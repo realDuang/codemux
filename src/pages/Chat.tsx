@@ -25,10 +25,11 @@ export default function Chat() {
   const [sending, setSending] = createSignal(false);
   const [messagesRef, setMessagesRef] = createSignal<HTMLDivElement>();
   const [loadingMessages, setLoadingMessages] = createSignal(false);
+  // 初始化时从 localStorage 读取保存的模型
   const [currentSessionModel, setCurrentSessionModel] = createSignal<{
     providerID: string;
     modelID: string;
-  } | null>(null);
+  } | null>(client.getDefaultModel());
 
   // Mobile Sidebar State
   const [isSidebarOpen, setIsSidebarOpen] = createSignal(false);
@@ -318,7 +319,7 @@ export default function Chat() {
     return { found: false, index: left };
   }
 
-  const handleSendMessage = async (text: string) => {
+  const handleSendMessage = async (text: string, mode?: "build" | "plan") => {
     const sessionId = sessionStore.current;
     if (!sessionId || sending()) return;
 
@@ -362,7 +363,12 @@ export default function Chat() {
     setMessageStore("part", tempMessageId, [tempPart]);
     setTimeout(scrollToBottom, 0);
 
-    await client.sendMessage(sessionId, text);
+    const model = currentSessionModel();
+    await client.sendMessage(sessionId, text, {
+      mode,
+      modelID: model?.modelID,
+      providerID: model?.providerID,
+    });
     setSending(false);
   };
 

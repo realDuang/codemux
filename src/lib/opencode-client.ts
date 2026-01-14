@@ -48,7 +48,11 @@ export class OpenCodeClient {
   async sendMessage(
     sessionId: string,
     text: string,
-    mode?: "build" | "plan",
+    options?: {
+      mode?: "build" | "plan";
+      modelID?: string;
+      providerID?: string;
+    },
   ) {
     const body: any = {
       parts: [
@@ -58,8 +62,15 @@ export class OpenCodeClient {
         },
       ],
     };
-    if (mode) {
-      body.mode = mode;
+    if (options?.mode) {
+      body.mode = options.mode;
+    }
+    // OpenCode API 期望 model 是一个包含 providerID 和 modelID 的对象
+    if (options?.modelID && options?.providerID) {
+      body.model = {
+        providerID: options.providerID,
+        modelID: options.modelID,
+      };
     }
 
     return this.request(`/session/${sessionId}/message`, {

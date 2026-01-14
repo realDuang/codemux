@@ -1,10 +1,23 @@
-import { MessageV2, Session } from "../types/opencode";
+import { MessageV2, Session, Config } from "../types/opencode";
 
 export class OpenCodeClient {
   private baseUrl: string;
 
-  constructor(baseUrl: string = "/opencode-api") {
-    this.baseUrl = baseUrl;
+  constructor(baseUrl?: string) {
+    // 从 localStorage 读取配置的服务器 URL，如果没有则使用默认值
+    const savedUrl = localStorage.getItem("opencode_server_url");
+    this.baseUrl = baseUrl || savedUrl || "/opencode-api";
+  }
+
+  // 设置服务器 URL
+  setServerUrl(url: string) {
+    this.baseUrl = url;
+    localStorage.setItem("opencode_server_url", url);
+  }
+
+  // 获取当前服务器 URL
+  getServerUrl(): string {
+    return this.baseUrl;
   }
 
   // 会话管理
@@ -12,10 +25,14 @@ export class OpenCodeClient {
     return this.request<Session.Info[]>("/session");
   }
 
-  async createSession(title?: string) {
+  async createSession(title?: string, modelID?: string, providerID?: string) {
+    const body: any = { title };
+    if (modelID) body.modelID = modelID;
+    if (providerID) body.providerID = providerID;
+
     return this.request<Session.Info>("/session", {
       method: "POST",
-      body: JSON.stringify({ title }),
+      body: JSON.stringify(body),
     });
   }
 
@@ -28,17 +45,26 @@ export class OpenCodeClient {
   }
 
   // 消息操作
-  async sendMessage(sessionId: string, text: string) {
+  async sendMessage(
+    sessionId: string,
+    text: string,
+    mode?: "build" | "plan",
+  ) {
+    const body: any = {
+      parts: [
+        {
+          type: "text",
+          text: text,
+        },
+      ],
+    };
+    if (mode) {
+      body.mode = mode;
+    }
+
     return this.request(`/session/${sessionId}/message`, {
       method: "POST",
-      body: JSON.stringify({
-        parts: [
-          {
-            type: "text",
-            text: text,
-          },
-        ],
-      }),
+      body: JSON.stringify(body),
     });
   }
 
@@ -49,6 +75,28 @@ export class OpenCodeClient {
   async getMessageParts(sessionId: string, messageId: string) {
     return this.request<MessageV2.Part[]>(
       `/session/${sessionId}/message/${messageId}/part`,
+    );
+  }
+
+  // 配置管理
+  async getProviders() {
+    return this.request<Config.ProviderResponse>("/provider");
+  }
+
+  async getAgents() {
+    return this.request<Config.AgentInfo[]>("/agent");
+  }
+
+  // 本地存储默认模型设置（因为OpenCode没有全局配置API）
+  getDefaultModel(): { providerID: string; modelID: string } | null {
+    const stored = localStorage.getItem("opencode_default_model");
+    return stored ? JSON.parse(stored) : null;
+  }
+
+  setDefaultModel(providerID: string, modelID: string) {
+    localStorage.setItem(
+      "opencode_default_model",
+      JSON.stringify({ providerID, modelID }),
     );
   }
 

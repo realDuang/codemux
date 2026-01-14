@@ -217,8 +217,22 @@ export function Part(props: PartProps) {
               )}
           </div>
         )}
-        {/* Reasoning - only show if reasoning exists on type 'reasoning' (custom extension) or we adapt type */}
-        {/* Note: Original code had reasoning match but Part type doesn't explicitly list it in my copy. Assuming extended type or ignoring for now. */}
+        {props.message.role === "assistant" && props.part.type === "reasoning" && (
+          <div data-component="tool">
+            <div data-component="tool-title">
+              <span data-slot="name">Thinking</span>
+            </div>
+            <Show when={props.part.text}>
+              <div data-component="assistant-reasoning">
+                <ResultsButton showCopy="Show details" hideCopy="Hide details">
+                  <div data-component="assistant-reasoning-markdown">
+                    <ContentMarkdown expand text={props.part.text || "Thinking..."} />
+                  </div>
+                </ResultsButton>
+              </div>
+            </Show>
+          </div>
+        )}
 
         {props.message.role === "user" && props.part.type === "file" && (
           <div data-component="attachment">

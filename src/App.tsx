@@ -3,6 +3,8 @@ import { createEffect } from "solid-js";
 import { Auth } from "./lib/auth";
 import Login from "./pages/Login";
 import Chat from "./pages/Chat";
+import RemoteAccess from "./pages/RemoteAccess";
+import Settings from "./pages/Settings";
 
 function App() {
   console.log("🎨 App component rendering");
@@ -11,6 +13,22 @@ function App() {
   return (
     <Router>
       <Route path="/login" component={Login} />
+      <Route path="/remote" component={RemoteAccess} />
+      <Route path="/settings" component={Settings} />
+      <Route
+        path="/chat"
+        component={() => {
+          createEffect(() => {
+            if (!Auth.isAuthenticated()) {
+              console.log("❌ Not authenticated, redirecting to login");
+              window.location.href = "/login";
+            } else {
+              console.log("✅ Authenticated, showing chat");
+            }
+          });
+          return <Chat />;
+        }}
+      />
       <Route
         path="/"
         component={() => {
@@ -19,7 +37,8 @@ function App() {
               console.log("❌ Not authenticated, redirecting to login");
               window.location.href = "/login";
             } else {
-              console.log("✅ Authenticated, showing chat");
+              console.log("✅ Authenticated, redirecting to chat");
+              window.location.href = "/chat";
             }
           });
           return <Chat />;

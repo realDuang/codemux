@@ -47,6 +47,13 @@ export namespace MessageV2 {
         id: string;
         messageID: string;
         sessionID: string;
+        type: "reasoning";
+        text: string;
+      }
+    | {
+        id: string;
+        messageID: string;
+        sessionID: string;
         type: "file";
         mime: string;
         filename: string;
@@ -108,6 +115,17 @@ export namespace MessageV2 {
                 duration: number;
               };
               metadata?: any;
+            }
+          | {
+              status: "error";
+              input: any;
+              output?: any;
+              error: string;
+              time: {
+                start: number;
+                end: number;
+                duration: number;
+              };
             };
       };
 }
@@ -121,5 +139,56 @@ export namespace Session {
       created: number;
       updated: number;
     };
+  }
+}
+
+export namespace Config {
+  export interface Model {
+    id: string;
+    providerID: string;
+    name: string;
+    family: string;
+    status: string;
+    cost: {
+      input: number;
+      output: number;
+      cache: { read: number; write: number };
+    };
+    limit: {
+      context: number;
+      output: number;
+    };
+    capabilities: {
+      temperature: boolean;
+      reasoning: boolean;
+      attachment: boolean;
+      toolcall: boolean;
+    };
+    release_date: string;
+  }
+
+  export interface Provider {
+    id: string;
+    source: string;
+    name: string;
+    env: string[];
+    options: Record<string, any>;
+    models: Record<string, Model>;
+  }
+
+  export interface ProviderResponse {
+    all: Provider[];
+    connected: string[];  // IDs of providers that have authentication
+    default: Record<string, string>;  // Default model ID for each provider
+    recent?: string[];
+    favorite?: string[];
+  }
+
+  export interface AgentInfo {
+    name: string;
+    options: Record<string, any>;
+    permission: any[];
+    mode?: string;
+    native?: boolean;
   }
 }

@@ -3,7 +3,7 @@ import { codeToHtml } from "shiki"
 import markedShiki from "marked-shiki"
 import { createOverflow } from "./common"
 import { CopyButton } from "./copy-button"
-import { createResource, createSignal } from "solid-js"
+import { createResource, createSignal, createEffect } from "solid-js"
 import { transformerNotationDiff } from "@shikijs/transformers"
 import style from "./content-markdown.module.css"
 
@@ -36,11 +36,18 @@ interface Props {
   highlight?: boolean
 }
 export function ContentMarkdown(props: Props) {
+  // 添加调试日志
+  createEffect(() => {
+    console.log("[ContentMarkdown] Text changed, length:", props.text?.length || 0);
+  });
+
   const [html] = createResource(
     () => strip(props.text),
     async (markdown) => {
+      console.log("[ContentMarkdown] Parsing markdown, length:", markdown?.length || 0);
       return markedWithShiki.parse(markdown)
     },
+    { initialValue: "" } // 添加初始值，避免undefined
   )
   const [expanded, setExpanded] = createSignal(false)
   const overflow = createOverflow()

@@ -133,11 +133,25 @@ export namespace MessageV2 {
 export namespace Session {
   export interface Info {
     id: string;
+    slug?: string;
+    projectID?: string;
+    directory: string;           // 项目目录路径（用于分组）
+    parentID?: string;           // 父会话 ID
     title?: string;
     version?: string;
     time: {
       created: number;
       updated: number;
+      compacting?: number;
+      archived?: number;
+    };
+    summary?: {
+      additions: number;
+      deletions: number;
+      files: number;
+    };
+    share?: {
+      url: string;
     };
   }
 }

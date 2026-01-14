@@ -29,7 +29,7 @@ export default function Chat() {
     providerID: string;
     modelID: string;
   } | null>(null);
-  
+
   // Mobile Sidebar State
   const [isSidebarOpen, setIsSidebarOpen] = createSignal(false);
   const [isMobile, setIsMobile] = createSignal(window.innerWidth < 768);
@@ -113,9 +113,12 @@ export default function Chat() {
     // 处理会话列表，将时间戳转换为 ISO 字符串
     const processedSessions = sessions.map((s) => ({
       id: s.id,
-      title: s.title || "未命名会话",
+      title: s.title || "新会话",
+      directory: s.directory || "",
+      parentID: s.parentID,
       createdAt: new Date(s.time.created).toISOString(),
       updatedAt: new Date(s.time.updated).toISOString(),
+      summary: s.summary,
     }));
 
     let currentSession = processedSessions[0];
@@ -125,8 +128,11 @@ export default function Chat() {
       currentSession = {
         id: newSession.id,
         title: newSession.title || "新会话",
+        directory: newSession.directory || "",
+        parentID: newSession.parentID,
         createdAt: new Date(newSession.time.created).toISOString(),
         updatedAt: new Date(newSession.time.updated).toISOString(),
+        summary: newSession.summary,
       };
       processedSessions.push(currentSession);
     }
@@ -165,8 +171,11 @@ export default function Chat() {
     const processedSession = {
       id: newSession.id,
       title: newSession.title || "新会话",
+      directory: newSession.directory || "",
+      parentID: newSession.parentID,
       createdAt: new Date(newSession.time.created).toISOString(),
       updatedAt: new Date(newSession.time.updated).toISOString(),
+      summary: newSession.summary,
     };
 
     setSessionStore("list", (list) => [processedSession, ...list]);
@@ -261,11 +270,13 @@ export default function Chat() {
         list.map((s) =>
           s.id === updated.id
             ? {
-                id: updated.id,
-                title: updated.title || "未命名会话",
-                createdAt: new Date(updated.time.created).toISOString(),
-                updatedAt: new Date(updated.time.updated).toISOString(),
-              }
+              ...s,
+              id: updated.id,
+              title: updated.title || "新会话",
+              directory: updated.directory || s.directory || "",
+              createdAt: new Date(updated.time.created).toISOString(),
+              updatedAt: new Date(updated.time.updated).toISOString(),
+            }
             : s,
         ),
       );
@@ -354,75 +365,75 @@ export default function Chat() {
 
   return (
     <div class="flex h-screen bg-gray-50/50 dark:bg-zinc-950 font-sans text-gray-900 dark:text-gray-100 overflow-hidden relative">
-      
+
       {/* Mobile Sidebar Overlay */}
       <Show when={isMobile() && isSidebarOpen()}>
-        <div 
+        <div
           class="absolute inset-0 bg-black/50 z-20 backdrop-blur-sm"
           onClick={toggleSidebar}
         />
       </Show>
 
       {/* Sidebar - Desktop: Static, Mobile: Drawer */}
-      <aside 
+      <aside
         class={`
           fixed md:static inset-y-0 left-0 z-30 w-72 bg-gray-50 dark:bg-zinc-950 border-r border-gray-200 dark:border-zinc-800 transform transition-transform duration-300 ease-in-out flex flex-col justify-between
           ${isSidebarOpen() ? "translate-x-0" : "-translate-x-full md:translate-x-0"}
         `}
       >
         <div class="flex flex-col h-full overflow-hidden">
-             <Show when={!sessionStore.loading}>
-              <SessionSidebar
-                sessions={sessionStore.list}
-                currentSessionId={sessionStore.current}
-                onSelectSession={handleSelectSession}
-                onNewSession={handleNewSession}
-                onDeleteSession={handleDeleteSession}
-              />
-            </Show>
+          <Show when={!sessionStore.loading}>
+            <SessionSidebar
+              sessions={sessionStore.list}
+              currentSessionId={sessionStore.current}
+              onSelectSession={handleSelectSession}
+              onNewSession={handleNewSession}
+              onDeleteSession={handleDeleteSession}
+            />
+          </Show>
         </div>
-        
+
         {/* User Actions Footer in Sidebar */}
         <div class="p-3 border-t border-gray-200 dark:border-zinc-800 space-y-1 bg-gray-50 dark:bg-zinc-950">
           <button
-              onClick={() => navigate("/remote")}
-              class="w-full flex items-center gap-3 px-3 py-2 text-sm font-medium text-gray-600 dark:text-gray-400 hover:bg-white dark:hover:bg-zinc-800 hover:text-gray-900 dark:hover:text-white rounded-lg transition-all shadow-sm hover:shadow"
-            >
-             <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="20" height="14" x="2" y="3" rx="2"/><line x1="8" x2="16" y1="21" y2="21"/><line x1="12" x2="12" y1="17" y2="21"/></svg>
-              远程访问
-          </button>
-           <button
-              onClick={() => navigate("/settings")}
-              class="w-full flex items-center gap-3 px-3 py-2 text-sm font-medium text-gray-600 dark:text-gray-400 hover:bg-white dark:hover:bg-zinc-800 hover:text-gray-900 dark:hover:text-white rounded-lg transition-all shadow-sm hover:shadow"
-            >
-              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.09a2 2 0 0 1-1-1.74v-.51a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
-              设置
+            onClick={() => navigate("/remote")}
+            class="w-full flex items-center gap-3 px-3 py-2 text-sm font-medium text-gray-600 dark:text-gray-400 hover:bg-white dark:hover:bg-zinc-800 hover:text-gray-900 dark:hover:text-white rounded-lg transition-all shadow-sm hover:shadow"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="20" height="14" x="2" y="3" rx="2" /><line x1="8" x2="16" y1="21" y2="21" /><line x1="12" x2="12" y1="17" y2="21" /></svg>
+            远程访问
           </button>
           <button
-              onClick={handleLogout}
-              class="w-full flex items-center gap-3 px-3 py-2 text-sm font-medium text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors"
-            >
-              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" x2="9" y1="12" y2="12"/></svg>
-              退出登录
+            onClick={() => navigate("/settings")}
+            class="w-full flex items-center gap-3 px-3 py-2 text-sm font-medium text-gray-600 dark:text-gray-400 hover:bg-white dark:hover:bg-zinc-800 hover:text-gray-900 dark:hover:text-white rounded-lg transition-all shadow-sm hover:shadow"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.09a2 2 0 0 1-1-1.74v-.51a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" /><circle cx="12" cy="12" r="3" /></svg>
+            设置
+          </button>
+          <button
+            onClick={handleLogout}
+            class="w-full flex items-center gap-3 px-3 py-2 text-sm font-medium text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" /><polyline points="16 17 21 12 16 7" /><line x1="21" x2="9" y1="12" y2="12" /></svg>
+            退出登录
           </button>
         </div>
       </aside>
 
       {/* Main Chat Area */}
       <div class="flex-1 flex flex-col overflow-hidden min-w-0 bg-white dark:bg-zinc-900">
-        
+
         {/* Header */}
         <header class="flex items-center justify-between px-4 py-3 border-b border-gray-100 dark:border-zinc-800/50 bg-white/80 dark:bg-zinc-900/80 backdrop-blur-sm sticky top-0 z-10">
           <div class="flex items-center gap-3">
-             <button 
-                onClick={toggleSidebar}
-                class="md:hidden p-2 -ml-2 text-gray-500 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-zinc-800 rounded-lg transition-colors"
-              >
-                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" x2="20" y1="12" y2="12"/><line x1="4" x2="20" y1="6" y2="6"/><line x1="4" x2="20" y1="18" y2="18"/></svg>
-             </button>
-             <h1 class="text-base font-semibold text-gray-900 dark:text-white truncate">
-                {sessionStore.list.find(s => s.id === sessionStore.current)?.title || "OpenCode Remote"}
-             </h1>
+            <button
+              onClick={toggleSidebar}
+              class="md:hidden p-2 -ml-2 text-gray-500 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-zinc-800 rounded-lg transition-colors"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" x2="20" y1="12" y2="12" /><line x1="4" x2="20" y1="6" y2="6" /><line x1="4" x2="20" y1="18" y2="18" /></svg>
+            </button>
+            <h1 class="text-base font-semibold text-gray-900 dark:text-white truncate">
+              {sessionStore.list.find(s => s.id === sessionStore.current)?.title || "OpenCode Remote"}
+            </h1>
           </div>
           <div class="flex items-center gap-2">
             <ModelSelector onModelChange={handleModelChange} />
@@ -445,7 +456,7 @@ export default function Chat() {
               when={!loadingMessages()}
               fallback={
                 <div class="flex-1 flex items-center justify-center">
-                   <div class="flex flex-col items-center gap-3 text-gray-400">
+                  <div class="flex flex-col items-center gap-3 text-gray-400">
                     <div class="w-6 h-6 border-2 border-current border-t-transparent rounded-full animate-spin"></div>
                   </div>
                 </div>
@@ -458,7 +469,7 @@ export default function Chat() {
                     fallback={
                       <div class="flex flex-col items-center justify-center h-[50vh] text-center px-4">
                         <div class="w-16 h-16 bg-gray-100 dark:bg-zinc-800 rounded-2xl flex items-center justify-center mb-6 text-gray-400 dark:text-gray-500">
-                          <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M14 9a2 2 0 0 1-2 2H6l-4 4V4c0-1.1.9-2 2-2h8a2 2 0 0 1 2 2v5Z"/><path d="M18 9h2a2 2 0 0 1 2 2v11l-4-4h-6a2 2 0 0 1-2-2v-1"/></svg>
+                          <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M14 9a2 2 0 0 1-2 2H6l-4 4V4c0-1.1.9-2 2-2h8a2 2 0 0 1 2 2v5Z" /><path d="M18 9h2a2 2 0 0 1 2 2v11l-4-4h-6a2 2 0 0 1-2-2v-1" /></svg>
                         </div>
                         <h2 class="text-xl font-semibold text-gray-900 dark:text-white mb-2">
                           开始新的对话
@@ -476,14 +487,14 @@ export default function Chat() {
 
               {/* Input Area */}
               <div class="p-4 bg-white/90 dark:bg-zinc-900/90 backdrop-blur-sm border-t border-gray-100 dark:border-zinc-800">
-                 <div class="max-w-3xl mx-auto w-full">
-                   <PromptInput onSend={handleSendMessage} disabled={sending()} />
-                   <div class="mt-2 text-center">
-                      <p class="text-[10px] text-gray-400 dark:text-gray-600">
-                        AI 生成的内容可能不准确，请核实重要信息。
-                      </p>
-                   </div>
-                 </div>
+                <div class="max-w-3xl mx-auto w-full">
+                  <PromptInput onSend={handleSendMessage} disabled={sending()} />
+                  <div class="mt-2 text-center">
+                    <p class="text-[10px] text-gray-400 dark:text-gray-600">
+                      AI 生成的内容可能不准确，请核实重要信息。
+                    </p>
+                  </div>
+                </div>
               </div>
             </Show>
           </Show>

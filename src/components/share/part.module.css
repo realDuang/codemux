@@ -530,4 +530,120 @@
       color: var(--sl-color-text-secondary);
     }
   }
+
+  /* Permission prompt styles */
+  [data-component="tool-permission"] {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+    padding: 0.75rem;
+    border: 2px solid var(--sl-color-orange);
+    border-radius: 0.5rem;
+    background-color: var(--sl-color-bg-alt);
+    width: 100%;
+    max-width: var(--md-tool-width);
+
+    [data-component="tool-title"][data-waiting] {
+      [data-slot="name"] {
+        color: var(--sl-color-orange);
+      }
+    }
+  }
+
+  [data-component="tool-running"] {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    padding: 0.5rem 0.75rem;
+    border: 1px solid var(--sl-color-divider);
+    border-radius: 0.5rem;
+    background-color: var(--sl-color-bg-alt);
+    width: 100%;
+    max-width: var(--md-tool-width);
+
+    [data-component="tool-title"][data-running] {
+      [data-slot="status"] {
+        margin-left: auto;
+        font-size: 0.75rem;
+        color: var(--sl-color-text-dimmed);
+        animation: pulse 1.5s ease-in-out infinite;
+      }
+    }
+  }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.5; }
+  }
+
+  [data-component="permission-prompt"] {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+
+    [data-slot="permission-info"] {
+      display: flex;
+      flex-direction: column;
+      gap: 0.25rem;
+      font-size: 0.75rem;
+
+      [data-slot="permission-type"] {
+        font-weight: 600;
+        text-transform: capitalize;
+        color: var(--sl-color-orange);
+      }
+
+      [data-slot="permission-patterns"] {
+        color: var(--sl-color-text-secondary);
+        word-break: break-all;
+      }
+    }
+
+    [data-slot="permission-actions"] {
+      display: flex;
+      gap: 0.5rem;
+      flex-wrap: wrap;
+
+      [data-slot="permission-button"] {
+        appearance: none;
+        border: none;
+        border-radius: 0.375rem;
+        padding: 0.5rem 1rem;
+        font-size: 0.8125rem;
+        font-weight: 500;
+        cursor: pointer;
+        transition: all 0.15s ease;
+
+        &[data-variant="deny"] {
+          background-color: transparent;
+          color: var(--sl-color-text-secondary);
+          border: 1px solid var(--sl-color-divider);
+
+          &:hover {
+            background-color: var(--sl-color-bg-hover);
+            color: var(--sl-color-red);
+            border-color: var(--sl-color-red);
+          }
+        }
+
+        &[data-variant="always"] {
+          background-color: var(--sl-color-bg-hover);
+          color: var(--sl-color-text);
+
+          &:hover {
+            background-color: var(--sl-color-divider);
+          }
+        }
+
+        &[data-variant="once"] {
+          background-color: var(--sl-color-orange);
+          color: white;
+
+          &:hover {
+            background-color: var(--sl-color-orange-high);
+          }
+        }
+      }
+    }
+  }
 }

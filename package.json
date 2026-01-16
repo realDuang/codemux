@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "vite --port 5174",
     "start": "bun scripts/start.ts",
+    "setup": "bun scripts/setup.ts",
     "build": "vite build",
     "preview": "vite preview"
   },

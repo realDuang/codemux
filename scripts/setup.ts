@@ -58,7 +58,6 @@ function getVersion(command: string, versionArg: string = "--version"): string |
     });
     if (result.status === 0 && result.stdout) {
       const firstLine = result.stdout.trim().split("\n")[0];
-      // Extract version number (match x.x.x format)
       const versionMatch = firstLine.match(/(\d+\.\d+\.\d+)/);
       return versionMatch ? versionMatch[1] : firstLine.substring(0, 20);
     }
@@ -120,7 +119,6 @@ async function installOpenCode(): Promise<boolean> {
   logStep("Installing OpenCode CLI");
 
   if (isWindows) {
-    // Windows: Use PowerShell irm
     log("  Using PowerShell to install...", colors.blue);
     return runInstallCommand(
       "OpenCode CLI installation",
@@ -129,7 +127,6 @@ async function installOpenCode(): Promise<boolean> {
       { shell: true }
     );
   } else {
-    // macOS / Linux: Use curl
     log("  Using curl to install...", colors.blue);
     return runInstallCommand(
       "OpenCode CLI installation",
@@ -145,7 +142,6 @@ async function installCloudflared(): Promise<boolean> {
   logStep("Installing Cloudflared");
 
   if (isWindows) {
-    // Windows: Use winget
     if (commandExists("winget")) {
       return runInstallCommand(
         "Cloudflared installation",
@@ -159,7 +155,6 @@ async function installCloudflared(): Promise<boolean> {
       return false;
     }
   } else if (isMac) {
-    // macOS: Use Homebrew
     if (commandExists("brew")) {
       return runInstallCommand(
         "Cloudflared installation",
@@ -173,9 +168,7 @@ async function installCloudflared(): Promise<boolean> {
       return false;
     }
   } else {
-    // Linux: Choose based on package manager
     if (commandExists("apt")) {
-      // Debian/Ubuntu
       log("  Detected apt, installing from Cloudflare official repository...", colors.blue);
       const commands = [
         "curl -fsSL https://pkg.cloudflare.com/cloudflare-main.gpg | sudo tee /usr/share/keyrings/cloudflare-main.gpg >/dev/null",
@@ -189,7 +182,6 @@ async function installCloudflared(): Promise<boolean> {
         { shell: false }
       );
     } else if (commandExists("yum") || commandExists("dnf")) {
-      // RHEL/Fedora
       const pm = commandExists("dnf") ? "dnf" : "yum";
       return runInstallCommand(
         "Cloudflared installation",
@@ -205,6 +197,86 @@ async function installCloudflared(): Promise<boolean> {
   }
 }
 
+// Auth provider interface
+interface AuthProvider {
+  name: string;
+  type: string;
+}
+
+// Get list of configured auth providers
+function getAuthProviders(): AuthProvider[] {
+  try {
+    const result = spawnSync("opencode", ["auth", "list"], {
+      stdio: "pipe",
+      encoding: "utf-8",
+      env: { ...process.env, NO_COLOR: "1", FORCE_COLOR: "0" },
+    });
+    if (result.status === 0 && result.stdout) {
+      const providers: AuthProvider[] = [];
+      const cleanOutput = result.stdout.replace(/\x1b\[[0-9;]*m/g, "");
+      const lines = cleanOutput.split("\n");
+      for (const line of lines) {
+        const match = line.match(/[●○]\s+(.+?)\s+(oauth|api[_-]?key|custom)\s*$/i);
+        if (match) {
+          providers.push({
+            name: match[1].trim(),
+            type: match[2].toLowerCase(),
+          });
+        }
+      }
+      return providers;
+    }
+  } catch {
+    return [];
+  }
+  return [];
+}
+
+// Check if any auth provider is configured
+function hasAuthProvider(): boolean {
+  return getAuthProviders().length > 0;
+}
+
+// Print auth provider status
+function printAuthStatus() {
+  const providers = getAuthProviders();
+
+  console.log("\n" + "-".repeat(60));
+  console.log(`${colors.bold}  Configured Auth Providers${colors.reset}`);
+  console.log("-".repeat(60));
+
+  if (providers.length === 0) {
+    console.log(`  ${colors.yellow}No providers configured${colors.reset}`);
+  } else {
+    for (const provider of providers) {
+      console.log(`  ${colors.green}[ok]${colors.reset} ${provider.name} (${provider.type})`);
+    }
+  }
+
+  console.log("-".repeat(60) + "\n");
+}
+
+// Run opencode auth login interactively (let opencode handle the UI)
+async function runAuthLogin(): Promise<boolean> {
+  return new Promise((resolve) => {
+    log("  Running: opencode auth login", colors.blue);
+
+    const proc = spawn("opencode", ["auth", "login"], {
+      stdio: "inherit",
+      shell: isWindows,
+    });
+
+    proc.on("close", (code) => {
+      resolve(code === 0);
+    });
+
+    proc.on("error", (err) => {
+      logError(`Authentication failed: ${err.message}`);
+      resolve(false);
+    });
+  });
+}
+
 // Dependency status interface
 interface DependencyStatus {
   name: string;
@@ -216,7 +288,7 @@ interface DependencyStatus {
 }
 
 function checkDependencies(): DependencyStatus[] {
-  const deps: DependencyStatus[] = [
+  return [
     {
       name: "Bun",
       command: "bun",
@@ -242,8 +314,6 @@ function checkDependencies(): DependencyStatus[] {
       description: "Cloudflare Tunnel (optional, for public access)",
     },
   ];
-
-  return deps;
 }
 
 // Print dependency status table
@@ -274,7 +344,7 @@ function printDependencyTable(deps: DependencyStatus[]) {
 async function main() {
   console.log("\n" + "=".repeat(60));
   console.log(
-    `${colors.bold}${colors.cyan}  OpenCode Remote - Dependency Setup Wizard${colors.reset}`
+    `${colors.bold}${colors.cyan}  OpenCode Remote - Setup Wizard${colors.reset}`
   );
   console.log("=".repeat(60));
 
@@ -304,8 +374,7 @@ async function main() {
   const needCloudflared = !cloudflaredDep?.installed;
 
   if (!needOpenCode && !needCloudflared) {
-    logSuccess("All dependencies are installed! You can run `bun run start` to start the project.");
-    process.exit(0);
+    logSuccess("All dependencies are installed!");
   }
 
   // Install OpenCode
@@ -342,18 +411,46 @@ async function main() {
     }
   }
 
-  // Final status check
-  console.log("\n");
-  logStep("Final status check");
+  // Final dependency check
   const finalDeps = checkDependencies();
-  printDependencyTable(finalDeps);
-
   const allRequired = finalDeps.filter((d) => d.required).every((d) => d.installed);
-  if (allRequired) {
-    logSuccess("Required dependencies are ready! Run `bun run start` to start the project.");
-  } else {
+  if (!allRequired) {
+    console.log("\n");
+    logStep("Final status check");
+    printDependencyTable(finalDeps);
     logWarning("Some required dependencies are missing. Please install them manually before starting.");
+    process.exit(1);
   }
+
+  // Auth provider setup
+  logStep("Checking auth providers");
+  printAuthStatus();
+
+  if (!hasAuthProvider()) {
+    logWarning("No auth provider configured. You need to authenticate with at least one provider.");
+    const shouldAuth = await confirm("Run opencode auth login now?");
+
+    if (shouldAuth) {
+      await runAuthLogin();
+      printAuthStatus();
+    }
+  } else {
+    const addMore = await confirm("Add another auth provider?");
+    if (addMore) {
+      await runAuthLogin();
+      printAuthStatus();
+    }
+  }
+
+  // Final message
+  console.log("\n" + "=".repeat(60));
+  if (hasAuthProvider()) {
+    logSuccess("Setup complete! Run `bun run start` to start the project.");
+  } else {
+    logWarning("Setup complete, but no auth provider configured.");
+    log("  Run `opencode auth login` to add a provider later.", colors.yellow);
+  }
+  console.log("=".repeat(60) + "\n");
 }
 
 main().catch((err) => {

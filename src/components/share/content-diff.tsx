@@ -2,6 +2,7 @@ import { parsePatch } from "diff"
 import { createMemo, For } from "solid-js"
 import { ContentCode } from "./content-code"
 import styles from "./content-diff.module.css"
+import { logger } from "../../lib/logger"
 
 type UnifiedLine = {
   content: string
@@ -57,7 +58,7 @@ export function ContentDiff(props: Props) {
         }
       }
     } catch (error) {
-      console.error("Failed to parse patch:", error)
+      logger.error("Failed to parse patch:", error)
       return []
     }
 

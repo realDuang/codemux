@@ -9,6 +9,7 @@ import {
 import { Auth } from "../lib/auth";
 import { useNavigate } from "@solidjs/router";
 import { client } from "../lib/opencode-client";
+import { logger } from "../lib/logger";
 import { sessionStore, setSessionStore } from "../stores/session";
 import {
   messageStore,
@@ -90,7 +91,7 @@ export default function Chat() {
   const [isMobile, setIsMobile] = createSignal(window.innerWidth < 768);
 
   const handleModelChange = (providerID: string, modelID: string) => {
-    console.log("[Chat] Model changed to:", { providerID, modelID });
+    logger.debug("[Chat] Model changed to:", { providerID, modelID });
     setCurrentSessionModel({ providerID, modelID });
   };
 
@@ -122,11 +123,11 @@ export default function Chat() {
 
   // Load messages for specific session
   const loadSessionMessages = async (sessionId: string) => {
-    console.log("[LoadMessages] Loading messages for session:", sessionId);
+    logger.debug("[LoadMessages] Loading messages for session:", sessionId);
     setLoadingMessages(true);
 
     const messages = await client.getMessages(sessionId);
-    console.log("[LoadMessages] Loaded messages:", messages);
+    logger.debug("[LoadMessages] Loaded messages:", messages);
 
     // Follow opencode desktop pattern: store message info and parts separately
     const messageInfos: MessageV2.Info[] = [];
@@ -157,11 +158,11 @@ export default function Chat() {
   };
 
   const initializeSession = async () => {
-    console.log("[Init] Starting session initialization");
+    logger.debug("[Init] Starting session initialization");
     setSessionStore({ loading: true });
 
     const sessions = await client.listSessions();
-    console.log("[Init] Loaded sessions:", sessions);
+    logger.debug("[Init] Loaded sessions:", sessions);
 
     // Process session list, convert timestamps to ISO strings
     const processedSessions = sessions.map((s) => ({
@@ -182,7 +183,7 @@ export default function Chat() {
     // Select the most recently updated session as default
     let currentSession = processedSessions[0];
     if (!currentSession) {
-      console.log("[Init] No sessions found, creating new one");
+      logger.debug("[Init] No sessions found, creating new one");
       const newSession = await client.createSession(t().sidebar.newSession);
       currentSession = {
         id: newSession.id,
@@ -207,7 +208,7 @@ export default function Chat() {
 
   // Switch session
   const handleSelectSession = async (sessionId: string) => {
-    console.log("[SelectSession] Switching to session:", sessionId);
+    logger.debug("[SelectSession] Switching to session:", sessionId);
     setSessionStore("current", sessionId);
     if (isMobile()) {
       setIsSidebarOpen(false); // Close sidebar on mobile selection
@@ -223,9 +224,9 @@ export default function Chat() {
 
   // New session
   const handleNewSession = async () => {
-    console.log("[NewSession] Creating new session");
+    logger.debug("[NewSession] Creating new session");
     const newSession = await client.createSession(t().sidebar.newSession);
-    console.log("[NewSession] Created:", newSession);
+    logger.debug("[NewSession] Created:", newSession);
 
     const processedSession = {
       id: newSession.id,
@@ -250,7 +251,7 @@ export default function Chat() {
 
   // Delete session
   const handleDeleteSession = async (sessionId: string) => {
-    console.log("[DeleteSession] Deleting session:", sessionId);
+    logger.debug("[DeleteSession] Deleting session:", sessionId);
 
     await client.deleteSession(sessionId);
 
@@ -275,7 +276,7 @@ export default function Chat() {
     permissionID: string,
     reply: Permission.Reply,
   ) => {
-    console.log("[Permission] Responding:", { sessionID, permissionID, reply });
+    logger.debug("[Permission] Responding:", { sessionID, permissionID, reply });
     
     try {
       await client.respondToPermission(permissionID, reply);
@@ -284,7 +285,7 @@ export default function Chat() {
       const existing = messageStore.permission[sessionID] || [];
       setMessageStore("permission", sessionID, existing.filter(p => p.id !== permissionID));
     } catch (error) {
-      console.error("[Permission] Failed to respond:", error);
+      logger.error("[Permission] Failed to respond:", error);
     }
   };
 
@@ -353,7 +354,7 @@ export default function Chat() {
 
       case "permission.asked": {
         const permission = event.data as Permission.Request;
-        console.log("[SSE] Permission asked:", permission);
+        logger.debug("[SSE] Permission asked:", permission);
         const existing = messageStore.permission[permission.sessionID] || [];
         if (!existing.find((p) => p.id === permission.id)) {
           setMessageStore("permission", permission.sessionID, [...existing, permission]);
@@ -363,7 +364,7 @@ export default function Chat() {
 
       case "permission.replied": {
         const { sessionID, requestID } = event.data as { sessionID: string; requestID: string };
-        console.log("[SSE] Permission replied:", requestID);
+        logger.debug("[SSE] Permission replied:", requestID);
         const existing = messageStore.permission[sessionID] || [];
         setMessageStore("permission", sessionID, existing.filter((p) => p.id !== requestID));
         break;

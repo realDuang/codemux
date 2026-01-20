@@ -3,6 +3,7 @@ import { useNavigate } from "@solidjs/router";
 import { Auth } from "../lib/auth";
 import { useI18n } from "../lib/i18n";
 import { LanguageSwitcher } from "../components/LanguageSwitcher";
+import { logger } from "../lib/logger";
 
 export default function Login() {
   const { t } = useI18n();
@@ -12,7 +13,7 @@ export default function Login() {
   const navigate = useNavigate();
 
   onMount(() => {
-    console.log("Login page mounted");
+    logger.debug("Login page mounted");
   });
 
   const handleSubmit = async (e: Event) => {
@@ -20,18 +21,18 @@ export default function Login() {
     setError("");
     setLoading(true);
 
-    console.log("Submitting code");
+    logger.debug("Submitting code");
 
     try {
       const success = await Auth.verify(code());
-      console.log("Auth result:", success);
+      logger.debug("Auth result:", success);
       if (success) {
         navigate("/", { replace: true });
       } else {
         setError(t().login.invalidCode);
       }
     } catch (err) {
-      console.error("❌ Auth error:", err);
+      logger.error("❌ Auth error:", err);
       setError(t().login.errorOccurred);
     } finally {
       setLoading(false);

@@ -2,14 +2,15 @@ import { Router, Route } from "@solidjs/router";
 import { createEffect } from "solid-js";
 import { Auth } from "./lib/auth";
 import { I18nProvider } from "./lib/i18n";
+import { logger } from "./lib/logger";
 import Login from "./pages/Login";
 import Chat from "./pages/Chat";
 import RemoteAccess from "./pages/RemoteAccess";
 import Settings from "./pages/Settings";
 
 function App() {
-  console.log("🎨 App component rendering");
-  console.log("🔐 Is authenticated:", Auth.isAuthenticated());
+  logger.debug("🎨 App component rendering");
+  logger.debug("🔐 Is authenticated:", Auth.isAuthenticated());
 
   return (
     <I18nProvider>
@@ -22,10 +23,10 @@ function App() {
           component={() => {
             createEffect(() => {
               if (!Auth.isAuthenticated()) {
-                console.log("❌ Not authenticated, redirecting to login");
+                logger.debug("❌ Not authenticated, redirecting to login");
                 window.location.href = "/login";
               } else {
-                console.log("✅ Authenticated, showing chat");
+                logger.debug("✅ Authenticated, showing chat");
               }
             });
             return <Chat />;
@@ -36,10 +37,10 @@ function App() {
           component={() => {
             createEffect(() => {
               if (!Auth.isAuthenticated()) {
-                console.log("❌ Not authenticated, redirecting to login");
+                logger.debug("❌ Not authenticated, redirecting to login");
                 window.location.href = "/login";
               } else {
-                console.log("✅ Authenticated, redirecting to chat");
+                logger.debug("✅ Authenticated, redirecting to chat");
                 window.location.href = "/chat";
               }
             });

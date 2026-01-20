@@ -1,6 +1,7 @@
 import { createSignal, onCleanup, splitProps } from "solid-js"
 import type { JSX } from "solid-js/jsx-runtime"
 import { IconCheckCircle, IconHashtag } from "../icons"
+import { logger } from "../../lib/logger"
 
 interface AnchorProps extends JSX.HTMLAttributes<HTMLDivElement> {
   id: string
@@ -22,7 +23,7 @@ export function AnchorIcon(props: AnchorProps) {
 
           navigator.clipboard
             .writeText(`${origin}${pathname}${search}${hash}`)
-            .catch((err) => console.error("Copy failed", err))
+            .catch((err) => logger.error("Copy failed", err))
 
           setCopied(true)
           setTimeout(() => setCopied(false), 3000)

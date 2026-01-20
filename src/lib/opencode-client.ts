@@ -1,4 +1,5 @@
 import { MessageV2, Session, Config, Permission } from "../types/opencode";
+import { logger } from "./logger";
 
 export class OpenCodeClient {
   private baseUrl: string;
@@ -123,30 +124,30 @@ export class OpenCodeClient {
   ): () => void {
     const eventSource = new EventSource(`${this.baseUrl}/global/event`);
 
-    console.log("[SSE Client] Connected to:", `${this.baseUrl}/global/event`);
+    logger.debug("[SSE Client] Connected to:", `${this.baseUrl}/global/event`);
 
     eventSource.onopen = () => {
-      console.log("[SSE Client] Connection opened");
+      logger.debug("[SSE Client] Connection opened");
     };
 
     eventSource.onerror = (error) => {
-      console.error("[SSE Client] Error:", error);
+      logger.error("[SSE Client] Error:", error);
     };
 
     eventSource.onmessage = (event) => {
-      console.log("[SSE Client] Raw message event:", event.data);
+      logger.debug("[SSE Client] Raw message event:", event.data);
 
       try {
         const parsed = JSON.parse(event.data);
-        console.log("[SSE Client] Parsed data:", parsed);
+        logger.debug("[SSE Client] Parsed data:", parsed);
 
         if (!parsed.payload) return;
 
         const eventType = parsed.payload.type;
         const properties = parsed.payload.properties;
 
-        console.log("[SSE Client] Event type:", eventType);
-        console.log("[SSE Client] Properties:", properties);
+        logger.debug("[SSE Client] Event type:", eventType);
+        logger.debug("[SSE Client] Properties:", properties);
 
         // Event type to data property mapping
         const eventDataMap: Record<string, string | null> = {
@@ -165,10 +166,10 @@ export class OpenCodeClient {
             onEvent({ type: eventType, data });
           }
         } else {
-          console.log("[SSE Client] Unhandled event type:", eventType);
+          logger.debug("[SSE Client] Unhandled event type:", eventType);
         }
       } catch (e) {
-        console.error(
+        logger.error(
           "[SSE Client] Failed to parse SSE message",
           e,
           event.data,
@@ -177,7 +178,7 @@ export class OpenCodeClient {
     };
 
     return () => {
-      console.log("[SSE Client] Closing connection");
+      logger.debug("[SSE Client] Closing connection");
       eventSource.close();
     };
   }

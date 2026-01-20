@@ -2,6 +2,7 @@ import { createSignal, createEffect, For, Show } from "solid-js";
 import { client } from "../lib/opencode-client";
 import { configStore, setConfigStore } from "../stores/config";
 import { useI18n } from "../lib/i18n";
+import { logger } from "../lib/logger";
 
 interface ModelSelectorProps {
   onModelChange?: (providerID: string, modelID: string) => void;
@@ -52,7 +53,7 @@ export function ModelSelector(props: ModelSelectorProps) {
         }
       }
     } catch (error) {
-      console.error("Failed to load providers:", error);
+      logger.error("Failed to load providers:", error);
     }
   });
 

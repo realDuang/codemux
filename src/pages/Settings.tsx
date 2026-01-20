@@ -3,6 +3,7 @@ import { useNavigate } from "@solidjs/router";
 import { client } from "../lib/opencode-client";
 import { LanguageSwitcher } from "../components/LanguageSwitcher";
 import { useI18n } from "../lib/i18n";
+import { logger } from "../lib/logger";
 
 export default function Settings() {
   const { t } = useI18n();
@@ -45,7 +46,7 @@ export default function Settings() {
         throw e;
       }
     } catch (error: any) {
-      console.error("[Settings] Connection check failed:", error);
+      logger.error("[Settings] Connection check failed:", error);
       throw new Error(`${t().settings.connectionFailed} ${error.message}`);
     } finally {
       setChecking(false);
@@ -79,7 +80,7 @@ export default function Settings() {
   };
 
   const handleSave = async () => {
-    console.log("[Settings] Saving configuration");
+    logger.debug("[Settings] Saving configuration");
     setSaving(true);
     setSaveStatus(null);
 
@@ -97,7 +98,7 @@ export default function Settings() {
         navigate("/chat");
       }, 1000);
     } catch (error: any) {
-      console.error("[Settings] Failed to save config:", error);
+      logger.error("[Settings] Failed to save config:", error);
       setSaveStatus({
         type: "error",
         message: error.message || t().settings.saveFailed,

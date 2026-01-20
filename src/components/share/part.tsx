@@ -47,6 +47,7 @@ import { ContentMarkdown } from "./content-markdown";
 import type { MessageV2, Permission } from "../../types/opencode";
 import type { Diagnostic } from "vscode-languageserver-types";
 import { useI18n, formatMessage } from "../../lib/i18n";
+import { logger } from "../../lib/logger";
 
 import styles from "./part.module.css";
 
@@ -86,7 +87,7 @@ export function Part(props: PartProps) {
               const { origin, pathname, search } = window.location;
               navigator.clipboard
                 .writeText(`${origin}${pathname}${search}${hash}`)
-                .catch((err) => console.error("Copy failed", err));
+                .catch((err) => logger.error("Copy failed", err));
 
               setCopied(true);
               setTimeout(() => setCopied(false), 3000);

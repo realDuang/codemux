@@ -6,6 +6,7 @@ import { CopyButton } from "./copy-button"
 import { createResource, createSignal, createEffect } from "solid-js"
 import { transformerNotationDiff } from "@shikijs/transformers"
 import { useI18n } from "../../lib/i18n"
+import { logger } from "../../lib/logger"
 import style from "./content-markdown.module.css"
 
 const markedWithShiki = marked.use(
@@ -41,13 +42,13 @@ export function ContentMarkdown(props: Props) {
   const { t } = useI18n();
   // Add debug logs
   createEffect(() => {
-    console.log("[ContentMarkdown] Text changed, length:", props.text?.length || 0);
+    logger.debug("[ContentMarkdown] Text changed, length:", props.text?.length || 0);
   });
 
   const [html] = createResource(
     () => strip(props.text),
     async (markdown) => {
-      console.log("[ContentMarkdown] Parsing markdown, length:", markdown?.length || 0);
+      logger.debug("[ContentMarkdown] Parsing markdown, length:", markdown?.length || 0);
       return markedWithShiki.parse(markdown)
     },
     { initialValue: "" } // Add initial value to avoid undefined

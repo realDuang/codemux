@@ -1,6 +1,7 @@
 import { createSignal, createEffect, Show, Switch, Match } from "solid-js";
 import { useNavigate } from "@solidjs/router";
 import { useI18n } from "../lib/i18n";
+import { logger } from "../lib/logger";
 
 interface TunnelInfo {
   url: string;
@@ -35,7 +36,7 @@ export default function RemoteAccess() {
         if (data.localIp) setLocalIp(data.localIp);
         if (data.port) setPort(data.port);
       })
-      .catch(console.error);
+      .catch((err) => logger.error("[RemoteAccess] Failed to get system info:", err));
 
     // Get access code
     fetch("/api/auth/code")
@@ -43,7 +44,7 @@ export default function RemoteAccess() {
       .then((data) => {
         if (data.code) setAccessCode(data.code);
       })
-      .catch(console.error);
+      .catch((err) => logger.error("[RemoteAccess] Failed to get access code:", err));
 
     // Get tunnel status
     checkTunnelStatus();
@@ -65,7 +66,7 @@ export default function RemoteAccess() {
       setTunnelInfo(info);
       setTunnelEnabled(info.status === "running");
     } catch (error) {
-      console.error("[RemoteAccess] Failed to check tunnel status:", error);
+      logger.error("[RemoteAccess] Failed to check tunnel status:", error);
     }
   };
 
@@ -102,7 +103,7 @@ export default function RemoteAccess() {
         setLoading(false);
       }
     } catch (error) {
-      console.error("[RemoteAccess] Failed to start tunnel:", error);
+      logger.error("[RemoteAccess] Failed to start tunnel:", error);
       setTunnelInfo({
         url: "",
         status: "error",
@@ -119,7 +120,7 @@ export default function RemoteAccess() {
       setTunnelInfo({ url: "", status: "stopped" });
       setTunnelEnabled(false);
     } catch (error) {
-      console.error("[RemoteAccess] Failed to stop tunnel:", error);
+      logger.error("[RemoteAccess] Failed to stop tunnel:", error);
     } finally {
       setLoading(false);
     }

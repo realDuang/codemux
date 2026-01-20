@@ -1,3 +1,5 @@
+import { logger } from "./logger";
+
 export class Auth {
   private static TOKEN_KEY = "opencode_remote_auth";
 
@@ -17,7 +19,7 @@ export class Auth {
       }
       return false;
     } catch (err) {
-      console.error("Auth verification failed:", err);
+      logger.error("Auth verification failed:", err);
       return false;
     }
   }

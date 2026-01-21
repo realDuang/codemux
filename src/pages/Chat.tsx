@@ -159,6 +159,16 @@ export default function Chat() {
 
   const initializeSession = async () => {
     logger.debug("[Init] Starting session initialization");
+    
+    // Verify device token is still valid before proceeding
+    const isValidToken = await Auth.checkDeviceToken();
+    if (!isValidToken) {
+      logger.debug("[Init] Device token invalid or revoked, redirecting to login");
+      Auth.clearAuth();
+      navigate("/login", { replace: true });
+      return;
+    }
+    
     setSessionStore({ loading: true });
 
     const sessions = await client.listSessions();

@@ -43,6 +43,8 @@ export interface LocaleDict {
     errorOccurred: string;
     verifying: string;
     connect: string;
+    checkingDevice: string;
+    rememberDevice: string;
   };
 
   // Chat page
@@ -80,6 +82,8 @@ export interface LocaleDict {
     infoDefault: string;
     infoRemote: string;
     infoChange: string;
+    security: string;
+    devicesDesc: string;
   };
 
   // Remote Access page
@@ -103,6 +107,7 @@ export interface LocaleDict {
     lanQrScan: string;
     publicQrDesc: string;
     lanQrDesc: string;
+    devicesDesc: string;
   };
 
   // Session Sidebar
@@ -166,6 +171,29 @@ export interface LocaleDict {
     runningCommands: string;
     gatheringThoughts: string;
   };
+
+  // Devices page
+  devices: {
+    title: string;
+    currentDevice: string;
+    lastSeen: string;
+    firstLogin: string;
+    rename: string;
+    revoke: string;
+    revokeConfirm: string;
+    revokeOthers: string;
+    revokeOthersConfirm: string;
+    revokeOthersSuccess: string;
+    noOtherDevices: string;
+    securityTip: string;
+    justNow: string;
+    minutesAgo: string;
+    hoursAgo: string;
+    daysAgo: string;
+    renameDevice: string;
+    renameDevicePlaceholder: string;
+    deviceRevoked: string;
+  };
 }
 
 export const en: LocaleDict = {
@@ -212,6 +240,8 @@ export const en: LocaleDict = {
     errorOccurred: "An error occurred. Please try again.",
     verifying: "Verifying...",
     connect: "Connect",
+    checkingDevice: "Checking device...",
+    rememberDevice: "This device will be remembered for future access",
   },
 
   // Chat page
@@ -249,6 +279,8 @@ export const en: LocaleDict = {
     infoDefault: "Default address is usually /opencode-api (pointing to local proxy)",
     infoRemote: "If connecting to a remote server, make sure the network is reachable",
     infoChange: "After changing the address, chat history and session list will load from the new server",
+    security: "Security",
+    devicesDesc: "Manage devices that can access this server",
   },
 
   // Remote Access page
@@ -272,6 +304,7 @@ export const en: LocaleDict = {
     lanQrScan: "Scan to access via LAN",
     publicQrDesc: "Suitable for remote connections, may be slower",
     lanQrDesc: "Make sure your phone and computer are on the same Wi-Fi",
+    devicesDesc: "Manage devices that can access this server",
   },
 
   // Session Sidebar
@@ -334,5 +367,28 @@ export const en: LocaleDict = {
     makingEdits: "Making edits",
     runningCommands: "Running commands",
     gatheringThoughts: "Gathering thoughts",
+  },
+
+  // Devices page
+  devices: {
+    title: "Authorized Devices",
+    currentDevice: "Current device",
+    lastSeen: "Last seen",
+    firstLogin: "First login",
+    rename: "Rename",
+    revoke: "Revoke",
+    revokeConfirm: "Are you sure you want to revoke access for this device?",
+    revokeOthers: "Revoke all other devices",
+    revokeOthersConfirm: "Are you sure you want to revoke access for all other devices?",
+    revokeOthersSuccess: "{count} device(s) revoked",
+    noOtherDevices: "No other authorized devices",
+    securityTip: "If you see an unfamiliar device, revoke its access immediately",
+    justNow: "just now",
+    minutesAgo: "{count} min ago",
+    hoursAgo: "{count}h ago",
+    daysAgo: "{count}d ago",
+    renameDevice: "Rename device",
+    renameDevicePlaceholder: "Enter device name",
+    deviceRevoked: "Device access revoked",
   },
 };

@@ -1,5 +1,6 @@
 dist/
 node_modules/
 .auth-code
+.devices.json
 nul
 .env

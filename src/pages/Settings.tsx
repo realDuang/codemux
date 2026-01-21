@@ -4,6 +4,7 @@ import { client } from "../lib/opencode-client";
 import { LanguageSwitcher } from "../components/LanguageSwitcher";
 import { useI18n } from "../lib/i18n";
 import { logger } from "../lib/logger";
+import { useAuthGuard } from "../lib/useAuthGuard";
 
 export default function Settings() {
   const { t } = useI18n();
@@ -15,6 +16,8 @@ export default function Settings() {
     type: "success" | "error";
     message: string;
   } | null>(null);
+
+  useAuthGuard("Settings");
 
   onMount(() => {
     // Load current server URL
@@ -169,7 +172,7 @@ export default function Settings() {
             {/* Connection Settings Section */}
             <section>
               <h2 class="text-sm font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-4 px-1">
-                Connection
+                {t().settings.connection}
               </h2>
               <div class="bg-white dark:bg-zinc-800 rounded-xl shadow-sm border border-gray-200 dark:border-zinc-700 overflow-hidden">
                 <div class="p-4 sm:p-6 space-y-6">

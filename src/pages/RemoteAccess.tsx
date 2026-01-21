@@ -2,6 +2,8 @@ import { createSignal, createEffect, Show, Switch, Match } from "solid-js";
 import { useNavigate } from "@solidjs/router";
 import { useI18n } from "../lib/i18n";
 import { logger } from "../lib/logger";
+import { Auth } from "../lib/auth";
+import { useAuthGuard } from "../lib/useAuthGuard";
 
 interface TunnelInfo {
   url: string;
@@ -27,6 +29,8 @@ export default function RemoteAccess() {
   const [showPassword, setShowPassword] = createSignal(false);
   const [activeQrTab, setActiveQrTab] = createSignal<"lan" | "public">("lan");
 
+  useAuthGuard("RemoteAccess");
+
   // Load system info
   createEffect(() => {
     // Get system info
@@ -38,11 +42,10 @@ export default function RemoteAccess() {
       })
       .catch((err) => logger.error("[RemoteAccess] Failed to get system info:", err));
 
-    // Get access code
-    fetch("/api/auth/code")
-      .then((res) => res.json())
-      .then((data) => {
-        if (data.code) setAccessCode(data.code);
+    // Get access code using Auth module (requires authentication)
+    Auth.getAccessCode()
+      .then((code) => {
+        if (code) setAccessCode(code);
       })
       .catch((err) => logger.error("[RemoteAccess] Failed to get access code:", err));
 
@@ -378,15 +381,63 @@ export default function RemoteAccess() {
                 </Switch>
               </div>
 
-              <div class="mt-6 text-center space-y-2">
+               <div class="mt-6 text-center space-y-2">
                  <h4 class="font-medium text-gray-900 dark:text-white">
                     {activeQrTab() === "public" ? t().remote.publicQrScan : t().remote.lanQrScan}
                  </h4>
                  <p class="text-xs text-gray-500 dark:text-gray-400 max-w-[200px]">
                     {activeQrTab() === "public" ? t().remote.publicQrDesc : t().remote.lanQrDesc}
                  </p>
+               </div>
+            </div>
+          </div>
+
+          {/* Authorized Devices Card */}
+          <div
+            onClick={() => navigate("/devices")}
+            class="bg-white dark:bg-zinc-900 rounded-xl border border-gray-200 dark:border-zinc-800 shadow-sm p-5 flex items-center justify-between cursor-pointer hover:bg-gray-50 dark:hover:bg-zinc-800/50 transition-colors"
+          >
+            <div class="flex items-center gap-4">
+              <div class="w-10 h-10 rounded-lg bg-blue-100 dark:bg-blue-900/30 flex items-center justify-center">
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  width="20"
+                  height="20"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  class="text-blue-600 dark:text-blue-400"
+                >
+                  <rect width="14" height="20" x="5" y="2" rx="2" ry="2" />
+                  <path d="M12 18h.01" />
+                </svg>
+              </div>
+              <div>
+                <h3 class="text-base font-medium text-gray-900 dark:text-white">
+                  {t().devices.title}
+                </h3>
+                <p class="text-sm text-gray-500 dark:text-gray-400 mt-0.5">
+                  {t().remote.devicesDesc}
+                </p>
               </div>
             </div>
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="20"
+              height="20"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              class="text-gray-400"
+            >
+              <path d="m9 18 6-6-6-6" />
+            </svg>
           </div>
         </div>
       </main>

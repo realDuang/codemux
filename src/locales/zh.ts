@@ -44,6 +44,8 @@ export const zh: LocaleDict = {
     errorOccurred: "发生错误，请重试。",
     verifying: "验证中...",
     connect: "连接",
+    checkingDevice: "正在检查设备...",
+    rememberDevice: "此设备将被记住，下次无需再次输入验证码",
   },
 
   // Chat page
@@ -81,6 +83,8 @@ export const zh: LocaleDict = {
     infoDefault: "默认地址通常为 /opencode-api (指向本地代理)",
     infoRemote: "如果连接远程服务器，请确保网络可达",
     infoChange: "更改地址后，聊天记录和会话列表将从新服务器加载",
+    security: "安全",
+    devicesDesc: "管理可以访问此服务器的设备",
   },
 
   // Remote Access page
@@ -104,6 +108,7 @@ export const zh: LocaleDict = {
     lanQrScan: "局域网扫码访问",
     publicQrDesc: "适用于远程连接，速度可能较慢",
     lanQrDesc: "确保手机和电脑连接同一 Wi-Fi",
+    devicesDesc: "管理可以访问此服务器的设备",
   },
 
   // Session Sidebar
@@ -166,5 +171,28 @@ export const zh: LocaleDict = {
     makingEdits: "进行编辑",
     runningCommands: "运行命令",
     gatheringThoughts: "整理思路",
+  },
+
+  // Devices page
+  devices: {
+    title: "已授权设备",
+    currentDevice: "当前设备",
+    lastSeen: "最后活跃",
+    firstLogin: "首次登录",
+    rename: "重命名",
+    revoke: "撤销",
+    revokeConfirm: "确定要撤销此设备的访问权限吗？",
+    revokeOthers: "撤销所有其他设备",
+    revokeOthersConfirm: "确定要撤销所有其他设备的访问权限吗？",
+    revokeOthersSuccess: "已撤销 {count} 个设备",
+    noOtherDevices: "没有其他已授权的设备",
+    securityTip: "如果发现不认识的设备，请立即撤销其访问权限",
+    justNow: "刚刚",
+    minutesAgo: "{count}分钟前",
+    hoursAgo: "{count}小时前",
+    daysAgo: "{count}天前",
+    renameDevice: "重命名设备",
+    renameDevicePlaceholder: "输入设备名称",
+    deviceRevoked: "设备访问已撤销",
   },
 };

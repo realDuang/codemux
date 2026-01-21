@@ -7,6 +7,7 @@ import Login from "./pages/Login";
 import Chat from "./pages/Chat";
 import RemoteAccess from "./pages/RemoteAccess";
 import Settings from "./pages/Settings";
+import Devices from "./pages/Devices";
 
 function App() {
   logger.debug("🎨 App component rendering");
@@ -18,6 +19,7 @@ function App() {
         <Route path="/login" component={Login} />
         <Route path="/remote" component={RemoteAccess} />
         <Route path="/settings" component={Settings} />
+        <Route path="/devices" component={Devices} />
         <Route
           path="/chat"
           component={() => {

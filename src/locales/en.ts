@@ -194,6 +194,15 @@ export interface LocaleDict {
     renameDevicePlaceholder: string;
     deviceRevoked: string;
   };
+
+  // Entry page
+  entry: {
+    checkingAccess: string;
+    enterChat: string;
+    enterChatDesc: string;
+    localModeTitle: string;
+    localModeDesc: string;
+  };
 }
 
 export const en: LocaleDict = {
@@ -390,5 +399,14 @@ export const en: LocaleDict = {
     renameDevice: "Rename device",
     renameDevicePlaceholder: "Enter device name",
     deviceRevoked: "Device access revoked",
+  },
+
+  // Entry page
+  entry: {
+    checkingAccess: "Checking access...",
+    enterChat: "Enter Chat",
+    enterChatDesc: "Start using OpenCode AI assistant",
+    localModeTitle: "Local Access Mode",
+    localModeDesc: "You're accessing from localhost. Configure remote access below or enter chat directly.",
   },
 };

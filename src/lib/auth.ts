@@ -335,4 +335,53 @@ export class Auth {
       return null;
     }
   }
+
+  // -------------------------------------------------------------------------
+  // Local Access Methods
+  // -------------------------------------------------------------------------
+
+  /**
+   * Check if current request is from localhost
+   */
+  static async isLocalAccess(): Promise<boolean> {
+    try {
+      const response = await fetch("/api/system/is-local");
+      if (response.ok) {
+        const data = await response.json();
+        return data.isLocal === true;
+      }
+      return false;
+    } catch (err) {
+      logger.error("Check local access error:", err);
+      return false;
+    }
+  }
+
+  /**
+   * Auto-authenticate for local access (localhost only)
+   */
+  static async localAuth(): Promise<{ success: boolean; error?: string }> {
+    try {
+      const deviceInfo = this.collectDeviceInfo();
+
+      const response = await fetch("/api/auth/local-auth", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ device: deviceInfo }),
+      });
+
+      const data: AuthResponse = await response.json();
+
+      if (response.ok && data.success && data.token && data.deviceId) {
+        this.saveToken(data.token);
+        this.saveDeviceId(data.deviceId);
+        return { success: true };
+      } else {
+        return { success: false, error: data.error || "Local auth failed" };
+      }
+    } catch (err) {
+      logger.error("Local auth error:", err);
+      return { success: false, error: "Network error" };
+    }
+  }
 }

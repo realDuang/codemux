@@ -65,6 +65,16 @@ function getLocalIp(): string {
   return localIp;
 }
 
+function isLocalhost(ip: string): boolean {
+  // Normalize IPv6-mapped IPv4 addresses (e.g., ::ffff:127.0.0.1 -> 127.0.0.1)
+  const normalizedIp = ip.replace(/^::ffff:/, "");
+  return (
+    normalizedIp === "127.0.0.1" ||
+    normalizedIp === "::1" ||
+    normalizedIp === "localhost"
+  );
+}
+
 // ============================================================================
 // Vite Config
 // ============================================================================
@@ -222,6 +232,52 @@ export default defineConfig({
         });
 
         // ====================================================================
+        // Auth: Local auto-authentication (localhost only)
+        // POST /api/auth/local-auth
+        // ====================================================================
+        server.middlewares.use(async (req, res, next) => {
+          if (req.url !== "/api/auth/local-auth" || req.method !== "POST") {
+            next();
+            return;
+          }
+
+          const clientIp = getClientIp(req);
+          if (!isLocalhost(clientIp)) {
+            sendJson(res, { error: "Local access only" }, 403);
+            return;
+          }
+
+          try {
+            const { device } = await parseBody(req);
+
+            // Create local device with special naming
+            const deviceId = deviceStore.generateDeviceId();
+            const token = deviceStore.generateToken(deviceId);
+
+            const deviceInfo: DeviceInfo = {
+              id: deviceId,
+              name: device?.name || "Local Machine",
+              platform: device?.platform || "Unknown",
+              browser: device?.browser || "Unknown",
+              createdAt: Date.now(),
+              lastSeenAt: Date.now(),
+              ip: clientIp,
+            };
+
+            deviceStore.addDevice(deviceInfo);
+
+            sendJson(res, {
+              success: true,
+              token,
+              deviceId,
+              device: deviceInfo,
+            });
+          } catch (err) {
+            sendJson(res, { error: "Bad request" }, 400);
+          }
+        });
+
+        // ====================================================================
         // Devices: List all authorized devices
         // GET /api/devices
         // ====================================================================
@@ -369,6 +425,21 @@ export default defineConfig({
             localIp: getLocalIp(),
             port: 5174,
           });
+        });
+
+        // ====================================================================
+        // System: Check if request is from localhost
+        // GET /api/system/is-local
+        // ====================================================================
+        server.middlewares.use((req, res, next) => {
+          if (req.url !== "/api/system/is-local" || req.method !== "GET") {
+            next();
+            return;
+          }
+
+          const clientIp = getClientIp(req);
+          const isLocal = isLocalhost(clientIp);
+          sendJson(res, { isLocal });
         });
 
         // ====================================================================

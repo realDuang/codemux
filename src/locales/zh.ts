@@ -195,4 +195,13 @@ export const zh: LocaleDict = {
     renameDevicePlaceholder: "输入设备名称",
     deviceRevoked: "设备访问已撤销",
   },
+
+  // Entry page
+  entry: {
+    checkingAccess: "正在检查访问权限...",
+    enterChat: "进入聊天",
+    enterChatDesc: "开始使用 OpenCode AI 助手",
+    localModeTitle: "本机访问模式",
+    localModeDesc: "您正在从本机访问。可以在下方配置远程访问，或直接进入聊天。",
+  },
 };

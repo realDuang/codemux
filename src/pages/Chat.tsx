@@ -574,7 +574,7 @@ export default function Chat() {
               </div>
 
               {/* Input Area */}
-              <div class="p-4 bg-white/90 dark:bg-zinc-900/90 backdrop-blur-sm border-t border-gray-100 dark:border-zinc-800">
+              <div class="p-4 bg-white/90 dark:bg-zinc-900/90 backdrop-blur-sm border-t border-gray-100 dark:border-zinc-800 relative z-20">
                 <div class="max-w-3xl mx-auto w-full">
                   <PromptInput 
                     onSend={handleSendMessage} 

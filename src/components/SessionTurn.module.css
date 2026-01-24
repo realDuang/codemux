@@ -21,8 +21,10 @@
   border-radius: 0.5rem;
 }
 
-:global(.dark) .stepsTrigger {
-  background-color: rgba(24, 24, 27, 0.95);
+@media (prefers-color-scheme: dark) {
+  .stepsTrigger {
+    background-color: rgba(24, 24, 27, 0.95);
+  }
 }
 
 .stepsTriggerButton {
@@ -42,10 +44,12 @@
   text-align: left;
 }
 
-:global(.dark) .stepsTriggerButton {
-  background-color: #27272a;
-  border-color: #3f3f46;
-  color: #a1a1aa;
+@media (prefers-color-scheme: dark) {
+  .stepsTriggerButton {
+    background-color: #27272a;
+    border-color: #3f3f46;
+    color: #a1a1aa;
+  }
 }
 
 .stepsTriggerButton:hover {
@@ -54,10 +58,12 @@
   color: #374151;
 }
 
-:global(.dark) .stepsTriggerButton:hover {
-  background-color: #3f3f46;
-  border-color: #52525b;
-  color: #e4e4e7;
+@media (prefers-color-scheme: dark) {
+  .stepsTriggerButton:hover {
+    background-color: #3f3f46;
+    border-color: #52525b;
+    color: #e4e4e7;
+  }
 }
 
 .stepsTriggerButton[data-working] {
@@ -65,9 +71,11 @@
   background-color: #eff6ff;
 }
 
-:global(.dark) .stepsTriggerButton[data-working] {
-  border-color: #3b82f6;
-  background-color: rgba(59, 130, 246, 0.1);
+@media (prefers-color-scheme: dark) {
+  .stepsTriggerButton[data-working] {
+    border-color: #3b82f6;
+    background-color: rgba(59, 130, 246, 0.1);
+  }
 }
 
 .statusText {
@@ -83,8 +91,10 @@
   flex-shrink: 0;
 }
 
-:global(.dark) .separator {
-  color: #71717a;
+@media (prefers-color-scheme: dark) {
+  .separator {
+    color: #71717a;
+  }
 }
 
 .duration {
@@ -93,8 +103,10 @@
   flex-shrink: 0;
 }
 
-:global(.dark) .duration {
-  color: #71717a;
+@media (prefers-color-scheme: dark) {
+  .duration {
+    color: #71717a;
+  }
 }
 
 .modelIcon {
@@ -105,8 +117,10 @@
   color: #6b7280;
 }
 
-:global(.dark) .modelIcon {
-  color: #a1a1aa;
+@media (prefers-color-scheme: dark) {
+  .modelIcon {
+    color: #a1a1aa;
+  }
 }
 
 .arrow {
@@ -131,9 +145,11 @@
   background-color: #fafafa;
 }
 
-:global(.dark) .stepsContent {
-  border-color: #3f3f46;
-  background-color: #18181b;
+@media (prefers-color-scheme: dark) {
+  .stepsContent {
+    border-color: #3f3f46;
+    background-color: #18181b;
+  }
 }
 
 .assistantMessageParts {
@@ -152,9 +168,11 @@
   background-color: white;
 }
 
-:global(.dark) .response {
-  border-color: #3f3f46;
-  background-color: #27272a;
+@media (prefers-color-scheme: dark) {
+  .response {
+    border-color: #3f3f46;
+    background-color: #27272a;
+  }
 }
 
 .responseHeader {
@@ -170,8 +188,10 @@
   margin: 0;
 }
 
-:global(.dark) .responseTitle {
-  color: #e4e4e7;
+@media (prefers-color-scheme: dark) {
+  .responseTitle {
+    color: #e4e4e7;
+  }
 }
 
 .responseContent {

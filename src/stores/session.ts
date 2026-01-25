@@ -1,10 +1,21 @@
 import { createStore } from "solid-js/store";
 
+export interface WorktreeInfo {
+  path: string;
+  branch: string;
+  baseBranch: string;
+  status: 'active' | 'merged' | 'pushed' | 'abandoned';
+  createdAt: string;
+  ahead?: number;
+  behind?: number;
+  hasUncommitted?: boolean;
+}
+
 export interface SessionInfo {
   id: string;
   title: string;
-  directory: string;           // 项目目录路径（用于分组）
-  parentID?: string;           // 父会话 ID
+  directory: string;
+  parentID?: string;
   createdAt: string;
   updatedAt: string;
   summary?: {
@@ -12,9 +23,9 @@ export interface SessionInfo {
     deletions: number;
     files: number;
   };
+  worktree?: WorktreeInfo;
 }
 
-// 项目展开状态
 export interface ProjectExpandState {
   [directory: string]: boolean;
 }

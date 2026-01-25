@@ -9,8 +9,9 @@ import {
 import { Auth } from "../lib/auth";
 import { useNavigate } from "@solidjs/router";
 import { client } from "../lib/opencode-client";
+import { worktreeClient } from "../lib/worktree-client";
 import { logger } from "../lib/logger";
-import { sessionStore, setSessionStore } from "../stores/session";
+import { sessionStore, setSessionStore, SessionInfo } from "../stores/session";
 import {
   messageStore,
   setMessageStore,
@@ -18,6 +19,8 @@ import {
 import { MessageList } from "../components/MessageList";
 import { PromptInput } from "../components/PromptInput";
 import { SessionSidebar } from "../components/SessionSidebar";
+import { NewSessionDialog } from "../components/NewSessionDialog";
+import { MergeDialog, PushDialog, AbandonDialog } from "../components/WorktreeDialogs";
 import { MessageV2, Permission, Session } from "../types/opencode";
 import { useI18n } from "../lib/i18n";
 import { AgentMode } from "../components/PromptInput";
@@ -79,6 +82,13 @@ export default function Chat() {
   const [isSidebarOpen, setIsSidebarOpen] = createSignal(false);
   const [isMobile, setIsMobile] = createSignal(window.innerWidth < 768);
   const [isLocalHost, setIsLocalHost] = createSignal(false);
+
+  // Worktree dialog state
+  const [newSessionDialogOpen, setNewSessionDialogOpen] = createSignal(false);
+  const [mergeDialogOpen, setMergeDialogOpen] = createSignal(false);
+  const [pushDialogOpen, setPushDialogOpen] = createSignal(false);
+  const [abandonDialogOpen, setAbandonDialogOpen] = createSignal(false);
+  const [selectedWorktreeSession, setSelectedWorktreeSession] = createSignal<SessionInfo | null>(null);
 
   const handleModelChange = (providerID: string, modelID: string) => {
     logger.debug("[Chat] Model changed to:", { providerID, modelID });
@@ -203,6 +213,12 @@ export default function Chat() {
       loading: false,
     });
 
+    if (currentSession.directory) {
+      worktreeClient.cleanup(currentSession.directory).catch((err) => {
+        logger.debug("[Init] Worktree cleanup failed (non-critical):", err);
+      });
+    }
+
     await loadSessionMessages(currentSession.id);
   };
 
@@ -222,15 +238,23 @@ export default function Chat() {
     }
   };
 
-  // New session
-  const handleNewSession = async () => {
-    logger.debug("[NewSession] Creating new session");
-    const newSession = await client.createSession();
-    logger.debug("[NewSession] Created:", newSession);
+  const handleNewSession = () => {
+    setNewSessionDialogOpen(true);
+  };
 
-    const processedSession = {
+  const handleCreateSession = async (options: {
+    title: string;
+    isolated: boolean;
+    branchName?: string;
+  }) => {
+    logger.debug("[CreateSession] Creating session with options:", options);
+
+    const newSession = await client.createSession(options.title);
+    logger.debug("[CreateSession] Created:", newSession);
+
+    const processedSession: SessionInfo = {
       id: newSession.id,
-      title: newSession.title || "",
+      title: newSession.title || options.title,
       directory: newSession.directory || "",
       parentID: newSession.parentID,
       createdAt: new Date(newSession.time.created).toISOString(),
@@ -238,15 +262,91 @@ export default function Chat() {
       summary: newSession.summary,
     };
 
-    setSessionStore("list", (list) => [processedSession, ...list]);
-    setSessionStore("current", processedSession.id);
-    if (isMobile()) {
-      setIsSidebarOpen(false); // Close sidebar on mobile
+    if (options.isolated && options.branchName && processedSession.directory) {
+      try {
+        const worktreeInfo = await worktreeClient.create(
+          processedSession.directory,
+          options.branchName,
+          processedSession.id
+        );
+        processedSession.worktree = worktreeInfo;
+        logger.debug("[CreateSession] Worktree created:", worktreeInfo);
+      } catch (error) {
+        logger.error("[CreateSession] Failed to create worktree:", error);
+      }
     }
 
-    // Initialize empty messages array
+    setSessionStore("list", (list) => [processedSession, ...list]);
+    setSessionStore("current", processedSession.id);
+    setNewSessionDialogOpen(false);
+
+    if (isMobile()) {
+      setIsSidebarOpen(false);
+    }
+
     setMessageStore("message", processedSession.id, []);
     setTimeout(scrollToBottom, 100);
+  };
+
+  const handleWorktreeMerge = (session: SessionInfo) => {
+    setSelectedWorktreeSession(session);
+    setMergeDialogOpen(true);
+  };
+
+  const handleWorktreePush = (session: SessionInfo) => {
+    setSelectedWorktreeSession(session);
+    setPushDialogOpen(true);
+  };
+
+  const handleWorktreeAbandon = (session: SessionInfo) => {
+    setSelectedWorktreeSession(session);
+    setAbandonDialogOpen(true);
+  };
+
+  const handleMergeConfirm = async (commitMessage: string) => {
+    const session = selectedWorktreeSession();
+    if (!session?.worktree?.path || !session.directory) return;
+
+    await worktreeClient.merge(session.worktree.path, session.directory, {
+      squash: true,
+      commitMessage,
+    });
+
+    setSessionStore("list", (list) =>
+      list.map((s) =>
+        s.id === session.id ? { ...s, worktree: undefined } : s
+      )
+    );
+    setMergeDialogOpen(false);
+    setSelectedWorktreeSession(null);
+    logger.debug("[Worktree] Merged and cleaned up:", session.id);
+  };
+
+  const handlePushConfirm = async (newBranchName?: string) => {
+    const session = selectedWorktreeSession();
+    if (!session?.worktree?.path) return;
+
+    const result = await worktreeClient.push(session.worktree.path, newBranchName);
+    logger.debug("[Worktree] Pushed to remote:", result.remoteBranch);
+
+    setPushDialogOpen(false);
+    setSelectedWorktreeSession(null);
+  };
+
+  const handleAbandonConfirm = async () => {
+    const session = selectedWorktreeSession();
+    if (!session?.worktree?.path || !session.directory) return;
+
+    await worktreeClient.abandon(session.worktree.path, session.directory);
+
+    setSessionStore("list", (list) =>
+      list.map((s) =>
+        s.id === session.id ? { ...s, worktree: undefined } : s
+      )
+    );
+    setAbandonDialogOpen(false);
+    setSelectedWorktreeSession(null);
+    logger.debug("[Worktree] Abandoned:", session.id);
   };
 
   // Delete session
@@ -485,6 +585,9 @@ export default function Chat() {
               onNewSession={handleNewSession}
               onDeleteSession={handleDeleteSession}
               onRenameSession={handleRenameSession}
+              onWorktreeMerge={handleWorktreeMerge}
+              onWorktreePush={handleWorktreePush}
+              onWorktreeAbandon={handleWorktreeAbandon}
             />
           </Show>
         </div>
@@ -609,6 +712,43 @@ export default function Chat() {
           </Show>
         </main>
       </div>
+
+      <NewSessionDialog
+        isOpen={newSessionDialogOpen()}
+        projectPath={sessionStore.list.find((s) => s.id === sessionStore.current)?.directory || ""}
+        onClose={() => setNewSessionDialogOpen(false)}
+        onCreate={handleCreateSession}
+      />
+
+      <MergeDialog
+        isOpen={mergeDialogOpen()}
+        worktree={selectedWorktreeSession()?.worktree || null}
+        onClose={() => {
+          setMergeDialogOpen(false);
+          setSelectedWorktreeSession(null);
+        }}
+        onMerge={handleMergeConfirm}
+      />
+
+      <PushDialog
+        isOpen={pushDialogOpen()}
+        worktree={selectedWorktreeSession()?.worktree || null}
+        onClose={() => {
+          setPushDialogOpen(false);
+          setSelectedWorktreeSession(null);
+        }}
+        onPush={handlePushConfirm}
+      />
+
+      <AbandonDialog
+        isOpen={abandonDialogOpen()}
+        worktree={selectedWorktreeSession()?.worktree || null}
+        onClose={() => {
+          setAbandonDialogOpen(false);
+          setSelectedWorktreeSession(null);
+        }}
+        onAbandon={handleAbandonConfirm}
+      />
     </div>
   );
 }

@@ -1,5 +1,5 @@
 import { For, Show, createSignal, createMemo } from "solid-js";
-import { SessionInfo, sessionStore, setSessionStore } from "../stores/session";
+import { SessionInfo, sessionStore, setSessionStore, WorktreeInfo } from "../stores/session";
 import { useI18n, formatMessage } from "../lib/i18n";
 
 interface SessionSidebarProps {
@@ -9,6 +9,9 @@ interface SessionSidebarProps {
   onNewSession: () => void;
   onDeleteSession: (sessionId: string) => void;
   onRenameSession: (sessionId: string, newTitle: string) => void;
+  onWorktreeMerge?: (session: SessionInfo) => void;
+  onWorktreePush?: (session: SessionInfo) => void;
+  onWorktreeAbandon?: (session: SessionInfo) => void;
 }
 
 // Project grouping data structure
@@ -350,10 +353,115 @@ export function SessionSidebar(props: SessionSidebarProps) {
                                       </Show>
                                     </div>
                                   </Show>
+
+                                  {/* Worktree Branch Info */}
+                                  <Show when={session.worktree}>
+                                    <div class="flex items-center gap-1.5 mt-1">
+                                      <svg
+                                        xmlns="http://www.w3.org/2000/svg"
+                                        width="10"
+                                        height="10"
+                                        viewBox="0 0 24 24"
+                                        fill="none"
+                                        stroke="currentColor"
+                                        stroke-width="2"
+                                        stroke-linecap="round"
+                                        stroke-linejoin="round"
+                                        class="text-purple-500"
+                                      >
+                                        <line x1="6" x2="6" y1="3" y2="15" />
+                                        <circle cx="18" cy="6" r="3" />
+                                        <circle cx="6" cy="18" r="3" />
+                                        <path d="M18 9a9 9 0 0 1-9 9" />
+                                      </svg>
+                                      <span class="text-[10px] text-purple-600 dark:text-purple-400 truncate max-w-[120px]" title={session.worktree!.branch}>
+                                        {session.worktree!.branch.replace(/^opencode-remote\//, '')}
+                                      </span>
+                                      <Show when={session.worktree!.hasUncommitted}>
+                                        <span class="text-[10px] text-yellow-600 dark:text-yellow-400">•</span>
+                                      </Show>
+                                    </div>
+                                  </Show>
                                 </div>
 
                                 <Show when={!isEditing()}>
                                   <div class="flex items-center gap-0.5 flex-shrink-0">
+                                    {/* Worktree Actions */}
+                                    <Show when={session.worktree && session.worktree.status === 'active'}>
+                                      <button
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          props.onWorktreeMerge?.(session);
+                                        }}
+                                        class="opacity-0 group-hover:opacity-100 p-1.5 text-gray-400 hover:text-green-500 hover:bg-green-50 dark:hover:bg-green-900/20 rounded transition-all"
+                                        title={t().worktree.merge}
+                                      >
+                                        <svg
+                                          xmlns="http://www.w3.org/2000/svg"
+                                          width="12"
+                                          height="12"
+                                          viewBox="0 0 24 24"
+                                          fill="none"
+                                          stroke="currentColor"
+                                          stroke-width="2"
+                                          stroke-linecap="round"
+                                          stroke-linejoin="round"
+                                        >
+                                          <circle cx="18" cy="18" r="3" />
+                                          <circle cx="6" cy="6" r="3" />
+                                          <path d="M6 21V9a9 9 0 0 0 9 9" />
+                                        </svg>
+                                      </button>
+                                      <button
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          props.onWorktreePush?.(session);
+                                        }}
+                                        class="opacity-0 group-hover:opacity-100 p-1.5 text-gray-400 hover:text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded transition-all"
+                                        title={t().worktree.push}
+                                      >
+                                        <svg
+                                          xmlns="http://www.w3.org/2000/svg"
+                                          width="12"
+                                          height="12"
+                                          viewBox="0 0 24 24"
+                                          fill="none"
+                                          stroke="currentColor"
+                                          stroke-width="2"
+                                          stroke-linecap="round"
+                                          stroke-linejoin="round"
+                                        >
+                                          <path d="M5 12h14" />
+                                          <path d="m12 5 7 7-7 7" />
+                                        </svg>
+                                      </button>
+                                      <button
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          props.onWorktreeAbandon?.(session);
+                                        }}
+                                        class="opacity-0 group-hover:opacity-100 p-1.5 text-gray-400 hover:text-orange-500 hover:bg-orange-50 dark:hover:bg-orange-900/20 rounded transition-all"
+                                        title={t().worktree.abandon}
+                                      >
+                                        <svg
+                                          xmlns="http://www.w3.org/2000/svg"
+                                          width="12"
+                                          height="12"
+                                          viewBox="0 0 24 24"
+                                          fill="none"
+                                          stroke="currentColor"
+                                          stroke-width="2"
+                                          stroke-linecap="round"
+                                          stroke-linejoin="round"
+                                        >
+                                          <path d="M3 6h18" />
+                                          <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" />
+                                          <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" />
+                                          <line x1="10" x2="10" y1="11" y2="17" />
+                                          <line x1="14" x2="14" y1="11" y2="17" />
+                                        </svg>
+                                      </button>
+                                    </Show>
                                     <button
                                       onClick={startEditing}
                                       class="opacity-0 group-hover:opacity-100 p-1.5 text-gray-400 hover:text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded transition-all"

@@ -6,6 +6,7 @@ import os from "os";
 import type { IncomingMessage, ServerResponse } from "http";
 import { tunnelManager } from "./scripts/tunnel-manager";
 import { deviceStore, type DeviceInfo } from "./scripts/device-store";
+import { worktreeService } from "./scripts/worktree-service";
 
 // ============================================================================
 // Helper Functions
@@ -683,6 +684,112 @@ export default defineConfig({
             sendJson(res, { error: "Not found" }, 404);
           } catch (error: any) {
             console.error("[API Error]", error);
+            sendJson(res, { error: error.message }, 500);
+          }
+        });
+
+        // ====================================================================
+        // Worktree Management APIs
+        // ====================================================================
+        server.middlewares.use(async (req, res, next) => {
+          if (!req.url?.startsWith("/api/worktree")) {
+            next();
+            return;
+          }
+
+          const token = extractBearerToken(req);
+          if (!token) {
+            sendJson(res, { error: "Unauthorized" }, 401);
+            return;
+          }
+
+          const authResult = deviceStore.verifyToken(token);
+          if (!authResult.valid) {
+            sendJson(res, { error: "Invalid token" }, 401);
+            return;
+          }
+
+          try {
+            if (req.url === "/api/worktree/create" && req.method === "POST") {
+              const { projectPath, branchName, sessionId } = await parseBody(req);
+              if (!projectPath || !branchName || !sessionId) {
+                sendJson(res, { error: "projectPath, branchName, and sessionId are required" }, 400);
+                return;
+              }
+              const info = await worktreeService.create({ projectPath, branchName, sessionId });
+              sendJson(res, info);
+              return;
+            }
+
+            if (req.url === "/api/worktree/merge" && req.method === "POST") {
+              const { worktreePath, projectPath, squash, commitMessage } = await parseBody(req);
+              if (!worktreePath || !projectPath) {
+                sendJson(res, { error: "worktreePath and projectPath are required" }, 400);
+                return;
+              }
+              const result = await worktreeService.merge({ worktreePath, projectPath, squash, commitMessage });
+              sendJson(res, result);
+              return;
+            }
+
+            if (req.url === "/api/worktree/push" && req.method === "POST") {
+              const { worktreePath, newBranchName } = await parseBody(req);
+              if (!worktreePath) {
+                sendJson(res, { error: "worktreePath is required" }, 400);
+                return;
+              }
+              const result = await worktreeService.push({ worktreePath, newBranchName });
+              sendJson(res, result);
+              return;
+            }
+
+            if (req.url === "/api/worktree/abandon" && req.method === "POST") {
+              const { worktreePath, projectPath } = await parseBody(req);
+              if (!worktreePath || !projectPath) {
+                sendJson(res, { error: "worktreePath and projectPath are required" }, 400);
+                return;
+              }
+              const result = await worktreeService.abandon(worktreePath, projectPath);
+              sendJson(res, result);
+              return;
+            }
+
+            if (req.url === "/api/worktree/list" && req.method === "POST") {
+              const { projectPath } = await parseBody(req);
+              if (!projectPath) {
+                sendJson(res, { error: "projectPath is required" }, 400);
+                return;
+              }
+              const list = await worktreeService.list(projectPath);
+              sendJson(res, { worktrees: list });
+              return;
+            }
+
+            if (req.url === "/api/worktree/info" && req.method === "POST") {
+              const { worktreePath } = await parseBody(req);
+              if (!worktreePath) {
+                sendJson(res, { error: "worktreePath is required" }, 400);
+                return;
+              }
+              const info = await worktreeService.getInfo(worktreePath);
+              sendJson(res, info || { error: "Worktree not found" });
+              return;
+            }
+
+            if (req.url === "/api/worktree/cleanup" && req.method === "POST") {
+              const { projectPath } = await parseBody(req);
+              if (!projectPath) {
+                sendJson(res, { error: "projectPath is required" }, 400);
+                return;
+              }
+              const result = await worktreeService.cleanup(projectPath);
+              sendJson(res, result);
+              return;
+            }
+
+            sendJson(res, { error: "Not found" }, 404);
+          } catch (error: any) {
+            console.error("[Worktree API Error]", error);
             sendJson(res, { error: error.message }, 500);
           }
         });

@@ -236,6 +236,45 @@ export interface LocaleDict {
     requestApproved: string;
     requestDenied: string;
   };
+
+  // Worktree / Isolated Session
+  worktree: {
+    newSessionTitle: string;
+    sessionTitle: string;
+    sessionTitlePlaceholder: string;
+    workingMode: string;
+    normalMode: string;
+    normalModeDesc: string;
+    isolatedMode: string;
+    isolatedModeDesc: string;
+    branchName: string;
+    branchPrefix: string;
+    create: string;
+    creating: string;
+    merge: string;
+    merging: string;
+    push: string;
+    pushing: string;
+    abandon: string;
+    abandoning: string;
+    mergeTitle: string;
+    mergeDesc: string;
+    commitMessage: string;
+    commitMessagePlaceholder: string;
+    deleteWorktree: string;
+    deleteBranch: string;
+    pushTitle: string;
+    pushDesc: string;
+    newBranchName: string;
+    newBranchNamePlaceholder: string;
+    abandonTitle: string;
+    abandonDesc: string;
+    abandonWarning: string;
+    uncommittedWarning: string;
+    aheadBehind: string;
+    ahead: string;
+    behind: string;
+  };
 }
 
 export const en: LocaleDict = {
@@ -474,5 +513,44 @@ export const en: LocaleDict = {
     noPendingRequests: "No pending requests",
     requestApproved: "Request approved",
     requestDenied: "Request denied",
+  },
+
+  // Worktree / Isolated Session
+  worktree: {
+    newSessionTitle: "New Session",
+    sessionTitle: "Session Title",
+    sessionTitlePlaceholder: "Enter a title for this session",
+    workingMode: "Working Mode",
+    normalMode: "Normal",
+    normalModeDesc: "Work directly in the main repository",
+    isolatedMode: "Isolated",
+    isolatedModeDesc: "Create a separate worktree with its own branch",
+    branchName: "Branch Name",
+    branchPrefix: "opencode-remote/",
+    create: "Create Session",
+    creating: "Creating...",
+    merge: "Merge",
+    merging: "Merging...",
+    push: "Push",
+    pushing: "Pushing...",
+    abandon: "Abandon",
+    abandoning: "Abandoning...",
+    mergeTitle: "Merge Changes",
+    mergeDesc: "Squash merge all changes from this isolated session into the base branch",
+    commitMessage: "Commit Message",
+    commitMessagePlaceholder: "Describe the changes being merged",
+    deleteWorktree: "Delete worktree after merge",
+    deleteBranch: "Delete branch after merge",
+    pushTitle: "Push to Remote",
+    pushDesc: "Push changes to remote repository. You can rename the branch before pushing.",
+    newBranchName: "Remote Branch Name",
+    newBranchNamePlaceholder: "e.g., feature/my-feature",
+    abandonTitle: "Abandon Changes",
+    abandonDesc: "Discard all changes and delete this isolated session",
+    abandonWarning: "This action cannot be undone. All uncommitted changes will be lost.",
+    uncommittedWarning: "You have uncommitted changes",
+    aheadBehind: "{ahead} ahead, {behind} behind",
+    ahead: "{count} commit(s) ahead",
+    behind: "{count} commit(s) behind",
   },
 };

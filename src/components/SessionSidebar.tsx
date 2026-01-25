@@ -1,19 +1,25 @@
 import { For, Show, createSignal, createMemo } from "solid-js";
-import { SessionInfo, sessionStore, setSessionStore } from "../stores/session";
+import { SessionInfo, sessionStore, setSessionStore, getProjectName } from "../stores/session";
 import { useI18n, formatMessage } from "../lib/i18n";
+import { Project } from "../types/opencode";
+import { ProjectStore } from "../lib/project-store";
 
 interface SessionSidebarProps {
   sessions: SessionInfo[];
   currentSessionId: string | null;
+  projects: Project.Info[];
   onSelectSession: (sessionId: string) => void;
-  onNewSession: () => void;
+  onNewSession: (directory?: string) => void;
   onDeleteSession: (sessionId: string) => void;
   onRenameSession: (sessionId: string, newTitle: string) => void;
+  onDeleteProjectSessions: (projectID: string, projectName: string, sessionCount: number) => void;
+  onAddProject: () => void;
 }
 
 // Project grouping data structure
 interface ProjectGroup {
-  directory: string;
+  projectID: string;
+  project: Project.Info | null;
   name: string;
   sessions: SessionInfo[];
 }
@@ -23,13 +29,6 @@ export function SessionSidebar(props: SessionSidebarProps) {
   const [hoveredProject, setHoveredProject] = createSignal<string | null>(null);
   const [editingSessionId, setEditingSessionId] = createSignal<string | null>(null);
   const [editingTitle, setEditingTitle] = createSignal("");
-
-  // Get project name from directory path
-  const getProjectName = (directory: string): string => {
-    if (!directory) return t().common.unknownProject;
-    const parts = directory.split("/").filter(Boolean);
-    return parts[parts.length - 1] || t().common.unknownProject;
-  };
 
   const isDefaultTitle = (title: string): boolean => {
     return /^(New session - |Child session - )\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(title);
@@ -42,47 +41,60 @@ export function SessionSidebar(props: SessionSidebarProps) {
     return title;
   };
 
-  // Group sessions by project
   const projectGroups = createMemo((): ProjectGroup[] => {
     const groups: Map<string, SessionInfo[]> = new Map();
 
-    // Filter out sub-sessions (show root sessions only)
-    const rootSessions = props.sessions.filter((s) => !s.parentID);
+    const filteredProjects = props.projects.filter((p) => p.worktree !== "/");
 
-    // Group by directory
-    for (const session of rootSessions) {
-      const dir = session.directory || "";
-      if (!groups.has(dir)) {
-        groups.set(dir, []);
-      }
-      groups.get(dir)!.push(session);
+    for (const project of filteredProjects) {
+      groups.set(project.id, []);
     }
 
-    // Convert to array and sort by latest updated time
+    const rootSessions = props.sessions.filter((s) => !s.parentID);
+
+    for (const session of rootSessions) {
+      const projectID = session.projectID || "";
+      
+      if (groups.has(projectID)) {
+        groups.get(projectID)!.push(session);
+      } else if (projectID) {
+        const matchingProject = filteredProjects.find(
+          (p) => session.directory && p.worktree === session.directory
+        );
+        if (matchingProject) {
+          groups.get(matchingProject.id)!.push(session);
+        }
+      }
+    }
+
     const result: ProjectGroup[] = [];
-    for (const [directory, sessions] of groups) {
-      // Sort sessions within each project by update time
+    for (const [projectID, sessions] of groups) {
       const sortedSessions = sessions.slice().sort((a, b) => {
         const aTime = new Date(a.updatedAt).getTime();
         const bTime = new Date(b.updatedAt).getTime();
         return bTime - aTime;
       });
 
+      const project = filteredProjects.find((p) => p.id === projectID) || null;
+      if (!project) continue;
+      
+      const name = getProjectName(project);
+
       result.push({
-        directory,
-        name: getProjectName(directory),
+        projectID,
+        project,
+        name,
         sessions: sortedSessions,
       });
     }
 
-    // Sort projects by their latest session's update time
     result.sort((a, b) => {
       const aLatest = a.sessions[0]
         ? new Date(a.sessions[0].updatedAt).getTime()
-        : 0;
+        : a.project?.time.updated || 0;
       const bLatest = b.sessions[0]
         ? new Date(b.sessions[0].updatedAt).getTime()
-        : 0;
+        : b.project?.time.updated || 0;
       return bLatest - aLatest;
     });
 
@@ -151,6 +163,10 @@ export function SessionSidebar(props: SessionSidebarProps) {
     return colors[Math.abs(hash) % colors.length];
   };
 
+  const getProjectDirectory = (project: Project.Info): string | undefined => {
+    return ProjectStore.getPath(project.id) || project.worktree || undefined;
+  };
+
   return (
     <div class="w-full bg-gray-50 dark:bg-zinc-950 border-r border-gray-200 dark:border-zinc-800 flex flex-col h-full">
       {/* Session List */}
@@ -180,17 +196,18 @@ export function SessionSidebar(props: SessionSidebarProps) {
         >
           <For each={projectGroups()}>
             {(project) => {
-              const isHovered = () => hoveredProject() === project.directory;
-              const isExpanded = () => isProjectExpanded(project.directory);
+              const isHovered = () => hoveredProject() === project.projectID;
+              const isExpanded = () => isProjectExpanded(project.projectID);
 
               return (
                 <div class="mb-2">
                   {/* Project Header */}
                   <div
                     class="group flex items-center justify-between px-2 py-1.5 rounded-md cursor-pointer hover:bg-gray-100 dark:hover:bg-zinc-900 transition-colors"
-                    onMouseEnter={() => setHoveredProject(project.directory)}
+                    onMouseEnter={() => setHoveredProject(project.projectID)}
                     onMouseLeave={() => setHoveredProject(null)}
-                    onClick={() => toggleProjectExpanded(project.directory)}
+                    onClick={() => toggleProjectExpanded(project.projectID)}
+                    title={project.project?.worktree || project.sessions[0]?.directory || ""}
                   >
                     <div class="flex items-center gap-2 min-w-0 flex-1">
                       {/* Expand/Collapse Arrow */}
@@ -218,38 +235,67 @@ export function SessionSidebar(props: SessionSidebarProps) {
                         {getProjectInitial(project.name)}
                       </div>
 
-                      {/* Project Name */}
-                      <span class="text-sm font-medium text-gray-700 dark:text-gray-300 truncate">
-                        {project.name}
-                      </span>
+                      {/* Project Name and Path */}
+                      <div class="min-w-0 flex-1">
+                        <span class="text-sm font-medium text-gray-700 dark:text-gray-300 truncate block">
+                          {project.name}
+                        </span>
+                        <span class="text-[10px] text-gray-400 dark:text-gray-500 truncate block">
+                          {project.project?.worktree || project.sessions[0]?.directory || ""}
+                        </span>
+                      </div>
                     </div>
 
                     {/* New session button on hover */}
-                    <button
-                      class={`p-1 text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 rounded transition-all ${
-                        isHovered() ? "opacity-100" : "opacity-0"
-                      }`}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        props.onNewSession();
-                      }}
-                      title={t().sidebar.newSession}
-                    >
-                      <svg
-                        xmlns="http://www.w3.org/2000/svg"
-                        width="14"
-                        height="14"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        stroke-width="2"
-                        stroke-linecap="round"
-                        stroke-linejoin="round"
+                    <div class={`flex items-center gap-0.5 ${isHovered() ? "opacity-100" : "opacity-0"}`}>
+                      <button
+                        class="p-1 text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 rounded transition-all"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          props.onNewSession(project.project ? getProjectDirectory(project.project) : undefined);
+                        }}
+                        title={t().sidebar.newSession}
                       >
-                        <path d="M5 12h14" />
-                        <path d="M12 5v14" />
-                      </svg>
-                    </button>
+                        <svg
+                          xmlns="http://www.w3.org/2000/svg"
+                          width="14"
+                          height="14"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          stroke-width="2"
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                        >
+                          <path d="M5 12h14" />
+                          <path d="M12 5v14" />
+                        </svg>
+                      </button>
+                      <button
+                        class="p-1 text-gray-400 hover:text-red-500 dark:hover:text-red-400 rounded transition-all"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          props.onDeleteProjectSessions(project.projectID, project.name, project.sessions.length);
+                        }}
+                        title={t().project.hideTitle}
+                      >
+                        <svg
+                          xmlns="http://www.w3.org/2000/svg"
+                          width="14"
+                          height="14"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          stroke-width="2"
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                        >
+                          <path d="M3 6h18" />
+                          <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" />
+                          <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" />
+                        </svg>
+                      </button>
+                    </div>
                   </div>
 
                   {/* Session List (Collapsible) */}
@@ -416,6 +462,30 @@ export function SessionSidebar(props: SessionSidebarProps) {
             }}
           </For>
         </Show>
+      </div>
+
+      <div class="px-2 py-2 border-t border-gray-200 dark:border-zinc-800">
+        <button
+          onClick={props.onAddProject}
+          class="w-full flex items-center gap-2 px-3 py-2 text-sm text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-zinc-800 hover:text-gray-900 dark:hover:text-white rounded-lg transition-colors"
+        >
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            width="16"
+            height="16"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z" />
+            <path d="M12 10v6" />
+            <path d="M9 13h6" />
+          </svg>
+          {t().project.add}
+        </button>
       </div>
     </div>
   );

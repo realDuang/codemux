@@ -18,9 +18,12 @@ import {
 import { MessageList } from "../components/MessageList";
 import { PromptInput } from "../components/PromptInput";
 import { SessionSidebar } from "../components/SessionSidebar";
+import { HideProjectModal } from "../components/HideProjectModal";
+import { AddProjectModal } from "../components/AddProjectModal";
 import { MessageV2, Permission, Session } from "../types/opencode";
 import { useI18n } from "../lib/i18n";
 import { AgentMode } from "../components/PromptInput";
+import { ProjectStore } from "../lib/project-store";
 
 // Binary search helper (consistent with opencode desktop)
 function binarySearch<T>(
@@ -79,6 +82,14 @@ export default function Chat() {
   const [isSidebarOpen, setIsSidebarOpen] = createSignal(false);
   const [isMobile, setIsMobile] = createSignal(window.innerWidth < 768);
   const [isLocalHost, setIsLocalHost] = createSignal(false);
+
+  const [deleteProjectInfo, setDeleteProjectInfo] = createSignal<{
+    projectID: string;
+    projectName: string;
+    sessionCount: number;
+  } | null>(null);
+
+  const [showAddProjectModal, setShowAddProjectModal] = createSignal(false);
 
   const handleModelChange = (providerID: string, modelID: string) => {
     logger.debug("[Chat] Model changed to:", { providerID, modelID });
@@ -150,7 +161,6 @@ export default function Chat() {
   const initializeSession = async () => {
     logger.debug("[Init] Starting session initialization");
     
-    // Verify device token is still valid before proceeding
     const isValidToken = await Auth.checkDeviceToken();
     if (!isValidToken) {
       logger.debug("[Init] Device token invalid or revoked, redirecting to login");
@@ -161,26 +171,49 @@ export default function Chat() {
     
     setSessionStore({ loading: true });
 
-    const sessions = await client.listSessions();
+    const projects = await client.listProjects();
+    logger.debug("[Init] Loaded projects:", projects);
+    
+    // Auto-hide global and invalid projects
+    for (const p of projects) {
+      if (!p.worktree || p.worktree === "/") {
+        ProjectStore.hide(p.id);
+      }
+    }
+    
+    const hiddenIds = ProjectStore.getHiddenIds();
+    logger.debug("[Init] Hidden project IDs:", hiddenIds);
+    
+    const validProjects = projects.filter((p) => {
+      const isHidden = ProjectStore.isHidden(p.id);
+      logger.debug(`[Init] Project ${p.id} (${p.worktree}) isHidden: ${isHidden}`);
+      return !isHidden;
+    });
+    const sessionPromises = validProjects.map((p) =>
+      client.listSessionsForDirectory(p.worktree).catch((err) => {
+        logger.error(`[Init] Failed to load sessions for ${p.worktree}:`, err);
+        return [] as Session.Info[];
+      })
+    );
+    const sessionArrays = await Promise.all(sessionPromises);
+    const sessions = sessionArrays.flat();
     logger.debug("[Init] Loaded sessions:", sessions);
 
-    // Process session list, convert timestamps to ISO strings
     const processedSessions = sessions.map((s) => ({
       id: s.id,
       title: s.title || "",
       directory: s.directory || "",
+      projectID: s.projectID,
       parentID: s.parentID,
       createdAt: new Date(s.time.created).toISOString(),
       updatedAt: new Date(s.time.updated).toISOString(),
       summary: s.summary,
     }));
 
-    // Sort by updatedAt descending (newest first)
     processedSessions.sort((a, b) => 
       new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
     );
 
-    // Select the most recently updated session as default
     let currentSession = processedSessions[0];
     if (!currentSession) {
       logger.debug("[Init] No sessions found, creating new one");
@@ -189,6 +222,7 @@ export default function Chat() {
         id: newSession.id,
         title: newSession.title || "",
         directory: newSession.directory || "",
+        projectID: newSession.projectID,
         parentID: newSession.parentID,
         createdAt: new Date(newSession.time.created).toISOString(),
         updatedAt: new Date(newSession.time.updated).toISOString(),
@@ -197,8 +231,14 @@ export default function Chat() {
       processedSessions.push(currentSession);
     }
 
+    // Set directory context for API requests
+    if (currentSession.directory) {
+      client.setDirectory(currentSession.directory);
+    }
+
     setSessionStore({
       list: processedSessions,
+      projects: validProjects,
       current: currentSession.id,
       loading: false,
     });
@@ -210,11 +250,16 @@ export default function Chat() {
   const handleSelectSession = async (sessionId: string) => {
     logger.debug("[SelectSession] Switching to session:", sessionId);
     setSessionStore("current", sessionId);
+    
+    const session = sessionStore.list.find(s => s.id === sessionId);
+    if (session?.directory) {
+      client.setDirectory(session.directory);
+    }
+    
     if (isMobile()) {
-      setIsSidebarOpen(false); // Close sidebar on mobile selection
+      setIsSidebarOpen(false);
     }
 
-    // If messages for this session are not loaded yet, load them
     if (!messageStore.message[sessionId]) {
       await loadSessionMessages(sessionId);
     } else {
@@ -223,15 +268,23 @@ export default function Chat() {
   };
 
   // New session
-  const handleNewSession = async () => {
-    logger.debug("[NewSession] Creating new session");
-    const newSession = await client.createSession();
+  const handleNewSession = async (directory?: string) => {
+    logger.debug("[NewSession] Creating new session in directory:", directory);
+    
+    const newSession = directory 
+      ? await client.createSessionInDirectory(directory)
+      : await client.createSession();
     logger.debug("[NewSession] Created:", newSession);
+
+    if (newSession.directory) {
+      client.setDirectory(newSession.directory);
+    }
 
     const processedSession = {
       id: newSession.id,
       title: newSession.title || "",
       directory: newSession.directory || "",
+      projectID: newSession.projectID,
       parentID: newSession.parentID,
       createdAt: new Date(newSession.time.created).toISOString(),
       updatedAt: new Date(newSession.time.updated).toISOString(),
@@ -241,10 +294,9 @@ export default function Chat() {
     setSessionStore("list", (list) => [processedSession, ...list]);
     setSessionStore("current", processedSession.id);
     if (isMobile()) {
-      setIsSidebarOpen(false); // Close sidebar on mobile
+      setIsSidebarOpen(false);
     }
 
-    // Initialize empty messages array
     setMessageStore("message", processedSession.id, []);
     setTimeout(scrollToBottom, 100);
   };
@@ -279,6 +331,75 @@ export default function Chat() {
       );
     } catch (error) {
       logger.error("[RenameSession] Failed:", error);
+    }
+  };
+
+  const handleHideProject = async () => {
+    const info = deleteProjectInfo();
+    if (!info) return;
+
+    logger.debug("[HideProject] Hiding project and deleting sessions:", info.projectID);
+    logger.debug("[HideProject] Hidden IDs before:", ProjectStore.getHiddenIds());
+
+    const sessionsToDelete = sessionStore.list.filter(
+      (s) => s.projectID === info.projectID
+    );
+    
+    for (const session of sessionsToDelete) {
+      await client.deleteSession(session.id);
+    }
+    
+    ProjectStore.hide(info.projectID);
+    logger.debug("[HideProject] Hidden IDs after:", ProjectStore.getHiddenIds());
+    
+    setSessionStore("list", (list) =>
+      list.filter((s) => s.projectID !== info.projectID)
+    );
+    setSessionStore("projects", (projects) =>
+      projects.filter((p) => p.id !== info.projectID)
+    );
+    
+    if (sessionStore.current && sessionsToDelete.some(s => s.id === sessionStore.current)) {
+      const remaining = sessionStore.list.filter((s) => s.projectID !== info.projectID);
+      if (remaining.length > 0) {
+        await handleSelectSession(remaining[0].id);
+      } else {
+        await handleNewSession();
+      }
+    }
+    
+    setDeleteProjectInfo(null);
+  };
+
+  const handleAddProject = async (directory: string) => {
+    logger.debug("[AddProject] Initializing project for directory:", directory);
+    
+    const { project, session } = await client.initializeProject(directory);
+    logger.debug("[AddProject] Project initialized:", project, "Session:", session);
+    
+    ProjectStore.add(project.id, directory);
+    
+    const existingProject = sessionStore.projects.find(p => p.id === project.id);
+    if (!existingProject) {
+      setSessionStore("projects", (projects) => [...projects, project]);
+    }
+    
+    if (session) {
+      const processedSession = {
+        id: session.id,
+        title: session.title || "",
+        directory: session.directory || "",
+        projectID: session.projectID,
+        parentID: session.parentID,
+        createdAt: new Date(session.time.created).toISOString(),
+        updatedAt: new Date(session.time.updated).toISOString(),
+        summary: session.summary,
+      };
+      
+      const existingSession = sessionStore.list.find(s => s.id === session.id);
+      if (!existingSession) {
+        setSessionStore("list", (list) => [processedSession, ...list]);
+      }
     }
   };
 
@@ -480,11 +601,16 @@ export default function Chat() {
           <Show when={!sessionStore.loading}>
             <SessionSidebar
               sessions={sessionStore.list}
+              projects={sessionStore.projects}
               currentSessionId={sessionStore.current}
               onSelectSession={handleSelectSession}
               onNewSession={handleNewSession}
               onDeleteSession={handleDeleteSession}
               onRenameSession={handleRenameSession}
+              onDeleteProjectSessions={(projectID, projectName, sessionCount) =>
+                setDeleteProjectInfo({ projectID, projectName, sessionCount })
+              }
+              onAddProject={() => setShowAddProjectModal(true)}
             />
           </Show>
         </div>
@@ -609,6 +735,20 @@ export default function Chat() {
           </Show>
         </main>
       </div>
+
+      <HideProjectModal
+        isOpen={deleteProjectInfo() !== null}
+        projectName={deleteProjectInfo()?.projectName || ""}
+        sessionCount={deleteProjectInfo()?.sessionCount || 0}
+        onClose={() => setDeleteProjectInfo(null)}
+        onConfirm={handleHideProject}
+      />
+
+      <AddProjectModal
+        isOpen={showAddProjectModal()}
+        onClose={() => setShowAddProjectModal(false)}
+        onAdd={handleAddProject}
+      />
     </div>
   );
 }

@@ -130,6 +130,41 @@ export const zh: LocaleDict = {
     files: "{count} 文件",
   },
 
+  // Workspace
+  workspace: {
+    add: "添加工作区",
+    addTitle: "添加工作区",
+    inputPath: "输入工作区路径",
+    pathHint: "请输入服务器上的绝对路径（例如 /Users/me/project）",
+    browseFolder: "浏览",
+    deleteTitle: "删除工作区",
+    deleteConfirm: "确定要删除「{name}」吗？",
+    sessionCount: "该工作区包含 {count} 个会话。",
+    deleteOptionRemove: "仅从列表中移除（保留会话数据）",
+    deleteOptionDeleteAll: "同时删除所有会话历史",
+    pathNotFound: "路径不存在或无法访问",
+    alreadyExists: "该工作区已存在",
+    deleteWorkspace: "删除工作区",
+  },
+
+  // Project
+  project: {
+    add: "添加项目",
+    addTitle: "添加项目",
+    inputPath: "输入项目路径",
+    pathHint: "请输入服务器上 git 仓库的绝对路径",
+    browse: "浏览",
+    browseNotSupported: "当前浏览器不支持文件夹选择",
+    adding: "正在添加项目...",
+    addFailed: "添加项目失败",
+    notGitRepo: "指定路径不是有效的 git 仓库",
+    hideTitle: "隐藏项目",
+    hideConfirm: "隐藏项目「{name}」并删除所有会话？",
+    sessionCount: "这将删除 {count} 个会话。",
+    hideWarning: "会话历史将被永久删除。",
+    hideNote: "可通过重新添加相同路径来恢复此项目。",
+  },
+
   // Prompt Input
   prompt: {
     buildMode: "Build 模式 - 执行代码修改和命令",

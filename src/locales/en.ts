@@ -129,6 +129,41 @@ export interface LocaleDict {
     files: string;
   };
 
+  // Workspace
+  workspace: {
+    add: string;
+    addTitle: string;
+    inputPath: string;
+    pathHint: string;
+    browseFolder: string;
+    deleteTitle: string;
+    deleteConfirm: string;
+    sessionCount: string;
+    deleteOptionRemove: string;
+    deleteOptionDeleteAll: string;
+    pathNotFound: string;
+    alreadyExists: string;
+    deleteWorkspace: string;
+  };
+
+  // Project
+  project: {
+    add: string;
+    addTitle: string;
+    inputPath: string;
+    pathHint: string;
+    browse: string;
+    browseNotSupported: string;
+    adding: string;
+    addFailed: string;
+    notGitRepo: string;
+    hideTitle: string;
+    hideConfirm: string;
+    sessionCount: string;
+    hideWarning: string;
+    hideNote: string;
+  };
+
   // Prompt Input
   prompt: {
     buildMode: string;
@@ -366,6 +401,41 @@ export const en: LocaleDict = {
     hoursAgo: "{count}h ago",
     daysAgo: "{count}d ago",
     files: "{count} files",
+  },
+
+  // Workspace
+  workspace: {
+    add: "Add Workspace",
+    addTitle: "Add Workspace",
+    inputPath: "Enter workspace path",
+    pathHint: "Enter an absolute path on the server (e.g. /Users/me/project)",
+    browseFolder: "Browse",
+    deleteTitle: "Delete Workspace",
+    deleteConfirm: "Are you sure you want to delete \"{name}\"?",
+    sessionCount: "This workspace contains {count} session(s).",
+    deleteOptionRemove: "Remove from list only (keep session data)",
+    deleteOptionDeleteAll: "Delete all session history",
+    pathNotFound: "Path not found or inaccessible",
+    alreadyExists: "This workspace already exists",
+    deleteWorkspace: "Delete workspace",
+  },
+
+  // Project
+  project: {
+    add: "Add Project",
+    addTitle: "Add Project",
+    inputPath: "Enter project path",
+    pathHint: "Enter an absolute path to a git repository on the server",
+    browse: "Browse",
+    browseNotSupported: "Folder selection not supported in this browser",
+    adding: "Adding project...",
+    addFailed: "Failed to add project",
+    notGitRepo: "The specified path is not a valid git repository",
+    hideTitle: "Hide Project",
+    hideConfirm: "Hide project \"{name}\" and delete all its sessions?",
+    sessionCount: "This will delete {count} session(s).",
+    hideWarning: "Session history will be permanently deleted.",
+    hideNote: "The project can be restored by adding it again with the same path.",
   },
 
   // Prompt Input

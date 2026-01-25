@@ -1,29 +1,126 @@
-import { MessageV2, Session, Config, Permission } from "../types/opencode";
+import { MessageV2, Session, Config, Permission, Project } from "../types/opencode";
 import { logger } from "./logger";
 
 export class OpenCodeClient {
   private baseUrl: string;
+  private currentDirectory: string | null = null;
 
   constructor(baseUrl?: string) {
-    // 从 localStorage 读取配置的服务器 URL，如果没有则使用默认值
+    // Read configured server URL from localStorage, use default if not found
     const savedUrl = localStorage.getItem("opencode_server_url");
     this.baseUrl = baseUrl || savedUrl || "/opencode-api";
   }
 
-  // 设置服务器 URL
+  // Set server URL
   setServerUrl(url: string) {
     this.baseUrl = url;
     localStorage.setItem("opencode_server_url", url);
   }
 
-  // 获取当前服务器 URL
+  // Get current server URL
   getServerUrl(): string {
     return this.baseUrl;
   }
 
-  // 会话管理
-  async listSessions() {
+  // Set current working directory for API requests
+  setDirectory(directory: string | null) {
+    this.currentDirectory = directory;
+    logger.debug("[OpenCodeClient] Directory set to:", directory);
+  }
+
+  // Get current working directory
+  getDirectory(): string | null {
+    return this.currentDirectory;
+  }
+
+  // Session management
+  async listSessions(directory?: string) {
+    const params = new URLSearchParams();
+    if (directory) {
+      params.set("directory", directory);
+    }
+    const queryString = params.toString();
+    const endpoint = queryString ? `/session?${queryString}` : "/session";
+    return this.request<Session.Info[]>(endpoint);
+  }
+
+  async listAllSessions() {
     return this.request<Session.Info[]>("/session");
+  }
+
+  /**
+   * List sessions for a specific directory.
+   * Uses explicit header instead of relying on currentDirectory.
+   */
+  async listSessionsForDirectory(directory: string): Promise<Session.Info[]> {
+    const response = await fetch(`${this.baseUrl}/session`, {
+      headers: {
+        "Content-Type": "application/json",
+        "x-opencode-directory": directory,
+      },
+    });
+
+    if (!response.ok) {
+      throw new Error(`API Error: ${response.statusText}`);
+    }
+
+    return response.json();
+  }
+
+  // Project management
+  async listProjects() {
+    return this.request<Project.Info[]>("/project");
+  }
+
+  async getCurrentProject() {
+    return this.request<Project.Info>("/project/current");
+  }
+
+  async updateProject(
+    projectID: string,
+    updates: { name?: string; icon?: Project.Info["icon"]; commands?: Project.Info["commands"] }
+  ) {
+    return this.request<Project.Info>(`/project/${projectID}`, {
+      method: "PATCH",
+      body: JSON.stringify(updates),
+    });
+  }
+
+  /**
+   * Initialize a project by creating a session in the given directory.
+   * OpenCode auto-creates and persists projects when a session is created in a git repo.
+   * Simply calling /project/current doesn't persist the project to storage.
+   */
+  async initializeProject(directory: string): Promise<{ project: Project.Info; session: Session.Info | null }> {
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+      "x-opencode-directory": directory,
+    };
+
+    const projectResponse = await fetch(`${this.baseUrl}/project/current`, { headers });
+    if (!projectResponse.ok) {
+      const errorText = await projectResponse.text();
+      if (errorText.includes("not a git repository") || errorText.includes("fatal: not a git")) {
+        throw new Error("NOT_GIT_REPO");
+      }
+      throw new Error(`API Error: ${projectResponse.statusText}`);
+    }
+    const project = await projectResponse.json() as Project.Info;
+
+    const sessionResponse = await fetch(`${this.baseUrl}/session`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ title: `Session - ${new Date().toISOString()}` }),
+    });
+    
+    let session: Session.Info | null = null;
+    if (sessionResponse.ok) {
+      session = await sessionResponse.json() as Session.Info;
+    } else {
+      console.warn("[initializeProject] Session creation failed, project may not be persisted");
+    }
+
+    return { project, session };
   }
 
   async createSession(title?: string, modelID?: string, providerID?: string) {
@@ -39,6 +136,25 @@ export class OpenCodeClient {
     });
   }
 
+  async createSessionInDirectory(directory: string, title?: string) {
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+      "x-opencode-directory": directory,
+    };
+
+    const response = await fetch(`${this.baseUrl}/session`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ title }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`API Error: ${response.statusText}`);
+    }
+
+    return response.json() as Promise<Session.Info>;
+  }
+
   async deleteSession(id: string) {
     return this.request(`/session/${id}`, { method: "DELETE" });
   }
@@ -47,7 +163,7 @@ export class OpenCodeClient {
     return this.request<Session.Info>(`/session/${id}`);
   }
 
-  // 消息操作
+  // Message operations
   async sendMessage(
     sessionId: string,
     text: string,
@@ -98,7 +214,7 @@ export class OpenCodeClient {
     });
   }
 
-  // 配置管理
+  // Config management
   async getProviders() {
     return this.request<Config.ProviderResponse>("/provider");
   }
@@ -119,7 +235,7 @@ export class OpenCodeClient {
     return this.request<Permission.Request[]>("/permission");
   }
 
-  // 本地存储默认模型设置（因为OpenCode没有全局配置API）
+  // Local storage for default model settings (OpenCode has no global config API)
   getDefaultModel(): { providerID: string; modelID: string } | null {
     const stored = localStorage.getItem("opencode_default_model");
     return stored ? JSON.parse(stored) : null;
@@ -132,13 +248,17 @@ export class OpenCodeClient {
     );
   }
 
-  // SSE 连接
+  // SSE connection
   connectSSE(
     onEvent: (event: { type: string; data: any }) => void,
   ): () => void {
-    const eventSource = new EventSource(`${this.baseUrl}/global/event`);
+    let sseUrl = `${this.baseUrl}/global/event`;
+    if (this.currentDirectory) {
+      sseUrl += `?directory=${encodeURIComponent(this.currentDirectory)}`;
+    }
+    const eventSource = new EventSource(sseUrl);
 
-    logger.debug("[SSE Client] Connected to:", `${this.baseUrl}/global/event`);
+    logger.debug("[SSE Client] Connected to:", sseUrl);
 
     eventSource.onopen = () => {
       logger.debug("[SSE Client] Connection opened");
@@ -201,12 +321,19 @@ export class OpenCodeClient {
     endpoint: string,
     options?: RequestInit,
   ): Promise<T> {
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+      ...((options?.headers as Record<string, string>) || {}),
+    };
+
+    // Add directory header if set
+    if (this.currentDirectory) {
+      headers["x-opencode-directory"] = this.currentDirectory;
+    }
+
     const response = await fetch(`${this.baseUrl}${endpoint}`, {
       ...options,
-      headers: {
-        "Content-Type": "application/json",
-        ...options?.headers,
-      },
+      headers,
     });
 
     if (!response.ok) {

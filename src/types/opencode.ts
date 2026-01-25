@@ -1,5 +1,28 @@
 // Types needed for API client and message rendering
 
+export namespace Project {
+  export interface Info {
+    id: string;
+    worktree: string;
+    vcs?: "git";
+    name?: string;
+    icon?: {
+      url?: string;
+      override?: string;
+      color?: string;
+    };
+    commands?: {
+      start?: string;
+    };
+    time: {
+      created: number;
+      updated: number;
+      initialized?: number;
+    };
+    sandboxes: string[];
+  }
+}
+
 export namespace MessageV2 {
   export type Role = "user" | "assistant";
 

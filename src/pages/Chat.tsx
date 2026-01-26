@@ -631,7 +631,7 @@ export default function Chat() {
       {/* Mobile Sidebar Overlay */}
       <Show when={isMobile() && isSidebarOpen()}>
         <div
-          class="absolute inset-0 bg-black/50 z-20 backdrop-blur-sm"
+          class="absolute inset-0 bg-black/50 z-20 backdrop-blur-xs"
           onClick={toggleSidebar}
         />
       </Show>
@@ -666,7 +666,7 @@ export default function Chat() {
           <Show when={isLocalHost()}>
             <button
               onClick={() => navigate("/")}
-              class="w-full flex items-center gap-3 px-3 py-2 text-sm font-medium text-gray-600 dark:text-gray-400 hover:bg-white dark:hover:bg-zinc-800 hover:text-gray-900 dark:hover:text-white rounded-lg transition-all shadow-sm hover:shadow"
+              class="w-full flex items-center gap-3 px-3 py-2 text-sm font-medium text-gray-600 dark:text-gray-400 hover:bg-white dark:hover:bg-zinc-800 hover:text-gray-900 dark:hover:text-white rounded-lg transition-all shadow-xs hover:shadow-sm"
             >
               <svg
                 xmlns="http://www.w3.org/2000/svg"
@@ -688,7 +688,7 @@ export default function Chat() {
           </Show>
           <button
             onClick={() => navigate("/settings")}
-            class="w-full flex items-center gap-3 px-3 py-2 text-sm font-medium text-gray-600 dark:text-gray-400 hover:bg-white dark:hover:bg-zinc-800 hover:text-gray-900 dark:hover:text-white rounded-lg transition-all shadow-sm hover:shadow"
+            class="w-full flex items-center gap-3 px-3 py-2 text-sm font-medium text-gray-600 dark:text-gray-400 hover:bg-white dark:hover:bg-zinc-800 hover:text-gray-900 dark:hover:text-white rounded-lg transition-all shadow-xs hover:shadow-sm"
           >
             <svg
               xmlns="http://www.w3.org/2000/svg"
@@ -755,7 +755,7 @@ export default function Chat() {
       {/* Main Chat Area */}
       <div class="flex-1 flex flex-col overflow-hidden min-w-0 bg-white dark:bg-zinc-900">
         {/* Header */}
-        <header class="flex items-center justify-between px-4 py-3 border-b border-gray-100 dark:border-zinc-800/50 bg-white/80 dark:bg-zinc-900/80 backdrop-blur-sm sticky top-0 z-10">
+        <header class="flex items-center justify-between px-4 py-3 border-b border-gray-100 dark:border-zinc-800/50 bg-white/80 dark:bg-zinc-900/80 backdrop-blur-xs sticky top-0 z-10">
           <div class="flex items-center gap-3">
             <button
               onClick={toggleSidebar}
@@ -865,7 +865,7 @@ export default function Chat() {
               </div>
 
               {/* Input Area */}
-              <div class="p-4 bg-white/90 dark:bg-zinc-900/90 backdrop-blur-sm border-t border-gray-100 dark:border-zinc-800 relative z-20">
+              <div class="p-4 bg-white/90 dark:bg-zinc-900/90 backdrop-blur-xs border-t border-gray-100 dark:border-zinc-800 relative z-20">
                 <div class="max-w-3xl mx-auto w-full">
                   <PromptInput
                     onSend={handleSendMessage}

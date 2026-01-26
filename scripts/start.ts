@@ -197,6 +197,7 @@ async function main() {
     ["serve", "--hostname", "127.0.0.1", "--port", "4096"],
     {
       stdio: "inherit",
+      shell: isWindows,
       env: { ...process.env },
       shell: isWindows,
     },
@@ -209,6 +210,7 @@ async function main() {
   console.log("Starting Web UI...");
   const viteProcess = spawn("vite", ["--host", "--port", "5174"], {
     stdio: "inherit",
+    shell: isWindows,
     env: {
       ...process.env,
       VITE_OPENCODE_API: "http://localhost:4096",

@@ -152,7 +152,7 @@ export default function Settings() {
               <h2 class="text-sm font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-4 px-1">
                 {t().settings.general}
               </h2>
-              <div class="bg-white dark:bg-zinc-800 rounded-xl shadow-sm border border-gray-200 dark:border-zinc-700 overflow-visible">
+              <div class="bg-white dark:bg-zinc-800 rounded-xl shadow-xs border border-gray-200 dark:border-zinc-700 overflow-visible">
                 {/* Language Setting */}
                 <div class="p-4 sm:p-6 flex items-center justify-between gap-4 border-b border-gray-200 dark:border-zinc-700">
                   <div>
@@ -189,7 +189,7 @@ export default function Settings() {
               <h2 class="text-sm font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-4 px-1">
                 {t().settings.connection}
               </h2>
-              <div class="bg-white dark:bg-zinc-800 rounded-xl shadow-sm border border-gray-200 dark:border-zinc-700 overflow-hidden">
+              <div class="bg-white dark:bg-zinc-800 rounded-xl shadow-xs border border-gray-200 dark:border-zinc-700 overflow-hidden">
                 <div class="p-4 sm:p-6 space-y-6">
                   {/* Server URL Input */}
                   <div>
@@ -313,14 +313,14 @@ export default function Settings() {
               <button
                 onClick={handleCancel}
                 disabled={saving() || checking()}
-                class="flex-1 sm:flex-none px-5 py-2.5 bg-white hover:bg-gray-50 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-gray-700 dark:text-gray-200 font-medium border border-gray-300 dark:border-zinc-600 rounded-lg transition-colors disabled:opacity-50 text-sm shadow-sm"
+                class="flex-1 sm:flex-none px-5 py-2.5 bg-white hover:bg-gray-50 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-gray-700 dark:text-gray-200 font-medium border border-gray-300 dark:border-zinc-600 rounded-lg transition-colors disabled:opacity-50 text-sm shadow-xs"
               >
                 {t().common.cancel}
               </button>
               <button
                 onClick={handleSave}
                 disabled={saving() || checking() || !serverUrl()}
-                class="flex-1 sm:flex-none px-5 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-600/50 text-white font-medium rounded-lg transition-colors shadow-sm disabled:cursor-not-allowed text-sm flex items-center justify-center gap-2 min-w-[140px]"
+                class="flex-1 sm:flex-none px-5 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-600/50 text-white font-medium rounded-lg transition-colors shadow-xs disabled:cursor-not-allowed text-sm flex items-center justify-center gap-2 min-w-[140px]"
               >
                 <Show when={saving()} fallback={t().settings.saveAndConnect}>
                   <div class="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />

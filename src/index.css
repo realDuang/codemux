@@ -1,6 +1,7 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import "tailwindcss";
+
+/* Custom dark mode variant using class selector */
+@custom-variant dark (&:where(.dark, .dark *));
 
 :root {
   --color-background: hsl(0, 20%, 99%);

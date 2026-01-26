@@ -104,7 +104,7 @@ export function AccessRequestNotification() {
             >
               <Show when={feedback()[req.id]}>
                 <div 
-                  class="absolute inset-0 z-20 flex flex-col items-center justify-center bg-white/90 dark:bg-zinc-900/95 backdrop-blur-sm transition-opacity duration-300"
+                  class="absolute inset-0 z-20 flex flex-col items-center justify-center bg-white/90 dark:bg-zinc-900/95 backdrop-blur-xs transition-opacity duration-300"
                 >
                   <Show 
                     when={feedback()[req.id] === "approved"}

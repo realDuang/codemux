@@ -1,4 +1,5 @@
 import { defineConfig } from "vite";
+import tailwindcss from "@tailwindcss/vite";
 import solid from "vite-plugin-solid";
 import fs from "fs";
 import path from "path";
@@ -81,6 +82,7 @@ function isLocalhost(ip: string): boolean {
 
 export default defineConfig({
   plugins: [
+    tailwindcss(),
     solid(),
     {
       name: "custom-api-middleware",

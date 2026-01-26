@@ -468,7 +468,7 @@ export default function EntryPage() {
               </div>
 
               {/* Status & Toggle Card */}
-              <div class="bg-white dark:bg-zinc-900 rounded-xl border border-gray-200 dark:border-zinc-800 shadow-sm overflow-hidden">
+              <div class="bg-white dark:bg-zinc-900 rounded-xl border border-gray-200 dark:border-zinc-800 shadow-xs overflow-hidden">
                 <div class="p-5 flex items-center justify-between">
                   <div class="space-y-1">
                     <div class="flex items-center gap-2">
@@ -533,7 +533,7 @@ export default function EntryPage() {
                 <div class="space-y-6">
 
                   {/* Access Code Card */}
-                  <div class="bg-white dark:bg-zinc-900 rounded-xl border border-gray-200 dark:border-zinc-800 shadow-sm p-5">
+                  <div class="bg-white dark:bg-zinc-900 rounded-xl border border-gray-200 dark:border-zinc-800 shadow-xs p-5">
                     <h3 class="text-sm font-medium text-gray-500 dark:text-gray-400 mb-3 flex items-center gap-2">
                       <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
                       {t().remote.accessPassword}
@@ -566,7 +566,7 @@ export default function EntryPage() {
                   </div>
 
                   {/* Connection Addresses */}
-                  <div class="bg-white dark:bg-zinc-900 rounded-xl border border-gray-200 dark:border-zinc-800 shadow-sm overflow-hidden">
+                  <div class="bg-white dark:bg-zinc-900 rounded-xl border border-gray-200 dark:border-zinc-800 shadow-xs overflow-hidden">
                     <div class="p-4 border-b border-gray-100 dark:border-zinc-800/50">
                       <h3 class="text-sm font-medium text-gray-500 dark:text-gray-400">{t().remote.connectionAddress}</h3>
                     </div>
@@ -635,27 +635,27 @@ export default function EntryPage() {
                 </div>
 
                 {/* Right Column: QR Code */}
-                <div class="bg-white dark:bg-zinc-900 rounded-xl border border-gray-200 dark:border-zinc-800 shadow-sm p-6 flex flex-col items-center justify-center min-h-[300px]">
+                <div class="bg-white dark:bg-zinc-900 rounded-xl border border-gray-200 dark:border-zinc-800 shadow-xs p-6 flex flex-col items-center justify-center min-h-[300px]">
 
                   <div class="w-full flex justify-center mb-6">
                     <div class="inline-flex bg-gray-100 dark:bg-zinc-800 p-1 rounded-lg">
                       <button
                         onClick={() => setActiveQrTab("lan")}
-                        class={`px-4 py-1.5 rounded-md text-sm font-medium transition-all ${activeQrTab() === "lan" ? 'bg-white dark:bg-zinc-700 shadow-sm text-gray-900 dark:text-white' : 'text-gray-500 hover:text-gray-700 dark:hover:text-gray-300'}`}
+                        class={`px-4 py-1.5 rounded-md text-sm font-medium transition-all ${activeQrTab() === "lan" ? 'bg-white dark:bg-zinc-700 shadow-xs text-gray-900 dark:text-white' : 'text-gray-500 hover:text-gray-700 dark:hover:text-gray-300'}`}
                       >
                         {t().remote.lan}
                       </button>
                       <button
                         disabled={tunnelInfo().status !== "running"}
                         onClick={() => setActiveQrTab("public")}
-                        class={`px-4 py-1.5 rounded-md text-sm font-medium transition-all ${activeQrTab() === "public" ? 'bg-white dark:bg-zinc-700 shadow-sm text-green-700 dark:text-green-400' : 'text-gray-500 hover:text-gray-700 dark:hover:text-gray-300'} ${tunnelInfo().status !== "running" ? 'opacity-50 cursor-not-allowed' : ''}`}
+                        class={`px-4 py-1.5 rounded-md text-sm font-medium transition-all ${activeQrTab() === "public" ? 'bg-white dark:bg-zinc-700 shadow-xs text-green-700 dark:text-green-400' : 'text-gray-500 hover:text-gray-700 dark:hover:text-gray-300'} ${tunnelInfo().status !== "running" ? 'opacity-50 cursor-not-allowed' : ''}`}
                       >
                         {t().remote.public}
                       </button>
                     </div>
                   </div>
 
-                  <div class="bg-white p-4 rounded-xl shadow-sm border border-gray-100">
+                  <div class="bg-white p-4 rounded-xl shadow-xs border border-gray-100">
                     <Switch>
                       <Match when={activeQrTab() === "public" && tunnelInfo().status === "running"}>
                         <img
@@ -693,7 +693,7 @@ export default function EntryPage() {
               {/* Authorized Devices Card */}
               <div
                 onClick={() => navigate("/devices")}
-                class="bg-white dark:bg-zinc-900 rounded-xl border border-gray-200 dark:border-zinc-800 shadow-sm p-5 flex items-center justify-between cursor-pointer hover:bg-gray-50 dark:hover:bg-zinc-800/50 transition-colors"
+                class="bg-white dark:bg-zinc-900 rounded-xl border border-gray-200 dark:border-zinc-800 shadow-xs p-5 flex items-center justify-between cursor-pointer hover:bg-gray-50 dark:hover:bg-zinc-800/50 transition-colors"
               >
                 <div class="flex items-center gap-4">
                   <div class="w-10 h-10 rounded-lg bg-blue-100 dark:bg-blue-900/30 flex items-center justify-center">

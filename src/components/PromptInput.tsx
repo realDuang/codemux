@@ -79,7 +79,7 @@ export function PromptInput(props: PromptInputProps) {
             onClick={() => handleAgentChange("build")}
             class={`px-3 py-1.5 text-xs font-medium rounded-md transition-all flex items-center gap-1.5 ${
               agent() === "build"
-                ? "bg-emerald-600 text-white shadow-sm"
+                ? "bg-emerald-600 text-white shadow-xs"
                 : "bg-gray-100 dark:bg-zinc-800 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-zinc-700"
             }`}
             title={t().prompt.buildMode}
@@ -91,7 +91,7 @@ export function PromptInput(props: PromptInputProps) {
             onClick={() => handleAgentChange("plan")}
             class={`px-3 py-1.5 text-xs font-medium rounded-md transition-all flex items-center gap-1.5 ${
               agent() === "plan"
-                ? "bg-violet-600 text-white shadow-sm"
+                ? "bg-violet-600 text-white shadow-xs"
                 : "bg-gray-100 dark:bg-zinc-800 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-zinc-700"
             }`}
             title={t().prompt.planMode}
@@ -107,7 +107,7 @@ export function PromptInput(props: PromptInputProps) {
       </div>
 
       {/* Input area */}
-      <div class={`relative rounded-xl border shadow-sm focus-within:ring-2 focus-within:border-transparent transition-all ${
+      <div class={`relative rounded-xl border shadow-xs focus-within:ring-2 focus-within:border-transparent transition-all ${
         agent() === "plan" 
           ? "bg-violet-50 dark:bg-violet-950/20 border-violet-200 dark:border-violet-800 focus-within:ring-violet-500" 
           : "bg-white dark:bg-zinc-800 border-gray-200 dark:border-zinc-700 focus-within:ring-blue-500"

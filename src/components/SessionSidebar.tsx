@@ -337,7 +337,7 @@ export function SessionSidebar(props: SessionSidebarProps) {
                             <div
                               class={`group relative px-3 py-2 mb-0.5 rounded-md cursor-pointer transition-all duration-150 ${
                                 isActive()
-                                  ? "bg-white dark:bg-zinc-800 shadow-sm"
+                                  ? "bg-white dark:bg-zinc-800 shadow-xs"
                                   : "hover:bg-gray-100 dark:hover:bg-zinc-900"
                               }`}
                               onClick={() => !isEditing() && props.onSelectSession(session.id)}

@@ -198,6 +198,7 @@ async function main() {
     {
       stdio: "inherit",
       env: { ...process.env },
+      shell: isWindows,
     },
   );
 
@@ -212,6 +213,7 @@ async function main() {
       ...process.env,
       VITE_OPENCODE_API: "http://localhost:4096",
     },
+    shell: isWindows,
   });
 
   console.log("\n" + "=".repeat(60));

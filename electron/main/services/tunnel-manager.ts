@@ -41,7 +41,9 @@ class TunnelManager {
 
     try {
       const cloudflaredPath = this.getCloudflaredPath();
-      this.process = spawn(cloudflaredPath, ["tunnel", "--url", `http://localhost:${port}`]);
+      this.process = spawn(cloudflaredPath, ["tunnel", "--url", `http://localhost:${port}`], {
+        shell: process.platform === "win32",
+      });
 
       const handleOutput = (data: Buffer) => {
         const output = data.toString();
@@ -81,7 +83,19 @@ class TunnelManager {
 
   async stop(): Promise<void> {
     if (this.process) {
-      this.process.kill();
+      // On Windows, we need to kill the process tree since we spawn with shell: true
+      if (process.platform === "win32") {
+        if (this.process.pid) {
+          const { exec } = await import("child_process");
+          exec(`taskkill /pid ${this.process.pid} /T /F`, (err) => {
+            if (err) {
+              console.error("[Tunnel] Failed to kill process:", err);
+            }
+          });
+        }
+      } else {
+        this.process.kill();
+      }
       this.process = null;
     }
     this.info = { url: "", status: "stopped" };

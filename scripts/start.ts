@@ -172,10 +172,23 @@ async function main() {
   console.log("=".repeat(60) + "\n");
 
   // Handle exit signals
-  const cleanup = () => {
+  const cleanup = async () => {
     console.log("\nShutting down...");
-    opencodeProcess.kill();
-    viteProcess.kill();
+    
+    if (isWindows) {
+      // On Windows, use taskkill to terminate process trees
+      const { exec } = await import("child_process");
+      if (opencodeProcess.pid) {
+        exec(`taskkill /pid ${opencodeProcess.pid} /T /F`, () => {});
+      }
+      if (viteProcess.pid) {
+        exec(`taskkill /pid ${viteProcess.pid} /T /F`, () => {});
+      }
+    } else {
+      opencodeProcess.kill();
+      viteProcess.kill();
+    }
+    
     if (fs.existsSync(authCodePath)) {
       fs.unlinkSync(authCodePath);
     }

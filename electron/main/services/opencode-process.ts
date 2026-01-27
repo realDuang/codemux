@@ -106,12 +106,31 @@ class OpenCodeProcess extends EventEmitter {
 
   async stop(): Promise<void> {
     if (this.process) {
-      this.process.kill("SIGTERM");
+      // On Windows, we need to kill the process tree since we spawn with shell: true
+      // On Unix, SIGTERM works normally
+      if (process.platform === "win32") {
+        // Use taskkill to forcefully terminate the process tree on Windows
+        if (this.process.pid) {
+          const { exec } = await import("child_process");
+          exec(`taskkill /pid ${this.process.pid} /T /F`, (err) => {
+            if (err) {
+              console.error("[OpenCode] Failed to kill process:", err);
+            }
+          });
+        }
+      } else {
+        this.process.kill("SIGTERM");
+      }
 
       await new Promise<void>((resolve) => {
         const timeout = setTimeout(() => {
           if (this.process) {
-            this.process.kill("SIGKILL");
+            if (process.platform === "win32") {
+              // On Windows, the process should already be killed by taskkill
+              // Just resolve after timeout
+            } else {
+              this.process.kill("SIGKILL");
+            }
           }
           resolve();
         }, 5000);

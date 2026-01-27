@@ -4,6 +4,9 @@ import { join } from "path";
 let mainWindow: BrowserWindow | null = null;
 
 export function createWindow(): BrowserWindow {
+  // Platform-specific window options
+  const isMac = process.platform === "darwin";
+  
   mainWindow = new BrowserWindow({
     width: 1280,
     height: 800,
@@ -11,8 +14,13 @@ export function createWindow(): BrowserWindow {
     minHeight: 600,
     show: false,
     autoHideMenuBar: true,
-    titleBarStyle: "hiddenInset",
-    trafficLightPosition: { x: 16, y: 16 },
+    // Only use hiddenInset on macOS, use default title bar on Windows/Linux
+    ...(isMac
+      ? {
+          titleBarStyle: "hiddenInset",
+          trafficLightPosition: { x: 16, y: 16 },
+        }
+      : {}),
     webPreferences: {
       preload: join(__dirname, "../preload/index.js"),
       sandbox: false,

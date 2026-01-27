@@ -245,6 +245,26 @@ class DeviceStore {
     return { valid: true, deviceId: result.payload.deviceId };
   }
 
+  /**
+   * Verify token without checking if device exists.
+   * Used for sync-state API where we only need to verify the JWT signature.
+   * This allows tokens from removed devices to still sync state.
+   */
+  verifyTokenLoose(token: string): { valid: boolean; deviceId?: string } {
+    // Check if token is revoked
+    if (this.revokedSet.has(token)) {
+      return { valid: false };
+    }
+
+    const result = verifyJWT(token, this.data.jwtSecret);
+    if (!result.valid || !result.payload) {
+      return { valid: false };
+    }
+
+    // Return valid even if device doesn't exist - we only verify JWT signature
+    return { valid: true, deviceId: result.payload.deviceId };
+  }
+
   revokeToken(token: string): void {
     if (!this.revokedSet.has(token)) {
       this.revokedSet.add(token);

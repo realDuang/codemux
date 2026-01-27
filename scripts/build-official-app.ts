@@ -6,10 +6,8 @@ const isWindows = process.platform === "win32";
 
 const colors = {
   reset: "\x1b[0m",
-  bold: "\x1b[1m",
   red: "\x1b[31m",
   green: "\x1b[32m",
-  yellow: "\x1b[33m",
   cyan: "\x1b[36m",
 };
 
@@ -19,10 +17,6 @@ function log(msg: string) {
 
 function success(msg: string) {
   console.log(`${colors.green}[ok] ${msg}${colors.reset}`);
-}
-
-function warn(msg: string) {
-  console.log(`${colors.yellow}[!] ${msg}${colors.reset}`);
 }
 
 function error(msg: string) {
@@ -44,22 +38,6 @@ function runCommand(
     proc.on("close", (code) => resolve(code === 0));
     proc.on("error", () => resolve(false));
   });
-}
-
-function copyDir(src: string, dest: string) {
-  if (!fs.existsSync(dest)) {
-    fs.mkdirSync(dest, { recursive: true });
-  }
-  const entries = fs.readdirSync(src, { withFileTypes: true });
-  for (const entry of entries) {
-    const srcPath = path.join(src, entry.name);
-    const destPath = path.join(dest, entry.name);
-    if (entry.isDirectory()) {
-      copyDir(srcPath, destPath);
-    } else {
-      fs.copyFileSync(srcPath, destPath);
-    }
-  }
 }
 
 async function main() {

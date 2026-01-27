@@ -2,19 +2,118 @@ import { createEffect, createSignal, onCleanup, Show } from "solid-js";
 import { Auth } from "../lib/auth";
 import { useI18n } from "../lib/i18n";
 import { logger } from "../lib/logger";
+import { useStorageSync, initStorageSyncAsync, getCurrentNetworkSourceKey } from "../lib/storage-sync";
 
-/**
- * OfficialApp - Embeds the official OpenCode App UI via iframe
- *
- * The official app is built from the submodule and served at /opencode-app/
- * It connects to the same OpenCode server (port 4096) through the Vite proxy
- */
+interface SyncState {
+  currentUrl: string | null;
+  timestamp: number;
+  deviceId: string | null;
+}
+
+const OPENCODE_APP_BASE = "/opencode-app";
+const URL_SYNC_INTERVAL = 2000;
+
+interface ProjectEntry {
+  worktree: string;
+  expanded?: boolean;
+}
+
+interface ServerData {
+  list?: string[];
+  projects?: Record<string, ProjectEntry[]>;
+  lastProject?: Record<string, string>;
+}
+
+function syncProjectsAcrossNetworkSources() {
+  const serverKey = "opencode.global.dat:server";
+  const layoutKey = "opencode.global.dat:layout.page";
+  const currentSource = getCurrentNetworkSourceKey();
+
+  try {
+    const serverValue = localStorage.getItem(serverKey);
+    
+    if (!serverValue) {
+      logger.debug("[OfficialApp] No server data found, skipping sync");
+      return;
+    }
+
+    const parsed: ServerData = JSON.parse(serverValue);
+    let modified = false;
+
+    if (!parsed.projects) parsed.projects = {};
+    if (!parsed.lastProject) parsed.lastProject = {};
+
+    const referenceProjects = parsed.projects["local"] || 
+      Object.values(parsed.projects).find(list => list && list.length > 0) || [];
+
+    if (!parsed.projects[currentSource] && referenceProjects.length > 0) {
+      parsed.projects[currentSource] = [...referenceProjects];
+      modified = true;
+      logger.debug("[OfficialApp] Copied projects to", currentSource);
+    }
+
+    const referenceLastProject = parsed.lastProject["local"] || 
+      Object.values(parsed.lastProject).find(v => v);
+
+    if (!parsed.lastProject[currentSource] && referenceLastProject) {
+      parsed.lastProject[currentSource] = referenceLastProject;
+      modified = true;
+      logger.debug("[OfficialApp] Copied lastProject to", currentSource);
+    }
+
+    if (modified) {
+      localStorage.setItem(serverKey, JSON.stringify(parsed));
+      logger.debug("[OfficialApp] Server data synced for", currentSource);
+    }
+
+    syncLayoutPage(layoutKey, currentSource);
+  } catch (err) {
+    logger.warn("[OfficialApp] Failed to sync projects:", err);
+  }
+}
+
+function syncLayoutPage(layoutKey: string, currentSource: string) {
+  try {
+    const layoutValue = localStorage.getItem(layoutKey);
+    if (!layoutValue) return;
+
+    const layout = JSON.parse(layoutValue) as Record<string, unknown>;
+    const localLayout = layout["local"];
+
+    if (currentSource !== "local" && localLayout && !layout[currentSource]) {
+      layout[currentSource] = localLayout;
+      localStorage.setItem(layoutKey, JSON.stringify(layout));
+      logger.debug("[OfficialApp] Layout synced from local to", currentSource);
+    }
+  } catch (err) {
+    logger.warn("[OfficialApp] Failed to sync layout:", err);
+  }
+}
+
 export default function OfficialApp() {
   const { t } = useI18n();
   const [loading, setLoading] = createSignal(true);
   const [error, setError] = createSignal<string | null>(null);
-  const [storageReady, setStorageReady] = createSignal(false);
   const [iframeSrc, setIframeSrc] = createSignal<string | null>(null);
+
+  useStorageSync();
+
+  let iframeRef: HTMLIFrameElement | undefined;
+  let lastSyncedUrl = "";
+
+  function stripBasePath(fullPath: string): string {
+    if (fullPath.startsWith(OPENCODE_APP_BASE)) {
+      return fullPath.slice(OPENCODE_APP_BASE.length) || "/";
+    }
+    return fullPath;
+  }
+
+  function addBasePath(path: string): string {
+    if (path.startsWith(OPENCODE_APP_BASE)) {
+      return path;
+    }
+    return `${OPENCODE_APP_BASE}${path.startsWith("/") ? path : "/" + path}`;
+  }
 
   createEffect(() => {
     if (!Auth.isAuthenticated()) {
@@ -23,189 +122,100 @@ export default function OfficialApp() {
     }
   });
 
-  // Sync storage from server BEFORE loading iframe
-  // Since parent and iframe share localStorage (same origin), we populate it first
-  createEffect(() => {
+  createEffect(async () => {
     const token = Auth.getToken();
     if (!token) return;
 
-    console.log("[OfficialApp] Syncing storage from server...");
-    fetch("/api/storage", {
-      headers: { Authorization: `Bearer ${token}` },
-    })
-      .then((res) => res.json())
-      .then(async (data) => {
-        if (data && typeof data === "object" && !data.error) {
-          const keys = Object.keys(data);
-          console.log("[OfficialApp] Received", keys.length, "keys from server");
-          
-          // Check the critical project key
-          const projectKey = "opencode.global.dat:globalSync.project";
-          if (data[projectKey]) {
-            console.log("[OfficialApp] Project data from API:", data[projectKey].substring(0, 200));
-          }
-          
-          // Write all keys to localStorage
-          Object.entries(data).forEach(([key, value]) => {
-            if (typeof value === "string") {
-              localStorage.setItem(key, value);
-            }
-          });
-          
-          // Verify the write
-          const writtenValue = localStorage.getItem(projectKey);
-          console.log("[OfficialApp] After write, localStorage has project data:", writtenValue ? "yes" : "no");
-          console.log("[OfficialApp] Storage synced:", keys.length, "keys");
-          
-          // Force a small delay to ensure localStorage writes are flushed
-          // This helps because the iframe's JS might start executing in the same tick
-          await new Promise(resolve => setTimeout(resolve, 100));
-        }
-        console.log("[OfficialApp] Setting storageReady to true");
-        setStorageReady(true);
-        // Set iframe src with timestamp to ensure fresh load
-        setIframeSrc(`/opencode-app/?_t=${Date.now()}`);
-      })
-      .catch((err) => {
-        console.error("[OfficialApp] Failed to sync storage:", err);
-        setStorageReady(true); // Continue anyway
-        setIframeSrc(`/opencode-app/?_t=${Date.now()}`);
-      });
+    await initStorageSyncAsync();
+    syncProjectsAcrossNetworkSources();
+
+    const syncState = await fetchSyncState();
+    if (syncState?.currentUrl && syncState.currentUrl !== "/") {
+      const fullPath = addBasePath(syncState.currentUrl);
+      lastSyncedUrl = syncState.currentUrl;
+      setIframeSrc(`${fullPath}?_t=${Date.now()}`);
+      logger.debug("[OfficialApp] Loading with synced URL:", syncState.currentUrl);
+    } else {
+      setIframeSrc(`/opencode-app/?_t=${Date.now()}`);
+    }
   });
 
-  // Intercept localStorage writes and sync to server
-  // Also poll for changes made by iframe (since we can't intercept iframe's localStorage calls)
-  createEffect(() => {
-    if (!storageReady()) return;
-
+  async function syncUrlToServer(url: string) {
     const token = Auth.getToken();
     if (!token) return;
 
-    const originalSetItem = localStorage.setItem.bind(localStorage);
-    const originalRemoveItem = localStorage.removeItem.bind(localStorage);
-
-    // Track last known values to detect changes
-    const lastKnownValues = new Map<string, string>();
-    
-    // Initialize with current values
-    for (let i = 0; i < localStorage.length; i++) {
-      const key = localStorage.key(i);
-      if (key?.startsWith("opencode.")) {
-        const value = localStorage.getItem(key);
-        if (value) lastKnownValues.set(key, value);
-      }
-    }
-
-    // Sync a key to server
-    const syncToServer = (key: string, value: string) => {
-      logger.debug("[OfficialApp] Syncing to server:", key, "length:", value.length);
-      fetch(`/api/storage/${encodeURIComponent(key)}`, {
+    try {
+      await fetch("/api/sync-state", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify({ value }),
-      }).catch((err) => logger.error("[OfficialApp] Failed to sync:", err));
-    };
+        body: JSON.stringify({ url }),
+      });
+      logger.debug("[OfficialApp] URL synced to server:", url);
+    } catch (err) {
+      logger.error("[OfficialApp] Failed to sync URL:", err);
+    }
+  }
 
-    // Intercept parent window localStorage writes
-    localStorage.setItem = function (key: string, value: string) {
-      originalSetItem(key, value);
-      if (key.startsWith("opencode.")) {
-        lastKnownValues.set(key, value);
-        syncToServer(key, value);
-      }
-    };
+  async function fetchSyncState(): Promise<SyncState | null> {
+    const token = Auth.getToken();
+    if (!token) return null;
 
-    localStorage.removeItem = function (key: string) {
-      originalRemoveItem(key);
-      if (key.startsWith("opencode.")) {
-        lastKnownValues.delete(key);
-        fetch(`/api/storage/${encodeURIComponent(key)}`, {
-          method: "DELETE",
-          headers: { Authorization: `Bearer ${token}` },
-        }).catch((err) => logger.error("[OfficialApp] Failed to sync removeItem:", err));
+    try {
+      const response = await fetch("/api/sync-state", {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!response.ok) {
+        logger.warn("[OfficialApp] Sync state fetch failed:", response.status);
+        return null;
       }
-    };
+      return await response.json();
+    } catch (err) {
+      logger.error("[OfficialApp] Failed to fetch sync state:", err);
+      return null;
+    }
+  }
 
-    // Poll for changes made by iframe (every 2 seconds)
-    const pollInterval = setInterval(() => {
-      for (let i = 0; i < localStorage.length; i++) {
-        const key = localStorage.key(i);
-        if (!key?.startsWith("opencode.")) continue;
-        
-        const currentValue = localStorage.getItem(key);
-        if (!currentValue) continue;
-        
-        const lastValue = lastKnownValues.get(key);
-        if (currentValue !== lastValue) {
-          logger.debug("[OfficialApp] Detected change in:", key);
-          lastKnownValues.set(key, currentValue);
-          syncToServer(key, currentValue);
-        }
+  function getCurrentIframeUrl(): string | null {
+    try {
+      const pathname = iframeRef?.contentWindow?.location.pathname ?? null;
+      if (!pathname) return null;
+      return stripBasePath(pathname);
+    } catch {
+      return null;
+    }
+  }
+
+  // Periodically sync current URL to server (for other devices to pick up on refresh)
+  createEffect(() => {
+    if (!iframeSrc()) return;
+
+    const syncInterval = setInterval(() => {
+      const currentUrl = getCurrentIframeUrl();
+      if (!currentUrl || currentUrl === "/") return;
+
+      // Only sync if URL changed since last sync
+      if (currentUrl !== lastSyncedUrl) {
+        lastSyncedUrl = currentUrl;
+        syncUrlToServer(currentUrl);
       }
-      
-      // Check for deleted keys
-      for (const key of lastKnownValues.keys()) {
-        if (localStorage.getItem(key) === null) {
-          logger.debug("[OfficialApp] Detected deletion of:", key);
-          lastKnownValues.delete(key);
-          fetch(`/api/storage/${encodeURIComponent(key)}`, {
-            method: "DELETE",
-            headers: { Authorization: `Bearer ${token}` },
-          }).catch((err) => logger.error("[OfficialApp] Failed to sync delete:", err));
-        }
-      }
-    }, 2000);
+    }, URL_SYNC_INTERVAL);
 
     onCleanup(() => {
-      localStorage.setItem = originalSetItem;
-      localStorage.removeItem = originalRemoveItem;
-      clearInterval(pollInterval);
+      clearInterval(syncInterval);
     });
   });
 
   function handleIframeLoad() {
     setLoading(false);
     logger.debug("[OfficialApp] Iframe loaded successfully");
-    
-    // Debug: Check if iframe can access localStorage
-    try {
-      const iframe = document.querySelector('iframe');
-      if (iframe?.contentWindow) {
-        const iframeStorage = iframe.contentWindow.localStorage;
-        
-        // Check project data (the critical key for showing projects)
-        const projectKey = "opencode.global.dat:globalSync.project";
-        const projectData = iframeStorage.getItem(projectKey);
-        console.log("[OfficialApp] Iframe localStorage project data:", projectData ? "exists" : "MISSING");
-        if (projectData) {
-          try {
-            const parsed = JSON.parse(projectData);
-            console.log("[OfficialApp] Iframe project count:", parsed?.value?.length ?? 0);
-          } catch (e) {
-            console.log("[OfficialApp] Failed to parse project data");
-          }
-        }
-        
-        // Check server data
-        const serverKey = "opencode.global.dat:server";
-        const serverData = iframeStorage.getItem(serverKey);
-        console.log("[OfficialApp] Iframe localStorage server data:", serverData ? "exists" : "MISSING");
-        
-        // List all opencode keys
-        const allKeys: string[] = [];
-        for (let i = 0; i < iframeStorage.length; i++) {
-          const key = iframeStorage.key(i);
-          if (key?.startsWith("opencode.")) {
-            allKeys.push(key);
-          }
-        }
-        console.log("[OfficialApp] All opencode keys in iframe:", allKeys);
-      }
-    } catch (err) {
-      console.error("[OfficialApp] Cannot access iframe localStorage:", err);
+
+    const currentUrl = getCurrentIframeUrl();
+    if (currentUrl && currentUrl !== "/" && currentUrl !== lastSyncedUrl) {
+      lastSyncedUrl = currentUrl;
+      syncUrlToServer(currentUrl);
     }
   }
 
@@ -215,7 +225,6 @@ export default function OfficialApp() {
     logger.error("[OfficialApp] Failed to load iframe");
   }
 
-  // Check if official app exists
   createEffect(() => {
     fetch("/opencode-app/index.html", { method: "HEAD" })
       .then((res) => {
@@ -232,7 +241,6 @@ export default function OfficialApp() {
 
   return (
     <div class="h-screen w-screen flex flex-col bg-zinc-950">
-      {/* Header bar with back button */}
       <div class="flex items-center justify-between px-4 py-2 bg-zinc-900 border-b border-zinc-800">
         <div class="flex items-center gap-3">
           <a
@@ -268,9 +276,7 @@ export default function OfficialApp() {
         </div>
       </div>
 
-      {/* Main content area */}
       <div class="flex-1 relative">
-        {/* Loading indicator */}
         <Show when={loading()}>
           <div class="absolute inset-0 flex items-center justify-center bg-zinc-950 z-10">
             <div class="flex flex-col items-center gap-4">
@@ -280,7 +286,6 @@ export default function OfficialApp() {
           </div>
         </Show>
 
-        {/* Error state */}
         <Show when={error()}>
           <div class="absolute inset-0 flex items-center justify-center bg-zinc-950 z-10">
             <div class="flex flex-col items-center gap-4 max-w-md text-center px-6">
@@ -317,9 +322,9 @@ export default function OfficialApp() {
           </div>
         </Show>
 
-        {/* Iframe for official app - only load after storage is synced */}
         <Show when={!error() && iframeSrc()}>
           <iframe
+            ref={iframeRef}
             src={iframeSrc()!}
             class="w-full h-full border-0"
             onLoad={handleIframeLoad}

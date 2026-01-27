@@ -2,9 +2,11 @@ dist/
 node_modules/
 .auth-code
 .devices.json
-.remote-storage.json
+.sync-state.json
+.storage-sync.json
 nul
 .env
+opencode_server.log
 
 # Official app build output
 public/opencode-app/

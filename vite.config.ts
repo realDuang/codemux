@@ -7,8 +7,8 @@ import os from "os";
 import type { IncomingMessage, ServerResponse } from "http";
 import { tunnelManager } from "./scripts/tunnel-manager";
 import { deviceStore, type DeviceInfo } from "./scripts/device-store";
-import { storageStore } from "./scripts/storage-store";
-
+import { syncStateStore } from "./scripts/sync-state-store";
+import { storageSyncStore } from "./scripts/storage-sync-store";
 
 // ============================================================================
 // Helper Functions
@@ -155,6 +155,20 @@ export default defineConfig({
               fs.createReadStream(indexPath).pipe(res);
               return;
             }
+          }
+
+          // SPA fallback: For any /opencode-app/* route that isn't a static file,
+          // serve the index.html to let the frontend router handle it
+          const indexPath = path.join(
+            process.cwd(),
+            "public",
+            "opencode-app",
+            "index.html",
+          );
+          if (fs.existsSync(indexPath)) {
+            res.setHeader("Content-Type", "text/html");
+            fs.createReadStream(indexPath).pipe(res);
+            return;
           }
 
           next();
@@ -798,11 +812,12 @@ export default defineConfig({
         });
 
         // ====================================================================
-        // Storage: Persisted storage sync
-        // GET/POST/DELETE /api/storage/*
+        // Sync State: Cross-device URL sync for Official App
+        // GET /api/sync-state - Get current sync state
+        // POST /api/sync-state - Update sync state with current URL
         // ====================================================================
         server.middlewares.use(async (req, res, next) => {
-          if (!req.url?.startsWith("/api/storage")) {
+          if (!req.url?.startsWith("/api/sync-state")) {
             next();
             return;
           }
@@ -813,48 +828,84 @@ export default defineConfig({
             return;
           }
 
-          const result = deviceStore.verifyToken(token);
-          if (!result.valid) {
+          // Use verifyTokenLoose to allow tokens from removed devices to sync state
+          const result = deviceStore.verifyTokenLoose(token);
+          if (!result.valid || !result.deviceId) {
             sendJson(res, { error: "Invalid token" }, 401);
             return;
           }
 
           try {
-            if (req.url === "/api/storage" && req.method === "GET") {
-              sendJson(res, storageStore.getAll());
+            if (req.url === "/api/sync-state" && req.method === "GET") {
+              sendJson(res, syncStateStore.getState());
               return;
             }
 
-            const match = req.url.match(/^\/api\/storage\/(.+)$/);
-            if (!match) {
-              sendJson(res, { error: "Not found" }, 404);
+            if (req.url === "/api/sync-state" && req.method === "POST") {
+              const { url, timestamp } = await parseBody(req);
+              if (typeof url !== "string") {
+                sendJson(res, { error: "url is required" }, 400);
+                return;
+              }
+              const state = syncStateStore.setState(url, result.deviceId);
+              sendJson(res, state);
               return;
             }
 
-            const key = decodeURIComponent(match[1]);
-
-            if (req.method === "GET") {
-              const value = storageStore.getItem(key);
-              sendJson(res, { key, value });
-              return;
-            }
-
-            if (req.method === "POST") {
-              const { value } = await parseBody(req);
-              storageStore.setItem(key, value);
-              sendJson(res, { success: true });
-              return;
-            }
-
-            if (req.method === "DELETE") {
-              storageStore.removeItem(key);
-              sendJson(res, { success: true });
-              return;
-            }
-
-            sendJson(res, { error: "Method not allowed" }, 405);
+            sendJson(res, { error: "Not found" }, 404);
           } catch (error: any) {
-            console.error("[Storage API Error]", error);
+            console.error("[Sync State API Error]", error);
+            sendJson(res, { error: error.message }, 500);
+          }
+        });
+
+        // ====================================================================
+        // Storage Sync: Cross-device localStorage sync for Official App
+        // GET /api/storage-sync - Get synced localStorage data
+        // POST /api/storage-sync - Update localStorage data
+        // ====================================================================
+        server.middlewares.use(async (req, res, next) => {
+          if (!req.url?.startsWith("/api/storage-sync")) {
+            next();
+            return;
+          }
+
+          const token = extractBearerToken(req);
+          if (!token) {
+            sendJson(res, { error: "Unauthorized" }, 401);
+            return;
+          }
+
+          const result = deviceStore.verifyTokenLoose(token);
+          if (!result.valid || !result.deviceId) {
+            sendJson(res, { error: "Invalid token" }, 401);
+            return;
+          }
+
+          try {
+            if (req.url === "/api/storage-sync" && req.method === "GET") {
+              const state = storageSyncStore.getState();
+              sendJson(res, {
+                ...state,
+                syncedKeys: storageSyncStore.getSyncedKeys(),
+              });
+              return;
+            }
+
+            if (req.url === "/api/storage-sync" && req.method === "POST") {
+              const { data } = await parseBody(req);
+              if (!data || typeof data !== "object") {
+                sendJson(res, { error: "data object is required" }, 400);
+                return;
+              }
+              const state = storageSyncStore.updateData(data, result.deviceId);
+              sendJson(res, state);
+              return;
+            }
+
+            sendJson(res, { error: "Not found" }, 404);
+          } catch (error: any) {
+            console.error("[Storage Sync API Error]", error);
             sendJson(res, { error: error.message }, 500);
           }
         });
@@ -865,9 +916,9 @@ export default defineConfig({
   server: {
     port: 5174,
     host: true,
-    allowedHosts: ["localhost", ".trycloudflare.com"],
+    allowedHosts: true, // Allow all hosts (localhost, LAN IPs, tunnels)
     watch: {
-      ignored: ["**/.remote-storage.json", "**/.auth-code", "**/.devices.json"],
+      ignored: ["**/.sync-state.json", "**/.auth-code", "**/.devices.json", "**/.storage-sync.json"],
     },
     proxy: (() => {
       const authHeaders = getOpenCodeAuthHeader();

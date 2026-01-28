@@ -8,10 +8,53 @@
 
 import { existsSync, mkdirSync, chmodSync, unlinkSync } from "fs";
 import { join } from "path";
-import { $ } from "bun";
+
+const isWindows = process.platform === "win32";
 
 const GITHUB_REPO = "anomalyco/opencode";
 const RESOURCES_DIR = join(import.meta.dir, "..", "resources", "bin");
+
+/**
+ * Cross-platform ZIP extraction
+ * Uses .NET ZipFile on Windows (no module dependency), unzip on Unix
+ */
+async function extractZip(zipPath: string, destDir: string): Promise<void> {
+  if (isWindows) {
+    // Use .NET System.IO.Compression.ZipFile directly (built-in, no module required)
+    // Remove existing files first to simulate overwrite behavior
+    const psCommand = `
+      Add-Type -AssemblyName System.IO.Compression.FileSystem
+      $zip = [System.IO.Compression.ZipFile]::OpenRead('${zipPath.replace(/'/g, "''")}')
+      foreach ($entry in $zip.Entries) {
+        $destPath = Join-Path '${destDir.replace(/'/g, "''")}' $entry.FullName
+        $destFolder = Split-Path $destPath -Parent
+        if (!(Test-Path $destFolder)) { New-Item -ItemType Directory -Path $destFolder -Force | Out-Null }
+        if ($entry.FullName -notmatch '/$') {
+          [System.IO.Compression.ZipFileExtensions]::ExtractToFile($entry, $destPath, $true)
+        }
+      }
+      $zip.Dispose()
+    `;
+    const proc = Bun.spawn(
+      ["powershell", "-NoProfile", "-Command", psCommand],
+      { stdout: "inherit", stderr: "inherit" }
+    );
+    const exitCode = await proc.exited;
+    if (exitCode !== 0) {
+      throw new Error(`PowerShell ZIP extraction failed with exit code ${exitCode}`);
+    }
+  } else {
+    // Use unzip on Unix (macOS, Linux)
+    const proc = Bun.spawn(["unzip", "-o", zipPath, "-d", destDir], {
+      stdout: "inherit",
+      stderr: "inherit",
+    });
+    const exitCode = await proc.exited;
+    if (exitCode !== 0) {
+      throw new Error(`unzip failed with exit code ${exitCode}`);
+    }
+  }
+}
 
 interface Platform {
   name: string;
@@ -74,8 +117,8 @@ async function downloadAndExtract(url: string, destDir: string, binaryName: stri
   await Bun.write(zipPath, arrayBuffer);
 
   console.log(`  Extracting...`);
-  // Use unzip command to extract
-  await $`unzip -o ${zipPath} -d ${destDir}`.quiet();
+  // Cross-platform extraction
+  await extractZip(zipPath, destDir);
 
   // Clean up zip file
   unlinkSync(zipPath);

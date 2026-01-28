@@ -36,3 +36,5 @@ npm-debug.log*
 # Temporary files
 nul
 *.tmp
+# OpenCode source (submodule/clone)
+/opencode/

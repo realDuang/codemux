@@ -3,6 +3,7 @@ productName: OpenCode Remote
 directories:
   output: release
   buildResources: resources
+icon: public/assets/icon.png
 files:
   - out/**/*
   - package.json
@@ -19,11 +20,13 @@ extraMetadata:
   main: out/main/index.js
 mac:
   target: dmg
+  icon: public/assets/icon.png
 win:
   target:
     - target: nsis
       arch:
         - x64
+  icon: public/assets/icon.ico
 nsis:
   oneClick: false
   perMachine: false

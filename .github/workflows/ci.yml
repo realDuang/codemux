@@ -28,3 +28,6 @@ jobs:
 
       - name: Run type check
         run: bun run typecheck
+
+      - name: Verify build
+        run: bun run build

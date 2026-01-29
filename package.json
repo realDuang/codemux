@@ -16,6 +16,7 @@
     "dist:mac:x64": "electron-builder --mac --x64 --publish never",
     "dist:win": "electron-builder --win --publish never",
     "typecheck": "tsc --noEmit",
+    "test:web-api": "bun scripts/test-web-api.ts",
     "setup": "bun scripts/setup.ts",
     "start": "bun scripts/start.ts",
     "update:opencode": "bun scripts/update-opencode.ts",

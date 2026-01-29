@@ -8,7 +8,7 @@ files:
   - out/**/*
   - package.json
 extraMetadata:
-  main: out/main/index.js
+  main: out/main/index.cjs
 mac:
   target: dmg
   icon: public/assets/icon.png

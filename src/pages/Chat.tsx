@@ -91,6 +91,9 @@ export default function Chat() {
 
   const [showAddProjectModal, setShowAddProjectModal] = createSignal(false);
 
+  // Track if this is a local access (Electron or localhost web)
+  const [isLocalAccess, setIsLocalAccess] = createSignal(isElectron());
+
   const handleModelChange = (providerID: string, modelID: string) => {
     logger.debug("[Chat] Model changed to:", { providerID, modelID });
     setCurrentSessionModel({ providerID, modelID });
@@ -162,6 +165,12 @@ export default function Chat() {
     logger.debug("[Init] Starting session initialization");
 
     try {
+      // Check if this is local access (for showing remote access button)
+      if (!isElectron()) {
+        const localAccess = await Auth.isLocalAccess();
+        setIsLocalAccess(localAccess);
+      }
+
       // Initialize the OpenCode client with correct URL
       await client.initialize();
 
@@ -629,7 +638,7 @@ export default function Chat() {
 
         {/* User Actions Footer in Sidebar */}
         <div class="p-3 border-t border-gray-200 dark:border-zinc-800 space-y-1 bg-gray-50 dark:bg-zinc-950">
-          <Show when={isElectron()}>
+          <Show when={isLocalAccess()}>
             <button
               onClick={() => navigate("/")}
               class="w-full flex items-center gap-3 px-3 py-2 text-sm font-medium text-gray-600 dark:text-gray-400 hover:bg-white dark:hover:bg-zinc-800 hover:text-gray-900 dark:hover:text-white rounded-lg transition-all shadow-xs hover:shadow-sm"

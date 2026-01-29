@@ -1,9 +1,10 @@
 {
   "name": "opencode-remote",
-  "version": "0.3.0",
+  "version": "0.3.1",
+  "type": "module",
   "description": "Access OpenCode from any device, anywhere - a desktop app and web interface for remote AI coding assistance",
   "author": "realDuang",
-  "main": "out/main/index.js",
+  "main": "out/main/index.cjs",
   "scripts": {
     "dev": "electron-vite dev",
     "build": "electron-vite build",
@@ -15,6 +16,8 @@
     "dist:mac:x64": "electron-builder --mac --x64 --publish never",
     "dist:win": "electron-builder --win --publish never",
     "typecheck": "tsc --noEmit",
+    "setup": "bun scripts/setup.ts",
+    "start": "bun scripts/start.ts",
     "update:opencode": "bun scripts/update-opencode.ts",
     "update:cloudflared": "bun scripts/update-cloudflared.ts"
   },

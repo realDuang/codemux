@@ -19,7 +19,7 @@ export function createWindow(): BrowserWindow {
         }
       : {}),
     webPreferences: {
-      preload: join(__dirname, "../preload/index.js"),
+      preload: join(__dirname, "../preload/index.cjs"),
       sandbox: false, // Required for IPC communication in preload
       contextIsolation: true,
       nodeIntegration: false,

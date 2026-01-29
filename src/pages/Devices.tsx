@@ -160,11 +160,15 @@ export default function Devices() {
   const navigate = useNavigate();
   const { t } = useI18n();
 
-  // Devices page is only accessible in Electron (host mode)
-  // Web clients should be redirected to chat
-  onMount(() => {
+  // Devices page is only accessible in host mode (Electron OR localhost web)
+  // Remote web clients should be redirected to chat
+  onMount(async () => {
     if (!isElectron()) {
-      navigate("/chat", { replace: true });
+      // Check if this is localhost web access
+      const isLocalAccess = await Auth.isLocalAccess();
+      if (!isLocalAccess) {
+        navigate("/chat", { replace: true });
+      }
     }
   });
 

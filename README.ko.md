@@ -9,9 +9,11 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![OpenCode](https://img.shields.io/badge/OpenCode-1.1.15+-green.svg)](https://opencode.ai)
 
-<img src="https://opencode.ai/logo.svg" alt="OpenCode Remote" width="120" />
+<img src="https://raw.githubusercontent.com/realDuang/opencode-remote/main/assets/logo.png" alt="OpenCode Remote" width="120" />
 
 *강력한 워크스테이션에서 AI 코딩 에이전트를 실행하고, 태블릿, 스마트폰 또는 모든 브라우저에서 접속하세요 — 인터넷을 통해서도 가능합니다.*
+
+<img src="https://raw.githubusercontent.com/realDuang/opencode-remote/main/assets/screenshots/main-chat.jpg" alt="메인 채팅 화면" width="800" />
 
 </div>
 
@@ -40,16 +42,33 @@ OpenCode와 같은 AI 코딩 에이전트는 다음 조건을 갖춘 머신에�
 | **실시간 스트리밍** | Server-Sent Events를 통한 실시간 메시지 스트리밍 |
 | **전체 기능 지원** | 모든 OpenCode 기능이 웹 UI에서 원활하게 작동 |
 
+<div align="center">
+<img src="https://raw.githubusercontent.com/realDuang/opencode-remote/main/assets/screenshots/chat-steps.jpg" alt="채팅 단계" width="700" />
+
+*단계별 실행과 다크 모드를 지원하는 AI 어시스턴트*
+</div>
+
 ---
 
 ## 빠른 시작
 
-### 사전 요구사항
+### 옵션 1: 데스크톱 앱 (권장)
 
-- [Bun](https://bun.sh) (권장) 또는 Node.js 18+
-- [OpenCode CLI](https://opencode.ai) 설치됨
+플랫폼에 맞는 최신 릴리스를 다운로드하세요:
 
-### 설치
+- **macOS (Apple Silicon)**: `OpenCode Remote-x.x.x-arm64.dmg`
+- **macOS (Intel)**: `OpenCode Remote-x.x.x-x64.dmg`
+- **Windows**: `OpenCode Remote-x.x.x-setup.exe`
+
+데스크톱 앱에는 필요한 모든 것이 포함되어 있습니다 — 추가 설치가 필요 없습니다.
+
+> ⚠️ **macOS 사용자 주의**: 앱이 코드 서명되지 않았습니다. macOS에서 "앱이 손상되었습니다" 오류가 표시될 수 있습니다. 다음 명령을 실행하여 해결하세요:
+>
+> ```bash
+> xattr -cr /Applications/OpenCode\ Remote.app
+> ```
+
+### 옵션 2: 개발 모드
 
 ```bash
 # 저장소 클론
@@ -59,32 +78,12 @@ cd opencode-remote
 # 의존성 설치
 bun install
 
-# 애플리케이션 시작
-bun run start
-```
+# 번들된 바이너리 다운로드
+bun run update:opencode
+bun run update:cloudflared
 
-### 실행 과정
-
-1. 랜덤 **6자리 접속 코드**가 생성되어 터미널에 표시
-2. OpenCode 서버가 포트 `4096`에서 시작
-3. 웹 UI가 포트 `5174`에서 시작
-4. `http://localhost:5174`를 열고 접속 코드 입력
-
-```
-============================================================
-Starting OpenCode Remote
-============================================================
-
-Access Code: 847291
-
-Starting OpenCode Server...
-Starting Web UI...
-
-============================================================
-All services started!
-Web UI: http://localhost:5174
-Use code: 847291
-============================================================
+# 개발 모드로 시작
+bun run dev
 ```
 
 ---
@@ -100,6 +99,10 @@ Use code: 847291
 3. 6자리 접속 코드 입력
 
 **또는 원격 접속 페이지에 표시된 QR 코드 스캔.**
+
+<div align="center">
+<img src="https://raw.githubusercontent.com/realDuang/opencode-remote/main/assets/screenshots/remote-access.jpg" alt="원격 접속" width="700" />
+</div>
 
 ### 방법 2: 공개 인터넷 접속
 

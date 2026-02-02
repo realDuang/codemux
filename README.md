@@ -9,9 +9,11 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![OpenCode](https://img.shields.io/badge/OpenCode-1.1.15+-green.svg)](https://opencode.ai)
 
-<img src="https://opencode.ai/logo.svg" alt="OpenCode Remote" width="120" />
+<img src="https://raw.githubusercontent.com/realDuang/opencode-remote/main/assets/logo.png" alt="OpenCode Remote" width="120" />
 
 *Use your powerful workstation to run AI coding agents while accessing them from a tablet, phone, or any browser — even across the internet.*
+
+<img src="https://raw.githubusercontent.com/realDuang/opencode-remote/main/assets/screenshots/main-chat.jpg" alt="Main Chat Interface" width="800" />
 
 </div>
 
@@ -41,6 +43,12 @@ But what if you want to **use your phone on the couch**, **pair program from an 
 | **Secure by Default** | Device-based authentication with secure token storage |
 | **Real-time Streaming** | Live message streaming via Server-Sent Events |
 
+<div align="center">
+<img src="https://raw.githubusercontent.com/realDuang/opencode-remote/main/assets/screenshots/chat-steps.jpg" alt="Chat Steps" width="700" />
+
+*AI assistant with step-by-step execution and dark mode support*
+</div>
+
 ---
 
 ## Quick Start
@@ -54,6 +62,12 @@ Download the latest release for your platform:
 - **Windows**: `OpenCode Remote-x.x.x-setup.exe`
 
 The desktop app bundles everything you need — no additional installation required.
+
+> ⚠️ **macOS Users**: The app is not code-signed. macOS may show "App is damaged" error. Run the following command to fix:
+>
+> ```bash
+> xattr -cr /Applications/OpenCode\ Remote.app
+> ```
 
 ### Option 2: Development Mode
 
@@ -88,6 +102,10 @@ Access from any device on your local network:
 
 **Or scan the QR code** displayed on the Remote Access page.
 
+<div align="center">
+<img src="https://raw.githubusercontent.com/realDuang/opencode-remote/main/assets/screenshots/remote-access.jpg" alt="Remote Access" width="700" />
+</div>
+
 ### Method 2: Public Internet Access
 
 Access from anywhere in the world with Cloudflare Tunnel:
@@ -120,6 +138,10 @@ The desktop app includes a device management system:
 - **Rename devices**: Give meaningful names to your devices
 - **Revoke access**: Remove devices you no longer want to have access
 - **Revoke all others**: Quickly revoke access from all devices except the current one
+
+<div align="center">
+<img src="https://raw.githubusercontent.com/realDuang/opencode-remote/main/assets/screenshots/devices-management.jpg" alt="Device Management" width="700" />
+</div>
 
 ---
 

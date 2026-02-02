@@ -9,9 +9,11 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![OpenCode](https://img.shields.io/badge/OpenCode-1.1.15+-green.svg)](https://opencode.ai)
 
-<img src="https://opencode.ai/logo.svg" alt="OpenCode Remote" width="120" />
+<img src="https://raw.githubusercontent.com/realDuang/opencode-remote/main/assets/logo.png" alt="OpenCode Remote" width="120" />
 
 *在高性能工作站上运行 AI 编程助手，通过平板、手机或任何浏览器远程访问——甚至跨越互联网。*
+
+<img src="https://raw.githubusercontent.com/realDuang/opencode-remote/main/assets/screenshots/main-chat.jpg" alt="主聊天界面" width="800" />
 
 </div>
 
@@ -40,16 +42,33 @@
 | **实时流式传输** | 通过 Server-Sent Events 实现消息实时推送 |
 | **完整功能** | 所有 OpenCode 功能都可通过 Web UI 无缝使用 |
 
+<div align="center">
+<img src="https://raw.githubusercontent.com/realDuang/opencode-remote/main/assets/screenshots/chat-steps.jpg" alt="聊天步骤" width="700" />
+
+*AI 助手支持步骤化执行和深色模式*
+</div>
+
 ---
 
 ## 快速开始
 
-### 前置要求
+### 方式一：桌面应用（推荐）
 
-- [Bun](https://bun.sh)（推荐）或 Node.js 18+
-- 已安装 [OpenCode CLI](https://opencode.ai)
+下载适合你平台的最新版本：
 
-### 安装
+- **macOS (Apple Silicon)**: `OpenCode Remote-x.x.x-arm64.dmg`
+- **macOS (Intel)**: `OpenCode Remote-x.x.x-x64.dmg`
+- **Windows**: `OpenCode Remote-x.x.x-setup.exe`
+
+桌面应用内置了所有依赖——无需额外安装。
+
+> ⚠️ **macOS 用户注意**：应用未经代码签名，macOS 可能提示"应用已损坏"。请运行以下命令修复：
+>
+> ```bash
+> xattr -cr /Applications/OpenCode\ Remote.app
+> ```
+
+### 方式二：开发模式
 
 ```bash
 # 克隆仓库
@@ -59,32 +78,12 @@ cd opencode-remote
 # 安装依赖
 bun install
 
-# 启动应用
-bun run start
-```
+# 下载内置二进制文件
+bun run update:opencode
+bun run update:cloudflared
 
-### 启动过程
-
-1. 生成随机 **6 位数访问码**并显示在终端
-2. OpenCode 服务器在端口 `4096` 启动
-3. Web UI 在端口 `5174` 启动
-4. 打开 `http://localhost:5174` 并输入访问码
-
-```
-============================================================
-Starting OpenCode Remote
-============================================================
-
-Access Code: 847291
-
-Starting OpenCode Server...
-Starting Web UI...
-
-============================================================
-All services started!
-Web UI: http://localhost:5174
-Use code: 847291
-============================================================
+# 启动开发模式
+bun run dev
 ```
 
 ---
@@ -100,6 +99,10 @@ Use code: 847291
 3. 输入 6 位数访问码
 
 **或者扫描远程访问页面上显示的二维码。**
+
+<div align="center">
+<img src="https://raw.githubusercontent.com/realDuang/opencode-remote/main/assets/screenshots/remote-access.jpg" alt="远程访问" width="700" />
+</div>
 
 ### 方式二：公网访问
 

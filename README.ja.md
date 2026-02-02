@@ -9,9 +9,11 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![OpenCode](https://img.shields.io/badge/OpenCode-1.1.15+-green.svg)](https://opencode.ai)
 
-<img src="https://opencode.ai/logo.svg" alt="OpenCode Remote" width="120" />
+<img src="https://raw.githubusercontent.com/realDuang/opencode-remote/main/assets/logo.png" alt="OpenCode Remote" width="120" />
 
 *高性能ワークステーションで AI コーディングエージェントを実行し、タブレット、スマートフォン、または任意のブラウザからアクセス — インターネット経由でも。*
+
+<img src="https://raw.githubusercontent.com/realDuang/opencode-remote/main/assets/screenshots/main-chat.jpg" alt="メインチャット画面" width="800" />
 
 </div>
 
@@ -40,16 +42,33 @@ OpenCode のような AI コーディングエージェントは、以下の条�
 | **リアルタイムストリーミング** | Server-Sent Events による ライブメッセージストリーミング |
 | **フル機能対応** | すべての OpenCode 機能が Web UI でシームレスに動作 |
 
+<div align="center">
+<img src="https://raw.githubusercontent.com/realDuang/opencode-remote/main/assets/screenshots/chat-steps.jpg" alt="チャットステップ" width="700" />
+
+*ステップ実行とダークモードをサポートする AI アシスタント*
+</div>
+
 ---
 
 ## クイックスタート
 
-### 前提条件
+### オプション 1：デスクトップアプリ（推奨）
 
-- [Bun](https://bun.sh)（推奨）または Node.js 18+
-- [OpenCode CLI](https://opencode.ai) がインストール済み
+プラットフォームに合わせて最新リリースをダウンロード：
 
-### インストール
+- **macOS (Apple Silicon)**: `OpenCode Remote-x.x.x-arm64.dmg`
+- **macOS (Intel)**: `OpenCode Remote-x.x.x-x64.dmg`
+- **Windows**: `OpenCode Remote-x.x.x-setup.exe`
+
+デスクトップアプリには必要なものがすべて含まれています — 追加のインストールは不要です。
+
+> ⚠️ **macOS ユーザーへ**：アプリはコード署名されていません。macOS で「アプリが破損しています」というエラーが表示される場合があります。以下のコマンドを実行して修正してください：
+>
+> ```bash
+> xattr -cr /Applications/OpenCode\ Remote.app
+> ```
+
+### オプション 2：開発モード
 
 ```bash
 # リポジトリをクローン
@@ -59,32 +78,12 @@ cd opencode-remote
 # 依存関係をインストール
 bun install
 
-# アプリケーションを起動
-bun run start
-```
+# バンドルされたバイナリをダウンロード
+bun run update:opencode
+bun run update:cloudflared
 
-### 起動時の動作
-
-1. ランダムな **6 桁のアクセスコード**が生成されターミナルに表示
-2. OpenCode サーバーがポート `4096` で起動
-3. Web UI がポート `5174` で起動
-4. `http://localhost:5174` を開いてアクセスコードを入力
-
-```
-============================================================
-Starting OpenCode Remote
-============================================================
-
-Access Code: 847291
-
-Starting OpenCode Server...
-Starting Web UI...
-
-============================================================
-All services started!
-Web UI: http://localhost:5174
-Use code: 847291
-============================================================
+# 開発モードで起動
+bun run dev
 ```
 
 ---
@@ -100,6 +99,10 @@ Use code: 847291
 3. 6 桁のアクセスコードを入力
 
 **またはリモートアクセスページに表示される QR コードをスキャン。**
+
+<div align="center">
+<img src="https://raw.githubusercontent.com/realDuang/opencode-remote/main/assets/screenshots/remote-access.jpg" alt="リモートアクセス" width="700" />
+</div>
 
 ### 方法2：パブリックインターネットアクセス
 

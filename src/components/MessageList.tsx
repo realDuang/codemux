@@ -54,21 +54,18 @@ export function MessageList(props: MessageListProps) {
   // Group messages into turns
   const turns = createMemo(() => groupMessagesIntoTurns(messages()));
 
-  // Check if the last assistant message is still being processed
   const isLastTurnWorking = createMemo(() => {
     const allTurns = turns();
-    if (allTurns.length === 0) return false;
+    if (allTurns.length === 0) return props.isWorking ?? false;
 
     const lastTurn = allTurns[allTurns.length - 1];
     const lastAssistant = lastTurn.assistantMessages.at(-1);
 
     if (!lastAssistant) {
-      // No assistant response yet - might be waiting
       return props.isWorking ?? false;
     }
 
-    // Check if the last assistant message has a completed time
-    return !lastAssistant.time?.completed && (props.isWorking ?? false);
+    return !lastAssistant.time?.completed;
   });
 
   return (

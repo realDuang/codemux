@@ -1,6 +1,6 @@
 {
   "name": "opencode-remote",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "type": "module",
   "description": "Access OpenCode from any device, anywhere - a desktop app and web interface for remote AI coding assistance",
   "author": "realDuang",

@@ -3,8 +3,10 @@ import { gateway } from "../lib/gateway-api";
 import { configStore, setConfigStore } from "../stores/config";
 import { useI18n } from "../lib/i18n";
 import { logger } from "../lib/logger";
+import type { EngineType } from "../types/unified";
 
 interface ModelSelectorProps {
+  engineType?: EngineType;
   onModelChange?: (providerID: string, modelID: string) => void;
 }
 
@@ -14,10 +16,11 @@ export function ModelSelector(props: ModelSelectorProps) {
   const [selectedProvider, setSelectedProvider] = createSignal<string>("");
   const [selectedModel, setSelectedModel] = createSignal<string>("");
 
-  // Load models from gateway
+  // Load models from gateway — re-runs when engineType changes
   createEffect(async () => {
+    const engineType = props.engineType || "opencode";
     try {
-      const models = await gateway.listModels("opencode");
+      const models = await gateway.listModels(engineType);
       setConfigStore({
         models: models,
         loading: false,

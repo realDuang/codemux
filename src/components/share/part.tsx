@@ -42,7 +42,7 @@ import { ContentDiff } from "./content-diff";
 import { ContentText } from "./content-text";
 import { ContentBash } from "./content-bash";
 import { ContentError } from "./content-error";
-import { formatDuration } from "./common";
+import { formatDuration, createElapsedTimer } from "./common";
 import { ContentMarkdown } from "./content-markdown";
 import type { UnifiedMessage, UnifiedPart, UnifiedPermission, ToolPart } from "../../types/unified";
 import type { Diagnostic } from "vscode-languageserver-types";
@@ -53,6 +53,24 @@ import { isExpanded, toggleExpanded, messageStore, setExpanded } from "../../sto
 import styles from "./part.module.css";
 
 const MIN_DURATION = 2000;
+
+/** Maps tool name to its corresponding icon */
+function ToolIcon(props: { tool: string }) {
+  return (
+    <Switch fallback={<IconSparkles width={14} height={14} />}>
+      <Match when={props.tool === "bash" || props.tool === "shell"}><IconCommandLine width={14} height={14} /></Match>
+      <Match when={props.tool === "edit"}><IconPencilSquare width={14} height={14} /></Match>
+      <Match when={props.tool === "write"}><IconDocumentPlus width={14} height={14} /></Match>
+      <Match when={props.tool === "read"}><IconDocument width={14} height={14} /></Match>
+      <Match when={props.tool === "grep"}><IconDocumentMagnifyingGlass width={14} height={14} /></Match>
+      <Match when={props.tool === "glob"}><IconMagnifyingGlass width={14} height={14} /></Match>
+      <Match when={props.tool === "list"}><IconRectangleStack width={14} height={14} /></Match>
+      <Match when={props.tool === "webfetch" || props.tool === "web_fetch"}><IconGlobeAlt width={14} height={14} /></Match>
+      <Match when={props.tool === "task"}><IconRobot width={14} height={14} /></Match>
+      <Match when={props.tool === "todowrite" || props.tool === "todoread" || props.tool === "todo"}><IconQueueList width={14} height={14} /></Match>
+    </Switch>
+  );
+}
 
 export interface PartProps {
   index: number;
@@ -266,8 +284,11 @@ export function Part(props: PartProps) {
             <Collapsible open={isExpanded(`error-${props.part.id}`)} onOpenChange={() => toggleExpanded(`error-${props.part.id}`)} class={styles.root}>
               <Collapsible.Trigger>
                 <div data-component="tool-title">
+                  <span data-slot="icon" data-icon-color="red">
+                    <IconSparkles width={14} height={14} />
+                  </span>
                   <span data-slot="name">Error</span>
-                  <span data-slot="target">{(props.part as ToolPart).originalTool}</span>
+                  <span data-slot="target">{(props.part as ToolPart).title || (props.part as ToolPart).originalTool}</span>
                 </div>
                 <Collapsible.Arrow />
               </Collapsible.Trigger>
@@ -283,7 +304,10 @@ export function Part(props: PartProps) {
         {props.part.type === "tool" && props.permission && (
           <div data-component="tool-permission">
             <div data-component="tool-title" data-waiting>
-              <span data-slot="name">{(props.part as ToolPart).originalTool}</span>
+              <span data-slot="icon" data-icon-color="orange">
+                <ToolIcon tool={(props.part as ToolPart).normalizedTool} />
+              </span>
+              <span data-slot="name">{(props.part as ToolPart).title || (props.part as ToolPart).originalTool}</span>
               <span data-slot="target">
                 {props.part.state.status === "running" && (props.part.state as any).input?.description}
                 {props.part.state.status === "running" && (props.part.state as any).input?.filePath}
@@ -304,111 +328,99 @@ export function Part(props: PartProps) {
           (props.part.state.status === "pending" || props.part.state.status === "running") &&
           !props.permission &&
           props.message.role === "assistant" && (
-            <div data-component="tool-running">
-              <div data-component="tool-title" data-running>
-                <span data-slot="name">{(props.part as ToolPart).originalTool}</span>
-                <Show when={props.part.state.status === "running" && (props.part.state as any).input}>
-                  <span data-slot="target">
-                    {(props.part.state as any).input?.description}
-                    {(props.part.state as any).input?.filePath}
-                    {(props.part.state as any).input?.pattern}
-                  </span>
-                </Show>
-                <span data-slot="status">{t().common.running}</span>
-              </div>
-            </div>
+            <RunningToolCard part={props.part as ToolPart} />
         )}
         {props.part.type === "tool" &&
           props.part.state.status === "completed" &&
           props.message.role === "assistant" && (
             <>
-              <div data-component="tool" data-tool={(props.part as ToolPart).originalTool}>
+              <div data-component="tool" data-tool={(props.part as ToolPart).normalizedTool}>
                 <Switch>
-                  <Match when={(props.part as ToolPart).originalTool === "grep"}>
+                  <Match when={(props.part as ToolPart).normalizedTool === "grep"}>
                     <GrepTool
                       message={props.message}
                       id={props.part.id}
-                      tool={(props.part as ToolPart).originalTool}
+                      tool={(props.part as ToolPart).normalizedTool}
                       // @ts-ignore
                       state={props.part.state}
                     />
                   </Match>
-                  <Match when={(props.part as ToolPart).originalTool === "glob"}>
+                  <Match when={(props.part as ToolPart).normalizedTool === "glob"}>
                     <GlobTool
                       message={props.message}
                       id={props.part.id}
-                      tool={(props.part as ToolPart).originalTool}
+                      tool={(props.part as ToolPart).normalizedTool}
                       // @ts-ignore
                       state={props.part.state}
                     />
                   </Match>
-                  <Match when={(props.part as ToolPart).originalTool === "list"}>
+                  <Match when={(props.part as ToolPart).normalizedTool === "list"}>
                     <ListTool
                       message={props.message}
                       id={props.part.id}
-                      tool={(props.part as ToolPart).originalTool}
+                      tool={(props.part as ToolPart).normalizedTool}
                       // @ts-ignore
                       state={props.part.state}
                     />
                   </Match>
-                  <Match when={(props.part as ToolPart).originalTool === "read"}>
+                  <Match when={(props.part as ToolPart).normalizedTool === "read"}>
                     <ReadTool
                       message={props.message}
                       id={props.part.id}
-                      tool={(props.part as ToolPart).originalTool}
+                      tool={(props.part as ToolPart).normalizedTool}
                       // @ts-ignore
                       state={props.part.state}
                     />
                   </Match>
-                  <Match when={(props.part as ToolPart).originalTool === "write"}>
+                  <Match when={(props.part as ToolPart).normalizedTool === "write"}>
                     <WriteTool
                       message={props.message}
                       id={props.part.id}
-                      tool={(props.part as ToolPart).originalTool}
+                      tool={(props.part as ToolPart).normalizedTool}
                       // @ts-ignore
                       state={props.part.state}
                     />
                   </Match>
-                  <Match when={(props.part as ToolPart).originalTool === "edit"}>
+                  <Match when={(props.part as ToolPart).normalizedTool === "edit"}>
                     <EditTool
                       message={props.message}
                       id={props.part.id}
-                      tool={(props.part as ToolPart).originalTool}
+                      tool={(props.part as ToolPart).normalizedTool}
                       // @ts-ignore
                       state={props.part.state}
                     />
                   </Match>
-                  <Match when={(props.part as ToolPart).originalTool === "bash"}>
+                  <Match when={(props.part as ToolPart).normalizedTool === "shell"}>
                     <BashTool
                       id={props.part.id}
-                      tool={(props.part as ToolPart).originalTool}
+                      tool={(props.part as ToolPart).normalizedTool}
                       // @ts-ignore
                       state={props.part.state}
                       message={props.message}
                     />
                   </Match>
-                  <Match when={(props.part as ToolPart).originalTool === "todowrite"}>
+                  <Match when={(props.part as ToolPart).normalizedTool === "todo"}>
                     <TodoWriteTool
                       message={props.message}
                       id={props.part.id}
-                      tool={(props.part as ToolPart).originalTool}
+                      tool={(props.part as ToolPart).normalizedTool}
                       // @ts-ignore
                       state={props.part.state}
                     />
                   </Match>
-                  <Match when={(props.part as ToolPart).originalTool === "webfetch"}>
+                  <Match when={(props.part as ToolPart).normalizedTool === "web_fetch"}>
                     <WebFetchTool
                       message={props.message}
                       id={props.part.id}
-                      tool={(props.part as ToolPart).originalTool}
+                      tool={(props.part as ToolPart).normalizedTool}
                       // @ts-ignore
                       state={props.part.state}
                     />
                   </Match>
-                  <Match when={(props.part as ToolPart).originalTool === "task"}>
+                  <Match when={(props.part as ToolPart).normalizedTool === "task"}>
                     <TaskTool
                       id={props.part.id}
-                      tool={(props.part as ToolPart).originalTool}
+                      tool={(props.part as ToolPart).normalizedTool}
                       message={props.message}
                       // @ts-ignore
                       state={props.part.state}
@@ -418,20 +430,13 @@ export function Part(props: PartProps) {
                     <FallbackTool
                       message={props.message}
                       id={props.part.id}
-                      tool={(props.part as ToolPart).originalTool}
+                      tool={(props.part as ToolPart).title || (props.part as ToolPart).originalTool}
                       // @ts-ignore
                       state={props.part.state}
                     />
                   </Match>
                 </Switch>
               </div>
-              <ToolFooter
-                // @ts-ignore
-                time={DateTime.fromMillis(props.part.state.time.end)
-                  // @ts-ignore
-                  .diff(DateTime.fromMillis(props.part.state.time.start))
-                  .toMillis()}
-              />
             </>
           )}
       </div>
@@ -563,6 +568,7 @@ export function TodoWriteTool(props: ToolProps) {
     <Collapsible open={expanded()} onOpenChange={() => setExpanded(expandedKey(), !expanded())}>
       <Collapsible.Trigger>
         <div data-component="tool-title">
+          <span data-slot="icon" data-icon-color="violet"><IconQueueList width={14} height={14} /></span>
           <span data-slot="name">
             <Switch fallback={t().parts.updatingPlan}>
               <Match when={starting()}>{t().parts.creatingPlan}</Match>
@@ -570,9 +576,14 @@ export function TodoWriteTool(props: ToolProps) {
             </Switch>
           </span>
         </div>
+        <ToolDuration
+          time={DateTime.fromMillis(props.state.time.end)
+            .diff(DateTime.fromMillis(props.state.time.start))
+            .toMillis()}
+        />
         <Collapsible.Arrow />
       </Collapsible.Trigger>
-      
+
       <Collapsible.Content>
         <Show when={todos().length > 0}>
           <ul data-component="todos">
@@ -586,11 +597,6 @@ export function TodoWriteTool(props: ToolProps) {
             </For>
           </ul>
         </Show>
-        <ToolFooter
-            time={DateTime.fromMillis(props.state.time.end)
-              .diff(DateTime.fromMillis(props.state.time.start))
-              .toMillis()}
-          />
       </Collapsible.Content>
     </Collapsible>
   );
@@ -602,9 +608,15 @@ function TaskTool(props: ToolProps) {
     <Collapsible open={isExpanded(props.id)} onOpenChange={() => toggleExpanded(props.id)}>
       <Collapsible.Trigger>
         <div data-component="tool-title">
+          <span data-slot="icon" data-icon-color="blue"><IconRobot width={14} height={14} /></span>
           <span data-slot="name">Task</span>
           <span data-slot="target">{props.state.input.description}</span>
         </div>
+        <ToolDuration
+          time={DateTime.fromMillis(props.state.time.end)
+            .diff(DateTime.fromMillis(props.state.time.start))
+            .toMillis()}
+        />
         <Collapsible.Arrow />
       </Collapsible.Trigger>
 
@@ -615,11 +627,6 @@ function TaskTool(props: ToolProps) {
         <div data-component="tool-output">
            <ContentMarkdown expand text={props.state.output} />
         </div>
-        <ToolFooter
-            time={DateTime.fromMillis(props.state.time.end)
-              .diff(DateTime.fromMillis(props.state.time.start))
-              .toMillis()}
-          />
       </Collapsible.Content>
     </Collapsible>
   );
@@ -631,11 +638,17 @@ export function FallbackTool(props: ToolProps) {
     <Collapsible open={isExpanded(props.id)} onOpenChange={() => toggleExpanded(props.id)}>
       <Collapsible.Trigger>
         <div data-component="tool-title">
+          <span data-slot="icon" data-icon-color="indigo"><ToolIcon tool={props.tool} /></span>
           <span data-slot="name">{props.tool}</span>
           {props.state.input?.description && (
             <span data-slot="target">{props.state.input.description}</span>
           )}
         </div>
+        <ToolDuration
+          time={DateTime.fromMillis(props.state.time.end)
+            .diff(DateTime.fromMillis(props.state.time.start))
+            .toMillis()}
+        />
         <Collapsible.Arrow />
       </Collapsible.Trigger>
 
@@ -664,11 +677,6 @@ export function FallbackTool(props: ToolProps) {
             </div>
           </Match>
         </Switch>
-        <ToolFooter
-            time={DateTime.fromMillis(props.state.time.end)
-              .diff(DateTime.fromMillis(props.state.time.start))
-              .toMillis()}
-          />
       </Collapsible.Content>
     </Collapsible>
   );
@@ -713,6 +721,7 @@ export function GrepTool(props: ToolProps) {
     <Collapsible open={isExpanded(props.id)} onOpenChange={() => toggleExpanded(props.id)}>
       <Collapsible.Trigger>
         <div data-component="tool-title">
+          <span data-slot="icon" data-icon-color="indigo"><IconDocumentMagnifyingGlass width={14} height={14} /></span>
           <span data-slot="name">Grep</span>
           <span data-slot="target" title={props.state.input.pattern}>
             &ldquo;{props.state.input.pattern}&rdquo;
@@ -725,9 +734,14 @@ export function GrepTool(props: ToolProps) {
             </span>
           </Show>
         </div>
+        <ToolDuration
+          time={DateTime.fromMillis(props.state.time.end)
+            .diff(DateTime.fromMillis(props.state.time.start))
+            .toMillis()}
+        />
         <Collapsible.Arrow />
       </Collapsible.Trigger>
-      
+
       <Collapsible.Content>
          <div data-component="tool-result">
            <Switch>
@@ -736,11 +750,6 @@ export function GrepTool(props: ToolProps) {
              </Match>
            </Switch>
          </div>
-         <ToolFooter
-            time={DateTime.fromMillis(props.state.time.end)
-              .diff(DateTime.fromMillis(props.state.time.start))
-              .toMillis()}
-          />
       </Collapsible.Content>
     </Collapsible>
   );
@@ -757,11 +766,17 @@ export function ListTool(props: ToolProps) {
     <Collapsible open={isExpanded(props.id)} onOpenChange={() => toggleExpanded(props.id)}>
       <Collapsible.Trigger>
         <div data-component="tool-title">
+          <span data-slot="icon" data-icon-color="indigo"><IconRectangleStack width={14} height={14} /></span>
           <span data-slot="name">LS</span>
           <span data-slot="target" title={props.state.input?.path}>
             {path()}
           </span>
         </div>
+        <ToolDuration
+          time={DateTime.fromMillis(props.state.time.end)
+            .diff(DateTime.fromMillis(props.state.time.start))
+            .toMillis()}
+        />
         <Collapsible.Arrow />
       </Collapsible.Trigger>
 
@@ -773,11 +788,6 @@ export function ListTool(props: ToolProps) {
             </Match>
           </Switch>
         </div>
-        <ToolFooter
-            time={DateTime.fromMillis(props.state.time.end)
-              .diff(DateTime.fromMillis(props.state.time.start))
-              .toMillis()}
-          />
       </Collapsible.Content>
     </Collapsible>
   );
@@ -788,9 +798,15 @@ export function WebFetchTool(props: ToolProps) {
     <Collapsible open={isExpanded(props.id)} onOpenChange={() => toggleExpanded(props.id)}>
       <Collapsible.Trigger>
         <div data-component="tool-title">
+          <span data-slot="icon" data-icon-color="teal"><IconGlobeAlt width={14} height={14} /></span>
           <span data-slot="name">Fetch</span>
           <span data-slot="target" title={props.state.input.url}>{props.state.input.url}</span>
         </div>
+        <ToolDuration
+          time={DateTime.fromMillis(props.state.time.end)
+            .diff(DateTime.fromMillis(props.state.time.start))
+            .toMillis()}
+        />
         <Collapsible.Arrow />
       </Collapsible.Trigger>
 
@@ -808,11 +824,6 @@ export function WebFetchTool(props: ToolProps) {
             </Match>
           </Switch>
         </div>
-        <ToolFooter
-            time={DateTime.fromMillis(props.state.time.end)
-              .diff(DateTime.fromMillis(props.state.time.start))
-              .toMillis()}
-          />
       </Collapsible.Content>
     </Collapsible>
   );
@@ -836,6 +847,7 @@ export function ReadTool(props: ToolProps) {
     <Collapsible open={isExpanded(props.id)} onOpenChange={() => toggleExpanded(props.id)}>
       <Collapsible.Trigger>
         <div data-component="tool-title">
+          <span data-slot="icon" data-icon-color="indigo"><IconDocument width={14} height={14} /></span>
           <span data-slot="name">Read</span>
           <span data-slot="target" title={props.state.input?.filePath}>
             {filePath()}
@@ -851,6 +863,11 @@ export function ReadTool(props: ToolProps) {
             </span>
           </Show>
         </div>
+        <ToolDuration
+          time={DateTime.fromMillis(props.state.time.end)
+            .diff(DateTime.fromMillis(props.state.time.start))
+            .toMillis()}
+        />
         <Collapsible.Arrow />
       </Collapsible.Trigger>
 
@@ -863,11 +880,6 @@ export function ReadTool(props: ToolProps) {
             />
           </div>
         </Show>
-        <ToolFooter
-          time={DateTime.fromMillis(props.state.time.end)
-            .diff(DateTime.fromMillis(props.state.time.start))
-            .toMillis()}
-        />
       </Collapsible.Content>
     </Collapsible>
   );
@@ -889,11 +901,17 @@ export function WriteTool(props: ToolProps) {
     <Collapsible open={isExpanded(props.id)} onOpenChange={() => toggleExpanded(props.id)}>
       <Collapsible.Trigger>
         <div data-component="tool-title">
+          <span data-slot="icon" data-icon-color="emerald"><IconDocumentPlus width={14} height={14} /></span>
           <span data-slot="name">Write</span>
           <span data-slot="target" title={props.state.input?.filePath}>
             {filePath()}
           </span>
         </div>
+        <ToolDuration
+          time={DateTime.fromMillis(props.state.time.end)
+            .diff(DateTime.fromMillis(props.state.time.start))
+            .toMillis()}
+        />
         <Collapsible.Arrow />
       </Collapsible.Trigger>
 
@@ -914,11 +932,6 @@ export function WriteTool(props: ToolProps) {
             </Match>
           </Switch>
         </div>
-        <ToolFooter
-            time={DateTime.fromMillis(props.state.time.end)
-              .diff(DateTime.fromMillis(props.state.time.start))
-              .toMillis()}
-          />
       </Collapsible.Content>
     </Collapsible>
   );
@@ -939,11 +952,17 @@ export function EditTool(props: ToolProps) {
     <Collapsible open={isExpanded(props.id)} onOpenChange={() => toggleExpanded(props.id)}>
       <Collapsible.Trigger>
         <div data-component="tool-title">
+          <span data-slot="icon" data-icon-color="amber"><IconPencilSquare width={14} height={14} /></span>
           <span data-slot="name">Edit</span>
           <span data-slot="target" title={props.state.input?.filePath}>
             {filePath()}
           </span>
         </div>
+        <ToolDuration
+          time={DateTime.fromMillis(props.state.time.end)
+            .diff(DateTime.fromMillis(props.state.time.start))
+            .toMillis()}
+        />
         <Collapsible.Arrow />
       </Collapsible.Trigger>
 
@@ -968,11 +987,6 @@ export function EditTool(props: ToolProps) {
         <Show when={diagnostics().length > 0}>
           <ContentError>{diagnostics()}</ContentError>
         </Show>
-        <ToolFooter
-            time={DateTime.fromMillis(props.state.time.end)
-              .diff(DateTime.fromMillis(props.state.time.start))
-              .toMillis()}
-          />
       </Collapsible.Content>
     </Collapsible>
   );
@@ -983,27 +997,28 @@ export function BashTool(props: ToolProps) {
     <Collapsible open={isExpanded(props.id)} onOpenChange={() => toggleExpanded(props.id)}>
       <Collapsible.Trigger>
         <div data-component="tool-title">
+           <span data-slot="icon" data-icon-color="green"><IconCommandLine width={14} height={14} /></span>
            <span data-slot="name">Bash</span>
            <span data-slot="target" title={props.state.input.command} style={{ "font-family": "monospace", "font-size": "0.75rem" }}>
-             {props.state.input.command.length > 50 
-               ? props.state.input.command.slice(0, 50) + "..." 
+             {props.state.input.command.length > 50
+               ? props.state.input.command.slice(0, 50) + "..."
                : props.state.input.command}
            </span>
         </div>
+        <ToolDuration
+          time={DateTime.fromMillis(props.state.time.end)
+            .diff(DateTime.fromMillis(props.state.time.start))
+            .toMillis()}
+        />
         <Collapsible.Arrow />
       </Collapsible.Trigger>
-      
+
       <Collapsible.Content>
          <ContentBash
           command={props.state.input.command}
           output={props.state.metadata?.output ?? props.state.metadata?.stdout}
           description={props.state.metadata?.description}
         />
-        <ToolFooter
-            time={DateTime.fromMillis(props.state.time.end)
-              .diff(DateTime.fromMillis(props.state.time.start))
-              .toMillis()}
-          />
       </Collapsible.Content>
     </Collapsible>
   );
@@ -1017,18 +1032,24 @@ export function GlobTool(props: ToolProps) {
     <Collapsible open={isExpanded(props.id)} onOpenChange={() => toggleExpanded(props.id)}>
        <Collapsible.Trigger>
           <div data-component="tool-title">
+            <span data-slot="icon" data-icon-color="indigo"><IconMagnifyingGlass width={14} height={14} /></span>
             <span data-slot="name">Glob</span>
             <span data-slot="target">
               &ldquo;{props.state.input.pattern}&rdquo;
             </span>
              <Show when={props.state.status === "completed"}>
               <span data-slot="summary" data-color="dimmed">
-                {count() === 1 
+                {count() === 1
                   ? formatMessage(t().parts.result, { count: count() })
                   : formatMessage(t().parts.results, { count: count() })}
               </span>
             </Show>
           </div>
+          <ToolDuration
+            time={DateTime.fromMillis(props.state.time.end)
+              .diff(DateTime.fromMillis(props.state.time.start))
+              .toMillis()}
+          />
           <Collapsible.Arrow />
        </Collapsible.Trigger>
 
@@ -1040,11 +1061,6 @@ export function GlobTool(props: ToolProps) {
             </div>
           </Match>
         </Switch>
-        <ToolFooter
-            time={DateTime.fromMillis(props.state.time.end)
-              .diff(DateTime.fromMillis(props.state.time.start))
-              .toMillis()}
-          />
        </Collapsible.Content>
     </Collapsible>
   );
@@ -1103,6 +1119,43 @@ function ToolFooter(props: { time: number }) {
     props.time > MIN_DURATION && (
       <Footer title={`${props.time}ms`}>{formatDuration(props.time)}</Footer>
     )
+  );
+}
+
+/** Inline duration badge shown in the trigger row */
+function ToolDuration(props: { time: number }) {
+  return (
+    <Show when={props.time > MIN_DURATION}>
+      <span data-slot="duration" title={`${props.time}ms`}>{formatDuration(props.time)}</span>
+    </Show>
+  );
+}
+
+/** Running tool card with live elapsed timer */
+function RunningToolCard(props: { part: ToolPart }) {
+  const { t } = useI18n();
+  const startTime = () => (props.part.state as any).time?.start ?? Date.now();
+  const isRunning = () =>
+    props.part.state.status === "pending" || props.part.state.status === "running";
+  const elapsed = createElapsedTimer(startTime, isRunning);
+
+  return (
+    <div data-component="tool-running">
+      <div data-component="tool-title" data-running>
+        <span data-slot="icon" data-icon-color="cyan">
+          <ToolIcon tool={props.part.normalizedTool} />
+        </span>
+        <span data-slot="name">{props.part.title || props.part.normalizedTool}</span>
+        <Show when={props.part.state.status === "running" && (props.part.state as any).input}>
+          <span data-slot="target">
+            {(props.part.state as any).input?.description}
+            {(props.part.state as any).input?.filePath}
+            {(props.part.state as any).input?.pattern}
+          </span>
+        </Show>
+        <span data-slot="status">{formatDuration(elapsed())}</span>
+      </div>
+    </div>
   );
 }
 

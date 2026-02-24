@@ -38,5 +38,3 @@ nul
 *.tmp
 __test_snap*.txt
 acp-probe-logs/
-# OpenCode source (submodule/clone)
-/opencode/

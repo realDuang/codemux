@@ -1,6 +1,8 @@
 import { createSignal, For, Show } from "solid-js";
 import { useI18n } from "../lib/i18n";
 import { configStore } from "../stores/config";
+import { systemAPI } from "../lib/electron-api";
+import { isElectron } from "../lib/platform";
 import type { EngineType } from "../types/unified";
 
 interface AddProjectModalProps {
@@ -38,6 +40,13 @@ export function AddProjectModal(props: AddProjectModalProps) {
       }
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleBrowse = async () => {
+    const selected = await systemAPI.selectDirectory();
+    if (selected) {
+      setDirectory(selected);
     }
   };
 
@@ -129,6 +138,15 @@ export function AddProjectModal(props: AddProjectModalProps) {
                     autofocus
                     class="flex-1 px-3 py-2 bg-white dark:bg-zinc-800 border border-gray-300 dark:border-zinc-700 rounded-lg text-gray-900 dark:text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                   />
+                  <Show when={isElectron()}>
+                    <button
+                      type="button"
+                      onClick={handleBrowse}
+                      class="px-3 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-zinc-700 hover:bg-gray-200 dark:hover:bg-zinc-600 border border-gray-300 dark:border-zinc-600 rounded-lg transition-colors whitespace-nowrap"
+                    >
+                      {t().project.browse}
+                    </button>
+                  </Show>
                 </div>
                 <div class="mt-3">
                   <label class="block text-sm font-medium text-zinc-700 dark:text-zinc-300 mb-1">

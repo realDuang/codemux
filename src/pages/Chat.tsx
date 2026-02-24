@@ -57,12 +57,35 @@ function isDefaultTitle(title: string): boolean {
   return DEFAULT_TITLE_PATTERN.test(title);
 }
 
+function toSessionInfo(s: UnifiedSession, projectID?: string): SessionInfo {
+  return {
+    id: s.id,
+    engineType: s.engineType,
+    title: s.title || "",
+    directory: s.directory || "",
+    projectID: projectID ?? (s.engineMeta?.projectID as string) ?? undefined,
+    parentID: s.parentId,
+    createdAt: new Date(s.time.created).toISOString(),
+    updatedAt: new Date(s.time.updated).toISOString(),
+    summary: s.engineMeta?.summary as SessionInfo["summary"] | undefined,
+  };
+}
+
 export default function Chat() {
   const { t } = useI18n();
   const navigate = useNavigate();
-  const [sending, setSending] = createSignal(false);
+  // Per-session sending state: one session generating shouldn't block others
+  const [sendingMap, setSendingMap] = createSignal<Record<string, boolean>>({});
+  const sending = createMemo(() => {
+    const sid = sessionStore.current;
+    return sid ? (sendingMap()[sid] ?? false) : false;
+  });
+  const setSendingFor = (sessionId: string, value: boolean) => {
+    setSendingMap((prev) => ({ ...prev, [sessionId]: value }));
+  };
   const [messagesRef, setMessagesRef] = createSignal<HTMLDivElement>();
   const [loadingMessages, setLoadingMessages] = createSignal(false);
+  const [userScrolledUp, setUserScrolledUp] = createSignal(false);
 
   const getDisplayTitle = (title: string): string => {
     if (!title || isDefaultTitle(title)) {
@@ -79,6 +102,14 @@ export default function Chat() {
   // Agent mode state - default to "build" matching OpenCode's default
   const [currentAgent, setCurrentAgent] = createSignal<AgentMode>({ id: "build", label: "Build" });
 
+  // Derive the engine type of the currently selected session
+  const currentEngineType = createMemo(() => {
+    const sid = sessionStore.current;
+    if (!sid) return configStore.currentEngineType || "opencode";
+    const session = sessionStore.list.find(s => s.id === sid);
+    return session?.engineType || configStore.currentEngineType || "opencode";
+  });
+
   // Mobile Sidebar State
   const [isSidebarOpen, setIsSidebarOpen] = createSignal(false);
   const [isMobile, setIsMobile] = createSignal(window.innerWidth < 768);
@@ -90,6 +121,9 @@ export default function Chat() {
   } | null>(null);
 
   const [showAddProjectModal, setShowAddProjectModal] = createSignal(false);
+
+  // WebSocket connection status
+  const [wsConnected, setWsConnected] = createSignal(true);
 
   // Track if this is a local access (Electron or localhost web)
   const [isLocalAccess, setIsLocalAccess] = createSignal(isElectron());
@@ -104,11 +138,24 @@ export default function Chat() {
     navigate("/", { replace: true });
   };
 
-  const scrollToBottom = () => {
+  const scrollToBottom = (force?: boolean) => {
     const el = messagesRef();
     if (el) {
-      el.scrollTop = el.scrollHeight;
+      if (force || !userScrolledUp()) {
+        el.scrollTop = el.scrollHeight;
+      }
     }
+  };
+
+  const isNearBottom = () => {
+    const el = messagesRef();
+    if (!el) return true;
+    const threshold = 80;
+    return el.scrollHeight - el.scrollTop - el.clientHeight < threshold;
+  };
+
+  const handleScroll = () => {
+    setUserScrolledUp(!isNearBottom());
   };
 
   const toggleSidebar = () => setIsSidebarOpen((prev) => !prev);
@@ -151,7 +198,7 @@ export default function Chat() {
       logger.error("[LoadMessages] Failed to load messages:", error);
     } finally {
       setLoadingMessages(false);
-      setTimeout(scrollToBottom, 100);
+      setTimeout(() => scrollToBottom(true), 100);
     }
   };
 
@@ -179,6 +226,7 @@ export default function Chat() {
       await gateway.init({
         onConnected: () => {
           logger.debug("[Gateway] Connected/reconnected");
+          setWsConnected(true);
           // If we were in error state, re-initialize on reconnect
           if (sessionStore.initError) {
             initializeSession();
@@ -186,6 +234,7 @@ export default function Chat() {
         },
         onDisconnected: (reason) => {
           logger.warn("[Gateway] Disconnected:", reason);
+          setWsConnected(false);
         },
         onPartUpdated: handlePartUpdated,
         onMessageUpdated: handleMessageUpdated,
@@ -214,6 +263,35 @@ export default function Chat() {
       const projects = await gateway.listProjects("opencode");
       logger.debug("[Init] Loaded projects:", projects);
 
+      // Load projects from other running engines
+      const runningEngines = configStore.engines.filter(e => e.status === "running" && e.type !== "opencode");
+      for (const engine of runningEngines) {
+        try {
+          const engineProjects = await gateway.listProjects(engine.type);
+          projects.push(...engineProjects);
+        } catch (err) {
+          logger.warn(`[Init] Failed to load projects for engine ${engine.type}:`, err);
+        }
+      }
+
+      // Restore locally-saved projects for ACP engines that don't support listProjects
+      const localProjects = ProjectStore.getAll();
+      for (const lp of localProjects) {
+        if (!projects.find(p => p.id === lp.id)) {
+          // Check if this looks like an ACP engine project (id format: engineType-directory)
+          const matchingEngine = runningEngines.find(e => lp.id.startsWith(`${e.type}-`));
+          if (matchingEngine) {
+            const dirName = lp.path.split(/[/\\]/).filter(Boolean).pop() || lp.path;
+            projects.push({
+              id: lp.id,
+              directory: lp.path,
+              name: dirName,
+              engineType: matchingEngine.type,
+            });
+          }
+        }
+      }
+
       // Auto-hide global and invalid projects
       for (const p of projects) {
         if (!p.directory || p.directory === "/") {
@@ -230,24 +308,33 @@ export default function Chat() {
         return !isHidden;
       });
 
-      // Load all sessions for this engine
+      // Load all sessions from all running engines
       const sessions = await gateway.listSessions("opencode");
+      for (const engine of runningEngines) {
+        try {
+          const engineSessions = await gateway.listSessions(engine.type);
+          sessions.push(...engineSessions);
+        } catch (err) {
+          logger.warn(`[Init] Failed to load sessions for engine ${engine.type}:`, err);
+        }
+      }
       logger.debug("[Init] Loaded sessions:", sessions);
 
       // Filter sessions to valid project directories
       const validDirectories = new Set(validProjects.map((p: UnifiedProject) => p.directory));
       const filteredSessions = sessions.filter((s: UnifiedSession) => validDirectories.has(s.directory));
 
-      const processedSessions: SessionInfo[] = filteredSessions.map((s: UnifiedSession) => ({
-        id: s.id,
-        title: s.title || "",
-        directory: s.directory || "",
-        projectID: (s.engineMeta?.projectID as string) || undefined,
-        parentID: s.parentId,
-        createdAt: new Date(s.time.created).toISOString(),
-        updatedAt: new Date(s.time.updated).toISOString(),
-        summary: s.engineMeta?.summary as SessionInfo["summary"] | undefined,
-      }));
+      const processedSessions: SessionInfo[] = filteredSessions.map((s: UnifiedSession) => {
+        // For ACP sessions without projectID, resolve via directory matching
+        let projectID = (s.engineMeta?.projectID as string) || undefined;
+        if (!projectID) {
+          const matchingProject = validProjects.find(p => p.directory === s.directory);
+          if (matchingProject) {
+            projectID = matchingProject.id;
+          }
+        }
+        return toSessionInfo(s, projectID);
+      });
 
       processedSessions.sort((a: SessionInfo, b: SessionInfo) =>
         new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
@@ -256,18 +343,11 @@ export default function Chat() {
       let currentSession = processedSessions[0];
       if (!currentSession) {
         logger.debug("[Init] No sessions found, creating new one");
-        const defaultDir = validProjects[0]?.directory || ".";
-        const newSession = await gateway.createSession("opencode", defaultDir);
-        currentSession = {
-          id: newSession.id,
-          title: newSession.title || "",
-          directory: newSession.directory || "",
-          projectID: (newSession.engineMeta?.projectID as string) || undefined,
-          parentID: newSession.parentId,
-          createdAt: new Date(newSession.time.created).toISOString(),
-          updatedAt: new Date(newSession.time.updated).toISOString(),
-          summary: newSession.engineMeta?.summary as SessionInfo["summary"] | undefined,
-        };
+        const defaultProject = validProjects[0];
+        const defaultDir = defaultProject?.directory || ".";
+        const defaultEngine = defaultProject?.engineType || configStore.currentEngineType || "opencode";
+        const newSession = await gateway.createSession(defaultEngine, defaultDir);
+        currentSession = toSessionInfo(newSession);
         processedSessions.push(currentSession);
       }
 
@@ -292,6 +372,19 @@ export default function Chat() {
     setSessionStore("current", sessionId);
     setSessionStore("initError", null);
 
+    // Update currentEngineType for model selector
+    const session = sessionStore.list.find(s => s.id === sessionId);
+    if (session?.engineType) {
+      setConfigStore("currentEngineType", session.engineType);
+    }
+
+    // Auto-select first available mode for the engine
+    const engineInfo = configStore.engines.find(e => e.type === (session?.engineType || configStore.currentEngineType));
+    const availableModes = engineInfo?.capabilities?.availableModes;
+    if (availableModes && availableModes.length > 0) {
+      setCurrentAgent(availableModes[0]);
+    }
+
     if (isMobile()) {
       setIsSidebarOpen(false);
     }
@@ -299,7 +392,7 @@ export default function Chat() {
     if (!messageStore.message[sessionId]) {
       await loadSessionMessages(sessionId);
     } else {
-      setTimeout(scrollToBottom, 100);
+      setTimeout(() => scrollToBottom(true), 100);
     }
   };
 
@@ -309,29 +402,41 @@ export default function Chat() {
 
     try {
       const dir = directory || sessionStore.projects[0]?.directory || ".";
-      const newSession = await gateway.createSession("opencode", dir);
+      // Determine the engine type from the project binding for this directory
+      const project = sessionStore.projects.find(p => p.directory === dir);
+      const engineType = project?.engineType || configStore.currentEngineType || "opencode";
+      const newSession = await gateway.createSession(engineType, dir);
       logger.debug("[NewSession] Created:", newSession);
 
-      const processedSession: SessionInfo = {
-        id: newSession.id,
-        title: newSession.title || "",
-        directory: newSession.directory || "",
-        projectID: (newSession.engineMeta?.projectID as string) || undefined,
-        parentID: newSession.parentId,
-        createdAt: new Date(newSession.time.created).toISOString(),
-        updatedAt: new Date(newSession.time.updated).toISOString(),
-        summary: newSession.engineMeta?.summary as SessionInfo["summary"] | undefined,
-      };
+      // Match projectID by directory (ACP engines don't return engineMeta.projectID)
+      const projectID = project?.id || undefined;
+      const processedSession = toSessionInfo(newSession, projectID);
 
       setSessionStore("list", (list) => [processedSession, ...list]);
       setSessionStore("current", processedSession.id);
       setSessionStore("initError", null);
+      setConfigStore("currentEngineType", engineType as import("../types/unified").EngineType);
       if (isMobile()) {
         setIsSidebarOpen(false);
       }
 
       setMessageStore("message", processedSession.id, []);
-      setTimeout(scrollToBottom, 100);
+      setTimeout(() => scrollToBottom(true), 100);
+
+      // Refresh engine capabilities (ACP engines populate modes/models only after createSession)
+      try {
+        const engines = await gateway.listEngines();
+        setConfigStore("engines", engines);
+
+        // Auto-select first available mode for the new engine
+        const engineInfo = engines.find(e => e.type === engineType);
+        const availableModes = engineInfo?.capabilities?.availableModes;
+        if (availableModes && availableModes.length > 0) {
+          setCurrentAgent(availableModes[0]);
+        }
+      } catch {
+        // Non-critical: mode list may be stale but won't block
+      }
     } catch (error) {
       logger.error("[NewSession] Failed to create session:", error);
     }
@@ -365,7 +470,8 @@ export default function Chat() {
   const handleRenameSession = async (sessionId: string, newTitle: string) => {
     logger.debug("[RenameSession] Renaming session:", sessionId, newTitle);
     try {
-      // TODO: Add session.update to gateway protocol
+      // Local-only rename: OpenCode CLI does not expose a session update/rename API.
+      // Title is auto-generated by the backend after the first assistant reply.
       setSessionStore("list", (list) =>
         list.map((s) => (s.id === sessionId ? { ...s, title: newTitle } : s))
       );
@@ -428,27 +534,31 @@ export default function Chat() {
 
       // Refresh projects list
       const projects = await gateway.listProjects(engineType);
-      const project = projects.find((p: UnifiedProject) => p.directory === directory);
+      let project = projects.find((p: UnifiedProject) => p.directory === directory);
+
+      // For ACP-based engines (e.g. copilot) that don't support listing projects,
+      // construct a project entry from the session info
+      if (!project && newSession) {
+        const projectID = (newSession.engineMeta?.projectID as string) || `${engineType}-${directory}`;
+        const dirName = directory.split(/[/\\]/).filter(Boolean).pop() || directory;
+        project = {
+          id: projectID,
+          directory,
+          name: dirName,
+          engineType,
+        };
+      }
 
       if (project) {
         ProjectStore.add(project.id, directory);
 
-        const existingProject = sessionStore.projects.find(p => p.id === project.id);
+        const existingProject = sessionStore.projects.find(p => p.id === project!.id);
         if (!existingProject) {
-          setSessionStore("projects", (ps) => [...ps, project]);
+          setSessionStore("projects", (ps) => [...ps, project!]);
         }
       }
 
-      const processedSession: SessionInfo = {
-        id: newSession.id,
-        title: newSession.title || "",
-        directory: newSession.directory || "",
-        projectID: (newSession.engineMeta?.projectID as string) || undefined,
-        parentID: newSession.parentId,
-        createdAt: new Date(newSession.time.created).toISOString(),
-        updatedAt: new Date(newSession.time.updated).toISOString(),
-        summary: newSession.engineMeta?.summary as SessionInfo["summary"] | undefined,
-      };
+      const processedSession = toSessionInfo(newSession, (newSession.engineMeta?.projectID as string) || project?.id || undefined);
 
       const existingSession = sessionStore.list.find(s => s.id === newSession.id);
       if (!existingSession) {
@@ -483,6 +593,36 @@ export default function Chat() {
 
   const handlePartUpdated = (_sessionId: string, part: UnifiedPart) => {
     const messageId = part.messageId;
+    const sessionId = part.sessionId;
+
+    // If this part's message doesn't exist yet in the message store,
+    // create a placeholder assistant message so parts can render during streaming.
+    // This is critical for ACP engines (Copilot) where sendMessage blocks until
+    // session/prompt completes, but parts arrive via notifications in the meantime.
+    if (sessionId && messageId) {
+      const messages = messageStore.message[sessionId] || [];
+      const msgExists = messages.some(m => m.id === messageId);
+      if (!msgExists) {
+        const placeholder: UnifiedMessage = {
+          id: messageId,
+          sessionId,
+          role: "assistant",
+          time: { created: Date.now() },
+          parts: [],
+        };
+        const idx = binarySearch(messages, messageId, (m) => m.id);
+        if (!messageStore.message[sessionId]) {
+          setMessageStore("message", sessionId, [placeholder]);
+        } else {
+          setMessageStore("message", sessionId, (draft) => {
+            const newMessages = [...draft];
+            newMessages.splice(idx.index, 0, placeholder);
+            return newMessages;
+          });
+        }
+      }
+    }
+
     const parts = messageStore.part[messageId] || [];
     const index = binarySearch(parts, part.id, (p) => p.id);
 
@@ -514,6 +654,31 @@ export default function Chat() {
         tempMessages.forEach(tempMsg => {
           setMessageStore("part", tempMsg.id, undefined as any);
         });
+      }
+    }
+
+    // Store parts from the incoming message (critical for ACP engines
+    // which emit full messages with parts via message.updated).
+    // If we already have parts from streaming part.updated events,
+    // prefer those since they may have more up-to-date state.
+    if (msgInfo.parts && msgInfo.parts.length > 0) {
+      const existingParts = messageStore.part[msgInfo.id];
+      if (!existingParts || existingParts.length === 0) {
+        const sortedParts = msgInfo.parts.slice().sort((a, b) =>
+          a.id.localeCompare(b.id)
+        );
+        setMessageStore("part", msgInfo.id, sortedParts);
+      } else {
+        // Merge: use existing streaming parts as base, add any new parts
+        // from the final message that weren't received via streaming
+        const existingIds = new Set(existingParts.map(p => p.id));
+        const newParts = msgInfo.parts.filter(p => !existingIds.has(p.id));
+        if (newParts.length > 0) {
+          const merged = [...existingParts, ...newParts].sort((a, b) =>
+            a.id.localeCompare(b.id)
+          );
+          setMessageStore("part", msgInfo.id, merged);
+        }
       }
     }
 
@@ -574,7 +739,7 @@ export default function Chat() {
     const sessionId = sessionStore.current;
     if (!sessionId || sending()) return;
 
-    setSending(true);
+    setSendingFor(sessionId, true);
 
     const tempMessageId = `msg-temp-${Date.now()}`;
     const tempPartId = `part-temp-${Date.now()}`;
@@ -609,19 +774,36 @@ export default function Chat() {
     }
 
     setMessageStore("part", tempMessageId, [tempPart]);
-    setTimeout(scrollToBottom, 0);
+    setUserScrolledUp(false);
+    setTimeout(() => scrollToBottom(true), 0);
 
     try {
       const model = currentSessionModel();
       await gateway.sendMessage(sessionId, text, {
         mode: agent.id,
-        modelId: model?.modelID,
+        modelId: model?.modelID || undefined,
       });
     } catch (error) {
       logger.error("[SendMessage] Failed to send message:", error);
+      // Remove the optimistic temp message on failure
+      setMessageStore("message", sessionId, (draft) =>
+        draft.filter((m) => m.id !== tempMessageId),
+      );
+      setMessageStore("part", tempMessageId, undefined as any);
     } finally {
-      setSending(false);
+      setSendingFor(sessionId, false);
     }
+  };
+
+  const handleCancelMessage = async () => {
+    const sessionId = sessionStore.current;
+    if (!sessionId) return;
+    try {
+      await gateway.cancelMessage(sessionId);
+    } catch (error) {
+      logger.error("[CancelMessage] Failed:", error);
+    }
+    setSendingFor(sessionId, false);
   };
 
   createEffect(() => {
@@ -720,6 +902,12 @@ export default function Chat() {
               {currentAgent().label}
             </span>
           </div>
+          <Show when={!wsConnected()}>
+            <div class="flex items-center gap-1.5 px-2 py-1 rounded-full bg-red-50 dark:bg-red-900/20 electron-no-drag">
+              <span class="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
+              <span class="text-[11px] font-medium text-red-600 dark:text-red-400">Disconnected</span>
+            </div>
+          </Show>
         </header>
 
         {/* Message List */}
@@ -769,7 +957,7 @@ export default function Chat() {
                 </div>
               }
             >
-              <div ref={setMessagesRef} class="flex-1 overflow-y-auto px-4 md:px-6 scroll-smooth">
+              <div ref={setMessagesRef} onScroll={handleScroll} class="flex-1 overflow-y-auto px-4 md:px-6 scroll-smooth">
                 <div class="max-w-3xl mx-auto w-full py-6">
                   <Show
                     when={sessionStore.current && messageStore.message[sessionStore.current]?.length > 0}
@@ -797,11 +985,14 @@ export default function Chat() {
                 <div class="max-w-3xl mx-auto w-full">
                   <PromptInput
                     onSend={handleSendMessage}
-                    disabled={sending()}
+                    onCancel={handleCancelMessage}
+                    isGenerating={sending()}
                     currentAgent={currentAgent()}
                     onAgentChange={setCurrentAgent}
                     onModelChange={handleModelChange}
-                    availableModes={configStore.engines.find(e => e.type === (configStore.currentEngineType ?? "opencode"))?.capabilities?.availableModes}
+                    engineType={currentEngineType()}
+                    availableModes={configStore.engines.find(e => e.type === currentEngineType())?.capabilities?.availableModes}
+                    disabled={!sessionStore.current}
                   />
                   <div class="mt-2 text-center">
                     <p class="text-[10px] text-gray-400 dark:text-gray-600">

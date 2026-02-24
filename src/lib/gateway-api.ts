@@ -44,6 +44,7 @@ export interface GatewayNotificationHandlers {
 class GatewayAPI {
   private handlers: GatewayNotificationHandlers = {};
   private initialized = false;
+  private boundHandlers: Array<{ event: string; handler: (...args: any[]) => void }> = [];
 
   /**
    * Initialize the gateway connection and subscribe to notifications.
@@ -78,6 +79,7 @@ class GatewayAPI {
    * Disconnect and cleanup.
    */
   destroy(): void {
+    this.unbindEvents();
     gatewayClient.disconnect();
     this.initialized = false;
   }
@@ -88,40 +90,55 @@ class GatewayAPI {
 
   // --- Event binding ---
 
+  private bind<K extends keyof import("./gateway-client").GatewayClientEvents>(
+    event: K,
+    handler: import("./gateway-client").GatewayClientEvents[K],
+  ): void {
+    gatewayClient.on(event, handler);
+    this.boundHandlers.push({ event, handler: handler as (...args: any[]) => void });
+  }
+
+  private unbindEvents(): void {
+    for (const { event, handler } of this.boundHandlers) {
+      gatewayClient.off(event as any, handler as any);
+    }
+    this.boundHandlers = [];
+  }
+
   private bindEvents(): void {
-    gatewayClient.on("connected", () => {
+    this.bind("connected", () => {
       this.handlers.onConnected?.();
     });
 
-    gatewayClient.on("disconnected", (reason) => {
+    this.bind("disconnected", (reason) => {
       this.handlers.onDisconnected?.(reason);
     });
 
-    gatewayClient.on("message.part.updated", (data) => {
+    this.bind("message.part.updated", (data) => {
       this.handlers.onPartUpdated?.(data.sessionId, data.part);
     });
 
-    gatewayClient.on("message.updated", (data) => {
+    this.bind("message.updated", (data) => {
       this.handlers.onMessageUpdated?.(data.sessionId, data.message);
     });
 
-    gatewayClient.on("session.updated", (data) => {
+    this.bind("session.updated", (data) => {
       this.handlers.onSessionUpdated?.(data.session);
     });
 
-    gatewayClient.on("session.created", (data) => {
+    this.bind("session.created", (data) => {
       this.handlers.onSessionCreated?.(data.session);
     });
 
-    gatewayClient.on("permission.asked", (data) => {
+    this.bind("permission.asked", (data) => {
       this.handlers.onPermissionAsked?.(data.permission);
     });
 
-    gatewayClient.on("permission.replied", (data) => {
+    this.bind("permission.replied", (data) => {
       this.handlers.onPermissionReplied?.(data.permissionId, data.optionId);
     });
 
-    gatewayClient.on("engine.status.changed", (data) => {
+    this.bind("engine.status.changed", (data) => {
       this.handlers.onEngineStatusChanged?.(data.engineType, data.status, data.error);
     });
   }

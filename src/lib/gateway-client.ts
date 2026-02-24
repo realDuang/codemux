@@ -200,6 +200,8 @@ export class GatewayClient {
       return;
     }
 
+    if (!msg || typeof msg !== "object") return;
+
     if (msg.type === "response") {
       // Response to a request
       const resp = msg as GatewayResponse;
@@ -238,7 +240,18 @@ export class GatewayClient {
       this.pending.set(requestId, { resolve, reject, timer });
 
       const msg: GatewayRequest = { type, requestId, payload };
-      this.ws.send(JSON.stringify(msg));
+      try {
+        if (this.ws!.readyState !== WebSocket.OPEN) {
+          clearTimeout(timer);
+          this.pending.delete(requestId);
+          return reject(new Error("WebSocket is not open"));
+        }
+        this.ws!.send(JSON.stringify(msg));
+      } catch (err) {
+        clearTimeout(timer);
+        this.pending.delete(requestId);
+        reject(err instanceof Error ? err : new Error(String(err)));
+      }
     });
   }
 

@@ -54,16 +54,16 @@
 
   /* OpenCode share component colors - Dark mode */
   --sl-color-white: #ffffff;
-  --sl-color-text: #f3f4f6;
-  --sl-color-text-secondary: #9ca3af;
-  --sl-color-text-dimmed: #6b7280;
-  --sl-color-text-invert: #1f2937;
-  --sl-color-divider: #374151;
-  --sl-color-border: #374151;
-  --sl-color-hairline: #1f2937;
-  --sl-color-bg-surface: #1f2937;
-  --sl-color-bg-alt: #111827;
-  --sl-color-bg-hover: #374151;
+  --sl-color-text: #f1f5f9;
+  --sl-color-text-secondary: #94a3b8;
+  --sl-color-text-dimmed: #64748b;
+  --sl-color-text-invert: #0f172a;
+  --sl-color-divider: rgba(71, 85, 105, 0.35);
+  --sl-color-border: rgba(71, 85, 105, 0.35);
+  --sl-color-hairline: #1e293b;
+  --sl-color-bg-surface: #0f172a;
+  --sl-color-bg-alt: #0c1220;
+  --sl-color-bg-hover: rgba(51, 65, 85, 0.4);
   
   /* Semantic colors - Dark mode */
   --sl-color-red: #f87171;

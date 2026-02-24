@@ -1,8 +1,9 @@
 import { createStore } from "solid-js/store";
-import type { UnifiedProject } from "../types/unified";
+import type { EngineType, UnifiedProject } from "../types/unified";
 
 export interface SessionInfo {
   id: string;
+  engineType: EngineType;
   title: string;
   directory: string;
   projectID?: string;

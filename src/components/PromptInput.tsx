@@ -1,4 +1,4 @@
-import { createSignal, createEffect, createMemo, For } from "solid-js";
+import { createSignal, createEffect, createMemo, For, Show } from "solid-js";
 import { IconArrowUp } from "./icons";
 import { useI18n } from "../lib/i18n";
 import { ModelSelector } from "./ModelSelector";
@@ -43,9 +43,9 @@ function getModeAccentRing(mode: AgentMode, index: number): {
   const label = getModeDisplayName(mode).toLowerCase();
   if (label === "plan")
     return {
-      bg: "bg-violet-50 dark:bg-violet-950/20",
-      ring: "focus-within:ring-violet-500",
-      border: "border-violet-200 dark:border-violet-800",
+      bg: "bg-violet-50/60 dark:bg-violet-950/30 backdrop-blur-xl",
+      ring: "focus-within:ring-violet-500/40",
+      border: "border-violet-200/40 dark:border-violet-800/40",
       bgHover: "bg-violet-600 hover:bg-violet-700",
     };
   if (label === "autopilot")
@@ -57,10 +57,10 @@ function getModeAccentRing(mode: AgentMode, index: number): {
     };
   // Default (build / agent / first mode / unknown)
   return {
-    bg: "bg-white dark:bg-zinc-800",
-    ring: "focus-within:ring-blue-500",
-    border: "border-gray-200 dark:border-zinc-700",
-    bgHover: "bg-blue-600 hover:bg-blue-700",
+    bg: "bg-white/60 dark:bg-slate-900/60 backdrop-blur-xl",
+    ring: "focus-within:ring-indigo-500/40",
+    border: "border-slate-200/40 dark:border-slate-700/40",
+    bgHover: "bg-indigo-600 hover:bg-indigo-700",
   };
 }
 
@@ -104,11 +104,16 @@ function getModeIcon(mode: AgentMode, index: number) {
 
 interface PromptInputProps {
   onSend: (text: string, agent: AgentMode) => void;
-  disabled?: boolean;
+  onCancel?: () => void;
+  /** When true, the session is generating — show stop button and prevent duplicate sends, but keep textarea editable */
+  isGenerating?: boolean;
   currentAgent?: AgentMode;
   onAgentChange?: (agent: AgentMode) => void;
   onModelChange?: (providerID: string, modelID: string) => void;
   availableModes?: AgentMode[];
+  engineType?: import("../types/unified").EngineType;
+  /** When true, the input is disabled (e.g., no session or modes not loaded yet) */
+  disabled?: boolean;
 }
 
 export function PromptInput(props: PromptInputProps) {
@@ -116,7 +121,11 @@ export function PromptInput(props: PromptInputProps) {
   const [text, setText] = createSignal("");
   const [textarea, setTextarea] = createSignal<HTMLTextAreaElement>();
 
-  const modes = createMemo(() => props.availableModes ?? defaultModes);
+  const modes = createMemo(() =>
+    props.availableModes && props.availableModes.length > 0
+      ? props.availableModes
+      : defaultModes
+  );
 
   // Default to first available mode
   const [agent, setAgent] = createSignal<AgentMode>(
@@ -151,11 +160,9 @@ export function PromptInput(props: PromptInputProps) {
   };
 
   const handleKeyDown = (e: KeyboardEvent) => {
-    if (props.disabled) return;
-
     if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
       e.preventDefault();
-      if (text().trim()) {
+      if (text().trim() && !props.isGenerating && !props.disabled) {
         props.onSend(text(), agent());
         setText("");
       }
@@ -163,7 +170,7 @@ export function PromptInput(props: PromptInputProps) {
   };
 
   const handleSend = () => {
-    if (props.disabled) return;
+    if (props.isGenerating || props.disabled) return;
 
     if (text().trim()) {
       props.onSend(text(), agent());
@@ -201,10 +208,10 @@ export function PromptInput(props: PromptInputProps) {
               return (
                 <button
                   onClick={() => handleAgentChange(mode)}
-                  class={`px-3 py-1.5 text-xs font-medium rounded-md transition-all flex items-center gap-1.5 ${
+                  class={`px-3 py-1.5 text-xs font-medium rounded-lg transition-all flex items-center gap-1.5 ${
                     isActive()
-                      ? `${color} text-white shadow-xs`
-                      : "bg-gray-100 dark:bg-zinc-800 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-zinc-700"
+                      ? `${color} text-white shadow-md shadow-indigo-500/20`
+                      : "bg-slate-100/60 dark:bg-slate-800/60 text-slate-500 dark:text-slate-400 hover:bg-slate-200/80 dark:hover:bg-slate-700/60 backdrop-blur-sm"
                   }`}
                   title={mode.description ?? displayName}
                 >
@@ -222,37 +229,54 @@ export function PromptInput(props: PromptInputProps) {
         </div>
 
         {/* Model selector - right side */}
-        <ModelSelector onModelChange={props.onModelChange} />
+        <ModelSelector engineType={props.engineType} onModelChange={props.onModelChange} />
       </div>
 
       {/* Input area */}
       <div
-        class={`relative rounded-xl border shadow-xs focus-within:ring-2 focus-within:border-transparent transition-all ${activeAccent().bg} ${activeAccent().border} ${activeAccent().ring}`}
+        class={`relative rounded-2xl border shadow-lg shadow-black/[0.03] dark:shadow-black/20 focus-within:ring-2 focus-within:border-transparent transition-all ${activeAccent().bg} ${activeAccent().border} ${activeAccent().ring}`}
       >
         <textarea
           ref={setTextarea}
           value={text()}
-          disabled={props.disabled}
           onInput={(e) => {
             setText(e.currentTarget.value);
             adjustHeight();
           }}
           onKeyDown={handleKeyDown}
+          disabled={props.disabled}
           placeholder={
-            isReadOnly() ? t().prompt.planPlaceholder : t().prompt.placeholder
+            props.disabled
+              ? "Select a mode to start..."
+              : isReadOnly() ? t().prompt.planPlaceholder : t().prompt.placeholder
           }
           rows={1}
-          class="w-full px-4 py-3 pr-12 bg-transparent resize-none focus:outline-none dark:text-white max-h-[200px] overflow-y-auto disabled:opacity-50 disabled:cursor-not-allowed"
+          class={`w-full px-4 py-3 pr-12 bg-transparent resize-none focus:outline-none dark:text-white max-h-[200px] overflow-y-auto placeholder:text-slate-400 dark:placeholder:text-slate-500 ${props.disabled ? "cursor-not-allowed opacity-50" : ""}`}
           style={{ "min-height": "52px" }}
         />
-        <button
-          onClick={handleSend}
-          disabled={!text().trim() || props.disabled}
-          class={`absolute right-2 bottom-2 p-2 rounded-lg text-white transition-colors disabled:bg-gray-200 dark:disabled:bg-zinc-700 disabled:text-gray-400 dark:disabled:text-zinc-500 ${activeAccent().bgHover}`}
-          aria-label={t().prompt.send}
+        <Show
+          when={props.isGenerating}
+          fallback={
+            <button
+              onClick={handleSend}
+              disabled={!text().trim() || props.disabled}
+              class={`absolute right-2.5 bottom-2.5 p-2 rounded-xl text-white transition-all disabled:bg-slate-200 dark:disabled:bg-slate-700 disabled:text-slate-400 dark:disabled:text-slate-500 shadow-md disabled:shadow-none ${activeAccent().bgHover}`}
+              aria-label={t().prompt.send}
+            >
+              <IconArrowUp width={20} height={20} />
+            </button>
+          }
         >
-          <IconArrowUp width={20} height={20} />
-        </button>
+          <button
+            onClick={() => props.onCancel?.()}
+            class="absolute right-2.5 bottom-2.5 p-2 rounded-xl bg-red-500 hover:bg-red-600 text-white transition-all shadow-md"
+            aria-label="Stop"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+              <rect x="6" y="6" width="12" height="12" rx="2" />
+            </svg>
+          </button>
+        </Show>
       </div>
     </div>
   );

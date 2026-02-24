@@ -1,12 +1,15 @@
 import {
   createMemo,
+  createSignal,
   For,
   Index,
   Show,
   Suspense,
+  onCleanup,
 } from "solid-js";
 import { messageStore, isExpanded, toggleExpanded } from "../stores/message";
 import { Part, ProviderIcon } from "./share/part";
+import { IconSparkles } from "./icons";
 import { useI18n } from "../lib/i18n";
 import type { UnifiedMessage, UnifiedPart, UnifiedPermission } from "../types/unified";
 import { Spinner } from "./Spinner";
@@ -158,12 +161,24 @@ export function SessionTurn(props: SessionTurnProps) {
     return t().steps.consideringNextSteps;
   });
 
-  // Compute duration
+  // Compute duration — live-ticking while working, static when done
+  const [tick, setTick] = createSignal(Date.now());
+  const tickTimer = setInterval(() => {
+    if (props.isWorking) setTick(Date.now());
+  }, 1000);
+  onCleanup(() => clearInterval(tickTimer));
+
   const duration = createMemo(() => {
     const startTime = props.userMessage.time.created;
     const lastAssistant = props.assistantMessages.at(-1);
     const endTime = lastAssistant?.time?.completed;
-    return formatDuration(startTime, endTime);
+    if (endTime) return formatDuration(startTime, endTime);
+    // While working, use live tick
+    if (props.isWorking) {
+      const _ = tick(); // subscribe to tick signal
+      return formatDuration(startTime, Date.now());
+    }
+    return formatDuration(startTime);
   });
 
   // Get model info from the first assistant message
@@ -381,7 +396,10 @@ export function SessionTurn(props: SessionTurnProps) {
           <Show when={!props.isWorking && lastTextPart()}>
             <div class={styles.response}>
               <div class={styles.responseHeader}>
-                <h3 class={styles.responseTitle}>{t().steps.response}</h3>
+                <h3 class={styles.responseTitle}>
+                  <span class={styles.responseIcon}><IconSparkles width={14} height={14} /></span>
+                  {t().steps.response}
+                </h3>
               </div>
               <div class={styles.responseContent}>
                 <Part

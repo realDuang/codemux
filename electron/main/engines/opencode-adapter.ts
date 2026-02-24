@@ -146,6 +146,7 @@ export class OpenCodeAdapter extends EngineAdapter {
     resolve: (msg: UnifiedMessage) => void;
     messageId: string | null;
     assistantParts: UnifiedPart[];
+    timeoutTimer: ReturnType<typeof setTimeout> | null;
   }>();
 
   constructor(options?: { port?: number; binaryPath?: string }) {
@@ -343,6 +344,7 @@ export class OpenCodeAdapter extends EngineAdapter {
   // --- SSE event handlers ---
 
   private handlePartUpdated(ocPart: OcPart): void {
+    if (!ocPart) return;
     const part = this.convertPart(ocPart);
     this.emit("message.part.updated", {
       sessionId: ocPart.sessionID,
@@ -396,6 +398,7 @@ export class OpenCodeAdapter extends EngineAdapter {
       if (pending && (pending.messageId === null || pending.messageId === ocMsg.id)) {
         if (ocMsg.time?.completed || ocMsg.error) {
           // Use the full message from the event (it has all parts)
+          if (pending.timeoutTimer) clearTimeout(pending.timeoutTimer);
           this.pendingMessages.delete(ocMsg.sessionID);
           pending.resolve(message);
         } else {
@@ -410,6 +413,7 @@ export class OpenCodeAdapter extends EngineAdapter {
     const pending = this.pendingMessages.get(sessionId);
     if (!pending) return;
 
+    if (pending.timeoutTimer) clearTimeout(pending.timeoutTimer);
     this.pendingMessages.delete(sessionId);
     pending.resolve({
       id: pending.messageId ?? "",
@@ -496,7 +500,7 @@ export class OpenCodeAdapter extends EngineAdapter {
         created: oc.time?.created ?? Date.now(),
         completed: oc.time?.completed,
       },
-      parts: (oc.parts ?? []).map((p) => this.convertPart(p)),
+      parts: (oc.parts ?? []).filter(Boolean).map((p) => this.convertPart(p)),
       tokens: oc.tokens,
       cost: oc.cost,
       modelId: oc.modelID,
@@ -624,12 +628,38 @@ export class OpenCodeAdapter extends EngineAdapter {
       this.status = "stopped";
       this.child = null;
       this.disconnectSSE();
+      // Resolve any pending messages with error
+      for (const [sessionId, pending] of this.pendingMessages) {
+        if (pending.timeoutTimer) clearTimeout(pending.timeoutTimer);
+        pending.resolve({
+          id: pending.messageId ?? "",
+          sessionId,
+          role: "assistant",
+          time: { created: Date.now() },
+          parts: pending.assistantParts,
+          error: `Process exited with code ${code}`,
+        });
+      }
+      this.pendingMessages.clear();
       this.emit("status.changed", { engineType: this.engineType, status: "stopped" });
     });
 
     this.child.on("error", (err) => {
       this.status = "error";
       this.child = null;
+      // Resolve any pending messages with error
+      for (const [sessionId, pending] of this.pendingMessages) {
+        if (pending.timeoutTimer) clearTimeout(pending.timeoutTimer);
+        pending.resolve({
+          id: pending.messageId ?? "",
+          sessionId,
+          role: "assistant",
+          time: { created: Date.now() },
+          parts: pending.assistantParts,
+          error: `Process error: ${err.message}`,
+        });
+      }
+      this.pendingMessages.clear();
       this.emit("status.changed", {
         engineType: this.engineType,
         status: "error",
@@ -706,6 +736,7 @@ export class OpenCodeAdapter extends EngineAdapter {
 
     // Reject any pending messages
     for (const [sessionId, pending] of this.pendingMessages) {
+      if (pending.timeoutTimer) clearTimeout(pending.timeoutTimer);
       pending.resolve({
         id: pending.messageId ?? "",
         sessionId,
@@ -850,10 +881,11 @@ export class OpenCodeAdapter extends EngineAdapter {
 
     // Create a promise that will be resolved when SSE delivers step-finish or message.updated
     const messagePromise = new Promise<UnifiedMessage>((resolve) => {
-      this.pendingMessages.set(sessionId, { resolve, messageId: null, assistantParts: [] });
+      const entry = { resolve, messageId: null as string | null, assistantParts: [] as UnifiedPart[], timeoutTimer: null as ReturnType<typeof setTimeout> | null };
+      this.pendingMessages.set(sessionId, entry);
 
       // Timeout after 5 minutes
-      setTimeout(() => {
+      entry.timeoutTimer = setTimeout(() => {
         if (this.pendingMessages.has(sessionId)) {
           this.pendingMessages.delete(sessionId);
           resolve({
@@ -880,8 +912,17 @@ export class OpenCodeAdapter extends EngineAdapter {
   }
 
   async cancelMessage(sessionId: string): Promise<void> {
+    // Cancel on the backend first
+    try {
+      await this.httpRequest(`/session/${sessionId}/message/cancel`, { method: "POST" });
+    } catch (err) {
+      // Best-effort: backend may not support cancel or session may already be done
+      console.warn("[OpenCodeAdapter] cancelMessage backend call failed:", err);
+    }
+
     const pending = this.pendingMessages.get(sessionId);
     if (pending) {
+      if (pending.timeoutTimer) clearTimeout(pending.timeoutTimer);
       this.pendingMessages.delete(sessionId);
       pending.resolve({
         id: pending.messageId ?? "",

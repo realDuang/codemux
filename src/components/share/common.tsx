@@ -3,6 +3,25 @@ import type { JSX } from "solid-js/jsx-runtime"
 import { IconCheckCircle, IconHashtag } from "../icons"
 import { logger } from "../../lib/logger"
 
+/**
+ * Creates a reactive elapsed timer that ticks every second.
+ * Returns a signal with the elapsed milliseconds since `startTime`.
+ * Stops ticking when `running()` returns false.
+ */
+export function createElapsedTimer(startTime: () => number, running: () => boolean) {
+  const [elapsed, setElapsed] = createSignal(Date.now() - startTime())
+
+  const timer = setInterval(() => {
+    if (running()) {
+      setElapsed(Date.now() - startTime())
+    }
+  }, 1000)
+
+  onCleanup(() => clearInterval(timer))
+
+  return () => running() ? elapsed() : elapsed()
+}
+
 interface AnchorProps extends JSX.HTMLAttributes<HTMLDivElement> {
   id: string
 }

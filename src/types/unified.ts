@@ -176,7 +176,7 @@ export interface PatchPart extends PartBase {
 }
 
 export type ToolState =
-  | { status: "pending" }
+  | { status: "pending"; time?: { start: number } }
   | {
       status: "running";
       input: unknown;

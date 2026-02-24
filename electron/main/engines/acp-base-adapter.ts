@@ -123,6 +123,12 @@ export abstract class AcpBaseAdapter extends EngineAdapter {
   // Message accumulation
   private messageBuffers = new Map<string, MessageBuffer>();
 
+  // Track active prompt request IDs per session so cancel can resolve them
+  private activePromptIds = new Map<string, number>();
+
+  // Message history per session (ACP has no message history API)
+  private messageHistory = new Map<string, UnifiedMessage[]>();
+
   // Permission handling
   private pendingPermissions = new Map<string, {
     rpcId: number;
@@ -151,11 +157,11 @@ export abstract class AcpBaseAdapter extends EngineAdapter {
     this.child.stdin.write(JSON.stringify(msg) + "\n");
   }
 
-  private sendRequest(method: string, params?: any): Promise<any> {
+  private sendRequest(method: string, params?: any): Promise<any> & { requestId: number } {
     const id = this.nextId++;
     const msg = { jsonrpc: "2.0" as const, id, method, params: params ?? {} };
     this.send(msg);
-    return new Promise((resolve, reject) => {
+    const promise = new Promise<any>((resolve, reject) => {
       this.pending.set(id, { resolve, reject });
       setTimeout(() => {
         if (this.pending.has(id)) {
@@ -163,7 +169,9 @@ export abstract class AcpBaseAdapter extends EngineAdapter {
           reject(new Error(`Timeout: ${method} (id=${id})`));
         }
       }, 120_000);
-    });
+    }) as Promise<any> & { requestId: number };
+    promise.requestId = id;
+    return promise;
   }
 
   private sendResponse(id: number, result: any): void {
@@ -240,6 +248,9 @@ export abstract class AcpBaseAdapter extends EngineAdapter {
       case "session_info_update":
         this.handleSessionInfoUpdate(sessionId, update);
         break;
+      default:
+        console.warn(`[ACP] Unknown sessionUpdate type: "${type}"`, JSON.stringify(update).slice(0, 200));
+        break;
     }
   }
 
@@ -311,7 +322,7 @@ export abstract class AcpBaseAdapter extends EngineAdapter {
       originalTool: title, // ACP doesn't provide tool name, use title
       title,
       kind,
-      state: { status: "pending" },
+      state: { status: "pending", time: { start: Date.now() } },
       locations: update.locations,
     };
     buf.parts.push(part);
@@ -331,7 +342,7 @@ export abstract class AcpBaseAdapter extends EngineAdapter {
     const existing = buf.parts[partIndex] as ToolPart;
     const status = update.status as string;
     const now = Date.now();
-    const startTime = existing.state.status === "pending" ? now : (existing.state as any).time?.start ?? now;
+    const startTime = (existing.state as any).time?.start ?? now;
 
     let updatedPart: ToolPart;
 
@@ -361,7 +372,16 @@ export abstract class AcpBaseAdapter extends EngineAdapter {
         },
       };
     } else {
-      return; // Unknown status
+      // Handle "running" or other intermediate statuses — update state but keep it as running
+      updatedPart = {
+        ...existing,
+        state: {
+          ...existing.state,
+          status: "running",
+          input: update.rawInput ?? (existing.state as any).input ?? null,
+          time: { start: startTime },
+        },
+      } as ToolPart;
     }
 
     buf.parts[partIndex] = updatedPart;
@@ -433,6 +453,31 @@ export abstract class AcpBaseAdapter extends EngineAdapter {
   private finalizeMessage(sessionId: string, stopReason?: string): UnifiedMessage {
     const buf = this.messageBuffers.get(sessionId);
     const now = Date.now();
+
+    // Resolve any tool parts still in pending/running state — the prompt
+    // has completed so the tools must have finished even if we never
+    // received an explicit tool_call_update for them.
+    if (buf?.parts) {
+      for (let i = 0; i < buf.parts.length; i++) {
+        const p = buf.parts[i];
+        if (p.type === "tool") {
+          const tp = p as ToolPart;
+          if (tp.state.status === "pending" || tp.state.status === "running") {
+            const startTime = (tp.state as any).time?.start ?? now;
+            buf.parts[i] = {
+              ...tp,
+              state: {
+                status: "completed",
+                input: (tp.state as any).input ?? null,
+                output: null,
+                title: tp.title,
+                time: { start: startTime, end: now, duration: now - startTime },
+              },
+            } as ToolPart;
+          }
+        }
+      }
+    }
 
     const message: UnifiedMessage = {
       id: buf?.messageId ?? randomUUID(),
@@ -665,6 +710,8 @@ export abstract class AcpBaseAdapter extends EngineAdapter {
         name: m.name,
         description: m.description,
         engineType: this.engineType,
+        providerId: this.engineType,
+        providerName: this.initResult?.agentInfo?.title ?? this.engineType,
         meta: m._meta,
       }));
       this.currentModelId = result.models.currentModelId ?? null;
@@ -727,6 +774,7 @@ export abstract class AcpBaseAdapter extends EngineAdapter {
 
   async deleteSession(_sessionId: string): Promise<void> {
     this.sessions.delete(_sessionId);
+    this.messageHistory.delete(_sessionId);
   }
 
   // --- Messages ---
@@ -766,14 +814,23 @@ export abstract class AcpBaseAdapter extends EngineAdapter {
       (p as any).messageId = userMessage.id;
     });
     this.emit("message.updated", { sessionId, message: userMessage });
+    this.appendToHistory(sessionId, userMessage);
 
     // Send prompt and wait for completion
-    const result = await this.sendRequest("session/prompt", {
+    const promptRequest = this.sendRequest("session/prompt", {
       sessionId,
       prompt,
       ...(options?.modelId ? { modelId: options.modelId } : {}),
       ...(options?.mode ? { modeId: options.mode } : {}),
     });
+    this.activePromptIds.set(sessionId, promptRequest.requestId);
+
+    let result: any;
+    try {
+      result = await promptRequest;
+    } finally {
+      this.activePromptIds.delete(sessionId);
+    }
 
     // Finalize the assistant message from accumulated buffer
     const message = this.finalizeMessage(sessionId, (result as any)?.stopReason);
@@ -781,8 +838,7 @@ export abstract class AcpBaseAdapter extends EngineAdapter {
     message.mode = this.currentModeId ?? undefined;
 
     this.emit("message.updated", { sessionId, message });
-
-    // Update session time
+    this.appendToHistory(sessionId, message);
     const session = this.sessions.get(sessionId);
     if (session) {
       session.time.updated = Date.now();
@@ -797,11 +853,25 @@ export abstract class AcpBaseAdapter extends EngineAdapter {
     } catch {
       // Cancel may fail if no prompt is running
     }
+
+    // Resolve the pending prompt request so sendMessage unblocks
+    const promptId = this.activePromptIds.get(sessionId);
+    if (promptId && this.pending.has(promptId)) {
+      this.pending.get(promptId)!.resolve({ stopReason: "cancelled" });
+      this.pending.delete(promptId);
+      this.activePromptIds.delete(sessionId);
+    }
   }
 
-  async listMessages(_sessionId: string): Promise<UnifiedMessage[]> {
-    // ACP doesn't have a message history API — messages are accumulated in memory
-    return [];
+  async listMessages(sessionId: string): Promise<UnifiedMessage[]> {
+    return this.messageHistory.get(sessionId) ?? [];
+  }
+
+  private appendToHistory(sessionId: string, message: UnifiedMessage): void {
+    if (!this.messageHistory.has(sessionId)) {
+      this.messageHistory.set(sessionId, []);
+    }
+    this.messageHistory.get(sessionId)!.push(message);
   }
 
   // --- Models ---

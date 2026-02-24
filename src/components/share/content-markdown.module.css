@@ -83,11 +83,17 @@
     pre {
       --shiki-dark-bg: var(--sl-color-bg-surface) !important;
       background-color: var(--sl-color-bg-surface) !important;
-      padding: 0.5rem 0.75rem;
+      padding: 0.75rem 1rem;
       line-height: 1.6;
       font-size: 0.857em;
       white-space: pre-wrap;
       word-break: break-word;
+      border-radius: 0.5rem;
+      border: 1px solid rgba(148, 163, 184, 0.12);
+
+      :global(.dark) & {
+        border-color: rgba(71, 85, 105, 0.3);
+      }
 
       span {
         white-space: break-spaces;

@@ -24,6 +24,22 @@ interface ProjectGroup {
   sessions: SessionInfo[];
 }
 
+// Engine section — groups projects by engine type
+interface EngineSection {
+  engineType: string;
+  label: string;
+  projects: ProjectGroup[];
+}
+
+function getEngineLabel(engineType: string): string {
+  switch (engineType) {
+    case "opencode": return "OpenCode";
+    case "copilot": return "Copilot";
+    case "claude": return "Claude";
+    default: return engineType;
+  }
+}
+
 function getEngineBadge(engineType?: string): { label: string; class: string } | null {
   if (!engineType) return null;
   switch (engineType) {
@@ -64,10 +80,11 @@ export function SessionSidebar(props: SessionSidebarProps) {
 
     for (const session of rootSessions) {
       const projectID = session.projectID || "";
-      
+
       if (groups.has(projectID)) {
         groups.get(projectID)!.push(session);
-      } else if (projectID) {
+      } else {
+        // Fallback: match by directory when projectID is missing or unknown
         const matchingProject = filteredProjects.find(
           (p) => session.directory && p.directory === session.directory
         );
@@ -87,7 +104,7 @@ export function SessionSidebar(props: SessionSidebarProps) {
 
       const project = filteredProjects.find((p) => p.id === projectID) || null;
       if (!project) continue;
-      
+
       const name = getProjectName(project);
 
       result.push({
@@ -110,6 +127,47 @@ export function SessionSidebar(props: SessionSidebarProps) {
 
     return result;
   });
+
+  // Group projects by engine type
+  const engineSections = createMemo((): EngineSection[] => {
+    const groups = projectGroups();
+    const engineMap = new Map<string, ProjectGroup[]>();
+
+    for (const group of groups) {
+      const engineType = group.project?.engineType || "opencode";
+      if (!engineMap.has(engineType)) {
+        engineMap.set(engineType, []);
+      }
+      engineMap.get(engineType)!.push(group);
+    }
+
+    const sections: EngineSection[] = [];
+    for (const [engineType, projects] of engineMap) {
+      sections.push({
+        engineType,
+        label: getEngineLabel(engineType),
+        projects,
+      });
+    }
+
+    // Sort by most recent activity across all projects in the section
+    sections.sort((a, b) => {
+      const getLatest = (s: EngineSection) => {
+        let latest = 0;
+        for (const p of s.projects) {
+          if (p.sessions[0]) {
+            latest = Math.max(latest, new Date(p.sessions[0].updatedAt).getTime());
+          }
+        }
+        return latest;
+      };
+      return getLatest(b) - getLatest(a);
+    });
+
+    return sections;
+  });
+
+  const multipleEngines = createMemo(() => engineSections().length > 1);
 
   // Check if project is expanded
   const isProjectExpanded = (directory: string): boolean => {
@@ -182,7 +240,7 @@ export function SessionSidebar(props: SessionSidebarProps) {
       {/* Session List */}
       <div class="flex-1 overflow-y-auto px-2 py-2">
         <Show
-          when={projectGroups().length > 0}
+          when={engineSections().length > 0}
           fallback={
             <div class="p-8 text-center">
               <div class="inline-flex items-center justify-center w-10 h-10 rounded-full bg-gray-100 dark:bg-zinc-800 mb-3 text-gray-400">
@@ -204,7 +262,21 @@ export function SessionSidebar(props: SessionSidebarProps) {
             </div>
           }
         >
-          <For each={projectGroups()}>
+          <For each={engineSections()}>
+            {(section) => (
+              <>
+                {/* Engine separator label (only when multiple engines) */}
+                <Show when={multipleEngines()}>
+                  <div class="flex items-center justify-between px-2 py-1.5 mt-1 first:mt-0">
+                    <span class="text-[11px] font-semibold uppercase tracking-wider text-gray-400 dark:text-gray-500">
+                      {section.label}
+                    </span>
+                    <span class="text-[10px] text-gray-400 dark:text-gray-500">
+                      {section.projects.length}
+                    </span>
+                  </div>
+                </Show>
+                <For each={section.projects}>
             {(project) => {
               const isHovered = () => hoveredProject() === project.projectID;
               const isExpanded = () => isProjectExpanded(project.projectID);
@@ -479,6 +551,9 @@ export function SessionSidebar(props: SessionSidebarProps) {
                 </div>
               );
             }}
+          </For>
+              </>
+            )}
           </For>
         </Show>
       </div>

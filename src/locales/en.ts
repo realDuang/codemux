@@ -55,6 +55,8 @@ export interface LocaleDict {
     logout: string;
     startConversation: string;
     startConversationDesc: string;
+    initFailed: string;
+    retry: string;
     disclaimer: string;
   };
 
@@ -254,6 +256,23 @@ export interface LocaleDict {
     requestApproved: string;
     requestDenied: string;
   };
+
+  // Engine
+  engine: {
+    title: string;
+    engines: string;
+    status: string;
+    running: string;
+    stopped: string;
+    starting: string;
+    error: string;
+    version: string;
+    selectEngine: string;
+    defaultEngine: string;
+    authRequired: string;
+    login: string;
+    noEngines: string;
+  };
 }
 
 export const en: LocaleDict = {
@@ -312,6 +331,8 @@ export const en: LocaleDict = {
     logout: "Logout",
     startConversation: "Start a new conversation",
     startConversationDesc: "Select a model and type any question in the input box below to start chatting.",
+    initFailed: "Initialization Failed",
+    retry: "Retry",
     disclaimer: "AI-generated content may be inaccurate. Please verify important information.",
   },
 
@@ -510,5 +531,22 @@ export const en: LocaleDict = {
     noPendingRequests: "No pending requests",
     requestApproved: "Request approved",
     requestDenied: "Request denied",
+  },
+
+  // Engine
+  engine: {
+    title: "Engines",
+    engines: "Engines",
+    status: "Status",
+    running: "Running",
+    stopped: "Stopped",
+    starting: "Starting...",
+    error: "Error",
+    version: "Version",
+    selectEngine: "Select Engine",
+    defaultEngine: "Default Engine",
+    authRequired: "Authentication Required",
+    login: "Login",
+    noEngines: "No engines available",
   },
 };

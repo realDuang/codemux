@@ -1,0 +1,213 @@
+/**
+ * Gateway API — Frontend bridge between GatewayClient and SolidJS stores.
+ *
+ * This module connects to the main-process gateway via WebSocket, subscribes
+ * to push notifications, and exposes typed methods for the frontend to use.
+ */
+
+import { gatewayClient, type GatewayClientEvents } from "./gateway-client";
+import type {
+  EngineType,
+  EngineInfo,
+  EngineCapabilities,
+  UnifiedSession,
+  UnifiedMessage,
+  UnifiedPart,
+  UnifiedModelInfo,
+  UnifiedProject,
+  UnifiedPermission,
+  AgentMode,
+  SessionCreateRequest,
+  MessageSendRequest,
+  PermissionReplyRequest,
+  ProjectSetEngineRequest,
+  ModelSetRequest,
+  ModeSetRequest,
+} from "../types/unified";
+
+// --- Notification callback types ---
+
+export interface GatewayNotificationHandlers {
+  onPartUpdated?: (sessionId: string, part: UnifiedPart) => void;
+  onMessageUpdated?: (sessionId: string, message: UnifiedMessage) => void;
+  onSessionUpdated?: (session: UnifiedSession) => void;
+  onSessionCreated?: (session: UnifiedSession) => void;
+  onPermissionAsked?: (permission: UnifiedPermission) => void;
+  onPermissionReplied?: (permissionId: string, optionId: string) => void;
+  onEngineStatusChanged?: (engineType: EngineType, status: string, error?: string) => void;
+  onConnected?: () => void;
+  onDisconnected?: (reason: string) => void;
+}
+
+// --- Gateway API singleton ---
+
+class GatewayAPI {
+  private handlers: GatewayNotificationHandlers = {};
+  private initialized = false;
+
+  /**
+   * Initialize the gateway connection and subscribe to notifications.
+   * Call once during app startup (e.g., in a top-level createEffect).
+   */
+  async init(handlers?: GatewayNotificationHandlers): Promise<void> {
+    if (this.initialized) return;
+    this.initialized = true;
+
+    if (handlers) {
+      this.handlers = handlers;
+    }
+
+    this.bindEvents();
+
+    try {
+      await gatewayClient.connect();
+    } catch (err) {
+      console.error("[GatewayAPI] Failed to connect:", err);
+      // Reconnect will be handled by GatewayClient automatically
+    }
+  }
+
+  /**
+   * Update notification handlers (can be called after init).
+   */
+  setHandlers(handlers: Partial<GatewayNotificationHandlers>): void {
+    Object.assign(this.handlers, handlers);
+  }
+
+  /**
+   * Disconnect and cleanup.
+   */
+  destroy(): void {
+    gatewayClient.disconnect();
+    this.initialized = false;
+  }
+
+  get connected(): boolean {
+    return gatewayClient.connected;
+  }
+
+  // --- Event binding ---
+
+  private bindEvents(): void {
+    gatewayClient.on("connected", () => {
+      this.handlers.onConnected?.();
+    });
+
+    gatewayClient.on("disconnected", (reason) => {
+      this.handlers.onDisconnected?.(reason);
+    });
+
+    gatewayClient.on("message.part.updated", (data) => {
+      this.handlers.onPartUpdated?.(data.sessionId, data.part);
+    });
+
+    gatewayClient.on("message.updated", (data) => {
+      this.handlers.onMessageUpdated?.(data.sessionId, data.message);
+    });
+
+    gatewayClient.on("session.updated", (data) => {
+      this.handlers.onSessionUpdated?.(data.session);
+    });
+
+    gatewayClient.on("session.created", (data) => {
+      this.handlers.onSessionCreated?.(data.session);
+    });
+
+    gatewayClient.on("permission.asked", (data) => {
+      this.handlers.onPermissionAsked?.(data.permission);
+    });
+
+    gatewayClient.on("permission.replied", (data) => {
+      this.handlers.onPermissionReplied?.(data.permissionId, data.optionId);
+    });
+
+    gatewayClient.on("engine.status.changed", (data) => {
+      this.handlers.onEngineStatusChanged?.(data.engineType, data.status, data.error);
+    });
+  }
+
+  // --- Engine ---
+
+  listEngines(): Promise<EngineInfo[]> {
+    return gatewayClient.listEngines();
+  }
+
+  getCapabilities(engineType: EngineType): Promise<EngineCapabilities> {
+    return gatewayClient.getEngineCapabilities(engineType);
+  }
+
+  // --- Session ---
+
+  listSessions(engineType: EngineType): Promise<UnifiedSession[]> {
+    return gatewayClient.listSessions(engineType);
+  }
+
+  createSession(engineType: EngineType, directory: string): Promise<UnifiedSession> {
+    return gatewayClient.createSession({ engineType, directory });
+  }
+
+  getSession(sessionId: string): Promise<UnifiedSession> {
+    return gatewayClient.getSession(sessionId);
+  }
+
+  deleteSession(sessionId: string): Promise<void> {
+    return gatewayClient.deleteSession(sessionId);
+  }
+
+  // --- Message ---
+
+  sendMessage(
+    sessionId: string,
+    text: string,
+    options?: { mode?: string; modelId?: string },
+  ): Promise<UnifiedMessage> {
+    return gatewayClient.sendMessage({
+      sessionId,
+      content: [{ type: "text", text }],
+      mode: options?.mode,
+      modelId: options?.modelId,
+    });
+  }
+
+  cancelMessage(sessionId: string): Promise<void> {
+    return gatewayClient.cancelMessage(sessionId);
+  }
+
+  listMessages(sessionId: string): Promise<UnifiedMessage[]> {
+    return gatewayClient.listMessages(sessionId);
+  }
+
+  // --- Model ---
+
+  listModels(engineType: EngineType): Promise<UnifiedModelInfo[]> {
+    return gatewayClient.listModels(engineType);
+  }
+
+  setModel(sessionId: string, modelId: string): Promise<void> {
+    return gatewayClient.setModel({ sessionId, modelId });
+  }
+
+  // --- Mode ---
+
+  setMode(sessionId: string, modeId: string): Promise<void> {
+    return gatewayClient.setMode({ sessionId, modeId });
+  }
+
+  // --- Permission ---
+
+  replyPermission(permissionId: string, optionId: string): Promise<void> {
+    return gatewayClient.replyPermission({ permissionId, optionId });
+  }
+
+  // --- Project ---
+
+  listProjects(engineType: EngineType): Promise<UnifiedProject[]> {
+    return gatewayClient.listProjects(engineType);
+  }
+
+  setProjectEngine(directory: string, engineType: EngineType): Promise<void> {
+    return gatewayClient.setProjectEngine({ directory, engineType });
+  }
+}
+
+export const gateway = new GatewayAPI();

@@ -425,6 +425,8 @@ export class Auth {
   // Local Access Methods
   // -------------------------------------------------------------------------
 
+  private static isLocalCache: boolean | null = null;
+
   /**
    * Check if current request is from localhost
    * In Electron, always returns true
@@ -435,11 +437,17 @@ export class Auth {
       return true;
     }
 
+    // Return cached result if available
+    if (this.isLocalCache !== null) {
+      return this.isLocalCache;
+    }
+
     try {
       const response = await fetch("/api/system/is-local");
       if (response.ok) {
         const data = await response.json();
-        return data.isLocal === true;
+        this.isLocalCache = data.isLocal === true;
+        return this.isLocalCache;
       }
       return false;
     } catch (err) {

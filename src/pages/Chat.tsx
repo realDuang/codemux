@@ -8,10 +8,10 @@ import {
 } from "solid-js";
 import { Auth } from "../lib/auth";
 import { useNavigate } from "@solidjs/router";
-import { client } from "../lib/opencode-client";
+import { gateway } from "../lib/gateway-api";
 import { logger } from "../lib/logger";
 import { isElectron } from "../lib/platform";
-import { sessionStore, setSessionStore } from "../stores/session";
+import { sessionStore, setSessionStore, type SessionInfo } from "../stores/session";
 import {
   messageStore,
   setMessageStore,
@@ -21,10 +21,10 @@ import { PromptInput } from "../components/PromptInput";
 import { SessionSidebar } from "../components/SessionSidebar";
 import { HideProjectModal } from "../components/HideProjectModal";
 import { AddProjectModal } from "../components/AddProjectModal";
-import { MessageV2, Permission, Session } from "../types/opencode";
+import type { UnifiedMessage, UnifiedPart, UnifiedPermission, UnifiedSession, UnifiedProject, AgentMode, EngineType } from "../types/unified";
 import { useI18n } from "../lib/i18n";
-import { AgentMode } from "../components/PromptInput";
 import { ProjectStore } from "../lib/project-store";
+import { configStore, setConfigStore } from "../stores/config";
 
 // Binary search helper (consistent with opencode desktop)
 function binarySearch<T>(
@@ -74,10 +74,10 @@ export default function Chat() {
   const [currentSessionModel, setCurrentSessionModel] = createSignal<{
     providerID: string;
     modelID: string;
-  } | null>(client.getDefaultModel());
+  } | null>(null);
   
   // Agent mode state - default to "build" matching OpenCode's default
-  const [currentAgent, setCurrentAgent] = createSignal<AgentMode>("build");
+  const [currentAgent, setCurrentAgent] = createSignal<AgentMode>({ id: "build", label: "Build" });
 
   // Mobile Sidebar State
   const [isSidebarOpen, setIsSidebarOpen] = createSignal(false);
@@ -130,49 +130,40 @@ export default function Chat() {
     logger.debug("[LoadMessages] Loading messages for session:", sessionId);
     setLoadingMessages(true);
 
-    const messages = await client.getMessages(sessionId);
-    logger.debug("[LoadMessages] Loaded messages:", messages);
-
-    // Follow opencode desktop pattern: store message info and parts separately
-    const messageInfos: MessageV2.Info[] = [];
-
-    for (const msg of messages) {
-      // API returns format { info: {...}, parts: [...] }
-      const msgInfo = (msg as any).info || msg;
-      const msgParts = (msg as any).parts || [];
-
-      // Store message info (without parts)
-      messageInfos.push(msgInfo);
+    try {
+      const messages = await gateway.listMessages(sessionId);
+      logger.debug("[LoadMessages] Loaded messages:", messages);
 
       // Store parts separately, sorted by id
-      const sortedParts = msgParts.slice().sort((a: any, b: any) =>
+      for (const msg of messages) {
+        const sortedParts = (msg.parts || []).slice().sort((a, b) =>
+          a.id.localeCompare(b.id)
+        );
+        setMessageStore("part", msg.id, sortedParts);
+      }
+
+      // Store all messages, sorted by id
+      const sortedMessages = messages.slice().sort((a, b) =>
         a.id.localeCompare(b.id)
       );
-      setMessageStore("part", msgInfo.id, sortedParts);
+      setMessageStore("message", sessionId, sortedMessages);
+    } catch (error) {
+      logger.error("[LoadMessages] Failed to load messages:", error);
+    } finally {
+      setLoadingMessages(false);
+      setTimeout(scrollToBottom, 100);
     }
-
-    // Store all messages, sorted by id
-    const sortedMessages = messageInfos.slice().sort((a, b) =>
-      a.id.localeCompare(b.id)
-    );
-    setMessageStore("message", sessionId, sortedMessages);
-
-    setLoadingMessages(false);
-    setTimeout(scrollToBottom, 100);
   };
 
   const initializeSession = async () => {
     logger.debug("[Init] Starting session initialization");
+    setSessionStore({ initError: null });
 
     try {
-      // Check if this is local access (for showing remote access button)
       if (!isElectron()) {
         const localAccess = await Auth.isLocalAccess();
         setIsLocalAccess(localAccess);
       }
-
-      // Initialize the OpenCode client with correct URL
-      await client.initialize();
 
       const isValidToken = await Auth.checkDeviceToken();
       if (!isValidToken) {
@@ -184,12 +175,48 @@ export default function Chat() {
 
       setSessionStore({ loading: true });
 
-      const projects = await client.listProjects();
+      // Initialize gateway connection with notification handlers
+      await gateway.init({
+        onConnected: () => {
+          logger.debug("[Gateway] Connected/reconnected");
+          // If we were in error state, re-initialize on reconnect
+          if (sessionStore.initError) {
+            initializeSession();
+          }
+        },
+        onDisconnected: (reason) => {
+          logger.warn("[Gateway] Disconnected:", reason);
+        },
+        onPartUpdated: handlePartUpdated,
+        onMessageUpdated: handleMessageUpdated,
+        onSessionUpdated: handleSessionUpdated,
+        onPermissionAsked: handlePermissionAsked,
+        onPermissionReplied: handlePermissionReplied,
+        onEngineStatusChanged: (engineType, status, error) => {
+          setConfigStore("engines", (engines) =>
+            engines.map(e => e.type === engineType ? { ...e, status: status as any } : e)
+          );
+        },
+      });
+
+      // Load available engines
+      try {
+        const engines = await gateway.listEngines();
+        setConfigStore("engines", engines);
+        const runningEngine = engines.find(e => e.status === "running");
+        if (runningEngine) {
+          setConfigStore("currentEngineType", runningEngine.type);
+        }
+      } catch (err) {
+        logger.warn("[Init] Failed to load engines:", err);
+      }
+
+      const projects = await gateway.listProjects("opencode");
       logger.debug("[Init] Loaded projects:", projects);
 
       // Auto-hide global and invalid projects
       for (const p of projects) {
-        if (!p.worktree || p.worktree === "/") {
+        if (!p.directory || p.directory === "/") {
           ProjectStore.hide(p.id);
         }
       }
@@ -197,56 +224,51 @@ export default function Chat() {
       const hiddenIds = ProjectStore.getHiddenIds();
       logger.debug("[Init] Hidden project IDs:", hiddenIds);
 
-      const validProjects = projects.filter((p) => {
+      const validProjects = projects.filter((p: UnifiedProject) => {
         const isHidden = ProjectStore.isHidden(p.id);
-        logger.debug(`[Init] Project ${p.id} (${p.worktree}) isHidden: ${isHidden}`);
+        logger.debug(`[Init] Project ${p.id} (${p.directory}) isHidden: ${isHidden}`);
         return !isHidden;
       });
-      const sessionPromises = validProjects.map((p) =>
-        client.listSessionsForDirectory(p.worktree).catch((err) => {
-          logger.error(`[Init] Failed to load sessions for ${p.worktree}:`, err);
-          return [] as Session.Info[];
-        })
-      );
-      const sessionArrays = await Promise.all(sessionPromises);
-      const sessions = sessionArrays.flat();
+
+      // Load all sessions for this engine
+      const sessions = await gateway.listSessions("opencode");
       logger.debug("[Init] Loaded sessions:", sessions);
 
-      const processedSessions = sessions.map((s) => ({
+      // Filter sessions to valid project directories
+      const validDirectories = new Set(validProjects.map((p: UnifiedProject) => p.directory));
+      const filteredSessions = sessions.filter((s: UnifiedSession) => validDirectories.has(s.directory));
+
+      const processedSessions: SessionInfo[] = filteredSessions.map((s: UnifiedSession) => ({
         id: s.id,
         title: s.title || "",
         directory: s.directory || "",
-        projectID: s.projectID,
-        parentID: s.parentID,
+        projectID: (s.engineMeta?.projectID as string) || undefined,
+        parentID: s.parentId,
         createdAt: new Date(s.time.created).toISOString(),
         updatedAt: new Date(s.time.updated).toISOString(),
-        summary: s.summary,
+        summary: s.engineMeta?.summary as SessionInfo["summary"] | undefined,
       }));
 
-      processedSessions.sort((a, b) =>
+      processedSessions.sort((a: SessionInfo, b: SessionInfo) =>
         new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
       );
 
       let currentSession = processedSessions[0];
       if (!currentSession) {
         logger.debug("[Init] No sessions found, creating new one");
-        const newSession = await client.createSession();
+        const defaultDir = validProjects[0]?.directory || ".";
+        const newSession = await gateway.createSession("opencode", defaultDir);
         currentSession = {
           id: newSession.id,
           title: newSession.title || "",
           directory: newSession.directory || "",
-          projectID: newSession.projectID,
-          parentID: newSession.parentID,
+          projectID: (newSession.engineMeta?.projectID as string) || undefined,
+          parentID: newSession.parentId,
           createdAt: new Date(newSession.time.created).toISOString(),
           updatedAt: new Date(newSession.time.updated).toISOString(),
-          summary: newSession.summary,
+          summary: newSession.engineMeta?.summary as SessionInfo["summary"] | undefined,
         };
         processedSessions.push(currentSession);
-      }
-
-      // Set directory context for API requests
-      if (currentSession.directory) {
-        client.setDirectory(currentSession.directory);
       }
 
       setSessionStore({
@@ -259,7 +281,8 @@ export default function Chat() {
       await loadSessionMessages(currentSession.id);
     } catch (error) {
       logger.error("[Init] Session initialization failed:", error);
-      setSessionStore({ loading: false });
+      const msg = error instanceof Error ? error.message : String(error);
+      setSessionStore({ loading: false, initError: msg });
     }
   };
 
@@ -267,12 +290,8 @@ export default function Chat() {
   const handleSelectSession = async (sessionId: string) => {
     logger.debug("[SelectSession] Switching to session:", sessionId);
     setSessionStore("current", sessionId);
-    
-    const session = sessionStore.list.find(s => s.id === sessionId);
-    if (session?.directory) {
-      client.setDirectory(session.directory);
-    }
-    
+    setSessionStore("initError", null);
+
     if (isMobile()) {
       setIsSidebarOpen(false);
     }
@@ -287,62 +306,66 @@ export default function Chat() {
   // New session
   const handleNewSession = async (directory?: string) => {
     logger.debug("[NewSession] Creating new session in directory:", directory);
-    
-    const newSession = directory 
-      ? await client.createSessionInDirectory(directory)
-      : await client.createSession();
-    logger.debug("[NewSession] Created:", newSession);
 
-    if (newSession.directory) {
-      client.setDirectory(newSession.directory);
+    try {
+      const dir = directory || sessionStore.projects[0]?.directory || ".";
+      const newSession = await gateway.createSession("opencode", dir);
+      logger.debug("[NewSession] Created:", newSession);
+
+      const processedSession: SessionInfo = {
+        id: newSession.id,
+        title: newSession.title || "",
+        directory: newSession.directory || "",
+        projectID: (newSession.engineMeta?.projectID as string) || undefined,
+        parentID: newSession.parentId,
+        createdAt: new Date(newSession.time.created).toISOString(),
+        updatedAt: new Date(newSession.time.updated).toISOString(),
+        summary: newSession.engineMeta?.summary as SessionInfo["summary"] | undefined,
+      };
+
+      setSessionStore("list", (list) => [processedSession, ...list]);
+      setSessionStore("current", processedSession.id);
+      setSessionStore("initError", null);
+      if (isMobile()) {
+        setIsSidebarOpen(false);
+      }
+
+      setMessageStore("message", processedSession.id, []);
+      setTimeout(scrollToBottom, 100);
+    } catch (error) {
+      logger.error("[NewSession] Failed to create session:", error);
     }
-
-    const processedSession = {
-      id: newSession.id,
-      title: newSession.title || "",
-      directory: newSession.directory || "",
-      projectID: newSession.projectID,
-      parentID: newSession.parentID,
-      createdAt: new Date(newSession.time.created).toISOString(),
-      updatedAt: new Date(newSession.time.updated).toISOString(),
-      summary: newSession.summary,
-    };
-
-    setSessionStore("list", (list) => [processedSession, ...list]);
-    setSessionStore("current", processedSession.id);
-    if (isMobile()) {
-      setIsSidebarOpen(false);
-    }
-
-    setMessageStore("message", processedSession.id, []);
-    setTimeout(scrollToBottom, 100);
   };
 
   // Delete session
   const handleDeleteSession = async (sessionId: string) => {
     logger.debug("[DeleteSession] Deleting session:", sessionId);
 
-    await client.deleteSession(sessionId);
+    try {
+      await gateway.deleteSession(sessionId);
 
-    // Remove from list
-    setSessionStore("list", (list) => list.filter((s) => s.id !== sessionId));
+      // Remove from list
+      setSessionStore("list", (list) => list.filter((s) => s.id !== sessionId));
 
-    // If current session deleted, switch to first available session
-    if (sessionStore.current === sessionId) {
-      const remaining = sessionStore.list.filter((s) => s.id !== sessionId);
-      if (remaining.length > 0) {
-        await handleSelectSession(remaining[0].id);
-      } else {
-        // No sessions left, create a new one
-        await handleNewSession();
+      // If current session deleted, switch to first available session
+      if (sessionStore.current === sessionId) {
+        const remaining = sessionStore.list.filter((s) => s.id !== sessionId);
+        if (remaining.length > 0) {
+          await handleSelectSession(remaining[0].id);
+        } else {
+          // No sessions left, create a new one
+          await handleNewSession();
+        }
       }
+    } catch (error) {
+      logger.error("[DeleteSession] Failed to delete session:", error);
     }
   };
 
   const handleRenameSession = async (sessionId: string, newTitle: string) => {
     logger.debug("[RenameSession] Renaming session:", sessionId, newTitle);
     try {
-      await client.updateSession(sessionId, { title: newTitle });
+      // TODO: Add session.update to gateway protocol
       setSessionStore("list", (list) =>
         list.map((s) => (s.id === sessionId ? { ...s, title: newTitle } : s))
       );
@@ -358,84 +381,97 @@ export default function Chat() {
     logger.debug("[HideProject] Hiding project and deleting sessions:", info.projectID);
     logger.debug("[HideProject] Hidden IDs before:", ProjectStore.getHiddenIds());
 
-    const sessionsToDelete = sessionStore.list.filter(
-      (s) => s.projectID === info.projectID
-    );
-    
-    const currentSessionWillBeDeleted = sessionStore.current && 
-      sessionsToDelete.some(s => s.id === sessionStore.current);
-    
-    for (const session of sessionsToDelete) {
-      await client.deleteSession(session.id);
-    }
-    
-    ProjectStore.hide(info.projectID);
-    logger.debug("[HideProject] Hidden IDs after:", ProjectStore.getHiddenIds());
-    
-    setSessionStore("list", (list) =>
-      list.filter((s) => s.projectID !== info.projectID)
-    );
-    setSessionStore("projects", (projects) =>
-      projects.filter((p) => p.id !== info.projectID)
-    );
-    
-    if (currentSessionWillBeDeleted) {
-      const remainingSessions = sessionStore.list;
-      if (remainingSessions.length > 0) {
-        await handleSelectSession(remainingSessions[0].id);
-      } else {
-        await handleNewSession();
+    try {
+      const sessionsToDelete = sessionStore.list.filter(
+        (s) => s.projectID === info.projectID
+      );
+
+      const currentSessionWillBeDeleted = sessionStore.current &&
+        sessionsToDelete.some(s => s.id === sessionStore.current);
+
+      for (const session of sessionsToDelete) {
+        await gateway.deleteSession(session.id);
       }
+
+      ProjectStore.hide(info.projectID);
+      logger.debug("[HideProject] Hidden IDs after:", ProjectStore.getHiddenIds());
+
+      setSessionStore("list", (list) =>
+        list.filter((s) => s.projectID !== info.projectID)
+      );
+      setSessionStore("projects", (projects) =>
+        projects.filter((p) => p.id !== info.projectID)
+      );
+
+      if (currentSessionWillBeDeleted) {
+        const remainingSessions = sessionStore.list;
+        if (remainingSessions.length > 0) {
+          await handleSelectSession(remainingSessions[0].id);
+        } else {
+          await handleNewSession();
+        }
+      }
+    } catch (error) {
+      logger.error("[HideProject] Failed to hide project:", error);
+    } finally {
+      setDeleteProjectInfo(null);
     }
-    
-    setDeleteProjectInfo(null);
   };
 
-  const handleAddProject = async (directory: string) => {
+  const handleAddProject = async (directory: string, engineType: EngineType = "opencode") => {
     logger.debug("[AddProject] Initializing project for directory:", directory);
-    
-    const { project, session } = await client.initializeProject(directory);
-    logger.debug("[AddProject] Project initialized:", project, "Session:", session);
-    
-    ProjectStore.add(project.id, directory);
-    
-    const existingProject = sessionStore.projects.find(p => p.id === project.id);
-    if (!existingProject) {
-      setSessionStore("projects", (projects) => [...projects, project]);
-    }
-    
-    if (session) {
-      const processedSession = {
-        id: session.id,
-        title: session.title || "",
-        directory: session.directory || "",
-        projectID: session.projectID,
-        parentID: session.parentID,
-        createdAt: new Date(session.time.created).toISOString(),
-        updatedAt: new Date(session.time.updated).toISOString(),
-        summary: session.summary,
+
+    try {
+      // Creating a session in the directory will trigger project initialization in OpenCode
+      const newSession = await gateway.createSession(engineType, directory);
+      logger.debug("[AddProject] Session created:", newSession);
+
+      // Refresh projects list
+      const projects = await gateway.listProjects(engineType);
+      const project = projects.find((p: UnifiedProject) => p.directory === directory);
+
+      if (project) {
+        ProjectStore.add(project.id, directory);
+
+        const existingProject = sessionStore.projects.find(p => p.id === project.id);
+        if (!existingProject) {
+          setSessionStore("projects", (ps) => [...ps, project]);
+        }
+      }
+
+      const processedSession: SessionInfo = {
+        id: newSession.id,
+        title: newSession.title || "",
+        directory: newSession.directory || "",
+        projectID: (newSession.engineMeta?.projectID as string) || undefined,
+        parentID: newSession.parentId,
+        createdAt: new Date(newSession.time.created).toISOString(),
+        updatedAt: new Date(newSession.time.updated).toISOString(),
+        summary: newSession.engineMeta?.summary as SessionInfo["summary"] | undefined,
       };
-      
-      const existingSession = sessionStore.list.find(s => s.id === session.id);
+
+      const existingSession = sessionStore.list.find(s => s.id === newSession.id);
       if (!existingSession) {
         setSessionStore("list", (list) => [processedSession, ...list]);
       }
-      
-      await handleSelectSession(session.id);
+
+      await handleSelectSession(newSession.id);
+    } catch (error) {
+      logger.error("[AddProject] Failed to add project:", error);
     }
   };
 
   const handlePermissionRespond = async (
     sessionID: string,
     permissionID: string,
-    reply: Permission.Reply,
+    reply: string,
   ) => {
     logger.debug("[Permission] Responding:", { sessionID, permissionID, reply });
-    
+
     try {
-      await client.respondToPermission(permissionID, reply);
-      
-      // Optimistically remove from queue (SSE will also send permission.replied)
+      await gateway.replyPermission(permissionID, reply);
+
+      // Optimistically remove from queue
       const existing = messageStore.permission[sessionID] || [];
       setMessageStore("permission", sessionID, existing.filter(p => p.id !== permissionID));
     } catch (error) {
@@ -443,102 +479,93 @@ export default function Chat() {
     }
   };
 
-  const handleSSEEvent = (event: { type: string; data: any }) => {
-    const sessionId = sessionStore.current;
-    if (!sessionId) return;
+  // --- Gateway notification handlers ---
 
-    switch (event.type) {
-      case "message.part.updated": {
-        const part = event.data as MessageV2.Part;
-        const messageId = part.messageID;
-        const parts = messageStore.part[messageId] || [];
-        const index = binarySearch(parts, part.id, (p) => p.id);
+  const handlePartUpdated = (_sessionId: string, part: UnifiedPart) => {
+    const messageId = part.messageId;
+    const parts = messageStore.part[messageId] || [];
+    const index = binarySearch(parts, part.id, (p) => p.id);
 
-        if (index.found) {
-          setMessageStore("part", messageId, index.index, part);
-        } else if (!messageStore.part[messageId]) {
-          setMessageStore("part", messageId, [part]);
-        } else {
-          setMessageStore("part", messageId, (draft) => {
-            const newParts = [...draft];
-            newParts.splice(index.index, 0, part);
-            return newParts;
-          });
-        }
-        setTimeout(scrollToBottom, 0);
-        break;
-      }
+    if (index.found) {
+      setMessageStore("part", messageId, index.index, part);
+    } else if (!messageStore.part[messageId]) {
+      setMessageStore("part", messageId, [part]);
+    } else {
+      setMessageStore("part", messageId, (draft) => {
+        const newParts = [...draft];
+        newParts.splice(index.index, 0, part);
+        return newParts;
+      });
+    }
+    setTimeout(scrollToBottom, 0);
+  };
 
-      case "message.updated": {
-        const msgInfo = event.data as MessageV2.Info;
-        const targetSessionId = msgInfo.sessionID;
-        
-        if (msgInfo.role === "user") {
-          const currentMessages = messageStore.message[targetSessionId] || [];
-          const tempMessages = currentMessages.filter(m => m.id.startsWith("msg-temp-"));
-          
-          if (tempMessages.length > 0) {
-            setMessageStore("message", targetSessionId, (draft) =>
-              draft.filter(m => !m.id.startsWith("msg-temp-"))
-            );
-            tempMessages.forEach(tempMsg => {
-              setMessageStore("part", tempMsg.id, undefined as any);
-            });
-          }
-        }
-        
-        const messages = messageStore.message[targetSessionId] || [];
-        const index = binarySearch(messages, msgInfo.id, (m) => m.id);
+  const handleMessageUpdated = (_sessionId: string, msgInfo: UnifiedMessage) => {
+    const targetSessionId = msgInfo.sessionId;
 
-        if (index.found) {
-          setMessageStore("message", targetSessionId, index.index, msgInfo);
-        } else if (!messageStore.message[targetSessionId]) {
-          setMessageStore("message", targetSessionId, [msgInfo]);
-        } else {
-          setMessageStore("message", targetSessionId, (draft) => {
-            const newMessages = [...draft];
-            newMessages.splice(index.index, 0, msgInfo);
-            return newMessages;
-          });
-        }
-        break;
-      }
+    if (msgInfo.role === "user") {
+      const currentMessages = messageStore.message[targetSessionId] || [];
+      const tempMessages = currentMessages.filter(m => m.id.startsWith("msg-temp-"));
 
-      case "session.updated": {
-        const updated = event.data;
-        logger.debug("[SSE] session.updated received:", updated);
-        setSessionStore("list", (list) =>
-          list.map((s) =>
-            s.id === updated.id
-              ? {
-                  ...s,
-                  title: updated.title || "",
-                  directory: updated.directory || s.directory || "",
-                  createdAt: new Date(updated.time.created).toISOString(),
-                  updatedAt: new Date(updated.time.updated).toISOString(),
-                }
-              : s,
-          ),
+      if (tempMessages.length > 0) {
+        setMessageStore("message", targetSessionId, (draft) =>
+          draft.filter(m => !m.id.startsWith("msg-temp-"))
         );
-        break;
+        tempMessages.forEach(tempMsg => {
+          setMessageStore("part", tempMsg.id, undefined as any);
+        });
       }
+    }
 
-      case "permission.asked": {
-        const permission = event.data as Permission.Request;
-        logger.debug("[SSE] Permission asked:", permission);
-        const existing = messageStore.permission[permission.sessionID] || [];
-        if (!existing.find((p) => p.id === permission.id)) {
-          setMessageStore("permission", permission.sessionID, [...existing, permission]);
-        }
-        break;
-      }
+    const messages = messageStore.message[targetSessionId] || [];
+    const index = binarySearch(messages, msgInfo.id, (m) => m.id);
 
-      case "permission.replied": {
-        const { sessionID, requestID } = event.data as { sessionID: string; requestID: string };
-        logger.debug("[SSE] Permission replied:", requestID);
-        const existing = messageStore.permission[sessionID] || [];
-        setMessageStore("permission", sessionID, existing.filter((p) => p.id !== requestID));
-        break;
+    if (index.found) {
+      setMessageStore("message", targetSessionId, index.index, msgInfo);
+    } else if (!messageStore.message[targetSessionId]) {
+      setMessageStore("message", targetSessionId, [msgInfo]);
+    } else {
+      setMessageStore("message", targetSessionId, (draft) => {
+        const newMessages = [...draft];
+        newMessages.splice(index.index, 0, msgInfo);
+        return newMessages;
+      });
+    }
+  };
+
+  const handleSessionUpdated = (updated: UnifiedSession) => {
+    logger.debug("[WS] session.updated received:", updated);
+    setSessionStore("list", (list) =>
+      list.map((s) =>
+        s.id === updated.id
+          ? {
+              ...s,
+              title: updated.title || "",
+              directory: updated.directory || s.directory || "",
+              createdAt: new Date(updated.time.created).toISOString(),
+              updatedAt: new Date(updated.time.updated).toISOString(),
+            }
+          : s,
+      ),
+    );
+  };
+
+  const handlePermissionAsked = (permission: UnifiedPermission) => {
+    logger.debug("[WS] Permission asked:", permission);
+    const existing = messageStore.permission[permission.sessionId] || [];
+    if (!existing.find((p) => p.id === permission.id)) {
+      setMessageStore("permission", permission.sessionId, [...existing, permission]);
+    }
+  };
+
+  const handlePermissionReplied = (permissionId: string, _optionId: string) => {
+    logger.debug("[WS] Permission replied:", permissionId);
+    // Find and remove permission from all sessions
+    for (const [sessionId, perms] of Object.entries(messageStore.permission)) {
+      if (!perms) continue;
+      const filtered = perms.filter((p) => p.id !== permissionId);
+      if (filtered.length !== perms.length) {
+        setMessageStore("permission", sessionId, filtered);
       }
     }
   };
@@ -552,9 +579,9 @@ export default function Chat() {
     const tempMessageId = `msg-temp-${Date.now()}`;
     const tempPartId = `part-temp-${Date.now()}`;
 
-    const tempMessageInfo: MessageV2.Info = {
+    const tempMessageInfo: UnifiedMessage = {
       id: tempMessageId,
-      sessionID: sessionId,
+      sessionId: sessionId,
       role: "user",
       time: {
         created: Date.now(),
@@ -562,13 +589,13 @@ export default function Chat() {
       parts: [],
     };
 
-    const tempPart: MessageV2.Part = {
+    const tempPart: UnifiedPart = {
       id: tempPartId,
-      messageID: tempMessageId,
-      sessionID: sessionId,
+      messageId: tempMessageId,
+      sessionId: sessionId,
       type: "text",
       text,
-    };
+    } as UnifiedPart;
 
     const messages = messageStore.message[sessionId] || [];
 
@@ -584,20 +611,25 @@ export default function Chat() {
     setMessageStore("part", tempMessageId, [tempPart]);
     setTimeout(scrollToBottom, 0);
 
-    const model = currentSessionModel();
-    await client.sendMessage(sessionId, text, {
-      agent,
-      modelID: model?.modelID,
-      providerID: model?.providerID,
-    });
-    setSending(false);
+    try {
+      const model = currentSessionModel();
+      await gateway.sendMessage(sessionId, text, {
+        mode: agent.id,
+        modelId: model?.modelID,
+      });
+    } catch (error) {
+      logger.error("[SendMessage] Failed to send message:", error);
+    } finally {
+      setSending(false);
+    }
   };
 
   createEffect(() => {
     initializeSession();
 
-    const cleanup = client.connectSSE(handleSSEEvent);
-    onCleanup(cleanup);
+    onCleanup(() => {
+      gateway.destroy();
+    });
   });
 
   return (
@@ -681,17 +713,42 @@ export default function Chat() {
             </h1>
             {/* Agent Mode Indicator */}
             <span class={`px-2 py-0.5 text-[10px] font-medium rounded-full ${
-              currentAgent() === "plan"
+              currentAgent().id === "plan"
                 ? "bg-violet-100 text-violet-700 dark:bg-violet-900/30 dark:text-violet-400"
                 : "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400"
             }`}>
-              {currentAgent() === "plan" ? t().prompt.plan : t().prompt.build}
+              {currentAgent().label}
             </span>
           </div>
         </header>
 
         {/* Message List */}
         <main class="flex-1 flex flex-col overflow-hidden relative">
+          <Show
+            when={!sessionStore.initError}
+            fallback={
+              <div class="flex-1 flex items-center justify-center">
+                <div class="flex flex-col items-center gap-4 text-center px-6 max-w-md">
+                  <div class="w-12 h-12 bg-red-100 dark:bg-red-900/30 rounded-xl flex items-center justify-center text-red-500">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+                  </div>
+                  <h3 class="text-lg font-semibold text-gray-900 dark:text-white">
+                    {t().chat.initFailed}
+                  </h3>
+                  <p class="text-sm text-gray-500 dark:text-gray-400">{sessionStore.initError}</p>
+                  <button
+                    onClick={() => {
+                      setSessionStore({ loading: true, initError: null });
+                      initializeSession();
+                    }}
+                    class="mt-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-lg transition-colors"
+                  >
+                    {t().chat.retry}
+                  </button>
+                </div>
+              </div>
+            }
+          >
           <Show
             when={!sessionStore.loading && sessionStore.current}
             fallback={
@@ -738,12 +795,13 @@ export default function Chat() {
               {/* Input Area */}
               <div class="p-4 bg-white/90 dark:bg-zinc-900/90 backdrop-blur-xs border-t border-gray-100 dark:border-zinc-800 relative z-20">
                 <div class="max-w-3xl mx-auto w-full">
-                  <PromptInput 
-                    onSend={handleSendMessage} 
-                    disabled={sending()} 
+                  <PromptInput
+                    onSend={handleSendMessage}
+                    disabled={sending()}
                     currentAgent={currentAgent()}
                     onAgentChange={setCurrentAgent}
                     onModelChange={handleModelChange}
+                    availableModes={configStore.engines.find(e => e.type === (configStore.currentEngineType ?? "opencode"))?.capabilities?.availableModes}
                   />
                   <div class="mt-2 text-center">
                     <p class="text-[10px] text-gray-400 dark:text-gray-600">
@@ -753,6 +811,7 @@ export default function Chat() {
                 </div>
               </div>
             </Show>
+          </Show>
           </Show>
         </main>
       </div>

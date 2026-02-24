@@ -35,13 +35,15 @@
     "shiki": "^1.22.0",
     "solid-js": "^1.8.0",
     "tailwind-merge": "^2.2.0",
-    "vscode-languageserver-types": "^3.17.5"
+    "vscode-languageserver-types": "^3.17.5",
+    "ws": "^8.19.0"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.0.0",
     "@types/diff": "^5.0.9",
     "@types/luxon": "^3.4.0",
     "@types/node": "^20.0.0",
+    "@types/ws": "^8.18.1",
     "bun-types": "latest",
     "electron": "33",
     "electron-builder": "^25.1.8",

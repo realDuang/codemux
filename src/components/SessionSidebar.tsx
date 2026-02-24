@@ -1,13 +1,13 @@
 import { For, Show, createSignal, createMemo } from "solid-js";
 import { SessionInfo, sessionStore, setSessionStore, getProjectName } from "../stores/session";
 import { useI18n, formatMessage } from "../lib/i18n";
-import { Project } from "../types/opencode";
+import type { UnifiedProject } from "../types/unified";
 import { ProjectStore } from "../lib/project-store";
 
 interface SessionSidebarProps {
   sessions: SessionInfo[];
   currentSessionId: string | null;
-  projects: Project.Info[];
+  projects: UnifiedProject[];
   onSelectSession: (sessionId: string) => void;
   onNewSession: (directory?: string) => void;
   onDeleteSession: (sessionId: string) => void;
@@ -19,9 +19,19 @@ interface SessionSidebarProps {
 // Project grouping data structure
 interface ProjectGroup {
   projectID: string;
-  project: Project.Info | null;
+  project: UnifiedProject | null;
   name: string;
   sessions: SessionInfo[];
+}
+
+function getEngineBadge(engineType?: string): { label: string; class: string } | null {
+  if (!engineType) return null;
+  switch (engineType) {
+    case "opencode": return { label: "OC", class: "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400" };
+    case "copilot": return { label: "Copilot", class: "bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400" };
+    case "claude": return { label: "Claude", class: "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400" };
+    default: return { label: engineType, class: "bg-zinc-100 text-zinc-600 dark:bg-zinc-700 dark:text-zinc-400" };
+  }
 }
 
 export function SessionSidebar(props: SessionSidebarProps) {
@@ -44,7 +54,7 @@ export function SessionSidebar(props: SessionSidebarProps) {
   const projectGroups = createMemo((): ProjectGroup[] => {
     const groups: Map<string, SessionInfo[]> = new Map();
 
-    const filteredProjects = props.projects.filter((p) => p.worktree !== "/");
+    const filteredProjects = props.projects.filter((p) => p.directory !== "/");
 
     for (const project of filteredProjects) {
       groups.set(project.id, []);
@@ -59,7 +69,7 @@ export function SessionSidebar(props: SessionSidebarProps) {
         groups.get(projectID)!.push(session);
       } else if (projectID) {
         const matchingProject = filteredProjects.find(
-          (p) => session.directory && p.worktree === session.directory
+          (p) => session.directory && p.directory === session.directory
         );
         if (matchingProject) {
           groups.get(matchingProject.id)!.push(session);
@@ -91,10 +101,10 @@ export function SessionSidebar(props: SessionSidebarProps) {
     result.sort((a, b) => {
       const aLatest = a.sessions[0]
         ? new Date(a.sessions[0].updatedAt).getTime()
-        : a.project?.time.updated || 0;
+        : (a.project?.engineMeta as any)?.time?.updated || 0;
       const bLatest = b.sessions[0]
         ? new Date(b.sessions[0].updatedAt).getTime()
-        : b.project?.time.updated || 0;
+        : (b.project?.engineMeta as any)?.time?.updated || 0;
       return bLatest - aLatest;
     });
 
@@ -163,8 +173,8 @@ export function SessionSidebar(props: SessionSidebarProps) {
     return colors[Math.abs(hash) % colors.length];
   };
 
-  const getProjectDirectory = (project: Project.Info): string | undefined => {
-    return ProjectStore.getPath(project.id) || project.worktree || undefined;
+  const getProjectDirectory = (project: UnifiedProject): string | undefined => {
+    return ProjectStore.getPath(project.id) || project.directory || undefined;
   };
 
   return (
@@ -207,7 +217,7 @@ export function SessionSidebar(props: SessionSidebarProps) {
                     onMouseEnter={() => setHoveredProject(project.projectID)}
                     onMouseLeave={() => setHoveredProject(null)}
                     onClick={() => toggleProjectExpanded(project.projectID)}
-                    title={project.project?.worktree || project.sessions[0]?.directory || ""}
+                    title={project.project?.directory || project.sessions[0]?.directory || ""}
                   >
                     <div class="flex items-center gap-2 min-w-0 flex-1">
                       {/* Expand/Collapse Arrow */}
@@ -237,11 +247,20 @@ export function SessionSidebar(props: SessionSidebarProps) {
 
                       {/* Project Name and Path */}
                       <div class="min-w-0 flex-1">
-                        <span class="text-sm font-medium text-gray-700 dark:text-gray-300 truncate block">
-                          {project.name}
-                        </span>
+                        <div class="flex items-center gap-1.5">
+                          <span class="text-sm font-medium text-gray-700 dark:text-gray-300 truncate">
+                            {project.name}
+                          </span>
+                          <Show when={getEngineBadge(project.project?.engineType)}>
+                            {(badge) => (
+                              <span class={`text-[10px] font-medium px-1.5 py-0.5 rounded-full leading-none flex-shrink-0 ${badge().class}`}>
+                                {badge().label}
+                              </span>
+                            )}
+                          </Show>
+                        </div>
                         <span class="text-[10px] text-gray-400 dark:text-gray-500 truncate block">
-                          {project.project?.worktree || project.sessions[0]?.directory || ""}
+                          {project.project?.directory || project.sessions[0]?.directory || ""}
                         </span>
                       </div>
                     </div>

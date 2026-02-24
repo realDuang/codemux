@@ -74,22 +74,12 @@ interface ElectronAPI {
     }>;
   };
 
-  opencode: {
-    start: () => Promise<{
-      running: boolean;
-      port: number;
-      pid?: number;
-      startTime?: number;
-      error?: string;
-    }>;
-    stop: () => Promise<void>;
-    getStatus: () => Promise<{
-      running: boolean;
-      port: number;
-      pid?: number;
-      startTime?: number;
-      error?: string;
-    }>;
+  server?: {
+    getPort: () => Promise<number>;
+    isRunning: () => Promise<boolean>;
+  };
+
+  gateway?: {
     getPort: () => Promise<number>;
   };
 }

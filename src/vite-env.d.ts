@@ -88,6 +88,10 @@ interface ElectronAPI {
     getPort: () => Promise<number>;
     isRunning: () => Promise<boolean>;
   };
+
+  gateway?: {
+    getPort: () => Promise<number>;
+  };
 }
 
 declare global {

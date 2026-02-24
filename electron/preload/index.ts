@@ -37,18 +37,15 @@ const electronAPI = {
     getStatus: () => ipcRenderer.invoke("tunnel:getStatus"),
   },
 
-  // OpenCode process API
-  opencode: {
-    start: () => ipcRenderer.invoke("opencode:start"),
-    stop: () => ipcRenderer.invoke("opencode:stop"),
-    getStatus: () => ipcRenderer.invoke("opencode:getStatus"),
-    getPort: () => ipcRenderer.invoke("opencode:getPort"),
-  },
-
   // Production server API
   server: {
     getPort: () => ipcRenderer.invoke("server:getPort"),
     isRunning: () => ipcRenderer.invoke("server:isRunning"),
+  },
+
+  // Gateway API
+  gateway: {
+    getPort: () => ipcRenderer.invoke("gateway:getPort"),
   },
 };
 

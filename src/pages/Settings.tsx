@@ -1,11 +1,13 @@
-import { createSignal, onMount, Show } from "solid-js";
+import { createSignal, For, onMount, Show, Switch, Match } from "solid-js";
 import { useNavigate } from "@solidjs/router";
-import { client } from "../lib/opencode-client";
+// Server URL is managed via localStorage for direct connection testing
 import { LanguageSwitcher } from "../components/LanguageSwitcher";
 import { ThemeSwitcher } from "../components/ThemeSwitcher";
 import { useI18n } from "../lib/i18n";
 import { logger } from "../lib/logger";
 import { useAuthGuard } from "../lib/useAuthGuard";
+import { configStore } from "../stores/config";
+import type { EngineInfo } from "../types/unified";
 
 export default function Settings() {
   const { t } = useI18n();
@@ -22,7 +24,7 @@ export default function Settings() {
 
   onMount(() => {
     // Load current server URL
-    setServerUrl(client.getServerUrl());
+    setServerUrl(localStorage.getItem("opencode_server_url") || "http://localhost:4096");
   });
 
   const checkConnection = async (url: string) => {
@@ -95,7 +97,7 @@ export default function Settings() {
       }
 
       await checkConnection(url);
-      client.setServerUrl(url);
+      localStorage.setItem("opencode_server_url", url);
       setSaveStatus({ type: "success", message: t().settings.urlUpdated });
 
       setTimeout(() => {
@@ -182,6 +184,108 @@ export default function Settings() {
                   </div>
                 </div>
               </div>
+            </section>
+
+            {/* Engines Section */}
+            <section>
+              <h2 class="text-sm font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-4 px-1">
+                {t().engine.engines}
+              </h2>
+              <Show
+                when={configStore.engines.length > 0}
+                fallback={
+                  <div class="bg-white dark:bg-zinc-800 rounded-xl shadow-xs border border-zinc-200 dark:border-zinc-700 p-6 text-center text-sm text-zinc-400 dark:text-zinc-500">
+                    {t().engine.noEngines}
+                  </div>
+                }
+              >
+                <div class="bg-white dark:bg-zinc-800 rounded-xl shadow-xs border border-zinc-200 dark:border-zinc-700">
+                  <For each={configStore.engines}>
+                    {(engine, index) => (
+                      <div
+                        class={`p-4 sm:p-6 flex items-center justify-between gap-4 ${index() < configStore.engines.length - 1 ? "border-b border-zinc-100 dark:border-zinc-700" : ""}`}
+                      >
+                        <div class="flex items-center gap-3 min-w-0">
+                          {/* Status indicator dot */}
+                          <span
+                            class={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${
+                              engine.status === "running"
+                                ? "bg-emerald-500"
+                                : engine.status === "starting"
+                                  ? "bg-amber-500"
+                                  : engine.status === "error"
+                                    ? "bg-red-500"
+                                    : "bg-zinc-400"
+                            }`}
+                          />
+                          <div class="min-w-0">
+                            <div class="flex items-center gap-2">
+                              <span class="text-base font-medium text-gray-900 dark:text-white truncate">
+                                {engine.name}
+                              </span>
+                              {/* Engine type badge */}
+                              <Switch>
+                                <Match when={engine.type === "opencode"}>
+                                  <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300">
+                                    OpenCode
+                                  </span>
+                                </Match>
+                                <Match when={engine.type === "copilot"}>
+                                  <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-800 dark:bg-purple-900/30 dark:text-purple-300">
+                                    Copilot
+                                  </span>
+                                </Match>
+                                <Match when={engine.type === "claude"}>
+                                  <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-orange-100 text-orange-800 dark:bg-orange-900/30 dark:text-orange-300">
+                                    Claude
+                                  </span>
+                                </Match>
+                              </Switch>
+                            </div>
+                            <div class="flex items-center gap-2 mt-0.5">
+                              {/* Status text */}
+                              <span class="text-sm text-gray-500 dark:text-gray-400">
+                                <Switch>
+                                  <Match when={engine.status === "running"}>
+                                    {t().engine.running}
+                                  </Match>
+                                  <Match when={engine.status === "starting"}>
+                                    {t().engine.starting}
+                                  </Match>
+                                  <Match when={engine.status === "error"}>
+                                    {t().engine.error}
+                                  </Match>
+                                  <Match when={engine.status === "stopped"}>
+                                    {t().engine.stopped}
+                                  </Match>
+                                </Switch>
+                              </span>
+                              {/* Version */}
+                              <Show when={engine.version}>
+                                <span class="text-xs text-gray-400 dark:text-gray-500">
+                                  v{engine.version}
+                                </span>
+                              </Show>
+                            </div>
+                          </div>
+                        </div>
+                        {/* Auth login button */}
+                        <Show
+                          when={
+                            engine.authMethods &&
+                            engine.authMethods.length > 0 &&
+                            engine.status !== "running"
+                          }
+                        >
+                          <button class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-lg transition-colors flex-shrink-0">
+                            {t().engine.login}
+                          </button>
+                        </Show>
+                      </div>
+                    )}
+                  </For>
+                </div>
+              </Show>
             </section>
 
             {/* Connection Settings Section */}

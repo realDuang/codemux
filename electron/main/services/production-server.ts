@@ -156,6 +156,10 @@ class ProductionServer {
     return this.server !== null;
   }
 
+  getServer(): http.Server | null {
+    return this.server;
+  }
+
   async start(port: number = DEFAULT_PORT): Promise<number> {
     if (this.server) {
       return this.port;

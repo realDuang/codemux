@@ -44,7 +44,7 @@ import { ContentBash } from "./content-bash";
 import { ContentError } from "./content-error";
 import { formatDuration } from "./common";
 import { ContentMarkdown } from "./content-markdown";
-import type { MessageV2, Permission } from "../../types/opencode";
+import type { UnifiedMessage, UnifiedPart, UnifiedPermission, ToolPart } from "../../types/unified";
 import type { Diagnostic } from "vscode-languageserver-types";
 import { useI18n, formatMessage } from "../../lib/i18n";
 import { logger } from "../../lib/logger";
@@ -56,11 +56,11 @@ const MIN_DURATION = 2000;
 
 export interface PartProps {
   index: number;
-  message: MessageV2.Info;
-  part: MessageV2.Part;
+  message: UnifiedMessage;
+  part: UnifiedPart;
   last: boolean;
-  permission?: Permission.Request;
-  onPermissionRespond?: (sessionID: string, permissionID: string, reply: Permission.Reply) => void;
+  permission?: UnifiedPermission;
+  onPermissionRespond?: (sessionID: string, permissionID: string, reply: string) => void;
 }
 
 export function Part(props: PartProps) {
@@ -99,11 +99,11 @@ export function Part(props: PartProps) {
                 when={
                   props.part.type === "step-start" &&
                   props.message.role === "assistant" &&
-                  props.message.modelID
+                  props.message.modelId
                 }
               >
-                <div title={props.message.modelID}>
-                   <ProviderIcon model={props.message.modelID || ""} size={18} />
+                <div title={props.message.modelId}>
+                   <ProviderIcon model={props.message.modelId || ""} size={18} />
                 </div>
               </Match>
               <Match
@@ -116,62 +116,62 @@ export function Part(props: PartProps) {
               </Match>
               <Match
                 when={
-                  props.part.type === "tool" && props.part.tool === "todowrite"
+                  props.part.type === "tool" && (props.part as ToolPart).originalTool === "todowrite"
                 }
               >
                 <IconQueueList width={18} height={18} />
               </Match>
               <Match
                 when={
-                  props.part.type === "tool" && props.part.tool === "todoread"
+                  props.part.type === "tool" && (props.part as ToolPart).originalTool === "todoread"
                 }
               >
                 <IconQueueList width={18} height={18} />
               </Match>
               <Match
-                when={props.part.type === "tool" && props.part.tool === "bash"}
+                when={props.part.type === "tool" && (props.part as ToolPart).originalTool === "bash"}
               >
                 <IconCommandLine width={18} height={18} />
               </Match>
               <Match
-                when={props.part.type === "tool" && props.part.tool === "edit"}
+                when={props.part.type === "tool" && (props.part as ToolPart).originalTool === "edit"}
               >
                 <IconPencilSquare width={18} height={18} />
               </Match>
               <Match
-                when={props.part.type === "tool" && props.part.tool === "write"}
+                when={props.part.type === "tool" && (props.part as ToolPart).originalTool === "write"}
               >
                 <IconDocumentPlus width={18} height={18} />
               </Match>
               <Match
-                when={props.part.type === "tool" && props.part.tool === "read"}
+                when={props.part.type === "tool" && (props.part as ToolPart).originalTool === "read"}
               >
                 <IconDocument width={18} height={18} />
               </Match>
               <Match
-                when={props.part.type === "tool" && props.part.tool === "grep"}
+                when={props.part.type === "tool" && (props.part as ToolPart).originalTool === "grep"}
               >
                 <IconDocumentMagnifyingGlass width={18} height={18} />
               </Match>
               <Match
-                when={props.part.type === "tool" && props.part.tool === "list"}
+                when={props.part.type === "tool" && (props.part as ToolPart).originalTool === "list"}
               >
                 <IconRectangleStack width={18} height={18} />
               </Match>
               <Match
-                when={props.part.type === "tool" && props.part.tool === "glob"}
+                when={props.part.type === "tool" && (props.part as ToolPart).originalTool === "glob"}
               >
                 <IconMagnifyingGlass width={18} height={18} />
               </Match>
               <Match
                 when={
-                  props.part.type === "tool" && props.part.tool === "webfetch"
+                  props.part.type === "tool" && (props.part as ToolPart).originalTool === "webfetch"
                 }
               >
                 <IconGlobeAlt width={18} height={18} />
               </Match>
               <Match
-                when={props.part.type === "tool" && props.part.tool === "task"}
+                when={props.part.type === "tool" && (props.part as ToolPart).originalTool === "task"}
               >
                 <IconRobot width={18} height={18} />
               </Match>
@@ -257,8 +257,8 @@ export function Part(props: PartProps) {
         {props.part.type === "step-start" &&
           props.message.role === "assistant" && (
             <div data-component="step-start">
-              <div data-slot="provider">{props.message.providerID}</div>
-              <div data-slot="model">{props.message.modelID}</div>
+              <div data-slot="provider">{props.message.providerId}</div>
+              <div data-slot="model">{props.message.modelId}</div>
             </div>
           )}
         {props.part.type === "tool" && props.part.state.status === "error" && (
@@ -267,7 +267,7 @@ export function Part(props: PartProps) {
               <Collapsible.Trigger>
                 <div data-component="tool-title">
                   <span data-slot="name">Error</span>
-                  <span data-slot="target">{props.part.tool}</span>
+                  <span data-slot="target">{(props.part as ToolPart).originalTool}</span>
                 </div>
                 <Collapsible.Arrow />
               </Collapsible.Trigger>
@@ -283,7 +283,7 @@ export function Part(props: PartProps) {
         {props.part.type === "tool" && props.permission && (
           <div data-component="tool-permission">
             <div data-component="tool-title" data-waiting>
-              <span data-slot="name">{props.part.tool}</span>
+              <span data-slot="name">{(props.part as ToolPart).originalTool}</span>
               <span data-slot="target">
                 {props.part.state.status === "running" && (props.part.state as any).input?.description}
                 {props.part.state.status === "running" && (props.part.state as any).input?.filePath}
@@ -306,7 +306,7 @@ export function Part(props: PartProps) {
           props.message.role === "assistant" && (
             <div data-component="tool-running">
               <div data-component="tool-title" data-running>
-                <span data-slot="name">{props.part.tool}</span>
+                <span data-slot="name">{(props.part as ToolPart).originalTool}</span>
                 <Show when={props.part.state.status === "running" && (props.part.state as any).input}>
                   <span data-slot="target">
                     {(props.part.state as any).input?.description}
@@ -322,103 +322,103 @@ export function Part(props: PartProps) {
           props.part.state.status === "completed" &&
           props.message.role === "assistant" && (
             <>
-              <div data-component="tool" data-tool={props.part.tool}>
+              <div data-component="tool" data-tool={(props.part as ToolPart).originalTool}>
                 <Switch>
-                  <Match when={props.part.tool === "grep"}>
+                  <Match when={(props.part as ToolPart).originalTool === "grep"}>
                     <GrepTool
-                      message={props.message as MessageV2.Info}
+                      message={props.message}
                       id={props.part.id}
-                      tool={props.part.tool}
+                      tool={(props.part as ToolPart).originalTool}
                       // @ts-ignore
                       state={props.part.state}
                     />
                   </Match>
-                  <Match when={props.part.tool === "glob"}>
+                  <Match when={(props.part as ToolPart).originalTool === "glob"}>
                     <GlobTool
-                      message={props.message as MessageV2.Info}
+                      message={props.message}
                       id={props.part.id}
-                      tool={props.part.tool}
+                      tool={(props.part as ToolPart).originalTool}
                       // @ts-ignore
                       state={props.part.state}
                     />
                   </Match>
-                  <Match when={props.part.tool === "list"}>
+                  <Match when={(props.part as ToolPart).originalTool === "list"}>
                     <ListTool
-                      message={props.message as MessageV2.Info}
+                      message={props.message}
                       id={props.part.id}
-                      tool={props.part.tool}
+                      tool={(props.part as ToolPart).originalTool}
                       // @ts-ignore
                       state={props.part.state}
                     />
                   </Match>
-                  <Match when={props.part.tool === "read"}>
+                  <Match when={(props.part as ToolPart).originalTool === "read"}>
                     <ReadTool
-                      message={props.message as MessageV2.Info}
+                      message={props.message}
                       id={props.part.id}
-                      tool={props.part.tool}
+                      tool={(props.part as ToolPart).originalTool}
                       // @ts-ignore
                       state={props.part.state}
                     />
                   </Match>
-                  <Match when={props.part.tool === "write"}>
+                  <Match when={(props.part as ToolPart).originalTool === "write"}>
                     <WriteTool
-                      message={props.message as MessageV2.Info}
+                      message={props.message}
                       id={props.part.id}
-                      tool={props.part.tool}
+                      tool={(props.part as ToolPart).originalTool}
                       // @ts-ignore
                       state={props.part.state}
                     />
                   </Match>
-                  <Match when={props.part.tool === "edit"}>
+                  <Match when={(props.part as ToolPart).originalTool === "edit"}>
                     <EditTool
-                      message={props.message as MessageV2.Info}
+                      message={props.message}
                       id={props.part.id}
-                      tool={props.part.tool}
+                      tool={(props.part as ToolPart).originalTool}
                       // @ts-ignore
                       state={props.part.state}
                     />
                   </Match>
-                  <Match when={props.part.tool === "bash"}>
+                  <Match when={(props.part as ToolPart).originalTool === "bash"}>
                     <BashTool
                       id={props.part.id}
-                      tool={props.part.tool}
+                      tool={(props.part as ToolPart).originalTool}
                       // @ts-ignore
                       state={props.part.state}
-                      message={props.message as MessageV2.Info}
+                      message={props.message}
                     />
                   </Match>
-                  <Match when={props.part.tool === "todowrite"}>
+                  <Match when={(props.part as ToolPart).originalTool === "todowrite"}>
                     <TodoWriteTool
-                      message={props.message as MessageV2.Info}
+                      message={props.message}
                       id={props.part.id}
-                      tool={props.part.tool}
+                      tool={(props.part as ToolPart).originalTool}
                       // @ts-ignore
                       state={props.part.state}
                     />
                   </Match>
-                  <Match when={props.part.tool === "webfetch"}>
+                  <Match when={(props.part as ToolPart).originalTool === "webfetch"}>
                     <WebFetchTool
-                      message={props.message as MessageV2.Info}
+                      message={props.message}
                       id={props.part.id}
-                      tool={props.part.tool}
+                      tool={(props.part as ToolPart).originalTool}
                       // @ts-ignore
                       state={props.part.state}
                     />
                   </Match>
-                  <Match when={props.part.tool === "task"}>
+                  <Match when={(props.part as ToolPart).originalTool === "task"}>
                     <TaskTool
                       id={props.part.id}
-                      tool={props.part.tool}
-                      message={props.message as MessageV2.Info}
+                      tool={(props.part as ToolPart).originalTool}
+                      message={props.message}
                       // @ts-ignore
                       state={props.part.state}
                     />
                   </Match>
                   <Match when={true}>
                     <FallbackTool
-                      message={props.message as MessageV2.Info}
+                      message={props.message}
                       id={props.part.id}
-                      tool={props.part.tool}
+                      tool={(props.part as ToolPart).originalTool}
                       // @ts-ignore
                       state={props.part.state}
                     />
@@ -445,7 +445,7 @@ type ToolProps = {
   id: string;
   tool: string;
   state: any; // Using any to avoid complex type matching for now
-  message: MessageV2.Info;
+  message: UnifiedMessage;
   isLastPart?: boolean;
 };
 
@@ -748,8 +748,8 @@ export function GrepTool(props: ToolProps) {
 
 export function ListTool(props: ToolProps) {
   const path = createMemo(() =>
-    props.state.input?.path !== props.message.path?.cwd
-      ? stripWorkingDirectory(props.state.input?.path, props.message.path?.cwd)
+    props.state.input?.path !== (props.message.engineMeta as any)?.path?.cwd
+      ? stripWorkingDirectory(props.state.input?.path, (props.message.engineMeta as any)?.path?.cwd)
       : props.state.input?.path,
   );
 
@@ -821,7 +821,7 @@ export function WebFetchTool(props: ToolProps) {
 export function ReadTool(props: ToolProps) {
   const { t } = useI18n();
   const filePath = createMemo(() =>
-    stripWorkingDirectory(props.state.input?.filePath, props.message.path?.cwd),
+    stripWorkingDirectory(props.state.input?.filePath, (props.message.engineMeta as any)?.path?.cwd),
   );
   const lineCount = createMemo(() => {
     const lines = props.state.metadata?.lines;
@@ -876,7 +876,7 @@ export function ReadTool(props: ToolProps) {
 export function WriteTool(props: ToolProps) {
   const { t } = useI18n();
   const filePath = createMemo(() =>
-    stripWorkingDirectory(props.state.input?.filePath, props.message.path?.cwd),
+    stripWorkingDirectory(props.state.input?.filePath, (props.message.engineMeta as any)?.path?.cwd),
   );
   const diagnostics = createMemo(() =>
     getDiagnostics(
@@ -926,7 +926,7 @@ export function WriteTool(props: ToolProps) {
 
 export function EditTool(props: ToolProps) {
   const filePath = createMemo(() =>
-    stripWorkingDirectory(props.state.input.filePath, props.message.path?.cwd),
+    stripWorkingDirectory(props.state.input.filePath, (props.message.engineMeta as any)?.path?.cwd),
   );
   const diagnostics = createMemo(() =>
     getDiagnostics(
@@ -1141,26 +1141,26 @@ export function ProviderIcon(props: { model: string; size?: number }) {
 
 // Permission Prompt Component
 interface PermissionPromptProps {
-  permission: Permission.Request;
-  onRespond?: (sessionID: string, permissionID: string, reply: Permission.Reply) => void;
+  permission: UnifiedPermission;
+  onRespond?: (sessionID: string, permissionID: string, reply: string) => void;
 }
 
 function PermissionPrompt(props: PermissionPromptProps) {
   const { t } = useI18n();
 
-  const handleRespond = (reply: Permission.Reply) => {
+  const handleRespond = (reply: string) => {
     if (props.onRespond) {
-      props.onRespond(props.permission.sessionID, props.permission.id, reply);
+      props.onRespond(props.permission.sessionId, props.permission.id, reply);
     }
   };
 
   return (
     <div data-component="permission-prompt">
       <div data-slot="permission-info">
-        <span data-slot="permission-type">{props.permission.permission}</span>
-        <Show when={props.permission.patterns.length > 0}>
+        <span data-slot="permission-type">{props.permission.title}</span>
+        <Show when={props.permission.patterns && props.permission.patterns.length > 0}>
           <span data-slot="permission-patterns">
-            {props.permission.patterns.join(", ")}
+            {props.permission.patterns?.join(", ")}
           </span>
         </Show>
       </div>

@@ -21,14 +21,6 @@ interface TunnelInfo {
   error?: string;
 }
 
-interface OpenCodeStatus {
-  running: boolean;
-  port: number;
-  pid?: number;
-  startTime?: number;
-  error?: string;
-}
-
 interface DeviceInfo {
   id: string;
   name: string;
@@ -218,31 +210,6 @@ export const tunnelAPI = {
   },
 };
 
-// OpenCode API
-export const opencodeAPI = {
-  async start(): Promise<OpenCodeStatus | null> {
-    const api = getElectronAPI();
-    return api ? api.opencode.start() : null;
-  },
-
-  async stop(): Promise<void> {
-    const api = getElectronAPI();
-    if (api) {
-      await api.opencode.stop();
-    }
-  },
-
-  async getStatus(): Promise<OpenCodeStatus | null> {
-    const api = getElectronAPI();
-    return api ? api.opencode.getStatus() : null;
-  },
-
-  async getPort(): Promise<number> {
-    const api = getElectronAPI();
-    return api ? api.opencode.getPort() : 4096;
-  },
-};
-
 // Production Server API
 export const serverAPI = {
   async getPort(): Promise<number> {
@@ -253,5 +220,13 @@ export const serverAPI = {
   async isRunning(): Promise<boolean> {
     const api = getElectronAPI();
     return api?.server ? api.server.isRunning() : false;
+  },
+};
+
+// Gateway API
+export const gatewayAPI = {
+  async getPort(): Promise<number> {
+    const api = getElectronAPI();
+    return api?.gateway ? api.gateway.getPort() : 4200;
   },
 };

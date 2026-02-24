@@ -1,10 +1,12 @@
-import { createSignal, Show } from "solid-js";
+import { createSignal, For, Show } from "solid-js";
 import { useI18n } from "../lib/i18n";
+import { configStore } from "../stores/config";
+import type { EngineType } from "../types/unified";
 
 interface AddProjectModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onAdd: (directory: string) => Promise<void>;
+  onAdd: (directory: string, engineType: EngineType) => Promise<void>;
 }
 
 export function AddProjectModal(props: AddProjectModalProps) {
@@ -12,6 +14,9 @@ export function AddProjectModal(props: AddProjectModalProps) {
   const [directory, setDirectory] = createSignal("");
   const [loading, setLoading] = createSignal(false);
   const [error, setError] = createSignal<string | null>(null);
+  const [selectedEngine, setSelectedEngine] = createSignal<EngineType>(
+    configStore.engines.find(e => e.status === "running")?.type ?? "opencode"
+  );
 
   const handleAdd = async () => {
     const dir = directory().trim();
@@ -21,7 +26,7 @@ export function AddProjectModal(props: AddProjectModalProps) {
     setError(null);
 
     try {
-      await props.onAdd(dir);
+      await props.onAdd(dir, selectedEngine());
       setDirectory("");
       props.onClose();
     } catch (e) {
@@ -124,6 +129,22 @@ export function AddProjectModal(props: AddProjectModalProps) {
                     autofocus
                     class="flex-1 px-3 py-2 bg-white dark:bg-zinc-800 border border-gray-300 dark:border-zinc-700 rounded-lg text-gray-900 dark:text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                   />
+                </div>
+                <div class="mt-3">
+                  <label class="block text-sm font-medium text-zinc-700 dark:text-zinc-300 mb-1">
+                    Engine
+                  </label>
+                  <select
+                    value={selectedEngine()}
+                    onChange={(e) => setSelectedEngine(e.target.value as EngineType)}
+                    class="w-full px-3 py-2 border border-zinc-300 dark:border-zinc-600 rounded-lg bg-white dark:bg-zinc-700 text-zinc-900 dark:text-zinc-100 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  >
+                    <For each={configStore.engines.filter(e => e.status === "running")}>
+                      {(engine) => (
+                        <option value={engine.type}>{engine.name}</option>
+                      )}
+                    </For>
+                  </select>
                 </div>
                 <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">
                   {t().project.pathHint}

@@ -56,6 +56,8 @@ export const zh: LocaleDict = {
     logout: "退出登录",
     startConversation: "开始新的对话",
     startConversationDesc: "选择一个模型，在下方输入框中输入任何问题开始聊天。",
+    initFailed: "初始化失败",
+    retry: "重试",
     disclaimer: "AI 生成的内容可能不准确，请核实重要信息。",
   },
 
@@ -254,5 +256,22 @@ export const zh: LocaleDict = {
     noPendingRequests: "没有待处理的请求",
     requestApproved: "请求已批准",
     requestDenied: "请求已拒绝",
+  },
+
+  // Engine
+  engine: {
+    title: "引擎",
+    engines: "引擎",
+    status: "状态",
+    running: "运行中",
+    stopped: "已停止",
+    starting: "启动中...",
+    error: "错误",
+    version: "版本",
+    selectEngine: "选择引擎",
+    defaultEngine: "默认引擎",
+    authRequired: "需要认证",
+    login: "登录",
+    noEngines: "没有可用的引擎",
   },
 };

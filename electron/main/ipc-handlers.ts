@@ -2,7 +2,6 @@ import { ipcMain, dialog, shell, app } from "electron";
 import os from "os";
 import { deviceStore } from "./services/device-store";
 import { tunnelManager } from "./services/tunnel-manager";
-import { opencodeProcess } from "./services/opencode-process";
 import { productionServer } from "./services/production-server";
 
 export function registerIpcHandlers(): void {
@@ -173,22 +172,10 @@ export function registerIpcHandlers(): void {
   });
 
   // ===========================================================================
-  // OpenCode Process Management
+  // Gateway
   // ===========================================================================
 
-  ipcMain.handle("opencode:start", async () => {
-    return opencodeProcess.start();
-  });
-
-  ipcMain.handle("opencode:stop", async () => {
-    return opencodeProcess.stop();
-  });
-
-  ipcMain.handle("opencode:getStatus", async () => {
-    return opencodeProcess.getStatus();
-  });
-
-  ipcMain.handle("opencode:getPort", async () => {
-    return opencodeProcess.getPort();
+  ipcMain.handle("gateway:getPort", async () => {
+    return 4200;
   });
 }

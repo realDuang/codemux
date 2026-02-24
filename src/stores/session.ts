@@ -1,5 +1,5 @@
 import { createStore } from "solid-js/store";
-import { Project } from "../types/opencode";
+import type { UnifiedProject } from "../types/unified";
 
 export interface SessionInfo {
   id: string;
@@ -24,28 +24,30 @@ export const [sessionStore, setSessionStore] = createStore<{
   list: SessionInfo[];
   current: string | null;
   loading: boolean;
-  projects: Project.Info[];
+  initError: string | null;
+  projects: UnifiedProject[];
   projectExpanded: ProjectExpandState;
 }>({
   list: [],
   current: null,
   loading: false,
+  initError: null,
   projects: [],
   projectExpanded: {},
 });
 
-export function getProjectName(project: Project.Info): string {
+export function getProjectName(project: UnifiedProject): string {
   if (project.name) return project.name;
-  const parts = project.worktree.split("/").filter(Boolean);
+  const parts = project.directory.split(/[\\/]/).filter(Boolean);
   return parts[parts.length - 1] || "Unknown";
 }
 
-export function getProjectByDirectory(directory: string): Project.Info | undefined {
+export function getProjectByDirectory(directory: string): UnifiedProject | undefined {
   return sessionStore.projects.find(
-    (p) => p.worktree === directory || p.sandboxes.includes(directory)
+    (p) => p.directory === directory
   );
 }
 
-export function getProjectById(projectID: string): Project.Info | undefined {
+export function getProjectById(projectID: string): UnifiedProject | undefined {
   return sessionStore.projects.find((p) => p.id === projectID);
 }

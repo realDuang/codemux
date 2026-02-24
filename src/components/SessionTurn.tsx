@@ -8,35 +8,34 @@ import {
 import { messageStore, isExpanded, toggleExpanded } from "../stores/message";
 import { Part, ProviderIcon } from "./share/part";
 import { useI18n } from "../lib/i18n";
-import type { MessageV2, Permission } from "../types/opencode";
+import type { UnifiedMessage, UnifiedPart, UnifiedPermission } from "../types/unified";
 import { Spinner } from "./Spinner";
 
 import styles from "./SessionTurn.module.css";
 
 interface SessionTurnProps {
   sessionID: string;
-  userMessage: MessageV2.Info;
-  assistantMessages: MessageV2.Info[];
+  userMessage: UnifiedMessage;
+  assistantMessages: UnifiedMessage[];
   isLastTurn: boolean;
   isWorking: boolean;
-  onPermissionRespond?: (sessionID: string, permissionID: string, reply: Permission.Reply) => void;
+  onPermissionRespond?: (sessionID: string, permissionID: string, reply: string) => void;
 }
 
 /**
  * Compute status text from the current part being processed
  */
 function computeStatusFromPart(
-  part: MessageV2.Part | undefined,
+  part: UnifiedPart | undefined,
   t: () => any
 ): string | undefined {
   if (!part) return undefined;
 
   if (part.type === "tool") {
-    switch (part.tool) {
+    switch (part.normalizedTool) {
       case "task":
         return t().steps.delegatingWork;
-      case "todowrite":
-      case "todoread":
+      case "todo":
         return t().steps.planningNextSteps;
       case "read":
         return t().steps.gatheringContext;
@@ -44,12 +43,12 @@ function computeStatusFromPart(
       case "grep":
       case "glob":
         return t().steps.searchingCodebase;
-      case "webfetch":
+      case "web_fetch":
         return t().steps.searchingWeb;
       case "edit":
       case "write":
         return t().steps.makingEdits;
-      case "bash":
+      case "shell":
         return t().steps.runningCommands;
       default:
         return undefined;
@@ -93,7 +92,7 @@ export function SessionTurn(props: SessionTurnProps) {
 
   const isCompactingTurn = createMemo(() => {
     for (const msg of props.assistantMessages) {
-      if (msg.summary === true || msg.mode === "compaction" || msg.agent === "compaction") {
+      if ((msg.engineMeta as any)?.summary === true || msg.mode === "compaction" || (msg.engineMeta as any)?.agent === "compaction") {
         return true;
       }
     }
@@ -110,11 +109,11 @@ export function SessionTurn(props: SessionTurnProps) {
     () => messageStore.permission[props.sessionID] || []
   );
 
-  // Get permission for a specific tool part (by callID)
-  const getPermissionForPart = (part: MessageV2.Part) => {
+  // Get permission for a specific tool part (by callId)
+  const getPermissionForPart = (part: UnifiedPart) => {
     if (part.type !== "tool") return undefined;
-    const callID = part.callID;
-    return permissions().find(p => p.tool?.callID === callID);
+    const callId = part.callId;
+    return permissions().find(p => p.toolCallId === callId);
   };
 
   // Check if there are any tool parts (steps)
@@ -172,15 +171,15 @@ export function SessionTurn(props: SessionTurnProps) {
     const firstAssistant = props.assistantMessages[0];
     if (firstAssistant) {
       return {
-        providerID: firstAssistant.providerID,
-        modelID: firstAssistant.modelID,
+        providerID: firstAssistant.providerId,
+        modelID: firstAssistant.modelId,
       };
     }
     return undefined;
   });
 
   // Filter parts for display
-  const filterParts = (allParts: MessageV2.Part[], messageRole: string) => {
+  const filterParts = (allParts: UnifiedPart[], messageRole: string) => {
     const filtered = allParts.filter((x, index) => {
       // Filter out all step-start, model info will be shown in header
       if (x.type === "step-start") return false;
@@ -188,7 +187,7 @@ export function SessionTurn(props: SessionTurnProps) {
       if (x.type === "patch") return false;
       if (x.type === "step-finish") return false;
       if (x.type === "text" && (x as any).synthetic === true) return false;
-      if (x.type === "tool" && x.tool === "todoread") return false;
+      if (x.type === "tool" && x.originalTool === "todoread") return false;
       if (x.type === "text" && !(x as any).text) return false;
       // Show pending/running tools when working
       if (
@@ -223,7 +222,7 @@ export function SessionTurn(props: SessionTurnProps) {
 
   // Get all steps parts (for expanded view)
   const allStepsParts = createMemo(() => {
-    const result: { message: MessageV2.Info; parts: MessageV2.Part[] }[] = [];
+    const result: { message: UnifiedMessage; parts: UnifiedPart[] }[] = [];
     for (const msg of props.assistantMessages) {
       const parts = messageStore.part[msg.id] || [];
       const filtered = filterParts(parts, "assistant");
@@ -358,7 +357,7 @@ export function SessionTurn(props: SessionTurnProps) {
                     const parts = messageStore.part[msg.id] || [];
                     for (let i = 0; i < parts.length; i++) {
                       const p = parts[i];
-                      if (p.type === "tool" && p.callID === perm.tool?.callID) {
+                      if (p.type === "tool" && p.callId === perm.toolCallId) {
                         return (
                           <Part
                             last={false}

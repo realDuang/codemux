@@ -7,13 +7,13 @@ import { tunnelManager } from './scripts/tunnel-manager';
 
 export default defineConfig({
   main: {
-    plugins: [externalizeDepsPlugin({ exclude: [] })],
+    plugins: [externalizeDepsPlugin({ exclude: ['ws'] })],
     build: {
       lib: {
         entry: resolve(__dirname, 'electron/main/index.ts'),
       },
       rollupOptions: {
-        external: ['electron'],
+        external: ['electron', 'bufferutil', 'utf-8-validate'],
         output: {
           format: 'cjs',
           entryFileNames: '[name].cjs',
@@ -70,6 +70,11 @@ export default defineConfig({
         ".trycloudflare.com",
       ],
       proxy: {
+        // Proxy Gateway WebSocket to the Gateway server
+        '/ws': {
+          target: 'http://localhost:4200',
+          ws: true,
+        },
         // Proxy OpenCode API requests to the OpenCode server
         '/opencode-api': {
           target: 'http://localhost:4096',

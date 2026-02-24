@@ -1,18 +1,18 @@
 import { createStore } from "solid-js/store";
-import { MessageV2, Permission } from "../types/opencode";
+import type { UnifiedMessage, UnifiedPart, UnifiedPermission } from "../types/unified";
 
-// Storage structure consistent with opencode desktop
+// Storage structure — engine-agnostic
 export const [messageStore, setMessageStore] = createStore<{
   message: {
-    [sessionID: string]: MessageV2.Info[];  // Grouped by sessionID, array sorted by id
+    [sessionId: string]: UnifiedMessage[];  // Grouped by sessionId, array sorted by id
   };
   part: {
-    [messageID: string]: MessageV2.Part[];  // Grouped by messageID, array sorted by id
+    [messageId: string]: UnifiedPart[];  // Grouped by messageId, array sorted by id
   };
   permission: {
-    [sessionID: string]: Permission.Request[];  // Permission request queue grouped by sessionID
+    [sessionId: string]: UnifiedPermission[];  // Permission request queue grouped by sessionId
   };
-  // Collapse/expand state, indexed by partID or special key
+  // Collapse/expand state, indexed by partId or special key
   expanded: {
     [key: string]: boolean;
   };

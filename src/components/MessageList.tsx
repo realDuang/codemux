@@ -1,17 +1,17 @@
 import { createMemo, For, Show } from "solid-js";
 import { messageStore } from "../stores/message";
 import { SessionTurn } from "./SessionTurn";
-import type { MessageV2, Permission } from "../types/opencode";
+import type { UnifiedMessage } from "../types/unified";
 
 interface MessageListProps {
   sessionID: string;
   isWorking?: boolean;
-  onPermissionRespond?: (sessionID: string, permissionID: string, reply: Permission.Reply) => void;
+  onPermissionRespond?: (sessionID: string, permissionID: string, reply: string) => void;
 }
 
 interface Turn {
-  userMessage: MessageV2.Info;
-  assistantMessages: MessageV2.Info[];
+  userMessage: UnifiedMessage;
+  assistantMessages: UnifiedMessage[];
 }
 
 /**
@@ -19,7 +19,7 @@ interface Turn {
  * A turn starts with a user message and includes all subsequent assistant messages
  * until the next user message
  */
-function groupMessagesIntoTurns(messages: MessageV2.Info[]): Turn[] {
+function groupMessagesIntoTurns(messages: UnifiedMessage[]): Turn[] {
   const turns: Turn[] = [];
   let currentTurn: Turn | null = null;
 

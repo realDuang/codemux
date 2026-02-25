@@ -742,12 +742,18 @@ export abstract class AcpBaseAdapter extends EngineAdapter {
   }
 
   async listSessions(directory?: string): Promise<UnifiedSession[]> {
+    const cwd = directory ?? process.cwd();
+    console.log(`[ACP:${this.engineType}] listSessions called, cwd=${cwd}, in-memory count=${this.sessions.size}`);
     try {
       const result = (await this.sendRequest("session/list", {
-        cwd: directory ?? process.cwd(),
+        cwd,
       })) as AcpSessionListResult;
 
-      return result.sessions.map((s) => {
+      console.log(`[ACP:${this.engineType}] session/list returned ${result.sessions.length} sessions:`,
+        result.sessions.map(s => ({ id: s.sessionId, cwd: s.cwd, title: s.title?.slice(0, 50) })));
+
+      // Update in-memory store with sessions from ACP binary
+      for (const s of result.sessions) {
         const session: UnifiedSession = {
           id: s.sessionId,
           engineType: this.engineType,
@@ -759,13 +765,19 @@ export abstract class AcpBaseAdapter extends EngineAdapter {
           },
         };
         this.sessions.set(session.id, session);
-        return session;
-      });
-    } catch {
-      return Array.from(this.sessions.values()).filter(
-        (s) => s.directory === directory,
-      );
+      }
+    } catch (err) {
+      console.warn(`[ACP:${this.engineType}] session/list RPC failed:`, err);
+      // ACP binary call failed — fall through to return from memory
     }
+
+    // Return all sessions from memory, optionally filtered by directory
+    const allSessions = Array.from(this.sessions.values());
+    const filtered = directory
+      ? allSessions.filter((s) => s.directory === directory)
+      : allSessions;
+    console.log(`[ACP:${this.engineType}] returning ${filtered.length} sessions (total in memory: ${allSessions.length})`);
+    return filtered;
   }
 
   async getSession(sessionId: string): Promise<UnifiedSession | null> {

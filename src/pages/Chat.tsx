@@ -322,6 +322,12 @@ export default function Chat() {
 
       // Filter sessions to valid project directories
       const validDirectories = new Set(validProjects.map((p: UnifiedProject) => p.directory));
+      logger.debug("[Init] Valid directories:", [...validDirectories]);
+      const droppedSessions = sessions.filter((s: UnifiedSession) => !validDirectories.has(s.directory));
+      if (droppedSessions.length > 0) {
+        logger.warn("[Init] Sessions filtered out (directory not in valid projects):",
+          droppedSessions.map(s => ({ id: s.id, dir: s.directory, engine: s.engineType })));
+      }
       const filteredSessions = sessions.filter((s: UnifiedSession) => validDirectories.has(s.directory));
 
       const processedSessions: SessionInfo[] = filteredSessions.map((s: UnifiedSession) => {
@@ -351,8 +357,25 @@ export default function Chat() {
         processedSessions.push(currentSession);
       }
 
+      // Merge with existing sessions: keep sessions already in list that weren't
+      // returned by backend (e.g. Copilot doesn't persist completed sessions in
+      // session/list RPC). Backend-returned sessions take priority for updates.
+      const existingList = sessionStore.list;
+      const mergedMap = new Map<string, SessionInfo>();
+      // Start with existing sessions
+      for (const s of existingList) {
+        mergedMap.set(s.id, s);
+      }
+      // Override/add with freshly loaded sessions
+      for (const s of processedSessions) {
+        mergedMap.set(s.id, s);
+      }
+      const mergedSessions = [...mergedMap.values()].sort(
+        (a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
+      );
+
       setSessionStore({
-        list: processedSessions,
+        list: mergedSessions,
         projects: validProjects,
         current: currentSession.id,
         loading: false,

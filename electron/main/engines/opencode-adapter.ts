@@ -3,12 +3,13 @@
 // Merges logic from opencode-process.ts (lifecycle) and opencode-client.ts (API)
 // ============================================================================
 
-import { spawn, ChildProcess } from "child_process";
+import { spawn, execFile, ChildProcess } from "child_process";
 import { EventEmitter } from "events";
 import * as http from "http";
-import * as fs from "fs";
-import * as path from "path";
+import * as net from "net";
 import { EngineAdapter } from "./engine-adapter";
+import { sessionStore } from "../services/session-store";
+import { openCodeLog } from "../services/logger";
 import { normalizeToolName, inferToolKind } from "../../../src/types/tool-mapping";
 import type {
   EngineType,
@@ -132,9 +133,11 @@ export class OpenCodeAdapter extends EngineAdapter {
 
   private child: ChildProcess | null = null;
   private port: number;
+  private binaryPath: string;
   private status: EngineStatus = "stopped";
   private sseAbort: AbortController | null = null;
   private sseRequest: http.ClientRequest | null = null;
+  private version: string | undefined;
 
   // Cached state
   private providers: OcProviderResponse | null = null;
@@ -149,31 +152,39 @@ export class OpenCodeAdapter extends EngineAdapter {
     timeoutTimer: ReturnType<typeof setTimeout> | null;
   }>();
 
+  // Sessions that have been cancelled — ignore SSE events for these until next sendMessage
+  private cancelledSessions = new Set<string>();
+
   constructor(options?: { port?: number; binaryPath?: string }) {
     super();
     this.port = options?.port ?? 4096;
+    this.binaryPath = options?.binaryPath ?? "opencode";
   }
 
   private get baseUrl(): string {
     return `http://127.0.0.1:${this.port}`;
   }
 
+  // --- Version fetch ---
+
+  private fetchVersion(): Promise<string | undefined> {
+    return new Promise((resolve) => {
+      const bin = this.getOpencodePath();
+      execFile(bin, ["--version"], { timeout: 5000, shell: process.platform === "win32" }, (err, stdout) => {
+        if (err) {
+          resolve(undefined);
+          return;
+        }
+        const ver = stdout.trim();
+        resolve(ver || undefined);
+      });
+    });
+  }
+
   // --- Binary resolution ---
 
   private getOpencodePath(): string {
-    // In packaged Electron, use bundled binary
-    try {
-      const { app } = require("electron");
-      if (app.isPackaged) {
-        const platform = process.platform;
-        const arch = process.arch;
-        const binaryName = platform === "win32" ? "opencode.exe" : "opencode";
-        return path.join(process.resourcesPath, "bin", `${platform}-${arch}`, binaryName);
-      }
-    } catch {
-      // Not in Electron context
-    }
-    return "opencode"; // Use system PATH
+    return this.binaryPath;
   }
 
   // --- HTTP helpers ---
@@ -228,7 +239,7 @@ export class OpenCodeAdapter extends EngineAdapter {
       },
       (res) => {
         if (res.statusCode !== 200) {
-          console.error(`[OpenCode SSE] Unexpected status: ${res.statusCode}`);
+          openCodeLog.error(`SSE unexpected status: ${res.statusCode}`);
           return;
         }
 
@@ -262,7 +273,7 @@ export class OpenCodeAdapter extends EngineAdapter {
 
     this.sseRequest.on("error", (err) => {
       if (this.status === "running") {
-        console.error("[OpenCode SSE] Connection error:", err.message);
+        openCodeLog.error("SSE connection error:", err.message);
         // Reconnect after delay
         setTimeout(() => {
           if (this.status === "running" && this.currentDirectory) {
@@ -345,6 +356,10 @@ export class OpenCodeAdapter extends EngineAdapter {
 
   private handlePartUpdated(ocPart: OcPart): void {
     if (!ocPart) return;
+
+    // Ignore SSE events for cancelled sessions (post-cancel stragglers)
+    if (this.cancelledSessions.has(ocPart.sessionID)) return;
+
     const part = this.convertPart(ocPart);
     this.emit("message.part.updated", {
       sessionId: ocPart.sessionID,
@@ -382,6 +397,9 @@ export class OpenCodeAdapter extends EngineAdapter {
   }
 
   private handleMessageUpdated(ocMsg: OcMessage, ocParts?: OcPart[]): void {
+    // Ignore SSE events for cancelled sessions (post-cancel stragglers)
+    if (this.cancelledSessions.has(ocMsg.sessionID)) return;
+
     // Merge parts from the separate parts array if the message info has no parts
     if (ocParts && (!ocMsg.parts || ocMsg.parts.length === 0)) {
       ocMsg.parts = ocParts;
@@ -427,12 +445,14 @@ export class OpenCodeAdapter extends EngineAdapter {
   private handleSessionUpdated(ocSession: OcSession): void {
     const session = this.convertSession(ocSession);
     this.sessions.set(session.id, session);
+    sessionStore.upsertSession(session);
     this.emit("session.updated", { session });
   }
 
   private handleSessionCreated(ocSession: OcSession): void {
     const session = this.convertSession(ocSession);
     this.sessions.set(session.id, session);
+    sessionStore.upsertSession(session);
     this.emit("session.created", { session });
   }
 
@@ -472,7 +492,7 @@ export class OpenCodeAdapter extends EngineAdapter {
     return {
       id: oc.id,
       engineType: this.engineType,
-      directory: oc.directory,
+      directory: oc.directory.replaceAll("\\", "/"),
       title: oc.title,
       parentId: oc.parentID,
       time: {
@@ -583,18 +603,115 @@ export class OpenCodeAdapter extends EngineAdapter {
 
   // --- EngineAdapter Implementation ---
 
+  private isPortAvailable(port: number): Promise<boolean> {
+    return new Promise((resolve) => {
+      const server = net.createServer();
+      server.once("error", () => resolve(false));
+      server.once("listening", () => {
+        server.close(() => resolve(true));
+      });
+      server.listen(port, "127.0.0.1");
+    });
+  }
+
+  /**
+   * Check if an existing OpenCode service is running on the given port.
+   * Returns true if the port responds with a valid /provider endpoint.
+   */
+  private async isExistingOpenCode(port: number): Promise<boolean> {
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 3000);
+      const response = await fetch(`http://127.0.0.1:${port}/provider`, {
+        signal: controller.signal,
+      });
+      clearTimeout(timeout);
+      return response.ok;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Resolve port for OpenCode service:
+   * 1. If preferred port is free → use it
+   * 2. If preferred port is occupied by an existing OpenCode instance → reuse it
+   * 3. Otherwise → find next available port
+   *
+   * Returns { port, reused } where reused=true means an existing instance was found.
+   */
+  private async resolvePort(): Promise<{ port: number; reused: boolean }> {
+    if (await this.isPortAvailable(this.port)) {
+      return { port: this.port, reused: false };
+    }
+
+    // Port occupied — check if it's an existing OpenCode service
+    if (await this.isExistingOpenCode(this.port)) {
+      openCodeLog.info(`Found existing OpenCode service on port ${this.port}, reusing it`);
+      return { port: this.port, reused: true };
+    }
+
+    // Port occupied by something else — find next available
+    const maxAttempts = 10;
+    for (let i = 1; i < maxAttempts; i++) {
+      const candidate = this.port + i;
+      if (await this.isPortAvailable(candidate)) {
+        openCodeLog.info(`Port ${this.port} in use by another service, using ${candidate} instead`);
+        return { port: candidate, reused: false };
+      }
+    }
+    throw new Error(`No available port found in range ${this.port}-${this.port + maxAttempts - 1}`);
+  }
+
   async start(): Promise<void> {
     if (this.child) return;
 
     this.status = "starting";
     this.emit("status.changed", { engineType: this.engineType, status: this.status });
 
-    const opencodePath = this.getOpencodePath();
+    // Preload persisted sessions from SessionStore
+    const persisted = sessionStore.getSessionsByEngine(this.engineType);
+    for (const s of persisted) {
+      if (!this.sessions.has(s.id)) {
+        this.sessions.set(s.id, s);
+      }
+    }
 
+    const { port, reused } = await this.resolvePort();
+    this.port = port;
+
+    if (reused) {
+      // Existing OpenCode service found — skip spawning, just connect
+      openCodeLog.info(`Attaching to existing service on port ${this.port}`);
+    } else {
+      // Spawn a new OpenCode process
+      this.spawnProcess();
+      await this.waitForReady();
+    }
+
+    // Fetch initial provider data
+    try {
+      this.providers = await this.httpRequest<OcProviderResponse>("/provider");
+    } catch {
+      // Provider fetch may fail initially, will retry on listModels()
+    }
+
+    // Fetch CLI version
+    try {
+      this.version = await this.fetchVersion();
+    } catch {
+      // Version fetch is non-critical
+    }
+
+    this.status = "running";
+    this.emit("status.changed", { engineType: this.engineType, status: "running" });
+  }
+
+  private spawnProcess(): void {
+    const opencodePath = this.getOpencodePath();
     const args = ["serve", "--hostname", "127.0.0.1", "--port", this.port.toString(), "--cors"];
 
     if (process.platform === "win32") {
-      // On Windows, use shell but pass as single command string to avoid DEP0190
       this.child = spawn(
         `${opencodePath} ${args.join(" ")}`,
         [],
@@ -615,20 +732,19 @@ export class OpenCodeAdapter extends EngineAdapter {
       );
     }
 
-    this.child.stdout?.on("data", (data) => {
+    this.child.stdout?.on("data", () => {
       // OpenCode stdout logging
     });
 
     this.child.stderr?.on("data", (data) => {
       const text = data.toString().trim();
-      if (text) console.error("[opencode stderr]", text);
+      if (text) openCodeLog.error("stderr:", text);
     });
 
     this.child.on("close", (code) => {
       this.status = "stopped";
       this.child = null;
       this.disconnectSSE();
-      // Resolve any pending messages with error
       for (const [sessionId, pending] of this.pendingMessages) {
         if (pending.timeoutTimer) clearTimeout(pending.timeoutTimer);
         pending.resolve({
@@ -647,7 +763,6 @@ export class OpenCodeAdapter extends EngineAdapter {
     this.child.on("error", (err) => {
       this.status = "error";
       this.child = null;
-      // Resolve any pending messages with error
       for (const [sessionId, pending] of this.pendingMessages) {
         if (pending.timeoutTimer) clearTimeout(pending.timeoutTimer);
         pending.resolve({
@@ -666,19 +781,6 @@ export class OpenCodeAdapter extends EngineAdapter {
         error: err.message,
       });
     });
-
-    // Wait for API to be ready
-    await this.waitForReady();
-
-    // Fetch initial provider data
-    try {
-      this.providers = await this.httpRequest<OcProviderResponse>("/provider");
-    } catch {
-      // Provider fetch may fail initially, will retry on listModels()
-    }
-
-    this.status = "running";
-    this.emit("status.changed", { engineType: this.engineType, status: "running" });
   }
 
   private async waitForReady(timeout = 15000): Promise<void> {
@@ -766,7 +868,7 @@ export class OpenCodeAdapter extends EngineAdapter {
     return {
       type: this.engineType,
       name: "OpenCode",
-      version: undefined,
+      version: this.version,
       status: this.status,
       capabilities: this.getCapabilities(),
     };
@@ -797,14 +899,18 @@ export class OpenCodeAdapter extends EngineAdapter {
     // Ensure SSE is connected for this directory
     this.connectSSE(directory);
 
+    // Do not pass a custom title — let OpenCode generate its default title
+    // ("New session - <ISO>") so that ensureTitle() recognises it and
+    // auto-generates a proper title via LLM after the first user message.
     const ocSession = await this.httpRequest<OcSession>("/session", {
       method: "POST",
-      body: JSON.stringify({ title: `Session - ${new Date().toISOString()}` }),
+      body: JSON.stringify({}),
       directory,
     });
 
     const session = this.convertSession(ocSession);
     this.sessions.set(session.id, session);
+    sessionStore.upsertSession(session);
     return session;
   }
 
@@ -818,11 +924,13 @@ export class OpenCodeAdapter extends EngineAdapter {
       dir ? { directory: dir } : undefined,
     );
 
-    return ocSessions.map((oc) => {
+    const sessions = ocSessions.map((oc) => {
       const session = this.convertSession(oc);
       this.sessions.set(session.id, session);
       return session;
     });
+    sessionStore.mergeSessions(sessions, this.engineType);
+    return sessions;
   }
 
   async getSession(sessionId: string): Promise<UnifiedSession | null> {
@@ -843,6 +951,7 @@ export class OpenCodeAdapter extends EngineAdapter {
   async deleteSession(sessionId: string): Promise<void> {
     await this.httpRequest(`/session/${sessionId}`, { method: "DELETE" });
     this.sessions.delete(sessionId);
+    sessionStore.deleteSession(sessionId);
   }
 
   // --- Messages ---
@@ -852,6 +961,9 @@ export class OpenCodeAdapter extends EngineAdapter {
     content: MessagePromptContent[],
     options?: { mode?: string; modelId?: string },
   ): Promise<UnifiedMessage> {
+    // Clear cancelled state — a new message means the user wants to interact again
+    this.cancelledSessions.delete(sessionId);
+
     // Get session directory for SSE connection
     const session = this.sessions.get(sessionId);
     if (session && !this.sseRequest) {
@@ -912,14 +1024,15 @@ export class OpenCodeAdapter extends EngineAdapter {
   }
 
   async cancelMessage(sessionId: string): Promise<void> {
-    // Cancel on the backend first
-    try {
-      await this.httpRequest(`/session/${sessionId}/message/cancel`, { method: "POST" });
-    } catch (err) {
-      // Best-effort: backend may not support cancel or session may already be done
-      console.warn("[OpenCodeAdapter] cancelMessage backend call failed:", err);
-    }
+    // Mark session as cancelled — SSE event handlers will ignore subsequent events
+    this.cancelledSessions.add(sessionId);
 
+    // Fire abort to OpenCode backend FIRST so it can kill running processes ASAP
+    this.httpRequest(`/session/${sessionId}/abort`, { method: "POST" }).catch((err) => {
+      openCodeLog.warn("cancelMessage abort call failed:", err);
+    });
+
+    // Resolve pending sendMessage promise so the UI unblocks immediately
     const pending = this.pendingMessages.get(sessionId);
     if (pending) {
       if (pending.timeoutTimer) clearTimeout(pending.timeoutTimer);
@@ -1019,13 +1132,14 @@ export class OpenCodeAdapter extends EngineAdapter {
         time: { created: number; updated: number };
       }>>("/project");
 
-      return projects.map((p) => ({
+      const unifiedProjects = projects.map((p) => ({
         id: p.id,
-        directory: p.worktree,
+        directory: p.worktree.replaceAll("\\", "/"),
         name: p.name,
         engineType: this.engineType as EngineType,
         engineMeta: { icon: p.icon },
       }));
+      return unifiedProjects;
     } catch {
       return [];
     }

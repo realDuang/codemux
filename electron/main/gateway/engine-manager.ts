@@ -4,6 +4,8 @@
 
 import { EventEmitter } from "events";
 import { EngineAdapter, type EngineAdapterEvents } from "../engines/engine-adapter";
+import { sessionStore } from "../services/session-store";
+import { engineManagerLog } from "../services/logger";
 import type {
   EngineType,
   EngineInfo,
@@ -41,6 +43,8 @@ export class EngineManager extends EventEmitter {
   private projectBindings = new Map<string, EngineType>();
   /** sessionId → engineType lookup for routing */
   private sessionEngineMap = new Map<string, EngineType>();
+  /** permissionId → engineType lookup for routing permission replies */
+  private permissionEngineMap = new Map<string, EngineType>();
 
   // --- Adapter Registration ---
 
@@ -76,7 +80,7 @@ export class EngineManager extends EventEmitter {
 
   /** Get adapter for a directory based on project binding */
   private getAdapterForDirectory(directory: string): EngineAdapter {
-    const engineType = this.projectBindings.get(directory);
+    const engineType = this.projectBindings.get(directory.replaceAll("\\", "/"));
     if (!engineType) {
       throw new Error(`No engine binding found for directory: ${directory}`);
     }
@@ -99,6 +103,10 @@ export class EngineManager extends EventEmitter {
     for (const event of events) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       adapter.on(event, (data: any) => {
+        // Track permission → engine mapping for routing replies
+        if (event === "permission.asked" && data?.permission?.id) {
+          this.permissionEngineMap.set(data.permission.id, adapter.engineType);
+        }
         this.emit(event, data);
       });
     }
@@ -108,11 +116,11 @@ export class EngineManager extends EventEmitter {
 
   setProjectEngine(directory: string, engineType: EngineType): void {
     this.getAdapterOrThrow(engineType); // Validate engine exists
-    this.projectBindings.set(directory, engineType);
+    this.projectBindings.set(directory.replaceAll("\\", "/"), engineType);
   }
 
   getProjectEngine(directory: string): EngineType | undefined {
-    return this.projectBindings.get(directory);
+    return this.projectBindings.get(directory.replaceAll("\\", "/"));
   }
 
   getProjectBindings(): Map<string, EngineType> {
@@ -121,7 +129,7 @@ export class EngineManager extends EventEmitter {
 
   loadProjectBindings(bindings: Record<string, EngineType>): void {
     for (const [dir, engine] of Object.entries(bindings)) {
-      this.projectBindings.set(dir, engine);
+      this.projectBindings.set(dir.replaceAll("\\", "/"), engine);
     }
   }
 
@@ -130,7 +138,7 @@ export class EngineManager extends EventEmitter {
   async startAll(): Promise<void> {
     const startPromises = Array.from(this.adapters.values()).map((adapter) =>
       adapter.start().catch((err) => {
-        console.error(`Failed to start ${adapter.engineType}:`, err);
+        engineManagerLog.error(`Failed to start ${adapter.engineType}:`, err);
       }),
     );
     await Promise.all(startPromises);
@@ -139,7 +147,7 @@ export class EngineManager extends EventEmitter {
   async stopAll(): Promise<void> {
     const stopPromises = Array.from(this.adapters.values()).map((adapter) =>
       adapter.stop().catch((err) => {
-        console.error(`Failed to stop ${adapter.engineType}:`, err);
+        engineManagerLog.error(`Failed to stop ${adapter.engineType}:`, err);
       }),
     );
     await Promise.all(stopPromises);
@@ -221,12 +229,52 @@ export class EngineManager extends EventEmitter {
     options?: { mode?: string; modelId?: string },
   ): Promise<UnifiedMessage> {
     const adapter = this.getAdapterForSession(sessionId);
-    return adapter.sendMessage(sessionId, content, options);
+    const result = await adapter.sendMessage(sessionId, content, options);
+
+    // Title fallback: if the session still has no meaningful title after the
+    // first assistant reply, derive one from the user's first message text.
+    this.applyTitleFallback(sessionId, content);
+
+    return result;
   }
 
   async cancelMessage(sessionId: string): Promise<void> {
     const adapter = this.getAdapterForSession(sessionId);
     return adapter.cancelMessage(sessionId);
+  }
+
+  /**
+   * If a session still has no meaningful title (empty, or matches the default
+   * "New session - <ISO>" / "Child session - <ISO>" pattern), set it to the
+   * first user message text (truncated to 100 chars).
+   */
+  private applyTitleFallback(
+    sessionId: string,
+    content: MessagePromptContent[],
+  ): void {
+    const session = sessionStore.getSession(sessionId);
+    if (!session) return;
+
+    // Already has a real title — nothing to do
+    if (session.title && !this.isDefaultTitle(session.title)) return;
+
+    // Extract first text from the user prompt
+    const firstText = content.find((c) => c.type === "text" && c.text)?.text;
+    if (!firstText) return;
+
+    const maxLen = 100;
+    session.title =
+      firstText.length > maxLen
+        ? firstText.slice(0, maxLen).trimEnd() + "…"
+        : firstText;
+    sessionStore.upsertSession(session);
+    this.emit("session.updated", { session });
+  }
+
+  private isDefaultTitle(title: string): boolean {
+    return /^(New session|Child session)( - \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}.\d{3}Z)?$/.test(
+      title,
+    );
   }
 
   async listMessages(sessionId: string): Promise<UnifiedMessage[]> {
@@ -263,9 +311,14 @@ export class EngineManager extends EventEmitter {
   async replyPermission(
     permissionId: string,
     reply: PermissionReply,
-    sessionId: string,
   ): Promise<void> {
-    const adapter = this.getAdapterForSession(sessionId);
+    // Look up engine by permissionId (registered when permission.asked was emitted)
+    const engineType = this.permissionEngineMap.get(permissionId);
+    if (!engineType) {
+      throw new Error(`No engine binding found for permission: ${permissionId}`);
+    }
+    const adapter = this.getAdapterOrThrow(engineType);
+    this.permissionEngineMap.delete(permissionId);
     return adapter.replyPermission(permissionId, reply);
   }
 
@@ -280,5 +333,37 @@ export class EngineManager extends EventEmitter {
 
   registerSession(sessionId: string, engineType: EngineType): void {
     this.sessionEngineMap.set(sessionId, engineType);
+  }
+
+  // --- SessionStore Integration ---
+
+  /**
+   * Rebuild routing tables from persisted SessionStore data.
+   * Called once at startup, after sessionStore.init().
+   */
+  initFromStore(): void {
+    for (const session of sessionStore.getAllSessions()) {
+      this.sessionEngineMap.set(session.id, session.engineType);
+      // Derive project bindings from sessions
+      if (session.directory) {
+        const normDir = session.directory.replaceAll("\\", "/");
+        if (normDir && normDir !== "/") {
+          this.projectBindings.set(normDir, session.engineType);
+        }
+      }
+    }
+    engineManagerLog.info(
+      `Restored ${this.sessionEngineMap.size} session routes, ${this.projectBindings.size} project bindings from sessions`,
+    );
+  }
+
+  /** Return all sessions from persistent store (all engines) */
+  listAllSessions(): UnifiedSession[] {
+    return sessionStore.getAllSessions();
+  }
+
+  /** Return all visible projects from persistent store (all engines) */
+  listAllProjects(): UnifiedProject[] {
+    return sessionStore.getVisibleProjects();
   }
 }

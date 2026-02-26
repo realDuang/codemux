@@ -1,7 +1,9 @@
 import { app, BrowserWindow } from "electron";
+import { mainLog } from "./services/logger";
 import { createWindow, getMainWindow } from "./window-manager";
 import { registerIpcHandlers } from "./ipc-handlers";
 import { deviceStore } from "./services/device-store";
+import { sessionStore } from "./services/session-store";
 import { authApiServer } from "./services/auth-api-server";
 import { productionServer } from "./services/production-server";
 import { EngineManager } from "./gateway/engine-manager";
@@ -27,6 +29,12 @@ export { engineManager, gatewayServer };
 // Gateway WS port
 const GATEWAY_PORT = 4200;
 
+// Startup readiness tracking
+let startupReady = false;
+export function isStartupReady(): boolean {
+  return startupReady;
+}
+
 // Single instance lock
 const gotTheLock = app.requestSingleInstanceLock();
 
@@ -48,6 +56,12 @@ if (!gotTheLock) {
     // Initialize DeviceStore (needs to be after app ready)
     deviceStore.init();
 
+    // Initialize SessionStore (needs to be after app ready, before engines start)
+    sessionStore.init();
+
+    // Rebuild engine routing tables from persisted SessionStore data
+    engineManager.initFromStore();
+
     // Register IPC handlers
     registerIpcHandlers();
 
@@ -57,16 +71,16 @@ if (!gotTheLock) {
       try {
         await authApiServer.start();
       } catch (err) {
-        console.error("[Main] Failed to start Auth API server:", err);
+        mainLog.error("Failed to start Auth API server:", err);
       }
     } else {
       // In production mode, start the production HTTP server
       // This is required for Cloudflare Tunnel to work
       try {
         const port = await productionServer.start(5173);
-        console.log(`[Main] Production server started on port ${port}`);
+        mainLog.info(`Production server started on port ${port}`);
       } catch (err) {
-        console.error("[Main] Failed to start Production server:", err);
+        mainLog.error("Failed to start Production server:", err);
       }
     }
 
@@ -77,34 +91,46 @@ if (!gotTheLock) {
         const httpServer = productionServer.getServer();
         if (httpServer) {
           gatewayServer.start({ server: httpServer, path: "/ws" });
-          console.log("[Main] Gateway server attached to production server at /ws");
+          mainLog.info("Gateway server attached to production server at /ws");
         } else {
           gatewayServer.start({ port: GATEWAY_PORT });
-          console.log(`[Main] Gateway server started on port ${GATEWAY_PORT}`);
+          mainLog.info(`Gateway server started on port ${GATEWAY_PORT}`);
         }
       } else {
         // In dev: standalone port
         gatewayServer.start({ port: GATEWAY_PORT });
-        console.log(`[Main] Gateway server started on port ${GATEWAY_PORT}`);
+        mainLog.info(`Gateway server started on port ${GATEWAY_PORT}`);
       }
     } catch (err) {
-      console.error("[Main] Failed to start Gateway server:", err);
+      mainLog.error("Failed to start Gateway server:", err);
     }
 
     // Start all engine adapters (non-blocking, don't delay window creation)
+    const enginePromises: Promise<void>[] = [];
     const engines = [
       ["OpenCode", openCodeAdapter],
       ["Copilot", copilotAdapter],
     ] as const;
     for (const [name, adapter] of engines) {
-      (adapter as any).start().then(
-        () => console.log(`[Main] ${name} engine started`),
-        (err: any) => console.error(`[Main] Failed to start ${name} engine:`, err?.message ?? err),
+      const p = (adapter as any).start().then(
+        () => mainLog.info(`${name} engine started`),
+        (err: any) => mainLog.error(`Failed to start ${name} engine:`, err?.message ?? err),
       );
+      enginePromises.push(p);
     }
 
     // Create main window
     createWindow();
+
+    // Mark startup as ready once all engines have settled (success or failure)
+    Promise.allSettled(enginePromises).then(() => {
+      startupReady = true;
+      mainLog.info("All engines settled, startup ready");
+      const win = getMainWindow();
+      if (win && !win.isDestroyed()) {
+        win.webContents.send("startup:ready");
+      }
+    });
 
     app.on("activate", () => {
       if (BrowserWindow.getAllWindows().length === 0) {
@@ -128,6 +154,9 @@ if (!gotTheLock) {
     event.preventDefault();
 
     try {
+      // Flush session store before quit
+      sessionStore.flushAll();
+
       await Promise.all([
         authApiServer.stop(),
         engineManager.stopAll(),
@@ -135,7 +164,7 @@ if (!gotTheLock) {
         (() => { gatewayServer.stop(); })(),
       ]);
     } catch (err) {
-      console.error("[Main] Cleanup error:", err);
+      mainLog.error("Cleanup error:", err);
     }
 
     app.exit(0);

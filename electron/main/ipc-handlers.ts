@@ -1,8 +1,10 @@
-import { ipcMain, dialog, shell, app } from "electron";
+import { ipcMain, dialog, shell, app, BrowserWindow } from "electron";
 import os from "os";
 import { deviceStore } from "./services/device-store";
 import { tunnelManager } from "./services/tunnel-manager";
 import { productionServer } from "./services/production-server";
+import { getLogFilePath, getFileLogLevel, setFileLogLevel } from "./services/logger";
+import { isStartupReady } from "./index";
 
 export function registerIpcHandlers(): void {
   // ===========================================================================
@@ -15,22 +17,13 @@ export function registerIpcHandlers(): void {
       arch: process.arch,
       version: app.getVersion(),
       userDataPath: app.getPath("userData"),
+      homePath: app.getPath("home"),
       isPackaged: app.isPackaged,
     };
   });
 
   ipcMain.handle("system:getLocalIp", async () => {
-    const interfaces = os.networkInterfaces();
-    for (const name of Object.keys(interfaces)) {
-      const nets = interfaces[name];
-      if (!nets) continue;
-      for (const net of nets) {
-        if (net.family === "IPv4" && !net.internal) {
-          return net.address;
-        }
-      }
-    }
-    return "localhost";
+    return getLocalIp();
   });
 
   ipcMain.handle("system:openExternal", async (_, url: string) => {
@@ -52,6 +45,15 @@ export function registerIpcHandlers(): void {
       properties: ["openDirectory"],
     });
     return result.canceled ? null : result.filePaths[0];
+  });
+
+  ipcMain.handle("system:openPath", async (_, folderPath: string) => {
+    const fs = await import("fs");
+    const stat = fs.statSync(folderPath);
+    if (!stat.isDirectory()) {
+      throw new Error("Path is not a directory");
+    }
+    return shell.openPath(folderPath);
   });
 
   // ===========================================================================
@@ -159,6 +161,13 @@ export function registerIpcHandlers(): void {
     return tunnelManager.getInfo();
   });
 
+  // Notify renderer when cloudflared exits unexpectedly
+  tunnelManager.setOnUnexpectedExit(() => {
+    for (const win of BrowserWindow.getAllWindows()) {
+      win.webContents.send("tunnel:disconnected");
+    }
+  });
+
   // ===========================================================================
   // Production Server Management
   // ===========================================================================
@@ -178,4 +187,61 @@ export function registerIpcHandlers(): void {
   ipcMain.handle("gateway:getPort", async () => {
     return 4200;
   });
+
+  // ===========================================================================
+  // Logging
+  // ===========================================================================
+
+  ipcMain.handle("log:getPath", async () => {
+    return getLogFilePath();
+  });
+
+  ipcMain.handle("log:getLevel", async () => {
+    return getFileLogLevel();
+  });
+
+  ipcMain.handle("log:setLevel", async (_event, level: string) => {
+    setFileLogLevel(level);
+    return { success: true };
+  });
+
+  // ===========================================================================
+  // Startup
+  // ===========================================================================
+
+  ipcMain.handle("startup:isReady", async () => {
+    return isStartupReady();
+  });
+}
+
+// --- LAN IP helpers ---
+
+const virtualInterfacePatterns = [
+  /^docker/i, /^br-/i, /^veth/i, /^vEthernet/i,
+  /^vmnet/i, /^VMware/i, /^VirtualBox/i, /^vboxnet/i,
+  /^Hyper-V/i, /^Default Switch/i, /^WSL/i,
+  /^tun/i, /^tap/i, /^singbox/i, /^sing-box/i, /^clash/i, /^utun/i,
+  /^tailscale/i, /^ZeroTier/i, /^zt/i,
+  /^wg/i, /^wireguard/i, /^ham/i, /^Hamachi/i, /^npcap/i, /^lo/i,
+];
+
+function isVirtualInterface(name: string): boolean {
+  return virtualInterfacePatterns.some((p) => p.test(name));
+}
+
+function getLocalIp(): string {
+  const interfaces = os.networkInterfaces();
+  let fallback: string | null = null;
+
+  for (const name of Object.keys(interfaces)) {
+    const nets = interfaces[name];
+    if (!nets) continue;
+    const virtual = isVirtualInterface(name);
+    for (const net of nets) {
+      if (net.internal || net.family !== "IPv4") continue;
+      if (!virtual) return net.address;
+      if (!fallback) fallback = net.address;
+    }
+  }
+  return fallback ?? "localhost";
 }

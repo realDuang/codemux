@@ -1,147 +1,215 @@
 <div align="center">
 
-# OpenCode Remote
+# CodeMux
 
 **[English](./README.md)** | [简体中文](./README.zh-CN.md) | [日本語](./README.ja.md) | [한국어](./README.ko.md)
 
-**Access OpenCode from Any Device, Anywhere**
+**One Interface. Every AI Coding Engine.**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![OpenCode](https://img.shields.io/badge/OpenCode-1.1.15+-green.svg)](https://opencode.ai)
 
-<img src="https://raw.githubusercontent.com/realDuang/opencode-remote/main/assets/logo.png" alt="OpenCode Remote" width="120" />
+<img src="https://raw.githubusercontent.com/realDuang/codemux/main/assets/logo.png" alt="CodeMux" width="120" />
 
-*Use your powerful workstation to run AI coding agents while accessing them from a tablet, phone, or any browser — even across the internet.*
+*A unified desktop & web client for multiple AI coding engines — OpenCode, GitHub Copilot CLI, and more. Access them all from any device, anywhere.*
 
-<img src="https://raw.githubusercontent.com/realDuang/opencode-remote/main/assets/screenshots/main-chat.jpg" alt="Main Chat Interface" width="800" />
+<img src="https://raw.githubusercontent.com/realDuang/codemux/main/assets/screenshots/main-chat.jpg" alt="CodeMux - Multi-Engine AI Coding Interface" width="800" />
 
 </div>
 
 ---
 
-## Why OpenCode Remote?
+## What is CodeMux?
 
-AI coding agents like OpenCode need to run on machines with:
-- Access to your codebase and development environment
-- Proper API keys and configurations
-- Sufficient computing power
+AI coding agents are powerful — but fragmented. OpenCode, GitHub Copilot CLI, Claude Code each run in their own terminal with separate sessions, different protocols, and no shared interface.
 
-But what if you want to **use your phone on the couch**, **pair program from an iPad**, or **access your dev machine from anywhere in the world**?
+**CodeMux** is a multi-engine gateway that brings them all into one place. It connects to each engine at the protocol level and provides a unified desktop app and web interface to manage sessions across engines — from any device, even over the internet.
 
-**OpenCode Remote** solves this by providing a desktop app and web interface that works from any device with a browser.
+This is not another multi-model chat wrapper. Each engine keeps its full capabilities — tool execution, file editing, shell access, session history — CodeMux just gives them a shared front door.
 
-### Key Features
+---
 
-| Feature | Description |
-|---------|-------------|
-| **Desktop App** | Native Electron app for macOS and Windows with bundled OpenCode and Cloudflare Tunnel |
-| **Remote Access from Any Device** | Access OpenCode through a clean web UI from phones, tablets, laptops — any device with a browser |
-| **One-Click Public Tunnel** | Enable internet access with a single toggle using Cloudflare Tunnel — no port forwarding or VPN needed |
-| **LAN Access** | Instantly accessible from any device on your local network |
-| **QR Code Connection** | Scan to connect from mobile devices — no typing URLs |
-| **Device Management** | Manage connected devices, rename them, or revoke access |
-| **Secure by Default** | Device-based authentication with secure token storage |
-| **Real-time Streaming** | Live message streaming via Server-Sent Events |
+## Key Features
 
-<div align="center">
-<img src="https://raw.githubusercontent.com/realDuang/opencode-remote/main/assets/screenshots/chat-steps.jpg" alt="Chat Steps" width="700" />
+| Category | Feature | Description |
+|----------|---------|-------------|
+| **Multi-Engine** | Unified Gateway | Switch between OpenCode, Copilot CLI, and more from a single interface |
+| | Protocol-Level Integration | Direct ACP (JSON-RPC/stdio) and HTTP+SSE connections — not process wrappers |
+| | Per-Engine Sessions | Each engine maintains its own sessions, history, and capabilities |
+| **Remote Access** | Access from Any Device | Use your phone, tablet, or any browser to reach your coding engines |
+| | One-Click Public Tunnel | Cloudflare Tunnel — no port forwarding, no VPN, no firewall changes |
+| | LAN + QR Code | Instant local network access with QR code for mobile devices |
+| **Interface** | Real-time Streaming | Live token streaming with tool call visualization |
+| | Step-by-Step Execution | Expandable tool calls showing file diffs, shell output, and more |
+| | Project Management | Group sessions by project directory across engines |
+| **Security** | Device Authorization | Each device must be approved before accessing |
+| | JWT + Access Codes | Token-based auth with 6-digit access codes for remote devices |
+| | Ephemeral Tunnel URLs | Public URLs rotate on every tunnel restart |
 
-*AI assistant with step-by-step execution and dark mode support*
-</div>
+---
+
+## Supported Engines
+
+| Engine | Protocol | Status | Highlights |
+|--------|----------|--------|------------|
+| **[OpenCode](https://opencode.ai)** | HTTP REST + SSE | ✅ Stable | Multi-provider model selection, full session management, file/shell tools |
+| **[GitHub Copilot CLI](https://githubnext.com/projects/copilot-cli)** | ACP (JSON-RPC/stdio) | ✅ Stable | Native ACP integration, SQLite session history, Copilot's full agentic capabilities |
+| **[Claude Code](https://claude.ai/code)** | ACP | 🚧 Planned | Waiting for official ACP protocol support |
+
+### First Open-Source GUI for Copilot CLI
+
+GitHub Copilot is the most widely adopted AI coding tool in the world. With **Copilot CLI**, GitHub brought agentic coding capabilities to the terminal through the [ACP protocol](https://github.com/anthropics/agent-control-protocol).
+
+**CodeMux is the first — and currently only — open-source project that provides a graphical interface for Copilot CLI.** No other tool offers protocol-level ACP integration with a full GUI. If you use Copilot and want a visual interface for agentic coding, CodeMux is the only open-source option.
+
+<img src="https://raw.githubusercontent.com/realDuang/codemux/main/assets/screenshots/chat-steps.jpg" alt="CodeMux - Step-by-Step Tool Execution" width="700" />
+
+---
+
+## Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  SolidJS UI (Desktop via Electron / Web via Browser)            │
+│                          │                                      │
+│              WebSocket (JSON-RPC)                               │
+│                          │                                      │
+│              ┌───────────┴───────────┐                          │
+│              │    Gateway Server     │                          │
+│              │    (Engine Manager)   │                          │
+│              └───┬───────┬───────┬───┘                          │
+│                  │       │       │                               │
+│           ┌──────┘   ┌───┘   ┌───┘                              │
+│           │          │       │                                   │
+│     ┌─────┴─────┐ ┌──┴───┐ ┌─┴──────┐                          │
+│     │ OpenCode  │ │Copilot│ │ Claude │                          │
+│     │ Adapter   │ │Adapter│ │Adapter │                          │
+│     │(HTTP+SSE) │ │ (ACP) │ │ (ACP)  │                          │
+│     └───────────┘ └──────┘ └────────┘                           │
+│                                                                  │
+│     Unified Type System: UnifiedPart, ToolPart, AgentMode        │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+All engines share a **normalized type system** — tool calls, file operations, diffs, and messages are mapped to a common format (`UnifiedPart`), so the UI doesn't need to know which engine is running.
 
 ---
 
 ## Quick Start
 
-### Option 1: Desktop App (Recommended)
+### Option 1: Desktop App
 
 Download the latest release for your platform:
 
-- **macOS (Apple Silicon)**: `OpenCode Remote-x.x.x-arm64.dmg`
-- **macOS (Intel)**: `OpenCode Remote-x.x.x-x64.dmg`
-- **Windows**: `OpenCode Remote-x.x.x-setup.exe`
+- **macOS (Apple Silicon)**: `CodeMux-x.x.x-arm64.dmg`
+- **macOS (Intel)**: `CodeMux-x.x.x-x64.dmg`
+- **Windows**: `CodeMux-x.x.x-setup.exe`
 
-The desktop app bundles everything you need — no additional installation required.
+The desktop app bundles the Cloudflare Tunnel binary and the gateway server. **OpenCode and Copilot CLI must be installed separately** (see below).
 
-> ⚠️ **macOS Users**: The app is not code-signed. macOS may show "App is damaged" error. Run the following command to fix:
+> ⚠️ **macOS Users**: The app is not code-signed. If macOS shows "App is damaged", run:
 >
 > ```bash
-> xattr -cr /Applications/OpenCode\ Remote.app
+> xattr -cr /Applications/CodeMux.app
 > ```
 
 ### Option 2: Development Mode
 
 ```bash
 # Clone the repository
-git clone https://github.com/realDuang/opencode-remote.git
-cd opencode-remote
+git clone https://github.com/realDuang/codemux.git
+cd codemux
 
 # Install dependencies
 bun install
 
-# Download bundled binaries
-bun run update:opencode
+# Download cloudflared binary (for remote access)
 bun run update:cloudflared
 
-# Start in development mode
+# Start development server (Electron + Vite HMR)
 bun run dev
 ```
 
+> **Engine Prerequisites**: Both engines are external dependencies that must be installed and available in your PATH:
+> - **OpenCode**: Install from [opencode.ai](https://opencode.ai) — `curl -fsSL https://opencode.ai/install.sh | bash` (Unix) or `irm https://opencode.ai/install.ps1 | iex` (Windows)
+> - **Copilot CLI**: Install [GitHub Copilot CLI](https://docs.github.com/en/copilot/using-github-copilot/using-github-copilot-coding-agent-in-cli) separately
+>
+> CodeMux auto-detects installed engines on startup.
+
 ---
 
-## Remote Access Guide
+## Remote Access
 
-### Method 1: LAN Access (Same Network)
+### LAN Access
 
-Access from any device on your local network:
-
-1. Open the desktop app and go to the **Remote Access** section
-2. Find your machine's IP address displayed on the page
+1. Open CodeMux and go to **Remote Access** in settings
+2. Find your machine's IP address on the page
 3. Open `http://<your-ip>:5173` from another device
-4. Authenticate with the device code
+4. Enter the 6-digit access code or scan the QR code
 
-**Or scan the QR code** displayed on the Remote Access page.
+<img src="https://raw.githubusercontent.com/realDuang/codemux/main/assets/screenshots/remote-access.jpg" alt="CodeMux - Remote Access" width="700" />
 
-<div align="center">
-<img src="https://raw.githubusercontent.com/realDuang/opencode-remote/main/assets/screenshots/remote-access.jpg" alt="Remote Access" width="700" />
-</div>
+### Public Internet Access
 
-### Method 2: Public Internet Access
+Access from anywhere with Cloudflare Tunnel:
 
-Access from anywhere in the world with Cloudflare Tunnel:
+1. Toggle **"Public Access"** in the Remote Access section
+2. Share the generated `*.trycloudflare.com` URL
+3. Remote device authenticates with the access code
 
-1. Go to **Remote Access** in the desktop app
-2. Toggle on **"Public Access"**
-3. Share the generated `*.trycloudflare.com` URL
-
-**No port forwarding, no firewall changes, no VPN required.**
+**No port forwarding. No firewall changes. No VPN.**
 
 ```
-┌──────────────────────────────────────────────────────────┐
-│                    Your Phone/Tablet                      │
-│                          ↓                                │
-│              https://xyz.trycloudflare.com                │
-│                          ↓                                │
-│                  Cloudflare Network                       │
-│                          ↓                                │
-│              Your Workstation (OpenCode)                  │
-└──────────────────────────────────────────────────────────┘
+Your Phone/Tablet
+       ↓
+https://xyz.trycloudflare.com
+       ↓
+  Cloudflare Network
+       ↓
+  Your Workstation (CodeMux Gateway)
+       ↓
+  ┌─────────┬──────────┬───────────┐
+  │OpenCode │ Copilot  │  Claude   │
+  │ Engine  │  Engine  │  Engine   │
+  └─────────┴──────────┴───────────┘
 ```
+
+### Device Management
+
+- **View** all connected devices with last access time
+- **Rename** devices for easy identification
+- **Revoke** access per-device or revoke all at once
+
+<img src="https://raw.githubusercontent.com/realDuang/codemux/main/assets/screenshots/devices-management.jpg" alt="CodeMux - Device Management" width="700" />
 
 ---
 
-## Device Management
+## Security
 
-The desktop app includes a device management system:
+| Layer | Protection |
+|-------|------------|
+| **Device Authorization** | New devices require approval with a 6-digit code |
+| **JWT Tokens** | Per-device tokens stored securely |
+| **HTTPS** | Public tunnel uses HTTPS via Cloudflare automatically |
+| **Ephemeral URLs** | Tunnel URLs change on every restart |
 
-- **View connected devices**: See all devices that have accessed your OpenCode instance
-- **Rename devices**: Give meaningful names to your devices
-- **Revoke access**: Remove devices you no longer want to have access
-- **Revoke all others**: Quickly revoke access from all devices except the current one
+**Best Practices:**
+- Revoke access from devices you no longer use
+- Disable public tunnel when not needed
+- CodeMux is designed for personal use — not multi-user scenarios
 
-<div align="center">
-<img src="https://raw.githubusercontent.com/realDuang/opencode-remote/main/assets/screenshots/devices-management.jpg" alt="Device Management" width="700" />
-</div>
+---
+
+## Tech Stack
+
+| Layer | Technology |
+|-------|------------|
+| Desktop Shell | Electron 33 |
+| Build System | electron-vite (Vite 5) |
+| Frontend | SolidJS 1.8 + TypeScript 5 |
+| Styling | Tailwind CSS v4 |
+| Engine Communication | WebSocket + JSON-RPC, HTTP+SSE, ACP (stdio) |
+| Packaging | electron-builder (DMG, NSIS) |
+| Tunnel | Cloudflare Tunnel (cloudflared) |
 
 ---
 
@@ -150,116 +218,47 @@ The desktop app includes a device management system:
 ### Commands
 
 ```bash
-# Start in development mode (Electron + Vite HMR)
-bun run dev
-
-# Build for production
-bun run build
-
-# Package for distribution
-bun run dist:mac:arm64  # macOS Apple Silicon
-bun run dist:mac:x64    # macOS Intel
-bun run dist:win        # Windows
-
-# Update bundled binaries
-bun run update:opencode
-bun run update:cloudflared
-
-# Type checking
-bun run typecheck
+bun run dev              # Electron + Vite HMR
+bun run build            # Production build
+bun run dist:mac:arm64   # macOS Apple Silicon
+bun run dist:mac:x64     # macOS Intel
+bun run dist:win         # Windows NSIS installer
+bun run typecheck        # Type checking
+bun run update:cloudflared  # Update Cloudflare Tunnel binary
 ```
 
 ### Project Structure
 
 ```
-opencode-remote/
+codemux/
 ├── electron/
-│   ├── main/              # Electron main process
-│   │   ├── services/      # OpenCode process, tunnel, device store
-│   │   └── ipc-handlers.ts
-│   └── preload/           # Preload scripts for IPC
-├── src/
-│   ├── pages/             # Page components (Chat, Settings, Devices)
-│   ├── components/        # UI components
-│   ├── lib/               # Core libraries (API client, auth, i18n)
-│   ├── stores/            # State management
-│   └── types/             # TypeScript definitions
-├── scripts/
-│   ├── update-opencode.ts # Download OpenCode binary
-│   └── update-cloudflared.ts
+│   ├── main/
+│   │   ├── engines/          # Engine adapters (OpenCode, Copilot, ACP base)
+│   │   ├── gateway/          # WebSocket server + engine routing
+│   │   └── services/         # Auth, device store, tunnel, sessions
+│   └── preload/
+├── src/                      # SolidJS renderer
+│   ├── pages/                # Chat, Settings, Devices, Entry
+│   ├── components/           # UI components + content renderers
+│   ├── stores/               # Reactive state (session, message, config)
+│   ├── lib/                  # Gateway client, auth, i18n, theme
+│   └── types/                # Unified type system + tool mapping
+├── scripts/                  # Setup, binary updaters
 ├── electron.vite.config.ts
 └── electron-builder.yml
 ```
 
 ---
 
-## Tech Stack
-
-| Category | Technology |
-|----------|------------|
-| Framework | Electron + SolidJS |
-| Build Tool | electron-vite |
-| Styling | Tailwind CSS v4 |
-| Language | TypeScript |
-| Package Manager | Bun |
-| Tunnel | Cloudflare Tunnel |
-
----
-
-## Security
-
-OpenCode Remote uses multiple layers of security:
-
-| Layer | Protection |
-|-------|------------|
-| **Device Auth** | Each device must be authorized to access |
-| **Token Auth** | Secure tokens stored per-device |
-| **HTTPS** | Public tunnel automatically uses HTTPS via Cloudflare |
-| **Ephemeral URLs** | Public tunnel URLs change each time you start the tunnel |
-
-**Best Practices:**
-- Revoke access from devices you no longer use
-- Disable public tunnel when not needed
-- Use for personal use only — not designed for multi-user scenarios
-
----
-
-## Troubleshooting
-
-### OpenCode binary not found
-
-```bash
-# Download the latest OpenCode binary
-bun run update:opencode
-```
-
-### Public tunnel not working
-
-```bash
-# Download cloudflared binary
-bun run update:cloudflared
-```
-
-### Build fails on Windows
-
-Ensure you have the required build tools installed for Electron.
-
----
-
 ## Contributing
 
-Contributions are welcome! Please read our contributing guidelines before submitting PRs.
+Contributions are welcome! Please follow these conventions:
 
-### Code Style
-- TypeScript strict mode
-- SolidJS reactive patterns
-- Tailwind for styling
+**Code Style**: TypeScript strict mode, SolidJS reactive patterns, Tailwind for styling
 
-### Commit Convention
-- `feat:` New features
-- `fix:` Bug fixes
-- `docs:` Documentation
-- `refactor:` Code refactoring
+**Commit Convention**: `feat:` | `fix:` | `docs:` | `refactor:` | `chore:`
+
+**Adding a New Engine**: Implement `EngineAdapter` (see `electron/main/engines/engine-adapter.ts`), add tool name mapping in `src/types/tool-mapping.ts`, and register in `electron/main/index.ts`.
 
 ---
 
@@ -271,14 +270,14 @@ Contributions are welcome! Please read our contributing guidelines before submit
 
 ## Links
 
-- [OpenCode](https://opencode.ai) — The AI coding agent
-- [Documentation](https://opencode.ai/docs) — OpenCode documentation
-- [Issues](https://github.com/realDuang/opencode-remote/issues) — Report bugs or request features
+- [Issues & Feature Requests](https://github.com/realDuang/codemux/issues)
+- [OpenCode](https://opencode.ai) — Supported engine
+- [GitHub Copilot CLI](https://docs.github.com/en/copilot/using-github-copilot/using-github-copilot-coding-agent-in-cli) — Supported engine
 
 ---
 
 <div align="center">
 
-**Built with [OpenCode](https://opencode.ai), [Electron](https://electronjs.org) and [SolidJS](https://solidjs.com)**
+**Built with [Electron](https://electronjs.org), [SolidJS](https://solidjs.com), and a love for AI-assisted coding.**
 
 </div>

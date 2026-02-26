@@ -1,4 +1,4 @@
-# OpenCode Remote
+# CodeMux
 
 Remote desktop app and web interface for AI coding assistance. Access OpenCode/Copilot from any device via Electron native app or browser (with Cloudflare Tunnel for public access).
 
@@ -224,7 +224,9 @@ This section documents the complete methodology for autonomous end-to-end testin
 
 ```bash
 # CRITICAL: Must unset ELECTRON_RUN_AS_NODE (inherited from Halo, breaks Electron)
-cmd /c "set ELECTRON_RUN_AS_NODE= && npx electron-vite dev"
+# Setting it to empty string does NOT work — Electron checks for existence, not value.
+# Use env -u to truly remove the variable from the child process environment.
+env -u ELECTRON_RUN_AS_NODE npx electron-vite dev
 ```
 
 Run with `run_in_background: true`. Wait for all services (5173, 4200, 4096, 4097).

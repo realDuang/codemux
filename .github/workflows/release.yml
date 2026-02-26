@@ -97,12 +97,6 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
-      - name: Download OpenCode binary
-        run: bun run update:opencode
-        env:
-          TARGET_ARCH: ${{ matrix.arch }}
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
       - name: Download Cloudflared binary
         run: bun run update:cloudflared
         env:
@@ -145,11 +139,6 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
-      - name: Download OpenCode binary
-        run: bun run update:opencode
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
       - name: Download Cloudflared binary
         run: bun run update:cloudflared
         env:
@@ -188,7 +177,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ needs.check-version.outputs.version }}
-          name: OpenCode Remote v${{ needs.check-version.outputs.version }}
+          name: CodeMux v${{ needs.check-version.outputs.version }}
           draft: false
           prerelease: false
           generate_release_notes: true

@@ -24,11 +24,11 @@ function getModeDisplayName(mode: AgentMode): string {
 /** Return the active-state background colour class for a mode button. */
 function getModeColor(mode: AgentMode, index: number): string {
   const label = getModeDisplayName(mode).toLowerCase();
-  if (label === "build" || label === "agent") return "bg-emerald-600";
-  if (label === "plan") return "bg-violet-600";
-  if (label === "autopilot") return "bg-amber-600";
+  if (label === "build" || label === "agent") return "bg-indigo-600";
+  if (label === "plan") return "bg-cyan-600";
+  if (label === "autopilot") return "bg-emerald-600";
   // Fallback by position
-  const palette = ["bg-emerald-600", "bg-violet-600", "bg-amber-600"];
+  const palette = ["bg-indigo-600", "bg-cyan-600", "bg-emerald-600"];
   if (index < palette.length) return palette[index];
   return "bg-slate-600";
 }
@@ -43,17 +43,17 @@ function getModeAccentRing(mode: AgentMode, index: number): {
   const label = getModeDisplayName(mode).toLowerCase();
   if (label === "plan")
     return {
-      bg: "bg-violet-50/60 dark:bg-slate-800/70 backdrop-blur-xl",
-      ring: "focus-within:ring-violet-500/40",
-      border: "border-violet-200/40 dark:border-violet-600/30",
-      bgHover: "bg-violet-600 hover:bg-violet-700",
+      bg: "bg-cyan-50/60 dark:bg-slate-800/70 backdrop-blur-xl",
+      ring: "focus-within:ring-cyan-500/40",
+      border: "border-cyan-200/40 dark:border-cyan-600/30",
+      bgHover: "bg-cyan-600 hover:bg-cyan-700",
     };
   if (label === "autopilot")
     return {
-      bg: "bg-amber-50 dark:bg-slate-800/70",
-      ring: "focus-within:ring-amber-500",
-      border: "border-amber-200 dark:border-amber-700/40",
-      bgHover: "bg-amber-600 hover:bg-amber-700",
+      bg: "bg-emerald-50/60 dark:bg-slate-800/70 backdrop-blur-xl",
+      ring: "focus-within:ring-emerald-500/40",
+      border: "border-emerald-200/40 dark:border-emerald-600/30",
+      bgHover: "bg-emerald-600 hover:bg-emerald-700",
     };
   // Default (build / agent / first mode / unknown)
   return {
@@ -185,16 +185,19 @@ export function PromptInput(props: PromptInputProps) {
     return getModeAccentRing(current, idx === -1 ? 0 : idx);
   });
 
-  // Whether the active mode is read-only (plan)
-  const isReadOnly = createMemo(() => {
+  // Placeholder text based on active mode
+  const modePlaceholder = createMemo(() => {
     const label = getModeDisplayName(agent()).toLowerCase();
-    return label === "plan";
+    if (label === "plan") return t().prompt.planPlaceholder;
+    if (label === "autopilot") return t().prompt.autopilotPlaceholder;
+    if (label === "build" || label === "agent") return t().prompt.buildPlaceholder;
+    return t().prompt.placeholder;
   });
 
   return (
     <div class="w-full max-w-4xl mx-auto">
       {/* Agent selector and Model selector row */}
-      <div class="flex items-center justify-between gap-2 mb-2 px-1">
+      <div class="flex items-center justify-between gap-2 mb-2 px-1 flex-wrap">
         {/* Agent mode buttons - left side */}
         <div class="flex gap-2">
           <For each={modes()}>
@@ -217,11 +220,6 @@ export function PromptInput(props: PromptInputProps) {
                 >
                   {icon}
                   {displayName}
-                  {isModePlan && (
-                    <span class="text-[10px] opacity-75">
-                      ({t().prompt.readOnly})
-                    </span>
-                  )}
                 </button>
               );
             }}
@@ -248,7 +246,7 @@ export function PromptInput(props: PromptInputProps) {
           placeholder={
             props.disabled
               ? "Select a mode to start..."
-              : isReadOnly() ? t().prompt.planPlaceholder : t().prompt.placeholder
+              : modePlaceholder()
           }
           rows={1}
           class={`w-full px-4 py-3 pr-12 bg-transparent resize-none focus:outline-none dark:text-white max-h-[200px] overflow-y-auto text-sm placeholder:text-slate-400 dark:placeholder:text-slate-500 ${props.disabled ? "cursor-not-allowed opacity-50" : ""}`}

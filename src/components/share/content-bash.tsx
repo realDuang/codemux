@@ -18,7 +18,7 @@ export function ContentBash(props: Props) {
         lang: "bash",
         themes: {
           light: "github-light",
-          dark: "github-dark",
+          dark: "one-dark-pro",
         },
       })
     },
@@ -31,7 +31,7 @@ export function ContentBash(props: Props) {
         lang: "console",
         themes: {
           light: "github-light",
-          dark: "github-dark",
+          dark: "one-dark-pro",
         },
       })
     },

@@ -24,7 +24,7 @@ const markedWithShiki = marked.use(
         lang: lang || "text",
         themes: {
           light: "github-light",
-          dark: "github-dark",
+          dark: "one-dark-pro",
         },
         transformers: [transformerNotationDiff()],
       })

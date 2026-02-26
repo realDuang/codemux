@@ -335,6 +335,16 @@ export function Part(props: PartProps) {
           props.message.role === "assistant" && (
             <>
               <div data-component="tool" data-tool={(props.part as ToolPart).normalizedTool}>
+                {/* Guard: if tool state has no input (e.g. interrupted session replay), render FallbackTool */}
+                {!(props.part.state as any).input ? (
+                  <FallbackTool
+                    message={props.message}
+                    id={props.part.id}
+                    tool={(props.part as ToolPart).title || (props.part as ToolPart).originalTool}
+                    // @ts-ignore
+                    state={{ ...props.part.state, input: {} }}
+                  />
+                ) : (
                 <Switch>
                   <Match when={(props.part as ToolPart).normalizedTool === "grep"}>
                     <GrepTool
@@ -436,6 +446,7 @@ export function Part(props: PartProps) {
                     />
                   </Match>
                 </Switch>
+                )}
               </div>
             </>
           )}
@@ -685,6 +696,7 @@ export function FallbackTool(props: ToolProps) {
 // Converts nested objects/arrays into [path, value] pairs.
 // E.g. {a:{b:{c:1}}, d:[{e:2}, 3]} => [["a.b.c",1], ["d[0].e",2], ["d[1]",3]]
 function flattenToolArgs(obj: any, prefix: string = ""): Array<[string, any]> {
+  if (obj == null) return [];
   const entries: Array<[string, any]> = [];
 
   for (const [key, value] of Object.entries(obj)) {
@@ -999,7 +1011,7 @@ export function BashTool(props: ToolProps) {
         <div data-component="tool-title">
            <span data-slot="icon" data-icon-color="green"><IconCommandLine width={14} height={14} /></span>
            <span data-slot="name">Bash</span>
-           <span data-slot="target" title={props.state.input.command} style={{ "font-family": "monospace", "font-size": "0.75rem" }}>
+           <span data-slot="target" title={props.state.input.command} style={{ "font-family": "var(--font-mono)", "font-size": "0.75rem" }}>
              {props.state.input.command.length > 50
                ? props.state.input.command.slice(0, 50) + "..."
                : props.state.input.command}
@@ -1198,51 +1210,69 @@ interface PermissionPromptProps {
   onRespond?: (sessionID: string, permissionID: string, reply: string) => void;
 }
 
-function PermissionPrompt(props: PermissionPromptProps) {
+export function PermissionPrompt(props: PermissionPromptProps) {
   const { t } = useI18n();
 
   const handleRespond = (reply: string) => {
-    if (props.onRespond) {
+    if (props.permission && props.onRespond) {
       props.onRespond(props.permission.sessionId, props.permission.id, reply);
     }
   };
 
+  // Map option type to button variant for styling
+  const getVariant = (type: string) => {
+    if (type.includes("reject")) return "deny";
+    if (type.includes("always")) return "always";
+    return "once";
+  };
+
+  // Map option type to display label (use option's own label if available)
+  const getLabel = (opt: { label: string; type: string }) => {
+    if (opt.label) return opt.label;
+    if (opt.type.includes("reject")) return t().permission.deny;
+    if (opt.type.includes("always")) return t().permission.allowAlways;
+    return t().permission.allowOnce;
+  };
+
+  // Use the actual options from the permission (provided by the agent).
+  // Fall back to hardcoded defaults only if no options exist.
+  const options = () => {
+    if (!props.permission) return [];
+    return props.permission.options?.length > 0
+      ? props.permission.options
+      : [
+          { id: "reject", label: t().permission.deny, type: "reject" },
+          { id: "always", label: t().permission.allowAlways, type: "accept_always" },
+          { id: "once", label: t().permission.allowOnce, type: "accept_once" },
+        ];
+  };
+
   return (
-    <div data-component="permission-prompt">
-      <div data-slot="permission-info">
-        <span data-slot="permission-type">{props.permission.title}</span>
-        <Show when={props.permission.patterns && props.permission.patterns.length > 0}>
-          <span data-slot="permission-patterns">
-            {props.permission.patterns?.join(", ")}
-          </span>
-        </Show>
+    <Show when={props.permission}>
+      <div data-component="permission-prompt">
+        <div data-slot="permission-info">
+          <span data-slot="permission-type">{props.permission?.title}</span>
+          <Show when={props.permission?.patterns && props.permission!.patterns.length > 0}>
+            <span data-slot="permission-patterns">
+              {props.permission?.patterns?.join(", ")}
+            </span>
+          </Show>
+        </div>
+        <div data-slot="permission-actions">
+          <For each={options()}>
+            {(opt) => (
+              <button
+                type="button"
+                data-slot="permission-button"
+                data-variant={getVariant(opt.type)}
+                onClick={() => handleRespond(opt.id)}
+              >
+                {getLabel(opt)}
+              </button>
+            )}
+          </For>
+        </div>
       </div>
-      <div data-slot="permission-actions">
-        <button
-          type="button"
-          data-slot="permission-button"
-          data-variant="deny"
-          onClick={() => handleRespond("reject")}
-        >
-          {t().permission.deny}
-        </button>
-        <button
-          type="button"
-          data-slot="permission-button"
-          data-variant="always"
-          onClick={() => handleRespond("always")}
-        >
-          {t().permission.allowAlways}
-        </button>
-        <button
-          type="button"
-          data-slot="permission-button"
-          data-variant="once"
-          onClick={() => handleRespond("once")}
-        >
-          {t().permission.allowOnce}
-        </button>
-      </div>
-    </div>
+    </Show>
   );
 }

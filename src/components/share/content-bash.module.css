@@ -12,6 +12,11 @@
     border-radius: 0.25rem;
     overflow: hidden;
     width: 100%;
+
+    :global(.dark) & {
+      border-color: rgba(71, 85, 105, 0.3);
+      background-color: #0b1120;
+    }
   }
 
   [data-slot="header"] {
@@ -54,13 +59,18 @@
     padding: 0.5rem calc(0.5rem + 3px);
 
     pre {
-      --shiki-dark-bg: var(--sl-color-bg) !important;
-      background-color: var(--sl-color-bg) !important;
+      --shiki-dark-bg: var(--sl-color-bg-surface) !important;
+      background-color: var(--sl-color-bg-surface) !important;
       line-height: 1.6;
       font-size: 0.75rem;
       white-space: pre-wrap;
       word-break: break-word;
       margin: 0;
+
+      :global(.dark) & {
+        --shiki-dark-bg: #0b1120 !important;
+        background-color: #0b1120 !important;
+      }
 
       span {
         white-space: break-spaces;

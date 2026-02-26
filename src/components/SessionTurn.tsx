@@ -8,10 +8,10 @@ import {
   onCleanup,
 } from "solid-js";
 import { messageStore, isExpanded, toggleExpanded } from "../stores/message";
-import { Part, ProviderIcon } from "./share/part";
+import { Part, ProviderIcon, PermissionPrompt } from "./share/part";
 import { IconSparkles } from "./icons";
 import { useI18n } from "../lib/i18n";
-import type { UnifiedMessage, UnifiedPart, UnifiedPermission } from "../types/unified";
+import type { UnifiedMessage, UnifiedPart, UnifiedPermission, ToolPart } from "../types/unified";
 import { Spinner } from "./Spinner";
 
 import styles from "./SessionTurn.module.css";
@@ -112,12 +112,52 @@ export function SessionTurn(props: SessionTurnProps) {
     () => messageStore.permission[props.sessionID] || []
   );
 
-  // Get permission for a specific tool part (by callId)
+  // Get permission for a specific tool part (by callId).
+  // Some agents (e.g. Copilot CLI) use a different toolCallId in the
+  // permission request than in the tool_call notification, so we also
+  // match by rawInput command against a pending/running tool part.
   const getPermissionForPart = (part: UnifiedPart) => {
     if (part.type !== "tool") return undefined;
-    const callId = part.callId;
-    return permissions().find(p => p.toolCallId === callId);
+    const tp = part as ToolPart;
+    // Direct match by callId
+    const direct = permissions().find(p => p.toolCallId === tp.callId);
+    if (direct) return direct;
+    // Fallback: match by rawInput command against a pending/running tool
+    if (tp.state.status === "pending" || tp.state.status === "running") {
+      const cmd = (tp.state as any).input?.command;
+      if (cmd) {
+        return permissions().find(p => {
+          const ri = p.rawInput as any;
+          return ri?.command === cmd || ri?.commands?.includes(cmd);
+        });
+      }
+      // Last resort: if there's only one unmatched permission and this is
+      // the only pending/running tool, assume they belong together.
+      const unmatchedPerms = permissions().filter(p => {
+        for (const msg of props.assistantMessages) {
+          const parts = messageStore.part[msg.id] || [];
+          if (parts.some((pp: any) => pp.type === "tool" && pp.callId === p.toolCallId)) return false;
+        }
+        return true;
+      });
+      if (unmatchedPerms.length === 1) return unmatchedPerms[0];
+    }
+    return undefined;
   };
+
+  // Get permissions that don't match any tool part (need standalone rendering)
+  const unmatchedPermissions = createMemo(() => {
+    const matched = new Set<string>();
+    for (const msg of props.assistantMessages) {
+      const parts = messageStore.part[msg.id] || [];
+      for (const p of parts) {
+        if (p.type !== "tool") continue;
+        const perm = getPermissionForPart(p);
+        if (perm) matched.add(perm.id);
+      }
+    }
+    return permissions().filter(p => !matched.has(p.id));
+  });
 
   // Check if there are any tool parts (steps)
   const hasSteps = createMemo(() => {
@@ -196,6 +236,7 @@ export function SessionTurn(props: SessionTurnProps) {
   // Filter parts for display
   const filterParts = (allParts: UnifiedPart[], messageRole: string) => {
     const filtered = allParts.filter((x, index) => {
+      if (!x) return false;
       // Filter out all step-start, model info will be shown in header
       if (x.type === "step-start") return false;
       if (x.type === "snapshot") return false;
@@ -360,6 +401,15 @@ export function SessionTurn(props: SessionTurnProps) {
                 )}
               </For>
             </div>
+            {/* Render unmatched permissions that couldn't be associated with any tool part */}
+            <For each={unmatchedPermissions()}>
+              {(perm) => (
+                <PermissionPrompt
+                  permission={perm}
+                  onRespond={props.onPermissionRespond}
+                />
+              )}
+            </For>
           </Show>
 
           {/* Permission prompts for running tools (show even when steps collapsed) */}
@@ -367,12 +417,12 @@ export function SessionTurn(props: SessionTurnProps) {
             <div class={styles.permissionPrompts}>
               <For each={permissions()}>
                 {(perm) => {
-                  // Find the tool part for this permission
+                  // Find the tool part for this permission (using extended matching)
                   for (const msg of props.assistantMessages) {
                     const parts = messageStore.part[msg.id] || [];
                     for (let i = 0; i < parts.length; i++) {
                       const p = parts[i];
-                      if (p.type === "tool" && p.callId === perm.toolCallId) {
+                      if (p.type === "tool" && getPermissionForPart(p)?.id === perm.id) {
                         return (
                           <Part
                             last={false}
@@ -386,7 +436,13 @@ export function SessionTurn(props: SessionTurnProps) {
                       }
                     }
                   }
-                  return null;
+                  // No matching tool part found — render standalone permission prompt
+                  return (
+                    <PermissionPrompt
+                      permission={perm}
+                      onRespond={props.onPermissionRespond}
+                    />
+                  );
                 }}
               </For>
             </div>

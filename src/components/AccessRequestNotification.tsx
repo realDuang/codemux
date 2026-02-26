@@ -105,14 +105,14 @@ export function AccessRequestNotification() {
         <For each={requests()}>
           {(req) => (
             <div 
-              class="relative bg-white dark:bg-zinc-900 rounded-xl shadow-2xl border border-gray-100 dark:border-zinc-800 overflow-hidden animate-in fade-in slide-in-from-bottom-4 duration-300"
+              class="relative bg-white dark:bg-slate-900 rounded-xl shadow-2xl border border-gray-100 dark:border-slate-800 overflow-hidden animate-in fade-in slide-in-from-bottom-4 duration-300"
               classList={{
                 "pointer-events-none": processingIds().has(req.id)
               }}
             >
               <Show when={feedback()[req.id]}>
                 <div 
-                  class="absolute inset-0 z-20 flex flex-col items-center justify-center bg-white/90 dark:bg-zinc-900/95 backdrop-blur-xs transition-opacity duration-300"
+                  class="absolute inset-0 z-20 flex flex-col items-center justify-center bg-white/90 dark:bg-slate-900/95 backdrop-blur-xs transition-opacity duration-300"
                 >
                   <Show 
                     when={feedback()[req.id] === "approved"}
@@ -176,7 +176,7 @@ export function AccessRequestNotification() {
                   </div>
                   <div class="flex items-center justify-between text-sm">
                     <span class="text-gray-500 dark:text-gray-400">{t().approval.ipAddress}:</span>
-                    <span class="font-mono text-xs font-medium text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-zinc-800 px-1.5 py-0.5 rounded">
+                    <span class="font-mono text-xs font-medium text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-slate-800 px-1.5 py-0.5 rounded">
                       {req.ip}
                     </span>
                   </div>
@@ -185,14 +185,14 @@ export function AccessRequestNotification() {
                 <div class="flex gap-3">
                   <button
                     onClick={() => handleDeny(req.id)}
-                    class="flex-1 px-4 py-2.5 text-sm font-medium text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-zinc-800 hover:bg-gray-200 dark:hover:bg-zinc-700 rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-gray-300 dark:focus:ring-gray-600"
+                    class="flex-1 px-4 py-2.5 text-sm font-medium text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-slate-800 hover:bg-gray-200 dark:hover:bg-slate-700 rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-gray-300 dark:focus:ring-gray-600"
                   >
                     {t().approval.deny}
                   </button>
                   
                   <button
                     onClick={() => handleApprove(req.id)}
-                    class="flex-1 px-4 py-2.5 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 active:bg-blue-800 rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 dark:focus:ring-offset-zinc-900"
+                    class="flex-1 px-4 py-2.5 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 active:bg-blue-800 rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 dark:focus:ring-offset-slate-900"
                   >
                     {t().approval.approve}
                   </button>

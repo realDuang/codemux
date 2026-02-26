@@ -71,9 +71,26 @@
     h4,
     h5,
     h6 {
-      font-size: 1em;
       font-weight: 600;
       margin-bottom: 0.5rem;
+    }
+
+    h1 {
+      font-size: 1.25em;
+    }
+
+    h2 {
+      font-size: 1.125em;
+    }
+
+    h3 {
+      font-size: 1em;
+    }
+
+    h4,
+    h5,
+    h6 {
+      font-size: 0.875em;
     }
 
     & > *:last-child {
@@ -92,6 +109,8 @@
       border: 1px solid rgba(148, 163, 184, 0.12);
 
       :global(.dark) & {
+        --shiki-dark-bg: #0b1120 !important;
+        background-color: #0b1120 !important;
         border-color: rgba(71, 85, 105, 0.3);
       }
 
@@ -104,6 +123,14 @@
       font-weight: 500;
 
       &:not(pre code) {
+        padding: 0.125em 0.3em;
+        border-radius: 0.25em;
+        background: rgba(0, 0, 0, 0.06);
+
+        :global(.dark) & {
+          background: rgba(255, 255, 255, 0.1);
+        }
+
         &::before {
           content: "`";
           font-weight: 700;

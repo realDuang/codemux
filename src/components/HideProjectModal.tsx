@@ -38,9 +38,9 @@ export function HideProjectModal(props: HideProjectModalProps) {
           role="dialog"
           aria-modal="true"
           aria-labelledby="hide-project-modal-title"
-          class="relative bg-white dark:bg-zinc-900 rounded-xl shadow-2xl w-full max-w-md mx-4 overflow-hidden"
+          class="relative bg-white dark:bg-slate-900 rounded-xl shadow-2xl w-full max-w-md mx-4 overflow-hidden"
         >
-          <div class="flex items-center justify-between px-6 py-4 border-b border-gray-200 dark:border-zinc-800">
+          <div class="flex items-center justify-between px-6 py-4 border-b border-gray-200 dark:border-slate-800">
             <h2 id="hide-project-modal-title" class="text-lg font-semibold text-gray-900 dark:text-white">
               {t().project.hideTitle}
             </h2>
@@ -81,10 +81,10 @@ export function HideProjectModal(props: HideProjectModalProps) {
             </div>
           </div>
 
-          <div class="flex justify-end gap-3 px-6 py-4 border-t border-gray-200 dark:border-zinc-800 bg-gray-50 dark:bg-zinc-900/50">
+          <div class="flex justify-end gap-3 px-6 py-4 border-t border-gray-200 dark:border-slate-800 bg-gray-50 dark:bg-slate-900/50">
             <button
               onClick={props.onClose}
-              class="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-zinc-800 rounded-lg transition-colors"
+              class="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-slate-800 rounded-lg transition-colors"
             >
               {t().common.cancel}
             </button>

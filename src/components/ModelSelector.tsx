@@ -1,4 +1,4 @@
-import { createSignal, createEffect, For, Show } from "solid-js";
+import { createSignal, createEffect, For, Show, onCleanup } from "solid-js";
 import { gateway } from "../lib/gateway-api";
 import { configStore, setConfigStore } from "../stores/config";
 import { useI18n } from "../lib/i18n";
@@ -16,11 +16,15 @@ export function ModelSelector(props: ModelSelectorProps) {
   const [selectedProvider, setSelectedProvider] = createSignal<string>("");
   const [selectedModel, setSelectedModel] = createSignal<string>("");
 
+  let disposed = false;
+  onCleanup(() => { disposed = true; });
+
   // Load models from gateway — re-runs when engineType changes
   createEffect(async () => {
     const engineType = props.engineType || "opencode";
     try {
       const models = await gateway.listModels(engineType);
+      if (disposed) return;
       setConfigStore({
         models: models,
         loading: false,
@@ -47,7 +51,15 @@ export function ModelSelector(props: ModelSelectorProps) {
         props.onModelChange?.(first.providerId || "", first.modelId);
       }
     } catch (error) {
-      logger.error("Failed to load models:", error);
+      if (!disposed) {
+        // Ignore "Not connected" errors — ModelSelector may mount before
+        // gateway.init() completes (e.g. navigating back from Settings).
+        // Models will be loaded once the gateway connects and Chat initializes.
+        const msg = error instanceof Error ? error.message : "";
+        if (!msg.includes("Not connected")) {
+          logger.error("Failed to load models:", error);
+        }
+      }
     }
   });
 
@@ -90,7 +102,7 @@ export function ModelSelector(props: ModelSelectorProps) {
     <div class="relative">
       <button
         onClick={() => setIsOpen(!isOpen())}
-        class="px-3 py-1.5 text-xs font-medium rounded-md transition-all flex items-center gap-1.5 bg-gray-100 dark:bg-zinc-800 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-zinc-700"
+        class="px-3 py-1.5 text-xs font-medium rounded-md transition-all flex items-center gap-1.5 bg-gray-100 dark:bg-slate-800 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-slate-700"
       >
         <svg
           xmlns="http://www.w3.org/2000/svg"
@@ -127,7 +139,7 @@ export function ModelSelector(props: ModelSelectorProps) {
 
       <Show when={isOpen()}>
         {/* Dropdown menu - opens upward */}
-        <div class="absolute right-0 bottom-full mb-2 w-72 md:w-80 bg-white dark:bg-zinc-800 border border-gray-200 dark:border-zinc-700 rounded-lg shadow-lg z-[60] max-h-[60vh] overflow-y-auto">
+        <div class="absolute right-0 bottom-full mb-2 w-72 md:w-80 bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-lg shadow-lg z-[60] max-h-[60vh] overflow-y-auto">
           <Show
             when={providerGroups().length > 0}
             fallback={
@@ -138,15 +150,15 @@ export function ModelSelector(props: ModelSelectorProps) {
           >
             <For each={providerGroups()}>
               {(group) => (
-                <div class="border-b dark:border-zinc-700 last:border-b-0">
-                  <div class="px-3 py-1.5 text-xs font-semibold text-gray-500 dark:text-gray-400 bg-gray-50 dark:bg-zinc-900">
+                <div class="border-b dark:border-slate-700 last:border-b-0">
+                  <div class="px-3 py-1.5 text-xs font-semibold text-gray-500 dark:text-gray-400 bg-gray-50 dark:bg-slate-900">
                     {group.name}
                   </div>
                   <For each={group.models}>
                     {(model) => (
                       <button
                         onClick={() => handleSelect(group.id, model.modelId)}
-                        class={`w-full text-left px-3 py-1.5 hover:bg-gray-50 dark:hover:bg-zinc-700 transition-colors flex items-center justify-between ${
+                        class={`w-full text-left px-3 py-1.5 hover:bg-gray-50 dark:hover:bg-slate-700 transition-colors flex items-center justify-between ${
                           selectedProvider() === group.id &&
                           selectedModel() === model.modelId
                             ? "bg-blue-50 dark:bg-blue-900/20"

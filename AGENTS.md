@@ -1,8 +1,8 @@
-# OpenCode Remote - AI Agent Development Guide
+# CodeMux - AI Agent Development Guide
 
 ## Project Overview
 
-**OpenCode Remote** is a standalone web interface for accessing OpenCode through a browser. It's a locally-run application that automatically starts an OpenCode server and provides a web UI with random access code authentication.
+**CodeMux** is a standalone web interface for accessing OpenCode through a browser. It's a locally-run application that automatically starts an OpenCode server and provides a web UI with random access code authentication.
 
 ### Tech Stack
 
@@ -16,7 +16,7 @@
 ### Project Structure
 
 ```
-opencode-remote/
+codemux/
 ├── src/
 │   ├── pages/          # Page components
 │   │   ├── Login.tsx   # Login page (6-digit code)
@@ -304,7 +304,7 @@ UI updates
 
 ## Internationalization (i18n)
 
-OpenCode Remote supports multiple languages using `@solid-primitives/i18n`.
+CodeMux supports multiple languages using `@solid-primitives/i18n`.
 
 ### Architecture
 
@@ -792,7 +792,7 @@ onEvent({ type: eventType, data: properties.part });
 ### Start Project
 
 ```bash
-cd /Users/duang/workspace/opencode-remote
+cd /Users/duang/workspace/codemux
 bun install
 bun run start
 ```

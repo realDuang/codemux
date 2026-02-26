@@ -97,8 +97,6 @@ export function SessionSidebar(props: SessionSidebarProps) {
         // Fallback: match by directory AND engine type when projectID is missing or unknown
         const matchingProject = filteredProjects.find(
           (p) => session.directory && p.directory === session.directory && p.engineType === session.engineType
-        ) || filteredProjects.find(
-          (p) => session.directory && p.directory === session.directory
         );
         if (matchingProject) {
           groups.get(matchingProject.id)!.push(session);

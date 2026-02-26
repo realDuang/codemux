@@ -149,6 +149,8 @@ export interface LocaleDict {
     readOnly: string;
     placeholder: string;
     planPlaceholder: string;
+    buildPlaceholder: string;
+    autopilotPlaceholder: string;
     send: string;
   };
 
@@ -304,7 +306,7 @@ export const en: LocaleDict = {
 
   // Login page
   login: {
-    title: "OpenCode Remote",
+    title: "CodeMux",
     accessCode: "Access Code",
     placeholder: "Enter 6-digit code",
     invalidCode: "Invalid access code",
@@ -417,6 +419,8 @@ export const en: LocaleDict = {
     readOnly: "Read-only",
     placeholder: "Type a message...",
     planPlaceholder: "Describe what you want to plan or analyze...",
+    buildPlaceholder: "Describe what you want to build or change...",
+    autopilotPlaceholder: "Describe a task to run autonomously...",
     send: "Send message",
   },
 
@@ -487,7 +491,7 @@ export const en: LocaleDict = {
   entry: {
     checkingAccess: "Checking access...",
     enterChat: "Enter Chat",
-    enterChatDesc: "Start using OpenCode AI assistant",
+    enterChatDesc: "Start using CodeMux AI assistant",
     localModeTitle: "Local Access Mode",
     localModeDesc: "You're accessing from localhost. Configure remote access below or enter chat directly.",
     startingServices: "Starting services...",

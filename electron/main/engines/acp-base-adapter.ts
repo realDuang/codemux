@@ -844,7 +844,7 @@ export abstract class AcpBaseAdapter extends EngineAdapter {
     try {
       this.initResult = await this.sendRequest("initialize", {
         protocolVersion: 1,
-        clientInfo: { name: "opencode-remote", version: "0.1.0" },
+        clientInfo: { name: "codemux", version: "0.1.0" },
         clientCapabilities: {
           fs: { readTextFile: true, writeTextFile: true },
           terminal: true,

@@ -6,6 +6,9 @@ dist/
 /out/
 /release/
 
+# Session store (dev leftover)
+.sessions/
+
 # Bundled resources (downloaded binaries)
 /resources/
 

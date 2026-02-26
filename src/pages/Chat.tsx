@@ -338,7 +338,7 @@ export default function Chat() {
         // For ACP sessions without projectID, resolve via directory matching
         let projectID = (s.engineMeta?.projectID as string) || undefined;
         if (!projectID) {
-          const matchingProject = validProjects.find(p => p.directory === s.directory);
+          const matchingProject = validProjects.find(p => p.directory === s.directory && p.engineType === s.engineType);
           if (matchingProject) {
             projectID = matchingProject.id;
           }

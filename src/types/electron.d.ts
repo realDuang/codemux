@@ -83,7 +83,7 @@ interface ElectronAPI {
   };
 
   gateway?: {
-    getPort: () => Promise<number>;
+    getPort: () => Promise<string>;
   };
 }
 

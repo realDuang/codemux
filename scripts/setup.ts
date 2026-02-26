@@ -1,5 +1,5 @@
 /**
- * OpenCode Remote - External Dependencies Setup Script
+ * CodeMux - External Dependencies Setup Script
  * Supports Windows / macOS / Linux
  *
  * Usage: bun run setup
@@ -344,7 +344,7 @@ function printDependencyTable(deps: DependencyStatus[]) {
 async function main() {
   console.log("\n" + "=".repeat(60));
   console.log(
-    `${colors.bold}${colors.cyan}  OpenCode Remote - Setup Wizard${colors.reset}`
+    `${colors.bold}${colors.cyan}  CodeMux - Setup Wizard${colors.reset}`
   );
   console.log("=".repeat(60));
 
@@ -404,7 +404,7 @@ async function main() {
       const success = await installCloudflared();
       if (!success) {
         logWarning("Cloudflared installation failed or requires manual installation.");
-        logWarning("You can still use OpenCode Remote on your local network.");
+        logWarning("You can still use CodeMux on your local network.");
       }
     } else {
       logWarning("Skipped Cloudflared installation. Public access feature will not be available.");

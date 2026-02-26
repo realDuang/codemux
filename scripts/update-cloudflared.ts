@@ -77,7 +77,7 @@ async function downloadFile(url: string, destPath: string): Promise<void> {
   
   // Build headers with optional GitHub token for downloads from GitHub
   const headers: Record<string, string> = {
-    "User-Agent": "opencode-remote-updater",
+    "User-Agent": "codemux-updater",
   };
   
   // Use GITHUB_TOKEN if available (helps with rate limits for GitHub downloads)

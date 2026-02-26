@@ -1,5 +1,5 @@
-const STORAGE_KEY = "opencode_remote_projects";
-const HIDDEN_KEY = "opencode_remote_hidden_projects";
+const STORAGE_KEY = "codemux_projects";
+const HIDDEN_KEY = "codemux_hidden_projects";
 
 export interface LocalProject {
   id: string;

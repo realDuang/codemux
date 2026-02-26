@@ -538,7 +538,7 @@ export default function EntryPage() {
             <div class="flex items-center gap-3">
               <LanguageSwitcher />
               <div class="text-xs font-medium px-2 py-1 rounded bg-gray-100 dark:bg-slate-800 text-gray-500 dark:text-gray-400">
-                OpenCode Remote
+                CodeMux
               </div>
             </div>
           </header>

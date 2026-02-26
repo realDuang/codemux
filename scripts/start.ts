@@ -135,7 +135,7 @@ async function main() {
   fs.writeFileSync(authCodePath, authCode);
 
   console.log("\n" + "=".repeat(60));
-  console.log("Starting OpenCode Remote");
+  console.log("Starting CodeMux");
   console.log("=".repeat(60));
   console.log(`\nAccess Code: ${authCode}\n`);
 

@@ -171,6 +171,10 @@ class GatewayAPI {
     return gatewayClient.deleteSession(sessionId);
   }
 
+  renameSession(sessionId: string, title: string): Promise<void> {
+    return gatewayClient.renameSession(sessionId, title);
+  }
+
   // --- Message ---
 
   sendMessage(
@@ -224,6 +228,24 @@ class GatewayAPI {
 
   setProjectEngine(directory: string, engineType: EngineType): Promise<void> {
     return gatewayClient.setProjectEngine({ directory, engineType });
+  }
+
+  // --- Cross-engine (SessionStore) ---
+
+  listAllSessions(): Promise<UnifiedSession[]> {
+    return gatewayClient.listAllSessions();
+  }
+
+  listAllProjects(): Promise<UnifiedProject[]> {
+    return gatewayClient.listAllProjects();
+  }
+
+  deleteProject(projectId: string): Promise<void> {
+    return gatewayClient.deleteProject(projectId) as Promise<any>;
+  }
+
+  importLegacyProjects(projects: UnifiedProject[]): Promise<void> {
+    return gatewayClient.importLegacyProjects(projects) as Promise<any>;
   }
 }
 

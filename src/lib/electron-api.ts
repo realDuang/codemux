@@ -11,6 +11,7 @@ interface SystemInfo {
   arch: string;
   version: string;
   userDataPath: string;
+  homePath: string;
   isPackaged: boolean;
 }
 
@@ -92,6 +93,14 @@ export const systemAPI = {
   async selectDirectory(): Promise<string | null> {
     const api = getElectronAPI();
     return api ? api.system.selectDirectory() : null;
+  },
+
+  async openPath(folderPath: string): Promise<string> {
+    const api = getElectronAPI();
+    if (api) {
+      return api.system.openPath(folderPath);
+    }
+    return "Not in Electron environment";
   },
 };
 
@@ -208,6 +217,11 @@ export const tunnelAPI = {
     const api = getElectronAPI();
     return api ? api.tunnel.getStatus() : null;
   },
+
+  onDisconnected(callback: () => void): (() => void) | null {
+    const api = getElectronAPI();
+    return api ? api.tunnel.onDisconnected(callback) : null;
+  },
 };
 
 // Production Server API
@@ -230,3 +244,19 @@ export const gatewayAPI = {
     return api?.gateway ? api.gateway.getPort() : 4200;
   },
 };
+
+/**
+ * Get the OpenCode session storage folder path for a project.
+ * OpenCode uses xdg-basedir: ~/.local/share/opencode/storage/session/{projectId}/
+ */
+export function getOpenCodeStoragePath(homePath: string, projectId: string): string {
+  return `${homePath}/.local/share/opencode/storage/session/${projectId}`;
+}
+
+/**
+ * Get the Copilot session storage folder path.
+ * Copilot stores all sessions under ~/.copilot/session-state/ (flat, not grouped by project).
+ */
+export function getCopilotStoragePath(homePath: string): string {
+  return `${homePath}/.copilot/session-state`;
+}

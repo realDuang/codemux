@@ -18,12 +18,13 @@ export const ProjectStore = {
   },
 
   add(projectId: string, path: string): void {
+    const normalizedPath = path.replaceAll("\\", "/");
     const projects = this.getAll();
     const existing = projects.find((p) => p.id === projectId);
     if (existing) {
-      existing.path = path;
+      existing.path = normalizedPath;
     } else {
-      projects.push({ id: projectId, path, addedAt: Date.now() });
+      projects.push({ id: projectId, path: normalizedPath, addedAt: Date.now() });
     }
     localStorage.setItem(STORAGE_KEY, JSON.stringify(projects));
     this.unhide(projectId);

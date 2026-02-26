@@ -92,7 +92,7 @@ function StartupSplash() {
           >
             <img
               src={`${import.meta.env.BASE_URL}assets/logo.png`}
-              alt="OpenCode Remote"
+              alt="CodeMux"
               class="w-24 h-24 object-contain"
               style={{
                 filter: "drop-shadow(0 0 24px rgba(59, 130, 246, 0.3))",

@@ -37,7 +37,7 @@ export const zh: LocaleDict = {
 
   // Login page
   login: {
-    title: "OpenCode Remote",
+    title: "CodeMux",
     accessCode: "访问码",
     placeholder: "输入 6 位验证码",
     invalidCode: "无效的访问码",
@@ -150,6 +150,8 @@ export const zh: LocaleDict = {
     readOnly: "只读",
     placeholder: "输入消息...",
     planPlaceholder: "描述你想要规划或分析的内容...",
+    buildPlaceholder: "描述你想要构建或修改的内容...",
+    autopilotPlaceholder: "描述一个自主执行的任务...",
     send: "发送消息",
   },
 
@@ -220,7 +222,7 @@ export const zh: LocaleDict = {
   entry: {
     checkingAccess: "正在检查访问权限...",
     enterChat: "进入聊天",
-    enterChatDesc: "开始使用 OpenCode AI 助手",
+    enterChatDesc: "开始使用 CodeMux AI 助手",
     localModeTitle: "本机访问模式",
     localModeDesc: "您正在从本机访问。可以在下方配置远程访问，或直接进入聊天。",
     startingServices: "正在启动服务...",

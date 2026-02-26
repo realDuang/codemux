@@ -3,7 +3,7 @@ import App from "./App";
 import "./index.css";
 import { logger } from "./lib/logger";
 
-logger.info("🚀 OpenCode Remote starting...");
+logger.info("🚀 CodeMux starting...");
 
 const root = document.getElementById("root");
 

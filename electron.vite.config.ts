@@ -7,7 +7,7 @@ import { tunnelManager } from './scripts/tunnel-manager';
 
 export default defineConfig({
   main: {
-    plugins: [externalizeDepsPlugin({ exclude: ['ws'] })],
+    plugins: [externalizeDepsPlugin({ exclude: ['ws', 'fix-path', 'shell-path', 'shell-env'] })],
     build: {
       lib: {
         entry: resolve(__dirname, 'electron/main/index.ts'),

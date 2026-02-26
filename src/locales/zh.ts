@@ -64,21 +64,8 @@ export const zh: LocaleDict = {
   // Settings page
   settings: {
     back: "返回",
-    title: "连接设置",
-    serverUrl: "OpenCode 服务器地址",
-    serverUrlDesc: "请输入你要连接的 OpenCode 服务地址 (例如: http://localhost:4096)",
-    testing: "测试中...",
-    testConnection: "测试连接",
-    connectionSuccess: "连接测试成功！",
-    connectionFailed: "无法连接到服务器:",
-    serverUrlEmpty: "服务器地址不能为空",
-    serverError: "服务器返回错误:",
-    urlUpdated: "服务器地址已更新",
-    saveFailed: "保存失败，请检查地址格式",
-    saving: "保存中...",
-    saveAndConnect: "保存",
+    title: "设置",
     general: "常规",
-    connection: "连接",
     language: "语言",
     languageDesc: "选择您偏好的界面语言",
     theme: "主题",
@@ -86,12 +73,14 @@ export const zh: LocaleDict = {
     themeLight: "浅色",
     themeDark: "深色",
     themeSystem: "跟随系统",
-    infoTitle: "说明",
-    infoDefault: "默认地址通常为 /opencode-api (指向本地代理)",
-    infoRemote: "如果连接远程服务器，请确保网络可达",
-    infoChange: "更改地址后，聊天记录和会话列表将从新服务器加载",
     security: "安全",
     devicesDesc: "管理可以访问此服务器的设备",
+    logging: "日志",
+    logFilePath: "日志文件位置",
+    logFilePathDesc: "应用程序日志在磁盘上的存储位置",
+    openLogFolder: "打开文件夹",
+    logLevel: "日志级别",
+    logLevelDesc: "写入日志文件的最低严重级别",
   },
 
   // Remote Access page
@@ -130,6 +119,8 @@ export const zh: LocaleDict = {
     hoursAgo: "{count}小时前",
     daysAgo: "{count}天前",
     files: "{count} 文件",
+    openStorageFolder: "打开存储文件夹",
+    copySessionId: "复制会话 ID",
   },
 
   // Project
@@ -232,6 +223,7 @@ export const zh: LocaleDict = {
     enterChatDesc: "开始使用 OpenCode AI 助手",
     localModeTitle: "本机访问模式",
     localModeDesc: "您正在从本机访问。可以在下方配置远程访问，或直接进入聊天。",
+    startingServices: "正在启动服务...",
   },
 
   // Device approval

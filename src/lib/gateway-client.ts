@@ -53,7 +53,7 @@ export interface GatewayClientEvents {
 interface PendingRequest {
   resolve: (payload: any) => void;
   reject: (err: Error) => void;
-  timer: ReturnType<typeof setTimeout>;
+  timer?: ReturnType<typeof setTimeout>;
 }
 
 // --- Client ---
@@ -208,7 +208,7 @@ export class GatewayClient {
       const pending = this.pending.get(resp.requestId);
       if (pending) {
         this.pending.delete(resp.requestId);
-        clearTimeout(pending.timer);
+        if (pending.timer) clearTimeout(pending.timer);
         if (resp.error) {
           pending.reject(new Error(`${resp.error.code}: ${resp.error.message}`));
         } else {
@@ -232,23 +232,26 @@ export class GatewayClient {
 
       const requestId = `req_${++this.requestCounter}_${Date.now()}`;
 
-      const timer = setTimeout(() => {
-        this.pending.delete(requestId);
-        reject(new Error(`Request timeout: ${type}`));
-      }, timeout);
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      if (timeout > 0) {
+        timer = setTimeout(() => {
+          this.pending.delete(requestId);
+          reject(new Error(`Request timeout: ${type}`));
+        }, timeout);
+      }
 
       this.pending.set(requestId, { resolve, reject, timer });
 
       const msg: GatewayRequest = { type, requestId, payload };
       try {
         if (this.ws!.readyState !== WebSocket.OPEN) {
-          clearTimeout(timer);
+          if (timer) clearTimeout(timer);
           this.pending.delete(requestId);
           return reject(new Error("WebSocket is not open"));
         }
         this.ws!.send(JSON.stringify(msg));
       } catch (err) {
-        clearTimeout(timer);
+        if (timer) clearTimeout(timer);
         this.pending.delete(requestId);
         reject(err instanceof Error ? err : new Error(String(err)));
       }
@@ -257,7 +260,7 @@ export class GatewayClient {
 
   private rejectAllPending(reason: string): void {
     for (const [id, pending] of this.pending) {
-      clearTimeout(pending.timer);
+      if (pending.timer) clearTimeout(pending.timer);
       pending.reject(new Error(reason));
     }
     this.pending.clear();
@@ -291,10 +294,16 @@ export class GatewayClient {
     return this.request(GatewayRequestType.SESSION_DELETE, { sessionId });
   }
 
+  renameSession(sessionId: string, title: string): Promise<void> {
+    return this.request(GatewayRequestType.SESSION_RENAME, { sessionId, title });
+  }
+
   // --- Message API ---
 
   sendMessage(req: MessageSendRequest): Promise<UnifiedMessage> {
-    return this.request(GatewayRequestType.MESSAGE_SEND, req);
+    // No timeout — agent tasks can run for minutes/hours.
+    // Cancellation via cancelMessage(); UI recovery via isLastTurnWorking.
+    return this.request(GatewayRequestType.MESSAGE_SEND, req, 0);
   }
 
   cancelMessage(sessionId: string): Promise<void> {
@@ -335,6 +344,43 @@ export class GatewayClient {
 
   setProjectEngine(req: ProjectSetEngineRequest): Promise<void> {
     return this.request(GatewayRequestType.PROJECT_SET_ENGINE, req);
+  }
+
+  // --- Cross-engine API (SessionStore) ---
+
+  listAllSessions(): Promise<UnifiedSession[]> {
+    return this.request(GatewayRequestType.SESSION_LIST_ALL);
+  }
+
+  listAllProjects(): Promise<UnifiedProject[]> {
+    return this.request(GatewayRequestType.PROJECT_LIST_ALL);
+  }
+
+  deleteProject(projectId: string): Promise<{ success: boolean }> {
+    return this.request(GatewayRequestType.PROJECT_DELETE, { projectId });
+  }
+
+  importLegacyProjects(
+    projects: UnifiedProject[],
+  ): Promise<{ success: boolean }> {
+    return this.request(GatewayRequestType.IMPORT_LEGACY_PROJECTS, { projects });
+  }
+
+  // --- Log forwarding (fire-and-forget, no response expected) ---
+
+  sendLog(level: string, args: unknown[]): void {
+    if (!this.ws || !this._connected || this.ws.readyState !== WebSocket.OPEN) {
+      return; // silently drop — we can't log failures from the logger itself
+    }
+    try {
+      this.ws.send(JSON.stringify({
+        type: GatewayRequestType.LOG_SEND,
+        requestId: "",
+        payload: { level, args },
+      }));
+    } catch {
+      // ignore — never let log forwarding break the app
+    }
   }
 }
 

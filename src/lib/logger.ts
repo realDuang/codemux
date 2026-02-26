@@ -1,6 +1,10 @@
 /**
  * Logger utility with configurable log levels via Vite environment variables.
  *
+ * Logs are written to:
+ *   1. Browser console (always, subject to level filter)
+ *   2. Backend log file via WebSocket (when connected)
+ *
  * Usage:
  *   import { logger } from '../lib/logger';
  *   logger.debug('[Component] Debug info');
@@ -16,6 +20,8 @@
  *   - 'error': Show errors only
  *   - 'none': Disable all logs (default in production)
  */
+
+import { gatewayClient } from "./gateway-client";
 
 export type LogLevel = "debug" | "info" | "warn" | "error" | "none";
 
@@ -44,6 +50,39 @@ function shouldLog(level: LogLevel): boolean {
   return LOG_LEVELS[level] >= LOG_LEVELS[currentLevel];
 }
 
+/**
+ * Serialize args for log forwarding.
+ * Converts Error objects and non-serializable values to strings.
+ */
+function serializeArgs(args: unknown[]): unknown[] {
+  return args.map((arg) => {
+    if (arg instanceof Error) {
+      return `${arg.name}: ${arg.message}${arg.stack ? "\n" + arg.stack : ""}`;
+    }
+    if (typeof arg === "object" && arg !== null) {
+      try {
+        JSON.stringify(arg);
+        return arg;
+      } catch {
+        return String(arg);
+      }
+    }
+    return arg;
+  });
+}
+
+/**
+ * Forward a log entry to the backend via WebSocket (fire-and-forget).
+ * Failures are silently ignored to avoid recursive logging.
+ */
+function forwardToBackend(level: string, args: unknown[]): void {
+  try {
+    gatewayClient.sendLog(level, serializeArgs(args));
+  } catch {
+    // never let forwarding break the app
+  }
+}
+
 export const logger = {
   /**
    * Debug level - verbose information for debugging
@@ -52,6 +91,7 @@ export const logger = {
   debug: (...args: unknown[]) => {
     if (shouldLog("debug")) {
       console.log(...args);
+      forwardToBackend("debug", args);
     }
   },
 
@@ -62,6 +102,7 @@ export const logger = {
   info: (...args: unknown[]) => {
     if (shouldLog("info")) {
       console.log(...args);
+      forwardToBackend("info", args);
     }
   },
 
@@ -72,6 +113,7 @@ export const logger = {
   warn: (...args: unknown[]) => {
     if (shouldLog("warn")) {
       console.warn(...args);
+      forwardToBackend("warn", args);
     }
   },
 
@@ -82,6 +124,7 @@ export const logger = {
   error: (...args: unknown[]) => {
     if (shouldLog("error")) {
       console.error(...args);
+      forwardToBackend("error", args);
     }
   },
 

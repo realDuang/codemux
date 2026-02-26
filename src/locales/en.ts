@@ -64,20 +64,7 @@ export interface LocaleDict {
   settings: {
     back: string;
     title: string;
-    serverUrl: string;
-    serverUrlDesc: string;
-    testing: string;
-    testConnection: string;
-    connectionSuccess: string;
-    connectionFailed: string;
-    serverUrlEmpty: string;
-    serverError: string;
-    urlUpdated: string;
-    saveFailed: string;
-    saving: string;
-    saveAndConnect: string;
     general: string;
-    connection: string;
     language: string;
     languageDesc: string;
     theme: string;
@@ -85,12 +72,14 @@ export interface LocaleDict {
     themeLight: string;
     themeDark: string;
     themeSystem: string;
-    infoTitle: string;
-    infoDefault: string;
-    infoRemote: string;
-    infoChange: string;
     security: string;
     devicesDesc: string;
+    logging: string;
+    logFilePath: string;
+    logFilePathDesc: string;
+    openLogFolder: string;
+    logLevel: string;
+    logLevelDesc: string;
   };
 
   // Remote Access page
@@ -129,6 +118,8 @@ export interface LocaleDict {
     hoursAgo: string;
     daysAgo: string;
     files: string;
+    openStorageFolder: string;
+    copySessionId: string;
   };
 
   // Project
@@ -231,6 +222,7 @@ export interface LocaleDict {
     enterChatDesc: string;
     localModeTitle: string;
     localModeDesc: string;
+    startingServices: string;
   };
 
   // Device approval
@@ -339,21 +331,8 @@ export const en: LocaleDict = {
   // Settings page
   settings: {
     back: "Back",
-    title: "Connection Settings",
-    serverUrl: "OpenCode Server URL",
-    serverUrlDesc: "Enter the OpenCode server address you want to connect to (e.g., http://localhost:4096)",
-    testing: "Testing...",
-    testConnection: "Test Connection",
-    connectionSuccess: "Connection test successful!",
-    connectionFailed: "Failed to connect to server:",
-    serverUrlEmpty: "Server URL cannot be empty",
-    serverError: "Server returned error:",
-    urlUpdated: "Server URL updated",
-    saveFailed: "Save failed. Please check the URL format",
-    saving: "Saving...",
-    saveAndConnect: "Save",
+    title: "Settings",
     general: "General",
-    connection: "Connection",
     language: "Language",
     languageDesc: "Choose your preferred interface language",
     theme: "Theme",
@@ -361,12 +340,14 @@ export const en: LocaleDict = {
     themeLight: "Light",
     themeDark: "Dark",
     themeSystem: "System",
-    infoTitle: "Info",
-    infoDefault: "Default address is usually /opencode-api (pointing to local proxy)",
-    infoRemote: "If connecting to a remote server, make sure the network is reachable",
-    infoChange: "After changing the address, chat history and session list will load from the new server",
     security: "Security",
     devicesDesc: "Manage devices that can access this server",
+    logging: "Logging",
+    logFilePath: "Log File Location",
+    logFilePathDesc: "Where application logs are stored on disk",
+    openLogFolder: "Open Folder",
+    logLevel: "Log Level",
+    logLevelDesc: "Minimum severity level for writing logs to file",
   },
 
   // Remote Access page
@@ -405,6 +386,8 @@ export const en: LocaleDict = {
     hoursAgo: "{count}h ago",
     daysAgo: "{count}d ago",
     files: "{count} files",
+    openStorageFolder: "Open storage folder",
+    copySessionId: "Copy session ID",
   },
 
   // Project
@@ -507,6 +490,7 @@ export const en: LocaleDict = {
     enterChatDesc: "Start using OpenCode AI assistant",
     localModeTitle: "Local Access Mode",
     localModeDesc: "You're accessing from localhost. Configure remote access below or enter chat directly.",
+    startingServices: "Starting services...",
   },
 
   // Device approval

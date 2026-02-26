@@ -347,7 +347,7 @@ export class EngineManager extends EventEmitter {
       // Derive project bindings from sessions
       if (session.directory) {
         const normDir = session.directory.replaceAll("\\", "/");
-        if (normDir && normDir !== "/") {
+        if (normDir && normDir !== "/" && !this.projectBindings.has(normDir)) {
           this.projectBindings.set(normDir, session.engineType);
         }
       }

@@ -185,7 +185,13 @@ export function registerIpcHandlers(): void {
   // ===========================================================================
 
   ipcMain.handle("gateway:getPort", async () => {
-    return 4200;
+    // In packaged mode, GatewayServer attaches to the production HTTP server
+    // at /ws path, so we must return the full WebSocket URL.
+    // In dev mode, GatewayServer listens on its own port (4200).
+    if (app.isPackaged && productionServer.isRunning()) {
+      return `ws://127.0.0.1:${productionServer.getPort()}/ws`;
+    }
+    return `ws://127.0.0.1:4200`;
   });
 
   // ===========================================================================

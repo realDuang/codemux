@@ -1,5 +1,5 @@
-appId: com.opencode.remote
-productName: OpenCode Remote
+appId: dev.codemux.app
+productName: CodeMux
 directories:
   output: release
   buildResources: resources
@@ -13,10 +13,6 @@ mac:
   target: dmg
   icon: public/assets/icon.png
   extraResources:
-    - from: resources/bin/darwin-${arch}
-      to: bin/darwin-${arch}
-      filter:
-        - "**/*"
     - from: resources/cloudflared/darwin-${arch}
       to: cloudflared/darwin-${arch}
       filter:
@@ -28,10 +24,6 @@ win:
         - x64
   icon: public/assets/icon.ico
   extraResources:
-    - from: resources/bin/win32-${arch}
-      to: bin/win32-${arch}
-      filter:
-        - "**/*"
     - from: resources/cloudflared/win32-${arch}
       to: cloudflared/win32-${arch}
       filter:

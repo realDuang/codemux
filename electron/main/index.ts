@@ -1,5 +1,10 @@
 import { app, BrowserWindow } from "electron";
+import fixPath from "fix-path";
 import { mainLog } from "./services/logger";
+
+// Fix $PATH for packaged macOS/Linux apps launched from GUI.
+// On Windows this is a no-op (Windows inherits PATH correctly from system env).
+fixPath();
 import { createWindow, getMainWindow } from "./window-manager";
 import { registerIpcHandlers } from "./ipc-handlers";
 import { deviceStore } from "./services/device-store";
@@ -113,8 +118,8 @@ if (!gotTheLock) {
     ] as const;
     for (const [name, adapter] of engines) {
       const p = (adapter as any).start().then(
-        () => mainLog.info(`${name} engine started`),
-        (err: any) => mainLog.error(`Failed to start ${name} engine:`, err?.message ?? err),
+        () => mainLog.warn(`${name} engine started successfully`),
+        (err: any) => mainLog.error(`${name} engine failed to start:`, err?.message ?? err),
       );
       enginePromises.push(p);
     }

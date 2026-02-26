@@ -7,8 +7,40 @@ import { spawn, ChildProcess } from "child_process";
 import * as readline from "readline";
 import * as fs from "fs";
 import * as path from "path";
-import { randomUUID } from "crypto";
+import { randomBytes } from "crypto";
 import { EngineAdapter } from "./engine-adapter";
+import { acpLog } from "../services/logger";
+
+// ---------------------------------------------------------------------------
+// Time-sortable ID generator for ACP engines.
+//
+// The frontend sorts messages and parts by `id.localeCompare(id)`. Using
+// randomUUID() (v4) breaks chronological ordering because UUID v4 is random.
+// This function produces IDs whose lexicographic order matches creation order:
+//   {prefix}_{12-hex-timestamp+counter}{10-hex-random}
+//
+// - 48-bit millisecond timestamp (good until year 10889)
+// - 16-bit monotonic counter (65 536 IDs per millisecond before wrap)
+// - 40-bit random suffix (collision-resistant across processes)
+// ---------------------------------------------------------------------------
+let _lastTs = 0;
+let _counter = 0;
+
+function timeId(prefix: string): string {
+  const now = Date.now();
+  if (now === _lastTs) {
+    _counter++;
+  } else {
+    _lastTs = now;
+    _counter = 0;
+  }
+  // 6 bytes for timestamp (ms), 2 bytes for counter → 8 bytes → 16 hex chars
+  const timePart = now.toString(16).padStart(12, "0");
+  const counterPart = (_counter & 0xffff).toString(16).padStart(4, "0");
+  const rand = randomBytes(5).toString("hex"); // 10 hex chars
+  return `${prefix}_${timePart}${counterPart}${rand}`;
+}
+import { sessionStore } from "../services/session-store";
 import type {
   EngineType,
   EngineStatus,
@@ -118,7 +150,7 @@ export abstract class AcpBaseAdapter extends EngineAdapter {
   private currentModelId: string | null = null;
   private currentModeId: string | null = null;
   private authMethods: AuthMethod[] = [];
-  private sessions = new Map<string, UnifiedSession>();
+  protected sessions = new Map<string, UnifiedSession>();
 
   // Message accumulation
   private messageBuffers = new Map<string, MessageBuffer>();
@@ -128,6 +160,19 @@ export abstract class AcpBaseAdapter extends EngineAdapter {
 
   // Message history per session (ACP has no message history API)
   private messageHistory = new Map<string, UnifiedMessage[]>();
+
+  // Sessions currently being loaded via session/load — suppress frontend events during replay
+  private loadingSessions = new Set<string>();
+
+  // Activity watchdog for session/prompt — tracks last session/update timestamp per session
+  // to detect when a prompt execution is completely stuck (no activity for a long time).
+  private lastActivityTimestamp = new Map<string, number>();
+  private activityWatchdogTimers = new Map<string, ReturnType<typeof setInterval>>();
+  private static readonly ACTIVITY_WATCHDOG_TIMEOUT_MS = 120_000; // 2 minutes of inactivity → auto-cancel
+  private static readonly ACTIVITY_WATCHDOG_CHECK_INTERVAL_MS = 10_000; // check every 10s
+
+  // User message buffer for session/load replay (tracks the current user message being assembled)
+  private userMessageBuffers = new Map<string, { id: string; parts: UnifiedPart[]; textAccumulator: string; textPartId: string | null; startTime: number }>();
 
   // Permission handling
   private pendingPermissions = new Map<string, {
@@ -157,18 +202,21 @@ export abstract class AcpBaseAdapter extends EngineAdapter {
     this.child.stdin.write(JSON.stringify(msg) + "\n");
   }
 
-  private sendRequest(method: string, params?: any): Promise<any> & { requestId: number } {
+  private sendRequest(method: string, params?: any, timeout: number = 120_000): Promise<any> & { requestId: number } {
     const id = this.nextId++;
     const msg = { jsonrpc: "2.0" as const, id, method, params: params ?? {} };
     this.send(msg);
     const promise = new Promise<any>((resolve, reject) => {
       this.pending.set(id, { resolve, reject });
-      setTimeout(() => {
-        if (this.pending.has(id)) {
-          this.pending.delete(id);
-          reject(new Error(`Timeout: ${method} (id=${id})`));
-        }
-      }, 120_000);
+      if (timeout > 0) {
+        setTimeout(() => {
+          if (this.pending.has(id)) {
+            this.pending.delete(id);
+            acpLog.error(`TIMEOUT: method="${method}" id=${id} (${timeout / 1000}s)`);
+            reject(new Error(`Timeout: ${method} (id=${id})`));
+          }
+        }, timeout);
+      }
     }) as Promise<any> & { requestId: number };
     promise.requestId = id;
     return promise;
@@ -230,26 +278,45 @@ export abstract class AcpBaseAdapter extends EngineAdapter {
     const update = params?.update;
     if (!sessionId || !update) return;
 
+    // Refresh activity watchdog — any session/update proves the agent is alive
+    this.lastActivityTimestamp.set(sessionId, Date.now());
+
     const type = update.sessionUpdate as string;
 
     switch (type) {
       case "agent_thought_chunk":
+        if (this.loadingSessions.has(sessionId)) {
+          this.finalizeUserMessageBuffer(sessionId);
+        }
         this.handleThoughtChunk(sessionId, update);
         break;
       case "tool_call":
+        // During session/load replay, finalize any pending user message before
+        // the first assistant tool call arrives.
+        if (this.loadingSessions.has(sessionId)) {
+          this.finalizeUserMessageBuffer(sessionId);
+        }
         this.handleToolCall(sessionId, update);
         break;
       case "tool_call_update":
         this.handleToolCallUpdate(sessionId, update);
         break;
       case "agent_message_chunk":
+        // During session/load replay, finalize any pending user message before
+        // the first assistant chunk arrives.
+        if (this.loadingSessions.has(sessionId)) {
+          this.finalizeUserMessageBuffer(sessionId);
+        }
         this.handleMessageChunk(sessionId, update);
+        break;
+      case "user_message_chunk":
+        this.handleUserMessageChunk(sessionId, update);
         break;
       case "session_info_update":
         this.handleSessionInfoUpdate(sessionId, update);
         break;
       default:
-        console.warn(`[ACP] Unknown sessionUpdate type: "${type}"`, JSON.stringify(update).slice(0, 200));
+        acpLog.warn(`Unknown sessionUpdate type: "${type}"`, JSON.stringify(update).slice(0, 200));
         break;
     }
   }
@@ -258,7 +325,7 @@ export abstract class AcpBaseAdapter extends EngineAdapter {
     let buf = this.messageBuffers.get(sessionId);
     if (!buf) {
       buf = {
-        messageId: randomUUID(),
+        messageId: timeId("msg"),
         sessionId,
         parts: [],
         textAccumulator: "",
@@ -279,7 +346,7 @@ export abstract class AcpBaseAdapter extends EngineAdapter {
 
     // Create or update reasoning part (accumulate like text)
     if (!buf.reasoningPartId) {
-      buf.reasoningPartId = randomUUID();
+      buf.reasoningPartId = timeId("prt");
     }
 
     const part: ReasoningPart = {
@@ -297,7 +364,9 @@ export abstract class AcpBaseAdapter extends EngineAdapter {
       buf.parts.push(part);
     }
 
-    this.emit("message.part.updated", { sessionId, messageId: buf.messageId, part });
+    if (!this.loadingSessions.has(sessionId)) {
+      this.emit("message.part.updated", { sessionId, messageId: buf.messageId, part });
+    }
   }
 
   private handleToolCall(sessionId: string, update: any): void {
@@ -313,7 +382,7 @@ export abstract class AcpBaseAdapter extends EngineAdapter {
     const kind = inferToolKind(update.kind, normalizedTool);
 
     const part: ToolPart = {
-      id: randomUUID(),
+      id: timeId("prt"),
       messageId: buf.messageId,
       sessionId,
       type: "tool",
@@ -322,11 +391,13 @@ export abstract class AcpBaseAdapter extends EngineAdapter {
       originalTool: title, // ACP doesn't provide tool name, use title
       title,
       kind,
-      state: { status: "pending", time: { start: Date.now() } },
+      state: { status: "pending", input: rawInput ?? null, time: { start: Date.now() } },
       locations: update.locations,
     };
     buf.parts.push(part);
-    this.emit("message.part.updated", { sessionId, messageId: buf.messageId, part });
+    if (!this.loadingSessions.has(sessionId)) {
+      this.emit("message.part.updated", { sessionId, messageId: buf.messageId, part });
+    }
   }
 
   private handleToolCallUpdate(sessionId: string, update: any): void {
@@ -385,11 +456,13 @@ export abstract class AcpBaseAdapter extends EngineAdapter {
     }
 
     buf.parts[partIndex] = updatedPart;
-    this.emit("message.part.updated", {
-      sessionId,
-      messageId: buf.messageId,
-      part: updatedPart,
-    });
+    if (!this.loadingSessions.has(sessionId)) {
+      this.emit("message.part.updated", {
+        sessionId,
+        messageId: buf.messageId,
+        part: updatedPart,
+      });
+    }
   }
 
   private handleMessageChunk(sessionId: string, update: any): void {
@@ -399,7 +472,7 @@ export abstract class AcpBaseAdapter extends EngineAdapter {
 
     // Create or update text part
     if (!buf.textPartId) {
-      buf.textPartId = randomUUID();
+      buf.textPartId = timeId("prt");
     }
 
     const part: TextPart = {
@@ -418,16 +491,31 @@ export abstract class AcpBaseAdapter extends EngineAdapter {
       buf.parts.push(part);
     }
 
-    this.emit("message.part.updated", { sessionId, messageId: buf.messageId, part });
+    if (!this.loadingSessions.has(sessionId)) {
+      this.emit("message.part.updated", { sessionId, messageId: buf.messageId, part });
+    }
   }
 
   private handleSessionInfoUpdate(sessionId: string, update: any): void {
-    const session = this.sessions.get(sessionId);
-    if (session) {
-      if (update.title) session.title = update.title;
-      session.time.updated = Date.now();
-      this.emit("session.updated", { session });
+    let session = this.sessions.get(sessionId);
+    if (!session) {
+      // Session not yet in memory — create a minimal entry so the update
+      // is not silently lost (can happen when loading existing sessions).
+      acpLog.warn(
+        `session/update for unknown session ${sessionId}, creating placeholder`,
+      );
+      session = {
+        id: sessionId,
+        engineType: this.engineType,
+        directory: "",
+        time: { created: Date.now(), updated: Date.now() },
+      };
+      this.sessions.set(sessionId, session);
     }
+    if (update.title) session.title = update.title;
+    session.time.updated = Date.now();
+    sessionStore.upsertSession(session);
+    this.emit("session.updated", { session });
   }
 
   private flushTextAccumulator(buf: MessageBuffer, sessionId: string): void {
@@ -447,6 +535,107 @@ export abstract class AcpBaseAdapter extends EngineAdapter {
       buf.reasoningAccumulator = "";
       buf.reasoningPartId = null;
     }
+  }
+
+  // --- User message handling for session/load replay ---
+
+  private handleUserMessageChunk(sessionId: string, update: any): void {
+    // During session/load, user_message_chunk signals a new user turn.
+    // First, finalize any pending assistant buffer from the previous turn.
+    if (this.messageBuffers.has(sessionId)) {
+      const msg = this.finalizeMessage(sessionId);
+      this.appendToHistory(sessionId, msg);
+    }
+
+    // Also finalize any pending user message buffer (consecutive user messages)
+    this.finalizeUserMessageBuffer(sessionId);
+
+    // Now accumulate this user message chunk
+    let ubuf = this.userMessageBuffers.get(sessionId);
+    if (!ubuf) {
+      ubuf = {
+        id: timeId("msg"),
+        parts: [],
+        textAccumulator: "",
+        textPartId: null,
+        startTime: Date.now(),
+      };
+      this.userMessageBuffers.set(sessionId, ubuf);
+    }
+
+    const text = update.content?.text ?? "";
+    ubuf.textAccumulator += text;
+
+    if (!ubuf.textPartId) {
+      ubuf.textPartId = timeId("prt");
+    }
+
+    const part: TextPart = {
+      id: ubuf.textPartId,
+      messageId: ubuf.id,
+      sessionId,
+      type: "text",
+      text: ubuf.textAccumulator,
+    };
+
+    const existingIdx = ubuf.parts.findIndex((p) => p.id === ubuf!.textPartId);
+    if (existingIdx >= 0) {
+      ubuf.parts[existingIdx] = part;
+    } else {
+      ubuf.parts.push(part);
+    }
+  }
+
+  /** Finalize user message buffer into a UnifiedMessage and append to history */
+  private finalizeUserMessageBuffer(sessionId: string): void {
+    const ubuf = this.userMessageBuffers.get(sessionId);
+    if (!ubuf || ubuf.parts.length === 0) return;
+
+    const message: UnifiedMessage = {
+      id: ubuf.id,
+      sessionId,
+      role: "user",
+      time: { created: ubuf.startTime },
+      parts: ubuf.parts,
+    };
+
+    this.appendToHistory(sessionId, message);
+    this.userMessageBuffers.delete(sessionId);
+  }
+
+  // --- Activity Watchdog ---
+
+  private startActivityWatchdog(sessionId: string): void {
+    this.stopActivityWatchdog(sessionId);
+    this.lastActivityTimestamp.set(sessionId, Date.now());
+
+    const timer = setInterval(() => {
+      const lastActivity = this.lastActivityTimestamp.get(sessionId);
+      if (!lastActivity) {
+        this.stopActivityWatchdog(sessionId);
+        return;
+      }
+      const elapsed = Date.now() - lastActivity;
+      if (elapsed >= AcpBaseAdapter.ACTIVITY_WATCHDOG_TIMEOUT_MS) {
+        acpLog.warn(
+          `Activity watchdog triggered for session ${sessionId}: ` +
+          `no session/update received for ${Math.round(elapsed / 1000)}s — auto-cancelling`,
+        );
+        this.stopActivityWatchdog(sessionId);
+        this.cancelMessage(sessionId);
+      }
+    }, AcpBaseAdapter.ACTIVITY_WATCHDOG_CHECK_INTERVAL_MS);
+
+    this.activityWatchdogTimers.set(sessionId, timer);
+  }
+
+  private stopActivityWatchdog(sessionId: string): void {
+    const timer = this.activityWatchdogTimers.get(sessionId);
+    if (timer) {
+      clearInterval(timer);
+      this.activityWatchdogTimers.delete(sessionId);
+    }
+    this.lastActivityTimestamp.delete(sessionId);
   }
 
   /** Finalize message buffer into a UnifiedMessage and clean up */
@@ -480,7 +669,7 @@ export abstract class AcpBaseAdapter extends EngineAdapter {
     }
 
     const message: UnifiedMessage = {
-      id: buf?.messageId ?? randomUUID(),
+      id: buf?.messageId ?? timeId("msg"),
       sessionId,
       role: "assistant",
       time: {
@@ -513,6 +702,7 @@ export abstract class AcpBaseAdapter extends EngineAdapter {
 
       default:
         // Unknown method - return error
+        acpLog.warn(`Unsupported reverse request method="${method}" id=${id} params=${JSON.stringify(params).slice(0, 300)}`);
         this.sendErrorResponse(id, -32601, `Method not supported: ${method}`);
         break;
     }
@@ -523,7 +713,20 @@ export abstract class AcpBaseAdapter extends EngineAdapter {
     const toolCall = params?.toolCall;
     const acpOptions = params?.options as Array<{ optionId: string; kind: string; name: string }> | undefined;
 
-    const permissionId = randomUUID();
+    // In autopilot mode, auto-approve all permission requests.
+    // ACP mode IDs can be full URIs like "copilot://mode#autopilot",
+    // so we check via includes() rather than strict equality.
+    const isAutopilot = this.currentModeId?.includes("autopilot") ?? false;
+    if (isAutopilot) {
+      const allowOption = acpOptions?.find(o => o.kind === "allow_once" || o.kind === "allow_always")
+        ?? acpOptions?.[0];
+      const optionId = allowOption?.optionId ?? "allow_once";
+      acpLog.info(`Autopilot: auto-approving permission for "${toolCall?.title}" with optionId="${optionId}"`);
+      this.sendResponse(rpcId, { outcome: { outcome: "selected", optionId } });
+      return;
+    }
+
+    const permissionId = timeId("per");
     const diff = toolCall?.rawInput?.diff;
 
     // Map ACP options to unified PermissionOption format
@@ -602,6 +805,15 @@ export abstract class AcpBaseAdapter extends EngineAdapter {
     this.child = spawn(binary, args, {
       stdio: ["pipe", "pipe", "pipe"],
       shell: this.getSpawnShell(),
+      env: {
+        ...process.env,
+        // Prevent git from blocking on interactive prompts when running as a
+        // child of Electron. The ACP process inherits piped stdin, so git (or
+        // Git Credential Manager) would hang waiting for terminal input without
+        // these flags.
+        GIT_TERMINAL_PROMPT: "0",
+        GIT_ASKPASS: "",
+      },
     });
 
     this.rl = readline.createInterface({ input: this.child.stdout! });
@@ -610,7 +822,7 @@ export abstract class AcpBaseAdapter extends EngineAdapter {
     this.child.stderr?.on("data", (data) => {
       // Log stderr but don't treat as fatal
       const text = data.toString().trim();
-      if (text) console.error(`[${this.engineType} stderr]`, text);
+      if (text) acpLog.error(`[${this.engineType} stderr]`, text);
     });
 
     this.child.on("exit", (code) => {
@@ -651,6 +863,14 @@ export abstract class AcpBaseAdapter extends EngineAdapter {
         engineType: this.engineType,
         status: "running",
       });
+
+      // Preload persisted sessions from SessionStore
+      const persisted = sessionStore.getSessionsByEngine(this.engineType);
+      for (const s of persisted) {
+        if (!this.sessions.has(s.id)) {
+          this.sessions.set(s.id, s);
+        }
+      }
     } catch (err: any) {
       this.status = "error";
       this.emit("status.changed", {
@@ -663,6 +883,10 @@ export abstract class AcpBaseAdapter extends EngineAdapter {
   }
 
   async stop(): Promise<void> {
+    // Clear all activity watchdog timers
+    for (const sessionId of this.activityWatchdogTimers.keys()) {
+      this.stopActivityWatchdog(sessionId);
+    }
     if (this.child) {
       this.child.kill();
       this.child = null;
@@ -729,7 +953,7 @@ export abstract class AcpBaseAdapter extends EngineAdapter {
     const session: UnifiedSession = {
       id: result.sessionId,
       engineType: this.engineType,
-      directory,
+      directory: directory.replaceAll("\\", "/"),
       time: {
         created: Date.now(),
         updated: Date.now(),
@@ -737,27 +961,24 @@ export abstract class AcpBaseAdapter extends EngineAdapter {
     };
 
     this.sessions.set(session.id, session);
+    sessionStore.upsertSession(session);
     this.emit("session.created", { session });
     return session;
   }
 
   async listSessions(directory?: string): Promise<UnifiedSession[]> {
     const cwd = directory ?? process.cwd();
-    console.log(`[ACP:${this.engineType}] listSessions called, cwd=${cwd}, in-memory count=${this.sessions.size}`);
     try {
       const result = (await this.sendRequest("session/list", {
         cwd,
       })) as AcpSessionListResult;
-
-      console.log(`[ACP:${this.engineType}] session/list returned ${result.sessions.length} sessions:`,
-        result.sessions.map(s => ({ id: s.sessionId, cwd: s.cwd, title: s.title?.slice(0, 50) })));
 
       // Update in-memory store with sessions from ACP binary
       for (const s of result.sessions) {
         const session: UnifiedSession = {
           id: s.sessionId,
           engineType: this.engineType,
-          directory: s.cwd,
+          directory: s.cwd.replaceAll("\\", "/"),
           title: s.title,
           time: {
             created: s.updatedAt ? new Date(s.updatedAt).getTime() : Date.now(),
@@ -767,16 +988,22 @@ export abstract class AcpBaseAdapter extends EngineAdapter {
         this.sessions.set(session.id, session);
       }
     } catch (err) {
-      console.warn(`[ACP:${this.engineType}] session/list RPC failed:`, err);
+      acpLog.warn(`session/list RPC failed:`, err);
       // ACP binary call failed — fall through to return from memory
     }
 
+    // Merge sessions into persistent SessionStore
+    sessionStore.mergeSessions(
+      Array.from(this.sessions.values()).filter(s => s.engineType === this.engineType),
+      this.engineType,
+    );
+
     // Return all sessions from memory, optionally filtered by directory
     const allSessions = Array.from(this.sessions.values());
-    const filtered = directory
-      ? allSessions.filter((s) => s.directory === directory)
+    const normalizedDir = directory?.replaceAll("\\", "/");
+    const filtered = normalizedDir
+      ? allSessions.filter((s) => s.directory === normalizedDir)
       : allSessions;
-    console.log(`[ACP:${this.engineType}] returning ${filtered.length} sessions (total in memory: ${allSessions.length})`);
     return filtered;
   }
 
@@ -784,9 +1011,97 @@ export abstract class AcpBaseAdapter extends EngineAdapter {
     return this.sessions.get(sessionId) ?? null;
   }
 
-  async deleteSession(_sessionId: string): Promise<void> {
-    this.sessions.delete(_sessionId);
-    this.messageHistory.delete(_sessionId);
+  async deleteSession(sessionId: string): Promise<void> {
+    // Try RPC deletion first (may not be supported by all ACP backends)
+    try {
+      await this.sendRequest("session/delete", { sessionId });
+    } catch {
+      // session/delete RPC not supported by this backend — ignore
+    }
+    this.sessions.delete(sessionId);
+    sessionStore.deleteSession(sessionId);
+    this.messageHistory.delete(sessionId);
+  }
+
+  /**
+   * Load a session's message history via session/load RPC.
+   * The agent replays the conversation as session/update notifications;
+   * handleSessionUpdate accumulates them into messageHistory.
+   * Frontend events are suppressed during loading to avoid UI flicker.
+   */
+  async loadSession(sessionId: string): Promise<void> {
+    // Skip if this engine doesn't support loadSession
+    if (!this.initResult?.agentCapabilities?.loadSession) return;
+
+    // Skip if we already have messages for this session
+    if ((this.messageHistory.get(sessionId)?.length ?? 0) > 0) return;
+
+    const session = this.sessions.get(sessionId);
+    if (!session) return;
+
+    this.loadingSessions.add(sessionId);
+    try {
+      // session/load streams history back via session/update notifications
+      // before returning its response. Use a generous timeout — large histories
+      // take time, but we must not block forever on corrupted sessions.
+      const result = await this.sendRequest("session/load", {
+        sessionId,
+        cwd: session.directory,
+        mcpServers: [],
+      }, 30_000) as { models?: any; modes?: any };
+
+      // Finalize any remaining buffers from the replay
+      this.finalizeUserMessageBuffer(sessionId);
+      if (this.messageBuffers.has(sessionId)) {
+        const msg = this.finalizeMessage(sessionId);
+        this.appendToHistory(sessionId, msg);
+      }
+
+      // Update models/modes from response (if provided)
+      if (result?.models?.availableModels) {
+        this.models = result.models.availableModels.map((m: any) => ({
+          modelId: m.modelId,
+          name: m.name,
+          description: m.description ?? "",
+          engineType: this.engineType,
+          providerId: this.engineType,
+          providerName: this.initResult?.agentInfo?.title ?? this.engineType,
+          meta: m._meta,
+        }));
+        if (result.models.currentModelId) {
+          this.currentModelId = result.models.currentModelId;
+        }
+      }
+      if (result?.modes?.availableModes) {
+        this.modes = result.modes.availableModes.map((m: any) => ({
+          id: m.id,
+          label: m.name,
+          description: m.description ?? "",
+        }));
+        if (result.modes.currentModeId) {
+          this.currentModeId = result.modes.currentModeId;
+        }
+      }
+
+      const msgCount = this.messageHistory.get(sessionId)?.length ?? 0;
+      acpLog.info(`session/load completed for ${sessionId}: ${msgCount} messages loaded`);
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : String(err);
+      if (errMsg.includes("already loaded")) {
+        acpLog.info(`session/load: ${sessionId} is already loaded, skipping`);
+      } else {
+        acpLog.error(`session/load failed for ${sessionId}:`, err);
+      }
+      // Mark as loaded (empty) to prevent repeated failed attempts
+      if (!this.messageHistory.has(sessionId)) {
+        this.messageHistory.set(sessionId, []);
+      }
+    } finally {
+      this.loadingSessions.delete(sessionId);
+      // Clean up any leftover buffers
+      this.messageBuffers.delete(sessionId);
+      this.userMessageBuffers.delete(sessionId);
+    }
   }
 
   // --- Messages ---
@@ -809,12 +1124,12 @@ export abstract class AcpBaseAdapter extends EngineAdapter {
 
     // Create user message
     const userMessage: UnifiedMessage = {
-      id: randomUUID(),
+      id: timeId("msg"),
       sessionId,
       role: "user",
       time: { created: Date.now() },
       parts: content.map((c) => ({
-        id: randomUUID(),
+        id: timeId("prt"),
         messageId: "",
         sessionId,
         type: "text" as const,
@@ -828,24 +1143,39 @@ export abstract class AcpBaseAdapter extends EngineAdapter {
     this.emit("message.updated", { sessionId, message: userMessage });
     this.appendToHistory(sessionId, userMessage);
 
-    // Send prompt and wait for completion
+    // Send prompt and wait for completion (no hard timeout — agent tasks can run
+    // for minutes/hours; cancellation is via cancelMessage or process exit).
+    // An activity watchdog auto-cancels if no session/update arrives for an
+    // extended period, catching stuck tool executions.
+    if (options?.mode) {
+      this.currentModeId = options.mode;
+    }
     const promptRequest = this.sendRequest("session/prompt", {
       sessionId,
       prompt,
       ...(options?.modelId ? { modelId: options.modelId } : {}),
       ...(options?.mode ? { modeId: options.mode } : {}),
-    });
+    }, 0);
     this.activePromptIds.set(sessionId, promptRequest.requestId);
+    this.startActivityWatchdog(sessionId);
 
     let result: any;
+    let promptError: Error | null = null;
     try {
       result = await promptRequest;
+    } catch (err: any) {
+      acpLog.error(`sendMessage failed: sessionId=${sessionId}, error=${err.message}`);
+      promptError = err;
     } finally {
       this.activePromptIds.delete(sessionId);
+      this.stopActivityWatchdog(sessionId);
     }
 
-    // Finalize the assistant message from accumulated buffer
-    const message = this.finalizeMessage(sessionId, (result as any)?.stopReason);
+    // ALWAYS finalize the assistant message — even on error/timeout.
+    // This ensures time.completed is set so the frontend never shows a
+    // perpetual "working" state.
+    const stopReason = promptError ? "error" : (result as any)?.stopReason;
+    const message = this.finalizeMessage(sessionId, stopReason);
     message.modelId = this.currentModelId ?? undefined;
     message.mode = this.currentModeId ?? undefined;
 
@@ -856,26 +1186,36 @@ export abstract class AcpBaseAdapter extends EngineAdapter {
       session.time.updated = Date.now();
     }
 
+    if (promptError) {
+      throw promptError;
+    }
+
     return message;
   }
 
   async cancelMessage(sessionId: string): Promise<void> {
-    try {
-      await this.sendRequest("session/cancel", { sessionId });
-    } catch {
-      // Cancel may fail if no prompt is running
-    }
-
-    // Resolve the pending prompt request so sendMessage unblocks
+    // Resolve the pending prompt request first so sendMessage unblocks immediately
     const promptId = this.activePromptIds.get(sessionId);
     if (promptId && this.pending.has(promptId)) {
       this.pending.get(promptId)!.resolve({ stopReason: "cancelled" });
       this.pending.delete(promptId);
       this.activePromptIds.delete(sessionId);
     }
+
+    // Fire session/cancel to ACP binary (best-effort, don't block)
+    this.sendRequest("session/cancel", { sessionId }).catch(() => {
+      // Cancel may fail if no prompt is running
+    });
   }
 
   async listMessages(sessionId: string): Promise<UnifiedMessage[]> {
+    // Lazily load session history on first access via session/load
+    if (
+      !this.messageHistory.has(sessionId) ||
+      this.messageHistory.get(sessionId)!.length === 0
+    ) {
+      await this.loadSession(sessionId);
+    }
     return this.messageHistory.get(sessionId) ?? [];
   }
 
@@ -934,6 +1274,37 @@ export abstract class AcpBaseAdapter extends EngineAdapter {
   // --- Projects ---
 
   async listProjects(): Promise<UnifiedProject[]> {
-    return [];
+    // ACP protocol has no native project concept.
+    // Derive virtual projects by grouping in-memory sessions by directory.
+    // Only refresh from binary if no prompt is active — some ACP implementations
+    // (e.g. Copilot CLI) cannot handle concurrent RPC requests during session/prompt.
+    if (this.activePromptIds.size === 0) {
+      try {
+        await this.listSessions();
+      } catch {
+        // Best-effort — fall through to use whatever is in memory
+      }
+    }
+
+    const dirMap = new Map<string, string>(); // directory → first sessionId (for stable ID)
+    for (const session of this.sessions.values()) {
+      if (session.directory && !dirMap.has(session.directory)) {
+        dirMap.set(session.directory, session.id);
+      }
+    }
+
+    const projects: UnifiedProject[] = [];
+    for (const [directory] of dirMap) {
+      if (!directory || directory === "/") continue;
+      const dirName = directory.split(/[/\\]/).filter(Boolean).pop() || directory;
+      projects.push({
+        id: `${this.engineType}-${directory}`,
+        directory,
+        name: dirName,
+        engineType: this.engineType,
+      });
+    }
+
+    return projects;
   }
 }

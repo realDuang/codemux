@@ -8,6 +8,9 @@ import { WebSocketServer, WebSocket } from "ws";
 import { randomUUID } from "crypto";
 import type { Server } from "http";
 import { EngineManager } from "./engine-manager";
+import { gatewayLog } from "../services/logger";
+import log from "../services/logger";
+import { sessionStore } from "../services/session-store";
 import {
   GatewayRequestType,
   GatewayNotificationType,
@@ -65,7 +68,7 @@ export class GatewayServer {
     }
     this.wss.on("connection", (ws, req) => this.handleConnection(ws, req));
     this.wss.on("error", (err) => {
-      console.error("[GatewayServer] WebSocket server error:", err);
+      gatewayLog.error("WebSocket server error:", err);
     });
 
     // Ping all clients every 30s to keep connections alive through proxies
@@ -78,7 +81,7 @@ export class GatewayServer {
     }, 30_000);
 
     const addr = "port" in options ? `:${options.port}` : "(attached to HTTP server)";
-    console.log(`[GatewayServer] Started on ${addr}`);
+    gatewayLog.info(`Started on ${addr}`);
   }
 
   stop(): void {
@@ -94,7 +97,7 @@ export class GatewayServer {
       this.clients.clear();
       this.wss.close();
       this.wss = null;
-      console.log("[GatewayServer] Stopped");
+      gatewayLog.info("Stopped");
     }
   }
 
@@ -126,15 +129,15 @@ export class GatewayServer {
     }
 
     this.clients.set(clientId, client);
-    console.log(`[GatewayServer] Client connected: ${clientId}`);
+    gatewayLog.info(`Client connected: ${clientId}`);
 
     ws.on("message", (data) => this.handleMessage(client, data));
     ws.on("close", () => {
       this.clients.delete(clientId);
-      console.log(`[GatewayServer] Client disconnected: ${clientId}`);
+      gatewayLog.info(`Client disconnected: ${clientId}`);
     });
     ws.on("error", (err) => {
-      console.error(`[GatewayServer] Client error (${clientId}):`, err);
+      gatewayLog.error(`Client error (${clientId}):`, err);
     });
   }
 
@@ -169,6 +172,20 @@ export class GatewayServer {
         payload: null,
         error: { code: "PARSE_ERROR", message: "Invalid JSON" },
       });
+      return;
+    }
+
+    // Fire-and-forget: renderer log forwarding — write to file, no response
+    if (request.type === GatewayRequestType.LOG_SEND) {
+      const p = request.payload as any;
+      const level = p?.level ?? "info";
+      const args = Array.isArray(p?.args) ? p.args : [String(p?.args ?? "")];
+      const rendererLog = log.scope("renderer");
+      if (typeof (rendererLog as any)[level] === "function") {
+        (rendererLog as any)[level](...args);
+      } else {
+        rendererLog.info(...args);
+      }
       return;
     }
 
@@ -223,6 +240,15 @@ export class GatewayServer {
       case GatewayRequestType.SESSION_DELETE:
         return this.engineManager.deleteSession(p.sessionId);
 
+      case GatewayRequestType.SESSION_RENAME: {
+        const session = sessionStore.getSession(p.sessionId);
+        if (session) {
+          session.title = p.title;
+          sessionStore.upsertSession(session);
+        }
+        return { success: true };
+      }
+
       // Message
       case GatewayRequestType.MESSAGE_SEND: {
         const req = p as MessageSendRequest;
@@ -259,7 +285,6 @@ export class GatewayServer {
         return this.engineManager.replyPermission(
           req.permissionId,
           { optionId: req.optionId },
-          p.sessionId,
         );
       }
 
@@ -272,6 +297,23 @@ export class GatewayServer {
         this.engineManager.setProjectEngine(req.directory, req.engineType);
         return { success: true };
       }
+
+      // Session (cross-engine)
+      case GatewayRequestType.SESSION_LIST_ALL:
+        return this.engineManager.listAllSessions();
+
+      // Project (cross-engine)
+      case GatewayRequestType.PROJECT_LIST_ALL:
+        return this.engineManager.listAllProjects();
+
+      case GatewayRequestType.PROJECT_DELETE:
+        sessionStore.deleteProject(p.projectId);
+        return { success: true };
+
+      // Legacy migration
+      case GatewayRequestType.IMPORT_LEGACY_PROJECTS:
+        sessionStore.importLegacyProjects(p.projects);
+        return { success: true };
 
       default:
         throw Object.assign(

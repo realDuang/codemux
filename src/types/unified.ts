@@ -91,6 +91,8 @@ export interface UnifiedSession {
   directory: string;
   title?: string;
   parentId?: string;
+  /** Resolved project ID — populated by SessionStore from (directory, engineType) */
+  projectId?: string;
   time: {
     created: number;
     updated: number;
@@ -176,7 +178,7 @@ export interface PatchPart extends PartBase {
 }
 
 export type ToolState =
-  | { status: "pending"; time?: { start: number } }
+  | { status: "pending"; input?: unknown; time?: { start: number } }
   | {
       status: "running";
       input: unknown;
@@ -338,6 +340,7 @@ export const GatewayRequestType = {
   SESSION_CREATE: "session.create",
   SESSION_GET: "session.get",
   SESSION_DELETE: "session.delete",
+  SESSION_RENAME: "session.rename",
 
   // Message
   MESSAGE_SEND: "message.send",
@@ -357,6 +360,17 @@ export const GatewayRequestType = {
   // Project
   PROJECT_LIST: "project.list",
   PROJECT_SET_ENGINE: "project.setEngine",
+  PROJECT_LIST_ALL: "project.listAll",
+  PROJECT_DELETE: "project.delete",
+
+  // Session (all engines)
+  SESSION_LIST_ALL: "session.listAll",
+
+  // Legacy migration
+  IMPORT_LEGACY_PROJECTS: "import.legacyProjects",
+
+  // Logging (renderer → main)
+  LOG_SEND: "log.send",
 } as const;
 
 // --- Notification type constants ---

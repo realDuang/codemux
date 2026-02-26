@@ -17,11 +17,13 @@ interface ElectronAPI {
       arch: string;
       version: string;
       userDataPath: string;
+      homePath: string;
       isPackaged: boolean;
     }>;
     getLocalIp: () => Promise<string>;
     openExternal: (url: string) => Promise<void>;
     selectDirectory: () => Promise<string | null>;
+    openPath: (folderPath: string) => Promise<string>;
   };
 
   auth: {
@@ -63,6 +65,7 @@ interface ElectronAPI {
       startTime?: number;
       error?: string;
     } | null>;
+    onDisconnected: (callback: () => void) => () => void;
   };
 
   opencode: {

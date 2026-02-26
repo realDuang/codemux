@@ -2,6 +2,7 @@ import { spawn, ChildProcess } from "child_process";
 import { app } from "electron";
 import path from "path";
 import fs from "fs";
+import { tunnelLog } from "./logger";
 
 interface TunnelInfo {
   url: string;
@@ -16,6 +17,13 @@ class TunnelManager {
     url: "",
     status: "stopped",
   };
+  private stoppedByUser = false;
+  private onUnexpectedExit: (() => void) | null = null;
+
+  /** Register a callback for when cloudflared exits unexpectedly (not via stop()). */
+  setOnUnexpectedExit(cb: () => void): void {
+    this.onUnexpectedExit = cb;
+  }
 
   private getCloudflaredPath(): string {
     if (!app.isPackaged) {
@@ -34,6 +42,7 @@ class TunnelManager {
       return this.info;
     }
 
+    this.stoppedByUser = false;
     this.info = {
       url: "",
       status: "starting",
@@ -52,7 +61,7 @@ class TunnelManager {
 
       const handleOutput = (data: Buffer) => {
         const output = data.toString();
-        console.log("[Tunnel]", output);
+        tunnelLog.info(output);
 
         const urlMatch = output.match(/https?:\/\/[\S]+\.trycloudflare\.com/);
         if (urlMatch) {
@@ -61,7 +70,7 @@ class TunnelManager {
             status: "running",
             startTime: this.info.startTime,
           };
-          console.log("[Tunnel] ✅ URL Ready:", this.info.url);
+          tunnelLog.info("URL Ready:", this.info.url);
         }
       };
 
@@ -69,12 +78,18 @@ class TunnelManager {
       this.process.stderr?.on("data", handleOutput);
 
       this.process.on("close", () => {
+        const wasRunning = this.info.status === "running" || this.info.status === "starting";
         this.info = { url: "", status: "stopped" };
         this.process = null;
+
+        if (wasRunning && !this.stoppedByUser) {
+          tunnelLog.warn("cloudflared exited unexpectedly");
+          this.onUnexpectedExit?.();
+        }
       });
 
       this.process.on("error", (err) => {
-        console.error("[Tunnel] Process error:", err);
+        tunnelLog.error("Process error:", err);
         this.info = { url: "", status: "error", error: err.message };
         this.process = null;
       });
@@ -87,6 +102,7 @@ class TunnelManager {
   }
 
   async stop(): Promise<void> {
+    this.stoppedByUser = true;
     const proc = this.process;
     this.info = { url: "", status: "stopped" };
 

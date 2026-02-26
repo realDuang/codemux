@@ -7,6 +7,7 @@ const electronAPI = {
     getLocalIp: () => ipcRenderer.invoke("system:getLocalIp"),
     openExternal: (url: string) => ipcRenderer.invoke("system:openExternal", url),
     selectDirectory: () => ipcRenderer.invoke("system:selectDirectory"),
+    openPath: (folderPath: string) => ipcRenderer.invoke("system:openPath", folderPath),
   },
 
   // Auth API
@@ -35,6 +36,10 @@ const electronAPI = {
     start: (port: number) => ipcRenderer.invoke("tunnel:start", port),
     stop: () => ipcRenderer.invoke("tunnel:stop"),
     getStatus: () => ipcRenderer.invoke("tunnel:getStatus"),
+    onDisconnected: (callback: () => void) => {
+      ipcRenderer.on("tunnel:disconnected", callback);
+      return () => { ipcRenderer.removeListener("tunnel:disconnected", callback); };
+    },
   },
 
   // Production server API
@@ -46,6 +51,22 @@ const electronAPI = {
   // Gateway API
   gateway: {
     getPort: () => ipcRenderer.invoke("gateway:getPort"),
+  },
+
+  // Logging API
+  log: {
+    getPath: () => ipcRenderer.invoke("log:getPath") as Promise<string>,
+    getLevel: () => ipcRenderer.invoke("log:getLevel") as Promise<string>,
+    setLevel: (level: string) =>
+      ipcRenderer.invoke("log:setLevel", level) as Promise<{ success: boolean }>,
+  },
+
+  // Startup API
+  startup: {
+    isReady: () => ipcRenderer.invoke("startup:isReady") as Promise<boolean>,
+    onReady: (callback: () => void) => {
+      ipcRenderer.once("startup:ready", callback);
+    },
   },
 };
 

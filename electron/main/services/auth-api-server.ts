@@ -1,5 +1,6 @@
 import http from "http";
 import { deviceStore } from "./device-store";
+import { authLog } from "./logger";
 
 // ============================================================================
 // Internal Auth API Server
@@ -83,7 +84,7 @@ class AuthApiServer {
         try {
           await this.handleRequest(req, res, pathname, url);
         } catch (err) {
-          console.error("[AuthAPI] Error:", err);
+          authLog.error("Error:", err);
           sendJson(res, { error: "Internal server error" }, 500);
         }
       });
@@ -93,7 +94,7 @@ class AuthApiServer {
       });
 
       this.server.on("error", (err) => {
-        console.error("[AuthAPI] Server error:", err);
+        authLog.error("Server error:", err);
         reject(err);
       });
     });

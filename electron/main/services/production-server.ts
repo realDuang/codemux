@@ -4,6 +4,7 @@ import fs from "fs";
 import path from "path";
 import { app } from "electron";
 import { deviceStore } from "./device-store";
+import { prodServerLog } from "./logger";
 
 // ============================================================================
 // Production HTTP Server
@@ -96,7 +97,7 @@ function proxyToOpenCode(
     });
 
     proxyReq.on("error", (err) => {
-      console.error("[Production Server] Proxy to OpenCode failed:", err.message);
+      prodServerLog.error("Proxy to OpenCode failed:", err.message);
       sendJson(res, { error: "OpenCode service unavailable", details: err.message }, 503);
     });
 
@@ -107,7 +108,7 @@ function proxyToOpenCode(
   });
 
   req.on("error", (err) => {
-    console.error("[Production Server] Request error:", err);
+    prodServerLog.error("Request error:", err);
     sendJson(res, { error: "Request failed" }, 500);
   });
 }
@@ -169,19 +170,19 @@ class ProductionServer {
     
     // Static files are in out/renderer relative to app path
     this.staticRoot = path.join(app.getAppPath(), "out", "renderer");
-    console.log("[Production Server] Static root:", this.staticRoot);
+    prodServerLog.info("Static root:", this.staticRoot);
 
     return new Promise((resolve, reject) => {
       this.server = http.createServer((req, res) => {
         this.handleRequest(req, res).catch((err) => {
-          console.error("[Production Server] Request handler error:", err);
+          prodServerLog.error("Request handler error:", err);
           sendJson(res, { error: "Internal server error" }, 500);
         });
       });
 
       this.server.on("error", (err: NodeJS.ErrnoException) => {
         if (err.code === "EADDRINUSE") {
-          console.log(`[Production Server] Port ${this.port} in use, trying ${this.port + 1}`);
+          prodServerLog.info(`Port ${this.port} in use, trying ${this.port + 1}`);
           this.port++;
           this.server?.listen(this.port, "0.0.0.0");
         } else {
@@ -190,7 +191,7 @@ class ProductionServer {
       });
 
       this.server.listen(this.port, "0.0.0.0", () => {
-        console.log(`[Production Server] Started on http://0.0.0.0:${this.port}`);
+        prodServerLog.info(`Started on http://0.0.0.0:${this.port}`);
         resolve(this.port);
       });
     });
@@ -248,19 +249,7 @@ class ProductionServer {
     // ========================================================================
     if (pathname === "/api/system/info" && req.method === "GET") {
       const os = await import("os");
-      let localIp = "localhost";
-      const interfaces = os.networkInterfaces();
-      for (const name of Object.keys(interfaces)) {
-        const nets = interfaces[name];
-        if (!nets) continue;
-        for (const net of nets) {
-          if (net.family === "IPv4" && !net.internal) {
-            localIp = net.address;
-            break;
-          }
-        }
-        if (localIp !== "localhost") break;
-      }
+      const localIp = getLocalIp(os);
       sendJson(res, { localIp, port: this.port });
       return;
     }
@@ -327,7 +316,7 @@ class ProductionServer {
       });
       res.end(content);
     } catch (err) {
-      console.error("[Production Server] Failed to serve file:", filePath, err);
+      prodServerLog.error("Failed to serve file:", filePath, err);
       res.writeHead(404);
       res.end("Not Found");
     }
@@ -622,3 +611,31 @@ class ProductionServer {
 }
 
 export const productionServer = new ProductionServer();
+
+// --- LAN IP helpers ---
+
+const virtualInterfacePatterns = [
+  /^docker/i, /^br-/i, /^veth/i, /^vEthernet/i,
+  /^vmnet/i, /^VMware/i, /^VirtualBox/i, /^vboxnet/i,
+  /^Hyper-V/i, /^Default Switch/i, /^WSL/i,
+  /^tun/i, /^tap/i, /^singbox/i, /^sing-box/i, /^clash/i, /^utun/i,
+  /^tailscale/i, /^ZeroTier/i, /^zt/i,
+  /^wg/i, /^wireguard/i, /^ham/i, /^Hamachi/i, /^npcap/i, /^lo/i,
+];
+
+function getLocalIp(osModule: typeof import("os")): string {
+  const interfaces = osModule.networkInterfaces();
+  let fallback: string | null = null;
+
+  for (const name of Object.keys(interfaces)) {
+    const nets = interfaces[name];
+    if (!nets) continue;
+    const virtual = virtualInterfacePatterns.some((p) => p.test(name));
+    for (const net of nets) {
+      if (net.internal || net.family !== "IPv4") continue;
+      if (!virtual) return net.address;
+      if (!fallback) fallback = net.address;
+    }
+  }
+  return fallback ?? "localhost";
+}

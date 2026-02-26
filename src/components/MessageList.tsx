@@ -65,11 +65,11 @@ export function MessageList(props: MessageListProps) {
       return props.isWorking ?? false;
     }
 
-    return !lastAssistant.time?.completed;
+    return !lastAssistant.time?.completed && (props.isWorking ?? false);
   });
 
   return (
-    <div class="flex flex-col gap-8 py-4">
+    <div class="flex flex-col gap-5 py-3">
       <Show
         when={turns().length > 0}
         fallback={

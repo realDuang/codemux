@@ -103,6 +103,15 @@ export default function EntryPage() {
     }
   });
 
+  // Listen for unexpected tunnel disconnects (cloudflared process crash)
+  const unsubTunnel = tunnelAPI.onDisconnected(() => {
+    logger.warn("[EntryPage] Tunnel disconnected unexpectedly");
+    setTunnelInfo({ url: "", status: "stopped" });
+    setTunnelEnabled(false);
+    setTunnelLoading(false);
+  });
+  onCleanup(() => unsubTunnel?.());
+
   const loadLocalModeData = async () => {
     // Get system info - different sources for Electron vs Browser
     try {
@@ -359,7 +368,7 @@ export default function EntryPage() {
   // =========================================================================
 
   return (
-    <div class="flex flex-col min-h-screen bg-gray-50/50 dark:bg-zinc-950 font-sans text-gray-900 dark:text-gray-100 electron-safe-top">
+    <div class="flex flex-col h-screen overflow-hidden bg-gray-50/50 dark:bg-slate-950 font-sans text-gray-900 dark:text-gray-100 electron-safe-top">
       {/* Language switcher for remote login page (non-host mode) */}
       <Show when={!isHost()}>
         <div class="absolute top-4 right-4 z-20" style={{ top: "calc(1rem + var(--electron-title-bar-height, 0px))" }}>
@@ -380,7 +389,7 @@ export default function EntryPage() {
       {/* Remote access: Show login form or approval status */}
       <Show when={!checking() && !isHost()}>
         <div class="flex-1 flex items-center justify-center p-4">
-          <div class="w-full max-w-md p-8 bg-white dark:bg-zinc-800 rounded-lg shadow-md transition-all duration-300">
+          <div class="w-full max-w-md p-8 bg-white dark:bg-slate-800 rounded-lg shadow-md transition-all duration-300">
             <Show when={!waitingApproval()} fallback={
               <div class="text-center space-y-6">
                 <Switch>
@@ -398,7 +407,7 @@ export default function EntryPage() {
                       {t().approval.waitingDesc}
                     </p>
                     
-                    <div class="bg-gray-50 dark:bg-zinc-700/50 rounded-lg p-4 text-left text-sm space-y-2">
+                    <div class="bg-gray-50 dark:bg-slate-700/50 rounded-lg p-4 text-left text-sm space-y-2">
                       <div class="flex justify-between">
                         <span class="text-gray-500 dark:text-gray-400">{t().approval.deviceName}:</span>
                         <span class="font-medium text-gray-900 dark:text-white">{deviceInfo()?.name}</span>
@@ -419,7 +428,7 @@ export default function EntryPage() {
 
                     <button
                       onClick={handleRetry}
-                      class="w-full mt-4 py-2 px-4 border border-gray-300 dark:border-zinc-600 hover:bg-gray-50 dark:hover:bg-zinc-700 text-gray-700 dark:text-gray-300 font-medium rounded-md transition-colors"
+                      class="w-full mt-4 py-2 px-4 border border-gray-300 dark:border-slate-600 hover:bg-gray-50 dark:hover:bg-slate-700 text-gray-700 dark:text-gray-300 font-medium rounded-md transition-colors"
                     >
                       {t().common.cancel}
                     </button>
@@ -441,7 +450,7 @@ export default function EntryPage() {
                     </p>
                     <button
                       onClick={handleRetry}
-                      class="w-full py-2 px-4 bg-gray-200 dark:bg-zinc-700 hover:bg-gray-300 dark:hover:bg-zinc-600 text-gray-800 dark:text-white font-medium rounded-md transition-colors"
+                      class="w-full py-2 px-4 bg-gray-200 dark:bg-slate-700 hover:bg-gray-300 dark:hover:bg-slate-600 text-gray-800 dark:text-white font-medium rounded-md transition-colors"
                     >
                       {t().approval.tryAgain}
                     </button>
@@ -485,7 +494,7 @@ export default function EntryPage() {
                     value={code()}
                     onInput={(e) => setCode(e.currentTarget.value)}
                     placeholder={t().login.placeholder}
-                    class="w-full px-4 py-2 border rounded-md focus:ring-2 focus:ring-blue-500 focus:outline-none dark:bg-zinc-700 dark:border-zinc-600 dark:text-white text-center text-lg tracking-widest font-mono"
+                    class="w-full px-4 py-2 border rounded-md focus:ring-2 focus:ring-blue-500 focus:outline-none dark:bg-slate-700 dark:border-slate-600 dark:text-white text-center text-lg tracking-widest font-mono"
                     maxLength={6}
                     disabled={loginLoading()}
                     autofocus
@@ -522,13 +531,13 @@ export default function EntryPage() {
       <Show when={!checking() && isHost()}>
         <div class="flex-1 overflow-y-auto">
           {/* Header */}
-          <header class="sticky top-0 z-10 backdrop-blur-md bg-white/70 dark:bg-zinc-900/70 border-b border-gray-200 dark:border-zinc-800 px-4 h-14 flex items-center justify-between">
+          <header class="sticky top-0 z-10 backdrop-blur-md bg-white/70 dark:bg-slate-900/70 border-b border-gray-200 dark:border-slate-800 px-4 h-14 flex items-center justify-between">
             <div class="flex items-center gap-2">
               <h1 class="font-semibold text-lg">{t().remote.title}</h1>
             </div>
             <div class="flex items-center gap-3">
               <LanguageSwitcher />
-              <div class="text-xs font-medium px-2 py-1 rounded bg-gray-100 dark:bg-zinc-800 text-gray-500 dark:text-gray-400">
+              <div class="text-xs font-medium px-2 py-1 rounded bg-gray-100 dark:bg-slate-800 text-gray-500 dark:text-gray-400">
                 OpenCode Remote
               </div>
             </div>
@@ -547,7 +556,7 @@ export default function EntryPage() {
               </div>
 
               {/* Status & Toggle Card */}
-              <div class="bg-white dark:bg-zinc-900 rounded-xl border border-gray-200 dark:border-zinc-800 shadow-xs overflow-hidden">
+              <div class="bg-white dark:bg-slate-900 rounded-xl border border-gray-200 dark:border-slate-800 shadow-xs overflow-hidden">
                 <div class="p-5 flex items-center justify-between">
                   <div class="space-y-1">
                     <div class="flex items-center gap-2">
@@ -568,7 +577,7 @@ export default function EntryPage() {
                     onClick={handleTunnelToggle}
                     disabled={tunnelLoading()}
                     class={`relative inline-flex h-7 w-12 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:ring-offset-2 ${
-                      tunnelEnabled() ? "bg-blue-600" : "bg-gray-200 dark:bg-zinc-700"
+                      tunnelEnabled() ? "bg-blue-600" : "bg-gray-200 dark:bg-slate-700"
                     } ${tunnelLoading() ? "opacity-50 cursor-not-allowed" : ""}`}
                   >
                     <span class="sr-only">Toggle Remote Access</span>
@@ -612,19 +621,19 @@ export default function EntryPage() {
                 <div class="space-y-6">
 
                   {/* Access Code Card */}
-                  <div class="bg-white dark:bg-zinc-900 rounded-xl border border-gray-200 dark:border-zinc-800 shadow-xs p-5">
+                  <div class="bg-white dark:bg-slate-900 rounded-xl border border-gray-200 dark:border-slate-800 shadow-xs p-5">
                     <h3 class="text-sm font-medium text-gray-500 dark:text-gray-400 mb-3 flex items-center gap-2">
                       <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
                       {t().remote.accessPassword}
                     </h3>
-                    <div class="flex items-center justify-between bg-gray-50 dark:bg-zinc-950 rounded-lg border border-gray-200 dark:border-zinc-800 px-4 py-3">
+                    <div class="flex items-center justify-between bg-gray-50 dark:bg-slate-950 rounded-lg border border-gray-200 dark:border-slate-800 px-4 py-3">
                       <span class="font-mono text-xl font-bold tracking-widest text-gray-900 dark:text-white">
                         {showPassword() ? accessCode() : "••••••"}
                       </span>
                       <div class="flex items-center gap-2">
                         <button
                           onClick={() => setShowPassword(!showPassword())}
-                          class="p-1.5 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors rounded-md hover:bg-gray-200 dark:hover:bg-zinc-800"
+                          class="p-1.5 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors rounded-md hover:bg-gray-200 dark:hover:bg-slate-800"
                           title={showPassword() ? "Hide" : "Show"}
                         >
                           <Show when={showPassword()} fallback={
@@ -645,15 +654,15 @@ export default function EntryPage() {
                   </div>
 
                   {/* Connection Addresses */}
-                  <div class="bg-white dark:bg-zinc-900 rounded-xl border border-gray-200 dark:border-zinc-800 shadow-xs overflow-hidden">
-                    <div class="p-4 border-b border-gray-100 dark:border-zinc-800/50">
+                  <div class="bg-white dark:bg-slate-900 rounded-xl border border-gray-200 dark:border-slate-800 shadow-xs overflow-hidden">
+                    <div class="p-4 border-b border-gray-100 dark:border-slate-800/50">
                       <h3 class="text-sm font-medium text-gray-500 dark:text-gray-400">{t().remote.connectionAddress}</h3>
                     </div>
-                    <div class="divide-y divide-gray-100 dark:divide-zinc-800/50">
+                    <div class="divide-y divide-gray-100 dark:divide-slate-800/50">
 
                       {/* Public Address */}
                       <Show when={tunnelInfo().status === "running"}>
-                        <div class="p-4 flex items-center justify-between group hover:bg-gray-50 dark:hover:bg-zinc-800/50 transition-colors">
+                        <div class="p-4 flex items-center justify-between group hover:bg-gray-50 dark:hover:bg-slate-800/50 transition-colors">
                           <div class="min-w-0 flex-1 mr-4">
                             <div class="flex items-center gap-2 mb-1">
                               <span class="inline-flex items-center justify-center w-5 h-5 rounded bg-green-100 dark:bg-green-900/30 text-green-600 dark:text-green-400">
@@ -673,7 +682,7 @@ export default function EntryPage() {
                       </Show>
 
                       {/* LAN Address */}
-                      <div class="p-4 flex items-center justify-between group hover:bg-gray-50 dark:hover:bg-zinc-800/50 transition-colors">
+                      <div class="p-4 flex items-center justify-between group hover:bg-gray-50 dark:hover:bg-slate-800/50 transition-colors">
                         <div class="min-w-0 flex-1 mr-4">
                           <div class="flex items-center gap-2 mb-1">
                             <span class="inline-flex items-center justify-center w-5 h-5 rounded bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400">
@@ -692,10 +701,10 @@ export default function EntryPage() {
                       </div>
 
                       {/* Local Address */}
-                      <div class="p-4 flex items-center justify-between group hover:bg-gray-50 dark:hover:bg-zinc-800/50 transition-colors">
+                      <div class="p-4 flex items-center justify-between group hover:bg-gray-50 dark:hover:bg-slate-800/50 transition-colors">
                         <div class="min-w-0 flex-1 mr-4">
                           <div class="flex items-center gap-2 mb-1">
-                            <span class="inline-flex items-center justify-center w-5 h-5 rounded bg-gray-100 dark:bg-zinc-800 text-gray-600 dark:text-gray-400">
+                            <span class="inline-flex items-center justify-center w-5 h-5 rounded bg-gray-100 dark:bg-slate-800 text-gray-600 dark:text-gray-400">
                               <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" x2="16" y1="21" y2="21"/><line x1="12" x2="12" y1="17" y2="21"/></svg>
                             </span>
                             <span class="text-xs font-medium text-gray-500">{t().remote.localAddress}</span>
@@ -714,20 +723,20 @@ export default function EntryPage() {
                 </div>
 
                 {/* Right Column: QR Code */}
-                <div class="bg-white dark:bg-zinc-900 rounded-xl border border-gray-200 dark:border-zinc-800 shadow-xs p-6 flex flex-col items-center justify-center min-h-[300px]">
+                <div class="bg-white dark:bg-slate-900 rounded-xl border border-gray-200 dark:border-slate-800 shadow-xs p-6 flex flex-col items-center justify-center min-h-[300px]">
 
                   <div class="w-full flex justify-center mb-6">
-                    <div class="inline-flex bg-gray-100 dark:bg-zinc-800 p-1 rounded-lg">
+                    <div class="inline-flex bg-gray-100 dark:bg-slate-800 p-1 rounded-lg">
                       <button
                         onClick={() => setActiveQrTab("lan")}
-                        class={`px-4 py-1.5 rounded-md text-sm font-medium transition-all ${activeQrTab() === "lan" ? 'bg-white dark:bg-zinc-700 shadow-xs text-gray-900 dark:text-white' : 'text-gray-500 hover:text-gray-700 dark:hover:text-gray-300'}`}
+                        class={`px-4 py-1.5 rounded-md text-sm font-medium transition-all ${activeQrTab() === "lan" ? 'bg-white dark:bg-slate-700 shadow-xs text-gray-900 dark:text-white' : 'text-gray-500 hover:text-gray-700 dark:hover:text-gray-300'}`}
                       >
                         {t().remote.lan}
                       </button>
                       <button
                         disabled={tunnelInfo().status !== "running"}
                         onClick={() => setActiveQrTab("public")}
-                        class={`px-4 py-1.5 rounded-md text-sm font-medium transition-all ${activeQrTab() === "public" ? 'bg-white dark:bg-zinc-700 shadow-xs text-green-700 dark:text-green-400' : 'text-gray-500 hover:text-gray-700 dark:hover:text-gray-300'} ${tunnelInfo().status !== "running" ? 'opacity-50 cursor-not-allowed' : ''}`}
+                        class={`px-4 py-1.5 rounded-md text-sm font-medium transition-all ${activeQrTab() === "public" ? 'bg-white dark:bg-slate-700 shadow-xs text-green-700 dark:text-green-400' : 'text-gray-500 hover:text-gray-700 dark:hover:text-gray-300'} ${tunnelInfo().status !== "running" ? 'opacity-50 cursor-not-allowed' : ''}`}
                       >
                         {t().remote.public}
                       </button>
@@ -772,7 +781,7 @@ export default function EntryPage() {
               {/* Authorized Devices Card */}
               <div
                 onClick={() => navigate("/devices")}
-                class="bg-white dark:bg-zinc-900 rounded-xl border border-gray-200 dark:border-zinc-800 shadow-xs p-5 flex items-center justify-between cursor-pointer hover:bg-gray-50 dark:hover:bg-zinc-800/50 transition-colors"
+                class="bg-white dark:bg-slate-900 rounded-xl border border-gray-200 dark:border-slate-800 shadow-xs p-5 flex items-center justify-between cursor-pointer hover:bg-gray-50 dark:hover:bg-slate-800/50 transition-colors"
               >
                 <div class="flex items-center gap-4">
                   <div class="w-10 h-10 rounded-lg bg-blue-100 dark:bg-blue-900/30 flex items-center justify-center">
@@ -821,7 +830,7 @@ export default function EntryPage() {
         </div>
 
         {/* Bottom: Enter Chat Button (sticky) */}
-        <div class="sticky bottom-0 bg-white/80 dark:bg-zinc-900/80 backdrop-blur-md border-t border-gray-200 dark:border-zinc-800 p-4">
+        <div class="sticky bottom-0 bg-white/80 dark:bg-slate-900/80 backdrop-blur-md border-t border-gray-200 dark:border-slate-800 p-4">
           <div class="max-w-2xl mx-auto">
             <button
               onClick={handleEnterChat}

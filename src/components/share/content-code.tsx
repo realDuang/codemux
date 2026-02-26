@@ -20,7 +20,7 @@ export function ContentCode(props: Props) {
         lang: lang && lang in bundledLanguages ? lang : "text",
         themes: {
           light: "github-light",
-          dark: "github-dark",
+          dark: "one-dark-pro",
         },
         transformers: [transformerNotationDiff()],
       })

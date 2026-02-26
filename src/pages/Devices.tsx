@@ -64,10 +64,10 @@ function DeviceCard(props: DeviceCardProps) {
 
   const borderClass = props.isCurrent
     ? "border-2 border-blue-500 dark:border-blue-600"
-    : "border border-gray-200 dark:border-zinc-800";
+    : "border border-gray-200 dark:border-slate-800";
 
   return (
-    <div class={`bg-white dark:bg-zinc-900 rounded-xl ${borderClass} shadow-xs overflow-hidden`}>
+    <div class={`bg-white dark:bg-slate-900 rounded-xl ${borderClass} shadow-xs overflow-hidden`}>
       <div class="p-5">
         <div class="flex items-start justify-between">
           <div class="flex items-start gap-3">
@@ -82,7 +82,7 @@ function DeviceCard(props: DeviceCardProps) {
                     type="text"
                     value={props.newName}
                     onInput={(e) => props.onNewNameChange(e.currentTarget.value)}
-                    class="px-2 py-1 text-sm border rounded dark:bg-zinc-800 dark:border-zinc-700"
+                    class="px-2 py-1 text-sm border rounded dark:bg-slate-800 dark:border-slate-700"
                     placeholder={t().devices.renameDevicePlaceholder}
                     onKeyDown={(e) => {
                       if (e.key === "Enter") props.onConfirmRename();
@@ -224,13 +224,13 @@ export default function Devices() {
   };
 
   return (
-    <div class="flex flex-col h-screen bg-gray-50/50 dark:bg-zinc-950 font-sans text-gray-900 dark:text-gray-100 electron-safe-top">
+    <div class="flex flex-col h-screen bg-gray-50/50 dark:bg-slate-950 font-sans text-gray-900 dark:text-gray-100 electron-safe-top">
       {/* Header */}
-      <header class="sticky top-0 z-10 backdrop-blur-md bg-white/70 dark:bg-zinc-900/70 border-b border-gray-200 dark:border-zinc-800 px-4 h-14 flex items-center justify-between electron-drag-region">
+      <header class="sticky top-0 z-10 backdrop-blur-md bg-white/70 dark:bg-slate-900/70 border-b border-gray-200 dark:border-slate-800 px-4 h-14 flex items-center justify-between electron-drag-region">
         <div class="flex items-center gap-2 electron-no-drag">
           <button
             onClick={() => navigate("/")}
-            class="p-2 -ml-2 rounded-lg hover:bg-gray-100 dark:hover:bg-zinc-800 text-gray-600 dark:text-gray-400 transition-colors"
+            class="p-2 -ml-2 rounded-lg hover:bg-gray-100 dark:hover:bg-slate-800 text-gray-600 dark:text-gray-400 transition-colors"
           >
             <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <path d="m15 18-6-6 6-6"/>

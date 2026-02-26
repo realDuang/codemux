@@ -102,12 +102,32 @@ export default function Chat() {
   // Agent mode state - default to "build" matching OpenCode's default
   const [currentAgent, setCurrentAgent] = createSignal<AgentMode>({ id: "build", label: "Build" });
 
+  // Track whether the component has been disposed (cleaned up) to suppress
+  // errors from async operations that complete after gateway.destroy().
+  let disposed = false;
+
   // Derive the engine type of the currently selected session
   const currentEngineType = createMemo(() => {
     const sid = sessionStore.current;
     if (!sid) return configStore.currentEngineType || "opencode";
     const session = sessionStore.list.find(s => s.id === sid);
     return session?.engineType || configStore.currentEngineType || "opencode";
+  });
+
+  // Keep currentAgent in sync: whenever the engine type changes or engine
+  // capabilities are refreshed (e.g. ACP modes populated after createSession),
+  // reset to the first available mode if the current one doesn't belong to
+  // the active engine.
+  createEffect(() => {
+    const engineType = currentEngineType();
+    const engineInfo = configStore.engines.find(e => e.type === engineType);
+    const availableModes = engineInfo?.capabilities?.availableModes;
+    if (availableModes && availableModes.length > 0) {
+      const cur = currentAgent();
+      if (!availableModes.some(m => m.id === cur.id)) {
+        setCurrentAgent(availableModes[0]);
+      }
+    }
   });
 
   // Mobile Sidebar State
@@ -195,7 +215,9 @@ export default function Chat() {
       );
       setMessageStore("message", sessionId, sortedMessages);
     } catch (error) {
-      logger.error("[LoadMessages] Failed to load messages:", error);
+      if (!disposed) {
+        logger.error("[LoadMessages] Failed to load messages:", error);
+      }
     } finally {
       setLoadingMessages(false);
       setTimeout(() => scrollToBottom(true), 100);
@@ -271,24 +293,6 @@ export default function Chat() {
           projects.push(...engineProjects);
         } catch (err) {
           logger.warn(`[Init] Failed to load projects for engine ${engine.type}:`, err);
-        }
-      }
-
-      // Restore locally-saved projects for ACP engines that don't support listProjects
-      const localProjects = ProjectStore.getAll();
-      for (const lp of localProjects) {
-        if (!projects.find(p => p.id === lp.id)) {
-          // Check if this looks like an ACP engine project (id format: engineType-directory)
-          const matchingEngine = runningEngines.find(e => lp.id.startsWith(`${e.type}-`));
-          if (matchingEngine) {
-            const dirName = lp.path.split(/[/\\]/).filter(Boolean).pop() || lp.path;
-            projects.push({
-              id: lp.id,
-              directory: lp.path,
-              name: dirName,
-              engineType: matchingEngine.type,
-            });
-          }
         }
       }
 
@@ -383,6 +387,7 @@ export default function Chat() {
 
       await loadSessionMessages(currentSession.id);
     } catch (error) {
+      if (disposed) return;
       logger.error("[Init] Session initialization failed:", error);
       const msg = error instanceof Error ? error.message : String(error);
       setSessionStore({ loading: false, initError: msg });
@@ -420,18 +425,21 @@ export default function Chat() {
   };
 
   // New session
-  const handleNewSession = async (directory?: string) => {
-    logger.debug("[NewSession] Creating new session in directory:", directory);
+  const handleNewSession = async (directory?: string, explicitEngineType?: EngineType) => {
+    logger.debug("[NewSession] Creating new session in directory:", directory, "engineType:", explicitEngineType);
 
     try {
       const dir = directory || sessionStore.projects[0]?.directory || ".";
-      // Determine the engine type from the project binding for this directory
-      const project = sessionStore.projects.find(p => p.directory === dir);
-      const engineType = project?.engineType || configStore.currentEngineType || "opencode";
+      // Use explicitly-passed engineType (from sidebar "+" button) when available,
+      // otherwise resolve from project binding or global default.
+      const engineType = explicitEngineType || configStore.currentEngineType || "opencode";
       const newSession = await gateway.createSession(engineType, dir);
       logger.debug("[NewSession] Created:", newSession);
 
-      // Match projectID by directory (ACP engines don't return engineMeta.projectID)
+      // Match project by both directory AND engine type to avoid cross-engine mismatch
+      // (same directory can exist under both OC and Copilot engines).
+      const project = sessionStore.projects.find(p => p.directory === dir && p.engineType === engineType)
+        || sessionStore.projects.find(p => p.directory === dir);
       const projectID = project?.id || undefined;
       const processedSession = toSessionInfo(newSession, projectID);
 
@@ -456,6 +464,12 @@ export default function Chat() {
         const availableModes = engineInfo?.capabilities?.availableModes;
         if (availableModes && availableModes.length > 0) {
           setCurrentAgent(availableModes[0]);
+        }
+
+        // Refresh model list (ACP adapter now has models populated from createSession)
+        const models = await gateway.listModels(engineType);
+        if (models.length > 0) {
+          setConfigStore("models", models);
         }
       } catch {
         // Non-critical: mode list may be stale but won't block
@@ -493,11 +507,12 @@ export default function Chat() {
   const handleRenameSession = async (sessionId: string, newTitle: string) => {
     logger.debug("[RenameSession] Renaming session:", sessionId, newTitle);
     try {
-      // Local-only rename: OpenCode CLI does not expose a session update/rename API.
-      // Title is auto-generated by the backend after the first assistant reply.
+      // Update frontend store immediately for responsiveness
       setSessionStore("list", (list) =>
         list.map((s) => (s.id === sessionId ? { ...s, title: newTitle } : s))
       );
+      // Persist to backend SessionStore
+      await gateway.renameSession(sessionId, newTitle);
     } catch (error) {
       logger.error("[RenameSession] Failed:", error);
     }
@@ -833,6 +848,7 @@ export default function Chat() {
     initializeSession();
 
     onCleanup(() => {
+      disposed = true;
       gateway.destroy();
     });
   });

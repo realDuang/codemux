@@ -30,7 +30,7 @@ function getModeColor(mode: AgentMode, index: number): string {
   // Fallback by position
   const palette = ["bg-emerald-600", "bg-violet-600", "bg-amber-600"];
   if (index < palette.length) return palette[index];
-  return "bg-zinc-600";
+  return "bg-slate-600";
 }
 
 /** Return the textarea / send-button accent colour for the active mode. */
@@ -43,23 +43,23 @@ function getModeAccentRing(mode: AgentMode, index: number): {
   const label = getModeDisplayName(mode).toLowerCase();
   if (label === "plan")
     return {
-      bg: "bg-violet-50/60 dark:bg-violet-950/30 backdrop-blur-xl",
+      bg: "bg-violet-50/60 dark:bg-slate-800/70 backdrop-blur-xl",
       ring: "focus-within:ring-violet-500/40",
-      border: "border-violet-200/40 dark:border-violet-800/40",
+      border: "border-violet-200/40 dark:border-violet-600/30",
       bgHover: "bg-violet-600 hover:bg-violet-700",
     };
   if (label === "autopilot")
     return {
-      bg: "bg-amber-50 dark:bg-amber-950/20",
+      bg: "bg-amber-50 dark:bg-slate-800/70",
       ring: "focus-within:ring-amber-500",
-      border: "border-amber-200 dark:border-amber-800",
+      border: "border-amber-200 dark:border-amber-700/40",
       bgHover: "bg-amber-600 hover:bg-amber-700",
     };
   // Default (build / agent / first mode / unknown)
   return {
-    bg: "bg-white/60 dark:bg-slate-900/60 backdrop-blur-xl",
+    bg: "bg-white/60 dark:bg-slate-800/70 backdrop-blur-xl",
     ring: "focus-within:ring-indigo-500/40",
-    border: "border-slate-200/40 dark:border-slate-700/40",
+    border: "border-slate-200/40 dark:border-slate-600/30",
     bgHover: "bg-indigo-600 hover:bg-indigo-700",
   };
 }
@@ -160,7 +160,7 @@ export function PromptInput(props: PromptInputProps) {
   };
 
   const handleKeyDown = (e: KeyboardEvent) => {
-    if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+    if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       if (text().trim() && !props.isGenerating && !props.disabled) {
         props.onSend(text(), agent());
@@ -251,7 +251,7 @@ export function PromptInput(props: PromptInputProps) {
               : isReadOnly() ? t().prompt.planPlaceholder : t().prompt.placeholder
           }
           rows={1}
-          class={`w-full px-4 py-3 pr-12 bg-transparent resize-none focus:outline-none dark:text-white max-h-[200px] overflow-y-auto placeholder:text-slate-400 dark:placeholder:text-slate-500 ${props.disabled ? "cursor-not-allowed opacity-50" : ""}`}
+          class={`w-full px-4 py-3 pr-12 bg-transparent resize-none focus:outline-none dark:text-white max-h-[200px] overflow-y-auto text-sm placeholder:text-slate-400 dark:placeholder:text-slate-500 ${props.disabled ? "cursor-not-allowed opacity-50" : ""}`}
           style={{ "min-height": "52px" }}
         />
         <Show

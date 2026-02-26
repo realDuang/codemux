@@ -362,21 +362,30 @@ function sendJson(res: ServerResponse, data: any, status = 200): void {
   res.end(JSON.stringify(data));
 }
 
+const virtualInterfacePatterns = [
+  /^docker/i, /^br-/i, /^veth/i, /^vEthernet/i,
+  /^vmnet/i, /^VMware/i, /^VirtualBox/i, /^vboxnet/i,
+  /^Hyper-V/i, /^Default Switch/i, /^WSL/i,
+  /^tun/i, /^tap/i, /^singbox/i, /^sing-box/i, /^clash/i, /^utun/i,
+  /^tailscale/i, /^ZeroTier/i, /^zt/i,
+  /^wg/i, /^wireguard/i, /^ham/i, /^Hamachi/i, /^npcap/i, /^lo/i,
+];
+
 function getLocalIp(): string {
-  let localIp = "localhost";
   const interfaces = os.networkInterfaces();
+  let fallback: string | null = null;
+
   for (const name of Object.keys(interfaces)) {
     const nets = interfaces[name];
     if (!nets) continue;
+    const virtual = virtualInterfacePatterns.some((p) => p.test(name));
     for (const net of nets) {
-      if (net.family === "IPv4" && !net.internal) {
-        localIp = net.address;
-        break;
-      }
+      if (net.internal || net.family !== "IPv4") continue;
+      if (!virtual) return net.address;
+      if (!fallback) fallback = net.address;
     }
-    if (localIp !== "localhost") break;
   }
-  return localIp;
+  return fallback ?? "localhost";
 }
 
 function getClientIp(req: IncomingMessage): string {
@@ -961,6 +970,10 @@ export default defineConfig({
       ".trycloudflare.com",
     ],
     proxy: {
+      "/ws": {
+        target: "http://localhost:4200",
+        ws: true,
+      },
       "/opencode-api": {
         target: "http://localhost:4096",
         changeOrigin: true,

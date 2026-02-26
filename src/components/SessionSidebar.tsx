@@ -1,15 +1,17 @@
-import { For, Show, createSignal, createMemo } from "solid-js";
+import { For, Show, createSignal, createMemo, onMount } from "solid-js";
 import { SessionInfo, sessionStore, setSessionStore, getProjectName } from "../stores/session";
 import { useI18n, formatMessage } from "../lib/i18n";
-import type { UnifiedProject } from "../types/unified";
+import type { UnifiedProject, EngineType } from "../types/unified";
 import { ProjectStore } from "../lib/project-store";
+import { isElectron } from "../lib/platform";
+import { systemAPI, getOpenCodeStoragePath, getCopilotStoragePath } from "../lib/electron-api";
 
 interface SessionSidebarProps {
   sessions: SessionInfo[];
   currentSessionId: string | null;
   projects: UnifiedProject[];
   onSelectSession: (sessionId: string) => void;
-  onNewSession: (directory?: string) => void;
+  onNewSession: (directory?: string, engineType?: EngineType) => void;
   onDeleteSession: (sessionId: string) => void;
   onRenameSession: (sessionId: string, newTitle: string) => void;
   onDeleteProjectSessions: (projectID: string, projectName: string, sessionCount: number) => void;
@@ -46,7 +48,7 @@ function getEngineBadge(engineType?: string): { label: string; class: string } |
     case "opencode": return { label: "OC", class: "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400" };
     case "copilot": return { label: "Copilot", class: "bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400" };
     case "claude": return { label: "Claude", class: "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400" };
-    default: return { label: engineType, class: "bg-zinc-100 text-zinc-600 dark:bg-zinc-700 dark:text-zinc-400" };
+    default: return { label: engineType, class: "bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-400" };
   }
 }
 
@@ -55,6 +57,14 @@ export function SessionSidebar(props: SessionSidebarProps) {
   const [hoveredProject, setHoveredProject] = createSignal<string | null>(null);
   const [editingSessionId, setEditingSessionId] = createSignal<string | null>(null);
   const [editingTitle, setEditingTitle] = createSignal("");
+  const [homePath, setHomePath] = createSignal<string | null>(null);
+
+  // Load homePath once on mount (only in Electron, needed for storage folder button)
+  if (isElectron()) {
+    systemAPI.getInfo().then((info) => {
+      if (info) setHomePath(info.homePath);
+    });
+  }
 
   const isDefaultTitle = (title: string): boolean => {
     return /^(New session - |Child session - )\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(title);
@@ -84,8 +94,10 @@ export function SessionSidebar(props: SessionSidebarProps) {
       if (groups.has(projectID)) {
         groups.get(projectID)!.push(session);
       } else {
-        // Fallback: match by directory when projectID is missing or unknown
+        // Fallback: match by directory AND engine type when projectID is missing or unknown
         const matchingProject = filteredProjects.find(
+          (p) => session.directory && p.directory === session.directory && p.engineType === session.engineType
+        ) || filteredProjects.find(
           (p) => session.directory && p.directory === session.directory
         );
         if (matchingProject) {
@@ -96,12 +108,6 @@ export function SessionSidebar(props: SessionSidebarProps) {
 
     const result: ProjectGroup[] = [];
     for (const [projectID, sessions] of groups) {
-      const sortedSessions = sessions.slice().sort((a, b) => {
-        const aTime = new Date(a.updatedAt).getTime();
-        const bTime = new Date(b.updatedAt).getTime();
-        return bTime - aTime;
-      });
-
       const project = filteredProjects.find((p) => p.id === projectID) || null;
       if (!project) continue;
 
@@ -111,19 +117,9 @@ export function SessionSidebar(props: SessionSidebarProps) {
         projectID,
         project,
         name,
-        sessions: sortedSessions,
+        sessions,
       });
     }
-
-    result.sort((a, b) => {
-      const aLatest = a.sessions[0]
-        ? new Date(a.sessions[0].updatedAt).getTime()
-        : (a.project?.engineMeta as any)?.time?.updated || 0;
-      const bLatest = b.sessions[0]
-        ? new Date(b.sessions[0].updatedAt).getTime()
-        : (b.project?.engineMeta as any)?.time?.updated || 0;
-      return bLatest - aLatest;
-    });
 
     return result;
   });
@@ -149,20 +145,6 @@ export function SessionSidebar(props: SessionSidebarProps) {
         projects,
       });
     }
-
-    // Sort by most recent activity across all projects in the section
-    sections.sort((a, b) => {
-      const getLatest = (s: EngineSection) => {
-        let latest = 0;
-        for (const p of s.projects) {
-          if (p.sessions[0]) {
-            latest = Math.max(latest, new Date(p.sessions[0].updatedAt).getTime());
-          }
-        }
-        return latest;
-      };
-      return getLatest(b) - getLatest(a);
-    });
 
     return sections;
   });
@@ -236,14 +218,14 @@ export function SessionSidebar(props: SessionSidebarProps) {
   };
 
   return (
-    <div class="w-full bg-gray-50 dark:bg-zinc-950 border-r border-gray-200 dark:border-zinc-800 flex flex-col h-full">
+    <div class="w-full bg-gray-50 dark:bg-slate-950 border-r border-gray-200 dark:border-slate-800 flex flex-col h-full">
       {/* Session List */}
       <div class="flex-1 overflow-y-auto px-2 py-2">
         <Show
           when={engineSections().length > 0}
           fallback={
             <div class="p-8 text-center">
-              <div class="inline-flex items-center justify-center w-10 h-10 rounded-full bg-gray-100 dark:bg-zinc-800 mb-3 text-gray-400">
+              <div class="inline-flex items-center justify-center w-10 h-10 rounded-full bg-gray-100 dark:bg-slate-800 mb-3 text-gray-400">
                 <svg
                   xmlns="http://www.w3.org/2000/svg"
                   width="20"
@@ -285,7 +267,7 @@ export function SessionSidebar(props: SessionSidebarProps) {
                 <div class="mb-2">
                   {/* Project Header */}
                   <div
-                    class="group flex items-center justify-between px-2 py-1.5 rounded-md cursor-pointer hover:bg-gray-100 dark:hover:bg-zinc-900 transition-colors"
+                    class="group flex items-center justify-between px-2 py-1.5 rounded-md cursor-pointer hover:bg-gray-100 dark:hover:bg-slate-900 transition-colors"
                     onMouseEnter={() => setHoveredProject(project.projectID)}
                     onMouseLeave={() => setHoveredProject(null)}
                     onClick={() => toggleProjectExpanded(project.projectID)}
@@ -343,7 +325,7 @@ export function SessionSidebar(props: SessionSidebarProps) {
                         class="p-1 text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 rounded transition-all"
                         onClick={(e) => {
                           e.stopPropagation();
-                          props.onNewSession(project.project ? getProjectDirectory(project.project) : undefined);
+                          props.onNewSession(project.project ? getProjectDirectory(project.project) : undefined, project.project?.engineType);
                         }}
                         title={t().sidebar.newSession}
                       >
@@ -362,6 +344,34 @@ export function SessionSidebar(props: SessionSidebarProps) {
                           <path d="M12 5v14" />
                         </svg>
                       </button>
+                      <Show when={isElectron() && (project.project?.engineType === "opencode" || project.project?.engineType === "copilot") && homePath()}>
+                        <button
+                          class="p-1 text-gray-400 hover:text-green-600 dark:hover:text-green-400 rounded transition-all"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            const engineType = project.project?.engineType;
+                            const storagePath = engineType === "opencode"
+                              ? getOpenCodeStoragePath(homePath()!, project.projectID)
+                              : getCopilotStoragePath(homePath()!);
+                            systemAPI.openPath(storagePath);
+                          }}
+                          title={t().sidebar.openStorageFolder}
+                        >
+                          <svg
+                            xmlns="http://www.w3.org/2000/svg"
+                            width="14"
+                            height="14"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="2"
+                            stroke-linecap="round"
+                            stroke-linejoin="round"
+                          >
+                            <path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z" />
+                          </svg>
+                        </button>
+                      </Show>
                       <button
                         class="p-1 text-gray-400 hover:text-red-500 dark:hover:text-red-400 rounded transition-all"
                         onClick={(e) => {
@@ -428,8 +438,8 @@ export function SessionSidebar(props: SessionSidebarProps) {
                             <div
                               class={`group relative px-3 py-2 mb-0.5 rounded-md cursor-pointer transition-all duration-150 ${
                                 isActive()
-                                  ? "bg-white dark:bg-zinc-800 shadow-xs"
-                                  : "hover:bg-gray-100 dark:hover:bg-zinc-900"
+                                  ? "bg-white dark:bg-slate-800 shadow-xs"
+                                  : "hover:bg-gray-100 dark:hover:bg-slate-900"
                               }`}
                               onClick={() => !isEditing() && props.onSelectSession(session.id)}
                             >
@@ -446,6 +456,7 @@ export function SessionSidebar(props: SessionSidebarProps) {
                                               : "text-gray-600 dark:text-gray-400"
                                           }`}
                                           onDblClick={startEditing}
+                                          title={session.id}
                                         >
                                           {getDisplayTitle(session.title)}
                                         </div>
@@ -458,7 +469,7 @@ export function SessionSidebar(props: SessionSidebarProps) {
                                         onKeyDown={handleKeyDown}
                                         onBlur={saveTitle}
                                         autofocus
-                                        class="text-sm w-full px-1 py-0.5 bg-white dark:bg-zinc-700 border border-blue-500 rounded outline-none text-gray-900 dark:text-gray-100"
+                                        class="text-sm w-full px-1 py-0.5 bg-white dark:bg-slate-700 border border-blue-500 rounded outline-none text-gray-900 dark:text-gray-100"
                                         onClick={(e) => e.stopPropagation()}
                                       />
                                     </Show>
@@ -491,6 +502,29 @@ export function SessionSidebar(props: SessionSidebarProps) {
 
                                 <Show when={!isEditing()}>
                                   <div class="flex items-center gap-0.5 flex-shrink-0">
+                                    <button
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        navigator.clipboard.writeText(session.id).catch(() => {});
+                                      }}
+                                      class="opacity-0 group-hover:opacity-100 p-1.5 text-gray-400 hover:text-green-500 hover:bg-green-50 dark:hover:bg-green-900/20 rounded transition-all"
+                                      title={`${t().sidebar.copySessionId}: ${session.id}`}
+                                    >
+                                      <svg
+                                        xmlns="http://www.w3.org/2000/svg"
+                                        width="12"
+                                        height="12"
+                                        viewBox="0 0 24 24"
+                                        fill="none"
+                                        stroke="currentColor"
+                                        stroke-width="2"
+                                        stroke-linecap="round"
+                                        stroke-linejoin="round"
+                                      >
+                                        <rect width="14" height="14" x="8" y="8" rx="2" ry="2" />
+                                        <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" />
+                                      </svg>
+                                    </button>
                                     <button
                                       onClick={startEditing}
                                       class="opacity-0 group-hover:opacity-100 p-1.5 text-gray-400 hover:text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded transition-all"
@@ -558,10 +592,10 @@ export function SessionSidebar(props: SessionSidebarProps) {
         </Show>
       </div>
 
-      <div class="px-2 py-2 border-t border-gray-200 dark:border-zinc-800">
+      <div class="px-2 py-2 border-t border-gray-200 dark:border-slate-800">
         <button
           onClick={props.onAddProject}
-          class="w-full flex items-center gap-2 px-3 py-2 text-sm text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-zinc-800 hover:text-gray-900 dark:hover:text-white rounded-lg transition-colors"
+          class="w-full flex items-center gap-2 px-3 py-2 text-sm text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-slate-800 hover:text-gray-900 dark:hover:text-white rounded-lg transition-colors"
         >
           <svg
             xmlns="http://www.w3.org/2000/svg"

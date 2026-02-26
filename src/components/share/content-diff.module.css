@@ -5,9 +5,14 @@
   background-color: var(--sl-color-bg-surface);
   border-radius: 0.25rem;
   overflow-x: auto;
-  font-family: monospace;
+  font-family: var(--font-mono);
   font-size: 0.75rem;
   line-height: 1.4;
+
+  :global(.dark) & {
+    background-color: #0b1120;
+    border-color: rgba(71, 85, 105, 0.3);
+  }
 }
 
 .line {
@@ -34,6 +39,15 @@
       --shiki-dark-bg: var(--sl-color-red-low) !important;
       background-color: var(--sl-color-red-low) !important;
     }
+
+    :global(.dark) & {
+      background-color: rgba(239, 68, 68, 0.12);
+
+      .content pre {
+        --shiki-dark-bg: rgba(239, 68, 68, 0.12) !important;
+        background-color: rgba(239, 68, 68, 0.12) !important;
+      }
+    }
   }
 
   &[data-type="added"] {
@@ -46,6 +60,15 @@
     .content pre {
       --shiki-dark-bg: var(--sl-color-green-low) !important;
       background-color: var(--sl-color-green-low) !important;
+    }
+
+    :global(.dark) & {
+      background-color: rgba(34, 197, 94, 0.12);
+
+      .content pre {
+        --shiki-dark-bg: rgba(34, 197, 94, 0.12) !important;
+        background-color: rgba(34, 197, 94, 0.12) !important;
+      }
     }
   }
 }

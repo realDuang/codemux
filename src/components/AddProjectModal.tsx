@@ -77,9 +77,9 @@ export function AddProjectModal(props: AddProjectModalProps) {
           role="dialog"
           aria-modal="true"
           aria-labelledby="add-project-modal-title"
-          class="relative bg-white dark:bg-zinc-900 rounded-xl shadow-2xl w-full max-w-md mx-4 overflow-hidden"
+          class="relative bg-white dark:bg-slate-900 rounded-xl shadow-2xl w-full max-w-md mx-4 overflow-hidden"
         >
-          <div class="flex items-center justify-between px-6 py-4 border-b border-gray-200 dark:border-zinc-800">
+          <div class="flex items-center justify-between px-6 py-4 border-b border-gray-200 dark:border-slate-800">
             <h2 id="add-project-modal-title" class="text-lg font-semibold text-gray-900 dark:text-white">
               {t().project.addTitle}
             </h2>
@@ -136,26 +136,26 @@ export function AddProjectModal(props: AddProjectModalProps) {
                     onKeyDown={handleKeyDown}
                     placeholder="/path/to/your/project"
                     autofocus
-                    class="flex-1 px-3 py-2 bg-white dark:bg-zinc-800 border border-gray-300 dark:border-zinc-700 rounded-lg text-gray-900 dark:text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    class="flex-1 px-3 py-2 bg-white dark:bg-slate-800 border border-gray-300 dark:border-slate-700 rounded-lg text-gray-900 dark:text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                   />
                   <Show when={isElectron()}>
                     <button
                       type="button"
                       onClick={handleBrowse}
-                      class="px-3 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-zinc-700 hover:bg-gray-200 dark:hover:bg-zinc-600 border border-gray-300 dark:border-zinc-600 rounded-lg transition-colors whitespace-nowrap"
+                      class="px-3 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-slate-700 hover:bg-gray-200 dark:hover:bg-slate-600 border border-gray-300 dark:border-slate-600 rounded-lg transition-colors whitespace-nowrap"
                     >
                       {t().project.browse}
                     </button>
                   </Show>
                 </div>
                 <div class="mt-3">
-                  <label class="block text-sm font-medium text-zinc-700 dark:text-zinc-300 mb-1">
+                  <label class="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
                     Engine
                   </label>
                   <select
                     value={selectedEngine()}
                     onChange={(e) => setSelectedEngine(e.target.value as EngineType)}
-                    class="w-full px-3 py-2 border border-zinc-300 dark:border-zinc-600 rounded-lg bg-white dark:bg-zinc-700 text-zinc-900 dark:text-zinc-100 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    class="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-700 text-slate-900 dark:text-slate-100 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                   >
                     <For each={configStore.engines.filter(e => e.status === "running")}>
                       {(engine) => (
@@ -177,10 +177,10 @@ export function AddProjectModal(props: AddProjectModalProps) {
             </Show>
           </div>
 
-          <div class="flex justify-end gap-3 px-6 py-4 border-t border-gray-200 dark:border-zinc-800 bg-gray-50 dark:bg-zinc-900/50">
+          <div class="flex justify-end gap-3 px-6 py-4 border-t border-gray-200 dark:border-slate-800 bg-gray-50 dark:bg-slate-900/50">
             <button
               onClick={handleClose}
-              class="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-zinc-800 rounded-lg transition-colors"
+              class="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-slate-800 rounded-lg transition-colors"
             >
               {t().common.cancel}
             </button>

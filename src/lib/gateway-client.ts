@@ -111,9 +111,10 @@ export class GatewayClient {
       this.wsUrl = url;
     } else if (!this.wsUrl) {
       if (isElectron()) {
-        // In Electron: connect to local gateway via IPC-provided port
-        const port = await gatewayAPI.getPort();
-        this.wsUrl = `ws://127.0.0.1:${port}`;
+        // In Electron: get full WS URL from main process via IPC
+        // Dev mode: ws://127.0.0.1:4200
+        // Packaged mode: ws://127.0.0.1:5173/ws (attached to production server)
+        this.wsUrl = await gatewayAPI.getWsUrl();
       } else {
         // In remote browser: derive WS URL from current page location
         // Production (Cloudflare Tunnel): wss://tunnel-host/ws

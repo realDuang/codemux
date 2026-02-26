@@ -139,7 +139,7 @@ export function ModelSelector(props: ModelSelectorProps) {
 
       <Show when={isOpen()}>
         {/* Dropdown menu - opens upward */}
-        <div class="absolute right-0 bottom-full mb-2 w-72 md:w-80 bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-lg shadow-lg z-[60] max-h-[60vh] overflow-y-auto">
+        <div class="absolute left-0 md:left-auto md:right-0 bottom-full mb-2 w-72 md:w-80 bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-lg shadow-lg z-[60] max-h-[60vh] overflow-y-auto">
           <Show
             when={providerGroups().length > 0}
             fallback={

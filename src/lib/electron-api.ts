@@ -239,9 +239,9 @@ export const serverAPI = {
 
 // Gateway API
 export const gatewayAPI = {
-  async getPort(): Promise<number> {
+  async getWsUrl(): Promise<string> {
     const api = getElectronAPI();
-    return api?.gateway ? api.gateway.getPort() : 4200;
+    return api?.gateway ? api.gateway.getPort() : "ws://127.0.0.1:4200";
   },
 };
 

@@ -41,3 +41,10 @@ nul
 *.tmp
 __test_snap*.txt
 acp-probe-logs/
+
+# Lock files (project uses bun.lock)
+package-lock.json
+
+# Playwright
+test-results/
+playwright-report/

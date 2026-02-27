@@ -329,6 +329,44 @@ class ProductionServer {
     url: URL
   ): Promise<void> {
     // ========================================================================
+    // POST /api/auth/local-auth - Auto-authenticate localhost clients
+    // ========================================================================
+    if (pathname === "/api/auth/local-auth" && req.method === "POST") {
+      const clientIp = getClientIp(req);
+      const normalizedIp = clientIp.replace(/^::ffff:/, "");
+      const isLocal = normalizedIp === "127.0.0.1" || normalizedIp === "::1" || normalizedIp === "localhost";
+
+      if (!isLocal) {
+        sendJson(res, { success: false, error: "Local access only" }, 403);
+        return;
+      }
+
+      try {
+        const body = await parseBody(req);
+        const deviceInfo = body?.device;
+        const deviceId = deviceStore.generateDeviceId();
+        const token = deviceStore.generateToken(deviceId);
+
+        const device = {
+          id: deviceId,
+          name: deviceInfo?.name || "Local Machine",
+          platform: deviceInfo?.platform || process.platform,
+          browser: deviceInfo?.browser || "Browser",
+          createdAt: Date.now(),
+          lastSeenAt: Date.now(),
+          ip: "localhost",
+          isHost: true,
+        };
+
+        deviceStore.addDevice(device);
+        sendJson(res, { success: true, token, deviceId, device });
+      } catch {
+        sendJson(res, { success: false, error: "Bad request" }, 400);
+      }
+      return;
+    }
+
+    // ========================================================================
     // GET /api/auth/code - Get access code
     // ========================================================================
     if (pathname === "/api/auth/code" && req.method === "GET") {

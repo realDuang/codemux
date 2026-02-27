@@ -210,10 +210,10 @@ describe("MockEngineAdapter", () => {
 
   describe("models", () => {
     it("should return mock model list", async () => {
-      const models = await adapter.listModels();
-      expect(models).toHaveLength(2);
-      expect(models[0].modelId).toBe("mock/test-model");
-      expect(models[0].engineType).toBe("opencode");
+      const result = await adapter.listModels();
+      expect(result.models).toHaveLength(2);
+      expect(result.models[0].modelId).toBe("mock/test-model");
+      expect(result.models[0].engineType).toBe("opencode");
     });
 
     it("should set model for session", async () => {

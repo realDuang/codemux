@@ -352,6 +352,7 @@ export const GatewayRequestType = {
   MODEL_SET: "model.set",
 
   // Mode
+  MODE_GET: "mode.get",
   MODE_SET: "mode.set",
 
   // Permission

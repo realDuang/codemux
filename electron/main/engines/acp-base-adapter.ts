@@ -8,6 +8,7 @@ import * as readline from "readline";
 import * as fs from "fs";
 import * as path from "path";
 import { randomBytes } from "crypto";
+import { homedir } from "os";
 import { EngineAdapter } from "./engine-adapter";
 import { acpLog } from "../services/logger";
 
@@ -805,6 +806,7 @@ export abstract class AcpBaseAdapter extends EngineAdapter {
     this.child = spawn(binary, args, {
       stdio: ["pipe", "pipe", "pipe"],
       shell: this.getSpawnShell(),
+      cwd: homedir(),
       env: {
         ...process.env,
         // Prevent git from blocking on interactive prompts when running as a
@@ -922,8 +924,9 @@ export abstract class AcpBaseAdapter extends EngineAdapter {
   // --- Sessions ---
 
   async createSession(directory: string): Promise<UnifiedSession> {
+    const cwd = directory && directory !== "." ? directory : homedir();
     const result = (await this.sendRequest("session/new", {
-      cwd: directory,
+      cwd,
       mcpServers: [],
     })) as AcpSessionNewResult;
 
@@ -1046,7 +1049,7 @@ export abstract class AcpBaseAdapter extends EngineAdapter {
       // take time, but we must not block forever on corrupted sessions.
       const result = await this.sendRequest("session/load", {
         sessionId,
-        cwd: session.directory,
+        cwd: session.directory || homedir(),
         mcpServers: [],
       }, 30_000) as { models?: any; modes?: any };
 

@@ -1,0 +1,43 @@
+name: Question
+description: Ask a question about setup, usage, or troubleshooting
+labels: ["question"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Have a question about CodeMux? Ask away! Please check existing issues and the README first.
+
+  - type: dropdown
+    id: topic
+    attributes:
+      label: Topic
+      description: What is your question about?
+      options:
+        - Installation / Setup
+        - Configuration
+        - Remote access / Tunnel
+        - Engine setup (OpenCode / Copilot)
+        - Usage / How-to
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: question
+    attributes:
+      label: Your Question
+      description: Describe your question in detail.
+    validations:
+      required: true
+
+  - type: textarea
+    id: tried
+    attributes:
+      label: What I've Tried
+      description: What have you already tried or researched?
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Environment
+      description: Any relevant info (OS, CodeMux version, engine version, etc.)

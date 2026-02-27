@@ -226,26 +226,32 @@ export class MockEngineAdapter extends EngineAdapter {
       if (session.title === "New Session" && userText.length > 0) {
         session.title = userText.slice(0, 50);
       }
-      this.emit("session.updated", { session });
     }
 
-    // Emit user message.updated so frontend replaces temp messages
-    this.emit("message.updated", {
-      sessionId,
-      message: userMessage,
-    });
-
-    // Emit assistant message events synchronously
-    // (real adapters stream via SSE; mock emits immediately for test reliability)
-    this.emit("message.part.updated", {
-      sessionId,
-      messageId: assistantMessageId,
-      part: textPart as UnifiedPart,
-    });
-    this.emit("message.updated", {
-      sessionId,
-      message: assistantMessage,
-    });
+    // Defer event emission so the RPC response reaches the client before
+    // broadcast notifications.  Without this, the gateway broadcasts
+    // message.part.updated / message.updated *before* it sends the RPC
+    // response for message.send, causing a race condition where the
+    // frontend may not yet have the session context ready to process
+    // the notifications.
+    setTimeout(() => {
+      if (session) {
+        this.emit("session.updated", { session });
+      }
+      this.emit("message.updated", {
+        sessionId,
+        message: userMessage,
+      });
+      this.emit("message.part.updated", {
+        sessionId,
+        messageId: assistantMessageId,
+        part: textPart as UnifiedPart,
+      });
+      this.emit("message.updated", {
+        sessionId,
+        message: assistantMessage,
+      });
+    }, 10);
 
     return assistantMessage;
   }

@@ -4,13 +4,13 @@
 
 **[English](./README.md)** | [简体中文](./README.zh-CN.md) | [日本語](./README.ja.md) | [한국어](./README.ko.md)
 
-**One Interface. Every AI Coding Engine.**
+**The First Open-Source GUI for GitHub Copilot CLI.**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 <img src="https://raw.githubusercontent.com/realDuang/codemux/main/assets/logo.png" alt="CodeMux" width="120" />
 
-*A unified desktop & web client for multiple AI coding engines — OpenCode, GitHub Copilot CLI, and more. Access them all from any device, anywhere.*
+*A multi-engine AI coding client with full agent chain-of-thought visualization and zero-config secure remote access — not another chat wrapper.*
 
 <img src="https://raw.githubusercontent.com/realDuang/codemux/main/assets/screenshots/main-chat.jpg" alt="CodeMux - Multi-Engine AI Coding Interface" width="800" />
 
@@ -18,79 +18,39 @@
 
 ---
 
-## What is CodeMux?
+## Why CodeMux?
 
-AI coding agents are powerful — but fragmented. OpenCode, GitHub Copilot CLI, Claude Code each run in their own terminal with separate sessions, different protocols, and no shared interface.
+### 1. First GUI for GitHub Copilot CLI
 
-**CodeMux** is a multi-engine gateway that brings them all into one place. It connects to each engine at the protocol level and provides a unified desktop app and web interface to manage sessions across engines — from any device, even over the internet.
+GitHub Copilot is the most widely adopted AI coding tool in the world. **Copilot CLI** brings its full agentic capabilities to the terminal via the [ACP protocol](https://github.com/anthropics/agent-control-protocol) — but there's no graphical interface for it.
 
-This is not another multi-model chat wrapper. Each engine keeps its full capabilities — tool execution, file editing, shell access, session history — CodeMux just gives them a shared front door.
+**CodeMux is the first — and currently only — open-source GUI for Copilot CLI.** It connects at the protocol level (JSON-RPC over stdio), giving you Copilot's complete agentic coding experience in a visual interface.
 
----
+### 2. Multi-Engine, Not Multi-Model
 
-## Key Features
+This is not a chat wrapper that swaps API keys. CodeMux is a **protocol-level gateway** — each engine runs with its own runtime, sessions, tool execution, and capabilities fully preserved.
 
-| Category | Feature | Description |
-|----------|---------|-------------|
-| **Multi-Engine** | Unified Gateway | Switch between OpenCode, Copilot CLI, and more from a single interface |
-| | Protocol-Level Integration | Direct ACP (JSON-RPC/stdio) and HTTP+SSE connections — not process wrappers |
-| | Per-Engine Sessions | Each engine maintains its own sessions, history, and capabilities |
-| **Remote Access** | Access from Any Device | Use your phone, tablet, or any browser to reach your coding engines |
-| | One-Click Public Tunnel | Cloudflare Tunnel — no port forwarding, no VPN, no firewall changes |
-| | LAN + QR Code | Instant local network access with QR code for mobile devices |
-| **Interface** | Real-time Streaming | Live token streaming with tool call visualization |
-| | Step-by-Step Execution | Expandable tool calls showing file diffs, shell output, and more |
-| | Project Management | Group sessions by project directory across engines |
-| **Security** | Device Authorization | Each device must be approved before accessing |
-| | JWT + Access Codes | Token-based auth with 6-digit access codes for remote devices |
-| | Ephemeral Tunnel URLs | Public URLs rotate on every tunnel restart |
+Switch between engines from a single interface. Each keeps its full power — file editing, shell access, session history, project context — CodeMux just gives them a shared front door.
 
----
+| Engine | Protocol | Status |
+|--------|----------|--------|
+| **[OpenCode](https://opencode.ai)** | HTTP REST + SSE | ✅ Stable |
+| **[GitHub Copilot CLI](https://docs.github.com/en/copilot/using-github-copilot/using-github-copilot-coding-agent-in-cli)** | ACP (JSON-RPC/stdio) | ✅ Stable |
+| **[Claude Code](https://claude.ai/code)** | ACP | 🚧 Planned |
 
-## Supported Engines
+### 3. Agent Chain-of-Thought Visualization
 
-| Engine | Protocol | Status | Highlights |
-|--------|----------|--------|------------|
-| **[OpenCode](https://opencode.ai)** | HTTP REST + SSE | ✅ Stable | Multi-provider model selection, full session management, file/shell tools |
-| **[GitHub Copilot CLI](https://githubnext.com/projects/copilot-cli)** | ACP (JSON-RPC/stdio) | ✅ Stable | Native ACP integration, SQLite session history, Copilot's full agentic capabilities |
-| **[Claude Code](https://claude.ai/code)** | ACP | 🚧 Planned | Waiting for official ACP protocol support |
+Every agent action is rendered as an expandable step — file diffs, shell commands, search results, tool calls — so you can see exactly what the agent is doing and why, not just the final answer.
 
-### First Open-Source GUI for Copilot CLI
+<img src="https://raw.githubusercontent.com/realDuang/codemux/main/assets/screenshots/chat-steps.jpg" alt="CodeMux - Step-by-Step Agent Visualization" width="700" />
 
-GitHub Copilot is the most widely adopted AI coding tool in the world. With **Copilot CLI**, GitHub brought agentic coding capabilities to the terminal through the [ACP protocol](https://github.com/anthropics/agent-control-protocol).
+### 4. Zero-Config Secure Remote Access
 
-**CodeMux is the first — and currently only — open-source project that provides a graphical interface for Copilot CLI.** No other tool offers protocol-level ACP integration with a full GUI. If you use Copilot and want a visual interface for agentic coding, CodeMux is the only open-source option.
+Access your coding agents from any device — phone, tablet, or another machine — without touching a single config file.
 
-<img src="https://raw.githubusercontent.com/realDuang/codemux/main/assets/screenshots/chat-steps.jpg" alt="CodeMux - Step-by-Step Tool Execution" width="700" />
-
----
-
-## Architecture
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│  SolidJS UI (Desktop via Electron / Web via Browser)            │
-│                          │                                      │
-│              WebSocket (JSON-RPC)                               │
-│                          │                                      │
-│              ┌───────────┴───────────┐                          │
-│              │    Gateway Server     │                          │
-│              │    (Engine Manager)   │                          │
-│              └───┬───────┬───────┬───┘                          │
-│                  │       │       │                               │
-│           ┌──────┘   ┌───┘   ┌───┘                              │
-│           │          │       │                                   │
-│     ┌─────┴─────┐ ┌──┴───┐ ┌─┴──────┐                          │
-│     │ OpenCode  │ │Copilot│ │ Claude │                          │
-│     │ Adapter   │ │Adapter│ │Adapter │                          │
-│     │(HTTP+SSE) │ │ (ACP) │ │ (ACP)  │                          │
-│     └───────────┘ └──────┘ └────────┘                           │
-│                                                                  │
-│     Unified Type System: UnifiedPart, ToolPart, AgentMode        │
-└─────────────────────────────────────────────────────────────────┘
-```
-
-All engines share a **normalized type system** — tool calls, file operations, diffs, and messages are mapped to a common format (`UnifiedPart`), so the UI doesn't need to know which engine is running.
+- **LAN**: Auto-detected IP + QR code, ready in seconds
+- **Public Internet**: One-click [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/) — no port forwarding, no VPN, no firewall changes
+- **Security built-in**: Device authorization, JWT tokens, HTTPS via Cloudflare, ephemeral tunnel URLs that rotate on every restart
 
 ---
 
@@ -150,13 +110,11 @@ bun run dev
 
 ### Public Internet Access
 
-Access from anywhere with Cloudflare Tunnel:
+Access from anywhere with Cloudflare Tunnel — **no port forwarding, no firewall changes, no VPN:**
 
 1. Toggle **"Public Access"** in the Remote Access section
 2. Share the generated `*.trycloudflare.com` URL
 3. Remote device authenticates with the access code
-
-**No port forwarding. No firewall changes. No VPN.**
 
 ```
 Your Phone/Tablet
@@ -173,17 +131,7 @@ https://xyz.trycloudflare.com
   └─────────┴──────────┴───────────┘
 ```
 
-### Device Management
-
-- **View** all connected devices with last access time
-- **Rename** devices for easy identification
-- **Revoke** access per-device or revoke all at once
-
-<img src="https://raw.githubusercontent.com/realDuang/codemux/main/assets/screenshots/devices-management.jpg" alt="CodeMux - Device Management" width="700" />
-
----
-
-## Security
+### Security & Device Management
 
 | Layer | Protection |
 |-------|------------|
@@ -192,24 +140,40 @@ https://xyz.trycloudflare.com
 | **HTTPS** | Public tunnel uses HTTPS via Cloudflare automatically |
 | **Ephemeral URLs** | Tunnel URLs change on every restart |
 
-**Best Practices:**
-- Revoke access from devices you no longer use
-- Disable public tunnel when not needed
-- CodeMux is designed for personal use — not multi-user scenarios
+Manage connected devices from the Devices page — view last access time, rename for identification, or revoke access per-device.
+
+<img src="https://raw.githubusercontent.com/realDuang/codemux/main/assets/screenshots/devices-management.jpg" alt="CodeMux - Device Management" width="700" />
+
+> CodeMux is designed for personal use. Revoke devices you no longer use and disable the public tunnel when not needed.
 
 ---
 
-## Tech Stack
+## Architecture
 
-| Layer | Technology |
-|-------|------------|
-| Desktop Shell | Electron 33 |
-| Build System | electron-vite (Vite 5) |
-| Frontend | SolidJS 1.8 + TypeScript 5 |
-| Styling | Tailwind CSS v4 |
-| Engine Communication | WebSocket + JSON-RPC, HTTP+SSE, ACP (stdio) |
-| Packaging | electron-builder (DMG, NSIS) |
-| Tunnel | Cloudflare Tunnel (cloudflared) |
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  SolidJS UI (Desktop via Electron / Web via Browser)            │
+│                          │                                      │
+│              WebSocket (JSON-RPC)                               │
+│                          │                                      │
+│              ┌───────────┴───────────┐                          │
+│              │    Gateway Server     │                          │
+│              │    (Engine Manager)   │                          │
+│              └───┬───────┬───────┬───┘                          │
+│                  │       │       │                              │
+│            ┌─────┘    ┌──┘      ┌┘                              │
+│            │          │         │                               │
+│      ┌─────┴─────┐ ┌──┴────┐ ┌──┴─────┐                         │
+│      │ OpenCode  │ │Copilot│ │ Claude │                         │
+│      │ Adapter   │ │Adapter│ │Adapter │                         │
+│      │(HTTP+SSE) │ │ (ACP) │ │ (ACP)  │                         │
+│      └───────────┘ └───────┘ └────────┘                         │
+│                                                                 │
+│     Unified Type System: UnifiedPart, ToolPart, AgentMode       │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+All engines share a **normalized type system** — tool calls, file operations, diffs, and messages are mapped to a common format (`UnifiedPart`), so the UI doesn't need to know which engine is running.
 
 ---
 

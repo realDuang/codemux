@@ -7,6 +7,8 @@
 
 export type EngineType = "opencode" | "copilot" | "claude" | (string & {});
 
+export type SessionActivityStatus = "idle" | "running" | "completed" | "waiting" | "error";
+
 export type EngineStatus = "stopped" | "starting" | "running" | "error";
 
 export interface EngineInfo {
@@ -81,6 +83,12 @@ export interface UnifiedModelInfo {
     attachment?: boolean;
     toolcall?: boolean;
   };
+}
+
+/** Result of listing models — includes which model is currently active */
+export interface ModelListResult {
+  models: UnifiedModelInfo[];
+  currentModelId?: string;
 }
 
 // --- Session ---
@@ -279,6 +287,43 @@ export interface PermissionReply {
   optionId: string;
 }
 
+// --- Question ---
+
+export interface QuestionOption {
+  label: string;
+  description: string;
+}
+
+export interface QuestionInfo {
+  /** The full question text */
+  question: string;
+  /** Short label (max 30 chars) */
+  header: string;
+  /** Available choices */
+  options: QuestionOption[];
+  /** Allow selecting multiple options */
+  multiple?: boolean;
+  /** Allow typing a custom answer (default: true) */
+  custom?: boolean;
+}
+
+export interface UnifiedQuestion {
+  id: string;
+  sessionId: string;
+  engineType: EngineType;
+  /** Related tool call ID */
+  toolCallId?: string;
+  /** The questions to ask the user */
+  questions: QuestionInfo[];
+  metadata?: Record<string, unknown>;
+}
+
+export interface QuestionReplyRequest {
+  questionId: string;
+  /** Each element is the selected labels for the corresponding question */
+  answers: string[][];
+}
+
 // --- Project ---
 
 export interface UnifiedProject {
@@ -358,6 +403,10 @@ export const GatewayRequestType = {
   // Permission
   PERMISSION_REPLY: "permission.reply",
 
+  // Question
+  QUESTION_REPLY: "question.reply",
+  QUESTION_REJECT: "question.reject",
+
   // Project
   PROJECT_LIST: "project.list",
   PROJECT_SET_ENGINE: "project.setEngine",
@@ -383,6 +432,9 @@ export const GatewayNotificationType = {
   SESSION_CREATED: "session.created",
   PERMISSION_ASKED: "permission.asked",
   PERMISSION_REPLIED: "permission.replied",
+  QUESTION_ASKED: "question.asked",
+  QUESTION_REPLIED: "question.replied",
+  QUESTION_REJECTED: "question.rejected",
   ENGINE_STATUS_CHANGED: "engine.status.changed",
 } as const;
 

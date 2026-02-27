@@ -21,6 +21,7 @@ import {
   type SessionCreateRequest,
   type MessageSendRequest,
   type PermissionReplyRequest,
+  type QuestionReplyRequest,
   type ProjectSetEngineRequest,
   type ModelSetRequest,
   type ModeSetRequest,
@@ -288,6 +289,20 @@ export class GatewayServer {
         );
       }
 
+      // Question
+      case GatewayRequestType.QUESTION_REPLY: {
+        const req = p as QuestionReplyRequest;
+        return this.engineManager.replyQuestion(
+          req.questionId,
+          req.answers,
+        );
+      }
+
+      case GatewayRequestType.QUESTION_REJECT: {
+        const req = p as QuestionReplyRequest;
+        return this.engineManager.rejectQuestion(req.questionId);
+      }
+
       // Project
       case GatewayRequestType.PROJECT_LIST:
         return this.engineManager.listProjects(p.engineType as EngineType);
@@ -366,6 +381,20 @@ export class GatewayServer {
     em.on("permission.replied", (data) => {
       this.broadcast({
         type: GatewayNotificationType.PERMISSION_REPLIED,
+        payload: data,
+      });
+    });
+
+    em.on("question.asked", (data) => {
+      this.broadcast({
+        type: GatewayNotificationType.QUESTION_ASKED,
+        payload: data,
+      });
+    });
+
+    em.on("question.replied", (data) => {
+      this.broadcast({
+        type: GatewayNotificationType.QUESTION_REPLIED,
         payload: data,
       });
     });

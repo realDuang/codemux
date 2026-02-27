@@ -8,11 +8,11 @@ import {
   onCleanup,
 } from "solid-js";
 import { messageStore, isExpanded, toggleExpanded } from "../stores/message";
-import { Part, ProviderIcon, PermissionPrompt } from "./share/part";
+import { Part, ProviderIcon, PermissionPrompt, QuestionPrompt } from "./share/part";
 import { ContentError } from "./share/content-error";
 import { IconSparkles } from "./icons";
 import { useI18n } from "../lib/i18n";
-import type { UnifiedMessage, UnifiedPart, UnifiedPermission, ToolPart } from "../types/unified";
+import type { UnifiedMessage, UnifiedPart, UnifiedPermission, UnifiedQuestion, ToolPart } from "../types/unified";
 import { Spinner } from "./Spinner";
 
 import styles from "./SessionTurn.module.css";
@@ -24,6 +24,8 @@ interface SessionTurnProps {
   isLastTurn: boolean;
   isWorking: boolean;
   onPermissionRespond?: (sessionID: string, permissionID: string, reply: string) => void;
+  onQuestionRespond?: (sessionID: string, questionID: string, answers: string[][]) => void;
+  onQuestionDismiss?: (sessionID: string, questionID: string) => void;
 }
 
 /**
@@ -158,6 +160,46 @@ export function SessionTurn(props: SessionTurnProps) {
       }
     }
     return permissions().filter(p => !matched.has(p.id));
+  });
+
+  // Get pending questions for this session
+  const questions = createMemo(
+    () => messageStore.question[props.sessionID] || []
+  );
+
+  // Get question for a specific tool part (by callId)
+  const getQuestionForPart = (part: UnifiedPart) => {
+    if (part.type !== "tool") return undefined;
+    const tp = part as ToolPart;
+    // Direct match by callId
+    const direct = questions().find(q => q.toolCallId === tp.callId);
+    if (direct) return direct;
+    // Fallback: if there's only one unmatched question and this is the only pending/running tool
+    if (tp.state.status === "pending" || tp.state.status === "running") {
+      const unmatchedQs = questions().filter(q => {
+        for (const msg of props.assistantMessages) {
+          const parts = messageStore.part[msg.id] || [];
+          if (parts.some((pp: any) => pp.type === "tool" && pp.callId === q.toolCallId)) return false;
+        }
+        return true;
+      });
+      if (unmatchedQs.length === 1) return unmatchedQs[0];
+    }
+    return undefined;
+  };
+
+  // Get questions that don't match any tool part (need standalone rendering)
+  const unmatchedQuestions = createMemo(() => {
+    const matched = new Set<string>();
+    for (const msg of props.assistantMessages) {
+      const parts = messageStore.part[msg.id] || [];
+      for (const p of parts) {
+        if (p.type !== "tool") continue;
+        const q = getQuestionForPart(p);
+        if (q) matched.add(q.id);
+      }
+    }
+    return questions().filter(q => !matched.has(q.id));
   });
 
   // Check if there are any tool parts (steps)
@@ -401,6 +443,9 @@ export function SessionTurn(props: SessionTurnProps) {
                             message={item.message}
                             permission={getPermissionForPart(part())}
                             onPermissionRespond={props.onPermissionRespond}
+                            question={getQuestionForPart(part())}
+                            onQuestionRespond={props.onQuestionRespond}
+                            onQuestionDismiss={props.onQuestionDismiss}
                           />
                         )}
                       </Index>
@@ -415,6 +460,16 @@ export function SessionTurn(props: SessionTurnProps) {
                 <PermissionPrompt
                   permission={perm}
                   onRespond={props.onPermissionRespond}
+                />
+              )}
+            </For>
+            {/* Render unmatched questions that couldn't be associated with any tool part */}
+            <For each={unmatchedQuestions()}>
+              {(q) => (
+                <QuestionPrompt
+                  question={q}
+                  onRespond={props.onQuestionRespond}
+                  onDismiss={props.onQuestionDismiss}
                 />
               )}
             </For>
@@ -449,6 +504,44 @@ export function SessionTurn(props: SessionTurnProps) {
                     <PermissionPrompt
                       permission={perm}
                       onRespond={props.onPermissionRespond}
+                    />
+                  );
+                }}
+              </For>
+            </div>
+          </Show>
+
+          {/* Question prompts for running tools (show even when steps collapsed) */}
+          <Show when={questions().length > 0 && !stepsExpanded()}>
+            <div class={styles.permissionPrompts}>
+              <For each={questions()}>
+                {(q) => {
+                  // Find the tool part for this question
+                  for (const msg of props.assistantMessages) {
+                    const parts = messageStore.part[msg.id] || [];
+                    for (let i = 0; i < parts.length; i++) {
+                      const p = parts[i];
+                      if (p.type === "tool" && getQuestionForPart(p)?.id === q.id) {
+                        return (
+                          <Part
+                            last={false}
+                            part={p}
+                            index={i}
+                            message={msg}
+                            question={q}
+                            onQuestionRespond={props.onQuestionRespond}
+                            onQuestionDismiss={props.onQuestionDismiss}
+                          />
+                        );
+                      }
+                    }
+                  }
+                  // No matching tool part found — render standalone question prompt
+                  return (
+                    <QuestionPrompt
+                      question={q}
+                      onRespond={props.onQuestionRespond}
+                      onDismiss={props.onQuestionDismiss}
                     />
                   );
                 }}

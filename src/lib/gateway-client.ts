@@ -18,13 +18,16 @@ import {
   type UnifiedSession,
   type UnifiedMessage,
   type UnifiedModelInfo,
+  type ModelListResult,
   type UnifiedProject,
   type UnifiedPermission,
+  type UnifiedQuestion,
   type UnifiedPart,
   type AgentMode,
   type SessionCreateRequest,
   type MessageSendRequest,
   type PermissionReplyRequest,
+  type QuestionReplyRequest,
   type ProjectSetEngineRequest,
   type ModelSetRequest,
   type ModeSetRequest,
@@ -45,6 +48,8 @@ export interface GatewayClientEvents {
   "session.created": (data: { session: UnifiedSession }) => void;
   "permission.asked": (data: { permission: UnifiedPermission }) => void;
   "permission.replied": (data: { permissionId: string; optionId: string }) => void;
+  "question.asked": (data: { question: UnifiedQuestion }) => void;
+  "question.replied": (data: { questionId: string; answers: string[][] }) => void;
   "engine.status.changed": (data: { engineType: EngineType; status: string; error?: string }) => void;
 }
 
@@ -317,7 +322,7 @@ export class GatewayClient {
 
   // --- Model API ---
 
-  listModels(engineType: EngineType): Promise<UnifiedModelInfo[]> {
+  listModels(engineType: EngineType): Promise<ModelListResult> {
     return this.request(GatewayRequestType.MODEL_LIST, { engineType });
   }
 
@@ -335,6 +340,16 @@ export class GatewayClient {
 
   replyPermission(req: PermissionReplyRequest): Promise<void> {
     return this.request(GatewayRequestType.PERMISSION_REPLY, req);
+  }
+
+  // --- Question API ---
+
+  replyQuestion(req: QuestionReplyRequest): Promise<void> {
+    return this.request(GatewayRequestType.QUESTION_REPLY, req);
+  }
+
+  rejectQuestion(questionId: string): Promise<void> {
+    return this.request(GatewayRequestType.QUESTION_REJECT, { questionId });
   }
 
   // --- Project API ---

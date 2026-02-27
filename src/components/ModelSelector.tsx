@@ -1,8 +1,6 @@
 import { createSignal, createEffect, For, Show, onCleanup } from "solid-js";
-import { gateway } from "../lib/gateway-api";
-import { configStore, setConfigStore } from "../stores/config";
+import { configStore } from "../stores/config";
 import { useI18n } from "../lib/i18n";
-import { logger } from "../lib/logger";
 import type { EngineType } from "../types/unified";
 
 interface ModelSelectorProps {
@@ -15,52 +13,69 @@ export function ModelSelector(props: ModelSelectorProps) {
   const [isOpen, setIsOpen] = createSignal(false);
   const [selectedProvider, setSelectedProvider] = createSignal<string>("");
   const [selectedModel, setSelectedModel] = createSignal<string>("");
+  let containerRef: HTMLDivElement | undefined;
 
-  let disposed = false;
-  onCleanup(() => { disposed = true; });
-
-  // Load models from gateway — re-runs when engineType changes
-  createEffect(async () => {
-    const engineType = props.engineType || "opencode";
-    try {
-      const models = await gateway.listModels(engineType);
-      if (disposed) return;
-      setConfigStore({
-        models: models,
-        loading: false,
+  // Close dropdown on outside click without using a full-screen overlay
+  // (a fixed inset-0 overlay can block the textarea from receiving focus)
+  createEffect(() => {
+    if (isOpen()) {
+      const handleOutsideClick = (e: MouseEvent) => {
+        if (containerRef && !containerRef.contains(e.target as Node)) {
+          setIsOpen(false);
+        }
+      };
+      // Use capture phase + setTimeout so the current click that opened
+      // the dropdown doesn't immediately close it
+      const timer = setTimeout(() => {
+        document.addEventListener("pointerdown", handleOutsideClick, true);
+      }, 0);
+      onCleanup(() => {
+        clearTimeout(timer);
+        document.removeEventListener("pointerdown", handleOutsideClick, true);
       });
+    }
+  });
 
-      // Try to restore last selected model from localStorage
-      const savedModelStr = localStorage.getItem("opencode_default_model");
-      const savedModel = savedModelStr ? JSON.parse(savedModelStr) : null;
-      if (savedModel) {
-        const exists = models.find(m => m.modelId === savedModel.modelID && m.providerId === savedModel.providerID);
-        if (exists) {
-          setSelectedProvider(savedModel.providerID);
-          setSelectedModel(savedModel.modelID);
-          props.onModelChange?.(savedModel.providerID, savedModel.modelID);
-          return;
-        }
-      }
+  // Purely reactive: read models and currentModelID from configStore.
+  // All model-fetching is done by Chat.tsx which controls timing to avoid
+  // race conditions with ACP adapters that only populate models after
+  // session/new or session/load.
+  createEffect(() => {
+    const models = configStore.models;
+    const currentId = configStore.currentModelID;
 
-      // If no saved selection or invalid, use first model
-      if (models.length > 0) {
-        const first = models[0];
-        setSelectedProvider(first.providerId || "");
-        setSelectedModel(first.modelId);
-        props.onModelChange?.(first.providerId || "", first.modelId);
-      }
-    } catch (error) {
-      if (!disposed) {
-        // Ignore "Not connected" errors — ModelSelector may mount before
-        // gateway.init() completes (e.g. navigating back from Settings).
-        // Models will be loaded once the gateway connects and Chat initializes.
-        const msg = error instanceof Error ? error.message : "";
-        if (!msg.includes("Not connected")) {
-          logger.error("Failed to load models:", error);
-        }
+    if (models.length === 0) return;
+
+    // If engine reports a current model, use it (e.g. Copilot CLI
+    // determines the model at startup and cannot switch at runtime)
+    if (currentId) {
+      const current = models.find(m => m.modelId === currentId);
+      if (current) {
+        setSelectedProvider(current.providerId || "");
+        setSelectedModel(current.modelId);
+        props.onModelChange?.(current.providerId || "", current.modelId);
+        return;
       }
     }
+
+    // Try to restore last selected model from localStorage
+    const savedModelStr = localStorage.getItem("opencode_default_model");
+    const savedModel = savedModelStr ? JSON.parse(savedModelStr) : null;
+    if (savedModel) {
+      const exists = models.find(m => m.modelId === savedModel.modelID && m.providerId === savedModel.providerID);
+      if (exists) {
+        setSelectedProvider(savedModel.providerID);
+        setSelectedModel(savedModel.modelID);
+        props.onModelChange?.(savedModel.providerID, savedModel.modelID);
+        return;
+      }
+    }
+
+    // Default to first model
+    const first = models[0];
+    setSelectedProvider(first.providerId || "");
+    setSelectedModel(first.modelId);
+    props.onModelChange?.(first.providerId || "", first.modelId);
   });
 
   // Group models by provider for display
@@ -98,11 +113,19 @@ export function ModelSelector(props: ModelSelectorProps) {
     return model?.name || "";
   };
 
+  // Copilot engine doesn't support runtime model switching — display only
+  const isModelLocked = () => configStore.currentEngineType === "copilot";
+
   return (
-    <div class="relative">
+    <div ref={containerRef} class="relative">
       <button
-        onClick={() => setIsOpen(!isOpen())}
-        class="px-3 py-1.5 text-xs font-medium rounded-md transition-all flex items-center gap-1.5 bg-gray-100 dark:bg-slate-800 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-slate-700"
+        onClick={() => !isModelLocked() && setIsOpen(!isOpen())}
+        class={`px-3 py-1.5 text-xs font-medium rounded-md transition-all flex items-center gap-1.5 bg-gray-100 dark:bg-slate-800 text-gray-600 dark:text-gray-400 ${
+          isModelLocked()
+            ? "cursor-default opacity-75"
+            : "hover:bg-gray-200 dark:hover:bg-slate-700"
+        }`}
+        title={isModelLocked() ? "Model is determined by Copilot CLI config" : undefined}
       >
         <svg
           xmlns="http://www.w3.org/2000/svg"
@@ -121,23 +144,25 @@ export function ModelSelector(props: ModelSelectorProps) {
         <span class="max-w-[120px] truncate">
           {selectedModelName() || t().model.selectModel}
         </span>
-        <svg
-          xmlns="http://www.w3.org/2000/svg"
-          width="12"
-          height="12"
-          viewBox="0 0 20 20"
-          fill="currentColor"
-          class={`transition-transform ${isOpen() ? "rotate-180" : ""}`}
-        >
-          <path
-            fill-rule="evenodd"
-            d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z"
-            clip-rule="evenodd"
-          />
-        </svg>
+        <Show when={!isModelLocked()}>
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            width="12"
+            height="12"
+            viewBox="0 0 20 20"
+            fill="currentColor"
+            class={`transition-transform ${isOpen() ? "rotate-180" : ""}`}
+          >
+            <path
+              fill-rule="evenodd"
+              d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z"
+              clip-rule="evenodd"
+            />
+          </svg>
+        </Show>
       </button>
 
-      <Show when={isOpen()}>
+      <Show when={isOpen() && !isModelLocked()}>
         {/* Dropdown menu - opens upward */}
         <div class="absolute left-0 md:left-auto md:right-0 bottom-full mb-2 w-72 md:w-80 bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-lg shadow-lg z-[60] max-h-[60vh] overflow-y-auto">
           <Show
@@ -181,14 +206,6 @@ export function ModelSelector(props: ModelSelectorProps) {
             </For>
           </Show>
         </div>
-      </Show>
-
-      {/* Close dropdown on outside click */}
-      <Show when={isOpen()}>
-        <div
-          class="fixed inset-0 z-[55]"
-          onClick={() => setIsOpen(false)}
-        ></div>
       </Show>
     </div>
   );

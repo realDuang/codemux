@@ -14,7 +14,9 @@ import type {
   UnifiedMessage,
   UnifiedPart,
   UnifiedPermission,
+  UnifiedQuestion,
   UnifiedModelInfo,
+  ModelListResult,
   UnifiedProject,
   AgentMode,
   MessagePromptContent,
@@ -50,6 +52,15 @@ export interface EngineAdapterEvents {
   "permission.replied": (data: {
     permissionId: string;
     optionId: string;
+  }) => void;
+
+  /** A question request from the agent */
+  "question.asked": (data: { question: UnifiedQuestion }) => void;
+
+  /** A question was replied to */
+  "question.replied": (data: {
+    questionId: string;
+    answers: string[][];
   }) => void;
 
   /** Engine status changed */
@@ -148,7 +159,7 @@ export abstract class EngineAdapter extends EventEmitter {
   // --- Models ---
 
   /** List available models */
-  abstract listModels(): Promise<UnifiedModelInfo[]>;
+  abstract listModels(): Promise<ModelListResult>;
 
   /** Set the active model for a session */
   abstract setModel(sessionId: string, modelId: string): Promise<void>;
@@ -167,6 +178,19 @@ export abstract class EngineAdapter extends EventEmitter {
   abstract replyPermission(
     permissionId: string,
     reply: PermissionReply,
+  ): Promise<void>;
+
+  // --- Questions ---
+
+  /** Reply to a question request */
+  abstract replyQuestion(
+    questionId: string,
+    answers: string[][],
+  ): Promise<void>;
+
+  /** Reject/dismiss a question request */
+  abstract rejectQuestion(
+    questionId: string,
   ): Promise<void>;
 
   // --- Projects ---

@@ -33,6 +33,13 @@ export interface LocaleDict {
     allowAlways: string;
     waitingApproval: string;
   };
+  // Question
+  question: {
+    submit: string;
+    dismiss: string;
+    customPlaceholder: string;
+    waitingAnswer: string;
+  };
 
   // Login page
   login: {
@@ -55,6 +62,8 @@ export interface LocaleDict {
     logout: string;
     startConversation: string;
     startConversationDesc: string;
+    noSessionSelected: string;
+    noSessionSelectedDesc: string;
     initFailed: string;
     retry: string;
     disclaimer: string;
@@ -305,6 +314,13 @@ export const en: LocaleDict = {
     allowAlways: "Allow always",
     waitingApproval: "Waiting for approval",
   },
+  // Question
+  question: {
+    submit: "Submit",
+    dismiss: "Dismiss",
+    customPlaceholder: "Type a custom answer...",
+    waitingAnswer: "Waiting for answer",
+  },
 
   // Login page
   login: {
@@ -327,6 +343,8 @@ export const en: LocaleDict = {
     logout: "Logout",
     startConversation: "Start a new conversation",
     startConversationDesc: "Select a model and type any question in the input box below to start chatting.",
+    noSessionSelected: "No session selected",
+    noSessionSelectedDesc: "Select a session from the sidebar or create a new one to get started.",
     initFailed: "Initialization Failed",
     retry: "Retry",
     disclaimer: "AI-generated content may be inaccurate. Please verify important information.",

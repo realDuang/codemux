@@ -15,6 +15,7 @@ import type {
   UnifiedMessage,
   UnifiedPart,
   UnifiedModelInfo,
+  ModelListResult,
   UnifiedProject,
   AgentMode,
   MessagePromptContent,
@@ -261,8 +262,8 @@ export class MockEngineAdapter extends EngineAdapter {
   // Models
   // ---------------------------------------------------------------------------
 
-  async listModels(): Promise<UnifiedModelInfo[]> {
-    return [
+  async listModels(): Promise<ModelListResult> {
+    return { models: [
       {
         modelId: "mock/test-model",
         name: "Test Model",
@@ -275,7 +276,7 @@ export class MockEngineAdapter extends EngineAdapter {
         engineType: this.engineType,
         description: "A fast mock model for testing purposes",
       },
-    ];
+    ] };
   }
 
   async setModel(sessionId: string, modelId: string): Promise<void> {
@@ -314,6 +315,14 @@ export class MockEngineAdapter extends EngineAdapter {
       permissionId,
       optionId: reply.optionId,
     });
+  }
+
+  async replyQuestion(_questionId: string, _answers: string[][]): Promise<void> {
+    // no-op for mock
+  }
+
+  async rejectQuestion(_questionId: string): Promise<void> {
+    // no-op for mock
   }
 
   // ---------------------------------------------------------------------------

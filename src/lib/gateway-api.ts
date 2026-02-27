@@ -14,8 +14,10 @@ import type {
   UnifiedMessage,
   UnifiedPart,
   UnifiedModelInfo,
+  ModelListResult,
   UnifiedProject,
   UnifiedPermission,
+  UnifiedQuestion,
   AgentMode,
   SessionCreateRequest,
   MessageSendRequest,
@@ -34,6 +36,8 @@ export interface GatewayNotificationHandlers {
   onSessionCreated?: (session: UnifiedSession) => void;
   onPermissionAsked?: (permission: UnifiedPermission) => void;
   onPermissionReplied?: (permissionId: string, optionId: string) => void;
+  onQuestionAsked?: (question: UnifiedQuestion) => void;
+  onQuestionReplied?: (questionId: string, answers: string[][]) => void;
   onEngineStatusChanged?: (engineType: EngineType, status: string, error?: string) => void;
   onConnected?: () => void;
   onDisconnected?: (reason: string) => void;
@@ -138,6 +142,14 @@ class GatewayAPI {
       this.handlers.onPermissionReplied?.(data.permissionId, data.optionId);
     });
 
+    this.bind("question.asked", (data) => {
+      this.handlers.onQuestionAsked?.(data.question);
+    });
+
+    this.bind("question.replied", (data) => {
+      this.handlers.onQuestionReplied?.(data.questionId, data.answers);
+    });
+
     this.bind("engine.status.changed", (data) => {
       this.handlers.onEngineStatusChanged?.(data.engineType, data.status, data.error);
     });
@@ -200,7 +212,7 @@ class GatewayAPI {
 
   // --- Model ---
 
-  listModels(engineType: EngineType): Promise<UnifiedModelInfo[]> {
+  listModels(engineType: EngineType): Promise<ModelListResult> {
     return gatewayClient.listModels(engineType);
   }
 
@@ -218,6 +230,16 @@ class GatewayAPI {
 
   replyPermission(permissionId: string, optionId: string): Promise<void> {
     return gatewayClient.replyPermission({ permissionId, optionId });
+  }
+
+  // --- Question ---
+
+  replyQuestion(questionId: string, answers: string[][]): Promise<void> {
+    return gatewayClient.replyQuestion({ questionId, answers });
+  }
+
+  rejectQuestion(questionId: string): Promise<void> {
+    return gatewayClient.rejectQuestion(questionId);
   }
 
   // --- Project ---

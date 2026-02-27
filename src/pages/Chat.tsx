@@ -4,6 +4,7 @@ import {
   createMemo,
   onCleanup,
   Show,
+  For,
   onMount,
 } from "solid-js";
 import { Auth } from "../lib/auth";
@@ -21,7 +22,7 @@ import { PromptInput } from "../components/PromptInput";
 import { SessionSidebar } from "../components/SessionSidebar";
 import { HideProjectModal } from "../components/HideProjectModal";
 import { AddProjectModal } from "../components/AddProjectModal";
-import type { UnifiedMessage, UnifiedPart, UnifiedPermission, UnifiedSession, UnifiedProject, AgentMode, EngineType } from "../types/unified";
+import type { UnifiedMessage, UnifiedPart, UnifiedPermission, UnifiedQuestion, UnifiedSession, UnifiedProject, AgentMode, EngineType, SessionActivityStatus } from "../types/unified";
 import { useI18n } from "../lib/i18n";
 import { ProjectStore } from "../lib/project-store";
 import { configStore, setConfigStore } from "../stores/config";
@@ -83,9 +84,78 @@ export default function Chat() {
   const setSendingFor = (sessionId: string, value: boolean) => {
     setSendingMap((prev) => ({ ...prev, [sessionId]: value }));
   };
+
+  // Track sessions that completed while user was viewing another session
+  const [unreadSessions, setUnreadSessions] = createSignal<Set<string>>(new Set());
+  let prevSendingMap: Record<string, boolean> = {};
+  createEffect(() => {
+    const currentMap = sendingMap();
+    const currentSession = sessionStore.current;
+    for (const [sessionId, wasSending] of Object.entries(prevSendingMap)) {
+      if (wasSending && !currentMap[sessionId] && sessionId !== currentSession) {
+        setUnreadSessions((prev) => {
+          const next = new Set(prev);
+          next.add(sessionId);
+          return next;
+        });
+      }
+    }
+    prevSendingMap = { ...currentMap };
+  });
+
+  // Compute activity status for each session
+  const sessionStatusMap = createMemo((): Record<string, SessionActivityStatus> => {
+    const map: Record<string, SessionActivityStatus> = {};
+    const currentSending = sendingMap();
+    const unread = unreadSessions();
+    for (const session of sessionStore.list) {
+      const sid = session.id;
+      // Priority: waiting > running > error > completed > idle
+      const pendingPerms = messageStore.permission[sid];
+      if (pendingPerms && pendingPerms.length > 0) {
+        map[sid] = "waiting";
+        continue;
+      }
+      const pendingQuestions = messageStore.question[sid];
+      if (pendingQuestions && pendingQuestions.length > 0) {
+        map[sid] = "waiting";
+        continue;
+      }
+      if (currentSending[sid]) {
+        map[sid] = "running";
+        continue;
+      }
+      const messages = messageStore.message[sid];
+      if (messages && messages.length > 0) {
+        const lastAssistant = [...messages].reverse().find((m) => m.role === "assistant");
+        if (lastAssistant?.error) {
+          map[sid] = "error";
+          continue;
+        }
+      }
+      if (unread.has(sid)) {
+        map[sid] = "completed";
+        continue;
+      }
+      map[sid] = "idle";
+    }
+    return map;
+  });
   const [messagesRef, setMessagesRef] = createSignal<HTMLDivElement>();
   const [loadingMessages, setLoadingMessages] = createSignal(false);
   const [userScrolledUp, setUserScrolledUp] = createSignal(false);
+
+  // Current session's pending permissions and questions (for input area replacement)
+  const currentPermissions = createMemo(() => {
+    const sid = sessionStore.current;
+    if (!sid) return [];
+    return messageStore.permission[sid] || [];
+  });
+  const currentQuestions = createMemo(() => {
+    const sid = sessionStore.current;
+    if (!sid) return [];
+    return messageStore.question[sid] || [];
+  });
 
   const getDisplayTitle = (title: string): string => {
     if (!title || isDefaultTitle(title)) {
@@ -263,6 +333,8 @@ export default function Chat() {
         onSessionUpdated: handleSessionUpdated,
         onPermissionAsked: handlePermissionAsked,
         onPermissionReplied: handlePermissionReplied,
+        onQuestionAsked: handleQuestionAsked,
+        onQuestionReplied: handleQuestionReplied,
         onEngineStatusChanged: (engineType, status, error) => {
           setConfigStore("engines", (engines) =>
             engines.map(e => e.type === engineType ? { ...e, status: status as any } : e)
@@ -350,16 +422,7 @@ export default function Chat() {
         new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
       );
 
-      let currentSession = processedSessions[0];
-      if (!currentSession) {
-        logger.debug("[Init] No sessions found, creating new one");
-        const defaultProject = validProjects[0];
-        const defaultDir = defaultProject?.directory || ".";
-        const defaultEngine = defaultProject?.engineType || "opencode";
-        const newSession = await gateway.createSession(defaultEngine, defaultDir);
-        currentSession = toSessionInfo(newSession);
-        processedSessions.push(currentSession);
-      }
+      const currentSession = processedSessions[0] ?? null;
 
       // Merge with existing sessions: keep sessions already in list that weren't
       // returned by backend (e.g. Copilot doesn't persist completed sessions in
@@ -381,11 +444,29 @@ export default function Chat() {
       setSessionStore({
         list: mergedSessions,
         projects: validProjects,
-        current: currentSession.id,
+        current: currentSession?.id ?? null,
         loading: false,
       });
 
-      await loadSessionMessages(currentSession.id);
+      if (currentSession) {
+        await loadSessionMessages(currentSession.id);
+
+        // Refresh model list after session init — ACP engines only populate
+        // models/currentModelId after createSession or loadSession, so the
+        // ModelSelector's initial listModels call may have returned empty.
+        const initEngineType = currentSession.engineType || configStore.currentEngineType || "opencode";
+        try {
+          const modelResult = await gateway.listModels(initEngineType);
+          if (modelResult.models.length > 0) {
+            setConfigStore("models", modelResult.models);
+          }
+          if (modelResult.currentModelId) {
+            setConfigStore("currentModelID", modelResult.currentModelId);
+          }
+        } catch {
+          // Non-critical
+        }
+      }
     } catch (error) {
       if (disposed) return;
       logger.error("[Init] Session initialization failed:", error);
@@ -399,6 +480,14 @@ export default function Chat() {
     logger.debug("[SelectSession] Switching to session:", sessionId);
     setSessionStore("current", sessionId);
     setSessionStore("initError", null);
+
+    // Clear unread status when user switches to this session
+    setUnreadSessions((prev) => {
+      if (!prev.has(sessionId)) return prev;
+      const next = new Set(prev);
+      next.delete(sessionId);
+      return next;
+    });
 
     // Update currentEngineType for model selector
     const session = sessionStore.list.find(s => s.id === sessionId);
@@ -421,6 +510,21 @@ export default function Chat() {
       await loadSessionMessages(sessionId);
     } else {
       setTimeout(() => scrollToBottom(true), 100);
+    }
+
+    // Refresh model list — ACP adapters populate models/currentModelId
+    // after loadSession, so we need to re-fetch after messages are loaded.
+    const switchEngineType = session?.engineType || configStore.currentEngineType || "opencode";
+    try {
+      const modelResult = await gateway.listModels(switchEngineType);
+      if (modelResult.models.length > 0) {
+        setConfigStore("models", modelResult.models);
+      }
+      if (modelResult.currentModelId) {
+        setConfigStore("currentModelID", modelResult.currentModelId);
+      }
+    } catch {
+      // Non-critical
     }
   };
 
@@ -467,9 +571,13 @@ export default function Chat() {
         }
 
         // Refresh model list (ACP adapter now has models populated from createSession)
-        const models = await gateway.listModels(engineType);
-        if (models.length > 0) {
-          setConfigStore("models", models);
+        const modelResult = await gateway.listModels(engineType);
+        if (modelResult.models.length > 0) {
+          setConfigStore("models", modelResult.models);
+        }
+        // Propagate engine's current model so ModelSelector picks it up
+        if (modelResult.currentModelId) {
+          setConfigStore("currentModelID", modelResult.currentModelId);
         }
       } catch {
         // Non-critical: mode list may be stale but won't block
@@ -773,6 +881,61 @@ export default function Chat() {
     }
   };
 
+  const handleQuestionAsked = (question: UnifiedQuestion) => {
+    logger.debug("[WS] Question asked:", question);
+    const existing = messageStore.question[question.sessionId] || [];
+    if (!existing.find((q) => q.id === question.id)) {
+      setMessageStore("question", question.sessionId, [...existing, question]);
+    }
+  };
+
+  const handleQuestionReplied = (questionId: string, _answers: string[][]) => {
+    logger.debug("[WS] Question replied:", questionId);
+    // Find and remove question from all sessions
+    for (const [sessionId, qs] of Object.entries(messageStore.question)) {
+      if (!qs) continue;
+      const filtered = qs.filter((q) => q.id !== questionId);
+      if (filtered.length !== qs.length) {
+        setMessageStore("question", sessionId, filtered);
+      }
+    }
+  };
+
+  const handleQuestionRespond = async (
+    sessionID: string,
+    questionID: string,
+    answers: string[][],
+  ) => {
+    logger.debug("[Question] Responding:", { sessionID, questionID, answers });
+
+    try {
+      await gateway.replyQuestion(questionID, answers);
+
+      // Optimistically remove from queue
+      const existing = messageStore.question[sessionID] || [];
+      setMessageStore("question", sessionID, existing.filter(q => q.id !== questionID));
+    } catch (error) {
+      logger.error("[Question] Failed to respond:", error);
+    }
+  };
+
+  const handleQuestionDismiss = async (
+    sessionID: string,
+    questionID: string,
+  ) => {
+    logger.debug("[Question] Dismissing:", { sessionID, questionID });
+
+    try {
+      await gateway.rejectQuestion(questionID);
+
+      // Optimistically remove from queue
+      const existing = messageStore.question[sessionID] || [];
+      setMessageStore("question", sessionID, existing.filter(q => q.id !== questionID));
+    } catch (error) {
+      logger.error("[Question] Failed to dismiss:", error);
+    }
+  };
+
   const handleSendMessage = async (text: string, agent: AgentMode) => {
     const sessionId = sessionStore.current;
     if (!sessionId || sending()) return;
@@ -877,6 +1040,7 @@ export default function Chat() {
               sessions={sessionStore.list}
               projects={sessionStore.projects}
               currentSessionId={sessionStore.current}
+              getSessionStatus={(sessionId: string) => sessionStatusMap()[sessionId] || "idle"}
               onSelectSession={handleSelectSession}
               onNewSession={handleNewSession}
               onDeleteSession={handleDeleteSession}
@@ -885,6 +1049,7 @@ export default function Chat() {
                 setDeleteProjectInfo({ projectID, projectName, sessionCount })
               }
               onAddProject={() => setShowAddProjectModal(true)}
+              showAddProject={isLocalAccess()}
             />
           </Show>
         </div>
@@ -977,11 +1142,29 @@ export default function Chat() {
             }
           >
           <Show
-            when={!sessionStore.loading && sessionStore.current}
+            when={!sessionStore.loading}
             fallback={
               <div class="flex-1 flex items-center justify-center">
                 <div class="flex flex-col items-center gap-3 text-gray-400">
                   <div class="w-6 h-6 border-2 border-current border-t-transparent rounded-full animate-spin"></div>
+                </div>
+              </div>
+            }
+          >
+          <Show
+            when={sessionStore.current}
+            fallback={
+              <div class="flex-1 flex items-center justify-center">
+                <div class="flex flex-col items-center gap-4 text-center px-6">
+                  <div class="w-16 h-16 bg-gray-100 dark:bg-zinc-800 rounded-2xl flex items-center justify-center text-gray-400 dark:text-gray-500">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M14 9a2 2 0 0 1-2 2H6l-4 4V4c0-1.1.9-2 2-2h8a2 2 0 0 1 2 2v5Z" /><path d="M18 9h2a2 2 0 0 1 2 2v11l-4-4h-6a2 2 0 0 1-2-2v-1" /></svg>
+                  </div>
+                  <h2 class="text-xl font-semibold text-gray-900 dark:text-white">
+                    {t().chat.noSessionSelected}
+                  </h2>
+                  <p class="text-sm text-gray-500 dark:text-gray-400 max-w-xs">
+                    {t().chat.noSessionSelectedDesc}
+                  </p>
                 </div>
               </div>
             }
@@ -1014,7 +1197,7 @@ export default function Chat() {
                       </div>
                     }
                   >
-                    <MessageList sessionID={sessionStore.current!} isWorking={sending()} onPermissionRespond={handlePermissionRespond} />
+                    <MessageList sessionID={sessionStore.current!} isWorking={sending()} onPermissionRespond={handlePermissionRespond} onQuestionRespond={handleQuestionRespond} onQuestionDismiss={handleQuestionDismiss} />
                   </Show>
                 </div>
               </div>
@@ -1022,17 +1205,80 @@ export default function Chat() {
               {/* Input Area */}
               <div class="p-4 bg-white/90 dark:bg-zinc-900/90 backdrop-blur-xs border-t border-gray-100 dark:border-zinc-800 relative z-20">
                 <div class="max-w-3xl mx-auto w-full">
-                  <PromptInput
-                    onSend={handleSendMessage}
-                    onCancel={handleCancelMessage}
-                    isGenerating={sending()}
-                    currentAgent={currentAgent()}
-                    onAgentChange={setCurrentAgent}
-                    onModelChange={handleModelChange}
-                    engineType={currentEngineType()}
-                    availableModes={configStore.engines.find(e => e.type === currentEngineType())?.capabilities?.availableModes}
-                    disabled={!sessionStore.current}
-                  />
+                  {/* Permission prompt replaces input when permissions are pending */}
+                  <Show when={currentPermissions().length > 0}>
+                    <div class="space-y-3">
+                      <For each={currentPermissions()}>
+                        {(perm) => (
+                          <div class="rounded-xl border border-amber-200 dark:border-amber-700/50 bg-amber-50/80 dark:bg-amber-950/30 p-4">
+                            <div class="flex items-center gap-2 mb-3">
+                              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-amber-600 dark:text-amber-400">
+                                <path d="M12 9v4" /><path d="M12 17h.01" /><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z" />
+                              </svg>
+                              <span class="text-sm font-medium text-amber-800 dark:text-amber-300">{t().permission.waitingApproval}</span>
+                            </div>
+                            <p class="text-sm text-amber-700 dark:text-amber-400 mb-1">{perm.title}</p>
+                            <Show when={perm.patterns && perm.patterns.length > 0}>
+                              <p class="text-xs text-amber-600/70 dark:text-amber-500/70 mb-3 font-mono">{perm.patterns?.join(", ")}</p>
+                            </Show>
+                            <div class="flex items-center gap-2 mt-3">
+                              <For each={perm.options?.length > 0 ? perm.options : [
+                                { id: "reject", label: t().permission.deny, type: "reject" },
+                                { id: "always", label: t().permission.allowAlways, type: "accept_always" },
+                                { id: "once", label: t().permission.allowOnce, type: "accept_once" },
+                              ]}>
+                                {(opt) => (
+                                  <button
+                                    type="button"
+                                    class={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
+                                      opt.type.includes("reject")
+                                        ? "bg-red-100 text-red-700 hover:bg-red-200 dark:bg-red-900/30 dark:text-red-400 dark:hover:bg-red-900/50"
+                                        : opt.type.includes("always")
+                                          ? "bg-emerald-100 text-emerald-700 hover:bg-emerald-200 dark:bg-emerald-900/30 dark:text-emerald-400 dark:hover:bg-emerald-900/50"
+                                          : "bg-indigo-100 text-indigo-700 hover:bg-indigo-200 dark:bg-indigo-900/30 dark:text-indigo-400 dark:hover:bg-indigo-900/50"
+                                    }`}
+                                    onClick={() => handlePermissionRespond(perm.sessionId, perm.id, opt.id)}
+                                  >
+                                    {opt.label || (opt.type.includes("reject") ? t().permission.deny : opt.type.includes("always") ? t().permission.allowAlways : t().permission.allowOnce)}
+                                  </button>
+                                )}
+                              </For>
+                            </div>
+                          </div>
+                        )}
+                      </For>
+                    </div>
+                  </Show>
+
+                  {/* Question prompt replaces input when questions are pending */}
+                  <Show when={currentPermissions().length === 0 && currentQuestions().length > 0}>
+                    <div class="space-y-3">
+                      <For each={currentQuestions()}>
+                        {(question) => (
+                          <InputAreaQuestion
+                            question={question}
+                            onRespond={handleQuestionRespond}
+                            onDismiss={handleQuestionDismiss}
+                          />
+                        )}
+                      </For>
+                    </div>
+                  </Show>
+
+                  {/* Normal input when no permissions or questions pending */}
+                  <Show when={currentPermissions().length === 0 && currentQuestions().length === 0}>
+                    <PromptInput
+                      onSend={handleSendMessage}
+                      onCancel={handleCancelMessage}
+                      isGenerating={sending()}
+                      currentAgent={currentAgent()}
+                      onAgentChange={setCurrentAgent}
+                      onModelChange={handleModelChange}
+                      engineType={currentEngineType()}
+                      availableModes={configStore.engines.find(e => e.type === currentEngineType())?.capabilities?.availableModes}
+                      disabled={!sessionStore.current}
+                    />
+                  </Show>
                   <div class="mt-2 text-center">
                     <p class="text-[10px] text-gray-400 dark:text-gray-600">
                       {t().chat.disclaimer}
@@ -1041,6 +1287,7 @@ export default function Chat() {
                 </div>
               </div>
             </Show>
+          </Show>
           </Show>
           </Show>
         </main>
@@ -1059,6 +1306,177 @@ export default function Chat() {
         onClose={() => setShowAddProjectModal(false)}
         onAdd={handleAddProject}
       />
+    </div>
+  );
+}
+
+// --- InputAreaQuestion: replaces PromptInput when questions are pending ---
+
+interface InputAreaQuestionProps {
+  question: UnifiedQuestion;
+  onRespond: (sessionID: string, questionID: string, answers: string[][]) => void;
+  onDismiss: (sessionID: string, questionID: string) => void;
+}
+
+function InputAreaQuestion(props: InputAreaQuestionProps) {
+  const { t } = useI18n();
+
+  // Each question in the array gets its own selection state
+  // selections[i] = array of selected option labels for question i
+  const [selections, setSelections] = createSignal<string[][]>(
+    props.question.questions.map(() => []),
+  );
+
+  // Custom text input per question
+  const [customInputs, setCustomInputs] = createSignal<string[]>(
+    props.question.questions.map(() => ""),
+  );
+
+  const toggleOption = (qIndex: number, label: string, multiple: boolean) => {
+    setSelections((prev) => {
+      const updated = [...prev];
+      const current = [...(updated[qIndex] || [])];
+
+      if (multiple) {
+        const idx = current.indexOf(label);
+        if (idx >= 0) {
+          current.splice(idx, 1);
+        } else {
+          current.push(label);
+        }
+      } else {
+        // Single select: toggle or replace
+        if (current.length === 1 && current[0] === label) {
+          updated[qIndex] = [];
+          return updated;
+        }
+        updated[qIndex] = [label];
+        return updated;
+      }
+
+      updated[qIndex] = current;
+      return updated;
+    });
+  };
+
+  const setCustomInput = (qIndex: number, value: string) => {
+    setCustomInputs((prev) => {
+      const updated = [...prev];
+      updated[qIndex] = value;
+      return updated;
+    });
+  };
+
+  const handleSubmit = () => {
+    // Build answers: for each question, combine selected options + custom input
+    const answers = props.question.questions.map((_, i) => {
+      const selected = selections()[i] || [];
+      const custom = customInputs()[i]?.trim();
+      if (custom) {
+        return [...selected, custom];
+      }
+      return [...selected];
+    });
+    props.onRespond(props.question.sessionId, props.question.id, answers);
+  };
+
+  const handleDismiss = () => {
+    props.onDismiss(props.question.sessionId, props.question.id);
+  };
+
+  const hasAnyAnswer = () => {
+    return props.question.questions.some((_, i) => {
+      const selected = selections()[i] || [];
+      const custom = customInputs()[i]?.trim();
+      return selected.length > 0 || (custom && custom.length > 0);
+    });
+  };
+
+  return (
+    <div class="rounded-xl border border-indigo-200 dark:border-indigo-700/50 bg-indigo-50/80 dark:bg-indigo-950/30 p-4">
+      <div class="flex items-center gap-2 mb-3">
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-indigo-600 dark:text-indigo-400">
+          <circle cx="12" cy="12" r="10" /><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" /><path d="M12 17h.01" />
+        </svg>
+        <span class="text-sm font-medium text-indigo-800 dark:text-indigo-300">{t().question.waitingAnswer}</span>
+      </div>
+
+      <For each={props.question.questions}>
+        {(qInfo, qIndex) => (
+          <div class={qIndex() > 0 ? "mt-4 pt-4 border-t border-indigo-200/50 dark:border-indigo-700/30" : ""}>
+            {/* Header + Question */}
+            <div class="mb-2">
+              <span class="inline-block text-xs font-semibold text-indigo-600 dark:text-indigo-400 bg-indigo-100 dark:bg-indigo-900/40 rounded px-1.5 py-0.5 mr-2">
+                {qInfo.header}
+              </span>
+              <span class="text-sm text-indigo-800 dark:text-indigo-200">{qInfo.question}</span>
+            </div>
+
+            {/* Options as selectable chips */}
+            <div class="flex flex-wrap gap-2 mb-2">
+              <For each={qInfo.options}>
+                {(opt) => {
+                  const isSelected = () => (selections()[qIndex()] || []).includes(opt.label);
+                  return (
+                    <button
+                      type="button"
+                      class={`px-3 py-1.5 rounded-lg text-sm transition-colors ${
+                        isSelected()
+                          ? "bg-indigo-600 text-white dark:bg-indigo-500"
+                          : "bg-white text-indigo-700 border border-indigo-200 hover:bg-indigo-100 dark:bg-indigo-900/30 dark:text-indigo-300 dark:border-indigo-700/50 dark:hover:bg-indigo-900/50"
+                      }`}
+                      onClick={() => toggleOption(qIndex(), opt.label, qInfo.multiple ?? false)}
+                      title={opt.description}
+                    >
+                      {opt.label}
+                    </button>
+                  );
+                }}
+              </For>
+            </div>
+
+            {/* Custom text input (shown when custom !== false) */}
+            <Show when={qInfo.custom !== false}>
+              <input
+                type="text"
+                class="w-full px-3 py-1.5 rounded-lg text-sm border border-indigo-200 dark:border-indigo-700/50 bg-white dark:bg-indigo-950/50 text-indigo-800 dark:text-indigo-200 placeholder-indigo-400/60 dark:placeholder-indigo-500/50 focus:outline-none focus:ring-1 focus:ring-indigo-400 dark:focus:ring-indigo-500"
+                placeholder={t().question.customPlaceholder}
+                value={customInputs()[qIndex()] || ""}
+                onInput={(e) => setCustomInput(qIndex(), e.currentTarget.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && hasAnyAnswer()) {
+                    e.preventDefault();
+                    handleSubmit();
+                  }
+                }}
+              />
+            </Show>
+          </div>
+        )}
+      </For>
+
+      {/* Action buttons */}
+      <div class="flex items-center gap-2 mt-3">
+        <button
+          type="button"
+          class="px-3 py-1.5 rounded-lg text-sm font-medium bg-red-100 text-red-700 hover:bg-red-200 dark:bg-red-900/30 dark:text-red-400 dark:hover:bg-red-900/50 transition-colors"
+          onClick={handleDismiss}
+        >
+          {t().question.dismiss}
+        </button>
+        <button
+          type="button"
+          class={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
+            hasAnyAnswer()
+              ? "bg-indigo-600 text-white hover:bg-indigo-700 dark:bg-indigo-500 dark:hover:bg-indigo-600"
+              : "bg-indigo-200 text-indigo-400 cursor-not-allowed dark:bg-indigo-900/30 dark:text-indigo-600"
+          }`}
+          onClick={handleSubmit}
+          disabled={!hasAnyAnswer()}
+        >
+          {t().question.submit}
+        </button>
+      </div>
     </div>
   );
 }

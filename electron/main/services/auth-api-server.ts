@@ -1,6 +1,6 @@
 import http from "http";
 import { deviceStore } from "./device-store";
-import { authLog } from "./logger";
+import { authLog, getLogFilePath, getFileLogLevel, setFileLogLevel } from "./logger";
 
 // ============================================================================
 // Internal Auth API Server
@@ -64,6 +64,11 @@ function getClientIp(req: http.IncomingMessage): string {
     return forwarded.split(",")[0].trim();
   }
   return req.socket.remoteAddress || "unknown";
+}
+
+function isLocalhost(ip: string): boolean {
+  const normalized = ip.replace(/^::ffff:/, "");
+  return normalized === "127.0.0.1" || normalized === "::1" || normalized === "localhost";
 }
 
 class AuthApiServer {
@@ -397,6 +402,87 @@ class AuthApiServer {
 
       const count = deviceStore.revokeAllExcept(result.deviceId);
       sendJson(res, { success: true, revokedCount: count });
+      return;
+    }
+
+    // ========================================================================
+    // Log API (localhost only)
+    // GET /api/system/log/path
+    // GET /api/system/log/level
+    // POST /api/system/log/level
+    // ========================================================================
+    if (pathname === "/api/system/log/path" && req.method === "GET") {
+      const clientIp = getClientIp(req);
+      if (!isLocalhost(clientIp)) {
+        sendJson(res, { error: "Local access only" }, 403);
+        return;
+      }
+      sendJson(res, { path: getLogFilePath() });
+      return;
+    }
+
+    if (pathname === "/api/system/log/level" && req.method === "GET") {
+      const clientIp = getClientIp(req);
+      if (!isLocalhost(clientIp)) {
+        sendJson(res, { error: "Local access only" }, 403);
+        return;
+      }
+      sendJson(res, { level: getFileLogLevel() });
+      return;
+    }
+
+    if (pathname === "/api/system/log/level" && req.method === "POST") {
+      const clientIp = getClientIp(req);
+      if (!isLocalhost(clientIp)) {
+        sendJson(res, { error: "Local access only" }, 403);
+        return;
+      }
+      try {
+        const { level } = await parseBody(req);
+        if (!level || typeof level !== "string") {
+          sendJson(res, { error: "level is required" }, 400);
+          return;
+        }
+        setFileLogLevel(level);
+        sendJson(res, { success: true });
+      } catch {
+        sendJson(res, { error: "Bad request" }, 400);
+      }
+      return;
+    }
+
+    // ========================================================================
+    // Local Auth (auto-authenticate localhost requests)
+    // POST /api/auth/local-auth
+    // ========================================================================
+    if (pathname === "/api/auth/local-auth" && req.method === "POST") {
+      const clientIp = getClientIp(req);
+      if (!isLocalhost(clientIp)) {
+        sendJson(res, { success: false, error: "Local auth is only available from localhost" }, 403);
+        return;
+      }
+
+      try {
+        const body = await parseBody(req);
+        const device = body.device || {};
+        const deviceId = deviceStore.generateDeviceId();
+        const token = deviceStore.generateToken(deviceId);
+
+        deviceStore.addDevice({
+          id: deviceId,
+          name: device.name || "Local Browser",
+          platform: device.platform || "web",
+          browser: device.browser || "Unknown",
+          createdAt: Date.now(),
+          lastSeenAt: Date.now(),
+          ip: "localhost",
+          isHost: true,
+        });
+
+        sendJson(res, { success: true, token, deviceId });
+      } catch {
+        sendJson(res, { success: false, error: "Bad request" }, 400);
+      }
       return;
     }
 

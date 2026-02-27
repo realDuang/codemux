@@ -4,115 +4,75 @@
 
 [English](./README.md) | [简体中文](./README.zh-CN.md) | **[日本語](./README.ja.md)** | [한국어](./README.ko.md)
 
-**ひとつのインターフェース。すべての AI コーディングエンジン。**
+**GitHub Copilot CLI 初のオープンソースGUI。**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 <img src="https://raw.githubusercontent.com/realDuang/codemux/main/assets/logo.png" alt="CodeMux" width="120" />
 
-*複数の AI コーディングエンジン — OpenCode、GitHub Copilot CLI など — を統合するデスクトップ & Web クライアント。あらゆるデバイスから、どこからでもアクセスできます。*
+*マルチエンジンAIコーディングクライアント — エージェントの思考連鎖を完全に可視化し、設定不要のセキュアなリモートアクセスを実現。単なるチャットラッパーではありません。*
 
-<img src="https://raw.githubusercontent.com/realDuang/codemux/main/assets/screenshots/main-chat.jpg" alt="CodeMux - マルチエンジン AI コーディングインターフェース" width="800" />
+<img src="https://raw.githubusercontent.com/realDuang/codemux/main/assets/screenshots/main-chat.jpg" alt="CodeMux - マルチエンジンAIコーディングインターフェース" width="800" />
 
 </div>
 
 ---
 
-## CodeMux とは？
+## なぜ CodeMux なのか？
 
-AI コーディングエージェントは強力ですが、バラバラに存在しています。OpenCode、GitHub Copilot CLI、Claude Code はそれぞれ独自のターミナルで動作し、セッションは分離され、プロトコルも異なり、共通のインターフェースがありません。
+### 1. GitHub Copilot CLI 初のGUI
 
-**CodeMux** は、これらすべてをひとつにまとめるマルチエンジンゲートウェイです。各エンジンにプロトコルレベルで接続し、統一されたデスクトップアプリと Web インターフェースを通じて、エンジン横断のセッション管理を実現します — あらゆるデバイスから、インターネット経由でもアクセス可能です。
+GitHub Copilot は世界で最も広く採用されているAIコーディングツールです。**Copilot CLI** は [ACP プロトコル](https://github.com/anthropics/agent-control-protocol)を通じてターミナルで完全なエージェント機能を提供しますが、そのためのグラフィカルインターフェースは存在しませんでした。
 
-これはマルチモデルチャットのラッパーではありません。各エンジンはツール実行、ファイル編集、シェルアクセス、セッション履歴といった本来の機能をすべて保持します — CodeMux はそれらへの共通の入り口を提供するだけです。
+**CodeMux は Copilot CLI 初の、そして現時点で唯一のオープンソースGUIです。** プロトコルレベル（JSON-RPC over stdio）で接続し、Copilot の完全なエージェントコーディング体験をビジュアルインターフェースで提供します。
 
----
+### 2. マルチモデルではなく、マルチエンジン
 
-## 主な機能
+これはAPIキーを切り替えるだけのチャットラッパーではありません。CodeMux は**プロトコルレベルのゲートウェイ**です — 各エンジンは独自のランタイム、セッション、ツール実行、機能をそのまま保持して動作します。
 
-| カテゴリ | 機能 | 説明 |
-|----------|------|------|
-| **マルチエンジン** | 統合ゲートウェイ | ひとつのインターフェースから OpenCode、Copilot CLI などを切り替え |
-| | プロトコルレベル統合 | ACP (JSON-RPC/stdio) および HTTP+SSE への直接接続 — プロセスラッパーではありません |
-| | エンジンごとのセッション | 各エンジンが独自のセッション、履歴、機能を維持 |
-| **リモートアクセス** | あらゆるデバイスからアクセス | スマートフォン、タブレット、ブラウザからコーディングエンジンにアクセス |
-| | ワンクリック公開トンネル | Cloudflare Tunnel — ポートフォワーディング、VPN、ファイアウォール変更は不要 |
-| | LAN + QR コード | QR コードによるローカルネットワーク上の即時アクセス |
-| **インターフェース** | リアルタイムストリーミング | ツール呼び出しの可視化を伴うライブトークンストリーミング |
-| | ステップバイステップ実行 | ファイル差分やシェル出力などを表示する展開可能なツール呼び出し |
-| | プロジェクト管理 | エンジン横断でプロジェクトディレクトリごとにセッションをグループ化 |
-| **セキュリティ** | デバイス認可 | 各デバイスはアクセス前に承認が必要 |
-| | JWT + アクセスコード | リモートデバイス向け 6 桁アクセスコード付きトークン認証 |
-| | 一時的なトンネル URL | トンネル再起動のたびに公開 URL が変更 |
+単一のインターフェースからエンジンを切り替えられます。各エンジンはファイル編集、シェルアクセス、セッション履歴、プロジェクトコンテキストなど、すべての機能を維持します — CodeMux はそれらに共通の入口を提供するだけです。
 
----
+| エンジン | プロトコル | ステータス |
+|--------|----------|--------|
+| **[OpenCode](https://opencode.ai)** | HTTP REST + SSE | ✅ 安定版 |
+| **[GitHub Copilot CLI](https://docs.github.com/en/copilot/using-github-copilot/using-github-copilot-coding-agent-in-cli)** | ACP (JSON-RPC/stdio) | ✅ 安定版 |
+| **[Claude Code](https://claude.ai/code)** | ACP | 🚧 計画中 |
 
-## 対応エンジン
+### 3. エージェントの思考連鎖を可視化
 
-| エンジン | プロトコル | ステータス | 特徴 |
-|----------|-----------|----------|------|
-| **[OpenCode](https://opencode.ai)** | HTTP REST + SSE | ✅ 安定版 | マルチプロバイダーモデル選択、完全なセッション管理、ファイル/シェルツール |
-| **[GitHub Copilot CLI](https://githubnext.com/projects/copilot-cli)** | ACP (JSON-RPC/stdio) | ✅ 安定版 | ネイティブ ACP 統合、SQLite セッション履歴、Copilot の完全なエージェント機能 |
-| **[Claude Code](https://claude.ai/code)** | ACP | 🚧 予定 | 公式 ACP プロトコル対応待ち |
+すべてのエージェントアクションが展開可能なステップとしてレンダリングされます — ファイルの差分、シェルコマンド、検索結果、ツール呼び出しなど — エージェントが何をしているのか、なぜそうしているのかを、最終的な回答だけでなく正確に把握できます。
 
-### 初のオープンソース Copilot CLI GUI
+<img src="https://raw.githubusercontent.com/realDuang/codemux/main/assets/screenshots/chat-steps.jpg" alt="CodeMux - ステップバイステップのエージェント可視化" width="700" />
 
-GitHub Copilot は世界で最も広く利用されている AI コーディングツールです。**Copilot CLI** により、GitHub は [ACP プロトコル](https://github.com/anthropics/agent-control-protocol) を通じてエージェント型コーディング機能をターミナルに導入しました。
+### 4. 設定不要のセキュアなリモートアクセス
 
-**CodeMux は、Copilot CLI にグラフィカルインターフェースを提供する、初めてのそして現時点で唯一のオープンソースプロジェクトです。** プロトコルレベルの ACP 統合を完全な GUI で実現するツールは他に存在しません。Copilot を使っていてエージェント型コーディングのビジュアルインターフェースが欲しい方にとって、CodeMux は唯一のオープンソースの選択肢です。
+スマートフォン、タブレット、別のマシンなど、あらゆるデバイスからコーディングエージェントにアクセスできます — 設定ファイルを一切触る必要はありません。
 
-<img src="https://raw.githubusercontent.com/realDuang/codemux/main/assets/screenshots/chat-steps.jpg" alt="CodeMux - ステップバイステップのツール実行" width="700" />
-
----
-
-## アーキテクチャ
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│  SolidJS UI (Desktop via Electron / Web via Browser)            │
-│                          │                                      │
-│              WebSocket (JSON-RPC)                               │
-│                          │                                      │
-│              ┌───────────┴───────────┐                          │
-│              │    Gateway Server     │                          │
-│              │    (Engine Manager)   │                          │
-│              └───┬───────┬───────┬───┘                          │
-│                  │       │       │                               │
-│           ┌──────┘   ┌───┘   ┌───┘                              │
-│           │          │       │                                   │
-│     ┌─────┴─────┐ ┌──┴───┐ ┌─┴──────┐                          │
-│     │ OpenCode  │ │Copilot│ │ Claude │                          │
-│     │ Adapter   │ │Adapter│ │Adapter │                          │
-│     │(HTTP+SSE) │ │ (ACP) │ │ (ACP)  │                          │
-│     └───────────┘ └──────┘ └────────┘                           │
-│                                                                  │
-│     Unified Type System: UnifiedPart, ToolPart, AgentMode        │
-└─────────────────────────────────────────────────────────────────┘
-```
-
-すべてのエンジンが**正規化された型システム**を共有します — ツール呼び出し、ファイル操作、差分、メッセージはすべて共通フォーマット（`UnifiedPart`）にマッピングされるため、UI はどのエンジンが動作しているかを意識する必要がありません。
+- **LAN**: IPアドレスの自動検出 + QRコードで、数秒で準備完了
+- **パブリックインターネット**: ワンクリックで [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/) — ポート転送、VPN、ファイアウォール変更は一切不要
+- **セキュリティ内蔵**: デバイス認証、JWT トークン、Cloudflare 経由のHTTPS、再起動ごとにローテーションされるエフェメラルトンネルURL
 
 ---
 
 ## クイックスタート
 
-### オプション 1：デスクトップアプリ
+### オプション 1: デスクトップアプリ
 
-プラットフォームに合わせて最新リリースをダウンロード：
+お使いのプラットフォーム向けの最新リリースをダウンロードしてください：
 
-- **macOS (Apple Silicon)**：`CodeMux-x.x.x-arm64.dmg`
-- **macOS (Intel)**：`CodeMux-x.x.x-x64.dmg`
-- **Windows**：`CodeMux-x.x.x-setup.exe`
+- **macOS (Apple Silicon)**: `CodeMux-x.x.x-arm64.dmg`
+- **macOS (Intel)**: `CodeMux-x.x.x-x64.dmg`
+- **Windows**: `CodeMux-x.x.x-setup.exe`
 
-デスクトップアプリには Cloudflare Tunnel バイナリとゲートウェイサーバーが同梱されています。**OpenCode と Copilot CLI は別途インストールが必要です**（下記参照）。
+デスクトップアプリには Cloudflare Tunnel バイナリとゲートウェイサーバーがバンドルされています。**OpenCode と Copilot CLI は別途インストールが必要です**（以下を参照）。
 
-> ⚠️ **macOS ユーザーへ**：アプリはコード署名されていません。macOS で「アプリが破損しています」と表示された場合、以下を実行してください：
+> ⚠️ **macOS ユーザーへ**: このアプリはコード署名されていません。macOS で「アプリが壊れています」と表示される場合は、以下を実行してください：
 >
 > ```bash
 > xattr -cr /Applications/CodeMux.app
 > ```
 
-### オプション 2：開発モード
+### オプション 2: 開発モード
 
 ```bash
 # リポジトリをクローン
@@ -122,19 +82,16 @@ cd codemux
 # 依存関係をインストール
 bun install
 
-# リモートアクセス用バイナリをダウンロード
+# cloudflared バイナリをダウンロード（リモートアクセス用）
 bun run update:cloudflared
 
 # 開発サーバーを起動（Electron + Vite HMR）
 bun run dev
 ```
 
-> **エンジンの前提条件**：CodeMux はエンジン本体を同梱していません。使用するエンジンを事前にインストールし、PATH に配置してください。
->
-> - **OpenCode**：[opencode.ai](https://opencode.ai) からインストール
->   - Unix / macOS：`curl -fsSL https://opencode.ai/install.sh | bash`
->   - Windows：`irm https://opencode.ai/install.ps1 | iex`
-> - **Copilot CLI**：[GitHub Copilot CLI](https://docs.github.com/en/copilot/using-github-copilot/using-github-copilot-coding-agent-in-cli) をインストールし、`gh auth login` で認証してください。
+> **エンジンの前提条件**: 両方のエンジンは外部依存関係であり、インストールしてPATHで利用可能にする必要があります：
+> - **OpenCode**: [opencode.ai](https://opencode.ai) からインストール — `curl -fsSL https://opencode.ai/install.sh | bash`（Unix）または `irm https://opencode.ai/install.ps1 | iex`（Windows）
+> - **Copilot CLI**: [GitHub Copilot CLI](https://docs.github.com/en/copilot/using-github-copilot/using-github-copilot-coding-agent-in-cli) を別途インストール
 >
 > CodeMux は起動時にインストール済みのエンジンを自動検出します。
 
@@ -144,31 +101,29 @@ bun run dev
 
 ### LAN アクセス
 
-1. CodeMux を開き、設定の**リモートアクセス**に移動
-2. ページに表示されるマシンの IP アドレスを確認
-3. 別のデバイスから `http://<あなたのIP>:5173` を開く
-4. 6 桁のアクセスコードを入力、または QR コードをスキャン
+1. CodeMux を開き、設定の**リモートアクセス**に移動します
+2. ページ上でマシンのIPアドレスを確認します
+3. 別のデバイスから `http://<your-ip>:5173` を開きます
+4. 6桁のアクセスコードを入力するか、QRコードをスキャンします
 
 <img src="https://raw.githubusercontent.com/realDuang/codemux/main/assets/screenshots/remote-access.jpg" alt="CodeMux - リモートアクセス" width="700" />
 
 ### パブリックインターネットアクセス
 
-Cloudflare Tunnel でどこからでもアクセス：
+Cloudflare Tunnel でどこからでもアクセス — **ポート転送、ファイアウォール変更、VPNは一切不要：**
 
-1. リモートアクセスセクションで**「パブリックアクセス」**をオンに切り替え
-2. 生成された `*.trycloudflare.com` URL を共有
-3. リモートデバイスでアクセスコードを入力して認証
-
-**ポートフォワーディング不要。ファイアウォール変更不要。VPN 不要。**
+1. リモートアクセスセクションで**「パブリックアクセス」**を切り替えます
+2. 生成された `*.trycloudflare.com` のURLを共有します
+3. リモートデバイスがアクセスコードで認証します
 
 ```
-Your Phone/Tablet
+あなたのスマートフォン/タブレット
        ↓
 https://xyz.trycloudflare.com
        ↓
-  Cloudflare Network
+  Cloudflare ネットワーク
        ↓
-  Your Workstation (CodeMux Gateway)
+  あなたのワークステーション (CodeMux Gateway)
        ↓
   ┌─────────┬──────────┬───────────┐
   │OpenCode │ Copilot  │  Claude   │
@@ -176,43 +131,49 @@ https://xyz.trycloudflare.com
   └─────────┴──────────┴───────────┘
 ```
 
-### デバイス管理
+### セキュリティとデバイス管理
 
-- 接続中のすべてのデバイスを最終アクセス時刻付きで**表示**
-- デバイスを識別しやすいように**名前変更**
-- デバイスごとにアクセスを**取り消し**、または一括取り消し
+| レイヤー | 保護内容 |
+|---------|----------|
+| **デバイス認証** | 新しいデバイスには6桁コードによる承認が必要 |
+| **JWT トークン** | デバイスごとのトークンを安全に保存 |
+| **HTTPS** | パブリックトンネルは Cloudflare 経由で自動的にHTTPSを使用 |
+| **エフェメラルURL** | トンネルURLは再起動ごとに変更 |
+
+デバイスページから接続中のデバイスを管理できます — 最終アクセス時刻の確認、識別用の名前変更、デバイスごとのアクセス取り消しが可能です。
 
 <img src="https://raw.githubusercontent.com/realDuang/codemux/main/assets/screenshots/devices-management.jpg" alt="CodeMux - デバイス管理" width="700" />
 
----
-
-## セキュリティ
-
-| レイヤー | 保護 |
-|----------|------|
-| **デバイス認可** | 新しいデバイスは 6 桁コードによる承認が必要 |
-| **JWT トークン** | デバイスごとに安全に保存されたトークン |
-| **HTTPS** | パブリックトンネルは Cloudflare 経由で自動的に HTTPS を使用 |
-| **一時的な URL** | トンネル再起動のたびに URL が変更 |
-
-**ベストプラクティス：**
-- 使用しなくなったデバイスのアクセスを取り消す
-- 不要時はパブリックトンネルを無効化
-- CodeMux は個人利用向けに設計されています — マルチユーザー環境向けではありません
+> CodeMux は個人利用向けに設計されています。使用しなくなったデバイスは取り消し、不要な場合はパブリックトンネルを無効にしてください。
 
 ---
 
-## 技術スタック
+## アーキテクチャ
 
-| レイヤー | 技術 |
-|----------|------|
-| デスクトップシェル | Electron 33 |
-| ビルドシステム | electron-vite (Vite 5) |
-| フロントエンド | SolidJS 1.8 + TypeScript 5 |
-| スタイリング | Tailwind CSS v4 |
-| エンジン通信 | WebSocket + JSON-RPC, HTTP+SSE, ACP (stdio) |
-| パッケージング | electron-builder (DMG, NSIS) |
-| トンネル | Cloudflare Tunnel (cloudflared) |
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  SolidJS UI (Electron によるデスクトップ / ブラウザによるWeb)      │
+│                          │                                      │
+│              WebSocket (JSON-RPC)                               │
+│                          │                                      │
+│              ┌───────────┴───────────┐                          │
+│              │    Gateway Server     │                          │
+│              │    (Engine Manager)   │                          │
+│              └───┬───────┬───────┬───┘                          │
+│                  │       │       │                              │
+│            ┌─────┘    ┌──┘      ┌┘                              │
+│            │          │         │                               │
+│      ┌─────┴─────┐ ┌──┴────┐ ┌──┴─────┐                         │
+│      │ OpenCode  │ │Copilot│ │ Claude │                         │
+│      │ Adapter   │ │Adapter│ │Adapter │                         │
+│      │(HTTP+SSE) │ │ (ACP) │ │ (ACP)  │                         │
+│      └───────────┘ └───────┘ └────────┘                         │
+│                                                                 │
+│     統一型システム: UnifiedPart, ToolPart, AgentMode              │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+すべてのエンジンは**正規化された型システム**を共有しています — ツール呼び出し、ファイル操作、差分、メッセージは共通フォーマット（`UnifiedPart`）にマッピングされるため、UIはどのエンジンが動作しているかを意識する必要がありません。
 
 ---
 
@@ -222,7 +183,7 @@ https://xyz.trycloudflare.com
 
 ```bash
 bun run dev              # Electron + Vite HMR
-bun run build            # 本番ビルド
+bun run build            # プロダクションビルド
 bun run dist:mac:arm64   # macOS Apple Silicon
 bun run dist:mac:x64     # macOS Intel
 bun run dist:win         # Windows NSIS インストーラー
@@ -230,7 +191,7 @@ bun run typecheck        # 型チェック
 bun run update:cloudflared  # Cloudflare Tunnel バイナリの更新
 ```
 
-### プロジェクト構造
+### プロジェクト構成
 
 ```
 codemux/
@@ -242,11 +203,11 @@ codemux/
 │   └── preload/
 ├── src/                      # SolidJS レンダラー
 │   ├── pages/                # Chat, Settings, Devices, Entry
-│   ├── components/           # UI コンポーネント + コンテンツレンダラー
-│   ├── stores/               # リアクティブ状態 (session, message, config)
-│   ├── lib/                  # ゲートウェイクライアント、認証、i18n、テーマ
+│   ├── components/           # UIコンポーネント + コンテンツレンダラー
+│   ├── stores/               # リアクティブステート (session, message, config)
+│   ├── lib/                  # Gateway クライアント、認証、i18n、テーマ
 │   └── types/                # 統一型システム + ツールマッピング
-├── scripts/                  # セットアップ、バイナリ更新ツール
+├── scripts/                  # セットアップ、バイナリアップデーター
 ├── electron.vite.config.ts
 └── electron-builder.yml
 ```
@@ -255,13 +216,13 @@ codemux/
 
 ## コントリビューション
 
-コントリビューション歓迎です！以下の規約に従ってください：
+コントリビューションを歓迎します！以下の規約に従ってください：
 
-**コードスタイル**：TypeScript 厳格モード、SolidJS リアクティブパターン、スタイリングには Tailwind を使用
+**コードスタイル**: TypeScript strict モード、SolidJS リアクティブパターン、Tailwind によるスタイリング
 
-**コミット規約**：`feat:` | `fix:` | `docs:` | `refactor:` | `chore:`
+**コミット規約**: `feat:` | `fix:` | `docs:` | `refactor:` | `chore:`
 
-**新しいエンジンの追加**：`EngineAdapter`（`electron/main/engines/engine-adapter.ts` を参照）を実装し、`src/types/tool-mapping.ts` にツール名マッピングを追加、`electron/main/index.ts` で登録してください。
+**新しいエンジンの追加**: `EngineAdapter` を実装し（`electron/main/engines/engine-adapter.ts` を参照）、`src/types/tool-mapping.ts` にツール名マッピングを追加し、`electron/main/index.ts` に登録してください。
 
 ---
 
@@ -273,7 +234,7 @@ codemux/
 
 ## リンク
 
-- [イシュー & 機能リクエスト](https://github.com/realDuang/codemux/issues)
+- [Issue & 機能リクエスト](https://github.com/realDuang/codemux/issues)
 - [OpenCode](https://opencode.ai) — 対応エンジン
 - [GitHub Copilot CLI](https://docs.github.com/en/copilot/using-github-copilot/using-github-copilot-coding-agent-in-cli) — 対応エンジン
 
@@ -281,6 +242,6 @@ codemux/
 
 <div align="center">
 
-**[Electron](https://electronjs.org)、[SolidJS](https://solidjs.com)、そして AI アシストコーディングへの情熱で構築されました。**
+**[Electron](https://electronjs.org)、[SolidJS](https://solidjs.com)、そしてAIアシストコーディングへの情熱で構築されています。**
 
 </div>

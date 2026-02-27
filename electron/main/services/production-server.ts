@@ -4,7 +4,7 @@ import fs from "fs";
 import path from "path";
 import { app } from "electron";
 import { deviceStore } from "./device-store";
-import { prodServerLog } from "./logger";
+import { prodServerLog, getLogFilePath, getFileLogLevel, setFileLogLevel } from "./logger";
 
 // ============================================================================
 // Production HTTP Server
@@ -259,6 +259,53 @@ class ProductionServer {
       const normalizedIp = clientIp.replace(/^::ffff:/, "");
       const isLocal = normalizedIp === "127.0.0.1" || normalizedIp === "::1" || normalizedIp === "localhost";
       sendJson(res, { isLocal });
+      return;
+    }
+
+    // Log API (localhost only)
+    if (pathname === "/api/system/log/path" && req.method === "GET") {
+      const clientIp = getClientIp(req);
+      const normalizedIp = clientIp.replace(/^::ffff:/, "");
+      const isLocal = normalizedIp === "127.0.0.1" || normalizedIp === "::1" || normalizedIp === "localhost";
+      if (!isLocal) {
+        sendJson(res, { error: "Local access only" }, 403);
+        return;
+      }
+      sendJson(res, { path: getLogFilePath() });
+      return;
+    }
+
+    if (pathname === "/api/system/log/level" && req.method === "GET") {
+      const clientIp = getClientIp(req);
+      const normalizedIp = clientIp.replace(/^::ffff:/, "");
+      const isLocal = normalizedIp === "127.0.0.1" || normalizedIp === "::1" || normalizedIp === "localhost";
+      if (!isLocal) {
+        sendJson(res, { error: "Local access only" }, 403);
+        return;
+      }
+      sendJson(res, { level: getFileLogLevel() });
+      return;
+    }
+
+    if (pathname === "/api/system/log/level" && req.method === "POST") {
+      const clientIp = getClientIp(req);
+      const normalizedIp = clientIp.replace(/^::ffff:/, "");
+      const isLocal = normalizedIp === "127.0.0.1" || normalizedIp === "::1" || normalizedIp === "localhost";
+      if (!isLocal) {
+        sendJson(res, { error: "Local access only" }, 403);
+        return;
+      }
+      try {
+        const body = await parseBody(req);
+        if (!body.level || typeof body.level !== "string") {
+          sendJson(res, { error: "level is required" }, 400);
+          return;
+        }
+        setFileLogLevel(body.level);
+        sendJson(res, { success: true });
+      } catch {
+        sendJson(res, { error: "Bad request" }, 400);
+      }
       return;
     }
 

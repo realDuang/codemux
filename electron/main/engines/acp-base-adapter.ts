@@ -10,6 +10,7 @@ import * as path from "path";
 import { randomBytes } from "crypto";
 import { homedir } from "os";
 import { EngineAdapter } from "./engine-adapter";
+import type { ModelListResult } from "../../../src/types/unified";
 import { acpLog } from "../services/logger";
 
 // ---------------------------------------------------------------------------
@@ -1234,8 +1235,8 @@ export abstract class AcpBaseAdapter extends EngineAdapter {
 
   // --- Models ---
 
-  async listModels(): Promise<UnifiedModelInfo[]> {
-    return this.models;
+  async listModels(): Promise<ModelListResult> {
+    return { models: this.models, currentModelId: this.currentModelId ?? undefined };
   }
 
   async setModel(sessionId: string, modelId: string): Promise<void> {
@@ -1275,6 +1276,16 @@ export abstract class AcpBaseAdapter extends EngineAdapter {
       permissionId,
       optionId: reply.optionId,
     });
+  }
+
+  // --- Questions (not supported by ACP engines) ---
+
+  async replyQuestion(_questionId: string, _answers: string[][]): Promise<void> {
+    throw new Error("Questions not supported by ACP engines");
+  }
+
+  async rejectQuestion(_questionId: string): Promise<void> {
+    throw new Error("Questions not supported by ACP engines");
   }
 
   // --- Projects ---

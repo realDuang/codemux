@@ -21,12 +21,15 @@ import type {
   UnifiedMessage,
   UnifiedPart,
   UnifiedPermission,
+  UnifiedQuestion,
   UnifiedModelInfo,
+  ModelListResult,
   UnifiedProject,
   AgentMode,
   MessagePromptContent,
   PermissionReply,
   PermissionOption,
+  QuestionInfo,
   ToolPart,
 } from "../../../src/types/unified";
 
@@ -115,6 +118,26 @@ interface OcPermission {
   patterns: string[];
   metadata: Record<string, unknown>;
   always: string[];
+  tool?: { messageID: string; callID: string };
+}
+
+interface OcQuestionOption {
+  label: string;
+  description: string;
+}
+
+interface OcQuestionInfo {
+  question: string;
+  header: string;
+  options: OcQuestionOption[];
+  multiple?: boolean;
+  custom?: boolean;
+}
+
+interface OcQuestion {
+  id: string;
+  sessionID: string;
+  questions: OcQuestionInfo[];
   tool?: { messageID: string; callID: string };
 }
 
@@ -349,6 +372,18 @@ export class OpenCodeAdapter extends EngineAdapter {
       case "permission.replied":
         this.handlePermissionReplied(properties);
         break;
+
+      case "question.asked":
+        this.handleQuestionAsked(properties);
+        break;
+
+      case "question.replied":
+        this.handleQuestionReplied(properties);
+        break;
+
+      case "question.rejected":
+        this.handleQuestionRejected(properties);
+        break;
     }
   }
 
@@ -483,6 +518,44 @@ export class OpenCodeAdapter extends EngineAdapter {
     this.emit("permission.replied", {
       permissionId: data.id ?? data.requestID,
       optionId: data.reply ?? "unknown",
+    });
+  }
+
+  private handleQuestionAsked(data: OcQuestion): void {
+    const questions: QuestionInfo[] = (data.questions || []).map((q) => ({
+      question: q.question,
+      header: q.header,
+      options: (q.options || []).map((o) => ({
+        label: o.label,
+        description: o.description,
+      })),
+      multiple: q.multiple,
+      custom: q.custom,
+    }));
+
+    const question: UnifiedQuestion = {
+      id: data.id,
+      sessionId: data.sessionID,
+      engineType: this.engineType,
+      toolCallId: data.tool?.callID,
+      questions,
+    };
+
+    this.emit("question.asked", { question });
+  }
+
+  private handleQuestionReplied(data: any): void {
+    this.emit("question.replied", {
+      questionId: data.requestID ?? data.id,
+      answers: data.answers ?? [],
+    });
+  }
+
+  private handleQuestionRejected(data: any): void {
+    // Rejected is equivalent to replied with empty answers for notification purposes
+    this.emit("question.replied", {
+      questionId: data.requestID ?? data.id,
+      answers: [],
     });
   }
 
@@ -1067,10 +1140,10 @@ export class OpenCodeAdapter extends EngineAdapter {
 
   // --- Models ---
 
-  async listModels(): Promise<UnifiedModelInfo[]> {
+  async listModels(): Promise<ModelListResult> {
     // Refresh provider data
     this.providers = await this.httpRequest<OcProviderResponse>("/provider");
-    return this.convertProviders(this.providers);
+    return { models: this.convertProviders(this.providers) };
   }
 
   async setModel(_sessionId: string, _modelId: string): Promise<void> {
@@ -1120,6 +1193,31 @@ export class OpenCodeAdapter extends EngineAdapter {
     this.emit("permission.replied", {
       permissionId,
       optionId: reply.optionId,
+    });
+  }
+
+  // --- Questions ---
+
+  async replyQuestion(questionId: string, answers: string[][]): Promise<void> {
+    await this.httpRequest(`/question/${questionId}/reply`, {
+      method: "POST",
+      body: JSON.stringify({ answers }),
+    });
+
+    this.emit("question.replied", {
+      questionId,
+      answers,
+    });
+  }
+
+  async rejectQuestion(questionId: string): Promise<void> {
+    await this.httpRequest(`/question/${questionId}/reject`, {
+      method: "POST",
+    });
+
+    this.emit("question.replied", {
+      questionId,
+      answers: [],
     });
   }
 

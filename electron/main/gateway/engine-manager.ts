@@ -12,6 +12,7 @@ import type {
   UnifiedSession,
   UnifiedMessage,
   UnifiedModelInfo,
+  ModelListResult,
   UnifiedProject,
   UnifiedPermission,
   AgentMode,
@@ -45,6 +46,8 @@ export class EngineManager extends EventEmitter {
   private sessionEngineMap = new Map<string, EngineType>();
   /** permissionId → engineType lookup for routing permission replies */
   private permissionEngineMap = new Map<string, EngineType>();
+  /** questionId → engineType lookup for routing question replies */
+  private questionEngineMap = new Map<string, EngineType>();
 
   // --- Adapter Registration ---
 
@@ -97,6 +100,8 @@ export class EngineManager extends EventEmitter {
       "session.created",
       "permission.asked",
       "permission.replied",
+      "question.asked",
+      "question.replied",
       "status.changed",
     ];
 
@@ -106,6 +111,10 @@ export class EngineManager extends EventEmitter {
         // Track permission → engine mapping for routing replies
         if (event === "permission.asked" && data?.permission?.id) {
           this.permissionEngineMap.set(data.permission.id, adapter.engineType);
+        }
+        // Track question → engine mapping for routing replies
+        if (event === "question.asked" && data?.question?.id) {
+          this.questionEngineMap.set(data.question.id, adapter.engineType);
         }
         this.emit(event, data);
       });
@@ -284,7 +293,7 @@ export class EngineManager extends EventEmitter {
 
   // --- Models ---
 
-  async listModels(engineType: EngineType): Promise<UnifiedModelInfo[]> {
+  async listModels(engineType: EngineType): Promise<ModelListResult> {
     const adapter = this.getAdapterOrThrow(engineType);
     return adapter.listModels();
   }
@@ -320,6 +329,33 @@ export class EngineManager extends EventEmitter {
     const adapter = this.getAdapterOrThrow(engineType);
     this.permissionEngineMap.delete(permissionId);
     return adapter.replyPermission(permissionId, reply);
+  }
+
+  // --- Questions ---
+
+  async replyQuestion(
+    questionId: string,
+    answers: string[][],
+  ): Promise<void> {
+    const engineType = this.questionEngineMap.get(questionId);
+    if (!engineType) {
+      throw new Error(`No engine binding found for question: ${questionId}`);
+    }
+    const adapter = this.getAdapterOrThrow(engineType);
+    this.questionEngineMap.delete(questionId);
+    return adapter.replyQuestion(questionId, answers);
+  }
+
+  async rejectQuestion(
+    questionId: string,
+  ): Promise<void> {
+    const engineType = this.questionEngineMap.get(questionId);
+    if (!engineType) {
+      throw new Error(`No engine binding found for question: ${questionId}`);
+    }
+    const adapter = this.getAdapterOrThrow(engineType);
+    this.questionEngineMap.delete(questionId);
+    return adapter.rejectQuestion(questionId);
   }
 
   // --- Projects ---

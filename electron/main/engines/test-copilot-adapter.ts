@@ -88,9 +88,9 @@ async function run() {
 
   // Step 3: List models
   console.log("\n── Step 3: List models ──");
-  const models = await adapter.listModels();
-  console.log(`Models (${models.length}):`);
-  for (const m of models) {
+  const modelResult = await adapter.listModels();
+  console.log(`Models (${modelResult.models.length}):`);
+  for (const m of modelResult.models) {
     console.log(`  - ${m.modelId}: ${m.name} (meta: ${JSON.stringify(m.meta)})`);
   }
 

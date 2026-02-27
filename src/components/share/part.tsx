@@ -44,7 +44,7 @@ import { ContentBash } from "./content-bash";
 import { ContentError } from "./content-error";
 import { formatDuration, createElapsedTimer } from "./common";
 import { ContentMarkdown } from "./content-markdown";
-import type { UnifiedMessage, UnifiedPart, UnifiedPermission, ToolPart } from "../../types/unified";
+import type { UnifiedMessage, UnifiedPart, UnifiedPermission, UnifiedQuestion, ToolPart } from "../../types/unified";
 import type { Diagnostic } from "vscode-languageserver-types";
 import { useI18n, formatMessage } from "../../lib/i18n";
 import { logger } from "../../lib/logger";
@@ -79,6 +79,9 @@ export interface PartProps {
   last: boolean;
   permission?: UnifiedPermission;
   onPermissionRespond?: (sessionID: string, permissionID: string, reply: string) => void;
+  question?: UnifiedQuestion;
+  onQuestionRespond?: (sessionID: string, questionID: string, answers: string[][]) => void;
+  onQuestionDismiss?: (sessionID: string, questionID: string) => void;
 }
 
 export function Part(props: PartProps) {
@@ -320,6 +323,23 @@ export function Part(props: PartProps) {
             <PermissionPrompt
               permission={props.permission}
               onRespond={props.onPermissionRespond}
+            />
+          </div>
+        )}
+        {/* Tool with pending question - show question prompt */}
+        {props.part.type === "tool" && props.question && (
+          <div data-component="tool-question">
+            <div data-component="tool-title" data-waiting>
+              <span data-slot="icon" data-icon-color="blue">
+                <ToolIcon tool={(props.part as ToolPart).normalizedTool} />
+              </span>
+              <span data-slot="name">{(props.part as ToolPart).title || (props.part as ToolPart).originalTool}</span>
+              <span data-slot="target">{t().question.waitingAnswer}</span>
+            </div>
+            <QuestionPrompt
+              question={props.question}
+              onRespond={props.onQuestionRespond}
+              onDismiss={props.onQuestionDismiss}
             />
           </div>
         )}
@@ -1271,6 +1291,137 @@ export function PermissionPrompt(props: PermissionPromptProps) {
               </button>
             )}
           </For>
+        </div>
+      </div>
+    </Show>
+  );
+}
+
+// Question Prompt Component
+interface QuestionPromptProps {
+  question: UnifiedQuestion;
+  onRespond?: (sessionID: string, questionID: string, answers: string[][]) => void;
+  onDismiss?: (sessionID: string, questionID: string) => void;
+}
+
+export function QuestionPrompt(props: QuestionPromptProps) {
+  const { t } = useI18n();
+
+  // Track selected answers per question index: answers[i] = array of selected option labels
+  const [answers, setAnswers] = createSignal<string[][]>(
+    props.question.questions.map(() => [])
+  );
+  // Track custom text input per question index
+  const [customTexts, setCustomTexts] = createSignal<string[]>(
+    props.question.questions.map(() => "")
+  );
+
+  const toggleOption = (questionIndex: number, optionLabel: string, multiple?: boolean) => {
+    setAnswers((prev) => {
+      const next = [...prev];
+      const current = [...(next[questionIndex] || [])];
+      const idx = current.indexOf(optionLabel);
+      if (idx >= 0) {
+        current.splice(idx, 1);
+      } else {
+        if (multiple) {
+          current.push(optionLabel);
+        } else {
+          // Single-select: replace
+          next[questionIndex] = [optionLabel];
+          return next;
+        }
+      }
+      next[questionIndex] = current;
+      return next;
+    });
+  };
+
+  const handleSubmit = () => {
+    if (!props.onRespond) return;
+    // Build final answers: merge selected options + custom text
+    const finalAnswers = props.question.questions.map((q, i) => {
+      const selected = [...(answers()[i] || [])];
+      const custom = (customTexts()[i] || "").trim();
+      if (custom) {
+        selected.push(custom);
+      }
+      return selected;
+    });
+    props.onRespond(props.question.sessionId, props.question.id, finalAnswers);
+  };
+
+  const handleDismiss = () => {
+    if (props.onDismiss) {
+      props.onDismiss(props.question.sessionId, props.question.id);
+    }
+  };
+
+  return (
+    <Show when={props.question}>
+      <div data-component="question-prompt">
+        <For each={props.question.questions}>
+          {(q, qi) => (
+            <div data-slot="question-item">
+              <div data-slot="question-header">
+                <span data-slot="question-badge">{q.header}</span>
+                <span data-slot="question-text">{q.question}</span>
+              </div>
+              <div data-slot="question-options">
+                <For each={q.options}>
+                  {(opt) => {
+                    const isSelected = () => (answers()[qi()] || []).includes(opt.label);
+                    return (
+                      <button
+                        type="button"
+                        data-slot="question-option"
+                        data-selected={isSelected() ? "" : undefined}
+                        onClick={() => toggleOption(qi(), opt.label, q.multiple)}
+                        title={opt.description}
+                      >
+                        {opt.label}
+                      </button>
+                    );
+                  }}
+                </For>
+              </div>
+              {/* Custom text input (shown by default unless custom is explicitly false) */}
+              <Show when={q.custom !== false}>
+                <input
+                  type="text"
+                  data-slot="question-custom-input"
+                  placeholder={t().question.customPlaceholder}
+                  value={customTexts()[qi()] || ""}
+                  onInput={(e) => {
+                    const idx = qi();
+                    setCustomTexts((prev) => {
+                      const next = [...prev];
+                      next[idx] = e.currentTarget.value;
+                      return next;
+                    });
+                  }}
+                />
+              </Show>
+            </div>
+          )}
+        </For>
+        <div data-slot="question-actions">
+          <button
+            type="button"
+            data-slot="permission-button"
+            data-variant="deny"
+            onClick={handleDismiss}
+          >
+            {t().question.dismiss}
+          </button>
+          <button
+            type="button"
+            data-slot="permission-button"
+            data-variant="once"
+            onClick={handleSubmit}
+          >
+            {t().question.submit}
+          </button>
         </div>
       </div>
     </Show>

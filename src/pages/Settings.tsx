@@ -5,6 +5,7 @@ import { ThemeSwitcher } from "../components/ThemeSwitcher";
 import { useI18n } from "../lib/i18n";
 import { useAuthGuard } from "../lib/useAuthGuard";
 import { isElectron } from "../lib/platform";
+import { Auth } from "../lib/auth";
 import { configStore } from "../stores/config";
 
 export default function Settings() {
@@ -15,6 +16,7 @@ export default function Settings() {
 
   const [logPath, setLogPath] = createSignal("");
   const [logLevel, setLogLevel] = createSignal("warn");
+  const [showLogSection, setShowLogSection] = createSignal(isElectron());
 
   const logLevels = ["error", "warn", "info", "verbose", "debug", "silly"];
 
@@ -29,14 +31,51 @@ export default function Settings() {
         setLogPath(path);
         setLogLevel(level);
       }
+    } else {
+      // Web mode: check if localhost, then fetch log info via REST
+      const localAccess = await Auth.isLocalAccess();
+      if (localAccess) {
+        setShowLogSection(true);
+        try {
+          const [pathRes, levelRes] = await Promise.all([
+            fetch("/api/system/log/path"),
+            fetch("/api/system/log/level"),
+          ]);
+          if (pathRes.ok) {
+            const { path } = await pathRes.json();
+            setLogPath(path || "");
+          }
+          if (levelRes.ok) {
+            const { level } = await levelRes.json();
+            setLogLevel(level || "warn");
+          }
+        } catch {
+          // Log API not available
+        }
+      }
     }
   });
 
   const handleLogLevelChange = async (level: string) => {
-    const api = (window as any).electronAPI;
-    if (api?.log) {
-      await api.log.setLevel(level);
-      setLogLevel(level);
+    if (isElectron()) {
+      const api = (window as any).electronAPI;
+      if (api?.log) {
+        await api.log.setLevel(level);
+        setLogLevel(level);
+      }
+    } else {
+      try {
+        const res = await fetch("/api/system/log/level", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ level }),
+        });
+        if (res.ok) {
+          setLogLevel(level);
+        }
+      } catch {
+        // Failed to set log level
+      }
     }
   };
 
@@ -224,8 +263,8 @@ export default function Settings() {
               </Show>
             </section>
 
-            {/* Logging Section (Electron only) */}
-            <Show when={isElectron()}>
+            {/* Logging Section */}
+            <Show when={showLogSection()}>
               <section>
                 <h2 class="text-sm font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-4 px-1">
                   {t().settings.logging}
@@ -247,13 +286,15 @@ export default function Settings() {
                       </Show>
                     </div>
                     <div class="flex-shrink-0">
-                      <button
-                        onClick={handleOpenLogFolder}
-                        disabled={!logPath()}
-                        class="px-3 py-1.5 text-sm font-medium rounded-lg border border-gray-300 dark:border-slate-600 text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-slate-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                      >
-                        {t().settings.openLogFolder}
-                      </button>
+                      <Show when={isElectron()}>
+                        <button
+                          onClick={handleOpenLogFolder}
+                          disabled={!logPath()}
+                          class="px-3 py-1.5 text-sm font-medium rounded-lg border border-gray-300 dark:border-slate-600 text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-slate-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          {t().settings.openLogFolder}
+                        </button>
+                      </Show>
                     </div>
                   </div>
                   {/* Log level */}

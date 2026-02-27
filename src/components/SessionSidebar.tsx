@@ -1,7 +1,7 @@
 import { For, Show, createSignal, createMemo, onMount } from "solid-js";
 import { SessionInfo, sessionStore, setSessionStore, getProjectName } from "../stores/session";
 import { useI18n, formatMessage } from "../lib/i18n";
-import type { UnifiedProject, EngineType } from "../types/unified";
+import type { UnifiedProject, EngineType, SessionActivityStatus } from "../types/unified";
 import { ProjectStore } from "../lib/project-store";
 import { isElectron } from "../lib/platform";
 import { systemAPI, getOpenCodeStoragePath, getCopilotStoragePath } from "../lib/electron-api";
@@ -10,12 +10,14 @@ interface SessionSidebarProps {
   sessions: SessionInfo[];
   currentSessionId: string | null;
   projects: UnifiedProject[];
+  getSessionStatus: (sessionId: string) => SessionActivityStatus;
   onSelectSession: (sessionId: string) => void;
   onNewSession: (directory?: string, engineType?: EngineType) => void;
   onDeleteSession: (sessionId: string) => void;
   onRenameSession: (sessionId: string, newTitle: string) => void;
   onDeleteProjectSessions: (projectID: string, projectName: string, sessionCount: number) => void;
   onAddProject: () => void;
+  showAddProject?: boolean;
 }
 
 // Project grouping data structure
@@ -58,6 +60,49 @@ export function SessionSidebar(props: SessionSidebarProps) {
   const [editingSessionId, setEditingSessionId] = createSignal<string | null>(null);
   const [editingTitle, setEditingTitle] = createSignal("");
   const [homePath, setHomePath] = createSignal<string | null>(null);
+
+  const StatusIndicator = (p: { status: SessionActivityStatus }) => {
+    switch (p.status) {
+      case "running":
+        return (
+          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24"
+            fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"
+            class="text-blue-500 dark:text-blue-400 flex-shrink-0 animate-spin">
+            <path d="M21 12a9 9 0 1 1-6.219-8.56" />
+          </svg>
+        );
+      case "completed":
+        return (
+          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24"
+            fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"
+            class="text-green-500 dark:text-green-400 flex-shrink-0">
+            <path d="M20 6 9 17l-5-5" />
+          </svg>
+        );
+      case "waiting":
+        return (
+          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24"
+            fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"
+            class="text-amber-500 dark:text-amber-400 flex-shrink-0">
+            <circle cx="12" cy="12" r="10" />
+            <path d="M12 8v4" />
+            <path d="M12 16h.01" />
+          </svg>
+        );
+      case "error":
+        return (
+          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24"
+            fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"
+            class="text-red-500 dark:text-red-400 flex-shrink-0">
+            <circle cx="12" cy="12" r="10" />
+            <path d="m15 9-6 6" />
+            <path d="m9 9 6 6" />
+          </svg>
+        );
+      default:
+        return null;
+    }
+  };
 
   // Load homePath once on mount (only in Electron, needed for storage folder button)
   if (isElectron()) {
@@ -405,6 +450,8 @@ export function SessionSidebar(props: SessionSidebarProps) {
                           const isActive = () =>
                             session.id === props.currentSessionId;
                           const isEditing = () => editingSessionId() === session.id;
+                          const sessionStatus = () =>
+                            props.getSessionStatus(session.id);
 
                           const startEditing = (e: MouseEvent) => {
                             e.stopPropagation();
@@ -443,13 +490,16 @@ export function SessionSidebar(props: SessionSidebarProps) {
                             >
                               <div class="flex items-center justify-between gap-2">
                                 <div class="flex-1 min-w-0">
-                                  <div class="flex items-center gap-2">
+                                  <div class="flex items-center gap-1.5">
+                                    <Show when={sessionStatus() !== "idle"}>
+                                      <StatusIndicator status={sessionStatus()} />
+                                    </Show>
                                     <Show
                                       when={isEditing()}
                                       fallback={
                                         <div
                                           class={`text-sm truncate ${
-                                            isActive()
+                                            isActive() || sessionStatus() === "completed"
                                               ? "text-gray-900 dark:text-gray-100 font-medium"
                                               : "text-gray-600 dark:text-gray-400"
                                           }`}
@@ -590,29 +640,31 @@ export function SessionSidebar(props: SessionSidebarProps) {
         </Show>
       </div>
 
-      <div class="px-2 py-2 border-t border-gray-200 dark:border-slate-800">
-        <button
-          onClick={props.onAddProject}
-          class="w-full flex items-center gap-2 px-3 py-2 text-sm text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-slate-800 hover:text-gray-900 dark:hover:text-white rounded-lg transition-colors"
-        >
-          <svg
-            xmlns="http://www.w3.org/2000/svg"
-            width="16"
-            height="16"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="2"
-            stroke-linecap="round"
-            stroke-linejoin="round"
+      <Show when={props.showAddProject !== false}>
+        <div class="px-2 py-2 border-t border-gray-200 dark:border-slate-800">
+          <button
+            onClick={props.onAddProject}
+            class="w-full flex items-center gap-2 px-3 py-2 text-sm text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-slate-800 hover:text-gray-900 dark:hover:text-white rounded-lg transition-colors"
           >
-            <path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z" />
-            <path d="M12 10v6" />
-            <path d="M9 13h6" />
-          </svg>
-          {t().project.add}
-        </button>
-      </div>
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z" />
+              <path d="M12 10v6" />
+              <path d="M9 13h6" />
+            </svg>
+            {t().project.add}
+          </button>
+        </div>
+      </Show>
     </div>
   );
 }

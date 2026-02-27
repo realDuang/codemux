@@ -7,6 +7,8 @@ interface MessageListProps {
   sessionID: string;
   isWorking?: boolean;
   onPermissionRespond?: (sessionID: string, permissionID: string, reply: string) => void;
+  onQuestionRespond?: (sessionID: string, questionID: string, answers: string[][]) => void;
+  onQuestionDismiss?: (sessionID: string, questionID: string) => void;
 }
 
 interface Turn {
@@ -91,6 +93,8 @@ export function MessageList(props: MessageListProps) {
                 isLastTurn={isLastTurn()}
                 isWorking={isWorking()}
                 onPermissionRespond={props.onPermissionRespond}
+                onQuestionRespond={props.onQuestionRespond}
+                onQuestionDismiss={props.onQuestionDismiss}
               />
             );
           }}

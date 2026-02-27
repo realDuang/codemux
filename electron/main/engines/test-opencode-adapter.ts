@@ -98,7 +98,8 @@ async function run() {
 
   // Step 2: List models
   console.log("\n── Step 2: List models ──");
-  const models = await adapter.listModels();
+  const modelResult = await adapter.listModels();
+  const models = modelResult.models;
   console.log(`Models (${models.length}):`);
   for (const m of models.slice(0, 5)) {
     console.log(`  - ${m.modelId}: ${m.name} (provider: ${m.providerName})`);

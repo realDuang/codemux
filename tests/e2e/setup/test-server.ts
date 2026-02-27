@@ -14,6 +14,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 import { randomUUID } from "crypto";
 import { MockEngineAdapter } from "../../../electron/main/engines/mock-adapter";
+import { MockAuthStore } from "./mock-auth-store";
 import {
   GatewayRequestType,
   GatewayNotificationType,
@@ -75,6 +76,29 @@ function setCorsHeaders(res: http.ServerResponse): void {
   res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, x-opencode-directory");
 }
 
+function parseJsonBody(req: http.IncomingMessage): Promise<any> {
+  return new Promise((resolve) => {
+    let body = "";
+    req.on("data", (chunk: string) => {
+      body += chunk;
+    });
+    req.on("end", () => {
+      try {
+        resolve(body ? JSON.parse(body) : {});
+      } catch {
+        resolve({});
+      }
+    });
+    req.on("error", () => resolve({}));
+  });
+}
+
+function extractBearerToken(req: http.IncomingMessage): string | null {
+  const auth = req.headers.authorization;
+  if (!auth?.startsWith("Bearer ")) return null;
+  return auth.slice(7);
+}
+
 // --- WebSocket client tracking ---
 
 interface WsClient {
@@ -96,6 +120,7 @@ export interface TestServerInstance {
   wsUrl: string;
   port: number;
   mockAdapters: Map<string, MockEngineAdapter>;
+  authStore: MockAuthStore;
   /** Pre-register session→engine routing (call after seeding) */
   registerSessionRoutes: () => Promise<void>;
   stop: () => Promise<void>;
@@ -124,6 +149,10 @@ export async function startTestServer(
   // Start both adapters
   await opencodeAdapter.start();
   await copilotAdapter.start();
+
+  // --- Auth state ---
+
+  const authStore = new MockAuthStore();
 
   // --- Routing state ---
 
@@ -452,6 +481,23 @@ export async function startTestServer(
     // Stub Auth API
     // ========================================================================
 
+    // --- Test control endpoints ---
+
+    if (pathname === "/api/test/set-local" && req.method === "POST") {
+      const body = await parseJsonBody(req);
+      authStore.setIsLocal(body.isLocal);
+      sendJson(res, { success: true });
+      return;
+    }
+
+    if (pathname === "/api/test/reset-auth" && req.method === "POST") {
+      authStore.reset();
+      sendJson(res, { success: true });
+      return;
+    }
+
+    // --- Auth endpoints ---
+
     if (pathname === "/api/auth/local-auth" && req.method === "POST") {
       sendJson(res, {
         success: true,
@@ -462,12 +508,96 @@ export async function startTestServer(
     }
 
     if (pathname === "/api/auth/validate" && req.method === "GET") {
-      sendJson(res, { valid: true, deviceId: "test-device" });
+      const token = extractBearerToken(req);
+      if (token) {
+        const result = authStore.verifyToken(token);
+        if (result.valid) {
+          sendJson(res, { valid: true, deviceId: result.deviceId });
+          return;
+        }
+      }
+      // Fallback for existing local auth test-token
+      if (token === "test-token") {
+        sendJson(res, { valid: true, deviceId: "test-device" });
+        return;
+      }
+      sendJson(res, { valid: false }, 401);
       return;
     }
 
     if (pathname === "/api/system/is-local" && req.method === "GET") {
-      sendJson(res, { isLocal: true });
+      sendJson(res, { isLocal: authStore.getIsLocal() });
+      return;
+    }
+
+    if (pathname === "/api/auth/request-access" && req.method === "POST") {
+      const body = await parseJsonBody(req);
+      if (!authStore.verifyAccessCode(body.code)) {
+        sendJson(res, { success: false, error: "Invalid code" }, 401);
+        return;
+      }
+      const request = authStore.createPendingRequest(
+        body.device || { name: "Unknown", platform: "Unknown", browser: "Unknown" },
+        "127.0.0.1",
+      );
+      sendJson(res, { success: true, requestId: request.id });
+      return;
+    }
+
+    if (pathname === "/api/auth/check-status" && req.method === "GET") {
+      const requestId = url.searchParams.get("requestId");
+      if (!requestId) {
+        sendJson(res, { status: "not_found" });
+        return;
+      }
+      const request = authStore.getPendingRequest(requestId);
+      if (!request) {
+        sendJson(res, { status: "not_found" });
+        return;
+      }
+      if (request.status === "approved") {
+        sendJson(res, {
+          status: "approved",
+          token: request.token,
+          deviceId: request.deviceId,
+        });
+      } else {
+        sendJson(res, { status: request.status });
+      }
+      return;
+    }
+
+    if (pathname === "/api/auth/code" && req.method === "GET") {
+      sendJson(res, { code: authStore.getAccessCode() });
+      return;
+    }
+
+    // --- Admin endpoints ---
+
+    if (pathname === "/api/admin/pending-requests" && req.method === "GET") {
+      sendJson(res, { requests: authStore.listPendingRequests() });
+      return;
+    }
+
+    if (pathname === "/api/admin/approve" && req.method === "POST") {
+      const body = await parseJsonBody(req);
+      const approved = authStore.approveRequest(body.requestId);
+      if (approved) {
+        sendJson(res, { success: true });
+      } else {
+        sendJson(res, { error: "Request not found or already processed" }, 404);
+      }
+      return;
+    }
+
+    if (pathname === "/api/admin/deny" && req.method === "POST") {
+      const body = await parseJsonBody(req);
+      const denied = authStore.denyRequest(body.requestId);
+      if (denied) {
+        sendJson(res, { success: true });
+      } else {
+        sendJson(res, { error: "Request not found or already processed" }, 404);
+      }
       return;
     }
 
@@ -577,6 +707,7 @@ export async function startTestServer(
         wsUrl: `ws://127.0.0.1:${actualPort}/ws`,
         port: actualPort,
         mockAdapters: adapters,
+        authStore,
         registerSessionRoutes: async () => {
           for (const [engineType, adapter] of adapters) {
             const sessions = await adapter.listSessions();

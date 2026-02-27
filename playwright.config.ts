@@ -1,4 +1,4 @@
-import { defineConfig } from "@playwright/test";
+import { defineConfig, devices } from "@playwright/test";
 
 export default defineConfig({
   testDir: "./tests/e2e/specs",
@@ -22,6 +22,14 @@ export default defineConfig({
     {
       name: "chromium",
       use: { browserName: "chromium" },
+    },
+    {
+      name: "mobile-chrome",
+      use: {
+        browserName: "chromium",
+        ...devices["Pixel 5"],
+      },
+      testMatch: /remote-auth\.spec\.ts/,
     },
   ],
 });

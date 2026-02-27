@@ -64,7 +64,7 @@ test.describe("Session – Messaging", () => {
   // has an inherent race condition on the very first cold-start run.
   // Server-side logs confirm the message is sent and broadcast correctly;
   // the issue is in the browser's real-time notification processing.
-  test.describe.configure({ retries: 1 });
+  test.describe.configure({ retries: 2 });
 
   test.beforeEach(async ({ page }) => {
     await navigateToChat(page);

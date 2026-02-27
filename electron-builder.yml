@@ -7,8 +7,10 @@ icon: public/assets/icon.png
 files:
   - out/**/*
   - package.json
+asarUnpack:
+  - node_modules/@github/copilot-*/**
 extraMetadata:
-  main: out/main/index.cjs
+  main: out/main/index.mjs
 mac:
   target: dmg
   icon: public/assets/icon.png

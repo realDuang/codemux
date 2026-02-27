@@ -29,8 +29,7 @@ Remote desktop app and web interface for AI coding assistance. Access OpenCode/C
 │   │   ├── engines/              # Engine adapters
 │   │   │   ├── engine-adapter.ts     # Abstract base class
 │   │   │   ├── opencode-adapter.ts   # OpenCode CLI (HTTP REST + SSE)
-│   │   │   ├── copilot-adapter.ts    # GitHub Copilot (JSON-RPC/stdio, ACP)
-│   │   │   └── acp-base-adapter.ts   # ACP protocol shared base
+│   │   │   └── copilot-sdk-adapter.ts # GitHub Copilot (@github/copilot-sdk)
 │   │   ├── gateway/              # WebSocket Gateway
 │   │   │   ├── ws-server.ts          # WebSocket server
 │   │   │   └── engine-manager.ts     # Engine routing & lifecycle
@@ -113,7 +112,7 @@ SolidJS UI
               └─ GatewayServer (electron/main/gateway/ws-server.ts)
                   └─ EngineManager (electron/main/gateway/engine-manager.ts)
                       ├─ OpenCodeAdapter → OpenCode CLI (HTTP :4096 + SSE)
-                      └─ CopilotAdapter → copilot --acp (JSON-RPC/stdio)
+                      └─ CopilotSdkAdapter → @github/copilot-sdk (JSON-RPC/stdio)
 ```
 
 ### Service Ports (Dev Mode)
@@ -154,7 +153,7 @@ SolidJS `createStore` (from `solid-js/store`):
 ### Engine Types
 
 - `"opencode"` — OpenCode CLI, communicates via HTTP REST + SSE streaming
-- `"copilot"` — GitHub Copilot, communicates via ACP (JSON-RPC over stdio), reads session history from SQLite (`~/.copilot/session-store.db`)
+- `"copilot"` — GitHub Copilot, uses `@github/copilot-sdk` (spawns Copilot CLI via JSON-RPC/stdio, reads session history from JSONL event files)
 - `"claude"` — Claude Code (placeholder, not yet implemented)
 
 ### Unified Type System
@@ -310,6 +309,24 @@ setter.call(input, 'value');
 input.dispatchEvent(new Event('input', { bubbles: true }));
 ```
 
+### Handling window.confirm Dialogs
+
+Delete session uses `window.confirm()` which blocks JavaScript execution and causes
+`browser_evaluate` to time out. Override it before triggering delete:
+
+```javascript
+browser_evaluate({
+  args: [{ uid: "snap_xx_0" }],
+  function: `(root) => {
+    window.confirm = () => true;
+    // Now safe to click delete buttons
+    const btn = document.querySelector('button[title="Delete session"]');
+    btn.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, composed: true }));
+    return "deleted";
+  }`
+})
+```
+
 ### Interaction Method Matrix
 
 | Operation | Method |
@@ -321,6 +338,8 @@ input.dispatchEvent(new Event('input', { bubbles: true }));
 | Expand steps | dispatchEvent click on `._stepsTriggerButton_*` |
 | Expand tool detail | dispatchEvent click on tool call button inside steps |
 | Add project | dispatchEvent click "Add Project" → fill dialog → confirm |
+| Delete session | Override `window.confirm = () => true` first, then dispatchEvent click on `button[title="Delete session"]` |
+| Delete/hide project | dispatchEvent click on `button[title="Hide Project"]` → confirm in HideProjectModal dialog |
 
 ### AI Browser Limitations
 

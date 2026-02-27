@@ -15,6 +15,7 @@ const __dirname = path.dirname(__filename);
 import { randomUUID } from "crypto";
 import { MockEngineAdapter } from "../../../electron/main/engines/mock-adapter";
 import { MockAuthStore } from "./mock-auth-store";
+import { seedTestData } from "./seed-data";
 import {
   GatewayRequestType,
   GatewayNotificationType,
@@ -492,6 +493,25 @@ export async function startTestServer(
 
     if (pathname === "/api/test/reset-auth" && req.method === "POST") {
       authStore.reset();
+      sendJson(res, { success: true });
+      return;
+    }
+
+    // Reset all mock adapters and re-seed with fresh test data
+    if (pathname === "/api/test/reseed" && req.method === "POST") {
+      for (const adapter of adapters.values()) {
+        adapter.reset();
+        await adapter.start();
+      }
+      sessionEngineMap.clear();
+      seedTestData(adapters);
+      // Re-register session routes
+      for (const [engineType, adapter] of adapters) {
+        const sessions = await adapter.listSessions();
+        for (const s of sessions) {
+          sessionEngineMap.set(s.id, engineType as EngineType);
+        }
+      }
       sendJson(res, { success: true });
       return;
     }

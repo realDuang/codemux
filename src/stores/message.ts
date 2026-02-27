@@ -1,5 +1,5 @@
 import { createStore } from "solid-js/store";
-import type { UnifiedMessage, UnifiedPart, UnifiedPermission } from "../types/unified";
+import type { UnifiedMessage, UnifiedPart, UnifiedPermission, UnifiedQuestion } from "../types/unified";
 
 // Storage structure — engine-agnostic
 export const [messageStore, setMessageStore] = createStore<{
@@ -12,6 +12,9 @@ export const [messageStore, setMessageStore] = createStore<{
   permission: {
     [sessionId: string]: UnifiedPermission[];  // Permission request queue grouped by sessionId
   };
+  question: {
+    [sessionId: string]: UnifiedQuestion[];  // Question request queue grouped by sessionId
+  };
   // Collapse/expand state, indexed by partId or special key
   expanded: {
     [key: string]: boolean;
@@ -20,6 +23,7 @@ export const [messageStore, setMessageStore] = createStore<{
   message: {},
   part: {},
   permission: {},
+  question: {},
   expanded: {},
 });
 

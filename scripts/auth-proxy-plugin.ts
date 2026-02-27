@@ -156,6 +156,7 @@ export function createAuthProxyPlugin(options: AuthProxyPluginOptions = {}): Plu
           "/api/auth/",
           "/api/admin/",
           "/api/devices",
+          "/api/system/log",
         ];
 
         const shouldProxy = authApiPaths.some(p => url.startsWith(p));

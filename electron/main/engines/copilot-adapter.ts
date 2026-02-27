@@ -13,6 +13,7 @@ import type {
   EngineType,
   EngineCapabilities,
   UnifiedSession,
+  ModelListResult,
 } from "../../../src/types/unified";
 
 interface SessionRow {
@@ -77,6 +78,31 @@ export class CopilotAdapter extends AcpBaseAdapter {
       : allSessions;
     sessionStore.mergeSessions(filtered, this.engineType);
     return filtered;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Override listModels to use the real model from ~/.copilot/config.json
+  // ACP's session/new returns an inaccurate currentModelId; the actual model
+  // used by Copilot CLI is determined by its config file's "model" field.
+  // ---------------------------------------------------------------------------
+  async listModels(): Promise<ModelListResult> {
+    const result = await super.listModels();
+    const configModel = this.readConfigModel();
+    if (configModel) {
+      result.currentModelId = configModel;
+    }
+    return result;
+  }
+
+  private readConfigModel(): string | undefined {
+    try {
+      const configPath = join(homedir(), ".copilot", "config.json");
+      if (!existsSync(configPath)) return undefined;
+      const config = JSON.parse(readFileSync(configPath, "utf-8"));
+      return config.model || undefined;
+    } catch {
+      return undefined;
+    }
   }
 
   // ---------------------------------------------------------------------------

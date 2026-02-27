@@ -34,6 +34,13 @@ export const zh: LocaleDict = {
     allowAlways: "总是允许",
     waitingApproval: "等待批准",
   },
+  // Question
+  question: {
+    submit: "提交",
+    dismiss: "忽略",
+    customPlaceholder: "输入自定义回答...",
+    waitingAnswer: "等待回答",
+  },
 
   // Login page
   login: {
@@ -56,6 +63,8 @@ export const zh: LocaleDict = {
     logout: "退出登录",
     startConversation: "开始新的对话",
     startConversationDesc: "选择一个模型，在下方输入框中输入任何问题开始聊天。",
+    noSessionSelected: "未选择会话",
+    noSessionSelectedDesc: "从侧边栏选择一个会话或创建新会话以开始使用。",
     initFailed: "初始化失败",
     retry: "重试",
     disclaimer: "AI 生成的内容可能不准确，请核实重要信息。",

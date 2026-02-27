@@ -160,7 +160,7 @@ export class CopilotAdapter extends AcpBaseAdapter {
         const session: UnifiedSession = {
           id: row.id,
           engineType: this.engineType,
-          directory: (row.cwd ?? "").replaceAll("\\", "/"),
+          directory: (row.cwd || homedir()).replaceAll("\\", "/"),
           title: row.summary ?? undefined,
           time: {
             created: row.created_at

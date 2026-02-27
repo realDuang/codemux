@@ -355,7 +355,7 @@ export default function Chat() {
         logger.debug("[Init] No sessions found, creating new one");
         const defaultProject = validProjects[0];
         const defaultDir = defaultProject?.directory || ".";
-        const defaultEngine = defaultProject?.engineType || configStore.currentEngineType || "opencode";
+        const defaultEngine = defaultProject?.engineType || "opencode";
         const newSession = await gateway.createSession(defaultEngine, defaultDir);
         currentSession = toSessionInfo(newSession);
         processedSessions.push(currentSession);

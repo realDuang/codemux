@@ -176,7 +176,7 @@ describe("MockEngineAdapter", () => {
       expect(messages[1].role).toBe("assistant");
     });
 
-    it("should emit message events synchronously", async () => {
+    it("should emit message events after sendMessage", async () => {
       const events: string[] = [];
       adapter.on("message.part.updated", () => events.push("part"));
       adapter.on("message.updated", (data) => events.push(`message:${data.message.role}`));
@@ -185,7 +185,10 @@ describe("MockEngineAdapter", () => {
         { type: "text", text: "test" },
       ]);
 
-      // Events are emitted synchronously (user message.updated, part, assistant message.updated)
+      // Events are deferred via setTimeout to avoid race conditions
+      // in gateway broadcast; wait for them to fire
+      await new Promise((r) => setTimeout(r, 50));
+
       expect(events).toContain("part");
       expect(events).toContain("message:user");
       expect(events).toContain("message:assistant");

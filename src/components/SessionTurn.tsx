@@ -9,6 +9,7 @@ import {
 } from "solid-js";
 import { messageStore, isExpanded, toggleExpanded } from "../stores/message";
 import { Part, ProviderIcon, PermissionPrompt } from "./share/part";
+import { ContentError } from "./share/content-error";
 import { IconSparkles } from "./icons";
 import { useI18n } from "../lib/i18n";
 import type { UnifiedMessage, UnifiedPart, UnifiedPermission, ToolPart } from "../types/unified";
@@ -181,6 +182,13 @@ export function SessionTurn(props: SessionTurnProps) {
       }
     }
     return undefined;
+  });
+
+  // Detect error/cancelled state from the last assistant message
+  const lastMessageError = createMemo(() => {
+    const msgs = props.assistantMessages;
+    if (msgs.length === 0) return undefined;
+    return msgs[msgs.length - 1].error;
   });
 
   // Compute current working status
@@ -466,6 +474,42 @@ export function SessionTurn(props: SessionTurnProps) {
                 />
               </div>
             </div>
+          </Show>
+
+          {/* Error/Cancelled Banner */}
+          <Show when={!props.isWorking && lastMessageError()}>
+            {(_) => {
+              const isCancelled = () => lastMessageError() === "Cancelled";
+              const variant = () => isCancelled() ? "cancelled" : "error";
+              return (
+                <div class={styles.errorBanner} data-variant={variant()}>
+                  <div class={styles.errorBannerHeader}>
+                    <span class={styles.errorBannerIcon}>
+                      <Show when={isCancelled()} fallback={
+                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                          <circle cx="12" cy="12" r="10" />
+                          <path d="m15 9-6 6" />
+                          <path d="m9 9 6 6" />
+                        </svg>
+                      }>
+                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                          <circle cx="12" cy="12" r="10" />
+                          <rect x="9" y="9" width="6" height="6" rx="1" />
+                        </svg>
+                      </Show>
+                    </span>
+                    <h3 class={styles.errorBannerTitle}>
+                      {isCancelled() ? t().steps.cancelled : t().steps.errorOccurred}
+                    </h3>
+                  </div>
+                  <Show when={!isCancelled()}>
+                    <div class={styles.errorBannerContent}>
+                      <ContentError>{lastMessageError()}</ContentError>
+                    </div>
+                  </Show>
+                </div>
+              );
+            }}
           </Show>
         </>
       }>

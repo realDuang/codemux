@@ -191,6 +191,8 @@ export interface LocaleDict {
     gatheringThoughts: string;
     organizingContext: string;
     contextOrganized: string;
+    cancelled: string;
+    errorOccurred: string;
   };
 
   // Devices page
@@ -461,6 +463,8 @@ export const en: LocaleDict = {
     gatheringThoughts: "Gathering thoughts",
     organizingContext: "Organizing context",
     contextOrganized: "Context organized",
+    cancelled: "Cancelled",
+    errorOccurred: "Error",
   },
 
   // Devices page

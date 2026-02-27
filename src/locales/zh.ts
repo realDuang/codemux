@@ -192,6 +192,8 @@ export const zh: LocaleDict = {
     gatheringThoughts: "整理思路",
     organizingContext: "整理上下文",
     contextOrganized: "上下文已整理",
+    cancelled: "已取消",
+    errorOccurred: "错误",
   },
 
   // Devices page

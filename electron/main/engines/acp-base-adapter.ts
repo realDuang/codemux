@@ -1181,6 +1181,9 @@ export abstract class AcpBaseAdapter extends EngineAdapter {
     const message = this.finalizeMessage(sessionId, stopReason);
     message.modelId = this.currentModelId ?? undefined;
     message.mode = this.currentModeId ?? undefined;
+    if (stopReason === "cancelled") {
+      message.error = "Cancelled";
+    }
 
     this.emit("message.updated", { sessionId, message });
     this.appendToHistory(sessionId, message);

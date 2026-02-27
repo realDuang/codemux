@@ -1037,14 +1037,17 @@ export class OpenCodeAdapter extends EngineAdapter {
     if (pending) {
       if (pending.timeoutTimer) clearTimeout(pending.timeoutTimer);
       this.pendingMessages.delete(sessionId);
-      pending.resolve({
+      const cancelledMessage: UnifiedMessage = {
         id: pending.messageId ?? "",
         sessionId,
         role: "assistant",
-        time: { created: Date.now() },
+        time: { created: Date.now(), completed: Date.now() },
         parts: pending.assistantParts,
         error: "Cancelled",
-      });
+      };
+      // Emit so frontend store gets the error via message.updated notification
+      this.emit("message.updated", { sessionId, message: cancelledMessage });
+      pending.resolve(cancelledMessage);
     }
   }
 

@@ -20,6 +20,11 @@ export const TEST_PROJECTS = {
     directory: "/test/project-beta",
     engineType: "copilot" as const,
   },
+  // Same path as project1 but different engine — tests cross-engine dedup
+  project3: {
+    directory: "/test/project-alpha",
+    engineType: "copilot" as const,
+  },
 };
 
 // --- Pre-built sessions ---
@@ -54,6 +59,14 @@ export const TEST_SESSIONS: UnifiedSession[] = [
     directory: "/test/project-beta",
     title: "Refactor database layer",
     time: { created: Date.now() - 1800000, updated: Date.now() - 900000 },
+  },
+  // Project 3 (copilot, same path as project1): 1 session
+  {
+    id: "session-cp-2",
+    engineType: "copilot",
+    directory: "/test/project-alpha",
+    title: "Cross-engine test session",
+    time: { created: Date.now() - 1200000, updated: Date.now() - 600000 },
   },
 ];
 
@@ -116,6 +129,25 @@ export const TEST_MESSAGES: Record<string, UnifiedMessage[]> = {
           sessionId: "session-cp-1",
           type: "text",
           text: "Refactor the database connection pool",
+        } as TextPart,
+      ],
+    },
+  ],
+
+  // session-cp-2: one user message
+  "session-cp-2": [
+    {
+      id: "msg-4",
+      sessionId: "session-cp-2",
+      role: "user",
+      time: { created: Date.now() - 1100000 },
+      parts: [
+        {
+          id: "part-4",
+          messageId: "msg-4",
+          sessionId: "session-cp-2",
+          type: "text",
+          text: "Test cross-engine project setup",
         } as TextPart,
       ],
     },

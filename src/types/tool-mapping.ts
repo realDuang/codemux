@@ -35,14 +35,38 @@ const CLAUDE_TOOL_MAP: Record<string, NormalizedToolName> = {
   TodoWrite: "todo",
 };
 
+// --- Copilot CLI tool name mapping (via @github/copilot-sdk) ---
+
+const COPILOT_TOOL_MAP: Record<string, NormalizedToolName> = {
+  // Shell
+  powershell: "shell", bash: "shell", shell: "shell",
+  read_powershell: "shell", write_powershell: "shell", stop_powershell: "shell",
+  // File operations
+  view: "read", read_file: "read",
+  create: "write", write_file: "write",
+  edit: "edit", edit_file: "edit",
+  // Search
+  grep: "grep", search: "grep",
+  glob: "glob", find: "glob",
+  list: "list",
+  // Web
+  web_fetch: "web_fetch", fetch_url: "web_fetch", web_search: "web_fetch",
+  // Agent
+  task: "task",
+  // Todo
+  update_todo: "todo",
+  // Intent (Copilot-specific, not a real tool)
+  report_intent: "unknown",
+};
+
 const ENGINE_TOOL_MAPS: Partial<Record<EngineType, Record<string, NormalizedToolName>>> = {
   opencode: OPENCODE_TOOL_MAP,
   claude: CLAUDE_TOOL_MAP,
+  copilot: COPILOT_TOOL_MAP,
 };
 
 /**
- * Normalize a tool name from OpenCode or Claude Code (engines that provide
- * explicit tool name strings).
+ * Normalize a tool name from any engine that provides explicit tool name strings.
  */
 export function normalizeToolName(
   engineType: EngineType,
@@ -57,63 +81,7 @@ export function normalizeToolName(
 }
 
 /**
- * Infer a normalized tool name from ACP's rawInput structure and title.
- * Used for Copilot CLI and other ACP engines that don't provide explicit
- * tool name fields.
- */
-export function inferToolFromAcp(
-  title: string,
-  rawInput: unknown,
-): NormalizedToolName {
-  if (!rawInput || typeof rawInput !== "object") return "unknown";
-  const input = rawInput as Record<string, unknown>;
-
-  // Shell: has "command" field
-  if ("command" in input) return "shell";
-
-  // Glob: has "pattern" and "path", title starts with "Finding files"
-  if ("pattern" in input && "path" in input && !("view_range" in input)) {
-    return "glob";
-  }
-
-  // Read/View: has "path" + "view_range", or title starts with "Viewing"
-  if ("view_range" in input) return "read";
-  if (title.startsWith("Viewing")) return "read";
-
-  // Write/Create: has "path" + "file_text", or title starts with "Creating"
-  if ("file_text" in input) return "write";
-  if (title.startsWith("Creating")) return "write";
-
-  // Edit: has "path" + ("old_string" or "new_string" or "insert_line")
-  if ("old_string" in input || "new_string" in input || "insert_line" in input) {
-    return "edit";
-  }
-
-  // Grep: has "pattern" + "path", title contains "Searching" or "Search"
-  if ("pattern" in input && (title.includes("Searching") || title.includes("Search"))) {
-    return "grep";
-  }
-
-  // Web fetch: has "url"
-  if ("url" in input) return "web_fetch";
-
-  // Task/Agent: has "prompt" with subagent-like fields
-  if ("prompt" in input && ("subagent_type" in input || "description" in input)) {
-    return "task";
-  }
-
-  // Todo: has "todos" array
-  if ("todos" in input && Array.isArray(input.todos)) return "todo";
-
-  // SQL: has "query" or "sql"
-  if ("query" in input && title.toLowerCase().includes("sql")) return "sql";
-
-  return "unknown";
-}
-
-/**
- * Infer the operation kind from ACP's tool_call kind field or from
- * the normalized tool name.
+ * Infer the operation kind from a kind hint or the normalized tool name.
  */
 export function inferToolKind(
   acpKind?: string,

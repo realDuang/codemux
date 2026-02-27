@@ -63,7 +63,6 @@ export function getLogFilePath(): string {
 export const mainLog = log.scope("main");
 export const gatewayLog = log.scope("gateway");
 export const engineManagerLog = log.scope("engine-mgr");
-export const acpLog = log.scope("acp");
 export const openCodeLog = log.scope("opencode");
 export const copilotLog = log.scope("copilot");
 export const authLog = log.scope("auth");

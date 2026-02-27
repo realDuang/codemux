@@ -4,7 +4,7 @@
   "type": "module",
   "description": "A unified AI coding assistant client - access multiple AI coding engines from any device via desktop app or web interface",
   "author": "realDuang",
-  "main": "out/main/index.cjs",
+  "main": "out/main/index.mjs",
   "scripts": {
     "dev": "electron-vite dev",
     "build": "electron-vite build",
@@ -21,10 +21,11 @@
     "update:cloudflared": "bun scripts/update-cloudflared.ts",
     "test:web-api": "bun scripts/test-web-api.ts",
     "test:unit": "vitest run",
-    "test:e2e": "playwright test",
+    "test:e2e": "electron-vite build && playwright test",
     "test": "vitest run && playwright test"
   },
   "dependencies": {
+    "@github/copilot-sdk": "^0.1.26",
     "@shikijs/transformers": "^1.22.0",
     "@solid-primitives/i18n": "^2.2.1",
     "@solidjs/router": "^0.14.10",
@@ -38,7 +39,6 @@
     "marked-shiki": "^1.1.2",
     "shiki": "^1.22.0",
     "solid-js": "^1.8.0",
-    "sql.js": "^1.14.0",
     "tailwind-merge": "^2.2.0",
     "vscode-languageserver-types": "^3.17.5",
     "ws": "^8.19.0"
@@ -52,7 +52,7 @@
     "@types/sql.js": "^1.4.9",
     "@types/ws": "^8.18.1",
     "bun-types": "latest",
-    "electron": "33",
+    "electron": "^40.6.1",
     "electron-builder": "^25.1.8",
     "electron-vite": "^2.3.0",
     "tailwindcss": "^4.0.0",

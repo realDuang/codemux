@@ -7,7 +7,7 @@ import { tunnelManager } from './scripts/tunnel-manager';
 
 export default defineConfig({
   main: {
-    plugins: [externalizeDepsPlugin({ exclude: ['ws', 'fix-path', 'shell-path', 'shell-env'] })],
+    plugins: [externalizeDepsPlugin({ exclude: ['ws', 'fix-path', 'shell-path', 'shell-env', 'electron-log'] })],
     build: {
       lib: {
         entry: resolve(__dirname, 'electron/main/index.ts'),
@@ -15,8 +15,8 @@ export default defineConfig({
       rollupOptions: {
         external: ['electron', 'bufferutil', 'utf-8-validate'],
         output: {
-          format: 'cjs',
-          entryFileNames: '[name].cjs',
+          format: 'es',
+          entryFileNames: '[name].mjs',
         },
       },
     },

@@ -14,9 +14,9 @@ import { productionServer } from "./services/production-server";
 import { EngineManager } from "./gateway/engine-manager";
 import { GatewayServer } from "./gateway/ws-server";
 import { OpenCodeAdapter } from "./engines/opencode-adapter";
-import { CopilotAdapter } from "./engines/copilot-adapter";
-// Claude Code adapter disabled — waiting for ACP protocol support
-// import { ClaudeAdapter } from "./engines/claude-adapter";
+import { CopilotSdkAdapter } from "./engines/copilot-sdk-adapter";
+// Claude Code adapter — not yet implemented
+// import { ClaudeCodeAdapter } from "./engines/claude-adapter";
 
 // --- Gateway singleton instances ---
 const engineManager = new EngineManager();
@@ -24,7 +24,7 @@ const gatewayServer = new GatewayServer(engineManager);
 
 // Register engine adapters
 const openCodeAdapter = new OpenCodeAdapter({ port: 4096 });
-const copilotAdapter = new CopilotAdapter();
+const copilotAdapter = new CopilotSdkAdapter();
 engineManager.registerAdapter(openCodeAdapter);
 engineManager.registerAdapter(copilotAdapter);
 

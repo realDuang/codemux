@@ -3,8 +3,14 @@
 // Implements all abstract methods with canned responses and in-memory storage.
 // ============================================================================
 
-import { randomUUID } from "crypto";
 import { EngineAdapter } from "./engine-adapter";
+
+// Monotonically increasing ID generator — ensures messages sort in creation
+// order when the store uses string-comparison sorting (alphabetical by id).
+let _idCounter = 0;
+function orderedId(prefix = "mock"): string {
+  return `${prefix}-${String(++_idCounter).padStart(12, "0")}`;
+}
 import type {
   EngineType,
   EngineStatus,
@@ -129,7 +135,7 @@ export class MockEngineAdapter extends EngineAdapter {
   async createSession(directory: string): Promise<UnifiedSession> {
     const now = Date.now();
     const session: UnifiedSession = {
-      id: randomUUID(),
+      id: orderedId(),
       engineType: this.engineType,
       directory,
       title: "New Session",
@@ -170,13 +176,13 @@ export class MockEngineAdapter extends EngineAdapter {
 
     // Store the user message
     const userMessage: UnifiedMessage = {
-      id: randomUUID(),
+      id: orderedId(),
       sessionId,
       role: "user",
       time: { created: now, completed: now },
       parts: [
         {
-          id: randomUUID(),
+          id: orderedId(),
           messageId: "", // filled below
           sessionId,
           type: "text",
@@ -194,8 +200,8 @@ export class MockEngineAdapter extends EngineAdapter {
 
     // Generate the canned assistant response
     const responseText = this.generateResponse(userText);
-    const assistantMessageId = randomUUID();
-    const partId = randomUUID();
+    const assistantMessageId = orderedId();
+    const partId = orderedId();
 
     const textPart: TextPart = {
       id: partId,
@@ -342,7 +348,7 @@ export class MockEngineAdapter extends EngineAdapter {
       if (!directorySet.has(session.directory)) {
         const dirName = session.directory.split(/[\\/]/).pop() ?? session.directory;
         directorySet.set(session.directory, {
-          id: randomUUID(),
+          id: `project-${this.engineType}-${session.directory.replace(/[^a-zA-Z0-9]/g, "-")}`,
           directory: session.directory,
           name: dirName,
           engineType: this.engineType,

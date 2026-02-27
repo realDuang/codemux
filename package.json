@@ -1,6 +1,6 @@
 {
   "name": "codemux",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "type": "module",
   "description": "A unified AI coding assistant client - access multiple AI coding engines from any device via desktop app or web interface",
   "author": "realDuang",
@@ -19,7 +19,10 @@
     "setup": "bun scripts/setup.ts",
     "start": "bun scripts/start.ts",
     "update:cloudflared": "bun scripts/update-cloudflared.ts",
-    "test:web-api": "bun scripts/test-web-api.ts"
+    "test:web-api": "bun scripts/test-web-api.ts",
+    "test:unit": "vitest run",
+    "test:e2e": "playwright test",
+    "test": "vitest run && playwright test"
   },
   "dependencies": {
     "@shikijs/transformers": "^1.22.0",
@@ -41,6 +44,7 @@
     "ws": "^8.19.0"
   },
   "devDependencies": {
+    "@playwright/test": "^1.58.2",
     "@tailwindcss/vite": "^4.0.0",
     "@types/diff": "^5.0.9",
     "@types/luxon": "^3.4.0",
@@ -54,6 +58,7 @@
     "tailwindcss": "^4.0.0",
     "typescript": "^5.3.0",
     "vite": "^5.0.0",
-    "vite-plugin-solid": "^2.10.0"
+    "vite-plugin-solid": "^2.10.0",
+    "vitest": "^4.0.18"
   }
 }

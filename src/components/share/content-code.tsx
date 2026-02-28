@@ -16,6 +16,7 @@ export function ContentCode(props: Props) {
     () => ({ code: props.code, lang: props.lang, showLineNumbers: props.showLineNumbers, transparentBg: props.transparentBg }),
     async ({ code, lang, showLineNumbers }) => {
       const codeStr = code || ""
+      await new Promise(r => setTimeout(r, 0));
       const result = await codeToHtml(codeStr, {
         lang: lang && lang in bundledLanguages ? lang : "text",
         themes: {

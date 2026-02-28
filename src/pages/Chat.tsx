@@ -237,6 +237,18 @@ export default function Chat() {
     }
   };
 
+  // Debounced scrollToBottom for high-frequency part updates —
+  // coalesces multiple calls within the same frame into one.
+  let scrollRafId: number | null = null;
+  const scheduleScrollToBottom = () => {
+    if (scrollRafId === null) {
+      scrollRafId = requestAnimationFrame(() => {
+        scrollRafId = null;
+        scrollToBottom();
+      });
+    }
+  };
+
   const isNearBottom = () => {
     const el = messagesRef();
     if (!el) return true;
@@ -269,7 +281,12 @@ export default function Chat() {
 
     try {
       const messages = await gateway.listMessages(sessionId);
-      logger.debug("[LoadMessages] Loaded messages:", messages);
+
+      // If user switched away while we were loading, still cache the data
+      // but don't flip loadingMessages — the new session's load owns that.
+      const isStale = sessionStore.current !== sessionId;
+
+      logger.debug("[LoadMessages] Loaded messages:", messages, isStale ? "(stale)" : "");
 
       // Store parts separately, sorted by id
       for (const msg of messages) {
@@ -475,8 +492,11 @@ export default function Chat() {
     }
   };
 
-  // Switch session
+  // Switch session — guarded against rapid re-entry so parallel requests
+  // don't pile up and flood the main thread when they all resolve at once.
+  let switchGeneration = 0;
   const handleSelectSession = async (sessionId: string) => {
+    const gen = ++switchGeneration;
     logger.debug("[SelectSession] Switching to session:", sessionId);
     setSessionStore("current", sessionId);
     setSessionStore("initError", null);
@@ -512,11 +532,17 @@ export default function Chat() {
       setTimeout(() => scrollToBottom(true), 100);
     }
 
+    // Stale check: if the user has already switched to another session
+    // while we were awaiting, skip the rest to avoid useless work.
+    if (gen !== switchGeneration) return;
+
     // Refresh model list — ACP adapters populate models/currentModelId
     // after loadSession, so we need to re-fetch after messages are loaded.
     const switchEngineType = session?.engineType || configStore.currentEngineType || "opencode";
     try {
       const modelResult = await gateway.listModels(switchEngineType);
+      // Only apply if this is still the active switch
+      if (gen !== switchGeneration) return;
       if (modelResult.models.length > 0) {
         setConfigStore("models", modelResult.models);
       }
@@ -783,7 +809,7 @@ export default function Chat() {
         return newParts;
       });
     }
-    setTimeout(scrollToBottom, 0);
+    scheduleScrollToBottom();
   };
 
   const handleMessageUpdated = (_sessionId: string, msgInfo: UnifiedMessage) => {

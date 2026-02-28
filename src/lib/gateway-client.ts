@@ -7,7 +7,6 @@ import { gatewayAPI } from "./electron-api";
 import { isElectron } from "./platform";
 import {
   GatewayRequestType,
-  GatewayNotificationType,
   type GatewayRequest,
   type GatewayResponse,
   type GatewayNotification,
@@ -17,13 +16,11 @@ import {
   type EngineCapabilities,
   type UnifiedSession,
   type UnifiedMessage,
-  type UnifiedModelInfo,
   type ModelListResult,
   type UnifiedProject,
   type UnifiedPermission,
   type UnifiedQuestion,
   type UnifiedPart,
-  type AgentMode,
   type SessionCreateRequest,
   type MessageSendRequest,
   type PermissionReplyRequest,

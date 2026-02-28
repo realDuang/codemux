@@ -24,15 +24,6 @@ export const localeNames: Record<LocaleCode, string> = {
   zh: "简体中文",
 };
 
-// Get browser default locale
-function getBrowserLocale(): LocaleCode {
-  const browserLang = navigator.language;
-  if (browserLang.startsWith("zh")) {
-    return "zh";
-  }
-  return "en";
-}
-
 // Get saved locale from localStorage or use English as default
 function getSavedLocale(): LocaleCode {
   const saved = localStorage.getItem("locale") as LocaleCode | null;

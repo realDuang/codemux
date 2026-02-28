@@ -5,7 +5,7 @@
  * to push notifications, and exposes typed methods for the frontend to use.
  */
 
-import { gatewayClient, type GatewayClientEvents } from "./gateway-client";
+import { gatewayClient } from "./gateway-client";
 import type {
   EngineType,
   EngineInfo,
@@ -13,18 +13,10 @@ import type {
   UnifiedSession,
   UnifiedMessage,
   UnifiedPart,
-  UnifiedModelInfo,
   ModelListResult,
   UnifiedProject,
   UnifiedPermission,
   UnifiedQuestion,
-  AgentMode,
-  SessionCreateRequest,
-  MessageSendRequest,
-  PermissionReplyRequest,
-  ProjectSetEngineRequest,
-  ModelSetRequest,
-  ModeSetRequest,
 } from "../types/unified";
 
 // --- Notification callback types ---

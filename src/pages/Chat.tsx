@@ -143,6 +143,8 @@ export default function Chat() {
   });
   const [messagesRef, setMessagesRef] = createSignal<HTMLDivElement>();
   const [loadingMessages, setLoadingMessages] = createSignal(false);
+  // Whether user has scrolled away from the bottom. When true, auto-scroll
+  // during streaming is suppressed so the user can read earlier content.
   const [userScrolledUp, setUserScrolledUp] = createSignal(false);
 
   // Current session's pending permissions and questions (for input area replacement)
@@ -228,37 +230,54 @@ export default function Chat() {
     navigate("/", { replace: true });
   };
 
-  const scrollToBottom = (force?: boolean) => {
+  // ── Scroll helpers ──────────────────────────────────────────────
+  // Scroll strategy: use a ResizeObserver on the inner content wrapper
+  // to detect height changes (from sync DOM updates, async markdown
+  // rendering, code highlighting, etc.).  When the user is near the
+  // bottom we auto-follow; otherwise we leave the viewport alone.
+  // This eliminates the race between store updates and async renders.
+
+  const scrollToBottom = () => {
     const el = messagesRef();
-    if (el) {
-      if (force || !userScrolledUp()) {
-        el.scrollTop = el.scrollHeight;
-      }
-    }
+    if (el) el.scrollTop = el.scrollHeight;
   };
 
-  // Debounced scrollToBottom for high-frequency part updates —
-  // coalesces multiple calls within the same frame into one.
-  let scrollRafId: number | null = null;
-  const scheduleScrollToBottom = () => {
-    if (scrollRafId === null) {
-      scrollRafId = requestAnimationFrame(() => {
-        scrollRafId = null;
-        scrollToBottom();
-      });
-    }
-  };
-
-  const isNearBottom = () => {
+  const isNearBottom = (threshold = 200) => {
     const el = messagesRef();
     if (!el) return true;
-    const threshold = 80;
     return el.scrollHeight - el.scrollTop - el.clientHeight < threshold;
   };
 
   const handleScroll = () => {
     setUserScrolledUp(!isNearBottom());
   };
+
+  // Observe the scroll container's inner content for any size change.
+  // When the content grows and the user hasn't scrolled up, smoothly
+  // follow to the bottom.  This covers both synchronous and async
+  // height changes (markdown rendering, shiki highlighting, etc.).
+  let scrollObserver: ResizeObserver | null = null;
+  createEffect(() => {
+    const el = messagesRef();
+    if (!el) return;
+
+    // Observe the first child (the inner content wrapper) so we detect
+    // height changes even when the scroll container itself stays fixed.
+    const target = el.firstElementChild || el;
+
+    scrollObserver?.disconnect();
+    scrollObserver = new ResizeObserver(() => {
+      if (!userScrolledUp()) {
+        scrollToBottom();
+      }
+    });
+    scrollObserver.observe(target);
+
+    onCleanup(() => {
+      scrollObserver?.disconnect();
+      scrollObserver = null;
+    });
+  });
 
   const toggleSidebar = () => setIsSidebarOpen((prev) => !prev);
 
@@ -307,7 +326,7 @@ export default function Chat() {
       }
     } finally {
       setLoadingMessages(false);
-      setTimeout(() => scrollToBottom(true), 100);
+      setTimeout(() => scrollToBottom(), 100);
     }
   };
 
@@ -529,7 +548,7 @@ export default function Chat() {
     if (!messageStore.message[sessionId]) {
       await loadSessionMessages(sessionId);
     } else {
-      setTimeout(() => scrollToBottom(true), 100);
+      setTimeout(() => scrollToBottom(), 100);
     }
 
     // Stale check: if the user has already switched to another session
@@ -582,7 +601,7 @@ export default function Chat() {
       }
 
       setMessageStore("message", processedSession.id, []);
-      setTimeout(() => scrollToBottom(true), 100);
+      setTimeout(() => scrollToBottom(), 100);
 
       // Refresh engine capabilities (ACP engines populate modes/models only after createSession)
       try {
@@ -840,7 +859,8 @@ export default function Chat() {
       }
     }
 
-    scheduleScrollToBottom();
+    // Auto-scroll is now handled by the ResizeObserver on the content
+    // wrapper — no need to call scrollToBottom() here synchronously.
   };
 
   const handlePartUpdated = (_sessionId: string, part: UnifiedPart) => {
@@ -855,11 +875,44 @@ export default function Chat() {
   const handleMessageUpdated = (_sessionId: string, msgInfo: UnifiedMessage) => {
     const targetSessionId = msgInfo.sessionId;
 
+    // When an assistant message completes, synchronously flush any buffered
+    // parts so they are in the store BEFORE we write the completed message.
+    // Without this, the rAF-batched parts (including the final text part)
+    // may not be in the store when isWorking transitions to false, causing
+    // the RESPONSE section to briefly (or permanently) not render.
+    if (msgInfo.role === "assistant" && msgInfo.time?.completed && pendingParts.size > 0) {
+      if (partFlushRafId !== null) {
+        cancelAnimationFrame(partFlushRafId);
+        partFlushRafId = null;
+      }
+      flushPendingParts();
+    }
+
     if (msgInfo.role === "user") {
       const currentMessages = messageStore.message[targetSessionId] || [];
       const tempMessages = currentMessages.filter(m => m.id.startsWith("msg-temp-"));
 
       if (tempMessages.length > 0) {
+        // Collect temp parts before deleting — if the real message has no parts
+        // (OpenCode often sends user message.updated without parts), we migrate
+        // the optimistic parts to the real message ID so the user bubble stays visible.
+        const hasMsgParts = msgInfo.parts && msgInfo.parts.length > 0;
+        if (!hasMsgParts) {
+          for (const tempMsg of tempMessages) {
+            const tempParts = messageStore.part[tempMsg.id];
+            if (tempParts && tempParts.length > 0) {
+              // Re-key temp parts to use the real message ID
+              const migrated = tempParts.map(p => ({
+                ...p,
+                id: p.id.replace(/^part-temp-/, `part-migrated-`),
+                messageId: msgInfo.id,
+              }));
+              setMessageStore("part", msgInfo.id, migrated);
+              break; // only need one temp message's parts
+            }
+          }
+        }
+
         setMessageStore("message", targetSessionId, (draft) =>
           draft.filter(m => !m.id.startsWith("msg-temp-"))
         );
@@ -1042,7 +1095,7 @@ export default function Chat() {
 
     setMessageStore("part", tempMessageId, [tempPart]);
     setUserScrolledUp(false);
-    setTimeout(() => scrollToBottom(true), 0);
+    setTimeout(() => scrollToBottom(), 0);
 
     try {
       const model = currentSessionModel();
@@ -1245,7 +1298,7 @@ export default function Chat() {
                 </div>
               }
             >
-              <div ref={setMessagesRef} onScroll={handleScroll} class="flex-1 overflow-y-auto px-4 md:px-6 scroll-smooth">
+              <div ref={setMessagesRef} onScroll={handleScroll} class="flex-1 overflow-y-auto px-4 md:px-6">
                 <div class="max-w-3xl mx-auto w-full py-6">
                   <Show
                     when={sessionStore.current && messageStore.message[sessionStore.current]?.length > 0}

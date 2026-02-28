@@ -113,19 +113,11 @@ export function ModelSelector(props: ModelSelectorProps) {
     return model?.name || "";
   };
 
-  // Copilot engine doesn't support runtime model switching — display only
-  const isModelLocked = () => configStore.currentEngineType === "copilot";
-
   return (
     <div ref={containerRef} class="relative">
       <button
-        onClick={() => !isModelLocked() && setIsOpen(!isOpen())}
-        class={`px-3 py-1.5 text-xs font-medium rounded-md transition-all flex items-center gap-1.5 bg-gray-100 dark:bg-slate-800 text-gray-600 dark:text-gray-400 ${
-          isModelLocked()
-            ? "cursor-default opacity-75"
-            : "hover:bg-gray-200 dark:hover:bg-slate-700"
-        }`}
-        title={isModelLocked() ? "Model is determined by Copilot CLI config" : undefined}
+        onClick={() => setIsOpen(!isOpen())}
+        class="px-3 py-1.5 text-xs font-medium rounded-md transition-all flex items-center gap-1.5 bg-gray-100 dark:bg-slate-800 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-slate-700"
       >
         <svg
           xmlns="http://www.w3.org/2000/svg"
@@ -144,25 +136,23 @@ export function ModelSelector(props: ModelSelectorProps) {
         <span class="max-w-[120px] truncate">
           {selectedModelName() || t().model.selectModel}
         </span>
-        <Show when={!isModelLocked()}>
-          <svg
-            xmlns="http://www.w3.org/2000/svg"
-            width="12"
-            height="12"
-            viewBox="0 0 20 20"
-            fill="currentColor"
-            class={`transition-transform ${isOpen() ? "rotate-180" : ""}`}
-          >
-            <path
-              fill-rule="evenodd"
-              d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z"
-              clip-rule="evenodd"
-            />
-          </svg>
-        </Show>
+        <svg
+          xmlns="http://www.w3.org/2000/svg"
+          width="12"
+          height="12"
+          viewBox="0 0 20 20"
+          fill="currentColor"
+          class={`transition-transform ${isOpen() ? "rotate-180" : ""}`}
+        >
+          <path
+            fill-rule="evenodd"
+            d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z"
+            clip-rule="evenodd"
+          />
+        </svg>
       </button>
 
-      <Show when={isOpen() && !isModelLocked()}>
+      <Show when={isOpen()}>
         {/* Dropdown menu - opens upward */}
         <div class="absolute left-0 md:left-auto md:right-0 bottom-full mb-2 w-72 md:w-80 bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-lg shadow-lg z-[60] max-h-[60vh] overflow-y-auto">
           <Show

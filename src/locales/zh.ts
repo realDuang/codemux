@@ -275,8 +275,6 @@ export const zh: LocaleDict = {
     version: "版本",
     selectEngine: "选择引擎",
     defaultEngine: "默认引擎",
-    authRequired: "需要认证",
-    login: "登录",
     noEngines: "没有可用的引擎",
   },
 };

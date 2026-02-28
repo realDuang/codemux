@@ -244,18 +244,6 @@ export default function Settings() {
                             </div>
                           </div>
                         </div>
-                        {/* Auth login button */}
-                        <Show
-                          when={
-                            engine.authMethods &&
-                            engine.authMethods.length > 0 &&
-                            engine.status !== "running"
-                          }
-                        >
-                          <button class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-lg transition-colors flex-shrink-0">
-                            {t().engine.login}
-                          </button>
-                        </Show>
                       </div>
                     )}
                   </For>

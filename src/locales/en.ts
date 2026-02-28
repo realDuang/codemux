@@ -274,8 +274,6 @@ export interface LocaleDict {
     version: string;
     selectEngine: string;
     defaultEngine: string;
-    authRequired: string;
-    login: string;
     noEngines: string;
   };
 }
@@ -555,8 +553,6 @@ export const en: LocaleDict = {
     version: "Version",
     selectEngine: "Select Engine",
     defaultEngine: "Default Engine",
-    authRequired: "Authentication Required",
-    login: "Login",
     noEngines: "No engines available",
   },
 };

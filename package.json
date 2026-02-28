@@ -1,6 +1,6 @@
 {
   "name": "codemux",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "type": "module",
   "description": "A unified AI coding assistant client - access multiple AI coding engines from any device via desktop app or web interface",
   "author": "realDuang",

@@ -2,6 +2,7 @@ import { marked } from "marked"
 import { codeToHtml } from "shiki"
 import markedShiki from "marked-shiki"
 import { createOverflow } from "./common"
+import { enqueueHighlight } from "./highlight-queue"
 import { createResource, createSignal, createEffect } from "solid-js"
 import { transformerNotationDiff } from "@shikijs/transformers"
 import { useI18n } from "../../lib/i18n"
@@ -48,11 +49,7 @@ export function ContentMarkdown(props: Props) {
     () => strip(props.text),
     async (markdown) => {
       logger.debug("[ContentMarkdown] Parsing markdown, length:", markdown?.length || 0);
-      // Yield to the main thread before heavy shiki highlighting so that
-      // many ContentMarkdown instances mounting at once (e.g. session switch)
-      // don't monopolise the microtask queue and starve user input events.
-      await new Promise(r => setTimeout(r, 0));
-      return markedWithShiki.parse(markdown)
+      return enqueueHighlight(() => markedWithShiki.parse(markdown))
     },
     { initialValue: "" } // Add initial value to avoid undefined
   )

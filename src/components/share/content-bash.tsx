@@ -1,6 +1,7 @@
 import style from "./content-bash.module.css"
 import { createResource, createSignal } from "solid-js"
 import { createOverflow } from "./common"
+import { enqueueHighlight } from "./highlight-queue"
 import { codeToHtml } from "shiki"
 
 interface Props {
@@ -14,28 +15,26 @@ export function ContentBash(props: Props) {
   const [commandHtml] = createResource(
     () => props.command,
     async (command) => {
-      await new Promise(r => setTimeout(r, 0));
-      return codeToHtml(command || "", {
+      return enqueueHighlight(() => codeToHtml(command || "", {
         lang: "bash",
         themes: {
           light: "github-light",
           dark: "one-dark-pro",
         },
-      })
+      }))
     },
   )
 
   const [outputHtml] = createResource(
     () => props.output,
     async (output) => {
-      await new Promise(r => setTimeout(r, 0));
-      return codeToHtml(output || "", {
+      return enqueueHighlight(() => codeToHtml(output || "", {
         lang: "console",
         themes: {
           light: "github-light",
           dark: "one-dark-pro",
         },
-      })
+      }))
     },
   )
 

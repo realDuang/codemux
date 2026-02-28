@@ -763,53 +763,93 @@ export default function Chat() {
 
   // --- Gateway notification handlers ---
 
-  const handlePartUpdated = (_sessionId: string, part: UnifiedPart) => {
-    const messageId = part.messageId;
-    const sessionId = part.sessionId;
+  // Batch part updates: accumulate incoming parts and flush once per animation
+  // frame so that rapid-fire WebSocket notifications (e.g. token-level deltas
+  // from Copilot) don't monopolise the main thread and starve keyboard input.
+  // We keep only the latest version of each part (keyed by part.id) so that
+  // multiple deltas for the same part within one frame are coalesced.
+  let pendingParts: Map<string, UnifiedPart> = new Map();
+  let partFlushRafId: number | null = null;
 
-    // If this part's message doesn't exist yet in the message store,
-    // create a placeholder assistant message so parts can render during streaming.
-    // This is critical for ACP engines (Copilot) where sendMessage blocks until
-    // session/prompt completes, but parts arrive via notifications in the meantime.
-    if (sessionId && messageId) {
-      const messages = messageStore.message[sessionId] || [];
-      const msgExists = messages.some(m => m.id === messageId);
-      if (!msgExists) {
-        const placeholder: UnifiedMessage = {
-          id: messageId,
-          sessionId,
-          role: "assistant",
-          time: { created: Date.now() },
-          parts: [],
-        };
-        const idx = binarySearch(messages, messageId, (m) => m.id);
-        if (!messageStore.message[sessionId]) {
-          setMessageStore("message", sessionId, [placeholder]);
-        } else {
-          setMessageStore("message", sessionId, (draft) => {
-            const newMessages = [...draft];
-            newMessages.splice(idx.index, 0, placeholder);
-            return newMessages;
-          });
+  const flushPendingParts = () => {
+    partFlushRafId = null;
+    const parts = pendingParts;
+    pendingParts = new Map();
+
+    // Group by messageId for efficient store updates
+    const byMessage = new Map<string, UnifiedPart[]>();
+    for (const part of parts.values()) {
+      let arr = byMessage.get(part.messageId);
+      if (!arr) {
+        arr = [];
+        byMessage.set(part.messageId, arr);
+      }
+      arr.push(part);
+    }
+
+    // Ensure placeholder messages exist for any new messageIds
+    for (const [messageId, msgParts] of byMessage) {
+      const sessionId = msgParts[0].sessionId;
+      if (sessionId && messageId) {
+        const messages = messageStore.message[sessionId] || [];
+        const msgExists = messages.some(m => m.id === messageId);
+        if (!msgExists) {
+          const placeholder: UnifiedMessage = {
+            id: messageId,
+            sessionId,
+            role: "assistant",
+            time: { created: Date.now() },
+            parts: [],
+          };
+          const idx = binarySearch(messages, messageId, (m) => m.id);
+          if (!messageStore.message[sessionId]) {
+            setMessageStore("message", sessionId, [placeholder]);
+          } else {
+            setMessageStore("message", sessionId, (draft) => {
+              const newMessages = [...draft];
+              newMessages.splice(idx.index, 0, placeholder);
+              return newMessages;
+            });
+          }
         }
       }
     }
 
-    const parts = messageStore.part[messageId] || [];
-    const index = binarySearch(parts, part.id, (p) => p.id);
+    // Apply part updates
+    for (const [messageId, msgParts] of byMessage) {
+      const existing = messageStore.part[messageId] || [];
 
-    if (index.found) {
-      setMessageStore("part", messageId, index.index, part);
-    } else if (!messageStore.part[messageId]) {
-      setMessageStore("part", messageId, [part]);
-    } else {
-      setMessageStore("part", messageId, (draft) => {
-        const newParts = [...draft];
-        newParts.splice(index.index, 0, part);
-        return newParts;
-      });
+      if (existing.length === 0 && !messageStore.part[messageId]) {
+        // No existing parts — set all at once
+        const sorted = msgParts.slice().sort((a, b) => a.id.localeCompare(b.id));
+        setMessageStore("part", messageId, sorted);
+      } else {
+        // Merge into existing parts array: update in-place or insert
+        setMessageStore("part", messageId, (draft) => {
+          const result = [...draft];
+          for (const part of msgParts) {
+            const idx = binarySearch(result, part.id, (p) => p.id);
+            if (idx.found) {
+              result[idx.index] = part;
+            } else {
+              result.splice(idx.index, 0, part);
+            }
+          }
+          return result;
+        });
+      }
     }
+
     scheduleScrollToBottom();
+  };
+
+  const handlePartUpdated = (_sessionId: string, part: UnifiedPart) => {
+    // Buffer the part; keep only the latest version per part.id
+    pendingParts.set(part.id, part);
+
+    if (partFlushRafId === null) {
+      partFlushRafId = requestAnimationFrame(flushPendingParts);
+    }
   };
 
   const handleMessageUpdated = (_sessionId: string, msgInfo: UnifiedMessage) => {

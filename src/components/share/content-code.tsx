@@ -1,6 +1,7 @@
 import { codeToHtml, bundledLanguages } from "shiki"
 import { createResource, Suspense } from "solid-js"
 import { transformerNotationDiff } from "@shikijs/transformers"
+import { enqueueHighlight } from "./highlight-queue"
 import style from "./content-code.module.css"
 
 interface Props {
@@ -16,15 +17,14 @@ export function ContentCode(props: Props) {
     () => ({ code: props.code, lang: props.lang, showLineNumbers: props.showLineNumbers, transparentBg: props.transparentBg }),
     async ({ code, lang, showLineNumbers }) => {
       const codeStr = code || ""
-      await new Promise(r => setTimeout(r, 0));
-      const result = await codeToHtml(codeStr, {
+      const result = await enqueueHighlight(() => codeToHtml(codeStr, {
         lang: lang && lang in bundledLanguages ? lang : "text",
         themes: {
           light: "github-light",
           dark: "one-dark-pro",
         },
         transformers: [transformerNotationDiff()],
-      })
+      }))
 
       // If showLineNumbers is not explicitly set, we don't add line numbers for single lines
       const lines = codeStr.split("\n")

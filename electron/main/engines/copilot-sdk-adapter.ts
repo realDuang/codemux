@@ -545,9 +545,15 @@ export class CopilotSdkAdapter extends EngineAdapter {
     const session = await this.ensureActiveSession(sessionId);
     const now = Date.now();
 
-    // Apply model override if provided
-    if (options?.modelId) {
+    // Switch model via RPC if a different model is requested
+    if (options?.modelId && options.modelId !== this.currentModelId) {
       this.currentModelId = options.modelId;
+      try {
+        await session.rpc.model.switchTo({ modelId: options.modelId });
+        copilotLog.info(`Model switched to ${options.modelId} for session ${sessionId}`);
+      } catch (err) {
+        copilotLog.warn(`Failed to switch model via RPC for session ${sessionId}:`, err);
+      }
     }
 
     // Apply mode if provided

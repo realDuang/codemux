@@ -11,10 +11,8 @@ import type {
   EngineInfo,
   UnifiedSession,
   UnifiedMessage,
-  UnifiedModelInfo,
   ModelListResult,
   UnifiedProject,
-  UnifiedPermission,
   AgentMode,
   MessagePromptContent,
   PermissionReply,
@@ -74,7 +72,17 @@ export class EngineManager extends EventEmitter {
 
   /** Get adapter for a session by looking up its engine binding */
   private getAdapterForSession(sessionId: string): EngineAdapter {
-    const engineType = this.sessionEngineMap.get(sessionId);
+    let engineType = this.sessionEngineMap.get(sessionId);
+    if (!engineType) {
+      // Fallback: recover binding from persistent session store (handles cases
+      // where the in-memory map was cleared by HMR/restart but sessions still
+      // exist on disk, or frontend retains stale sessions from a merge)
+      const stored = sessionStore.getSession(sessionId);
+      if (stored?.engineType) {
+        engineType = stored.engineType;
+        this.sessionEngineMap.set(sessionId, engineType);
+      }
+    }
     if (!engineType) {
       throw new Error(`No engine binding found for session: ${sessionId}`);
     }

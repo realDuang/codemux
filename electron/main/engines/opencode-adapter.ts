@@ -1,12 +1,132 @@
 // ============================================================================
-// OpenCode Adapter — HTTP REST + SSE integration with OpenCode CLI
-// Merges logic from opencode-process.ts (lifecycle) and opencode-client.ts (API)
+// OpenCode Adapter — Integration via @opencode-ai/sdk (v2)
+//
+// Uses the official SDK for all communication with the OpenCode server.
+// No raw HTTP requests, no manual SSE parsing, no hand-maintained types.
 // ============================================================================
 
-import { spawn, execFile, ChildProcess } from "child_process";
-import { EventEmitter } from "events";
-import * as http from "http";
 import * as net from "net";
+import { execFile, spawn } from "child_process";
+import {
+  createOpencodeClient,
+  type OpencodeClient,
+  type ServerOptions,
+  type Session as SdkSession,
+  type Event as SdkEvent,
+  type GlobalEvent as SdkGlobalEvent,
+  type Part as SdkPart,
+  type ToolState as SdkToolState,
+  type ProviderListResponse,
+  type QuestionRequest as SdkQuestionRequest,
+} from "@opencode-ai/sdk/v2";
+
+const IS_WIN = process.platform === "win32";
+
+/**
+ * Local replacement for SDK's createOpencodeServer().
+ * The SDK's version uses spawn() without shell:true, which fails on Windows
+ * because `opencode` is installed as `opencode.cmd` and Node's spawn without
+ * shell can't resolve .cmd files.
+ *
+ * On non-Windows platforms this behaves identically to the SDK version.
+ */
+function createOpencodeServer(options?: ServerOptions): Promise<{ url: string; close(): void }> {
+  const opts = Object.assign(
+    { hostname: "127.0.0.1", port: 4096, timeout: 5000 },
+    options ?? {},
+  );
+
+  const args = [`serve`, `--hostname=${opts.hostname}`, `--port=${opts.port}`];
+  if (opts.config?.logLevel) args.push(`--log-level=${opts.config.logLevel}`);
+
+  // Build a clean env for the child process:
+  // - Remove ELECTRON_RUN_AS_NODE which leaks from Electron/Halo and can
+  //   interfere with Bun's uv_spawn when opencode tries to execute bash.
+  // - Inject OPENCODE_CONFIG_CONTENT for config overlay.
+  const childEnv = { ...process.env };
+  delete childEnv.ELECTRON_RUN_AS_NODE;
+  childEnv.OPENCODE_CONFIG_CONTENT = JSON.stringify(opts.config ?? {});
+
+  // On Windows, spawn() can't resolve .cmd files without shell:true.
+  // We build the full command string to avoid the DEP0190 deprecation warning
+  // (passing args array + shell:true triggers it).
+  const proc = IS_WIN
+    ? spawn(
+        `opencode ${args.join(" ")}`,
+        [],
+        {
+          signal: opts.signal,
+          shell: true,
+          env: childEnv,
+        },
+      )
+    : spawn(`opencode`, args, {
+        signal: opts.signal,
+        env: childEnv,
+      });
+
+  const url = new Promise<string>((resolve, reject) => {
+    const id = setTimeout(() => {
+      reject(new Error(`Timeout waiting for server to start after ${opts.timeout}ms`));
+    }, opts.timeout);
+
+    let output = "";
+
+    proc.stdout?.on("data", (chunk: Buffer) => {
+      output += chunk.toString();
+      const lines = output.split("\n");
+      for (const line of lines) {
+        if (line.startsWith("opencode server listening")) {
+          const match = line.match(/on\s+(https?:\/\/[^\s]+)/);
+          if (!match) {
+            throw new Error(`Failed to parse server url from output: ${line}`);
+          }
+          clearTimeout(id);
+          resolve(match[1]);
+          return;
+        }
+      }
+    });
+
+    proc.stderr?.on("data", (chunk: Buffer) => {
+      output += chunk.toString();
+    });
+
+    proc.on("exit", (code) => {
+      clearTimeout(id);
+      let msg = `Server exited with code ${code}`;
+      if (output.trim()) msg += `\nServer output: ${output}`;
+      reject(new Error(msg));
+    });
+
+    proc.on("error", (error) => {
+      clearTimeout(id);
+      reject(error);
+    });
+
+    if (opts.signal) {
+      opts.signal.addEventListener("abort", () => {
+        clearTimeout(id);
+        reject(new Error("Aborted"));
+      });
+    }
+  });
+
+  return url.then((resolvedUrl) => ({
+    url: resolvedUrl,
+    close() {
+      if (IS_WIN) {
+        // On Windows, proc.kill() sends SIGTERM which doesn't reliably kill
+        // child processes spawned via .cmd. Use taskkill /T to kill the process tree.
+        if (proc.pid) {
+          spawn("taskkill", ["/pid", String(proc.pid), "/T", "/F"], { stdio: "ignore" });
+        }
+      } else {
+        proc.kill();
+      }
+    },
+  }));
+}
 import { EngineAdapter } from "./engine-adapter";
 import { sessionStore } from "../services/session-store";
 import { openCodeLog } from "../services/logger";
@@ -33,137 +153,24 @@ import type {
   ToolPart,
 } from "../../../src/types/unified";
 
-// --- OpenCode API response types (from src/types/opencode.ts) ---
-
-interface OcSession {
-  id: string;
-  slug?: string;
-  projectID?: string;
-  directory: string;
-  parentID?: string;
-  title?: string;
-  version?: string;
-  time: { created: number; updated: number; compacting?: number; archived?: number };
-  summary?: { additions: number; deletions: number; files: number };
-  share?: { url: string };
-}
-
-interface OcMessage {
-  id: string;
-  sessionID: string;
-  role: "user" | "assistant";
-  time: { created: number; completed?: number };
-  cost?: number;
-  path?: { root: string; cwd: string };
-  summary?: boolean;
-  tokens?: { input: number; output: number; cache: { read: number; write: number }; reasoning: number };
-  modelID?: string;
-  providerID?: string;
-  mode?: "build" | "plan" | "compaction";
-  agent?: string;
-  system?: string;
-  error?: string;
-  parts: OcPart[];
-}
-
-type OcPart =
-  | { id: string; messageID: string; sessionID: string; type: "text"; text: string; synthetic?: boolean }
-  | { id: string; messageID: string; sessionID: string; type: "reasoning"; text: string }
-  | { id: string; messageID: string; sessionID: string; type: "file"; mime: string; filename: string; url: string }
-  | { id: string; messageID: string; sessionID: string; type: "step-start" }
-  | { id: string; messageID: string; sessionID: string; type: "step-finish" }
-  | { id: string; messageID: string; sessionID: string; type: "snapshot"; files: string[] }
-  | { id: string; messageID: string; sessionID: string; type: "patch"; content: string; path: string }
-  | { id: string; messageID: string; sessionID: string; type: "tool"; callID: string; tool: string; state: OcToolState };
-
-type OcToolState =
-  | { status: "pending" }
-  | { status: "running"; input: any; time: { start: number } }
-  | { status: "completed"; input: any; output: any; title?: string; time: { start: number; end: number; duration: number }; metadata?: any }
-  | { status: "error"; input: any; output?: any; error: string; time: { start: number; end: number; duration: number } };
-
-interface OcProvider {
-  id: string;
-  source: string;
-  name: string;
-  env: string[];
-  options: Record<string, any>;
-  models: Record<string, OcModel>;
-}
-
-interface OcModel {
-  id: string;
-  providerID: string;
-  name: string;
-  family: string;
-  status: string;
-  cost: { input: number; output: number; cache: { read: number; write: number } };
-  limit: { context: number; output: number };
-  capabilities: { temperature: boolean; reasoning: boolean; attachment: boolean; toolcall: boolean };
-  release_date: string;
-}
-
-interface OcProviderResponse {
-  all: OcProvider[];
-  connected: string[];
-  default: Record<string, string>;
-  recent?: string[];
-  favorite?: string[];
-}
-
-interface OcPermission {
-  id: string;
-  sessionID: string;
-  permission: string;
-  patterns: string[];
-  metadata: Record<string, unknown>;
-  always: string[];
-  tool?: { messageID: string; callID: string };
-}
-
-interface OcQuestionOption {
-  label: string;
-  description: string;
-}
-
-interface OcQuestionInfo {
-  question: string;
-  header: string;
-  options: OcQuestionOption[];
-  multiple?: boolean;
-  custom?: boolean;
-}
-
-interface OcQuestion {
-  id: string;
-  sessionID: string;
-  questions: OcQuestionInfo[];
-  tool?: { messageID: string; callID: string };
-}
-
-// --- SSE event parsed structure ---
-interface SseEvent {
-  type: string;
-  data: any;
-}
-
 /**
  * OpenCode Engine Adapter
- * Manages the OpenCode CLI process and communicates via HTTP REST + SSE.
+ * Manages the OpenCode server process via SDK and communicates via SDK client.
  */
 export class OpenCodeAdapter extends EngineAdapter {
   readonly engineType: EngineType = "opencode";
 
-  private child: ChildProcess | null = null;
+  private server: { url: string; close(): void } | null = null;
   private port: number;
-  private binaryPath: string;
   private status: EngineStatus = "stopped";
-  private sseAbort: AbortController | null = null;
-  private sseRequest: http.ClientRequest | null = null;
   private version: string | undefined;
+  private connectedProviders: string[] = [];
+  private client: OpencodeClient | null = null;
+
+  // SSE event loop abort
+  private sseAbortController: AbortController | null = null;
 
   // Cached state
-  private providers: OcProviderResponse | null = null;
   private sessions = new Map<string, UnifiedSession>();
   private currentDirectory: string | null = null;
 
@@ -178,22 +185,50 @@ export class OpenCodeAdapter extends EngineAdapter {
   // Sessions that have been cancelled — ignore SSE events for these until next sendMessage
   private cancelledSessions = new Set<string>();
 
-  constructor(options?: { port?: number; binaryPath?: string }) {
+  // Cache of SDK parts by partID for applying message.part.delta increments
+  private partCache = new Map<string, SdkPart>();
+
+  constructor(options?: { port?: number }) {
     super();
     this.port = options?.port ?? 4096;
-    this.binaryPath = options?.binaryPath ?? "opencode";
   }
 
   private get baseUrl(): string {
     return `http://127.0.0.1:${this.port}`;
   }
 
+  // --- SDK client management ---
+
+  private createClient(directory?: string): OpencodeClient {
+    return createOpencodeClient({
+      baseUrl: this.baseUrl,
+      ...(directory ? { directory } : {}),
+    });
+  }
+
+  private ensureClient(): OpencodeClient {
+    if (!this.client) {
+      this.client = this.createClient(this.currentDirectory ?? undefined);
+    }
+    return this.client;
+  }
+
+  /**
+   * Recreate the client with a new directory context.
+   * The SDK bakes the x-opencode-directory header into the client instance,
+   * so we need a fresh client when switching directories.
+   */
+  private switchDirectory(directory: string): void {
+    if (this.currentDirectory === directory && this.client) return;
+    this.currentDirectory = directory;
+    this.client = this.createClient(directory);
+  }
+
   // --- Version fetch ---
 
   private fetchVersion(): Promise<string | undefined> {
     return new Promise((resolve) => {
-      const bin = this.getOpencodePath();
-      execFile(bin, ["--version"], { timeout: 5000, shell: process.platform === "win32" }, (err, stdout) => {
+      execFile("opencode", ["--version"], { timeout: 5000, shell: IS_WIN }, (err, stdout) => {
         if (err) {
           resolve(undefined);
           return;
@@ -204,278 +239,272 @@ export class OpenCodeAdapter extends EngineAdapter {
     });
   }
 
-  // --- Binary resolution ---
-
-  private getOpencodePath(): string {
-    return this.binaryPath;
-  }
-
-  // --- HTTP helpers ---
-
-  private async httpRequest<T>(
-    endpoint: string,
-    options?: { method?: string; body?: string; directory?: string },
-  ): Promise<T> {
-    const headers: Record<string, string> = { "Content-Type": "application/json" };
-    const dir = options?.directory ?? this.currentDirectory;
-    if (dir) {
-      headers["x-opencode-directory"] = dir;
-    }
-
-    const url = `${this.baseUrl}${endpoint}`;
-    const response = await fetch(url, {
-      method: options?.method ?? "GET",
-      headers,
-      body: options?.body,
+  /**
+   * Check if the target port is already occupied and try to kill the occupying process.
+   * This handles orphaned opencode processes from previous crashes or unclean exits.
+   */
+  private async killOrphanedProcess(): Promise<void> {
+    const inUse = await new Promise<boolean>((resolve) => {
+      const socket = new net.Socket();
+      socket.setTimeout(1000);
+      socket.once("connect", () => { socket.destroy(); resolve(true); });
+      socket.once("timeout", () => { socket.destroy(); resolve(false); });
+      socket.once("error", () => { socket.destroy(); resolve(false); });
+      socket.connect(this.port, "127.0.0.1");
     });
 
-    if (!response.ok) {
-      throw new Error(`OpenCode API error: ${response.status} ${response.statusText} (${endpoint})`);
+    if (!inUse) return;
+
+    openCodeLog.warn(`Port ${this.port} is already in use, attempting to kill orphaned process...`);
+
+    if (IS_WIN) {
+      // On Windows, find the PID via PowerShell and kill it
+      await new Promise<void>((resolve) => {
+        const ps = `Get-NetTCPConnection -LocalPort ${this.port} -State Listen -ErrorAction SilentlyContinue | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue }`;
+        execFile("powershell", ["-NoProfile", "-Command", ps], { timeout: 5000 }, (err) => {
+          if (err) openCodeLog.warn("Failed to kill orphaned process:", err.message);
+          resolve();
+        });
+      });
+    } else {
+      // On Unix, use fuser or lsof
+      await new Promise<void>((resolve) => {
+        execFile("fuser", ["-k", `${this.port}/tcp`], { timeout: 5000 }, (err) => {
+          if (err) openCodeLog.warn("Failed to kill orphaned process:", err.message);
+          resolve();
+        });
+      });
     }
 
-    if (response.status === 204) {
-      return {} as T;
-    }
-
-    return response.json() as Promise<T>;
+    // Brief wait for port to be released
+    await new Promise((r) => setTimeout(r, 500));
   }
 
-  // --- SSE connection ---
+  // --- SSE connection via SDK (global event stream, all projects) ---
 
-  private connectSSE(directory: string): void {
+  private connectSSE(): void {
     this.disconnectSSE();
 
-    const sseUrl = `${this.baseUrl}/global/event?directory=${encodeURIComponent(directory)}`;
-    this.sseAbort = new AbortController();
+    this.sseAbortController = new AbortController();
+    const signal = this.sseAbortController.signal;
 
-    // Use http.get for Node.js SSE consumption (no browser EventSource available)
-    const url = new URL(sseUrl);
-    this.sseRequest = http.get(
-      {
-        hostname: url.hostname,
-        port: url.port,
-        path: `${url.pathname}${url.search}`,
-        headers: {
-          Accept: "text/event-stream",
-          "Cache-Control": "no-cache",
-        },
-      },
-      (res) => {
-        if (res.statusCode !== 200) {
-          openCodeLog.error(`SSE unexpected status: ${res.statusCode}`);
-          return;
+    // Global events don't need a directory — they receive events from all projects.
+    // Use a bare client (no directory header) for SSE.
+    const sseClient = this.createClient();
+
+    const startStream = async () => {
+      try {
+        const result = await sseClient.global.event();
+
+        for await (const globalEvent of result.stream) {
+          if (signal.aborted) break;
+
+          const event = globalEvent as SdkGlobalEvent;
+          if (event?.payload) {
+            this.handleSdkEvent(event.payload);
+          }
         }
+      } catch (err: any) {
+        if (signal.aborted) return;
+        openCodeLog.error("SSE stream error:", err?.message ?? err);
+      }
 
-        let buffer = "";
-        res.setEncoding("utf-8");
-
-        res.on("data", (chunk: string) => {
-          buffer += chunk;
-
-          // SSE messages are separated by double newlines
-          const parts = buffer.split("\n\n");
-          buffer = parts.pop() ?? "";
-
-          if (parts.length <= 1) {
-            // Common case: single message — process immediately
-            if (parts.length === 1) this.parseSseMessage(parts[0]);
-          } else {
-            // Batch arrival (e.g. after network jitter / TCP buffering):
-            // Yield between messages so the Node event loop can process
-            // other I/O (WebSocket sends, pings, etc.) and the frontend
-            // gets a chance to handle user input between DOM updates.
-            let i = 0;
-            const processNext = () => {
-              if (i < parts.length) {
-                this.parseSseMessage(parts[i++]);
-                setImmediate(processNext);
-              }
-            };
-            processNext();
-          }
-        });
-
-        res.on("end", () => {
-          // SSE connection closed — reconnect after delay if still running
-          if (this.status === "running" && this.currentDirectory) {
-            setTimeout(() => {
-              if (this.status === "running" && this.currentDirectory) {
-                this.connectSSE(this.currentDirectory);
-              }
-            }, 2000);
-          }
-        });
-      },
-    );
-
-    this.sseRequest.on("error", (err) => {
-      if (this.status === "running") {
-        openCodeLog.error("SSE connection error:", err.message);
-        // Reconnect after delay
+      // Reconnect after delay if still running
+      if (!signal.aborted && this.status === "running") {
         setTimeout(() => {
-          if (this.status === "running" && this.currentDirectory) {
-            this.connectSSE(this.currentDirectory);
+          if (!signal.aborted && this.status === "running") {
+            this.connectSSE();
           }
         }, 2000);
       }
-    });
+    };
+
+    startStream();
   }
 
   private disconnectSSE(): void {
-    if (this.sseRequest) {
-      this.sseRequest.destroy();
-      this.sseRequest = null;
-    }
-    if (this.sseAbort) {
-      this.sseAbort.abort();
-      this.sseAbort = null;
+    if (this.sseAbortController) {
+      this.sseAbortController.abort();
+      this.sseAbortController = null;
     }
   }
 
-  private parseSseMessage(raw: string): void {
-    // SSE format: "data: {...json...}\n"
-    // May have "event:" and "id:" fields which we ignore
-    const lines = raw.split("\n");
-    let jsonData = "";
+  // --- SSE event dispatch ---
 
-    for (const line of lines) {
-      if (line.startsWith("data: ")) {
-        jsonData += line.slice(6);
-      } else if (line.startsWith("data:")) {
-        jsonData += line.slice(5);
-      }
-    }
-
-    if (!jsonData) return;
-
-    try {
-      const parsed = JSON.parse(jsonData);
-      if (!parsed.payload) return;
-
-      const eventType = parsed.payload.type as string;
-      const properties = parsed.payload.properties;
-
-      this.handleSseEvent(eventType, properties);
-    } catch (e) {
-      // Ignore unparseable SSE messages
-    }
-  }
-
-  private handleSseEvent(type: string, properties: any): void {
-    switch (type) {
+  private handleSdkEvent(event: SdkEvent): void {
+    switch (event.type) {
       case "message.part.updated":
-        this.handlePartUpdated(properties.part);
+        this.handlePartUpdated(event.properties.part);
+        break;
+
+      case "message.part.delta":
+        this.handlePartDelta(event.properties as any);
         break;
 
       case "message.updated":
-        this.handleMessageUpdated(properties.info, properties.parts);
+        this.handleMessageUpdated(event.properties.info);
         break;
 
       case "session.updated":
-        this.handleSessionUpdated(properties.info);
+        this.handleSessionUpdated(event.properties.info);
         break;
 
       case "session.created":
-        this.handleSessionCreated(properties.info);
+        this.handleSessionCreated(event.properties.info);
         break;
 
       case "permission.asked":
-        this.handlePermissionAsked(properties);
+        this.handlePermissionAsked(event.properties);
         break;
 
       case "permission.replied":
-        this.handlePermissionReplied(properties);
+        this.handlePermissionReplied(event.properties);
         break;
 
       case "question.asked":
-        this.handleQuestionAsked(properties);
+        this.handleQuestionAsked(event.properties);
         break;
 
       case "question.replied":
-        this.handleQuestionReplied(properties);
+        this.handleQuestionReplied(event.properties);
         break;
 
       case "question.rejected":
-        this.handleQuestionRejected(properties);
+        this.handleQuestionRejected(event.properties);
         break;
     }
   }
 
   // --- SSE event handlers ---
 
-  private handlePartUpdated(ocPart: OcPart): void {
-    if (!ocPart) return;
+  private handlePartUpdated(sdkPart: SdkPart): void {
+    if (!sdkPart) return;
 
-    // Ignore SSE events for cancelled sessions (post-cancel stragglers)
-    if (this.cancelledSessions.has(ocPart.sessionID)) return;
+    const sessionID = (sdkPart as any).sessionID;
+    const messageID = (sdkPart as any).messageID;
+    const partID = (sdkPart as any).id;
 
-    const part = this.convertPart(ocPart);
+    // Ignore SSE events for cancelled sessions
+    if (sessionID && this.cancelledSessions.has(sessionID)) return;
+
+    // Cache the SDK part for delta accumulation
+    if (partID) {
+      this.partCache.set(partID, { ...sdkPart });
+    }
+
+    const part = this.convertPart(sdkPart);
     this.emit("message.part.updated", {
-      sessionId: ocPart.sessionID,
-      messageId: ocPart.messageID,
+      sessionId: sessionID,
+      messageId: messageID,
       part,
     });
 
     // Track parts for pending messages and detect completion via step-finish
-    const pending = this.pendingMessages.get(ocPart.sessionID);
-    if (pending) {
-      // Skip user message parts (they have a different messageID from the assistant)
-      if (pending.messageId === null) {
-        // First assistant part — capture the messageID
-        // User parts come first but step-start signals the assistant turn
-        if (ocPart.type === "step-start") {
-          pending.messageId = ocPart.messageID;
-        }
-      }
-
-      if (pending.messageId && ocPart.messageID === pending.messageId) {
-        // Collect assistant parts (update existing or add new)
-        const existingIdx = pending.assistantParts.findIndex((p) => p.id === part.id);
-        if (existingIdx >= 0) {
-          pending.assistantParts[existingIdx] = part;
-        } else {
-          pending.assistantParts.push(part);
+    if (sessionID) {
+      const pending = this.pendingMessages.get(sessionID);
+      if (pending) {
+        if (pending.messageId === null) {
+          if (sdkPart.type === "step-start") {
+            pending.messageId = messageID;
+          }
         }
 
-        // step-finish signals the end of the assistant turn
-        if (ocPart.type === "step-finish") {
-          this.resolvePendingMessage(ocPart.sessionID);
+        if (pending.messageId && messageID === pending.messageId) {
+          const existingIdx = pending.assistantParts.findIndex((p) => p.id === part.id);
+          if (existingIdx >= 0) {
+            pending.assistantParts[existingIdx] = part;
+          } else {
+            pending.assistantParts.push(part);
+          }
+
+          if (sdkPart.type === "step-finish") {
+            this.resolvePendingMessage(sessionID);
+          }
         }
       }
     }
   }
 
-  private handleMessageUpdated(ocMsg: OcMessage, ocParts?: OcPart[]): void {
-    // Ignore SSE events for cancelled sessions (post-cancel stragglers)
-    if (this.cancelledSessions.has(ocMsg.sessionID)) return;
+  private handlePartDelta(props: {
+    sessionID: string;
+    messageID: string;
+    partID: string;
+    field: string;
+    delta: string;
+  }): void {
+    const { sessionID, messageID, partID, field, delta } = props;
+    if (!sessionID || !partID) return;
 
-    // Merge parts from the separate parts array if the message info has no parts
-    if (ocParts && (!ocMsg.parts || ocMsg.parts.length === 0)) {
-      ocMsg.parts = ocParts;
+    // Ignore SSE events for cancelled sessions
+    if (this.cancelledSessions.has(sessionID)) return;
+
+    // Get or create cached part
+    let cached = this.partCache.get(partID);
+    if (!cached) {
+      // Part not seen yet — create a minimal placeholder based on field
+      const placeholder = {
+        type: field === "reasoning" ? "reasoning" : "text",
+        id: partID,
+        messageID,
+        sessionID,
+      } as SdkPart;
+      if (field === "text" || field === "reasoning") {
+        (placeholder as any)[field] = "";
+      }
+      this.partCache.set(partID, placeholder);
+      cached = placeholder;
     }
-    const message = this.convertMessage(ocMsg);
+
+    // Append delta to the specified field
+    if (field in (cached as any)) {
+      (cached as any)[field] = ((cached as any)[field] ?? "") + delta;
+    } else {
+      (cached as any)[field] = delta;
+    }
+
+    // Convert and re-emit as message.part.updated so the frontend receives
+    // the accumulated text progressively
+    const part = this.convertPart(cached);
+    this.emit("message.part.updated", {
+      sessionId: sessionID,
+      messageId: messageID,
+      part,
+    });
+  }
+
+  private handleMessageUpdated(sdkMsg: any): void {
+    const sessionID = sdkMsg?.sessionID;
+    if (!sessionID) return;
+
+    // Ignore SSE events for cancelled sessions
+    if (this.cancelledSessions.has(sessionID)) return;
+
+    // Skip user messages — the frontend already handles them via optimistic insert.
+    // OpenCode SSE pushes message.updated for all roles, but re-emitting user messages
+    // causes duplicates in the UI.
+    if (sdkMsg.role === "user") return;
+
+    const message = this.convertMessage(sdkMsg);
     this.emit("message.updated", {
-      sessionId: ocMsg.sessionID,
+      sessionId: sessionID,
       message,
     });
 
     // Resolve pending sendMessage() promise if this is the completed assistant message
-    if (ocMsg.role === "assistant") {
-      const pending = this.pendingMessages.get(ocMsg.sessionID);
-      if (pending && (pending.messageId === null || pending.messageId === ocMsg.id)) {
-        if (ocMsg.time?.completed || ocMsg.error) {
-          // Use the full message from the event (it has all parts)
+    if (sdkMsg.role === "assistant") {
+      const pending = this.pendingMessages.get(sessionID);
+      if (pending && (pending.messageId === null || pending.messageId === sdkMsg.id)) {
+        if (sdkMsg.time?.completed || sdkMsg.error) {
           if (pending.timeoutTimer) clearTimeout(pending.timeoutTimer);
-          this.pendingMessages.delete(ocMsg.sessionID);
+          this.pendingMessages.delete(sessionID);
           pending.resolve(message);
         } else {
-          pending.messageId = ocMsg.id;
+          pending.messageId = sdkMsg.id;
         }
       }
     }
   }
 
-  /** Resolve a pending message with collected parts */
   private resolvePendingMessage(sessionId: string): void {
     const pending = this.pendingMessages.get(sessionId);
     if (!pending) return;
@@ -491,21 +520,21 @@ export class OpenCodeAdapter extends EngineAdapter {
     });
   }
 
-  private handleSessionUpdated(ocSession: OcSession): void {
-    const session = this.convertSession(ocSession);
+  private handleSessionUpdated(sdkSession: SdkSession): void {
+    const session = this.convertSession(sdkSession);
     this.sessions.set(session.id, session);
     sessionStore.upsertSession(session);
     this.emit("session.updated", { session });
   }
 
-  private handleSessionCreated(ocSession: OcSession): void {
-    const session = this.convertSession(ocSession);
+  private handleSessionCreated(sdkSession: SdkSession): void {
+    const session = this.convertSession(sdkSession);
     this.sessions.set(session.id, session);
     sessionStore.upsertSession(session);
     this.emit("session.created", { session });
   }
 
-  private handlePermissionAsked(data: OcPermission): void {
+  private handlePermissionAsked(data: any): void {
     const options: PermissionOption[] = [
       { id: "once", label: "Allow once", type: "accept_once" },
       { id: "always", label: "Always allow", type: "accept_always" },
@@ -516,13 +545,13 @@ export class OpenCodeAdapter extends EngineAdapter {
       id: data.id,
       sessionId: data.sessionID,
       engineType: this.engineType,
-      toolCallId: data.tool?.callID,
-      title: data.permission,
+      toolCallId: data.callID,
+      title: data.title ?? data.type ?? "Permission request",
       kind: "edit",
       rawInput: data.metadata,
       options,
-      permission: data.permission,
-      patterns: data.patterns,
+      permission: data.type,
+      patterns: data.pattern ? (Array.isArray(data.pattern) ? data.pattern : [data.pattern]) : [],
     };
 
     this.emit("permission.asked", { permission });
@@ -530,12 +559,12 @@ export class OpenCodeAdapter extends EngineAdapter {
 
   private handlePermissionReplied(data: any): void {
     this.emit("permission.replied", {
-      permissionId: data.id ?? data.requestID,
-      optionId: data.reply ?? "unknown",
+      permissionId: data.permissionID ?? data.id,
+      optionId: data.response ?? "unknown",
     });
   }
 
-  private handleQuestionAsked(data: OcQuestion): void {
+  private handleQuestionAsked(data: SdkQuestionRequest): void {
     const questions: QuestionInfo[] = (data.questions || []).map((q) => ({
       question: q.question,
       header: q.header,
@@ -566,7 +595,6 @@ export class OpenCodeAdapter extends EngineAdapter {
   }
 
   private handleQuestionRejected(data: any): void {
-    // Rejected is equivalent to replied with empty answers for notification purposes
     this.emit("question.replied", {
       questionId: data.requestID ?? data.id,
       answers: [],
@@ -575,91 +603,144 @@ export class OpenCodeAdapter extends EngineAdapter {
 
   // --- Type converters ---
 
-  private convertSession(oc: OcSession): UnifiedSession {
+  private convertSession(sdk: SdkSession): UnifiedSession {
     return {
-      id: oc.id,
+      id: sdk.id,
       engineType: this.engineType,
-      directory: oc.directory.replaceAll("\\", "/"),
-      title: oc.title,
-      parentId: oc.parentID,
+      directory: sdk.directory.replaceAll("\\", "/"),
+      title: sdk.title,
+      parentId: sdk.parentID,
       time: {
-        created: oc.time.created,
-        updated: oc.time.updated,
+        created: sdk.time.created,
+        updated: sdk.time.updated,
       },
       engineMeta: {
-        slug: oc.slug,
-        projectID: oc.projectID,
-        version: oc.version,
-        compacting: oc.time.compacting,
-        archived: oc.time.archived,
-        summary: oc.summary,
-        share: oc.share,
+        slug: sdk.slug,
+        projectID: sdk.projectID,
+        version: sdk.version,
+        compacting: sdk.time.compacting,
+        summary: sdk.summary,
+        share: sdk.share,
       },
     };
   }
 
-  private convertMessage(oc: OcMessage): UnifiedMessage {
+  private convertMessage(sdk: any): UnifiedMessage {
+    // SDK Message is a union of UserMessage | AssistantMessage
+    // Both have id, sessionID, role, time
+    const errorStr = sdk.error
+      ? (typeof sdk.error === "string" ? sdk.error : sdk.error.message ?? sdk.error.name ?? "Error")
+      : undefined;
+
     return {
-      id: oc.id,
-      sessionId: oc.sessionID,
-      role: oc.role,
+      id: sdk.id,
+      sessionId: sdk.sessionID,
+      role: sdk.role,
       time: {
-        created: oc.time?.created ?? Date.now(),
-        completed: oc.time?.completed,
+        created: sdk.time?.created ?? Date.now(),
+        completed: sdk.time?.completed,
       },
-      parts: (oc.parts ?? []).filter(Boolean).map((p) => this.convertPart(p)),
-      tokens: oc.tokens,
-      cost: oc.cost,
-      modelId: oc.modelID,
-      providerId: oc.providerID,
-      mode: oc.mode,
-      error: oc.error,
+      parts: (sdk.parts ?? []).filter(Boolean).map((p: SdkPart) => this.convertPart(p)),
+      tokens: sdk.tokens,
+      cost: sdk.cost,
+      modelId: sdk.modelID,
+      providerId: sdk.providerID,
+      mode: sdk.mode,
+      error: errorStr,
       engineMeta: {
-        path: oc.path,
-        agent: oc.agent,
-        system: oc.system,
-        summary: oc.summary,
+        path: sdk.path,
+        agent: sdk.agent,
+        system: sdk.system,
+        summary: sdk.summary,
       },
     };
   }
 
-  private convertPart(oc: OcPart): UnifiedPart {
-    const base = { id: oc.id, messageId: oc.messageID, sessionId: oc.sessionID };
+  private convertPart(sdk: SdkPart): UnifiedPart {
+    const base = {
+      id: (sdk as any).id ?? "",
+      messageId: (sdk as any).messageID ?? "",
+      sessionId: (sdk as any).sessionID ?? "",
+    };
 
-    switch (oc.type) {
+    switch (sdk.type) {
       case "text":
-        return { ...base, type: "text", text: oc.text, synthetic: oc.synthetic };
+        return { ...base, type: "text", text: sdk.text, synthetic: sdk.synthetic };
       case "reasoning":
-        return { ...base, type: "reasoning", text: oc.text };
+        return { ...base, type: "reasoning", text: sdk.text };
       case "file":
-        return { ...base, type: "file", mime: oc.mime, filename: oc.filename, url: oc.url };
+        return { ...base, type: "file", mime: sdk.mime, filename: sdk.filename ?? "", url: sdk.url };
       case "step-start":
         return { ...base, type: "step-start" };
       case "step-finish":
         return { ...base, type: "step-finish" };
       case "snapshot":
-        return { ...base, type: "snapshot", files: oc.files };
+        // SDK SnapshotPart has `snapshot: string` (single hash), unified has `files: string[]`
+        return { ...base, type: "snapshot", files: sdk.snapshot ? [sdk.snapshot] : [] };
       case "patch":
-        return { ...base, type: "patch", content: oc.content, path: oc.path };
+        // SDK PatchPart has `hash: string, files: string[]`, unified has `content: string, path: string`
+        return { ...base, type: "patch", content: sdk.hash ?? "", path: (sdk.files?.[0] ?? "") };
       case "tool": {
-        const normalizedTool = normalizeToolName("opencode", oc.tool);
+        const normalizedTool = normalizeToolName("opencode", sdk.tool);
         const kind = inferToolKind(undefined, normalizedTool);
+        const state = sdk.state as SdkToolState;
         const part: ToolPart = {
           ...base,
           type: "tool",
-          callId: oc.callID,
+          callId: sdk.callID,
           normalizedTool,
-          originalTool: oc.tool,
-          title: (oc.state as any)?.title ?? oc.tool,
+          originalTool: sdk.tool,
+          title: (state as any)?.title ?? sdk.tool,
           kind,
-          state: oc.state,
+          state: this.convertToolState(state),
         };
         return part;
       }
+      default:
+        // Handle new part types (agent, retry, compaction, subtask) gracefully
+        // by falling back to a text representation
+        return { ...base, type: "text", text: `[${(sdk as any).type}]` };
     }
   }
 
-  private convertProviders(response: OcProviderResponse): UnifiedModelInfo[] {
+  private convertToolState(sdkState: SdkToolState): import("../../../src/types/unified").ToolState {
+    switch (sdkState.status) {
+      case "pending":
+        return { status: "pending", input: sdkState.input };
+      case "running":
+        return {
+          status: "running",
+          input: sdkState.input,
+          time: { start: sdkState.time.start },
+        };
+      case "completed":
+        return {
+          status: "completed",
+          input: sdkState.input,
+          output: sdkState.output,
+          title: sdkState.title,
+          time: {
+            start: sdkState.time.start,
+            end: sdkState.time.end,
+            duration: sdkState.time.end - sdkState.time.start,
+          },
+          metadata: sdkState.metadata,
+        };
+      case "error":
+        return {
+          status: "error",
+          input: sdkState.input,
+          error: sdkState.error,
+          time: {
+            start: sdkState.time.start,
+            end: sdkState.time.end,
+            duration: sdkState.time.end - sdkState.time.start,
+          },
+        };
+    }
+  }
+
+  private convertProviders(response: ProviderListResponse): UnifiedModelInfo[] {
     const models: UnifiedModelInfo[] = [];
     for (const provider of response.all) {
       // Only include connected providers
@@ -667,20 +748,30 @@ export class OpenCodeAdapter extends EngineAdapter {
 
       for (const model of Object.values(provider.models)) {
         models.push({
-          // Encode as "providerId/modelId" so sendMessage can decode
           modelId: `${provider.id}/${model.id}`,
           name: model.name,
-          description: `${model.family} (${provider.name})`,
+          description: `${model.family ?? ""} (${provider.name})`.trim(),
           engineType: this.engineType,
           providerId: provider.id,
           providerName: provider.name,
-          cost: model.cost,
-          capabilities: model.capabilities,
+          cost: model.cost ? {
+            input: model.cost.input,
+            output: model.cost.output,
+            cache: {
+              read: model.cost.cache_read ?? 0,
+              write: model.cost.cache_write ?? 0,
+            },
+          } : undefined,
+          capabilities: {
+            temperature: model.temperature,
+            reasoning: model.reasoning,
+            attachment: model.attachment,
+            toolcall: model.tool_call,
+          },
           meta: {
             status: model.status,
             releaseDate: model.release_date,
             limits: model.limit,
-            source: provider.source,
           },
         });
       }
@@ -690,68 +781,8 @@ export class OpenCodeAdapter extends EngineAdapter {
 
   // --- EngineAdapter Implementation ---
 
-  private isPortAvailable(port: number): Promise<boolean> {
-    return new Promise((resolve) => {
-      const server = net.createServer();
-      server.once("error", () => resolve(false));
-      server.once("listening", () => {
-        server.close(() => resolve(true));
-      });
-      server.listen(port, "127.0.0.1");
-    });
-  }
-
-  /**
-   * Check if an existing OpenCode service is running on the given port.
-   * Returns true if the port responds with a valid /provider endpoint.
-   */
-  private async isExistingOpenCode(port: number): Promise<boolean> {
-    try {
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 3000);
-      const response = await fetch(`http://127.0.0.1:${port}/provider`, {
-        signal: controller.signal,
-      });
-      clearTimeout(timeout);
-      return response.ok;
-    } catch {
-      return false;
-    }
-  }
-
-  /**
-   * Resolve port for OpenCode service:
-   * 1. If preferred port is free → use it
-   * 2. If preferred port is occupied by an existing OpenCode instance → reuse it
-   * 3. Otherwise → find next available port
-   *
-   * Returns { port, reused } where reused=true means an existing instance was found.
-   */
-  private async resolvePort(): Promise<{ port: number; reused: boolean }> {
-    if (await this.isPortAvailable(this.port)) {
-      return { port: this.port, reused: false };
-    }
-
-    // Port occupied — check if it's an existing OpenCode service
-    if (await this.isExistingOpenCode(this.port)) {
-      openCodeLog.info(`Found existing OpenCode service on port ${this.port}, reusing it`);
-      return { port: this.port, reused: true };
-    }
-
-    // Port occupied by something else — find next available
-    const maxAttempts = 10;
-    for (let i = 1; i < maxAttempts; i++) {
-      const candidate = this.port + i;
-      if (await this.isPortAvailable(candidate)) {
-        openCodeLog.info(`Port ${this.port} in use by another service, using ${candidate} instead`);
-        return { port: candidate, reused: false };
-      }
-    }
-    throw new Error(`No available port found in range ${this.port}-${this.port + maxAttempts - 1}`);
-  }
-
   async start(): Promise<void> {
-    if (this.child) return;
+    if (this.server) return;
 
     this.status = "starting";
     this.emit("status.changed", { engineType: this.engineType, status: this.status });
@@ -764,21 +795,48 @@ export class OpenCodeAdapter extends EngineAdapter {
       }
     }
 
-    const { port, reused } = await this.resolvePort();
-    this.port = port;
+    // Use SDK to spawn and manage the OpenCode server process
+    try {
+      // Clean up any orphaned opencode process on our port (e.g. from a previous crash)
+      await this.killOrphanedProcess();
 
-    if (reused) {
-      // Existing OpenCode service found — skip spawning, just connect
-      openCodeLog.info(`Attaching to existing service on port ${this.port}`);
-    } else {
-      // Spawn a new OpenCode process
-      this.spawnProcess();
-      await this.waitForReady();
+      this.server = await createOpencodeServer({
+        hostname: "127.0.0.1",
+        port: this.port,
+        timeout: 15000,
+        config: {
+          server: {
+            cors: ["*"],
+          },
+        },
+      });
+      openCodeLog.info(`OpenCode server started at ${this.server.url}`);
+    } catch (err: any) {
+      this.status = "error";
+      this.emit("status.changed", {
+        engineType: this.engineType,
+        status: "error",
+        error: err.message,
+      });
+      throw err;
     }
 
-    // Fetch initial provider data
+    // Initialize the SDK client
+    this.client = this.createClient();
+
+    // Start SSE event stream (global, all projects)
+    this.connectSSE();
+
+    // Fetch initial provider data via SDK
     try {
-      this.providers = await this.httpRequest<OcProviderResponse>("/provider");
+      const providerResult = await this.ensureClient().provider.list();
+      if (providerResult.data) {
+        const connected = providerResult.data.connected ?? [];
+        this.connectedProviders = providerResult.data.all
+          .filter(p => connected.includes(p.id))
+          .map(p => p.name);
+        openCodeLog.info(`Connected providers: ${this.connectedProviders.join(", ") || "none"}`);
+      }
     } catch {
       // Provider fetch may fail initially, will retry on listModels()
     }
@@ -794,134 +852,16 @@ export class OpenCodeAdapter extends EngineAdapter {
     this.emit("status.changed", { engineType: this.engineType, status: "running" });
   }
 
-  private spawnProcess(): void {
-    const opencodePath = this.getOpencodePath();
-    const args = ["serve", "--hostname", "127.0.0.1", "--port", this.port.toString(), "--cors"];
-
-    if (process.platform === "win32") {
-      this.child = spawn(
-        `${opencodePath} ${args.join(" ")}`,
-        [],
-        {
-          env: { ...process.env },
-          stdio: ["ignore", "pipe", "pipe"],
-          shell: true,
-        },
-      );
-    } else {
-      this.child = spawn(
-        opencodePath,
-        args,
-        {
-          env: { ...process.env },
-          stdio: ["ignore", "pipe", "pipe"],
-        },
-      );
-    }
-
-    this.child.stdout?.on("data", () => {
-      // OpenCode stdout logging
-    });
-
-    this.child.stderr?.on("data", (data) => {
-      const text = data.toString().trim();
-      if (text) openCodeLog.error("stderr:", text);
-    });
-
-    this.child.on("close", (code) => {
-      this.status = "stopped";
-      this.child = null;
-      this.disconnectSSE();
-      for (const [sessionId, pending] of this.pendingMessages) {
-        if (pending.timeoutTimer) clearTimeout(pending.timeoutTimer);
-        pending.resolve({
-          id: pending.messageId ?? "",
-          sessionId,
-          role: "assistant",
-          time: { created: Date.now() },
-          parts: pending.assistantParts,
-          error: `Process exited with code ${code}`,
-        });
-      }
-      this.pendingMessages.clear();
-      this.emit("status.changed", { engineType: this.engineType, status: "stopped" });
-    });
-
-    this.child.on("error", (err) => {
-      this.status = "error";
-      this.child = null;
-      for (const [sessionId, pending] of this.pendingMessages) {
-        if (pending.timeoutTimer) clearTimeout(pending.timeoutTimer);
-        pending.resolve({
-          id: pending.messageId ?? "",
-          sessionId,
-          role: "assistant",
-          time: { created: Date.now() },
-          parts: pending.assistantParts,
-          error: `Process error: ${err.message}`,
-        });
-      }
-      this.pendingMessages.clear();
-      this.emit("status.changed", {
-        engineType: this.engineType,
-        status: "error",
-        error: err.message,
-      });
-    });
-  }
-
-  private async waitForReady(timeout = 15000): Promise<void> {
-    const start = Date.now();
-    while (Date.now() - start < timeout) {
-      try {
-        const response = await fetch(`${this.baseUrl}/provider`);
-        if (response.ok) return;
-      } catch {
-        // Not ready yet
-      }
-      await new Promise((r) => setTimeout(r, 500));
-    }
-    throw new Error("OpenCode service failed to start within timeout");
-  }
-
   async stop(): Promise<void> {
     this.disconnectSSE();
 
-    if (this.child) {
-      const pid = this.child.pid;
-
-      if (process.platform === "win32" && pid) {
-        // On Windows, shell-spawned processes need taskkill /tree to kill the child process
-        try {
-          const { execSync } = require("child_process");
-          execSync(`taskkill /PID ${pid} /T /F`, { stdio: "ignore" });
-        } catch {
-          // Process may already be gone
-        }
-      } else {
-        this.child.kill("SIGTERM");
-      }
-
-      await new Promise<void>((resolve) => {
-        const timeout = setTimeout(() => {
-          if (this.child) {
-            if (process.platform !== "win32") {
-              this.child.kill("SIGKILL");
-            }
-          }
-          resolve();
-        }, 5000);
-
-        this.child?.once("close", () => {
-          clearTimeout(timeout);
-          resolve();
-        });
-      });
-
-      this.child = null;
+    if (this.server) {
+      this.server.close();
+      this.server = null;
     }
 
     this.status = "stopped";
+    this.client = null;
 
     // Reject any pending messages
     for (const [sessionId, pending] of this.pendingMessages) {
@@ -940,8 +880,8 @@ export class OpenCodeAdapter extends EngineAdapter {
 
   async healthCheck(): Promise<boolean> {
     try {
-      const response = await fetch(`${this.baseUrl}/provider`);
-      return response.ok;
+      const result = await this.ensureClient().global.health();
+      return !!result.data;
     } catch {
       return false;
     }
@@ -952,12 +892,17 @@ export class OpenCodeAdapter extends EngineAdapter {
   }
 
   getInfo(): EngineInfo {
+    const hasProviders = this.connectedProviders.length > 0;
     return {
       type: this.engineType,
       name: "OpenCode",
       version: this.version,
       status: this.status,
       capabilities: this.getCapabilities(),
+      authenticated: hasProviders,
+      authMessage: hasProviders
+        ? this.connectedProviders.join(", ")
+        : undefined,
     };
   }
 
@@ -981,38 +926,64 @@ export class OpenCodeAdapter extends EngineAdapter {
   // --- Sessions ---
 
   async createSession(directory: string): Promise<UnifiedSession> {
-    this.currentDirectory = directory;
+    this.switchDirectory(directory);
 
-    // Ensure SSE is connected for this directory
-    this.connectSSE(directory);
+    const client = this.ensureClient();
+    const result = await client.session.create({ directory });
+    if (result.error) {
+      throw new Error(`Failed to create session: ${JSON.stringify(result.error)}`);
+    }
 
-    // Do not pass a custom title — let OpenCode generate its default title
-    // ("New session - <ISO>") so that ensureTitle() recognises it and
-    // auto-generates a proper title via LLM after the first user message.
-    const ocSession = await this.httpRequest<OcSession>("/session", {
-      method: "POST",
-      body: JSON.stringify({}),
-      directory,
-    });
-
-    const session = this.convertSession(ocSession);
+    const session = this.convertSession(result.data);
     this.sessions.set(session.id, session);
     sessionStore.upsertSession(session);
     return session;
   }
 
   async listSessions(directory?: string): Promise<UnifiedSession[]> {
-    const dir = directory ?? this.currentDirectory ?? "";
-    const endpoint = dir
-      ? `/session?directory=${encodeURIComponent(dir)}`
-      : "/session";
-    const ocSessions = await this.httpRequest<OcSession[]>(
-      endpoint,
-      dir ? { directory: dir } : undefined,
-    );
+    // When a specific directory is provided, list sessions for that project only.
+    if (directory) {
+      return this.listSessionsForDirectory(directory);
+    }
 
-    const sessions = ocSessions.map((oc) => {
-      const session = this.convertSession(oc);
+    // No directory — list sessions across ALL known projects.
+    // OpenCode requires a project directory context for session.list(),
+    // so we fetch the project list first, then list sessions per-project.
+    try {
+      const projects = await this.listProjects();
+      if (projects.length === 0) {
+        // No projects yet — return whatever is in the session store
+        return sessionStore.getSessionsByEngine(this.engineType);
+      }
+
+      const allSessions: UnifiedSession[] = [];
+      for (const project of projects) {
+        try {
+          const sessions = await this.listSessionsForDirectory(project.directory);
+          allSessions.push(...sessions);
+        } catch (err: any) {
+          openCodeLog.warn(`Failed to list sessions for project ${project.directory}:`, err?.message);
+        }
+      }
+
+      sessionStore.mergeSessions(allSessions, this.engineType);
+      return allSessions;
+    } catch (err: any) {
+      openCodeLog.warn("Failed to list projects for session enumeration:", err?.message);
+      // Fall back to session store if project listing fails
+      return sessionStore.getSessionsByEngine(this.engineType);
+    }
+  }
+
+  private async listSessionsForDirectory(directory: string): Promise<UnifiedSession[]> {
+    const client = this.createClient(directory);
+    const result = await client.session.list({ directory });
+    if (result.error) {
+      throw new Error(`Failed to list sessions: ${JSON.stringify(result.error)}`);
+    }
+
+    const sessions = (result.data ?? []).map((sdk: SdkSession) => {
+      const session = this.convertSession(sdk);
       this.sessions.set(session.id, session);
       return session;
     });
@@ -1026,8 +997,11 @@ export class OpenCodeAdapter extends EngineAdapter {
     if (cached) return cached;
 
     try {
-      const oc = await this.httpRequest<OcSession>(`/session/${sessionId}`);
-      const session = this.convertSession(oc);
+      const client = this.ensureClient();
+      const result = await client.session.get({ sessionID: sessionId });
+      if (result.error) return null;
+
+      const session = this.convertSession(result.data);
       this.sessions.set(session.id, session);
       return session;
     } catch {
@@ -1036,7 +1010,8 @@ export class OpenCodeAdapter extends EngineAdapter {
   }
 
   async deleteSession(sessionId: string): Promise<void> {
-    await this.httpRequest(`/session/${sessionId}`, { method: "DELETE" });
+    const client = this.ensureClient();
+    await client.session.delete({ sessionID: sessionId });
     this.sessions.delete(sessionId);
     sessionStore.deleteSession(sessionId);
   }
@@ -1051,36 +1026,36 @@ export class OpenCodeAdapter extends EngineAdapter {
     // Clear cancelled state — a new message means the user wants to interact again
     this.cancelledSessions.delete(sessionId);
 
-    // Get session directory for SSE connection
     const session = this.sessions.get(sessionId);
-    if (session && !this.sseRequest) {
-      this.connectSSE(session.directory);
-    }
 
-    // Build OpenCode message body
-    const parts = content.map((c) => {
-      if (c.type === "text") return { type: "text" as const, text: c.text ?? "" };
-      return { type: "text" as const, text: c.text ?? "" };
-    });
+    // Build prompt parts
+    const parts = content.map((c) => ({
+      type: "text" as const,
+      text: c.text ?? "",
+    }));
 
-    const body: any = { parts };
-    if (options?.mode) body.agent = options.mode;
+    // Build model spec if provided
+    let model: { providerID: string; modelID: string } | undefined;
     if (options?.modelId) {
-      // OpenCode modelId is encoded as "providerId/modelId"
       const slashIdx = options.modelId.indexOf("/");
       if (slashIdx > 0) {
-        body.model = {
+        model = {
           providerID: options.modelId.slice(0, slashIdx),
           modelID: options.modelId.slice(slashIdx + 1),
         };
       }
     }
 
-    const dir = session?.directory ?? this.currentDirectory;
+    const dir = session?.directory ?? this.currentDirectory ?? undefined;
 
     // Create a promise that will be resolved when SSE delivers step-finish or message.updated
     const messagePromise = new Promise<UnifiedMessage>((resolve) => {
-      const entry = { resolve, messageId: null as string | null, assistantParts: [] as UnifiedPart[], timeoutTimer: null as ReturnType<typeof setTimeout> | null };
+      const entry = {
+        resolve,
+        messageId: null as string | null,
+        assistantParts: [] as UnifiedPart[],
+        timeoutTimer: null as ReturnType<typeof setTimeout> | null,
+      };
       this.pendingMessages.set(sessionId, entry);
 
       // Timeout after 5 minutes
@@ -1099,12 +1074,29 @@ export class OpenCodeAdapter extends EngineAdapter {
       }, 300_000);
     });
 
-    // Fire the POST (doesn't return the full message — content comes via SSE)
-    await this.httpRequest(`/session/${sessionId}/message`, {
-      method: "POST",
-      body: JSON.stringify(body),
-      directory: dir ?? undefined,
+    // Fire async prompt via SDK (returns 204, response comes via SSE)
+    const client = dir ? this.createClient(dir) : this.ensureClient();
+    const promptResult = await client.session.promptAsync({
+      sessionID: sessionId,
+      directory: dir,
+      parts,
+      agent: options?.mode,
+      model,
     });
+
+    // SDK uses ThrowOnError=false by default, so errors are returned in the result
+    // rather than thrown. If promptAsync failed, clean up and throw immediately
+    // instead of waiting for SSE (which will never arrive).
+    const promptError = (promptResult as any).error;
+    if (promptError) {
+      const pending = this.pendingMessages.get(sessionId);
+      if (pending?.timeoutTimer) clearTimeout(pending.timeoutTimer);
+      this.pendingMessages.delete(sessionId);
+      const errMsg = typeof promptError === "string"
+        ? promptError
+        : JSON.stringify(promptError);
+      throw new Error(`Failed to send message: ${errMsg}`);
+    }
 
     // Wait for SSE to deliver the complete assistant response
     return messagePromise;
@@ -1114,8 +1106,8 @@ export class OpenCodeAdapter extends EngineAdapter {
     // Mark session as cancelled — SSE event handlers will ignore subsequent events
     this.cancelledSessions.add(sessionId);
 
-    // Fire abort to OpenCode backend FIRST so it can kill running processes ASAP
-    this.httpRequest(`/session/${sessionId}/abort`, { method: "POST" }).catch((err) => {
+    // Fire abort via SDK FIRST so it can kill running processes ASAP
+    this.ensureClient().session.abort({ sessionID: sessionId }).catch((err: any) => {
       openCodeLog.warn("cancelMessage abort call failed:", err);
     });
 
@@ -1132,32 +1124,37 @@ export class OpenCodeAdapter extends EngineAdapter {
         parts: pending.assistantParts,
         error: "Cancelled",
       };
-      // Emit so frontend store gets the error via message.updated notification
       this.emit("message.updated", { sessionId, message: cancelledMessage });
       pending.resolve(cancelledMessage);
     }
   }
 
   async listMessages(sessionId: string): Promise<UnifiedMessage[]> {
-    // OpenCode API returns Array<{ info: Message, parts: Part[] }>
-    const rawMessages = await this.httpRequest<Array<{ info: OcMessage; parts: OcPart[] }>>(
-      `/session/${sessionId}/message`,
-    );
-    return rawMessages.map((wrapper) => {
-      const oc = wrapper.info;
-      if (!oc.parts || oc.parts.length === 0) {
-        oc.parts = wrapper.parts;
+    const client = this.ensureClient();
+    const result = await client.session.messages({ sessionID: sessionId });
+    if (result.error) {
+      throw new Error(`Failed to list messages: ${JSON.stringify(result.error)}`);
+    }
+
+    // SDK returns Array<{ info: Message, parts: Part[] }>
+    return (result.data ?? []).map((wrapper: any) => {
+      const msg = wrapper.info ?? wrapper;
+      if (wrapper.parts && (!msg.parts || msg.parts.length === 0)) {
+        msg.parts = wrapper.parts;
       }
-      return this.convertMessage(oc);
+      return this.convertMessage(msg);
     });
   }
 
   // --- Models ---
 
   async listModels(): Promise<ModelListResult> {
-    // Refresh provider data
-    this.providers = await this.httpRequest<OcProviderResponse>("/provider");
-    return { models: this.convertProviders(this.providers) };
+    const client = this.ensureClient();
+    const result = await client.provider.list();
+    if (result.error || !result.data) {
+      throw new Error(`Failed to list providers: ${JSON.stringify(result.error)}`);
+    }
+    return { models: this.convertProviders(result.data) };
   }
 
   async setModel(_sessionId: string, _modelId: string): Promise<void> {
@@ -1181,27 +1178,27 @@ export class OpenCodeAdapter extends EngineAdapter {
   // --- Permissions ---
 
   async replyPermission(permissionId: string, reply: PermissionReply): Promise<void> {
-    // Map unified optionId to OpenCode reply format
-    let ocReply: "once" | "always" | "reject";
+    let replyValue: "once" | "always" | "reject";
     switch (reply.optionId) {
       case "once":
       case "accept_once":
       case "allow_once":
-        ocReply = "once";
+        replyValue = "once";
         break;
       case "always":
       case "accept_always":
       case "allow_always":
-        ocReply = "always";
+        replyValue = "always";
         break;
       default:
-        ocReply = "reject";
+        replyValue = "reject";
         break;
     }
 
-    await this.httpRequest(`/permission/${permissionId}/reply`, {
-      method: "POST",
-      body: JSON.stringify({ reply: ocReply }),
+    const client = this.ensureClient();
+    await client.permission.reply({
+      requestID: permissionId,
+      reply: replyValue,
     });
 
     this.emit("permission.replied", {
@@ -1213,9 +1210,10 @@ export class OpenCodeAdapter extends EngineAdapter {
   // --- Questions ---
 
   async replyQuestion(questionId: string, answers: string[][]): Promise<void> {
-    await this.httpRequest(`/question/${questionId}/reply`, {
-      method: "POST",
-      body: JSON.stringify({ answers }),
+    const client = this.ensureClient();
+    await client.question.reply({
+      requestID: questionId,
+      answers,
     });
 
     this.emit("question.replied", {
@@ -1225,8 +1223,9 @@ export class OpenCodeAdapter extends EngineAdapter {
   }
 
   async rejectQuestion(questionId: string): Promise<void> {
-    await this.httpRequest(`/question/${questionId}/reject`, {
-      method: "POST",
+    const client = this.ensureClient();
+    await client.question.reject({
+      requestID: questionId,
     });
 
     this.emit("question.replied", {
@@ -1239,22 +1238,17 @@ export class OpenCodeAdapter extends EngineAdapter {
 
   async listProjects(): Promise<UnifiedProject[]> {
     try {
-      const projects = await this.httpRequest<Array<{
-        id: string;
-        worktree: string;
-        name?: string;
-        icon?: { url?: string; override?: string; color?: string };
-        time: { created: number; updated: number };
-      }>>("/project");
+      const client = this.ensureClient();
+      const result = await client.project.list();
+      if (result.error) return [];
 
-      const unifiedProjects = projects.map((p) => ({
+      return (result.data ?? []).map((p) => ({
         id: p.id,
         directory: p.worktree.replaceAll("\\", "/"),
         name: p.name,
         engineType: this.engineType as EngineType,
         engineMeta: { icon: p.icon },
       }));
-      return unifiedProjects;
     } catch {
       return [];
     }

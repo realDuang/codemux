@@ -20,7 +20,6 @@ import type {
   UnifiedSession,
   UnifiedMessage,
   UnifiedPart,
-  UnifiedModelInfo,
   ModelListResult,
   UnifiedProject,
   AgentMode,
@@ -48,6 +47,8 @@ export class MockEngineAdapter extends EngineAdapter {
   private sessionModels: Map<string, string> = new Map();
   private sessionModes: Map<string, string> = new Map();
   private currentMode: string = "agent";
+  private slowResponseDelay: number = 0;
+  private pendingAbort: Map<string, AbortController> = new Map();
 
   constructor(options: MockAdapterOptions) {
     super();
@@ -234,6 +235,61 @@ export class MockEngineAdapter extends EngineAdapter {
       }
     }
 
+    // --- Slow response mode: delay completion so cancel can be tested ---
+    if (this.slowResponseDelay > 0) {
+      // Emit user message and an in-progress assistant message immediately
+      setTimeout(() => {
+        if (session) {
+          this.emit("session.updated", { session });
+        }
+        this.emit("message.updated", { sessionId, message: userMessage });
+        // Emit assistant message without completed time to indicate "generating"
+        const inProgressMessage: UnifiedMessage = {
+          ...assistantMessage,
+          time: { created: now + 1 },
+          parts: [{
+            ...textPart,
+            text: "",
+          } as TextPart],
+        };
+        this.emit("message.updated", { sessionId, message: inProgressMessage });
+      }, 10);
+
+      // Wait for delay or cancellation
+      const abortController = new AbortController();
+      this.pendingAbort.set(sessionId, abortController);
+
+      return new Promise<UnifiedMessage>((resolve) => {
+        const timer = setTimeout(() => {
+          this.pendingAbort.delete(sessionId);
+          // Emit the completed response
+          this.emit("message.part.updated", {
+            sessionId,
+            messageId: assistantMessageId,
+            part: textPart as UnifiedPart,
+          });
+          this.emit("message.updated", { sessionId, message: assistantMessage });
+          resolve(assistantMessage);
+        }, this.slowResponseDelay);
+
+        abortController.signal.addEventListener("abort", () => {
+          clearTimeout(timer);
+          this.pendingAbort.delete(sessionId);
+          // Emit cancelled message
+          const cancelledMessage: UnifiedMessage = {
+            ...assistantMessage,
+            time: { created: now + 1, completed: Date.now() },
+            error: "Cancelled",
+            parts: [],
+          };
+          this.emit("message.updated", { sessionId, message: cancelledMessage });
+          resolve(cancelledMessage);
+        });
+      });
+    }
+
+    // --- Instant response (default) ---
+
     // Defer event emission so the RPC response reaches the client before
     // broadcast notifications.  Without this, the gateway broadcasts
     // message.part.updated / message.updated *before* it sends the RPC
@@ -262,8 +318,11 @@ export class MockEngineAdapter extends EngineAdapter {
     return assistantMessage;
   }
 
-  async cancelMessage(_sessionId: string): Promise<void> {
-    // No-op for mock
+  async cancelMessage(sessionId: string): Promise<void> {
+    const controller = this.pendingAbort.get(sessionId);
+    if (controller) {
+      controller.abort();
+    }
   }
 
   async listMessages(sessionId: string): Promise<UnifiedMessage[]> {
@@ -372,6 +431,15 @@ export class MockEngineAdapter extends EngineAdapter {
   }
 
   /**
+   * Enable slow response mode for testing cancellation.
+   * When delayMs > 0, sendMessage waits before emitting the final response,
+   * allowing cancelMessage to abort mid-generation.
+   */
+  setSlowMode(delayMs: number): void {
+    this.slowResponseDelay = delayMs;
+  }
+
+  /**
    * Clear all in-memory data and reset status to stopped.
    */
   reset(): void {
@@ -380,6 +448,11 @@ export class MockEngineAdapter extends EngineAdapter {
     this.sessionModels.clear();
     this.sessionModes.clear();
     this.currentMode = "agent";
+    this.slowResponseDelay = 0;
+    for (const controller of this.pendingAbort.values()) {
+      controller.abort();
+    }
+    this.pendingAbort.clear();
     this.status = "stopped";
   }
 

@@ -15,7 +15,6 @@ import type {
   UnifiedPart,
   UnifiedPermission,
   UnifiedQuestion,
-  UnifiedModelInfo,
   ModelListResult,
   UnifiedProject,
   AgentMode,

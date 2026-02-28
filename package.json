@@ -26,6 +26,7 @@
   },
   "dependencies": {
     "@github/copilot-sdk": "^0.1.26",
+    "@opencode-ai/sdk": "^1.2.15",
     "@shikijs/transformers": "^1.22.0",
     "@solid-primitives/i18n": "^2.2.1",
     "@solidjs/router": "^0.14.10",

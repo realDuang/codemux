@@ -15,8 +15,6 @@ import { EngineManager } from "./gateway/engine-manager";
 import { GatewayServer } from "./gateway/ws-server";
 import { OpenCodeAdapter } from "./engines/opencode-adapter";
 import { CopilotSdkAdapter } from "./engines/copilot-sdk-adapter";
-// Claude Code adapter — not yet implemented
-// import { ClaudeCodeAdapter } from "./engines/claude-adapter";
 
 // --- Gateway singleton instances ---
 const engineManager = new EngineManager();

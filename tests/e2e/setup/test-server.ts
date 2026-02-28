@@ -516,6 +516,19 @@ export async function startTestServer(
       return;
     }
 
+    // Set slow response mode on a mock adapter for cancel testing
+    if (pathname === "/api/test/set-slow-mode" && req.method === "POST") {
+      const body = await parseJsonBody(req);
+      const adapter = adapters.get(body.engineType);
+      if (!adapter) {
+        sendJson(res, { error: `Unknown engine type: ${body.engineType}` }, 400);
+        return;
+      }
+      adapter.setSlowMode(body.delayMs ?? 0);
+      sendJson(res, { success: true });
+      return;
+    }
+
     // --- Auth endpoints ---
 
     if (pathname === "/api/auth/local-auth" && req.method === "POST") {

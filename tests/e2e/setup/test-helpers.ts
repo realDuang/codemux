@@ -483,3 +483,84 @@ export async function hasEngineBadge(
     { name: projectName, badge: badgeText },
   );
 }
+
+// ---------------------------------------------------------------------------
+// Mode Switching
+// ---------------------------------------------------------------------------
+
+/**
+ * Switch the active agent mode by clicking the mode button with the given name.
+ * Uses TreeWalker + dispatchEvent for SolidJS compatibility.
+ */
+export async function switchMode(page: Page, modeName: string): Promise<void> {
+  const clicked = await page.evaluate((name) => {
+    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+    let node: Node | null;
+    while ((node = walker.nextNode())) {
+      if (node.textContent?.trim() === name) {
+        let el = node.parentElement;
+        for (let i = 0; i < 5; i++) {
+          if (!el) break;
+          if (el.tagName === "BUTTON") {
+            el.dispatchEvent(
+              new MouseEvent("click", { bubbles: true, cancelable: true, composed: true }),
+            );
+            return true;
+          }
+          el = el.parentElement;
+        }
+      }
+    }
+    return false;
+  }, modeName);
+
+  if (!clicked) {
+    throw new Error(`Could not find mode button "${modeName}"`);
+  }
+
+  await page.waitForTimeout(300);
+}
+
+// ---------------------------------------------------------------------------
+// Slow Mode & Cancel
+// ---------------------------------------------------------------------------
+
+/**
+ * Set slow response mode on a mock adapter via test server API.
+ * When delayMs > 0, mock adapter delays response completion, enabling cancel tests.
+ */
+export async function setSlowMode(
+  page: Page,
+  engineType: string,
+  delayMs: number,
+): Promise<void> {
+  const baseUrl = process.env.TEST_BASE_URL!;
+  await page.evaluate(
+    async ({ url, engine, delay }) => {
+      await fetch(`${url}/api/test/set-slow-mode`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ engineType: engine, delayMs: delay }),
+      });
+    },
+    { url: baseUrl, engine: engineType, delay: delayMs },
+  );
+}
+
+/**
+ * Click the Stop/Cancel button that appears during message generation.
+ */
+export async function clickCancelButton(page: Page): Promise<void> {
+  const stopButton = page.locator('button[aria-label="Stop"]');
+  await stopButton.waitFor({ timeout: 5_000 });
+  // Use dispatchEvent for SolidJS compatibility
+  await page.evaluate(() => {
+    const btn = document.querySelector('button[aria-label="Stop"]');
+    if (btn) {
+      btn.dispatchEvent(
+        new MouseEvent("click", { bubbles: true, cancelable: true, composed: true }),
+      );
+    }
+  });
+  await page.waitForTimeout(300);
+}

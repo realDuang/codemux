@@ -1,5 +1,5 @@
 import style from "./content-bash.module.css"
-import { createResource, createSignal } from "solid-js"
+import { createResource, createSignal, Show } from "solid-js"
 import { createOverflow } from "./common"
 import { enqueueHighlight } from "./highlight-queue"
 import { codeToHtml } from "shiki"
@@ -48,8 +48,12 @@ export function ContentBash(props: Props) {
           <span>{props.description}</span>
         </div>
         <div data-slot="content">
-          <div innerHTML={commandHtml()} />
-          <div data-slot="output" ref={overflow.ref} innerHTML={outputHtml()} />
+          <Show when={commandHtml()} fallback={<pre style={{ margin: 0, "white-space": "pre-wrap", "font-size": "0.8125rem" }}><code>{props.command}</code></pre>}>
+            <div innerHTML={commandHtml()} />
+          </Show>
+          <Show when={outputHtml()} fallback={<pre style={{ margin: 0, "white-space": "pre-wrap", "font-size": "0.8125rem" }} ref={overflow.ref}><code>{props.output}</code></pre>}>
+            <div data-slot="output" ref={overflow.ref} innerHTML={outputHtml()} />
+          </Show>
         </div>
       </div>
 

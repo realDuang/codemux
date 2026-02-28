@@ -15,9 +15,7 @@ import {
   IconSparkles,
   IconGlobeAlt,
   IconDocument,
-  IconPaperClip,
   IconQueueList,
-  IconUserCircle,
   IconCommandLine,
   IconCheckCircle,
   IconChevronDown,
@@ -634,7 +632,6 @@ export function TodoWriteTool(props: ToolProps) {
 }
 
 function TaskTool(props: ToolProps) {
-  const { t } = useI18n();
   return (
     <Collapsible open={isExpanded(props.id)} onOpenChange={() => toggleExpanded(props.id)}>
       <Collapsible.Trigger>
@@ -918,7 +915,6 @@ export function ReadTool(props: ToolProps) {
 }
 
 export function WriteTool(props: ToolProps) {
-  const { t } = useI18n();
   const filePath = createMemo(() =>
     stripWorkingDirectory(props.state.input?.filePath, (props.message.engineMeta as any)?.path?.cwd),
   );
@@ -1098,42 +1094,6 @@ export function GlobTool(props: ToolProps) {
   );
 }
 
-interface ResultsButtonProps extends ParentProps {
-
-  showCopy?: string;
-  hideCopy?: string;
-}
-function ResultsButton(props: ResultsButtonProps) {
-  const { t } = useI18n();
-  const [show, setShow] = createSignal(false);
-
-  return (
-    <>
-      <button
-        type="button"
-        data-component="button-text"
-        data-more
-        onClick={() => setShow((e) => !e)}
-      >
-        <span>
-          {show()
-            ? props.hideCopy || t().common.hideResults
-            : props.showCopy || t().common.showResults}
-        </span>
-        <span data-slot="icon">
-          <Show
-            when={show()}
-            fallback={<IconChevronRight width={11} height={11} />}
-          >
-            <IconChevronDown width={11} height={11} />
-          </Show>
-        </span>
-      </button>
-      <Show when={show()}>{props.children}</Show>
-    </>
-  );
-}
-
 export function Spacer() {
   return <div data-component="spacer"></div>;
 }
@@ -1143,14 +1103,6 @@ function Footer(props: ParentProps<{ title: string }>) {
     <div data-component="content-footer" title={props.title}>
       {props.children}
     </div>
-  );
-}
-
-function ToolFooter(props: { time: number }) {
-  return (
-    props.time > MIN_DURATION && (
-      <Footer title={`${props.time}ms`}>{formatDuration(props.time)}</Footer>
-    )
   );
 }
 
@@ -1165,7 +1117,6 @@ function ToolDuration(props: { time: number }) {
 
 /** Running tool card with live elapsed timer */
 function RunningToolCard(props: { part: ToolPart }) {
-  const { t } = useI18n();
   const startTime = () => (props.part.state as any).time?.start ?? Date.now();
   const isRunning = () =>
     props.part.state.status === "pending" || props.part.state.status === "running";
@@ -1340,7 +1291,7 @@ export function QuestionPrompt(props: QuestionPromptProps) {
   const handleSubmit = () => {
     if (!props.onRespond) return;
     // Build final answers: merge selected options + custom text
-    const finalAnswers = props.question.questions.map((q, i) => {
+    const finalAnswers = props.question.questions.map((_q, i) => {
       const selected = [...(answers()[i] || [])];
       const custom = (customTexts()[i] || "").trim();
       if (custom) {

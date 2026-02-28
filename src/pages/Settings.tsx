@@ -240,9 +240,9 @@ export default function Settings() {
                                   </Match>
                                 </Switch>
                               </span>
-                              {/* Auth info (e.g. GitHub username) */}
-                              <Show when={engine.authenticated && engine.authMessage}>
-                                <span class="text-xs text-emerald-600 dark:text-emerald-400">
+                              {/* Auth info */}
+                              <Show when={engine.authMessage}>
+                                <span class={`text-xs ${engine.authenticated ? "text-emerald-600 dark:text-emerald-400" : "text-amber-600 dark:text-amber-400"}`}>
                                   {engine.authMessage}
                                 </span>
                               </Show>

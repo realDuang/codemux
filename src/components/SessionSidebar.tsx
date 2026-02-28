@@ -1,4 +1,4 @@
-import { For, Show, createSignal, createMemo, onMount } from "solid-js";
+import { For, Show, createSignal, createMemo } from "solid-js";
 import { SessionInfo, sessionStore, setSessionStore, getProjectName } from "../stores/session";
 import { useI18n, formatMessage } from "../lib/i18n";
 import type { UnifiedProject, EngineType, SessionActivityStatus } from "../types/unified";

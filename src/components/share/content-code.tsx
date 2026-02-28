@@ -1,5 +1,5 @@
 import { codeToHtml, bundledLanguages } from "shiki"
-import { createResource, Suspense } from "solid-js"
+import { createResource, Show } from "solid-js"
 import { transformerNotationDiff } from "@shikijs/transformers"
 import { enqueueHighlight } from "./highlight-queue"
 import style from "./content-code.module.css"
@@ -44,13 +44,21 @@ export function ContentCode(props: Props) {
   )
 
   return (
-    <Suspense>
-      <div 
-        innerHTML={html()} 
-        class={style.root} 
-        data-flush={props.flush === true ? true : undefined}
-        data-transparent-bg={props.transparentBg === true ? true : undefined}
-      />
-    </Suspense>
+    <div
+      class={style.root}
+      data-flush={props.flush === true ? true : undefined}
+      data-transparent-bg={props.transparentBg === true ? true : undefined}
+    >
+      <Show
+        when={html()}
+        fallback={
+          <pre style={{ margin: 0, "white-space": "pre-wrap", "word-break": "break-all", "font-size": "0.8125rem", "line-height": "1.5" }}>
+            <code>{props.code}</code>
+          </pre>
+        }
+      >
+        <div innerHTML={html()} />
+      </Show>
+    </div>
   )
 }

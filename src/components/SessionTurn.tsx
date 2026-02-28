@@ -2,7 +2,6 @@ import {
   createMemo,
   createSignal,
   For,
-  Index,
   Show,
   Suspense,
   onCleanup,
@@ -12,7 +11,7 @@ import { Part, ProviderIcon, PermissionPrompt, QuestionPrompt } from "./share/pa
 import { ContentError } from "./share/content-error";
 import { IconSparkles } from "./icons";
 import { useI18n } from "../lib/i18n";
-import type { UnifiedMessage, UnifiedPart, UnifiedPermission, UnifiedQuestion, ToolPart } from "../types/unified";
+import type { UnifiedMessage, UnifiedPart, ToolPart } from "../types/unified";
 import { Spinner } from "./Spinner";
 
 import styles from "./SessionTurn.module.css";
@@ -352,16 +351,16 @@ export function SessionTurn(props: SessionTurnProps) {
           {/* User Message - Only show when there are displayable parts */}
           <Show when={filteredUserParts().length > 0}>
             <div class={styles.userMessage}>
-              <Index each={filteredUserParts()}>
+              <For each={filteredUserParts()}>
                 {(part, partIndex) => (
                   <Part
-                    last={props.isLastTurn && filteredUserParts().length === partIndex + 1}
-                    part={part()}
-                    index={partIndex}
+                    last={props.isLastTurn && filteredUserParts().length === partIndex() + 1}
+                    part={part}
+                    index={partIndex()}
                     message={props.userMessage}
                   />
                 )}
-              </Index>
+              </For>
             </div>
           </Show>
 
@@ -434,21 +433,21 @@ export function SessionTurn(props: SessionTurnProps) {
                 {(item) => (
                   <div class={styles.assistantMessageParts}>
                     <Suspense>
-                      <Index each={item.parts}>
+                      <For each={item.parts}>
                         {(part, partIndex) => (
                           <Part
                             last={false}
-                            part={part()}
-                            index={partIndex}
+                            part={part}
+                            index={partIndex()}
                             message={item.message}
-                            permission={getPermissionForPart(part())}
+                            permission={getPermissionForPart(part)}
                             onPermissionRespond={props.onPermissionRespond}
-                            question={getQuestionForPart(part())}
+                            question={getQuestionForPart(part)}
                             onQuestionRespond={props.onQuestionRespond}
                             onQuestionDismiss={props.onQuestionDismiss}
                           />
                         )}
-                      </Index>
+                      </For>
                     </Suspense>
                   </div>
                 )}

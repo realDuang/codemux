@@ -1,5 +1,5 @@
 import { For, Show, createSignal } from "solid-js";
-import { Theme, ThemeMode, getThemeMode, setThemeMode } from "../lib/theme";
+import { ThemeMode, getThemeMode, setThemeMode } from "../lib/theme";
 import { useI18n } from "../lib/i18n";
 
 export function ThemeSwitcher() {

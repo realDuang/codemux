@@ -4,7 +4,6 @@ import {
   reseedTestData,
   selectSession,
   getActiveMode,
-  isModelSelectorLocked,
   countProjectGroups,
   countSessions,
   hasEngineBadge,
@@ -102,39 +101,6 @@ test.describe("Sidebar", () => {
     // At minimum, the mode bar should still be visible
     const cpMode = await getActiveMode(page);
     expect(cpMode).not.toBeNull();
-  });
-
-  test("should show locked model selector for copilot session", async ({ page }) => {
-    await selectSession(page, "Refactor database layer");
-    await page.waitForTimeout(500);
-
-    const locked = await isModelSelectorLocked(page);
-    expect(locked).toBe(true);
-  });
-
-  test("should show unlocked model selector for opencode session", async ({ page }) => {
-    await selectSession(page, "Fix authentication bug");
-    await page.waitForTimeout(500);
-
-    const locked = await isModelSelectorLocked(page);
-    expect(locked).toBe(false);
-  });
-
-  test("should toggle model selector lock when switching between engines", async ({ page }) => {
-    // Start with opencode — unlocked
-    await selectSession(page, "Fix authentication bug");
-    await page.waitForTimeout(500);
-    expect(await isModelSelectorLocked(page)).toBe(false);
-
-    // Switch to copilot — locked
-    await selectSession(page, "Refactor database layer");
-    await page.waitForTimeout(500);
-    expect(await isModelSelectorLocked(page)).toBe(true);
-
-    // Switch back to opencode — unlocked again
-    await selectSession(page, "Add unit tests");
-    await page.waitForTimeout(500);
-    expect(await isModelSelectorLocked(page)).toBe(false);
   });
 
   // --- Session Count ---

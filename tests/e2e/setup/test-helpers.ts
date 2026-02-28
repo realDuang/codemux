@@ -375,22 +375,6 @@ export async function getActiveMode(page: Page): Promise<string | null> {
 }
 
 /**
- * Check if the model selector is locked (copilot engine).
- * Returns true if the selector has opacity-75 and the locked title.
- */
-export async function isModelSelectorLocked(page: Page): Promise<boolean> {
-  return page.evaluate(() => {
-    const buttons = document.querySelectorAll("button");
-    for (const btn of buttons) {
-      if (btn.title === "Model is determined by Copilot CLI config") {
-        return true;
-      }
-    }
-    return false;
-  });
-}
-
-/**
  * Get the currently displayed model name from the model selector.
  */
 export async function getModelName(page: Page): Promise<string | null> {
@@ -403,7 +387,7 @@ export async function getModelName(page: Page): Promise<string | null> {
         cls.includes("rounded-md") &&
         cls.includes("text-xs") &&
         cls.includes("font-medium") &&
-        (cls.includes("opacity-75") || cls.includes("hover:bg-gray-200"))
+        cls.includes("hover:bg-gray-200")
       ) {
         return btn.textContent?.trim() || null;
       }

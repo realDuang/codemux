@@ -13,7 +13,6 @@ import {
   createSession,
   hideProject,
   getActiveMode,
-  isModelSelectorLocked,
   countProjectGroups,
   countSessions,
   selectSession,
@@ -147,31 +146,6 @@ test.describe("Session - Create", () => {
     expect(activeMode).toContain("Agent");
   });
 
-  test("should display locked model selector for copilot session", async ({ page }) => {
-    // Select an existing copilot session from seed data
-    // "Cross-engine test session" belongs to project-alpha with copilot engine
-    await selectSession(page, "Cross-engine test session");
-
-    // Wait for session switch to complete
-    await page.waitForTimeout(500);
-
-    // Verify model selector is locked for copilot engine
-    // (title="Model is determined by Copilot CLI config")
-    const locked = await isModelSelectorLocked(page);
-    expect(locked).toBe(true);
-  });
-
-  test("should display unlocked model selector for opencode session", async ({ page }) => {
-    // Select an existing opencode session from seed data
-    await selectSession(page, "Fix authentication bug");
-
-    // Wait for session switch to complete
-    await page.waitForTimeout(500);
-
-    // Verify model selector is NOT locked for opencode engine
-    const locked = await isModelSelectorLocked(page);
-    expect(locked).toBe(false);
-  });
 });
 
 // ============================================================================

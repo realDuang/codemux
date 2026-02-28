@@ -8,8 +8,9 @@
 import { randomBytes } from "crypto";
 import { readFileSync, existsSync } from "fs";
 import { homedir } from "os";
-import { join } from "path";
+import { join, dirname } from "path";
 import { fileURLToPath } from "url";
+import { app } from "electron";
 import { CopilotClient, CopilotSession } from "@github/copilot-sdk";
 import type {
   SessionEvent,
@@ -207,13 +208,37 @@ function readConfigModel(): string | undefined {
  * The native binary has no such issue since it runs independently.
  */
 function resolvePlatformCli(): string | undefined {
+  const pkgName = `@github/copilot-${process.platform}-${process.arch}`;
+  const binaryName = process.platform === "win32" ? "copilot.exe" : "copilot";
+
+  // Strategy 1: import.meta.resolve (works in dev mode where node_modules is
+  // on disk and the code runs unbundled or with working module resolution).
   try {
-    const pkgName = `@github/copilot-${process.platform}-${process.arch}`;
     const resolved = fileURLToPath(import.meta.resolve(pkgName));
     if (existsSync(resolved)) return resolved;
   } catch {
-    // Platform package not installed — fall through
+    // Not resolvable — expected in packaged builds
   }
+
+  // Strategy 2: Scan known filesystem locations for the platform binary.
+  // In packaged Electron apps, electron-builder may hoist the package into
+  // @github/copilot/node_modules/ and asar-unpack it to app.asar.unpacked/.
+  const appPath = app.getAppPath(); // e.g. resources/app.asar
+  const candidates = [
+    // Packaged: nested inside @github/copilot (asar-unpacked)
+    join(dirname(appPath), "app.asar.unpacked", "node_modules", "@github", "copilot", "node_modules", pkgName, binaryName),
+    // Packaged: top-level node_modules (asar-unpacked)
+    join(dirname(appPath), "app.asar.unpacked", "node_modules", pkgName, binaryName),
+    // Dev: top-level node_modules
+    join(appPath, "node_modules", pkgName, binaryName),
+    // Dev: nested inside @github/copilot
+    join(appPath, "node_modules", "@github", "copilot", "node_modules", pkgName, binaryName),
+  ];
+
+  for (const candidate of candidates) {
+    if (existsSync(candidate)) return candidate;
+  }
+
   return undefined;
 }
 
@@ -231,9 +256,13 @@ export class CopilotSdkAdapter extends EngineAdapter {
 
   // --- State ---
   private status: EngineStatus = "stopped";
+  private version: string | undefined;
   private currentModelId: string | null = null;
   private cachedModels: UnifiedModelInfo[] = [];
   private sessionModes = new Map<string, string>();
+
+  // --- Permission auto-approve rules ---
+  private allowedAlwaysKinds = new Set<string>();
 
   // --- Message accumulation ---
   private messageBuffers = new Map<string, MessageBuffer>();
@@ -297,6 +326,15 @@ export class CopilotSdkAdapter extends EngineAdapter {
         message: ping.message,
         protocolVersion: ping.protocolVersion,
       });
+
+      // Fetch CLI version
+      try {
+        const status = await this.client.getStatus();
+        this.version = status.version;
+        copilotLog.info(`Copilot CLI version: ${this.version}`);
+      } catch {
+        // Version fetch is non-critical
+      }
 
       // Read initial model from config
       this.currentModelId = readConfigModel() ?? null;
@@ -362,6 +400,7 @@ export class CopilotSdkAdapter extends EngineAdapter {
     return {
       type: this.engineType,
       name: "GitHub Copilot",
+      version: this.version,
       status: this.status,
       capabilities: this.getCapabilities(),
       authMethods: this.getAuthMethods(),
@@ -546,10 +585,9 @@ export class CopilotSdkAdapter extends EngineAdapter {
     const initialMessage = this.bufferToMessage(buffer, false);
     this.emit("message.updated", { sessionId, message: initialMessage });
 
-    // Build send options
+    // Build send options (mode here is delivery mode, not agent mode)
     const sendOptions: MessageOptions = {
       prompt: promptText,
-      mode: this.sessionModes.get(sessionId) as MessageOptions["mode"],
     };
 
     // Wrap in a promise that resolves when session.idle fires
@@ -641,7 +679,19 @@ export class CopilotSdkAdapter extends EngineAdapter {
 
   async setModel(sessionId: string, modelId: string): Promise<void> {
     this.currentModelId = modelId;
-    copilotLog.info(`Model set to ${modelId} (applies to next message)`);
+
+    // Switch model in active session via RPC
+    const session = this.activeSessions.get(sessionId);
+    if (session) {
+      try {
+        await session.rpc.model.switchTo({ modelId });
+        copilotLog.info(`Model switched to ${modelId} for session ${sessionId}`);
+      } catch (err) {
+        copilotLog.warn(`Failed to switch model via RPC for session ${sessionId}:`, err);
+      }
+    } else {
+      copilotLog.info(`Model set to ${modelId} (no active session, applies on next create)`);
+    }
   }
 
   // ==========================================================================
@@ -654,7 +704,20 @@ export class CopilotSdkAdapter extends EngineAdapter {
 
   async setMode(sessionId: string, modeId: string): Promise<void> {
     this.sessionModes.set(sessionId, modeId);
-    copilotLog.info(`Mode set to ${modeId} for session ${sessionId}`);
+
+    // Notify copilot backend of mode change via RPC
+    const session = this.activeSessions.get(sessionId);
+    if (session) {
+      const sdkMode = modeId === "agent" ? "interactive" : modeId as "interactive" | "plan" | "autopilot";
+      try {
+        await session.rpc.mode.set({ mode: sdkMode });
+        copilotLog.info(`Mode set to ${sdkMode} for session ${sessionId}`);
+      } catch (err) {
+        copilotLog.warn(`Failed to set mode via RPC for session ${sessionId}:`, err);
+      }
+    } else {
+      copilotLog.info(`Mode set to ${modeId} for session ${sessionId} (no active session)`);
+    }
   }
 
   // ==========================================================================
@@ -670,6 +733,15 @@ export class CopilotSdkAdapter extends EngineAdapter {
 
     const optionId = reply.optionId;
     const isApproved = optionId === "allow_once" || optionId === "allow_always";
+
+    // Persist "always allow" rule for this permission kind
+    if (optionId === "allow_always" && pending.permission.rawInput) {
+      const rawKind = (pending.permission.rawInput as Record<string, unknown>).kind as string | undefined;
+      if (rawKind) {
+        this.allowedAlwaysKinds.add(rawKind);
+        copilotLog.info(`Added allow_always rule for kind: ${rawKind}`);
+      }
+    }
 
     const result: PermissionRequestResult = {
       kind: isApproved ? "approved" : "denied-interactively-by-user",
@@ -1414,8 +1486,22 @@ export class CopilotSdkAdapter extends EngineAdapter {
     req: PermissionRequest,
     ctx: { sessionId: string },
   ): Promise<PermissionRequestResult> {
-    const permissionId = timeId("perm");
     const sessionId = ctx.sessionId;
+
+    // Auto-approve in autopilot mode
+    const currentMode = this.sessionModes.get(sessionId) ?? "agent";
+    if (currentMode === "autopilot") {
+      copilotLog.info(`Auto-approved ${req.kind} permission in autopilot mode (session ${sessionId})`);
+      return Promise.resolve({ kind: "approved" });
+    }
+
+    // Auto-approve if user previously selected "Always Allow" for this kind
+    if (this.allowedAlwaysKinds.has(req.kind)) {
+      copilotLog.info(`Auto-approved ${req.kind} permission via allow_always rule`);
+      return Promise.resolve({ kind: "approved" });
+    }
+
+    const permissionId = timeId("perm");
 
     // Map permission kind to UI kind
     const kind: "read" | "edit" | "other" =

@@ -18,6 +18,10 @@ export interface EngineInfo {
   status: EngineStatus;
   capabilities: EngineCapabilities;
   authMethods?: AuthMethod[];
+  /** Whether the engine is authenticated (undefined = not applicable) */
+  authenticated?: boolean;
+  /** Human-readable auth status message (e.g. username or error) */
+  authMessage?: string;
 }
 
 export interface EngineCapabilities {

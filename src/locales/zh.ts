@@ -272,6 +272,7 @@ export const zh: LocaleDict = {
     stopped: "已停止",
     starting: "启动中...",
     error: "错误",
+    notAuthenticated: "未登录",
     version: "版本",
     selectEngine: "选择引擎",
     defaultEngine: "默认引擎",

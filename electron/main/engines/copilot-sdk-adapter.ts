@@ -257,6 +257,8 @@ export class CopilotSdkAdapter extends EngineAdapter {
   // --- State ---
   private status: EngineStatus = "stopped";
   private version: string | undefined;
+  private authenticated: boolean | undefined;
+  private authMessage: string | undefined;
   private currentModelId: string | null = null;
   private cachedModels: UnifiedModelInfo[] = [];
   private sessionModes = new Map<string, string>();
@@ -336,6 +338,18 @@ export class CopilotSdkAdapter extends EngineAdapter {
         // Version fetch is non-critical
       }
 
+      // Check auth status
+      try {
+        const authStatus = await this.client.getAuthStatus();
+        this.authenticated = authStatus.isAuthenticated;
+        this.authMessage = authStatus.isAuthenticated
+          ? authStatus.login ?? authStatus.authType
+          : authStatus.statusMessage ?? "Not authenticated";
+        copilotLog.info(`Copilot auth: authenticated=${authStatus.isAuthenticated}, type=${authStatus.authType}, user=${authStatus.login}`);
+      } catch {
+        // Auth status check is non-critical
+      }
+
       // Read initial model from config
       this.currentModelId = readConfigModel() ?? null;
 
@@ -404,6 +418,8 @@ export class CopilotSdkAdapter extends EngineAdapter {
       status: this.status,
       capabilities: this.getCapabilities(),
       authMethods: this.getAuthMethods(),
+      authenticated: this.authenticated,
+      authMessage: this.authMessage,
     };
   }
 

@@ -184,13 +184,15 @@ export default function Settings() {
                           {/* Status indicator dot */}
                           <span
                             class={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${
-                              engine.status === "running"
-                                ? "bg-emerald-500"
-                                : engine.status === "starting"
-                                  ? "bg-amber-500"
-                                  : engine.status === "error"
-                                    ? "bg-red-500"
-                                    : "bg-slate-400"
+                              engine.status === "running" && engine.authenticated === false
+                                ? "bg-amber-500"
+                                : engine.status === "running"
+                                  ? "bg-emerald-500"
+                                  : engine.status === "starting"
+                                    ? "bg-amber-500"
+                                    : engine.status === "error"
+                                      ? "bg-red-500"
+                                      : "bg-slate-400"
                             }`}
                           />
                           <div class="min-w-0">
@@ -221,6 +223,9 @@ export default function Settings() {
                               {/* Status text */}
                               <span class="text-sm text-gray-500 dark:text-gray-400">
                                 <Switch>
+                                  <Match when={engine.status === "running" && engine.authenticated === false}>
+                                    <span class="text-amber-600 dark:text-amber-400">{t().engine.notAuthenticated}</span>
+                                  </Match>
                                   <Match when={engine.status === "running"}>
                                     {t().engine.running}
                                   </Match>
@@ -235,6 +240,12 @@ export default function Settings() {
                                   </Match>
                                 </Switch>
                               </span>
+                              {/* Auth info (e.g. GitHub username) */}
+                              <Show when={engine.authenticated && engine.authMessage}>
+                                <span class="text-xs text-emerald-600 dark:text-emerald-400">
+                                  {engine.authMessage}
+                                </span>
+                              </Show>
                               {/* Version */}
                               <Show when={engine.version}>
                                 <span class="text-xs text-gray-400 dark:text-gray-500">

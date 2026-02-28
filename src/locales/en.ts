@@ -271,6 +271,7 @@ export interface LocaleDict {
     stopped: string;
     starting: string;
     error: string;
+    notAuthenticated: string;
     version: string;
     selectEngine: string;
     defaultEngine: string;
@@ -550,6 +551,7 @@ export const en: LocaleDict = {
     stopped: "Stopped",
     starting: "Starting...",
     error: "Error",
+    notAuthenticated: "Not Authenticated",
     version: "Version",
     selectEngine: "Select Engine",
     defaultEngine: "Default Engine",

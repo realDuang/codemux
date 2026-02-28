@@ -3,6 +3,7 @@
 // =============================================================================
 
 import fs from "fs";
+import fsPromises from "fs/promises";
 import path from "path";
 import crypto from "crypto";
 import { app } from "electron";
@@ -454,19 +455,20 @@ class SessionStore {
 
   /**
    * Atomic write: write to .tmp file first, then rename.
+   * Uses async I/O to avoid blocking the event loop during SSE processing.
    */
-  private atomicWrite(filePath: string, data: unknown): void {
+  private async atomicWrite(filePath: string, data: unknown): Promise<void> {
     const dir = path.dirname(filePath);
     this.ensureDir(dir);
 
     const tmpPath = filePath + ".tmp";
     try {
-      fs.writeFileSync(tmpPath, JSON.stringify(data, null, 2), "utf-8");
-      fs.renameSync(tmpPath, filePath);
+      await fsPromises.writeFile(tmpPath, JSON.stringify(data, null, 2), "utf-8");
+      await fsPromises.rename(tmpPath, filePath);
     } catch (err) {
       sessionStoreLog.error(`Failed to write ${filePath}:`, err);
       // Clean up tmp file if rename failed
-      try { fs.unlinkSync(tmpPath); } catch { /* ignore */ }
+      try { await fsPromises.unlink(tmpPath); } catch { /* ignore */ }
     }
   }
 }

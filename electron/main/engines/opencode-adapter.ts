@@ -276,8 +276,22 @@ export class OpenCodeAdapter extends EngineAdapter {
           const parts = buffer.split("\n\n");
           buffer = parts.pop() ?? "";
 
-          for (const part of parts) {
-            this.parseSseMessage(part);
+          if (parts.length <= 1) {
+            // Common case: single message — process immediately
+            if (parts.length === 1) this.parseSseMessage(parts[0]);
+          } else {
+            // Batch arrival (e.g. after network jitter / TCP buffering):
+            // Yield between messages so the Node event loop can process
+            // other I/O (WebSocket sends, pings, etc.) and the frontend
+            // gets a chance to handle user input between DOM updates.
+            let i = 0;
+            const processNext = () => {
+              if (i < parts.length) {
+                this.parseSseMessage(parts[i++]);
+                setImmediate(processNext);
+              }
+            };
+            processNext();
           }
         });
 

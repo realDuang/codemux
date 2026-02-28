@@ -14,6 +14,7 @@ export function ContentBash(props: Props) {
   const [commandHtml] = createResource(
     () => props.command,
     async (command) => {
+      await new Promise(r => setTimeout(r, 0));
       return codeToHtml(command || "", {
         lang: "bash",
         themes: {
@@ -27,6 +28,7 @@ export function ContentBash(props: Props) {
   const [outputHtml] = createResource(
     () => props.output,
     async (output) => {
+      await new Promise(r => setTimeout(r, 0));
       return codeToHtml(output || "", {
         lang: "console",
         themes: {

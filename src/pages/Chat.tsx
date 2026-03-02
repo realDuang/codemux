@@ -515,11 +515,14 @@ export default function Chat() {
       setConfigStore("currentEngineType", session.engineType);
     }
 
-    // Auto-select first available mode for the engine
+    // Only reset mode when current mode is incompatible with the engine
     const engineInfo = configStore.engines.find(e => e.type === (session?.engineType || configStore.currentEngineType));
     const availableModes = engineInfo?.capabilities?.availableModes;
     if (availableModes && availableModes.length > 0) {
-      setCurrentAgent(availableModes[0]);
+      const cur = currentAgent();
+      if (!availableModes.some(m => m.id === cur.id)) {
+        setCurrentAgent(availableModes[0]);
+      }
     }
 
     if (isMobile()) {

@@ -251,25 +251,31 @@ export function SessionTurn(props: SessionTurnProps) {
     return t().steps.consideringNextSteps;
   });
 
-  // Compute duration — live-ticking while working, static when done
+  // Compute duration — live-ticking while no final endTime, static when done.
+  // Use a self-contained timer that doesn't depend on isWorking prop for ticking,
+  // since isWorking reactivity can be lost through Index/prop chain.
   const [tick, setTick] = createSignal(Date.now());
+
+  const finalEndTime = createMemo(() => {
+    // Only trust time.completed when isWorking is false — during multi-step
+    // tasks, intermediate messages may carry completed timestamps prematurely.
+    if (props.isWorking) return undefined;
+    const lastAssistant = props.assistantMessages.at(-1);
+    return lastAssistant?.time?.completed;
+  });
+
   const tickTimer = setInterval(() => {
-    if (props.isWorking) setTick(Date.now());
+    // Tick unconditionally — the memo will decide whether to use it
+    if (!finalEndTime()) setTick(Date.now());
   }, 1000);
   onCleanup(() => clearInterval(tickTimer));
 
   const duration = createMemo(() => {
     const startTime = props.userMessage.time.created;
-    // While working, always use live tick — intermediate assistant
-    // messages may have time.completed set during multi-step tasks
-    if (props.isWorking) {
-      const _ = tick(); // subscribe to tick signal
-      return formatDuration(startTime, Date.now());
-    }
-    const lastAssistant = props.assistantMessages.at(-1);
-    const endTime = lastAssistant?.time?.completed;
+    const endTime = finalEndTime();
     if (endTime) return formatDuration(startTime, endTime);
-    return formatDuration(startTime);
+    const _ = tick(); // subscribe to tick signal for live updates
+    return formatDuration(startTime, Date.now());
   });
 
   // Get model info from the first assistant message

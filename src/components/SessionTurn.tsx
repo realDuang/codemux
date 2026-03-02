@@ -2,6 +2,7 @@ import {
   createMemo,
   createSignal,
   For,
+  Index,
   Show,
   Suspense,
   onCleanup,
@@ -351,16 +352,16 @@ export function SessionTurn(props: SessionTurnProps) {
           {/* User Message - Only show when there are displayable parts */}
           <Show when={filteredUserParts().length > 0}>
             <div class={styles.userMessage}>
-              <For each={filteredUserParts()}>
+              <Index each={filteredUserParts()}>
                 {(part, partIndex) => (
                   <Part
-                    last={props.isLastTurn && filteredUserParts().length === partIndex() + 1}
-                    part={part}
-                    index={partIndex()}
+                    last={props.isLastTurn && filteredUserParts().length === partIndex + 1}
+                    part={part()}
+                    index={partIndex}
                     message={props.userMessage}
                   />
                 )}
-              </For>
+              </Index>
             </div>
           </Show>
 
@@ -433,21 +434,21 @@ export function SessionTurn(props: SessionTurnProps) {
                 {(item) => (
                   <div class={styles.assistantMessageParts}>
                     <Suspense>
-                      <For each={item.parts}>
+                      <Index each={item.parts}>
                         {(part, partIndex) => (
                           <Part
                             last={false}
-                            part={part}
-                            index={partIndex()}
+                            part={part()}
+                            index={partIndex}
                             message={item.message}
-                            permission={getPermissionForPart(part)}
+                            permission={getPermissionForPart(part())}
                             onPermissionRespond={props.onPermissionRespond}
-                            question={getQuestionForPart(part)}
+                            question={getQuestionForPart(part())}
                             onQuestionRespond={props.onQuestionRespond}
                             onQuestionDismiss={props.onQuestionDismiss}
                           />
                         )}
-                      </For>
+                      </Index>
                     </Suspense>
                   </div>
                 )}

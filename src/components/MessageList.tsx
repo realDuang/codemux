@@ -1,4 +1,4 @@
-import { createMemo, For, Show } from "solid-js";
+import { createMemo, Index, Show } from "solid-js";
 import { messageStore } from "../stores/message";
 import { SessionTurn } from "./SessionTurn";
 import type { UnifiedMessage } from "../types/unified";
@@ -80,16 +80,16 @@ export function MessageList(props: MessageListProps) {
           </div>
         }
       >
-        <For each={turns()}>
+        <Index each={turns()}>
           {(turn, turnIndex) => {
-            const isLastTurn = () => turnIndex() === turns().length - 1;
+            const isLastTurn = () => turnIndex === turns().length - 1;
             const isWorking = () => isLastTurn() && isLastTurnWorking();
 
             return (
               <SessionTurn
                 sessionID={props.sessionID}
-                userMessage={turn.userMessage}
-                assistantMessages={turn.assistantMessages}
+                userMessage={turn().userMessage}
+                assistantMessages={turn().assistantMessages}
                 isLastTurn={isLastTurn()}
                 isWorking={isWorking()}
                 onPermissionRespond={props.onPermissionRespond}
@@ -98,7 +98,7 @@ export function MessageList(props: MessageListProps) {
               />
             );
           }}
-        </For>
+        </Index>
       </Show>
     </div>
   );

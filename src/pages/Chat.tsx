@@ -231,53 +231,34 @@ export default function Chat() {
   };
 
   // ── Scroll helpers ──────────────────────────────────────────────
-  // Scroll strategy: use a ResizeObserver on the inner content wrapper
-  // to detect height changes (from sync DOM updates, async markdown
-  // rendering, code highlighting, etc.).  When the user is near the
-  // bottom we auto-follow; otherwise we leave the viewport alone.
-  // This eliminates the race between store updates and async renders.
 
   const scrollToBottom = () => {
     const el = messagesRef();
     if (el) el.scrollTop = el.scrollHeight;
   };
 
-  const isNearBottom = (threshold = 200) => {
+  // Debounced scrollToBottom for high-frequency part updates —
+  // coalesces multiple calls within the same frame into one.
+  let scrollRafId: number | null = null;
+  const scheduleScrollToBottom = () => {
+    if (scrollRafId === null) {
+      scrollRafId = requestAnimationFrame(() => {
+        scrollRafId = null;
+        scrollToBottom();
+      });
+    }
+  };
+
+  const isNearBottom = () => {
     const el = messagesRef();
     if (!el) return true;
+    const threshold = 80;
     return el.scrollHeight - el.scrollTop - el.clientHeight < threshold;
   };
 
   const handleScroll = () => {
     setUserScrolledUp(!isNearBottom());
   };
-
-  // Observe the scroll container's inner content for any size change.
-  // When the content grows and the user hasn't scrolled up, smoothly
-  // follow to the bottom.  This covers both synchronous and async
-  // height changes (markdown rendering, shiki highlighting, etc.).
-  let scrollObserver: ResizeObserver | null = null;
-  createEffect(() => {
-    const el = messagesRef();
-    if (!el) return;
-
-    // Observe the first child (the inner content wrapper) so we detect
-    // height changes even when the scroll container itself stays fixed.
-    const target = el.firstElementChild || el;
-
-    scrollObserver?.disconnect();
-    scrollObserver = new ResizeObserver(() => {
-      if (!userScrolledUp()) {
-        scrollToBottom();
-      }
-    });
-    scrollObserver.observe(target);
-
-    onCleanup(() => {
-      scrollObserver?.disconnect();
-      scrollObserver = null;
-    });
-  });
 
   const toggleSidebar = () => setIsSidebarOpen((prev) => !prev);
 
@@ -859,8 +840,7 @@ export default function Chat() {
       }
     }
 
-    // Auto-scroll is now handled by the ResizeObserver on the content
-    // wrapper — no need to call scrollToBottom() here synchronously.
+    scheduleScrollToBottom();
   };
 
   const handlePartUpdated = (_sessionId: string, part: UnifiedPart) => {

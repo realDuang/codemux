@@ -416,10 +416,6 @@ export class OpenCodeAdapter extends EngineAdapter {
           } else {
             pending.assistantParts.push(part);
           }
-
-          if (sdkPart.type === "step-finish") {
-            this.resolvePendingMessage(sessionID);
-          }
         }
       }
     }

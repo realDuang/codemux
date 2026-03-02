@@ -840,7 +840,9 @@ export default function Chat() {
       }
     }
 
-    scheduleScrollToBottom();
+    if (!userScrolledUp()) {
+      scheduleScrollToBottom();
+    }
   };
 
   const handlePartUpdated = (_sessionId: string, part: UnifiedPart) => {

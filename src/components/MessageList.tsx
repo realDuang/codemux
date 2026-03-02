@@ -56,19 +56,11 @@ export function MessageList(props: MessageListProps) {
   // Group messages into turns
   const turns = createMemo(() => groupMessagesIntoTurns(messages()));
 
-  const isLastTurnWorking = createMemo(() => {
-    const allTurns = turns();
-    if (allTurns.length === 0) return props.isWorking ?? false;
-
-    const lastTurn = allTurns[allTurns.length - 1];
-    const lastAssistant = lastTurn.assistantMessages.at(-1);
-
-    if (!lastAssistant) {
-      return props.isWorking ?? false;
-    }
-
-    return !lastAssistant.time?.completed && (props.isWorking ?? false);
-  });
+  // Use sending() (props.isWorking) as the sole source of truth.
+  // time.completed on individual assistant messages is unreliable for
+  // multi-step tasks — intermediate messages get completed timestamps
+  // while the overall task is still running.
+  const isLastTurnWorking = createMemo(() => props.isWorking ?? false);
 
   return (
     <div class="flex flex-col gap-5 py-3">

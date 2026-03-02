@@ -260,14 +260,15 @@ export function SessionTurn(props: SessionTurnProps) {
 
   const duration = createMemo(() => {
     const startTime = props.userMessage.time.created;
-    const lastAssistant = props.assistantMessages.at(-1);
-    const endTime = lastAssistant?.time?.completed;
-    if (endTime) return formatDuration(startTime, endTime);
-    // While working, use live tick
+    // While working, always use live tick — intermediate assistant
+    // messages may have time.completed set during multi-step tasks
     if (props.isWorking) {
       const _ = tick(); // subscribe to tick signal
       return formatDuration(startTime, Date.now());
     }
+    const lastAssistant = props.assistantMessages.at(-1);
+    const endTime = lastAssistant?.time?.completed;
+    if (endTime) return formatDuration(startTime, endTime);
     return formatDuration(startTime);
   });
 

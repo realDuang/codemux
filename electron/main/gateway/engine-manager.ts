@@ -238,6 +238,37 @@ export class EngineManager extends EventEmitter {
     this.sessionEngineMap.delete(sessionId);
   }
 
+  /**
+   * Delete a project and all its sessions.
+   * Routes through adapter.deleteSession() for each session to ensure
+   * in-memory caches (v2Sessions, messageHistory, etc.) are cleaned up,
+   * then removes the project directory from disk via sessionStore.
+   */
+  async deleteProject(projectId: string): Promise<void> {
+    // Find all sessions belonging to this project
+    const allSessions = sessionStore.getAllSessions();
+    const projectSessions = allSessions.filter(s => {
+      const derived = `${s.engineType}-${s.directory.replaceAll("\\", "/")}`;
+      return s.projectId === projectId || derived === projectId;
+    });
+
+    // Delete each session through the adapter (cleans in-memory state)
+    for (const session of projectSessions) {
+      try {
+        const adapter = this.adapters.get(session.engineType as EngineType);
+        if (adapter) {
+          await adapter.deleteSession(session.id);
+        }
+        this.sessionEngineMap.delete(session.id);
+      } catch (err) {
+        engineManagerLog.warn(`Failed to delete session ${session.id} during project delete:`, err);
+      }
+    }
+
+    // Remove the project directory from disk
+    sessionStore.deleteProject(projectId);
+  }
+
   // --- Messages ---
 
   async sendMessage(

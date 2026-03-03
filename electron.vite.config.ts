@@ -2,8 +2,17 @@ import { defineConfig, externalizeDepsPlugin } from 'electron-vite';
 import solid from 'vite-plugin-solid';
 import tailwindcss from '@tailwindcss/vite';
 import { resolve } from 'path';
+import { createLogger } from 'vite';
 import { createAuthProxyPlugin } from './scripts/auth-proxy-plugin';
 import { tunnelManager } from './scripts/tunnel-manager';
+
+// Custom logger that suppresses proxy errors during startup
+const logger = createLogger();
+const _loggerError = logger.error.bind(logger);
+logger.error = (msg, options) => {
+  if (typeof msg === 'string' && msg.includes('proxy error:')) return;
+  _loggerError(msg, options);
+};
 
 export default defineConfig({
   main: {
@@ -41,6 +50,7 @@ export default defineConfig({
   renderer: {
     root: '.',
     base: './',
+    customLogger: logger,
     build: {
       rollupOptions: {
         input: {

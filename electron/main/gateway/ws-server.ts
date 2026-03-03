@@ -322,7 +322,7 @@ export class GatewayServer {
         return this.engineManager.listAllProjects();
 
       case GatewayRequestType.PROJECT_DELETE:
-        sessionStore.deleteProject(p.projectId);
+        await this.engineManager.deleteProject(p.projectId);
         return { success: true };
 
       // Legacy migration

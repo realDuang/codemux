@@ -26,7 +26,8 @@ log.transports.file.level = "warn";
 log.transports.file.format =
   "[{y}-{m}-{d} {h}:{i}:{s}.{ms}] [{level}]{scope} {text}";
 
-// Console transport: keep default behavior (prints to terminal / DevTools)
+// Console transport: only show info and above (suppress debug/verbose noise)
+log.transports.console.level = "info";
 log.transports.console.format = "%c{h}:{i}:{s}.{ms}%c [{level}]{scope} › {text}";
 
 // Catch unhandled errors and rejections, log them to file

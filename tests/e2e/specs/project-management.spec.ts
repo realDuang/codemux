@@ -8,7 +8,7 @@ import { test, expect } from "@playwright/test";
 import {
   navigateToChat,
   solidClick,
-  autoConfirmDialogs,
+  solidClickByText,
   addProject,
   createSession,
   hideProject,
@@ -168,11 +168,12 @@ test.describe("Session - Delete", () => {
     const sessionsBefore = await countSessions(page);
     expect(sessionsBefore).toBeGreaterThan(1);
 
-    // Override window.confirm to auto-accept (prevents JS blocking)
-    await autoConfirmDialogs(page);
-
-    // Click the first "Delete session" button (the newly created session)
+    // Click the first "Delete session" button to show inline confirm
     await solidClick(page, 'button[title="Delete session"]');
+
+    // Wait for confirm buttons to appear, then click "Confirm"
+    await page.waitForTimeout(300);
+    await solidClickByText(page, "Confirm", "BUTTON");
 
     // Wait for deletion to propagate
     await page.waitForTimeout(500);

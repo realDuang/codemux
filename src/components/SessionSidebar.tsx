@@ -59,6 +59,7 @@ export function SessionSidebar(props: SessionSidebarProps) {
   const [hoveredProject, setHoveredProject] = createSignal<string | null>(null);
   const [editingSessionId, setEditingSessionId] = createSignal<string | null>(null);
   const [editingTitle, setEditingTitle] = createSignal("");
+  const [pendingDeleteId, setPendingDeleteId] = createSignal<string | null>(null);
   const [homePath, setHomePath] = createSignal<string | null>(null);
 
   const StatusIndicator = (p: { status: SessionActivityStatus }) => {
@@ -87,6 +88,16 @@ export function SessionSidebar(props: SessionSidebarProps) {
             <circle cx="12" cy="12" r="10" />
             <path d="M12 8v4" />
             <path d="M12 16h.01" />
+          </svg>
+        );
+      case "cancelled":
+        return (
+          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24"
+            fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"
+            class="text-amber-500 dark:text-amber-400 flex-shrink-0">
+            <path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3" />
+            <path d="M12 9v4" />
+            <path d="M12 17h.01" />
           </svg>
         );
       case "error":
@@ -499,7 +510,7 @@ export function SessionSidebar(props: SessionSidebarProps) {
                                       fallback={
                                         <div
                                           class={`text-sm truncate ${
-                                            isActive() || sessionStatus() === "completed"
+                                            isActive() || sessionStatus() === "completed" || sessionStatus() === "cancelled" || sessionStatus() === "error"
                                               ? "text-gray-900 dark:text-gray-100 font-medium"
                                               : "text-gray-600 dark:text-gray-400"
                                           }`}
@@ -549,6 +560,32 @@ export function SessionSidebar(props: SessionSidebarProps) {
                                 </div>
 
                                 <Show when={!isEditing()}>
+                                  <Show
+                                    when={pendingDeleteId() !== session.id}
+                                    fallback={
+                                      <div class="flex items-center gap-1 flex-shrink-0">
+                                        <button
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            props.onDeleteSession(session.id);
+                                            setPendingDeleteId(null);
+                                          }}
+                                          class="px-2 py-1 text-[10px] font-medium text-white bg-red-500 hover:bg-red-600 rounded transition-colors"
+                                        >
+                                          {t().common.confirm}
+                                        </button>
+                                        <button
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            setPendingDeleteId(null);
+                                          }}
+                                          class="px-2 py-1 text-[10px] font-medium text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-slate-700 rounded transition-colors"
+                                        >
+                                          {t().common.cancel}
+                                        </button>
+                                      </div>
+                                    }
+                                  >
                                   <div class="flex items-center gap-0.5 flex-shrink-0">
                                     <button
                                       onClick={(e) => {
@@ -597,10 +634,7 @@ export function SessionSidebar(props: SessionSidebarProps) {
                                       onClick={(e) => {
                                         e.stopPropagation();
                                         e.preventDefault();
-                                        const confirmed = window.confirm(t().sidebar.deleteConfirm);
-                                        if (confirmed) {
-                                          props.onDeleteSession(session.id);
-                                        }
+                                        setPendingDeleteId(session.id);
                                       }}
                                       class="opacity-0 group-hover:opacity-100 p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded transition-all"
                                       title={t().sidebar.deleteSession}
@@ -622,6 +656,7 @@ export function SessionSidebar(props: SessionSidebarProps) {
                                       </svg>
                                     </button>
                                   </div>
+                                  </Show>
                                 </Show>
                               </div>
                             </div>

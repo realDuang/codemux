@@ -182,6 +182,7 @@ export interface LocaleDict {
     result: string;
     results: string;
     lines: string;
+    toolHint: string;
   };
 
   // Steps (SessionTurn)
@@ -202,6 +203,7 @@ export interface LocaleDict {
     contextOrganized: string;
     cancelled: string;
     errorOccurred: string;
+    continueWork: string;
   };
 
   // Devices page
@@ -462,6 +464,7 @@ export const en: LocaleDict = {
     result: "{count} result",
     results: "{count} results",
     lines: "{count} lines",
+    toolHint: "Hint",
   },
 
   // Steps (SessionTurn)
@@ -482,6 +485,7 @@ export const en: LocaleDict = {
     contextOrganized: "Context organized",
     cancelled: "Cancelled",
     errorOccurred: "Error",
+    continueWork: "Continue",
   },
 
   // Devices page

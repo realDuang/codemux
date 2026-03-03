@@ -1,20 +1,20 @@
 import {
   createMemo,
   createSignal,
+  createEffect,
   For,
   Index,
   Show,
   Suspense,
   onCleanup,
+  onMount,
 } from "solid-js";
-import { messageStore, isExpanded, toggleExpanded } from "../stores/message";
-import { Part, ProviderIcon, PermissionPrompt, QuestionPrompt } from "./share/part";
+import { messageStore, isExpanded, setExpanded, toggleExpanded } from "../stores/message";
+import { Part, PartProps, ProviderIcon, PermissionPrompt, QuestionPrompt } from "./share/part";
 import { ContentError } from "./share/content-error";
 import { IconSparkles } from "./icons";
 import { useI18n } from "../lib/i18n";
 import type { UnifiedMessage, UnifiedPart, ToolPart } from "../types/unified";
-import { Spinner } from "./Spinner";
-
 import styles from "./SessionTurn.module.css";
 
 interface SessionTurnProps {
@@ -26,10 +26,76 @@ interface SessionTurnProps {
   onPermissionRespond?: (sessionID: string, permissionID: string, reply: string) => void;
   onQuestionRespond?: (sessionID: string, questionID: string, answers: string[][]) => void;
   onQuestionDismiss?: (sessionID: string, questionID: string) => void;
+  onContinue?: (sessionID: string) => void;
 }
 
 /**
- * Compute status text from the current part being processed
+ * Extract file basename from a path string.
+ * Handles all engine path formats (filePath, file_path, path).
+ */
+function extractFileBasename(input: Record<string, unknown> | undefined): string | undefined {
+  if (!input) return undefined;
+  const raw = (input.filePath ?? input.file_path ?? input.path) as string | undefined;
+  if (typeof raw !== "string" || !raw) return undefined;
+  return raw.split(/[/\\]/).pop() || raw;
+}
+
+/**
+ * Extract a truncated command summary from shell input.
+ */
+function extractCommandSummary(input: Record<string, unknown> | undefined): string | undefined {
+  if (!input) return undefined;
+  const cmd = input.command as string | undefined;
+  if (typeof cmd !== "string" || !cmd) return undefined;
+  const parts = cmd.trimStart().split(/\s+/).slice(0, 2).join(" ");
+  return parts.length > 24 ? parts.slice(0, 23) + "\u2026" : parts;
+}
+
+/**
+ * Extract a search pattern or query from grep/glob input.
+ */
+function extractPattern(input: Record<string, unknown> | undefined): string | undefined {
+  if (!input) return undefined;
+  const raw = (input.pattern ?? input.query) as string | undefined;
+  if (typeof raw !== "string" || !raw) return undefined;
+  return raw.length > 20 ? raw.slice(0, 19) + "\u2026" : raw;
+}
+
+/**
+ * Extract hostname from a URL.
+ */
+function extractHostname(input: Record<string, unknown> | undefined): string | undefined {
+  if (!input) return undefined;
+  const url = input.url as string | undefined;
+  if (typeof url !== "string" || !url) return undefined;
+  try {
+    return new URL(url).hostname.replace("www.", "");
+  } catch {
+    return url.length > 24 ? url.slice(0, 23) + "\u2026" : url;
+  }
+}
+
+/**
+ * Extract task description.
+ */
+function extractDescription(input: Record<string, unknown> | undefined): string | undefined {
+  if (!input) return undefined;
+  const desc = input.description as string | undefined;
+  if (typeof desc !== "string" || !desc) return undefined;
+  return desc.length > 30 ? desc.slice(0, 29) + "\u2026" : desc;
+}
+
+/**
+ * Append a detail string to a base status label with a separator.
+ */
+function withDetail(base: string, detail: string | undefined): string {
+  return detail ? `${base} · ${detail}` : base;
+}
+
+/**
+ * Compute status text from the current part being processed.
+ * Extracts specific details (filenames, commands, patterns) from tool input
+ * for a richer status display across all engine types.
  */
 function computeStatusFromPart(
   part: UnifiedPart | undefined,
@@ -38,27 +104,55 @@ function computeStatusFromPart(
   if (!part) return undefined;
 
   if (part.type === "tool") {
-    switch (part.normalizedTool) {
+    const tp = part as ToolPart;
+    const input = tp.state?.input as Record<string, unknown> | undefined;
+
+    let base: string;
+    let detail: string | undefined;
+
+    switch (tp.normalizedTool) {
       case "task":
-        return t().steps.delegatingWork;
+        base = t().steps.delegatingWork;
+        detail = extractDescription(input);
+        break;
       case "todo":
         return t().steps.planningNextSteps;
       case "read":
-        return t().steps.gatheringContext;
+        base = t().steps.gatheringContext;
+        detail = extractFileBasename(input);
+        break;
       case "list":
+        base = t().steps.searchingCodebase;
+        detail = extractFileBasename(input);
+        break;
       case "grep":
       case "glob":
-        return t().steps.searchingCodebase;
+        base = t().steps.searchingCodebase;
+        detail = extractPattern(input);
+        break;
       case "web_fetch":
-        return t().steps.searchingWeb;
+        base = t().steps.searchingWeb;
+        detail = extractHostname(input);
+        break;
       case "edit":
       case "write":
-        return t().steps.makingEdits;
+        base = t().steps.makingEdits;
+        detail = extractFileBasename(input);
+        break;
       case "shell":
-        return t().steps.runningCommands;
+        base = t().steps.runningCommands;
+        detail = extractCommandSummary(input);
+        break;
       default:
-        return undefined;
+        // For unknown tools, use the adapter-generated title directly
+        return tp.title || tp.originalTool;
     }
+
+    // If input extraction failed, fall back to adapter-generated title
+    if (!detail && tp.title && tp.title !== tp.originalTool) {
+      return tp.title;
+    }
+    return withDetail(base, detail);
   }
   if (part.type === "reasoning") {
     const text = (part as any).text ?? "";
@@ -89,12 +183,63 @@ function formatDuration(startTime: number, endTime?: number): string {
   return `${minutes}m ${remainingSeconds}s`;
 }
 
+/** Lazy wrapper for Part — uses IntersectionObserver to defer rendering of off-screen parts. */
+function LazyPart(props: PartProps & { isNearEnd: boolean }) {
+  // Always render immediately if near end of list (for auto-scroll)
+  const [visible, setVisible] = createSignal(props.isNearEnd);
+  let ref!: HTMLDivElement;
+
+  onMount(() => {
+    if (visible()) return;
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (entry.isIntersecting) {
+          setVisible(true);
+          observer.disconnect();
+        }
+      },
+      { rootMargin: "200px" }
+    );
+    observer.observe(ref);
+    onCleanup(() => observer.disconnect());
+  });
+
+  return (
+    <div ref={ref} style={{ "min-height": visible() ? undefined : "40px" }}>
+      <Show when={visible()}>
+        <Part
+          last={props.last}
+          part={props.part}
+          index={props.index}
+          message={props.message}
+          isStreaming={props.isStreaming}
+          permission={props.permission}
+          onPermissionRespond={props.onPermissionRespond}
+          question={props.question}
+          onQuestionRespond={props.onQuestionRespond}
+          onQuestionDismiss={props.onQuestionDismiss}
+        />
+      </Show>
+    </div>
+  );
+}
+
 export function SessionTurn(props: SessionTurnProps) {
   const { t } = useI18n();
   
   const stepsExpandedKey = () => `steps-${props.userMessage.id}`;
   const stepsExpanded = () => isExpanded(stepsExpandedKey());
   const handleStepsToggle = () => toggleExpanded(stepsExpandedKey());
+
+  // Auto-expand steps panel when AI starts working (last turn only).
+  // Only auto-expand once per turn to respect manual user collapse.
+  let hasAutoExpanded = false;
+  createEffect(() => {
+    if (props.isWorking && !hasAutoExpanded) {
+      setExpanded(stepsExpandedKey(), true);
+      hasAutoExpanded = true;
+    }
+  });
 
   const isCompactingTurn = createMemo(() => {
     for (const msg of props.assistantMessages) {
@@ -226,6 +371,40 @@ export function SessionTurn(props: SessionTurnProps) {
     return undefined;
   });
 
+  // Get the latest text part during streaming (for live response area)
+  const streamingTextPart = createMemo(() => {
+    if (!props.isWorking) return undefined;
+    const msgs = props.assistantMessages;
+    for (let mi = msgs.length - 1; mi >= 0; mi--) {
+      const msgParts = messageStore.part[msgs[mi].id] || [];
+      for (let pi = msgParts.length - 1; pi >= 0; pi--) {
+        const part = msgParts[pi];
+        if (part?.type === "text" && (part as any).text) return part;
+      }
+    }
+    return undefined;
+  });
+
+  // Detect if reasoning is the active part (for trigger bar pulse dot)
+  const isReasoningActive = createMemo(() => {
+    if (!props.isWorking) return false;
+    const msgs = props.assistantMessages;
+    if (msgs.length === 0) return false;
+    const lastMsg = msgs[msgs.length - 1];
+    const parts = messageStore.part[lastMsg.id] || [];
+    for (let i = parts.length - 1; i >= 0; i--) {
+      if (parts[i]?.type === "reasoning") return true;
+      if (parts[i]?.type === "tool") return false;
+    }
+    return false;
+  });
+
+  // Last assistant message ID (for streaming detection)
+  const lastAssistantMsgId = () => {
+    const msgs = props.assistantMessages;
+    return msgs.length > 0 ? msgs[msgs.length - 1].id : undefined;
+  };
+
   // Detect error/cancelled state from the last assistant message
   const lastMessageError = createMemo(() => {
     const msgs = props.assistantMessages;
@@ -339,10 +518,10 @@ export function SessionTurn(props: SessionTurnProps) {
     for (const msg of props.assistantMessages) {
       const parts = messageStore.part[msg.id] || [];
       const filtered = filterParts(parts, "assistant");
-      // When showing steps, filter out the last text part (it's shown separately as response)
-      const lastText = lastTextPart();
-      const stepsFiltered = !props.isWorking && lastText
-        ? filtered.filter((p) => p.id !== lastText.id)
+      // Filter out the text part displayed in response area (both streaming and completed)
+      const responseText = props.isWorking ? streamingTextPart() : lastTextPart();
+      const stepsFiltered = responseText
+        ? filtered.filter((p) => p.id !== responseText.id)
         : filtered;
       if (stepsFiltered.length > 0) {
         result.push({ message: msg, parts: stepsFiltered });
@@ -381,11 +560,14 @@ export function SessionTurn(props: SessionTurnProps) {
                 onClick={handleStepsToggle}
                 data-working={props.isWorking ? "" : undefined}
               >
-                {/* Spinner when working */}
+                {/* Working pulse dot — changes color by phase */}
                 <Show when={props.isWorking}>
-                  <Spinner size="small" />
+                  <span
+                    class={styles.workingDot}
+                    data-phase={isReasoningActive() ? "reasoning" : "tool"}
+                  />
                 </Show>
-                
+
                 {/* Model icon - show when not working */}
                 <Show when={!props.isWorking && modelInfo()?.modelID}>
                   <span class={styles.modelIcon} title={`${modelInfo()?.providerID} / ${modelInfo()?.modelID}`}>
@@ -438,27 +620,52 @@ export function SessionTurn(props: SessionTurnProps) {
           <Show when={stepsExpanded() && allStepsParts().length > 0}>
             <div class={styles.stepsContent}>
               <For each={allStepsParts()}>
-                {(item) => (
-                  <div class={styles.assistantMessageParts}>
-                    <Suspense>
-                      <Index each={item.parts}>
-                        {(part, partIndex) => (
-                          <Part
-                            last={false}
-                            part={part()}
-                            index={partIndex}
-                            message={item.message}
-                            permission={getPermissionForPart(part())}
-                            onPermissionRespond={props.onPermissionRespond}
-                            question={getQuestionForPart(part())}
-                            onQuestionRespond={props.onQuestionRespond}
-                            onQuestionDismiss={props.onQuestionDismiss}
-                          />
-                        )}
-                      </Index>
-                    </Suspense>
-                  </div>
-                )}
+                {(item) => {
+                  // Determine the last reasoning part index for streaming detection
+                  const lastReasoningIdx = () =>
+                    item.parts.reduce(
+                      (acc: number, pp, i) => (pp.type === "reasoning" ? i : acc),
+                      -1
+                    );
+
+                  return (
+                    <div class={styles.assistantMessageParts}>
+                      <Suspense>
+                        <Index each={item.parts}>
+                          {(part, partIndex) => {
+                            const isPartStreaming = () =>
+                              props.isWorking &&
+                              part().type === "reasoning" &&
+                              item.message.id === lastAssistantMsgId() &&
+                              partIndex === lastReasoningIdx();
+
+                            const partProps = {
+                              get last() { return false as const; },
+                              get part() { return part(); },
+                              get index() { return partIndex; },
+                              get message() { return item.message; },
+                              get isStreaming() { return isPartStreaming(); },
+                              get permission() { return getPermissionForPart(part()); },
+                              get onPermissionRespond() { return props.onPermissionRespond; },
+                              get question() { return getQuestionForPart(part()); },
+                              get onQuestionRespond() { return props.onQuestionRespond; },
+                              get onQuestionDismiss() { return props.onQuestionDismiss; },
+                            };
+
+                            return item.parts.length > 8 ? (
+                              <LazyPart
+                                {...partProps}
+                                isNearEnd={partIndex >= item.parts.length - 3}
+                              />
+                            ) : (
+                              <Part {...partProps} />
+                            );
+                          }}
+                        </Index>
+                      </Suspense>
+                    </div>
+                  );
+                }}
               </For>
             </div>
             {/* Render unmatched permissions that couldn't be associated with any tool part */}
@@ -556,6 +763,27 @@ export function SessionTurn(props: SessionTurnProps) {
             </div>
           </Show>
 
+          {/* Streaming Response (live text during working) */}
+          <Show when={props.isWorking && streamingTextPart()}>
+            <div class={styles.response}>
+              <div class={styles.responseHeader}>
+                <h3 class={styles.responseTitle}>
+                  <span class={styles.responseIcon}><IconSparkles width={14} height={14} /></span>
+                  {t().steps.response}
+                </h3>
+              </div>
+              <div class={styles.responseContent}>
+                <Part
+                  last={true}
+                  part={streamingTextPart()!}
+                  index={0}
+                  message={props.assistantMessages.at(-1)!}
+                  isStreaming={true}
+                />
+              </div>
+            </div>
+          </Show>
+
           {/* Response (last text part) - Always show when not working and has response */}
           <Show when={!props.isWorking && lastTextPart()}>
             <div class={styles.response}>
@@ -592,15 +820,30 @@ export function SessionTurn(props: SessionTurnProps) {
                           <path d="m9 9 6 6" />
                         </svg>
                       }>
+                        {/* Triangle warning icon for cancelled */}
                         <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                          <circle cx="12" cy="12" r="10" />
-                          <rect x="9" y="9" width="6" height="6" rx="1" />
+                          <path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3" />
+                          <path d="M12 9v4" />
+                          <path d="M12 17h.01" />
                         </svg>
                       </Show>
                     </span>
                     <h3 class={styles.errorBannerTitle}>
                       {isCancelled() ? t().steps.cancelled : t().steps.errorOccurred}
                     </h3>
+                    {/* Continue button for cancelled state */}
+                    <Show when={isCancelled() && props.isLastTurn && props.onContinue}>
+                      <button
+                        type="button"
+                        class={styles.continueButton}
+                        onClick={() => props.onContinue?.(props.sessionID)}
+                      >
+                        <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                          <polygon points="6 3 20 12 6 21 6 3" />
+                        </svg>
+                        {t().steps.continueWork}
+                      </button>
+                    </Show>
                   </div>
                   <Show when={!isCancelled()}>
                     <div class={styles.errorBannerContent}>

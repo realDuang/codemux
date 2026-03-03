@@ -183,6 +183,7 @@ export const zh: LocaleDict = {
     result: "{count} 结果",
     results: "{count} 结果",
     lines: "{count} 行",
+    toolHint: "提示",
   },
 
   // Steps (SessionTurn)
@@ -203,6 +204,7 @@ export const zh: LocaleDict = {
     contextOrganized: "上下文已整理",
     cancelled: "已取消",
     errorOccurred: "错误",
+    continueWork: "继续",
   },
 
   // Devices page

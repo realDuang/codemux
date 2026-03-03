@@ -113,11 +113,17 @@ export function ModelSelector(props: ModelSelectorProps) {
     return model?.name || "";
   };
 
+  const modelSwitchable = () => {
+    const engine = configStore.engines.find(e => e.type === props.engineType);
+    return engine?.capabilities.modelSwitchable ?? true;
+  };
+
   return (
     <div ref={containerRef} class="relative">
       <button
-        onClick={() => setIsOpen(!isOpen())}
-        class="px-3 py-1.5 text-xs font-medium rounded-md transition-all flex items-center gap-1.5 bg-gray-100 dark:bg-slate-800 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-slate-700"
+        onClick={() => modelSwitchable() && setIsOpen(!isOpen())}
+        class={`px-3 py-1.5 text-xs font-medium rounded-md transition-all flex items-center gap-1.5 bg-gray-100 dark:bg-slate-800 text-gray-600 dark:text-gray-400 ${modelSwitchable() ? "hover:bg-gray-200 dark:hover:bg-slate-700 cursor-pointer" : "opacity-70 cursor-default"}`}
+        disabled={!modelSwitchable()}
       >
         <svg
           xmlns="http://www.w3.org/2000/svg"
@@ -136,20 +142,22 @@ export function ModelSelector(props: ModelSelectorProps) {
         <span class="max-w-[120px] truncate">
           {selectedModelName() || t().model.selectModel}
         </span>
-        <svg
-          xmlns="http://www.w3.org/2000/svg"
-          width="12"
-          height="12"
-          viewBox="0 0 20 20"
-          fill="currentColor"
-          class={`transition-transform ${isOpen() ? "rotate-180" : ""}`}
-        >
-          <path
-            fill-rule="evenodd"
-            d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z"
-            clip-rule="evenodd"
-          />
-        </svg>
+        <Show when={modelSwitchable()}>
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            width="12"
+            height="12"
+            viewBox="0 0 20 20"
+            fill="currentColor"
+            class={`transition-transform ${isOpen() ? "rotate-180" : ""}`}
+          >
+            <path
+              fill-rule="evenodd"
+              d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z"
+              clip-rule="evenodd"
+            />
+          </svg>
+        </Show>
       </button>
 
       <Show when={isOpen()}>

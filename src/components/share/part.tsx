@@ -75,6 +75,7 @@ export interface PartProps {
   message: UnifiedMessage;
   part: UnifiedPart;
   last: boolean;
+  isStreaming?: boolean;
   permission?: UnifiedPermission;
   onPermissionRespond?: (sessionID: string, permissionID: string, reply: string) => void;
   question?: UnifiedQuestion;
@@ -232,12 +233,18 @@ export function Part(props: PartProps) {
           </div>
         )}
         {props.message.role === "assistant" && props.part.type === "reasoning" && (
-          <div data-component="reasoning">
-             <Collapsible open={isExpanded(`reasoning-${props.part.id}`)} onOpenChange={() => toggleExpanded(`reasoning-${props.part.id}`)}>
+          <div data-component="reasoning" data-streaming={props.isStreaming ? "" : undefined}>
+             <Collapsible
+               open={props.isStreaming || isExpanded(`reasoning-${props.part.id}`)}
+               onOpenChange={() => toggleExpanded(`reasoning-${props.part.id}`)}
+             >
                 <Collapsible.Trigger>
                    <div data-slot="title">
                       <IconBrain width={14} height={14} />
                       <span>{t().parts.thinking}</span>
+                      <Show when={props.isStreaming}>
+                        <span data-slot="streaming-dot" />
+                      </Show>
                    </div>
                    <Collapsible.Arrow />
                 </Collapsible.Trigger>
@@ -285,10 +292,10 @@ export function Part(props: PartProps) {
             <Collapsible open={isExpanded(`error-${props.part.id}`)} onOpenChange={() => toggleExpanded(`error-${props.part.id}`)} class={styles.root}>
               <Collapsible.Trigger>
                 <div data-component="tool-title">
-                  <span data-slot="icon" data-icon-color="red">
+                  <span data-slot="icon" data-icon-color="amber">
                     <IconSparkles width={14} height={14} />
                   </span>
-                  <span data-slot="name">Error</span>
+                  <span data-slot="name">{t().parts.toolHint}</span>
                   <span data-slot="target">{(props.part as ToolPart).title || (props.part as ToolPart).originalTool}</span>
                 </div>
                 <Collapsible.Arrow />
@@ -591,7 +598,7 @@ export function TodoWriteTool(props: ToolProps) {
   const finished = () => todos().every((t: Todo) => t.status === "completed");
 
   const expandedKey = () => `todowrite-${props.id}`;
-  const expanded = () => messageStore.expanded[expandedKey()] ?? true;
+  const expanded = () => messageStore.expanded[expandedKey()] ?? false;
 
   return (
     <Collapsible open={expanded()} onOpenChange={() => setExpanded(expandedKey(), !expanded())}>

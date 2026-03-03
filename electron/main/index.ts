@@ -15,6 +15,7 @@ import { EngineManager } from "./gateway/engine-manager";
 import { GatewayServer } from "./gateway/ws-server";
 import { OpenCodeAdapter } from "./engines/opencode-adapter";
 import { CopilotSdkAdapter } from "./engines/copilot-sdk-adapter";
+import { ClaudeCodeAdapter } from "./engines/claude-code-adapter";
 
 // --- Gateway singleton instances ---
 const engineManager = new EngineManager();
@@ -23,8 +24,10 @@ const gatewayServer = new GatewayServer(engineManager);
 // Register engine adapters
 const openCodeAdapter = new OpenCodeAdapter({ port: 4096 });
 const copilotAdapter = new CopilotSdkAdapter();
+const claudeAdapter = new ClaudeCodeAdapter();
 engineManager.registerAdapter(openCodeAdapter);
 engineManager.registerAdapter(copilotAdapter);
+engineManager.registerAdapter(claudeAdapter);
 
 // Export for IPC handlers
 export { engineManager, gatewayServer };
@@ -113,6 +116,7 @@ if (!gotTheLock) {
     const engines = [
       ["OpenCode", openCodeAdapter],
       ["Copilot", copilotAdapter],
+      ["Claude", claudeAdapter],
     ] as const;
     for (const [name, adapter] of engines) {
       const p = (adapter as any).start().then(

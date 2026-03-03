@@ -188,6 +188,10 @@ export class OpenCodeAdapter extends EngineAdapter {
   // Cache of SDK parts by partID for applying message.part.delta increments
   private partCache = new Map<string, SdkPart>();
 
+  // Cache of the last emitted assistant message per session, used to construct the
+  // final message when session.status: idle arrives (see resolveSessionIdle).
+  private lastEmittedMessage = new Map<string, UnifiedMessage>();
+
   constructor(options?: { port?: number }) {
     super();
     this.port = options?.port ?? 4096;
@@ -372,6 +376,14 @@ export class OpenCodeAdapter extends EngineAdapter {
       case "question.rejected":
         this.handleQuestionRejected(event.properties);
         break;
+
+      case "session.status":
+        this.handleSessionStatus(event.properties as any);
+        break;
+
+      case "session.idle":
+        this.handleSessionIdleEvent(event.properties as any);
+        break;
     }
   }
 
@@ -481,39 +493,100 @@ export class OpenCodeAdapter extends EngineAdapter {
     if (sdkMsg.role === "user") return;
 
     const message = this.convertMessage(sdkMsg);
+
+    if (sdkMsg.role === "assistant") {
+      const pending = this.pendingMessages.get(sessionID);
+      if (pending) {
+        // Track the message ID for this pending turn
+        if (pending.messageId === null || pending.messageId === sdkMsg.id) {
+          pending.messageId = sdkMsg.id;
+        }
+
+        if (sdkMsg.time?.completed || sdkMsg.error) {
+          // Cache the full message for resolveSessionIdle to use later.
+          // DON'T resolve the pending promise here — wait for session.status: idle
+          // which is the authoritative signal that the entire agent loop has finished.
+          // Resolving here causes the stop button to disappear prematurely when
+          // intermediate assistant messages complete during multi-step agent loops.
+          this.lastEmittedMessage.set(sessionID, message);
+
+          // Emit a stripped copy without time.completed and error so the frontend
+          // (Chat.tsx:899-904) doesn't clear the sending state prematurely.
+          const strippedMessage: UnifiedMessage = {
+            ...message,
+            time: { created: message.time.created },
+            error: undefined,
+          };
+          this.emit("message.updated", {
+            sessionId: sessionID,
+            message: strippedMessage,
+          });
+          return;
+        }
+      }
+    }
+
     this.emit("message.updated", {
       sessionId: sessionID,
       message,
     });
+  }
 
-    // Resolve pending sendMessage() promise if this is the completed assistant message
-    if (sdkMsg.role === "assistant") {
-      const pending = this.pendingMessages.get(sessionID);
-      if (pending && (pending.messageId === null || pending.messageId === sdkMsg.id)) {
-        if (sdkMsg.time?.completed || sdkMsg.error) {
-          if (pending.timeoutTimer) clearTimeout(pending.timeoutTimer);
-          this.pendingMessages.delete(sessionID);
-          pending.resolve(message);
-        } else {
-          pending.messageId = sdkMsg.id;
-        }
-      }
+  private handleSessionStatus(data: { sessionID: string; status: { type: string } }): void {
+    const sessionID = data?.sessionID;
+    if (!sessionID) return;
+    if (this.cancelledSessions.has(sessionID)) return;
+
+    if (data.status?.type === "idle") {
+      this.resolveSessionIdle(sessionID);
     }
   }
 
-  private resolvePendingMessage(sessionId: string): void {
-    const pending = this.pendingMessages.get(sessionId);
+  private handleSessionIdleEvent(data: { sessionID: string }): void {
+    const sessionID = data?.sessionID;
+    if (!sessionID) return;
+    if (this.cancelledSessions.has(sessionID)) return;
+
+    // session.idle is the deprecated form of session.status: idle.
+    // Both are emitted by OpenCode — handle whichever arrives first.
+    this.resolveSessionIdle(sessionID);
+  }
+
+  /**
+   * Called when OpenCode signals that a session's agent loop has fully completed.
+   * This is the authoritative "turn done" signal — resolves the pending sendMessage
+   * promise and emits the final message with time.completed to the frontend.
+   */
+  private resolveSessionIdle(sessionID: string): void {
+    const pending = this.pendingMessages.get(sessionID);
     if (!pending) return;
 
     if (pending.timeoutTimer) clearTimeout(pending.timeoutTimer);
-    this.pendingMessages.delete(sessionId);
-    pending.resolve({
-      id: pending.messageId ?? "",
-      sessionId,
-      role: "assistant",
-      time: { created: Date.now(), completed: Date.now() },
-      parts: pending.assistantParts,
+    this.pendingMessages.delete(sessionID);
+
+    // Use the last cached message (which has the real time.completed from OpenCode),
+    // or fall back to constructing one from accumulated parts.
+    const cachedMessage = this.lastEmittedMessage.get(sessionID);
+    this.lastEmittedMessage.delete(sessionID);
+
+    const finalMessage: UnifiedMessage = cachedMessage
+      ? { ...cachedMessage, time: { ...cachedMessage.time, completed: cachedMessage.time.completed ?? Date.now() } }
+      : {
+          id: pending.messageId ?? "",
+          sessionId: sessionID,
+          role: "assistant",
+          time: { created: Date.now(), completed: Date.now() },
+          parts: pending.assistantParts,
+        };
+
+    // Re-emit the message WITH time.completed so the frontend gets the definitive
+    // "turn done" signal (Chat.tsx:899-904 will clear the sending state).
+    this.emit("message.updated", {
+      sessionId: sessionID,
+      message: finalMessage,
     });
+
+    pending.resolve(finalMessage);
   }
 
   private handleSessionUpdated(sdkSession: SdkSession): void {
@@ -872,6 +945,7 @@ export class OpenCodeAdapter extends EngineAdapter {
       });
     }
     this.pendingMessages.clear();
+    this.lastEmittedMessage.clear();
   }
 
   async healthCheck(): Promise<boolean> {
@@ -911,6 +985,7 @@ export class OpenCodeAdapter extends EngineAdapter {
       imageAttachment: false,
       loadSession: true,
       listSessions: true,
+      modelSwitchable: true,
       availableModes: this.getModes(),
     };
   }
@@ -1099,29 +1174,34 @@ export class OpenCodeAdapter extends EngineAdapter {
   }
 
   async cancelMessage(sessionId: string): Promise<void> {
-    // Mark session as cancelled — SSE event handlers will ignore subsequent events
-    this.cancelledSessions.add(sessionId);
-
-    // Fire abort via SDK FIRST so it can kill running processes ASAP
+    // Fire abort via SDK to kill running processes ASAP.
+    // Don't add to cancelledSessions — let OpenCode's abort response (message.updated
+    // with error + session.status: idle) flow through SSE naturally so the frontend
+    // gets the correct error state. The cancelledSessions mechanism would block these
+    // events, leaving the frontend without an error banner or completed timestamp.
     this.ensureClient().session.abort({ sessionID: sessionId }).catch((err: any) => {
       openCodeLog.warn("cancelMessage abort call failed:", err);
     });
 
-    // Resolve pending sendMessage promise so the UI unblocks immediately
+    // Remove pending state so that subsequent SSE events (the abort error message,
+    // session.status: idle) are NOT suppressed by handleMessageUpdated's stripping
+    // logic (which only activates when a pending entry exists).
     const pending = this.pendingMessages.get(sessionId);
     if (pending) {
       if (pending.timeoutTimer) clearTimeout(pending.timeoutTimer);
       this.pendingMessages.delete(sessionId);
-      const cancelledMessage: UnifiedMessage = {
+      this.lastEmittedMessage.delete(sessionId);
+
+      // Resolve the sendMessage promise immediately so the UI unblocks.
+      // The actual error/completed state will arrive via SSE shortly.
+      pending.resolve({
         id: pending.messageId ?? "",
         sessionId,
         role: "assistant",
         time: { created: Date.now(), completed: Date.now() },
         parts: pending.assistantParts,
         error: "Cancelled",
-      };
-      this.emit("message.updated", { sessionId, message: cancelledMessage });
-      pending.resolve(cancelledMessage);
+      });
     }
   }
 

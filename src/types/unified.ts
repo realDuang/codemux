@@ -7,7 +7,7 @@
 
 export type EngineType = "opencode" | "copilot" | "claude" | (string & {});
 
-export type SessionActivityStatus = "idle" | "running" | "completed" | "waiting" | "error";
+export type SessionActivityStatus = "idle" | "running" | "completed" | "waiting" | "error" | "cancelled";
 
 export type EngineStatus = "stopped" | "starting" | "running" | "error";
 
@@ -39,6 +39,8 @@ export interface EngineCapabilities {
   loadSession: boolean;
   /** Whether session listing is supported */
   listSessions: boolean;
+  /** Whether the user can switch models (false when env var overrides model) */
+  modelSwitchable: boolean;
   /** Available agent modes */
   availableModes: AgentMode[];
 }

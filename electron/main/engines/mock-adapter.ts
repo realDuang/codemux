@@ -113,6 +113,7 @@ export class MockEngineAdapter extends EngineAdapter {
       imageAttachment: false,
       loadSession: true,
       listSessions: true,
+      modelSwitchable: true,
       availableModes: this.getModes(),
     };
   }

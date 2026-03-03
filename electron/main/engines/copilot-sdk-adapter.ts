@@ -436,6 +436,7 @@ export class CopilotSdkAdapter extends EngineAdapter {
       imageAttachment: true,
       loadSession: true,
       listSessions: true,
+      modelSwitchable: true,
       availableModes: this.getModes(),
     };
   }
@@ -649,7 +650,23 @@ export class CopilotSdkAdapter extends EngineAdapter {
       copilotLog.warn(`Error cancelling message in session ${sessionId}:`, err);
     }
 
+    // Reject pending questions/permissions for this session so the UI unblocks
+    for (const [id, pending] of this.pendingQuestions) {
+      if (pending.question.sessionId === sessionId) {
+        pending.resolve({ answer: "", wasFreeform: false });
+        this.pendingQuestions.delete(id);
+      }
+    }
+    for (const [id, pending] of this.pendingPermissions) {
+      if (pending.permission.sessionId === sessionId) {
+        pending.resolve({ kind: "denied-interactively-by-user" });
+        this.pendingPermissions.delete(id);
+      }
+    }
+
     // Finalize any pending buffer
+    const buffer = this.messageBuffers.get(sessionId);
+    if (buffer) buffer.error = "Cancelled";
     this.finalizeBuffer(sessionId);
   }
 

@@ -13,16 +13,21 @@ export async function navigateToChat(page: Page): Promise<void> {
   await page.goto(process.env.TEST_BASE_URL!);
   await page.getByRole("button", { name: /Enter Chat/i }).click();
   await expect(page).toHaveURL(/.*\/chat/, { timeout: 10_000 });
-  // Wait for sessions to load via WebSocket
-  await page.getByText("Fix authentication bug").waitFor({ timeout: 10_000 });
+  // Wait for projects to load via WebSocket — project headers are always
+  // visible in the sidebar regardless of expand/collapse state
+  await page.getByText("project-alpha").first().waitFor({ timeout: 15_000 });
 
-  // Wait for initializeSession to fully complete: it auto-selects the first
-  // session and loads its messages. The loading spinner must disappear before
-  // we can safely interact with sessions / send messages.
+  // Wait for initializeSession to fully complete: the loading spinner must
+  // disappear before we can safely interact with sessions / send messages.
   const spinner = page.locator(".animate-spin");
   await spinner.waitFor({ state: "hidden", timeout: 10_000 }).catch(() => {
     // Spinner may never appear if everything loads instantly
   });
+
+  // Expand all collapsed project groups so session titles become visible.
+  // Projects default to collapsed state, but tests need to see session titles.
+  await expandAllProjects(page);
+
   // Small additional wait for SolidJS reactivity to settle
   await page.waitForTimeout(300);
 }
@@ -36,6 +41,72 @@ export async function reseedTestData(page: Page): Promise<void> {
   await page.evaluate(async (url) => {
     await fetch(`${url}/api/test/reseed`, { method: "POST" });
   }, baseUrl);
+}
+
+// ---------------------------------------------------------------------------
+// Sidebar Helpers — Engine Tabs & Project Expansion
+// ---------------------------------------------------------------------------
+
+/**
+ * Expand all collapsed project groups in the sidebar.
+ * Projects default to collapsed state; click each collapsed header to expand.
+ */
+export async function expandAllProjects(page: Page): Promise<void> {
+  // Each project header has a chevron SVG that rotates when expanded.
+  // Collapsed projects have the chevron NOT rotated (no "rotate-90" class).
+  // Click each collapsed project header (the row with cursor-pointer) to expand it.
+  await page.evaluate(() => {
+    // Find all "Hide Project" buttons — each one is inside a project group header
+    const hideButtons = document.querySelectorAll('button[title="Hide Project"]');
+    for (const btn of hideButtons) {
+      // Walk up to find the project header container
+      let header = btn.parentElement;
+      for (let i = 0; i < 5; i++) {
+        if (!header) break;
+        if (header.classList.contains("cursor-pointer")) break;
+        header = header.parentElement;
+      }
+      if (!header) continue;
+
+      // Check if the project is collapsed by looking for the chevron SVG
+      const svg = header.querySelector("svg");
+      if (svg && !svg.classList.contains("rotate-90")) {
+        // Project is collapsed — click to expand
+        header.dispatchEvent(
+          new MouseEvent("click", { bubbles: true, cancelable: true, composed: true }),
+        );
+      }
+    }
+  });
+  // Wait for expansion animations and SolidJS reactivity
+  await page.waitForTimeout(200);
+}
+
+/**
+ * Switch the active engine tab in the sidebar.
+ * When multiple engines are running, the sidebar shows tabs to filter by engine.
+ */
+export async function switchEngineTab(page: Page, engineLabel: string): Promise<void> {
+  const clicked = await page.evaluate((label) => {
+    // Engine tab buttons are in a flex container at the top of the sidebar
+    const buttons = document.querySelectorAll("button");
+    for (const btn of buttons) {
+      const span = btn.querySelector("span");
+      if (span && span.textContent?.trim() === label) {
+        btn.dispatchEvent(
+          new MouseEvent("click", { bubbles: true, cancelable: true, composed: true }),
+        );
+        return true;
+      }
+    }
+    return false;
+  }, engineLabel);
+
+  if (clicked) {
+    await page.waitForTimeout(200);
+    // Expand all projects in the newly visible tab
+    await expandAllProjects(page);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -412,36 +483,67 @@ export async function countSessions(page: Page): Promise<number> {
 
 /**
  * Click on a session in the sidebar by its title text.
+ * Handles engine tabs (switches tab if session not visible) and collapsed
+ * projects (expands them) automatically.
  */
 export async function selectSession(page: Page, sessionTitle: string): Promise<void> {
-  await page.evaluate((title) => {
-    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
-    let node: Node | null;
-    while ((node = walker.nextNode())) {
-      if (node.textContent?.trim() === title) {
-        let el = node.parentElement;
-        for (let i = 0; i < 5; i++) {
-          if (!el) break;
-          if (el.classList.contains("cursor-pointer")) {
-            el.dispatchEvent(
-              new MouseEvent("click", { bubbles: true, cancelable: true, composed: true }),
-            );
-            return;
+  // Helper: try to find and click the session title in the current DOM
+  const tryClick = async (): Promise<boolean> => {
+    return page.evaluate((title) => {
+      const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+      let node: Node | null;
+      while ((node = walker.nextNode())) {
+        if (node.textContent?.trim() === title) {
+          let el = node.parentElement;
+          for (let i = 0; i < 5; i++) {
+            if (!el) break;
+            if (el.classList.contains("cursor-pointer")) {
+              el.dispatchEvent(
+                new MouseEvent("click", { bubbles: true, cancelable: true, composed: true }),
+              );
+              return true;
+            }
+            el = el.parentElement;
           }
-          el = el.parentElement;
         }
       }
-    }
-  }, sessionTitle);
+      return false;
+    }, sessionTitle);
+  };
 
-  // Wait for loadSessionMessages to complete: the loading spinner (.animate-spin)
-  // must disappear before we interact with the message area. This prevents a race
-  // where loadSessionMessages overwrites store data written by sendMessage.
+  // First attempt — session may already be visible
+  if (await tryClick()) {
+    await waitForSessionLoad(page);
+    return;
+  }
+
+  // Session not visible — try expanding collapsed projects in the current tab
+  await expandAllProjects(page);
+  if (await tryClick()) {
+    await waitForSessionLoad(page);
+    return;
+  }
+
+  // Session still not visible — try switching engine tabs
+  const engineLabels = ["OpenCode", "Copilot", "Claude"];
+  for (const label of engineLabels) {
+    await switchEngineTab(page, label);
+    if (await tryClick()) {
+      await waitForSessionLoad(page);
+      return;
+    }
+  }
+
+  // Last resort: session not found in any tab
+  throw new Error(`Could not find session "${sessionTitle}" in any engine tab`);
+}
+
+/** Internal: wait for session messages to finish loading */
+async function waitForSessionLoad(page: Page): Promise<void> {
   const spinner = page.locator(".animate-spin");
   await spinner.waitFor({ state: "hidden", timeout: 10_000 }).catch(() => {
     // Spinner may never appear if messages load instantly — that's fine
   });
-
   // Extra guard: wait for the message area or empty-state to be rendered
   await page.waitForTimeout(200);
 }

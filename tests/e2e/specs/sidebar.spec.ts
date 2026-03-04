@@ -7,6 +7,8 @@ import {
   countProjectGroups,
   countSessions,
   hasEngineBadge,
+  switchEngineTab,
+  expandAllProjects,
 } from "../setup/test-helpers";
 
 test.describe("Sidebar", () => {
@@ -22,26 +24,39 @@ test.describe("Sidebar", () => {
 
   // --- Project Display ---
 
-  test("should display multiple project groups from seed data", async ({ page }) => {
-    // Seed data has 3 projects: project-alpha(OC), project-beta(CP), project-alpha(CP)
-    const count = await countProjectGroups(page);
-    expect(count).toBeGreaterThanOrEqual(3);
+  test("should display project groups across engine tabs", async ({ page }) => {
+    // With engine tabs, projects are split across tabs.
+    // OpenCode tab: project-alpha(OC) = 1 project
+    const ocCount = await countProjectGroups(page);
+    expect(ocCount).toBeGreaterThanOrEqual(1);
+
+    // Copilot tab: project-beta(CP) + project-alpha(CP) = 2 projects
+    await switchEngineTab(page, "Copilot");
+    const cpCount = await countProjectGroups(page);
+    expect(cpCount).toBeGreaterThanOrEqual(2);
+
+    // Total across both tabs
+    expect(ocCount + cpCount).toBeGreaterThanOrEqual(3);
   });
 
   test("should display engine badges for project groups", async ({ page }) => {
-    // project-alpha with opencode engine should have "OC" badge
+    // project-alpha with opencode engine should have "OC" badge (default tab)
     const hasOC = await hasEngineBadge(page, "project-alpha", "OC");
     expect(hasOC).toBe(true);
 
-    // project-beta with copilot engine should have "Copilot" badge
+    // project-beta with copilot engine — switch to Copilot tab
+    await switchEngineTab(page, "Copilot");
     const hasCopilot = await hasEngineBadge(page, "project-beta", "Copilot");
     expect(hasCopilot).toBe(true);
   });
 
-  test("should display all session titles from seed data", async ({ page }) => {
-    // Check key sessions are visible
+  test("should display session titles across engine tabs", async ({ page }) => {
+    // OpenCode tab sessions (projects expanded by navigateToChat)
     await expect(page.getByText("Fix authentication bug")).toBeVisible({ timeout: 5_000 });
     await expect(page.getByText("Add unit tests")).toBeVisible({ timeout: 5_000 });
+
+    // Copilot tab sessions
+    await switchEngineTab(page, "Copilot");
     await expect(page.getByText("Refactor database layer")).toBeVisible({ timeout: 5_000 });
     await expect(page.getByText("Cross-engine test session")).toBeVisible({ timeout: 5_000 });
   });
@@ -105,9 +120,15 @@ test.describe("Sidebar", () => {
 
   // --- Session Count ---
 
-  test("should show correct total session count", async ({ page }) => {
-    // Seed data: 3 opencode + 1 copilot(beta) + 1 copilot(alpha) = 5 sessions
-    const count = await countSessions(page);
-    expect(count).toBe(5);
+  test("should show correct total session count across tabs", async ({ page }) => {
+    // With engine tabs, count sessions per tab and sum.
+    // OpenCode: 3 sessions (project-alpha)
+    const ocCount = await countSessions(page);
+
+    // Copilot: 2 sessions (project-beta + project-alpha)
+    await switchEngineTab(page, "Copilot");
+    const cpCount = await countSessions(page);
+
+    expect(ocCount + cpCount).toBe(5);
   });
 });

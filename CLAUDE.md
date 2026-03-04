@@ -19,86 +19,17 @@ Remote desktop app and web interface for AI coding assistance. Access OpenCode/C
 
 ## Project Structure
 
-```
-.
-├── electron/
-│   ├── main/
-│   │   ├── index.ts              # Main process entry (service orchestration)
-│   │   ├── ipc-handlers.ts       # IPC handler registration
-│   │   ├── window-manager.ts     # BrowserWindow creation
-│   │   ├── engines/              # Engine adapters
-│   │   │   ├── engine-adapter.ts     # Abstract base class
-│   │   │   ├── opencode-adapter.ts   # OpenCode CLI (HTTP REST + SSE)
-│   │   │   └── copilot-sdk-adapter.ts # GitHub Copilot (@github/copilot-sdk)
-│   │   ├── gateway/              # WebSocket Gateway
-│   │   │   ├── ws-server.ts          # WebSocket server
-│   │   │   └── engine-manager.ts     # Engine routing & lifecycle
-│   │   └── services/             # Backend services
-│   │       ├── auth-server.ts        # Auth API (token-based)
-│   │       ├── device-store.ts       # Authorized devices persistence
-│   │       ├── session-store.ts      # Session persistence (filesystem)
-│   │       ├── prod-server.ts        # Production HTTP server
-│   │       └── tunnel-manager.ts     # Cloudflare Tunnel management
-│   └── preload/
-│       └── index.ts              # contextBridge (electronAPI)
-├── src/                          # SolidJS renderer
-│   ├── main.tsx                  # App mount point
-│   ├── App.tsx                   # Router setup & i18n provider
-│   ├── pages/
-│   │   ├── EntryPage.tsx         # Landing page (local auto-auth / remote login)
-│   │   ├── Chat.tsx              # Main chat interface
-│   │   ├── Settings.tsx          # Settings page
-│   │   └── Devices.tsx           # Device management
-│   ├── components/
-│   │   ├── SessionSidebar.tsx    # Sidebar: project groups + session list
-│   │   ├── SessionTurn.tsx       # Single assistant turn (steps, tool calls)
-│   │   ├── MessageList.tsx       # Message rendering
-│   │   ├── PromptInput.tsx       # Input area (agent/plan/autopilot modes)
-│   │   ├── ModelSelector.tsx     # Model dropdown
-│   │   ├── AddProjectModal.tsx   # Add project dialog
-│   │   ├── HideProjectModal.tsx  # Hide project dialog
-│   │   ├── Collapsible.tsx       # Expand/collapse wrapper
-│   │   ├── AccessRequestNotification.tsx  # Remote access approval toast
-│   │   ├── LanguageSwitcher.tsx  # Language toggle
-│   │   ├── ThemeSwitcher.tsx     # Theme toggle (light/dark/system)
-│   │   ├── Spinner.tsx           # Loading indicator
-│   │   ├── icons/                # Custom SVG icon components
-│   │   └── share/                # Content renderers
-│   │       ├── part.tsx              # Part type dispatcher
-│   │       ├── content-markdown.tsx  # Markdown (marked + shiki)
-│   │       ├── content-code.tsx      # Code file viewer
-│   │       ├── content-bash.tsx      # Shell command display
-│   │       ├── content-diff.tsx      # Diff viewer
-│   │       ├── content-text.tsx      # Plain text
-│   │       ├── content-error.tsx     # Error display
-│   │       ├── copy-button.tsx       # Copy to clipboard
-│   │       └── common.tsx            # Shared utilities
-│   ├── stores/
-│   │   ├── session.ts            # Session & project state
-│   │   ├── message.ts            # Messages & parts state
-│   │   └── config.ts             # Models, engines, provider config
-│   ├── lib/
-│   │   ├── gateway-client.ts     # WebSocket client (auto-reconnect, RPC)
-│   │   ├── gateway-api.ts        # High-level gateway API (connects to stores)
-│   │   ├── auth.ts               # Auth helpers (token mgmt, local/remote auth)
-│   │   ├── i18n.tsx              # I18n provider & useI18n hook
-│   │   ├── theme.ts              # Theme management
-│   │   ├── platform.ts           # Platform detection (Electron/web/remote)
-│   │   ├── project-store.ts      # localStorage project preferences
-│   │   └── logger.ts             # Configurable logger (VITE_LOG_LEVEL)
-│   ├── locales/
-│   │   ├── en.ts                 # English translations
-│   │   └── zh.ts                 # Chinese translations
-│   └── types/
-│       ├── unified.ts            # All shared types + gateway protocol
-│       └── tool-mapping.ts       # Engine-specific → normalized tool names
-├── opencode/                     # Git submodule: OpenCode CLI source
-├── scripts/                      # Bun scripts (setup, start, update binaries)
-├── electron.vite.config.ts       # Build config (main/preload/renderer)
-├── electron-builder.yml          # Packaging config
-├── vite.config.ts                # Standalone Vite dev server config
-└── package.json
-```
+See [docs/project-structure.md](docs/project-structure.md) for full annotated file tree.
+
+Key directories:
+- `electron/main/engines/` — Engine adapters (OpenCode, Copilot, Claude Code, Mock)
+- `electron/main/gateway/` — WebSocket gateway server + engine manager
+- `electron/main/channels/` — External messaging channels (Feishu)
+- `electron/main/services/` — Auth, device store, logger/settings, tunnel
+- `src/pages/` — Route pages (Entry, Chat, Settings, Devices)
+- `src/components/` — UI components + `share/` content renderers
+- `src/stores/` — SolidJS reactive stores (session, message, config)
+- `src/lib/` — Shared utilities (gateway client, auth, settings, i18n, theme)
 
 ## Architecture
 
@@ -112,7 +43,8 @@ SolidJS UI
               └─ GatewayServer (electron/main/gateway/ws-server.ts)
                   └─ EngineManager (electron/main/gateway/engine-manager.ts)
                       ├─ OpenCodeAdapter → OpenCode CLI (HTTP :4096 + SSE)
-                      └─ CopilotSdkAdapter → @github/copilot-sdk (JSON-RPC/stdio)
+                      ├─ CopilotSdkAdapter → @github/copilot-sdk (JSON-RPC/stdio)
+                      └─ ClaudeCodeAdapter → @anthropic-ai/claude-agent-sdk (stdio)
 ```
 
 ### Service Ports (Dev Mode)
@@ -141,7 +73,7 @@ SolidJS `createStore` (from `solid-js/store`):
 |-------|-----------|------|
 | sessionStore | `list`, `current`, `projects`, `loading` | `src/stores/session.ts` |
 | messageStore | `message[sessionId]`, `part[messageId]`, `expanded[key]` | `src/stores/message.ts` |
-| configStore | `models`, `engines`, `currentEngineType`, `currentModelID` | `src/stores/config.ts` |
+| configStore | `models`, `engines`, `currentEngineType`, `engineModelSelections` | `src/stores/config.ts` |
 
 ### Auth Flow
 
@@ -154,7 +86,7 @@ SolidJS `createStore` (from `solid-js/store`):
 
 - `"opencode"` — OpenCode CLI, communicates via HTTP REST + SSE streaming
 - `"copilot"` — GitHub Copilot, uses `@github/copilot-sdk` (spawns Copilot CLI via JSON-RPC/stdio, reads session history from JSONL event files)
-- `"claude"` — Claude Code (placeholder, not yet implemented)
+- `"claude"` — Claude Code, uses `@anthropic-ai/claude-agent-sdk` (spawns Claude CLI via stdio, model list via SDK query)
 
 ### Unified Type System
 
@@ -211,152 +143,59 @@ npm run dist:mac   # macOS DMG
 ### i18n
 
 - Two locales: `en` (default), `zh`
-- Stored in `localStorage.locale`
+- Persisted in `settings.json` (key: `locale`)
 - Dictionary files: `src/locales/en.ts`, `src/locales/zh.ts`
 - Usage: `const t = useI18n(); t().chat.sendMessage`
 
+### Settings Persistence
+
+All user preferences are persisted to `%APPDATA%/codemux/settings.json` (via `app.getPath("userData")`).
+
+```
+Renderer (src/lib/settings.ts)      Preload (electron/preload)      Main (services/logger.ts)
+  _rendererCache (deep-clone)  →  IPC settings:save  →  saveSettings() → fs write
+  getSetting() reads cache          (pass-through)       deep merge for object keys
+  saveSetting() updates cache
+```
+
+- **Read path**: Preload reads `settings.json` synchronously at startup (`ipcRenderer.sendSync`), exposes via `contextBridge`. Renderer deep-clones into its own `_rendererCache` on first access.
+- **Write path**: `saveSetting(key, val)` updates renderer cache immediately, then fires async IPC to main. Main does one-level deep merge for object-valued keys (e.g. `engineModels`) and atomic file write.
+- **Web fallback**: `localStorage` with `settings:` prefix.
+
+Settings shape:
+```json
+{
+  "theme": "light" | "dark" | "system",
+  "locale": "en" | "zh",
+  "logLevel": "error" | "warn" | "info" | "verbose" | "debug" | "silly",
+  "engineModels": {
+    "opencode": { "providerID": "...", "modelID": "..." },
+    "claude": { "providerID": "...", "modelID": "..." }
+  }
+}
+```
+
+### Channels
+
+External messaging integrations that bridge chat platforms to CodeMux engines.
+
+```
+Feishu Bot (webhook)
+  └─ FeishuAdapter (electron/main/channels/feishu/)
+      └─ GatewayWsClient (channels/gateway-ws-client.ts)
+          └─ WebSocket → GatewayServer (same as UI)
+```
+
+- `ChannelManager` manages channel lifecycle, config persistence (`.channels/` dir), and IPC handlers
+- Each channel adapter extends `ChannelAdapter` base class
+- Channels connect to the gateway as internal WS clients, reusing the same protocol as the UI
+
 ## E2E Browser Testing (via Halo AI Browser)
 
-This section documents the complete methodology for autonomous end-to-end testing of the app through Halo's embedded AI Browser.
+See [docs/e2e-testing.md](docs/e2e-testing.md) for full guide with code examples.
 
-### Starting the Dev Server
-
-```bash
-# CRITICAL: Must unset ELECTRON_RUN_AS_NODE (inherited from Halo, breaks Electron)
-# Setting it to empty string does NOT work — Electron checks for existence, not value.
-# Use env -u to truly remove the variable from the child process environment.
-env -u ELECTRON_RUN_AS_NODE npx electron-vite dev
-```
-
-Run with `run_in_background: true`. Wait for all services (5173, 4200, 4096, 4097).
-
-### browser_evaluate: MUST Pass args
-
-Without `args`, code does NOT execute in page context (always returns `{}`):
-
-```javascript
-// WRONG
-browser_evaluate({ function: `() => document.title` })
-
-// CORRECT — pass root element as dummy arg
-browser_evaluate({
-  args: [{ uid: "snap_xx_0" }],
-  function: `(root) => document.title`
-})
-```
-
-### Clicking SolidJS Elements: Use dispatchEvent
-
-SolidJS event delegation stores handlers as `element.$$click` on elements, with a single listener on `document` (bubble phase). Neither `browser_click` nor direct `$$click()` calls work reliably.
-
-**Use `dispatchEvent` — it goes through normal DOM bubbling and is consistently reliable:**
-
-```javascript
-browser_evaluate({
-  args: [{ uid: "snap_xx_0" }],
-  function: `(root) => {
-    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
-    let node;
-    while (node = walker.nextNode()) {
-      if (node.textContent.trim() === 'TARGET_TEXT') {
-        let el = node.parentElement;
-        for (let i = 0; i < 5; i++) {
-          if (!el) break;
-          if (el.tagName === 'BUTTON' || el.tagName === 'DIV') {
-            el.dispatchEvent(new MouseEvent('click', {
-              bubbles: true, cancelable: true, composed: true
-            }));
-            return "clicked";
-          }
-          el = el.parentElement;
-        }
-      }
-    }
-    return "not found";
-  }`
-})
-```
-
-### Sending Messages
-
-1. Use `browser_fill` on the textarea (triggers SolidJS `onInput` signal)
-2. Call textarea's `$$keydown` handler with Enter:
-
-```javascript
-browser_evaluate({
-  args: [{ uid: "snap_xx_0" }],
-  function: `(root) => {
-    const ta = document.querySelector('textarea');
-    ta.focus();
-    const handler = ta.$$keydown;
-    const data = ta.$$keydownData;
-    const event = new KeyboardEvent('keydown', {
-      key: 'Enter', code: 'Enter', keyCode: 13, which: 13,
-      bubbles: true, cancelable: true
-    });
-    data !== undefined ? handler.call(ta, data, event) : handler.call(ta, event);
-    return "sent";
-  }`
-})
-```
-
-### Filling Input Fields (in dialogs, etc.)
-
-```javascript
-// Use native setter + dispatchEvent to trigger SolidJS signals
-const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
-setter.call(input, 'value');
-input.dispatchEvent(new Event('input', { bubbles: true }));
-```
-
-### Handling window.confirm Dialogs
-
-Delete session uses `window.confirm()` which blocks JavaScript execution and causes
-`browser_evaluate` to time out. Override it before triggering delete:
-
-```javascript
-browser_evaluate({
-  args: [{ uid: "snap_xx_0" }],
-  function: `(root) => {
-    window.confirm = () => true;
-    // Now safe to click delete buttons
-    const btn = document.querySelector('button[title="Delete session"]');
-    btn.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, composed: true }));
-    return "deleted";
-  }`
-})
-```
-
-### Interaction Method Matrix
-
-| Operation | Method |
-|-----------|--------|
-| Navigate to app | `browser_navigate` → dispatchEvent on "Enter Chat" button |
-| Switch session | dispatchEvent click on sidebar `div.cursor-pointer` |
-| New session | dispatchEvent click on `button[title="New session"]` (index by project) |
-| Send message | `browser_fill` + `$$keydown` Enter on textarea |
-| Expand steps | dispatchEvent click on `._stepsTriggerButton_*` |
-| Expand tool detail | dispatchEvent click on tool call button inside steps |
-| Add project | dispatchEvent click "Add Project" → fill dialog → confirm |
-| Delete session | Override `window.confirm = () => true` first, then dispatchEvent click on `button[title="Delete session"]` |
-| Delete/hide project | dispatchEvent click on `button[title="Hide Project"]` → confirm in HideProjectModal dialog |
-
-### AI Browser Limitations
-
-| Feature | Status |
-|---------|--------|
-| `browser_fill` | Works, triggers SolidJS onInput |
-| `browser_press_key` | Works for real keyboard events |
-| `browser_evaluate` (with args) | Works in page context |
-| `browser_evaluate` (no args) | Does NOT execute on page |
-| `browser_click` on SolidJS elements | Does NOT trigger delegated events |
-| `browser_screenshot` | Often times out |
-| `browser_snapshot` | Works, primary inspection method |
-
-### SolidJS Event Delegation
-
-- Delegated events: click, dblclick, input, keydown, keyup, mousedown, mouseup, pointerdown, pointerup, touchstart, touchend, etc.
-- Handler storage: `element.$$click`, `element.$$clickData`, `element.$$keydown`, `element.$$input`
-- Listener on `document` (bubble phase) via `delegateEvents()`
-- Events MUST have `bubbles: true` to reach the document listener
-- Disabled elements are skipped
+Key points:
+- Must unset `ELECTRON_RUN_AS_NODE` when starting dev server
+- `browser_evaluate` MUST pass `args` (otherwise returns `{}`)
+- `browser_click` does NOT work on SolidJS elements — use `dispatchEvent` instead
+- `browser_snapshot` is the primary inspection method (`browser_screenshot` often times out)

@@ -1,7 +1,6 @@
 import { createSignal, createEffect, createMemo, For, Show } from "solid-js";
 import { IconArrowUp } from "./icons";
 import { useI18n } from "../lib/i18n";
-import { ModelSelector } from "./ModelSelector";
 import type { AgentMode } from "../types/unified";
 
 const defaultModes: AgentMode[] = [
@@ -109,9 +108,7 @@ interface PromptInputProps {
   isGenerating?: boolean;
   currentAgent?: AgentMode;
   onAgentChange?: (agent: AgentMode) => void;
-  onModelChange?: (providerID: string, modelID: string) => void;
   availableModes?: AgentMode[];
-  engineType?: import("../types/unified").EngineType;
   /** When true, the input is disabled (e.g., no session or modes not loaded yet) */
   disabled?: boolean;
 }
@@ -225,9 +222,6 @@ export function PromptInput(props: PromptInputProps) {
             }}
           </For>
         </div>
-
-        {/* Model selector - right side */}
-        <ModelSelector engineType={props.engineType} onModelChange={props.onModelChange} />
       </div>
 
       {/* Input area */}

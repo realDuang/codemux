@@ -25,7 +25,7 @@ import { AddProjectModal } from "../components/AddProjectModal";
 import type { UnifiedMessage, UnifiedPart, UnifiedPermission, UnifiedQuestion, UnifiedSession, UnifiedProject, AgentMode, EngineType, SessionActivityStatus } from "../types/unified";
 import { useI18n } from "../lib/i18n";
 import { ProjectStore } from "../lib/project-store";
-import { configStore, setConfigStore } from "../stores/config";
+import { configStore, setConfigStore, getSelectedModelForEngine, restoreEngineModelSelections } from "../stores/config";
 
 // Binary search helper (consistent with opencode desktop)
 function binarySearch<T>(
@@ -166,11 +166,6 @@ export default function Chat() {
     return title;
   };
 
-  const [currentSessionModel, setCurrentSessionModel] = createSignal<{
-    providerID: string;
-    modelID: string;
-  } | null>(null);
-  
   // Agent mode state - default to "build" matching OpenCode's default
   const [currentAgent, setCurrentAgent] = createSignal<AgentMode>({ id: "build", label: "Build" });
 
@@ -219,11 +214,6 @@ export default function Chat() {
 
   // Track if this is a local access (Electron or localhost web)
   const [isLocalAccess, setIsLocalAccess] = createSignal(isElectron());
-
-  const handleModelChange = (providerID: string, modelID: string) => {
-    logger.debug("[Chat] Model changed to:", { providerID, modelID });
-    setCurrentSessionModel({ providerID, modelID });
-  };
 
   const handleLogout = () => {
     Auth.logout();
@@ -367,6 +357,20 @@ export default function Chat() {
         if (runningEngine) {
           setConfigStore("currentEngineType", runningEngine.type);
         }
+
+        // Load model lists for all running engines so Settings can show them
+        const runningEnginesForModels = engines.filter(e => e.status === "running");
+        await Promise.all(runningEnginesForModels.map(async (engine) => {
+          try {
+            const modelResult = await gateway.listModels(engine.type);
+            if (modelResult.models.length > 0) {
+              setConfigStore("engineModels", engine.type, modelResult.models);
+            }
+          } catch {
+            // Non-critical: some engines may not support model listing yet
+          }
+        }));
+        restoreEngineModelSelections();
       } catch (err) {
         logger.warn("[Init] Failed to load engines:", err);
       }
@@ -470,16 +474,18 @@ export default function Chat() {
 
         // Refresh model list after session init — ACP engines only populate
         // models/currentModelId after createSession or loadSession, so the
-        // ModelSelector's initial listModels call may have returned empty.
+        // initial listModels call may have returned empty.
         const initEngineType = currentSession.engineType || configStore.currentEngineType || "opencode";
         try {
           const modelResult = await gateway.listModels(initEngineType);
           if (modelResult.models.length > 0) {
             setConfigStore("models", modelResult.models);
+            setConfigStore("engineModels", initEngineType, modelResult.models);
           }
           if (modelResult.currentModelId) {
             setConfigStore("currentModelID", modelResult.currentModelId);
           }
+          restoreEngineModelSelections();
         } catch {
           // Non-critical
         }
@@ -548,6 +554,7 @@ export default function Chat() {
       if (gen !== switchGeneration) return;
       if (modelResult.models.length > 0) {
         setConfigStore("models", modelResult.models);
+        setConfigStore("engineModels", switchEngineType, modelResult.models);
       }
       if (modelResult.currentModelId) {
         setConfigStore("currentModelID", modelResult.currentModelId);
@@ -603,8 +610,8 @@ export default function Chat() {
         const modelResult = await gateway.listModels(engineType);
         if (modelResult.models.length > 0) {
           setConfigStore("models", modelResult.models);
+          setConfigStore("engineModels", engineType, modelResult.models);
         }
-        // Propagate engine's current model so ModelSelector picks it up
         if (modelResult.currentModelId) {
           setConfigStore("currentModelID", modelResult.currentModelId);
         }
@@ -1046,10 +1053,10 @@ export default function Chat() {
     setTimeout(() => scrollToBottom(), 0);
 
     try {
-      const model = currentSessionModel();
+      const modelId = getSelectedModelForEngine(currentEngineType());
       await gateway.sendMessage(sessionId, text, {
         mode: agent.id,
-        modelId: model?.modelID || undefined,
+        modelId,
       });
       // sendMessage RPC resolved — the engine considers the prompt handled.
       // However, in multi-step agent loops (e.g. OpenCode), the RPC may resolve
@@ -1350,8 +1357,6 @@ export default function Chat() {
                       isGenerating={sending()}
                       currentAgent={currentAgent()}
                       onAgentChange={setCurrentAgent}
-                      onModelChange={handleModelChange}
-                      engineType={currentEngineType()}
                       availableModes={configStore.engines.find(e => e.type === currentEngineType())?.capabilities?.availableModes}
                       disabled={!sessionStore.current}
                     />

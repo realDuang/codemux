@@ -164,12 +164,6 @@ export const zh: LocaleDict = {
     send: "发送消息",
   },
 
-  // Model Selector
-  model: {
-    selectModel: "选择模型",
-    noModels: "没有可用的模型，请先配置服务器",
-  },
-
   // Message Parts
   parts: {
     linkToMessage: "跳转到此消息",
@@ -279,5 +273,36 @@ export const zh: LocaleDict = {
     selectEngine: "选择引擎",
     defaultEngine: "默认引擎",
     noEngines: "没有可用的引擎",
+    defaultModel: "模型",
+    defaultModelDesc: "会话使用的模型",
+    noModelsAvailable: "暂无可用模型",
+  },
+
+  // Channels
+  channel: {
+    channels: "渠道",
+    feishuBot: "飞书机器人",
+    feishuBotDesc: "通过飞书机器人消息使用 AI 编码助手",
+    appId: "App ID",
+    appIdPlaceholder: "输入飞书 App ID",
+    appSecret: "App Secret",
+    appSecretPlaceholder: "输入飞书 App Secret",
+    enable: "启用",
+    disable: "停用",
+    status: "状态",
+    connected: "已连接",
+    disconnected: "未连接",
+    connecting: "连接中...",
+    error: "错误",
+    autoApprove: "自动批准权限",
+    autoApproveDesc: "自动批准引擎的权限请求",
+    advanced: "高级设置",
+    streamingThrottle: "流式消息节流",
+    streamingThrottleDesc: "飞书消息更新的最小间隔时间",
+    ms: "毫秒",
+    configure: "配置",
+    configRequired: "需要填写 App ID 和 App Secret 才能启用机器人",
+    save: "保存",
+    saving: "保存中...",
   },
 };

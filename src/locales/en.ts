@@ -163,12 +163,6 @@ export interface LocaleDict {
     send: string;
   };
 
-  // Model Selector
-  model: {
-    selectModel: string;
-    noModels: string;
-  };
-
   // Message Parts
   parts: {
     linkToMessage: string;
@@ -278,6 +272,37 @@ export interface LocaleDict {
     selectEngine: string;
     defaultEngine: string;
     noEngines: string;
+    defaultModel: string;
+    defaultModelDesc: string;
+    noModelsAvailable: string;
+  };
+
+  // Channels
+  channel: {
+    channels: string;
+    feishuBot: string;
+    feishuBotDesc: string;
+    appId: string;
+    appIdPlaceholder: string;
+    appSecret: string;
+    appSecretPlaceholder: string;
+    enable: string;
+    disable: string;
+    status: string;
+    connected: string;
+    disconnected: string;
+    connecting: string;
+    error: string;
+    autoApprove: string;
+    autoApproveDesc: string;
+    advanced: string;
+    streamingThrottle: string;
+    streamingThrottleDesc: string;
+    ms: string;
+    configure: string;
+    configRequired: string;
+    save: string;
+    saving: string;
   };
 }
 
@@ -445,12 +470,6 @@ export const en: LocaleDict = {
     send: "Send message",
   },
 
-  // Model Selector
-  model: {
-    selectModel: "Select Model",
-    noModels: "No models available. Please configure the server first",
-  },
-
   // Message Parts
   parts: {
     linkToMessage: "Link to this message",
@@ -560,5 +579,36 @@ export const en: LocaleDict = {
     selectEngine: "Select Engine",
     defaultEngine: "Default Engine",
     noEngines: "No engines available",
+    defaultModel: "Model",
+    defaultModelDesc: "Model used for conversations",
+    noModelsAvailable: "No models available",
+  },
+
+  // Channels
+  channel: {
+    channels: "Channels",
+    feishuBot: "Feishu Bot",
+    feishuBotDesc: "Connect to Feishu (Lark) for AI coding assistance via bot messages",
+    appId: "App ID",
+    appIdPlaceholder: "Enter Feishu App ID",
+    appSecret: "App Secret",
+    appSecretPlaceholder: "Enter Feishu App Secret",
+    enable: "Enable",
+    disable: "Disable",
+    status: "Status",
+    connected: "Connected",
+    disconnected: "Disconnected",
+    connecting: "Connecting...",
+    error: "Error",
+    autoApprove: "Auto-approve Permissions",
+    autoApproveDesc: "Automatically approve engine permission requests",
+    advanced: "Advanced Settings",
+    streamingThrottle: "Streaming Throttle",
+    streamingThrottleDesc: "Minimum interval between Feishu message updates",
+    ms: "ms",
+    configure: "Configure",
+    configRequired: "App ID and App Secret are required to enable the bot",
+    save: "Save",
+    saving: "Saving...",
   },
 };

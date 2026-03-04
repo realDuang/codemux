@@ -1,12 +1,14 @@
-import { For, Show, Switch, Match, createSignal, onMount } from "solid-js";
+import { For, Show, Switch, Match, createSignal, createMemo, onMount } from "solid-js";
 import { useNavigate } from "@solidjs/router";
 import { LanguageSwitcher } from "../components/LanguageSwitcher";
 import { ThemeSwitcher } from "../components/ThemeSwitcher";
+import { FeishuConfigModal } from "../components/FeishuConfigModal";
 import { useI18n } from "../lib/i18n";
 import { useAuthGuard } from "../lib/useAuthGuard";
 import { isElectron } from "../lib/platform";
 import { Auth } from "../lib/auth";
-import { configStore } from "../stores/config";
+import { configStore, saveEngineModelSelection } from "../stores/config";
+import type { UnifiedModelInfo } from "../types/unified";
 
 export default function Settings() {
   const { t } = useI18n();
@@ -17,6 +19,18 @@ export default function Settings() {
   const [logPath, setLogPath] = createSignal("");
   const [logLevel, setLogLevel] = createSignal("warn");
   const [showLogSection, setShowLogSection] = createSignal(isElectron());
+
+  // Channel state
+  const [feishuConfig, setFeishuConfig] = createSignal({
+    appId: "",
+    appSecret: "",
+    autoApprovePermissions: true,
+    streamingThrottleMs: 1500,
+  });
+  const [feishuStatus, setFeishuStatus] = createSignal<string>("stopped");
+  const [feishuError, setFeishuError] = createSignal<string>("");
+  const [showFeishuModal, setShowFeishuModal] = createSignal(false);
+  const [showFeishuSection, setShowFeishuSection] = createSignal(isElectron());
 
   const logLevels = ["error", "warn", "info", "verbose", "debug", "silly"];
 
@@ -51,6 +65,28 @@ export default function Settings() {
           }
         } catch {
           // Log API not available
+        }
+      }
+    }
+
+    // Load channel config (Electron only)
+    if (isElectron()) {
+      const api = (window as any).electronAPI;
+      if (api?.channel) {
+        try {
+          const [config, status] = await Promise.all([
+            api.channel.getConfig("feishu"),
+            api.channel.getStatus("feishu"),
+          ]);
+          if (config?.options) {
+            setFeishuConfig((prev) => ({ ...prev, ...config.options }));
+          }
+          if (status) {
+            setFeishuStatus(status.status || "stopped");
+            setFeishuError(status.error || "");
+          }
+        } catch {
+          // Channel API not available
         }
       }
     }
@@ -91,6 +127,54 @@ export default function Settings() {
         // fallback: try shell.openExternal for the directory
       }
     }
+  };
+
+  const handleFeishuToggle = async () => {
+    const api = (window as any).electronAPI;
+    if (!api?.channel) return;
+
+    try {
+      const status = feishuStatus();
+      if (status === "running") {
+        await api.channel.stop("feishu");
+        setFeishuStatus("stopped");
+        setFeishuError("");
+      } else {
+        const config = feishuConfig();
+        if (!config.appId || !config.appSecret) return;
+        // Save config first
+        await api.channel.updateConfig("feishu", { options: config });
+        await api.channel.start("feishu");
+        setFeishuStatus("starting");
+        setFeishuError("");
+        // Poll status after a delay
+        setTimeout(async () => {
+          try {
+            const st = await api.channel.getStatus("feishu");
+            setFeishuStatus(st?.status || "stopped");
+            setFeishuError(st?.error || "");
+          } catch {}
+        }, 3000);
+      }
+    } catch (err: any) {
+      setFeishuError(err?.message || "Failed");
+      setFeishuStatus("error");
+    }
+  };
+
+  const handleFeishuConfigSave = async (config: { appId: string; appSecret: string; autoApprovePermissions: boolean; streamingThrottleMs: number }) => {
+    const api = (window as any).electronAPI;
+    if (!api?.channel) return;
+
+    await api.channel.updateConfig("feishu", { options: config });
+    setFeishuConfig(config);
+
+    // Refresh status after save
+    try {
+      const st = await api.channel.getStatus("feishu");
+      setFeishuStatus(st?.status || "stopped");
+      setFeishuError(st?.error || "");
+    } catch {}
   };
 
   return (
@@ -176,87 +260,172 @@ export default function Settings() {
               >
                 <div class="bg-white dark:bg-slate-800 rounded-xl shadow-xs border border-slate-200 dark:border-slate-700">
                   <For each={configStore.engines}>
-                    {(engine, index) => (
-                      <div
-                        class={`p-4 sm:p-6 flex items-center justify-between gap-4 ${index() < configStore.engines.length - 1 ? "border-b border-slate-100 dark:border-slate-700" : ""}`}
-                      >
-                        <div class="flex items-center gap-3 min-w-0">
-                          {/* Status indicator dot */}
-                          <span
-                            class={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${
-                              engine.status === "running" && engine.authenticated === false
-                                ? "bg-amber-500"
-                                : engine.status === "running"
-                                  ? "bg-emerald-500"
-                                  : engine.status === "starting"
+                    {(engine, index) => {
+                      const models = createMemo(() => configStore.engineModels[engine.type] || []);
+                      const showModelSelector = createMemo(() =>
+                        engine.status === "running" &&
+                        models().length > 0
+                      );
+                      const selectedModelId = createMemo(() => {
+                        const selection = configStore.engineModelSelections[engine.type];
+                        if (selection?.modelID && models().some(m => m.modelId === selection.modelID)) {
+                          return selection.modelID;
+                        }
+                        return models()[0]?.modelId || "";
+                      });
+
+                      // Group models by provider for optgroup display
+                      const providerGroups = createMemo(() => {
+                        const groups = new Map<string, { name: string; models: UnifiedModelInfo[] }>();
+                        for (const model of models()) {
+                          const pid = model.providerId || "default";
+                          if (!groups.has(pid)) {
+                            groups.set(pid, { name: model.providerName || pid, models: [] });
+                          }
+                          groups.get(pid)!.models.push(model);
+                        }
+                        return Array.from(groups.entries());
+                      });
+
+                      const handleModelSelect = (modelId: string) => {
+                        const model = models().find(m => m.modelId === modelId);
+                        if (model) {
+                          saveEngineModelSelection(engine.type, {
+                            providerID: model.providerId || "",
+                            modelID: model.modelId,
+                          });
+                        }
+                      };
+
+                      return (
+                        <div
+                          class={index() < configStore.engines.length - 1 ? "border-b border-slate-100 dark:border-slate-700" : ""}
+                        >
+                          <div class="p-4 sm:p-6 flex items-center justify-between gap-4">
+                            <div class="flex items-center gap-3 min-w-0">
+                              {/* Status indicator dot */}
+                              <span
+                                class={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${
+                                  engine.status === "running" && engine.authenticated === false
                                     ? "bg-amber-500"
-                                    : engine.status === "error"
-                                      ? "bg-red-500"
-                                      : "bg-slate-400"
-                            }`}
-                          />
-                          <div class="min-w-0">
-                            <div class="flex items-center gap-2">
-                              <span class="text-base font-medium text-gray-900 dark:text-white truncate">
-                                {engine.name}
-                              </span>
-                              {/* Engine type badge */}
-                              <Switch>
-                                <Match when={engine.type === "opencode"}>
-                                  <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300">
-                                    OpenCode
+                                    : engine.status === "running"
+                                      ? "bg-emerald-500"
+                                      : engine.status === "starting"
+                                        ? "bg-amber-500"
+                                        : engine.status === "error"
+                                          ? "bg-red-500"
+                                          : "bg-slate-400"
+                                }`}
+                              />
+                              <div class="min-w-0">
+                                <div class="flex items-center gap-2">
+                                  <span class="text-base font-medium text-gray-900 dark:text-white truncate">
+                                    {engine.name}
                                   </span>
-                                </Match>
-                                <Match when={engine.type === "copilot"}>
-                                  <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-800 dark:bg-purple-900/30 dark:text-purple-300">
-                                    Copilot
+                                  {/* Engine type badge */}
+                                  <Switch>
+                                    <Match when={engine.type === "opencode"}>
+                                      <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300">
+                                        OpenCode
+                                      </span>
+                                    </Match>
+                                    <Match when={engine.type === "copilot"}>
+                                      <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-800 dark:bg-purple-900/30 dark:text-purple-300">
+                                        Copilot
+                                      </span>
+                                    </Match>
+                                    <Match when={engine.type === "claude"}>
+                                      <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-orange-100 text-orange-800 dark:bg-orange-900/30 dark:text-orange-300">
+                                        Claude
+                                      </span>
+                                    </Match>
+                                  </Switch>
+                                </div>
+                                <div class="flex items-center gap-2 mt-0.5">
+                                  {/* Status text */}
+                                  <span class="text-sm text-gray-500 dark:text-gray-400">
+                                    <Switch>
+                                      <Match when={engine.status === "running" && engine.authenticated === false}>
+                                        <span class="text-amber-600 dark:text-amber-400">{t().engine.notAuthenticated}</span>
+                                      </Match>
+                                      <Match when={engine.status === "running"}>
+                                        {t().engine.running}
+                                      </Match>
+                                      <Match when={engine.status === "starting"}>
+                                        {t().engine.starting}
+                                      </Match>
+                                      <Match when={engine.status === "error"}>
+                                        {t().engine.error}
+                                      </Match>
+                                      <Match when={engine.status === "stopped"}>
+                                        {t().engine.stopped}
+                                      </Match>
+                                    </Switch>
                                   </span>
-                                </Match>
-                                <Match when={engine.type === "claude"}>
-                                  <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-orange-100 text-orange-800 dark:bg-orange-900/30 dark:text-orange-300">
-                                    Claude
-                                  </span>
-                                </Match>
-                              </Switch>
-                            </div>
-                            <div class="flex items-center gap-2 mt-0.5">
-                              {/* Status text */}
-                              <span class="text-sm text-gray-500 dark:text-gray-400">
-                                <Switch>
-                                  <Match when={engine.status === "running" && engine.authenticated === false}>
-                                    <span class="text-amber-600 dark:text-amber-400">{t().engine.notAuthenticated}</span>
-                                  </Match>
-                                  <Match when={engine.status === "running"}>
-                                    {t().engine.running}
-                                  </Match>
-                                  <Match when={engine.status === "starting"}>
-                                    {t().engine.starting}
-                                  </Match>
-                                  <Match when={engine.status === "error"}>
-                                    {t().engine.error}
-                                  </Match>
-                                  <Match when={engine.status === "stopped"}>
-                                    {t().engine.stopped}
-                                  </Match>
-                                </Switch>
-                              </span>
-                              {/* Auth info */}
-                              <Show when={engine.authMessage}>
-                                <span class={`text-xs ${engine.authenticated ? "text-emerald-600 dark:text-emerald-400" : "text-amber-600 dark:text-amber-400"}`}>
-                                  {engine.authMessage}
-                                </span>
-                              </Show>
-                              {/* Version */}
-                              <Show when={engine.version}>
-                                <span class="text-xs text-gray-400 dark:text-gray-500">
-                                  v{engine.version}
-                                </span>
-                              </Show>
+                                  {/* Auth info */}
+                                  <Show when={engine.authMessage}>
+                                    <span class={`text-xs ${engine.authenticated ? "text-emerald-600 dark:text-emerald-400" : "text-amber-600 dark:text-amber-400"}`}>
+                                      {engine.authMessage}
+                                    </span>
+                                  </Show>
+                                  {/* Version */}
+                                  <Show when={engine.version}>
+                                    <span class="text-xs text-gray-400 dark:text-gray-500">
+                                      v{engine.version}
+                                    </span>
+                                  </Show>
+                                </div>
+                              </div>
                             </div>
                           </div>
+
+                          {/* Model selector - for running engines with available models */}
+                          <Show when={showModelSelector()}>
+                            <div class="px-4 sm:px-6 pb-4 sm:pb-6 pt-0 flex items-center justify-between gap-4 -mt-2">
+                              <div>
+                                <h4 class="text-sm font-medium text-gray-700 dark:text-gray-300">
+                                  {t().engine.defaultModel}
+                                </h4>
+                                <p class="text-xs text-gray-400 dark:text-gray-500 mt-0.5">
+                                  {t().engine.defaultModelDesc}
+                                </p>
+                              </div>
+                              <div class="flex-shrink-0">
+                                <select
+                                  value={selectedModelId()}
+                                  onChange={(e) => handleModelSelect(e.currentTarget.value)}
+                                  disabled={engine.capabilities.modelSwitchable === false}
+                                  class={`px-3 py-1.5 text-sm font-medium rounded-lg border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-gray-700 dark:text-gray-300 transition-colors max-w-[240px] ${engine.capabilities.modelSwitchable === false ? "opacity-60 cursor-not-allowed" : "cursor-pointer hover:bg-gray-100 dark:hover:bg-slate-600"}`}
+                                >
+                                  <For each={providerGroups()}>
+                                    {([pid, group]) => (
+                                      <Show
+                                        when={providerGroups().length > 1}
+                                        fallback={
+                                          <For each={group.models}>
+                                            {(model) => (
+                                              <option value={model.modelId}>{model.name}</option>
+                                            )}
+                                          </For>
+                                        }
+                                      >
+                                        <optgroup label={group.name}>
+                                          <For each={group.models}>
+                                            {(model) => (
+                                              <option value={model.modelId}>{model.name}</option>
+                                            )}
+                                          </For>
+                                        </optgroup>
+                                      </Show>
+                                    )}
+                                  </For>
+                                </select>
+                              </div>
+                            </div>
+                          </Show>
                         </div>
-                      </div>
-                    )}
+                      );
+                    }}
                   </For>
                 </div>
               </Show>
@@ -323,6 +492,69 @@ export default function Settings() {
                 </div>
               </section>
             </Show>
+
+            {/* Channels Section (Electron only) */}
+            <Show when={showFeishuSection()}>
+              <section>
+                <h2 class="text-sm font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-4 px-1">
+                  {t().channel.channels}
+                </h2>
+                <div class="bg-white dark:bg-slate-800 rounded-xl shadow-xs border border-gray-200 dark:border-slate-700 overflow-visible">
+                  <div class="p-4 sm:p-6 flex items-center justify-between gap-4">
+                    <div class="min-w-0">
+                      <div class="flex items-center gap-2">
+                        <h3 class="text-base font-medium text-gray-900 dark:text-white">
+                          {t().channel.feishuBot}
+                        </h3>
+                        <span
+                          class={`w-2 h-2 rounded-full flex-shrink-0 ${
+                            feishuStatus() === "running"
+                              ? "bg-emerald-500"
+                              : feishuStatus() === "starting"
+                                ? "bg-amber-500"
+                                : feishuStatus() === "error"
+                                  ? "bg-red-500"
+                                  : "bg-slate-400"
+                          }`}
+                        />
+                      </div>
+                      <p class="text-sm text-gray-500 dark:text-gray-400 mt-1">
+                        {t().channel.feishuBotDesc}
+                      </p>
+                      <Show when={feishuError()}>
+                        <p class="text-xs text-red-500 mt-1">{feishuError()}</p>
+                      </Show>
+                    </div>
+                    <div class="flex-shrink-0 flex items-center gap-2">
+                      <button
+                        onClick={() => setShowFeishuModal(true)}
+                        class="px-3 py-1.5 text-sm font-medium rounded-lg border border-gray-300 dark:border-slate-600 text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-slate-700 transition-colors"
+                      >
+                        {t().channel.configure}
+                      </button>
+                      <button
+                        onClick={handleFeishuToggle}
+                        disabled={feishuStatus() === "starting" || (!feishuConfig().appId && feishuStatus() !== "running")}
+                        class={`px-4 py-1.5 text-sm font-medium rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
+                          feishuStatus() === "running"
+                            ? "bg-red-100 text-red-700 hover:bg-red-200 dark:bg-red-900/30 dark:text-red-300 dark:hover:bg-red-900/50"
+                            : "bg-emerald-100 text-emerald-700 hover:bg-emerald-200 dark:bg-emerald-900/30 dark:text-emerald-300 dark:hover:bg-emerald-900/50"
+                        }`}
+                      >
+                        {feishuStatus() === "running" ? t().channel.disable : feishuStatus() === "starting" ? t().channel.connecting : t().channel.enable}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </section>
+            </Show>
+
+            <FeishuConfigModal
+              isOpen={showFeishuModal()}
+              onClose={() => setShowFeishuModal(false)}
+              initialConfig={feishuConfig()}
+              onSave={handleFeishuConfigSave}
+            />
 
           </div>
         </main>

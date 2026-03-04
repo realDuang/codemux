@@ -22,8 +22,8 @@ test.describe("Settings", () => {
     await page.getByRole("button", { name: /Enter Chat/i }).click();
     await expect(page).toHaveURL(/.*\/chat/, { timeout: 10_000 });
 
-    // Wait for sessions to load, proving WebSocket is connected and engines are loaded
-    await page.getByText("Fix authentication bug").waitFor({ timeout: 10_000 });
+    // Wait for projects to load, proving WebSocket is connected and engines are loaded
+    await page.getByText("project-alpha").first().waitFor({ timeout: 15_000 });
 
     // Navigate to settings via SPA sidebar button (preserves configStore.engines)
     await page.getByRole("button", { name: /Settings/i }).click();

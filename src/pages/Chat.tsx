@@ -426,7 +426,19 @@ export default function Chat() {
       const filteredSessions = sessions.filter((s: UnifiedSession) => validDirectories.has(s.directory));
 
       const processedSessions: SessionInfo[] = filteredSessions.map((s: UnifiedSession) => {
-        return toSessionInfo(s);
+        // Resolve projectID: prefer session's own projectId, then fall back to
+        // directory+engineType matching against known projects. Some engines
+        // (e.g. Copilot, mock adapters) don't populate projectId on sessions.
+        let projectID = s.projectId ?? (s.engineMeta?.projectID as string) ?? undefined;
+        if (!projectID) {
+          const matchingProject = validProjects.find(
+            p => p.directory === s.directory && p.engineType === s.engineType,
+          );
+          if (matchingProject) {
+            projectID = matchingProject.id;
+          }
+        }
+        return toSessionInfo(s, projectID);
       });
 
       processedSessions.sort((a: SessionInfo, b: SessionInfo) =>

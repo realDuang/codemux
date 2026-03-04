@@ -215,6 +215,9 @@ test.describe("Project - Delete (Hide)", () => {
     // Wait for sessions to settle
     await page.waitForTimeout(500);
 
+    // Expand all projects so delete-me sessions are visible in DOM for counting
+    await expandAllProjects(page);
+
     // Count sessions before hiding the project
     const sessionsBefore = await countSessions(page);
 

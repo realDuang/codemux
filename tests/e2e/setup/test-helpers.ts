@@ -56,8 +56,8 @@ export async function expandAllProjects(page: Page): Promise<void> {
   // Collapsed projects have the chevron NOT rotated (no "rotate-90" class).
   // Click each collapsed project header (the row with cursor-pointer) to expand it.
   await page.evaluate(() => {
-    // Find all "Hide Project" buttons — each one is inside a project group header
-    const hideButtons = document.querySelectorAll('button[title="Hide Project"]');
+    // Find all "Delete Project Sessions" buttons — each one is inside a project group header
+    const hideButtons = document.querySelectorAll('button[title="Delete Project Sessions"]');
     for (const btn of hideButtons) {
       // Walk up to find the project header container
       let header = btn.parentElement;
@@ -379,7 +379,7 @@ export async function hideProject(page: Page, projectName: string): Promise<void
         let container = node.parentElement;
         for (let i = 0; i < 10; i++) {
           if (!container) break;
-          const hideBtn = container.querySelector('button[title="Hide Project"]');
+          const hideBtn = container.querySelector('button[title="Delete Project Sessions"]');
           if (hideBtn) {
             (hideBtn as HTMLElement).dispatchEvent(
               new MouseEvent("click", { bubbles: true, cancelable: true, composed: true }),
@@ -398,7 +398,7 @@ export async function hideProject(page: Page, projectName: string): Promise<void
   }
 
   // Wait for confirmation dialog
-  const confirmDialog = page.getByRole("dialog", { name: /Hide Project/i });
+  const confirmDialog = page.getByRole("dialog", { name: /Delete Project Sessions/i });
   await expect(confirmDialog).toBeVisible({ timeout: 5_000 });
 
   // Click "Confirm" button
@@ -471,7 +471,7 @@ export async function getModelName(page: Page): Promise<string | null> {
  * Count the number of project groups visible in the sidebar.
  */
 export async function countProjectGroups(page: Page): Promise<number> {
-  return page.locator('button[title="Hide Project"]').count();
+  return page.locator('button[title="Delete Project Sessions"]').count();
 }
 
 /**

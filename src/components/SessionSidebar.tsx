@@ -2,7 +2,7 @@ import { For, Show, createSignal, createMemo, createEffect } from "solid-js";
 import { SessionInfo, sessionStore, setSessionStore, getProjectName } from "../stores/session";
 import { useI18n, formatMessage } from "../lib/i18n";
 import type { UnifiedProject, EngineType, SessionActivityStatus } from "../types/unified";
-import { configStore } from "../stores/config";
+import { configStore, isEngineEnabled } from "../stores/config";
 import { ProjectStore } from "../lib/project-store";
 import { isElectron } from "../lib/platform";
 import { systemAPI, getOpenCodeStoragePath, getCopilotStoragePath } from "../lib/electron-api";
@@ -203,7 +203,7 @@ export function SessionSidebar(props: SessionSidebarProps) {
   const [activeTab, setActiveTab] = createSignal<string | null>(null);
 
   const runningEngines = createMemo(() =>
-    configStore.engines.filter(e => e.status === "running")
+    configStore.engines.filter(e => e.status === "running" && isEngineEnabled(e.type))
   );
 
   const showTabs = createMemo(() => runningEngines().length > 1);

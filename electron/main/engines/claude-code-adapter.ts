@@ -32,7 +32,7 @@ import type {
 
 import { EngineAdapter } from "./engine-adapter";
 import { sessionStore } from "../services/session-store";
-import { mainLog } from "../services/logger";
+import { claudeLog } from "../services/logger";
 import { inferToolKind } from "../../../src/types/tool-mapping";
 import type {
   EngineType,
@@ -256,7 +256,7 @@ export class ClaudeCodeAdapter extends EngineAdapter {
     if (this.status === "running") return;
 
     this.setStatus("starting");
-    mainLog.info("Starting Claude Code adapter...");
+    claudeLog.info("Starting Claude Code adapter...");
 
     try {
       // Claude Code CLI is available globally (installed via npm install -g @anthropic-ai/claude-code)
@@ -267,7 +267,7 @@ export class ClaudeCodeAdapter extends EngineAdapter {
       const envModel = process.env.ANTHROPIC_MODEL || this.options?.env?.ANTHROPIC_MODEL;
       if (envModel) {
         this.currentModelId = envModel;
-        mainLog.info(`[Claude] Default model from env: ${envModel}`);
+        claudeLog.info(`[Claude] Default model from env: ${envModel}`);
       } else {
         this.currentModelId = this.options?.model ?? null;
       }
@@ -280,9 +280,9 @@ export class ClaudeCodeAdapter extends EngineAdapter {
       await this.fetchModels();
 
       this.setStatus("running");
-      mainLog.info("Claude Code adapter started successfully");
+      claudeLog.info("Claude Code adapter started successfully");
     } catch (err) {
-      mainLog.error("Failed to start Claude Code adapter:", err);
+      claudeLog.error("Failed to start Claude Code adapter:", err);
       this.setStatus("error", err instanceof Error ? err.message : String(err));
       throw err;
     }
@@ -291,14 +291,14 @@ export class ClaudeCodeAdapter extends EngineAdapter {
   async stop(): Promise<void> {
     if (this.status === "stopped") return;
 
-    mainLog.info("Stopping Claude Code adapter...");
+    claudeLog.info("Stopping Claude Code adapter...");
 
     // Close all V2 sessions
     for (const [sessionId, info] of this.v2Sessions) {
       try {
         info.session.close();
       } catch (e) {
-        mainLog.warn(`Error closing Claude session ${sessionId}:`, e);
+        claudeLog.warn(`Error closing Claude session ${sessionId}:`, e);
       }
     }
     this.v2Sessions.clear();
@@ -395,7 +395,7 @@ export class ClaudeCodeAdapter extends EngineAdapter {
         .map((s) => this.sdkSessionToUnified(s, directory));
       sessionStore.mergeSessions(sessions, this.engineType);
     } catch (err) {
-      mainLog.warn("Failed to list Claude sessions from SDK:", err);
+      claudeLog.warn("Failed to list Claude sessions from SDK:", err);
     }
 
     // Return from session store (merged source of truth)
@@ -552,10 +552,10 @@ export class ClaudeCodeAdapter extends EngineAdapter {
     try {
       if (existsSync(sessionFile)) {
         unlinkSync(sessionFile);
-        mainLog.info(`[Claude] Deleted CC session file: ${sessionFile}`);
+        claudeLog.info(`[Claude] Deleted CC session file: ${sessionFile}`);
       }
     } catch (err) {
-      mainLog.warn(`[Claude] Failed to delete CC session file ${sessionFile}:`, err);
+      claudeLog.warn(`[Claude] Failed to delete CC session file ${sessionFile}:`, err);
     }
   }
 
@@ -589,7 +589,7 @@ export class ClaudeCodeAdapter extends EngineAdapter {
         }
       }
     } catch (err) {
-      mainLog.warn(`[Claude] Failed to read timestamps from ${sessionFile}:`, err);
+      claudeLog.warn(`[Claude] Failed to read timestamps from ${sessionFile}:`, err);
     }
 
     return timestamps;
@@ -687,7 +687,7 @@ export class ClaudeCodeAdapter extends EngineAdapter {
         buffer,
         abortController,
       ).catch((err) => {
-        mainLog.error(`[Claude][${sessionId}] Stream processing error:`, err);
+        claudeLog.error(`[Claude][${sessionId}] Stream processing error:`, err);
         const resolver = this.sendResolvers.get(sessionId);
         if (resolver) {
           this.sendResolvers.delete(sessionId);
@@ -715,7 +715,7 @@ export class ClaudeCodeAdapter extends EngineAdapter {
         const query = (v2Info.session as any).query;
         if (query && typeof query.interrupt === "function") {
           await query.interrupt();
-          mainLog.info(`[Claude][${sessionId}] V2 session interrupted`);
+          claudeLog.info(`[Claude][${sessionId}] V2 session interrupted`);
 
           // Drain stale messages so the next send()+stream() cycle starts clean.
           // After interrupt, the CLI will emit remaining buffered messages and
@@ -723,17 +723,17 @@ export class ClaudeCodeAdapter extends EngineAdapter {
           // the next conversation turn.
           try {
             for await (const msg of v2Info.session.stream()) {
-              mainLog.debug(`[Claude][${sessionId}] Drain after interrupt: ${(msg as any).type}`);
+              claudeLog.debug(`[Claude][${sessionId}] Drain after interrupt: ${(msg as any).type}`);
               if ((msg as any).type === "result") break;
             }
           } catch {
             // Stream may already be closed / errored — safe to ignore
           }
         } else {
-          mainLog.info(`[Claude][${sessionId}] Message cancelled (no interrupt available)`);
+          claudeLog.info(`[Claude][${sessionId}] Message cancelled (no interrupt available)`);
         }
       } catch (e) {
-        mainLog.warn(`[Claude][${sessionId}] Error interrupting session:`, e);
+        claudeLog.warn(`[Claude][${sessionId}] Error interrupting session:`, e);
       }
     }
 
@@ -803,7 +803,7 @@ export class ClaudeCodeAdapter extends EngineAdapter {
       this.messageHistory.set(sessionId, messages);
       return messages;
     } catch (err) {
-      mainLog.warn(`[Claude][${sessionId}] Failed to load messages from SDK:`, err);
+      claudeLog.warn(`[Claude][${sessionId}] Failed to load messages from SDK:`, err);
       return [];
     }
   }
@@ -820,7 +820,7 @@ export class ClaudeCodeAdapter extends EngineAdapter {
    */
   private async fetchModels(): Promise<void> {
     try {
-      mainLog.info("[Claude] Fetching models via SDK query...");
+      claudeLog.info("[Claude] Fetching models via SDK query...");
 
       const env: Record<string, string | undefined> = {
         ...process.env,
@@ -846,12 +846,12 @@ export class ClaudeCodeAdapter extends EngineAdapter {
           description: m.description || "",
           engineType: "claude" as EngineType,
         }));
-        mainLog.info(`[Claude] Loaded ${this.cachedModels.length} models via SDK`);
+        claudeLog.info(`[Claude] Loaded ${this.cachedModels.length} models via SDK`);
       } else {
-        mainLog.warn("[Claude] SDK returned empty model list");
+        claudeLog.warn("[Claude] SDK returned empty model list");
       }
     } catch (err) {
-      mainLog.warn("[Claude] Failed to fetch models via SDK:", err);
+      claudeLog.warn("[Claude] Failed to fetch models via SDK:", err);
     }
   }
 
@@ -864,7 +864,7 @@ export class ClaudeCodeAdapter extends EngineAdapter {
 
   async setModel(sessionId: string, modelId: string): Promise<void> {
     this.currentModelId = modelId;
-    mainLog.info(`[Claude] Model set to: ${modelId}`);
+    claudeLog.info(`[Claude] Model set to: ${modelId}`);
 
     // Close existing session to force recreation with new model
     const v2Info = this.v2Sessions.get(sessionId);
@@ -888,7 +888,7 @@ export class ClaudeCodeAdapter extends EngineAdapter {
 
   async setMode(sessionId: string, modeId: string): Promise<void> {
     this.sessionModes.set(sessionId, modeId);
-    mainLog.info(`[Claude][${sessionId}] Mode set to: ${modeId}`);
+    claudeLog.info(`[Claude][${sessionId}] Mode set to: ${modeId}`);
 
     // Close existing session to force recreation with new permission mode
     const v2Info = this.v2Sessions.get(sessionId);
@@ -912,7 +912,7 @@ export class ClaudeCodeAdapter extends EngineAdapter {
   ): Promise<void> {
     const pending = this.pendingPermissions.get(permissionId);
     if (!pending) {
-      mainLog.warn(
+      claudeLog.warn(
         `[Claude] No pending permission found for ID: ${permissionId}`,
       );
       return;
@@ -1013,7 +1013,7 @@ export class ClaudeCodeAdapter extends EngineAdapter {
       questions,
     };
 
-    mainLog.info(
+    claudeLog.info(
       `[Claude][${sessionId}] AskUserQuestion: id=${questionId}, ${questions.length} questions`,
     );
 
@@ -1109,7 +1109,7 @@ export class ClaudeCodeAdapter extends EngineAdapter {
       },
     };
 
-    mainLog.info(
+    claudeLog.info(
       `[Claude][${sessionId}] Permission request: id=${permissionId}, tool=${toolName}`,
     );
 
@@ -1150,7 +1150,7 @@ export class ClaudeCodeAdapter extends EngineAdapter {
   ): Promise<void> {
     const pending = this.pendingQuestions.get(questionId);
     if (!pending) {
-      mainLog.warn(
+      claudeLog.warn(
         `[Claude] No pending question found for ID: ${questionId}`,
       );
       return;
@@ -1205,7 +1205,7 @@ export class ClaudeCodeAdapter extends EngineAdapter {
       // Check if permissionMode changed — must recreate session if so
       const requestedMode = opts.permissionMode ?? "default";
       if (existing.permissionMode !== requestedMode) {
-        mainLog.info(
+        claudeLog.info(
           `[Claude][${sessionId}] permissionMode changed from ${existing.permissionMode} to ${requestedMode}, recreating session`,
         );
         this.cleanupSession(sessionId, "permissionMode changed");
@@ -1222,7 +1222,7 @@ export class ClaudeCodeAdapter extends EngineAdapter {
       }
     }
 
-    mainLog.info(
+    claudeLog.info(
       `[Claude][${sessionId}] Creating new V2 session in ${directory}`,
     );
     const startTime = Date.now();
@@ -1261,7 +1261,7 @@ export class ClaudeCodeAdapter extends EngineAdapter {
 
     if (ccSessionId) {
       // Resume existing session
-      mainLog.info(
+      claudeLog.info(
         `[Claude][${sessionId}] Resuming CC session: ${ccSessionId}`,
       );
       v2Session = unstable_v2_resumeSession(ccSessionId, sdkOptions);
@@ -1270,7 +1270,7 @@ export class ClaudeCodeAdapter extends EngineAdapter {
       v2Session = unstable_v2_createSession(sdkOptions);
     }
 
-    mainLog.info(
+    claudeLog.info(
       `[Claude][${sessionId}] V2 session created in ${Date.now() - startTime}ms`,
     );
 
@@ -1294,7 +1294,7 @@ export class ClaudeCodeAdapter extends EngineAdapter {
     const info = this.v2Sessions.get(sessionId);
     if (!info) return;
 
-    mainLog.info(`[Claude][${sessionId}] Cleaning up session: ${reason}`);
+    claudeLog.info(`[Claude][${sessionId}] Cleaning up session: ${reason}`);
 
     try {
       info.session.close();
@@ -1340,9 +1340,9 @@ export class ClaudeCodeAdapter extends EngineAdapter {
       }
     } catch (err: any) {
       if (abortController.signal.aborted) {
-        mainLog.info(`[Claude][${sessionId}] Stream aborted`);
+        claudeLog.info(`[Claude][${sessionId}] Stream aborted`);
       } else {
-        mainLog.error(`[Claude][${sessionId}] Stream error:`, err);
+        claudeLog.error(`[Claude][${sessionId}] Stream error:`, err);
         buffer.error = err?.message ?? String(err);
       }
     } finally {
@@ -1388,7 +1388,7 @@ export class ClaudeCodeAdapter extends EngineAdapter {
 
       default:
         // tool_progress, auth_status, etc. — log but don't process
-        mainLog.info(
+        claudeLog.info(
           `[Claude][${sessionId}] Unhandled message type: ${(msg as any).type}`,
         );
         break;
@@ -1437,13 +1437,13 @@ export class ClaudeCodeAdapter extends EngineAdapter {
         buffer.modelId = msg.model;
       }
 
-      mainLog.info(
+      claudeLog.info(
         `[Claude][${sessionId}] System init: session=${ccSessionId}, model=${msg.model}`,
       );
     } else if (msg.subtype === "status") {
       // Handle status changes (e.g., compacting)
       if (msg.status === "compacting") {
-        mainLog.info(
+        claudeLog.info(
           `[Claude][${sessionId}] Context compacting...`,
         );
       }
@@ -1543,7 +1543,7 @@ export class ClaudeCodeAdapter extends EngineAdapter {
       buffer.error = msg.result ?? "Unknown error";
     }
 
-    mainLog.info(
+    claudeLog.info(
       `[Claude][${sessionId}] Result: cost=$${buffer.cost?.toFixed(4)}, ` +
         `tokens=${buffer.tokens?.input ?? 0}/${buffer.tokens?.output ?? 0}`,
     );
@@ -1807,7 +1807,7 @@ export class ClaudeCodeAdapter extends EngineAdapter {
     const toolPart = this.toolCallParts.get(toolCallId);
 
     if (!toolPart) {
-      mainLog.warn(
+      claudeLog.warn(
         `[Claude][${sessionId}] Tool result for unknown tool call: ${toolCallId}`,
       );
       return;

@@ -113,6 +113,7 @@ export const gatewayLog = log.scope("gateway");
 export const engineManagerLog = log.scope("engine-mgr");
 export const openCodeLog = log.scope("opencode");
 export const copilotLog = log.scope("copilot");
+export const claudeLog = log.scope("claude");
 export const authLog = log.scope("auth");
 export const prodServerLog = log.scope("prod-server");
 export const sessionStoreLog = log.scope("session-store");

@@ -65,17 +65,6 @@ const electronAPI = {
       ipcRenderer.invoke("log:setLevel", level) as Promise<{ success: boolean }>,
   },
 
-  // Channel API
-  channel: {
-    list: () => ipcRenderer.invoke("channel:list"),
-    getConfig: (type: string) => ipcRenderer.invoke("channel:getConfig", type),
-    updateConfig: (type: string, updates: any) =>
-      ipcRenderer.invoke("channel:updateConfig", type, updates),
-    start: (type: string) => ipcRenderer.invoke("channel:start", type),
-    stop: (type: string) => ipcRenderer.invoke("channel:stop", type),
-    getStatus: (type: string) => ipcRenderer.invoke("channel:getStatus", type),
-  },
-
   // Settings API (persisted to settings.json)
   settings: {
     /** Synchronously cached settings — available immediately at module init */

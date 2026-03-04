@@ -16,8 +16,6 @@ import { GatewayServer } from "./gateway/ws-server";
 import { OpenCodeAdapter } from "./engines/opencode-adapter";
 import { CopilotSdkAdapter } from "./engines/copilot-sdk-adapter";
 import { ClaudeCodeAdapter } from "./engines/claude-code-adapter";
-import { ChannelManager } from "./channels/channel-manager";
-import { FeishuAdapter } from "./channels/feishu/feishu-adapter";
 
 // --- Gateway singleton instances ---
 const engineManager = new EngineManager();
@@ -33,14 +31,6 @@ engineManager.registerAdapter(claudeAdapter);
 
 // Export for IPC handlers
 export { engineManager, gatewayServer };
-
-// --- Channel Manager ---
-const channelManager = new ChannelManager();
-const feishuAdapter = new FeishuAdapter();
-channelManager.registerAdapter(feishuAdapter);
-
-// Export for IPC handlers
-export { channelManager };
 
 // Gateway WS port
 const GATEWAY_PORT = 4200;
@@ -140,19 +130,12 @@ if (!gotTheLock) {
     createWindow();
 
     // Mark startup as ready once all engines have settled (success or failure)
-    Promise.allSettled(enginePromises).then(async () => {
+    Promise.allSettled(enginePromises).then(() => {
       startupReady = true;
       mainLog.info("All engines settled, startup ready");
       const win = getMainWindow();
       if (win && !win.isDestroyed()) {
         win.webContents.send("startup:ready");
-      }
-
-      // Initialize channels (after engines are ready and gateway is running)
-      try {
-        await channelManager.initFromConfig();
-      } catch (err) {
-        mainLog.error("Failed to initialize channels:", err);
       }
     });
 
@@ -183,7 +166,6 @@ if (!gotTheLock) {
 
       await Promise.all([
         authApiServer.stop(),
-        channelManager.stopAll(),
         engineManager.stopAll(),
         productionServer.stop(),
         (() => { gatewayServer.stop(); })(),

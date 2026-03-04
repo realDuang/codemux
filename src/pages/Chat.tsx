@@ -1211,7 +1211,7 @@ export default function Chat() {
                       </div>
                     }
                   >
-                    <MessageList sessionID={sessionStore.current!} isWorking={sending()} onPermissionRespond={handlePermissionRespond} onQuestionRespond={handleQuestionRespond} onQuestionDismiss={handleQuestionDismiss} onContinue={handleContinue} />
+                    <MessageList sessionID={sessionStore.current!} isWorking={sending()} scrollContainerRef={messagesRef} onPermissionRespond={handlePermissionRespond} onQuestionRespond={handleQuestionRespond} onQuestionDismiss={handleQuestionDismiss} onContinue={handleContinue} />
                   </Show>
                 </div>
               </div>

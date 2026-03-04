@@ -17,6 +17,7 @@ import {
   unstable_v2_resumeSession,
   listSessions as sdkListSessions,
   getSessionMessages as sdkGetSessionMessages,
+  query as sdkQuery,
 } from "@anthropic-ai/claude-agent-sdk";
 import type {
   SDKSession,
@@ -24,7 +25,6 @@ import type {
   SDKMessage,
   SDKSessionInfo,
   ModelInfo,
-  Options,
   CanUseTool,
   PermissionResult,
   PermissionUpdate,
@@ -208,8 +208,6 @@ export class ClaudeCodeAdapter extends EngineAdapter {
   private version: string | undefined;
   private currentModelId: string | null = null;
   private cachedModels: UnifiedModelInfo[] = [];
-  /** True when model is overridden by env var (ANTHROPIC_MODEL) — disables model switching */
-  private isCustomEnvModel = false;
   private sessionModes = new Map<string, string>();
 
   // --- Message accumulation ---
@@ -265,19 +263,21 @@ export class ClaudeCodeAdapter extends EngineAdapter {
       // The SDK will find it automatically, or we can specify pathToClaudeCodeExecutable.
       // No separate server process to manage — the SDK spawns CLI subprocesses per session.
 
-      // Set default model — check env var override first
+      // Set default model from env var or constructor option
       const envModel = process.env.ANTHROPIC_MODEL || this.options?.env?.ANTHROPIC_MODEL;
       if (envModel) {
         this.currentModelId = envModel;
-        this.isCustomEnvModel = true;
-        mainLog.info(`[Claude] Using custom env model: ${envModel}`);
+        mainLog.info(`[Claude] Default model from env: ${envModel}`);
       } else {
         this.currentModelId = this.options?.model ?? null;
-        this.isCustomEnvModel = false;
       }
 
       // Start cleanup interval
       this.startSessionCleanup();
+
+      // Fetch model list via SDK (uses CLI's own auth)
+      // Must complete before setStatus("running") so frontend gets models on first listModels() call
+      await this.fetchModels();
 
       this.setStatus("running");
       mainLog.info("Claude Code adapter started successfully");
@@ -351,7 +351,7 @@ export class ClaudeCodeAdapter extends EngineAdapter {
       imageAttachment: false,
       loadSession: true,
       listSessions: true,
-      modelSwitchable: !this.isCustomEnvModel,
+      modelSwitchable: true,
       availableModes: this.getModes(),
     };
   }
@@ -812,41 +812,50 @@ export class ClaudeCodeAdapter extends EngineAdapter {
   // Models
   // ==========================================================================
 
-  // Known Claude Code models — this list matches what Claude Code CLI
-  // exposes via its /model command. Models are validated server-side;
-  // unavailable models will be rejected at send time.
-  private static readonly KNOWN_MODELS: Array<{
-    modelId: string;
-    name: string;
-    description: string;
-  }> = [
-    { modelId: "claude-sonnet-4-20250514", name: "Claude Sonnet 4", description: "Fast and capable" },
-    { modelId: "claude-opus-4-20250514", name: "Claude Opus 4", description: "Most powerful" },
-    { modelId: "claude-haiku-3-5-20241022", name: "Claude 3.5 Haiku", description: "Fast and lightweight" },
-  ];
+  /**
+   * Fetch available models via the Claude Code CLI's V1 query API.
+   * Uses sdkQuery().supportedModels() which goes through the CLI's own auth
+   * (OAuth, API key, etc.) — no separate ANTHROPIC_API_KEY needed.
+   * Called once during start() — results cached in this.cachedModels.
+   */
+  private async fetchModels(): Promise<void> {
+    try {
+      mainLog.info("[Claude] Fetching models via SDK query...");
+
+      const env: Record<string, string | undefined> = {
+        ...process.env,
+        ...this.options?.env,
+      };
+
+      const q = sdkQuery({
+        prompt: "",
+        options: {
+          model: this.currentModelId ?? "claude-sonnet-4-20250514",
+          env,
+          abortController: new AbortController(),
+        } as any,
+      });
+
+      const models = await q.supportedModels();
+      q.close();
+
+      if (models && models.length > 0) {
+        this.cachedModels = models.map((m) => ({
+          modelId: m.value,
+          name: m.displayName || m.value,
+          description: m.description || "",
+          engineType: "claude" as EngineType,
+        }));
+        mainLog.info(`[Claude] Loaded ${this.cachedModels.length} models via SDK`);
+      } else {
+        mainLog.warn("[Claude] SDK returned empty model list");
+      }
+    } catch (err) {
+      mainLog.warn("[Claude] Failed to fetch models via SDK:", err);
+    }
+  }
 
   async listModels(): Promise<ModelListResult> {
-    // Custom env model — only show that one model, no switching allowed
-    if (this.isCustomEnvModel && this.currentModelId) {
-      return {
-        models: [{
-          modelId: this.currentModelId,
-          name: this.currentModelId,
-          description: "Custom model (ANTHROPIC_MODEL)",
-          engineType: "claude" as EngineType,
-        }],
-        currentModelId: this.currentModelId,
-      };
-    }
-
-    if (this.cachedModels.length === 0) {
-      // Populate from known models
-      this.cachedModels = ClaudeCodeAdapter.KNOWN_MODELS.map((m) => ({
-        ...m,
-        engineType: "claude" as EngineType,
-      }));
-    }
-
     return {
       models: this.cachedModels,
       currentModelId: this.currentModelId ?? this.cachedModels[0]?.modelId,
@@ -855,7 +864,6 @@ export class ClaudeCodeAdapter extends EngineAdapter {
 
   async setModel(sessionId: string, modelId: string): Promise<void> {
     this.currentModelId = modelId;
-    this.cachedModels = []; // Clear cache so custom model gets re-evaluated
     mainLog.info(`[Claude] Model set to: ${modelId}`);
 
     // Close existing session to force recreation with new model
@@ -1427,19 +1435,6 @@ export class ClaudeCodeAdapter extends EngineAdapter {
       // Extract model info
       if (msg.model) {
         buffer.modelId = msg.model;
-      }
-
-      // Extract available models from init response
-      if (msg.models && Array.isArray(msg.models) && msg.models.length > 0) {
-        this.cachedModels = msg.models.map((m: any) => ({
-          modelId: m.value ?? m.id ?? m.modelId,
-          name: m.displayName ?? m.name ?? m.value,
-          description: m.description ?? "",
-          engineType: "claude" as EngineType,
-        }));
-        mainLog.info(
-          `[Claude][${sessionId}] Loaded ${this.cachedModels.length} models from init`,
-        );
       }
 
       mainLog.info(

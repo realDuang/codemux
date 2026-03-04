@@ -1,5 +1,6 @@
 import { createStore } from "solid-js/store";
 import type { EngineInfo, EngineType, UnifiedModelInfo } from "../types/unified";
+import { getSetting, saveSetting, getNestedSetting, saveNestedSetting } from "../lib/settings";
 
 export interface EngineModelSelection {
   providerID: string;
@@ -15,7 +16,7 @@ interface ConfigState {
   currentEngineType: EngineType | null;
   /** Model lists keyed by engine type */
   engineModels: Record<string, UnifiedModelInfo[]>;
-  /** User-selected model per engine type, persisted to localStorage */
+  /** User-selected model per engine type, persisted to settings.json */
   engineModelSelections: Record<string, EngineModelSelection>;
 }
 
@@ -30,14 +31,10 @@ export const [configStore, setConfigStore] = createStore<ConfigState>({
   engineModelSelections: {},
 });
 
-const STORAGE_KEY_PREFIX = "engine_model_";
-
 export function loadEngineModelSelection(engineType: string): EngineModelSelection | null {
   try {
-    const raw = localStorage.getItem(`${STORAGE_KEY_PREFIX}${engineType}`);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw);
-    if (parsed && parsed.providerID && parsed.modelID) return parsed;
+    const saved = getNestedSetting<EngineModelSelection>(`engineModels.${engineType}`);
+    if (saved && saved.providerID !== undefined && saved.modelID) return saved;
     return null;
   } catch {
     return null;
@@ -46,7 +43,7 @@ export function loadEngineModelSelection(engineType: string): EngineModelSelecti
 
 export function saveEngineModelSelection(engineType: string, selection: EngineModelSelection): void {
   setConfigStore("engineModelSelections", engineType, selection);
-  localStorage.setItem(`${STORAGE_KEY_PREFIX}${engineType}`, JSON.stringify(selection));
+  saveNestedSetting(`engineModels.${engineType}`, selection);
 }
 
 /**
@@ -58,7 +55,9 @@ export function getSelectedModelForEngine(engineType: string): string | undefine
   const selection = configStore.engineModelSelections[engineType];
   if (selection?.modelID) {
     const models = configStore.engineModels[engineType];
-    if (models?.some(m => m.modelId === selection.modelID)) {
+    // Claude engine always allows custom model input — skip validation
+    // For others: validate against model list when available; trust manual input when list is empty
+    if (engineType === "claude" || !models || models.length === 0 || models.some(m => m.modelId === selection.modelID)) {
       return selection.modelID;
     }
   }
@@ -72,13 +71,21 @@ export function getSelectedModelForEngine(engineType: string): string | undefine
 }
 
 /**
- * Restore persisted model selections from localStorage for all known engines.
+ * Restore persisted model selections from settings.json for all known engines.
+ * Validates saved selections against the current model list — if the saved model
+ * is no longer available (e.g. deprecated), it is discarded.
  */
 export function restoreEngineModelSelections(): void {
   for (const engine of configStore.engines) {
     const saved = loadEngineModelSelection(engine.type);
     if (saved) {
-      setConfigStore("engineModelSelections", engine.type, saved);
+      const models = configStore.engineModels[engine.type];
+      // Claude engine always allows custom model input — always restore
+      // For others: only restore if model list is empty (can't validate) or the saved model exists
+      if (engine.type === "claude" || !models || models.length === 0 || models.some(m => m.modelId === saved.modelID)) {
+        setConfigStore("engineModelSelections", engine.type, saved);
+      }
+      // Stale models are simply not loaded — no need to delete from settings file
     }
   }
 }

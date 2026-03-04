@@ -3,7 +3,7 @@ import os from "os";
 import { deviceStore } from "./services/device-store";
 import { tunnelManager } from "./services/tunnel-manager";
 import { productionServer } from "./services/production-server";
-import { getLogFilePath, getFileLogLevel, setFileLogLevel } from "./services/logger";
+import { getLogFilePath, getFileLogLevel, setFileLogLevel, loadSettings, saveSettings } from "./services/logger";
 import { isStartupReady } from "./index";
 
 export function registerIpcHandlers(): void {
@@ -208,6 +208,24 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle("log:setLevel", async (_event, level: string) => {
     setFileLogLevel(level);
+    return { success: true };
+  });
+
+  // ===========================================================================
+  // Settings (persisted to settings.json in userData)
+  // ===========================================================================
+
+  // Synchronous read — used by preload to provide initial values before renderer starts
+  ipcMain.on("settings:loadSync", (event) => {
+    event.returnValue = loadSettings();
+  });
+
+  ipcMain.handle("settings:load", async () => {
+    return loadSettings();
+  });
+
+  ipcMain.handle("settings:save", async (_event, patch: Record<string, unknown>) => {
+    saveSettings(patch);
     return { success: true };
   });
 

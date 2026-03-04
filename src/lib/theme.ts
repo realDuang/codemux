@@ -1,20 +1,19 @@
 import { createSignal, Accessor } from "solid-js";
 import { logger } from "./logger";
+import { getSetting, saveSetting } from "./settings";
 
 export type ThemeMode = "light" | "dark" | "system";
 
-const THEME_STORAGE_KEY = "theme-mode";
-
 function getSavedTheme(): ThemeMode {
-  const saved = localStorage.getItem(THEME_STORAGE_KEY) as ThemeMode | null;
+  const saved = getSetting<string>("theme");
   if (saved && ["light", "dark", "system"].includes(saved)) {
-    return saved;
+    return saved as ThemeMode;
   }
   return "system";
 }
 
 function saveTheme(theme: ThemeMode): void {
-  localStorage.setItem(THEME_STORAGE_KEY, theme);
+  saveSetting("theme", theme);
 }
 
 function getSystemTheme(): "light" | "dark" {

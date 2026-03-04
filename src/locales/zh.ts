@@ -68,6 +68,8 @@ export const zh: LocaleDict = {
     initFailed: "初始化失败",
     retry: "重试",
     disclaimer: "AI 生成的内容可能不准确，请核实重要信息。",
+    noModeError: "未选择模式，请先选择模式再发送。",
+    noModelError: "未配置模型，请在设置 > 引擎中设置模型。",
   },
 
   // Settings page
@@ -143,11 +145,11 @@ export const zh: LocaleDict = {
     adding: "正在添加项目...",
     addFailed: "添加项目失败",
     notGitRepo: "指定路径不是有效的 git 仓库",
-    hideTitle: "隐藏项目",
-    hideConfirm: "隐藏项目「{name}」并删除所有会话？",
+    hideTitle: "删除项目会话",
+    hideConfirm: "删除项目「{name}」的所有会话？",
     sessionCount: "这将删除 {count} 个会话。",
     hideWarning: "会话历史将被永久删除。",
-    hideNote: "可通过重新添加相同路径来恢复此项目。",
+    hideNote: "创建新会话时项目会重新出现。",
   },
 
   // Prompt Input
@@ -276,6 +278,7 @@ export const zh: LocaleDict = {
     defaultModel: "模型",
     defaultModelDesc: "会话使用的模型",
     noModelsAvailable: "暂无可用模型",
+    modelInputPlaceholder: "输入模型 ID（如 claude-sonnet-4-20250514）",
   },
 
   // Channels

@@ -1081,7 +1081,11 @@ export class OpenCodeAdapter extends EngineAdapter {
   }
 
   async deleteSession(sessionId: string): Promise<void> {
-    const client = this.ensureClient();
+    // Use the session's directory to create a client with the correct project context
+    const session = this.sessions.get(sessionId);
+    const client = session?.directory
+      ? this.createClient(session.directory)
+      : this.ensureClient();
     await client.session.delete({ sessionID: sessionId });
     this.sessions.delete(sessionId);
     sessionStore.deleteSession(sessionId);

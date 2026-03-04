@@ -147,6 +147,7 @@ interface V2SessionInfo {
   createdAt: number;
   lastUsedAt: number;
   capturedSessionId?: string; // CC's internal session ID from system init message
+  permissionMode?: "default" | "plan" | "acceptEdits" | "dontAsk";
 }
 
 // ============================================================================
@@ -1193,14 +1194,23 @@ export class ClaudeCodeAdapter extends EngineAdapter {
   ): Promise<SDKSession> {
     const existing = this.v2Sessions.get(sessionId);
     if (existing) {
-      // Check if session is still ready
-      try {
-        // V2 session transport may have died; we detect this when stream() fails
-        existing.lastUsedAt = Date.now();
-        return existing.session;
-      } catch {
-        // Session is dead, recreate
-        this.cleanupSession(sessionId, "session not ready");
+      // Check if permissionMode changed — must recreate session if so
+      const requestedMode = opts.permissionMode ?? "default";
+      if (existing.permissionMode !== requestedMode) {
+        mainLog.info(
+          `[Claude][${sessionId}] permissionMode changed from ${existing.permissionMode} to ${requestedMode}, recreating session`,
+        );
+        this.cleanupSession(sessionId, "permissionMode changed");
+      } else {
+        // Check if session is still ready
+        try {
+          // V2 session transport may have died; we detect this when stream() fails
+          existing.lastUsedAt = Date.now();
+          return existing.session;
+        } catch {
+          // Session is dead, recreate
+          this.cleanupSession(sessionId, "session not ready");
+        }
       }
     }
 
@@ -1262,6 +1272,7 @@ export class ClaudeCodeAdapter extends EngineAdapter {
       createdAt: Date.now(),
       lastUsedAt: Date.now(),
       capturedSessionId: ccSessionId,
+      permissionMode: opts.permissionMode ?? "default",
     };
 
     this.v2Sessions.set(sessionId, info);

@@ -573,9 +573,19 @@ export class CopilotSdkAdapter extends EngineAdapter {
       }
     }
 
-    // Apply mode if provided
+    // Apply mode if provided — notify Copilot backend via RPC when mode changes
     if (options?.mode) {
+      const previousMode = this.sessionModes.get(sessionId);
       this.sessionModes.set(sessionId, options.mode);
+      if (options.mode !== previousMode) {
+        const sdkMode = options.mode === "agent" ? "interactive" : options.mode as "interactive" | "plan" | "autopilot";
+        try {
+          await session.rpc.mode.set({ mode: sdkMode });
+          copilotLog.info(`Mode switched to ${sdkMode} for session ${sessionId}`);
+        } catch (err) {
+          copilotLog.warn(`Failed to switch mode via RPC for session ${sessionId}:`, err);
+        }
+      }
     }
 
     // Build prompt text from content parts

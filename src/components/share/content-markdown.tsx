@@ -1,36 +1,58 @@
-import { marked } from "marked"
-import { codeToHtml } from "shiki"
-import markedShiki from "marked-shiki"
 import { createOverflow } from "./common"
-import { createResource, createSignal, createEffect } from "solid-js"
-import { transformerNotationDiff } from "@shikijs/transformers"
+import { createResource, createSignal, createEffect, onCleanup } from "solid-js"
 import { useI18n } from "../../lib/i18n"
 import { logger } from "../../lib/logger"
 import style from "./content-markdown.module.css"
 
-const markedWithShiki = marked.use(
-  {
-    renderer: {
-      link(link: any) {
-        const { href, title, text } = link;
-        const titleAttr = title ? ` title="${title}"` : ""
-        return `<a href="${href}"${titleAttr} target="_blank" rel="noopener noreferrer">${text}</a>`
-      },
-    },
-  },
-  markedShiki({
-    highlight(code, lang) {
-      return codeToHtml(code, {
-        lang: lang || "text",
-        themes: {
-          light: "github-light",
-          dark: "one-dark-pro",
+// Shiki highlight cache — avoids redundant codeToHtml calls for identical code blocks
+const highlightCache = new Map<string, string>()
+
+// Lazy-initialized marked instance with Shiki integration
+let markedInstancePromise: Promise<any> | null = null
+
+function getMarkedInstance() {
+  if (markedInstancePromise) return markedInstancePromise
+  markedInstancePromise = (async () => {
+    const [{ marked }, { codeToHtml }, { default: markedShiki }, { transformerNotationDiff }] =
+      await Promise.all([
+        import("marked"),
+        import("shiki"),
+        import("marked-shiki"),
+        import("@shikijs/transformers"),
+      ])
+
+    return marked.use(
+      {
+        renderer: {
+          link(link: any) {
+            const { href, title, text } = link
+            const titleAttr = title ? ` title="${title}"` : ""
+            return `<a href="${href}"${titleAttr} target="_blank" rel="noopener noreferrer">${text}</a>`
+          },
         },
-        transformers: [transformerNotationDiff()],
-      })
-    },
-  }),
-)
+      },
+      markedShiki({
+        async highlight(code: string, lang: string) {
+          const cacheKey = `${lang || "text"}:${code}`
+          const cached = highlightCache.get(cacheKey)
+          if (cached) return cached
+
+          const html = await codeToHtml(code, {
+            lang: lang || "text",
+            themes: {
+              light: "github-light",
+              dark: "one-dark-pro",
+            },
+            transformers: [transformerNotationDiff()],
+          })
+          highlightCache.set(cacheKey, html)
+          return html
+        },
+      }),
+    )
+  })()
+  return markedInstancePromise
+}
 
 interface Props {
   text: string
@@ -39,18 +61,28 @@ interface Props {
 }
 export function ContentMarkdown(props: Props) {
   const { t } = useI18n();
-  // Add debug logs
+
+  // Debounced text — coalesces rapid SSE token updates into ~6-7 re-parses/sec
+  const [debouncedText, setDebouncedText] = createSignal(strip(props.text))
+  createEffect(() => {
+    const text = strip(props.text)
+    const timer = setTimeout(() => setDebouncedText(text), 150)
+    onCleanup(() => clearTimeout(timer))
+  })
+
   createEffect(() => {
     logger.debug("[ContentMarkdown] Text changed, length:", props.text?.length || 0);
   });
 
   const [html] = createResource(
-    () => strip(props.text),
+    debouncedText,
     async (markdown) => {
-      logger.debug("[ContentMarkdown] Parsing markdown, length:", markdown?.length || 0);
-      return markedWithShiki.parse(markdown)
+      if (!markdown) return ""
+      logger.debug("[ContentMarkdown] Parsing markdown, length:", markdown.length);
+      const m = await getMarkedInstance()
+      return m.parse(markdown)
     },
-    { initialValue: "" } // Add initial value to avoid undefined
+    { initialValue: "" }
   )
   const [expanded, setExpanded] = createSignal(false)
   const overflow = createOverflow()

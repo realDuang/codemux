@@ -36,7 +36,7 @@ GitHub Copilot 是全球使用最广泛的 AI 编程工具。**Copilot CLI** 通
 |--------|----------|--------|
 | **[OpenCode](https://opencode.ai)** | HTTP REST + SSE | ✅ 稳定 |
 | **[GitHub Copilot CLI](https://docs.github.com/en/copilot/using-github-copilot/using-github-copilot-coding-agent-in-cli)** | ACP (JSON-RPC/stdio) | ✅ 稳定 |
-| **[Claude Code](https://claude.ai/code)** | ACP | 🚧 计划中 |
+| **[Claude Code](https://claude.ai/code)** | SDK (stdio) | ✅ 稳定 |
 
 ### 3. Agent 思维链可视化
 
@@ -64,7 +64,7 @@ GitHub Copilot 是全球使用最广泛的 AI 编程工具。**Copilot CLI** 通
 - **macOS (Intel)**：`CodeMux-x.x.x-x64.dmg`
 - **Windows**：`CodeMux-x.x.x-setup.exe`
 
-桌面应用内置了 Cloudflare Tunnel 二进制文件和网关服务器。**OpenCode 和 Copilot CLI 需要单独安装**（见下文）。
+桌面应用内置了 Cloudflare Tunnel 二进制文件和网关服务器。**OpenCode、Copilot CLI 和 Claude Code 需要单独安装**（见下文）。
 
 > ⚠️ **macOS 用户**：应用未进行代码签名。如果 macOS 提示"应用已损坏"，请运行：
 >
@@ -89,9 +89,10 @@ bun run update:cloudflared
 bun run dev
 ```
 
-> **引擎前置条件**：两个引擎都是外部依赖，需要安装并添加到 PATH 中：
+> **引擎前置条件**：所有引擎都是外部依赖，需要安装并添加到 PATH 中：
 > - **OpenCode**：从 [opencode.ai](https://opencode.ai) 安装 —— `curl -fsSL https://opencode.ai/install.sh | bash`（Unix）或 `irm https://opencode.ai/install.ps1 | iex`（Windows）
 > - **Copilot CLI**：单独安装 [GitHub Copilot CLI](https://docs.github.com/en/copilot/using-github-copilot/using-github-copilot-coding-agent-in-cli)
+> - **Claude Code**：通过 `npm install -g @anthropic-ai/claude-code` 安装，并设置 `ANTHROPIC_API_KEY`
 >
 > CodeMux 启动时会自动检测已安装的引擎。
 
@@ -166,7 +167,7 @@ https://xyz.trycloudflare.com
 │      ┌─────┴─────┐ ┌──┴────┐ ┌──┴─────┐                         │
 │      │ OpenCode  │ │Copilot│ │ Claude │                         │
 │      │  适配器   │ │ 适配器│ │ 适配器  │                         │
-│      │(HTTP+SSE) │ │ (ACP) │ │ (ACP)  │                         │
+│      │(HTTP+SSE) │ │ (ACP) │ │ (SDK)  │                         │
 │      └───────────┘ └───────┘ └────────┘                         │
 │                                                                 │
 │     统一类型系统：UnifiedPart, ToolPart, AgentMode                │
@@ -197,7 +198,7 @@ bun run update:cloudflared  # 更新 Cloudflare Tunnel 二进制文件
 codemux/
 ├── electron/
 │   ├── main/
-│   │   ├── engines/          # 引擎适配器（OpenCode、Copilot、ACP 基类）
+│   │   ├── engines/          # 引擎适配器（OpenCode、Copilot、Claude Code）
 │   │   ├── gateway/          # WebSocket 服务器 + 引擎路由
 │   │   └── services/         # 认证、设备存储、隧道、会话
 │   └── preload/
@@ -237,6 +238,7 @@ codemux/
 - [问题反馈与功能建议](https://github.com/realDuang/codemux/issues)
 - [OpenCode](https://opencode.ai) — 支持的引擎
 - [GitHub Copilot CLI](https://docs.github.com/en/copilot/using-github-copilot/using-github-copilot-coding-agent-in-cli) — 支持的引擎
+- [Claude Code](https://docs.anthropic.com/en/docs/claude-code) — 支持的引擎
 
 ---
 

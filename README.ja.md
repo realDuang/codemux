@@ -36,7 +36,7 @@ GitHub Copilot は世界で最も広く採用されているAIコーディング
 |--------|----------|--------|
 | **[OpenCode](https://opencode.ai)** | HTTP REST + SSE | ✅ 安定版 |
 | **[GitHub Copilot CLI](https://docs.github.com/en/copilot/using-github-copilot/using-github-copilot-coding-agent-in-cli)** | ACP (JSON-RPC/stdio) | ✅ 安定版 |
-| **[Claude Code](https://claude.ai/code)** | ACP | 🚧 計画中 |
+| **[Claude Code](https://claude.ai/code)** | SDK (stdio) | ✅ 安定版 |
 
 ### 3. エージェントの思考連鎖を可視化
 
@@ -64,7 +64,7 @@ GitHub Copilot は世界で最も広く採用されているAIコーディング
 - **macOS (Intel)**: `CodeMux-x.x.x-x64.dmg`
 - **Windows**: `CodeMux-x.x.x-setup.exe`
 
-デスクトップアプリには Cloudflare Tunnel バイナリとゲートウェイサーバーがバンドルされています。**OpenCode と Copilot CLI は別途インストールが必要です**（以下を参照）。
+デスクトップアプリには Cloudflare Tunnel バイナリとゲートウェイサーバーがバンドルされています。**OpenCode、Copilot CLI、Claude Code は別途インストールが必要です**（以下を参照）。
 
 > ⚠️ **macOS ユーザーへ**: このアプリはコード署名されていません。macOS で「アプリが壊れています」と表示される場合は、以下を実行してください：
 >
@@ -89,9 +89,10 @@ bun run update:cloudflared
 bun run dev
 ```
 
-> **エンジンの前提条件**: 両方のエンジンは外部依存関係であり、インストールしてPATHで利用可能にする必要があります：
+> **エンジンの前提条件**: すべてのエンジンは外部依存関係であり、インストールしてPATHで利用可能にする必要があります：
 > - **OpenCode**: [opencode.ai](https://opencode.ai) からインストール — `curl -fsSL https://opencode.ai/install.sh | bash`（Unix）または `irm https://opencode.ai/install.ps1 | iex`（Windows）
 > - **Copilot CLI**: [GitHub Copilot CLI](https://docs.github.com/en/copilot/using-github-copilot/using-github-copilot-coding-agent-in-cli) を別途インストール
+> - **Claude Code**: `npm install -g @anthropic-ai/claude-code` でインストールし、`ANTHROPIC_API_KEY` を設定
 >
 > CodeMux は起動時にインストール済みのエンジンを自動検出します。
 
@@ -166,7 +167,7 @@ https://xyz.trycloudflare.com
 │      ┌─────┴─────┐ ┌──┴────┐ ┌──┴─────┐                         │
 │      │ OpenCode  │ │Copilot│ │ Claude │                         │
 │      │ Adapter   │ │Adapter│ │Adapter │                         │
-│      │(HTTP+SSE) │ │ (ACP) │ │ (ACP)  │                         │
+│      │(HTTP+SSE) │ │ (ACP) │ │ (SDK)  │                         │
 │      └───────────┘ └───────┘ └────────┘                         │
 │                                                                 │
 │     統一型システム: UnifiedPart, ToolPart, AgentMode              │
@@ -197,7 +198,7 @@ bun run update:cloudflared  # Cloudflare Tunnel バイナリの更新
 codemux/
 ├── electron/
 │   ├── main/
-│   │   ├── engines/          # エンジンアダプター (OpenCode, Copilot, ACP base)
+│   │   ├── engines/          # エンジンアダプター (OpenCode, Copilot, Claude Code)
 │   │   ├── gateway/          # WebSocket サーバー + エンジンルーティング
 │   │   └── services/         # 認証、デバイスストア、トンネル、セッション
 │   └── preload/
@@ -237,6 +238,7 @@ codemux/
 - [Issue & 機能リクエスト](https://github.com/realDuang/codemux/issues)
 - [OpenCode](https://opencode.ai) — 対応エンジン
 - [GitHub Copilot CLI](https://docs.github.com/en/copilot/using-github-copilot/using-github-copilot-coding-agent-in-cli) — 対応エンジン
+- [Claude Code](https://docs.anthropic.com/en/docs/claude-code) — 対応エンジン
 
 ---
 

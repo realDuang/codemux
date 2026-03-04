@@ -67,6 +67,8 @@ export interface LocaleDict {
     initFailed: string;
     retry: string;
     disclaimer: string;
+    noModeError: string;
+    noModelError: string;
   };
 
   // Settings page
@@ -275,6 +277,7 @@ export interface LocaleDict {
     defaultModel: string;
     defaultModelDesc: string;
     noModelsAvailable: string;
+    modelInputPlaceholder: string;
   };
 
   // Channels
@@ -374,6 +377,8 @@ export const en: LocaleDict = {
     initFailed: "Initialization Failed",
     retry: "Retry",
     disclaimer: "AI-generated content may be inaccurate. Please verify important information.",
+    noModeError: "No mode selected. Please select a mode before sending.",
+    noModelError: "No model configured. Please set a model in Settings > Engines.",
   },
 
   // Settings page
@@ -449,11 +454,11 @@ export const en: LocaleDict = {
     adding: "Adding project...",
     addFailed: "Failed to add project",
     notGitRepo: "The specified path is not a valid git repository",
-    hideTitle: "Hide Project",
-    hideConfirm: "Hide project \"{name}\" and delete all its sessions?",
+    hideTitle: "Delete Project Sessions",
+    hideConfirm: "Delete all sessions for project \"{name}\"?",
     sessionCount: "This will delete {count} session(s).",
     hideWarning: "Session history will be permanently deleted.",
-    hideNote: "The project can be restored by adding it again with the same path.",
+    hideNote: "The project will reappear when new sessions are created.",
   },
 
   // Prompt Input
@@ -582,6 +587,7 @@ export const en: LocaleDict = {
     defaultModel: "Model",
     defaultModelDesc: "Model used for conversations",
     noModelsAvailable: "No models available",
+    modelInputPlaceholder: "Enter model ID (e.g. claude-sonnet-4-20250514)",
   },
 
   // Channels

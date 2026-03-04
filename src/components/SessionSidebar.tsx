@@ -1,7 +1,8 @@
-import { For, Show, createSignal, createMemo } from "solid-js";
+import { For, Show, createSignal, createMemo, createEffect } from "solid-js";
 import { SessionInfo, sessionStore, setSessionStore, getProjectName } from "../stores/session";
 import { useI18n, formatMessage } from "../lib/i18n";
 import type { UnifiedProject, EngineType, SessionActivityStatus } from "../types/unified";
+import { configStore } from "../stores/config";
 import { ProjectStore } from "../lib/project-store";
 import { isElectron } from "../lib/platform";
 import { systemAPI, getOpenCodeStoragePath, getCopilotStoragePath } from "../lib/electron-api";
@@ -149,19 +150,12 @@ export function SessionSidebar(props: SessionSidebarProps) {
 
       if (groups.has(projectID)) {
         groups.get(projectID)!.push(session);
-      } else {
-        // Fallback: match by directory AND engine type when projectID is missing or unknown
-        const matchingProject = filteredProjects.find(
-          (p) => session.directory && p.directory === session.directory && p.engineType === session.engineType
-        );
-        if (matchingProject) {
-          groups.get(matchingProject.id)!.push(session);
-        }
       }
     }
 
     const result: ProjectGroup[] = [];
     for (const [projectID, sessions] of groups) {
+      if (sessions.length === 0) continue; // Only show projects that have sessions
       const project = filteredProjects.find((p) => p.id === projectID) || null;
       if (!project) continue;
 
@@ -205,10 +199,57 @@ export function SessionSidebar(props: SessionSidebarProps) {
 
   const multipleEngines = createMemo(() => engineSections().length > 1);
 
+  // Engine tab state
+  const [activeTab, setActiveTab] = createSignal<string | null>(null);
+
+  const runningEngines = createMemo(() =>
+    configStore.engines.filter(e => e.status === "running")
+  );
+
+  const showTabs = createMemo(() => runningEngines().length > 1);
+
+  // Auto-initialize/reset activeTab when running engines change
+  createEffect(() => {
+    if (showTabs()) {
+      const current = activeTab();
+      const running = runningEngines();
+      if (!current || !running.some(e => e.type === current)) {
+        setActiveTab(running[0]?.type ?? null);
+      }
+    } else {
+      setActiveTab(null);
+    }
+  });
+
+  // Auto-switch tab when user selects a session from a different engine
+  // Only track currentSessionId changes, not activeTab changes
+  let prevSessionId: string | null = null;
+  createEffect(() => {
+    const currentId = props.currentSessionId;
+    if (currentId === prevSessionId) return;
+    prevSessionId = currentId;
+
+    if (!showTabs() || !currentId) return;
+    const session = props.sessions.find(s => s.id === currentId);
+    if (session?.engineType && session.engineType !== activeTab()) {
+      if (runningEngines().some(e => e.type === session.engineType)) {
+        setActiveTab(session.engineType);
+      }
+    }
+  });
+
+  // Filtered sections based on active tab
+  const visibleSections = createMemo(() => {
+    const tab = activeTab();
+    const sections = engineSections();
+    if (!tab) return sections;
+    return sections.filter(s => s.engineType === tab);
+  });
+
   // Check if project is expanded
   const isProjectExpanded = (directory: string): boolean => {
-    // Expanded by default
-    return sessionStore.projectExpanded[directory] !== false;
+    // Collapsed by default
+    return sessionStore.projectExpanded[directory] === true;
   };
 
   // Toggle project expansion
@@ -273,10 +314,42 @@ export function SessionSidebar(props: SessionSidebarProps) {
 
   return (
     <div class="w-full bg-gray-50 dark:bg-slate-950 border-r border-gray-200 dark:border-slate-800 flex flex-col h-full">
+      {/* Engine Tab Bar */}
+      <Show when={showTabs()}>
+        <div class="flex items-center gap-1 px-2 pt-2 pb-1 border-b border-gray-200 dark:border-slate-800">
+          <For each={runningEngines()}>
+            {(engine) => {
+              const isActive = () => activeTab() === engine.type;
+              const projectCount = () =>
+                engineSections().find(s => s.engineType === engine.type)?.projects.length ?? 0;
+
+              return (
+                <button
+                  class={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
+                    isActive()
+                      ? "bg-white dark:bg-slate-800 text-gray-900 dark:text-gray-100 shadow-sm"
+                      : "text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-slate-900"
+                  }`}
+                  onClick={() => setActiveTab(engine.type)}
+                >
+                  <span>{getEngineLabel(engine.type)}</span>
+                  <span class={`text-[10px] px-1.5 py-0.5 rounded-full leading-none ${
+                    isActive()
+                      ? (getEngineBadge(engine.type)?.class ?? "bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-400")
+                      : "bg-gray-100 text-gray-400 dark:bg-slate-800 dark:text-gray-500"
+                  }`}>
+                    {projectCount()}
+                  </span>
+                </button>
+              );
+            }}
+          </For>
+        </div>
+      </Show>
       {/* Session List */}
       <div class="flex-1 overflow-y-auto px-2 py-2">
         <Show
-          when={engineSections().length > 0}
+          when={visibleSections().length > 0}
           fallback={
             <div class="p-8 text-center">
               <div class="inline-flex items-center justify-center w-10 h-10 rounded-full bg-gray-100 dark:bg-slate-800 mb-3 text-gray-400">
@@ -298,11 +371,11 @@ export function SessionSidebar(props: SessionSidebarProps) {
             </div>
           }
         >
-          <For each={engineSections()}>
+          <For each={visibleSections()}>
             {(section) => (
               <>
-                {/* Engine separator label (only when multiple engines) */}
-                <Show when={multipleEngines()}>
+                {/* Engine separator label (only when multiple engines and no tabs) */}
+                <Show when={multipleEngines() && !showTabs()}>
                   <div class="flex items-center justify-between px-2 py-1.5 mt-1 first:mt-0">
                     <span class="text-[11px] font-semibold uppercase tracking-wider text-gray-400 dark:text-gray-500">
                       {section.label}

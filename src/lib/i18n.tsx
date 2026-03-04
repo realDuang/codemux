@@ -8,6 +8,7 @@ import {
 } from "solid-js";
 import { en, type LocaleDict } from "../locales/en";
 import { zh } from "../locales/zh";
+import { getSetting, saveSetting } from "./settings";
 
 // Supported locales
 export type LocaleCode = "en" | "zh";
@@ -24,9 +25,9 @@ export const localeNames: Record<LocaleCode, string> = {
   zh: "简体中文",
 };
 
-// Get saved locale from localStorage or use English as default
+// Get saved locale from settings or use English as default
 function getSavedLocale(): LocaleCode {
-  const saved = localStorage.getItem("locale") as LocaleCode | null;
+  const saved = getSetting<string>("locale") as LocaleCode | null;
   if (saved && dictionaries[saved]) {
     return saved;
   }
@@ -34,9 +35,9 @@ function getSavedLocale(): LocaleCode {
   return "en";
 }
 
-// Save locale to localStorage
+// Save locale to settings
 function saveLocale(locale: LocaleCode): void {
-  localStorage.setItem("locale", locale);
+  saveSetting("locale", locale);
 }
 
 // Create locale context type

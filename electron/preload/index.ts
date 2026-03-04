@@ -1,5 +1,9 @@
 import { contextBridge, ipcRenderer } from "electron";
 
+// Pre-load settings synchronously so renderer can read them immediately at module init
+// (needed for theme/locale which must be applied before first paint)
+const _settingsCache: Record<string, unknown> = ipcRenderer.sendSync("settings:loadSync") ?? {};
+
 const electronAPI = {
   // System API
   system: {
@@ -59,6 +63,29 @@ const electronAPI = {
     getLevel: () => ipcRenderer.invoke("log:getLevel") as Promise<string>,
     setLevel: (level: string) =>
       ipcRenderer.invoke("log:setLevel", level) as Promise<{ success: boolean }>,
+  },
+
+  // Channel API
+  channel: {
+    list: () => ipcRenderer.invoke("channel:list"),
+    getConfig: (type: string) => ipcRenderer.invoke("channel:getConfig", type),
+    updateConfig: (type: string, updates: any) =>
+      ipcRenderer.invoke("channel:updateConfig", type, updates),
+    start: (type: string) => ipcRenderer.invoke("channel:start", type),
+    stop: (type: string) => ipcRenderer.invoke("channel:stop", type),
+    getStatus: (type: string) => ipcRenderer.invoke("channel:getStatus", type),
+  },
+
+  // Settings API (persisted to settings.json)
+  settings: {
+    /** Synchronously cached settings — available immediately at module init */
+    cache: _settingsCache,
+    /** Async load all settings from disk */
+    load: () => ipcRenderer.invoke("settings:load") as Promise<Record<string, unknown>>,
+    /** Async save a partial settings patch to disk */
+    save: (patch: Record<string, unknown>) => {
+      return ipcRenderer.invoke("settings:save", patch) as Promise<{ success: boolean }>;
+    },
   },
 
   // Startup API

@@ -1,6 +1,7 @@
 import log from "electron-log/main";
 import { app } from "electron";
 import path from "node:path";
+import fs from "node:fs";
 import type { LevelOption } from "electron-log";
 
 // Configure electron-log for the main process.
@@ -19,8 +20,50 @@ log.transports.file.resolvePathFn = (variables) => {
 // Rotate at 5 MB, keep the old file as main.old.log
 log.transports.file.maxSize = 5 * 1024 * 1024;
 
-// Default file log level: warn (only warn + error written to file)
-log.transports.file.level = "warn";
+// --- Persisted settings ---
+
+const VALID_LEVELS: LevelOption[] = ["error", "warn", "info", "verbose", "debug", "silly", false];
+
+function getSettingsPath(): string {
+  return path.join(app.getPath("userData"), "settings.json");
+}
+
+function loadSettings(): Record<string, unknown> {
+  try {
+    const raw = fs.readFileSync(getSettingsPath(), "utf-8");
+    return JSON.parse(raw);
+  } catch {
+    return {};
+  }
+}
+
+function saveSettings(patch: Record<string, unknown>): void {
+  const existing = loadSettings();
+  // Deep merge: for object-valued keys, merge nested properties instead of replacing
+  const settings = { ...existing };
+  for (const [key, value] of Object.entries(patch)) {
+    if (value && typeof value === "object" && !Array.isArray(value)
+        && existing[key] && typeof existing[key] === "object" && !Array.isArray(existing[key])) {
+      settings[key] = { ...(existing[key] as Record<string, unknown>), ...(value as Record<string, unknown>) };
+    } else {
+      settings[key] = value;
+    }
+  }
+  const filePath = getSettingsPath();
+  const dir = path.dirname(filePath);
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
+  }
+  const tmpPath = `${filePath}.tmp`;
+  fs.writeFileSync(tmpPath, JSON.stringify(settings, null, 2));
+  fs.renameSync(tmpPath, filePath);
+}
+
+// Restore persisted log level, fallback to "warn"
+const savedLevel = loadSettings().logLevel as string | undefined;
+log.transports.file.level = (savedLevel && VALID_LEVELS.includes(savedLevel as LevelOption))
+  ? savedLevel as LevelOption
+  : "warn";
 
 // File format: include date, level, and scope
 log.transports.file.format =
@@ -43,11 +86,11 @@ export function getFileLogLevel(): string {
   return String(log.transports.file.level ?? "warn");
 }
 
-/** Set the file transport log level at runtime */
+/** Set the file transport log level at runtime and persist to disk */
 export function setFileLogLevel(level: string): void {
-  const valid: LevelOption[] = ["error", "warn", "info", "verbose", "debug", "silly", false];
-  if (valid.includes(level as LevelOption)) {
+  if (VALID_LEVELS.includes(level as LevelOption)) {
     log.transports.file.level = level as LevelOption;
+    saveSettings({ logLevel: level });
   }
 }
 
@@ -56,6 +99,10 @@ export function getLogFilePath(): string {
   const file = log.transports.file.getFile();
   return file?.path ?? "";
 }
+
+// --- Generic settings access (for other modules) ---
+
+export { loadSettings, saveSettings };
 
 // Export pre-configured scoped loggers for each module.
 // Usage: import { mainLog } from "../services/logger";
@@ -72,6 +119,8 @@ export const sessionStoreLog = log.scope("session-store");
 export const deviceStoreLog = log.scope("device-store");
 export const tunnelLog = log.scope("tunnel");
 export const windowLog = log.scope("window");
+export const channelLog = log.scope("channel");
+export const feishuLog = log.scope("feishu");
 
 // Re-export the root logger for ad-hoc usage and renderer log forwarding
 export default log;

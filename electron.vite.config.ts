@@ -73,6 +73,7 @@ export default defineConfig({
       },
     },
     server: {
+      hmr: false,
       host: true,
       port: 5173,
       allowedHosts: [

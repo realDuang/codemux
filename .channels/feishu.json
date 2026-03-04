@@ -1,0 +1,11 @@
+{
+  "type": "feishu",
+  "name": "feishu",
+  "enabled": true,
+  "options": {
+    "appId": "cli_a92d0d0ba438dcb0",
+    "appSecret": "93Tvel4EDq9kbjR7t1z1jbVOWgdyKIvF",
+    "autoApprovePermissions": true,
+    "streamingThrottleMs": 1500
+  }
+}

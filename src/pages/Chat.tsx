@@ -411,64 +411,53 @@ export default function Chat() {
           // Update store incrementally so sidebar can show project groups
           setSessionStore("projects", validProjects);
 
-          // Phase 2: Load sessions from all engines in parallel
-          const sessionResults = await Promise.allSettled(
-            enabledRunningEngines.map(engine => gateway.listSessions(engine.type))
-          );
-          if (disposed || gen !== initGeneration) return;
-
-          const sessions: UnifiedSession[] = [];
-          sessionResults.forEach((result, i) => {
-            if (result.status === "fulfilled") {
-              sessions.push(...result.value);
-            } else {
-              logger.warn(`[Init:bg] Failed to load sessions for engine ${enabledRunningEngines[i].type}:`, result.reason);
-            }
-          });
-          logger.debug("[Init:bg] Loaded sessions:", sessions.length);
-
-          // Filter sessions to valid project directories
+          // Phase 2: Load sessions incrementally per engine
           const validDirectories = new Set(validProjects.map((p: UnifiedProject) => p.directory));
-          const droppedSessions = sessions.filter((s: UnifiedSession) => !validDirectories.has(s.directory));
-          if (droppedSessions.length > 0) {
-            logger.warn("[Init:bg] Sessions filtered out (directory not in valid projects):",
-              droppedSessions.map(s => ({ id: s.id, dir: s.directory, engine: s.engineType })));
-          }
-          const filteredSessions = sessions.filter((s: UnifiedSession) => validDirectories.has(s.directory));
+          setSessionStore("loadingEngines", enabledRunningEngines.map(e => e.type));
 
-          const processedSessions: SessionInfo[] = filteredSessions.map((s: UnifiedSession) => {
-            let projectID = s.projectId ?? (s.engineMeta?.projectID as string) ?? undefined;
-            if (!projectID) {
-              const matchingProject = validProjects.find(
-                p => p.directory === s.directory && p.engineType === s.engineType,
-              );
-              if (matchingProject) {
-                projectID = matchingProject.id;
+          await Promise.allSettled(
+            enabledRunningEngines.map(async (engine) => {
+              try {
+                const sessions = await gateway.listSessions(engine.type);
+                if (disposed || gen !== initGeneration) return;
+
+                const filteredSessions = sessions.filter((s: UnifiedSession) => validDirectories.has(s.directory));
+                if (sessions.length !== filteredSessions.length) {
+                  const dropped = sessions.filter((s: UnifiedSession) => !validDirectories.has(s.directory));
+                  logger.warn(`[Init:bg] Sessions filtered out for ${engine.type}:`,
+                    dropped.map(s => ({ id: s.id, dir: s.directory })));
+                }
+
+                const processedSessions: SessionInfo[] = filteredSessions.map((s: UnifiedSession) => {
+                  let projectID = s.projectId ?? (s.engineMeta?.projectID as string) ?? undefined;
+                  if (!projectID) {
+                    const matchingProject = validProjects.find(
+                      p => p.directory === s.directory && p.engineType === s.engineType,
+                    );
+                    if (matchingProject) {
+                      projectID = matchingProject.id;
+                    }
+                  }
+                  return toSessionInfo(s, projectID);
+                });
+
+                // Incremental merge into store
+                const existingList = sessionStore.list;
+                const mergedMap = new Map<string, SessionInfo>();
+                for (const s of existingList) mergedMap.set(s.id, s);
+                for (const s of processedSessions) mergedMap.set(s.id, s);
+                const mergedSessions = [...mergedMap.values()].sort(
+                  (a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
+                );
+                setSessionStore("list", mergedSessions);
+                logger.debug(`[Init:bg] Sessions loaded for ${engine.type}:`, processedSessions.length);
+              } catch (err) {
+                logger.warn(`[Init:bg] Failed to load sessions for ${engine.type}:`, err);
+              } finally {
+                setSessionStore("loadingEngines", (prev) => prev.filter(t => t !== engine.type));
               }
-            }
-            return toSessionInfo(s, projectID);
-          });
-
-          processedSessions.sort((a: SessionInfo, b: SessionInfo) =>
-            new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
+            })
           );
-
-          // Merge with existing sessions
-          if (disposed || gen !== initGeneration) return;
-          const existingList = sessionStore.list;
-          const mergedMap = new Map<string, SessionInfo>();
-          for (const s of existingList) {
-            mergedMap.set(s.id, s);
-          }
-          for (const s of processedSessions) {
-            mergedMap.set(s.id, s);
-          }
-          const mergedSessions = [...mergedMap.values()].sort(
-            (a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
-          );
-
-          setSessionStore("list", mergedSessions);
-          logger.debug("[Init:bg] Session list updated:", mergedSessions.length);
         } catch (err) {
           if (disposed || gen !== initGeneration) return;
           logger.warn("[Init:bg] Background session loading failed:", err);

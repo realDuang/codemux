@@ -351,24 +351,37 @@ export function SessionSidebar(props: SessionSidebarProps) {
         <Show
           when={visibleSections().length > 0}
           fallback={
-            <div class="p-8 text-center">
-              <div class="inline-flex items-center justify-center w-10 h-10 rounded-full bg-gray-100 dark:bg-slate-800 mb-3 text-gray-400">
-                <svg
-                  xmlns="http://www.w3.org/2000/svg"
-                  width="20"
-                  height="20"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="2"
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                >
-                  <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+            <Show
+              when={sessionStore.loadingEngines.some(e => !activeTab() || e === activeTab())}
+              fallback={
+                <div class="p-8 text-center">
+                  <div class="inline-flex items-center justify-center w-10 h-10 rounded-full bg-gray-100 dark:bg-slate-800 mb-3 text-gray-400">
+                    <svg
+                      xmlns="http://www.w3.org/2000/svg"
+                      width="20"
+                      height="20"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="2"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    >
+                      <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+                    </svg>
+                  </div>
+                  <p class="text-sm text-gray-500 dark:text-gray-400">{t().sidebar.noSessions}</p>
+                </div>
+              }
+            >
+              <div class="p-6 text-center">
+                <svg class="animate-spin h-5 w-5 mx-auto mb-2 text-gray-400 dark:text-gray-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                  <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" />
+                  <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
                 </svg>
+                <p class="text-xs text-gray-400 dark:text-gray-500">{t().sidebar.loadingSessions}</p>
               </div>
-              <p class="text-sm text-gray-500 dark:text-gray-400">{t().sidebar.noSessions}</p>
-            </div>
+            </Show>
           }
         >
           <For each={visibleSections()}>

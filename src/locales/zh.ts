@@ -121,6 +121,7 @@ export const zh: LocaleDict = {
   // Session Sidebar
   sidebar: {
     noSessions: "暂无会话",
+    loadingSessions: "加载会话中...",
     newSession: "新建会话",
     deleteConfirm: "确定要删除这个会话吗？",
     deleteSession: "删除会话",

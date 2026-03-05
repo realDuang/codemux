@@ -25,6 +25,7 @@ export const [sessionStore, setSessionStore] = createStore<{
   list: SessionInfo[];
   current: string | null;
   loading: boolean;
+  loadingEngines: string[];
   initError: string | null;
   projects: UnifiedProject[];
   projectExpanded: ProjectExpandState;
@@ -32,6 +33,7 @@ export const [sessionStore, setSessionStore] = createStore<{
   list: [],
   current: null,
   loading: false,
+  loadingEngines: [],
   initError: null,
   projects: [],
   projectExpanded: {},

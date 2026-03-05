@@ -120,6 +120,7 @@ export interface LocaleDict {
   // Session Sidebar
   sidebar: {
     noSessions: string;
+    loadingSessions: string;
     newSession: string;
     deleteConfirm: string;
     deleteSession: string;
@@ -432,6 +433,7 @@ export const en: LocaleDict = {
   // Session Sidebar
   sidebar: {
     noSessions: "No sessions",
+    loadingSessions: "Loading sessions...",
     newSession: "New session",
     deleteConfirm: "Are you sure you want to delete this session?",
     deleteSession: "Delete session",

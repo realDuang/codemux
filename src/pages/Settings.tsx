@@ -7,6 +7,7 @@ import { useAuthGuard } from "../lib/useAuthGuard";
 import { isElectron } from "../lib/platform";
 import { Auth } from "../lib/auth";
 import { configStore, saveEngineModelSelection, isEngineEnabled, setEngineEnabled } from "../stores/config";
+import { systemAPI, updateAPI } from "../lib/electron-api";
 import type { UnifiedModelInfo } from "../types/unified";
 
 export default function Settings() {
@@ -19,9 +20,23 @@ export default function Settings() {
   const [logLevel, setLogLevel] = createSignal("warn");
   const [showLogSection, setShowLogSection] = createSignal(isElectron());
 
+  // Update section state
+  const [appVersion, setAppVersion] = createSignal("");
+  const [updateCheckStatus, setUpdateCheckStatus] = createSignal<"idle" | "checking" | "up-to-date" | "available" | "error">("idle");
+  const [autoCheckEnabled, setAutoCheckEnabled] = createSignal(true);
+
   const logLevels = ["error", "warn", "info", "verbose", "debug", "silly"];
 
   onMount(async () => {
+    // Load app version and update settings
+    if (isElectron()) {
+      const info = await systemAPI.getInfo();
+      if (info) setAppVersion(info.version);
+
+      const autoCheck = await updateAPI.isAutoCheckEnabled();
+      setAutoCheckEnabled(autoCheck);
+    }
+
     if (isElectron()) {
       const api = (window as any).electronAPI;
       if (api?.log) {
@@ -92,6 +107,32 @@ export default function Settings() {
         // fallback: try shell.openExternal for the directory
       }
     }
+  };
+
+  const handleCheckForUpdates = async () => {
+    setUpdateCheckStatus("checking");
+    const result = await updateAPI.checkForUpdates();
+    if (!result) {
+      setUpdateCheckStatus("idle");
+      return;
+    }
+    if (result.status === "available" || result.status === "downloading" || result.status === "downloaded") {
+      setUpdateCheckStatus("available");
+    } else if (result.status === "error") {
+      setUpdateCheckStatus("error");
+      // Reset after 3 seconds
+      setTimeout(() => setUpdateCheckStatus("idle"), 3000);
+    } else {
+      setUpdateCheckStatus("up-to-date");
+      // Reset after 3 seconds
+      setTimeout(() => setUpdateCheckStatus("idle"), 3000);
+    }
+  };
+
+  const handleAutoCheckToggle = async () => {
+    const newValue = !autoCheckEnabled();
+    setAutoCheckEnabled(newValue);
+    await updateAPI.setAutoCheck(newValue);
   };
 
   return (
@@ -465,6 +506,79 @@ export default function Settings() {
                           )}
                         </For>
                       </select>
+                    </div>
+                  </div>
+                </div>
+              </section>
+            </Show>
+
+            {/* Update Section (Electron only) */}
+            <Show when={isElectron()}>
+              <section>
+                <h2 class="text-sm font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-4 px-1">
+                  {t().update.title}
+                </h2>
+                <div class="bg-white dark:bg-slate-800 rounded-xl shadow-xs border border-gray-200 dark:border-slate-700 overflow-visible">
+                  {/* Current version + check for updates */}
+                  <div class="p-4 sm:p-6 flex items-center justify-between gap-4 border-b border-gray-200 dark:border-slate-700">
+                    <div>
+                      <h3 class="text-base font-medium text-gray-900 dark:text-white">
+                        {t().update.currentVersion}
+                      </h3>
+                      <p class="text-sm text-gray-500 dark:text-gray-400 mt-1">
+                        v{appVersion()}
+                      </p>
+                      <Show when={updateCheckStatus() === "up-to-date"}>
+                        <p class="text-xs text-emerald-600 dark:text-emerald-400 mt-1">
+                          {t().update.upToDate}
+                        </p>
+                      </Show>
+                      <Show when={updateCheckStatus() === "available"}>
+                        <p class="text-xs text-blue-600 dark:text-blue-400 mt-1">
+                          {t().update.available}
+                        </p>
+                      </Show>
+                      <Show when={updateCheckStatus() === "error"}>
+                        <p class="text-xs text-red-500 mt-1">
+                          {t().update.error}
+                        </p>
+                      </Show>
+                    </div>
+                    <div class="flex-shrink-0">
+                      <button
+                        onClick={handleCheckForUpdates}
+                        disabled={updateCheckStatus() === "checking"}
+                        class="px-3 py-1.5 text-sm font-medium rounded-lg border border-gray-300 dark:border-slate-600 text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-slate-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        {updateCheckStatus() === "checking" ? t().update.checking : t().update.checkForUpdates}
+                      </button>
+                    </div>
+                  </div>
+                  {/* Auto-check toggle */}
+                  <div class="p-4 sm:p-6 flex items-center justify-between gap-4">
+                    <div>
+                      <h3 class="text-base font-medium text-gray-900 dark:text-white">
+                        {t().update.autoCheck}
+                      </h3>
+                      <p class="text-sm text-gray-500 dark:text-gray-400 mt-1">
+                        {t().update.autoCheckDesc}
+                      </p>
+                    </div>
+                    <div class="flex-shrink-0">
+                      <button
+                        onClick={handleAutoCheckToggle}
+                        class={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                          autoCheckEnabled() ? "bg-blue-600" : "bg-gray-300 dark:bg-slate-600"
+                        }`}
+                        role="switch"
+                        aria-checked={autoCheckEnabled()}
+                      >
+                        <span
+                          class={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                            autoCheckEnabled() ? "translate-x-6" : "translate-x-1"
+                          }`}
+                        />
+                      </button>
                     </div>
                   </div>
                 </div>

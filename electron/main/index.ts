@@ -16,6 +16,7 @@ import { GatewayServer } from "./gateway/ws-server";
 import { OpenCodeAdapter } from "./engines/opencode-adapter";
 import { CopilotSdkAdapter } from "./engines/copilot-sdk-adapter";
 import { ClaudeCodeAdapter } from "./engines/claude-code-adapter";
+import { updateManager } from "./services/update-manager";
 
 // --- Gateway singleton instances ---
 const engineManager = new EngineManager();
@@ -128,6 +129,11 @@ if (!gotTheLock) {
 
     // Create main window
     createWindow();
+
+    // Initialize auto-updater (only in packaged mode)
+    if (app.isPackaged) {
+      updateManager.init();
+    }
 
     // Mark startup as ready once all engines have settled (success or failure)
     Promise.allSettled(enginePromises).then(() => {

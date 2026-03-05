@@ -310,4 +310,23 @@ export const zh: LocaleDict = {
     save: "保存",
     saving: "保存中...",
   },
+
+  // Update
+  update: {
+    title: "更新",
+    currentVersion: "当前版本",
+    checkForUpdates: "检查更新",
+    checking: "正在检查更新...",
+    upToDate: "已是最新版本",
+    available: "发现新版本 v{version}",
+    downloading: "正在下载更新...",
+    downloaded: "更新已就绪，可以安装",
+    restartNow: "立即重启",
+    restartLater: "稍后",
+    error: "检查更新失败",
+    autoCheck: "自动检查更新",
+    autoCheckDesc: "启动时自动检查更新",
+    releaseNotes: "更新内容",
+    retry: "重试",
+  },
 };

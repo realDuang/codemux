@@ -3,6 +3,7 @@ import os from "os";
 import { deviceStore } from "./services/device-store";
 import { tunnelManager } from "./services/tunnel-manager";
 import { productionServer } from "./services/production-server";
+import { updateManager } from "./services/update-manager";
 import { getLogFilePath, getFileLogLevel, setFileLogLevel, loadSettings, saveSettings } from "./services/logger";
 import { isStartupReady } from "./index";
 
@@ -227,6 +228,31 @@ export function registerIpcHandlers(): void {
   ipcMain.handle("settings:save", async (_event, patch: Record<string, unknown>) => {
     saveSettings(patch);
     return { success: true };
+  });
+
+  // ===========================================================================
+  // Auto Update
+  // ===========================================================================
+
+  ipcMain.handle("update:checkForUpdates", async () => {
+    return updateManager.checkForUpdates();
+  });
+
+  ipcMain.handle("update:quitAndInstall", async () => {
+    updateManager.quitAndInstall();
+  });
+
+  ipcMain.handle("update:getStatus", async () => {
+    return updateManager.getState();
+  });
+
+  ipcMain.handle("update:setAutoCheck", async (_, enabled: boolean) => {
+    updateManager.setAutoCheck(enabled);
+    return { success: true };
+  });
+
+  ipcMain.handle("update:isAutoCheckEnabled", async () => {
+    return updateManager.isAutoCheckEnabled();
   });
 
   // ===========================================================================

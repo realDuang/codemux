@@ -309,6 +309,25 @@ export interface LocaleDict {
     save: string;
     saving: string;
   };
+
+  // Update
+  update: {
+    title: string;
+    currentVersion: string;
+    checkForUpdates: string;
+    checking: string;
+    upToDate: string;
+    available: string;
+    downloading: string;
+    downloaded: string;
+    restartNow: string;
+    restartLater: string;
+    error: string;
+    autoCheck: string;
+    autoCheckDesc: string;
+    releaseNotes: string;
+    retry: string;
+  };
 }
 
 export const en: LocaleDict = {
@@ -620,5 +639,24 @@ export const en: LocaleDict = {
     configRequired: "App ID and App Secret are required to enable the bot",
     save: "Save",
     saving: "Saving...",
+  },
+
+  // Update
+  update: {
+    title: "Update",
+    currentVersion: "Current Version",
+    checkForUpdates: "Check for Updates",
+    checking: "Checking for updates...",
+    upToDate: "You're up to date",
+    available: "New version v{version} available",
+    downloading: "Downloading update...",
+    downloaded: "Update ready to install",
+    restartNow: "Restart Now",
+    restartLater: "Later",
+    error: "Update check failed",
+    autoCheck: "Auto-check for updates",
+    autoCheckDesc: "Automatically check for updates on startup",
+    releaseNotes: "What's new",
+    retry: "Retry",
   },
 };

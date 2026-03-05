@@ -48,7 +48,9 @@ export function loadEngineModelSelection(engineType: string): EngineModelSelecti
 
 export function saveEngineModelSelection(engineType: string, selection: EngineModelSelection): void {
   setConfigStore("engineModelSelections", engineType, selection);
-  saveNestedSetting(`engineModels.${engineType}`, selection);
+  // Merge with existing persisted object to preserve `enabled` flag set by setEngineEnabled()
+  const existing = getNestedSetting<Record<string, unknown>>(`engineModels.${engineType}`) ?? {};
+  saveNestedSetting(`engineModels.${engineType}`, { ...existing, ...selection });
 }
 
 /**

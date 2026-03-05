@@ -300,7 +300,7 @@ export default function Settings() {
                                 </Show>
                                 {/* Show "Disabled" label when engine is off */}
                                 <Show when={!isEngineEnabled(engine.type)}>
-                                  <span class="text-sm text-gray-400 dark:text-gray-500 mt-0.5">
+                                  <span class="block text-sm text-gray-400 dark:text-gray-500 mt-0.5">
                                     {t().engine.disabled}
                                   </span>
                                 </Show>

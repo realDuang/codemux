@@ -1,4 +1,4 @@
-import { createMemo, createSignal, Index, Show, onCleanup } from "solid-js";
+import { createMemo, Index, Show } from "solid-js";
 import { createVirtualizer } from "@tanstack/solid-virtual";
 import { messageStore } from "../stores/message";
 import { SessionTurn } from "./SessionTurn";

@@ -325,7 +325,6 @@ export function SessionTurn(props: SessionTurnProps) {
   // Get permissions that don't match any tool part (need standalone rendering)
   const unmatchedPermissions = createMemo(() => {
     const matched = new Set<string>();
-    const byCallId = permissionByCallId();
     for (const msg of props.assistantMessages) {
       const parts = messageStore.part[msg.id] || [];
       for (const p of parts) {

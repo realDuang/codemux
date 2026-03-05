@@ -25,7 +25,7 @@ import { AddProjectModal } from "../components/AddProjectModal";
 import type { UnifiedMessage, UnifiedPart, UnifiedPermission, UnifiedQuestion, UnifiedSession, UnifiedProject, AgentMode, EngineType, SessionActivityStatus } from "../types/unified";
 import { useI18n } from "../lib/i18n";
 
-import { configStore, setConfigStore, getSelectedModelForEngine, restoreEngineModelSelections } from "../stores/config";
+import { configStore, setConfigStore, getSelectedModelForEngine, restoreEngineModelSelections, isEngineEnabled, restoreEnabledEngines } from "../stores/config";
 
 // Binary search helper (consistent with opencode desktop)
 function binarySearch<T>(
@@ -103,44 +103,30 @@ export default function Chat() {
     prevSendingMap = { ...currentMap };
   });
 
-  // Compute activity status for each session
-  const sessionStatusMap = createMemo((): Record<string, SessionActivityStatus> => {
-    const map: Record<string, SessionActivityStatus> = {};
-    const currentSending = sendingMap();
-    const unread = unreadSessions();
-    for (const session of sessionStore.list) {
-      const sid = session.id;
-      // Priority: waiting > running > error > completed > idle
-      const pendingPerms = messageStore.permission[sid];
-      if (pendingPerms && pendingPerms.length > 0) {
-        map[sid] = "waiting";
-        continue;
-      }
-      const pendingQuestions = messageStore.question[sid];
-      if (pendingQuestions && pendingQuestions.length > 0) {
-        map[sid] = "waiting";
-        continue;
-      }
-      if (currentSending[sid]) {
-        map[sid] = "running";
-        continue;
-      }
-      const messages = messageStore.message[sid];
-      if (messages && messages.length > 0) {
-        const lastAssistant = [...messages].reverse().find((m) => m.role === "assistant");
-        if (lastAssistant?.error) {
-          map[sid] = lastAssistant.error === "Cancelled" ? "cancelled" : "error";
-          continue;
+  // Compute activity status for a single session (called on-demand, not a global memo)
+  const getSessionStatus = (sid: string): SessionActivityStatus => {
+    const pendingPerms = messageStore.permission[sid];
+    if (pendingPerms && pendingPerms.length > 0) return "waiting";
+    const pendingQuestions = messageStore.question[sid];
+    if (pendingQuestions && pendingQuestions.length > 0) return "waiting";
+    if (sendingMap()[sid]) return "running";
+    const messages = messageStore.message[sid];
+    if (messages && messages.length > 0) {
+      let lastAssistant: UnifiedMessage | undefined;
+      for (let i = messages.length - 1; i >= 0; i -= 1) {
+        const m = messages[i];
+        if (m.role === "assistant") {
+          lastAssistant = m;
+          break;
         }
       }
-      if (unread.has(sid)) {
-        map[sid] = "completed";
-        continue;
+      if (lastAssistant?.error) {
+        return lastAssistant.error === "Cancelled" ? "cancelled" : "error";
       }
-      map[sid] = "idle";
     }
-    return map;
-  });
+    if (unreadSessions().has(sid)) return "completed";
+    return "idle";
+  };
   const [messagesRef, setMessagesRef] = createSignal<HTMLDivElement>();
   const [loadingMessages, setLoadingMessages] = createSignal(false);
   // Whether user has scrolled away from the bottom. When true, auto-scroll
@@ -255,14 +241,19 @@ export default function Chat() {
     return el.scrollHeight - el.scrollTop - el.clientHeight < threshold;
   };
 
+  let scrollRafPending = false;
   const handleScroll = () => {
-    setUserScrolledUp(!isNearBottom());
+    if (scrollRafPending) return;
+    scrollRafPending = true;
+    requestAnimationFrame(() => {
+      scrollRafPending = false;
+      setUserScrolledUp(!isNearBottom());
+    });
   };
 
   const toggleSidebar = () => setIsSidebarOpen((prev) => !prev);
 
-  // Window Resize Listener for Mobile State
-  createEffect(() => {
+  onMount(() => {
     const handleResize = () => {
       setIsMobile(window.innerWidth < 768);
       if (window.innerWidth >= 768) {
@@ -287,19 +278,16 @@ export default function Chat() {
 
       logger.debug("[LoadMessages] Loaded messages:", messages, isStale ? "(stale)" : "");
 
-      // Store parts separately, sorted by id
+      // Store parts separately, sorted by id (in-place — API returns fresh arrays)
       for (const msg of messages) {
-        const sortedParts = (msg.parts || []).slice().sort((a, b) =>
-          a.id.localeCompare(b.id)
-        );
-        setMessageStore("part", msg.id, sortedParts);
+        const parts = msg.parts || [];
+        parts.sort((a, b) => a.id.localeCompare(b.id));
+        setMessageStore("part", msg.id, parts);
       }
 
-      // Store all messages, sorted by id
-      const sortedMessages = messages.slice().sort((a, b) =>
-        a.id.localeCompare(b.id)
-      );
-      setMessageStore("message", sessionId, sortedMessages);
+      // Store all messages, sorted by id (in-place — API returns fresh array)
+      messages.sort((a, b) => a.id.localeCompare(b.id));
+      setMessageStore("message", sessionId, messages);
     } catch (error) {
       if (!disposed) {
         logger.error("[LoadMessages] Failed to load messages:", error);
@@ -310,7 +298,12 @@ export default function Chat() {
     }
   };
 
+  // Generation counter to discard stale background loads when initializeSession
+  // is called again (e.g. on gateway reconnect).
+  let initGeneration = 0;
+
   const initializeSession = async () => {
+    const gen = ++initGeneration;
     logger.debug("[Init] Starting session initialization");
     setSessionStore({ initError: null });
 
@@ -358,17 +351,18 @@ export default function Chat() {
         },
       });
 
-      // Load available engines
+      // Load available engines (blocking — needed for UI/Settings before we can proceed)
       try {
         const engines = await gateway.listEngines();
         setConfigStore("engines", engines);
-        const runningEngine = engines.find(e => e.status === "running");
+        restoreEnabledEngines();
+        const runningEngine = engines.find(e => e.status === "running" && isEngineEnabled(e.type));
         if (runningEngine) {
           setConfigStore("currentEngineType", runningEngine.type);
         }
 
-        // Load model lists for all running engines so Settings can show them
-        const runningEnginesForModels = engines.filter(e => e.status === "running");
+        // Load model lists for all running + enabled engines so Settings can show them
+        const runningEnginesForModels = engines.filter(e => e.status === "running" && isEngineEnabled(e.type));
         await Promise.all(runningEnginesForModels.map(async (engine) => {
           try {
             const modelResult = await gateway.listModels(engine.type);
@@ -384,91 +378,102 @@ export default function Chat() {
         logger.warn("[Init] Failed to load engines:", err);
       }
 
-      const projects = await gateway.listProjects("opencode");
-      logger.debug("[Init] Loaded projects:", projects);
+      // Engine + model loading complete — unblock UI immediately.
+      // Sidebar will render (possibly empty) while projects/sessions load in background.
+      setSessionStore({ loading: false, current: null });
 
-      // Load projects from other running engines
-      const runningEngines = configStore.engines.filter(e => e.status === "running" && e.type !== "opencode");
-      for (const engine of runningEngines) {
+      // --- Background: load projects & sessions without blocking the UI ---
+      const enabledRunningEngines = configStore.engines.filter(e => e.status === "running" && isEngineEnabled(e.type));
+
+      // Fire-and-forget — errors are logged, not surfaced as initError
+      (async () => {
         try {
-          const engineProjects = await gateway.listProjects(engine.type);
-          projects.push(...engineProjects);
-        } catch (err) {
-          logger.warn(`[Init] Failed to load projects for engine ${engine.type}:`, err);
-        }
-      }
-
-      // Filter out invalid projects (no directory or root "/")
-      const validProjects = projects.filter((p: UnifiedProject) => {
-        return p.directory && p.directory !== "/";
-      });
-
-      // Load all sessions from all running engines
-      const sessions = await gateway.listSessions("opencode");
-      for (const engine of runningEngines) {
-        try {
-          const engineSessions = await gateway.listSessions(engine.type);
-          sessions.push(...engineSessions);
-        } catch (err) {
-          logger.warn(`[Init] Failed to load sessions for engine ${engine.type}:`, err);
-        }
-      }
-      logger.debug("[Init] Loaded sessions:", sessions);
-
-      // Filter sessions to valid project directories
-      const validDirectories = new Set(validProjects.map((p: UnifiedProject) => p.directory));
-      logger.debug("[Init] Valid directories:", [...validDirectories]);
-      const droppedSessions = sessions.filter((s: UnifiedSession) => !validDirectories.has(s.directory));
-      if (droppedSessions.length > 0) {
-        logger.warn("[Init] Sessions filtered out (directory not in valid projects):",
-          droppedSessions.map(s => ({ id: s.id, dir: s.directory, engine: s.engineType })));
-      }
-      const filteredSessions = sessions.filter((s: UnifiedSession) => validDirectories.has(s.directory));
-
-      const processedSessions: SessionInfo[] = filteredSessions.map((s: UnifiedSession) => {
-        // Resolve projectID: prefer session's own projectId, then fall back to
-        // directory+engineType matching against known projects. Some engines
-        // (e.g. Copilot, mock adapters) don't populate projectId on sessions.
-        let projectID = s.projectId ?? (s.engineMeta?.projectID as string) ?? undefined;
-        if (!projectID) {
-          const matchingProject = validProjects.find(
-            p => p.directory === s.directory && p.engineType === s.engineType,
+          // Phase 1: Load projects from all engines in parallel
+          const projectResults = await Promise.allSettled(
+            enabledRunningEngines.map(engine => gateway.listProjects(engine.type))
           );
-          if (matchingProject) {
-            projectID = matchingProject.id;
+          if (disposed || gen !== initGeneration) return;
+
+          const projects: UnifiedProject[] = [];
+          projectResults.forEach((result, i) => {
+            if (result.status === "fulfilled") {
+              projects.push(...result.value);
+            } else {
+              logger.warn(`[Init:bg] Failed to load projects for engine ${enabledRunningEngines[i].type}:`, result.reason);
+            }
+          });
+
+          const validProjects = projects.filter((p: UnifiedProject) =>
+            p.directory && p.directory !== "/"
+          );
+          logger.debug("[Init:bg] Loaded projects:", validProjects.length);
+
+          // Update store incrementally so sidebar can show project groups
+          setSessionStore("projects", validProjects);
+
+          // Phase 2: Load sessions from all engines in parallel
+          const sessionResults = await Promise.allSettled(
+            enabledRunningEngines.map(engine => gateway.listSessions(engine.type))
+          );
+          if (disposed || gen !== initGeneration) return;
+
+          const sessions: UnifiedSession[] = [];
+          sessionResults.forEach((result, i) => {
+            if (result.status === "fulfilled") {
+              sessions.push(...result.value);
+            } else {
+              logger.warn(`[Init:bg] Failed to load sessions for engine ${enabledRunningEngines[i].type}:`, result.reason);
+            }
+          });
+          logger.debug("[Init:bg] Loaded sessions:", sessions.length);
+
+          // Filter sessions to valid project directories
+          const validDirectories = new Set(validProjects.map((p: UnifiedProject) => p.directory));
+          const droppedSessions = sessions.filter((s: UnifiedSession) => !validDirectories.has(s.directory));
+          if (droppedSessions.length > 0) {
+            logger.warn("[Init:bg] Sessions filtered out (directory not in valid projects):",
+              droppedSessions.map(s => ({ id: s.id, dir: s.directory, engine: s.engineType })));
           }
+          const filteredSessions = sessions.filter((s: UnifiedSession) => validDirectories.has(s.directory));
+
+          const processedSessions: SessionInfo[] = filteredSessions.map((s: UnifiedSession) => {
+            let projectID = s.projectId ?? (s.engineMeta?.projectID as string) ?? undefined;
+            if (!projectID) {
+              const matchingProject = validProjects.find(
+                p => p.directory === s.directory && p.engineType === s.engineType,
+              );
+              if (matchingProject) {
+                projectID = matchingProject.id;
+              }
+            }
+            return toSessionInfo(s, projectID);
+          });
+
+          processedSessions.sort((a: SessionInfo, b: SessionInfo) =>
+            new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
+          );
+
+          // Merge with existing sessions
+          if (disposed || gen !== initGeneration) return;
+          const existingList = sessionStore.list;
+          const mergedMap = new Map<string, SessionInfo>();
+          for (const s of existingList) {
+            mergedMap.set(s.id, s);
+          }
+          for (const s of processedSessions) {
+            mergedMap.set(s.id, s);
+          }
+          const mergedSessions = [...mergedMap.values()].sort(
+            (a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
+          );
+
+          setSessionStore("list", mergedSessions);
+          logger.debug("[Init:bg] Session list updated:", mergedSessions.length);
+        } catch (err) {
+          if (disposed || gen !== initGeneration) return;
+          logger.warn("[Init:bg] Background session loading failed:", err);
         }
-        return toSessionInfo(s, projectID);
-      });
-
-      processedSessions.sort((a: SessionInfo, b: SessionInfo) =>
-        new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
-      );
-
-      // Merge with existing sessions: keep sessions already in list that weren't
-      // returned by backend (e.g. Copilot doesn't persist completed sessions in
-      // session/list RPC). Backend-returned sessions take priority for updates.
-      const existingList = sessionStore.list;
-      const mergedMap = new Map<string, SessionInfo>();
-      // Start with existing sessions
-      for (const s of existingList) {
-        mergedMap.set(s.id, s);
-      }
-      // Override/add with freshly loaded sessions
-      for (const s of processedSessions) {
-        mergedMap.set(s.id, s);
-      }
-      const mergedSessions = [...mergedMap.values()].sort(
-        (a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
-      );
-
-      // On startup, don't auto-open any session — let user pick from sidebar
-      setSessionStore({
-        list: mergedSessions,
-        projects: validProjects,
-        current: null,
-        loading: false,
-      });
+      })();
     } catch (error) {
       if (disposed) return;
       logger.error("[Init] Session initialization failed:", error);
@@ -750,7 +755,7 @@ export default function Chat() {
         return newParts;
       });
     }
-    setTimeout(scrollToBottom, 0);
+    if (!userScrolledUp()) scheduleScrollToBottom();
   };
 
   const handleMessageUpdated = (_sessionId: string, msgInfo: UnifiedMessage) => {
@@ -797,19 +802,18 @@ export default function Chat() {
     if (msgInfo.parts && msgInfo.parts.length > 0) {
       const existingParts = messageStore.part[msgInfo.id];
       if (!existingParts || existingParts.length === 0) {
-        const sortedParts = msgInfo.parts.slice().sort((a, b) =>
-          a.id.localeCompare(b.id)
-        );
-        setMessageStore("part", msgInfo.id, sortedParts);
+        // Sort in-place — msgInfo.parts is from the incoming event, safe to mutate
+        msgInfo.parts.sort((a, b) => a.id.localeCompare(b.id));
+        setMessageStore("part", msgInfo.id, msgInfo.parts);
       } else {
         // Merge: use existing streaming parts as base, add any new parts
         // from the final message that weren't received via streaming
         const existingIds = new Set(existingParts.map(p => p.id));
         const newParts = msgInfo.parts.filter(p => !existingIds.has(p.id));
         if (newParts.length > 0) {
-          const merged = [...existingParts, ...newParts].sort((a, b) =>
-            a.id.localeCompare(b.id)
-          );
+          // Single concat + in-place sort (avoids spread + sort creating 2 arrays)
+          const merged = existingParts.concat(newParts);
+          merged.sort((a, b) => a.id.localeCompare(b.id));
           setMessageStore("part", msgInfo.id, merged);
         }
       }
@@ -876,6 +880,7 @@ export default function Chat() {
       const filtered = perms.filter((p) => p.id !== permissionId);
       if (filtered.length !== perms.length) {
         setMessageStore("permission", sessionId, filtered);
+        break;
       }
     }
   };
@@ -896,6 +901,7 @@ export default function Chat() {
       const filtered = qs.filter((q) => q.id !== questionId);
       if (filtered.length !== qs.length) {
         setMessageStore("question", sessionId, filtered);
+        break;
       }
     }
   };
@@ -1032,6 +1038,13 @@ export default function Chat() {
     setSendingFor(sessionId, false);
   };
 
+  const currentSessionTitle = createMemo(() => {
+    const sid = sessionStore.current;
+    if (!sid) return "";
+    const session = sessionStore.list.find(s => s.id === sid);
+    return session?.title || "";
+  });
+
   createEffect(() => {
     initializeSession();
 
@@ -1065,7 +1078,7 @@ export default function Chat() {
               sessions={sessionStore.list}
               projects={sessionStore.projects}
               currentSessionId={sessionStore.current}
-              getSessionStatus={(sessionId: string) => sessionStatusMap()[sessionId] || "idle"}
+              getSessionStatus={getSessionStatus}
               onSelectSession={handleSelectSession}
               onNewSession={handleNewSession}
               onDeleteSession={handleDeleteSession}
@@ -1120,7 +1133,7 @@ export default function Chat() {
               <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" x2="20" y1="12" y2="12" /><line x1="4" x2="20" y1="6" y2="6" /><line x1="4" x2="20" y1="18" y2="18" /></svg>
             </button>
             <h1 class="text-base font-semibold text-gray-900 dark:text-white truncate">
-              {getDisplayTitle(sessionStore.list.find(s => s.id === sessionStore.current)?.title || "")}
+              {getDisplayTitle(currentSessionTitle())}
             </h1>
             {/* Agent Mode Indicator */}
             <span class={`px-2 py-0.5 text-[10px] font-medium rounded-full ${
@@ -1222,7 +1235,7 @@ export default function Chat() {
                       </div>
                     }
                   >
-                    <MessageList sessionID={sessionStore.current!} isWorking={sending()} onPermissionRespond={handlePermissionRespond} onQuestionRespond={handleQuestionRespond} onQuestionDismiss={handleQuestionDismiss} onContinue={handleContinue} />
+                    <MessageList sessionID={sessionStore.current!} isWorking={sending()} scrollContainerRef={messagesRef} onPermissionRespond={handlePermissionRespond} onQuestionRespond={handleQuestionRespond} onQuestionDismiss={handleQuestionDismiss} onContinue={handleContinue} />
                   </Show>
                 </div>
               </div>

@@ -1,6 +1,5 @@
 import { parsePatch } from "diff"
 import { createMemo, For } from "solid-js"
-import { ContentCode } from "./content-code"
 import styles from "./content-diff.module.css"
 import { logger } from "../../lib/logger"
 
@@ -80,7 +79,7 @@ export function ContentDiff(props: Props) {
               {line.type === "added" ? "+" : line.type === "removed" ? "-" : " "}
             </span>
             <span class={styles.content}>
-              <ContentCode code={line.content} lang={props.lang} flush transparentBg />
+              <code>{line.content}</code>
             </span>
           </div>
         )}

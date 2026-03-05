@@ -1,7 +1,33 @@
-import { codeToHtml, bundledLanguages } from "shiki"
 import { createResource, Suspense } from "solid-js"
-import { transformerNotationDiff } from "@shikijs/transformers"
 import style from "./content-code.module.css"
+
+const highlightCache = new Map<string, string>()
+
+async function highlight(code: string, lang?: string, transparentBg?: boolean) {
+  const cacheKey = `${lang || "text"}:${transparentBg ? "t" : "f"}:${code}`
+  if (highlightCache.has(cacheKey)) {
+    return highlightCache.get(cacheKey)!
+  }
+
+  const [{ codeToHtml, bundledLanguages }, { transformerNotationDiff }] = await Promise.all([
+    import("shiki"),
+    import("@shikijs/transformers"),
+  ])
+
+  const result = await codeToHtml(code, {
+    lang: lang && lang in bundledLanguages ? lang : "text",
+    themes: {
+      light: "github-light",
+      dark: "one-dark-pro",
+    },
+    transformers: [transformerNotationDiff()],
+  })
+
+  const finalResult = transparentBg ? result.replace(/style="background-color:[^"]*"/, 'style="background-color:transparent"') : result
+
+  highlightCache.set(cacheKey, finalResult)
+  return finalResult
+}
 
 interface Props {
   code: string
@@ -14,16 +40,9 @@ interface Props {
 export function ContentCode(props: Props) {
   const [html] = createResource(
     () => ({ code: props.code, lang: props.lang, showLineNumbers: props.showLineNumbers, transparentBg: props.transparentBg }),
-    async ({ code, lang, showLineNumbers }) => {
+    async ({ code, lang, showLineNumbers, transparentBg }) => {
       const codeStr = code || ""
-      const result = await codeToHtml(codeStr, {
-        lang: lang && lang in bundledLanguages ? lang : "text",
-        themes: {
-          light: "github-light",
-          dark: "one-dark-pro",
-        },
-        transformers: [transformerNotationDiff()],
-      })
+      const result = await highlight(codeStr, lang, transparentBg)
 
       // If showLineNumbers is not explicitly set, we don't add line numbers for single lines
       const lines = codeStr.split("\n")

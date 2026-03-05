@@ -3,8 +3,8 @@ import style from "./content-code.module.css"
 
 const highlightCache = new Map<string, string>()
 
-async function highlight(code: string, lang?: string) {
-  const cacheKey = `${lang || "text"}:${code}`
+async function highlight(code: string, lang?: string, transparentBg?: boolean) {
+  const cacheKey = `${lang || "text"}:${transparentBg ? "t" : "f"}:${code}`
   if (highlightCache.has(cacheKey)) {
     return highlightCache.get(cacheKey)!
   }
@@ -23,8 +23,10 @@ async function highlight(code: string, lang?: string) {
     transformers: [transformerNotationDiff()],
   })
 
-  highlightCache.set(cacheKey, result)
-  return result
+  const finalResult = transparentBg ? result.replace(/style="background-color:[^"]*"/, 'style="background-color:transparent"') : result
+
+  highlightCache.set(cacheKey, finalResult)
+  return finalResult
 }
 
 interface Props {
@@ -38,9 +40,9 @@ interface Props {
 export function ContentCode(props: Props) {
   const [html] = createResource(
     () => ({ code: props.code, lang: props.lang, showLineNumbers: props.showLineNumbers, transparentBg: props.transparentBg }),
-    async ({ code, lang, showLineNumbers }) => {
+    async ({ code, lang, showLineNumbers, transparentBg }) => {
       const codeStr = code || ""
-      const result = await highlight(codeStr, lang)
+      const result = await highlight(codeStr, lang, transparentBg)
 
       // If showLineNumbers is not explicitly set, we don't add line numbers for single lines
       const lines = codeStr.split("\n")

@@ -901,12 +901,28 @@ export class CopilotSdkAdapter extends EngineAdapter {
       onUserInputRequest: (req, ctx) => this.handleUserInputRequest(req, ctx),
     };
 
-    const sdkSession = await this.client!.resumeSession(sessionId, config);
-    this.subscribeToSessionEvents(sdkSession);
-    this.activeSessions.set(sessionId, sdkSession);
-
-    copilotLog.info(`Resumed session ${sessionId}`);
-    return sdkSession;
+    try {
+      const sdkSession = await this.client!.resumeSession(sessionId, config);
+      this.subscribeToSessionEvents(sdkSession);
+      this.activeSessions.set(sessionId, sdkSession);
+      copilotLog.info(`Resumed session ${sessionId}`);
+      return sdkSession;
+    } catch (err) {
+      copilotLog.warn(`Failed to resume session ${sessionId}, creating fresh session:`, err);
+      // Fallback: create a new session in the same directory when resume fails
+      // (e.g. corrupted JSONL event file with schema validation errors)
+      const newConfig: SessionConfig = {
+        streaming: true,
+        workingDirectory: storedSession?.directory,
+        onPermissionRequest: (req, ctx) => this.handlePermissionRequest(req, ctx),
+        onUserInputRequest: (req, ctx) => this.handleUserInputRequest(req, ctx),
+      };
+      const sdkSession = await this.client!.createSession(newConfig);
+      this.subscribeToSessionEvents(sdkSession);
+      this.activeSessions.set(sessionId, sdkSession);
+      copilotLog.warn(`Created fallback session ${sdkSession.sessionId} for corrupted ${sessionId}`);
+      return sdkSession;
+    }
   }
 
   /**
@@ -1857,6 +1873,8 @@ export class CopilotSdkAdapter extends EngineAdapter {
     let textPartId: string | null = null;
     let reasoningAccum = "";
     let reasoningPartId: string | null = null;
+    // Track the current event's real timestamp for accurate history replay
+    let currentEventTs = 0;
 
     const flushText = () => {
       if (textAccum && textPartId && currentAssistantMsg) {
@@ -1904,7 +1922,7 @@ export class CopilotSdkAdapter extends EngineAdapter {
           id: timeId("msg"),
           sessionId,
           role: "assistant",
-          time: { created: Date.now() },
+          time: { created: currentEventTs },
           parts: [],
         };
       }
@@ -1915,7 +1933,7 @@ export class CopilotSdkAdapter extends EngineAdapter {
       if (currentAssistantMsg) {
         flushText();
         flushReasoning();
-        currentAssistantMsg.time.completed = Date.now();
+        currentAssistantMsg.time.completed = currentEventTs;
         messages.push(currentAssistantMsg);
         currentAssistantMsg = null;
       }
@@ -1925,6 +1943,9 @@ export class CopilotSdkAdapter extends EngineAdapter {
     const replayToolParts = new Map<string, ToolPart>();
 
     for (const event of events) {
+      // Parse the real event timestamp for accurate history replay
+      currentEventTs = new Date(event.timestamp).getTime() || Date.now();
+
       switch (event.type) {
         case "user.message": {
           // Finalize any pending assistant message
@@ -1934,7 +1955,7 @@ export class CopilotSdkAdapter extends EngineAdapter {
           const userMsg = this.createUserMessage(
             sessionId,
             userData.content ?? "",
-            Date.now(),
+            currentEventTs,
           );
           messages.push(userMsg);
           break;
@@ -1993,7 +2014,7 @@ export class CopilotSdkAdapter extends EngineAdapter {
             state: {
               status: "running",
               input: tData.arguments ?? {},
-              time: { start: Date.now() },
+              time: { start: currentEventTs },
             },
           };
 
@@ -2012,11 +2033,11 @@ export class CopilotSdkAdapter extends EngineAdapter {
 
           const existingTool = replayToolParts.get(cData.toolCallId);
           if (existingTool) {
-            const now = Date.now();
+            const endTs = currentEventTs;
             const startTime =
               existingTool.state.status === "running"
                 ? existingTool.state.time.start
-                : now;
+                : endTs;
 
             if (cData.success) {
               existingTool.state = {
@@ -2025,8 +2046,8 @@ export class CopilotSdkAdapter extends EngineAdapter {
                 output: cData.result?.content ?? "",
                 time: {
                   start: startTime,
-                  end: now,
-                  duration: now - startTime,
+                  end: endTs,
+                  duration: endTs - startTime,
                 },
               };
             } else {
@@ -2036,8 +2057,8 @@ export class CopilotSdkAdapter extends EngineAdapter {
                 error: cData.error ?? "Failed",
                 time: {
                   start: startTime,
-                  end: now,
-                  duration: now - startTime,
+                  end: endTs,
+                  duration: endTs - startTime,
                 },
               };
             }

@@ -1001,6 +1001,14 @@ export class FeishuAdapter extends ChannelAdapter {
       streaming.patchTimer = null;
     }
 
+    // If the message ended with an error, show it in the Feishu reply
+    if (message.error) {
+      const errorText = `⚠️ Error: ${message.error}`;
+      this.patchFeishuMessage(streaming.feishuMessageId, errorText);
+      binding.streamingSessions.delete(streamingKey);
+      return;
+    }
+
     // Send final PATCH with complete text + tool summary
     const toolSummary = formatToolSummaryFromCounts(streaming.toolCounts);
     let finalText = streaming.textBuffer || "(No text response)";

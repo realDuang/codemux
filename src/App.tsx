@@ -10,6 +10,7 @@ import Chat from "./pages/Chat";
 import Settings from "./pages/Settings";
 import Devices from "./pages/Devices";
 import { AccessRequestNotification } from "./components/AccessRequestNotification";
+import { UpdateNotification } from "./components/UpdateNotification";
 
 // Use HashRouter for Electron (file:// protocol) and regular Router for web
 // HashRouter uses URL hashes (#/path) which work with file:// protocol
@@ -222,6 +223,7 @@ function App() {
       </Show>
       <Show when={appReady()}>
         <AccessRequestNotification />
+        <UpdateNotification />
         <AppRouter>
           <Route path="/" component={EntryPage} />
           <Route path="/login" component={LoginRedirect} />

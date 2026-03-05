@@ -36,7 +36,7 @@ Switch between engines from a single interface. Each keeps its full power — fi
 |--------|----------|--------|
 | **[OpenCode](https://opencode.ai)** | HTTP REST + SSE | ✅ Stable |
 | **[GitHub Copilot CLI](https://docs.github.com/en/copilot/using-github-copilot/using-github-copilot-coding-agent-in-cli)** | ACP (JSON-RPC/stdio) | ✅ Stable |
-| **[Claude Code](https://claude.ai/code)** | ACP | 🚧 Planned |
+| **[Claude Code](https://claude.ai/code)** | SDK (stdio) | ✅ Stable |
 
 ### 3. Agent Chain-of-Thought Visualization
 
@@ -64,7 +64,7 @@ Download the latest release for your platform:
 - **macOS (Intel)**: `CodeMux-x.x.x-x64.dmg`
 - **Windows**: `CodeMux-x.x.x-setup.exe`
 
-The desktop app bundles the Cloudflare Tunnel binary and the gateway server. **OpenCode and Copilot CLI must be installed separately** (see below).
+The desktop app bundles the Cloudflare Tunnel binary and the gateway server. **OpenCode, Copilot CLI, and Claude Code must be installed separately** (see below).
 
 > ⚠️ **macOS Users**: The app is not code-signed. If macOS shows "App is damaged", run:
 >
@@ -89,9 +89,10 @@ bun run update:cloudflared
 bun run dev
 ```
 
-> **Engine Prerequisites**: Both engines are external dependencies that must be installed and available in your PATH:
+> **Engine Prerequisites**: All engines are external dependencies that must be installed and available in your PATH:
 > - **OpenCode**: Install from [opencode.ai](https://opencode.ai) — `curl -fsSL https://opencode.ai/install.sh | bash` (Unix) or `irm https://opencode.ai/install.ps1 | iex` (Windows)
 > - **Copilot CLI**: Install [GitHub Copilot CLI](https://docs.github.com/en/copilot/using-github-copilot/using-github-copilot-coding-agent-in-cli) separately
+> - **Claude Code**: Install via `npm install -g @anthropic-ai/claude-code` and set your `ANTHROPIC_API_KEY`
 >
 > CodeMux auto-detects installed engines on startup.
 
@@ -166,7 +167,7 @@ Manage connected devices from the Devices page — view last access time, rename
 │      ┌─────┴─────┐ ┌──┴────┐ ┌──┴─────┐                         │
 │      │ OpenCode  │ │Copilot│ │ Claude │                         │
 │      │ Adapter   │ │Adapter│ │Adapter │                         │
-│      │(HTTP+SSE) │ │ (ACP) │ │ (ACP)  │                         │
+│      │(HTTP+SSE) │ │ (ACP) │ │ (SDK)  │                         │
 │      └───────────┘ └───────┘ └────────┘                         │
 │                                                                 │
 │     Unified Type System: UnifiedPart, ToolPart, AgentMode       │
@@ -197,7 +198,7 @@ bun run update:cloudflared  # Update Cloudflare Tunnel binary
 codemux/
 ├── electron/
 │   ├── main/
-│   │   ├── engines/          # Engine adapters (OpenCode, Copilot, ACP base)
+│   │   ├── engines/          # Engine adapters (OpenCode, Copilot, Claude Code)
 │   │   ├── gateway/          # WebSocket server + engine routing
 │   │   └── services/         # Auth, device store, tunnel, sessions
 │   └── preload/
@@ -237,6 +238,7 @@ Contributions are welcome! Please follow these conventions:
 - [Issues & Feature Requests](https://github.com/realDuang/codemux/issues)
 - [OpenCode](https://opencode.ai) — Supported engine
 - [GitHub Copilot CLI](https://docs.github.com/en/copilot/using-github-copilot/using-github-copilot-coding-agent-in-cli) — Supported engine
+- [Claude Code](https://docs.anthropic.com/en/docs/claude-code) — Supported engine
 
 ---
 

@@ -18,6 +18,8 @@ import {
   selectSession,
   hasEngineBadge,
   reseedTestData,
+  switchEngineTab,
+  expandAllProjects,
 } from "../setup/test-helpers";
 
 // ============================================================================
@@ -58,6 +60,9 @@ test.describe("Project - Create", () => {
     // Add a new project with copilot engine
     await addProject(page, "/test/copilot-project", "copilot");
 
+    // Switch to Copilot tab to see the new project
+    await switchEngineTab(page, "Copilot");
+
     // Wait for the project to appear
     await expect(page.getByText("copilot-project").first()).toBeVisible({ timeout: 10_000 });
 
@@ -82,30 +87,33 @@ test.describe("Project - Create", () => {
   });
 
   test("should NOT dedup when adding same path but different engine", async ({ page }) => {
-    // Count initial project groups
+    // Count initial project groups on OpenCode tab
     const groupsBefore = await countProjectGroups(page);
 
     // Note: project-alpha already exists with both opencode and copilot in seed data.
     // Use a fresh path to demonstrate that same path + different engines = no dedup.
     await addProject(page, "/test/new-dedup-test", "opencode");
 
-    // Wait for the first project to appear
+    // Wait for the first project to appear (on OpenCode tab)
     await expect(page.getByText("new-dedup-test").first()).toBeVisible({ timeout: 10_000 });
 
-    // Verify project count increased by 1
+    // Verify project count increased by 1 on the OpenCode tab
     const groupsAfterFirst = await countProjectGroups(page);
     expect(groupsAfterFirst).toBe(groupsBefore + 1);
 
     // Now add the same path but with a different engine (copilot)
     await addProject(page, "/test/new-dedup-test", "copilot");
 
-    // Wait for potential UI update
-    await page.waitForTimeout(1000);
+    // Switch to Copilot tab to check the copilot project was added
+    await switchEngineTab(page, "Copilot");
 
-    // Verify project count increased by 1 again (total +2 from start)
-    // Same path + different engine = separate project groups, no dedup
+    // Wait for the copilot version to appear
+    await expect(page.getByText("new-dedup-test").first()).toBeVisible({ timeout: 10_000 });
+
+    // Verify OpenCode tab still has the same count (no dedup with copilot)
+    await switchEngineTab(page, "OpenCode");
     const groupsAfterSecond = await countProjectGroups(page);
-    expect(groupsAfterSecond).toBe(groupsBefore + 2);
+    expect(groupsAfterSecond).toBe(groupsBefore + 1);
   });
 });
 
@@ -207,6 +215,9 @@ test.describe("Project - Delete (Hide)", () => {
     // Wait for sessions to settle
     await page.waitForTimeout(500);
 
+    // Expand all projects so delete-me sessions are visible in DOM for counting
+    await expandAllProjects(page);
+
     // Count sessions before hiding the project
     const sessionsBefore = await countSessions(page);
 
@@ -222,11 +233,14 @@ test.describe("Project - Delete (Hide)", () => {
   });
 
   test("should delete project-beta and its session", async ({ page }) => {
+    // Switch to Copilot tab where project-beta lives
+    await switchEngineTab(page, "Copilot");
+
     // Verify project-beta and its session exist in seed data
     await expect(page.getByText("project-beta").first()).toBeVisible({ timeout: 5_000 });
     await expect(page.getByText("Refactor database layer").first()).toBeVisible({ timeout: 5_000 });
 
-    // Count sessions before deletion
+    // Count sessions before deletion (on Copilot tab)
     const sessionsBefore = await countSessions(page);
 
     // Hide (delete) project-beta
@@ -238,7 +252,7 @@ test.describe("Project - Delete (Hide)", () => {
     // Verify its session "Refactor database layer" is also removed
     await expect(page.getByText("Refactor database layer")).toHaveCount(0, { timeout: 5_000 });
 
-    // Verify total session count decreased by 1
+    // Verify total session count on Copilot tab decreased by 1
     const sessionsAfter = await countSessions(page);
     expect(sessionsAfter).toBe(sessionsBefore - 1);
   });

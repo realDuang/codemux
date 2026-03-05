@@ -1,6 +1,6 @@
 {
   "name": "codemux",
-  "version": "1.2.3",
+  "version": "1.2.4",
   "type": "module",
   "description": "A unified AI coding assistant client - access multiple AI coding engines from any device via desktop app or web interface",
   "author": "realDuang",
@@ -27,10 +27,12 @@
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.2.63",
     "@github/copilot-sdk": "^0.1.26",
+    "@larksuiteoapi/node-sdk": "^1.42.0",
     "@opencode-ai/sdk": "^1.2.15",
     "@shikijs/transformers": "^1.22.0",
     "@solid-primitives/i18n": "^2.2.1",
     "@solidjs/router": "^0.14.10",
+    "@tanstack/solid-virtual": "^3.13.19",
     "clsx": "^2.1.0",
     "diff": "^5.1.0",
     "electron-log": "^5.4.3",
@@ -43,7 +45,6 @@
     "solid-js": "^1.8.0",
     "tailwind-merge": "^2.2.0",
     "vscode-languageserver-types": "^3.17.5",
-    "@larksuiteoapi/node-sdk": "^1.42.0",
     "ws": "^8.19.0"
   },
   "devDependencies": {

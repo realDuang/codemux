@@ -103,44 +103,30 @@ export default function Chat() {
     prevSendingMap = { ...currentMap };
   });
 
-  // Compute activity status for each session
-  const sessionStatusMap = createMemo((): Record<string, SessionActivityStatus> => {
-    const map: Record<string, SessionActivityStatus> = {};
-    const currentSending = sendingMap();
-    const unread = unreadSessions();
-    for (const session of sessionStore.list) {
-      const sid = session.id;
-      // Priority: waiting > running > error > completed > idle
-      const pendingPerms = messageStore.permission[sid];
-      if (pendingPerms && pendingPerms.length > 0) {
-        map[sid] = "waiting";
-        continue;
-      }
-      const pendingQuestions = messageStore.question[sid];
-      if (pendingQuestions && pendingQuestions.length > 0) {
-        map[sid] = "waiting";
-        continue;
-      }
-      if (currentSending[sid]) {
-        map[sid] = "running";
-        continue;
-      }
-      const messages = messageStore.message[sid];
-      if (messages && messages.length > 0) {
-        const lastAssistant = [...messages].reverse().find((m) => m.role === "assistant");
-        if (lastAssistant?.error) {
-          map[sid] = lastAssistant.error === "Cancelled" ? "cancelled" : "error";
-          continue;
+  // Compute activity status for a single session (called on-demand, not a global memo)
+  const getSessionStatus = (sid: string): SessionActivityStatus => {
+    const pendingPerms = messageStore.permission[sid];
+    if (pendingPerms && pendingPerms.length > 0) return "waiting";
+    const pendingQuestions = messageStore.question[sid];
+    if (pendingQuestions && pendingQuestions.length > 0) return "waiting";
+    if (sendingMap()[sid]) return "running";
+    const messages = messageStore.message[sid];
+    if (messages && messages.length > 0) {
+      let lastAssistant: UnifiedMessage | undefined;
+      for (let i = messages.length - 1; i >= 0; i -= 1) {
+        const m = messages[i];
+        if (m.role === "assistant") {
+          lastAssistant = m;
+          break;
         }
       }
-      if (unread.has(sid)) {
-        map[sid] = "completed";
-        continue;
+      if (lastAssistant?.error) {
+        return lastAssistant.error === "Cancelled" ? "cancelled" : "error";
       }
-      map[sid] = "idle";
     }
-    return map;
-  });
+    if (unreadSessions().has(sid)) return "completed";
+    return "idle";
+  };
   const [messagesRef, setMessagesRef] = createSignal<HTMLDivElement>();
   const [loadingMessages, setLoadingMessages] = createSignal(false);
   // Whether user has scrolled away from the bottom. When true, auto-scroll
@@ -255,14 +241,19 @@ export default function Chat() {
     return el.scrollHeight - el.scrollTop - el.clientHeight < threshold;
   };
 
+  let scrollRafPending = false;
   const handleScroll = () => {
-    setUserScrolledUp(!isNearBottom());
+    if (scrollRafPending) return;
+    scrollRafPending = true;
+    requestAnimationFrame(() => {
+      scrollRafPending = false;
+      setUserScrolledUp(!isNearBottom());
+    });
   };
 
   const toggleSidebar = () => setIsSidebarOpen((prev) => !prev);
 
-  // Window Resize Listener for Mobile State
-  createEffect(() => {
+  onMount(() => {
     const handleResize = () => {
       setIsMobile(window.innerWidth < 768);
       if (window.innerWidth >= 768) {
@@ -287,19 +278,16 @@ export default function Chat() {
 
       logger.debug("[LoadMessages] Loaded messages:", messages, isStale ? "(stale)" : "");
 
-      // Store parts separately, sorted by id
+      // Store parts separately, sorted by id (in-place — API returns fresh arrays)
       for (const msg of messages) {
-        const sortedParts = (msg.parts || []).slice().sort((a, b) =>
-          a.id.localeCompare(b.id)
-        );
-        setMessageStore("part", msg.id, sortedParts);
+        const parts = msg.parts || [];
+        parts.sort((a, b) => a.id.localeCompare(b.id));
+        setMessageStore("part", msg.id, parts);
       }
 
-      // Store all messages, sorted by id
-      const sortedMessages = messages.slice().sort((a, b) =>
-        a.id.localeCompare(b.id)
-      );
-      setMessageStore("message", sessionId, sortedMessages);
+      // Store all messages, sorted by id (in-place — API returns fresh array)
+      messages.sort((a, b) => a.id.localeCompare(b.id));
+      setMessageStore("message", sessionId, messages);
     } catch (error) {
       if (!disposed) {
         logger.error("[LoadMessages] Failed to load messages:", error);
@@ -426,7 +414,19 @@ export default function Chat() {
       const filteredSessions = sessions.filter((s: UnifiedSession) => validDirectories.has(s.directory));
 
       const processedSessions: SessionInfo[] = filteredSessions.map((s: UnifiedSession) => {
-        return toSessionInfo(s);
+        // Resolve projectID: prefer session's own projectId, then fall back to
+        // directory+engineType matching against known projects. Some engines
+        // (e.g. Copilot, mock adapters) don't populate projectId on sessions.
+        let projectID = s.projectId ?? (s.engineMeta?.projectID as string) ?? undefined;
+        if (!projectID) {
+          const matchingProject = validProjects.find(
+            p => p.directory === s.directory && p.engineType === s.engineType,
+          );
+          if (matchingProject) {
+            projectID = matchingProject.id;
+          }
+        }
+        return toSessionInfo(s, projectID);
       });
 
       processedSessions.sort((a: SessionInfo, b: SessionInfo) =>
@@ -738,7 +738,7 @@ export default function Chat() {
         return newParts;
       });
     }
-    setTimeout(scrollToBottom, 0);
+    if (!userScrolledUp()) scheduleScrollToBottom();
   };
 
   const handleMessageUpdated = (_sessionId: string, msgInfo: UnifiedMessage) => {
@@ -785,19 +785,18 @@ export default function Chat() {
     if (msgInfo.parts && msgInfo.parts.length > 0) {
       const existingParts = messageStore.part[msgInfo.id];
       if (!existingParts || existingParts.length === 0) {
-        const sortedParts = msgInfo.parts.slice().sort((a, b) =>
-          a.id.localeCompare(b.id)
-        );
-        setMessageStore("part", msgInfo.id, sortedParts);
+        // Sort in-place — msgInfo.parts is from the incoming event, safe to mutate
+        msgInfo.parts.sort((a, b) => a.id.localeCompare(b.id));
+        setMessageStore("part", msgInfo.id, msgInfo.parts);
       } else {
         // Merge: use existing streaming parts as base, add any new parts
         // from the final message that weren't received via streaming
         const existingIds = new Set(existingParts.map(p => p.id));
         const newParts = msgInfo.parts.filter(p => !existingIds.has(p.id));
         if (newParts.length > 0) {
-          const merged = [...existingParts, ...newParts].sort((a, b) =>
-            a.id.localeCompare(b.id)
-          );
+          // Single concat + in-place sort (avoids spread + sort creating 2 arrays)
+          const merged = existingParts.concat(newParts);
+          merged.sort((a, b) => a.id.localeCompare(b.id));
           setMessageStore("part", msgInfo.id, merged);
         }
       }
@@ -864,6 +863,7 @@ export default function Chat() {
       const filtered = perms.filter((p) => p.id !== permissionId);
       if (filtered.length !== perms.length) {
         setMessageStore("permission", sessionId, filtered);
+        break;
       }
     }
   };
@@ -884,6 +884,7 @@ export default function Chat() {
       const filtered = qs.filter((q) => q.id !== questionId);
       if (filtered.length !== qs.length) {
         setMessageStore("question", sessionId, filtered);
+        break;
       }
     }
   };
@@ -1020,6 +1021,13 @@ export default function Chat() {
     setSendingFor(sessionId, false);
   };
 
+  const currentSessionTitle = createMemo(() => {
+    const sid = sessionStore.current;
+    if (!sid) return "";
+    const session = sessionStore.list.find(s => s.id === sid);
+    return session?.title || "";
+  });
+
   createEffect(() => {
     initializeSession();
 
@@ -1053,7 +1061,7 @@ export default function Chat() {
               sessions={sessionStore.list}
               projects={sessionStore.projects}
               currentSessionId={sessionStore.current}
-              getSessionStatus={(sessionId: string) => sessionStatusMap()[sessionId] || "idle"}
+              getSessionStatus={getSessionStatus}
               onSelectSession={handleSelectSession}
               onNewSession={handleNewSession}
               onDeleteSession={handleDeleteSession}
@@ -1108,7 +1116,7 @@ export default function Chat() {
               <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" x2="20" y1="12" y2="12" /><line x1="4" x2="20" y1="6" y2="6" /><line x1="4" x2="20" y1="18" y2="18" /></svg>
             </button>
             <h1 class="text-base font-semibold text-gray-900 dark:text-white truncate">
-              {getDisplayTitle(sessionStore.list.find(s => s.id === sessionStore.current)?.title || "")}
+              {getDisplayTitle(currentSessionTitle())}
             </h1>
             {/* Agent Mode Indicator */}
             <span class={`px-2 py-0.5 text-[10px] font-medium rounded-full ${
@@ -1210,7 +1218,7 @@ export default function Chat() {
                       </div>
                     }
                   >
-                    <MessageList sessionID={sessionStore.current!} isWorking={sending()} onPermissionRespond={handlePermissionRespond} onQuestionRespond={handleQuestionRespond} onQuestionDismiss={handleQuestionDismiss} onContinue={handleContinue} />
+                    <MessageList sessionID={sessionStore.current!} isWorking={sending()} scrollContainerRef={messagesRef} onPermissionRespond={handlePermissionRespond} onQuestionRespond={handleQuestionRespond} onQuestionDismiss={handleQuestionDismiss} onContinue={handleContinue} />
                   </Show>
                 </div>
               </div>

@@ -14,7 +14,7 @@ import { Part, PartProps, ProviderIcon, PermissionPrompt, QuestionPrompt } from 
 import { ContentError } from "./share/content-error";
 import { IconSparkles } from "./icons";
 import { useI18n } from "../lib/i18n";
-import type { UnifiedMessage, UnifiedPart, ToolPart } from "../types/unified";
+import type { UnifiedMessage, UnifiedPart, ToolPart, UnifiedPermission } from "../types/unified";
 import styles from "./SessionTurn.module.css";
 
 interface SessionTurnProps {
@@ -260,34 +260,63 @@ export function SessionTurn(props: SessionTurnProps) {
     () => messageStore.permission[props.sessionID] || []
   );
 
-  // Get permission for a specific tool part (by callId).
+  // Pre-computed lookup maps for O(1) permission matching.
+  // Build callId→permission and command→permission maps once, reuse everywhere.
+  const permissionByCallId = createMemo(() => {
+    const map = new Map<string, UnifiedPermission>();
+    for (const p of permissions()) {
+      if (p.toolCallId) map.set(p.toolCallId, p);
+    }
+    return map;
+  });
+
+  const permissionByCommand = createMemo(() => {
+    const map = new Map<string, UnifiedPermission>();
+    for (const p of permissions()) {
+      const ri = p.rawInput as any;
+      if (ri?.command) map.set(ri.command, p);
+      if (ri?.commands) {
+        for (const cmd of ri.commands) map.set(cmd, p);
+      }
+    }
+    return map;
+  });
+
+  // Collect all tool callIds across assistant messages (for unmatched-permission detection)
+  const allToolCallIds = createMemo(() => {
+    const ids = new Set<string>();
+    for (const msg of props.assistantMessages) {
+      const parts = messageStore.part[msg.id] || [];
+      for (const p of parts) {
+        if (p.type === "tool" && (p as ToolPart).callId) {
+          ids.add((p as ToolPart).callId);
+        }
+      }
+    }
+    return ids;
+  });
+
+  // Get permission for a specific tool part (by callId) — O(1) lookup.
   // Some agents (e.g. Copilot CLI) use a different toolCallId in the
   // permission request than in the tool_call notification, so we also
   // match by rawInput command against a pending/running tool part.
   const getPermissionForPart = (part: UnifiedPart) => {
     if (part.type !== "tool") return undefined;
     const tp = part as ToolPart;
-    // Direct match by callId
-    const direct = permissions().find(p => p.toolCallId === tp.callId);
+    // Direct match by callId — O(1)
+    const direct = permissionByCallId().get(tp.callId);
     if (direct) return direct;
-    // Fallback: match by rawInput command against a pending/running tool
+    // Fallback: match by rawInput command against a pending/running tool — O(1)
     if (tp.state.status === "pending" || tp.state.status === "running") {
       const cmd = (tp.state as any).input?.command;
       if (cmd) {
-        return permissions().find(p => {
-          const ri = p.rawInput as any;
-          return ri?.command === cmd || ri?.commands?.includes(cmd);
-        });
+        const byCmd = permissionByCommand().get(cmd);
+        if (byCmd) return byCmd;
       }
       // Last resort: if there's only one unmatched permission and this is
       // the only pending/running tool, assume they belong together.
-      const unmatchedPerms = permissions().filter(p => {
-        for (const msg of props.assistantMessages) {
-          const parts = messageStore.part[msg.id] || [];
-          if (parts.some((pp: any) => pp.type === "tool" && pp.callId === p.toolCallId)) return false;
-        }
-        return true;
-      });
+      const toolIds = allToolCallIds();
+      const unmatchedPerms = permissions().filter(p => !p.toolCallId || !toolIds.has(p.toolCallId));
       if (unmatchedPerms.length === 1) return unmatchedPerms[0];
     }
     return undefined;
@@ -312,22 +341,26 @@ export function SessionTurn(props: SessionTurnProps) {
     () => messageStore.question[props.sessionID] || []
   );
 
-  // Get question for a specific tool part (by callId)
+  // Pre-computed lookup map for O(1) question matching by callId.
+  const questionByCallId = createMemo(() => {
+    const map = new Map<string, typeof questions extends () => (infer T)[] ? T : never>();
+    for (const q of questions()) {
+      if (q.toolCallId) map.set(q.toolCallId, q);
+    }
+    return map;
+  });
+
+  // Get question for a specific tool part (by callId) — O(1) lookup.
   const getQuestionForPart = (part: UnifiedPart) => {
     if (part.type !== "tool") return undefined;
     const tp = part as ToolPart;
-    // Direct match by callId
-    const direct = questions().find(q => q.toolCallId === tp.callId);
+    // Direct match by callId — O(1)
+    const direct = questionByCallId().get(tp.callId);
     if (direct) return direct;
     // Fallback: if there's only one unmatched question and this is the only pending/running tool
     if (tp.state.status === "pending" || tp.state.status === "running") {
-      const unmatchedQs = questions().filter(q => {
-        for (const msg of props.assistantMessages) {
-          const parts = messageStore.part[msg.id] || [];
-          if (parts.some((pp: any) => pp.type === "tool" && pp.callId === q.toolCallId)) return false;
-        }
-        return true;
-      });
+      const toolIds = allToolCallIds();
+      const unmatchedQs = questions().filter(q => !q.toolCallId || !toolIds.has(q.toolCallId));
       if (unmatchedQs.length === 1) return unmatchedQs[0];
     }
     return undefined;
@@ -443,11 +476,13 @@ export function SessionTurn(props: SessionTurnProps) {
     return lastAssistant?.time?.completed;
   });
 
-  const tickTimer = setInterval(() => {
-    // Tick unconditionally — the memo will decide whether to use it
-    if (!finalEndTime()) setTick(Date.now());
-  }, 1000);
-  onCleanup(() => clearInterval(tickTimer));
+  createEffect(() => {
+    if (finalEndTime()) return; // Already completed, no timer needed
+    const tickTimer = setInterval(() => {
+      setTick(Date.now());
+    }, 1000);
+    onCleanup(() => clearInterval(tickTimer));
+  });
 
   const duration = createMemo(() => {
     const startTime = props.userMessage.time.created;
@@ -471,16 +506,47 @@ export function SessionTurn(props: SessionTurnProps) {
 
   // Filter parts for display
   const filterParts = (allParts: UnifiedPart[], messageRole: string) => {
-    const filtered = allParts.filter((x, index) => {
-      if (!x) return false;
+    if (messageRole !== "assistant") {
+      // For non-assistant messages, just filter
+      return allParts.filter((x) => {
+        if (!x) return false;
+        // Filter out all step-start, model info will be shown in header
+        if (x.type === "step-start") return false;
+        if (x.type === "snapshot") return false;
+        if (x.type === "patch") return false;
+        if (x.type === "step-finish") return false;
+        if (x.type === "text" && (x as any).synthetic === true) return false;
+        if (x.type === "tool" && x.originalTool === "todoread") return false;
+        if (x.type === "text" && !(x as any).text) return false;
+        // Show pending/running tools when working
+        if (
+          x.type === "tool" &&
+          !props.isWorking &&
+          ((x as any).state?.status === "pending" ||
+            (x as any).state?.status === "running")
+        ) {
+          return false;
+        }
+        return true;
+      });
+    }
+
+    // Single-pass filter + categorize for assistant messages
+    const others: UnifiedPart[] = [];
+    const reasoning: UnifiedPart[] = [];
+    const tools: UnifiedPart[] = [];
+    const text: UnifiedPart[] = [];
+
+    for (const x of allParts) {
+      if (!x) continue;
       // Filter out all step-start, model info will be shown in header
-      if (x.type === "step-start") return false;
-      if (x.type === "snapshot") return false;
-      if (x.type === "patch") return false;
-      if (x.type === "step-finish") return false;
-      if (x.type === "text" && (x as any).synthetic === true) return false;
-      if (x.type === "tool" && x.originalTool === "todoread") return false;
-      if (x.type === "text" && !(x as any).text) return false;
+      if (x.type === "step-start") continue;
+      if (x.type === "snapshot") continue;
+      if (x.type === "patch") continue;
+      if (x.type === "step-finish") continue;
+      if (x.type === "text" && (x as any).synthetic === true) continue;
+      if (x.type === "tool" && x.originalTool === "todoread") continue;
+      if (x.type === "text" && !(x as any).text) continue;
       // Show pending/running tools when working
       if (
         x.type === "tool" &&
@@ -488,23 +554,36 @@ export function SessionTurn(props: SessionTurnProps) {
         ((x as any).state?.status === "pending" ||
           (x as any).state?.status === "running")
       ) {
-        return false;
+        continue;
       }
-      return true;
-    });
 
-    // For assistant messages, reorder: reasoning -> tools -> text
-    if (messageRole === "assistant") {
-      const reasoning = filtered.filter((p) => p.type === "reasoning");
-      const tools = filtered.filter((p) => p.type === "tool");
-      const text = filtered.filter((p) => p.type === "text");
-      const others = filtered.filter(
-        (p) => p.type !== "reasoning" && p.type !== "tool" && p.type !== "text"
-      );
-      return [...others, ...reasoning, ...tools, ...text];
+      switch (x.type) {
+        case "reasoning":
+          reasoning.push(x);
+          break;
+        case "tool":
+          tools.push(x);
+          break;
+        case "text":
+          text.push(x);
+          break;
+        default:
+          others.push(x);
+          break;
+      }
     }
 
-    return filtered;
+    // Concatenate in order: others -> reasoning -> tools -> text
+    const result = new Array(
+      others.length + reasoning.length + tools.length + text.length
+    );
+    let idx = 0;
+    for (const arr of [others, reasoning, tools, text]) {
+      for (const item of arr) {
+        result[idx++] = item;
+      }
+    }
+    return result as UnifiedPart[];
   };
 
   // Filter user message parts

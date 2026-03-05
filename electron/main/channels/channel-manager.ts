@@ -62,10 +62,14 @@ export class ChannelManager {
   }
 
   /** Load persisted config and auto-start enabled channels */
-  async initFromConfig(): Promise<void> {
+  async initFromConfig(runtimeOptions?: { gatewayUrl?: string }): Promise<void> {
     for (const [type, adapter] of this.adapters) {
       const config = loadConfig(type);
       if (config) {
+        // Inject runtime gateway URL into channel options (overrides persisted value)
+        if (runtimeOptions?.gatewayUrl && config.options) {
+          (config.options as Record<string, unknown>).gatewayUrl = runtimeOptions.gatewayUrl;
+        }
         this.configs.set(type, config);
         if (config.enabled) {
           channelLog.info(`Auto-starting enabled channel: ${type}`);

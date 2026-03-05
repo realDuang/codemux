@@ -3,9 +3,10 @@ import { useNavigate } from "@solidjs/router";
 import { Auth } from "../lib/auth";
 import { useI18n } from "../lib/i18n";
 import { LanguageSwitcher } from "../components/LanguageSwitcher";
+import { FeishuConfigModal } from "../components/FeishuConfigModal";
 import { logger } from "../lib/logger";
 import { isElectron } from "../lib/platform";
-import { systemAPI, tunnelAPI } from "../lib/electron-api";
+import { systemAPI, tunnelAPI, channelAPI, type ChannelInfo } from "../lib/electron-api";
 
 interface TunnelInfo {
   url: string;
@@ -47,6 +48,17 @@ export default function EntryPage() {
   const [showPassword, setShowPassword] = createSignal(false);
   const [activeQrTab, setActiveQrTab] = createSignal<"lan" | "public">("lan");
   const [enteringChat, setEnteringChat] = createSignal(false);
+
+  // Feishu channel states
+  const [feishuStatus, setFeishuStatus] = createSignal<ChannelInfo | null>(null);
+  const [feishuConfig, setFeishuConfig] = createSignal({
+    appId: "",
+    appSecret: "",
+    autoApprovePermissions: true,
+    streamingThrottleMs: 1500,
+  });
+  const [feishuConfigOpen, setFeishuConfigOpen] = createSignal(false);
+  const [feishuLoading, setFeishuLoading] = createSignal(false);
 
   onMount(async () => {
     logger.debug("[EntryPage] Mounted, checking access type...");
@@ -155,6 +167,9 @@ export default function EntryPage() {
 
     // Get tunnel status
     checkTunnelStatus();
+
+    // Load Feishu channel status and config
+    loadFeishuStatus();
   };
 
   const checkTunnelStatus = async () => {
@@ -329,6 +344,90 @@ export default function EntryPage() {
       logger.error("[EntryPage] Failed to stop tunnel:", error);
     } finally {
       setTunnelLoading(false);
+    }
+  };
+
+  // =========================================================================
+  // Feishu channel handlers
+  // =========================================================================
+
+  const loadFeishuStatus = async () => {
+    try {
+      const status = await channelAPI.getStatus("feishu");
+      if (status) setFeishuStatus(status);
+
+      const config = await channelAPI.getConfig("feishu");
+      if (config?.options) {
+        setFeishuConfig({
+          appId: (config.options.appId as string) || "",
+          appSecret: (config.options.appSecret as string) || "",
+          autoApprovePermissions: config.options.autoApprovePermissions !== false,
+          streamingThrottleMs: (config.options.streamingThrottleMs as number) || 1500,
+        });
+      }
+    } catch (err) {
+      logger.error("[EntryPage] Failed to load Feishu status:", err);
+    }
+  };
+
+  const handleFeishuToggle = async () => {
+    const currentStatus = feishuStatus();
+    const isRunning = currentStatus?.status === "running" || currentStatus?.status === "starting";
+
+    setFeishuLoading(true);
+    try {
+      if (isRunning) {
+        await channelAPI.stop("feishu");
+        setFeishuStatus({ type: "feishu", name: "feishu", status: "stopped" });
+      } else {
+        // Check if config is complete
+        const cfg = feishuConfig();
+        if (!cfg.appId || !cfg.appSecret) {
+          setFeishuConfigOpen(true);
+          setFeishuLoading(false);
+          return;
+        }
+        await channelAPI.start("feishu");
+        // Poll for status
+        setTimeout(async () => {
+          const status = await channelAPI.getStatus("feishu");
+          if (status) setFeishuStatus(status);
+          setFeishuLoading(false);
+        }, 1500);
+        return;
+      }
+    } catch (err) {
+      logger.error("[EntryPage] Failed to toggle Feishu:", err);
+      const status = await channelAPI.getStatus("feishu");
+      if (status) setFeishuStatus(status);
+    } finally {
+      setFeishuLoading(false);
+    }
+  };
+
+  const handleFeishuConfigSave = async (config: {
+    appId: string;
+    appSecret: string;
+    autoApprovePermissions: boolean;
+    streamingThrottleMs: number;
+  }) => {
+    await channelAPI.updateConfig("feishu", { options: config });
+    setFeishuConfig(config);
+
+    // If not running, start it now
+    const status = feishuStatus();
+    if (status?.status !== "running") {
+      try {
+        await channelAPI.start("feishu");
+        setTimeout(async () => {
+          const newStatus = await channelAPI.getStatus("feishu");
+          if (newStatus) setFeishuStatus(newStatus);
+        }, 1500);
+      } catch (err) {
+        logger.error("[EntryPage] Failed to start Feishu after config save:", err);
+        const newStatus = await channelAPI.getStatus("feishu");
+        if (newStatus) setFeishuStatus(newStatus);
+      }
     }
   };
 
@@ -825,6 +924,77 @@ export default function EntryPage() {
                   <path d="m9 18 6-6-6-6" />
                 </svg>
               </div>
+
+              {/* Feishu Bot Channel Card */}
+              <Show when={isElectron()}>
+                <div class="bg-white dark:bg-slate-900 rounded-xl border border-gray-200 dark:border-slate-800 shadow-xs overflow-hidden">
+                  <div class="p-5 flex items-center justify-between">
+                    <div class="flex items-center gap-4">
+                      <div class="w-10 h-10 rounded-lg bg-indigo-100 dark:bg-indigo-900/30 flex items-center justify-center">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-indigo-600 dark:text-indigo-400"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+                      </div>
+                      <div class="space-y-1">
+                        <div class="flex items-center gap-2">
+                          <h3 class="text-base font-medium text-gray-900 dark:text-white">
+                            {t().channel.feishuBot}
+                          </h3>
+                          <Show when={feishuLoading() || feishuStatus()?.status === "starting"}>
+                            <span class="inline-flex h-2 w-2 rounded-full bg-yellow-400 animate-pulse"></span>
+                          </Show>
+                          <Show when={!feishuLoading() && feishuStatus()?.status === "running"}>
+                            <span class="inline-flex h-2 w-2 rounded-full bg-green-500"></span>
+                          </Show>
+                          <Show when={!feishuLoading() && feishuStatus()?.status === "error"}>
+                            <span class="inline-flex h-2 w-2 rounded-full bg-red-500"></span>
+                          </Show>
+                        </div>
+                        <p class="text-sm text-gray-500 dark:text-gray-400">
+                          {t().channel.feishuBotDesc}
+                        </p>
+                      </div>
+                    </div>
+
+                    <div class="flex items-center gap-3">
+                      <button
+                        onClick={() => setFeishuConfigOpen(true)}
+                        class="px-3 py-1.5 text-xs font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-slate-800 rounded-lg transition-colors border border-gray-200 dark:border-slate-700"
+                      >
+                        {t().channel.configure}
+                      </button>
+                      <button
+                        onClick={handleFeishuToggle}
+                        disabled={feishuLoading()}
+                        class={`relative inline-flex h-7 w-12 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:ring-offset-2 ${
+                          feishuStatus()?.status === "running" ? "bg-blue-600" : "bg-gray-200 dark:bg-slate-700"
+                        } ${feishuLoading() ? "opacity-50 cursor-not-allowed" : ""}`}
+                      >
+                        <span class="sr-only">Toggle Feishu Bot</span>
+                        <span
+                          class={`pointer-events-none inline-block h-6 w-6 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
+                            feishuStatus()?.status === "running" ? "translate-x-5" : "translate-x-0"
+                          }`}
+                        />
+                      </button>
+                    </div>
+                  </div>
+
+                  <Show when={feishuStatus()?.status === "error" && feishuStatus()?.error}>
+                    <div class="px-5 py-3 bg-red-50 dark:bg-red-900/10 border-t border-red-100 dark:border-red-900/30">
+                      <p class="text-xs text-red-600 dark:text-red-400 flex items-center gap-2">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" x2="12" y1="8" y2="12"/><line x1="12" x2="12.01" y1="16" y2="16"/></svg>
+                        {feishuStatus()?.error}
+                      </p>
+                    </div>
+                  </Show>
+                </div>
+              </Show>
+
+              <FeishuConfigModal
+                isOpen={feishuConfigOpen()}
+                onClose={() => setFeishuConfigOpen(false)}
+                initialConfig={feishuConfig()}
+                onSave={handleFeishuConfigSave}
+              />
             </div>
           </main>
         </div>

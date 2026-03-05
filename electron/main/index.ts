@@ -150,7 +150,13 @@ if (!gotTheLock) {
 
       // Initialize channels (after engines are ready and gateway is running)
       try {
-        await channelManager.initFromConfig();
+        // Determine the actual Gateway WS URL for channel adapters.
+        // In production, gateway is attached to the production HTTP server on /ws path.
+        // In dev, gateway runs on a standalone port.
+        const gatewayUrl = app.isPackaged && productionServer.isRunning()
+          ? "ws://127.0.0.1:5173/ws"
+          : `ws://127.0.0.1:${GATEWAY_PORT}`;
+        await channelManager.initFromConfig({ gatewayUrl });
       } catch (err) {
         mainLog.error("Failed to initialize channels:", err);
       }

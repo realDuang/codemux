@@ -2,11 +2,35 @@
 // Feishu Session Mapper
 // Maps Feishu group chats to CodeMux sessions (One Group = One Session).
 // Manages P2P chat state, streaming sessions, and message deduplication.
+// Persists group bindings to disk so they survive app restarts.
 // ============================================================================
 
+import fs from "fs";
+import path from "path";
+import { app } from "electron";
 import type { EngineType } from "../../../../src/types/unified";
 import type { GroupBinding, P2PChatState, PendingSelection, StreamingSession } from "./feishu-types";
 import { feishuLog } from "../../services/logger";
+
+// --- Persistence helpers ---
+
+/** Serializable subset of GroupBinding (excludes runtime-only fields) */
+interface PersistedGroupBinding {
+  chatId: string;
+  sessionId: string;
+  engineType: string;
+  directory: string;
+  projectId: string;
+  ownerOpenId: string;
+  createdAt: number;
+}
+
+function getBindingsFilePath(): string {
+  const dir = app.isPackaged
+    ? path.join(app.getPath("userData"), "channels")
+    : path.join(process.cwd(), ".channels");
+  return path.join(dir, "feishu-bindings.json");
+}
 
 export class FeishuSessionMapper {
   // --- Group Bindings (One Group = One Session) ---
@@ -40,6 +64,68 @@ export class FeishuSessionMapper {
   private creatingGroups = new Set<string>();
 
   // =========================================================================
+  // Persistence — load / save group bindings to disk
+  // =========================================================================
+
+  /** Load persisted group bindings from disk (call once at startup) */
+  loadBindings(): void {
+    const filePath = getBindingsFilePath();
+    if (!fs.existsSync(filePath)) return;
+
+    try {
+      const raw = fs.readFileSync(filePath, "utf-8");
+      const items: PersistedGroupBinding[] = JSON.parse(raw);
+      for (const item of items) {
+        const binding: GroupBinding = {
+          chatId: item.chatId,
+          sessionId: item.sessionId,
+          engineType: item.engineType as EngineType,
+          directory: item.directory,
+          projectId: item.projectId,
+          ownerOpenId: item.ownerOpenId,
+          streamingSessions: new Map(),
+          createdAt: item.createdAt,
+        };
+        this.groupBindings.set(binding.chatId, binding);
+        this.sessionToGroupIndex.set(binding.sessionId, binding.chatId);
+      }
+      feishuLog.info(`Loaded ${items.length} persisted group bindings`);
+    } catch (err) {
+      feishuLog.error("Failed to load group bindings:", err);
+    }
+  }
+
+  /** Persist current group bindings to disk */
+  private saveBindings(): void {
+    const filePath = getBindingsFilePath();
+    const dir = path.dirname(filePath);
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+
+    const items: PersistedGroupBinding[] = [];
+    for (const b of this.groupBindings.values()) {
+      items.push({
+        chatId: b.chatId,
+        sessionId: b.sessionId,
+        engineType: b.engineType,
+        directory: b.directory,
+        projectId: b.projectId,
+        ownerOpenId: b.ownerOpenId,
+        createdAt: b.createdAt,
+      });
+    }
+
+    try {
+      const tmpPath = `${filePath}.tmp`;
+      fs.writeFileSync(tmpPath, JSON.stringify(items, null, 2));
+      fs.renameSync(tmpPath, filePath);
+    } catch (err) {
+      feishuLog.error("Failed to save group bindings:", err);
+    }
+  }
+
+  // =========================================================================
   // Group Binding Methods
   // =========================================================================
 
@@ -47,6 +133,7 @@ export class FeishuSessionMapper {
   createGroupBinding(binding: GroupBinding): void {
     this.groupBindings.set(binding.chatId, binding);
     this.sessionToGroupIndex.set(binding.sessionId, binding.chatId);
+    this.saveBindings();
     feishuLog.info(
       `Created group binding: chat=${binding.chatId} → session=${binding.sessionId} (${binding.engineType}:${binding.projectId})`,
     );
@@ -97,6 +184,7 @@ export class FeishuSessionMapper {
     // Remove from both maps
     this.sessionToGroupIndex.delete(binding.sessionId);
     this.groupBindings.delete(groupChatId);
+    this.saveBindings();
 
     feishuLog.info(
       `Removed group binding: chat=${groupChatId} (session=${binding.sessionId})`,

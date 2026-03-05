@@ -245,6 +245,59 @@ export const gatewayAPI = {
   },
 };
 
+// Channel API (Feishu Bot, etc.)
+export interface ChannelConfig {
+  type: string;
+  name: string;
+  enabled: boolean;
+  options: Record<string, unknown>;
+}
+
+export interface ChannelInfo {
+  type: string;
+  name: string;
+  status: "stopped" | "starting" | "running" | "error";
+  error?: string;
+}
+
+export const channelAPI = {
+  async list(): Promise<ChannelInfo[]> {
+    const api = getElectronAPI();
+    return api?.channel ? api.channel.list() : [];
+  },
+
+  async getConfig(type: string): Promise<ChannelConfig | null> {
+    const api = getElectronAPI();
+    return api?.channel ? api.channel.getConfig(type) : null;
+  },
+
+  async updateConfig(type: string, updates: Partial<ChannelConfig>): Promise<void> {
+    const api = getElectronAPI();
+    if (api?.channel) {
+      await api.channel.updateConfig(type, updates);
+    }
+  },
+
+  async start(type: string): Promise<void> {
+    const api = getElectronAPI();
+    if (api?.channel) {
+      await api.channel.start(type);
+    }
+  },
+
+  async stop(type: string): Promise<void> {
+    const api = getElectronAPI();
+    if (api?.channel) {
+      await api.channel.stop(type);
+    }
+  },
+
+  async getStatus(type: string): Promise<ChannelInfo | null> {
+    const api = getElectronAPI();
+    return api?.channel ? api.channel.getStatus(type) : null;
+  },
+};
+
 /**
  * Get the OpenCode session storage folder path for a project.
  * OpenCode uses xdg-basedir: ~/.local/share/opencode/storage/session/{projectId}/

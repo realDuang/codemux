@@ -189,7 +189,10 @@ export class FeishuAdapter extends ChannelAdapter {
       await this.gatewayClient.connect();
       feishuLog.info("Gateway WS client connected");
 
-      // 5. Subscribe to Gateway notifications
+      // 5. Restore persisted group bindings from disk
+      this.sessionMapper.loadBindings();
+
+      // 6. Subscribe to Gateway notifications
       this.subscribeGatewayEvents();
 
       this.status = "running";
@@ -288,6 +291,11 @@ export class FeishuAdapter extends ChannelAdapter {
     // Question requests
     this.gatewayClient.on("question.asked", (data) => {
       this.handleQuestionAsked(data.question);
+    });
+
+    // Session title updates — sync to Feishu group name
+    this.gatewayClient.on("session.updated", (data) => {
+      this.handleSessionUpdated(data.session);
     });
   }
 
@@ -537,6 +545,15 @@ export class FeishuAdapter extends ChannelAdapter {
     const session = pending.sessions[num - 1];
     this.sessionMapper.clearPendingSelection(chatId);
 
+    // Check if this session already has a bound group chat — if so, direct user there
+    if (this.sessionMapper.hasGroupForSession(session.id)) {
+      await this.sendTextMessage(
+        chatId,
+        `This session already has a group chat. Please send messages in the existing group chat directly.`,
+      );
+      return true;
+    }
+
     await this.createGroupForSession(
       userOpenId,
       session.id,
@@ -679,8 +696,19 @@ export class FeishuAdapter extends ChannelAdapter {
     }
 
     try {
+      // Fetch session title for group name
+      let sessionTitle = "New Session";
+      try {
+        const session = await this.gatewayClient.getSession(sessionId);
+        if (session?.title) {
+          sessionTitle = session.title;
+        }
+      } catch {
+        // Use default title if session fetch fails
+      }
+
       // Create Feishu group chat with the user
-      const groupName = `[CodeMux][${engineType}] ${projectName}`;
+      const groupName = `[CodeMux][${projectName}] ${sessionTitle}`;
       const createRes = await this.larkClient.im.chat.create({
         params: { user_id_type: "open_id", set_bot_manager: true },
         data: {
@@ -1025,6 +1053,36 @@ export class FeishuAdapter extends ChannelAdapter {
       // For now, auto-approve if possible (handled by handlePermissionAsked).
     } else {
       this.sendTextMessage(groupChatId, "Agent Question (no options available)");
+    }
+  }
+
+  private async handleSessionUpdated(session: import("../../../../src/types/unified").UnifiedSession): Promise<void> {
+    if (!this.larkClient) return;
+
+    // Check if this session has a bound group chat
+    const groupChatId = this.sessionMapper.findGroupChatIdBySessionId(session.id);
+    if (!groupChatId) return;
+
+    const binding = this.sessionMapper.getGroupBinding(groupChatId);
+    if (!binding) return;
+
+    // Derive the project name from directory
+    const projectName = binding.directory.split(/[\\/]/).pop() || binding.directory;
+
+    // Build the expected group name
+    const newTitle = session.title || "New Session";
+    const expectedGroupName = `[CodeMux][${projectName}] ${newTitle}`;
+
+    // Update the Feishu group chat name
+    try {
+      await this.rateLimiter.consume();
+      await this.larkClient.im.chat.update({
+        path: { chat_id: groupChatId },
+        data: { name: expectedGroupName },
+      });
+      feishuLog.info(`Updated group chat name: ${groupChatId} → "${expectedGroupName}"`);
+    } catch (err) {
+      feishuLog.error(`Failed to update group chat name for ${groupChatId}:`, err);
     }
   }
 

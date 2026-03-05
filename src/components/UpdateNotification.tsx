@@ -33,6 +33,7 @@ export function UpdateNotification() {
 
     addCleanup(updateAPI.onUpdateError((s) => {
       setState(s);
+      setDismissed(false);
     }));
 
     onCleanup(() => {

@@ -1,8 +1,7 @@
 import { app } from "electron";
 import { autoUpdater, type UpdateInfo, type ProgressInfo } from "electron-updater";
-import log from "electron-log";
 import { getMainWindow } from "../window-manager";
-import { loadSettings, saveSettings } from "./logger";
+import log, { loadSettings, saveSettings } from "./logger";
 
 export type UpdateStatus =
   | "idle"
@@ -34,6 +33,8 @@ class UpdateManager {
   private downloadProgress: ProgressInfo | null = null;
   private errorMessage: string | null = null;
   private checkTimer: ReturnType<typeof setInterval> | null = null;
+  private initialCheckTimer: ReturnType<typeof setTimeout> | null = null;
+  private initialized = false;
 
   init(): void {
     // Configure logging
@@ -62,6 +63,7 @@ class UpdateManager {
       setTimeout(() => {
         if (this.status === "not-available") {
           this.status = "idle";
+          this.sendToRenderer("update:status", this.getState());
         }
       }, 5000);
     });
@@ -86,10 +88,15 @@ class UpdateManager {
     });
 
     // Schedule auto-check if enabled
+    this.initialized = true;
     this.scheduleCheck();
   }
 
   async checkForUpdates(): Promise<UpdateState> {
+    if (!this.initialized) {
+      return { status: "idle" };
+    }
+
     if (this.status === "checking" || this.status === "downloading") {
       return this.getState();
     }
@@ -141,7 +148,8 @@ class UpdateManager {
 
     if (autoCheck) {
       // Initial check after 30 seconds (let app finish starting)
-      setTimeout(() => {
+      this.initialCheckTimer = setTimeout(() => {
+        this.initialCheckTimer = null;
         this.checkForUpdates();
       }, 30_000);
 
@@ -154,6 +162,11 @@ class UpdateManager {
 
   setAutoCheck(enabled: boolean): void {
     saveSettings({ autoUpdate: enabled });
+
+    if (this.initialCheckTimer) {
+      clearTimeout(this.initialCheckTimer);
+      this.initialCheckTimer = null;
+    }
 
     if (this.checkTimer) {
       clearInterval(this.checkTimer);

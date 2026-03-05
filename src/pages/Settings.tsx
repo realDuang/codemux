@@ -535,7 +535,7 @@ export default function Settings() {
                       </Show>
                       <Show when={updateCheckStatus() === "available"}>
                         <p class="text-xs text-blue-600 dark:text-blue-400 mt-1">
-                          {t().update.downloaded}
+                          {t().update.available}
                         </p>
                       </Show>
                       <Show when={updateCheckStatus() === "error"}>

@@ -112,7 +112,14 @@ export default function Chat() {
     if (sendingMap()[sid]) return "running";
     const messages = messageStore.message[sid];
     if (messages && messages.length > 0) {
-      const lastAssistant = [...messages].reverse().find((m) => m.role === "assistant");
+      let lastAssistant: UnifiedMessage | undefined;
+      for (let i = messages.length - 1; i >= 0; i -= 1) {
+        const m = messages[i];
+        if (m.role === "assistant") {
+          lastAssistant = m;
+          break;
+        }
+      }
       if (lastAssistant?.error) {
         return lastAssistant.error === "Cancelled" ? "cancelled" : "error";
       }

@@ -278,6 +278,8 @@ export interface LocaleDict {
     defaultModelDesc: string;
     noModelsAvailable: string;
     modelInputPlaceholder: string;
+    enabled: string;
+    disabled: string;
   };
 
   // Channels
@@ -607,6 +609,8 @@ export const en: LocaleDict = {
     defaultModelDesc: "Model used for conversations",
     noModelsAvailable: "No models available",
     modelInputPlaceholder: "Enter model ID (e.g. claude-sonnet-4-20250514)",
+    enabled: "Enabled",
+    disabled: "Disabled",
   },
 
   // Channels

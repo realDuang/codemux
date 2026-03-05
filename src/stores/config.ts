@@ -5,6 +5,8 @@ import { getSetting, saveSetting, getNestedSetting, saveNestedSetting } from "..
 export interface EngineModelSelection {
   providerID: string;
   modelID: string;
+  /** Whether this engine is enabled (default: true when undefined) */
+  enabled?: boolean;
 }
 
 interface ConfigState {
@@ -18,6 +20,8 @@ interface ConfigState {
   engineModels: Record<string, UnifiedModelInfo[]>;
   /** User-selected model per engine type, persisted to settings.json */
   engineModelSelections: Record<string, EngineModelSelection>;
+  /** Engine enabled state, keyed by engine type. Missing = true (default enabled). */
+  enabledEngines: Record<string, boolean>;
 }
 
 export const [configStore, setConfigStore] = createStore<ConfigState>({
@@ -29,6 +33,7 @@ export const [configStore, setConfigStore] = createStore<ConfigState>({
   currentEngineType: null,
   engineModels: {},
   engineModelSelections: {},
+  enabledEngines: {},
 });
 
 export function loadEngineModelSelection(engineType: string): EngineModelSelection | null {
@@ -43,7 +48,9 @@ export function loadEngineModelSelection(engineType: string): EngineModelSelecti
 
 export function saveEngineModelSelection(engineType: string, selection: EngineModelSelection): void {
   setConfigStore("engineModelSelections", engineType, selection);
-  saveNestedSetting(`engineModels.${engineType}`, selection);
+  // Merge with existing persisted object to preserve `enabled` flag set by setEngineEnabled()
+  const existing = getNestedSetting<Record<string, unknown>>(`engineModels.${engineType}`) ?? {};
+  saveNestedSetting(`engineModels.${engineType}`, { ...existing, ...selection });
 }
 
 /**
@@ -87,5 +94,38 @@ export function restoreEngineModelSelections(): void {
       }
       // Stale models are simply not loaded — no need to delete from settings file
     }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Engine enabled/disabled state
+// ---------------------------------------------------------------------------
+
+/** Check if an engine is enabled. Missing entries default to true. */
+export function isEngineEnabled(engineType: string): boolean {
+  const explicit = configStore.enabledEngines[engineType];
+  if (explicit !== undefined) return explicit;
+  // Fall back to persisted value in engineModels settings
+  const saved = getNestedSetting<{ enabled?: boolean }>(`engineModels.${engineType}`);
+  return saved?.enabled !== false; // undefined or true → enabled
+}
+
+/** Toggle engine enabled state and persist to settings.json. */
+export function setEngineEnabled(engineType: string, enabled: boolean): void {
+  // Update reactive store
+  setConfigStore("enabledEngines", engineType, enabled);
+  // Persist into engineModels.{type}.enabled in settings.json
+  const existing = getNestedSetting<Record<string, unknown>>(`engineModels.${engineType}`) ?? {};
+  existing.enabled = enabled;
+  saveNestedSetting(`engineModels.${engineType}`, existing);
+}
+
+/** Restore enabled state for all known engines from settings.json into the store. */
+export function restoreEnabledEngines(): void {
+  for (const engine of configStore.engines) {
+    const saved = getNestedSetting<{ enabled?: boolean }>(`engineModels.${engine.type}`);
+    // Only set explicit false; missing/true both mean enabled
+    const enabled = saved?.enabled !== false;
+    setConfigStore("enabledEngines", engine.type, enabled);
   }
 }

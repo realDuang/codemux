@@ -279,6 +279,8 @@ export const zh: LocaleDict = {
     defaultModelDesc: "会话使用的模型",
     noModelsAvailable: "暂无可用模型",
     modelInputPlaceholder: "输入模型 ID（如 claude-sonnet-4-20250514）",
+    enabled: "已启用",
+    disabled: "已停用",
   },
 
   // Channels

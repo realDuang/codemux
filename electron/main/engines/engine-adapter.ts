@@ -38,8 +38,10 @@ export interface EngineAdapterEvents {
     message: UnifiedMessage;
   }) => void;
 
-  /** A session was updated (title, time, etc.) */
-  "session.updated": (data: { session: UnifiedSession }) => void;
+  /** A session was updated (title, time, etc.) — partial updates allowed */
+  "session.updated": (data: {
+    session: Partial<UnifiedSession> & Pick<UnifiedSession, "id" | "engineType">;
+  }) => void;
 
   /** A new session was created */
   "session.created": (data: { session: UnifiedSession }) => void;

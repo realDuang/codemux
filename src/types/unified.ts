@@ -194,6 +194,8 @@ export interface UnifiedMessage {
   providerId?: string;
   mode?: string;
   error?: string;
+  /** True when the engine session is stale and should be recreated */
+  staleSession?: boolean;
   /** Engine-specific data (OpenCode: path, agent, system, summary flag) */
   engineMeta?: Record<string, unknown>;
 }

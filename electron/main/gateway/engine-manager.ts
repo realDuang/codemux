@@ -629,7 +629,7 @@ export class EngineManager extends EventEmitter {
 
     // If the engine reported a stale session (no SSE response within timeout),
     // clear the engineSessionId so the next attempt creates a fresh session.
-    if (result.error && result.error.includes("session may be stale")) {
+    if (result.staleSession) {
       engineManagerLog.warn(`Stale session detected for ${sessionId}, clearing engineSessionId`);
       conversationStore.clearEngineSession(sessionId);
       this.engineToConvMap.delete(engineSessionId);
@@ -645,7 +645,7 @@ export class EngineManager extends EventEmitter {
     const conv = conversationStore.get(sessionId);
     if (!conv?.engineSessionId) return;
     const adapter = this.getAdapterForSession(sessionId);
-    return adapter.cancelMessage(conv.engineSessionId);
+    return adapter.cancelMessage(conv.engineSessionId, conv.directory);
   }
 
   /**

@@ -509,8 +509,11 @@ export class CopilotSdkAdapter extends EngineAdapter {
     return session;
   }
 
-  hasSession(sessionId: string): boolean {
-    return this.sessionDirectories.has(sessionId);
+  hasSession(_sessionId: string): boolean {
+    // Copilot sessions can be resumed by ID via the SDK even without
+    // in-memory state (e.g. after app restart). Always return true and
+    // rely on ensureActiveSession() for actual rehydration.
+    return true;
   }
 
   async getSession(sessionId: string): Promise<UnifiedSession | null> {
@@ -921,8 +924,10 @@ export class CopilotSdkAdapter extends EngineAdapter {
       };
       const sdkSession = await this.client!.createSession(newConfig);
       this.subscribeToSessionEvents(sdkSession);
-      this.activeSessions.set(sessionId, sdkSession);
-      if (workingDirectory) this.sessionDirectories.set(sessionId, workingDirectory);
+      // Store the fallback session under its actual SDK sessionId to keep
+      // internal maps consistent with event routing.
+      this.activeSessions.set(sdkSession.sessionId, sdkSession);
+      if (workingDirectory) this.sessionDirectories.set(sdkSession.sessionId, workingDirectory);
       copilotLog.warn(`Created fallback session ${sdkSession.sessionId} for corrupted ${sessionId}`);
       return sdkSession;
     }

@@ -17,7 +17,7 @@ import { feishuLog } from "../../services/logger";
 /** Serializable subset of GroupBinding (excludes runtime-only fields) */
 interface PersistedGroupBinding {
   chatId: string;
-  sessionId: string;
+  conversationId: string;
   engineType: string;
   directory: string;
   projectId: string;
@@ -37,8 +37,8 @@ export class FeishuSessionMapper {
 
   /** groupChatId → GroupBinding */
   private groupBindings = new Map<string, GroupBinding>();
-  /** Reverse index: sessionId → groupChatId */
-  private sessionToGroupIndex = new Map<string, string>();
+  /** Reverse index: conversationId → groupChatId */
+  private conversationToGroupIndex = new Map<string, string>();
 
   // --- P2P Chat State ---
 
@@ -60,7 +60,7 @@ export class FeishuSessionMapper {
 
   // --- Concurrency Guard ---
 
-  /** Session IDs currently being created (prevents duplicate group creation) */
+  /** Conversation IDs currently being created (prevents duplicate group creation) */
   private creatingGroups = new Set<string>();
 
   // =========================================================================
@@ -78,7 +78,7 @@ export class FeishuSessionMapper {
       for (const item of items) {
         const binding: GroupBinding = {
           chatId: item.chatId,
-          sessionId: item.sessionId,
+          conversationId: item.conversationId,
           engineType: item.engineType as EngineType,
           directory: item.directory,
           projectId: item.projectId,
@@ -87,7 +87,7 @@ export class FeishuSessionMapper {
           createdAt: item.createdAt,
         };
         this.groupBindings.set(binding.chatId, binding);
-        this.sessionToGroupIndex.set(binding.sessionId, binding.chatId);
+        this.conversationToGroupIndex.set(binding.conversationId, binding.chatId);
       }
       feishuLog.info(`Loaded ${items.length} persisted group bindings`);
     } catch (err) {
@@ -107,7 +107,7 @@ export class FeishuSessionMapper {
     for (const b of this.groupBindings.values()) {
       items.push({
         chatId: b.chatId,
-        sessionId: b.sessionId,
+        conversationId: b.conversationId,
         engineType: b.engineType,
         directory: b.directory,
         projectId: b.projectId,
@@ -132,10 +132,10 @@ export class FeishuSessionMapper {
   /** Create a new group binding and update both maps */
   createGroupBinding(binding: GroupBinding): void {
     this.groupBindings.set(binding.chatId, binding);
-    this.sessionToGroupIndex.set(binding.sessionId, binding.chatId);
+    this.conversationToGroupIndex.set(binding.conversationId, binding.chatId);
     this.saveBindings();
     feishuLog.info(
-      `Created group binding: chat=${binding.chatId} → session=${binding.sessionId} (${binding.engineType}:${binding.projectId})`,
+      `Created group binding: chat=${binding.chatId} → conversation=${binding.conversationId} (${binding.engineType}:${binding.projectId})`,
     );
   }
 
@@ -144,15 +144,15 @@ export class FeishuSessionMapper {
     return this.groupBindings.get(groupChatId);
   }
 
-  /** Find the group binding that owns a given session ID */
-  findGroupBySessionId(sessionId: string): GroupBinding | undefined {
-    const chatId = this.sessionToGroupIndex.get(sessionId);
+  /** Find the group binding that owns a given conversation ID */
+  findGroupByConversationId(conversationId: string): GroupBinding | undefined {
+    const chatId = this.conversationToGroupIndex.get(conversationId);
     return chatId ? this.groupBindings.get(chatId) : undefined;
   }
 
-  /** Find the group chat ID that owns a given session ID */
-  findGroupChatIdBySessionId(sessionId: string): string | undefined {
-    return this.sessionToGroupIndex.get(sessionId);
+  /** Find the group chat ID that owns a given conversation ID */
+  findGroupChatIdByConversationId(conversationId: string): string | undefined {
+    return this.conversationToGroupIndex.get(conversationId);
   }
 
   /** Check if a chat ID belongs to a bound group chat */
@@ -160,9 +160,9 @@ export class FeishuSessionMapper {
     return this.groupBindings.has(chatId);
   }
 
-  /** Check if a session ID already has a group binding */
-  hasGroupForSession(sessionId: string): boolean {
-    return this.sessionToGroupIndex.has(sessionId);
+  /** Check if a conversation ID already has a group binding */
+  hasGroupForConversation(conversationId: string): boolean {
+    return this.conversationToGroupIndex.has(conversationId);
   }
 
   /** Remove a group binding, clean up streaming timers, and update both maps */
@@ -182,12 +182,12 @@ export class FeishuSessionMapper {
     binding.streamingSessions.clear();
 
     // Remove from both maps
-    this.sessionToGroupIndex.delete(binding.sessionId);
+    this.conversationToGroupIndex.delete(binding.conversationId);
     this.groupBindings.delete(groupChatId);
     this.saveBindings();
 
     feishuLog.info(
-      `Removed group binding: chat=${groupChatId} (session=${binding.sessionId})`,
+      `Removed group binding: chat=${groupChatId} (conversation=${binding.conversationId})`,
     );
     return binding;
   }
@@ -197,21 +197,21 @@ export class FeishuSessionMapper {
   // =========================================================================
 
   /**
-   * Mark a session as currently being created.
+   * Mark a conversation as currently being created.
    * @returns false if already being created (caller should abort), true otherwise
    */
-  markCreating(sessionId: string): boolean {
-    if (this.creatingGroups.has(sessionId)) {
-      feishuLog.warn(`Session ${sessionId} is already being created, skipping`);
+  markCreating(conversationId: string): boolean {
+    if (this.creatingGroups.has(conversationId)) {
+      feishuLog.warn(`Conversation ${conversationId} is already being created, skipping`);
       return false;
     }
-    this.creatingGroups.add(sessionId);
+    this.creatingGroups.add(conversationId);
     return true;
   }
 
-  /** Unmark a session as being created (call in finally block) */
-  unmarkCreating(sessionId: string): void {
-    this.creatingGroups.delete(sessionId);
+  /** Unmark a conversation as being created (call in finally block) */
+  unmarkCreating(conversationId: string): void {
+    this.creatingGroups.delete(conversationId);
   }
 
   // =========================================================================
@@ -326,15 +326,15 @@ export class FeishuSessionMapper {
     }
   }
 
-  /** Get the streaming session for a CodeMux message (lookup by sessionId) */
-  getStreamingSession(sessionId: string, messageId: string): StreamingSession | undefined {
-    const binding = this.findGroupBySessionId(sessionId);
+  /** Get the streaming session for a CodeMux message (lookup by conversationId) */
+  getStreamingSession(conversationId: string, messageId: string): StreamingSession | undefined {
+    const binding = this.findGroupByConversationId(conversationId);
     return binding?.streamingSessions.get(messageId);
   }
 
   /** Remove a completed streaming session and clean up its timer */
-  removeStreamingSession(sessionId: string, messageId: string): void {
-    const binding = this.findGroupBySessionId(sessionId);
+  removeStreamingSession(conversationId: string, messageId: string): void {
+    const binding = this.findGroupByConversationId(conversationId);
     if (binding) {
       const session = binding.streamingSessions.get(messageId);
       if (session?.patchTimer) {

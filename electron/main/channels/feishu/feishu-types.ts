@@ -34,8 +34,8 @@ export const DEFAULT_FEISHU_CONFIG: FeishuConfig = {
 export interface StreamingSession {
   /** Feishu message ID (obtained after initial send) */
   feishuMessageId: string;
-  /** CodeMux session ID */
-  sessionId: string;
+  /** CodeMux conversation ID */
+  conversationId: string;
   /** CodeMux message ID */
   messageId: string;
   /** Accumulated text content (text parts are cumulative, not incremental) */
@@ -56,8 +56,8 @@ export interface StreamingSession {
 export interface GroupBinding {
   /** Feishu group chat_id */
   chatId: string;
-  /** Bound CodeMux session ID */
-  sessionId: string;
+  /** Bound CodeMux conversation ID */
+  conversationId: string;
   /** Engine type for this session */
   engineType: EngineType;
   /** Project directory */

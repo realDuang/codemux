@@ -388,13 +388,10 @@ export default function EntryPage() {
           return;
         }
         await channelAPI.start("feishu");
-        // Poll for status
-        setTimeout(async () => {
-          const status = await channelAPI.getStatus("feishu");
-          if (status) setFeishuStatus(status);
-          setFeishuLoading(false);
-        }, 1500);
-        return;
+        // Poll for status after a delay to let the adapter initialize
+        await new Promise((resolve) => setTimeout(resolve, 1500));
+        const status = await channelAPI.getStatus("feishu");
+        if (status) setFeishuStatus(status);
       }
     } catch (err) {
       logger.error("[EntryPage] Failed to toggle Feishu:", err);

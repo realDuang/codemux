@@ -204,8 +204,13 @@ export class FeishuAdapter extends ChannelAdapter {
       this.error = err instanceof Error ? err.message : String(err);
       this.emit("status.changed", this.status);
       feishuLog.error("Failed to start Feishu adapter:", err);
-      // Clean up partial init
+      // Clean up partial init (preserve error state)
+      const savedStatus = this.status;
+      const savedError = this.error;
       await this.stop().catch(() => {});
+      this.status = savedStatus;
+      this.error = savedError;
+      this.emit("status.changed", this.status);
       throw err;
     }
   }

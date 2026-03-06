@@ -89,12 +89,11 @@ export function truncateForFeishu(text: string, maxBytes = MAX_MESSAGE_BYTES): s
     return text;
   }
 
-  // Binary search for the right truncation point
+  // Iteratively shrink to find the right truncation point
   const noticeBytes = encoder.encode(TRUNCATION_NOTICE).length;
   const targetBytes = maxBytes - noticeBytes;
 
-  // Simple approach: truncate by character count estimate
-  // UTF-8 chars are 1-4 bytes; use conservative ratio
+  // Start with a conservative character estimate (UTF-8 chars are 1-4 bytes)
   let truncateAt = Math.floor(targetBytes / 3);
   while (encoder.encode(text.slice(0, truncateAt)).length > targetBytes && truncateAt > 0) {
     truncateAt = Math.floor(truncateAt * 0.9);

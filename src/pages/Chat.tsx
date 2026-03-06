@@ -441,15 +441,15 @@ export default function Chat() {
                   return toSessionInfo(s, projectID);
                 });
 
-                // Incremental merge into store
-                const existingList = sessionStore.list;
-                const mergedMap = new Map<string, SessionInfo>();
-                for (const s of existingList) mergedMap.set(s.id, s);
-                for (const s of processedSessions) mergedMap.set(s.id, s);
-                const mergedSessions = [...mergedMap.values()].sort(
-                  (a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
-                );
-                setSessionStore("list", mergedSessions);
+                // Incremental merge into store (use updater function to avoid race conditions)
+                setSessionStore("list", (existingList) => {
+                  const mergedMap = new Map<string, SessionInfo>();
+                  for (const s of existingList) mergedMap.set(s.id, s);
+                  for (const s of processedSessions) mergedMap.set(s.id, s);
+                  return [...mergedMap.values()].sort(
+                    (a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
+                  );
+                });
                 logger.debug(`[Init:bg] Sessions loaded for ${engine.type}:`, processedSessions.length);
               } catch (err) {
                 logger.warn(`[Init:bg] Failed to load sessions for ${engine.type}:`, err);

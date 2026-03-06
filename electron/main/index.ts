@@ -16,6 +16,8 @@ process.on("uncaughtException", (err) => {
     return;
   }
   mainLog.error("Uncaught exception:", err);
+  // Non-EPIPE uncaught exceptions leave the process in undefined state — exit gracefully
+  app.exit(1);
 });
 import { createWindow, getMainWindow } from "./window-manager";
 import { registerIpcHandlers } from "./ipc-handlers";

@@ -182,6 +182,14 @@ export class EngineManager extends EventEmitter {
     if ("permission" in rewritten && rewritten.permission?.sessionId === engineSessionId) {
       rewritten.permission = { ...rewritten.permission, sessionId: conversationId };
     }
+    // Nested session.id (e.g., in session.created / session.updated events)
+    if ("session" in rewritten && rewritten.session?.id === engineSessionId) {
+      rewritten.session = { ...rewritten.session, id: conversationId };
+    }
+    // Nested question.sessionId (e.g., in question.asked events)
+    if ("question" in rewritten && rewritten.question?.sessionId === engineSessionId) {
+      rewritten.question = { ...rewritten.question, sessionId: conversationId };
+    }
     return rewritten;
   }
 
@@ -232,9 +240,35 @@ export class EngineManager extends EventEmitter {
       }
     });
 
+    // --- session.updated: persist metadata changes then forward with rewrite ---
+    adapter.on("session.updated", (data) => {
+      const engineSessionId = data?.session?.id;
+      const convId = engineSessionId ? this.resolveConversationId(engineSessionId) : null;
+
+      if (convId) {
+        // Persist title changes
+        if (data.session.title) {
+          const conv = conversationStore.get(convId);
+          if (conv && this.isDefaultTitle(conv.title)) {
+            conversationStore.rename(convId, data.session.title);
+          }
+        }
+        // Persist engineMeta (e.g. ccSessionId for Claude Code session resumption)
+        if (data.session.engineMeta) {
+          conversationStore.setEngineSession(
+            convId,
+            conversationStore.get(convId)?.engineSessionId ?? "",
+            data.session.engineMeta as Record<string, unknown>,
+          );
+        }
+        this.emit("session.updated", this.rewriteSessionId(data as any, engineSessionId!, convId) as any);
+      } else {
+        this.emit("session.updated", data);
+      }
+    });
+
     // --- Other events: simple forwarding with sessionId rewrite ---
     const simpleEvents: (keyof EngineAdapterEvents)[] = [
-      "session.updated",
       "session.created",
       "permission.asked",
       "permission.replied",
@@ -256,7 +290,8 @@ export class EngineManager extends EventEmitter {
         }
 
         // Rewrite sessionId if applicable
-        const engineSessionId = data?.sessionId || data?.session?.id || data?.permission?.sessionId;
+        const engineSessionId =
+          data?.sessionId || data?.session?.id || data?.permission?.sessionId || data?.question?.sessionId;
         if (engineSessionId) {
           const convId = this.resolveConversationId(engineSessionId);
           if (convId) {
@@ -545,7 +580,7 @@ export class EngineManager extends EventEmitter {
     // Lazy engine session creation: first sendMessage triggers adapter.createSession()
     let engineSessionId = conv.engineSessionId;
     if (!engineSessionId) {
-      const engineSession = await adapter.createSession(conv.directory);
+      const engineSession = await adapter.createSession(conv.directory, conv.engineMeta);
       engineSessionId = engineSession.id;
       conversationStore.setEngineSession(sessionId, engineSessionId, engineSession.engineMeta);
     }

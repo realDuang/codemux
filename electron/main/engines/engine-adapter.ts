@@ -126,8 +126,8 @@ export abstract class EngineAdapter extends EventEmitter {
   /** List sessions, optionally filtered by directory */
   abstract listSessions(directory?: string): Promise<UnifiedSession[]>;
 
-  /** Create a new session */
-  abstract createSession(directory: string): Promise<UnifiedSession>;
+  /** Create a new session. Optional meta contains persisted engine metadata (e.g. ccSessionId). */
+  abstract createSession(directory: string, meta?: Record<string, unknown>): Promise<UnifiedSession>;
 
   /** Get a specific session by ID */
   abstract getSession(sessionId: string): Promise<UnifiedSession | null>;

@@ -211,6 +211,8 @@ export class ClaudeCodeAdapter extends EngineAdapter {
 
   // --- Session directory cache (used instead of external store lookups) ---
   private sessionDirectories = new Map<string, string>();
+  /** Persisted ccSessionId per session, for SDK session resumption across restarts */
+  private sessionCcIds = new Map<string, string>();
 
   // --- Message accumulation ---
   private messageBuffers = new Map<string, MessageBuffer>();
@@ -387,7 +389,7 @@ export class ClaudeCodeAdapter extends EngineAdapter {
     }
   }
 
-  async createSession(directory: string): Promise<UnifiedSession> {
+  async createSession(directory: string, meta?: Record<string, unknown>): Promise<UnifiedSession> {
     const normalizedDir = directory.replaceAll("\\", "/");
     const sessionId = timeId("cs");
     const now = Date.now();
@@ -404,6 +406,10 @@ export class ClaudeCodeAdapter extends EngineAdapter {
     };
 
     this.sessionDirectories.set(sessionId, normalizedDir);
+    // Restore ccSessionId from persisted engineMeta for session resumption
+    if (meta?.ccSessionId && typeof meta.ccSessionId === "string") {
+      this.sessionCcIds.set(sessionId, meta.ccSessionId);
+    }
     this.emit("session.created", { session });
 
     return session;
@@ -1194,8 +1200,7 @@ export class ClaudeCodeAdapter extends EngineAdapter {
     const startTime = Date.now();
 
     // Check if this session has a previous CC session ID for resumption
-    // (from in-memory v2Sessions cache — EngineManager handles persistent storage)
-    const ccSessionId = undefined as string | undefined;
+    const ccSessionId = this.sessionCcIds.get(sessionId);
 
     // Build environment variables
     const env: Record<string, string | undefined> = {

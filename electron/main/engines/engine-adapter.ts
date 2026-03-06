@@ -158,7 +158,7 @@ export abstract class EngineAdapter extends EventEmitter {
   ): Promise<UnifiedMessage>;
 
   /** Cancel an in-flight message */
-  abstract cancelMessage(sessionId: string): Promise<void>;
+  abstract cancelMessage(sessionId: string, directory?: string): Promise<void>;
 
   /** List messages for a session */
   abstract listMessages(sessionId: string): Promise<UnifiedMessage[]>;

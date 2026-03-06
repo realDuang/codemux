@@ -1112,7 +1112,7 @@ export class OpenCodeAdapter extends EngineAdapter {
   async sendMessage(
     sessionId: string,
     content: MessagePromptContent[],
-    options?: { mode?: string; modelId?: string },
+    options?: { mode?: string; modelId?: string; directory?: string },
   ): Promise<UnifiedMessage> {
     // Clear cancelled state — a new message means the user wants to interact again
     this.cancelledSessions.delete(sessionId);
@@ -1137,7 +1137,7 @@ export class OpenCodeAdapter extends EngineAdapter {
       }
     }
 
-    const dir = session?.directory ?? this.currentDirectory ?? undefined;
+    const dir = session?.directory ?? options?.directory ?? this.currentDirectory ?? undefined;
 
     // Pre-prompt abort: clear any residual unfinished state in OpenCode.
     // This is harmless if the session is already idle, but critical for sessions
@@ -1222,7 +1222,8 @@ export class OpenCodeAdapter extends EngineAdapter {
             role: "assistant",
             time: { created: Date.now() },
             parts: [],
-            error: "No response from engine — session may be stale",
+            error: "No response from engine",
+            staleSession: true,
           });
         }
       }, 30_000);
@@ -1232,7 +1233,7 @@ export class OpenCodeAdapter extends EngineAdapter {
     return messagePromise;
   }
 
-  async cancelMessage(sessionId: string): Promise<void> {
+  async cancelMessage(sessionId: string, directory?: string): Promise<void> {
     // Fire abort via SDK to kill running processes ASAP.
     // Don't add to cancelledSessions — let OpenCode's abort response (message.updated
     // with error + session.status: idle) flow through SSE naturally so the frontend
@@ -1242,8 +1243,9 @@ export class OpenCodeAdapter extends EngineAdapter {
     // OpenCode's state is scoped per-directory — sending abort with the wrong directory
     // causes SessionPrompt.cancel() to silently miss the session's AbortController.
     const session = this.sessions.get(sessionId);
-    const client = session?.directory
-      ? this.createClient(session.directory)
+    const dir = session?.directory ?? directory;
+    const client = dir
+      ? this.createClient(dir)
       : this.ensureClient();
     client.session.abort({ sessionID: sessionId }).catch((err: any) => {
       openCodeLog.warn("cancelMessage abort call failed:", err);

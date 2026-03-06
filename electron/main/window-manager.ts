@@ -30,6 +30,10 @@ export function createWindow(): BrowserWindow {
     mainWindow?.show();
   });
 
+  mainWindow.on("closed", () => {
+    mainWindow = null;
+  });
+
   // Open external links in default browser
   mainWindow.webContents.setWindowOpenHandler((details) => {
     shell.openExternal(details.url);

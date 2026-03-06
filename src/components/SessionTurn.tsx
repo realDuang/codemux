@@ -380,12 +380,12 @@ export function SessionTurn(props: SessionTurnProps) {
     return questions().filter(q => !matched.has(q.id));
   });
 
-  // Check if there are any tool parts (steps)
+  // Check if there are any step parts (tool, reasoning, step-start, etc.)
   const hasSteps = createMemo(() => {
     for (const assistantMsg of props.assistantMessages) {
       const parts = messageStore.part[assistantMsg.id] || [];
       for (const p of parts) {
-        if (p?.type === "tool") return true;
+        if (p?.type === "tool" || p?.type === "reasoning") return true;
       }
     }
     return false;

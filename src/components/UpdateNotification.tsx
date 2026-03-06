@@ -7,6 +7,14 @@ export function UpdateNotification() {
   const { t } = useI18n();
   const [state, setState] = createSignal<UpdateStateInfo | null>(null);
   const [dismissed, setDismissed] = createSignal(false);
+  let errorDismissTimer: ReturnType<typeof setTimeout> | null = null;
+
+  const clearErrorTimer = () => {
+    if (errorDismissTimer) {
+      clearTimeout(errorDismissTimer);
+      errorDismissTimer = null;
+    }
+  };
 
   onMount(() => {
     if (!isElectron()) return;
@@ -18,25 +26,43 @@ export function UpdateNotification() {
     };
 
     addCleanup(updateAPI.onUpdateAvailable((s) => {
+      clearErrorTimer();
       setState(s);
       setDismissed(false);
     }));
 
     addCleanup(updateAPI.onDownloadProgress((s) => {
+      clearErrorTimer();
       setState(s);
     }));
 
     addCleanup(updateAPI.onUpdateDownloaded((s) => {
+      clearErrorTimer();
       setState(s);
       setDismissed(false);
     }));
 
     addCleanup(updateAPI.onUpdateError((s) => {
+      clearErrorTimer();
       setState(s);
       setDismissed(false);
+      // Auto-dismiss error notification after 10 seconds
+      errorDismissTimer = setTimeout(() => {
+        errorDismissTimer = null;
+        if (state()?.status === "error") {
+          setDismissed(true);
+        }
+      }, 10_000);
+    }));
+
+    addCleanup(updateAPI.onStatusChange((s) => {
+      // Update state on status changes (e.g., checking → error/available)
+      // so retry shows visual feedback
+      setState(s);
     }));
 
     onCleanup(() => {
+      clearErrorTimer();
       for (const cleanup of cleanups) cleanup();
     });
   });
@@ -56,7 +82,7 @@ export function UpdateNotification() {
   const shouldShow = () => {
     const s = state();
     if (!s || dismissed()) return false;
-    return s.status === "available" || s.status === "downloading" || s.status === "downloaded" || s.status === "error";
+    return s.status === "checking" || s.status === "available" || s.status === "downloading" || s.status === "downloaded" || s.status === "error";
   };
 
   const progressPercent = () => {
@@ -68,6 +94,32 @@ export function UpdateNotification() {
     <Show when={shouldShow()}>
       <div class="fixed bottom-6 right-6 z-50 w-80 max-w-[calc(100vw-3rem)] font-sans animate-in fade-in slide-in-from-bottom-4 duration-300">
         <div class="bg-white dark:bg-slate-900 rounded-xl shadow-2xl border border-gray-100 dark:border-slate-800 overflow-hidden">
+          {/* Checking state */}
+          <Show when={state()?.status === "checking"}>
+            <div class="p-4">
+              <div class="flex items-center justify-between">
+                <div class="flex items-center gap-2.5">
+                  <div class="w-8 h-8 rounded-full bg-blue-50 dark:bg-blue-900/20 flex items-center justify-center text-blue-600 dark:text-blue-400 animate-spin">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                      <path d="M21 12a9 9 0 1 1-6.219-8.56"/>
+                    </svg>
+                  </div>
+                  <p class="text-sm font-medium text-gray-900 dark:text-gray-100">
+                    {t().update.checking}
+                  </p>
+                </div>
+                <button
+                  onClick={handleDismiss}
+                  class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M18 6 6 18"/><path d="m6 6 12 12"/>
+                  </svg>
+                </button>
+              </div>
+            </div>
+          </Show>
+
           {/* Downloading state */}
           <Show when={state()?.status === "available" || state()?.status === "downloading"}>
             <div class="p-4">
@@ -158,12 +210,22 @@ export function UpdateNotification() {
                     {t().update.error}
                   </p>
                 </div>
-                <button
-                  onClick={handleRetry}
-                  class="px-3 py-1.5 text-xs font-medium text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded-lg transition-colors"
-                >
-                  {t().update.retry}
-                </button>
+                <div class="flex items-center gap-1">
+                  <button
+                    onClick={handleRetry}
+                    class="px-3 py-1.5 text-xs font-medium text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded-lg transition-colors"
+                  >
+                    {t().update.retry}
+                  </button>
+                  <button
+                    onClick={handleDismiss}
+                    class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors p-1"
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                      <path d="M18 6 6 18"/><path d="m6 6 12 12"/>
+                    </svg>
+                  </button>
+                </div>
               </div>
             </div>
           </Show>

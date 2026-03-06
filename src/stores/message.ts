@@ -4,7 +4,7 @@ import type { UnifiedMessage, UnifiedPart, UnifiedPermission, UnifiedQuestion } 
 // Storage structure — engine-agnostic
 export const [messageStore, setMessageStore] = createStore<{
   message: {
-    [sessionId: string]: UnifiedMessage[];  // Grouped by sessionId, array sorted by id
+    [sessionId: string]: UnifiedMessage[];  // Grouped by sessionId, array in chronological order
   };
   part: {
     [messageId: string]: UnifiedPart[];  // Grouped by messageId, array sorted by id

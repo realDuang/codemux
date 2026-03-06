@@ -19,6 +19,7 @@ export default function Settings() {
   const [logPath, setLogPath] = createSignal("");
   const [logLevel, setLogLevel] = createSignal("warn");
   const [showLogSection, setShowLogSection] = createSignal(isElectron());
+  const [conversationsPath, setConversationsPath] = createSignal("");
 
   // Update section state
   const [appVersion, setAppVersion] = createSignal("");
@@ -31,7 +32,12 @@ export default function Settings() {
     // Load app version and update settings
     if (isElectron()) {
       const info = await systemAPI.getInfo();
-      if (info) setAppVersion(info.version);
+      if (info) {
+        setAppVersion(info.version);
+        // Derive conversations storage path from userData
+        const sep = info.platform === "win32" ? "\\" : "/";
+        setConversationsPath(info.userDataPath + sep + "conversations");
+      }
 
       const autoCheck = await updateAPI.isAutoCheckEnabled();
       setAutoCheckEnabled(autoCheck);
@@ -105,6 +111,17 @@ export default function Settings() {
         await api.system.openPath(dir);
       } catch {
         // fallback: try shell.openExternal for the directory
+      }
+    }
+  };
+
+  const handleOpenConversationsFolder = async () => {
+    const path = conversationsPath();
+    if (path) {
+      try {
+        await systemAPI.openPath(path);
+      } catch {
+        // Failed to open conversations folder
       }
     }
   };
@@ -484,6 +501,33 @@ export default function Settings() {
                       </Show>
                     </div>
                   </div>
+                  {/* Conversations storage */}
+                  <Show when={isElectron()}>
+                    <div class="p-4 sm:p-6 flex items-center justify-between gap-4 border-b border-gray-200 dark:border-slate-700">
+                      <div class="min-w-0">
+                        <h3 class="text-base font-medium text-gray-900 dark:text-white">
+                          {t().settings.conversationsPath}
+                        </h3>
+                        <p class="text-sm text-gray-500 dark:text-gray-400 mt-1">
+                          {t().settings.conversationsPathDesc}
+                        </p>
+                        <Show when={conversationsPath()}>
+                          <p class="text-xs text-gray-400 dark:text-gray-500 mt-2 font-mono truncate" title={conversationsPath()}>
+                            {conversationsPath()}
+                          </p>
+                        </Show>
+                      </div>
+                      <div class="flex-shrink-0">
+                        <button
+                          onClick={handleOpenConversationsFolder}
+                          disabled={!conversationsPath()}
+                          class="px-3 py-1.5 text-sm font-medium rounded-lg border border-gray-300 dark:border-slate-600 text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-slate-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          {t().settings.openConversationsFolder}
+                        </button>
+                      </div>
+                    </div>
+                  </Show>
                   {/* Log level */}
                   <div class="p-4 sm:p-6 flex items-center justify-between gap-4">
                     <div>

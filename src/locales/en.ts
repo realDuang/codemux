@@ -89,6 +89,9 @@ export interface LocaleDict {
     logFilePath: string;
     logFilePathDesc: string;
     openLogFolder: string;
+    conversationsPath: string;
+    conversationsPathDesc: string;
+    openConversationsFolder: string;
     logLevel: string;
     logLevelDesc: string;
   };
@@ -421,6 +424,9 @@ export const en: LocaleDict = {
     logFilePath: "Log File Location",
     logFilePathDesc: "Where application logs are stored on disk",
     openLogFolder: "Open Folder",
+    conversationsPath: "Conversations Storage",
+    conversationsPathDesc: "Where conversation history and messages are stored on disk",
+    openConversationsFolder: "Open Folder",
     logLevel: "Log Level",
     logLevelDesc: "Minimum severity level for writing logs to file",
   },

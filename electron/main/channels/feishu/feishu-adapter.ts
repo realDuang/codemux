@@ -551,7 +551,7 @@ export class FeishuAdapter extends ChannelAdapter {
     this.sessionMapper.clearPendingSelection(chatId);
 
     // Check if this session already has a bound group chat — if so, direct user there
-    if (this.sessionMapper.hasGroupForSession(session.id)) {
+    if (this.sessionMapper.hasGroupForConversation(session.id)) {
       await this.sendTextMessage(
         chatId,
         `This session already has a group chat. Please send messages in the existing group chat directly.`,
@@ -606,7 +606,7 @@ export class FeishuAdapter extends ChannelAdapter {
         break;
 
       case "cancel":
-        await this.gatewayClient.cancelMessage(binding.sessionId);
+        await this.gatewayClient.cancelMessage(binding.conversationId);
         await this.sendTextMessage(groupChatId, "Message cancelled.");
         break;
 
@@ -615,7 +615,7 @@ export class FeishuAdapter extends ChannelAdapter {
         const lines = [
           "**Session Status**\n",
           `Project: **${projectName}** (${binding.engineType})`,
-          `Session: \`${binding.sessionId.slice(0, 12)}...\``,
+          `Session: \`${binding.conversationId.slice(0, 12)}...\``,
         ];
         await this.sendTextMessage(groupChatId, lines.join("\n"));
         break;
@@ -627,7 +627,7 @@ export class FeishuAdapter extends ChannelAdapter {
           return;
         }
         await this.gatewayClient.setMode({
-          sessionId: binding.sessionId,
+          sessionId: binding.conversationId,
           modeId: command.args[0],
         });
         await this.sendTextMessage(groupChatId, `Mode set to: **${command.args[0]}**`);
@@ -650,7 +650,7 @@ export class FeishuAdapter extends ChannelAdapter {
           await this.sendTextMessage(groupChatId, lines.join("\n"));
         } else if (command.args && command.args.length > 0) {
           await this.gatewayClient.setModel({
-            sessionId: binding.sessionId,
+            sessionId: binding.conversationId,
             modelId: command.args[0],
           });
           await this.sendTextMessage(groupChatId, `Model set to: **${command.args[0]}**`);
@@ -672,7 +672,7 @@ export class FeishuAdapter extends ChannelAdapter {
 
   private async createGroupForSession(
     userOpenId: string,
-    sessionId: string,
+    conversationId: string,
     engineType: EngineType,
     directory: string,
     projectId: string,
@@ -682,21 +682,21 @@ export class FeishuAdapter extends ChannelAdapter {
     if (!this.larkClient || !this.gatewayClient) return;
 
     // Check if session already has a group
-    if (this.sessionMapper.hasGroupForSession(sessionId)) {
-      const existingChatId = this.sessionMapper.findGroupChatIdBySessionId(sessionId);
+    if (this.sessionMapper.hasGroupForConversation(conversationId)) {
+      const existingChatId = this.sessionMapper.findGroupChatIdByConversationId(conversationId);
       if (p2pChatId) {
         await this.sendTextMessage(
           p2pChatId,
           `Session already has a group chat. Check your Feishu groups.`,
         );
       }
-      feishuLog.warn(`Session ${sessionId} already has group ${existingChatId}`);
+      feishuLog.warn(`Conversation ${conversationId} already has group ${existingChatId}`);
       return;
     }
 
     // Concurrency guard — prevent duplicate group creation from rapid clicks
-    if (!this.sessionMapper.markCreating(sessionId)) {
-      feishuLog.warn(`Session ${sessionId} group creation already in progress`);
+    if (!this.sessionMapper.markCreating(conversationId)) {
+      feishuLog.warn(`Conversation ${conversationId} group creation already in progress`);
       return;
     }
 
@@ -704,7 +704,7 @@ export class FeishuAdapter extends ChannelAdapter {
       // Fetch session title for group name
       let sessionTitle = "New Session";
       try {
-        const session = await this.gatewayClient.getSession(sessionId);
+        const session = await this.gatewayClient.getSession(conversationId);
         if (session?.title) {
           sessionTitle = session.title;
         }
@@ -731,12 +731,12 @@ export class FeishuAdapter extends ChannelAdapter {
         return;
       }
 
-      feishuLog.info(`Created group chat: ${newChatId} for session ${sessionId}`);
+      feishuLog.info(`Created group chat: ${newChatId} for conversation ${conversationId}`);
 
       // Register group binding
       this.sessionMapper.createGroupBinding({
         chatId: newChatId,
-        sessionId,
+        conversationId,
         engineType,
         directory,
         projectId,
@@ -746,7 +746,7 @@ export class FeishuAdapter extends ChannelAdapter {
       });
 
       // Send welcome card to the new group
-      const welcomeCard = buildGroupWelcomeCard(projectName, engineType, sessionId);
+      const welcomeCard = buildGroupWelcomeCard(projectName, engineType, conversationId);
       await this.sendCardMessage(newChatId, welcomeCard);
 
       // Notify user in P2P
@@ -765,7 +765,7 @@ export class FeishuAdapter extends ChannelAdapter {
         );
       }
     } finally {
-      this.sessionMapper.unmarkCreating(sessionId);
+      this.sessionMapper.unmarkCreating(conversationId);
     }
   }
 
@@ -839,10 +839,10 @@ export class FeishuAdapter extends ChannelAdapter {
     const binding = this.sessionMapper.removeGroupBinding(chatId);
     if (binding && this.gatewayClient) {
       try {
-        await this.gatewayClient.deleteSession(binding.sessionId);
-        feishuLog.info(`Deleted session ${binding.sessionId} after group disbanded`);
+        await this.gatewayClient.deleteSession(binding.conversationId);
+        feishuLog.info(`Deleted session ${binding.conversationId} after group disbanded`);
       } catch (err) {
-        feishuLog.error(`Failed to delete session ${binding.sessionId}:`, err);
+        feishuLog.error(`Failed to delete session ${binding.conversationId}:`, err);
       }
     }
   }
@@ -855,10 +855,10 @@ export class FeishuAdapter extends ChannelAdapter {
     const binding = this.sessionMapper.removeGroupBinding(chatId);
     if (binding && this.gatewayClient) {
       try {
-        await this.gatewayClient.deleteSession(binding.sessionId);
-        feishuLog.info(`Deleted session ${binding.sessionId} after bot removed from group`);
+        await this.gatewayClient.deleteSession(binding.conversationId);
+        feishuLog.info(`Deleted session ${binding.conversationId} after bot removed from group`);
       } catch (err) {
-        feishuLog.error(`Failed to delete session ${binding.sessionId}:`, err);
+        feishuLog.error(`Failed to delete session ${binding.conversationId}:`, err);
       }
     }
   }
@@ -887,7 +887,7 @@ export class FeishuAdapter extends ChannelAdapter {
     const placeholderKey = `pending_${Date.now()}`;
     const streamingSession: StreamingSession = {
       feishuMessageId: feishuMsgId,
-      sessionId: binding.sessionId,
+      conversationId: binding.conversationId,
       messageId: "",  // will be set when sendMessage resolves
       textBuffer: "",
       lastPatchTime: Date.now(),
@@ -901,7 +901,7 @@ export class FeishuAdapter extends ChannelAdapter {
     // Streaming updates come via Gateway notifications and are now captured
     // by the pre-registered streaming session above.
     const sendPromise = this.gatewayClient.sendMessage({
-      sessionId: binding.sessionId,
+      sessionId: binding.conversationId,
       content: [{ type: "text", text }],
     });
 
@@ -928,14 +928,14 @@ export class FeishuAdapter extends ChannelAdapter {
   // Gateway Notification Handlers
   // ============================================================================
 
-  private handlePartUpdated(sessionId: string, part: UnifiedPart): void {
-    const binding = this.sessionMapper.findGroupBySessionId(sessionId);
+  private handlePartUpdated(conversationId: string, part: UnifiedPart): void {
+    const binding = this.sessionMapper.findGroupByConversationId(conversationId);
     if (!binding) return;
 
     // Find the active (non-completed) streaming session
     let streaming: StreamingSession | undefined;
     for (const ss of binding.streamingSessions.values()) {
-      if (ss.sessionId === sessionId && !ss.completed) {
+      if (ss.conversationId === conversationId && !ss.completed) {
         streaming = ss;
         break;
       }
@@ -964,7 +964,7 @@ export class FeishuAdapter extends ChannelAdapter {
     }
   }
 
-  private handleMessageCompleted(sessionId: string, message: UnifiedMessage): void {
+  private handleMessageCompleted(conversationId: string, message: UnifiedMessage): void {
     // Only process assistant messages — user message updates must be ignored
     // as they arrive first (before any text parts) and would prematurely
     // finalize the streaming session with empty textBuffer.
@@ -977,7 +977,7 @@ export class FeishuAdapter extends ChannelAdapter {
     // the streaming session while text parts are still arriving.
     if (!message.time?.completed) return;
 
-    const binding = this.sessionMapper.findGroupBySessionId(sessionId);
+    const binding = this.sessionMapper.findGroupByConversationId(conversationId);
     if (!binding) return;
 
     // Try direct lookup by message.id first
@@ -985,10 +985,10 @@ export class FeishuAdapter extends ChannelAdapter {
     let streamingKey = message.id;
 
     // Fallback: if sendMessage().then() hasn't re-keyed yet (placeholder still active),
-    // scan for any non-completed session matching this sessionId
+    // scan for any non-completed session matching this conversationId
     if (!streaming) {
       for (const [key, ss] of binding.streamingSessions.entries()) {
-        if (ss.sessionId === sessionId && !ss.completed) {
+        if (ss.conversationId === conversationId && !ss.completed) {
           streaming = ss;
           streamingKey = key;
           break;
@@ -1027,7 +1027,7 @@ export class FeishuAdapter extends ChannelAdapter {
   }
 
   private handlePermissionAsked(permission: UnifiedPermission): void {
-    const binding = this.sessionMapper.findGroupBySessionId(permission.sessionId);
+    const binding = this.sessionMapper.findGroupByConversationId(permission.sessionId);
     if (!binding) return;
 
     if (!this.config.autoApprovePermissions || !this.gatewayClient) return;
@@ -1050,7 +1050,7 @@ export class FeishuAdapter extends ChannelAdapter {
   }
 
   private handleQuestionAsked(question: UnifiedQuestion): void {
-    const groupChatId = this.sessionMapper.findGroupChatIdBySessionId(question.sessionId);
+    const groupChatId = this.sessionMapper.findGroupChatIdByConversationId(question.sessionId);
     if (!groupChatId) return;
 
     // UnifiedQuestion has questions: QuestionInfo[], each with question text and options
@@ -1073,7 +1073,7 @@ export class FeishuAdapter extends ChannelAdapter {
     if (!this.larkClient) return;
 
     // Check if this session has a bound group chat
-    const groupChatId = this.sessionMapper.findGroupChatIdBySessionId(session.id);
+    const groupChatId = this.sessionMapper.findGroupChatIdByConversationId(session.id);
     if (!groupChatId) return;
 
     const binding = this.sessionMapper.getGroupBinding(groupChatId);

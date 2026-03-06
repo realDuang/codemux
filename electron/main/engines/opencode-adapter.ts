@@ -128,7 +128,6 @@ function createOpencodeServer(options?: ServerOptions): Promise<{ url: string; c
   }));
 }
 import { EngineAdapter } from "./engine-adapter";
-import { sessionStore } from "../services/session-store";
 import { openCodeLog } from "../services/logger";
 import { normalizeToolName, inferToolKind } from "../../../src/types/tool-mapping";
 import type {
@@ -592,14 +591,12 @@ export class OpenCodeAdapter extends EngineAdapter {
   private handleSessionUpdated(sdkSession: SdkSession): void {
     const session = this.convertSession(sdkSession);
     this.sessions.set(session.id, session);
-    sessionStore.upsertSession(session);
     this.emit("session.updated", { session });
   }
 
   private handleSessionCreated(sdkSession: SdkSession): void {
     const session = this.convertSession(sdkSession);
     this.sessions.set(session.id, session);
-    sessionStore.upsertSession(session);
     this.emit("session.created", { session });
   }
 
@@ -856,14 +853,6 @@ export class OpenCodeAdapter extends EngineAdapter {
     this.status = "starting";
     this.emit("status.changed", { engineType: this.engineType, status: this.status });
 
-    // Preload persisted sessions from SessionStore
-    const persisted = sessionStore.getSessionsByEngine(this.engineType);
-    for (const s of persisted) {
-      if (!this.sessions.has(s.id)) {
-        this.sessions.set(s.id, s);
-      }
-    }
-
     // Use SDK to spawn and manage the OpenCode server process
     try {
       // Clean up any orphaned opencode process on our port (e.g. from a previous crash)
@@ -1007,7 +996,6 @@ export class OpenCodeAdapter extends EngineAdapter {
 
     const session = this.convertSession(result.data);
     this.sessions.set(session.id, session);
-    sessionStore.upsertSession(session);
     return session;
   }
 
@@ -1023,8 +1011,7 @@ export class OpenCodeAdapter extends EngineAdapter {
     try {
       const projects = await this.listProjects();
       if (projects.length === 0) {
-        // No projects yet — return whatever is in the session store
-        return sessionStore.getSessionsByEngine(this.engineType);
+        return [];
       }
 
       const allSessions: UnifiedSession[] = [];
@@ -1037,12 +1024,10 @@ export class OpenCodeAdapter extends EngineAdapter {
         }
       }
 
-      sessionStore.mergeSessions(allSessions, this.engineType);
       return allSessions;
     } catch (err: any) {
       openCodeLog.warn("Failed to list projects for session enumeration:", err?.message);
-      // Fall back to session store if project listing fails
-      return sessionStore.getSessionsByEngine(this.engineType);
+      return [];
     }
   }
 
@@ -1058,7 +1043,6 @@ export class OpenCodeAdapter extends EngineAdapter {
       this.sessions.set(session.id, session);
       return session;
     });
-    sessionStore.mergeSessions(sessions, this.engineType);
     return sessions;
   }
 
@@ -1088,7 +1072,6 @@ export class OpenCodeAdapter extends EngineAdapter {
       : this.ensureClient();
     await client.session.delete({ sessionID: sessionId });
     this.sessions.delete(sessionId);
-    sessionStore.deleteSession(sessionId);
   }
 
   // --- Messages ---

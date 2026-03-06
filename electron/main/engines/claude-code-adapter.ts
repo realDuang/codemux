@@ -31,7 +31,6 @@ import type {
 } from "@anthropic-ai/claude-agent-sdk";
 
 import { EngineAdapter } from "./engine-adapter";
-import { sessionStore } from "../services/session-store";
 import { claudeLog } from "../services/logger";
 import { inferToolKind } from "../../../src/types/tool-mapping";
 import type {
@@ -210,6 +209,9 @@ export class ClaudeCodeAdapter extends EngineAdapter {
   private cachedModels: UnifiedModelInfo[] = [];
   private sessionModes = new Map<string, string>();
 
+  // --- Session directory cache (used instead of external store lookups) ---
+  private sessionDirectories = new Map<string, string>();
+
   // --- Message accumulation ---
   private messageBuffers = new Map<string, MessageBuffer>();
   private messageHistory = new Map<string, UnifiedMessage[]>();
@@ -373,33 +375,16 @@ export class ClaudeCodeAdapter extends EngineAdapter {
         directory ? { dir: directory } : undefined,
       );
 
-      // Build a set of ccSessionIds already tracked by codemux-created sessions (cs_*).
-      // These sessions have richer state (streaming history, V2 session info) so we
-      // skip the SDK-imported duplicate (cc_*) to avoid showing two entries for the
-      // same underlying Claude Code conversation.
-      const knownCcIds = new Set<string>();
-      for (const s of sessionStore.getSessionsByEngine(this.engineType)) {
-        const ccId = s.engineMeta?.ccSessionId as string | undefined;
-        if (ccId && !s.id.startsWith("cc_")) {
-          knownCcIds.add(ccId);
-        }
+      const sessions = sdkSessions.map((s) => this.sdkSessionToUnified(s, directory));
+      if (directory) {
+        const normDir = directory.replaceAll("\\", "/");
+        return sessions.filter((s) => s.directory === normDir);
       }
-
-      const sessions = sdkSessions
-        .filter((s) => !knownCcIds.has(s.sessionId))
-        .map((s) => this.sdkSessionToUnified(s, directory));
-      sessionStore.mergeSessions(sessions, this.engineType);
+      return sessions;
     } catch (err) {
       claudeLog.warn("Failed to list Claude sessions from SDK:", err);
+      return [];
     }
-
-    // Return from session store (merged source of truth)
-    const allSessions = sessionStore.getSessionsByEngine(this.engineType);
-    if (directory) {
-      const normDir = directory.replaceAll("\\", "/");
-      return allSessions.filter((s) => s.directory === normDir);
-    }
-    return allSessions;
   }
 
   async createSession(directory: string): Promise<UnifiedSession> {
@@ -418,14 +403,14 @@ export class ClaudeCodeAdapter extends EngineAdapter {
       },
     };
 
-    sessionStore.upsertSession(session);
+    this.sessionDirectories.set(sessionId, normalizedDir);
     this.emit("session.created", { session });
 
     return session;
   }
 
   async getSession(sessionId: string): Promise<UnifiedSession | null> {
-    return sessionStore.getSession(sessionId) ?? null;
+    return null;
   }
 
   async deleteSession(sessionId: string): Promise<void> {
@@ -469,15 +454,13 @@ export class ClaudeCodeAdapter extends EngineAdapter {
     }
 
     // Delete the Claude Code .jsonl session file so it won't reappear on next listSessions
-    const session = sessionStore.getSession(sessionId);
-    const ccSessionId =
-      v2Info?.capturedSessionId ??
-      (session?.engineMeta?.ccSessionId as string | undefined);
-    if (ccSessionId && session?.directory) {
-      this.deleteCCSessionFile(ccSessionId, session.directory);
+    const ccSessionId = v2Info?.capturedSessionId;
+    const directory = v2Info?.directory ?? this.sessionDirectories.get(sessionId);
+    if (ccSessionId && directory) {
+      this.deleteCCSessionFile(ccSessionId, directory);
     }
 
-    sessionStore.deleteSession(sessionId);
+    this.sessionDirectories.delete(sessionId);
     this.messageHistory.delete(sessionId);
     this.messageBuffers.delete(sessionId);
     this.sessionModes.delete(sessionId);
@@ -599,8 +582,10 @@ export class ClaudeCodeAdapter extends EngineAdapter {
     content: MessagePromptContent[],
     options?: { mode?: string; modelId?: string },
   ): Promise<UnifiedMessage> {
-    const session = sessionStore.getSession(sessionId);
-    if (!session) throw new Error(`Session ${sessionId} not found`);
+    const directory =
+      this.v2Sessions.get(sessionId)?.directory ??
+      this.sessionDirectories.get(sessionId);
+    if (!directory) throw new Error(`Session ${sessionId} not found (no directory)`);
 
     // Extract text content from prompt
     const textContent = content
@@ -660,7 +645,7 @@ export class ClaudeCodeAdapter extends EngineAdapter {
     // Get or create V2 session
     const v2Session = await this.getOrCreateV2Session(
       sessionId,
-      session.directory,
+      directory,
       {
         model: options?.modelId ?? this.currentModelId ?? undefined,
         permissionMode,
@@ -759,30 +744,16 @@ export class ClaudeCodeAdapter extends EngineAdapter {
       return history;
     }
 
-    // Resolve the CC session ID from multiple sources
-    const session = sessionStore.getSession(sessionId);
-    let ccSessionId = session?.engineMeta?.ccSessionId as string | undefined;
-
-    // Fallback: check in-memory v2Sessions for captured session ID
-    if (!ccSessionId) {
-      const v2Info = this.v2Sessions.get(sessionId);
-      if (v2Info?.capturedSessionId) {
-        ccSessionId = v2Info.capturedSessionId;
-        // Persist it for future restarts
-        if (session) {
-          session.engineMeta = { ...session.engineMeta, ccSessionId };
-          sessionStore.upsertSession(session);
-          sessionStore.flushAll();
-        }
-      }
-    }
+    // Resolve the CC session ID from in-memory v2Sessions
+    const v2Info = this.v2Sessions.get(sessionId);
+    const ccSessionId = v2Info?.capturedSessionId;
 
     if (!ccSessionId) {
       return [];
     }
 
     // Try to load from SDK session files
-    const directory = session?.directory;
+    const directory = v2Info?.directory ?? this.sessionDirectories.get(sessionId);
     try {
       const sdkMessages = await sdkGetSessionMessages(
         ccSessionId,
@@ -1175,9 +1146,7 @@ export class ClaudeCodeAdapter extends EngineAdapter {
   // ==========================================================================
 
   async listProjects(): Promise<UnifiedProject[]> {
-    return sessionStore.getAllProjects().filter(
-      (p) => p.engineType === this.engineType,
-    );
+    return [];
   }
 
   // ==========================================================================
@@ -1225,10 +1194,8 @@ export class ClaudeCodeAdapter extends EngineAdapter {
     const startTime = Date.now();
 
     // Check if this session has a previous CC session ID for resumption
-    const storedSession = sessionStore.getSession(sessionId);
-    const ccSessionId = storedSession?.engineMeta?.ccSessionId as
-      | string
-      | undefined;
+    // (from in-memory v2Sessions cache — EngineManager handles persistent storage)
+    const ccSessionId = undefined as string | undefined;
 
     // Build environment variables
     const env: Record<string, string | undefined> = {
@@ -1405,24 +1372,20 @@ export class ClaudeCodeAdapter extends EngineAdapter {
       const ccSessionId = msg.session_id;
 
       if (ccSessionId) {
-        // Store the CC session ID for future resumption
+        // Store the CC session ID in the in-memory V2 session for future resumption
         const v2Info = this.v2Sessions.get(sessionId);
         if (v2Info) {
           v2Info.capturedSessionId = ccSessionId;
         }
 
-        // Update session store with CC session ID
-        const session = sessionStore.getSession(sessionId);
-        if (session) {
-          session.engineMeta = {
-            ...session.engineMeta,
-            ccSessionId,
-          };
-          sessionStore.upsertSession(session);
-          // Flush immediately — ccSessionId is critical for message history
-          // recovery after restart, must not be lost in debounce window
-          sessionStore.flushAll();
-        }
+        // Emit ccSessionId so EngineManager can persist it in ConversationStore
+        this.emit("session.updated", {
+          session: {
+            id: sessionId,
+            engineType: this.engineType,
+            engineMeta: { ccSessionId },
+          },
+        });
       }
 
       // Extract version info
@@ -1893,22 +1856,7 @@ export class ClaudeCodeAdapter extends EngineAdapter {
     // Emit final message
     this.emit("message.updated", { sessionId: buffer.sessionId, message: finalMessage });
 
-    // Update session title from first user message if no title yet
-    const session = sessionStore.getSession(sessionId);
-    if (session && (!session.title || session.title === "New Chat")) {
-      const firstUserMsg = history.find((m) => m.role === "user");
-      if (firstUserMsg) {
-        const textPart = firstUserMsg.parts.find((p) => p.type === "text") as
-          | TextPart
-          | undefined;
-        if (textPart) {
-          session.title = textPart.text.slice(0, 100);
-          session.time.updated = Date.now();
-          sessionStore.upsertSession(session);
-          this.emit("session.updated", { session });
-        }
-      }
-    }
+    // Title updates are handled by EngineManager's applyTitleFallback()
 
     // Clean up
     this.messageBuffers.delete(sessionId);
@@ -1948,7 +1896,7 @@ export class ClaudeCodeAdapter extends EngineAdapter {
     directory?: string,
   ): UnifiedSession {
     return {
-      id: `cc_${sdkSession.sessionId.replace(/-/g, "").slice(0, 20)}`,
+      id: `cc_${sdkSession.sessionId}`,
       engineType: this.engineType,
       directory:
         (sdkSession.cwd ?? directory ?? "").replaceAll("\\", "/"),

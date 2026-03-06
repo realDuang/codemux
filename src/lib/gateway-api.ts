@@ -202,6 +202,10 @@ class GatewayAPI {
     return gatewayClient.listMessages(sessionId);
   }
 
+  async getMessageSteps(sessionId: string, messageId: string): Promise<UnifiedPart[]> {
+    return gatewayClient.getMessageSteps(sessionId, messageId);
+  }
+
   // --- Model ---
 
   listModels(engineType: EngineType): Promise<ModelListResult> {

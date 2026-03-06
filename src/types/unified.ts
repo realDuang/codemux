@@ -97,6 +97,59 @@ export interface ModelListResult {
   currentModelId?: string;
 }
 
+// --- Conversation (self-owned persistence layer) ---
+
+export interface ConversationMeta {
+  id: string;
+  engineType: EngineType;
+  directory: string;
+  title: string;
+  createdAt: number;
+  updatedAt: number;
+  messageCount: number;
+  preview?: string;
+  /** Volatile engine session ID for resume (engine may clear this) */
+  engineSessionId?: string;
+  /** Engine-specific metadata (e.g. ccSessionId, projectID) */
+  engineMeta?: Record<string, unknown>;
+}
+
+export interface ConversationMessage {
+  id: string;
+  role: MessageRole;
+  time: { created: number; completed?: number };
+  /** Content-only parts (text, file) — steps stored separately */
+  parts: Array<TextPart | FilePart>;
+  tokens?: {
+    input: number;
+    output: number;
+    cache?: { read: number; write: number };
+    reasoning?: number;
+  };
+  cost?: number;
+  modelId?: string;
+  error?: string;
+}
+
+export interface StepsFile {
+  version: 1;
+  conversationId: string;
+  /** messageId → step parts (reasoning, tool, step-start/finish, snapshot, patch) */
+  messages: Record<string, UnifiedPart[]>;
+}
+
+/** Content part types stored in main conversation file */
+export type ContentPart = TextPart | FilePart;
+
+/** Step part types stored in separate steps file */
+export type StepPart =
+  | ReasoningPart
+  | ToolPart
+  | StepStartPart
+  | StepFinishPart
+  | SnapshotPart
+  | PatchPart;
+
 // --- Session ---
 
 export interface UnifiedSession {
@@ -397,6 +450,7 @@ export const GatewayRequestType = {
   MESSAGE_SEND: "message.send",
   MESSAGE_CANCEL: "message.cancel",
   MESSAGE_LIST: "message.list",
+  MESSAGE_STEPS: "message.steps",
 
   // Model
   MODEL_LIST: "model.list",

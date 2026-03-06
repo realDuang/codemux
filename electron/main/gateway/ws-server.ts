@@ -10,7 +10,7 @@ import type { Server } from "http";
 import { EngineManager } from "./engine-manager";
 import { gatewayLog } from "../services/logger";
 import log from "../services/logger";
-import { sessionStore } from "../services/session-store";
+import { conversationStore } from "../services/conversation-store";
 import {
   GatewayRequestType,
   GatewayNotificationType,
@@ -242,11 +242,7 @@ export class GatewayServer {
         return this.engineManager.deleteSession(p.sessionId);
 
       case GatewayRequestType.SESSION_RENAME: {
-        const session = sessionStore.getSession(p.sessionId);
-        if (session) {
-          session.title = p.title;
-          sessionStore.upsertSession(session);
-        }
+        conversationStore.rename(p.sessionId, p.title);
         return { success: true };
       }
 
@@ -264,6 +260,12 @@ export class GatewayServer {
 
       case GatewayRequestType.MESSAGE_LIST:
         return this.engineManager.listMessages(p.sessionId);
+
+      case GatewayRequestType.MESSAGE_STEPS: {
+        const { sessionId, messageId } = p as { sessionId: string; messageId: string };
+        const steps = await this.engineManager.getMessageSteps(sessionId, messageId);
+        return steps;
+      }
 
       // Model
       case GatewayRequestType.MODEL_LIST:
@@ -327,8 +329,7 @@ export class GatewayServer {
 
       // Legacy migration
       case GatewayRequestType.IMPORT_LEGACY_PROJECTS:
-        sessionStore.importLegacyProjects(p.projects);
-        return { success: true };
+        return { imported: 0 }; // Legacy import no longer needed
 
       default:
         throw Object.assign(

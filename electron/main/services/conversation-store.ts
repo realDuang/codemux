@@ -1,0 +1,579 @@
+// =============================================================================
+// Conversation Store — Self-owned conversation persistence layer
+//
+// Single source of truth for all conversations, messages, and steps.
+// Engine sessions are ephemeral runtime channels; this store owns the data.
+//
+// Disk layout:
+//   %APPDATA%/codemux/conversations/
+//     index.json                  - ConversationMeta[] for fast listing
+//     {conversationId}.json       - ConversationMessage[] (content parts only)
+//     {conversationId}.steps.json - StepsFile (reasoning, tool, step-start/finish, etc.)
+//
+// Performance:
+//   - index.json fully loaded into memory on init (fast listing)
+//   - Message/step files loaded on-demand
+//   - Index writes debounced 500ms
+//   - Atomic writes (.tmp + rename) for crash safety
+// =============================================================================
+
+import fs from "fs";
+import path from "path";
+import { app } from "electron";
+import { conversationStoreLog } from "./logger";
+import { timeId } from "../utils/id-gen";
+import type {
+  EngineType,
+  ConversationMeta,
+  ConversationMessage,
+  StepsFile,
+  UnifiedPart,
+  UnifiedProject,
+  TextPart,
+  FilePart,
+} from "../../../src/types/unified";
+
+// Re-export for convenience
+export type { ConversationMeta, ConversationMessage, StepsFile };
+
+// =============================================================================
+// Constants
+// =============================================================================
+
+const INDEX_VERSION = 1;
+const PREVIEW_LENGTH = 100;
+const STEPS_FILE_VERSION = 1;
+const INDEX_DEBOUNCE_MS = 500;
+const MAX_TOOL_OUTPUT_SIZE = 10_240; // 10KB per tool output in persisted steps
+
+// =============================================================================
+// Index File Structure
+// =============================================================================
+
+interface ConversationIndex {
+  version: number;
+  updatedAt: string;
+  conversations: ConversationMeta[];
+}
+
+// =============================================================================
+// Conversation Store
+// =============================================================================
+
+class ConversationStore {
+  private basePath = "";
+  private initialized = false;
+
+  // In-memory index: id → ConversationMeta
+  private index = new Map<string, ConversationMeta>();
+
+  // Debounced index write
+  private indexDirty = false;
+  private indexTimer: ReturnType<typeof setTimeout> | null = null;
+
+  // -------------------------------------------------------------------------
+  // Lifecycle
+  // -------------------------------------------------------------------------
+
+  init(): void {
+    if (this.initialized) return;
+
+    this.basePath = path.join(app.getPath("userData"), "conversations");
+    this.ensureDir(this.basePath);
+    this.loadIndex();
+    this.initialized = true;
+    conversationStoreLog.info(
+      `Initialized at ${this.basePath}, ${this.index.size} conversations`,
+    );
+  }
+
+  flushAll(): void {
+    if (this.indexDirty) {
+      if (this.indexTimer) {
+        clearTimeout(this.indexTimer);
+        this.indexTimer = null;
+      }
+      this.writeIndex();
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // Conversation CRUD
+  // -------------------------------------------------------------------------
+
+  list(filter?: {
+    engineType?: EngineType;
+    directory?: string;
+  }): ConversationMeta[] {
+    this.ensureInitialized();
+    let result = Array.from(this.index.values());
+
+    if (filter?.engineType) {
+      result = result.filter((c) => c.engineType === filter.engineType);
+    }
+    if (filter?.directory) {
+      const norm = this.normalizeDir(filter.directory);
+      result = result.filter((c) => this.normalizeDir(c.directory) === norm);
+    }
+
+    result.sort((a, b) => b.updatedAt - a.updatedAt);
+    return result;
+  }
+
+  get(id: string): ConversationMeta | null {
+    this.ensureInitialized();
+    return this.index.get(id) ?? null;
+  }
+
+  create(params: {
+    engineType: EngineType;
+    directory: string;
+    title?: string;
+  }): ConversationMeta {
+    this.ensureInitialized();
+
+    const now = Date.now();
+    const conv: ConversationMeta = {
+      id: timeId("conv"),
+      engineType: params.engineType,
+      directory: params.directory,
+      title: params.title || this.generateTitle(),
+      createdAt: now,
+      updatedAt: now,
+      messageCount: 0,
+    };
+
+    this.index.set(conv.id, conv);
+    this.scheduleIndexWrite();
+
+    conversationStoreLog.info(
+      `Created conversation ${conv.id} (${conv.engineType}, ${conv.directory})`,
+    );
+    return conv;
+  }
+
+  update(id: string, patch: Partial<ConversationMeta>): void {
+    this.ensureInitialized();
+    const conv = this.index.get(id);
+    if (!conv) return;
+
+    // Apply patch (preserve id, createdAt)
+    const { id: _id, createdAt: _ca, ...allowed } = patch;
+    Object.assign(conv, allowed);
+    if (!patch.updatedAt) {
+      conv.updatedAt = Date.now();
+    }
+
+    this.scheduleIndexWrite();
+  }
+
+  delete(id: string): void {
+    this.ensureInitialized();
+    if (!this.index.has(id)) return;
+
+    this.index.delete(id);
+
+    // Delete message and steps files
+    const msgPath = this.getMessageFilePath(id);
+    const stepsPath = this.getStepsFilePath(id);
+    this.safeDelete(msgPath);
+    this.safeDelete(msgPath + ".tmp");
+    this.safeDelete(stepsPath);
+    this.safeDelete(stepsPath + ".tmp");
+
+    this.scheduleIndexWrite();
+    conversationStoreLog.info(`Deleted conversation ${id}`);
+  }
+
+  rename(id: string, title: string): void {
+    this.update(id, { title });
+  }
+
+  // -------------------------------------------------------------------------
+  // Messages
+  // -------------------------------------------------------------------------
+
+  listMessages(id: string): ConversationMessage[] {
+    this.ensureInitialized();
+    const filePath = this.getMessageFilePath(id);
+
+    if (!fs.existsSync(filePath)) {
+      return [];
+    }
+
+    try {
+      const raw = fs.readFileSync(filePath, "utf-8");
+      return JSON.parse(raw) as ConversationMessage[];
+    } catch (err) {
+      conversationStoreLog.error(
+        `Failed to read messages for ${id}:`,
+        err,
+      );
+      return [];
+    }
+  }
+
+  appendMessage(id: string, msg: ConversationMessage): void {
+    this.ensureInitialized();
+    const messages = this.listMessages(id);
+    messages.push(msg);
+    this.writeMessages(id, messages);
+
+    // Update meta
+    const conv = this.index.get(id);
+    if (conv) {
+      conv.messageCount = messages.length;
+      conv.updatedAt = Date.now();
+
+      // Update preview from last text part
+      if (msg.parts.length > 0) {
+        const textPart = msg.parts.find(
+          (p): p is TextPart => p.type === "text",
+        );
+        if (textPart) {
+          conv.preview = textPart.text.slice(0, PREVIEW_LENGTH);
+          if (textPart.text.length > PREVIEW_LENGTH) {
+            conv.preview += "...";
+          }
+        }
+      }
+
+      // Auto-title from first user message
+      if (messages.length === 1 && msg.role === "user") {
+        const textPart = msg.parts.find(
+          (p): p is TextPart => p.type === "text",
+        );
+        if (textPart) {
+          conv.title =
+            textPart.text.slice(0, 50) +
+            (textPart.text.length > 50 ? "..." : "");
+        }
+      }
+
+      this.scheduleIndexWrite();
+    }
+  }
+
+  updateMessage(
+    id: string,
+    msgId: string,
+    patch: Partial<ConversationMessage>,
+  ): void {
+    this.ensureInitialized();
+    const messages = this.listMessages(id);
+    const idx = messages.findIndex((m) => m.id === msgId);
+    if (idx === -1) return;
+
+    const { id: _id, ...allowed } = patch;
+    Object.assign(messages[idx], allowed);
+    this.writeMessages(id, messages);
+  }
+
+  // -------------------------------------------------------------------------
+  // Steps
+  // -------------------------------------------------------------------------
+
+  getSteps(id: string, messageId: string): UnifiedPart[] {
+    this.ensureInitialized();
+    const stepsFile = this.readStepsFile(id);
+    if (!stepsFile) return [];
+    return stepsFile.messages[messageId] ?? [];
+  }
+
+  getAllSteps(id: string): StepsFile | null {
+    this.ensureInitialized();
+    return this.readStepsFile(id);
+  }
+
+  saveSteps(id: string, messageId: string, steps: UnifiedPart[]): void {
+    this.ensureInitialized();
+
+    // Truncate large tool outputs before persisting
+    const truncated = steps.map((step) => this.truncateStepOutput(step));
+
+    // Read existing steps file or create new
+    let stepsFile = this.readStepsFile(id);
+    if (!stepsFile) {
+      stepsFile = {
+        version: STEPS_FILE_VERSION,
+        conversationId: id,
+        messages: {},
+      };
+    }
+
+    stepsFile.messages[messageId] = truncated;
+    this.writeStepsFile(id, stepsFile);
+  }
+
+  // -------------------------------------------------------------------------
+  // Project Derivation
+  // -------------------------------------------------------------------------
+
+  /**
+   * Derive projects by grouping conversations by (directory, engineType).
+   * Each unique combination becomes a virtual project.
+   */
+  deriveProjects(): UnifiedProject[] {
+    this.ensureInitialized();
+    const dirEngineMap = new Map<
+      string,
+      { directory: string; engineType: EngineType }
+    >();
+
+    for (const conv of this.index.values()) {
+      if (!conv.directory || conv.directory === "/") continue;
+      const key = `${conv.engineType}::${this.normalizeDir(conv.directory)}`;
+      if (!dirEngineMap.has(key)) {
+        dirEngineMap.set(key, {
+          directory: conv.directory,
+          engineType: conv.engineType,
+        });
+      }
+    }
+
+    const projects: UnifiedProject[] = [];
+    for (const { directory, engineType } of dirEngineMap.values()) {
+      const name =
+        directory.split(/[/\\]/).filter(Boolean).pop() || directory;
+      projects.push({
+        id: `${engineType}-${this.normalizeDir(directory)}`,
+        directory,
+        name,
+        engineType,
+      });
+    }
+    return projects;
+  }
+
+  // -------------------------------------------------------------------------
+  // Engine Session Association
+  // -------------------------------------------------------------------------
+
+  setEngineSession(
+    id: string,
+    engineSessionId: string,
+    meta?: Record<string, unknown>,
+  ): void {
+    const conv = this.index.get(id);
+    if (!conv) return;
+
+    conv.engineSessionId = engineSessionId;
+    if (meta) {
+      conv.engineMeta = { ...conv.engineMeta, ...meta };
+    }
+    this.scheduleIndexWrite();
+  }
+
+  clearEngineSession(id: string): void {
+    const conv = this.index.get(id);
+    if (!conv) return;
+
+    conv.engineSessionId = undefined;
+    this.scheduleIndexWrite();
+  }
+
+  findByEngineSession(engineSessionId: string): ConversationMeta | null {
+    for (const conv of this.index.values()) {
+      if (conv.engineSessionId === engineSessionId) return conv;
+    }
+    return null;
+  }
+
+  // -------------------------------------------------------------------------
+  // Private — Index Persistence
+  // -------------------------------------------------------------------------
+
+  private loadIndex(): void {
+    const indexPath = this.getIndexPath();
+
+    if (!fs.existsSync(indexPath)) {
+      conversationStoreLog.info("No index file found, starting fresh");
+      return;
+    }
+
+    try {
+      const raw = fs.readFileSync(indexPath, "utf-8");
+      const data: ConversationIndex = JSON.parse(raw);
+
+      if (data.version !== INDEX_VERSION) {
+        conversationStoreLog.warn(
+          `Index version mismatch (${data.version} vs ${INDEX_VERSION}), rebuilding`,
+        );
+        return;
+      }
+
+      for (const conv of data.conversations) {
+        this.index.set(conv.id, conv);
+      }
+
+      conversationStoreLog.info(
+        `Index loaded: ${this.index.size} conversations`,
+      );
+    } catch (err) {
+      conversationStoreLog.error("Failed to read index:", err);
+    }
+  }
+
+  private writeIndex(): void {
+    this.indexDirty = false;
+
+    const conversations = Array.from(this.index.values());
+    conversations.sort((a, b) => b.updatedAt - a.updatedAt);
+
+    const data: ConversationIndex = {
+      version: INDEX_VERSION,
+      updatedAt: new Date().toISOString(),
+      conversations,
+    };
+
+    this.atomicWrite(this.getIndexPath(), data);
+  }
+
+  private scheduleIndexWrite(): void {
+    this.indexDirty = true;
+
+    if (this.indexTimer) {
+      clearTimeout(this.indexTimer);
+    }
+
+    this.indexTimer = setTimeout(() => {
+      this.indexTimer = null;
+      this.writeIndex();
+    }, INDEX_DEBOUNCE_MS);
+  }
+
+  // -------------------------------------------------------------------------
+  // Private — File Paths
+  // -------------------------------------------------------------------------
+
+  private getIndexPath(): string {
+    return path.join(this.basePath, "index.json");
+  }
+
+  private getMessageFilePath(id: string): string {
+    return path.join(this.basePath, `${id}.json`);
+  }
+
+  private getStepsFilePath(id: string): string {
+    return path.join(this.basePath, `${id}.steps.json`);
+  }
+
+  // -------------------------------------------------------------------------
+  // Private — Message File I/O
+  // -------------------------------------------------------------------------
+
+  private writeMessages(id: string, messages: ConversationMessage[]): void {
+    this.atomicWrite(this.getMessageFilePath(id), messages);
+  }
+
+  // -------------------------------------------------------------------------
+  // Private — Steps File I/O
+  // -------------------------------------------------------------------------
+
+  private readStepsFile(id: string): StepsFile | null {
+    const filePath = this.getStepsFilePath(id);
+    if (!fs.existsSync(filePath)) return null;
+
+    try {
+      const raw = fs.readFileSync(filePath, "utf-8");
+      return JSON.parse(raw) as StepsFile;
+    } catch (err) {
+      conversationStoreLog.error(`Failed to read steps for ${id}:`, err);
+      return null;
+    }
+  }
+
+  private writeStepsFile(id: string, stepsFile: StepsFile): void {
+    this.atomicWrite(this.getStepsFilePath(id), stepsFile);
+  }
+
+  /**
+   * Truncate large tool outputs in step parts to keep file sizes manageable.
+   */
+  private truncateStepOutput(step: UnifiedPart): UnifiedPart {
+    if (step.type !== "tool") return step;
+
+    const state = step.state;
+    if (
+      state.status === "completed" &&
+      typeof state.output === "string" &&
+      state.output.length > MAX_TOOL_OUTPUT_SIZE
+    ) {
+      return {
+        ...step,
+        state: {
+          ...state,
+          output:
+            state.output.slice(0, MAX_TOOL_OUTPUT_SIZE) +
+            `\n...[truncated, ${state.output.length - MAX_TOOL_OUTPUT_SIZE} chars omitted]`,
+        },
+      };
+    }
+
+    return step;
+  }
+
+  // -------------------------------------------------------------------------
+  // Private — Utility
+  // -------------------------------------------------------------------------
+
+  private ensureInitialized(): void {
+    if (!this.initialized) {
+      throw new Error(
+        "ConversationStore not initialized. Call init() after app.whenReady()",
+      );
+    }
+  }
+
+  private normalizeDir(dir: string): string {
+    return dir.replaceAll("\\", "/");
+  }
+
+  private ensureDir(dirPath: string): void {
+    if (!fs.existsSync(dirPath)) {
+      fs.mkdirSync(dirPath, { recursive: true });
+    }
+  }
+
+  private safeDelete(filePath: string): void {
+    try {
+      if (fs.existsSync(filePath)) {
+        fs.rmSync(filePath);
+      }
+    } catch {
+      /* ignore cleanup errors */
+    }
+  }
+
+  /**
+   * Atomic write: write to .tmp file first, then rename.
+   */
+  private atomicWrite(filePath: string, data: unknown): void {
+    const dir = path.dirname(filePath);
+    this.ensureDir(dir);
+
+    const tmpPath = filePath + ".tmp";
+    try {
+      fs.writeFileSync(tmpPath, JSON.stringify(data, null, 2), "utf-8");
+      fs.renameSync(tmpPath, filePath);
+    } catch (err) {
+      conversationStoreLog.error(`Failed to write ${filePath}:`, err);
+      try {
+        fs.unlinkSync(tmpPath);
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+
+  private generateTitle(): string {
+    const now = new Date();
+    const month = now.getMonth() + 1;
+    const day = now.getDate();
+    const hour = now.getHours();
+    const minute = now.getMinutes();
+    return `Chat ${month}-${day} ${hour}:${minute.toString().padStart(2, "0")}`;
+  }
+}
+
+export const conversationStore = new ConversationStore();

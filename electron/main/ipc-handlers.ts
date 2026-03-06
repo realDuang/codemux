@@ -166,7 +166,9 @@ export function registerIpcHandlers(): void {
   // Notify renderer when cloudflared exits unexpectedly
   tunnelManager.setOnUnexpectedExit(() => {
     for (const win of BrowserWindow.getAllWindows()) {
-      win.webContents.send("tunnel:disconnected");
+      if (!win.isDestroyed()) {
+        win.webContents.send("tunnel:disconnected");
+      }
     }
   });
 

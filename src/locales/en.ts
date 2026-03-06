@@ -135,6 +135,8 @@ export interface LocaleDict {
     files: string;
     openStorageFolder: string;
     copySessionId: string;
+    expandSidebar: string;
+    collapseSidebar: string;
   };
 
   // Project
@@ -470,6 +472,8 @@ export const en: LocaleDict = {
     files: "{count} files",
     openStorageFolder: "Open storage folder",
     copySessionId: "Copy session ID",
+    expandSidebar: "Expand sidebar",
+    collapseSidebar: "Collapse sidebar",
   },
 
   // Project

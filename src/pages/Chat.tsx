@@ -184,6 +184,8 @@ export default function Chat() {
   // Mobile Sidebar State
   const [isSidebarOpen, setIsSidebarOpen] = createSignal(false);
   const [isMobile, setIsMobile] = createSignal(window.innerWidth < 768);
+  // Desktop sidebar collapse (icon-only mode)
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = createSignal(false);
 
   // Send validation error (auto-clears after 3s)
   const [sendError, setSendError] = createSignal<string | null>(null);
@@ -250,6 +252,7 @@ export default function Chat() {
   };
 
   const toggleSidebar = () => setIsSidebarOpen((prev) => !prev);
+  const toggleSidebarCollapse = () => setIsSidebarCollapsed((prev) => !prev);
 
   onMount(() => {
     const handleResize = () => {
@@ -1005,10 +1008,27 @@ export default function Chat() {
       {/* Sidebar - Desktop: Static, Mobile: Drawer */}
       <aside
         class={`
-          fixed md:static inset-y-0 left-0 z-30 w-72 bg-gray-50 dark:bg-zinc-950 border-r border-gray-200 dark:border-zinc-800 transform transition-transform duration-300 ease-in-out flex flex-col justify-between electron-safe-top
-          ${isSidebarOpen() ? "translate-x-0" : "-translate-x-full md:translate-x-0"}
+          fixed md:static inset-y-0 left-0 z-30 ${isSidebarCollapsed() ? "md:w-14" : "w-72"} bg-gray-50 dark:bg-zinc-950 border-r border-gray-200 dark:border-zinc-800 transform transition-[width,transform] duration-300 ease-in-out flex flex-col justify-between electron-safe-top
+          ${isSidebarOpen() ? "translate-x-0 w-72" : "-translate-x-full md:translate-x-0"}
         `}
       >
+        {/* Sidebar Collapse Toggle (desktop only) */}
+        <div class="hidden md:flex items-center justify-between px-2 pt-2 pb-1 border-b border-gray-200 dark:border-zinc-800">
+          <Show when={!isSidebarCollapsed()}>
+            <span class="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider px-1">Sessions</span>
+          </Show>
+          <button
+            onClick={toggleSidebarCollapse}
+            class="p-1.5 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-zinc-800 rounded-md transition-colors flex-shrink-0"
+            title={isSidebarCollapsed() ? t().sidebar.expandSidebar : t().sidebar.collapseSidebar}
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <rect width="18" height="18" x="3" y="3" rx="2" />
+              <path d="M9 3v18" />
+              {isSidebarCollapsed() ? <path d="m14 9 3 3-3 3" /> : <path d="m14 9-3 3 3 3" />}
+            </svg>
+          </button>
+        </div>
         <div class="flex flex-col h-full overflow-hidden">
           <Show when={!sessionStore.loading}>
             <SessionSidebar
@@ -1025,34 +1045,44 @@ export default function Chat() {
               }
               onAddProject={() => setShowAddProjectModal(true)}
               showAddProject={isLocalAccess()}
+              collapsed={isSidebarCollapsed() && !isMobile()}
             />
           </Show>
         </div>
 
         {/* User Actions Footer in Sidebar */}
-        <div class="p-3 border-t border-gray-200 dark:border-zinc-800 space-y-1 bg-gray-50 dark:bg-zinc-950">
+        <div class={`${isSidebarCollapsed() && !isMobile() ? "px-1 py-2" : "p-3"} border-t border-gray-200 dark:border-zinc-800 space-y-1 bg-gray-50 dark:bg-zinc-950`}>
           <Show when={isLocalAccess()}>
             <button
               onClick={() => navigate("/")}
-              class="w-full flex items-center gap-3 px-3 py-2 text-sm font-medium text-gray-600 dark:text-gray-400 hover:bg-white dark:hover:bg-zinc-800 hover:text-gray-900 dark:hover:text-white rounded-lg transition-all shadow-xs hover:shadow-sm"
+              class={`w-full flex items-center ${isSidebarCollapsed() && !isMobile() ? "justify-center p-2" : "gap-3 px-3 py-2"} text-sm font-medium text-gray-600 dark:text-gray-400 hover:bg-white dark:hover:bg-zinc-800 hover:text-gray-900 dark:hover:text-white rounded-lg transition-all shadow-xs hover:shadow-sm`}
+              title={t().chat.remoteAccess}
             >
               <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="20" height="14" x="2" y="3" rx="2" /><line x1="8" x2="16" y1="21" y2="21" /><line x1="12" x2="12" y1="17" y2="21" /></svg>
-              {t().chat.remoteAccess}
+              <Show when={!isSidebarCollapsed() || isMobile()}>
+                {t().chat.remoteAccess}
+              </Show>
             </button>
           </Show>
           <button
             onClick={() => navigate("/settings")}
-            class="w-full flex items-center gap-3 px-3 py-2 text-sm font-medium text-gray-600 dark:text-gray-400 hover:bg-white dark:hover:bg-zinc-800 hover:text-gray-900 dark:hover:text-white rounded-lg transition-all shadow-xs hover:shadow-sm"
+            class={`w-full flex items-center ${isSidebarCollapsed() && !isMobile() ? "justify-center p-2" : "gap-3 px-3 py-2"} text-sm font-medium text-gray-600 dark:text-gray-400 hover:bg-white dark:hover:bg-zinc-800 hover:text-gray-900 dark:hover:text-white rounded-lg transition-all shadow-xs hover:shadow-sm`}
+            title={t().chat.settings}
           >
             <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.09a2 2 0 0 1-1-1.74v-.51a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" /><circle cx="12" cy="12" r="3" /></svg>
-            {t().chat.settings}
+            <Show when={!isSidebarCollapsed() || isMobile()}>
+              {t().chat.settings}
+            </Show>
           </button>
           <button
             onClick={handleLogout}
-            class="w-full flex items-center gap-3 px-3 py-2 text-sm font-medium text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors"
+            class={`w-full flex items-center ${isSidebarCollapsed() && !isMobile() ? "justify-center p-2" : "gap-3 px-3 py-2"} text-sm font-medium text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors`}
+            title={t().chat.logout}
           >
             <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" /><polyline points="16 17 21 12 16 7" /><line x1="21" x2="9" y1="12" y2="12" /></svg>
-            {t().chat.logout}
+            <Show when={!isSidebarCollapsed() || isMobile()}>
+              {t().chat.logout}
+            </Show>
           </button>
         </div>
       </aside>
@@ -1155,7 +1185,7 @@ export default function Chat() {
               }
             >
               <div ref={setMessagesRef} onScroll={handleScroll} class="flex-1 overflow-y-auto px-4 md:px-6">
-                <div class="max-w-3xl mx-auto w-full py-6">
+                <div class="max-w-4xl mx-auto w-full py-6">
                   <Show
                     when={sessionStore.current && messageStore.message[sessionStore.current]?.length > 0}
                     fallback={
@@ -1179,7 +1209,7 @@ export default function Chat() {
 
               {/* Input Area */}
               <div class="p-4 bg-white/90 dark:bg-zinc-900/90 backdrop-blur-xs border-t border-gray-100 dark:border-zinc-800 relative z-20">
-                <div class="max-w-3xl mx-auto w-full">
+                <div class="max-w-4xl mx-auto w-full">
                   {/* Permission prompt replaces input when permissions are pending */}
                   <Show when={currentPermissions().length > 0}>
                     <div class="space-y-3">

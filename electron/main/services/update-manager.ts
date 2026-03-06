@@ -1,5 +1,7 @@
 import { app } from "electron";
-import { autoUpdater, type UpdateInfo, type ProgressInfo } from "electron-updater";
+import pkg from "electron-updater";
+import type { UpdateInfo, ProgressInfo } from "electron-updater";
+const { autoUpdater } = pkg;
 import { getMainWindow } from "../window-manager";
 import log, { loadSettings, saveSettings } from "./logger";
 

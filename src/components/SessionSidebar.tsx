@@ -5,7 +5,7 @@ import type { UnifiedProject, EngineType, SessionActivityStatus } from "../types
 import { configStore, isEngineEnabled } from "../stores/config";
 import { ProjectStore } from "../lib/project-store";
 import { isElectron } from "../lib/platform";
-import { systemAPI, getOpenCodeStoragePath, getCopilotStoragePath } from "../lib/electron-api";
+import { systemAPI } from "../lib/electron-api";
 
 interface SessionSidebarProps {
   sessions: SessionInfo[];
@@ -143,7 +143,7 @@ export function SessionSidebar(props: SessionSidebarProps) {
       groups.set(project.id, []);
     }
 
-    const rootSessions = props.sessions.filter((s) => !s.parentID);
+    const rootSessions = props.sessions;
 
     for (const session of rootSessions) {
       const projectID = session.projectID || "";
@@ -351,9 +351,6 @@ export function SessionSidebar(props: SessionSidebarProps) {
         <Show
           when={visibleSections().length > 0}
           fallback={
-            <Show
-              when={sessionStore.loadingEngines.some(e => !activeTab() || e === activeTab())}
-              fallback={
                 <div class="p-8 text-center">
                   <div class="inline-flex items-center justify-center w-10 h-10 rounded-full bg-gray-100 dark:bg-slate-800 mb-3 text-gray-400">
                     <svg
@@ -372,16 +369,6 @@ export function SessionSidebar(props: SessionSidebarProps) {
                   </div>
                   <p class="text-sm text-gray-500 dark:text-gray-400">{t().sidebar.noSessions}</p>
                 </div>
-              }
-            >
-              <div class="p-6 text-center">
-                <svg class="animate-spin h-5 w-5 mx-auto mb-2 text-gray-400 dark:text-gray-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                  <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" />
-                  <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-                </svg>
-                <p class="text-xs text-gray-400 dark:text-gray-500">{t().sidebar.loadingSessions}</p>
-              </div>
-            </Show>
           }
         >
           <For each={visibleSections()}>
@@ -484,34 +471,6 @@ export function SessionSidebar(props: SessionSidebarProps) {
                           <path d="M12 5v14" />
                         </svg>
                       </button>
-                      <Show when={isElectron() && (project.project?.engineType === "opencode" || project.project?.engineType === "copilot") && homePath()}>
-                        <button
-                          class="p-1 text-gray-400 hover:text-green-600 dark:hover:text-green-400 rounded transition-all"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            const engineType = project.project?.engineType;
-                            const storagePath = engineType === "opencode"
-                              ? getOpenCodeStoragePath(homePath()!, project.projectID)
-                              : getCopilotStoragePath(homePath()!);
-                            systemAPI.openPath(storagePath);
-                          }}
-                          title={t().sidebar.openStorageFolder}
-                        >
-                          <svg
-                            xmlns="http://www.w3.org/2000/svg"
-                            width="14"
-                            height="14"
-                            viewBox="0 0 24 24"
-                            fill="none"
-                            stroke="currentColor"
-                            stroke-width="2"
-                            stroke-linecap="round"
-                            stroke-linejoin="round"
-                          >
-                            <path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z" />
-                          </svg>
-                        </button>
-                      </Show>
                       <button
                         class="p-1 text-gray-400 hover:text-red-500 dark:hover:text-red-400 rounded transition-all"
                         onClick={(e) => {
@@ -624,25 +583,6 @@ export function SessionSidebar(props: SessionSidebarProps) {
                                       </span>
                                     </Show>
                                   </div>
-
-                                  {/* Change Statistics */}
-                                  <Show when={session.summary}>
-                                    <div class="flex items-center gap-2 mt-0.5">
-                                      <span class="text-[10px] text-gray-400">
-                                        {formatMessage(t().sidebar.files, { count: session.summary!.files })}
-                                      </span>
-                                      <Show when={session.summary!.additions > 0}>
-                                        <span class="text-[10px] text-green-500">
-                                          +{session.summary!.additions}
-                                        </span>
-                                      </Show>
-                                      <Show when={session.summary!.deletions > 0}>
-                                        <span class="text-[10px] text-red-500">
-                                          -{session.summary!.deletions}
-                                        </span>
-                                      </Show>
-                                    </div>
-                                  </Show>
                                 </div>
 
                                 <Show when={!isEditing()}>

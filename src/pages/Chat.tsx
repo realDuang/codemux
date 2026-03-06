@@ -65,10 +65,8 @@ function toSessionInfo(s: UnifiedSession, projectID?: string): SessionInfo {
     title: s.title || "",
     directory: s.directory || "",
     projectID: projectID ?? s.projectId ?? (s.engineMeta?.projectID as string) ?? undefined,
-    parentID: s.parentId,
     createdAt: new Date(s.time.created).toISOString(),
     updatedAt: new Date(s.time.updated).toISOString(),
-    summary: s.engineMeta?.summary as SessionInfo["summary"] | undefined,
   };
 }
 
@@ -285,8 +283,10 @@ export default function Chat() {
         setMessageStore("part", msg.id, parts);
       }
 
-      // Store all messages, sorted by id (in-place — API returns fresh array)
-      messages.sort((a, b) => a.id.localeCompare(b.id));
+      // Store all messages, sorted by creation time (ascending).
+      // Engine message IDs use different formats (UUID for OpenCode, timeId for others),
+      // so lexicographic ID sort would break chronological ordering.
+      messages.sort((a, b) => a.time.created - b.time.created);
       setMessageStore("message", sessionId, messages);
     } catch (error) {
       if (!disposed) {
@@ -383,84 +383,36 @@ export default function Chat() {
       setSessionStore({ loading: false, current: null });
 
       // --- Background: load projects & sessions without blocking the UI ---
-      const enabledRunningEngines = configStore.engines.filter(e => e.status === "running" && isEngineEnabled(e.type));
 
       // Fire-and-forget — errors are logged, not surfaced as initError
       (async () => {
+        // Load all projects and sessions from ConversationStore (single call each)
         try {
-          // Phase 1: Load projects from all engines in parallel
-          const projectResults = await Promise.allSettled(
-            enabledRunningEngines.map(engine => gateway.listProjects(engine.type))
-          );
-          if (disposed || gen !== initGeneration) return;
+          const [allProjects, allSessions] = await Promise.all([
+            gateway.listAllProjects(),
+            gateway.listAllSessions(),
+          ]);
 
-          const projects: UnifiedProject[] = [];
-          projectResults.forEach((result, i) => {
-            if (result.status === "fulfilled") {
-              projects.push(...result.value);
-            } else {
-              logger.warn(`[Init:bg] Failed to load projects for engine ${enabledRunningEngines[i].type}:`, result.reason);
-            }
+          if (gen !== initGeneration || disposed) return;
+
+          setSessionStore("projects", allProjects);
+
+          // Filter sessions to valid directories only
+          const validDirectories = new Set(allProjects.map(p => p.directory));
+          const filteredSessions = allSessions.filter(s =>
+            s.directory && validDirectories.has(s.directory)
+          );
+
+          const sessionInfos = filteredSessions.map(s => {
+            const project = allProjects.find(p =>
+              p.directory === s.directory && p.engineType === s.engineType
+            );
+            return toSessionInfo(s, project?.id);
           });
 
-          const validProjects = projects.filter((p: UnifiedProject) =>
-            p.directory && p.directory !== "/"
-          );
-          logger.debug("[Init:bg] Loaded projects:", validProjects.length);
-
-          // Update store incrementally so sidebar can show project groups
-          setSessionStore("projects", validProjects);
-
-          // Phase 2: Load sessions incrementally per engine
-          const validDirectories = new Set(validProjects.map((p: UnifiedProject) => p.directory));
-          setSessionStore("loadingEngines", enabledRunningEngines.map(e => e.type));
-
-          await Promise.allSettled(
-            enabledRunningEngines.map(async (engine) => {
-              try {
-                const sessions = await gateway.listSessions(engine.type);
-                if (disposed || gen !== initGeneration) return;
-
-                const filteredSessions = sessions.filter((s: UnifiedSession) => validDirectories.has(s.directory));
-                if (sessions.length !== filteredSessions.length) {
-                  const dropped = sessions.filter((s: UnifiedSession) => !validDirectories.has(s.directory));
-                  logger.warn(`[Init:bg] Sessions filtered out for ${engine.type}:`,
-                    dropped.map(s => ({ id: s.id, dir: s.directory })));
-                }
-
-                const processedSessions: SessionInfo[] = filteredSessions.map((s: UnifiedSession) => {
-                  let projectID = s.projectId ?? (s.engineMeta?.projectID as string) ?? undefined;
-                  if (!projectID) {
-                    const matchingProject = validProjects.find(
-                      p => p.directory === s.directory && p.engineType === s.engineType,
-                    );
-                    if (matchingProject) {
-                      projectID = matchingProject.id;
-                    }
-                  }
-                  return toSessionInfo(s, projectID);
-                });
-
-                // Incremental merge into store (use updater function to avoid race conditions)
-                setSessionStore("list", (existingList) => {
-                  const mergedMap = new Map<string, SessionInfo>();
-                  for (const s of existingList) mergedMap.set(s.id, s);
-                  for (const s of processedSessions) mergedMap.set(s.id, s);
-                  return [...mergedMap.values()].sort(
-                    (a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
-                  );
-                });
-                logger.debug(`[Init:bg] Sessions loaded for ${engine.type}:`, processedSessions.length);
-              } catch (err) {
-                logger.warn(`[Init:bg] Failed to load sessions for ${engine.type}:`, err);
-              } finally {
-                setSessionStore("loadingEngines", (prev) => prev.filter(t => t !== engine.type));
-              }
-            })
-          );
+          setSessionStore("list", sessionInfos);
         } catch (err) {
-          if (disposed || gen !== initGeneration) return;
-          logger.warn("[Init:bg] Background session loading failed:", err);
+          if (!disposed) logger.error("[Init] Failed to load projects/sessions:", err);
         }
       })();
     } catch (error) {
@@ -717,15 +669,13 @@ export default function Chat() {
           time: { created: Date.now() },
           parts: [],
         };
-        const idx = binarySearch(messages, messageId, (m) => m.id);
+        // Streaming placeholders are always for the current (latest) turn — append to end.
+        // binarySearch by ID would misplace them when engine IDs (e.g. UUID) sort
+        // before user temp IDs ("msg-temp-...") in lexicographic order.
         if (!messageStore.message[sessionId]) {
           setMessageStore("message", sessionId, [placeholder]);
         } else {
-          setMessageStore("message", sessionId, (draft) => {
-            const newMessages = [...draft];
-            newMessages.splice(idx.index, 0, placeholder);
-            return newMessages;
-          });
+          setMessageStore("message", sessionId, (draft) => [...draft, placeholder]);
         }
       }
     }
@@ -809,18 +759,16 @@ export default function Chat() {
     }
 
     const messages = messageStore.message[targetSessionId] || [];
-    const index = binarySearch(messages, msgInfo.id, (m) => m.id);
+    const existingIdx = messages.findIndex(m => m.id === msgInfo.id);
 
-    if (index.found) {
-      setMessageStore("message", targetSessionId, index.index, msgInfo);
+    if (existingIdx >= 0) {
+      // Update existing message in place
+      setMessageStore("message", targetSessionId, existingIdx, msgInfo);
     } else if (!messageStore.message[targetSessionId]) {
       setMessageStore("message", targetSessionId, [msgInfo]);
     } else {
-      setMessageStore("message", targetSessionId, (draft) => {
-        const newMessages = [...draft];
-        newMessages.splice(index.index, 0, msgInfo);
-        return newMessages;
-      });
+      // New message — append to end (incoming messages are always for the current turn)
+      setMessageStore("message", targetSessionId, (draft) => [...draft, msgInfo]);
     }
 
     // Auto-clear sending state when assistant message is finalized (completed or errored).
@@ -976,13 +924,13 @@ export default function Chat() {
 
     const messages = messageStore.message[sessionId] || [];
 
-    const msgIndex = binarySearch(messages, tempMessageId, (m) => m.id);
-    if (!msgIndex.found) {
-      setMessageStore("message", sessionId, (draft) => {
-        const newMessages = [...draft];
-        newMessages.splice(msgIndex.index, 0, tempMessageInfo);
-        return newMessages;
-      });
+    // User temp messages are always the newest — append to end.
+    // Don't use binarySearch here: engine message IDs (e.g. UUID from OpenCode)
+    // may sort before "msg-temp-" in lexicographic order, causing the user message
+    // to land after all assistant messages and breaking turn grouping.
+    const tempExists = messages.some(m => m.id === tempMessageId);
+    if (!tempExists) {
+      setMessageStore("message", sessionId, (draft) => [...draft, tempMessageInfo]);
     }
 
     setMessageStore("part", tempMessageId, [tempPart]);

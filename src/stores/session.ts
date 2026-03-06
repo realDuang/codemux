@@ -7,14 +7,8 @@ export interface SessionInfo {
   title: string;
   directory: string;
   projectID?: string;
-  parentID?: string;
   createdAt: string;
   updatedAt: string;
-  summary?: {
-    additions: number;
-    deletions: number;
-    files: number;
-  };
 }
 
 export interface ProjectExpandState {
@@ -25,7 +19,6 @@ export const [sessionStore, setSessionStore] = createStore<{
   list: SessionInfo[];
   current: string | null;
   loading: boolean;
-  loadingEngines: string[];
   initError: string | null;
   projects: UnifiedProject[];
   projectExpanded: ProjectExpandState;
@@ -33,7 +26,6 @@ export const [sessionStore, setSessionStore] = createStore<{
   list: [],
   current: null,
   loading: false,
-  loadingEngines: [],
   initError: null,
   projects: [],
   projectExpanded: {},

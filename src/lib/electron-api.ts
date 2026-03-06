@@ -298,6 +298,81 @@ export const channelAPI = {
   },
 };
 
+// Auto Update types
+export interface UpdateStateInfo {
+  status: "idle" | "checking" | "available" | "not-available" | "downloading" | "downloaded" | "error";
+  version?: string;
+  releaseNotes?: string;
+  progress?: {
+    percent: number;
+    bytesPerSecond: number;
+    transferred: number;
+    total: number;
+  };
+  error?: string;
+}
+
+// Auto Update API
+// Access update namespace via (api as any) since the update? property
+// is declared in electron.d.ts (module-scoped) and not visible here.
+// Type safety is provided by UpdateStateInfo at the consumer level.
+function getUpdateAPI(): any {
+  const api = getElectronAPI();
+  return (api as any)?.update ?? null;
+}
+
+export const updateAPI = {
+  async checkForUpdates(): Promise<UpdateStateInfo | null> {
+    const update = getUpdateAPI();
+    return update ? update.checkForUpdates() as Promise<UpdateStateInfo> : null;
+  },
+
+  async quitAndInstall(): Promise<void> {
+    const update = getUpdateAPI();
+    if (update) await update.quitAndInstall();
+  },
+
+  async getStatus(): Promise<UpdateStateInfo | null> {
+    const update = getUpdateAPI();
+    return update ? update.getStatus() as Promise<UpdateStateInfo> : null;
+  },
+
+  async setAutoCheck(enabled: boolean): Promise<void> {
+    const update = getUpdateAPI();
+    if (update) await update.setAutoCheck(enabled);
+  },
+
+  async isAutoCheckEnabled(): Promise<boolean> {
+    const update = getUpdateAPI();
+    return update ? update.isAutoCheckEnabled() : false;
+  },
+
+  onUpdateAvailable(callback: (state: UpdateStateInfo) => void): (() => void) | null {
+    const update = getUpdateAPI();
+    return update ? update.onUpdateAvailable(callback) : null;
+  },
+
+  onDownloadProgress(callback: (state: UpdateStateInfo) => void): (() => void) | null {
+    const update = getUpdateAPI();
+    return update ? update.onDownloadProgress(callback) : null;
+  },
+
+  onUpdateDownloaded(callback: (state: UpdateStateInfo) => void): (() => void) | null {
+    const update = getUpdateAPI();
+    return update ? update.onUpdateDownloaded(callback) : null;
+  },
+
+  onUpdateError(callback: (state: UpdateStateInfo) => void): (() => void) | null {
+    const update = getUpdateAPI();
+    return update ? update.onUpdateError(callback) : null;
+  },
+
+  onStatusChange(callback: (state: UpdateStateInfo) => void): (() => void) | null {
+    const update = getUpdateAPI();
+    return update ? update.onStatusChange(callback) : null;
+  },
+};
+
 /**
  * Get the OpenCode session storage folder path for a project.
  * OpenCode uses xdg-basedir: ~/.local/share/opencode/storage/session/{projectId}/

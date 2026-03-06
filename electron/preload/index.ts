@@ -95,6 +95,40 @@ const electronAPI = {
       ipcRenderer.once("startup:ready", callback);
     },
   },
+
+  // Auto Update API
+  update: {
+    checkForUpdates: () => ipcRenderer.invoke("update:checkForUpdates"),
+    quitAndInstall: () => ipcRenderer.invoke("update:quitAndInstall"),
+    getStatus: () => ipcRenderer.invoke("update:getStatus"),
+    setAutoCheck: (enabled: boolean) => ipcRenderer.invoke("update:setAutoCheck", enabled),
+    isAutoCheckEnabled: () => ipcRenderer.invoke("update:isAutoCheckEnabled") as Promise<boolean>,
+    onUpdateAvailable: (callback: (state: any) => void) => {
+      const handler = (_: any, state: any) => callback(state);
+      ipcRenderer.on("update:available", handler);
+      return () => { ipcRenderer.removeListener("update:available", handler); };
+    },
+    onDownloadProgress: (callback: (state: any) => void) => {
+      const handler = (_: any, state: any) => callback(state);
+      ipcRenderer.on("update:progress", handler);
+      return () => { ipcRenderer.removeListener("update:progress", handler); };
+    },
+    onUpdateDownloaded: (callback: (state: any) => void) => {
+      const handler = (_: any, state: any) => callback(state);
+      ipcRenderer.on("update:downloaded", handler);
+      return () => { ipcRenderer.removeListener("update:downloaded", handler); };
+    },
+    onUpdateError: (callback: (state: any) => void) => {
+      const handler = (_: any, state: any) => callback(state);
+      ipcRenderer.on("update:error", handler);
+      return () => { ipcRenderer.removeListener("update:error", handler); };
+    },
+    onStatusChange: (callback: (state: any) => void) => {
+      const handler = (_: any, state: any) => callback(state);
+      ipcRenderer.on("update:status", handler);
+      return () => { ipcRenderer.removeListener("update:status", handler); };
+    },
+  },
 };
 
 contextBridge.exposeInMainWorld("electronAPI", electronAPI);

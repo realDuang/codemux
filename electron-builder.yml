@@ -4,6 +4,10 @@ directories:
   output: release
   buildResources: resources
 icon: public/assets/icon.png
+publish:
+  provider: github
+  owner: realDuang
+  repo: codemux
 files:
   - out/**/*
   - package.json
@@ -12,7 +16,9 @@ asarUnpack:
 extraMetadata:
   main: out/main/index.mjs
 mac:
-  target: dmg
+  target:
+    - dmg
+    - zip
   icon: public/assets/icon.png
   extraResources:
     - from: resources/cloudflared/darwin-${arch}
@@ -36,4 +42,4 @@ nsis:
   allowToChangeInstallationDirectory: true
   createDesktopShortcut: true
 dmg:
-  writeUpdateInfo: false
+  writeUpdateInfo: true

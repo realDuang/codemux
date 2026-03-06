@@ -94,6 +94,32 @@ interface ElectronAPI {
     stop: (type: string) => Promise<void>;
     getStatus: (type: string) => Promise<{ type: string; name: string; status: "stopped" | "starting" | "running" | "error"; error?: string } | null>;
   };
+
+  update?: {
+    checkForUpdates: () => Promise<UpdateState>;
+    quitAndInstall: () => Promise<void>;
+    getStatus: () => Promise<UpdateState>;
+    setAutoCheck: (enabled: boolean) => Promise<{ success: boolean }>;
+    isAutoCheckEnabled: () => Promise<boolean>;
+    onUpdateAvailable: (callback: (state: UpdateState) => void) => () => void;
+    onDownloadProgress: (callback: (state: UpdateState) => void) => () => void;
+    onUpdateDownloaded: (callback: (state: UpdateState) => void) => () => void;
+    onUpdateError: (callback: (state: UpdateState) => void) => () => void;
+    onStatusChange: (callback: (state: UpdateState) => void) => () => void;
+  };
+}
+
+interface UpdateState {
+  status: "idle" | "checking" | "available" | "not-available" | "downloading" | "downloaded" | "error";
+  version?: string;
+  releaseNotes?: string;
+  progress?: {
+    percent: number;
+    bytesPerSecond: number;
+    transferred: number;
+    total: number;
+  };
+  error?: string;
 }
 
 declare global {

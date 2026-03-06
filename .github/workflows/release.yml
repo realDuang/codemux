@@ -117,7 +117,11 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: macos-${{ matrix.arch }}
-          path: release/*.dmg
+          path: |
+            release/*.dmg
+            release/*.zip
+            release/*.yml
+            release/*.yaml
           if-no-files-found: error
 
   # Build for Windows
@@ -154,7 +158,10 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: windows-x64
-          path: release/*.exe
+          path: |
+            release/*.exe
+            release/*.yml
+            release/*.yaml
           if-no-files-found: error
 
   # Create GitHub Release (skip for PRs)
@@ -183,4 +190,7 @@ jobs:
           generate_release_notes: true
           files: |
             artifacts/**/*.dmg
+            artifacts/**/*.zip
             artifacts/**/*.exe
+            artifacts/**/*.yml
+            artifacts/**/*.yaml

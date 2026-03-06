@@ -261,6 +261,7 @@ export class CopilotSdkAdapter extends EngineAdapter {
   private currentModelId: string | null = null;
   private cachedModels: UnifiedModelInfo[] = [];
   private sessionModes = new Map<string, string>();
+  private sessionDirectories = new Map<string, string>();
 
   // --- Permission auto-approve rules ---
   private allowedAlwaysKinds = new Set<string>();
@@ -492,6 +493,7 @@ export class CopilotSdkAdapter extends EngineAdapter {
     this.subscribeToSessionEvents(sdkSession);
     this.activeSessions.set(sessionId, sdkSession);
     this.sessionModes.set(sessionId, mode);
+    this.sessionDirectories.set(sessionId, directory);
 
     const now = Date.now();
     const session: UnifiedSession = {
@@ -505,6 +507,10 @@ export class CopilotSdkAdapter extends EngineAdapter {
     copilotLog.info(`Created session ${sessionId} in ${normalizedDir}`);
 
     return session;
+  }
+
+  hasSession(sessionId: string): boolean {
+    return this.sessionDirectories.has(sessionId);
   }
 
   async getSession(sessionId: string): Promise<UnifiedSession | null> {
@@ -538,6 +544,7 @@ export class CopilotSdkAdapter extends EngineAdapter {
     this.messageHistory.delete(sessionId);
     this.messageBuffers.delete(sessionId);
     this.sessionModes.delete(sessionId);
+    this.sessionDirectories.delete(sessionId);
     this.activeTurnSessions.delete(sessionId);
 
     copilotLog.info(`Deleted session ${sessionId}`);
@@ -550,9 +557,9 @@ export class CopilotSdkAdapter extends EngineAdapter {
   async sendMessage(
     sessionId: string,
     content: MessagePromptContent[],
-    options?: { mode?: string; modelId?: string },
+    options?: { mode?: string; modelId?: string; directory?: string },
   ): Promise<UnifiedMessage> {
-    const session = await this.ensureActiveSession(sessionId);
+    const session = await this.ensureActiveSession(sessionId, options?.directory);
     const now = Date.now();
 
     // Switch model via RPC if a different model is requested
@@ -879,14 +886,18 @@ export class CopilotSdkAdapter extends EngineAdapter {
    * Ensure a CopilotSession is active and subscribed to events.
    * If the session isn't in activeSessions, resume it from the SDK.
    */
-  private async ensureActiveSession(sessionId: string): Promise<CopilotSession> {
+  private async ensureActiveSession(sessionId: string, directory?: string): Promise<CopilotSession> {
     const existing = this.activeSessions.get(sessionId);
     if (existing) return existing;
 
     this.ensureClient();
 
+    // Resolve working directory: explicit param > cached > undefined
+    const workingDirectory = directory || this.sessionDirectories.get(sessionId);
+
     const config: ResumeSessionConfig = {
       streaming: true,
+      workingDirectory,
       onPermissionRequest: (req, ctx) => this.handlePermissionRequest(req, ctx),
       onUserInputRequest: (req, ctx) => this.handleUserInputRequest(req, ctx),
     };
@@ -895,6 +906,7 @@ export class CopilotSdkAdapter extends EngineAdapter {
       const sdkSession = await this.client!.resumeSession(sessionId, config);
       this.subscribeToSessionEvents(sdkSession);
       this.activeSessions.set(sessionId, sdkSession);
+      if (workingDirectory) this.sessionDirectories.set(sessionId, workingDirectory);
       copilotLog.info(`Resumed session ${sessionId}`);
       return sdkSession;
     } catch (err) {
@@ -903,12 +915,14 @@ export class CopilotSdkAdapter extends EngineAdapter {
       // (e.g. corrupted JSONL event file with schema validation errors)
       const newConfig: SessionConfig = {
         streaming: true,
+        workingDirectory,
         onPermissionRequest: (req, ctx) => this.handlePermissionRequest(req, ctx),
         onUserInputRequest: (req, ctx) => this.handleUserInputRequest(req, ctx),
       };
       const sdkSession = await this.client!.createSession(newConfig);
       this.subscribeToSessionEvents(sdkSession);
       this.activeSessions.set(sessionId, sdkSession);
+      if (workingDirectory) this.sessionDirectories.set(sessionId, workingDirectory);
       copilotLog.warn(`Created fallback session ${sdkSession.sessionId} for corrupted ${sessionId}`);
       return sdkSession;
     }

@@ -179,6 +179,8 @@ export class OpenCodeAdapter extends EngineAdapter {
     messageId: string | null;
     assistantParts: UnifiedPart[];
     timeoutTimer: ReturnType<typeof setTimeout> | null;
+    firstEventTimer: ReturnType<typeof setTimeout> | null;
+    promptSent: boolean;
   }>();
 
   // Sessions that have been cancelled — ignore SSE events for these until next sendMessage
@@ -334,6 +336,15 @@ export class OpenCodeAdapter extends EngineAdapter {
 
   // --- SSE event dispatch ---
 
+  /** Clear the first-event timer for a session (called when any SSE event arrives) */
+  private clearFirstEventTimer(sessionId: string): void {
+    const pending = this.pendingMessages.get(sessionId);
+    if (pending?.firstEventTimer) {
+      clearTimeout(pending.firstEventTimer);
+      pending.firstEventTimer = null;
+    }
+  }
+
   private handleSdkEvent(event: SdkEvent): void {
     switch (event.type) {
       case "message.part.updated":
@@ -398,6 +409,9 @@ export class OpenCodeAdapter extends EngineAdapter {
     // Ignore SSE events for cancelled sessions
     if (sessionID && this.cancelledSessions.has(sessionID)) return;
 
+    // First SSE event for this session — clear the first-event timeout
+    if (sessionID) this.clearFirstEventTimer(sessionID);
+
     // Cache the SDK part for delta accumulation
     if (partID) {
       this.partCache.set(partID, { ...sdkPart });
@@ -445,6 +459,9 @@ export class OpenCodeAdapter extends EngineAdapter {
     // Ignore SSE events for cancelled sessions
     if (this.cancelledSessions.has(sessionID)) return;
 
+    // First SSE event for this session — clear the first-event timeout
+    this.clearFirstEventTimer(sessionID);
+
     // Get or create cached part
     let cached = this.partCache.get(partID);
     if (!cached) {
@@ -485,6 +502,9 @@ export class OpenCodeAdapter extends EngineAdapter {
 
     // Ignore SSE events for cancelled sessions
     if (this.cancelledSessions.has(sessionID)) return;
+
+    // First SSE event for this session — clear the first-event timeout
+    this.clearFirstEventTimer(sessionID);
 
     // Skip user messages — the frontend already handles them via optimistic insert.
     // OpenCode SSE pushes message.updated for all roles, but re-emitting user messages
@@ -560,7 +580,13 @@ export class OpenCodeAdapter extends EngineAdapter {
     const pending = this.pendingMessages.get(sessionID);
     if (!pending) return;
 
+    // Ignore idle events that arrive before promptAsync has been sent.
+    // This happens when the pre-prompt abort triggers a session.status: idle
+    // SSE event that races with the pending entry registration.
+    if (!pending.promptSent) return;
+
     if (pending.timeoutTimer) clearTimeout(pending.timeoutTimer);
+    if (pending.firstEventTimer) clearTimeout(pending.firstEventTimer);
     this.pendingMessages.delete(sessionID);
 
     // Use the last cached message (which has the real time.completed from OpenCode),
@@ -698,6 +724,12 @@ export class OpenCodeAdapter extends EngineAdapter {
       ? (typeof sdk.error === "string" ? sdk.error : sdk.error.message ?? sdk.error.name ?? "Error")
       : undefined;
 
+    // Normalize OpenCode's abort error to the unified "Cancelled" convention
+    // so the frontend uses a single check (error === "Cancelled") across all engines.
+    const normalizedError = errorStr && (
+      errorStr === "MessageAbortedError" || (sdk.error?.name === "MessageAbortedError")
+    ) ? "Cancelled" : errorStr;
+
     return {
       id: sdk.id,
       sessionId: sdk.sessionID,
@@ -712,7 +744,7 @@ export class OpenCodeAdapter extends EngineAdapter {
       modelId: sdk.modelID,
       providerId: sdk.providerID,
       mode: sdk.mode,
-      error: errorStr,
+      error: normalizedError,
       engineMeta: {
         path: sdk.path,
         agent: sdk.agent,
@@ -924,6 +956,7 @@ export class OpenCodeAdapter extends EngineAdapter {
     // Reject any pending messages
     for (const [sessionId, pending] of this.pendingMessages) {
       if (pending.timeoutTimer) clearTimeout(pending.timeoutTimer);
+      if (pending.firstEventTimer) clearTimeout(pending.firstEventTimer);
       pending.resolve({
         id: pending.messageId ?? "",
         sessionId,
@@ -1106,6 +1139,17 @@ export class OpenCodeAdapter extends EngineAdapter {
 
     const dir = session?.directory ?? this.currentDirectory ?? undefined;
 
+    // Pre-prompt abort: clear any residual unfinished state in OpenCode.
+    // This is harmless if the session is already idle, but critical for sessions
+    // that were left in a "busy" state after a previous cancel or crash.
+    // IMPORTANT: Must happen BEFORE registering the pending entry, otherwise the
+    // abort's "session.status: idle" SSE event would consume the pending entry,
+    // causing subsequent SSE events to bypass the stripping logic in
+    // handleMessageUpdated (L515-543), which results in premature time.completed
+    // emissions and broken step visibility in the UI.
+    const client = dir ? this.createClient(dir) : this.ensureClient();
+    await client.session.abort({ sessionID: sessionId }).catch(() => {});
+
     // Create a promise that will be resolved when SSE delivers step-finish or message.updated
     const messagePromise = new Promise<UnifiedMessage>((resolve) => {
       const entry = {
@@ -1113,12 +1157,15 @@ export class OpenCodeAdapter extends EngineAdapter {
         messageId: null as string | null,
         assistantParts: [] as UnifiedPart[],
         timeoutTimer: null as ReturnType<typeof setTimeout> | null,
+        firstEventTimer: null as ReturnType<typeof setTimeout> | null,
+        promptSent: false,
       };
       this.pendingMessages.set(sessionId, entry);
 
       // Timeout after 5 minutes
       entry.timeoutTimer = setTimeout(() => {
         if (this.pendingMessages.has(sessionId)) {
+          if (entry.firstEventTimer) clearTimeout(entry.firstEventTimer);
           this.pendingMessages.delete(sessionId);
           resolve({
             id: "",
@@ -1133,7 +1180,6 @@ export class OpenCodeAdapter extends EngineAdapter {
     });
 
     // Fire async prompt via SDK (returns 204, response comes via SSE)
-    const client = dir ? this.createClient(dir) : this.ensureClient();
     const promptResult = await client.session.promptAsync({
       sessionID: sessionId,
       directory: dir,
@@ -1149,11 +1195,37 @@ export class OpenCodeAdapter extends EngineAdapter {
     if (promptError) {
       const pending = this.pendingMessages.get(sessionId);
       if (pending?.timeoutTimer) clearTimeout(pending.timeoutTimer);
+      if (pending?.firstEventTimer) clearTimeout(pending.firstEventTimer);
       this.pendingMessages.delete(sessionId);
       const errMsg = typeof promptError === "string"
         ? promptError
         : JSON.stringify(promptError);
       throw new Error(`Failed to send message: ${errMsg}`);
+    }
+
+    // Start first-event timer: if no SSE event arrives within 30s, the session
+    // is likely stale (e.g., left in busy state after a crash or failed abort).
+    const pending = this.pendingMessages.get(sessionId);
+    if (pending) {
+      // Mark prompt as sent so resolveSessionIdle knows this idle event is real
+      // (not from the pre-prompt abort).
+      pending.promptSent = true;
+
+      pending.firstEventTimer = setTimeout(() => {
+        if (this.pendingMessages.has(sessionId)) {
+          openCodeLog.warn(`No SSE response within 30s for session ${sessionId} — session may be stale`);
+          if (pending.timeoutTimer) clearTimeout(pending.timeoutTimer);
+          this.pendingMessages.delete(sessionId);
+          pending.resolve({
+            id: "",
+            sessionId,
+            role: "assistant",
+            time: { created: Date.now() },
+            parts: [],
+            error: "No response from engine — session may be stale",
+          });
+        }
+      }, 30_000);
     }
 
     // Wait for SSE to deliver the complete assistant response
@@ -1166,7 +1238,14 @@ export class OpenCodeAdapter extends EngineAdapter {
     // with error + session.status: idle) flow through SSE naturally so the frontend
     // gets the correct error state. The cancelledSessions mechanism would block these
     // events, leaving the frontend without an error banner or completed timestamp.
-    this.ensureClient().session.abort({ sessionID: sessionId }).catch((err: any) => {
+    // Use the session's directory to create a client with the correct project context.
+    // OpenCode's state is scoped per-directory — sending abort with the wrong directory
+    // causes SessionPrompt.cancel() to silently miss the session's AbortController.
+    const session = this.sessions.get(sessionId);
+    const client = session?.directory
+      ? this.createClient(session.directory)
+      : this.ensureClient();
+    client.session.abort({ sessionID: sessionId }).catch((err: any) => {
       openCodeLog.warn("cancelMessage abort call failed:", err);
     });
 
@@ -1176,6 +1255,7 @@ export class OpenCodeAdapter extends EngineAdapter {
     const pending = this.pendingMessages.get(sessionId);
     if (pending) {
       if (pending.timeoutTimer) clearTimeout(pending.timeoutTimer);
+      if (pending.firstEventTimer) clearTimeout(pending.firstEventTimer);
       this.pendingMessages.delete(sessionId);
       this.lastEmittedMessage.delete(sessionId);
 

@@ -415,6 +415,10 @@ export class ClaudeCodeAdapter extends EngineAdapter {
     return session;
   }
 
+  hasSession(sessionId: string): boolean {
+    return this.v2Sessions.has(sessionId) || this.sessionDirectories.has(sessionId);
+  }
+
   async getSession(sessionId: string): Promise<UnifiedSession | null> {
     return null;
   }
@@ -684,6 +688,12 @@ export class ClaudeCodeAdapter extends EngineAdapter {
   }
 
   async cancelMessage(sessionId: string): Promise<void> {
+    // Mark the buffer as cancelled BEFORE aborting, so that whichever code path
+    // calls finalizeBuffer first (this method or sendMessageV2's finally block)
+    // will see the "Cancelled" error and emit it to the frontend.
+    const buffer = this.messageBuffers.get(sessionId);
+    if (buffer) buffer.error = "Cancelled";
+
     const controller = this.activeAbortControllers.get(sessionId);
     if (controller) {
       controller.abort();
@@ -737,9 +747,7 @@ export class ClaudeCodeAdapter extends EngineAdapter {
       }
     }
 
-    // Finalize any pending buffer
-    const buffer = this.messageBuffers.get(sessionId);
-    if (buffer) buffer.error = "Cancelled";
+    // Finalize if sendMessageV2's finally block hasn't already done so
     this.finalizeBuffer(sessionId, true);
   }
 

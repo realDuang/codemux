@@ -75,6 +75,8 @@ export class EngineManager extends EventEmitter {
   private engineToConvMap = new Map<string, string>();
   /** Accumulate step-type parts during streaming: messageId → UnifiedPart[] */
   private stepPartsBuffer = new Map<string, UnifiedPart[]>();
+  /** Accumulate content-type parts (text/file) during streaming: messageId → (TextPart|FilePart)[] */
+  private contentPartsBuffer = new Map<string, Array<TextPart | FilePart>>();
 
   // --- Adapter Registration ---
 
@@ -199,8 +201,24 @@ export class EngineManager extends EventEmitter {
       const { sessionId: engineSessionId, messageId, part } = data;
       const convId = this.resolveConversationId(engineSessionId);
 
-      // Accumulate step-type parts for later persistence
-      if (!this.isContentPart(part)) {
+      // Accumulate parts for later persistence
+      if (this.isContentPart(part)) {
+        // Buffer content parts (text/file) — these are NOT included in
+        // message.updated's parts array (OpenCode sends them only via
+        // part.updated SSE), so we must buffer them separately.
+        const key = messageId;
+        if (!this.contentPartsBuffer.has(key)) {
+          this.contentPartsBuffer.set(key, []);
+        }
+        const buffer = this.contentPartsBuffer.get(key)!;
+        const existingIdx = buffer.findIndex((p) => p.id === part.id);
+        if (existingIdx >= 0) {
+          buffer[existingIdx] = part as TextPart | FilePart;
+        } else {
+          buffer.push(part as TextPart | FilePart);
+        }
+      } else {
+        // Buffer step-type parts
         const key = messageId;
         if (!this.stepPartsBuffer.has(key)) {
           this.stepPartsBuffer.set(key, []);
@@ -330,6 +348,15 @@ export class EngineManager extends EventEmitter {
         }
       }
 
+      // Merge buffered content parts (text/file sent via part.updated SSE,
+      // which are often NOT included in message.updated's parts array).
+      const bufferedContent = this.contentPartsBuffer.get(message.id) || [];
+      for (const bp of bufferedContent) {
+        if (!contentParts.some((p) => p.id === bp.id)) {
+          contentParts.push(bp);
+        }
+      }
+
       // Build ConversationMessage (content parts only)
       const convMessage: ConversationMessage = {
         id: message.id,
@@ -365,8 +392,9 @@ export class EngineManager extends EventEmitter {
         conversationStore.saveSteps(conversationId, message.id, allSteps);
       }
 
-      // Clean up buffer
+      // Clean up buffers
       this.stepPartsBuffer.delete(message.id);
+      this.contentPartsBuffer.delete(message.id);
 
       engineManagerLog.debug(
         `Persisted message ${message.id} (${message.role}) to conversation ${conversationId}: ${contentParts.length} content parts, ${allSteps.length} steps`,
@@ -578,8 +606,10 @@ export class EngineManager extends EventEmitter {
     const adapter = this.getAdapterForSession(sessionId);
 
     // Lazy engine session creation: first sendMessage triggers adapter.createSession()
+    // Also re-create if the adapter lost track of the session (e.g. after app restart,
+    // the persisted engineSessionId refers to a cs_ ID that only existed in runtime memory).
     let engineSessionId = conv.engineSessionId;
-    if (!engineSessionId) {
+    if (!engineSessionId || !adapter.hasSession(engineSessionId)) {
       const engineSession = await adapter.createSession(conv.directory, conv.engineMeta);
       engineSessionId = engineSession.id;
       conversationStore.setEngineSession(sessionId, engineSessionId, engineSession.engineMeta);
@@ -592,7 +622,18 @@ export class EngineManager extends EventEmitter {
     // (Some adapters like OpenCode don't emit user message events)
     this.persistUserMessage(sessionId, content);
 
-    const result = await adapter.sendMessage(engineSessionId, content, options);
+    const result = await adapter.sendMessage(engineSessionId, content, {
+      ...options,
+      directory: conv.directory,
+    });
+
+    // If the engine reported a stale session (no SSE response within timeout),
+    // clear the engineSessionId so the next attempt creates a fresh session.
+    if (result.error && result.error.includes("session may be stale")) {
+      engineManagerLog.warn(`Stale session detected for ${sessionId}, clearing engineSessionId`);
+      conversationStore.clearEngineSession(sessionId);
+      this.engineToConvMap.delete(engineSessionId);
+    }
 
     // Title fallback: derive title from first user message if still default
     this.applyTitleFallback(sessionId, content);

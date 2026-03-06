@@ -106,12 +106,30 @@ jobs:
       - name: Build app
         run: bun run build
 
+      - name: Run predist script
+        run: bun scripts/predist.ts
+        env:
+          TARGET_ARCH: ${{ matrix.arch }}
+
       - name: Package for macOS ${{ matrix.arch }}
-        run: bun run dist:mac:${{ matrix.arch }}
+        run: npx electron-builder --mac --${{ matrix.arch }} --publish never
         env:
           # Code signing for macOS (requires Apple Developer certificates)
           # Set CSC_LINK and CSC_KEY_PASSWORD secrets for production releases
           CSC_IDENTITY_AUTO_DISCOVERY: ${{ secrets.CSC_LINK != '' }}
+
+      - name: Verify release artifacts
+        run: |
+          echo "=== All release artifacts ==="
+          ls -la release/
+          echo ""
+          echo "=== Checking required files ==="
+          test -f release/latest-mac.yml && echo "✓ latest-mac.yml exists" || echo "✗ latest-mac.yml MISSING"
+          ls release/*.zip 2>/dev/null && echo "✓ zip file(s) exist" || echo "✗ zip file(s) MISSING"
+          ls release/*.dmg 2>/dev/null && echo "✓ dmg file(s) exist" || echo "✗ dmg file(s) MISSING"
+          # Fail if critical auto-update files are missing
+          test -f release/latest-mac.yml || { echo "ERROR: latest-mac.yml not generated"; exit 1; }
+          ls release/*.zip >/dev/null 2>&1 || { echo "ERROR: zip file not generated"; exit 1; }
 
       - name: Upload macOS artifact
         uses: actions/upload-artifact@v4
@@ -120,8 +138,7 @@ jobs:
           path: |
             release/*.dmg
             release/*.zip
-            release/*.yml
-            release/*.yaml
+            release/latest-mac.yml
           if-no-files-found: error
 
   # Build for Windows
@@ -151,8 +168,19 @@ jobs:
       - name: Build app
         run: bun run build
 
+      - name: Run predist script
+        run: bun scripts/predist.ts
+
       - name: Package for Windows
-        run: bun run dist:win
+        run: npx electron-builder --win --publish never
+
+      - name: Verify release artifacts
+        run: |
+          echo "=== All release artifacts ==="
+          dir release\
+          echo ""
+          if exist "release\latest.yml" (echo latest.yml exists) else (echo ERROR: latest.yml MISSING && exit /b 1)
+        shell: cmd
 
       - name: Upload Windows artifact
         uses: actions/upload-artifact@v4
@@ -160,8 +188,7 @@ jobs:
           name: windows-x64
           path: |
             release/*.exe
-            release/*.yml
-            release/*.yaml
+            release/latest.yml
           if-no-files-found: error
 
   # Create GitHub Release (skip for PRs)
@@ -180,6 +207,65 @@ jobs:
         with:
           path: artifacts
 
+      - name: List downloaded artifacts
+        run: |
+          echo "=== All downloaded artifacts ==="
+          find artifacts -type f | sort
+          echo ""
+          echo "=== Checking required update files ==="
+          find artifacts -name "latest.yml" -o -name "latest-mac.yml" | sort
+          find artifacts -name "*.zip" | sort
+
+      - name: Merge macOS latest-mac.yml for multi-arch support
+        shell: bash
+        run: |
+          # electron-updater expects a single latest-mac.yml with files entries for
+          # both arm64 and x64 architectures. Since we build them separately, we need
+          # to merge the two yml files into one.
+          pip3 install pyyaml --quiet
+          python3 << 'PYEOF'
+          import yaml, sys, os
+
+          arm64_yml = "artifacts/macos-arm64/latest-mac.yml"
+          x64_yml = "artifacts/macos-x64/latest-mac.yml"
+          output_yml = "artifacts/latest-mac.yml"
+
+          ymls = {}
+          for arch, fpath in [("arm64", arm64_yml), ("x64", x64_yml)]:
+              if os.path.exists(fpath):
+                  with open(fpath) as f:
+                      ymls[arch] = yaml.safe_load(f)
+                  print(f"Loaded {arch} yml: {ymls[arch]}")
+              else:
+                  print(f"WARNING: {fpath} not found, skipping {arch}")
+
+          if not ymls:
+              print("ERROR: No latest-mac.yml files found")
+              sys.exit(1)
+
+          base_arch = list(ymls.keys())[0]
+          merged = ymls[base_arch].copy()
+
+          all_files = []
+          for arch, data in ymls.items():
+              if "files" in data:
+                  all_files.extend(data["files"])
+
+          merged["files"] = all_files
+
+          if all_files:
+              merged["path"] = all_files[0].get("url", merged.get("path", ""))
+              merged["sha512"] = all_files[0].get("sha512", merged.get("sha512", ""))
+
+          with open(output_yml, "w") as f:
+              yaml.dump(merged, f, default_flow_style=False, allow_unicode=True)
+
+          print(f"Merged latest-mac.yml written to {output_yml}")
+          print(f"Contains {len(all_files)} file entries:")
+          for entry in all_files:
+              print(f"  - {entry.get('url', 'unknown')}")
+          PYEOF
+
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
@@ -188,9 +274,10 @@ jobs:
           draft: false
           prerelease: false
           generate_release_notes: true
+          fail_on_unmatched_files: true
           files: |
             artifacts/**/*.dmg
             artifacts/**/*.zip
             artifacts/**/*.exe
-            artifacts/**/*.yml
-            artifacts/**/*.yaml
+            artifacts/**/latest.yml
+            artifacts/latest-mac.yml

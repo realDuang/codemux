@@ -17,8 +17,8 @@ extraMetadata:
   main: out/main/index.mjs
 mac:
   target:
-    - dmg
-    - zip
+    - target: dmg
+    - target: zip
   icon: public/assets/icon.png
   extraResources:
     - from: resources/cloudflared/darwin-${arch}
@@ -41,5 +41,6 @@ nsis:
   perMachine: false
   allowToChangeInstallationDirectory: true
   createDesktopShortcut: true
+  artifactName: "CodeMux-Setup-${version}.${ext}"
 dmg:
   writeUpdateInfo: true

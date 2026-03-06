@@ -123,6 +123,11 @@ export abstract class EngineAdapter extends EventEmitter {
 
   // --- Sessions ---
 
+  /** Check whether the adapter knows about a session (has it in runtime state). */
+  hasSession(_sessionId: string): boolean {
+    return true; // Subclasses override; default assumes known for backward compat
+  }
+
   /** List sessions, optionally filtered by directory */
   abstract listSessions(directory?: string): Promise<UnifiedSession[]>;
 
@@ -148,6 +153,7 @@ export abstract class EngineAdapter extends EventEmitter {
     options?: {
       mode?: string;
       modelId?: string;
+      directory?: string;
     },
   ): Promise<UnifiedMessage>;
 

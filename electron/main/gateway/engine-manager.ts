@@ -4,19 +4,44 @@
 
 import { EventEmitter } from "events";
 import { EngineAdapter, type EngineAdapterEvents } from "../engines/engine-adapter";
-import { sessionStore } from "../services/session-store";
+import { conversationStore } from "../services/conversation-store";
 import { engineManagerLog } from "../services/logger";
+import { timeId } from "../utils/id-gen";
 import type {
   EngineType,
   EngineInfo,
   UnifiedSession,
   UnifiedMessage,
+  UnifiedPart,
+  TextPart,
+  FilePart,
   ModelListResult,
   UnifiedProject,
   AgentMode,
   MessagePromptContent,
   PermissionReply,
+  ConversationMeta,
+  ConversationMessage,
 } from "../../../src/types/unified";
+
+// --- Helpers ---
+
+/** Convert ConversationMeta → UnifiedSession for wire compatibility */
+function convToSession(conv: ConversationMeta): UnifiedSession {
+  return {
+    id: conv.id,
+    engineType: conv.engineType,
+    directory: conv.directory,
+    title: conv.title,
+    time: {
+      created: conv.createdAt,
+      updated: conv.updatedAt,
+    },
+    engineMeta: conv.engineMeta,
+  };
+}
+
+// --- Event types ---
 
 interface EngineManagerEvents extends EngineAdapterEvents {
   /** Forwarded from adapters with engineType annotation */
@@ -40,12 +65,16 @@ export declare interface EngineManager {
 export class EngineManager extends EventEmitter {
   private adapters = new Map<EngineType, EngineAdapter>();
   private projectBindings = new Map<string, EngineType>();
-  /** sessionId → engineType lookup for routing */
+  /** conversationId → engineType lookup for routing */
   private sessionEngineMap = new Map<string, EngineType>();
   /** permissionId → engineType lookup for routing permission replies */
   private permissionEngineMap = new Map<string, EngineType>();
   /** questionId → engineType lookup for routing question replies */
   private questionEngineMap = new Map<string, EngineType>();
+  /** engineSessionId → conversationId cache (populated on session creation / lookup) */
+  private engineToConvMap = new Map<string, string>();
+  /** Accumulate step-type parts during streaming: messageId → UnifiedPart[] */
+  private stepPartsBuffer = new Map<string, UnifiedPart[]>();
 
   // --- Adapter Registration ---
 
@@ -70,16 +99,14 @@ export class EngineManager extends EventEmitter {
     return adapter;
   }
 
-  /** Get adapter for a session by looking up its engine binding */
+  /** Get adapter for a conversation by looking up its engine binding */
   private getAdapterForSession(sessionId: string): EngineAdapter {
     let engineType = this.sessionEngineMap.get(sessionId);
     if (!engineType) {
-      // Fallback: recover binding from persistent session store (handles cases
-      // where the in-memory map was cleared by HMR/restart but sessions still
-      // exist on disk, or frontend retains stale sessions from a merge)
-      const stored = sessionStore.getSession(sessionId);
-      if (stored?.engineType) {
-        engineType = stored.engineType;
+      // Fallback: recover binding from ConversationStore
+      const conv = conversationStore.get(sessionId);
+      if (conv?.engineType) {
+        engineType = conv.engineType;
         this.sessionEngineMap.set(sessionId, engineType);
       }
     }
@@ -100,10 +127,113 @@ export class EngineManager extends EventEmitter {
 
   // --- Event Forwarding ---
 
+  /**
+   * Resolve engineSessionId → conversationId.
+   * Uses in-memory cache first, then falls back to ConversationStore lookup.
+   */
+  private resolveConversationId(engineSessionId: string): string | null {
+    const cached = this.engineToConvMap.get(engineSessionId);
+    if (cached) return cached;
+    const conv = conversationStore.findByEngineSession(engineSessionId);
+    if (conv) {
+      this.engineToConvMap.set(engineSessionId, conv.id);
+      return conv.id;
+    }
+    return null;
+  }
+
+  /**
+   * Check if a part is a "content" part (text or file) that belongs in ConversationMessage,
+   * vs a "step" part (reasoning, tool, step-start/finish, snapshot, patch) that goes in StepsFile.
+   */
+  private isContentPart(part: UnifiedPart): part is TextPart | FilePart {
+    return part.type === "text" || part.type === "file";
+  }
+
+  /**
+   * Rewrite sessionId fields in event data from engineSessionId to conversationId.
+   * Returns null if the mapping cannot be resolved.
+   */
+  private rewriteSessionId(
+    data: Record<string, any>,
+    engineSessionId: string,
+    conversationId: string,
+  ): Record<string, any> {
+    const rewritten = { ...data };
+    // Top-level sessionId
+    if ("sessionId" in rewritten && rewritten.sessionId === engineSessionId) {
+      rewritten.sessionId = conversationId;
+    }
+    // Nested message.sessionId
+    if ("message" in rewritten && rewritten.message?.sessionId === engineSessionId) {
+      rewritten.message = { ...rewritten.message, sessionId: conversationId };
+      // Rewrite parts inside the message
+      if (Array.isArray(rewritten.message.parts)) {
+        rewritten.message.parts = rewritten.message.parts.map((p: any) =>
+          p.sessionId === engineSessionId ? { ...p, sessionId: conversationId } : p,
+        );
+      }
+    }
+    // Nested part.sessionId
+    if ("part" in rewritten && rewritten.part?.sessionId === engineSessionId) {
+      rewritten.part = { ...rewritten.part, sessionId: conversationId };
+    }
+    // Nested permission.sessionId
+    if ("permission" in rewritten && rewritten.permission?.sessionId === engineSessionId) {
+      rewritten.permission = { ...rewritten.permission, sessionId: conversationId };
+    }
+    return rewritten;
+  }
+
   private forwardEvents(adapter: EngineAdapter): void {
-    const events: (keyof EngineAdapterEvents)[] = [
-      "message.part.updated",
-      "message.updated",
+    // --- message.part.updated: accumulate step parts + rewrite sessionId ---
+    adapter.on("message.part.updated", (data) => {
+      const { sessionId: engineSessionId, messageId, part } = data;
+      const convId = this.resolveConversationId(engineSessionId);
+
+      // Accumulate step-type parts for later persistence
+      if (!this.isContentPart(part)) {
+        const key = messageId;
+        if (!this.stepPartsBuffer.has(key)) {
+          this.stepPartsBuffer.set(key, []);
+        }
+        const buffer = this.stepPartsBuffer.get(key)!;
+        const existingIdx = buffer.findIndex((p) => p.id === part.id);
+        if (existingIdx >= 0) {
+          buffer[existingIdx] = part;
+        } else {
+          buffer.push(part);
+        }
+      }
+
+      // Rewrite sessionId and forward to frontend
+      if (convId) {
+        const rewritten = this.rewriteSessionId(data, engineSessionId, convId);
+        this.emit("message.part.updated", rewritten as any);
+      } else {
+        this.emit("message.part.updated", data);
+      }
+    });
+
+    // --- message.updated: persist message + flush steps + rewrite sessionId ---
+    adapter.on("message.updated", (data) => {
+      const { sessionId: engineSessionId, message } = data;
+      const convId = this.resolveConversationId(engineSessionId);
+
+      if (convId) {
+        // Persist the message
+        this.persistMessage(convId, message);
+
+        // Rewrite sessionId and forward to frontend
+        const rewritten = this.rewriteSessionId(data, engineSessionId, convId);
+        this.emit("message.updated", rewritten as any);
+      } else {
+        this.emit("message.updated", data);
+      }
+    });
+
+    // --- Other events: simple forwarding with sessionId rewrite ---
+    const simpleEvents: (keyof EngineAdapterEvents)[] = [
       "session.updated",
       "session.created",
       "permission.asked",
@@ -113,7 +243,7 @@ export class EngineManager extends EventEmitter {
       "status.changed",
     ];
 
-    for (const event of events) {
+    for (const event of simpleEvents) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       adapter.on(event, (data: any) => {
         // Track permission → engine mapping for routing replies
@@ -124,8 +254,130 @@ export class EngineManager extends EventEmitter {
         if (event === "question.asked" && data?.question?.id) {
           this.questionEngineMap.set(data.question.id, adapter.engineType);
         }
+
+        // Rewrite sessionId if applicable
+        const engineSessionId = data?.sessionId || data?.session?.id || data?.permission?.sessionId;
+        if (engineSessionId) {
+          const convId = this.resolveConversationId(engineSessionId);
+          if (convId) {
+            this.emit(event, this.rewriteSessionId(data, engineSessionId, convId) as any);
+            return;
+          }
+        }
         this.emit(event, data);
       });
+    }
+  }
+
+  /**
+   * Persist a UnifiedMessage to ConversationStore.
+   * Splits content parts (text/file) into ConversationMessage and step parts into StepsFile.
+   * Only persists completed assistant messages (those with time.completed).
+   * User messages are persisted separately in persistUserMessage().
+   */
+  private persistMessage(conversationId: string, message: UnifiedMessage): void {
+    // User messages are handled in persistUserMessage() to avoid duplicates
+    if (message.role === "user") return;
+
+    const isCompleted = !!message.time.completed;
+    if (!isCompleted) return; // Skip incomplete assistant messages (initial empty emit)
+
+    try {
+      // Split parts into content vs steps
+      const contentParts: Array<TextPart | FilePart> = [];
+      const stepParts: UnifiedPart[] = [];
+
+      for (const part of message.parts || []) {
+        if (this.isContentPart(part)) {
+          contentParts.push(part);
+        } else {
+          stepParts.push(part);
+        }
+      }
+
+      // Build ConversationMessage (content parts only)
+      const convMessage: ConversationMessage = {
+        id: message.id,
+        role: message.role,
+        time: message.time,
+        parts: contentParts,
+        tokens: message.tokens,
+        cost: message.cost,
+        modelId: message.modelId,
+        error: message.error,
+      };
+
+      // Check if message already exists
+      const existingMessages = conversationStore.listMessages(conversationId);
+      const existingIdx = existingMessages.findIndex((m) => m.id === message.id);
+
+      if (existingIdx >= 0) {
+        conversationStore.updateMessage(conversationId, message.id, convMessage);
+      } else {
+        conversationStore.appendMessage(conversationId, convMessage);
+      }
+
+      // Merge buffered step parts with any steps from the message itself
+      const bufferedSteps = this.stepPartsBuffer.get(message.id) || [];
+      const allSteps = [...stepParts];
+      for (const bp of bufferedSteps) {
+        if (!allSteps.some((s) => s.id === bp.id)) {
+          allSteps.push(bp);
+        }
+      }
+
+      if (allSteps.length > 0) {
+        conversationStore.saveSteps(conversationId, message.id, allSteps);
+      }
+
+      // Clean up buffer
+      this.stepPartsBuffer.delete(message.id);
+
+      engineManagerLog.debug(
+        `Persisted message ${message.id} (${message.role}) to conversation ${conversationId}: ${contentParts.length} content parts, ${allSteps.length} steps`,
+      );
+    } catch (err) {
+      engineManagerLog.error(`Failed to persist message ${message.id}:`, err);
+    }
+  }
+
+  /**
+   * Persist a user message from sendMessage() content.
+   * Called before adapter.sendMessage() to ensure user messages are saved
+   * even if the adapter doesn't emit user message events (e.g., OpenCode).
+   */
+  private persistUserMessage(conversationId: string, content: MessagePromptContent[]): void {
+    try {
+      const now = Date.now();
+      const msgId = timeId("msg");
+
+      // Build text parts from prompt content
+      const textParts: TextPart[] = content
+        .filter((c) => c.type === "text" && c.text)
+        .map((c, idx) => ({
+          type: "text" as const,
+          id: `${msgId}_p${idx}`,
+          messageId: msgId,
+          sessionId: conversationId,
+          text: c.text!,
+        }));
+
+      if (textParts.length === 0) return;
+
+      const convMessage: ConversationMessage = {
+        id: msgId,
+        role: "user",
+        time: { created: now, completed: now },
+        parts: textParts,
+      };
+
+      conversationStore.appendMessage(conversationId, convMessage);
+
+      engineManagerLog.debug(
+        `Persisted user message ${msgId} to conversation ${conversationId}: ${textParts.length} text parts`,
+      );
+    } catch (err) {
+      engineManagerLog.error(`Failed to persist user message for conversation ${conversationId}:`, err);
     }
   }
 
@@ -190,83 +442,92 @@ export class EngineManager extends EventEmitter {
     return this.getAdapterOrThrow(engineType).getInfo();
   }
 
-  // --- Sessions ---
+  // --- Sessions (backed by ConversationStore) ---
 
   async listSessions(engineTypeOrDirectory: string): Promise<UnifiedSession[]> {
-    let sessions: UnifiedSession[];
-    let engineType: EngineType;
-
-    // If it's a known engine type, list all sessions for that engine
     if (this.adapters.has(engineTypeOrDirectory as EngineType)) {
-      engineType = engineTypeOrDirectory as EngineType;
-      const adapter = this.getAdapterOrThrow(engineType);
-      sessions = await adapter.listSessions();
+      // List all conversations for this engine type
+      const convs = conversationStore.list({ engineType: engineTypeOrDirectory as EngineType });
+      // Register all for routing
+      for (const conv of convs) {
+        this.sessionEngineMap.set(conv.id, conv.engineType);
+      }
+      return convs.map(convToSession);
     } else {
-      // Otherwise treat as directory path
-      const adapter = this.getAdapterForDirectory(engineTypeOrDirectory);
-      engineType = this.projectBindings.get(engineTypeOrDirectory)!;
-      sessions = await adapter.listSessions(engineTypeOrDirectory);
+      // List conversations for a specific directory
+      const convs = conversationStore.list({ directory: engineTypeOrDirectory });
+      for (const conv of convs) {
+        this.sessionEngineMap.set(conv.id, conv.engineType);
+      }
+      return convs.map(convToSession);
     }
-
-    // Register all returned sessions for future routing
-    for (const session of sessions) {
-      this.sessionEngineMap.set(session.id, engineType);
-    }
-
-    return sessions;
   }
 
   async createSession(
     engineType: EngineType,
     directory: string,
   ): Promise<UnifiedSession> {
-    const adapter = this.getAdapterOrThrow(engineType);
-    const session = await adapter.createSession(directory);
-    // Register session → engine mapping for future routing
-    this.sessionEngineMap.set(session.id, engineType);
-    return session;
+    this.getAdapterOrThrow(engineType); // Validate engine exists
+    const conv = conversationStore.create({ engineType, directory });
+    this.sessionEngineMap.set(conv.id, engineType);
+    return convToSession(conv);
   }
 
   async getSession(sessionId: string): Promise<UnifiedSession | null> {
-    const adapter = this.getAdapterForSession(sessionId);
-    return adapter.getSession(sessionId);
+    const conv = conversationStore.get(sessionId);
+    return conv ? convToSession(conv) : null;
   }
 
   async deleteSession(sessionId: string): Promise<void> {
-    const adapter = this.getAdapterForSession(sessionId);
-    await adapter.deleteSession(sessionId);
+    const conv = conversationStore.get(sessionId);
+    if (!conv) return;
+
+    // Best-effort engine session cleanup
+    if (conv.engineSessionId) {
+      try {
+        const adapter = this.adapters.get(conv.engineType);
+        if (adapter) {
+          await adapter.deleteSession(conv.engineSessionId);
+        }
+      } catch {
+        // Engine cleanup is best-effort
+      }
+    }
+
+    conversationStore.delete(sessionId);
     this.sessionEngineMap.delete(sessionId);
   }
 
   /**
-   * Delete a project and all its sessions.
-   * Routes through adapter.deleteSession() for each session to ensure
-   * in-memory caches (v2Sessions, messageHistory, etc.) are cleaned up,
-   * then removes the project directory from disk via sessionStore.
+   * Delete a project and all its conversations.
+   * Cleans up engine sessions best-effort, then removes conversations from store.
    */
   async deleteProject(projectId: string): Promise<void> {
-    // Find all sessions belonging to this project
-    const allSessions = sessionStore.getAllSessions();
-    const projectSessions = allSessions.filter(s => {
-      const derived = `${s.engineType}-${s.directory.replaceAll("\\", "/")}`;
-      return s.projectId === projectId || derived === projectId;
+    const allConvs = conversationStore.list();
+    const projectConvs = allConvs.filter((conv) => {
+      const derived = `${conv.engineType}-${conv.directory.replaceAll("\\", "/")}`;
+      return derived === projectId;
     });
 
-    // Delete each session through the adapter (cleans in-memory state)
-    for (const session of projectSessions) {
-      try {
-        const adapter = this.adapters.get(session.engineType as EngineType);
-        if (adapter) {
-          await adapter.deleteSession(session.id);
+    for (const conv of projectConvs) {
+      // Best-effort engine session cleanup
+      if (conv.engineSessionId) {
+        try {
+          const adapter = this.adapters.get(conv.engineType);
+          if (adapter) {
+            await adapter.deleteSession(conv.engineSessionId);
+          }
+        } catch (err) {
+          engineManagerLog.warn(`Failed to delete engine session for ${conv.id} during project delete:`, err);
         }
-        this.sessionEngineMap.delete(session.id);
-      } catch (err) {
-        engineManagerLog.warn(`Failed to delete session ${session.id} during project delete:`, err);
       }
+      conversationStore.delete(conv.id);
+      this.sessionEngineMap.delete(conv.id);
     }
+  }
 
-    // Remove the project directory from disk
-    sessionStore.deleteProject(projectId);
+  async renameSession(sessionId: string, title: string): Promise<void> {
+    conversationStore.rename(sessionId, title);
   }
 
   // --- Messages ---
@@ -276,58 +537,100 @@ export class EngineManager extends EventEmitter {
     content: MessagePromptContent[],
     options?: { mode?: string; modelId?: string },
   ): Promise<UnifiedMessage> {
-    const adapter = this.getAdapterForSession(sessionId);
-    const result = await adapter.sendMessage(sessionId, content, options);
+    const conv = conversationStore.get(sessionId);
+    if (!conv) throw new Error(`Conversation not found: ${sessionId}`);
 
-    // Title fallback: if the session still has no meaningful title after the
-    // first assistant reply, derive one from the user's first message text.
+    const adapter = this.getAdapterForSession(sessionId);
+
+    // Lazy engine session creation: first sendMessage triggers adapter.createSession()
+    let engineSessionId = conv.engineSessionId;
+    if (!engineSessionId) {
+      const engineSession = await adapter.createSession(conv.directory);
+      engineSessionId = engineSession.id;
+      conversationStore.setEngineSession(sessionId, engineSessionId, engineSession.engineMeta);
+    }
+
+    // Cache the engineSessionId → conversationId mapping
+    this.engineToConvMap.set(engineSessionId, sessionId);
+
+    // Persist user message before sending to engine
+    // (Some adapters like OpenCode don't emit user message events)
+    this.persistUserMessage(sessionId, content);
+
+    const result = await adapter.sendMessage(engineSessionId, content, options);
+
+    // Title fallback: derive title from first user message if still default
     this.applyTitleFallback(sessionId, content);
 
     return result;
   }
 
   async cancelMessage(sessionId: string): Promise<void> {
+    const conv = conversationStore.get(sessionId);
+    if (!conv?.engineSessionId) return;
     const adapter = this.getAdapterForSession(sessionId);
-    return adapter.cancelMessage(sessionId);
+    return adapter.cancelMessage(conv.engineSessionId);
   }
 
   /**
-   * If a session still has no meaningful title (empty, or matches the default
-   * "New session - <ISO>" / "Child session - <ISO>" pattern), set it to the
-   * first user message text (truncated to 100 chars).
+   * If a conversation still has no meaningful title (empty, or matches default
+   * pattern), set it to the first user message text (truncated to 100 chars).
    */
   private applyTitleFallback(
     sessionId: string,
     content: MessagePromptContent[],
   ): void {
-    const session = sessionStore.getSession(sessionId);
-    if (!session) return;
+    const conv = conversationStore.get(sessionId);
+    if (!conv) return;
 
     // Already has a real title — nothing to do
-    if (session.title && !this.isDefaultTitle(session.title)) return;
+    if (conv.title && !this.isDefaultTitle(conv.title)) return;
 
     // Extract first text from the user prompt
     const firstText = content.find((c) => c.type === "text" && c.text)?.text;
     if (!firstText) return;
 
     const maxLen = 100;
-    session.title =
+    const title =
       firstText.length > maxLen
         ? firstText.slice(0, maxLen).trimEnd() + "…"
         : firstText;
-    sessionStore.upsertSession(session);
-    this.emit("session.updated", { session });
+    conversationStore.rename(sessionId, title);
+    this.emit("session.updated", { session: convToSession(conversationStore.get(sessionId)!) });
   }
 
   private isDefaultTitle(title: string): boolean {
-    return /^(New session|Child session)( - \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}.\d{3}Z)?$/.test(
-      title,
-    );
+    // Match old engine-generated default titles and ConversationStore's "Chat M-D HH:MM" format
+    return /^(New session|Child session|Chat \d)/.test(title);
   }
 
   async listMessages(sessionId: string): Promise<UnifiedMessage[]> {
-    const adapter = this.getAdapterForSession(sessionId);
-    return adapter.listMessages(sessionId);
+    const messages = conversationStore.listMessages(sessionId);
+    const stepsFile = conversationStore.getAllSteps(sessionId);
+
+    return messages.map((msg) => {
+      // Merge content parts with step parts for full reconstruction
+      const steps = stepsFile?.messages[msg.id] ?? [];
+      const allParts: UnifiedPart[] = [...msg.parts, ...steps];
+      // Sort by part ID for consistent ordering
+      allParts.sort((a, b) => a.id.localeCompare(b.id));
+
+      return {
+        id: msg.id,
+        sessionId,
+        role: msg.role,
+        time: msg.time,
+        parts: allParts,
+        tokens: msg.tokens,
+        cost: msg.cost,
+        modelId: msg.modelId,
+        error: msg.error,
+      };
+    });
+  }
+
+  async getMessageSteps(sessionId: string, messageId: string): Promise<UnifiedPart[]> {
+    return conversationStore.getSteps(sessionId, messageId);
   }
 
   // --- Models ---
@@ -338,8 +641,12 @@ export class EngineManager extends EventEmitter {
   }
 
   async setModel(sessionId: string, modelId: string): Promise<void> {
+    const conv = conversationStore.get(sessionId);
+    if (!conv?.engineSessionId) {
+      throw new Error(`No engine session for conversation: ${sessionId}`);
+    }
     const adapter = this.getAdapterForSession(sessionId);
-    return adapter.setModel(sessionId, modelId);
+    return adapter.setModel(conv.engineSessionId, modelId);
   }
 
   // --- Modes ---
@@ -350,8 +657,12 @@ export class EngineManager extends EventEmitter {
   }
 
   async setMode(sessionId: string, modeId: string): Promise<void> {
+    const conv = conversationStore.get(sessionId);
+    if (!conv?.engineSessionId) {
+      throw new Error(`No engine session for conversation: ${sessionId}`);
+    }
     const adapter = this.getAdapterForSession(sessionId);
-    return adapter.setMode(sessionId, modeId);
+    return adapter.setMode(conv.engineSessionId, modeId);
   }
 
   // --- Permissions ---
@@ -400,8 +711,8 @@ export class EngineManager extends EventEmitter {
   // --- Projects ---
 
   async listProjects(engineType: EngineType): Promise<UnifiedProject[]> {
-    const adapter = this.getAdapterOrThrow(engineType);
-    return adapter.listProjects();
+    // Derive projects from conversations for this engine type
+    return conversationStore.deriveProjects().filter(p => p.engineType === engineType);
   }
 
   // --- Session Registration (for adapters that load existing sessions) ---
@@ -410,35 +721,39 @@ export class EngineManager extends EventEmitter {
     this.sessionEngineMap.set(sessionId, engineType);
   }
 
-  // --- SessionStore Integration ---
+  // --- ConversationStore Integration ---
 
   /**
-   * Rebuild routing tables from persisted SessionStore data.
-   * Called once at startup, after sessionStore.init().
+   * Rebuild routing tables from ConversationStore data.
+   * Called once at startup, after conversationStore.init().
    */
   initFromStore(): void {
-    for (const session of sessionStore.getAllSessions()) {
-      this.sessionEngineMap.set(session.id, session.engineType);
-      // Derive project bindings from sessions
-      if (session.directory) {
-        const normDir = session.directory.replaceAll("\\", "/");
+    for (const conv of conversationStore.list()) {
+      this.sessionEngineMap.set(conv.id, conv.engineType);
+      // Cache engineSessionId → conversationId mapping
+      if (conv.engineSessionId) {
+        this.engineToConvMap.set(conv.engineSessionId, conv.id);
+      }
+      // Derive project bindings from conversations
+      if (conv.directory) {
+        const normDir = conv.directory.replaceAll("\\", "/");
         if (normDir && normDir !== "/" && !this.projectBindings.has(normDir)) {
-          this.projectBindings.set(normDir, session.engineType);
+          this.projectBindings.set(normDir, conv.engineType);
         }
       }
     }
     engineManagerLog.info(
-      `Restored ${this.sessionEngineMap.size} session routes, ${this.projectBindings.size} project bindings from sessions`,
+      `Restored ${this.sessionEngineMap.size} conversation routes, ${this.projectBindings.size} project bindings, ${this.engineToConvMap.size} engine session mappings`,
     );
   }
 
-  /** Return all sessions from persistent store (all engines) */
+  /** Return all conversations as UnifiedSession[] (all engines) */
   listAllSessions(): UnifiedSession[] {
-    return sessionStore.getAllSessions();
+    return conversationStore.list().map(convToSession);
   }
 
-  /** Return all visible projects from persistent store (all engines) */
+  /** Return all projects derived from conversations */
   listAllProjects(): UnifiedProject[] {
-    return sessionStore.getVisibleProjects();
+    return conversationStore.deriveProjects();
   }
 }

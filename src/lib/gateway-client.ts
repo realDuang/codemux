@@ -317,6 +317,10 @@ export class GatewayClient {
     return this.request(GatewayRequestType.MESSAGE_LIST, { sessionId });
   }
 
+  async getMessageSteps(sessionId: string, messageId: string): Promise<UnifiedPart[]> {
+    return this.request<UnifiedPart[]>(GatewayRequestType.MESSAGE_STEPS, { sessionId, messageId });
+  }
+
   // --- Model API ---
 
   listModels(engineType: EngineType): Promise<ModelListResult> {

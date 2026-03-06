@@ -37,7 +37,6 @@ interface UserInputResponse {
 }
 
 import { EngineAdapter } from "./engine-adapter";
-import { sessionStore } from "../services/session-store";
 import { copilotLog } from "../services/logger";
 import { inferToolKind } from "../../../src/types/tool-mapping";
 import type {
@@ -461,18 +460,15 @@ export class CopilotSdkAdapter extends EngineAdapter {
     try {
       const metadataList = await this.client!.listSessions();
       const sessions = metadataList.map((m) => this.metadataToSession(m));
-      sessionStore.mergeSessions(sessions, this.engineType);
+      if (directory) {
+        const normDir = directory.replaceAll("\\", "/");
+        return sessions.filter((s) => s.directory === normDir);
+      }
+      return sessions;
     } catch (err) {
       copilotLog.warn("Failed to list sessions from SDK:", err);
+      return [];
     }
-
-    // Return from session store (merged source of truth)
-    const allSessions = sessionStore.getSessionsByEngine(this.engineType);
-    if (directory) {
-      const normDir = directory.replaceAll("\\", "/");
-      return allSessions.filter((s) => s.directory === normDir);
-    }
-    return allSessions;
   }
 
   async createSession(directory: string): Promise<UnifiedSession> {
@@ -505,8 +501,6 @@ export class CopilotSdkAdapter extends EngineAdapter {
       time: { created: now, updated: now },
     };
 
-    sessionStore.upsertSession(session);
-
     this.emit("session.created", { session });
     copilotLog.info(`Created session ${sessionId} in ${normalizedDir}`);
 
@@ -514,7 +508,7 @@ export class CopilotSdkAdapter extends EngineAdapter {
   }
 
   async getSession(sessionId: string): Promise<UnifiedSession | null> {
-    return sessionStore.getSession(sessionId);
+    return null;
   }
 
   async deleteSession(sessionId: string): Promise<void> {
@@ -545,7 +539,6 @@ export class CopilotSdkAdapter extends EngineAdapter {
     this.messageBuffers.delete(sessionId);
     this.sessionModes.delete(sessionId);
     this.activeTurnSessions.delete(sessionId);
-    sessionStore.deleteSession(sessionId);
 
     copilotLog.info(`Deleted session ${sessionId}`);
   }
@@ -855,8 +848,7 @@ export class CopilotSdkAdapter extends EngineAdapter {
   // ==========================================================================
 
   async listProjects(): Promise<UnifiedProject[]> {
-    const allProjects = sessionStore.getAllProjects();
-    return allProjects.filter((p) => p.engineType === this.engineType);
+    return [];
   }
 
   // ==========================================================================
@@ -893,10 +885,8 @@ export class CopilotSdkAdapter extends EngineAdapter {
 
     this.ensureClient();
 
-    const storedSession = sessionStore.getSession(sessionId);
     const config: ResumeSessionConfig = {
       streaming: true,
-      workingDirectory: storedSession?.directory,
       onPermissionRequest: (req, ctx) => this.handlePermissionRequest(req, ctx),
       onUserInputRequest: (req, ctx) => this.handleUserInputRequest(req, ctx),
     };
@@ -913,7 +903,6 @@ export class CopilotSdkAdapter extends EngineAdapter {
       // (e.g. corrupted JSONL event file with schema validation errors)
       const newConfig: SessionConfig = {
         streaming: true,
-        workingDirectory: storedSession?.directory,
         onPermissionRequest: (req, ctx) => this.handlePermissionRequest(req, ctx),
         onUserInputRequest: (req, ctx) => this.handleUserInputRequest(req, ctx),
       };
@@ -1351,13 +1340,9 @@ export class CopilotSdkAdapter extends EngineAdapter {
   ): void {
     if (!data.title) return;
 
-    const stored = sessionStore.getSession(sessionId);
-    if (stored) {
-      stored.title = data.title;
-      stored.time.updated = Date.now();
-      sessionStore.upsertSession(stored);
-      this.emit("session.updated", { session: stored });
-    }
+    this.emit("session.updated", {
+      session: { id: sessionId, engineType: this.engineType, title: data.title },
+    });
   }
 
   // --- Session Error ---
@@ -1719,14 +1704,6 @@ export class CopilotSdkAdapter extends EngineAdapter {
     this.appendMessageToHistory(sessionId, message);
 
     this.emit("message.updated", { sessionId, message });
-
-    // Update session time
-    const stored = sessionStore.getSession(sessionId);
-    if (stored) {
-      stored.time.updated = Date.now();
-      sessionStore.upsertSession(stored);
-      this.emit("session.updated", { session: stored });
-    }
 
     // Clean up
     this.messageBuffers.delete(sessionId);
@@ -2104,17 +2081,9 @@ export class CopilotSdkAdapter extends EngineAdapter {
           finalizeAssistant();
           break;
 
-        case "session.title_changed": {
-          const tData = event.data as { title?: string };
-          if (tData.title) {
-            const stored = sessionStore.getSession(sessionId);
-            if (stored) {
-              stored.title = tData.title;
-              sessionStore.upsertSession(stored);
-            }
-          }
+        case "session.title_changed":
+          // Title changes are handled by EngineManager via live event handler
           break;
-        }
 
         default:
           // Skip events that don't contribute to message history

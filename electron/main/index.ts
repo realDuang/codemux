@@ -5,10 +5,22 @@ import { mainLog } from "./services/logger";
 // Fix $PATH for packaged macOS/Linux apps launched from GUI.
 // On Windows this is a no-op (Windows inherits PATH correctly from system env).
 fixPath();
+
+// Catch uncaught exceptions from child process stdio (EPIPE, etc.)
+// Without this, Electron shows an error dialog and the app becomes unstable.
+process.on("uncaughtException", (err) => {
+  // EPIPE occurs when writing to a child process whose stdin is already closed
+  // (e.g. engine CLI exits before SDK finishes writing). Safe to suppress.
+  if ((err as NodeJS.ErrnoException).code === "EPIPE") {
+    mainLog.warn("Suppressed EPIPE error:", err.message);
+    return;
+  }
+  mainLog.error("Uncaught exception:", err);
+});
 import { createWindow, getMainWindow } from "./window-manager";
 import { registerIpcHandlers } from "./ipc-handlers";
 import { deviceStore } from "./services/device-store";
-import { sessionStore } from "./services/session-store";
+import { conversationStore } from "./services/conversation-store";
 import { authApiServer } from "./services/auth-api-server";
 import { productionServer } from "./services/production-server";
 import { EngineManager } from "./gateway/engine-manager";
@@ -63,7 +75,7 @@ if (!gotTheLock) {
 } else {
   app.on("second-instance", () => {
     const mainWindow = getMainWindow();
-    if (mainWindow) {
+    if (mainWindow && !mainWindow.isDestroyed()) {
       if (mainWindow.isMinimized()) mainWindow.restore();
       mainWindow.focus();
     }
@@ -73,10 +85,10 @@ if (!gotTheLock) {
     // Initialize DeviceStore (needs to be after app ready)
     deviceStore.init();
 
-    // Initialize SessionStore (needs to be after app ready, before engines start)
-    sessionStore.init();
+    // Initialize ConversationStore (needs to be after app ready, before engines start)
+    conversationStore.init();
 
-    // Rebuild engine routing tables from persisted SessionStore data
+    // Rebuild engine routing tables from persisted ConversationStore data
     engineManager.initFromStore();
 
     // Register IPC handlers
@@ -190,8 +202,8 @@ if (!gotTheLock) {
     event.preventDefault();
 
     try {
-      // Flush session store before quit
-      sessionStore.flushAll();
+      // Flush conversation store before quit
+      conversationStore.flushAll();
 
       await Promise.all([
         authApiServer.stop(),

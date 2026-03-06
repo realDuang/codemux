@@ -263,14 +263,9 @@ export class ClaudeCodeAdapter extends EngineAdapter {
       // The SDK will find it automatically, or we can specify pathToClaudeCodeExecutable.
       // No separate server process to manage — the SDK spawns CLI subprocesses per session.
 
-      // Set default model from env var or constructor option
-      const envModel = process.env.ANTHROPIC_MODEL || this.options?.env?.ANTHROPIC_MODEL;
-      if (envModel) {
-        this.currentModelId = envModel;
-        claudeLog.info(`[Claude] Default model from env: ${envModel}`);
-      } else {
-        this.currentModelId = this.options?.model ?? null;
-      }
+      // Model is determined per-request via sendMessage's modelId parameter,
+      // sourced from the user's selection in settings.json. No env var override needed.
+      this.currentModelId = this.options?.model ?? null;
 
       // Start cleanup interval
       this.startSessionCleanup();
@@ -826,6 +821,8 @@ export class ClaudeCodeAdapter extends EngineAdapter {
         ...process.env,
         ...this.options?.env,
       };
+      // Don't let stale env var override the user's model selection
+      delete env.ANTHROPIC_MODEL;
 
       const q = sdkQuery({
         prompt: "",
@@ -1238,6 +1235,8 @@ export class ClaudeCodeAdapter extends EngineAdapter {
       ...process.env,
       ...this.options?.env,
     };
+    // Don't let stale env var override the user's model selection
+    delete env.ANTHROPIC_MODEL;
 
     // Build SDK session options
     // We use 'as any' because the SDK v0.2.x SDKSessionOptions type is still

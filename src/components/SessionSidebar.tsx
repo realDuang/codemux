@@ -19,6 +19,7 @@ interface SessionSidebarProps {
   onDeleteProjectSessions: (projectID: string, projectName: string, sessionCount: number) => void;
   onAddProject: () => void;
   showAddProject?: boolean;
+  collapsed?: boolean;
 }
 
 // Project grouping data structure
@@ -313,44 +314,56 @@ export function SessionSidebar(props: SessionSidebarProps) {
   };
 
   return (
-    <div class="w-full bg-gray-50 dark:bg-slate-950 border-r border-gray-200 dark:border-slate-800 flex flex-col h-full">
+    <div class="w-full bg-gray-50 dark:bg-slate-950 border-r border-gray-200 dark:border-slate-800 flex flex-col h-full overflow-hidden">
       {/* Engine Tab Bar */}
       <Show when={showTabs()}>
-        <div class="flex items-center gap-1 px-2 pt-2 pb-1 border-b border-gray-200 dark:border-slate-800">
-          <For each={runningEngines()}>
-            {(engine) => {
-              const isActive = () => activeTab() === engine.type;
-              const projectCount = () =>
-                engineSections().find(s => s.engineType === engine.type)?.projects.length ?? 0;
+        <Show when={!props.collapsed} fallback={
+          <div class="flex items-center justify-center px-1 pt-2 pb-1 border-b border-gray-200 dark:border-slate-800">
+            <span class={`text-[10px] font-medium px-1.5 py-0.5 rounded-full leading-none ${
+              getEngineBadge(activeTab() ?? "")?.class ?? "bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-400"
+            }`}>
+              {getEngineBadge(activeTab() ?? "")?.label ?? ""}
+            </span>
+          </div>
+        }>
+          <div class="flex items-center gap-1 px-2 pt-2 pb-1 border-b border-gray-200 dark:border-slate-800">
+            <For each={runningEngines()}>
+              {(engine) => {
+                const isActive = () => activeTab() === engine.type;
+                const projectCount = () =>
+                  engineSections().find(s => s.engineType === engine.type)?.projects.length ?? 0;
+                const badge = () => getEngineBadge(engine.type);
 
-              return (
-                <button
-                  class={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
-                    isActive()
-                      ? "bg-white dark:bg-slate-800 text-gray-900 dark:text-gray-100 shadow-sm"
-                      : "text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-slate-900"
-                  }`}
-                  onClick={() => setActiveTab(engine.type)}
-                >
-                  <span>{getEngineLabel(engine.type)}</span>
-                  <span class={`text-[10px] px-1.5 py-0.5 rounded-full leading-none ${
-                    isActive()
-                      ? (getEngineBadge(engine.type)?.class ?? "bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-400")
-                      : "bg-gray-100 text-gray-400 dark:bg-slate-800 dark:text-gray-500"
-                  }`}>
-                    {projectCount()}
-                  </span>
-                </button>
-              );
-            }}
-          </For>
-        </div>
+                return (
+                  <button
+                    class={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
+                      isActive()
+                        ? "bg-white dark:bg-slate-800 text-gray-900 dark:text-gray-100 shadow-sm"
+                        : "text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-slate-900"
+                    }`}
+                    onClick={() => setActiveTab(engine.type)}
+                  >
+                    <span>{getEngineLabel(engine.type)}</span>
+                    <span class={`text-[10px] px-1.5 py-0.5 rounded-full leading-none ${
+                      isActive()
+                        ? (badge()?.class ?? "bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-400")
+                        : "bg-gray-100 text-gray-400 dark:bg-slate-800 dark:text-gray-500"
+                    }`}>
+                      {projectCount()}
+                    </span>
+                  </button>
+                );
+              }}
+            </For>
+          </div>
+        </Show>
       </Show>
       {/* Session List */}
-      <div class="flex-1 overflow-y-auto px-2 py-2">
+      <div class={`flex-1 overflow-y-auto ${props.collapsed ? "px-1" : "px-2"} py-2`}>
         <Show
           when={visibleSections().length > 0}
           fallback={
+            <Show when={!props.collapsed}>
                 <div class="p-8 text-center">
                   <div class="inline-flex items-center justify-center w-10 h-10 rounded-full bg-gray-100 dark:bg-slate-800 mb-3 text-gray-400">
                     <svg
@@ -369,8 +382,47 @@ export function SessionSidebar(props: SessionSidebarProps) {
                   </div>
                   <p class="text-sm text-gray-500 dark:text-gray-400">{t().sidebar.noSessions}</p>
                 </div>
+            </Show>
           }
         >
+          {/* Collapsed mode: show only project icons */}
+          <Show when={props.collapsed}>
+            <div class="flex flex-col items-center gap-1">
+              <For each={visibleSections()}>
+                {(section) => (
+                  <For each={section.projects}>
+                    {(project) => {
+                      const hasActiveSession = () =>
+                        project.sessions.some(s => s.id === props.currentSessionId);
+                      return (
+                        <button
+                          class={`w-10 h-10 rounded-lg flex items-center justify-center transition-all ${
+                            hasActiveSession()
+                              ? "ring-2 ring-blue-500 ring-offset-1 dark:ring-offset-slate-950"
+                              : "hover:bg-gray-100 dark:hover:bg-slate-800"
+                          }`}
+                          onClick={() => {
+                            const firstSession = project.sessions[0];
+                            if (firstSession) props.onSelectSession(firstSession.id);
+                          }}
+                          title={project.name}
+                        >
+                          <div
+                            class={`w-7 h-7 rounded flex items-center justify-center text-white text-xs font-medium ${getProjectColor(project.name)}`}
+                          >
+                            {getProjectInitial(project.name)}
+                          </div>
+                        </button>
+                      );
+                    }}
+                  </For>
+                )}
+              </For>
+            </div>
+          </Show>
+
+          {/* Expanded mode: full session list */}
+          <Show when={!props.collapsed}>
           <For each={visibleSections()}>
             {(section) => (
               <>
@@ -698,14 +750,16 @@ export function SessionSidebar(props: SessionSidebarProps) {
               </>
             )}
           </For>
+          </Show>
         </Show>
       </div>
 
       <Show when={props.showAddProject !== false}>
-        <div class="px-2 py-2 border-t border-gray-200 dark:border-slate-800">
+        <div class={`${props.collapsed ? "px-1" : "px-2"} py-2 border-t border-gray-200 dark:border-slate-800`}>
           <button
             onClick={props.onAddProject}
-            class="w-full flex items-center gap-2 px-3 py-2 text-sm text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-slate-800 hover:text-gray-900 dark:hover:text-white rounded-lg transition-colors"
+            class={`w-full flex items-center ${props.collapsed ? "justify-center p-2" : "gap-2 px-3 py-2"} text-sm text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-slate-800 hover:text-gray-900 dark:hover:text-white rounded-lg transition-colors`}
+            title={t().project.add}
           >
             <svg
               xmlns="http://www.w3.org/2000/svg"
@@ -722,7 +776,9 @@ export function SessionSidebar(props: SessionSidebarProps) {
               <path d="M12 10v6" />
               <path d="M9 13h6" />
             </svg>
-            {t().project.add}
+            <Show when={!props.collapsed}>
+              {t().project.add}
+            </Show>
           </button>
         </div>
       </Show>

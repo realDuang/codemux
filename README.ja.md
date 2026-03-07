@@ -52,6 +52,28 @@ GitHub Copilot は世界で最も広く採用されているAIコーディング
 - **パブリックインターネット**: ワンクリックで [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/) — ポート転送、VPN、ファイアウォール変更は一切不要
 - **セキュリティ内蔵**: デバイス認証、JWT トークン、Cloudflare 経由のHTTPS、再起動ごとにローテーションされるエフェメラルトンネルURL
 
+### 5. Feishu（Lark）ボット連携
+
+[Feishu](https://www.feishu.cn/) から直接AIコーディングエージェントを使用できます — ブラウザ不要。CodeMux は Feishu ボットとして接続し、チャットメッセージをゲートウェイ経由で任意のエンジンにブリッジします。
+
+**1グループ＝1セッション**：各 Feishu グループチャットは単一の CodeMux セッションに対応します。ボットのP2Pチャットでプロジェクトを選択すると、セッション用のグループが自動作成され、会話が分離されて集中できます。
+
+**ボットメニューとスラッシュコマンド**で、Feishu 内から完全にコントロール可能：
+
+| コマンド | コンテキスト | 機能 |
+|---------|------------|------|
+| メニュー：プロジェクト切替 | P2P | プロジェクトを参照・選択 |
+| メニュー：新規セッション | P2P | 新しいセッションを作成（以前使用したプロジェクトがあればプロジェクト選択をスキップ） |
+| メニュー：セッション切替 | P2P | 既存セッション間を切り替え |
+| `/cancel` | グループ | 現在のAI応答を停止 |
+| `/mode <agent\|plan\|build>` | グループ | 実行モードを切り替え |
+| `/model list` / `/model <id>` | グループ | モデルの一覧表示・切り替え |
+| `/status` | グループ | セッション情報を表示 |
+
+AI応答はスロットル制御されたメッセージ更新でリアルタイムにストリーミングされ、完了時にツールサマリー（例：`Shell(2), Edit(1)`）が付加されます。
+
+> **セットアップ**：Feishu 開放プラットフォームでボット機能付きのカスタムアプリを作成し、**WebSocket（長期接続）** モードでイベントサブスクリプションを有効にして、CodeMux で App ID / App Secret を設定してください。詳細は [Feishu 開放プラットフォーム](https://open.feishu.cn/)をご覧ください。
+
 ---
 
 ## クイックスタート
@@ -200,6 +222,7 @@ codemux/
 │   ├── main/
 │   │   ├── engines/          # エンジンアダプター (OpenCode, Copilot, Claude Code)
 │   │   ├── gateway/          # WebSocket サーバー + エンジンルーティング
+│   │   ├── channels/         # 外部メッセージングチャネル (Feishu)
 │   │   └── services/         # 認証、デバイスストア、トンネル、セッション
 │   └── preload/
 ├── src/                      # SolidJS レンダラー
@@ -239,6 +262,7 @@ codemux/
 - [OpenCode](https://opencode.ai) — 対応エンジン
 - [GitHub Copilot CLI](https://docs.github.com/en/copilot/using-github-copilot/using-github-copilot-coding-agent-in-cli) — 対応エンジン
 - [Claude Code](https://docs.anthropic.com/en/docs/claude-code) — 対応エンジン
+- [Feishu 開放プラットフォーム](https://open.feishu.cn/) — Feishu ボット連携
 
 ---
 

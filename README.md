@@ -52,6 +52,28 @@ Access your coding agents from any device — phone, tablet, or another machine 
 - **Public Internet**: One-click [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/) — no port forwarding, no VPN, no firewall changes
 - **Security built-in**: Device authorization, JWT tokens, HTTPS via Cloudflare, ephemeral tunnel URLs that rotate on every restart
 
+### 5. Feishu (Lark) Bot Integration
+
+Use your AI coding agents directly from [Feishu](https://www.feishu.cn/) — no browser needed. CodeMux connects as a Feishu bot, bridging chat messages to any engine through the gateway.
+
+**One Group = One Session**: Each Feishu group chat maps to a single CodeMux session. Start a conversation in the bot's P2P chat to select a project, then a group is auto-created for the session — keeping conversations isolated and focused.
+
+**Bot menu & slash commands** give full control from within Feishu:
+
+| Command | Context | Function |
+|---------|---------|----------|
+| Menu: Switch Project | P2P | Browse and select a project |
+| Menu: New Session | P2P | Create a new session (skips project selection if one was used before) |
+| Menu: Switch Session | P2P | Switch between existing sessions |
+| `/cancel` | Group | Stop the current AI response |
+| `/mode <agent\|plan\|build>` | Group | Switch execution mode |
+| `/model list` / `/model <id>` | Group | List or switch models |
+| `/status` | Group | Show session info |
+
+AI responses stream in real-time with throttled message updates, and a tool summary (e.g. `Shell(2), Edit(1)`) is appended on completion.
+
+> **Setup**: Create a Feishu custom app with bot capability, enable event subscriptions via **WebSocket (长连接)** mode, and configure the App ID / App Secret in CodeMux. See [Feishu Open Platform](https://open.feishu.cn/) for details.
+
 ---
 
 ## Quick Start
@@ -200,6 +222,7 @@ codemux/
 │   ├── main/
 │   │   ├── engines/          # Engine adapters (OpenCode, Copilot, Claude Code)
 │   │   ├── gateway/          # WebSocket server + engine routing
+│   │   ├── channels/         # External messaging channels (Feishu)
 │   │   └── services/         # Auth, device store, tunnel, sessions
 │   └── preload/
 ├── src/                      # SolidJS renderer
@@ -239,6 +262,7 @@ Contributions are welcome! Please follow these conventions:
 - [OpenCode](https://opencode.ai) — Supported engine
 - [GitHub Copilot CLI](https://docs.github.com/en/copilot/using-github-copilot/using-github-copilot-coding-agent-in-cli) — Supported engine
 - [Claude Code](https://docs.anthropic.com/en/docs/claude-code) — Supported engine
+- [Feishu Open Platform](https://open.feishu.cn/) — Feishu bot integration
 
 ---
 

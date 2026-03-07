@@ -52,6 +52,28 @@ GitHub Copilot 是全球使用最广泛的 AI 编程工具。**Copilot CLI** 通
 - **公网**：一键 [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/) —— 无需端口转发、无需 VPN、无需防火墙更改
 - **内置安全机制**：设备授权、JWT 令牌、通过 Cloudflare 的 HTTPS、每次重启时轮换的临时隧道 URL
 
+### 5. 飞书机器人集成
+
+直接在[飞书](https://www.feishu.cn/)中使用你的 AI 编程 Agent —— 无需打开浏览器。CodeMux 以飞书机器人的身份接入，通过网关将聊天消息桥接到任意引擎。
+
+**一群一会话**：每个飞书群聊对应一个 CodeMux 会话。在机器人的私聊中选择项目后，系统自动创建群聊用于该会话 —— 保持对话独立且专注。
+
+**机器人菜单和斜杠命令**让你在飞书内即可完全掌控：
+
+| 命令 | 上下文 | 功能 |
+|------|--------|------|
+| 菜单：切换项目 | 私聊 | 浏览并选择项目 |
+| 菜单：新建会话 | 私聊 | 创建新会话（如果之前使用过项目则跳过项目选择） |
+| 菜单：切换会话 | 私聊 | 在已有会话间切换 |
+| `/cancel` | 群聊 | 停止当前 AI 响应 |
+| `/mode <agent\|plan\|build>` | 群聊 | 切换执行模式 |
+| `/model list` / `/model <id>` | 群聊 | 查看或切换模型 |
+| `/status` | 群聊 | 查看会话信息 |
+
+AI 响应实时流式推送（节流更新），完成时附带工具摘要（如 `Shell(2), Edit(1)`）。
+
+> **配置方式**：在飞书开放平台创建企业自建应用并启用机器人能力，事件订阅选择 **长连接（WebSocket）** 模式，然后在 CodeMux 中配置 App ID / App Secret 即可。详见[飞书开放平台](https://open.feishu.cn/)。
+
 ---
 
 ## 快速开始
@@ -200,6 +222,7 @@ codemux/
 │   ├── main/
 │   │   ├── engines/          # 引擎适配器（OpenCode、Copilot、Claude Code）
 │   │   ├── gateway/          # WebSocket 服务器 + 引擎路由
+│   │   ├── channels/         # 外部消息通道（飞书）
 │   │   └── services/         # 认证、设备存储、隧道、会话
 │   └── preload/
 ├── src/                      # SolidJS 渲染层
@@ -239,6 +262,7 @@ codemux/
 - [OpenCode](https://opencode.ai) — 支持的引擎
 - [GitHub Copilot CLI](https://docs.github.com/en/copilot/using-github-copilot/using-github-copilot-coding-agent-in-cli) — 支持的引擎
 - [Claude Code](https://docs.anthropic.com/en/docs/claude-code) — 支持的引擎
+- [飞书开放平台](https://open.feishu.cn/) — 飞书机器人集成
 
 ---
 

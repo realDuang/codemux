@@ -32,9 +32,11 @@ import {
 } from "./feishu-message-formatter";
 import {
   DEFAULT_FEISHU_CONFIG,
+  TEMP_SESSION_TTL_MS,
   type FeishuConfig,
   type StreamingSession,
   type GroupBinding,
+  type TempSession,
   type FeishuMessageEvent,
   type FeishuBotMenuEvent,
   type FeishuChatDisbandedEvent,
@@ -379,7 +381,25 @@ export class FeishuAdapter extends ChannelAdapter {
       if (handled) return;
     }
 
-    // 3. Default: show project list and enter project selection mode
+    // 3. Active temp session (not expired)? → send to engine
+    const tempSession = this.sessionMapper.getTempSession(chatId);
+    if (tempSession && !this.isTempSessionExpired(tempSession)) {
+      await this.enqueueP2PMessage(chatId, text);
+      return;
+    }
+
+    // 4. Has lastSelectedProject → auto-create temp session and send
+    const p2pState = this.sessionMapper.getP2PChat(chatId);
+    if (p2pState?.lastSelectedProject && this.gatewayClient) {
+      // Clean up expired temp session if any
+      if (tempSession) {
+        await this.cleanupExpiredTempSession(chatId);
+      }
+      await this.createTempSessionAndSend(chatId, p2pState.lastSelectedProject, text);
+      return;
+    }
+
+    // 5. No project → show project list
     await this.showProjectList(chatId);
   }
 
@@ -401,7 +421,7 @@ export class FeishuAdapter extends ChannelAdapter {
       default:
         await this.sendTextMessage(
           chatId,
-          "This command is only available in session group chats. Use /help for available commands.",
+          "📋 此命令仅在会话群聊中可用。使用 /help 查看可用命令。",
         );
     }
   }
@@ -475,7 +495,7 @@ export class FeishuAdapter extends ChannelAdapter {
     } catch (err) {
       await this.sendTextMessage(
         chatId,
-        `Failed to create session: ${err instanceof Error ? err.message : String(err)}`,
+        `📋 创建会话失败：${err instanceof Error ? err.message : String(err)}`,
       );
     }
   }
@@ -501,6 +521,146 @@ export class FeishuAdapter extends ChannelAdapter {
         this.sessionMapper.setPendingSelectionByOpenId(openId, selection);
       }
     }
+  }
+
+  // ============================================================================
+  // P2P Temp Session Methods
+  // ============================================================================
+
+  /** Check if a temp session has expired (2h since last activity) */
+  private isTempSessionExpired(temp: TempSession): boolean {
+    return Date.now() - temp.lastActiveAt > TEMP_SESSION_TTL_MS;
+  }
+
+  /** Create a temp session for the given project and send the first message */
+  private async createTempSessionAndSend(
+    chatId: string,
+    project: { directory: string; engineType: EngineType; projectId: string },
+    text: string,
+  ): Promise<void> {
+    if (!this.gatewayClient) return;
+
+    try {
+      const session = await this.gatewayClient.createSession({
+        engineType: project.engineType,
+        directory: project.directory,
+      });
+
+      const tempSession: TempSession = {
+        conversationId: session.id,
+        engineType: project.engineType,
+        directory: project.directory,
+        projectId: project.projectId,
+        lastActiveAt: Date.now(),
+        messageQueue: [],
+        processing: false,
+      };
+
+      this.sessionMapper.setTempSession(chatId, tempSession);
+      await this.enqueueP2PMessage(chatId, text);
+    } catch (err) {
+      await this.sendTextMessage(
+        chatId,
+        `📋 创建临时会话失败：${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
+
+  /** Enqueue a message for serial processing in the P2P temp session */
+  private async enqueueP2PMessage(chatId: string, text: string): Promise<void> {
+    const temp = this.sessionMapper.getTempSession(chatId);
+    if (!temp) return;
+
+    temp.messageQueue.push(text);
+    if (!temp.processing) {
+      await this.processP2PQueue(chatId);
+    }
+  }
+
+  /** Process the next message in the P2P temp session queue */
+  private async processP2PQueue(chatId: string): Promise<void> {
+    const temp = this.sessionMapper.getTempSession(chatId);
+    if (!temp || temp.messageQueue.length === 0) {
+      if (temp) temp.processing = false;
+      return;
+    }
+
+    temp.processing = true;
+    const text = temp.messageQueue.shift()!;
+    await this.sendToEngineP2P(chatId, temp, text);
+  }
+
+  /** Send a message to the engine via a P2P temp session (no group) */
+  private async sendToEngineP2P(
+    chatId: string,
+    tempSession: TempSession,
+    text: string,
+  ): Promise<void> {
+    if (!this.gatewayClient) return;
+
+    // Send initial "thinking" message
+    const feishuMsgId = await this.sendTextMessage(chatId, "🤔 思考中...");
+    if (!feishuMsgId) {
+      feishuLog.error("Failed to send P2P thinking message");
+      await this.processP2PQueue(chatId);
+      return;
+    }
+
+    tempSession.lastActiveAt = Date.now();
+
+    // Create streaming session
+    const streaming: StreamingSession = {
+      feishuMessageId: feishuMsgId,
+      conversationId: tempSession.conversationId,
+      messageId: "",
+      textBuffer: "",
+      lastPatchTime: Date.now(),
+      patchTimer: null,
+      completed: false,
+      toolCounts: new Map(),
+    };
+    tempSession.streamingSession = streaming;
+
+    const sendPromise = this.gatewayClient.sendMessage({
+      sessionId: tempSession.conversationId,
+      content: [{ type: "text", text }],
+    });
+
+    sendPromise
+      .then((msg) => {
+        streaming.messageId = msg.id;
+      })
+      .catch(async (err) => {
+        feishuLog.error("P2P sendMessage failed:", err);
+        tempSession.streamingSession = undefined;
+        this.patchFeishuMessage(
+          feishuMsgId,
+          `⚠️ 错误：${err instanceof Error ? err.message : String(err)}`,
+        );
+        // Session might be invalid — try recreating on next message
+        const p2pState = this.sessionMapper.getP2PChat(chatId);
+        if (p2pState?.lastSelectedProject) {
+          await this.cleanupExpiredTempSession(chatId);
+        }
+        await this.processP2PQueue(chatId);
+      });
+  }
+
+  /** Clean up an expired or invalid temp session */
+  private async cleanupExpiredTempSession(chatId: string): Promise<void> {
+    const temp = this.sessionMapper.getTempSession(chatId);
+    if (!temp) return;
+
+    if (temp.streamingSession?.patchTimer) {
+      clearTimeout(temp.streamingSession.patchTimer);
+    }
+    try {
+      await this.gatewayClient?.deleteSession(temp.conversationId);
+      feishuLog.info(`Deleted expired temp session: ${temp.conversationId}`);
+    } catch {
+      // Ignore deletion failures for temp sessions
+    }
+    this.sessionMapper.clearTempSession(chatId);
   }
 
   /** Flatten projects grouped by engine type (same order as buildProjectListText) */
@@ -599,7 +759,7 @@ export class FeishuAdapter extends ChannelAdapter {
     if (this.sessionMapper.hasGroupForConversation(session.id)) {
       await this.sendTextMessage(
         chatId,
-        `This session already has a group chat. Please send messages in the existing group chat directly.`,
+        `📋 此会话已有对应的群聊，请直接在群聊中发送消息。`,
       );
       return true;
     }
@@ -624,7 +784,7 @@ export class FeishuAdapter extends ChannelAdapter {
   private async handleGroupMessage(groupChatId: string, text: string): Promise<void> {
     const binding = this.sessionMapper.getGroupBinding(groupChatId);
     if (!binding) {
-      await this.sendTextMessage(groupChatId, "This group is not bound to a CodeMux session.");
+      await this.sendTextMessage(groupChatId, "📋 此群聊未绑定到 CodeMux 会话。");
       return;
     }
 
@@ -652,15 +812,15 @@ export class FeishuAdapter extends ChannelAdapter {
 
       case "cancel":
         await this.gatewayClient.cancelMessage(binding.conversationId);
-        await this.sendTextMessage(groupChatId, "Message cancelled.");
+        await this.sendTextMessage(groupChatId, "📋 消息已取消。");
         break;
 
       case "status": {
         const projectName = binding.directory.split(/[\\/]/).pop();
         const lines = [
-          "**Session Status**\n",
-          `Project: **${projectName}** (${binding.engineType})`,
-          `Session: \`${binding.conversationId.slice(0, 12)}...\``,
+          "📋 **会话状态**\n",
+          `项目：**${projectName}**（${binding.engineType}）`,
+          `会话：\`${binding.conversationId.slice(0, 12)}...\``,
         ];
         await this.sendTextMessage(groupChatId, lines.join("\n"));
         break;
@@ -668,14 +828,14 @@ export class FeishuAdapter extends ChannelAdapter {
 
       case "mode": {
         if (!command.args || command.args.length === 0) {
-          await this.sendTextMessage(groupChatId, "Usage: /mode <agent|plan|build>");
+          await this.sendTextMessage(groupChatId, "📋 用法：/mode <agent|plan|build>");
           return;
         }
         await this.gatewayClient.setMode({
           sessionId: binding.conversationId,
           modeId: command.args[0],
         });
-        await this.sendTextMessage(groupChatId, `Mode set to: **${command.args[0]}**`);
+        await this.sendTextMessage(groupChatId, `📋 模式已切换为：**${command.args[0]}**`);
         break;
       }
 
@@ -685,20 +845,20 @@ export class FeishuAdapter extends ChannelAdapter {
           (!command.subcommand && (!command.args || command.args.length === 0))
         ) {
           const result = await this.gatewayClient.listModels(binding.engineType);
-          const lines = ["Models", "─────────────────────────"];
+          const lines = ["📋 模型列表", "─────────────────────────"];
           for (const m of result.models) {
-            const current = m.modelId === result.currentModelId ? " (current)" : "";
+            const current = m.modelId === result.currentModelId ? "（当前）" : "";
             lines.push(`  ${m.name || m.modelId}${current}`);
           }
           lines.push("─────────────────────────");
-          lines.push("Use /model <model-id> to switch.");
+          lines.push("使用 /model <model-id> 切换模型。");
           await this.sendTextMessage(groupChatId, lines.join("\n"));
         } else if (command.args && command.args.length > 0) {
           await this.gatewayClient.setModel({
             sessionId: binding.conversationId,
             modelId: command.args[0],
           });
-          await this.sendTextMessage(groupChatId, `Model set to: **${command.args[0]}**`);
+          await this.sendTextMessage(groupChatId, `📋 模型已切换为：**${command.args[0]}**`);
         }
         break;
       }
@@ -706,7 +866,7 @@ export class FeishuAdapter extends ChannelAdapter {
       default:
         await this.sendTextMessage(
           groupChatId,
-          `Unknown command: \`${command.command}\`. Use /help for available commands.`,
+          `📋 未知命令：\`${command.command}\`。使用 /help 查看可用命令。`,
         );
     }
   }
@@ -930,7 +1090,7 @@ export class FeishuAdapter extends ChannelAdapter {
     if (!this.gatewayClient) return;
 
     // Send initial "thinking" message to Feishu
-    const feishuMsgId = await this.sendTextMessage(groupChatId, "Thinking...");
+    const feishuMsgId = await this.sendTextMessage(groupChatId, "🤔 思考中...");
     if (!feishuMsgId) {
       feishuLog.error("Failed to send initial thinking message");
       return;
@@ -974,7 +1134,7 @@ export class FeishuAdapter extends ChannelAdapter {
         binding.streamingSessions.delete(placeholderKey);
         this.patchFeishuMessage(
           feishuMsgId,
-          `Error: ${err instanceof Error ? err.message : String(err)}`,
+          `⚠️ 错误：${err instanceof Error ? err.message : String(err)}`,
         );
       });
   }
@@ -984,63 +1144,78 @@ export class FeishuAdapter extends ChannelAdapter {
   // ============================================================================
 
   private handlePartUpdated(conversationId: string, part: UnifiedPart): void {
+    // Try group binding first
     const binding = this.sessionMapper.findGroupByConversationId(conversationId);
-    if (!binding) return;
-
-    // Find the active (non-completed) streaming session
-    let streaming: StreamingSession | undefined;
-    for (const ss of binding.streamingSessions.values()) {
-      if (ss.conversationId === conversationId && !ss.completed) {
-        streaming = ss;
-        break;
+    if (binding) {
+      // Find the active (non-completed) streaming session
+      let streaming: StreamingSession | undefined;
+      for (const ss of binding.streamingSessions.values()) {
+        if (ss.conversationId === conversationId && !ss.completed) {
+          streaming = ss;
+          break;
+        }
       }
+      if (streaming) {
+        this.applyPartToStreaming(streaming, part);
+      }
+      return;
     }
 
-    if (!streaming) return;
+    // Try P2P temp session
+    const p2pChatId = this.sessionMapper.findP2PChatByTempConversation(conversationId);
+    if (p2pChatId) {
+      const tempSession = this.sessionMapper.getTempSession(p2pChatId);
+      if (tempSession?.streamingSession && !tempSession.streamingSession.completed) {
+        this.applyPartToStreaming(tempSession.streamingSession, part);
+      }
+    }
+  }
 
+  /** Apply a part update to a streaming session (shared by group and P2P) */
+  private applyPartToStreaming(streaming: StreamingSession, part: UnifiedPart): void {
     switch (part.type) {
       case "text":
-        // Text parts are cumulative (complete text, not incremental)
         streaming.textBuffer = part.text || "";
         this.scheduleStreamingPatch(streaming);
         break;
-
       case "tool":
-        // Track tool usage for summary
         if (part.normalizedTool) {
           const count = streaming.toolCounts.get(part.normalizedTool) ?? 0;
           streaming.toolCounts.set(part.normalizedTool, count + 1);
         }
         break;
-
-      // Reasoning, step-start, step-finish, file, patch, snapshot: not displayed in Feishu
       default:
         break;
     }
   }
 
   private handleMessageCompleted(conversationId: string, message: UnifiedMessage): void {
-    // Only process assistant messages — user message updates must be ignored
-    // as they arrive first (before any text parts) and would prematurely
-    // finalize the streaming session with empty textBuffer.
     if (message.role !== "assistant") return;
-
-    // Only process truly completed messages (with time.completed set).
-    // The engine adapter emits intermediate "stripped" message.updated events
-    // (without time.completed) during multi-step agent execution.
-    // Without this check, those intermediate events would prematurely finalize
-    // the streaming session while text parts are still arriving.
     if (!message.time?.completed) return;
 
+    // Try group binding first
     const binding = this.sessionMapper.findGroupByConversationId(conversationId);
-    if (!binding) return;
+    if (binding) {
+      this.finalizeGroupStreaming(binding, conversationId, message);
+      return;
+    }
 
-    // Try direct lookup by message.id first
+    // Try P2P temp session
+    const p2pChatId = this.sessionMapper.findP2PChatByTempConversation(conversationId);
+    if (p2pChatId) {
+      this.finalizeP2PStreaming(p2pChatId, message);
+    }
+  }
+
+  /** Finalize streaming for a group binding */
+  private finalizeGroupStreaming(
+    binding: GroupBinding,
+    conversationId: string,
+    message: UnifiedMessage,
+  ): void {
     let streaming = binding.streamingSessions.get(message.id);
     let streamingKey = message.id;
 
-    // Fallback: if sendMessage().then() hasn't re-keyed yet (placeholder still active),
-    // scan for any non-completed session matching this conversationId
     if (!streaming) {
       for (const [key, ss] of binding.streamingSessions.entries()) {
         if (ss.conversationId === conversationId && !ss.completed) {
@@ -1054,36 +1229,69 @@ export class FeishuAdapter extends ChannelAdapter {
     if (!streaming) return;
 
     streaming.completed = true;
-
-    // Cancel pending patch timer
     if (streaming.patchTimer) {
       clearTimeout(streaming.patchTimer);
       streaming.patchTimer = null;
     }
 
-    // If the message ended with an error, show it in the Feishu reply
     if (message.error) {
-      const errorText = `⚠️ Error: ${message.error}`;
-      this.patchFeishuMessage(streaming.feishuMessageId, errorText);
+      this.patchFeishuMessage(streaming.feishuMessageId, `⚠️ 错误：${message.error}`);
       binding.streamingSessions.delete(streamingKey);
       return;
     }
 
-    // Send final PATCH with complete text + tool summary
     const toolSummary = formatToolSummaryFromCounts(streaming.toolCounts);
-    let finalText = streaming.textBuffer || "(No text response)";
+    let finalText = streaming.textBuffer || "（无文本回复）";
     finalText += toolSummary;
     finalText = truncateForFeishu(finalText);
 
     this.patchFeishuMessage(streaming.feishuMessageId, finalText);
-
-    // Cleanup — use streamingKey (may be placeholder or real message.id)
     binding.streamingSessions.delete(streamingKey);
   }
 
+  /** Finalize streaming for a P2P temp session and process next queued message */
+  private finalizeP2PStreaming(chatId: string, message: UnifiedMessage): void {
+    const tempSession = this.sessionMapper.getTempSession(chatId);
+    if (!tempSession?.streamingSession) return;
+
+    const streaming = tempSession.streamingSession;
+    streaming.completed = true;
+    if (streaming.patchTimer) {
+      clearTimeout(streaming.patchTimer);
+      streaming.patchTimer = null;
+    }
+
+    tempSession.lastActiveAt = Date.now();
+
+    if (message.error) {
+      this.patchFeishuMessage(streaming.feishuMessageId, `⚠️ 错误：${message.error}`);
+      tempSession.streamingSession = undefined;
+      this.processP2PQueue(chatId);
+      return;
+    }
+
+    const toolSummary = formatToolSummaryFromCounts(streaming.toolCounts);
+    let finalText = streaming.textBuffer || "（无文本回复）";
+    finalText = `💬 ${finalText}`;
+    finalText += toolSummary;
+    finalText = truncateForFeishu(finalText);
+
+    this.patchFeishuMessage(streaming.feishuMessageId, finalText);
+    tempSession.streamingSession = undefined;
+
+    // Process next queued message
+    this.processP2PQueue(chatId);
+  }
+
   private handlePermissionAsked(permission: UnifiedPermission): void {
+    // Try group binding
     const binding = this.sessionMapper.findGroupByConversationId(permission.sessionId);
-    if (!binding) return;
+
+    // Also try P2P temp session (permissions apply regardless of chat type)
+    if (!binding) {
+      const p2pChatId = this.sessionMapper.findP2PChatByTempConversation(permission.sessionId);
+      if (!p2pChatId) return;
+    }
 
     if (!this.config.autoApprovePermissions || !this.gatewayClient) return;
 
@@ -1105,22 +1313,28 @@ export class FeishuAdapter extends ChannelAdapter {
   }
 
   private handleQuestionAsked(question: UnifiedQuestion): void {
-    const groupChatId = this.sessionMapper.findGroupChatIdByConversationId(question.sessionId);
-    if (!groupChatId) return;
+    // Try group binding first
+    let targetChatId = this.sessionMapper.findGroupChatIdByConversationId(question.sessionId);
+
+    // Fallback to P2P temp session
+    if (!targetChatId) {
+      targetChatId = this.sessionMapper.findP2PChatByTempConversation(question.sessionId);
+    }
+    if (!targetChatId) return;
 
     // UnifiedQuestion has questions: QuestionInfo[], each with question text and options
     if (question.questions && question.questions.length > 0) {
       const q = question.questions[0]; // Handle first question
       const options = q.options.map((o, i) => ({ id: String(i), label: o.label || o.description }));
       const text = buildQuestionText(
-        q.question || "The agent has a question:",
+        q.question || "Agent 有一个问题：",
         options,
       );
-      this.sendTextMessage(groupChatId, text);
+      this.sendTextMessage(targetChatId, text);
       // Note: Question replies via text commands are not yet implemented.
       // For now, auto-approve if possible (handled by handlePermissionAsked).
     } else {
-      this.sendTextMessage(groupChatId, "Agent Question (no options available)");
+      this.sendTextMessage(targetChatId, "📋 Agent 提问（无选项）");
     }
   }
 

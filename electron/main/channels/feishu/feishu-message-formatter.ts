@@ -9,7 +9,7 @@ import type { UnifiedPart } from "../../../../src/types/unified";
 
 /** Maximum Feishu message size in bytes (roughly 30KB for text) */
 const MAX_MESSAGE_BYTES = 28_000;
-const TRUNCATION_NOTICE = "\n\n... (content truncated, view full response in CodeMux)";
+const TRUNCATION_NOTICE = "\n\n...（内容已截断，请在 CodeMux 中查看完整回复）";
 
 /**
  * Extract user-visible text from a list of UnifiedParts.

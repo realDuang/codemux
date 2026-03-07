@@ -73,13 +73,13 @@ export function parseCommand(text: string): ParsedCommand | null {
  */
 export function buildHelpText(): string {
   return [
-    "CodeMux Bot — P2P Commands",
+    "📋 CodeMux Bot — 私聊命令",
     "─────────────────────────",
-    "/project — Show project list",
-    "/help — Show this help",
+    "/project — 查看项目列表",
+    "/help — 显示此帮助",
     "",
-    "Or just send any text to see your projects.",
-    "Reply with a number to select from lists.",
+    "直接发送消息即可与 AI 对话。",
+    "回复数字可从列表中选择。",
   ].join("\n");
 }
 
@@ -89,16 +89,16 @@ export function buildHelpText(): string {
  */
 export function buildGroupHelpText(): string {
   return [
-    "**Session Commands**",
+    "📋 **会话命令**",
     "",
-    "`/cancel` — Cancel the current running message",
-    "`/status` — Show session info",
-    "`/mode <agent|plan|build>` — Switch mode",
-    "`/model list` — List available models",
-    "`/model <id>` — Set model by ID",
-    "`/help` — Show this help message",
+    "`/cancel` — 取消当前正在运行的消息",
+    "`/status` — 查看会话信息",
+    "`/mode <agent|plan|build>` — 切换模式",
+    "`/model list` — 查看可用模型",
+    "`/model <id>` — 按 ID 切换模型",
+    "`/help` — 显示此帮助",
     "",
-    "Send any text to chat with the AI assistant.",
+    "发送任意文本即可与 AI 助手对话。",
   ].join("\n");
 }
 
@@ -110,7 +110,7 @@ export function buildProjectListText(
   projects: import("../../../../src/types/unified").UnifiedProject[],
 ): string {
   if (projects.length === 0) {
-    return "No projects found. Start a session in CodeMux first.";
+    return "📋 未找到项目。请先在 CodeMux 中启动一个会话。";
   }
 
   // Group projects by engine type
@@ -121,7 +121,7 @@ export function buildProjectListText(
     grouped.get(key)!.push(p);
   }
 
-  const lines: string[] = ["Projects", "─────────────────────────"];
+  const lines: string[] = ["📋 项目列表", "─────────────────────────"];
   let index = 1;
 
   for (const [engineType, engineProjects] of grouped) {
@@ -134,7 +134,7 @@ export function buildProjectListText(
   }
 
   lines.push("─────────────────────────");
-  lines.push("Reply with a number to select a project.");
+  lines.push("回复数字以选择项目。");
 
   return lines.join("\n");
 }
@@ -148,14 +148,14 @@ export function buildSessionListText(
   projectName: string,
 ): string {
   const lines: string[] = [
-    `Sessions — ${projectName}`,
+    `📋 会话列表 — ${projectName}`,
     "─────────────────────────",
-    'Reply "new" to create a new session.',
+    '回复 "new" 创建新会话。',
   ];
 
   if (sessions.length > 0) {
     lines.push("─────────────────────────");
-    lines.push("Existing sessions:");
+    lines.push("已有会话：");
 
     // Sort by updated time descending, limit to 9
     const sorted = [...sessions].sort(
@@ -171,7 +171,7 @@ export function buildSessionListText(
   }
 
   lines.push("─────────────────────────");
-  lines.push('Reply with a number to open, or "new" for a new session.');
+  lines.push('回复数字以打开会话，或回复 "new" 创建新会话。');
 
   return lines.join("\n");
 }
@@ -184,7 +184,7 @@ export function buildQuestionText(
   options: Array<{ id: string; label: string }>,
 ): string {
   const lines: string[] = [
-    "Agent Question",
+    "📋 Agent 提问",
     "─────────────────────────",
     questionText,
     "─────────────────────────",
@@ -195,7 +195,7 @@ export function buildQuestionText(
   }
 
   lines.push("─────────────────────────");
-  lines.push("Reply with a number to answer.");
+  lines.push("回复数字以回答。");
 
   return lines.join("\n");
 }

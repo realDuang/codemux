@@ -9,7 +9,7 @@ import fs from "fs";
 import path from "path";
 import { app } from "electron";
 import type { EngineType } from "../../../../src/types/unified";
-import type { GroupBinding, P2PChatState, PendingSelection, StreamingSession } from "./feishu-types";
+import type { GroupBinding, P2PChatState, PendingSelection, StreamingSession, TempSession } from "./feishu-types";
 import { feishuLog } from "../../services/logger";
 
 // --- Persistence helpers ---
@@ -62,6 +62,9 @@ export class FeishuSessionMapper {
 
   /** Conversation IDs currently being created (prevents duplicate group creation) */
   private creatingGroups = new Set<string>();
+
+  /** Reverse index: conversationId → p2pChatId (for temp session notification routing) */
+  private tempConversationToChat = new Map<string, string>();
 
   // =========================================================================
   // Persistence — load / save group bindings to disk
@@ -345,6 +348,50 @@ export class FeishuSessionMapper {
   }
 
   // =========================================================================
+  // Temp Session Methods (P2P direct interaction, no group)
+  // =========================================================================
+
+  /** Set or replace the temp session for a P2P chat */
+  setTempSession(chatId: string, tempSession: TempSession): void {
+    const state = this.p2pChats.get(chatId);
+    if (state) {
+      // Remove old reverse index if exists
+      if (state.tempSession) {
+        this.tempConversationToChat.delete(state.tempSession.conversationId);
+      }
+      state.tempSession = tempSession;
+      this.tempConversationToChat.set(tempSession.conversationId, chatId);
+      feishuLog.info(
+        `P2P chat ${chatId} temp session: ${tempSession.conversationId} (${tempSession.engineType})`,
+      );
+    }
+  }
+
+  /** Get the temp session for a P2P chat */
+  getTempSession(chatId: string): TempSession | undefined {
+    return this.p2pChats.get(chatId)?.tempSession;
+  }
+
+  /** Clear the temp session for a P2P chat */
+  clearTempSession(chatId: string): void {
+    const state = this.p2pChats.get(chatId);
+    if (state?.tempSession) {
+      // Clean up streaming timer
+      if (state.tempSession.streamingSession?.patchTimer) {
+        clearTimeout(state.tempSession.streamingSession.patchTimer);
+      }
+      this.tempConversationToChat.delete(state.tempSession.conversationId);
+      state.tempSession = undefined;
+      feishuLog.info(`P2P chat ${chatId} temp session cleared`);
+    }
+  }
+
+  /** Find the P2P chat ID that owns a temp session with the given conversation ID */
+  findP2PChatByTempConversation(conversationId: string): string | undefined {
+    return this.tempConversationToChat.get(conversationId);
+  }
+
+  // =========================================================================
   // Deduplication
   // =========================================================================
 
@@ -368,7 +415,7 @@ export class FeishuSessionMapper {
   // Cleanup
   // =========================================================================
 
-  /** Clean up all streaming timers across all group bindings (for shutdown) */
+  /** Clean up all streaming timers across all bindings and temp sessions (for shutdown) */
   cleanup(): void {
     for (const binding of this.groupBindings.values()) {
       for (const session of binding.streamingSessions.values()) {
@@ -378,6 +425,12 @@ export class FeishuSessionMapper {
         }
       }
       binding.streamingSessions.clear();
+    }
+    for (const state of this.p2pChats.values()) {
+      if (state.tempSession?.streamingSession?.patchTimer) {
+        clearTimeout(state.tempSession.streamingSession.patchTimer);
+        state.tempSession.streamingSession.patchTimer = null;
+      }
     }
   }
 }

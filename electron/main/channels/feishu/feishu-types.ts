@@ -29,6 +29,9 @@ export const DEFAULT_FEISHU_CONFIG: FeishuConfig = {
   gatewayUrl: "ws://127.0.0.1:4200",
 };
 
+/** TTL for temporary P2P sessions (2 hours in ms) */
+export const TEMP_SESSION_TTL_MS = 2 * 60 * 60 * 1000;
+
 // --- Streaming State ---
 
 export interface StreamingSession {
@@ -74,7 +77,7 @@ export interface GroupBinding {
 
 // --- P2P Chat State (Entry Point Only) ---
 
-/** P2P chat state — entry point only, no engine interaction */
+/** P2P chat state — entry point and optional temporary session */
 export interface P2PChatState {
   chatId: string;
   /** open_id of the user in this P2P chat */
@@ -87,6 +90,28 @@ export interface P2PChatState {
   };
   /** Pending selection state for text-based command interaction */
   pendingSelection?: PendingSelection;
+  /** Temporary session for direct P2P interaction (no group creation, 2h TTL) */
+  tempSession?: TempSession;
+}
+
+/** Temporary session bound to P2P chat (no group creation, 2h TTL) */
+export interface TempSession {
+  /** CodeMux session/conversation ID */
+  conversationId: string;
+  /** Engine type for this session */
+  engineType: EngineType;
+  /** Project directory */
+  directory: string;
+  /** Project ID */
+  projectId: string;
+  /** Timestamp of last message sent or received */
+  lastActiveAt: number;
+  /** Current streaming session (if any) */
+  streamingSession?: StreamingSession;
+  /** Message queue for serial processing */
+  messageQueue: string[];
+  /** Whether currently processing a message */
+  processing: boolean;
 }
 
 /** Pending selection context for P2P text-based project/session selection */

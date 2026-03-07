@@ -596,7 +596,12 @@ export class FeishuAdapter extends ChannelAdapter {
     tempSession: TempSession,
     text: string,
   ): Promise<void> {
-    if (!this.gatewayClient) return;
+    if (!this.gatewayClient) {
+      // Reset processing state so future messages can still be processed
+      tempSession.processing = false;
+      feishuLog.error("Gateway client not connected, cannot send P2P message");
+      return;
+    }
 
     // Send initial "thinking" message
     const feishuMsgId = await this.sendTextMessage(chatId, "🤔 思考中...");
@@ -1203,7 +1208,7 @@ export class FeishuAdapter extends ChannelAdapter {
     // Try P2P temp session
     const p2pChatId = this.sessionMapper.findP2PChatByTempConversation(conversationId);
     if (p2pChatId) {
-      this.finalizeP2PStreaming(p2pChatId, message);
+      void this.finalizeP2PStreaming(p2pChatId, message);
     }
   }
 
@@ -1250,7 +1255,7 @@ export class FeishuAdapter extends ChannelAdapter {
   }
 
   /** Finalize streaming for a P2P temp session and process next queued message */
-  private finalizeP2PStreaming(chatId: string, message: UnifiedMessage): void {
+  private async finalizeP2PStreaming(chatId: string, message: UnifiedMessage): Promise<void> {
     const tempSession = this.sessionMapper.getTempSession(chatId);
     if (!tempSession?.streamingSession) return;
 
@@ -1266,7 +1271,7 @@ export class FeishuAdapter extends ChannelAdapter {
     if (message.error) {
       this.patchFeishuMessage(streaming.feishuMessageId, `⚠️ 错误：${message.error}`);
       tempSession.streamingSession = undefined;
-      this.processP2PQueue(chatId);
+      await this.processP2PQueue(chatId);
       return;
     }
 
@@ -1280,7 +1285,7 @@ export class FeishuAdapter extends ChannelAdapter {
     tempSession.streamingSession = undefined;
 
     // Process next queued message
-    this.processP2PQueue(chatId);
+    await this.processP2PQueue(chatId);
   }
 
   private handlePermissionAsked(permission: UnifiedPermission): void {

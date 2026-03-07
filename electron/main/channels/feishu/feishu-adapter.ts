@@ -428,6 +428,81 @@ export class FeishuAdapter extends ChannelAdapter {
     }
   }
 
+  /** Show session list for a specific project and enter session selection mode */
+  private async showSessionListForProject(
+    chatId: string,
+    project: { directory: string; engineType: EngineType; projectId: string },
+    projectName: string,
+  ): Promise<void> {
+    if (!this.gatewayClient) return;
+    const sessions = await this.gatewayClient.listSessions(project.engineType);
+    const filtered = sessions.filter((s) => s.directory === project.directory);
+    const sessionText = buildSessionListText(filtered, projectName);
+    await this.sendTextMessage(chatId, sessionText);
+
+    this.sessionMapper.setPendingSelection(chatId, {
+      type: "session",
+      sessions: filtered,
+      engineType: project.engineType,
+      directory: project.directory,
+      projectId: project.projectId,
+      projectName,
+    });
+  }
+
+  /** Create a new session for a project and open a group chat */
+  private async createNewSessionForProject(
+    chatId: string,
+    userOpenId: string,
+    project: { directory: string; engineType: EngineType; projectId: string },
+    projectName: string,
+  ): Promise<void> {
+    if (!this.gatewayClient) return;
+    try {
+      const session = await this.gatewayClient.createSession({
+        engineType: project.engineType,
+        directory: project.directory,
+      });
+      await this.createGroupForSession(
+        userOpenId,
+        session.id,
+        project.engineType,
+        project.directory,
+        project.projectId,
+        projectName,
+        chatId,
+      );
+    } catch (err) {
+      await this.sendTextMessage(
+        chatId,
+        `Failed to create session: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
+
+  /** Show project list from a bot menu event context (may not have chatId yet) */
+  private async showProjectListFromMenu(
+    openId: string,
+    chatId: string | undefined,
+    receiveId: string,
+    receiveIdType: string,
+  ): Promise<void> {
+    if (!this.gatewayClient) return;
+    const projects = await this.gatewayClient.listAllProjects();
+    const text = buildProjectListText(projects);
+    await this.sendMessageTo(receiveId, receiveIdType, "text", JSON.stringify({ text }));
+
+    if (projects.length > 0) {
+      const flatProjects = this.flattenProjectsByEngine(projects);
+      const selection = { type: "project" as const, projects: flatProjects };
+      if (chatId) {
+        this.sessionMapper.setPendingSelection(chatId, selection);
+      } else {
+        this.sessionMapper.setPendingSelectionByOpenId(openId, selection);
+      }
+    }
+  }
+
   /** Flatten projects grouped by engine type (same order as buildProjectListText) */
   private flattenProjectsByEngine(
     projects: import("../../../../src/types/unified").UnifiedProject[],
@@ -475,28 +550,14 @@ export class FeishuAdapter extends ChannelAdapter {
     const projectName = project.name || project.directory.split(/[\\/]/).pop() || project.directory;
 
     // Save last selected project
-    this.sessionMapper.setP2PLastProject(chatId, {
+    const projectRef = {
       directory: project.directory,
       engineType: project.engineType,
       projectId: project.id,
-    });
+    };
+    this.sessionMapper.setP2PLastProject(chatId, projectRef);
 
-    // Fetch sessions for this project and show session list
-    if (!this.gatewayClient) return true;
-    const sessions = await this.gatewayClient.listSessions(project.engineType);
-    const filtered = sessions.filter((s) => s.directory === project.directory);
-    const sessionText = buildSessionListText(filtered, projectName);
-    await this.sendTextMessage(chatId, sessionText);
-
-    // Enter session selection mode
-    this.sessionMapper.setPendingSelection(chatId, {
-      type: "session",
-      sessions: filtered,
-      engineType: project.engineType,
-      directory: project.directory,
-      projectId: project.id,
-      projectName,
-    });
+    await this.showSessionListForProject(chatId, projectRef, projectName);
 
     return true;
   }
@@ -515,29 +576,13 @@ export class FeishuAdapter extends ChannelAdapter {
     }
 
     if (trimmed === "new") {
-      // Create new session + group
       this.sessionMapper.clearPendingSelection(chatId);
-      if (!this.gatewayClient) return true;
-      try {
-        const session = await this.gatewayClient.createSession({
-          engineType: pending.engineType,
-          directory: pending.directory,
-        });
-        await this.createGroupForSession(
-          userOpenId,
-          session.id,
-          pending.engineType,
-          pending.directory,
-          pending.projectId,
-          pending.projectName || "",
-          chatId,
-        );
-      } catch (err) {
-        await this.sendTextMessage(
-          chatId,
-          `Failed to create session: ${err instanceof Error ? err.message : String(err)}`,
-        );
-      }
+      await this.createNewSessionForProject(
+        chatId,
+        userOpenId,
+        { directory: pending.directory, engineType: pending.engineType, projectId: pending.projectId },
+        pending.projectName || "",
+      );
       return true;
     }
 
@@ -787,28 +832,38 @@ export class FeishuAdapter extends ChannelAdapter {
     const receiveId = chatId || openId;
 
     switch (eventKey) {
-      case "switch_project":
-      case "new_session":
-      case "switch_session": {
-        // All menu actions → show project list as text in P2P
-        if (!this.gatewayClient) return;
-        const projects = await this.gatewayClient.listAllProjects();
-        const text = buildProjectListText(projects);
-        await this.sendMessageTo(receiveId, receiveIdType, "text", JSON.stringify({ text }));
+      case "switch_project": {
+        await this.showProjectListFromMenu(openId, chatId, receiveId, receiveIdType);
+        break;
+      }
 
-        // Set pending selection
-        if (projects.length > 0) {
-          const flatProjects = this.flattenProjectsByEngine(projects);
-          const selection = { type: "project" as const, projects: flatProjects };
-          if (chatId) {
-            // Known P2P chat — set directly
-            this.sessionMapper.setPendingSelection(chatId, selection);
-          } else {
-            // No chat_id yet (first interaction via menu) — store by openId
-            // Will be transferred when user's reply arrives in handleFeishuMessage
-            this.sessionMapper.setPendingSelectionByOpenId(openId, selection);
+      case "new_session": {
+        if (chatId) {
+          const p2pState = this.sessionMapper.getP2PChat(chatId);
+          const lastProject = p2pState?.lastSelectedProject;
+          if (lastProject && this.gatewayClient) {
+            const projectName =
+              lastProject.directory.split(/[\\/]/).pop() || lastProject.directory;
+            await this.createNewSessionForProject(chatId, openId, lastProject, projectName);
+            return;
           }
         }
+        await this.showProjectListFromMenu(openId, chatId, receiveId, receiveIdType);
+        break;
+      }
+
+      case "switch_session": {
+        if (chatId) {
+          const p2pState = this.sessionMapper.getP2PChat(chatId);
+          const lastProject = p2pState?.lastSelectedProject;
+          if (lastProject && this.gatewayClient) {
+            const projectName =
+              lastProject.directory.split(/[\\/]/).pop() || lastProject.directory;
+            await this.showSessionListForProject(chatId, lastProject, projectName);
+            return;
+          }
+        }
+        await this.showProjectListFromMenu(openId, chatId, receiveId, receiveIdType);
         break;
       }
 

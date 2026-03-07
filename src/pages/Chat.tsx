@@ -1015,12 +1015,14 @@ export default function Chat() {
         {/* Sidebar Collapse Toggle (desktop only) */}
         <div class="hidden md:flex items-center justify-between px-2 pt-2 pb-1 border-b border-gray-200 dark:border-zinc-800">
           <Show when={!isSidebarCollapsed()}>
-            <span class="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider px-1">Sessions</span>
+            <span class="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider px-1">{t().sidebar.sessions}</span>
           </Show>
           <button
             onClick={toggleSidebarCollapse}
             class="p-1.5 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-zinc-800 rounded-md transition-colors flex-shrink-0"
             title={isSidebarCollapsed() ? t().sidebar.expandSidebar : t().sidebar.collapseSidebar}
+            aria-label={isSidebarCollapsed() ? t().sidebar.expandSidebar : t().sidebar.collapseSidebar}
+            aria-expanded={!isSidebarCollapsed()}
           >
             <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <rect width="18" height="18" x="3" y="3" rx="2" />

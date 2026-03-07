@@ -402,10 +402,17 @@ export function SessionSidebar(props: SessionSidebarProps) {
                               : "hover:bg-gray-100 dark:hover:bg-slate-800"
                           }`}
                           onClick={() => {
+                            // If the current session already belongs to this project, keep it selected
+                            if (hasActiveSession() && props.currentSessionId) {
+                              props.onSelectSession(props.currentSessionId);
+                              return;
+                            }
+                            // Otherwise, fall back to the first session
                             const firstSession = project.sessions[0];
                             if (firstSession) props.onSelectSession(firstSession.id);
                           }}
                           title={project.name}
+                          aria-label={project.name}
                         >
                           <div
                             class={`w-7 h-7 rounded flex items-center justify-center text-white text-xs font-medium ${getProjectColor(project.name)}`}

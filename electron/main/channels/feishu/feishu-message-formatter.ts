@@ -59,7 +59,7 @@ export function formatToolSummary(parts: UnifiedPart[]): string {
     .map(([name, count]) => `${capitalize(name)}(${count})`)
     .join(", ");
 
-  return `\n\n---\nExecuted ${total} action${total > 1 ? "s" : ""}: ${details}`;
+  return `\n\n---\n执行了 ${total} 个操作：${details}`;
 }
 
 /**
@@ -74,7 +74,7 @@ export function formatToolSummaryFromCounts(toolCounts: Map<string, number>): st
     .map(([name, count]) => `${capitalize(name)}(${count})`)
     .join(", ");
 
-  return `\n\n---\nExecuted ${total} action${total > 1 ? "s" : ""}: ${details}`;
+  return `\n\n---\n执行了 ${total} 个操作：${details}`;
 }
 
 /**

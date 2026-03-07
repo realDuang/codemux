@@ -137,6 +137,7 @@ export interface LocaleDict {
     copySessionId: string;
     expandSidebar: string;
     collapseSidebar: string;
+    sessions: string;
   };
 
   // Project
@@ -474,6 +475,7 @@ export const en: LocaleDict = {
     copySessionId: "Copy session ID",
     expandSidebar: "Expand sidebar",
     collapseSidebar: "Collapse sidebar",
+    sessions: "Sessions",
   },
 
   // Project

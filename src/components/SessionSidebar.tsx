@@ -239,12 +239,14 @@ export function SessionSidebar(props: SessionSidebarProps) {
     }
   });
 
-  // Filtered sections based on active tab
+  // Filtered sections based on active tab (or running engines when tabs are hidden)
   const visibleSections = createMemo(() => {
     const tab = activeTab();
     const sections = engineSections();
-    if (!tab) return sections;
-    return sections.filter(s => s.engineType === tab);
+    if (tab) return sections.filter(s => s.engineType === tab);
+    // When no tabs shown (single engine or none), still filter to running+enabled engines only
+    const running = runningEngines();
+    return sections.filter(s => running.some(e => e.type === s.engineType));
   });
 
   // Check if project is expanded

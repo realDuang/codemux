@@ -73,8 +73,19 @@ log.transports.file.format =
 log.transports.console.level = "info";
 log.transports.console.format = "%c{h}:{i}:{s}.{ms}%c [{level}]{scope} › {text}";
 
-// Catch unhandled errors and rejections, log them to file
-log.errorHandler.startCatching();
+// Catch unhandled errors and rejections, log them to file.
+// Use onError to suppress EPIPE errors — these are harmless pipe-break signals
+// from child processes (engine CLIs) that exit before the parent finishes writing.
+// Without this filter, electron-log's default handler shows an error dialog to
+// the user on every EPIPE, even though the app's own uncaughtException listener
+// (in index.ts) already handles them gracefully.
+log.errorHandler.startCatching({
+  onError({ error }) {
+    if ((error as NodeJS.ErrnoException).code === "EPIPE") {
+      return false; // Suppress: don't log, don't show dialog
+    }
+  },
+});
 
 // Log Electron lifecycle events (crashes, gpu-process-gone, etc.)
 log.eventLogger.startLogging();

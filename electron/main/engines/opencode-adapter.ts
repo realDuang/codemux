@@ -92,6 +92,14 @@ function createOpencodeServer(options?: ServerOptions): Promise<{ url: string; c
       output += chunk.toString();
     });
 
+    // Attach error handlers to stdio streams to prevent EPIPE from becoming
+    // an uncaughtException when the child process exits before we finish
+    // reading/writing. Without these, broken-pipe errors bubble up and
+    // electron-log's default handler shows an error dialog to the user.
+    proc.stdout?.on("error", () => {});
+    proc.stderr?.on("error", () => {});
+    proc.stdin?.on("error", () => {});
+
     proc.on("exit", (code) => {
       clearTimeout(id);
       let msg = `Server exited with code ${code}`;

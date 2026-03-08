@@ -19,8 +19,26 @@ import {
   type ProviderListResponse,
   type QuestionRequest as SdkQuestionRequest,
 } from "@opencode-ai/sdk/v2";
+import { openCodeLog } from "../services/logger";
 
 const IS_WIN = process.platform === "win32";
+
+type StreamName = "stdout" | "stderr" | "stdin";
+
+export function createStreamErrorHandler(
+  streamName: StreamName,
+  logUnexpected: (message: string, error: NodeJS.ErrnoException) => void = (message, error) => {
+    openCodeLog.warn(message, error);
+  },
+): (error: NodeJS.ErrnoException) => void {
+  return (error: NodeJS.ErrnoException) => {
+    if (error.code === "EPIPE") {
+      return;
+    }
+
+    logUnexpected(`Unexpected ${streamName} stream error from OpenCode server process`, error);
+  };
+}
 
 /**
  * Local replacement for SDK's createOpencodeServer().
@@ -96,9 +114,9 @@ function createOpencodeServer(options?: ServerOptions): Promise<{ url: string; c
     // an uncaughtException when the child process exits before we finish
     // reading/writing. Without these, broken-pipe errors bubble up and
     // electron-log's default handler shows an error dialog to the user.
-    proc.stdout?.on("error", () => {});
-    proc.stderr?.on("error", () => {});
-    proc.stdin?.on("error", () => {});
+    proc.stdout?.on("error", createStreamErrorHandler("stdout"));
+    proc.stderr?.on("error", createStreamErrorHandler("stderr"));
+    proc.stdin?.on("error", createStreamErrorHandler("stdin"));
 
     proc.on("exit", (code) => {
       clearTimeout(id);
@@ -136,7 +154,6 @@ function createOpencodeServer(options?: ServerOptions): Promise<{ url: string; c
   }));
 }
 import { EngineAdapter } from "./engine-adapter";
-import { openCodeLog } from "../services/logger";
 import { normalizeToolName, inferToolKind } from "../../../src/types/tool-mapping";
 import type {
   EngineType,

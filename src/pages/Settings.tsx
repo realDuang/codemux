@@ -243,9 +243,7 @@ export default function Settings() {
                       const selectedModelId = createMemo(() => {
                         const selection = configStore.engineModelSelections[engine.type];
                         if (selection?.modelID) {
-                          // For claude engine (combo input) or empty model list, always trust saved value
-                          // For other engines with a model list, validate against known models
-                          if (engine.type === "claude" || models().length === 0 || models().some(m => m.modelId === selection.modelID)) {
+                          if (models().length === 0 || models().some(m => m.modelId === selection.modelID)) {
                             return selection.modelID;
                           }
                         }
@@ -394,68 +392,35 @@ export default function Settings() {
                                 </p>
                               </div>
                               <div class="flex-shrink-0">
-                                <Show
-                                  when={engine.type !== "claude" && models().length > 0}
-                                  fallback={
-                                    <>
-                                      <input
-                                        type="text"
-                                        list={`model-list-${engine.type}`}
-                                        value={selectedModelId()}
-                                        placeholder={t().engine.modelInputPlaceholder}
-                                        onBlur={(e) => {
-                                          const val = e.currentTarget.value.trim();
-                                          if (val) handleModelSelect(val);
-                                        }}
-                                        onKeyDown={(e) => {
-                                          if (e.key === "Enter") {
-                                            const val = e.currentTarget.value.trim();
-                                            if (val) handleModelSelect(val);
-                                            e.currentTarget.blur();
-                                          }
-                                        }}
-                                        class="px-3 py-1.5 text-sm font-medium rounded-lg border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-gray-700 dark:text-gray-300 transition-colors max-w-[240px] focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400"
-                                      />
-                                      <Show when={models().length > 0}>
-                                        <datalist id={`model-list-${engine.type}`}>
-                                          <For each={models()}>
-                                            {(model) => <option value={model.modelId}>{model.name}</option>}
-                                          </For>
-                                        </datalist>
-                                      </Show>
-                                    </>
-                                  }
+                                <select
+                                  value={selectedModelId()}
+                                  onChange={(e) => handleModelSelect(e.currentTarget.value)}
+                                  disabled={engine.capabilities.modelSwitchable === false}
+                                  class={`w-[260px] px-3 py-1.5 text-sm font-medium rounded-lg border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-gray-700 dark:text-gray-300 transition-colors ${engine.capabilities.modelSwitchable === false ? "opacity-60 cursor-not-allowed" : "cursor-pointer hover:bg-gray-100 dark:hover:bg-slate-600"}`}
                                 >
-                                  <select
-                                    value={selectedModelId()}
-                                    onChange={(e) => handleModelSelect(e.currentTarget.value)}
-                                    disabled={engine.capabilities.modelSwitchable === false}
-                                    class={`px-3 py-1.5 text-sm font-medium rounded-lg border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-gray-700 dark:text-gray-300 transition-colors max-w-[240px] ${engine.capabilities.modelSwitchable === false ? "opacity-60 cursor-not-allowed" : "cursor-pointer hover:bg-gray-100 dark:hover:bg-slate-600"}`}
-                                  >
-                                    <For each={providerGroups()}>
-                                      {([pid, group]) => (
-                                        <Show
-                                          when={providerGroups().length > 1}
-                                          fallback={
-                                            <For each={group.models}>
-                                              {(model) => (
-                                                <option value={model.modelId}>{model.name}</option>
-                                              )}
-                                            </For>
-                                          }
-                                        >
-                                          <optgroup label={group.name}>
-                                            <For each={group.models}>
-                                              {(model) => (
-                                                <option value={model.modelId}>{model.name}</option>
-                                              )}
-                                            </For>
-                                          </optgroup>
-                                        </Show>
-                                      )}
-                                    </For>
-                                  </select>
-                                </Show>
+                                  <For each={providerGroups()}>
+                                    {([pid, group]) => (
+                                      <Show
+                                        when={providerGroups().length > 1}
+                                        fallback={
+                                          <For each={group.models}>
+                                            {(model) => (
+                                              <option value={model.modelId}>{model.name}</option>
+                                            )}
+                                          </For>
+                                        }
+                                      >
+                                        <optgroup label={group.name}>
+                                          <For each={group.models}>
+                                            {(model) => (
+                                              <option value={model.modelId}>{model.name}</option>
+                                            )}
+                                          </For>
+                                        </optgroup>
+                                      </Show>
+                                    )}
+                                  </For>
+                                </select>
                               </div>
                             </div>
                           </Show>

@@ -24,7 +24,6 @@ import type {
   SDKSessionOptions,
   SDKMessage,
   SDKSessionInfo,
-  ModelInfo,
   CanUseTool,
   PermissionResult,
   PermissionUpdate,
@@ -276,7 +275,7 @@ export class ClaudeCodeAdapter extends EngineAdapter {
 
       // Fetch model list via SDK (uses CLI's own auth)
       // Must complete before setStatus("running") so frontend gets models on first listModels() call
-      await this.fetchModels();
+      await this.refreshModelCache();
 
       this.setStatus("running");
       claudeLog.info("Claude Code adapter started successfully");
@@ -793,27 +792,133 @@ export class ClaudeCodeAdapter extends EngineAdapter {
   // ==========================================================================
 
   /**
-   * Fetch available models via the Claude Code CLI's V1 query API.
-   * Uses sdkQuery().supportedModels() which goes through the CLI's own auth
-   * (OAuth, API key, etc.) — no separate ANTHROPIC_API_KEY needed.
-   * Called once during start() — results cached in this.cachedModels.
+   * Fetch available models. Tries HTTP GET /v1/models first (supports custom
+   * API endpoints / proxies), falls back to SDK supportedModels() if no
+   * ANTHROPIC_API_KEY is available (e.g. when using CLI OAuth auth).
    */
-  private async fetchModels(): Promise<void> {
-    try {
-      claudeLog.info("[Claude] Fetching models via SDK query...");
+  private async refreshModelCache(): Promise<void> {
+    const env: Record<string, string | undefined> = {
+      ...process.env,
+      ...this.options?.env,
+    };
 
-      const env: Record<string, string | undefined> = {
-        ...process.env,
-        ...this.options?.env,
-      };
+    // Resolve credentials: ANTHROPIC_API_KEY (X-Api-Key) or ANTHROPIC_AUTH_TOKEN (Bearer)
+    const apiKey = env.ANTHROPIC_API_KEY;
+    const authToken = env.ANTHROPIC_AUTH_TOKEN;
+    const baseUrl = env.ANTHROPIC_BASE_URL;
+
+    if (apiKey || authToken) {
+      const success = await this.fetchModelsViaHttp(
+        apiKey ? { type: "api-key", value: apiKey } : { type: "bearer", value: authToken! },
+        baseUrl,
+      );
+      if (success) return;
+    }
+
+    // Fallback: use SDK query (works with CLI OAuth, but only returns official models)
+    await this.fetchModelsViaSdk(env);
+  }
+
+  /**
+   * Fetch models via HTTP GET /v1/models.
+   * Supports three auth modes:
+   * - Anthropic native: X-Api-Key header (when using ANTHROPIC_API_KEY with api.anthropic.com)
+   * - Custom endpoint with API key: Bearer header (ANTHROPIC_API_KEY with non-Anthropic host)
+   * - Custom endpoint with auth token: Bearer header (ANTHROPIC_AUTH_TOKEN + ANTHROPIC_BASE_URL)
+   */
+  private async fetchModelsViaHttp(
+    credential: { type: "api-key"; value: string } | { type: "bearer"; value: string },
+    baseUrlEnv?: string,
+  ): Promise<boolean> {
+    try {
+      // Normalize base URL: strip trailing slashes and known path suffixes
+      let baseUrl = (baseUrlEnv || "https://api.anthropic.com").replace(/\/+$/, "");
+      const suffixes = ["/chat/completions", "/completions", "/responses", "/v1/chat"];
+      for (const suffix of suffixes) {
+        if (baseUrl.endsWith(suffix)) {
+          baseUrl = baseUrl.slice(0, -suffix.length);
+          break;
+        }
+      }
+      if (!baseUrl.includes("/v1")) {
+        baseUrl = `${baseUrl}/v1`;
+      }
+      const modelsUrl = `${baseUrl}/models`;
+
+      // Build auth headers based on credential type and target host
+      const isAnthropicNative = new URL(modelsUrl).hostname.endsWith("anthropic.com");
+      let headers: Record<string, string> = { "Content-Type": "application/json" };
+
+      if (credential.type === "api-key" && isAnthropicNative) {
+        // Anthropic native API uses X-Api-Key
+        headers["X-Api-Key"] = credential.value;
+        headers["anthropic-version"] = "2023-06-01";
+      } else {
+        // Custom endpoints / proxies use Bearer (both api-key and auth-token)
+        headers["Authorization"] = `Bearer ${credential.value}`;
+      }
+
+      claudeLog.info(`[Claude] Fetching models from ${modelsUrl}...`);
+
+      const response = await fetch(modelsUrl, {
+        method: "GET",
+        headers,
+        signal: AbortSignal.timeout(15_000),
+      });
+
+      if (!response.ok) {
+        claudeLog.warn(`[Claude] Models API returned ${response.status}: ${response.statusText}`);
+        return false;
+      }
+
+      const data = (await response.json()) as { data?: Array<{ id: string; display_name?: string }> };
+
+      if (!data.data || !Array.isArray(data.data)) {
+        claudeLog.warn("[Claude] Unexpected models response format");
+        return false;
+      }
+
+      const models = data.data
+        .filter((m) => typeof m.id === "string")
+        .map((m) => ({
+          modelId: m.id,
+          name: m.display_name || m.id,
+          description: "",
+          engineType: "claude" as EngineType,
+        }))
+        .sort((a, b) => a.modelId.localeCompare(b.modelId));
+
+      if (models.length > 0) {
+        this.cachedModels = models;
+        claudeLog.info(`[Claude] Loaded ${models.length} models from ${modelsUrl}`);
+        return true;
+      }
+
+      claudeLog.warn("[Claude] Models API returned empty list");
+      return false;
+    } catch (err) {
+      claudeLog.warn("[Claude] Failed to fetch models via HTTP:", err);
+      return false;
+    }
+  }
+
+  /**
+   * Fallback: fetch models via SDK query (spawns CLI subprocess).
+   * Works with CLI OAuth auth but only returns Anthropic official models.
+   */
+  private async fetchModelsViaSdk(env: Record<string, string | undefined>): Promise<void> {
+    try {
+      claudeLog.info("[Claude] Fetching models via SDK query (fallback)...");
+
       // Don't let stale env var override the user's model selection
-      delete env.ANTHROPIC_MODEL;
+      const sdkEnv = { ...env };
+      delete sdkEnv.ANTHROPIC_MODEL;
 
       const q = sdkQuery({
         prompt: "",
         options: {
           model: this.currentModelId ?? "claude-sonnet-4-20250514",
-          env,
+          env: sdkEnv,
           abortController: new AbortController(),
         } as any,
       });

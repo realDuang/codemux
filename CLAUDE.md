@@ -104,6 +104,16 @@ All engines share normalized types defined in `src/types/unified.ts`:
 | `/settings` | Settings | No |
 | `/devices` | Devices | No |
 
+### Engine-Agnostic Frontend (Critical Rule)
+
+**All engine-specific logic MUST live in the adapter layer (`electron/main/engines/`), never in the frontend (`src/`).**
+
+- Adapters normalize engine-specific data (tool names, argument formats, status values, working directories, session metadata) into unified types before emitting to the frontend.
+- The frontend renders based solely on unified types (`UnifiedMessage`, `UnifiedPart`, `ToolPart`, `EngineCapabilities`) — it must **never** branch on `engineType`, check `engineMeta` fields, or hardcode engine names.
+- Engine behavioral differences are expressed through `EngineCapabilities` flags (e.g. `customModelInput`, `providerModelHierarchy`), not engine name checks.
+- Default engine resolution uses `getDefaultEngineType()` from `config.ts`, not hardcoded strings.
+- Example: Copilot's `sql` tool operating on the `todos` table is intercepted and converted to a synthetic `normalizedTool: "todo"` part by the adapter — the frontend sees the same todo format as OpenCode/Claude.
+
 ## Development
 
 ```bash

@@ -232,30 +232,54 @@ export function Part(props: PartProps) {
               )}
           </div>
         )}
-        {props.message.role === "assistant" && props.part.type === "reasoning" && (
-          <div data-component="reasoning" data-streaming={props.isStreaming ? "" : undefined}>
-             <Collapsible
-               open={props.isStreaming || isExpanded(`reasoning-${props.part.id}`)}
-               onOpenChange={() => toggleExpanded(`reasoning-${props.part.id}`)}
-             >
-                <Collapsible.Trigger>
-                   <div data-slot="title">
-                      <IconBrain width={14} height={14} />
-                      <span>{t().parts.thinking}</span>
-                      <Show when={props.isStreaming}>
-                        <span data-slot="streaming-dot" />
-                      </Show>
-                   </div>
-                   <Collapsible.Arrow />
-                </Collapsible.Trigger>
-                <Collapsible.Content>
-                    <div data-component="assistant-reasoning-markdown">
-                        <ContentMarkdown expand text={props.part.text || t().parts.thinking + "..."} />
-                    </div>
-                </Collapsible.Content>
-             </Collapsible>
-          </div>
-        )}
+        {props.message.role === "assistant" && props.part.type === "reasoning" && (() => {
+          const reasoningText = () => (props.part as any).text || "";
+          const heading = () => {
+            const text = reasoningText();
+            if (!text) return undefined;
+            const atx = text.trimStart().match(/^#{1,3}\s+(.+)$/m);
+            if (atx) { const h = atx[1].trim(); return h.length > 45 ? h.slice(0, 44) + "\u2026" : h; }
+            const bold = text.trimStart().match(/^\*\*(.+?)\*\*/);
+            if (bold) { const h = bold[1].trim(); return h.length > 45 ? h.slice(0, 44) + "\u2026" : h; }
+            return undefined;
+          };
+          const preview = () => {
+            const text = reasoningText().replace(/^#{1,3}\s+.+$/m, "").replace(/\*\*(.+?)\*\*/g, "$1").trim();
+            return text.length > 100 ? text.slice(0, 99) + "\u2026" : text;
+          };
+          const isCollapsed = () => !props.isStreaming && !isExpanded(`reasoning-${props.part.id}`);
+          return (
+            <div data-component="reasoning" data-streaming={props.isStreaming ? "" : undefined}>
+               <Collapsible
+                 open={props.isStreaming || isExpanded(`reasoning-${props.part.id}`)}
+                 onOpenChange={() => toggleExpanded(`reasoning-${props.part.id}`)}
+               >
+                  <Collapsible.Trigger>
+                     <div data-slot="title">
+                        <IconBrain width={14} height={14} />
+                        <span>{t().parts.thinking}</span>
+                        <Show when={heading()}>
+                          <span data-slot="reasoning-heading">{heading()}</span>
+                        </Show>
+                        <Show when={props.isStreaming}>
+                          <span data-slot="streaming-dot" />
+                        </Show>
+                     </div>
+                     <Collapsible.Arrow />
+                  </Collapsible.Trigger>
+                  {/* Collapsed preview — shows first ~100 chars when folded */}
+                  <Show when={isCollapsed() && preview()}>
+                    <div data-slot="reasoning-preview">{preview()}</div>
+                  </Show>
+                  <Collapsible.Content>
+                      <div data-component="assistant-reasoning-markdown">
+                          <ContentMarkdown expand text={reasoningText() || t().parts.thinking + "..."} />
+                      </div>
+                  </Collapsible.Content>
+               </Collapsible>
+            </div>
+          );
+        })()}
 
         {props.message.role === "user" && props.part.type === "file" && (
           <div data-component="attachment">
@@ -793,8 +817,8 @@ export function GrepTool(props: ToolProps) {
 
 export function ListTool(props: ToolProps) {
   const path = createMemo(() =>
-    props.state.input?.path !== (props.message.engineMeta as any)?.path?.cwd
-      ? stripWorkingDirectory(props.state.input?.path, (props.message.engineMeta as any)?.path?.cwd)
+    props.state.input?.path !== props.message.workingDirectory
+      ? stripWorkingDirectory(props.state.input?.path, props.message.workingDirectory)
       : props.state.input?.path,
   );
 
@@ -868,7 +892,7 @@ export function WebFetchTool(props: ToolProps) {
 export function ReadTool(props: ToolProps) {
   const { t } = useI18n();
   const filePath = createMemo(() =>
-    stripWorkingDirectory(props.state.input?.filePath, (props.message.engineMeta as any)?.path?.cwd),
+    stripWorkingDirectory(props.state.input?.filePath, props.message.workingDirectory),
   );
   const lineCount = createMemo(() => {
     const lines = props.state.metadata?.lines;
@@ -880,50 +904,36 @@ export function ReadTool(props: ToolProps) {
   });
 
   return (
-    <Collapsible open={isExpanded(props.id)} onOpenChange={() => toggleExpanded(props.id)}>
-      <Collapsible.Trigger>
-        <div data-component="tool-title">
-          <span data-slot="icon" data-icon-color="indigo"><IconDocument width={14} height={14} /></span>
-          <span data-slot="name">Read</span>
-          <span data-slot="target" title={props.state.input?.filePath}>
-            {filePath()}
+    <div data-component="tool-row">
+      <div data-component="tool-title">
+        <span data-slot="icon" data-icon-color="indigo"><IconDocument width={14} height={14} /></span>
+        <span data-slot="name">Read</span>
+        <span data-slot="target" title={props.state.input?.filePath}>
+          {filePath()}
+        </span>
+        <Show when={lineCount() !== null}>
+          <span data-slot="summary" data-color="dimmed">
+            {formatMessage(t().parts.lines, { count: lineCount() })}
           </span>
-          <Show when={lineCount() !== null}>
-            <span data-slot="summary" data-color="dimmed">
-              {formatMessage(t().parts.lines, { count: lineCount() })}
-            </span>
-          </Show>
-          <Show when={props.state.metadata?.error}>
-            <span data-slot="error" data-color="red">
-              {t().common.error}
-            </span>
-          </Show>
-        </div>
-        <ToolDuration
-          time={DateTime.fromMillis(props.state.time.end)
-            .diff(DateTime.fromMillis(props.state.time.start))
-            .toMillis()}
-        />
-        <Collapsible.Arrow />
-      </Collapsible.Trigger>
-
-      <Collapsible.Content>
-        <Show when={props.state.output}>
-          <div data-component="tool-result">
-            <ContentCode
-              lang={getShikiLang(filePath() || "")}
-              code={props.state.output}
-            />
-          </div>
         </Show>
-      </Collapsible.Content>
-    </Collapsible>
+        <Show when={props.state.metadata?.error}>
+          <span data-slot="error" data-color="red">
+            {t().common.error}
+          </span>
+        </Show>
+      </div>
+      <ToolDuration
+        time={DateTime.fromMillis(props.state.time.end)
+          .diff(DateTime.fromMillis(props.state.time.start))
+          .toMillis()}
+      />
+    </div>
   );
 }
 
 export function WriteTool(props: ToolProps) {
   const filePath = createMemo(() =>
-    stripWorkingDirectory(props.state.input?.filePath, (props.message.engineMeta as any)?.path?.cwd),
+    stripWorkingDirectory(props.state.input?.filePath, props.message.workingDirectory),
   );
   const diagnostics = createMemo(() =>
     getDiagnostics(
@@ -974,7 +984,7 @@ export function WriteTool(props: ToolProps) {
 
 export function EditTool(props: ToolProps) {
   const filePath = createMemo(() =>
-    stripWorkingDirectory(props.state.input.filePath, (props.message.engineMeta as any)?.path?.cwd),
+    stripWorkingDirectory(props.state.input.filePath, props.message.workingDirectory),
   );
   const diagnostics = createMemo(() =>
     getDiagnostics(

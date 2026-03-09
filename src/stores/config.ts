@@ -54,6 +54,13 @@ export function saveEngineModelSelection(engineType: string, selection: EngineMo
 }
 
 /**
+ * Get capabilities for a given engine type from the engine list.
+ */
+function getEngineCapabilities(engineType: string) {
+  return configStore.engines.find((e) => e.type === engineType)?.capabilities;
+}
+
+/**
  * Get the model ID to use for a given engine type.
  * Priority: user selection > engine-reported currentModelID > first model in list.
  */
@@ -62,9 +69,10 @@ export function getSelectedModelForEngine(engineType: string): string | undefine
   const selection = configStore.engineModelSelections[engineType];
   if (selection?.modelID) {
     const models = configStore.engineModels[engineType];
-    // Claude engine always allows custom model input — skip validation
+    const caps = getEngineCapabilities(engineType);
+    // Engines with customModelInput allow arbitrary model IDs — skip validation
     // For others: validate against model list when available; trust manual input when list is empty
-    if (engineType === "claude" || !models || models.length === 0 || models.some(m => m.modelId === selection.modelID)) {
+    if (caps?.customModelInput || !models || models.length === 0 || models.some(m => m.modelId === selection.modelID)) {
       return selection.modelID;
     }
   }
@@ -87,14 +95,28 @@ export function restoreEngineModelSelections(): void {
     const saved = loadEngineModelSelection(engine.type);
     if (saved) {
       const models = configStore.engineModels[engine.type];
-      // Claude engine always allows custom model input — always restore
+      // Engines with customModelInput always accept any saved model ID
       // For others: only restore if model list is empty (can't validate) or the saved model exists
-      if (engine.type === "claude" || !models || models.length === 0 || models.some(m => m.modelId === saved.modelID)) {
+      if (engine.capabilities?.customModelInput || !models || models.length === 0 || models.some(m => m.modelId === saved.modelID)) {
         setConfigStore("engineModelSelections", engine.type, saved);
       }
       // Stale models are simply not loaded — no need to delete from settings file
     }
   }
+}
+
+// ---------------------------------------------------------------------------
+// Default engine resolution
+// ---------------------------------------------------------------------------
+
+/** Get the default engine type: first running engine, or first engine, or "opencode". */
+export function getDefaultEngineType(): string {
+  return (
+    configStore.currentEngineType ||
+    configStore.engines.find((e) => e.status === "running")?.type ||
+    configStore.engines[0]?.type ||
+    "opencode"
+  );
 }
 
 // ---------------------------------------------------------------------------

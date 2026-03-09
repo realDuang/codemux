@@ -87,13 +87,24 @@ export function ContentMarkdown(props: Props) {
   const [expanded, setExpanded] = createSignal(false)
   const overflow = createOverflow()
 
+  // Show raw text as fallback while markdown is loading (avoids blank/white screen)
+  const displayHtml = () => {
+    const parsed = html()
+    if (parsed) return parsed
+    // Fallback: escape HTML and wrap in <p> for basic readability
+    const raw = debouncedText()
+    if (!raw) return ""
+    const escaped = raw.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+    return `<p>${escaped.replace(/\n\n/g, "</p><p>").replace(/\n/g, "<br>")}</p>`
+  }
+
   return (
     <div
       class={style.root}
       data-highlight={props.highlight === true ? true : undefined}
       data-expanded={expanded() || props.expand === true ? true : undefined}
     >
-      <div data-slot="markdown" ref={overflow.ref} innerHTML={html()} />
+      <div data-slot="markdown" ref={overflow.ref} innerHTML={displayHtml()} />
 
       {!props.expand && overflow.status && (
         <button

@@ -257,23 +257,28 @@ export function SessionTurn(props: SessionTurnProps) {
   const stepsExpanded = () => isExpanded(stepsExpandedKey());
   const handleStepsToggle = () => toggleExpanded(stepsExpandedKey());
 
-  // Lazy-load step parts when steps panel is expanded
+  // Lazy-load step parts when steps panel is expanded.
+  // Uses a local Set to track in-flight requests, avoiding re-entrant fetches
+  // when the effect re-runs due to store updates within the async body.
   const [stepsLoading, setStepsLoading] = createSignal(false);
+  const stepsInflight = new Set<string>();
   createEffect(() => {
     if (!stepsExpanded()) return;
-    // Load steps for each assistant message that hasn't been loaded yet
+    // Only load messages that have steps, aren't loaded, and aren't in-flight
     const toLoad = props.assistantMessages.filter(
-      (msg) => !messageStore.stepsLoaded[msg.id]
+      (msg) => (msg.stepCount ?? 0) > 0
+        && !messageStore.stepsLoaded[msg.id]
+        && !stepsInflight.has(msg.id)
     );
     if (toLoad.length === 0) return;
 
+    for (const msg of toLoad) stepsInflight.add(msg.id);
     setStepsLoading(true);
     Promise.all(
       toLoad.map(async (msg) => {
         try {
           const steps = await gateway.getMessageSteps(props.sessionID, msg.id);
           if (steps.length > 0) {
-            // Merge step parts into existing parts, sorted by id
             const existing = messageStore.part[msg.id] || [];
             const existingIds = new Set(existing.map((p) => p.id));
             const newSteps = steps.filter((s) => !existingIds.has(s.id));
@@ -285,12 +290,17 @@ export function SessionTurn(props: SessionTurnProps) {
               });
             }
           }
+          setMessageStore("stepsLoaded", msg.id, true);
         } catch (err) {
           console.error(`[SessionTurn] Failed to load steps for ${msg.id}:`, err);
+          // Don't mark as loaded on failure — allows retry on next expand
+        } finally {
+          stepsInflight.delete(msg.id);
         }
-        setMessageStore("stepsLoaded", msg.id, true);
       })
-    ).finally(() => setStepsLoading(false));
+    ).finally(() => {
+      if (stepsInflight.size === 0) setStepsLoading(false);
+    });
   });
 
   // Auto-expand steps panel when AI starts working (last turn only).

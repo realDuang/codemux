@@ -299,17 +299,18 @@ export default function Chat() {
 
   // Load messages for specific session
   const loadSessionMessages = async (sessionId: string) => {
+    const t0 = performance.now();
     logger.debug("[LoadMessages] Loading messages for session:", sessionId);
     setLoadingMessages(true);
 
     try {
       const messages = await gateway.listMessages(sessionId);
+      const t1 = performance.now();
+      logger.debug(`[LoadMessages] RPC took ${(t1 - t0).toFixed(0)}ms, got ${messages.length} messages`);
 
       // If user switched away while we were loading, still cache the data
       // but don't flip loadingMessages — the new session's load owns that.
       const isStale = sessionStore.current !== sessionId;
-
-      logger.debug("[LoadMessages] Loaded messages:", messages, isStale ? "(stale)" : "");
 
       // Store parts separately, sorted by id (in-place — API returns fresh arrays)
       for (const msg of messages) {
@@ -323,6 +324,8 @@ export default function Chat() {
       // so lexicographic ID sort would break chronological ordering.
       messages.sort((a, b) => a.time.created - b.time.created);
       setMessageStore("message", sessionId, messages);
+      const t2 = performance.now();
+      logger.debug(`[LoadMessages] Store update took ${(t2 - t1).toFixed(0)}ms, total ${(t2 - t0).toFixed(0)}ms`);
     } catch (error) {
       if (!disposed) {
         logger.error("[LoadMessages] Failed to load messages:", error);

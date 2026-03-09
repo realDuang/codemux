@@ -1,0 +1,148 @@
+/* ═══════════════════════════════════════════════════
+   TextReveal — mask-position wipe text transition
+   ═══════════════════════════════════════════════════
+
+   Direction: bottom-to-top.
+   New text rises in from below, old text exits upward.
+
+   Entering: gradient reveals bottom-to-top
+     gradient(to bottom, white 33%, transparent 33%+edge)
+     pos 0 100% = hidden (mask covers with transparent)
+     pos 0 0%   = visible (mask covers with white)
+
+   Leaving: gradient hides bottom-to-top
+     gradient(to top, white 33%, transparent 33%+edge)
+     pos 0 100% = visible
+     pos 0 0%   = hidden
+
+   Both transition from 0 100% (swap) → 0 0% (settled).
+   ═══════════════════════════════════════════════════ */
+
+.root {
+  --_edge: var(--text-reveal-edge, 17%);
+  --_dur: var(--text-reveal-duration, 300ms);
+  --_spring: cubic-bezier(0.34, 1.08, 0.64, 1);
+  --_spring-soft: cubic-bezier(0.34, 1, 0.64, 1);
+  --_travel: var(--text-reveal-travel, 20px);
+
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  overflow: visible;
+}
+
+.track {
+  display: grid;
+  min-height: 20px;
+  line-height: 20px;
+  justify-items: start;
+  align-items: center;
+  overflow: visible;
+  transition: width var(--_dur) var(--_spring-soft);
+}
+
+.entering,
+.leaving {
+  grid-area: 1 / 1;
+  line-height: 20px;
+  white-space: nowrap;
+  justify-self: start;
+  text-align: start;
+  mask-size: 100% 300%;
+  -webkit-mask-size: 100% 300%;
+  mask-repeat: no-repeat;
+  -webkit-mask-repeat: no-repeat;
+  transition-duration: var(--_dur);
+  transition-timing-function: var(--_spring);
+}
+
+/* ── Entering: reveal bottom-to-top ── */
+.entering {
+  mask-image: linear-gradient(
+    to bottom,
+    white 33%,
+    transparent calc(33% + var(--_edge))
+  );
+  -webkit-mask-image: linear-gradient(
+    to bottom,
+    white 33%,
+    transparent calc(33% + var(--_edge))
+  );
+  mask-position: 0 0%;
+  -webkit-mask-position: 0 0%;
+  transition-property: mask-position, -webkit-mask-position, transform;
+  transform: translateY(0);
+}
+
+/* ── Leaving: hide bottom-to-top + slide upward ── */
+.leaving {
+  mask-image: linear-gradient(
+    to top,
+    white 33%,
+    transparent calc(33% + var(--_edge))
+  );
+  -webkit-mask-image: linear-gradient(
+    to top,
+    white 33%,
+    transparent calc(33% + var(--_edge))
+  );
+  mask-position: 0 0%;
+  -webkit-mask-position: 0 0%;
+  transition-property: mask-position, -webkit-mask-position, transform;
+  transform: translateY(calc(var(--_travel) * -1));
+}
+
+/* ── Swapping: instant reset (no transition) ── */
+.root[data-swapping="true"] .entering {
+  mask-position: 0 100%;
+  -webkit-mask-position: 0 100%;
+  transform: translateY(var(--_travel));
+  transition-duration: 0ms !important;
+}
+
+.root[data-swapping="true"] .leaving {
+  mask-position: 0 100%;
+  -webkit-mask-position: 0 100%;
+  transform: translateY(0);
+  transition-duration: 0ms !important;
+}
+
+/* ── Not ready: kill all transitions on mount ── */
+.root[data-ready="false"] .track {
+  transition-duration: 0ms !important;
+}
+
+.root[data-ready="false"] .entering,
+.root[data-ready="false"] .leaving {
+  transition-duration: 0ms !important;
+}
+
+/* ── Truncate mode ── */
+.root[data-truncate="true"] {
+  width: 100%;
+}
+
+.root[data-truncate="true"] .track {
+  width: 100%;
+  min-width: 0;
+  overflow: clip;
+}
+
+.root[data-truncate="true"] .entering,
+.root[data-truncate="true"] .leaving {
+  min-width: 0;
+  width: 100%;
+  overflow: clip;
+}
+
+/* ── Accessibility: reduced motion ── */
+@media (prefers-reduced-motion: reduce) {
+  .track {
+    transition-duration: 0ms !important;
+  }
+
+  .entering,
+  .leaving {
+    transition-duration: 0ms !important;
+  }
+}

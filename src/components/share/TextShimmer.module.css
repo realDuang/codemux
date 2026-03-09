@@ -1,0 +1,118 @@
+/* ═══════════════════════════════════════════
+   TextShimmer — gradient sweep text animation
+   ═══════════════════════════════════════════ */
+
+.root {
+  --shimmer-duration: 2000ms;
+  --shimmer-swap: 220ms;
+  --shimmer-size: 600%;
+  --shimmer-angle: 90deg;
+  --shimmer-spread: 5.2ch;
+  --shimmer-base-color: rgba(100, 116, 139, 0.75);
+  --shimmer-peak-color: rgba(30, 41, 59, 0.95);
+  --shimmer-sweep-gradient: linear-gradient(
+    var(--shimmer-angle),
+    transparent calc(50% - var(--shimmer-spread)),
+    var(--shimmer-peak-color) 50%,
+    transparent calc(50% + var(--shimmer-spread))
+  );
+  --shimmer-base-gradient: linear-gradient(
+    var(--shimmer-base-color),
+    var(--shimmer-base-color)
+  );
+
+  display: inline-block;
+  position: relative;
+  vertical-align: baseline;
+  font: inherit;
+  letter-spacing: inherit;
+  line-height: inherit;
+}
+
+:global(.dark) .root {
+  --shimmer-base-color: rgba(148, 163, 184, 0.6);
+  --shimmer-peak-color: rgba(226, 232, 240, 0.95);
+}
+
+/* ── Shared text layer styles ── */
+.charBase,
+.charShimmer {
+  display: inline-block;
+  white-space: pre;
+  font: inherit;
+  letter-spacing: inherit;
+  line-height: inherit;
+  transition: opacity var(--shimmer-swap) ease-out;
+}
+
+/* ── Base layer: normal text, hidden when shimmer active ── */
+.charBase {
+  position: relative;
+  color: inherit;
+  opacity: 1;
+}
+
+/* ── Shimmer layer: gradient-clipped overlay ── */
+.charShimmer {
+  position: absolute;
+  inset: 0;
+  color: var(--shimmer-base-color);
+  opacity: 0;
+}
+
+/* Active: show shimmer, hide base */
+.root[data-active="true"] .charShimmer {
+  opacity: 1;
+}
+
+/* Running: animate the gradient sweep */
+.charShimmer[data-run="true"] {
+  animation-name: shimmer-sweep;
+  animation-duration: var(--shimmer-duration);
+  animation-iteration-count: infinite;
+  animation-timing-function: linear;
+  animation-fill-mode: both;
+  will-change: background-position;
+}
+
+@keyframes shimmer-sweep {
+  0%   { background-position: 100% 0, 0 0; }
+  100% { background-position: 0% 0, 0 0; }
+}
+
+/* ── background-clip: text support (the magic) ── */
+@supports ((-webkit-background-clip: text) or (background-clip: text)) {
+  .charShimmer {
+    color: transparent;
+    -webkit-text-fill-color: transparent;
+    background-image: var(--shimmer-sweep-gradient), var(--shimmer-base-gradient);
+    background-size: var(--shimmer-size) 100%, 100% 100%;
+    background-position: 100% 0, 0 0;
+    background-repeat: no-repeat;
+    -webkit-background-clip: text;
+    background-clip: text;
+  }
+
+  .root[data-active="true"] .charBase {
+    opacity: 0;
+  }
+}
+
+/* ── Accessibility: reduced motion ── */
+@media (prefers-reduced-motion: reduce) {
+  .charBase,
+  .charShimmer {
+    transition-duration: 0ms;
+  }
+
+  .charShimmer {
+    animation: none !important;
+    color: inherit;
+    -webkit-text-fill-color: currentColor;
+    background-image: none;
+  }
+
+  .charBase {
+    opacity: 1 !important;
+  }
+}

@@ -1,0 +1,137 @@
+/* ═══════════════════════════════════════════════════
+   InputAreaPermission — Permission prompt in the input area
+   ═══════════════════════════════════════════════════ */
+
+.root {
+  border-radius: 12px;
+  border: 1px solid rgba(245, 158, 11, 0.2);
+  background: rgba(255, 251, 235, 0.8);
+  padding: 16px;
+}
+
+:global(.dark) .root {
+  border-color: rgba(245, 158, 11, 0.2);
+  background: rgba(120, 53, 15, 0.12);
+}
+
+/* ── Header ── */
+.header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.headerIcon {
+  color: rgba(217, 119, 6, 0.85);
+  flex-shrink: 0;
+}
+
+:global(.dark) .headerIcon {
+  color: rgba(251, 191, 36, 0.85);
+}
+
+.headerLabel {
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: rgba(146, 64, 14, 0.9);
+}
+
+:global(.dark) .headerLabel {
+  color: rgba(253, 224, 71, 0.85);
+}
+
+/* ── Permission info ── */
+.title {
+  font-size: 0.8125rem;
+  color: rgba(120, 53, 15, 0.85);
+  margin-bottom: 2px;
+}
+
+:global(.dark) .title {
+  color: rgba(252, 211, 77, 0.85);
+}
+
+.patterns {
+  font-size: 0.75rem;
+  color: rgba(180, 83, 9, 0.6);
+  font-family: var(--font-mono, monospace);
+  margin-bottom: 8px;
+  word-break: break-all;
+}
+
+:global(.dark) .patterns {
+  color: rgba(251, 191, 36, 0.5);
+}
+
+/* ── Action buttons ── */
+.actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.btn {
+  padding: 5px 12px;
+  border-radius: 8px;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background-color 150ms ease;
+  border: none;
+}
+
+.btn[data-variant="reject"] {
+  background: rgba(239, 68, 68, 0.1);
+  color: rgba(185, 28, 28, 0.85);
+}
+
+:global(.dark) .btn[data-variant="reject"] {
+  background: rgba(239, 68, 68, 0.1);
+  color: rgba(248, 113, 113, 0.85);
+}
+
+.btn[data-variant="reject"]:hover {
+  background: rgba(239, 68, 68, 0.18);
+}
+
+:global(.dark) .btn[data-variant="reject"]:hover {
+  background: rgba(239, 68, 68, 0.15);
+}
+
+.btn[data-variant="always"] {
+  background: rgba(16, 185, 129, 0.1);
+  color: rgba(6, 95, 70, 0.85);
+}
+
+:global(.dark) .btn[data-variant="always"] {
+  background: rgba(16, 185, 129, 0.1);
+  color: rgba(52, 211, 153, 0.85);
+}
+
+.btn[data-variant="always"]:hover {
+  background: rgba(16, 185, 129, 0.18);
+}
+
+:global(.dark) .btn[data-variant="always"]:hover {
+  background: rgba(16, 185, 129, 0.15);
+}
+
+.btn[data-variant="once"] {
+  background: rgba(99, 102, 241, 0.1);
+  color: rgba(55, 48, 163, 0.85);
+}
+
+:global(.dark) .btn[data-variant="once"] {
+  background: rgba(99, 102, 241, 0.1);
+  color: rgba(129, 140, 248, 0.85);
+}
+
+.btn[data-variant="once"]:hover {
+  background: rgba(99, 102, 241, 0.18);
+}
+
+:global(.dark) .btn[data-variant="once"]:hover {
+  background: rgba(99, 102, 241, 0.15);
+}

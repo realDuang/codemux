@@ -1,0 +1,168 @@
+/* ═══════════════════════════════════════════════════
+   ContextGroup — Collapsed group of context-gathering tools
+   ═══════════════════════════════════════════════════ */
+
+.root {
+  border-radius: 8px;
+  border: 1px solid rgba(99, 102, 241, 0.1);
+  background: rgba(238, 242, 255, 0.35);
+  overflow: hidden;
+  margin: 2px 0;
+}
+
+:global(.dark) .root {
+  border-color: rgba(99, 102, 241, 0.08);
+  background: rgba(49, 46, 129, 0.08);
+}
+
+/* ── Trigger row ── */
+.trigger {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  width: 100%;
+  cursor: pointer;
+  border: none;
+  background: transparent;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  transition: background-color 120ms ease;
+}
+
+.trigger:hover {
+  background: rgba(99, 102, 241, 0.06);
+}
+
+:global(.dark) .trigger:hover {
+  background: rgba(99, 102, 241, 0.06);
+}
+
+.icon {
+  color: rgba(99, 102, 241, 0.6);
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+}
+
+:global(.dark) .icon {
+  color: rgba(129, 140, 248, 0.5);
+}
+
+.label {
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: rgba(55, 48, 163, 0.7);
+  white-space: nowrap;
+}
+
+:global(.dark) .label {
+  color: rgba(165, 180, 252, 0.65);
+}
+
+.summary {
+  font-size: 0.6875rem;
+  color: rgba(99, 102, 241, 0.45);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+:global(.dark) .summary {
+  color: rgba(129, 140, 248, 0.35);
+}
+
+.arrow {
+  margin-left: auto;
+  color: rgba(99, 102, 241, 0.4);
+  flex-shrink: 0;
+  transition: transform 200ms ease;
+  display: flex;
+  align-items: center;
+}
+
+:global(.dark) .arrow {
+  color: rgba(129, 140, 248, 0.35);
+}
+
+.arrow[data-expanded] {
+  transform: rotate(180deg);
+}
+
+/* ── Streaming dot ── */
+.streamingDot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: rgba(99, 102, 241, 0.6);
+  animation: contextPulse 1.5s ease-in-out infinite;
+  flex-shrink: 0;
+}
+
+:global(.dark) .streamingDot {
+  background: rgba(129, 140, 248, 0.6);
+}
+
+@keyframes contextPulse {
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 1; }
+}
+
+/* ── Expanded list ── */
+.list {
+  border-top: 1px solid rgba(99, 102, 241, 0.08);
+  padding: 4px 6px 6px;
+}
+
+:global(.dark) .list {
+  border-top-color: rgba(99, 102, 241, 0.06);
+}
+
+.item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 6px;
+  border-radius: 4px;
+  font-size: 0.6875rem;
+  color: rgba(55, 48, 163, 0.6);
+  transition: background-color 100ms ease;
+}
+
+:global(.dark) .item {
+  color: rgba(165, 180, 252, 0.5);
+}
+
+.item:hover {
+  background: rgba(99, 102, 241, 0.05);
+}
+
+.itemIcon {
+  flex-shrink: 0;
+  color: rgba(99, 102, 241, 0.4);
+  display: flex;
+  align-items: center;
+}
+
+:global(.dark) .itemIcon {
+  color: rgba(129, 140, 248, 0.35);
+}
+
+.itemAction {
+  font-weight: 500;
+  flex-shrink: 0;
+}
+
+.itemDetail {
+  color: rgba(99, 102, 241, 0.45);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+:global(.dark) .itemDetail {
+  color: rgba(129, 140, 248, 0.35);
+}

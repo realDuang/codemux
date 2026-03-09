@@ -5,7 +5,7 @@ import {
   IconDocumentMagnifyingGlass,
   IconRectangleStack,
 } from "./icons";
-import { useI18n, formatMessage } from "../lib/i18n";
+import { useI18n } from "../lib/i18n";
 import type { ToolPart } from "../types/unified";
 import styles from "./ContextGroup.module.css";
 

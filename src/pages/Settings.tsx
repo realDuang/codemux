@@ -243,7 +243,8 @@ export default function Settings() {
                       const selectedModelId = createMemo(() => {
                         const selection = configStore.engineModelSelections[engine.type];
                         if (selection?.modelID) {
-                          if (models().length === 0 || models().some(m => m.modelId === selection.modelID)) {
+                          // Engines with customModelInput accept arbitrary model IDs
+                          if (engine.capabilities?.customModelInput || models().length === 0 || models().some(m => m.modelId === selection.modelID)) {
                             return selection.modelID;
                           }
                         }
@@ -392,35 +393,57 @@ export default function Settings() {
                                 </p>
                               </div>
                               <div class="flex-shrink-0">
-                                <select
-                                  value={selectedModelId()}
-                                  onChange={(e) => handleModelSelect(e.currentTarget.value)}
-                                  disabled={engine.capabilities.modelSwitchable === false}
-                                  class={`w-[260px] px-3 py-1.5 text-sm font-medium rounded-lg border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-gray-700 dark:text-gray-300 transition-colors ${engine.capabilities.modelSwitchable === false ? "opacity-60 cursor-not-allowed" : "cursor-pointer hover:bg-gray-100 dark:hover:bg-slate-600"}`}
+                                <Show
+                                  when={engine.capabilities?.customModelInput}
+                                  fallback={
+                                    <select
+                                      value={selectedModelId()}
+                                      onChange={(e) => handleModelSelect(e.currentTarget.value)}
+                                      disabled={engine.capabilities.modelSwitchable === false}
+                                      class={`w-[260px] px-3 py-1.5 text-sm font-medium rounded-lg border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-gray-700 dark:text-gray-300 transition-colors ${engine.capabilities.modelSwitchable === false ? "opacity-60 cursor-not-allowed" : "cursor-pointer hover:bg-gray-100 dark:hover:bg-slate-600"}`}
+                                    >
+                                      <For each={providerGroups()}>
+                                        {([pid, group]) => (
+                                          <Show
+                                            when={providerGroups().length > 1}
+                                            fallback={
+                                              <For each={group.models}>
+                                                {(model) => (
+                                                  <option value={model.modelId}>{model.name}</option>
+                                                )}
+                                              </For>
+                                            }
+                                          >
+                                            <optgroup label={group.name}>
+                                              <For each={group.models}>
+                                                {(model) => (
+                                                  <option value={model.modelId}>{model.name}</option>
+                                                )}
+                                              </For>
+                                            </optgroup>
+                                          </Show>
+                                        )}
+                                      </For>
+                                    </select>
+                                  }
                                 >
-                                  <For each={providerGroups()}>
-                                    {([pid, group]) => (
-                                      <Show
-                                        when={providerGroups().length > 1}
-                                        fallback={
-                                          <For each={group.models}>
-                                            {(model) => (
-                                              <option value={model.modelId}>{model.name}</option>
-                                            )}
-                                          </For>
-                                        }
-                                      >
-                                        <optgroup label={group.name}>
-                                          <For each={group.models}>
-                                            {(model) => (
-                                              <option value={model.modelId}>{model.name}</option>
-                                            )}
-                                          </For>
-                                        </optgroup>
-                                      </Show>
-                                    )}
-                                  </For>
-                                </select>
+                                  {/* Custom model input with datalist for engines that allow arbitrary model IDs */}
+                                  <input
+                                    type="text"
+                                    list={`models-${engine.type}`}
+                                    value={selectedModelId()}
+                                    onChange={(e) => handleModelSelect(e.currentTarget.value)}
+                                    placeholder="Enter model ID..."
+                                    class="w-[260px] px-3 py-1.5 text-sm font-medium rounded-lg border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-gray-700 dark:text-gray-300 transition-colors hover:bg-gray-100 dark:hover:bg-slate-600"
+                                  />
+                                  <datalist id={`models-${engine.type}`}>
+                                    <For each={models()}>
+                                      {(model) => (
+                                        <option value={model.modelId}>{model.name}</option>
+                                      )}
+                                    </For>
+                                  </datalist>
+                                </Show>
                               </div>
                             </div>
                           </Show>

@@ -229,7 +229,7 @@ function LazyPart(props: PartProps & { isNearEnd: boolean }) {
 
 /**
  * Extract a reasoning heading from markdown text.
- * Looks for H1-H6 headings, setext headings, or **bold** first lines.
+ * Looks for ATX headings (H1-H3) or **bold** first lines.
  */
 function extractReasoningHeading(text: string | undefined): string | undefined {
   if (!text) return undefined;
@@ -868,19 +868,20 @@ export function SessionTurn(props: SessionTurnProps) {
 
                       // Regular part rendering
                       const ri = renderItem;
-                      const lastReasoningIdx = () => {
+                      const lastReasoningId = () => {
                         const msgParts = messageStore.part[ri.message.id] || [];
-                        return msgParts.reduce(
-                          (acc: number, pp, i) => (pp.type === "reasoning" ? i : acc),
-                          -1
-                        );
+                        let lastId: string | undefined;
+                        for (const pp of msgParts) {
+                          if (pp.type === "reasoning") lastId = pp.id;
+                        }
+                        return lastId;
                       };
 
                       const isPartStreaming = () =>
                         props.isWorking &&
                         ri.part.type === "reasoning" &&
                         ri.message.id === lastAssistantMsgId() &&
-                        ri.index === lastReasoningIdx();
+                        ri.part.id === lastReasoningId();
 
                       const partProps = {
                         get last() { return false as const; },

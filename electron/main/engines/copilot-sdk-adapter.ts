@@ -2153,7 +2153,7 @@ export class CopilotSdkAdapter extends EngineAdapter {
   private normalizeTodoInput(args: unknown): Record<string, unknown> {
     const input = (args ?? {}) as Record<string, unknown>;
     const raw = input.todos;
-    if (typeof raw === "string" && raw.includes("[ ]")) {
+    if (typeof raw === "string" && /[-*]\s*\[[ xX]\]/.test(raw)) {
       const todos: Array<{ content: string; status: string }> = [];
       for (const line of raw.split("\n")) {
         const m = line.match(/^[-*]\s*\[([ xX])\]\s+(.+)/);

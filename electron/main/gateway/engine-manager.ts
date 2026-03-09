@@ -800,7 +800,6 @@ export class EngineManager extends EventEmitter {
     this.questionEngineMap.delete(questionId);
     this.questionSessionMap.delete(questionId);
     return adapter.rejectQuestion(questionId, sessionId);
-    return adapter.rejectQuestion(questionId);
   }
 
   // --- Projects ---

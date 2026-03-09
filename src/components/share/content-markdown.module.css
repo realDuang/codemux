@@ -49,6 +49,24 @@
       font-weight: 600;
     }
 
+    a {
+      color: #2563eb;
+      text-decoration: underline;
+      text-underline-offset: 2px;
+
+      &:hover {
+        color: #1d4ed8;
+      }
+
+      :global(.dark) & {
+        color: #60a5fa;
+
+        &:hover {
+          color: #93bbfd;
+        }
+      }
+    }
+
     ol {
       list-style-position: outside;
       padding-left: 1.5rem;

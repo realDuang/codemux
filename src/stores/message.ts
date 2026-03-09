@@ -19,12 +19,17 @@ export const [messageStore, setMessageStore] = createStore<{
   expanded: {
     [key: string]: boolean;
   };
+  // Tracks whether step parts have been loaded for a message (lazy loading)
+  stepsLoaded: {
+    [messageId: string]: boolean;
+  };
 }>({
   message: {},
   part: {},
   permission: {},
   question: {},
   expanded: {},
+  stepsLoaded: {},
 });
 
 // Helper functions for expanded state management

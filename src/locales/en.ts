@@ -212,6 +212,7 @@ export interface LocaleDict {
     cancelled: string;
     errorOccurred: string;
     continueWork: string;
+    loadingSteps: string;
   };
 
   // Devices page
@@ -555,6 +556,7 @@ export const en: LocaleDict = {
     cancelled: "Cancelled",
     errorOccurred: "Error",
     continueWork: "Continue",
+    loadingSteps: "Loading steps...",
   },
 
   // Devices page

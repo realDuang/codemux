@@ -204,6 +204,8 @@ export interface UnifiedMessage {
   isCompaction?: boolean;
   /** Engine-specific data — avoid accessing in frontend rendering logic */
   engineMeta?: Record<string, unknown>;
+  /** Number of step parts (tool, reasoning, etc.) — used for lazy loading */
+  stepCount?: number;
 }
 
 // --- Part (discriminated union) ---

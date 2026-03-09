@@ -9,7 +9,7 @@ import {
   onCleanup,
   onMount,
 } from "solid-js";
-import { messageStore, isExpanded, setExpanded, toggleExpanded } from "../stores/message";
+import { messageStore, setMessageStore, isExpanded, setExpanded, toggleExpanded } from "../stores/message";
 import { Part, PartProps, ProviderIcon, PermissionPrompt, QuestionPrompt } from "./share/part";
 import { ContextGroup, CONTEXT_TOOLS, type ContextGroupItem } from "./ContextGroup";
 import { ContentError } from "./share/content-error";
@@ -17,6 +17,7 @@ import { TextShimmer } from "./share/TextShimmer";
 import { TextReveal } from "./share/TextReveal";
 import { IconSparkles } from "./icons";
 import { useI18n } from "../lib/i18n";
+import { gateway } from "../lib/gateway-api";
 import type { UnifiedMessage, UnifiedPart, ToolPart, UnifiedPermission } from "../types/unified";
 import styles from "./SessionTurn.module.css";
 
@@ -256,6 +257,42 @@ export function SessionTurn(props: SessionTurnProps) {
   const stepsExpanded = () => isExpanded(stepsExpandedKey());
   const handleStepsToggle = () => toggleExpanded(stepsExpandedKey());
 
+  // Lazy-load step parts when steps panel is expanded
+  const [stepsLoading, setStepsLoading] = createSignal(false);
+  createEffect(() => {
+    if (!stepsExpanded()) return;
+    // Load steps for each assistant message that hasn't been loaded yet
+    const toLoad = props.assistantMessages.filter(
+      (msg) => !messageStore.stepsLoaded[msg.id]
+    );
+    if (toLoad.length === 0) return;
+
+    setStepsLoading(true);
+    Promise.all(
+      toLoad.map(async (msg) => {
+        try {
+          const steps = await gateway.getMessageSteps(props.sessionID, msg.id);
+          if (steps.length > 0) {
+            // Merge step parts into existing parts, sorted by id
+            const existing = messageStore.part[msg.id] || [];
+            const existingIds = new Set(existing.map((p) => p.id));
+            const newSteps = steps.filter((s) => !existingIds.has(s.id));
+            if (newSteps.length > 0) {
+              setMessageStore("part", msg.id, (draft) => {
+                const merged = [...(draft || []), ...newSteps];
+                merged.sort((a, b) => a.id.localeCompare(b.id));
+                return merged;
+              });
+            }
+          }
+        } catch (err) {
+          console.error(`[SessionTurn] Failed to load steps for ${msg.id}:`, err);
+        }
+        setMessageStore("stepsLoaded", msg.id, true);
+      })
+    ).finally(() => setStepsLoading(false));
+  });
+
   // Auto-expand steps panel when AI starts working (last turn only).
   // Only auto-expand once per turn to respect manual user collapse.
   let hasAutoExpanded = false;
@@ -406,8 +443,13 @@ export function SessionTurn(props: SessionTurnProps) {
   });
 
   // Check if there are any step parts (tool, reasoning, step-start, etc.)
+  // For historical sessions, use stepCount from metadata (steps not yet loaded).
+  // For streaming sessions, parts arrive in real-time so scan them directly.
   const hasSteps = createMemo(() => {
     for (const assistantMsg of props.assistantMessages) {
+      // Check metadata stepCount (set by listMessages for historical sessions)
+      if (assistantMsg.stepCount && assistantMsg.stepCount > 0) return true;
+      // Also check live parts (for streaming sessions where parts arrive via SSE)
       const parts = messageStore.part[assistantMsg.id] || [];
       for (const p of parts) {
         if (p?.type === "reasoning") return true;
@@ -850,7 +892,15 @@ export function SessionTurn(props: SessionTurnProps) {
           </Show>
 
           {/* Expanded Steps Content */}
-          <Show when={stepsExpanded() && groupedRenderItems().length > 0}>
+          <Show when={stepsExpanded()}>
+            <Show when={stepsLoading()}>
+              <div class={styles.stepsContent}>
+                <div class="flex items-center gap-2 px-3 py-2 text-sm" style={{ color: "var(--color-text-secondary)" }}>
+                  <TextShimmer text={t().steps.loadingSteps ?? "Loading steps..."} />
+                </div>
+              </div>
+            </Show>
+            <Show when={groupedRenderItems().length > 0}>
             <div class={styles.stepsContent}>
               <div class={styles.assistantMessageParts}>
                 <Suspense>
@@ -921,6 +971,7 @@ export function SessionTurn(props: SessionTurnProps) {
                 />
               )}
             </For>
+            </Show>
           </Show>
 
           {/* Permission/Question prompts removed from steps —

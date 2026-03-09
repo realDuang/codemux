@@ -730,6 +730,10 @@ export default function Chat() {
         return newParts;
       });
     }
+    // Mark steps as loaded for streaming messages so lazy-load won't re-fetch
+    if (!messageStore.stepsLoaded[messageId]) {
+      setMessageStore("stepsLoaded", messageId, true);
+    }
     if (!userScrolledUp()) scheduleScrollToBottom();
   };
 

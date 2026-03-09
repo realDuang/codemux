@@ -213,6 +213,7 @@ export const zh: LocaleDict = {
     cancelled: "已取消",
     errorOccurred: "错误",
     continueWork: "继续",
+    loadingSteps: "加载步骤中...",
   },
 
   // Devices page

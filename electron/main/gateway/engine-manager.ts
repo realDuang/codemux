@@ -695,18 +695,16 @@ export class EngineManager extends EventEmitter {
     const stepsFile = conversationStore.getAllSteps(sessionId);
 
     return messages.map((msg) => {
-      // Merge content parts with step parts for full reconstruction
-      const steps = stepsFile?.messages[msg.id] ?? [];
-      const allParts: UnifiedPart[] = [...msg.parts, ...steps];
-      // Sort by part ID for consistent ordering
-      allParts.sort((a, b) => a.id.localeCompare(b.id));
+      // Content parts only — steps are lazy-loaded via getMessageSteps()
+      const stepCount = (stepsFile?.messages[msg.id] ?? []).length;
 
       return {
         id: msg.id,
         sessionId,
         role: msg.role,
         time: msg.time,
-        parts: allParts,
+        parts: msg.parts as UnifiedPart[],
+        stepCount,
         tokens: msg.tokens,
         cost: msg.cost,
         modelId: msg.modelId,

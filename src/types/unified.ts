@@ -41,6 +41,8 @@ export interface EngineCapabilities {
   listSessions: boolean;
   /** Whether the user can switch models (false when env var overrides model) */
   modelSwitchable: boolean;
+  /** Whether the user can type arbitrary model IDs not in the model list */
+  customModelInput: boolean;
   /** Available agent modes */
   availableModes: AgentMode[];
 }
@@ -196,7 +198,11 @@ export interface UnifiedMessage {
   error?: string;
   /** True when the engine session is stale and should be recreated */
   staleSession?: boolean;
-  /** Engine-specific data (OpenCode: path, agent, system, summary flag) */
+  /** Working directory for file path resolution (populated by adapters) */
+  workingDirectory?: string;
+  /** True when this message is a context-compaction summary */
+  isCompaction?: boolean;
+  /** Engine-specific data — avoid accessing in frontend rendering logic */
   engineMeta?: Record<string, unknown>;
 }
 

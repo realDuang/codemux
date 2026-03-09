@@ -114,6 +114,7 @@ export class MockEngineAdapter extends EngineAdapter {
       loadSession: true,
       listSessions: true,
       modelSwitchable: true,
+      customModelInput: false,
       availableModes: this.getModes(),
     };
   }
@@ -382,6 +383,7 @@ export class MockEngineAdapter extends EngineAdapter {
   async replyPermission(
     permissionId: string,
     reply: PermissionReply,
+    _sessionId?: string,
   ): Promise<void> {
     this.emit("permission.replied", {
       permissionId,
@@ -389,11 +391,11 @@ export class MockEngineAdapter extends EngineAdapter {
     });
   }
 
-  async replyQuestion(_questionId: string, _answers: string[][]): Promise<void> {
+  async replyQuestion(_questionId: string, _answers: string[][], _sessionId?: string): Promise<void> {
     // no-op for mock
   }
 
-  async rejectQuestion(_questionId: string): Promise<void> {
+  async rejectQuestion(_questionId: string, _sessionId?: string): Promise<void> {
     // no-op for mock
   }
 

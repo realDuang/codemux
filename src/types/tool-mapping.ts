@@ -55,6 +55,8 @@ const COPILOT_TOOL_MAP: Record<string, NormalizedToolName> = {
   task: "task",
   // Todo
   update_todo: "todo",
+  // SQL (used by Copilot for structured data including todo management)
+  sql: "sql",
   // Intent (Copilot-specific, not a real tool)
   report_intent: "unknown",
 };

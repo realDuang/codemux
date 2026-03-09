@@ -185,6 +185,7 @@ export abstract class EngineAdapter extends EventEmitter {
   abstract replyPermission(
     permissionId: string,
     reply: PermissionReply,
+    sessionId?: string,
   ): Promise<void>;
 
   // --- Questions ---
@@ -193,11 +194,13 @@ export abstract class EngineAdapter extends EventEmitter {
   abstract replyQuestion(
     questionId: string,
     answers: string[][],
+    sessionId?: string,
   ): Promise<void>;
 
   /** Reject/dismiss a question request */
   abstract rejectQuestion(
     questionId: string,
+    sessionId?: string,
   ): Promise<void>;
 
   // --- Projects ---

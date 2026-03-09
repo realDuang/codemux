@@ -119,6 +119,7 @@ const COPILOT_TOOL_MAP: Record<string, NormalizedToolName> = {
   web_search: "web_fetch",
   task: "task",
   update_todo: "todo",
+  sql: "sql",
   report_intent: "unknown",
 };
 
@@ -262,6 +263,9 @@ export class CopilotSdkAdapter extends EngineAdapter {
   private cachedModels: UnifiedModelInfo[] = [];
   private sessionModes = new Map<string, string>();
   private sessionDirectories = new Map<string, string>();
+
+  // --- In-memory todo state per session (populated from sql tool calls) ---
+  private sessionTodos = new Map<string, Map<string, { id: string; title: string; status: string }>>();
 
   // --- Permission auto-approve rules ---
   private allowedAlwaysKinds = new Set<string>();
@@ -437,6 +441,7 @@ export class CopilotSdkAdapter extends EngineAdapter {
       loadSession: true,
       listSessions: true,
       modelSwitchable: true,
+      customModelInput: false,
       availableModes: this.getModes(),
     };
   }
@@ -548,6 +553,7 @@ export class CopilotSdkAdapter extends EngineAdapter {
     this.messageBuffers.delete(sessionId);
     this.sessionModes.delete(sessionId);
     this.sessionDirectories.delete(sessionId);
+    this.sessionTodos.delete(sessionId);
     this.activeTurnSessions.delete(sessionId);
 
     copilotLog.info(`Deleted session ${sessionId}`);
@@ -776,7 +782,7 @@ export class CopilotSdkAdapter extends EngineAdapter {
   // Permissions
   // ==========================================================================
 
-  async replyPermission(permissionId: string, reply: PermissionReply): Promise<void> {
+  async replyPermission(permissionId: string, reply: PermissionReply, _sessionId?: string): Promise<void> {
     const pending = this.pendingPermissions.get(permissionId);
     if (!pending) {
       copilotLog.warn(`No pending permission found for ID ${permissionId}`);
@@ -810,7 +816,7 @@ export class CopilotSdkAdapter extends EngineAdapter {
   // Questions
   // ==========================================================================
 
-  async replyQuestion(questionId: string, answers: string[][]): Promise<void> {
+  async replyQuestion(questionId: string, answers: string[][], _sessionId?: string): Promise<void> {
     const pending = this.pendingQuestions.get(questionId);
     if (!pending) {
       copilotLog.warn(`No pending question found for ID ${questionId}`);
@@ -834,7 +840,7 @@ export class CopilotSdkAdapter extends EngineAdapter {
     copilotLog.info(`Question ${questionId} replied`);
   }
 
-  async rejectQuestion(questionId: string): Promise<void> {
+  async rejectQuestion(questionId: string, _sessionId?: string): Promise<void> {
     const pending = this.pendingQuestions.get(questionId);
     if (!pending) {
       copilotLog.warn(`No pending question found for ID ${questionId}`);
@@ -1163,6 +1169,19 @@ export class CopilotSdkAdapter extends EngineAdapter {
     const kind = inferToolKind(undefined, normalizedTool);
     const partId = timeId("part");
 
+    // Detect sql tool operating on the todos table — treat as a todo tool
+    const args = (data.arguments ?? {}) as Record<string, unknown>;
+    const sqlQuery = typeof args.query === "string" ? args.query : "";
+    const isTodoSql = normalizedTool === "sql" && /\btodos\b/i.test(sqlQuery);
+
+    if (isTodoSql) {
+      // Parse the SQL and update in-memory todo state
+      this.applySqlTodoChanges(sessionId, sqlQuery);
+      // Emit a synthetic todo part with current state
+      this.emitTodoPart(sessionId, buffer, data.toolCallId, "running");
+      return;
+    }
+
     // Build a human-readable title
     const title = this.buildToolTitle(data.toolName, normalizedTool, data.arguments);
 
@@ -1178,7 +1197,9 @@ export class CopilotSdkAdapter extends EngineAdapter {
       kind,
       state: {
         status: "running",
-        input: data.arguments ?? {},
+        input: normalizedTool === "todo"
+          ? this.normalizeTodoInput(data.arguments)
+          : (data.arguments ?? {}),
         time: { start: Date.now() },
       },
     };
@@ -1208,7 +1229,11 @@ export class CopilotSdkAdapter extends EngineAdapter {
   ): void {
     const toolPart = this.toolCallParts.get(data.toolCallId);
     if (!toolPart) {
-      copilotLog.warn(`Tool complete for unknown toolCallId: ${data.toolCallId}`);
+      // May be a sql-todo tool that we intercepted — update the synthetic todo part
+      const buffer = this.messageBuffers.get(sessionId);
+      if (buffer) {
+        this.emitTodoPart(sessionId, buffer, data.toolCallId, "completed");
+      }
       return;
     }
 
@@ -1748,6 +1773,7 @@ export class CopilotSdkAdapter extends EngineAdapter {
       cost: buffer.cost,
       modelId: buffer.modelId ?? this.currentModelId ?? undefined,
       error: buffer.error,
+      workingDirectory: this.sessionDirectories.get(buffer.sessionId),
     };
   }
 
@@ -2119,6 +2145,173 @@ export class CopilotSdkAdapter extends EngineAdapter {
   // ==========================================================================
   // Private — Utility
   // ==========================================================================
+
+  /**
+   * Normalize todo tool input: Copilot sends markdown string
+   * ("- [ ] task\n- [x] done"), convert to unified array format.
+   */
+  private normalizeTodoInput(args: unknown): Record<string, unknown> {
+    const input = (args ?? {}) as Record<string, unknown>;
+    const raw = input.todos;
+    if (typeof raw === "string" && raw.includes("[ ]")) {
+      const todos: Array<{ content: string; status: string }> = [];
+      for (const line of raw.split("\n")) {
+        const m = line.match(/^[-*]\s*\[([ xX])\]\s+(.+)/);
+        if (m) {
+          todos.push({
+            content: m[2].trim(),
+            status: m[1] === " " ? "pending" : "completed",
+          });
+        }
+      }
+      if (todos.length > 0) return { ...input, todos };
+    }
+    return input;
+  }
+
+  // ============================================================================
+  // SQL → Todo: Parse Copilot's sql tool calls that operate on the todos table
+  // ============================================================================
+
+  /**
+   * Parse INSERT/UPDATE SQL on the `todos` table and update in-memory state.
+   * Copilot uses: INSERT INTO todos (id, title, status) VALUES (...)
+   *               UPDATE todos SET status = '...' WHERE id IN (...)
+   *               UPDATE todos SET status = '...' (no WHERE = all rows)
+   */
+  private applySqlTodoChanges(sessionId: string, sql: string): void {
+    let todos = this.sessionTodos.get(sessionId);
+    if (!todos) {
+      todos = new Map();
+      this.sessionTodos.set(sessionId, todos);
+    }
+
+    // Handle INSERT: INSERT INTO todos (id, title, status) VALUES ('id', 'title', 'status'), ...
+    const insertPattern = /INSERT\s+INTO\s+todos\b[^)]*\)\s*VALUES\s*([\s\S]+?)(?:;|$)/gi;
+    let insertMatch: RegExpExecArray | null;
+    while ((insertMatch = insertPattern.exec(sql)) !== null) {
+      const valuesStr = insertMatch[1];
+      const rowPattern = /\(\s*'([^']+)'\s*,\s*'([^']+)'\s*,\s*'([^']+)'\s*\)/g;
+      let rowMatch: RegExpExecArray | null;
+      while ((rowMatch = rowPattern.exec(valuesStr)) !== null) {
+        todos.set(rowMatch[1], {
+          id: rowMatch[1],
+          title: rowMatch[2],
+          status: rowMatch[3],
+        });
+      }
+    }
+
+    // Handle UPDATE: UPDATE todos SET status = 'done' WHERE id IN ('a', 'b')
+    // or: UPDATE todos SET status = 'done' (all rows)
+    const updatePattern = /UPDATE\s+todos\s+SET\s+status\s*=\s*'([^']+)'(?:\s+WHERE\s+id\s+(?:IN\s*\(([^)]+)\)|=\s*'([^']+)'))?/gi;
+    let updateMatch: RegExpExecArray | null;
+    while ((updateMatch = updatePattern.exec(sql)) !== null) {
+      const newStatus = updateMatch[1];
+      const inList = updateMatch[2];
+      const singleId = updateMatch[3];
+
+      if (inList) {
+        // WHERE id IN ('a', 'b', 'c')
+        const ids = [...inList.matchAll(/'([^']+)'/g)].map((m) => m[1]);
+        for (const id of ids) {
+          const existing = todos.get(id);
+          if (existing) existing.status = newStatus;
+        }
+      } else if (singleId) {
+        // WHERE id = 'x'
+        const existing = todos.get(singleId);
+        if (existing) existing.status = newStatus;
+      } else {
+        // No WHERE clause — update all
+        for (const todo of todos.values()) {
+          todo.status = newStatus;
+        }
+      }
+    }
+  }
+
+  /** Map Copilot's todo status names to the unified format. */
+  private normalizeTodoStatus(status: string): "pending" | "in_progress" | "completed" {
+    switch (status) {
+      case "in_progress":
+        return "in_progress";
+      case "done":
+      case "completed":
+        return "completed";
+      default:
+        return "pending";
+    }
+  }
+
+  /** Get the current todos for a session as a unified array. */
+  private getTodosArray(sessionId: string): Array<{ content: string; status: "pending" | "in_progress" | "completed" }> {
+    const todos = this.sessionTodos.get(sessionId);
+    if (!todos || todos.size === 0) return [];
+    return [...todos.values()].map((t) => ({
+      content: t.title,
+      status: this.normalizeTodoStatus(t.status),
+    }));
+  }
+
+  /**
+   * Emit (or update) a synthetic todo ToolPart for the current session.
+   * Reuses the same part if one already exists in the buffer.
+   */
+  private emitTodoPart(
+    sessionId: string,
+    buffer: MessageBuffer,
+    toolCallId: string,
+    status: "running" | "completed",
+  ): void {
+    const todos = this.getTodosArray(sessionId);
+    if (todos.length === 0) return;
+
+    // Find existing synthetic todo part in this buffer
+    let todoPart = buffer.parts.find(
+      (p) => p.type === "tool" && (p as ToolPart).normalizedTool === "todo",
+    ) as ToolPart | undefined;
+
+    const now = Date.now();
+    const startTime = todoPart ? ((todoPart.state as any).time?.start ?? now) : now;
+
+    const newState = status === "completed"
+      ? {
+          status: "completed" as const,
+          input: { todos },
+          output: "",
+          time: { start: startTime, end: now, duration: now - startTime },
+        }
+      : {
+          status: "running" as const,
+          input: { todos },
+          time: { start: startTime },
+        };
+
+    if (todoPart) {
+      todoPart.state = newState;
+    } else {
+      todoPart = {
+        id: timeId("part"),
+        messageId: buffer.messageId,
+        sessionId,
+        type: "tool",
+        callId: `todo-synthetic-${toolCallId}`,
+        normalizedTool: "todo",
+        originalTool: "sql",
+        title: "Todo",
+        kind: "other",
+        state: newState,
+      };
+      buffer.parts.push(todoPart);
+    }
+
+    this.emit("message.part.updated", {
+      sessionId,
+      messageId: buffer.messageId,
+      part: todoPart,
+    });
+  }
 
   /**
    * Build a human-readable title for a tool call.

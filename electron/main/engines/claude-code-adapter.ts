@@ -350,6 +350,7 @@ export class ClaudeCodeAdapter extends EngineAdapter {
       loadSession: true,
       listSessions: true,
       modelSwitchable: true,
+      customModelInput: true,
       availableModes: this.getModes(),
     };
   }
@@ -643,6 +644,7 @@ export class ClaudeCodeAdapter extends EngineAdapter {
       role: "assistant",
       time: { created: Date.now() },
       parts: [],
+      workingDirectory: directory,
     };
     this.emit("message.updated", { sessionId, message: assistantMessage });
 
@@ -996,6 +998,7 @@ export class ClaudeCodeAdapter extends EngineAdapter {
   async replyPermission(
     permissionId: string,
     reply: PermissionReply,
+    _sessionId?: string,
   ): Promise<void> {
     const pending = this.pendingPermissions.get(permissionId);
     if (!pending) {
@@ -1234,6 +1237,7 @@ export class ClaudeCodeAdapter extends EngineAdapter {
   async replyQuestion(
     questionId: string,
     answers: string[][],
+    _sessionId?: string,
   ): Promise<void> {
     const pending = this.pendingQuestions.get(questionId);
     if (!pending) {
@@ -1252,7 +1256,7 @@ export class ClaudeCodeAdapter extends EngineAdapter {
     this.emit("question.replied", { questionId, answers });
   }
 
-  async rejectQuestion(questionId: string): Promise<void> {
+  async rejectQuestion(questionId: string, _sessionId?: string): Promise<void> {
     const pending = this.pendingQuestions.get(questionId);
     if (!pending) return;
 
@@ -1964,6 +1968,7 @@ export class ClaudeCodeAdapter extends EngineAdapter {
       cost: buffer.cost,
       modelId: buffer.modelId,
       error: buffer.error,
+      workingDirectory: this.sessionDirectories.get(sessionId),
     };
 
     // Add to history

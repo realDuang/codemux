@@ -39,6 +39,9 @@ export interface LocaleDict {
     dismiss: string;
     customPlaceholder: string;
     waitingAnswer: string;
+    selectMultiple: string;
+    back: string;
+    next: string;
   };
 
   // Login page
@@ -180,6 +183,7 @@ export interface LocaleDict {
     creatingPlan: string;
     updatingPlan: string;
     completingPlan: string;
+    todoTitle: string;
     match: string;
     matches: string;
     result: string;
@@ -197,6 +201,7 @@ export interface LocaleDict {
     delegatingWork: string;
     planningNextSteps: string;
     gatheringContext: string;
+    gatheredContext: string;
     searchingCodebase: string;
     searchingWeb: string;
     makingEdits: string;
@@ -377,6 +382,9 @@ export const en: LocaleDict = {
     dismiss: "Dismiss",
     customPlaceholder: "Type a custom answer...",
     waitingAnswer: "Waiting for answer",
+    selectMultiple: "Select multiple options",
+    back: "Back",
+    next: "Next",
   },
 
   // Login page
@@ -518,6 +526,7 @@ export const en: LocaleDict = {
     creatingPlan: "Creating plan",
     updatingPlan: "Updating plan",
     completingPlan: "Completing plan",
+    todoTitle: "Tasks",
     match: "{count} match",
     matches: "{count} matches",
     result: "{count} result",
@@ -535,6 +544,7 @@ export const en: LocaleDict = {
     delegatingWork: "Delegating work",
     planningNextSteps: "Planning next steps",
     gatheringContext: "Gathering context",
+    gatheredContext: "Gathered context",
     searchingCodebase: "Searching the codebase",
     searchingWeb: "Searching the web",
     makingEdits: "Making edits",

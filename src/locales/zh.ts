@@ -40,6 +40,9 @@ export const zh: LocaleDict = {
     dismiss: "忽略",
     customPlaceholder: "输入自定义回答...",
     waitingAnswer: "等待回答",
+    selectMultiple: "可选择多个选项",
+    back: "上一步",
+    next: "下一步",
   },
 
   // Login page
@@ -181,6 +184,7 @@ export const zh: LocaleDict = {
     creatingPlan: "创建计划",
     updatingPlan: "更新计划",
     completingPlan: "完成计划",
+    todoTitle: "任务列表",
     match: "{count} 匹配",
     matches: "{count} 匹配",
     result: "{count} 结果",
@@ -198,6 +202,7 @@ export const zh: LocaleDict = {
     delegatingWork: "分配任务",
     planningNextSteps: "规划步骤",
     gatheringContext: "收集上下文",
+    gatheredContext: "已收集上下文",
     searchingCodebase: "搜索代码库",
     searchingWeb: "搜索网页",
     makingEdits: "进行编辑",

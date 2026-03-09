@@ -254,6 +254,20 @@ export class OpenCodeAdapter extends EngineAdapter {
     this.client = this.createClient(directory);
   }
 
+  /**
+   * Get a client scoped to a specific session's directory.
+   * Falls back to ensureClient() if sessionId is unknown or has no directory.
+   */
+  private clientForSession(sessionId?: string): OpencodeClient {
+    if (sessionId) {
+      const session = this.sessions.get(sessionId);
+      if (session?.directory) {
+        return this.createClient(session.directory);
+      }
+    }
+    return this.ensureClient();
+  }
+
   // --- Version fetch ---
 
   private fetchVersion(): Promise<string | undefined> {
@@ -727,6 +741,7 @@ export class OpenCodeAdapter extends EngineAdapter {
       directory: sdk.directory.replaceAll("\\", "/"),
       title: sdk.title,
       parentId: sdk.parentID,
+      projectId: sdk.projectID,
       time: {
         created: sdk.time.created,
         updated: sdk.time.updated,
@@ -770,6 +785,8 @@ export class OpenCodeAdapter extends EngineAdapter {
       providerId: sdk.providerID,
       mode: sdk.mode,
       error: normalizedError,
+      workingDirectory: (sdk as any).path?.cwd,
+      isCompaction: (sdk as any).summary === true,
       engineMeta: {
         path: sdk.path,
         agent: sdk.agent,
@@ -1033,6 +1050,7 @@ export class OpenCodeAdapter extends EngineAdapter {
       loadSession: true,
       listSessions: true,
       modelSwitchable: true,
+      customModelInput: false,
       availableModes: this.getModes(),
     };
   }
@@ -1347,7 +1365,7 @@ export class OpenCodeAdapter extends EngineAdapter {
 
   // --- Permissions ---
 
-  async replyPermission(permissionId: string, reply: PermissionReply): Promise<void> {
+  async replyPermission(permissionId: string, reply: PermissionReply, sessionId?: string): Promise<void> {
     let replyValue: "once" | "always" | "reject";
     switch (reply.optionId) {
       case "once":
@@ -1365,7 +1383,8 @@ export class OpenCodeAdapter extends EngineAdapter {
         break;
     }
 
-    const client = this.ensureClient();
+    // Use the session's directory for correct client context
+    const client = this.clientForSession(sessionId);
     await client.permission.reply({
       requestID: permissionId,
       reply: replyValue,
@@ -1379,8 +1398,9 @@ export class OpenCodeAdapter extends EngineAdapter {
 
   // --- Questions ---
 
-  async replyQuestion(questionId: string, answers: string[][]): Promise<void> {
-    const client = this.ensureClient();
+  async replyQuestion(questionId: string, answers: string[][], sessionId?: string): Promise<void> {
+    // Use the session's directory for correct client context
+    const client = this.clientForSession(sessionId);
     await client.question.reply({
       requestID: questionId,
       answers,
@@ -1392,8 +1412,9 @@ export class OpenCodeAdapter extends EngineAdapter {
     });
   }
 
-  async rejectQuestion(questionId: string): Promise<void> {
-    const client = this.ensureClient();
+  async rejectQuestion(questionId: string, sessionId?: string): Promise<void> {
+    // Use the session's directory for correct client context
+    const client = this.clientForSession(sessionId);
     await client.question.reject({
       requestID: questionId,
     });

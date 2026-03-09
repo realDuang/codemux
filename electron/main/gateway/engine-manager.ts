@@ -71,6 +71,10 @@ export class EngineManager extends EventEmitter {
   private permissionEngineMap = new Map<string, EngineType>();
   /** questionId → engineType lookup for routing question replies */
   private questionEngineMap = new Map<string, EngineType>();
+  /** questionId → sessionId lookup so adapters can resolve correct directory */
+  private questionSessionMap = new Map<string, string>();
+  /** permissionId → sessionId lookup so adapters can resolve correct directory */
+  private permissionSessionMap = new Map<string, string>();
   /** engineSessionId → conversationId cache (populated on session creation / lookup) */
   private engineToConvMap = new Map<string, string>();
   /** Accumulate step-type parts during streaming: messageId → UnifiedPart[] */
@@ -301,10 +305,16 @@ export class EngineManager extends EventEmitter {
         // Track permission → engine mapping for routing replies
         if (event === "permission.asked" && data?.permission?.id) {
           this.permissionEngineMap.set(data.permission.id, adapter.engineType);
+          // Also store sessionId so adapters can resolve correct directory
+          const permSid = data?.permission?.sessionId || data?.sessionId;
+          if (permSid) this.permissionSessionMap.set(data.permission.id, permSid);
         }
         // Track question → engine mapping for routing replies
         if (event === "question.asked" && data?.question?.id) {
           this.questionEngineMap.set(data.question.id, adapter.engineType);
+          // Also store sessionId so adapters can resolve correct directory
+          const qSid = data?.question?.sessionId || data?.sessionId;
+          if (qSid) this.questionSessionMap.set(data.question.id, qSid);
         }
 
         // Rewrite sessionId if applicable
@@ -753,8 +763,11 @@ export class EngineManager extends EventEmitter {
       throw new Error(`No engine binding found for permission: ${permissionId}`);
     }
     const adapter = this.getAdapterOrThrow(engineType);
+    // Resolve the sessionId so the adapter can use the correct directory context
+    const sessionId = this.permissionSessionMap.get(permissionId);
     this.permissionEngineMap.delete(permissionId);
-    return adapter.replyPermission(permissionId, reply);
+    this.permissionSessionMap.delete(permissionId);
+    return adapter.replyPermission(permissionId, reply, sessionId);
   }
 
   // --- Questions ---
@@ -768,8 +781,11 @@ export class EngineManager extends EventEmitter {
       throw new Error(`No engine binding found for question: ${questionId}`);
     }
     const adapter = this.getAdapterOrThrow(engineType);
+    // Resolve the sessionId so the adapter can use the correct directory context
+    const sessionId = this.questionSessionMap.get(questionId);
     this.questionEngineMap.delete(questionId);
-    return adapter.replyQuestion(questionId, answers);
+    this.questionSessionMap.delete(questionId);
+    return adapter.replyQuestion(questionId, answers, sessionId);
   }
 
   async rejectQuestion(
@@ -780,7 +796,10 @@ export class EngineManager extends EventEmitter {
       throw new Error(`No engine binding found for question: ${questionId}`);
     }
     const adapter = this.getAdapterOrThrow(engineType);
+    const sessionId = this.questionSessionMap.get(questionId);
     this.questionEngineMap.delete(questionId);
+    this.questionSessionMap.delete(questionId);
+    return adapter.rejectQuestion(questionId, sessionId);
     return adapter.rejectQuestion(questionId);
   }
 

@@ -24,10 +24,9 @@ function getMarkedInstance() {
     return marked.use(
       {
         renderer: {
-          link(link: any) {
-            const { href, title, text } = link
+          link(href: string, title: string | null | undefined, text: string) {
             const titleAttr = title ? ` title="${title}"` : ""
-            return `<a href="${href}"${titleAttr} target="_blank" rel="noopener noreferrer">${text}</a>`
+            return `<a href="${href}"${titleAttr} target="_blank" rel="noopener noreferrer">${text || href}</a>`
           },
         },
       },

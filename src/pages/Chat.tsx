@@ -25,7 +25,11 @@ import { AddProjectModal } from "../components/AddProjectModal";
 import type { UnifiedMessage, UnifiedPart, UnifiedPermission, UnifiedQuestion, UnifiedSession, UnifiedProject, AgentMode, EngineType, SessionActivityStatus } from "../types/unified";
 import { useI18n } from "../lib/i18n";
 
-import { configStore, setConfigStore, getSelectedModelForEngine, restoreEngineModelSelections, isEngineEnabled, restoreEnabledEngines } from "../stores/config";
+import { InputAreaQuestion } from "../components/InputAreaQuestion";
+import { InputAreaPermission } from "../components/InputAreaPermission";
+import { TodoDock } from "../components/TodoDock";
+
+import { configStore, setConfigStore, getSelectedModelForEngine, restoreEngineModelSelections, isEngineEnabled, restoreEnabledEngines, getDefaultEngineType } from "../stores/config";
 
 // Binary search helper (consistent with opencode desktop)
 function binarySearch<T>(
@@ -64,7 +68,7 @@ function toSessionInfo(s: UnifiedSession, projectID?: string): SessionInfo {
     engineType: s.engineType,
     title: s.title || "",
     directory: s.directory || "",
-    projectID: projectID ?? s.projectId ?? (s.engineMeta?.projectID as string) ?? undefined,
+    projectID: projectID ?? s.projectId ?? undefined,
     createdAt: new Date(s.time.created).toISOString(),
     updatedAt: new Date(s.time.updated).toISOString(),
   };
@@ -143,6 +147,34 @@ export default function Chat() {
     return messageStore.question[sid] || [];
   });
 
+  // Extract latest todos from the most recent TodoWrite tool part in the current session.
+  // All adapters normalize input.todos to [{ content, status }] arrays before reaching here.
+  const currentTodos = createMemo(() => {
+    const sid = sessionStore.current;
+    if (!sid) return [];
+    const messages = messageStore.message[sid] || [];
+    for (let mi = messages.length - 1; mi >= 0; mi--) {
+      const msg = messages[mi];
+      if (msg.role !== "assistant") continue;
+      const parts = messageStore.part[msg.id] || [];
+      for (let pi = parts.length - 1; pi >= 0; pi--) {
+        const p = parts[pi];
+        if (p.type !== "tool" || (p as any).normalizedTool !== "todo") continue;
+        const status = (p as any).state?.status;
+        if (status !== "completed" && status !== "running") continue;
+
+        const todos = (p as any).state?.input?.todos;
+        if (Array.isArray(todos) && todos.length > 0) {
+          return todos as Array<{
+            content: string;
+            status: "pending" | "in_progress" | "completed";
+          }>;
+        }
+      }
+    }
+    return [];
+  });
+
   const getDisplayTitle = (title: string): string => {
     if (!title || isDefaultTitle(title)) {
       return t().sidebar.newSession;
@@ -160,9 +192,9 @@ export default function Chat() {
   // Derive the engine type of the currently selected session
   const currentEngineType = createMemo(() => {
     const sid = sessionStore.current;
-    if (!sid) return configStore.currentEngineType || "opencode";
+    if (!sid) return getDefaultEngineType();
     const session = sessionStore.list.find(s => s.id === sid);
-    return session?.engineType || configStore.currentEngineType || "opencode";
+    return session?.engineType || getDefaultEngineType();
   });
 
   // Keep currentAgent in sync: whenever the engine type changes or engine
@@ -482,7 +514,7 @@ export default function Chat() {
       const dir = directory || sessionStore.projects[0]?.directory || ".";
       // Use explicitly-passed engineType (from sidebar "+" button) when available,
       // otherwise resolve from project binding or global default.
-      const engineType = explicitEngineType || configStore.currentEngineType || "opencode";
+      const engineType = explicitEngineType || getDefaultEngineType();
       const newSession = await gateway.createSession(engineType, dir);
       logger.debug("[NewSession] Created:", newSession);
 
@@ -588,28 +620,29 @@ export default function Chat() {
     }
   };
 
-  const handleAddProject = async (directory: string, engineType: EngineType = "opencode") => {
+  const handleAddProject = async (directory: string, engineType?: EngineType) => {
+    const resolvedEngineType = engineType || getDefaultEngineType() as EngineType;
     logger.debug("[AddProject] Initializing project for directory:", directory);
 
     try {
-      // Creating a session in the directory will trigger project initialization in OpenCode
-      const newSession = await gateway.createSession(engineType, directory);
+      // Creating a session in the directory will trigger project initialization
+      const newSession = await gateway.createSession(resolvedEngineType, directory);
       logger.debug("[AddProject] Session created:", newSession);
 
       // Refresh projects list
-      const projects = await gateway.listProjects(engineType);
+      const projects = await gateway.listProjects(resolvedEngineType);
       let project = projects.find((p: UnifiedProject) => p.directory === directory);
 
-      // For ACP-based engines (e.g. copilot) that don't support listing projects,
+      // For engines that don't support listing projects,
       // construct a project entry from the session info
       if (!project && newSession) {
-        const projectID = (newSession.engineMeta?.projectID as string) || `${engineType}-${directory}`;
+        const projectID = newSession.projectId || `${resolvedEngineType}-${directory}`;
         const dirName = directory.split(/[/\\]/).filter(Boolean).pop() || directory;
         project = {
           id: projectID,
           directory,
           name: dirName,
-          engineType,
+          engineType: resolvedEngineType,
         };
       }
 
@@ -620,7 +653,7 @@ export default function Chat() {
         }
       }
 
-      const processedSession = toSessionInfo(newSession, (newSession.engineMeta?.projectID as string) || project?.id || undefined);
+      const processedSession = toSessionInfo(newSession, newSession.projectId || project?.id || undefined);
 
       const existingSession = sessionStore.list.find(s => s.id === newSession.id);
       if (!existingSession) {
@@ -1212,46 +1245,20 @@ export default function Chat() {
               {/* Input Area */}
               <div class="p-4 bg-white/90 dark:bg-zinc-900/90 backdrop-blur-xs border-t border-gray-100 dark:border-zinc-800 relative z-20">
                 <div class="max-w-4xl mx-auto w-full">
+                  {/* TodoDock — persistent task list above input */}
+                  <Show when={currentTodos().length > 0}>
+                    <TodoDock todos={currentTodos()} isWorking={sending()} />
+                  </Show>
+
                   {/* Permission prompt replaces input when permissions are pending */}
                   <Show when={currentPermissions().length > 0}>
                     <div class="space-y-3">
                       <For each={currentPermissions()}>
                         {(perm) => (
-                          <div class="rounded-xl border border-amber-200 dark:border-amber-700/50 bg-amber-50/80 dark:bg-amber-950/30 p-4">
-                            <div class="flex items-center gap-2 mb-3">
-                              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-amber-600 dark:text-amber-400">
-                                <path d="M12 9v4" /><path d="M12 17h.01" /><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z" />
-                              </svg>
-                              <span class="text-sm font-medium text-amber-800 dark:text-amber-300">{t().permission.waitingApproval}</span>
-                            </div>
-                            <p class="text-sm text-amber-700 dark:text-amber-400 mb-1">{perm.title}</p>
-                            <Show when={perm.patterns && perm.patterns.length > 0}>
-                              <p class="text-xs text-amber-600/70 dark:text-amber-500/70 mb-3 font-mono">{perm.patterns?.join(", ")}</p>
-                            </Show>
-                            <div class="flex items-center gap-2 mt-3">
-                              <For each={perm.options?.length > 0 ? perm.options : [
-                                { id: "reject", label: t().permission.deny, type: "reject" },
-                                { id: "always", label: t().permission.allowAlways, type: "accept_always" },
-                                { id: "once", label: t().permission.allowOnce, type: "accept_once" },
-                              ]}>
-                                {(opt) => (
-                                  <button
-                                    type="button"
-                                    class={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
-                                      opt.type.includes("reject")
-                                        ? "bg-red-100 text-red-700 hover:bg-red-200 dark:bg-red-900/30 dark:text-red-400 dark:hover:bg-red-900/50"
-                                        : opt.type.includes("always")
-                                          ? "bg-emerald-100 text-emerald-700 hover:bg-emerald-200 dark:bg-emerald-900/30 dark:text-emerald-400 dark:hover:bg-emerald-900/50"
-                                          : "bg-indigo-100 text-indigo-700 hover:bg-indigo-200 dark:bg-indigo-900/30 dark:text-indigo-400 dark:hover:bg-indigo-900/50"
-                                    }`}
-                                    onClick={() => handlePermissionRespond(perm.sessionId, perm.id, opt.id)}
-                                  >
-                                    {opt.label || (opt.type.includes("reject") ? t().permission.deny : opt.type.includes("always") ? t().permission.allowAlways : t().permission.allowOnce)}
-                                  </button>
-                                )}
-                              </For>
-                            </div>
-                          </div>
+                          <InputAreaPermission
+                            permission={perm}
+                            onRespond={handlePermissionRespond}
+                          />
                         )}
                       </For>
                     </div>
@@ -1319,175 +1326,3 @@ export default function Chat() {
     </div>
   );
 }
-
-// --- InputAreaQuestion: replaces PromptInput when questions are pending ---
-
-interface InputAreaQuestionProps {
-  question: UnifiedQuestion;
-  onRespond: (sessionID: string, questionID: string, answers: string[][]) => void;
-  onDismiss: (sessionID: string, questionID: string) => void;
-}
-
-function InputAreaQuestion(props: InputAreaQuestionProps) {
-  const { t } = useI18n();
-
-  // Each question in the array gets its own selection state
-  // selections[i] = array of selected option labels for question i
-  const [selections, setSelections] = createSignal<string[][]>(
-    props.question.questions.map(() => []),
-  );
-
-  // Custom text input per question
-  const [customInputs, setCustomInputs] = createSignal<string[]>(
-    props.question.questions.map(() => ""),
-  );
-
-  const toggleOption = (qIndex: number, label: string, multiple: boolean) => {
-    setSelections((prev) => {
-      const updated = [...prev];
-      const current = [...(updated[qIndex] || [])];
-
-      if (multiple) {
-        const idx = current.indexOf(label);
-        if (idx >= 0) {
-          current.splice(idx, 1);
-        } else {
-          current.push(label);
-        }
-      } else {
-        // Single select: toggle or replace
-        if (current.length === 1 && current[0] === label) {
-          updated[qIndex] = [];
-          return updated;
-        }
-        updated[qIndex] = [label];
-        return updated;
-      }
-
-      updated[qIndex] = current;
-      return updated;
-    });
-  };
-
-  const setCustomInput = (qIndex: number, value: string) => {
-    setCustomInputs((prev) => {
-      const updated = [...prev];
-      updated[qIndex] = value;
-      return updated;
-    });
-  };
-
-  const handleSubmit = () => {
-    // Build answers: for each question, combine selected options + custom input
-    const answers = props.question.questions.map((_, i) => {
-      const selected = selections()[i] || [];
-      const custom = customInputs()[i]?.trim();
-      if (custom) {
-        return [...selected, custom];
-      }
-      return [...selected];
-    });
-    props.onRespond(props.question.sessionId, props.question.id, answers);
-  };
-
-  const handleDismiss = () => {
-    props.onDismiss(props.question.sessionId, props.question.id);
-  };
-
-  const hasAnyAnswer = () => {
-    return props.question.questions.some((_, i) => {
-      const selected = selections()[i] || [];
-      const custom = customInputs()[i]?.trim();
-      return selected.length > 0 || (custom && custom.length > 0);
-    });
-  };
-
-  return (
-    <div class="rounded-xl border border-indigo-200 dark:border-indigo-700/50 bg-indigo-50/80 dark:bg-indigo-950/30 p-4">
-      <div class="flex items-center gap-2 mb-3">
-        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-indigo-600 dark:text-indigo-400">
-          <circle cx="12" cy="12" r="10" /><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" /><path d="M12 17h.01" />
-        </svg>
-        <span class="text-sm font-medium text-indigo-800 dark:text-indigo-300">{t().question.waitingAnswer}</span>
-      </div>
-
-      <For each={props.question.questions}>
-        {(qInfo, qIndex) => (
-          <div class={qIndex() > 0 ? "mt-4 pt-4 border-t border-indigo-200/50 dark:border-indigo-700/30" : ""}>
-            {/* Header + Question */}
-            <div class="mb-2">
-              <span class="inline-block text-xs font-semibold text-indigo-600 dark:text-indigo-400 bg-indigo-100 dark:bg-indigo-900/40 rounded px-1.5 py-0.5 mr-2">
-                {qInfo.header}
-              </span>
-              <span class="text-sm text-indigo-800 dark:text-indigo-200">{qInfo.question}</span>
-            </div>
-
-            {/* Options as selectable chips */}
-            <div class="flex flex-wrap gap-2 mb-2">
-              <For each={qInfo.options}>
-                {(opt) => {
-                  const isSelected = () => (selections()[qIndex()] || []).includes(opt.label);
-                  return (
-                    <button
-                      type="button"
-                      class={`px-3 py-1.5 rounded-lg text-sm transition-colors ${
-                        isSelected()
-                          ? "bg-indigo-600 text-white dark:bg-indigo-500"
-                          : "bg-white text-indigo-700 border border-indigo-200 hover:bg-indigo-100 dark:bg-indigo-900/30 dark:text-indigo-300 dark:border-indigo-700/50 dark:hover:bg-indigo-900/50"
-                      }`}
-                      onClick={() => toggleOption(qIndex(), opt.label, qInfo.multiple ?? false)}
-                      title={opt.description}
-                    >
-                      {opt.label}
-                    </button>
-                  );
-                }}
-              </For>
-            </div>
-
-            {/* Custom text input (shown when custom !== false) */}
-            <Show when={qInfo.custom !== false}>
-              <input
-                type="text"
-                class="w-full px-3 py-1.5 rounded-lg text-sm border border-indigo-200 dark:border-indigo-700/50 bg-white dark:bg-indigo-950/50 text-indigo-800 dark:text-indigo-200 placeholder-indigo-400/60 dark:placeholder-indigo-500/50 focus:outline-none focus:ring-1 focus:ring-indigo-400 dark:focus:ring-indigo-500"
-                placeholder={t().question.customPlaceholder}
-                value={customInputs()[qIndex()] || ""}
-                onInput={(e) => setCustomInput(qIndex(), e.currentTarget.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" && hasAnyAnswer()) {
-                    e.preventDefault();
-                    handleSubmit();
-                  }
-                }}
-              />
-            </Show>
-          </div>
-        )}
-      </For>
-
-      {/* Action buttons */}
-      <div class="flex items-center gap-2 mt-3">
-        <button
-          type="button"
-          class="px-3 py-1.5 rounded-lg text-sm font-medium bg-red-100 text-red-700 hover:bg-red-200 dark:bg-red-900/30 dark:text-red-400 dark:hover:bg-red-900/50 transition-colors"
-          onClick={handleDismiss}
-        >
-          {t().question.dismiss}
-        </button>
-        <button
-          type="button"
-          class={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
-            hasAnyAnswer()
-              ? "bg-indigo-600 text-white hover:bg-indigo-700 dark:bg-indigo-500 dark:hover:bg-indigo-600"
-              : "bg-indigo-200 text-indigo-400 cursor-not-allowed dark:bg-indigo-900/30 dark:text-indigo-600"
-          }`}
-          onClick={handleSubmit}
-          disabled={!hasAnyAnswer()}
-        >
-          {t().question.submit}
-        </button>
-      </div>
-    </div>
-  );
-}
-

@@ -2,7 +2,7 @@ import { For, Show, createSignal, createMemo, createEffect } from "solid-js";
 import { SessionInfo, sessionStore, setSessionStore, getProjectName } from "../stores/session";
 import { useI18n, formatMessage } from "../lib/i18n";
 import type { UnifiedProject, EngineType, SessionActivityStatus } from "../types/unified";
-import { configStore, isEngineEnabled } from "../stores/config";
+import { configStore, isEngineEnabled, getDefaultEngineType } from "../stores/config";
 import { ProjectStore } from "../lib/project-store";
 import { isElectron } from "../lib/platform";
 import { systemAPI } from "../lib/electron-api";
@@ -179,7 +179,7 @@ export function SessionSidebar(props: SessionSidebarProps) {
     const engineMap = new Map<string, ProjectGroup[]>();
 
     for (const group of groups) {
-      const engineType = group.project?.engineType || "opencode";
+      const engineType = group.project?.engineType || getDefaultEngineType();
       if (!engineMap.has(engineType)) {
         engineMap.set(engineType, []);
       }

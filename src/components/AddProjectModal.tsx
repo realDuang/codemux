@@ -1,6 +1,6 @@
 import { createSignal, For, Show } from "solid-js";
 import { useI18n } from "../lib/i18n";
-import { configStore } from "../stores/config";
+import { configStore, getDefaultEngineType } from "../stores/config";
 import { systemAPI } from "../lib/electron-api";
 import { isElectron } from "../lib/platform";
 import type { EngineType } from "../types/unified";
@@ -17,7 +17,7 @@ export function AddProjectModal(props: AddProjectModalProps) {
   const [loading, setLoading] = createSignal(false);
   const [error, setError] = createSignal<string | null>(null);
   const [selectedEngine, setSelectedEngine] = createSignal<EngineType>(
-    configStore.engines.find(e => e.status === "running")?.type ?? "opencode"
+    getDefaultEngineType() as EngineType
   );
 
   const handleAdd = async () => {

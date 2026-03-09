@@ -143,6 +143,53 @@
       margin-bottom: 0;
     }
 
+    /* Reasoning heading — extracted subtitle next to "Thinking" */
+    [data-slot="reasoning-heading"] {
+      font-size: 0.75rem;
+      font-weight: 400;
+      color: rgba(109, 40, 217, 0.5);
+      max-width: 220px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+
+      :global(.dark) & {
+        color: rgba(196, 181, 253, 0.45);
+      }
+
+      &::before {
+        content: "·";
+        margin-right: 0.375rem;
+        opacity: 0.6;
+      }
+    }
+
+    /* Collapsed preview — faded text hint */
+    [data-slot="reasoning-preview"] {
+      padding: 0 1rem 0.75rem 1rem;
+      font-size: 0.75rem;
+      line-height: 1.5;
+      color: rgba(109, 40, 217, 0.4);
+      max-height: 2.25em;
+      overflow: hidden;
+      mask-image: linear-gradient(to right, black 75%, transparent 100%);
+      -webkit-mask-image: linear-gradient(to right, black 75%, transparent 100%);
+
+      :global(.dark) & {
+        color: rgba(196, 181, 253, 0.3);
+      }
+    }
+
+    /* Weakened code saturation in dark mode for reasoning */
+    :global(.dark) & [data-component="assistant-reasoning-markdown"] code {
+      filter: saturate(0.65);
+    }
+
+    :global(.dark) & [data-component="assistant-reasoning-markdown"] pre {
+      filter: saturate(0.6);
+      opacity: 0.9;
+    }
+
     /* Streaming indicator dot */
     [data-slot="streaming-dot"] {
       display: inline-block;
@@ -177,17 +224,23 @@
     gap: 0.75rem;
     flex-grow: 1;
     max-width: var(--md-tool-width);
-    padding: 0.5rem 0.75rem;
-    border: 1px solid rgba(148, 163, 184, 0.15);
-    border-radius: 0.875rem;
-    background: linear-gradient(135deg, rgba(248, 250, 252, 0.7) 0%, rgba(241, 245, 249, 0.5) 100%);
-    backdrop-filter: blur(8px);
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+    padding: 8px 12px;
+    border: 1px solid rgba(148, 163, 184, 0.1);
+    border-radius: 8px;
+    background: rgba(248, 250, 252, 0.35);
+    transition: border-color 0.15s;
 
     :global(.dark) & {
-      background: linear-gradient(135deg, rgba(30, 41, 59, 0.4) 0%, rgba(15, 23, 42, 0.5) 100%);
-      border-color: rgba(71, 85, 105, 0.2);
-      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15), inset 0 1px 1px rgba(255, 255, 255, 0.03);
+      background: rgba(30, 41, 59, 0.2);
+      border-color: rgba(71, 85, 105, 0.15);
+    }
+
+    &:hover {
+      border-color: rgba(148, 163, 184, 0.2);
+
+      :global(.dark) & {
+        border-color: rgba(71, 85, 105, 0.25);
+      }
     }
 
     & > [data-component="assistant-text-markdown"] {
@@ -292,7 +345,27 @@
   }
 
   /* ════════════════════════════════════════
-     Tool Cards — Modern Glassmorphism
+     Tool Row — Simplified non-expandable row (for Read etc.)
+     ════════════════════════════════════════ */
+  [data-component="tool-row"] {
+    display: flex;
+    align-items: center;
+    gap: 0;
+    padding: 6px 12px;
+    border: 1px solid rgba(148, 163, 184, 0.1);
+    border-radius: 0.75rem;
+    background: rgba(248, 250, 252, 0.5);
+    width: 100%;
+    max-width: var(--md-tool-width);
+
+    :global(.dark) & {
+      background: rgba(30, 41, 59, 0.3);
+      border-color: rgba(71, 85, 105, 0.15);
+    }
+  }
+
+  /* ════════════════════════════════════════
+     Tool Cards — Lightweight style (matching ContextGroup)
      ════════════════════════════════════════ */
   [data-component="tool"] {
     display: flex;
@@ -300,29 +373,24 @@
     align-items: stretch;
     gap: 0;
     padding: 0;
-    border: 1px solid rgba(148, 163, 184, 0.15);
-    border-radius: 0.875rem;
-    background: linear-gradient(135deg, rgba(248, 250, 252, 0.8) 0%, rgba(241, 245, 249, 0.6) 100%);
-    backdrop-filter: blur(8px);
+    border: 1px solid rgba(148, 163, 184, 0.1);
+    border-radius: 8px;
+    background: rgba(248, 250, 252, 0.35);
     width: 100%;
     max-width: var(--md-tool-width);
     overflow: hidden;
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
-    transition: border-color 0.2s, box-shadow 0.2s;
+    transition: border-color 0.15s;
 
     :global(.dark) & {
-      background: linear-gradient(135deg, rgba(30, 41, 59, 0.5) 0%, rgba(15, 23, 42, 0.6) 100%);
-      border-color: rgba(71, 85, 105, 0.25);
-      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2), inset 0 1px 1px rgba(255, 255, 255, 0.03);
+      background: rgba(30, 41, 59, 0.2);
+      border-color: rgba(71, 85, 105, 0.15);
     }
 
     &:hover {
-      border-color: rgba(148, 163, 184, 0.3);
-      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.06);
+      border-color: rgba(148, 163, 184, 0.2);
 
       :global(.dark) & {
-        border-color: rgba(99, 102, 241, 0.3);
-        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3), 0 0 8px rgba(99, 102, 241, 0.08);
+        border-color: rgba(71, 85, 105, 0.25);
       }
     }
 
@@ -330,15 +398,15 @@
       display: flex;
       align-items: center;
       width: 100%;
-      padding: 0.625rem 0.875rem;
+      padding: 6px 10px;
       background: transparent;
       border: none;
       cursor: pointer;
       text-align: left;
       gap: 0.5rem;
       font-size: 0.8125rem;
-      min-height: 2.25rem;
-      transition: background 0.15s;
+      min-height: 2rem;
+      transition: background 0.12s;
       min-width: 0;
 
       &:hover {
@@ -371,7 +439,7 @@
     }
 
     [data-slot="collapsible-content"] {
-      padding: 0 0.875rem 0.875rem;
+      padding: 0 10px 10px;
       width: 100%;
       border-top: 1px solid transparent;
 
@@ -727,19 +795,16 @@
     display: flex;
     flex-direction: column;
     gap: 0.75rem;
-    padding: 1rem;
-    border: 1px solid rgba(251, 146, 60, 0.3);
-    border-radius: 0.875rem;
-    background: linear-gradient(135deg, rgba(255, 247, 237, 0.8) 0%, rgba(254, 243, 199, 0.5) 100%);
-    backdrop-filter: blur(8px);
+    padding: 10px;
+    border: 1px solid rgba(251, 146, 60, 0.15);
+    border-radius: 8px;
+    background: rgba(255, 247, 237, 0.35);
     width: 100%;
     max-width: var(--md-tool-width);
-    box-shadow: 0 2px 8px rgba(251, 146, 60, 0.08);
 
     :global(.dark) & {
-      background: linear-gradient(135deg, rgba(120, 53, 15, 0.2) 0%, rgba(15, 23, 42, 0.6) 100%);
-      border-color: rgba(251, 146, 60, 0.25);
-      box-shadow: 0 2px 12px rgba(251, 146, 60, 0.1);
+      background: rgba(120, 53, 15, 0.1);
+      border-color: rgba(251, 146, 60, 0.12);
     }
 
     [data-component="tool-title"][data-waiting] {
@@ -760,20 +825,16 @@
     display: flex;
     flex-direction: column;
     gap: 0.5rem;
-    padding: 0.625rem 0.875rem;
-    border: 1px solid rgba(14, 165, 233, 0.4);
-    border-radius: 0.875rem;
-    background: linear-gradient(135deg, rgba(224, 242, 254, 0.5) 0%, rgba(240, 249, 255, 0.3) 100%);
-    backdrop-filter: blur(8px);
+    padding: 6px 10px;
+    border: 1px solid rgba(14, 165, 233, 0.15);
+    border-radius: 8px;
+    background: rgba(224, 242, 254, 0.25);
     width: 100%;
     max-width: var(--md-tool-width);
-    box-shadow: 0 0 12px rgba(14, 165, 233, 0.08);
-    animation: border-glow-pulse 2s ease-in-out infinite;
 
     :global(.dark) & {
-      background: linear-gradient(135deg, rgba(12, 74, 110, 0.15) 0%, rgba(15, 23, 42, 0.4) 100%);
-      border-color: rgba(14, 165, 233, 0.5);
-      animation: border-glow-pulse-dark 2s ease-in-out infinite;
+      background: rgba(12, 74, 110, 0.1);
+      border-color: rgba(14, 165, 233, 0.15);
     }
 
     [data-component="tool-title"][data-running] {
@@ -908,19 +969,16 @@
     display: flex;
     flex-direction: column;
     gap: 0.75rem;
-    padding: 1rem;
-    border: 1px solid rgba(99, 102, 241, 0.3);
-    border-radius: 0.875rem;
-    background: linear-gradient(135deg, rgba(238, 242, 255, 0.8) 0%, rgba(224, 231, 255, 0.5) 100%);
-    backdrop-filter: blur(8px);
+    padding: 10px;
+    border: 1px solid rgba(99, 102, 241, 0.15);
+    border-radius: 8px;
+    background: rgba(238, 242, 255, 0.35);
     width: 100%;
     max-width: var(--md-tool-width);
-    box-shadow: 0 2px 8px rgba(99, 102, 241, 0.08);
 
     :global(.dark) & {
-      background: linear-gradient(135deg, rgba(49, 46, 129, 0.2) 0%, rgba(15, 23, 42, 0.6) 100%);
-      border-color: rgba(99, 102, 241, 0.25);
-      box-shadow: 0 2px 12px rgba(99, 102, 241, 0.1);
+      background: rgba(49, 46, 129, 0.1);
+      border-color: rgba(99, 102, 241, 0.12);
     }
 
     [data-component="tool-title"][data-waiting] {
@@ -1144,21 +1202,21 @@
 @keyframes reasoning-glow {
   0%, 100% {
     border-color: rgba(139, 92, 246, 0.2);
-    box-shadow: 0 2px 8px -2px rgba(139, 92, 246, 0.08);
+    box-shadow: 0 0 0 1px rgba(139, 92, 246, 0.05), 0 2px 12px -4px rgba(139, 92, 246, 0.08);
   }
   50% {
-    border-color: rgba(139, 92, 246, 0.45);
-    box-shadow: 0 2px 16px -2px rgba(139, 92, 246, 0.2);
+    border-color: rgba(139, 92, 246, 0.35);
+    box-shadow: 0 0 0 1px rgba(139, 92, 246, 0.1), 0 2px 16px -4px rgba(139, 92, 246, 0.15);
   }
 }
 
 @keyframes reasoning-glow-dark {
   0%, 100% {
-    border-color: rgba(139, 92, 246, 0.25);
-    box-shadow: 0 2px 16px -2px rgba(139, 92, 246, 0.1);
+    border-color: rgba(139, 92, 246, 0.2);
+    box-shadow: 0 0 0 1px rgba(139, 92, 246, 0.08), 0 2px 16px -4px rgba(139, 92, 246, 0.1);
   }
   50% {
-    border-color: rgba(139, 92, 246, 0.55);
-    box-shadow: 0 2px 20px -2px rgba(139, 92, 246, 0.25);
+    border-color: rgba(139, 92, 246, 0.4);
+    box-shadow: 0 0 0 1px rgba(139, 92, 246, 0.15), 0 2px 20px -4px rgba(139, 92, 246, 0.2);
   }
 }

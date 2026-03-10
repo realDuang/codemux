@@ -38,7 +38,6 @@
     "@solid-primitives/i18n": "^2.2.1",
     "@solidjs/router": "^0.14.10",
     "@tanstack/solid-virtual": "^3.13.19",
-    "clsx": "^2.1.0",
     "diff": "^5.1.0",
     "electron-log": "^5.4.3",
     "electron-updater": "^6.8.3",
@@ -49,7 +48,6 @@
     "marked-shiki": "^1.1.2",
     "shiki": "^1.22.0",
     "solid-js": "^1.8.0",
-    "tailwind-merge": "^2.2.0",
     "vscode-languageserver-types": "^3.17.5",
     "ws": "^8.19.0"
   },
@@ -59,7 +57,6 @@
     "@types/diff": "^5.0.9",
     "@types/luxon": "^3.4.0",
     "@types/node": "^20.0.0",
-    "@types/sql.js": "^1.4.9",
     "@types/ws": "^8.18.1",
     "bun-types": "latest",
     "electron": "^40.6.1",

@@ -209,37 +209,6 @@ export class Auth {
   }
 
   /**
-   * Login with 6-digit access code
-   */
-  static async loginWithCode(code: string): Promise<{ success: boolean; error?: string }> {
-    try {
-      const deviceInfo = this.collectDeviceInfo();
-
-      const response = await fetch("/api/auth/verify", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          code,
-          device: deviceInfo,
-        }),
-      });
-
-      const data: AuthResponse = await response.json();
-
-      if (response.ok && data.success && data.token && data.deviceId) {
-        this.saveToken(data.token);
-        this.saveDeviceId(data.deviceId);
-        return { success: true };
-      } else {
-        return { success: false, error: data.error || "Login failed" };
-      }
-    } catch (err) {
-      logger.error("Login error:", err);
-      return { success: false, error: "Network error" };
-    }
-  }
-
-  /**
    * Logout current device
    */
   static async logout(): Promise<void> {

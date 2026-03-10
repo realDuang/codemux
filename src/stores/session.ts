@@ -36,13 +36,3 @@ export function getProjectName(project: UnifiedProject): string {
   const parts = project.directory.split(/[\\/]/).filter(Boolean);
   return parts[parts.length - 1] || "Unknown";
 }
-
-export function getProjectByDirectory(directory: string): UnifiedProject | undefined {
-  return sessionStore.projects.find(
-    (p) => p.directory === directory
-  );
-}
-
-export function getProjectById(projectID: string): UnifiedProject | undefined {
-  return sessionStore.projects.find((p) => p.id === projectID);
-}

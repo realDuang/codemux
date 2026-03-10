@@ -65,11 +65,3 @@ export function getEffectiveTheme(): "light" | "dark" {
   const mode = themeMode();
   return mode === "system" ? getSystemTheme() : mode;
 }
-
-export const Theme = {
-  get mode(): Accessor<ThemeMode> {
-    return themeMode;
-  },
-  set: setThemeMode,
-  getEffective: getEffectiveTheme,
-};

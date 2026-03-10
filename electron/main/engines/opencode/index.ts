@@ -78,9 +78,6 @@ export class OpenCodeAdapter extends EngineAdapter {
     promptSent: boolean;
   }>();
 
-  // Sessions that have been cancelled — ignore SSE events for these until next sendMessage
-  private cancelledSessions = new Set<string>();
-
   // Cache of SDK parts by partID for applying message.part.delta increments
   private partCache = new Map<string, SdkPart>();
 
@@ -259,9 +256,6 @@ export class OpenCodeAdapter extends EngineAdapter {
     const messageID = (sdkPart as any).messageID;
     const partID = (sdkPart as any).id;
 
-    // Ignore SSE events for cancelled sessions
-    if (sessionID && this.cancelledSessions.has(sessionID)) return;
-
     // First SSE event for this session — clear the first-event timeout
     if (sessionID) this.clearFirstEventTimer(sessionID);
 
@@ -309,9 +303,6 @@ export class OpenCodeAdapter extends EngineAdapter {
     const { sessionID, messageID, partID, field, delta } = props;
     if (!sessionID || !partID) return;
 
-    // Ignore SSE events for cancelled sessions
-    if (this.cancelledSessions.has(sessionID)) return;
-
     // First SSE event for this session — clear the first-event timeout
     this.clearFirstEventTimer(sessionID);
 
@@ -352,9 +343,6 @@ export class OpenCodeAdapter extends EngineAdapter {
   private handleMessageUpdated(sdkMsg: any): void {
     const sessionID = sdkMsg?.sessionID;
     if (!sessionID) return;
-
-    // Ignore SSE events for cancelled sessions
-    if (this.cancelledSessions.has(sessionID)) return;
 
     // First SSE event for this session — clear the first-event timeout
     this.clearFirstEventTimer(sessionID);
@@ -407,7 +395,6 @@ export class OpenCodeAdapter extends EngineAdapter {
   private handleSessionStatus(data: { sessionID: string; status: { type: string } }): void {
     const sessionID = data?.sessionID;
     if (!sessionID) return;
-    if (this.cancelledSessions.has(sessionID)) return;
 
     if (data.status?.type === "idle") {
       this.resolveSessionIdle(sessionID);
@@ -417,7 +404,6 @@ export class OpenCodeAdapter extends EngineAdapter {
   private handleSessionIdleEvent(data: { sessionID: string }): void {
     const sessionID = data?.sessionID;
     if (!sessionID) return;
-    if (this.cancelledSessions.has(sessionID)) return;
 
     // session.idle is the deprecated form of session.status: idle.
     // Both are emitted by OpenCode — handle whichever arrives first.
@@ -457,12 +443,12 @@ export class OpenCodeAdapter extends EngineAdapter {
           parts: pending.assistantParts,
         };
 
-    // Re-emit the message WITH time.completed so the frontend gets the definitive
-    // "turn done" signal (Chat.tsx:899-904 will clear the sending state).
-    this.emit("message.updated", {
-      sessionId: sessionID,
-      message: finalMessage,
-    });
+    // Clear part cache for this session
+    for (const [partID, part] of this.partCache.entries()) {
+      if ((part as any).sessionID === sessionID) {
+        this.partCache.delete(partID);
+      }
+    }
 
     pending.resolve(finalMessage);
   }
@@ -620,6 +606,7 @@ export class OpenCodeAdapter extends EngineAdapter {
     }
 
     this.status = "stopped";
+    this.emit("status.changed", { engineType: this.engineType, status: "stopped" });
     this.client = null;
 
     // Reject any pending messages
@@ -755,7 +742,7 @@ export class OpenCodeAdapter extends EngineAdapter {
     if (cached) return cached;
 
     try {
-      const client = this.ensureClient();
+      const client = this.clientForSession(sessionId);
       const result = await client.session.get({ sessionID: sessionId });
       if (result.error) return null;
 
@@ -784,9 +771,6 @@ export class OpenCodeAdapter extends EngineAdapter {
     content: MessagePromptContent[],
     options?: { mode?: string; modelId?: string; directory?: string },
   ): Promise<UnifiedMessage> {
-    // Clear cancelled state — a new message means the user wants to interact again
-    this.cancelledSessions.delete(sessionId);
-
     const session = this.sessions.get(sessionId);
 
     // Build prompt parts
@@ -945,7 +929,7 @@ export class OpenCodeAdapter extends EngineAdapter {
   }
 
   async listMessages(sessionId: string): Promise<UnifiedMessage[]> {
-    const client = this.ensureClient();
+    const client = this.clientForSession(sessionId);
     const result = await client.session.messages({ sessionID: sessionId });
     if (result.error) {
       throw new Error(`Failed to list messages: ${JSON.stringify(result.error)}`);

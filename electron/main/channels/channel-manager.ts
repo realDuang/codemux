@@ -41,7 +41,15 @@ function saveConfig(config: ChannelConfig): void {
   }
   const filePath = path.join(dir, `${config.type}.json`);
   const tmpPath = `${filePath}.tmp`;
-  fs.writeFileSync(tmpPath, JSON.stringify(config, null, 2));
+
+  // Exclude ephemeral runtime data (gatewayUrl) from persisted config
+  const configToSave = { ...config };
+  if (configToSave.options) {
+    const { gatewayUrl: _, ...persistentOptions } = configToSave.options as Record<string, unknown>;
+    configToSave.options = persistentOptions;
+  }
+
+  fs.writeFileSync(tmpPath, JSON.stringify(configToSave, null, 2));
   fs.renameSync(tmpPath, filePath);
 }
 

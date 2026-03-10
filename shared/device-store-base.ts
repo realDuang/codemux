@@ -32,7 +32,6 @@ const RESOLVED_RETENTION_MS = 24 * 60 * 60 * 1000;
  */
 export abstract class DeviceStoreBase {
   protected data: DeviceStoreData | null = null;
-  protected revokedSet: Set<string> = new Set();
 
   /** Subclass provides the absolute path to the devices JSON file. */
   protected abstract getFilePath(): string;
@@ -44,7 +43,6 @@ export abstract class DeviceStoreBase {
   /** Load data from disk into memory. Call from subclass constructor or init(). */
   protected loadData(): void {
     this.data = this.loadFromDisk();
-    this.revokedSet = new Set(this.data.revokedTokens);
   }
 
   /** Reload data from disk (for syncing with other processes in dev mode). */
@@ -71,7 +69,6 @@ export abstract class DeviceStoreBase {
         return {
           devices: parsed.devices || {},
           pendingRequests: parsed.pendingRequests || {},
-          revokedTokens: parsed.revokedTokens || [],
           jwtSecret: parsed.jwtSecret || this.generateSecret(),
         };
       } catch {
@@ -85,7 +82,6 @@ export abstract class DeviceStoreBase {
     const data: DeviceStoreData = {
       devices: {},
       pendingRequests: {},
-      revokedTokens: [],
       jwtSecret: this.generateSecret(),
     };
     this.save(data);
@@ -184,9 +180,6 @@ export abstract class DeviceStoreBase {
 
   verifyToken(token: string): { valid: boolean; deviceId?: string } {
     this.beforeRead();
-    if (this.revokedSet.has(token)) {
-      return { valid: false };
-    }
 
     const data = this.getData();
     const result = verifyJWT(token, data.jwtSecret);

@@ -57,7 +57,10 @@ export function verifyJWT(token: string, secret: string): { valid: boolean; payl
     const [headerB64, payloadB64, signature] = parts;
     const expectedSignature = createHmacSignature(`${headerB64}.${payloadB64}`, secret);
 
-    if (signature !== expectedSignature) return { valid: false };
+    const sigBuf = Buffer.from(signature);
+    const expectedBuf = Buffer.from(expectedSignature);
+    if (sigBuf.length !== expectedBuf.length) return { valid: false };
+    if (!crypto.timingSafeEqual(sigBuf, expectedBuf)) return { valid: false };
 
     const payload = JSON.parse(base64UrlDecode(payloadB64)) as TokenPayload;
 

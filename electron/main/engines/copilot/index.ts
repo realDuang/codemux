@@ -110,7 +110,6 @@ export class CopilotSdkAdapter extends EngineAdapter {
   private idleResolvers = new Map<string, (msg: UnifiedMessage) => void>();
   private toolCallParts = new Map<string, ToolPart>();
   private taskCompleteCallIds = new Set<string>();
-  private activeTurnSessions = new Set<string>();
 
   constructor(private options?: { cliPath?: string; env?: Record<string, string> }) {
     super();
@@ -146,7 +145,9 @@ export class CopilotSdkAdapter extends EngineAdapter {
       try {
         const status = await this.client.getStatus();
         this.version = status.version;
-      } catch {}
+      } catch (error) {
+        copilotLog.warn("Failed to get Copilot CLI version:", error);
+      }
 
       try {
         const authStatus = await this.client.getAuthStatus();
@@ -154,7 +155,9 @@ export class CopilotSdkAdapter extends EngineAdapter {
         this.authMessage = authStatus.isAuthenticated
           ? authStatus.login ?? authStatus.authType
           : authStatus.statusMessage ?? "Not authenticated";
-      } catch {}
+      } catch (error) {
+        copilotLog.warn("Failed to get Copilot auth status:", error);
+      }
 
       this.currentModelId = readConfigModel() ?? null;
       this.setStatus("running");
@@ -315,7 +318,6 @@ export class CopilotSdkAdapter extends EngineAdapter {
     this.sessionModes.delete(sessionId);
     this.sessionDirectories.delete(sessionId);
     this.sessionTodos.delete(sessionId);
-    this.activeTurnSessions.delete(sessionId);
   }
 
   async sendMessage(
@@ -533,6 +535,7 @@ export class CopilotSdkAdapter extends EngineAdapter {
     } catch (err) {
       const sdkSession = await this.client!.createSession({ ...config } as any);
       this.subscribeToSessionEvents(sdkSession);
+      this.activeSessions.set(sessionId, sdkSession);
       this.activeSessions.set(sdkSession.sessionId, sdkSession);
       if (workingDirectory) this.sessionDirectories.set(sdkSession.sessionId, workingDirectory);
       return sdkSession;
@@ -568,7 +571,9 @@ export class CopilotSdkAdapter extends EngineAdapter {
         case "subagent.started": this.handleSubagentStarted(sessionId, event.data as any); break;
         case "subagent.completed": this.handleSubagentCompleted(sessionId, event.data as any); break;
       }
-    } catch (err) {}
+    } catch (err) {
+      copilotLog.warn(`Error handling session event for session ${sessionId}:`, err);
+    }
   }
 
   private handleMessageDelta(sessionId: string, data: { deltaContent: string }): void {
@@ -679,7 +684,6 @@ export class CopilotSdkAdapter extends EngineAdapter {
   }
 
   private handleTurnStart(sessionId: string, _data: any): void {
-    this.activeTurnSessions.add(sessionId);
     const buffer = this.getOrCreateBuffer(sessionId);
     const stepStartPart: any = { id: timeId("part"), messageId: buffer.messageId, sessionId, type: "step-start" };
     buffer.parts.push(stepStartPart);
@@ -687,7 +691,6 @@ export class CopilotSdkAdapter extends EngineAdapter {
   }
 
   private handleTurnEnd(sessionId: string, _data: any): void {
-    this.activeTurnSessions.delete(sessionId);
     const buffer = this.getOrCreateBuffer(sessionId);
     this.flushTextAccumulator(buffer, sessionId);
     const stepFinishPart: any = { id: timeId("part"), messageId: buffer.messageId, sessionId, type: "step-finish" };

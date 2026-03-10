@@ -45,6 +45,5 @@ export interface PendingRequest {
 export interface DeviceStoreData {
   devices: Record<string, DeviceInfo>;
   pendingRequests: Record<string, PendingRequest>;
-  revokedTokens: string[];
   jwtSecret: string;
 }

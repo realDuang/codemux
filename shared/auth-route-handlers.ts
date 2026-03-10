@@ -1,5 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "http";
 import { sendJson, parseBody, extractBearerToken, getClientIp, isLocalhost } from "./http-utils";
+import type { DeviceInfo, PendingRequest } from "./device-store-types";
 
 // =============================================================================
 // Shared auth route handlers for auth-api-server and production-server.
@@ -16,18 +17,18 @@ import { sendJson, parseBody, extractBearerToken, getClientIp, isLocalhost } fro
 interface AuthDeviceStore {
   getAccessCode(): string;
   verifyToken(token: string): { valid: boolean; deviceId?: string };
-  getDevice(id: string): any;
-  listDevices(): any[];
-  addDevice(device: any): void;
+  getDevice(id: string): DeviceInfo | undefined;
+  listDevices(): DeviceInfo[];
+  addDevice(device: DeviceInfo): void;
   removeDevice(id: string): boolean;
-  updateDevice(id: string, updates: Record<string, any>): void;
+  updateDevice(id: string, updates: Partial<DeviceInfo>): void;
   generateDeviceId(): string;
   generateToken(deviceId: string): string;
-  createPendingRequest(device: { name: string; platform: string; browser: string }, ip: string): any;
-  getPendingRequest(id: string): any;
-  listPendingRequests(): any[];
-  approveRequest(requestId: string): any;
-  denyRequest(requestId: string): any;
+  createPendingRequest(device: { name: string; platform: string; browser: string }, ip: string): PendingRequest;
+  getPendingRequest(id: string): PendingRequest | undefined;
+  listPendingRequests(): PendingRequest[];
+  approveRequest(requestId: string): PendingRequest | undefined;
+  denyRequest(requestId: string): PendingRequest | undefined;
   revokeAllExcept(deviceId: string): number;
 }
 
@@ -75,19 +76,23 @@ export async function handleAuthRoutes(
     return handleLocalAuth(req, res, store, localAuthOptions);
   }
   if (pathname === "/api/auth/code" && req.method === "GET") {
+    if (!requireAuth(req, res, store)) return true;
     sendJson(res, { code: store.getAccessCode() });
     return true;
   }
 
   // --- Admin routes ---
   if (pathname === "/api/admin/pending-requests" && req.method === "GET") {
+    if (!requireAuth(req, res, store)) return true;
     sendJson(res, { requests: store.listPendingRequests() });
     return true;
   }
   if (pathname === "/api/admin/approve" && req.method === "POST") {
+    if (!requireAuth(req, res, store)) return true;
     return handleApproveRequest(req, res, store);
   }
   if (pathname === "/api/admin/deny" && req.method === "POST") {
+    if (!requireAuth(req, res, store)) return true;
     return handleDenyRequest(req, res, store);
   }
 

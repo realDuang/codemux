@@ -30,7 +30,6 @@ import type {
   UnifiedPart,
   UnifiedProject,
   TextPart,
-  FilePart,
 } from "../../../src/types/unified";
 
 // Re-export for convenience

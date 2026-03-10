@@ -851,14 +851,12 @@ export class ClaudeCodeAdapter extends EngineAdapter {
   /**
    * Create a canUseTool callback bound to a specific codemux session ID.
    * This callback is invoked by the SDK before each tool execution.
-   * For AskUserQuestion tools, it routes to the question UI.
-   * For other tools, it routes to the permission UI.
    */
   private createCanUseTool(sessionId: string): CanUseTool {
     return async (
-      toolName: string,
+      _toolName: string,
       input: Record<string, unknown>,
-      options: {
+      _options: {
         signal: AbortSignal;
         suggestions?: PermissionUpdate[];
         blockedPath?: string;
@@ -867,12 +865,7 @@ export class ClaudeCodeAdapter extends EngineAdapter {
         agentID?: string;
       },
     ): Promise<PermissionResult> => {
-      // --- Handle AskUserQuestion tool as a "question" ---
-      if (toolName === "AskUserQuestion") {
-        return this.handleAskUserQuestion(sessionId, input, options);
-      }
-
-      // --- Auto-approve all other tools ---
+      // --- Auto-approve all tools ---
       // Permissions are controlled via allowedTools + this callback.
       // We auto-allow everything to avoid blocking the agent workflow.
       return { behavior: "allow", updatedInput: input };
@@ -1701,7 +1694,11 @@ export class ClaudeCodeAdapter extends EngineAdapter {
 
     // Clean up
     this.messageBuffers.delete(sessionId);
-    this.toolCallParts.clear();
+    for (const [key, part] of this.toolCallParts) {
+      if (part.sessionId === sessionId) {
+        this.toolCallParts.delete(key);
+      }
+    }
 
     // Resolve sendMessage promise
     const resolver = this.sendResolvers.get(sessionId);

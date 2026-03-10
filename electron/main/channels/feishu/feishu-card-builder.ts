@@ -19,11 +19,11 @@ export function buildGroupWelcomeCard(
   sessionId: string,
 ): string {
   const commands = [
-    "/cancel — Cancel current request",
-    "/status — Show session status",
-    "/mode — Switch agent mode",
-    "/model — Switch model",
-    "/help — Show available commands",
+    "/cancel — 取消当前正在运行的消息",
+    "/status — 查看会话信息",
+    "/mode — 切换模式",
+    "/model — 切换模型",
+    "/help — 显示可用命令",
   ].join("\n");
 
   const elements: unknown[] = [
@@ -32,11 +32,11 @@ export function buildGroupWelcomeCard(
       text: {
         tag: "lark_md",
         content: [
-          `**Project:** ${projectName}`,
-          `**Engine:** ${engineType}`,
-          `**Session:** ${sessionId.slice(0, 12)}...`,
+          `**项目:** ${projectName}`,
+          `**引擎:** ${engineType}`,
+          `**会话:** ${sessionId.slice(0, 12)}...`,
           "",
-          "Send a message to start coding. Available commands:",
+          "发送消息即可开始对话。可用命令：",
           commands,
         ].join("\n"),
       },
@@ -46,7 +46,7 @@ export function buildGroupWelcomeCard(
   const card = {
     config: { wide_screen_mode: true },
     header: {
-      title: { tag: "plain_text", content: "CodeMux Session" },
+      title: { tag: "plain_text", content: "CodeMux 会话" },
       template: "green",
     },
     elements,

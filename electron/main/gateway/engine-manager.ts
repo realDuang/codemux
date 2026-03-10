@@ -555,6 +555,17 @@ export class EngineManager extends EventEmitter {
     const conv = conversationStore.get(sessionId);
     if (!conv) return;
 
+    // Clean up buffers for all messages in this session
+    try {
+      const messages = conversationStore.listMessages(sessionId);
+      for (const msg of messages) {
+        this.stepPartsBuffer.delete(msg.id);
+        this.contentPartsBuffer.delete(msg.id);
+      }
+    } catch (err) {
+      engineManagerLog.warn(`Failed to clean up buffers for session ${sessionId}:`, err);
+    }
+
     // Best-effort engine session cleanup
     if (conv.engineSessionId) {
       try {
@@ -565,6 +576,7 @@ export class EngineManager extends EventEmitter {
       } catch {
         // Engine cleanup is best-effort
       }
+      this.engineToConvMap.delete(conv.engineSessionId);
     }
 
     conversationStore.delete(sessionId);
@@ -583,6 +595,17 @@ export class EngineManager extends EventEmitter {
     });
 
     for (const conv of projectConvs) {
+      // Clean up buffers for all messages in this session
+      try {
+        const messages = conversationStore.listMessages(conv.id);
+        for (const msg of messages) {
+          this.stepPartsBuffer.delete(msg.id);
+          this.contentPartsBuffer.delete(msg.id);
+        }
+      } catch (err) {
+        engineManagerLog.warn(`Failed to clean up buffers for session ${conv.id} during project delete:`, err);
+      }
+
       // Best-effort engine session cleanup
       if (conv.engineSessionId) {
         try {
@@ -593,14 +616,16 @@ export class EngineManager extends EventEmitter {
         } catch (err) {
           engineManagerLog.warn(`Failed to delete engine session for ${conv.id} during project delete:`, err);
         }
+        this.engineToConvMap.delete(conv.engineSessionId);
       }
       conversationStore.delete(conv.id);
       this.sessionEngineMap.delete(conv.id);
     }
   }
 
-  async renameSession(sessionId: string, title: string): Promise<void> {
+  async renameSession(sessionId: string, title: string): Promise<{ success: boolean }> {
     conversationStore.rename(sessionId, title);
+    return { success: true };
   }
 
   // --- Messages ---

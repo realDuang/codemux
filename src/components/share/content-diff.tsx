@@ -12,7 +12,6 @@ type UnifiedLine = {
 
 interface Props {
   diff: string
-  lang?: string
 }
 
 export function ContentDiff(props: Props) {

@@ -16,7 +16,7 @@ export function createElapsedTimer(startTime: () => number, running: () => boole
 
   onCleanup(() => clearInterval(timer))
 
-  return () => running() ? elapsed() : elapsed()
+  return () => elapsed()
 }
 
 export function createOverflow() {

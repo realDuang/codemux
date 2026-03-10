@@ -395,8 +395,8 @@ export default function Settings() {
                                     <select
                                       value={selectedModelId()}
                                       onChange={(e) => handleModelSelect(e.currentTarget.value)}
-                                      disabled={engine.capabilities.modelSwitchable === false}
-                                      class={`w-[260px] px-3 py-1.5 text-sm font-medium rounded-lg border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-gray-700 dark:text-gray-300 transition-colors ${engine.capabilities.modelSwitchable === false ? "opacity-60 cursor-not-allowed" : "cursor-pointer hover:bg-gray-100 dark:hover:bg-slate-600"}`}
+                                      disabled={engine.capabilities?.modelSwitchable === false}
+                                      class={`w-[260px] px-3 py-1.5 text-sm font-medium rounded-lg border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-gray-700 dark:text-gray-300 transition-colors ${engine.capabilities?.modelSwitchable === false ? "opacity-60 cursor-not-allowed" : "cursor-pointer hover:bg-gray-100 dark:hover:bg-slate-600"}`}
                                     >
                                       <For each={providerGroups()}>
                                         {([pid, group]) => (

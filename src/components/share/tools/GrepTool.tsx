@@ -18,8 +18,8 @@ export function GrepTool(props: ToolProps) {
         <div data-component="tool-title">
           <span data-slot="icon" data-icon-color="indigo"><IconDocumentMagnifyingGlass width={14} height={14} /></span>
           <span data-slot="name">Grep</span>
-          <span data-slot="target" title={props.state.input.pattern}>
-            &ldquo;{props.state.input.pattern}&rdquo;
+          <span data-slot="target" title={props.state.input?.pattern}>
+            &ldquo;{props.state.input?.pattern}&rdquo;
           </span>
           <Show when={props.state.status === "completed"}>
             <span data-slot="summary" data-color="dimmed">
@@ -37,15 +37,13 @@ export function GrepTool(props: ToolProps) {
         <Collapsible.Arrow />
       </Collapsible.Trigger>
 
-      <Collapsible.Content>
-         <div data-component="tool-result">
-           <Switch>
-             <Match when={matchCount() > 0 || props.state.output}>
-                <ContentText expand compact text={props.state.output} />
-             </Match>
-           </Switch>
-         </div>
-      </Collapsible.Content>
+       <Collapsible.Content>
+         <Show when={matchCount() > 0 || props.state.output}>
+           <div data-component="tool-result">
+             <ContentText expand compact text={props.state.output} />
+           </div>
+         </Show>
+       </Collapsible.Content>
     </Collapsible>
   );
 }

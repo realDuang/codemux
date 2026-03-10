@@ -203,7 +203,6 @@ export function PromptInput(props: PromptInputProps) {
               const isActive = () => agent().id === mode.id;
               const color = getModeColor(mode, index());
               const icon = getModeIcon(mode, index());
-              const isModePlan = displayName.toLowerCase() === "plan";
 
               return (
                 <button

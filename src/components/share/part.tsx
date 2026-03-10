@@ -53,7 +53,7 @@ import {
 import type { UnifiedMessage, UnifiedPart, UnifiedPermission, UnifiedQuestion, ToolPart } from "../../types/unified";
 import { useI18n } from "../../lib/i18n";
 import { logger } from "../../lib/logger";
-import { isExpanded, toggleExpanded, messageStore, setExpanded } from "../../stores/message";
+import { isExpanded, toggleExpanded } from "../../stores/message";
 
 import styles from "./part.module.css";
 
@@ -86,7 +86,7 @@ export function Part(props: PartProps) {
     >
       <div data-component="decoration">
         <div data-slot="anchor" title={t().parts.linkToMessage}>
-          <a
+            <a
             href={`#${id()}`}
             onClick={(e) => {
               e.preventDefault();
@@ -121,66 +121,10 @@ export function Part(props: PartProps) {
               >
                 <IconBrain width={18} height={18} />
               </Match>
-              <Match
-                when={
-                  props.part.type === "tool" && (props.part as ToolPart).originalTool === "todowrite"
-                }
-              >
-                <IconQueueList width={18} height={18} />
-              </Match>
-              <Match
-                when={
-                  props.part.type === "tool" && (props.part as ToolPart).originalTool === "todoread"
-                }
-              >
-                <IconQueueList width={18} height={18} />
-              </Match>
-              <Match
-                when={props.part.type === "tool" && (props.part as ToolPart).originalTool === "bash"}
-              >
-                <IconCommandLine width={18} height={18} />
-              </Match>
-              <Match
-                when={props.part.type === "tool" && (props.part as ToolPart).originalTool === "edit"}
-              >
-                <IconPencilSquare width={18} height={18} />
-              </Match>
-              <Match
-                when={props.part.type === "tool" && (props.part as ToolPart).originalTool === "write"}
-              >
-                <IconDocumentPlus width={18} height={18} />
-              </Match>
-              <Match
-                when={props.part.type === "tool" && (props.part as ToolPart).originalTool === "read"}
-              >
-                <IconDocument width={18} height={18} />
-              </Match>
-              <Match
-                when={props.part.type === "tool" && (props.part as ToolPart).originalTool === "grep"}
-              >
-                <IconDocumentMagnifyingGlass width={18} height={18} />
-              </Match>
-              <Match
-                when={props.part.type === "tool" && (props.part as ToolPart).originalTool === "list"}
-              >
-                <IconRectangleStack width={18} height={18} />
-              </Match>
-              <Match
-                when={props.part.type === "tool" && (props.part as ToolPart).originalTool === "glob"}
-              >
-                <IconMagnifyingGlass width={18} height={18} />
-              </Match>
-              <Match
-                when={
-                  props.part.type === "tool" && (props.part as ToolPart).originalTool === "webfetch"
-                }
-              >
-                <IconGlobeAlt width={18} height={18} />
-              </Match>
-              <Match
-                when={props.part.type === "tool" && (props.part as ToolPart).originalTool === "task"}
-              >
-                <IconRobot width={18} height={18} />
+              <Match when={props.part.type === "tool"}>
+                <div data-slot="icon-wrapper">
+                  <ToolIcon tool={(props.part as ToolPart).originalTool} size={18} />
+                </div>
               </Match>
               <Match when={true}>
                 <IconSparkles width={18} height={18} />
@@ -373,11 +317,10 @@ export function Part(props: PartProps) {
               <div data-component="tool" data-tool={(props.part as ToolPart).normalizedTool}>
                 {/* Guard: if tool state has no input (e.g. interrupted session replay), render FallbackTool */}
                 {!(props.part.state as any).input ? (
-                  <FallbackTool
+                    <FallbackTool
                     message={props.message}
                     id={props.part.id}
                     tool={(props.part as ToolPart).title || (props.part as ToolPart).originalTool}
-                    // @ts-ignore
                     state={{ ...props.part.state, input: {} }}
                   />
                 ) : (
@@ -387,7 +330,6 @@ export function Part(props: PartProps) {
                       message={props.message}
                       id={props.part.id}
                       tool={(props.part as ToolPart).normalizedTool}
-                      // @ts-ignore
                       state={props.part.state}
                     />
                   </Match>
@@ -396,7 +338,6 @@ export function Part(props: PartProps) {
                       message={props.message}
                       id={props.part.id}
                       tool={(props.part as ToolPart).normalizedTool}
-                      // @ts-ignore
                       state={props.part.state}
                     />
                   </Match>
@@ -405,7 +346,6 @@ export function Part(props: PartProps) {
                       message={props.message}
                       id={props.part.id}
                       tool={(props.part as ToolPart).normalizedTool}
-                      // @ts-ignore
                       state={props.part.state}
                     />
                   </Match>
@@ -414,7 +354,6 @@ export function Part(props: PartProps) {
                       message={props.message}
                       id={props.part.id}
                       tool={(props.part as ToolPart).normalizedTool}
-                      // @ts-ignore
                       state={props.part.state}
                     />
                   </Match>
@@ -423,7 +362,6 @@ export function Part(props: PartProps) {
                       message={props.message}
                       id={props.part.id}
                       tool={(props.part as ToolPart).normalizedTool}
-                      // @ts-ignore
                       state={props.part.state}
                     />
                   </Match>
@@ -432,7 +370,6 @@ export function Part(props: PartProps) {
                       message={props.message}
                       id={props.part.id}
                       tool={(props.part as ToolPart).normalizedTool}
-                      // @ts-ignore
                       state={props.part.state}
                     />
                   </Match>
@@ -440,7 +377,6 @@ export function Part(props: PartProps) {
                     <BashTool
                       id={props.part.id}
                       tool={(props.part as ToolPart).normalizedTool}
-                      // @ts-ignore
                       state={props.part.state}
                       message={props.message}
                     />
@@ -450,7 +386,6 @@ export function Part(props: PartProps) {
                       message={props.message}
                       id={props.part.id}
                       tool={(props.part as ToolPart).normalizedTool}
-                      // @ts-ignore
                       state={props.part.state}
                     />
                   </Match>
@@ -459,7 +394,6 @@ export function Part(props: PartProps) {
                       message={props.message}
                       id={props.part.id}
                       tool={(props.part as ToolPart).normalizedTool}
-                      // @ts-ignore
                       state={props.part.state}
                     />
                   </Match>
@@ -468,7 +402,6 @@ export function Part(props: PartProps) {
                       id={props.part.id}
                       tool={(props.part as ToolPart).normalizedTool}
                       message={props.message}
-                      // @ts-ignore
                       state={props.part.state}
                     />
                   </Match>
@@ -477,7 +410,6 @@ export function Part(props: PartProps) {
                       message={props.message}
                       id={props.part.id}
                       tool={(props.part as ToolPart).title || (props.part as ToolPart).originalTool}
-                      // @ts-ignore
                       state={props.part.state}
                     />
                   </Match>

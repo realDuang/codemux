@@ -46,14 +46,12 @@ function RemoteRedirect() {
 function ChatRoute() {
   const navigate = useNavigate();
 
-  createEffect(() => {
-    if (!Auth.isAuthenticated()) {
-      logger.debug("❌ Not authenticated, redirecting to entry");
-      navigate("/", { replace: true });
-    } else {
-      logger.debug("✅ Authenticated, showing chat");
-    }
-  });
+  if (!Auth.isAuthenticated()) {
+    logger.debug("❌ Not authenticated, redirecting to entry");
+    navigate("/", { replace: true });
+  } else {
+    logger.debug("✅ Authenticated, showing chat");
+  }
 
   return <Chat />;
 }
@@ -67,7 +65,7 @@ function StartupSplash() {
       {/* Animated background glow */}
       <div class="absolute inset-0 flex items-center justify-center pointer-events-none">
         <div
-          class="w-[500px] h-[500px] rounded-full opacity-[0.07] dark:opacity-[0.05]"
+          class="w-[500px] h-[500px] rounded-full opacity-[0.07] dark:opacity-[0.05] dark:animate-[dark-splash-pulse_3s_ease-in-out_infinite]"
           style={{
             background: "radial-gradient(circle, #3b82f6 0%, transparent 70%)",
             animation: "splash-pulse 3s ease-in-out infinite",
@@ -175,7 +173,7 @@ function StartupSplash() {
           0%, 100% { transform: translateX(-100%); }
           50% { transform: translateX(100%); }
         }
-        .dark @keyframes splash-pulse {
+        @keyframes dark-splash-pulse {
           0%, 100% { transform: scale(0.8); opacity: 0.05; }
           50% { transform: scale(1.1); opacity: 0.08; }
         }

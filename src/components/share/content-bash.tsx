@@ -1,7 +1,7 @@
 import style from "./content-bash.module.css"
 import { createResource, createSignal } from "solid-js"
 import { createOverflow } from "./common"
-import { codeToHtml } from "shiki"
+import { useI18n } from "../../lib/i18n";
 
 interface Props {
   command: string
@@ -11,9 +11,11 @@ interface Props {
 }
 
 export function ContentBash(props: Props) {
+  const { t } = useI18n();
   const [commandHtml] = createResource(
     () => props.command,
     async (command) => {
+      const { codeToHtml } = await import("shiki")
       return codeToHtml(command || "", {
         lang: "bash",
         themes: {
@@ -27,6 +29,7 @@ export function ContentBash(props: Props) {
   const [outputHtml] = createResource(
     () => props.output,
     async (output) => {
+      const { codeToHtml } = await import("shiki")
       return codeToHtml(output || "", {
         lang: "console",
         themes: {
@@ -52,14 +55,14 @@ export function ContentBash(props: Props) {
         </div>
       </div>
 
-      {!props.expand && overflow.status && (
+      {((!props.expand && overflow.status) || expanded()) && (
         <button
           type="button"
           data-component="text-button"
           data-slot="expand-button"
           onClick={() => setExpanded((e) => !e)}
         >
-          {expanded() ? "Show less" : "Show more"}
+          {expanded() ? t().common.showLess : t().common.showMore}
         </button>
       )}
     </div>

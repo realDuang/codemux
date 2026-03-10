@@ -15,7 +15,7 @@ export function WebFetchTool(props: ToolProps) {
         <div data-component="tool-title">
           <span data-slot="icon" data-icon-color="teal"><IconGlobeAlt width={14} height={14} /></span>
           <span data-slot="name">Fetch</span>
-          <span data-slot="target" title={props.state.input.url}>{props.state.input.url}</span>
+          <span data-slot="target" title={props.state.input?.url}>{props.state.input?.url}</span>
         </div>
         <ToolDuration
           time={DateTime.fromMillis(props.state.time.end)
@@ -33,7 +33,7 @@ export function WebFetchTool(props: ToolProps) {
             </Match>
             <Match when={props.state.output}>
               <ContentCode
-                lang={props.state.input.format || "text"}
+                lang={props.state.input?.format || "text"}
                 code={props.state.output}
               />
             </Match>

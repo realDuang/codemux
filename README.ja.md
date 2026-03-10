@@ -22,7 +22,7 @@
 
 ### 1. GitHub Copilot CLI 初のGUI
 
-GitHub Copilot は世界で最も広く採用されているAIコーディングツールです。**Copilot CLI** は [ACP プロトコル](https://github.com/anthropics/agent-control-protocol)を通じてターミナルで完全なエージェント機能を提供しますが、そのためのグラフィカルインターフェースは存在しませんでした。
+GitHub Copilot は世界で最も広く採用されているAIコーディングツールです。**Copilot CLI** はターミナルで完全なエージェント機能を提供しますが、そのためのグラフィカルインターフェースは存在しませんでした。
 
 **CodeMux は Copilot CLI 初の、そして現時点で唯一のオープンソースGUIです。** プロトコルレベル（JSON-RPC over stdio）で接続し、Copilot の完全なエージェントコーディング体験をビジュアルインターフェースで提供します。
 
@@ -35,7 +35,7 @@ GitHub Copilot は世界で最も広く採用されているAIコーディング
 | エンジン | プロトコル | ステータス |
 |--------|----------|--------|
 | **[OpenCode](https://opencode.ai)** | HTTP REST + SSE | ✅ 安定版 |
-| **[GitHub Copilot CLI](https://docs.github.com/en/copilot/using-github-copilot/using-github-copilot-coding-agent-in-cli)** | ACP (JSON-RPC/stdio) | ✅ 安定版 |
+| **[GitHub Copilot CLI](https://docs.github.com/en/copilot/using-github-copilot/using-github-copilot-coding-agent-in-cli)** | JSON-RPC/stdio | ✅ 安定版 |
 | **[Claude Code](https://claude.ai/code)** | SDK (stdio) | ✅ 安定版 |
 
 ### 3. エージェントの思考連鎖を可視化

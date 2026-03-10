@@ -22,7 +22,7 @@
 
 ### 1. First GUI for GitHub Copilot CLI
 
-GitHub Copilot is the most widely adopted AI coding tool in the world. **Copilot CLI** brings its full agentic capabilities to the terminal via the [ACP protocol](https://github.com/anthropics/agent-control-protocol) — but there's no graphical interface for it.
+GitHub Copilot is the most widely adopted AI coding tool in the world. **Copilot CLI** brings its full agentic capabilities to the terminal — but there's no graphical interface for it.
 
 **CodeMux is the first — and currently only — open-source GUI for Copilot CLI.** It connects at the protocol level (JSON-RPC over stdio), giving you Copilot's complete agentic coding experience in a visual interface.
 
@@ -35,7 +35,7 @@ Switch between engines from a single interface. Each keeps its full power — fi
 | Engine | Protocol | Status |
 |--------|----------|--------|
 | **[OpenCode](https://opencode.ai)** | HTTP REST + SSE | ✅ Stable |
-| **[GitHub Copilot CLI](https://docs.github.com/en/copilot/using-github-copilot/using-github-copilot-coding-agent-in-cli)** | ACP (JSON-RPC/stdio) | ✅ Stable |
+| **[GitHub Copilot CLI](https://docs.github.com/en/copilot/using-github-copilot/using-github-copilot-coding-agent-in-cli)** | JSON-RPC/stdio | ✅ Stable |
 | **[Claude Code](https://claude.ai/code)** | SDK (stdio) | ✅ Stable |
 
 ### 3. Agent Chain-of-Thought Visualization

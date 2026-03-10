@@ -22,7 +22,7 @@
 
 ### 1. 首个 GitHub Copilot CLI 图形界面
 
-GitHub Copilot 是全球使用最广泛的 AI 编程工具。**Copilot CLI** 通过 [ACP 协议](https://github.com/anthropics/agent-control-protocol) 将其完整的 Agent 能力带入终端 —— 但它没有图形界面。
+GitHub Copilot 是全球使用最广泛的 AI 编程工具。**Copilot CLI** 将其完整的 Agent 能力带入终端 —— 但它没有图形界面。
 
 **CodeMux 是首个 —— 也是目前唯一的 —— Copilot CLI 开源图形界面。** 它在协议层面连接（JSON-RPC over stdio），让你在可视化界面中获得 Copilot 完整的 Agent 编程体验。
 
@@ -35,7 +35,7 @@ GitHub Copilot 是全球使用最广泛的 AI 编程工具。**Copilot CLI** 通
 | 引擎 | 协议 | 状态 |
 |--------|----------|--------|
 | **[OpenCode](https://opencode.ai)** | HTTP REST + SSE | ✅ 稳定 |
-| **[GitHub Copilot CLI](https://docs.github.com/en/copilot/using-github-copilot/using-github-copilot-coding-agent-in-cli)** | ACP (JSON-RPC/stdio) | ✅ 稳定 |
+| **[GitHub Copilot CLI](https://docs.github.com/en/copilot/using-github-copilot/using-github-copilot-coding-agent-in-cli)** | JSON-RPC/stdio | ✅ 稳定 |
 | **[Claude Code](https://claude.ai/code)** | SDK (stdio) | ✅ 稳定 |
 
 ### 3. Agent 思维链可视化

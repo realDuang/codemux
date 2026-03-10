@@ -1,0 +1,122 @@
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { isElectron } from '../../../../src/lib/platform';
+
+vi.mock('../../../../src/lib/platform', () => ({
+  isElectron: vi.fn(() => false),
+}));
+
+// Create an in-memory localStorage mock for Node environment
+function createLocalStorageMock() {
+  const store = new Map<string, string>();
+  return {
+    getItem: (key: string) => store.get(key) ?? null,
+    setItem: (key: string, value: string) => store.set(key, value),
+    removeItem: (key: string) => store.delete(key),
+    clear: () => store.clear(),
+    get length() { return store.size; },
+    key: (index: number) => [...store.keys()][index] ?? null,
+  };
+}
+
+// Stub localStorage and window before importing settings (which may access them at module level)
+vi.stubGlobal('localStorage', createLocalStorageMock());
+vi.stubGlobal('window', globalThis);
+
+// Import AFTER globals are stubbed
+const { getSetting, saveSetting, getNestedSetting, saveNestedSetting } = await import('../../../../src/lib/settings');
+
+describe('settings', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    localStorage.clear();
+    vi.mocked(isElectron).mockReturnValue(false);
+    // Reset electron-related globals
+    delete (window as any).electronAPI;
+    // Reset the internal renderer cache by re-stubbing window without electronAPI
+  });
+
+  describe('getSetting / saveSetting', () => {
+    it('manages simple settings in browser mode using localStorage', () => {
+      saveSetting('theme', 'dark');
+      expect(localStorage.getItem('settings:theme')).toBe(JSON.stringify('dark'));
+      expect(getSetting('theme')).toBe('dark');
+    });
+
+    it('returns undefined for missing keys or handles JSON parse errors', () => {
+      expect(getSetting('missing')).toBeUndefined();
+      
+      localStorage.setItem('settings:bad', 'invalid-json');
+      expect(getSetting('bad')).toBeUndefined();
+    });
+
+    it('interacts with Electron API when in electron mode', () => {
+      vi.mocked(isElectron).mockReturnValue(true);
+      const saveMock = vi.fn();
+      (window as any).electronAPI = {
+        settings: {
+          cache: { theme: 'light' },
+          save: saveMock,
+        },
+      };
+
+      expect(getSetting('theme')).toBe('light');
+      
+      saveSetting('theme', 'system');
+      expect(saveMock).toHaveBeenCalledWith({ theme: 'system' });
+      expect(getSetting('theme')).toBe('system');
+      // Also saved to localStorage as secondary cache
+      expect(localStorage.getItem('settings:theme')).toBe(JSON.stringify('system'));
+    });
+  });
+
+  describe('getNestedSetting', () => {
+    it('retrieves values from nested paths correctly', () => {
+      localStorage.setItem('settings:engineModels', JSON.stringify({
+        opencode: { modelID: 'gpt-4o' },
+        claude: { modelID: 'claude-3-5-sonnet' }
+      }));
+
+      expect(getNestedSetting('engineModels.opencode.modelID')).toBe('gpt-4o');
+      expect(getNestedSetting('engineModels.claude')).toEqual({ modelID: 'claude-3-5-sonnet' });
+    });
+
+    it('returns undefined for non-existent or invalid paths', () => {
+      localStorage.setItem('settings:engineModels', JSON.stringify({
+        opencode: { modelID: 'gpt-4o' }
+      }));
+
+      expect(getNestedSetting('engineModels.missing')).toBeUndefined();
+      expect(getNestedSetting('engineModels.opencode.missing')).toBeUndefined();
+      expect(getNestedSetting('engineModels.opencode.modelID.sub')).toBeUndefined();
+      expect(getNestedSetting('missing.path')).toBeUndefined();
+    });
+
+    it('delegates to getSetting for single-level paths', () => {
+      saveSetting('theme', 'dark');
+      expect(getNestedSetting('theme')).toBe('dark');
+    });
+  });
+
+  describe('saveNestedSetting', () => {
+    it('saves values to nested paths and merges with existing sibling keys', () => {
+      saveSetting('engineModels', { opencode: { modelID: 'gpt-4o' } });
+      
+      saveNestedSetting('engineModels.claude.modelID', 'claude-3');
+      
+      const saved = getSetting<any>('engineModels');
+      expect(saved.opencode.modelID).toBe('gpt-4o');
+      expect(saved.claude.modelID).toBe('claude-3');
+    });
+
+    it('creates intermediate objects if they do not exist', () => {
+      saveNestedSetting('a.b.c', 123);
+      expect(getNestedSetting('a.b.c')).toBe(123);
+      expect(getSetting('a')).toEqual({ b: { c: 123 } });
+    });
+
+    it('delegates to saveSetting for single-level paths', () => {
+      saveNestedSetting('theme', 'light');
+      expect(localStorage.getItem('settings:theme')).toBe(JSON.stringify('light'));
+    });
+  });
+});

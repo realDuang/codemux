@@ -13,6 +13,9 @@ class TestDeviceStore extends DeviceStoreBase {
   protected getFilePath(): string {
     return this.filePath;
   }
+  public cleanupExpiredRequestsPublic(): void {
+    this.cleanupExpiredRequests();
+  }
 }
 
 describe('DeviceStoreBase', () => {
@@ -168,6 +171,65 @@ describe('DeviceStoreBase', () => {
       // Non-pending
       expect(store.denyRequest('none')).toBeUndefined();
     });
+
+    it('handles approveRequest edge cases: expired or non-existent', () => {
+      vi.useFakeTimers();
+      const req = store.createPendingRequest({ name: 'PC' } as any, 'ip');
+      
+      // Non-existent
+      expect(store.approveRequest('none')).toBeUndefined();
+
+      // Expired
+      vi.advanceTimersByTime(6 * 60 * 1000);
+      expect(store.approveRequest(req.id)).toBeUndefined();
+      expect(store.getPendingRequest(req.id)?.status).toBe('expired');
+      vi.useRealTimers();
+    });
+  });
+
+  describe('Additional Edge Cases & Maintenance', () => {
+    it('cleans up expired requests after 24-hour retention', () => {
+      vi.useFakeTimers();
+      const req1 = store.createPendingRequest({ name: 'Old' } as any, 'ip');
+      
+      // Resolve req1 (approve) and let it age
+      store.approveRequest(req1.id);
+      
+      // Age 25 hours
+      vi.advanceTimersByTime(25 * 60 * 60 * 1000);
+      
+      // Statuses: 
+      // req1: approved (25h ago)
+      
+      // req2: created now, will be fresh
+      const req2 = store.createPendingRequest({ name: 'Recent' } as any, 'ip');
+      store.denyRequest(req2.id);
+      
+      store.cleanupExpiredRequestsPublic();
+      
+      expect(store.getPendingRequest(req1.id)).toBeUndefined(); // Removed (>24h)
+      expect(store.getPendingRequest(req2.id)).toBeDefined();   // Kept (<24h)
+      vi.useRealTimers();
+    });
+
+    it('handles revokeAllExcept edge cases', () => {
+      // Empty store
+      expect(store.revokeAllExcept('none')).toBe(0);
+
+      // Only kept device exists
+      store.addDevice({ id: 'd1' } as any);
+      expect(store.revokeAllExcept('d1')).toBe(0);
+      expect(store.getDevice('d1')).toBeDefined();
+    });
+
+    it('sorts devices by lastSeenAt descending', () => {
+      store.addDevice({ id: 'd1', lastSeenAt: 100 } as any);
+      store.addDevice({ id: 'd2', lastSeenAt: 300 } as any);
+      store.addDevice({ id: 'd3', lastSeenAt: 200 } as any);
+
+      const sorted = store.listDevices();
+      expect(sorted.map(d => d.id)).toEqual(['d2', 'd3', 'd1']);
+    });
   });
 
   describe('Access Code', () => {
@@ -177,6 +239,11 @@ describe('DeviceStoreBase', () => {
       
       // Consistency check
       expect(store.getAccessCode()).toBe(code);
+      
+      // Always 6 digits
+      for (let i = 0; i < 5; i++) {
+        expect(store.getAccessCode()).toMatch(/^\d{6}$/);
+      }
     });
   });
 });

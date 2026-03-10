@@ -1,7 +1,0 @@
-{
-  "permissions": {
-    "allow": [
-      "Bash(del /f /q _benchmark_tmp.txt)"
-    ]
-  }
-}

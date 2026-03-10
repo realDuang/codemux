@@ -125,35 +125,3 @@ export function inferToolKind(
 
   return "other";
 }
-
-/**
- * Get a display label for a normalized tool name.
- */
-export function getToolDisplayName(normalizedTool: NormalizedToolName): string {
-  switch (normalizedTool) {
-    case "shell":
-      return "Shell";
-    case "read":
-      return "Read";
-    case "write":
-      return "Write";
-    case "edit":
-      return "Edit";
-    case "grep":
-      return "Search";
-    case "glob":
-      return "Find Files";
-    case "list":
-      return "List";
-    case "web_fetch":
-      return "Web Fetch";
-    case "task":
-      return "Agent Task";
-    case "todo":
-      return "Todo";
-    case "sql":
-      return "SQL";
-    case "unknown":
-      return "Tool";
-  }
-}

@@ -7,7 +7,7 @@
 ### Tech Stack
 
 - **Frontend Framework**: Vite + SolidJS
-- **Styling**: Tailwind CSS v3.4.0
+- **Styling**: Tailwind CSS v4.0.0
 - **Package Manager**: Bun
 - **Communication**: REST API + Server-Sent Events (SSE)
 - **Authentication**: 6-digit random code
@@ -39,7 +39,7 @@ codemux/
 │   │   └── i18n.tsx            # i18n provider and utilities
 │   ├── locales/        # Translation files
 │   │   ├── en.ts               # English translations
-│   │   └── zh-CN.ts            # Simplified Chinese translations
+│   │   └── zh.ts               # Simplified Chinese translations
 │   ├── stores/         # State management
 │   │   ├── session.ts  # Session state
 │   │   ├── message.ts  # Message state
@@ -311,7 +311,7 @@ CodeMux supports multiple languages using `@solid-primitives/i18n`.
 #### Translation Files (`src/locales/`)
 
 - **`en.ts`**: English translations with `LocaleDict` interface definition
-- **`zh-CN.ts`**: Simplified Chinese translations implementing `LocaleDict`
+- **`zh.ts`**: Simplified Chinese translations implementing `LocaleDict`
 
 Translation structure:
 
@@ -408,23 +408,23 @@ import { translations as frTranslations } from "../locales/fr";
 
 const dictionaries = {
   en: enTranslations,
-  "zh-CN": zhCNTranslations,
+  "zh": zhTranslations,
   fr: frTranslations, // Add new language
 };
 
 export const localeNames: Record<LocaleCode, string> = {
   en: "English",
-  "zh-CN": "简体中文",
+  "zh": "简体中文",
   fr: "Français", // Add display name
 };
 
-export type LocaleCode = "en" | "zh-CN" | "fr"; // Add to type
+export type LocaleCode = "en" | "zh" | "fr"; // Add to type
 ```
 
 3. **Update `LanguageSwitcher.tsx`**:
 
 ```typescript
-const locales: LocaleCode[] = ["en", "zh-CN", "fr"]; // Add new language
+const locales: LocaleCode[] = ["en", "zh", "fr"]; // Add new language
 ```
 
 ### Adding New Translation Keys
@@ -441,7 +441,7 @@ export interface LocaleDict {
 }
 ```
 
-2. **Add translations** in all language files (`en.ts`, `zh-CN.ts`, etc.):
+2. **Add translations** in all language files (`en.ts`, `zh.ts`, etc.):
 
 ```typescript
 export const translations: LocaleDict = {
@@ -773,7 +773,7 @@ onEvent({ type: eventType, data: properties.part });
 
 ### UI and Styling
 
-- `tailwindcss`: ^3.4.0 - CSS framework
+- `tailwindcss`: ^4.0.0 - CSS framework
 - `autoprefixer`: ^10.4.20 - CSS prefixing
 - `postcss`: ^8.4.49 - CSS processing
 
@@ -826,6 +826,6 @@ bun run dev
 
 ---
 
-**Last Updated**: 2026-01-13
-**Project Version**: 1.0.0
+**Last Updated**: 2026-03-10
+**Project Version**: 1.3.3
 **OpenCode Compatible Version**: 1.1.15+

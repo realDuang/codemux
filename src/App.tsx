@@ -46,12 +46,14 @@ function RemoteRedirect() {
 function ChatRoute() {
   const navigate = useNavigate();
 
-  if (!Auth.isAuthenticated()) {
-    logger.debug("❌ Not authenticated, redirecting to entry");
-    navigate("/", { replace: true });
-  } else {
-    logger.debug("✅ Authenticated, showing chat");
-  }
+  createEffect(() => {
+    if (!Auth.isAuthenticated()) {
+      logger.debug("❌ Not authenticated, redirecting to entry");
+      navigate("/", { replace: true });
+    } else {
+      logger.debug("✅ Authenticated, showing chat");
+    }
+  });
 
   return <Chat />;
 }

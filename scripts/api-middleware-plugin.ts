@@ -36,7 +36,6 @@ interface DeviceStoreInterface {
   updateDevice(deviceId: string, updates: Partial<DeviceInfo>): void;
   updateLastSeen(deviceId: string, ip: string): void;
   removeDevice(deviceId: string): boolean;
-  revokeToken(token: string): void;
   revokeDevice(deviceId: string): boolean;
   revokeAllExcept(deviceId: string): number;
   createPendingRequest(device: { name: string; platform: string; browser: string }, ip: string): PendingRequest;

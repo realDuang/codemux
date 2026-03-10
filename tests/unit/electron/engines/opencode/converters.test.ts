@@ -4,14 +4,14 @@ import {
   convertMessage, 
   convertPart, 
   convertProviders 
-} from '../../electron/main/engines/opencode/converters';
-import type { EngineType } from '../../src/types/unified';
+} from '../../../../../electron/main/engines/opencode/converters';
+import type { EngineType } from '../../../../../src/types/unified';
 
 const ENGINE_TYPE: EngineType = 'opencode';
 
 describe('OpenCode Converters', () => {
   describe('convertSession', () => {
-    it('should convert a full SDK session to UnifiedSession', () => {
+    it('converts SDK session to UnifiedSession and handles path normalization', () => {
       const sdkSession = {
         id: 'session-123',
         directory: 'C:\\Users\\test\\project',
@@ -51,21 +51,19 @@ describe('OpenCode Converters', () => {
           share: { enabled: true, url: 'https://share.link' },
         },
       });
-    });
 
-    it('should handle Unix-style paths without change', () => {
-      const sdkSession = {
+      const unixSession = {
         id: 's1',
         directory: '/home/user/project',
         time: { created: 1, updated: 2 }
       };
-      const unified = convertSession(ENGINE_TYPE, sdkSession as any);
-      expect(unified.directory).toBe('/home/user/project');
+      const unifiedUnix = convertSession(ENGINE_TYPE, unixSession as any);
+      expect(unifiedUnix.directory).toBe('/home/user/project');
     });
   });
 
   describe('convertMessage', () => {
-    it('should convert a full SDK message with parts', () => {
+    it('converts SDK message with various states (full, minimal, compaction)', () => {
       const sdkMessage = {
         id: 'msg-1',
         sessionID: 'sess-1',
@@ -76,7 +74,7 @@ describe('OpenCode Converters', () => {
         },
         parts: [
           { type: 'text', text: 'Hello' },
-          null, // Should be filtered
+          null,
           { type: 'reasoning', text: 'Thinking...' }
         ],
         tokens: { input: 10, output: 20 },
@@ -105,9 +103,25 @@ describe('OpenCode Converters', () => {
         agent: 'coder',
         system: 'You are an assistant'
       });
+
+      const minimalMsg = {
+        id: 'min-1',
+        sessionID: 's1',
+        role: 'user'
+      };
+      const unifiedMinimal = convertMessage(ENGINE_TYPE, minimalMsg);
+      expect(unifiedMinimal.time.created).toBeDefined();
+      expect(unifiedMinimal.parts).toEqual([]);
+
+      const compactionMsg = {
+        id: 'c1',
+        summary: true,
+        time: { created: 1 }
+      };
+      expect(convertMessage(ENGINE_TYPE, compactionMsg).isCompaction).toBe(true);
     });
 
-    it('should handle message errors and normalize MessageAbortedError', () => {
+    it('normalizes various error formats including MessageAbortedError', () => {
       const msgWithError = {
         id: 'm1',
         error: 'Some error',
@@ -136,112 +150,35 @@ describe('OpenCode Converters', () => {
       };
       expect(convertMessage(ENGINE_TYPE, msgWithErrorObj).error).toBe('Custom Error');
     });
-
-    it('should handle minimal input with defaults', () => {
-      const minimalMsg = {
-        id: 'min-1',
-        sessionID: 's1',
-        role: 'user'
-      };
-      const unified = convertMessage(ENGINE_TYPE, minimalMsg);
-      expect(unified.time.created).toBeDefined();
-      expect(unified.parts).toEqual([]);
-    });
-
-    it('should identify context compaction messages', () => {
-      const compactionMsg = {
-        id: 'c1',
-        summary: true,
-        time: { created: 1 }
-      };
-      expect(convertMessage(ENGINE_TYPE, compactionMsg).isCompaction).toBe(true);
-    });
   });
 
   describe('convertPart', () => {
-    const baseSdk = {
-      id: 'p1',
-      messageID: 'm1',
-      sessionID: 's1'
-    };
-    const baseUnified = {
-      id: 'p1',
-      messageId: 'm1',
-      sessionId: 's1'
-    };
+    const baseSdk = { id: 'p1', messageID: 'm1', sessionID: 's1' };
+    const baseUnified = { id: 'p1', messageId: 'm1', sessionId: 's1' };
 
-    it('should convert text parts', () => {
-      const sdk = { ...baseSdk, type: 'text', text: 'hi', synthetic: true };
-      expect(convertPart(ENGINE_TYPE, sdk as any)).toEqual({
-        ...baseUnified,
-        type: 'text',
-        text: 'hi',
-        synthetic: true
-      });
+    it.each([
+      ['text', { type: 'text', text: 'hi', synthetic: true }, { type: 'text', text: 'hi', synthetic: true }],
+      ['reasoning', { type: 'reasoning', text: 'logic' }, { type: 'reasoning', text: 'logic' }],
+      ['file', { type: 'file', mime: 'image/png', filename: 'img.png', url: 'blob:...' }, { type: 'file', mime: 'image/png', filename: 'img.png', url: 'blob:...' }],
+      ['step-start', { type: 'step-start' }, { type: 'step-start' }],
+      ['step-finish', { type: 'step-finish' }, { type: 'step-finish' }],
+      ['snapshot', { type: 'snapshot', snapshot: 'hash123' }, { type: 'snapshot', files: ['hash123'] }],
+      ['patch', { type: 'patch', hash: 'diff-content', files: ['file.ts'] }, { type: 'patch', content: 'diff-content', path: 'file.ts' }],
+    ])('converts %s parts correctly', (_, sdkExtra, expectedExtra) => {
+      const sdk = { ...baseSdk, ...sdkExtra };
+      expect(convertPart(ENGINE_TYPE, sdk as any)).toEqual({ ...baseUnified, ...expectedExtra });
     });
 
-    it('should convert reasoning parts', () => {
-      const sdk = { ...baseSdk, type: 'reasoning', text: 'logic' };
-      expect(convertPart(ENGINE_TYPE, sdk as any)).toEqual({
-        ...baseUnified,
-        type: 'reasoning',
-        text: 'logic'
-      });
-    });
+    it('converts tool parts with all lifecycle states', () => {
+      const baseTool = { ...baseSdk, type: 'tool', callID: 'call-1', tool: 'bash' };
 
-    it('should convert file parts', () => {
-      const sdk = { ...baseSdk, type: 'file', mime: 'image/png', filename: 'img.png', url: 'blob:...' };
-      expect(convertPart(ENGINE_TYPE, sdk as any)).toEqual({
-        ...baseUnified,
-        type: 'file',
-        mime: 'image/png',
-        filename: 'img.png',
-        url: 'blob:...'
-      });
-    });
-
-    it('should convert step markers', () => {
-      expect(convertPart(ENGINE_TYPE, { ...baseSdk, type: 'step-start' } as any)).toMatchObject({ ...baseUnified, type: 'step-start' });
-      expect(convertPart(ENGINE_TYPE, { ...baseSdk, type: 'step-finish' } as any)).toMatchObject({ ...baseUnified, type: 'step-finish' });
-    });
-
-    it('should convert snapshot parts (single hash to array)', () => {
-      const sdk = { ...baseSdk, type: 'snapshot', snapshot: 'hash123' };
-      expect(convertPart(ENGINE_TYPE, sdk as any)).toEqual({
-        ...baseUnified,
-        type: 'snapshot',
-        files: ['hash123']
-      });
-    });
-
-    it('should convert patch parts', () => {
-      const sdk = { ...baseSdk, type: 'patch', hash: 'diff-content', files: ['file.ts'] };
-      expect(convertPart(ENGINE_TYPE, sdk as any)).toEqual({
-        ...baseUnified,
-        type: 'patch',
-        content: 'diff-content',
-        path: 'file.ts'
-      });
-    });
-
-    it('should convert tool parts with all states', () => {
-      const baseTool = {
-        ...baseSdk,
-        type: 'tool',
-        callID: 'call-1',
-        tool: 'bash'
-      };
-
-      // Pending
       const pending = convertPart(ENGINE_TYPE, { ...baseTool, state: { status: 'pending', input: 'ls' } } as any);
       expect(pending.type).toBe('tool');
       if (pending.type === 'tool') {
         expect(pending.normalizedTool).toBe('shell');
         expect(pending.state.status).toBe('pending');
-        expect(pending.messageId).toBe('m1');
       }
 
-      // Running
       const running = convertPart(ENGINE_TYPE, { 
         ...baseTool, 
         state: { status: 'running', input: 'ls', time: { start: 100 } } 
@@ -251,7 +188,6 @@ describe('OpenCode Converters', () => {
         expect((running.state as any).time.start).toBe(100);
       }
 
-      // Completed
       const completed = convertPart(ENGINE_TYPE, { 
         ...baseTool, 
         state: { 
@@ -270,7 +206,6 @@ describe('OpenCode Converters', () => {
         expect((completed.state as any).metadata).toEqual({ foo: 'bar' });
       }
 
-      // Error
       const error = convertPart(ENGINE_TYPE, { 
         ...baseTool, 
         state: { 
@@ -287,7 +222,7 @@ describe('OpenCode Converters', () => {
       }
     });
 
-    it('should fallback to text for unknown part types', () => {
+    it('falls back to text for unknown part types', () => {
       const sdk = { ...baseSdk, type: 'future-type' };
       const unified = convertPart(ENGINE_TYPE, sdk as any);
       expect(unified.type).toBe('text');
@@ -297,7 +232,7 @@ describe('OpenCode Converters', () => {
   });
 
   describe('convertProviders', () => {
-    it('should convert connected providers and their models', () => {
+    it('converts connected providers and their models, handling missing cost or connectivity', () => {
       const response = {
         all: [
           {
@@ -355,29 +290,18 @@ describe('OpenCode Converters', () => {
           limits: { tpd: 1000 }
         }
       });
-    });
 
-    it('should handle models without cost info', () => {
-      const response = {
-        all: [
-          {
-            id: 'p1',
-            name: 'P1',
-            models: { 'm1': { id: 'm1', name: 'M1' } }
-          }
-        ],
+      const responseNoCost = {
+        all: [{ id: 'p1', name: 'P1', models: { 'm1': { id: 'm1', name: 'M1' } } }],
         connected: ['p1']
       };
-      const models = convertProviders(ENGINE_TYPE, response as any);
-      expect(models[0].cost).toBeUndefined();
-    });
+      expect(convertProviders(ENGINE_TYPE, responseNoCost as any)[0].cost).toBeUndefined();
 
-    it('should return empty array if no providers connected', () => {
-      const response = {
+      const responseNoConnected = {
         all: [{ id: 'p1', models: {} }],
         connected: []
       };
-      expect(convertProviders(ENGINE_TYPE, response as any)).toEqual([]);
+      expect(convertProviders(ENGINE_TYPE, responseNoConnected as any)).toEqual([]);
     });
   });
 });

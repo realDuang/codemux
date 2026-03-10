@@ -242,8 +242,7 @@ export class GatewayServer {
         return this.engineManager.deleteSession(p.sessionId);
 
       case GatewayRequestType.SESSION_RENAME: {
-        conversationStore.rename(p.sessionId, p.title);
-        return { success: true };
+        return this.engineManager.renameSession(p.sessionId, p.title);
       }
 
       // Message

@@ -8,6 +8,18 @@ import { getHighlight, setHighlight } from "../../lib/highlight-cache"
 // Lazy-initialized marked instance with Shiki integration
 let markedInstancePromise: Promise<any> | null = null
 
+function escapeHtml(str: string): string {
+  return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#039;');
+}
+
+function sanitizeHref(href: string): string {
+  const trimmed = href.trim().toLowerCase();
+  if (trimmed.startsWith('javascript:') || trimmed.startsWith('vbscript:') || trimmed.startsWith('data:text/html')) {
+    return '';
+  }
+  return href;
+}
+
 function getMarkedInstance() {
   if (markedInstancePromise) return markedInstancePromise
   markedInstancePromise = (async () => {
@@ -23,8 +35,9 @@ function getMarkedInstance() {
       {
         renderer: {
           link(href: string, title: string | null | undefined, text: string) {
-            const titleAttr = title ? ` title="${title}"` : ""
-            return `<a href="${href}"${titleAttr} target="_blank" rel="noopener noreferrer">${text || href}</a>`
+            const titleAttr = title ? ` title="${escapeHtml(title)}"` : ""
+            const sanitizedHref = escapeHtml(sanitizeHref(href))
+            return `<a href="${sanitizedHref}"${titleAttr} target="_blank" rel="noopener noreferrer">${text || href}</a>`
           },
         },
       },
@@ -103,7 +116,7 @@ export function ContentMarkdown(props: Props) {
     >
       <div data-slot="markdown" ref={overflow.ref} innerHTML={displayHtml()} />
 
-      {!props.expand && overflow.status && (
+      {((!props.expand && overflow.status) || expanded()) && (
         <button
           type="button"
           data-component="text-button"

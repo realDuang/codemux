@@ -86,7 +86,8 @@ export function createOpencodeServer(options?: ServerOptions): Promise<{ url: st
         if (line.startsWith("opencode server listening")) {
           const match = line.match(/on\s+(https?:\/\/[^\s]+)/);
           if (!match) {
-            throw new Error(`Failed to parse server url from output: ${line}`);
+            reject(new Error(`Failed to parse server url from output: ${line}`));
+            return;
           }
           clearTimeout(id);
           resolve(match[1]);

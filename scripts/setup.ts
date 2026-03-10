@@ -7,20 +7,10 @@
 
 import { spawn, spawnSync } from "child_process";
 import * as readline from "readline";
+import { colors, commandExists } from "./utils";
 
 const isWindows = process.platform === "win32";
 const isMac = process.platform === "darwin";
-
-// ANSI colors
-const colors = {
-  reset: "\x1b[0m",
-  bold: "\x1b[1m",
-  red: "\x1b[31m",
-  green: "\x1b[32m",
-  yellow: "\x1b[33m",
-  blue: "\x1b[34m",
-  cyan: "\x1b[36m",
-};
 
 function log(message: string, color: string = colors.reset) {
   console.log(`${color}${message}${colors.reset}`);
@@ -40,13 +30,6 @@ function logWarning(message: string) {
 
 function logError(message: string) {
   console.log(`${colors.red}[x] ${message}${colors.reset}`);
-}
-
-// Check if a command exists in PATH
-function commandExists(command: string): boolean {
-  const checkCmd = isWindows ? "where" : "which";
-  const result = spawnSync(checkCmd, [command], { stdio: "pipe" });
-  return result.status === 0;
 }
 
 // Get command version

@@ -15,14 +15,14 @@ interface SystemInfo {
   isPackaged: boolean;
 }
 
-interface TunnelInfo {
+export interface TunnelInfo {
   url: string;
   status: "starting" | "running" | "stopped" | "error";
   startTime?: number;
   error?: string;
 }
 
-interface DeviceInfo {
+export interface DeviceInfo {
   id: string;
   name: string;
   platform: string;

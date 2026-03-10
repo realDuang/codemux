@@ -17,6 +17,7 @@ import { TextShimmer } from "./share/TextShimmer";
 import { TextReveal } from "./share/TextReveal";
 import { IconSparkles } from "./icons";
 import { useI18n } from "../lib/i18n";
+import { logger } from "../lib/logger";
 import { gateway } from "../lib/gateway-api";
 import type { UnifiedMessage, UnifiedPart, ToolPart, UnifiedPermission } from "../types/unified";
 import styles from "./SessionTurn.module.css";
@@ -292,7 +293,7 @@ export function SessionTurn(props: SessionTurnProps) {
           }
           setMessageStore("stepsLoaded", msg.id, true);
         } catch (err) {
-          console.error(`[SessionTurn] Failed to load steps for ${msg.id}:`, err);
+          logger.error(`[SessionTurn] Failed to load steps for ${msg.id}:`, err);
           // Don't mark as loaded on failure — allows retry on next expand
         } finally {
           stepsInflight.delete(msg.id);
@@ -599,59 +600,19 @@ export function SessionTurn(props: SessionTurnProps) {
     return undefined;
   });
 
-  // Filter parts for display
-  const filterParts = (allParts: UnifiedPart[], messageRole: string) => {
-    if (messageRole !== "assistant") {
-      // For non-assistant messages, just filter
-      return allParts.filter((x) => {
-        if (!x) return false;
-        // Filter out all step-start, model info will be shown in header
-        if (x.type === "step-start") return false;
-        if (x.type === "snapshot") return false;
-        if (x.type === "patch") return false;
-        if (x.type === "step-finish") return false;
-        if (x.type === "text" && (x as any).synthetic === true) return false;
-        // Hide all todo tools (todowrite/todoread) — displayed in TodoDock instead
-        if (x.type === "tool" && (x as ToolPart).normalizedTool === "todo") return false;
-        if (x.type === "text" && !(x as any).text) return false;
-        // Hide pending/running tools when not working
-        if (
-          x.type === "tool" &&
-          !props.isWorking &&
-          ((x as any).state?.status === "pending" ||
-            (x as any).state?.status === "running")
-        ) {
-          return false;
-        }
-        // Hide pending/running permission/question tools — input area handles interaction
-        if (
-          x.type === "tool" &&
-          ((x as any).state?.status === "pending" ||
-            (x as any).state?.status === "running")
-        ) {
-          const tp = x as ToolPart;
-          const hasPerm = permissionByCallId().has(tp.callId);
-          const hasQ = questionByCallId().has(tp.callId);
-          if (hasPerm || hasQ) return false;
-        }
-        return true;
-      });
-    }
-
-    // Filter assistant message parts — same logic, preserve original order
-    const filtered: UnifiedPart[] = [];
-
-    for (const x of allParts) {
-      if (!x) continue;
+  // Filter parts for display — same rules apply to all message roles
+  const filterParts = (allParts: UnifiedPart[]) => {
+    return allParts.filter((x) => {
+      if (!x) return false;
       // Filter out all step-start, model info will be shown in header
-      if (x.type === "step-start") continue;
-      if (x.type === "snapshot") continue;
-      if (x.type === "patch") continue;
-      if (x.type === "step-finish") continue;
-      if (x.type === "text" && (x as any).synthetic === true) continue;
+      if (x.type === "step-start") return false;
+      if (x.type === "snapshot") return false;
+      if (x.type === "patch") return false;
+      if (x.type === "step-finish") return false;
+      if (x.type === "text" && (x as any).synthetic === true) return false;
       // Hide all todo tools (todowrite/todoread) — displayed in TodoDock instead
-      if (x.type === "tool" && (x as ToolPart).normalizedTool === "todo") continue;
-      if (x.type === "text" && !(x as any).text) continue;
+      if (x.type === "tool" && (x as ToolPart).normalizedTool === "todo") return false;
+      if (x.type === "text" && !(x as any).text) return false;
       // Hide pending/running tools when not working
       if (
         x.type === "tool" &&
@@ -659,7 +620,7 @@ export function SessionTurn(props: SessionTurnProps) {
         ((x as any).state?.status === "pending" ||
           (x as any).state?.status === "running")
       ) {
-        continue;
+        return false;
       }
       // Hide pending/running permission/question tools — input area handles interaction
       if (
@@ -670,18 +631,15 @@ export function SessionTurn(props: SessionTurnProps) {
         const tp = x as ToolPart;
         const hasPerm = permissionByCallId().has(tp.callId);
         const hasQ = questionByCallId().has(tp.callId);
-        if (hasPerm || hasQ) continue;
+        if (hasPerm || hasQ) return false;
       }
-
-      filtered.push(x);
-    }
-
-    return filtered;
+      return true;
+    });
   };
 
   // Filter user message parts
   const filteredUserParts = createMemo(() =>
-    filterParts(userParts(), "user")
+    filterParts(userParts())
   );
 
   // Get all steps parts (for expanded view)
@@ -689,7 +647,7 @@ export function SessionTurn(props: SessionTurnProps) {
     const result: { message: UnifiedMessage; parts: UnifiedPart[] }[] = [];
     for (const msg of props.assistantMessages) {
       const parts = messageStore.part[msg.id] || [];
-      const filtered = filterParts(parts, "assistant");
+      const filtered = filterParts(parts);
       // Filter out the text part displayed in response area (both streaming and completed)
       const responseText = props.isWorking ? streamingTextPart() : lastTextPart();
       const stepsFiltered = responseText

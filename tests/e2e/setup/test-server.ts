@@ -13,6 +13,7 @@ import { WebSocketServer, WebSocket } from "ws";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 import { randomUUID } from "crypto";
+import { sendJson, extractBearerToken } from "../../../shared/http-utils";
 import { MockEngineAdapter } from "../../../electron/main/engines/mock-adapter";
 import { MockAuthStore } from "./mock-auth-store";
 import { seedTestData } from "./seed-data";
@@ -59,18 +60,6 @@ function getMimeType(filePath: string): string {
 
 // --- HTTP helpers ---
 
-function sendJson(res: http.ServerResponse, data: unknown, status = 200): void {
-  const body = JSON.stringify(data);
-  res.writeHead(status, {
-    "Content-Type": "application/json",
-    "Content-Length": Buffer.byteLength(body),
-    "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS, PATCH",
-    "Access-Control-Allow-Headers": "Content-Type, Authorization, x-opencode-directory",
-  });
-  res.end(body);
-}
-
 function setCorsHeaders(res: http.ServerResponse): void {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS, PATCH");
@@ -92,12 +81,6 @@ function parseJsonBody(req: http.IncomingMessage): Promise<any> {
     });
     req.on("error", () => resolve({}));
   });
-}
-
-function extractBearerToken(req: http.IncomingMessage): string | null {
-  const auth = req.headers.authorization;
-  if (!auth?.startsWith("Bearer ")) return null;
-  return auth.slice(7);
 }
 
 // --- WebSocket client tracking ---

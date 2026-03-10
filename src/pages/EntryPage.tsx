@@ -6,14 +6,7 @@ import { LanguageSwitcher } from "../components/LanguageSwitcher";
 import { FeishuConfigModal } from "../components/FeishuConfigModal";
 import { logger } from "../lib/logger";
 import { isElectron } from "../lib/platform";
-import { systemAPI, tunnelAPI, channelAPI, type ChannelInfo } from "../lib/electron-api";
-
-interface TunnelInfo {
-  url: string;
-  status: "starting" | "running" | "stopped" | "error";
-  startTime?: number;
-  error?: string;
-}
+import { systemAPI, tunnelAPI, channelAPI, type ChannelInfo, type TunnelInfo } from "../lib/electron-api";
 
 export default function EntryPage() {
   const { t } = useI18n();

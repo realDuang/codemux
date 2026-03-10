@@ -3,26 +3,17 @@
  * Provides HTTP API endpoints for both regular Vite dev server and Electron dev mode
  */
 
-import fs from "fs";
-import path from "path";
 import os from "os";
 import type { IncomingMessage, ServerResponse } from "http";
 import type { Plugin, ViteDevServer } from "vite";
+import { sendJson, parseBody, extractBearerToken, getClientIp, isLocalhost } from "../shared/http-utils";
 
 // ============================================================================
 // Types
 // ============================================================================
 
-export interface DeviceInfo {
-  id: string;
-  name: string;
-  platform: string;
-  browser: string;
-  createdAt: number;
-  lastSeenAt: number;
-  ip: string;
-  isHost?: boolean;
-}
+import type { DeviceInfo, PendingRequest } from "../shared/device-store-types";
+export type { DeviceInfo };
 
 export interface TunnelInfo {
   url: string;
@@ -32,7 +23,8 @@ export interface TunnelInfo {
 }
 
 // ============================================================================
-// Device Store Interface (shared between scripts/device-store and electron/main/services/device-store)
+// Device Store Interface (implemented by both scripts/ and electron/ DeviceStore)
+// All methods are now guaranteed by DeviceStoreBase.
 // ============================================================================
 
 interface DeviceStoreInterface {
@@ -44,63 +36,22 @@ interface DeviceStoreInterface {
   listDevices(): DeviceInfo[];
   updateDevice(deviceId: string, updates: Partial<DeviceInfo>): void;
   updateLastSeen(deviceId: string, ip: string): void;
-  removeDevice?(deviceId: string): void;
-  revokeToken?(token: string): void;
-  revokeDevice?(deviceId: string): boolean;
-  revokeAllExcept?(deviceId: string): number;
-  createPendingRequest?(device: { name: string; platform: string; browser: string }, ip: string): any;
-  getPendingRequest?(requestId: string): any;
-  listPendingRequests?(): any[];
-  approveRequest?(requestId: string): any;
-  denyRequest?(requestId: string): any;
-  getAccessCode?(): string;
+  removeDevice(deviceId: string): boolean;
+  revokeToken(token: string): void;
+  revokeDevice(deviceId: string): boolean;
+  revokeAllExcept(deviceId: string): number;
+  createPendingRequest(device: { name: string; platform: string; browser: string }, ip: string): PendingRequest;
+  getPendingRequest(requestId: string): PendingRequest | undefined;
+  listPendingRequests(): PendingRequest[];
+  approveRequest(requestId: string): PendingRequest | undefined;
+  denyRequest(requestId: string): PendingRequest | undefined;
+  getAccessCode(): string;
 }
 
 interface TunnelManagerInterface {
   start(port: number): Promise<TunnelInfo>;
   stop(): Promise<void>;
   getInfo(): TunnelInfo;
-}
-
-// ============================================================================
-// Helper Functions
-// ============================================================================
-
-function parseBody(req: IncomingMessage): Promise<any> {
-  return new Promise((resolve, reject) => {
-    let body = "";
-    req.on("data", (chunk) => (body += chunk));
-    req.on("end", () => {
-      try {
-        resolve(body ? JSON.parse(body) : {});
-      } catch {
-        reject(new Error("Invalid JSON"));
-      }
-    });
-    req.on("error", reject);
-  });
-}
-
-function sendJson(res: ServerResponse, data: any, status = 200): void {
-  res.statusCode = status;
-  res.setHeader("Content-Type", "application/json");
-  res.end(JSON.stringify(data));
-}
-
-function getClientIp(req: IncomingMessage): string {
-  const forwarded = req.headers["x-forwarded-for"];
-  if (typeof forwarded === "string") {
-    return forwarded.split(",")[0].trim();
-  }
-  return req.socket.remoteAddress || "unknown";
-}
-
-function extractBearerToken(req: IncomingMessage): string | null {
-  const auth = req.headers.authorization;
-  if (auth && auth.startsWith("Bearer ")) {
-    return auth.slice(7);
-  }
-  return null;
 }
 
 const virtualInterfacePatterns = [
@@ -127,15 +78,6 @@ function getLocalIp(): string {
     }
   }
   return fallback ?? "localhost";
-}
-
-function isLocalhost(ip: string): boolean {
-  const normalizedIp = ip.replace(/^::ffff:/, "");
-  return (
-    normalizedIp === "127.0.0.1" ||
-    normalizedIp === "::1" ||
-    normalizedIp === "localhost"
-  );
 }
 
 // ============================================================================
@@ -205,23 +147,9 @@ export function createApiMiddlewarePlugin(options: ApiMiddlewareOptions): Plugin
           return;
         }
 
-        // Use deviceStore.getAccessCode if available, otherwise read from file
-        if (deviceStore.getAccessCode) {
-          const code = deviceStore.getAccessCode();
-          sendJson(res, { code });
-        } else {
-          try {
-            const authCodePath = path.join(process.cwd(), ".auth-code");
-            if (fs.existsSync(authCodePath)) {
-              const code = fs.readFileSync(authCodePath, "utf-8").trim();
-              sendJson(res, { code });
-            } else {
-              sendJson(res, { error: "Code not found" }, 404);
-            }
-          } catch {
-            sendJson(res, { error: "Server error" }, 500);
-          }
-        }
+        // All DeviceStore implementations now have getAccessCode()
+        const code = deviceStore.getAccessCode();
+        sendJson(res, { code });
       });
 
       // ====================================================================
@@ -283,15 +211,7 @@ export function createApiMiddlewarePlugin(options: ApiMiddlewareOptions): Plugin
           const { code, device } = await parseBody(req);
 
           // Verify code
-          let validCode: string | null = null;
-          if (deviceStore.getAccessCode) {
-            validCode = deviceStore.getAccessCode();
-          } else {
-            const authCodePath = path.join(process.cwd(), ".auth-code");
-            if (fs.existsSync(authCodePath)) {
-              validCode = fs.readFileSync(authCodePath, "utf-8").trim();
-            }
-          }
+          const validCode = deviceStore.getAccessCode();
 
           if (!validCode) {
             sendJson(res, { success: false, error: "Auth code not found" }, 500);
@@ -305,23 +225,19 @@ export function createApiMiddlewarePlugin(options: ApiMiddlewareOptions): Plugin
 
           const clientIp = getClientIp(req);
 
-          if (deviceStore.createPendingRequest) {
-            const pendingRequest = deviceStore.createPendingRequest(
-              {
-                name: device?.name || "Unknown Device",
-                platform: device?.platform || "Unknown",
-                browser: device?.browser || "Unknown",
-              },
-              clientIp
-            );
+          const pendingRequest = deviceStore.createPendingRequest(
+            {
+              name: device?.name || "Unknown Device",
+              platform: device?.platform || "Unknown",
+              browser: device?.browser || "Unknown",
+            },
+            clientIp
+          );
 
-            sendJson(res, {
-              success: true,
-              requestId: pendingRequest.id,
-            });
-          } else {
-            sendJson(res, { success: false, error: "Pending requests not supported" }, 501);
-          }
+          sendJson(res, {
+            success: true,
+            requestId: pendingRequest.id,
+          });
         } catch (err) {
           sendJson(res, { success: false, error: "Bad request" }, 400);
         }
@@ -339,7 +255,7 @@ export function createApiMiddlewarePlugin(options: ApiMiddlewareOptions): Plugin
         }
 
         const requestId = url.searchParams.get("requestId");
-        if (!requestId || !deviceStore.getPendingRequest) {
+        if (!requestId) {
           sendJson(res, { status: "not_found" });
           return;
         }
@@ -389,7 +305,7 @@ export function createApiMiddlewarePlugin(options: ApiMiddlewareOptions): Plugin
           return;
         }
 
-        const requests = deviceStore.listPendingRequests?.() || [];
+        const requests = deviceStore.listPendingRequests();
         sendJson(res, { requests });
       });
 
@@ -433,14 +349,14 @@ export function createApiMiddlewarePlugin(options: ApiMiddlewareOptions): Plugin
           }
 
           if (req.url === "/api/admin/approve") {
-            const approved = deviceStore.approveRequest?.(requestId);
+            const approved = deviceStore.approveRequest(requestId);
             if (approved) {
               sendJson(res, { success: true, device: deviceStore.getDevice(approved.deviceId!) });
             } else {
               sendJson(res, { error: "Request not found or already processed" }, 404);
             }
           } else {
-            const denied = deviceStore.denyRequest?.(requestId);
+            const denied = deviceStore.denyRequest(requestId);
             if (denied) {
               sendJson(res, { success: true });
             } else {

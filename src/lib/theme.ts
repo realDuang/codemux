@@ -29,16 +29,13 @@ function applyTheme(theme: ThemeMode): void {
   const root = document.documentElement;
   const effectiveTheme = theme === "system" ? getSystemTheme() : theme;
 
-  logger.debug("[Theme] Applying theme:", theme, "effective:", effectiveTheme);
-  logger.debug("[Theme] Document element:", root.tagName, "classList before:", root.classList.toString());
-
   if (effectiveTheme === "dark") {
     root.classList.add("dark");
   } else {
     root.classList.remove("dark");
   }
 
-  logger.debug("[Theme] classList after:", root.classList.toString());
+  logger.debug("[Theme] Applied:", theme, "→", effectiveTheme);
 }
 
 const [themeMode, setThemeModeSignal] = createSignal<ThemeMode>(getSavedTheme());
@@ -55,7 +52,6 @@ if (typeof window !== "undefined") {
 }
 
 export function setThemeMode(theme: ThemeMode): void {
-  logger.debug("[Theme] setThemeMode called with:", theme);
   setThemeModeSignal(theme);
   saveTheme(theme);
   applyTheme(theme);

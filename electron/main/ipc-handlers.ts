@@ -1,4 +1,5 @@
 import { ipcMain, dialog, shell, app, BrowserWindow } from "electron";
+import fs from "fs";
 import os from "os";
 import { deviceStore } from "./services/device-store";
 import { tunnelManager } from "./services/tunnel-manager";
@@ -50,7 +51,6 @@ export function registerIpcHandlers(): void {
   });
 
   ipcMain.handle("system:openPath", async (_, folderPath: string) => {
-    const fs = await import("fs");
     const stat = fs.statSync(folderPath);
     if (!stat.isDirectory()) {
       throw new Error("Path is not a directory");

@@ -76,10 +76,20 @@ export function normalizeToolName(
 ): NormalizedToolName {
   const map = ENGINE_TOOL_MAPS[engineType];
   if (map) {
-    const normalized = map[engineTool] ?? map[engineTool.toLowerCase()];
-    if (normalized) return normalized;
+    return normalizeToolNameWithMap(engineTool, map);
   }
   return "unknown";
+}
+
+/**
+ * Normalize a tool name using the given mapping table.
+ * Tries exact match first, then lowercase, then falls back to "unknown".
+ */
+export function normalizeToolNameWithMap(
+  toolName: string,
+  toolMap: Record<string, NormalizedToolName>,
+): NormalizedToolName {
+  return toolMap[toolName] ?? toolMap[toolName.toLowerCase()] ?? "unknown";
 }
 
 /**

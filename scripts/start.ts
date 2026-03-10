@@ -1,45 +1,13 @@
 import { spawn, spawnSync } from "child_process";
-import fs from "fs";
-import path from "path";
-import * as readline from "readline";
+import * as fs from "fs";
+import * as path from "path";
+import { colors, commandExists, confirm } from "./utils";
 
 const isWindows = process.platform === "win32";
-
-// ANSI colors
-const colors = {
-  reset: "\x1b[0m",
-  bold: "\x1b[1m",
-  red: "\x1b[31m",
-  green: "\x1b[32m",
-  yellow: "\x1b[33m",
-  cyan: "\x1b[36m",
-};
 
 // Generate 6-digit auth code
 function generateAuthCode(): string {
   return Math.random().toString().slice(2, 8);
-}
-
-// Check if a command exists in PATH
-function commandExists(command: string): boolean {
-  const checkCmd = isWindows ? "where" : "which";
-  const result = spawnSync(checkCmd, [command], { stdio: "pipe" });
-  return result.status === 0;
-}
-
-// Ask user for confirmation
-async function confirm(question: string): Promise<boolean> {
-  const rl = readline.createInterface({
-    input: process.stdin,
-    output: process.stdout,
-  });
-
-  return new Promise((resolve) => {
-    rl.question(`${colors.yellow}? ${question} (y/N): ${colors.reset}`, (answer) => {
-      rl.close();
-      resolve(answer.toLowerCase() === "y" || answer.toLowerCase() === "yes");
-    });
-  });
 }
 
 // Execute install command

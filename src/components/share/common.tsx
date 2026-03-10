@@ -1,7 +1,4 @@
-import { createSignal, onCleanup, splitProps } from "solid-js"
-import type { JSX } from "solid-js/jsx-runtime"
-import { IconCheckCircle, IconHashtag } from "../icons"
-import { logger } from "../../lib/logger"
+import { createSignal, onCleanup } from "solid-js"
 
 /**
  * Creates a reactive elapsed timer that ticks every second.
@@ -20,41 +17,6 @@ export function createElapsedTimer(startTime: () => number, running: () => boole
   onCleanup(() => clearInterval(timer))
 
   return () => running() ? elapsed() : elapsed()
-}
-
-interface AnchorProps extends JSX.HTMLAttributes<HTMLDivElement> {
-  id: string
-}
-export function AnchorIcon(props: AnchorProps) {
-  const [local, rest] = splitProps(props, ["id", "children"])
-  const [copied, setCopied] = createSignal(false)
-
-  return (
-    <div {...rest} data-element-anchor title="Link to this message" data-status={copied() ? "copied" : ""}>
-      <a
-        href={`#${local.id}`}
-        onClick={(e) => {
-          e.preventDefault()
-
-          const anchor = e.currentTarget
-          const hash = anchor.getAttribute("href") || ""
-          const { origin, pathname, search } = window.location
-
-          navigator.clipboard
-            .writeText(`${origin}${pathname}${search}${hash}`)
-            .catch((err) => logger.error("Copy failed", err))
-
-          setCopied(true)
-          setTimeout(() => setCopied(false), 3000)
-        }}
-      >
-        {local.children}
-        <IconHashtag width={18} height={18} />
-        <IconCheckCircle width={18} height={18} />
-      </a>
-      <span data-element-tooltip>Copied!</span>
-    </div>
-  )
 }
 
 export function createOverflow() {

@@ -9,8 +9,9 @@
  */
 
 import { spawn, type ChildProcess } from "child_process";
-import fs from "fs";
-import path from "path";
+import * as fs from "fs";
+import * as path from "path";
+import { colors } from "./utils";
 
 const isWindows = process.platform === "win32";
 const BASE_URL = "http://localhost:5174";
@@ -18,16 +19,6 @@ const BASE_URL = "http://localhost:5174";
 // Store auth token and access code for tests that need them
 let authToken: string = "";
 let accessCode: string = "";
-
-// ANSI colors
-const colors = {
-  reset: "\x1b[0m",
-  bold: "\x1b[1m",
-  red: "\x1b[31m",
-  green: "\x1b[32m",
-  yellow: "\x1b[33m",
-  cyan: "\x1b[36m",
-};
 
 function log(message: string, color: keyof typeof colors = "reset") {
   console.log(`${colors[color]}${message}${colors.reset}`);

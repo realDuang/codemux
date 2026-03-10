@@ -24,6 +24,7 @@ import { HideProjectModal } from "../components/HideProjectModal";
 import { AddProjectModal } from "../components/AddProjectModal";
 import type { UnifiedMessage, UnifiedPart, UnifiedPermission, UnifiedQuestion, UnifiedSession, UnifiedProject, AgentMode, EngineType, SessionActivityStatus } from "../types/unified";
 import { useI18n } from "../lib/i18n";
+import { isDefaultTitle } from "../lib/session-utils";
 
 import { InputAreaQuestion } from "../components/InputAreaQuestion";
 import { InputAreaPermission } from "../components/InputAreaPermission";
@@ -54,12 +55,6 @@ function binarySearch<T>(
   }
 
   return { found: false, index: left };
-}
-
-const DEFAULT_TITLE_PATTERN = /^(New session - |Child session - )\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
-
-function isDefaultTitle(title: string): boolean {
-  return DEFAULT_TITLE_PATTERN.test(title);
 }
 
 function toSessionInfo(s: UnifiedSession, projectID?: string): SessionInfo {
@@ -922,7 +917,7 @@ export default function Chat() {
   };
 
   // Continue after interruption — re-send with current agent mode
-  const handleContinue = (sessionID: string) => {
+  const handleContinue = (_sessionID: string) => {
     if (sending()) return;
     handleSendMessage("Continue where you left off.", currentAgent());
   };

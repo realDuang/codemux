@@ -5,156 +5,28 @@
 // No raw HTTP requests, no manual SSE parsing, no hand-maintained types.
 // ============================================================================
 
-import * as net from "net";
-import { execFile, spawn } from "child_process";
 import {
   createOpencodeClient,
   type OpencodeClient,
-  type ServerOptions,
   type Session as SdkSession,
   type Event as SdkEvent,
   type GlobalEvent as SdkGlobalEvent,
   type Part as SdkPart,
-  type ToolState as SdkToolState,
-  type ProviderListResponse,
   type QuestionRequest as SdkQuestionRequest,
 } from "@opencode-ai/sdk/v2";
-import { openCodeLog } from "../services/logger";
-
-const IS_WIN = process.platform === "win32";
-
-type StreamName = "stdout" | "stderr" | "stdin";
-
-export function createStreamErrorHandler(
-  streamName: StreamName,
-  logUnexpected: (message: string, error: NodeJS.ErrnoException) => void = (message, error) => {
-    openCodeLog.warn(message, error);
-  },
-): (error: NodeJS.ErrnoException) => void {
-  return (error: NodeJS.ErrnoException) => {
-    if (error.code === "EPIPE") {
-      return;
-    }
-
-    logUnexpected(`Unexpected ${streamName} stream error from OpenCode server process`, error);
-  };
-}
-
-/**
- * Local replacement for SDK's createOpencodeServer().
- * The SDK's version uses spawn() without shell:true, which fails on Windows
- * because `opencode` is installed as `opencode.cmd` and Node's spawn without
- * shell can't resolve .cmd files.
- *
- * On non-Windows platforms this behaves identically to the SDK version.
- */
-function createOpencodeServer(options?: ServerOptions): Promise<{ url: string; close(): void }> {
-  const opts = Object.assign(
-    { hostname: "127.0.0.1", port: 4096, timeout: 5000 },
-    options ?? {},
-  );
-
-  const args = [`serve`, `--hostname=${opts.hostname}`, `--port=${opts.port}`];
-  if (opts.config?.logLevel) args.push(`--log-level=${opts.config.logLevel}`);
-
-  // Build a clean env for the child process:
-  // - Remove ELECTRON_RUN_AS_NODE which leaks from Electron/Halo and can
-  //   interfere with Bun's uv_spawn when opencode tries to execute bash.
-  // - Inject OPENCODE_CONFIG_CONTENT for config overlay.
-  const childEnv = { ...process.env };
-  delete childEnv.ELECTRON_RUN_AS_NODE;
-  childEnv.OPENCODE_CONFIG_CONTENT = JSON.stringify(opts.config ?? {});
-
-  // On Windows, spawn() can't resolve .cmd files without shell:true.
-  // We build the full command string to avoid the DEP0190 deprecation warning
-  // (passing args array + shell:true triggers it).
-  const proc = IS_WIN
-    ? spawn(
-        `opencode ${args.join(" ")}`,
-        [],
-        {
-          signal: opts.signal,
-          shell: true,
-          env: childEnv,
-        },
-      )
-    : spawn(`opencode`, args, {
-        signal: opts.signal,
-        env: childEnv,
-      });
-
-  const url = new Promise<string>((resolve, reject) => {
-    const id = setTimeout(() => {
-      reject(new Error(`Timeout waiting for server to start after ${opts.timeout}ms`));
-    }, opts.timeout);
-
-    let output = "";
-
-    proc.stdout?.on("data", (chunk: Buffer) => {
-      output += chunk.toString();
-      const lines = output.split("\n");
-      for (const line of lines) {
-        if (line.startsWith("opencode server listening")) {
-          const match = line.match(/on\s+(https?:\/\/[^\s]+)/);
-          if (!match) {
-            throw new Error(`Failed to parse server url from output: ${line}`);
-          }
-          clearTimeout(id);
-          resolve(match[1]);
-          return;
-        }
-      }
-    });
-
-    proc.stderr?.on("data", (chunk: Buffer) => {
-      output += chunk.toString();
-    });
-
-    // Attach error handlers to stdio streams to prevent EPIPE from becoming
-    // an uncaughtException when the child process exits before we finish
-    // reading/writing. Without these, broken-pipe errors bubble up and
-    // electron-log's default handler shows an error dialog to the user.
-    proc.stdout?.on("error", createStreamErrorHandler("stdout"));
-    proc.stderr?.on("error", createStreamErrorHandler("stderr"));
-    proc.stdin?.on("error", createStreamErrorHandler("stdin"));
-
-    proc.on("exit", (code) => {
-      clearTimeout(id);
-      let msg = `Server exited with code ${code}`;
-      if (output.trim()) msg += `\nServer output: ${output}`;
-      reject(new Error(msg));
-    });
-
-    proc.on("error", (error) => {
-      clearTimeout(id);
-      reject(error);
-    });
-
-    if (opts.signal) {
-      opts.signal.addEventListener("abort", () => {
-        clearTimeout(id);
-        reject(new Error("Aborted"));
-      });
-    }
-  });
-
-  return url.then((resolvedUrl) => ({
-    url: resolvedUrl,
-    close() {
-      if (IS_WIN) {
-        // On Windows, proc.kill() sends SIGTERM which doesn't reliably kill
-        // child processes spawned via .cmd. Use taskkill /T to kill the process tree.
-        if (proc.pid) {
-          spawn("taskkill", ["/pid", String(proc.pid), "/T", "/F"], { stdio: "ignore" });
-        }
-      } else {
-        proc.kill();
-      }
-    },
-  }));
-}
-import { EngineAdapter } from "./engine-adapter";
-import { normalizeToolName, inferToolKind } from "../../../src/types/tool-mapping";
+import { openCodeLog } from "../../services/logger";
+import { EngineAdapter } from "../engine-adapter";
+import {
+  convertSession,
+  convertMessage,
+  convertPart,
+  convertProviders,
+} from "./converters";
+import {
+  createOpencodeServer,
+  fetchVersion,
+  killOrphanedProcess,
+} from "./server";
 import type {
   EngineType,
   EngineStatus,
@@ -166,7 +38,6 @@ import type {
   UnifiedPart,
   UnifiedPermission,
   UnifiedQuestion,
-  UnifiedModelInfo,
   ModelListResult,
   UnifiedProject,
   AgentMode,
@@ -174,8 +45,7 @@ import type {
   PermissionReply,
   PermissionOption,
   QuestionInfo,
-  ToolPart,
-} from "../../../src/types/unified";
+} from "../../../../src/types/unified";
 
 /**
  * OpenCode Engine Adapter
@@ -266,62 +136,6 @@ export class OpenCodeAdapter extends EngineAdapter {
       }
     }
     return this.ensureClient();
-  }
-
-  // --- Version fetch ---
-
-  private fetchVersion(): Promise<string | undefined> {
-    return new Promise((resolve) => {
-      execFile("opencode", ["--version"], { timeout: 5000, shell: IS_WIN }, (err, stdout) => {
-        if (err) {
-          resolve(undefined);
-          return;
-        }
-        const ver = stdout.trim();
-        resolve(ver || undefined);
-      });
-    });
-  }
-
-  /**
-   * Check if the target port is already occupied and try to kill the occupying process.
-   * This handles orphaned opencode processes from previous crashes or unclean exits.
-   */
-  private async killOrphanedProcess(): Promise<void> {
-    const inUse = await new Promise<boolean>((resolve) => {
-      const socket = new net.Socket();
-      socket.setTimeout(1000);
-      socket.once("connect", () => { socket.destroy(); resolve(true); });
-      socket.once("timeout", () => { socket.destroy(); resolve(false); });
-      socket.once("error", () => { socket.destroy(); resolve(false); });
-      socket.connect(this.port, "127.0.0.1");
-    });
-
-    if (!inUse) return;
-
-    openCodeLog.warn(`Port ${this.port} is already in use, attempting to kill orphaned process...`);
-
-    if (IS_WIN) {
-      // On Windows, find the PID via PowerShell and kill it
-      await new Promise<void>((resolve) => {
-        const ps = `Get-NetTCPConnection -LocalPort ${this.port} -State Listen -ErrorAction SilentlyContinue | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue }`;
-        execFile("powershell", ["-NoProfile", "-Command", ps], { timeout: 5000 }, (err) => {
-          if (err) openCodeLog.warn("Failed to kill orphaned process:", err.message);
-          resolve();
-        });
-      });
-    } else {
-      // On Unix, use fuser or lsof
-      await new Promise<void>((resolve) => {
-        execFile("fuser", ["-k", `${this.port}/tcp`], { timeout: 5000 }, (err) => {
-          if (err) openCodeLog.warn("Failed to kill orphaned process:", err.message);
-          resolve();
-        });
-      });
-    }
-
-    // Brief wait for port to be released
-    await new Promise((r) => setTimeout(r, 500));
   }
 
   // --- SSE connection via SDK (global event stream, all projects) ---
@@ -456,7 +270,7 @@ export class OpenCodeAdapter extends EngineAdapter {
       this.partCache.set(partID, { ...sdkPart });
     }
 
-    const part = this.convertPart(sdkPart);
+    const part = convertPart(this.engineType, sdkPart);
     this.emit("message.part.updated", {
       sessionId: sessionID,
       messageId: messageID,
@@ -527,7 +341,7 @@ export class OpenCodeAdapter extends EngineAdapter {
 
     // Convert and re-emit as message.part.updated so the frontend receives
     // the accumulated text progressively
-    const part = this.convertPart(cached);
+    const part = convertPart(this.engineType, cached);
     this.emit("message.part.updated", {
       sessionId: sessionID,
       messageId: messageID,
@@ -550,7 +364,7 @@ export class OpenCodeAdapter extends EngineAdapter {
     // causes duplicates in the UI.
     if (sdkMsg.role === "user") return;
 
-    const message = this.convertMessage(sdkMsg);
+    const message = convertMessage(this.engineType, sdkMsg);
 
     if (sdkMsg.role === "assistant") {
       const pending = this.pendingMessages.get(sessionID);
@@ -654,13 +468,13 @@ export class OpenCodeAdapter extends EngineAdapter {
   }
 
   private handleSessionUpdated(sdkSession: SdkSession): void {
-    const session = this.convertSession(sdkSession);
+    const session = convertSession(this.engineType, sdkSession);
     this.sessions.set(session.id, session);
     this.emit("session.updated", { session });
   }
 
   private handleSessionCreated(sdkSession: SdkSession): void {
-    const session = this.convertSession(sdkSession);
+    const session = convertSession(this.engineType, sdkSession);
     this.sessions.set(session.id, session);
     this.emit("session.created", { session });
   }
@@ -732,193 +546,6 @@ export class OpenCodeAdapter extends EngineAdapter {
     });
   }
 
-  // --- Type converters ---
-
-  private convertSession(sdk: SdkSession): UnifiedSession {
-    return {
-      id: sdk.id,
-      engineType: this.engineType,
-      directory: sdk.directory.replaceAll("\\", "/"),
-      title: sdk.title,
-      parentId: sdk.parentID,
-      projectId: sdk.projectID,
-      time: {
-        created: sdk.time.created,
-        updated: sdk.time.updated,
-      },
-      engineMeta: {
-        slug: sdk.slug,
-        projectID: sdk.projectID,
-        version: sdk.version,
-        compacting: sdk.time.compacting,
-        summary: sdk.summary,
-        share: sdk.share,
-      },
-    };
-  }
-
-  private convertMessage(sdk: any): UnifiedMessage {
-    // SDK Message is a union of UserMessage | AssistantMessage
-    // Both have id, sessionID, role, time
-    const errorStr = sdk.error
-      ? (typeof sdk.error === "string" ? sdk.error : sdk.error.message ?? sdk.error.name ?? "Error")
-      : undefined;
-
-    // Normalize OpenCode's abort error to the unified "Cancelled" convention
-    // so the frontend uses a single check (error === "Cancelled") across all engines.
-    const normalizedError = errorStr && (
-      errorStr === "MessageAbortedError" || (sdk.error?.name === "MessageAbortedError")
-    ) ? "Cancelled" : errorStr;
-
-    return {
-      id: sdk.id,
-      sessionId: sdk.sessionID,
-      role: sdk.role,
-      time: {
-        created: sdk.time?.created ?? Date.now(),
-        completed: sdk.time?.completed,
-      },
-      parts: (sdk.parts ?? []).filter(Boolean).map((p: SdkPart) => this.convertPart(p)),
-      tokens: sdk.tokens,
-      cost: sdk.cost,
-      modelId: sdk.modelID,
-      providerId: sdk.providerID,
-      mode: sdk.mode,
-      error: normalizedError,
-      workingDirectory: (sdk as any).path?.cwd,
-      isCompaction: (sdk as any).summary === true,
-      engineMeta: {
-        path: sdk.path,
-        agent: sdk.agent,
-        system: sdk.system,
-        summary: sdk.summary,
-      },
-    };
-  }
-
-  private convertPart(sdk: SdkPart): UnifiedPart {
-    const base = {
-      id: (sdk as any).id ?? "",
-      messageId: (sdk as any).messageID ?? "",
-      sessionId: (sdk as any).sessionID ?? "",
-    };
-
-    switch (sdk.type) {
-      case "text":
-        return { ...base, type: "text", text: sdk.text, synthetic: sdk.synthetic };
-      case "reasoning":
-        return { ...base, type: "reasoning", text: sdk.text };
-      case "file":
-        return { ...base, type: "file", mime: sdk.mime, filename: sdk.filename ?? "", url: sdk.url };
-      case "step-start":
-        return { ...base, type: "step-start" };
-      case "step-finish":
-        return { ...base, type: "step-finish" };
-      case "snapshot":
-        // SDK SnapshotPart has `snapshot: string` (single hash), unified has `files: string[]`
-        return { ...base, type: "snapshot", files: sdk.snapshot ? [sdk.snapshot] : [] };
-      case "patch":
-        // SDK PatchPart has `hash: string, files: string[]`, unified has `content: string, path: string`
-        return { ...base, type: "patch", content: sdk.hash ?? "", path: (sdk.files?.[0] ?? "") };
-      case "tool": {
-        const normalizedTool = normalizeToolName("opencode", sdk.tool);
-        const kind = inferToolKind(undefined, normalizedTool);
-        const state = sdk.state as SdkToolState;
-        const part: ToolPart = {
-          ...base,
-          type: "tool",
-          callId: sdk.callID,
-          normalizedTool,
-          originalTool: sdk.tool,
-          title: (state as any)?.title ?? sdk.tool,
-          kind,
-          state: this.convertToolState(state),
-        };
-        return part;
-      }
-      default:
-        // Handle new part types (agent, retry, compaction, subtask) gracefully
-        // by falling back to a text representation
-        return { ...base, type: "text", text: `[${(sdk as any).type}]` };
-    }
-  }
-
-  private convertToolState(sdkState: SdkToolState): import("../../../src/types/unified").ToolState {
-    switch (sdkState.status) {
-      case "pending":
-        return { status: "pending", input: sdkState.input };
-      case "running":
-        return {
-          status: "running",
-          input: sdkState.input,
-          time: { start: sdkState.time.start },
-        };
-      case "completed":
-        return {
-          status: "completed",
-          input: sdkState.input,
-          output: sdkState.output,
-          title: sdkState.title,
-          time: {
-            start: sdkState.time.start,
-            end: sdkState.time.end,
-            duration: sdkState.time.end - sdkState.time.start,
-          },
-          metadata: sdkState.metadata,
-        };
-      case "error":
-        return {
-          status: "error",
-          input: sdkState.input,
-          error: sdkState.error,
-          time: {
-            start: sdkState.time.start,
-            end: sdkState.time.end,
-            duration: sdkState.time.end - sdkState.time.start,
-          },
-        };
-    }
-  }
-
-  private convertProviders(response: ProviderListResponse): UnifiedModelInfo[] {
-    const models: UnifiedModelInfo[] = [];
-    for (const provider of response.all) {
-      // Only include connected providers
-      if (!response.connected.includes(provider.id)) continue;
-
-      for (const model of Object.values(provider.models)) {
-        models.push({
-          modelId: `${provider.id}/${model.id}`,
-          name: model.name,
-          description: `${model.family ?? ""} (${provider.name})`.trim(),
-          engineType: this.engineType,
-          providerId: provider.id,
-          providerName: provider.name,
-          cost: model.cost ? {
-            input: model.cost.input,
-            output: model.cost.output,
-            cache: {
-              read: model.cost.cache_read ?? 0,
-              write: model.cost.cache_write ?? 0,
-            },
-          } : undefined,
-          capabilities: {
-            temperature: model.temperature,
-            reasoning: model.reasoning,
-            attachment: model.attachment,
-            toolcall: model.tool_call,
-          },
-          meta: {
-            status: model.status,
-            releaseDate: model.release_date,
-            limits: model.limit,
-          },
-        });
-      }
-    }
-    return models;
-  }
-
   // --- EngineAdapter Implementation ---
 
   async start(): Promise<void> {
@@ -930,7 +557,7 @@ export class OpenCodeAdapter extends EngineAdapter {
     // Use SDK to spawn and manage the OpenCode server process
     try {
       // Clean up any orphaned opencode process on our port (e.g. from a previous crash)
-      await this.killOrphanedProcess();
+      await killOrphanedProcess(this.port);
 
       this.server = await createOpencodeServer({
         hostname: "127.0.0.1",
@@ -975,7 +602,7 @@ export class OpenCodeAdapter extends EngineAdapter {
 
     // Fetch CLI version
     try {
-      this.version = await this.fetchVersion();
+      this.version = await fetchVersion();
     } catch {
       // Version fetch is non-critical
     }
@@ -1070,7 +697,7 @@ export class OpenCodeAdapter extends EngineAdapter {
       throw new Error(`Failed to create session: ${JSON.stringify(result.error)}`);
     }
 
-    const session = this.convertSession(result.data);
+    const session = convertSession(this.engineType, result.data);
     this.sessions.set(session.id, session);
     return session;
   }
@@ -1115,7 +742,7 @@ export class OpenCodeAdapter extends EngineAdapter {
     }
 
     const sessions = (result.data ?? []).map((sdk: SdkSession) => {
-      const session = this.convertSession(sdk);
+      const session = convertSession(this.engineType, sdk);
       this.sessions.set(session.id, session);
       return session;
     });
@@ -1132,7 +759,7 @@ export class OpenCodeAdapter extends EngineAdapter {
       const result = await client.session.get({ sessionID: sessionId });
       if (result.error) return null;
 
-      const session = this.convertSession(result.data);
+      const session = convertSession(this.engineType, result.data);
       this.sessions.set(session.id, session);
       return session;
     } catch {
@@ -1297,21 +924,21 @@ export class OpenCodeAdapter extends EngineAdapter {
     // Remove pending state so that subsequent SSE events (the abort error message,
     // session.status: idle) are NOT suppressed by handleMessageUpdated's stripping
     // logic (which only activates when a pending entry exists).
-    const pending = this.pendingMessages.get(sessionId);
-    if (pending) {
-      if (pending.timeoutTimer) clearTimeout(pending.timeoutTimer);
-      if (pending.firstEventTimer) clearTimeout(pending.firstEventTimer);
+    const pendingEntry = this.pendingMessages.get(sessionId);
+    if (pendingEntry) {
+      if (pendingEntry.timeoutTimer) clearTimeout(pendingEntry.timeoutTimer);
+      if (pendingEntry.firstEventTimer) clearTimeout(pendingEntry.firstEventTimer);
       this.pendingMessages.delete(sessionId);
       this.lastEmittedMessage.delete(sessionId);
 
       // Resolve the sendMessage promise immediately so the UI unblocks.
       // The actual error/completed state will arrive via SSE shortly.
-      pending.resolve({
-        id: pending.messageId ?? "",
+      pendingEntry.resolve({
+        id: pendingEntry.messageId ?? "",
         sessionId,
         role: "assistant",
         time: { created: Date.now(), completed: Date.now() },
-        parts: pending.assistantParts,
+        parts: pendingEntry.assistantParts,
         error: "Cancelled",
       });
     }
@@ -1330,7 +957,7 @@ export class OpenCodeAdapter extends EngineAdapter {
       if (wrapper.parts && (!msg.parts || msg.parts.length === 0)) {
         msg.parts = wrapper.parts;
       }
-      return this.convertMessage(msg);
+      return convertMessage(this.engineType, msg);
     });
   }
 
@@ -1342,7 +969,7 @@ export class OpenCodeAdapter extends EngineAdapter {
     if (result.error || !result.data) {
       throw new Error(`Failed to list providers: ${JSON.stringify(result.error)}`);
     }
-    return { models: this.convertProviders(result.data) };
+    return { models: convertProviders(this.engineType, result.data) };
   }
 
   async setModel(_sessionId: string, _modelId: string): Promise<void> {
@@ -1437,7 +1064,7 @@ export class OpenCodeAdapter extends EngineAdapter {
         id: p.id,
         directory: p.worktree.replaceAll("\\", "/"),
         name: p.name,
-        engineType: this.engineType as EngineType,
+        engineType: this.engineType,
         engineMeta: { icon: p.icon },
       }));
     } catch {

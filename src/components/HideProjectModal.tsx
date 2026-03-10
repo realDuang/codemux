@@ -1,5 +1,6 @@
 import { createSignal, Show } from "solid-js";
 import { useI18n, formatMessage } from "../lib/i18n";
+import { logger } from "../lib/logger";
 
 interface HideProjectModalProps {
   isOpen: boolean;
@@ -19,7 +20,7 @@ export function HideProjectModal(props: HideProjectModalProps) {
       await props.onConfirm();
       props.onClose();
     } catch (error) {
-      console.error("Failed to hide project:", error);
+      logger.error("Failed to hide project:", error);
     } finally {
       setLoading(false);
     }

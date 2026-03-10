@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { createStreamErrorHandler } from "../../electron/main/engines/opencode-adapter";
+import { createStreamErrorHandler } from "../../electron/main/engines/opencode/server";
 
 describe("createStreamErrorHandler", () => {
   it("should ignore EPIPE stream errors", () => {

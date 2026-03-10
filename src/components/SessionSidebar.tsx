@@ -1,6 +1,7 @@
 import { For, Show, createSignal, createMemo, createEffect } from "solid-js";
 import { SessionInfo, sessionStore, setSessionStore, getProjectName } from "../stores/session";
 import { useI18n, formatMessage } from "../lib/i18n";
+import { isDefaultTitle } from "../lib/session-utils";
 import type { UnifiedProject, EngineType, SessionActivityStatus } from "../types/unified";
 import { configStore, isEngineEnabled, getDefaultEngineType } from "../stores/config";
 import { ProjectStore } from "../lib/project-store";
@@ -123,10 +124,6 @@ export function SessionSidebar(props: SessionSidebarProps) {
       if (info) setHomePath(info.homePath);
     });
   }
-
-  const isDefaultTitle = (title: string): boolean => {
-    return /^(New session - |Child session - )\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(title);
-  };
 
   const getDisplayTitle = (title: string): string => {
     if (!title || isDefaultTitle(title)) {

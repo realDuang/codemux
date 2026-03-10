@@ -9,23 +9,10 @@ import http from "http";
 import os from "os";
 import type { IncomingMessage, ServerResponse } from "http";
 import type { Plugin, ViteDevServer } from "vite";
+import { sendJson, getClientIp, isLocalhost } from "../shared/http-utils";
 
 // Electron's internal Auth API server port (must match auth-api-server.ts)
 const AUTH_API_PORT = 4097;
-
-function sendJson(res: ServerResponse, data: any, status = 200): void {
-  res.statusCode = status;
-  res.setHeader("Content-Type", "application/json");
-  res.end(JSON.stringify(data));
-}
-
-function getClientIp(req: IncomingMessage): string {
-  const forwarded = req.headers["x-forwarded-for"];
-  if (typeof forwarded === "string") {
-    return forwarded.split(",")[0].trim();
-  }
-  return req.socket.remoteAddress || "unknown";
-}
 
 const virtualInterfacePatterns = [
   /^docker/i, /^br-/i, /^veth/i, /^vEthernet/i,
@@ -51,15 +38,6 @@ function getLocalIp(): string {
     }
   }
   return fallback ?? "localhost";
-}
-
-function isLocalhost(ip: string): boolean {
-  const normalizedIp = ip.replace(/^::ffff:/, "");
-  return (
-    normalizedIp === "127.0.0.1" ||
-    normalizedIp === "::1" ||
-    normalizedIp === "localhost"
-  );
 }
 
 /**

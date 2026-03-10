@@ -4,6 +4,8 @@ import path from "path";
 import { app } from "electron";
 import { deviceStore } from "./device-store";
 import { prodServerLog, getLogFilePath, getFileLogLevel, setFileLogLevel } from "./logger";
+import { sendJson, getClientIp, isLocalhost, getLocalIp } from "../../../shared/http-utils";
+import { handleAuthRoutes, handleLogRoutes } from "../../../shared/auth-route-handlers";
 
 // ============================================================================
 // Production HTTP Server
@@ -36,32 +38,6 @@ const MIME_TYPES: Record<string, string> = {
 function getMimeType(filePath: string): string {
   const ext = path.extname(filePath).toLowerCase();
   return MIME_TYPES[ext] || "application/octet-stream";
-}
-
-function sendJson(res: http.ServerResponse, data: any, status = 200): void {
-  res.writeHead(status, {
-    "Content-Type": "application/json",
-    "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS, PATCH",
-    "Access-Control-Allow-Headers": "Content-Type, Authorization, x-opencode-directory",
-  });
-  res.end(JSON.stringify(data));
-}
-
-function getClientIp(req: http.IncomingMessage): string {
-  const forwarded = req.headers["x-forwarded-for"];
-  if (typeof forwarded === "string") {
-    return forwarded.split(",")[0].trim();
-  }
-  return req.socket.remoteAddress || "unknown";
-}
-
-function extractBearerToken(req: http.IncomingMessage): string | null {
-  const auth = req.headers.authorization;
-  if (auth?.startsWith("Bearer ")) {
-    return auth.slice(7);
-  }
-  return null;
 }
 
 /**
@@ -109,37 +85,6 @@ function proxyToOpenCode(
   req.on("error", (err) => {
     prodServerLog.error("Request error:", err);
     sendJson(res, { error: "Request failed" }, 500);
-  });
-}
-
-/**
- * Parse JSON body from request
- */
-function parseBody(req: http.IncomingMessage): Promise<any> {
-  return new Promise((resolve, reject) => {
-    let body = "";
-    const MAX_SIZE = 1024 * 1024; // 1MB
-    let size = 0;
-
-    req.on("data", (chunk) => {
-      size += chunk.length;
-      if (size > MAX_SIZE) {
-        req.destroy();
-        reject(new Error("Request body too large"));
-        return;
-      }
-      body += chunk;
-    });
-
-    req.on("end", () => {
-      try {
-        resolve(body ? JSON.parse(body) : {});
-      } catch {
-        reject(new Error("Invalid JSON"));
-      }
-    });
-
-    req.on("error", reject);
   });
 }
 
@@ -236,10 +181,18 @@ class ProductionServer {
     }
 
     // ========================================================================
-    // Auth API Routes
+    // Auth + Device + Admin API Routes (shared handler)
     // ========================================================================
     if (pathname.startsWith("/api/auth/") || pathname.startsWith("/api/admin/") || pathname.startsWith("/api/devices")) {
-      await this.handleAuthApi(req, res, pathname, url);
+      const handled = await handleAuthRoutes(req, res, pathname, url, deviceStore, {
+        defaultDeviceName: "Local Machine",
+        defaultPlatform: process.platform,
+        defaultBrowser: "Browser",
+        includeDeviceInResponse: true,
+      });
+      if (handled) return;
+      // Fall through to 404 if no auth route matched
+      sendJson(res, { error: "Not found" }, 404);
       return;
     }
 
@@ -255,65 +208,22 @@ class ProductionServer {
 
     if (pathname === "/api/system/is-local" && req.method === "GET") {
       const clientIp = getClientIp(req);
-      const normalizedIp = clientIp.replace(/^::ffff:/, "");
-      const isLocal = normalizedIp === "127.0.0.1" || normalizedIp === "::1" || normalizedIp === "localhost";
-      sendJson(res, { isLocal });
+      sendJson(res, { isLocal: isLocalhost(clientIp) });
       return;
     }
 
-    // Log API (localhost only)
-    if (pathname === "/api/system/log/path" && req.method === "GET") {
-      const clientIp = getClientIp(req);
-      const normalizedIp = clientIp.replace(/^::ffff:/, "");
-      const isLocal = normalizedIp === "127.0.0.1" || normalizedIp === "::1" || normalizedIp === "localhost";
-      if (!isLocal) {
-        sendJson(res, { error: "Local access only" }, 403);
-        return;
-      }
-      sendJson(res, { path: getLogFilePath() });
-      return;
-    }
-
-    if (pathname === "/api/system/log/level" && req.method === "GET") {
-      const clientIp = getClientIp(req);
-      const normalizedIp = clientIp.replace(/^::ffff:/, "");
-      const isLocal = normalizedIp === "127.0.0.1" || normalizedIp === "::1" || normalizedIp === "localhost";
-      if (!isLocal) {
-        sendJson(res, { error: "Local access only" }, 403);
-        return;
-      }
-      sendJson(res, { level: getFileLogLevel() });
-      return;
-    }
-
-    if (pathname === "/api/system/log/level" && req.method === "POST") {
-      const clientIp = getClientIp(req);
-      const normalizedIp = clientIp.replace(/^::ffff:/, "");
-      const isLocal = normalizedIp === "127.0.0.1" || normalizedIp === "::1" || normalizedIp === "localhost";
-      if (!isLocal) {
-        sendJson(res, { error: "Local access only" }, 403);
-        return;
-      }
-      try {
-        const body = await parseBody(req);
-        if (!body.level || typeof body.level !== "string") {
-          sendJson(res, { error: "level is required" }, 400);
-          return;
-        }
-        setFileLogLevel(body.level);
-        sendJson(res, { success: true });
-      } catch {
-        sendJson(res, { error: "Bad request" }, 400);
-      }
-      return;
-    }
+    // Log API routes (localhost only, shared handler)
+    const logHandled = await handleLogRoutes(req, res, pathname, {
+      getLogFilePath,
+      getFileLogLevel,
+      setFileLogLevel,
+    });
+    if (logHandled) return;
 
     // ========================================================================
     // Tunnel API Routes (handled via IPC in Electron, but provide HTTP fallback)
     // ========================================================================
     if (pathname.startsWith("/api/tunnel")) {
-      // Tunnel APIs are primarily handled via IPC
-      // This is a fallback for any HTTP-based access
       sendJson(res, { error: "Tunnel APIs should be accessed via Electron IPC" }, 400);
       return;
     }
@@ -367,359 +277,6 @@ class ProductionServer {
       res.end("Not Found");
     }
   }
-
-  private async handleAuthApi(
-    req: http.IncomingMessage,
-    res: http.ServerResponse,
-    pathname: string,
-    url: URL
-  ): Promise<void> {
-    // ========================================================================
-    // POST /api/auth/local-auth - Auto-authenticate localhost clients
-    // ========================================================================
-    if (pathname === "/api/auth/local-auth" && req.method === "POST") {
-      const clientIp = getClientIp(req);
-      const normalizedIp = clientIp.replace(/^::ffff:/, "");
-      const isLocal = normalizedIp === "127.0.0.1" || normalizedIp === "::1" || normalizedIp === "localhost";
-
-      if (!isLocal) {
-        sendJson(res, { success: false, error: "Local access only" }, 403);
-        return;
-      }
-
-      try {
-        const body = await parseBody(req);
-        const deviceInfo = body?.device;
-        const deviceId = deviceStore.generateDeviceId();
-        const token = deviceStore.generateToken(deviceId);
-
-        const device = {
-          id: deviceId,
-          name: deviceInfo?.name || "Local Machine",
-          platform: deviceInfo?.platform || process.platform,
-          browser: deviceInfo?.browser || "Browser",
-          createdAt: Date.now(),
-          lastSeenAt: Date.now(),
-          ip: "localhost",
-          isHost: true,
-        };
-
-        deviceStore.addDevice(device);
-        sendJson(res, { success: true, token, deviceId, device });
-      } catch {
-        sendJson(res, { success: false, error: "Bad request" }, 400);
-      }
-      return;
-    }
-
-    // ========================================================================
-    // GET /api/auth/code - Get access code
-    // ========================================================================
-    if (pathname === "/api/auth/code" && req.method === "GET") {
-      const code = deviceStore.getAccessCode();
-      sendJson(res, { code });
-      return;
-    }
-
-    // ========================================================================
-    // GET /api/auth/validate - Validate token
-    // ========================================================================
-    if (pathname === "/api/auth/validate" && req.method === "GET") {
-      const token = extractBearerToken(req);
-      if (!token) {
-        sendJson(res, { error: "No token provided" }, 401);
-        return;
-      }
-
-      const result = deviceStore.verifyToken(token);
-      if (!result.valid || !result.deviceId) {
-        sendJson(res, { error: "Invalid or expired token" }, 401);
-        return;
-      }
-
-      const device = deviceStore.getDevice(result.deviceId);
-      sendJson(res, { valid: true, deviceId: result.deviceId, device });
-      return;
-    }
-
-    // ========================================================================
-    // POST /api/auth/request-access - Request access
-    // ========================================================================
-    if (pathname === "/api/auth/request-access" && req.method === "POST") {
-      try {
-        const { code, device } = await parseBody(req);
-        const validCode = deviceStore.getAccessCode();
-        
-        if (code !== validCode) {
-          sendJson(res, { success: false, error: "Invalid code" }, 401);
-          return;
-        }
-
-        const clientIp = getClientIp(req);
-        const pendingRequest = deviceStore.createPendingRequest(
-          {
-            name: device?.name || "Unknown Device",
-            platform: device?.platform || "Unknown",
-            browser: device?.browser || "Unknown",
-          },
-          clientIp
-        );
-
-        sendJson(res, { success: true, requestId: pendingRequest.id });
-      } catch {
-        sendJson(res, { success: false, error: "Bad request" }, 400);
-      }
-      return;
-    }
-
-    // ========================================================================
-    // GET /api/auth/check-status - Check access status
-    // ========================================================================
-    if (pathname === "/api/auth/check-status" && req.method === "GET") {
-      const requestId = url.searchParams.get("requestId");
-      if (!requestId) {
-        sendJson(res, { status: "not_found" });
-        return;
-      }
-
-      const request = deviceStore.getPendingRequest(requestId);
-      if (!request) {
-        sendJson(res, { status: "not_found" });
-        return;
-      }
-
-      if (request.status === "approved") {
-        sendJson(res, {
-          status: "approved",
-          token: request.token,
-          deviceId: request.deviceId,
-        });
-      } else {
-        sendJson(res, { status: request.status });
-      }
-      return;
-    }
-
-    // ========================================================================
-    // POST /api/auth/logout - Logout
-    // ========================================================================
-    if (pathname === "/api/auth/logout" && req.method === "POST") {
-      const token = extractBearerToken(req);
-      if (!token) {
-        sendJson(res, { error: "No token provided" }, 401);
-        return;
-      }
-
-      const result = deviceStore.verifyToken(token);
-      if (!result.valid || !result.deviceId) {
-        sendJson(res, { error: "Invalid token" }, 401);
-        return;
-      }
-
-      deviceStore.removeDevice(result.deviceId);
-      sendJson(res, { success: true });
-      return;
-    }
-
-    // ========================================================================
-    // GET /api/admin/pending-requests - Get pending requests
-    // ========================================================================
-    if (pathname === "/api/admin/pending-requests" && req.method === "GET") {
-      const requests = deviceStore.listPendingRequests();
-      sendJson(res, { requests });
-      return;
-    }
-
-    // ========================================================================
-    // POST /api/admin/approve - Approve request
-    // ========================================================================
-    if (pathname === "/api/admin/approve" && req.method === "POST") {
-      try {
-        const { requestId } = await parseBody(req);
-        if (!requestId) {
-          sendJson(res, { error: "requestId is required" }, 400);
-          return;
-        }
-
-        const approved = deviceStore.approveRequest(requestId);
-        if (approved) {
-          sendJson(res, { success: true, device: deviceStore.getDevice(approved.deviceId!) });
-        } else {
-          sendJson(res, { error: "Request not found or already processed" }, 404);
-        }
-      } catch {
-        sendJson(res, { error: "Bad request" }, 400);
-      }
-      return;
-    }
-
-    // ========================================================================
-    // POST /api/admin/deny - Deny request
-    // ========================================================================
-    if (pathname === "/api/admin/deny" && req.method === "POST") {
-      try {
-        const { requestId } = await parseBody(req);
-        if (!requestId) {
-          sendJson(res, { error: "requestId is required" }, 400);
-          return;
-        }
-
-        const denied = deviceStore.denyRequest(requestId);
-        if (denied) {
-          sendJson(res, { success: true });
-        } else {
-          sendJson(res, { error: "Request not found or already processed" }, 404);
-        }
-      } catch {
-        sendJson(res, { error: "Bad request" }, 400);
-      }
-      return;
-    }
-
-    // ========================================================================
-    // GET /api/devices - List devices
-    // ========================================================================
-    if (pathname === "/api/devices" && req.method === "GET") {
-      const token = extractBearerToken(req);
-      if (!token) {
-        sendJson(res, { error: "Unauthorized" }, 401);
-        return;
-      }
-
-      const result = deviceStore.verifyToken(token);
-      if (!result.valid || !result.deviceId) {
-        sendJson(res, { error: "Invalid token" }, 401);
-        return;
-      }
-
-      const devices = deviceStore.listDevices();
-      sendJson(res, { devices, currentDeviceId: result.deviceId });
-      return;
-    }
-
-    // ========================================================================
-    // DELETE /api/devices/:id - Revoke device
-    // ========================================================================
-    const revokeMatch = pathname.match(/^\/api\/devices\/([a-f0-9]+)$/);
-    if (revokeMatch && req.method === "DELETE") {
-      const targetDeviceId = revokeMatch[1];
-      const token = extractBearerToken(req);
-      if (!token) {
-        sendJson(res, { error: "Unauthorized" }, 401);
-        return;
-      }
-
-      const result = deviceStore.verifyToken(token);
-      if (!result.valid || !result.deviceId) {
-        sendJson(res, { error: "Invalid token" }, 401);
-        return;
-      }
-
-      if (targetDeviceId === result.deviceId) {
-        sendJson(res, { error: "Cannot revoke current device. Use logout instead." }, 400);
-        return;
-      }
-
-      const success = deviceStore.removeDevice(targetDeviceId);
-      if (success) {
-        sendJson(res, { success: true });
-      } else {
-        sendJson(res, { error: "Device not found" }, 404);
-      }
-      return;
-    }
-
-    // ========================================================================
-    // PUT /api/devices/:id/rename - Rename device
-    // ========================================================================
-    const renameMatch = pathname.match(/^\/api\/devices\/([a-f0-9]+)\/rename$/);
-    if (renameMatch && req.method === "PUT") {
-      const targetDeviceId = renameMatch[1];
-      const token = extractBearerToken(req);
-      if (!token) {
-        sendJson(res, { error: "Unauthorized" }, 401);
-        return;
-      }
-
-      const result = deviceStore.verifyToken(token);
-      if (!result.valid) {
-        sendJson(res, { error: "Invalid token" }, 401);
-        return;
-      }
-
-      try {
-        const { name } = await parseBody(req);
-        if (!name || typeof name !== "string" || name.trim().length === 0) {
-          sendJson(res, { error: "Name is required" }, 400);
-          return;
-        }
-
-        const device = deviceStore.getDevice(targetDeviceId);
-        if (!device) {
-          sendJson(res, { error: "Device not found" }, 404);
-          return;
-        }
-
-        deviceStore.updateDevice(targetDeviceId, { name: name.trim() });
-        sendJson(res, { success: true, device: deviceStore.getDevice(targetDeviceId) });
-      } catch {
-        sendJson(res, { error: "Bad request" }, 400);
-      }
-      return;
-    }
-
-    // ========================================================================
-    // POST /api/devices/revoke-others - Revoke all other devices
-    // ========================================================================
-    if (pathname === "/api/devices/revoke-others" && req.method === "POST") {
-      const token = extractBearerToken(req);
-      if (!token) {
-        sendJson(res, { error: "Unauthorized" }, 401);
-        return;
-      }
-
-      const result = deviceStore.verifyToken(token);
-      if (!result.valid || !result.deviceId) {
-        sendJson(res, { error: "Invalid token" }, 401);
-        return;
-      }
-
-      const count = deviceStore.revokeAllExcept(result.deviceId);
-      sendJson(res, { success: true, revokedCount: count });
-      return;
-    }
-
-    // Not found
-    sendJson(res, { error: "Not found" }, 404);
-  }
 }
 
 export const productionServer = new ProductionServer();
-
-// --- LAN IP helpers ---
-
-const virtualInterfacePatterns = [
-  /^docker/i, /^br-/i, /^veth/i, /^vEthernet/i,
-  /^vmnet/i, /^VMware/i, /^VirtualBox/i, /^vboxnet/i,
-  /^Hyper-V/i, /^Default Switch/i, /^WSL/i,
-  /^tun/i, /^tap/i, /^singbox/i, /^sing-box/i, /^clash/i, /^utun/i,
-  /^tailscale/i, /^ZeroTier/i, /^zt/i,
-  /^wg/i, /^wireguard/i, /^ham/i, /^Hamachi/i, /^npcap/i, /^lo/i,
-];
-
-function getLocalIp(osModule: typeof import("os")): string {
-  const interfaces = osModule.networkInterfaces();
-  let fallback: string | null = null;
-
-  for (const name of Object.keys(interfaces)) {
-    const nets = interfaces[name];
-    if (!nets) continue;
-    const virtual = virtualInterfacePatterns.some((p) => p.test(name));
-    for (const net of nets) {
-      if (net.internal || net.family !== "IPv4") continue;
-      if (!virtual) return net.address;
-      if (!fallback) fallback = net.address;
-    }
-  }
-  return fallback ?? "localhost";
-}

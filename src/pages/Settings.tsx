@@ -41,9 +41,7 @@ export default function Settings() {
 
       const autoCheck = await updateAPI.isAutoCheckEnabled();
       setAutoCheckEnabled(autoCheck);
-    }
 
-    if (isElectron()) {
       const api = (window as any).electronAPI;
       if (api?.log) {
         const [path, level] = await Promise.all([
@@ -150,6 +148,14 @@ export default function Settings() {
     const newValue = !autoCheckEnabled();
     setAutoCheckEnabled(newValue);
     await updateAPI.setAutoCheck(newValue);
+  };
+
+  const statusDotColor = (engine: { status: string; authenticated?: boolean }): string => {
+    if (engine.status === "running" && engine.authenticated === false) return "bg-amber-500";
+    if (engine.status === "running") return "bg-emerald-500";
+    if (engine.status === "starting") return "bg-amber-500";
+    if (engine.status === "error") return "bg-red-500";
+    return "bg-slate-400";
   };
 
   return (
@@ -281,17 +287,7 @@ export default function Settings() {
                               {/* Status indicator dot — hidden when engine is disabled */}
                               <Show when={isEngineEnabled(engine.type)}>
                                 <span
-                                  class={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${
-                                    engine.status === "running" && engine.authenticated === false
-                                      ? "bg-amber-500"
-                                      : engine.status === "running"
-                                        ? "bg-emerald-500"
-                                        : engine.status === "starting"
-                                          ? "bg-amber-500"
-                                          : engine.status === "error"
-                                            ? "bg-red-500"
-                                            : "bg-slate-400"
-                                  }`}
+                                  class={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${statusDotColor(engine)}`}
                                 />
                               </Show>
                               <div class="min-w-0">

@@ -2,6 +2,7 @@ import { createSignal, onMount, onCleanup, For, Show } from "solid-js";
 import { Auth, type PendingRequest } from "../lib/auth";
 import { useI18n } from "../lib/i18n";
 import { isElectron } from "../lib/platform";
+import { logger } from "../lib/logger";
 
 export function AccessRequestNotification() {
   const { t } = useI18n();
@@ -45,7 +46,7 @@ export function AccessRequestNotification() {
         return [...pending, ...keptProcessing];
       });
     } catch (err) {
-      console.error("Failed to fetch pending requests", err);
+      logger.error("Failed to fetch pending requests", err);
     }
   };
 

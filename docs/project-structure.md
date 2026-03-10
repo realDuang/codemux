@@ -9,9 +9,18 @@
 │   │   ├── window-manager.ts     # BrowserWindow creation
 │   │   ├── engines/              # Engine adapters
 │   │   │   ├── engine-adapter.ts     # Abstract base class
-│   │   │   ├── opencode-adapter.ts   # OpenCode CLI (HTTP REST + SSE)
-│   │   │   ├── copilot-sdk-adapter.ts # GitHub Copilot (@github/copilot-sdk)
-│   │   │   ├── claude-code-adapter.ts # Claude Code (@anthropic-ai/claude-agent-sdk)
+│   │   │   ├── opencode/             # OpenCode CLI (HTTP REST + SSE)
+│   │   │   │   ├── index.ts
+│   │   │   │   ├── converters.ts
+│   │   │   │   └── server.ts
+│   │   │   ├── copilot/              # GitHub Copilot (@github/copilot-sdk)
+│   │   │   │   ├── index.ts
+│   │   │   │   ├── converters.ts
+│   │   │   │   └── config.ts
+│   │   │   ├── claude/               # Claude Code (@anthropic-ai/claude-agent-sdk)
+│   │   │   │   ├── index.ts
+│   │   │   │   ├── converters.ts
+│   │   │   │   └── cc-session-files.ts
 │   │   │   └── mock-adapter.ts       # Mock engine for testing
 │   │   ├── gateway/              # WebSocket Gateway
 │   │   │   ├── ws-server.ts          # WebSocket server

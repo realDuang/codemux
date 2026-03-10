@@ -1,12 +1,11 @@
 import { createResource, Suspense } from "solid-js"
 import style from "./content-code.module.css"
-
-const highlightCache = new Map<string, string>()
+import { getHighlight, setHighlight, hasHighlight } from "../../lib/highlight-cache"
 
 async function highlight(code: string, lang?: string, transparentBg?: boolean) {
   const cacheKey = `${lang || "text"}:${transparentBg ? "t" : "f"}:${code}`
-  if (highlightCache.has(cacheKey)) {
-    return highlightCache.get(cacheKey)!
+  if (hasHighlight(cacheKey)) {
+    return getHighlight(cacheKey)!
   }
 
   const [{ codeToHtml, bundledLanguages }, { transformerNotationDiff }] = await Promise.all([
@@ -25,7 +24,7 @@ async function highlight(code: string, lang?: string, transparentBg?: boolean) {
 
   const finalResult = transparentBg ? result.replace(/style="background-color:[^"]*"/, 'style="background-color:transparent"') : result
 
-  highlightCache.set(cacheKey, finalResult)
+  setHighlight(cacheKey, finalResult)
   return finalResult
 }
 

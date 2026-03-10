@@ -1,21 +1,12 @@
 import { logger } from "./logger";
 import { isElectron } from "./platform";
-import { authAPI } from "./electron-api";
+import { authAPI, type DeviceInfo } from "./electron-api";
 
 // ============================================================================
 // Types
 // ============================================================================
 
-export interface DeviceInfo {
-  id: string;
-  name: string;
-  platform: string;
-  browser: string;
-  createdAt: number;
-  lastSeenAt: number;
-  ip: string;
-  isHost?: boolean;
-}
+export type { DeviceInfo };
 
 export interface PendingRequest {
   id: string;

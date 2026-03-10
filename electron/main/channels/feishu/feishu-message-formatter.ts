@@ -5,66 +5,14 @@
 // only user-visible content.
 // ============================================================================
 
-import type { UnifiedPart } from "../../../../src/types/unified";
-
 /** Maximum Feishu message size in bytes (roughly 30KB for text) */
 const MAX_MESSAGE_BYTES = 28_000;
 const TRUNCATION_NOTICE = "\n\n...（内容已截断，请在 CodeMux 中查看完整回复）";
 
 /**
- * Extract user-visible text from a list of UnifiedParts.
- * Only text parts are included; reasoning, tools, steps, etc. are filtered out.
- */
-export function formatPartsToText(parts: UnifiedPart[]): string {
-  const textParts: string[] = [];
-
-  for (const part of parts) {
-    switch (part.type) {
-      case "text":
-        if (part.text) {
-          textParts.push(part.text);
-        }
-        break;
-      // All other part types are intentionally not displayed in Feishu:
-      // - reasoning: internal thought process
-      // - tool: individual tool call details
-      // - step-start/step-finish: step markers
-      // - file/patch/snapshot: code file operations
-      default:
-        break;
-    }
-  }
-
-  return textParts.join("");
-}
-
-/**
- * Generate a brief summary of tool calls from parts.
- * Example output: "Executed 3 actions: Shell(2), Edit(1)"
- */
-export function formatToolSummary(parts: UnifiedPart[]): string {
-  const toolCounts = new Map<string, number>();
-
-  for (const part of parts) {
-    if (part.type === "tool" && part.normalizedTool) {
-      const name = part.normalizedTool;
-      toolCounts.set(name, (toolCounts.get(name) ?? 0) + 1);
-    }
-  }
-
-  if (toolCounts.size === 0) return "";
-
-  const total = Array.from(toolCounts.values()).reduce((a, b) => a + b, 0);
-  const details = Array.from(toolCounts.entries())
-    .map(([name, count]) => `${capitalize(name)}(${count})`)
-    .join(", ");
-
-  return `\n\n---\n执行了 ${total} 个操作：${details}`;
-}
-
-/**
  * Build a tool summary string from a tool counts map.
  * Used by streaming sessions that track tool counts incrementally.
+ * Example output: "Executed 3 actions: Shell(2), Edit(1)"
  */
 export function formatToolSummaryFromCounts(toolCounts: Map<string, number>): string {
   if (toolCounts.size === 0) return "";

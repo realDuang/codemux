@@ -3,9 +3,7 @@ import { createResource, createSignal, createEffect, onCleanup } from "solid-js"
 import { useI18n } from "../../lib/i18n"
 import { logger } from "../../lib/logger"
 import style from "./content-markdown.module.css"
-
-// Shiki highlight cache — avoids redundant codeToHtml calls for identical code blocks
-const highlightCache = new Map<string, string>()
+import { getHighlight, setHighlight } from "../../lib/highlight-cache"
 
 // Lazy-initialized marked instance with Shiki integration
 let markedInstancePromise: Promise<any> | null = null
@@ -33,7 +31,7 @@ function getMarkedInstance() {
       markedShiki({
         async highlight(code: string, lang: string) {
           const cacheKey = `${lang || "text"}:${code}`
-          const cached = highlightCache.get(cacheKey)
+          const cached = getHighlight(cacheKey)
           if (cached) return cached
 
           const html = await codeToHtml(code, {
@@ -44,7 +42,7 @@ function getMarkedInstance() {
             },
             transformers: [transformerNotationDiff()],
           })
-          highlightCache.set(cacheKey, html)
+          setHighlight(cacheKey, html)
           return html
         },
       }),

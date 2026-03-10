@@ -213,6 +213,11 @@ class ConversationStore {
     }
   }
 
+  /**
+   * Appends a message to a conversation.
+   * NOTE: Currently performs O(n) I/O by rewriting the entire session file.
+   * For very long conversations, consider an append-only log or write-buffering.
+   */
   appendMessage(id: string, msg: ConversationMessage): void {
     this.ensureInitialized();
     const messages = this.listMessages(id);

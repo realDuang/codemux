@@ -6,6 +6,7 @@
  */
 
 import { gatewayClient } from "./gateway-client";
+import { logger } from "./logger";
 import type {
   EngineType,
   EngineInfo,
@@ -59,7 +60,7 @@ class GatewayAPI {
     try {
       await gatewayClient.connect();
     } catch (err) {
-      console.error("[GatewayAPI] Failed to connect:", err);
+      logger.error("[GatewayAPI] Failed to connect:", err);
       // Reconnect will be handled by GatewayClient automatically
     }
   }
@@ -258,12 +259,12 @@ class GatewayAPI {
     return gatewayClient.listAllProjects();
   }
 
-  deleteProject(projectId: string): Promise<void> {
-    return gatewayClient.deleteProject(projectId) as Promise<any>;
+  async deleteProject(projectId: string): Promise<{ success: boolean }> {
+    return gatewayClient.deleteProject(projectId);
   }
 
-  importLegacyProjects(projects: UnifiedProject[]): Promise<void> {
-    return gatewayClient.importLegacyProjects(projects) as Promise<any>;
+  async importLegacyProjects(projects: UnifiedProject[]): Promise<{ success: boolean }> {
+    return gatewayClient.importLegacyProjects(projects);
   }
 }
 

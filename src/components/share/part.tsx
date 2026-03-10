@@ -1,11 +1,9 @@
-import map from "lang-map";
 import { DateTime } from "luxon";
 import {
   For,
   Show,
   Match,
   Switch,
-  type JSX,
   createMemo,
   createSignal,
   type ParentProps,
@@ -18,8 +16,6 @@ import {
   IconQueueList,
   IconCommandLine,
   IconCheckCircle,
-  IconChevronDown,
-  IconChevronRight,
   IconDocumentPlus,
   IconPencilSquare,
   IconRectangleStack,
@@ -35,40 +31,31 @@ import {
   IconBrain,
 } from "../icons/custom";
 import { Collapsible } from "../Collapsible";
-import { ContentCode } from "./content-code";
-import { ContentDiff } from "./content-diff";
-import { ContentText } from "./content-text";
-import { ContentBash } from "./content-bash";
 import { ContentError } from "./content-error";
-import { formatDuration, createElapsedTimer } from "./common";
 import { ContentMarkdown } from "./content-markdown";
+import { formatDuration, createElapsedTimer } from "./common";
+import {
+  ToolIcon,
+  ToolDuration,
+  formatErrorString,
+  TodoWriteTool,
+  TaskTool,
+  FallbackTool,
+  GrepTool,
+  GlobTool,
+  ListTool,
+  WebFetchTool,
+  ReadTool,
+  WriteTool,
+  EditTool,
+  BashTool,
+} from "./tools";
 import type { UnifiedMessage, UnifiedPart, UnifiedPermission, UnifiedQuestion, ToolPart } from "../../types/unified";
-import type { Diagnostic } from "vscode-languageserver-types";
-import { useI18n, formatMessage } from "../../lib/i18n";
+import { useI18n } from "../../lib/i18n";
 import { logger } from "../../lib/logger";
 import { isExpanded, toggleExpanded, messageStore, setExpanded } from "../../stores/message";
 
 import styles from "./part.module.css";
-
-const MIN_DURATION = 2000;
-
-/** Maps tool name to its corresponding icon */
-function ToolIcon(props: { tool: string }) {
-  return (
-    <Switch fallback={<IconSparkles width={14} height={14} />}>
-      <Match when={props.tool === "bash" || props.tool === "shell"}><IconCommandLine width={14} height={14} /></Match>
-      <Match when={props.tool === "edit"}><IconPencilSquare width={14} height={14} /></Match>
-      <Match when={props.tool === "write"}><IconDocumentPlus width={14} height={14} /></Match>
-      <Match when={props.tool === "read"}><IconDocument width={14} height={14} /></Match>
-      <Match when={props.tool === "grep"}><IconDocumentMagnifyingGlass width={14} height={14} /></Match>
-      <Match when={props.tool === "glob"}><IconMagnifyingGlass width={14} height={14} /></Match>
-      <Match when={props.tool === "list"}><IconRectangleStack width={14} height={14} /></Match>
-      <Match when={props.tool === "webfetch" || props.tool === "web_fetch"}><IconGlobeAlt width={14} height={14} /></Match>
-      <Match when={props.tool === "task"}><IconRobot width={14} height={14} /></Match>
-      <Match when={props.tool === "todowrite" || props.tool === "todoread" || props.tool === "todo"}><IconQueueList width={14} height={14} /></Match>
-    </Switch>
-  );
-}
 
 export interface PartProps {
   index: number;
@@ -504,613 +491,6 @@ export function Part(props: PartProps) {
   );
 }
 
-// ... rest of the file ...
-
-type ToolProps = {
-  id: string;
-  tool: string;
-  state: any; // Using any to avoid complex type matching for now
-  message: UnifiedMessage;
-  isLastPart?: boolean;
-};
-
-interface Todo {
-  id: string;
-  content: string;
-  status: "pending" | "in_progress" | "completed";
-  priority: "low" | "medium" | "high";
-}
-
-function stripWorkingDirectory(filePath?: string, workingDir?: string) {
-  if (filePath === undefined || workingDir === undefined) return filePath;
-
-  const prefix = workingDir.endsWith("/") ? workingDir : workingDir + "/";
-
-  if (filePath === workingDir) {
-    return "";
-  }
-
-  if (filePath.startsWith(prefix)) {
-    return filePath.slice(prefix.length);
-  }
-
-  return filePath;
-}
-
-function getShikiLang(filename: string) {
-  const ext = filename.split(".").pop()?.toLowerCase() ?? "";
-  const langs = map.languages(ext);
-  const type = langs?.[0]?.toLowerCase();
-
-  const overrides: Record<string, string> = {
-    conf: "shellscript",
-  };
-
-  return type ? (overrides[type] ?? type) : "plaintext";
-}
-
-function getDiagnostics(
-  diagnosticsByFile: Record<string, Diagnostic[]>,
-  currentFile: string,
-): JSX.Element[] {
-  const result: JSX.Element[] = [];
-
-  if (
-    diagnosticsByFile === undefined ||
-    diagnosticsByFile[currentFile] === undefined
-  )
-    return result;
-
-  for (const diags of Object.values(diagnosticsByFile)) {
-    for (const d of diags) {
-      if (d.severity !== 1) continue;
-
-      const line = d.range.start.line + 1;
-      const column = d.range.start.character + 1;
-
-      result.push(
-        <pre>
-          <span data-color="red" data-marker="label">
-            Error
-          </span>
-          <span data-color="dimmed" data-separator>
-            [{line}:{column}]
-          </span>
-          <span>{d.message}</span>
-        </pre>,
-      );
-    }
-  }
-
-  return result;
-}
-
-function formatErrorString(error: string): JSX.Element {
-  const { t } = useI18n();
-  if (!error) return <></>;
-  const errorMarker = "Error: ";
-  const startsWithError = error.startsWith(errorMarker);
-
-  return startsWithError ? (
-    <pre>
-      <span data-color="red" data-marker="label" data-separator>
-        {t().common.error}
-      </span>
-      <span>{error.slice(errorMarker.length)}</span>
-    </pre>
-  ) : (
-    <pre>
-      <span data-color="dimmed">{error}</span>
-    </pre>
-  );
-}
-
-
-export function TodoWriteTool(props: ToolProps) {
-  const { t } = useI18n();
-  const priority: Record<Todo["status"], number> = {
-    in_progress: 0,
-    pending: 1,
-    completed: 2,
-  };
-  const todos = createMemo(() =>
-    ((props.state.input?.todos ?? []) as Todo[])
-      .slice()
-      .sort((a, b) => priority[a.status] - priority[b.status]),
-  );
-  const starting = () => todos().every((t: Todo) => t.status === "pending");
-  const finished = () => todos().every((t: Todo) => t.status === "completed");
-
-  const expandedKey = () => `todowrite-${props.id}`;
-  const expanded = () => messageStore.expanded[expandedKey()] ?? false;
-
-  return (
-    <Collapsible open={expanded()} onOpenChange={() => setExpanded(expandedKey(), !expanded())}>
-      <Collapsible.Trigger>
-        <div data-component="tool-title">
-          <span data-slot="icon" data-icon-color="violet"><IconQueueList width={14} height={14} /></span>
-          <span data-slot="name">
-            <Switch fallback={t().parts.updatingPlan}>
-              <Match when={starting()}>{t().parts.creatingPlan}</Match>
-              <Match when={finished()}>{t().parts.completingPlan}</Match>
-            </Switch>
-          </span>
-        </div>
-        <ToolDuration
-          time={DateTime.fromMillis(props.state.time.end)
-            .diff(DateTime.fromMillis(props.state.time.start))
-            .toMillis()}
-        />
-        <Collapsible.Arrow />
-      </Collapsible.Trigger>
-
-      <Collapsible.Content>
-        <Show when={todos().length > 0}>
-          <ul data-component="todos">
-            <For each={todos()}>
-              {(todo) => (
-                <li data-slot="item" data-status={todo.status}>
-                  <span></span>
-                  {todo.content}
-                </li>
-              )}
-            </For>
-          </ul>
-        </Show>
-      </Collapsible.Content>
-    </Collapsible>
-  );
-}
-
-function TaskTool(props: ToolProps) {
-  return (
-    <Collapsible open={isExpanded(props.id)} onOpenChange={() => toggleExpanded(props.id)}>
-      <Collapsible.Trigger>
-        <div data-component="tool-title">
-          <span data-slot="icon" data-icon-color="blue"><IconRobot width={14} height={14} /></span>
-          <span data-slot="name">Task</span>
-          <span data-slot="target">{props.state.input.description}</span>
-        </div>
-        <ToolDuration
-          time={DateTime.fromMillis(props.state.time.end)
-            .diff(DateTime.fromMillis(props.state.time.start))
-            .toMillis()}
-        />
-        <Collapsible.Arrow />
-      </Collapsible.Trigger>
-
-      <Collapsible.Content>
-        <div data-component="tool-input">
-          &ldquo;{props.state.input.prompt}&rdquo;
-        </div>
-        <div data-component="tool-output">
-           <ContentMarkdown expand text={props.state.output} />
-        </div>
-      </Collapsible.Content>
-    </Collapsible>
-  );
-}
-
-
-export function FallbackTool(props: ToolProps) {
-  return (
-    <Collapsible open={isExpanded(props.id)} onOpenChange={() => toggleExpanded(props.id)}>
-      <Collapsible.Trigger>
-        <div data-component="tool-title">
-          <span data-slot="icon" data-icon-color="indigo"><ToolIcon tool={props.tool} /></span>
-          <span data-slot="name">{props.tool}</span>
-          {props.state.input?.description && (
-            <span data-slot="target">{props.state.input.description}</span>
-          )}
-        </div>
-        <ToolDuration
-          time={DateTime.fromMillis(props.state.time.end)
-            .diff(DateTime.fromMillis(props.state.time.start))
-            .toMillis()}
-        />
-        <Collapsible.Arrow />
-      </Collapsible.Trigger>
-
-      <Collapsible.Content>
-        <div data-component="tool-args">
-          <For each={flattenToolArgs(props.state.input)}>
-            {(arg) => (
-              <>
-                <div></div>
-                <div>{arg[0]}</div>
-                <div>{arg[1]}</div>
-              </>
-            )}
-          </For>
-        </div>
-        <Switch>
-          <Match when={props.state.output}>
-            <div data-component="tool-result">
-                <ContentText
-                  expand
-                  compact
-                  text={props.state.output}
-                  data-size="sm"
-                  data-color="dimmed"
-                />
-            </div>
-          </Match>
-        </Switch>
-      </Collapsible.Content>
-    </Collapsible>
-  );
-}
-
-// Converts nested objects/arrays into [path, value] pairs.
-// E.g. {a:{b:{c:1}}, d:[{e:2}, 3]} => [["a.b.c",1], ["d[0].e",2], ["d[1]",3]]
-function flattenToolArgs(obj: any, prefix: string = ""): Array<[string, any]> {
-  if (obj == null) return [];
-  const entries: Array<[string, any]> = [];
-
-  for (const [key, value] of Object.entries(obj)) {
-    const path = prefix ? `${prefix}.${key}` : key;
-
-    if (value !== null && typeof value === "object") {
-      if (Array.isArray(value)) {
-        value.forEach((item, index) => {
-          const arrayPath = `${path}[${index}]`;
-          if (item !== null && typeof item === "object") {
-            entries.push(...flattenToolArgs(item, arrayPath));
-          } else {
-            entries.push([arrayPath, item]);
-          }
-        });
-      } else {
-        entries.push(...flattenToolArgs(value, path));
-      }
-    } else {
-      entries.push([path, value]);
-    }
-  }
-
-  return entries;
-}
-
-
-
-export function GrepTool(props: ToolProps) {
-  const { t } = useI18n();
-  const matchCount = () => props.state.metadata?.matches ?? 0;
-  
-  return (
-    <Collapsible open={isExpanded(props.id)} onOpenChange={() => toggleExpanded(props.id)}>
-      <Collapsible.Trigger>
-        <div data-component="tool-title">
-          <span data-slot="icon" data-icon-color="indigo"><IconDocumentMagnifyingGlass width={14} height={14} /></span>
-          <span data-slot="name">Grep</span>
-          <span data-slot="target" title={props.state.input.pattern}>
-            &ldquo;{props.state.input.pattern}&rdquo;
-          </span>
-          <Show when={props.state.status === "completed"}>
-            <span data-slot="summary" data-color="dimmed">
-              {matchCount() === 1 
-                ? formatMessage(t().parts.match, { count: matchCount() })
-                : formatMessage(t().parts.matches, { count: matchCount() })}
-            </span>
-          </Show>
-        </div>
-        <ToolDuration
-          time={DateTime.fromMillis(props.state.time.end)
-            .diff(DateTime.fromMillis(props.state.time.start))
-            .toMillis()}
-        />
-        <Collapsible.Arrow />
-      </Collapsible.Trigger>
-
-      <Collapsible.Content>
-         <div data-component="tool-result">
-           <Switch>
-             <Match when={matchCount() > 0 || props.state.output}>
-                <ContentText expand compact text={props.state.output} />
-             </Match>
-           </Switch>
-         </div>
-      </Collapsible.Content>
-    </Collapsible>
-  );
-}
-
-export function ListTool(props: ToolProps) {
-  const path = createMemo(() =>
-    props.state.input?.path !== props.message.workingDirectory
-      ? stripWorkingDirectory(props.state.input?.path, props.message.workingDirectory)
-      : props.state.input?.path,
-  );
-
-  return (
-    <Collapsible open={isExpanded(props.id)} onOpenChange={() => toggleExpanded(props.id)}>
-      <Collapsible.Trigger>
-        <div data-component="tool-title">
-          <span data-slot="icon" data-icon-color="indigo"><IconRectangleStack width={14} height={14} /></span>
-          <span data-slot="name">LS</span>
-          <span data-slot="target" title={props.state.input?.path}>
-            {path()}
-          </span>
-        </div>
-        <ToolDuration
-          time={DateTime.fromMillis(props.state.time.end)
-            .diff(DateTime.fromMillis(props.state.time.start))
-            .toMillis()}
-        />
-        <Collapsible.Arrow />
-      </Collapsible.Trigger>
-
-      <Collapsible.Content>
-        <div data-component="tool-result">
-          <Switch>
-            <Match when={props.state.output}>
-               <ContentText expand compact text={props.state.output} />
-            </Match>
-          </Switch>
-        </div>
-      </Collapsible.Content>
-    </Collapsible>
-  );
-}
-
-export function WebFetchTool(props: ToolProps) {
-  return (
-    <Collapsible open={isExpanded(props.id)} onOpenChange={() => toggleExpanded(props.id)}>
-      <Collapsible.Trigger>
-        <div data-component="tool-title">
-          <span data-slot="icon" data-icon-color="teal"><IconGlobeAlt width={14} height={14} /></span>
-          <span data-slot="name">Fetch</span>
-          <span data-slot="target" title={props.state.input.url}>{props.state.input.url}</span>
-        </div>
-        <ToolDuration
-          time={DateTime.fromMillis(props.state.time.end)
-            .diff(DateTime.fromMillis(props.state.time.start))
-            .toMillis()}
-        />
-        <Collapsible.Arrow />
-      </Collapsible.Trigger>
-
-      <Collapsible.Content>
-        <div data-component="tool-result">
-          <Switch>
-            <Match when={props.state.metadata?.error}>
-              <ContentError>{formatErrorString(props.state.output)}</ContentError>
-            </Match>
-            <Match when={props.state.output}>
-              <ContentCode
-                lang={props.state.input.format || "text"}
-                code={props.state.output}
-              />
-            </Match>
-          </Switch>
-        </div>
-      </Collapsible.Content>
-    </Collapsible>
-  );
-}
-
-export function ReadTool(props: ToolProps) {
-  const { t } = useI18n();
-  const filePath = createMemo(() =>
-    stripWorkingDirectory(props.state.input?.filePath, props.message.workingDirectory),
-  );
-  const lineCount = createMemo(() => {
-    const lines = props.state.metadata?.lines;
-    if (typeof lines === "number") return lines;
-    if (props.state.output) {
-      return props.state.output.split("\n").length;
-    }
-    return null;
-  });
-
-  return (
-    <div data-component="tool-row">
-      <div data-component="tool-title">
-        <span data-slot="icon" data-icon-color="indigo"><IconDocument width={14} height={14} /></span>
-        <span data-slot="name">Read</span>
-        <span data-slot="target" title={props.state.input?.filePath}>
-          {filePath()}
-        </span>
-        <Show when={lineCount() !== null}>
-          <span data-slot="summary" data-color="dimmed">
-            {formatMessage(t().parts.lines, { count: lineCount() })}
-          </span>
-        </Show>
-        <Show when={props.state.metadata?.error}>
-          <span data-slot="error" data-color="red">
-            {t().common.error}
-          </span>
-        </Show>
-      </div>
-      <ToolDuration
-        time={DateTime.fromMillis(props.state.time.end)
-          .diff(DateTime.fromMillis(props.state.time.start))
-          .toMillis()}
-      />
-    </div>
-  );
-}
-
-export function WriteTool(props: ToolProps) {
-  const filePath = createMemo(() =>
-    stripWorkingDirectory(props.state.input?.filePath, props.message.workingDirectory),
-  );
-  const diagnostics = createMemo(() =>
-    getDiagnostics(
-      props.state.metadata?.diagnostics,
-      props.state.input.filePath,
-    ),
-  );
-
-  return (
-    <Collapsible open={isExpanded(props.id)} onOpenChange={() => toggleExpanded(props.id)}>
-      <Collapsible.Trigger>
-        <div data-component="tool-title">
-          <span data-slot="icon" data-icon-color="emerald"><IconDocumentPlus width={14} height={14} /></span>
-          <span data-slot="name">Write</span>
-          <span data-slot="target" title={props.state.input?.filePath}>
-            {filePath()}
-          </span>
-        </div>
-        <ToolDuration
-          time={DateTime.fromMillis(props.state.time.end)
-            .diff(DateTime.fromMillis(props.state.time.start))
-            .toMillis()}
-        />
-        <Collapsible.Arrow />
-      </Collapsible.Trigger>
-
-      <Collapsible.Content>
-        <Show when={diagnostics().length > 0}>
-          <ContentError>{diagnostics()}</ContentError>
-        </Show>
-        <div data-component="tool-result">
-          <Switch>
-            <Match when={props.state.metadata?.error}>
-              <ContentError>{formatErrorString(props.state.output)}</ContentError>
-            </Match>
-            <Match when={props.state.input?.content}>
-               <ContentCode
-                 lang={getShikiLang(filePath() || "")}
-                 code={props.state.input?.content}
-               />
-            </Match>
-          </Switch>
-        </div>
-      </Collapsible.Content>
-    </Collapsible>
-  );
-}
-
-export function EditTool(props: ToolProps) {
-  const filePath = createMemo(() =>
-    stripWorkingDirectory(props.state.input.filePath, props.message.workingDirectory),
-  );
-  const diagnostics = createMemo(() =>
-    getDiagnostics(
-      props.state.metadata?.diagnostics,
-      props.state.input.filePath,
-    ),
-  );
-
-  return (
-    <Collapsible open={isExpanded(props.id)} onOpenChange={() => toggleExpanded(props.id)}>
-      <Collapsible.Trigger>
-        <div data-component="tool-title">
-          <span data-slot="icon" data-icon-color="amber"><IconPencilSquare width={14} height={14} /></span>
-          <span data-slot="name">Edit</span>
-          <span data-slot="target" title={props.state.input?.filePath}>
-            {filePath()}
-          </span>
-        </div>
-        <ToolDuration
-          time={DateTime.fromMillis(props.state.time.end)
-            .diff(DateTime.fromMillis(props.state.time.start))
-            .toMillis()}
-        />
-        <Collapsible.Arrow />
-      </Collapsible.Trigger>
-
-      <Collapsible.Content>
-        <div data-component="tool-result">
-          <Switch>
-            <Match when={props.state.metadata?.error}>
-              <ContentError>
-                {formatErrorString(props.state.metadata?.message || "")}
-              </ContentError>
-            </Match>
-            <Match when={props.state.metadata?.diff}>
-              <div data-component="diff">
-                <ContentDiff
-                  diff={props.state.metadata?.diff}
-                  lang={getShikiLang(filePath() || "")}
-                />
-              </div>
-            </Match>
-          </Switch>
-        </div>
-        <Show when={diagnostics().length > 0}>
-          <ContentError>{diagnostics()}</ContentError>
-        </Show>
-      </Collapsible.Content>
-    </Collapsible>
-  );
-}
-
-export function BashTool(props: ToolProps) {
-  return (
-    <Collapsible open={isExpanded(props.id)} onOpenChange={() => toggleExpanded(props.id)}>
-      <Collapsible.Trigger>
-        <div data-component="tool-title">
-           <span data-slot="icon" data-icon-color="green"><IconCommandLine width={14} height={14} /></span>
-           <span data-slot="name">Bash</span>
-           <span data-slot="target" title={props.state.input.command} style={{ "font-family": "var(--font-mono)", "font-size": "0.75rem" }}>
-             {props.state.input.command.length > 50
-               ? props.state.input.command.slice(0, 50) + "..."
-               : props.state.input.command}
-           </span>
-        </div>
-        <ToolDuration
-          time={DateTime.fromMillis(props.state.time.end)
-            .diff(DateTime.fromMillis(props.state.time.start))
-            .toMillis()}
-        />
-        <Collapsible.Arrow />
-      </Collapsible.Trigger>
-
-      <Collapsible.Content>
-         <ContentBash
-          command={props.state.input.command}
-          output={props.state.metadata?.output ?? props.state.metadata?.stdout}
-          description={props.state.metadata?.description}
-        />
-      </Collapsible.Content>
-    </Collapsible>
-  );
-}
-
-export function GlobTool(props: ToolProps) {
-  const { t } = useI18n();
-  const count = () => props.state.metadata?.count ?? 0;
-
-  return (
-    <Collapsible open={isExpanded(props.id)} onOpenChange={() => toggleExpanded(props.id)}>
-       <Collapsible.Trigger>
-          <div data-component="tool-title">
-            <span data-slot="icon" data-icon-color="indigo"><IconMagnifyingGlass width={14} height={14} /></span>
-            <span data-slot="name">Glob</span>
-            <span data-slot="target">
-              &ldquo;{props.state.input.pattern}&rdquo;
-            </span>
-             <Show when={props.state.status === "completed"}>
-              <span data-slot="summary" data-color="dimmed">
-                {count() === 1
-                  ? formatMessage(t().parts.result, { count: count() })
-                  : formatMessage(t().parts.results, { count: count() })}
-              </span>
-            </Show>
-          </div>
-          <ToolDuration
-            time={DateTime.fromMillis(props.state.time.end)
-              .diff(DateTime.fromMillis(props.state.time.start))
-              .toMillis()}
-          />
-          <Collapsible.Arrow />
-       </Collapsible.Trigger>
-
-       <Collapsible.Content>
-        <Switch>
-          <Match when={count() > 0 || props.state.output}>
-            <div data-component="tool-result">
-                 <ContentText expand compact text={props.state.output} />
-            </div>
-          </Match>
-        </Switch>
-       </Collapsible.Content>
-    </Collapsible>
-  );
-}
-
 export function Spacer() {
   return <div data-component="spacer"></div>;
 }
@@ -1120,15 +500,6 @@ function Footer(props: ParentProps<{ title: string }>) {
     <div data-component="content-footer" title={props.title}>
       {props.children}
     </div>
-  );
-}
-
-/** Inline duration badge shown in the trigger row */
-function ToolDuration(props: { time: number }) {
-  return (
-    <Show when={props.time > MIN_DURATION}>
-      <span data-slot="duration" title={`${props.time}ms`}>{formatDuration(props.time)}</span>
-    </Show>
   );
 }
 
@@ -1158,7 +529,6 @@ function RunningToolCard(props: { part: ToolPart }) {
     </div>
   );
 }
-
 
 function getProvider(model: string) {
   const lowerModel = model.toLowerCase();
@@ -1207,14 +577,12 @@ export function PermissionPrompt(props: PermissionPromptProps) {
     }
   };
 
-  // Map option type to button variant for styling
   const getVariant = (type: string) => {
     if (type.includes("reject")) return "deny";
     if (type.includes("always")) return "always";
     return "once";
   };
 
-  // Map option type to display label (use option's own label if available)
   const getLabel = (opt: { label: string; type: string }) => {
     if (opt.label) return opt.label;
     if (opt.type.includes("reject")) return t().permission.deny;
@@ -1222,8 +590,6 @@ export function PermissionPrompt(props: PermissionPromptProps) {
     return t().permission.allowOnce;
   };
 
-  // Use the actual options from the permission (provided by the agent).
-  // Fall back to hardcoded defaults only if no options exist.
   const options = () => {
     if (!props.permission) return [];
     return props.permission.options?.length > 0
@@ -1275,11 +641,9 @@ interface QuestionPromptProps {
 export function QuestionPrompt(props: QuestionPromptProps) {
   const { t } = useI18n();
 
-  // Track selected answers per question index: answers[i] = array of selected option labels
   const [answers, setAnswers] = createSignal<string[][]>(
     props.question.questions.map(() => [])
   );
-  // Track custom text input per question index
   const [customTexts, setCustomTexts] = createSignal<string[]>(
     props.question.questions.map(() => "")
   );
@@ -1295,7 +659,6 @@ export function QuestionPrompt(props: QuestionPromptProps) {
         if (multiple) {
           current.push(optionLabel);
         } else {
-          // Single-select: replace
           next[questionIndex] = [optionLabel];
           return next;
         }
@@ -1307,7 +670,6 @@ export function QuestionPrompt(props: QuestionPromptProps) {
 
   const handleSubmit = () => {
     if (!props.onRespond) return;
-    // Build final answers: merge selected options + custom text
     const finalAnswers = props.question.questions.map((_q, i) => {
       const selected = [...(answers()[i] || [])];
       const custom = (customTexts()[i] || "").trim();
@@ -1353,7 +715,6 @@ export function QuestionPrompt(props: QuestionPromptProps) {
                   }}
                 </For>
               </div>
-              {/* Custom text input (shown by default unless custom is explicitly false) */}
               <Show when={q.custom !== false}>
                 <input
                   type="text"

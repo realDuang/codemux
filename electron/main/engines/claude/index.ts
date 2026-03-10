@@ -7,11 +7,7 @@
 // reuse the running CC process, avoiding cold start (~3-5s) each time.
 // ============================================================================
 
-import { randomBytes } from "crypto";
-import { existsSync, unlinkSync, readdirSync, readFileSync } from "fs";
-import { homedir } from "os";
-import { join } from "path";
-import { app } from "electron";
+import { timeId } from "../../utils/id-gen";
 import {
   unstable_v2_createSession,
   unstable_v2_resumeSession,
@@ -21,17 +17,15 @@ import {
 } from "@anthropic-ai/claude-agent-sdk";
 import type {
   SDKSession,
-  SDKSessionOptions,
   SDKMessage,
-  SDKSessionInfo,
   CanUseTool,
   PermissionResult,
   PermissionUpdate,
 } from "@anthropic-ai/claude-agent-sdk";
 
-import { EngineAdapter } from "./engine-adapter";
-import { claudeLog } from "../services/logger";
-import { inferToolKind } from "../../../src/types/tool-mapping";
+import { EngineAdapter, MessageBuffer } from "../engine-adapter";
+import { claudeLog } from "../../services/logger";
+import { inferToolKind, normalizeToolName } from "../../../../src/types/tool-mapping";
 import type {
   EngineType,
   EngineStatus,
@@ -54,86 +48,11 @@ import type {
   ReasoningPart,
   StepStartPart,
   StepFinishPart,
-  NormalizedToolName,
-  PermissionOption,
   QuestionInfo,
-} from "../../../src/types/unified";
+} from "../../../../src/types/unified";
 
-// ============================================================================
-// Time-sortable ID generator (same pattern as CopilotSdkAdapter)
-// ============================================================================
-
-let _lastTs = 0;
-let _counter = 0;
-
-function timeId(prefix: string): string {
-  const now = Date.now();
-  if (now === _lastTs) {
-    _counter++;
-  } else {
-    _lastTs = now;
-    _counter = 0;
-  }
-  const timePart = now.toString(16).padStart(12, "0");
-  const counterPart = (_counter & 0xffff).toString(16).padStart(4, "0");
-  const rand = randomBytes(5).toString("hex");
-  return `${prefix}_${timePart}${counterPart}${rand}`;
-}
-
-// ============================================================================
-// Claude Code Tool Name Mapping
-// ============================================================================
-
-const CLAUDE_TOOL_MAP: Record<string, NormalizedToolName> = {
-  Bash: "shell",
-  Read: "read",
-  Write: "write",
-  Edit: "edit",
-  Grep: "grep",
-  Glob: "glob",
-  WebFetch: "web_fetch",
-  WebSearch: "web_fetch",
-  Task: "task",
-  TodoWrite: "todo",
-  TodoRead: "todo",
-  NotebookEdit: "edit",
-  LSP: "read",
-  AskUserQuestion: "unknown",
-  Skill: "unknown",
-  EnterPlanMode: "unknown",
-  ExitPlanMode: "unknown",
-};
-
-function normalizeClaudeToolName(toolName: string): NormalizedToolName {
-  return (
-    CLAUDE_TOOL_MAP[toolName] ??
-    CLAUDE_TOOL_MAP[toolName.toLowerCase()] ??
-    "unknown"
-  );
-}
-
-// ============================================================================
-// Message Buffer — Accumulates streaming events into a complete message
-// ============================================================================
-
-interface MessageBuffer {
-  messageId: string;
-  sessionId: string;
-  parts: UnifiedPart[];
-  textAccumulator: string;
-  textPartId: string | null;
-  reasoningAccumulator: string;
-  reasoningPartId: string | null;
-  startTime: number;
-  tokens?: {
-    input: number;
-    output: number;
-    cache?: { read: number; write: number };
-  };
-  cost?: number;
-  modelId?: string;
-  error?: string;
-}
+import { sdkSessionToUnified, convertSdkMessages } from "./converters";
+import { deleteCCSessionFile, readJsonlTimestamps } from "./cc-session-files";
 
 // ============================================================================
 // V2 Session Info — Tracks a persistent SDK session
@@ -232,7 +151,6 @@ export class ClaudeCodeAdapter extends EngineAdapter {
 
   // --- Tool call tracking ---
   private toolCallParts = new Map<string, ToolPart>();
-  private toolIdToThoughtId = new Map<string, string>();
 
   // --- Active requests (for abort) ---
   private activeAbortControllers = new Map<string, AbortController>();
@@ -377,7 +295,7 @@ export class ClaudeCodeAdapter extends EngineAdapter {
         directory ? { dir: directory } : undefined,
       );
 
-      const sessions = sdkSessions.map((s) => this.sdkSessionToUnified(s, directory));
+      const sessions = sdkSessions.map((s) => sdkSessionToUnified(this.engineType, s, directory));
       if (directory) {
         const normDir = directory.replaceAll("\\", "/");
         return sessions.filter((s) => s.directory === normDir);
@@ -467,120 +385,13 @@ export class ClaudeCodeAdapter extends EngineAdapter {
     const ccSessionId = v2Info?.capturedSessionId;
     const directory = v2Info?.directory ?? this.sessionDirectories.get(sessionId);
     if (ccSessionId && directory) {
-      this.deleteCCSessionFile(ccSessionId, directory);
+      deleteCCSessionFile(ccSessionId, directory);
     }
 
     this.sessionDirectories.delete(sessionId);
     this.messageHistory.delete(sessionId);
     this.messageBuffers.delete(sessionId);
     this.sessionModes.delete(sessionId);
-  }
-
-  // ==========================================================================
-  // Claude Code session file management
-  // ==========================================================================
-
-  /**
-   * Map a project directory to Claude Code's folder name convention.
-   * Mirrors the SDK's internal v9() function: replace all non-alphanumeric
-   * chars with '-', truncate + hash if longer than 200 chars.
-   */
-  private static ccProjectFolder(directory: string): string {
-    const MAX_PREFIX = 200;
-    const sanitized = directory.replace(/[^a-zA-Z0-9]/g, "-");
-    if (sanitized.length <= MAX_PREFIX) return sanitized;
-    // Simple string hash matching SDK's iq() fallback
-    let hash = 0;
-    for (let i = 0; i < directory.length; i++) {
-      hash = ((hash << 5) - hash + directory.charCodeAt(i)) | 0;
-    }
-    return `${sanitized.slice(0, MAX_PREFIX)}-${(hash >>> 0).toString(36)}`;
-  }
-
-  /**
-   * Get the Claude Code config directory (respects CLAUDE_CONFIG_DIR env var).
-   */
-  private static ccConfigDir(): string {
-    return (process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), ".claude"));
-  }
-
-  /**
-   * Find the Claude Code projects directory for a given workspace directory.
-   * Handles the fallback logic for long paths where the hash suffix may differ.
-   */
-  private findCCProjectDir(directory: string): string | null {
-    const projectsDir = join(ClaudeCodeAdapter.ccConfigDir(), "projects");
-    if (!existsSync(projectsDir)) return null;
-
-    const folderName = ClaudeCodeAdapter.ccProjectFolder(directory);
-    const exactPath = join(projectsDir, folderName);
-    if (existsSync(exactPath)) return exactPath;
-
-    // Fallback for long paths: match by prefix
-    if (folderName.length > 200) {
-      const prefix = folderName.slice(0, 200);
-      try {
-        const entries = readdirSync(projectsDir, { withFileTypes: true });
-        const match = entries.find(e => e.isDirectory() && e.name.startsWith(prefix + "-"));
-        if (match) return join(projectsDir, match.name);
-      } catch { /* ignore */ }
-    }
-
-    return null;
-  }
-
-  /**
-   * Delete a Claude Code .jsonl session file from disk.
-   */
-  private deleteCCSessionFile(ccSessionId: string, directory: string): void {
-    const projectDir = this.findCCProjectDir(directory);
-    if (!projectDir) return;
-
-    const sessionFile = join(projectDir, `${ccSessionId}.jsonl`);
-    try {
-      if (existsSync(sessionFile)) {
-        unlinkSync(sessionFile);
-        claudeLog.info(`[Claude] Deleted CC session file: ${sessionFile}`);
-      }
-    } catch (err) {
-      claudeLog.warn(`[Claude] Failed to delete CC session file ${sessionFile}:`, err);
-    }
-  }
-
-  /**
-   * Read a Claude Code .jsonl session file and extract uuid→timestamp mapping.
-   * The SDK's getSessionMessages() strips the timestamp field, so we read
-   * the raw file to recover per-message timestamps for history display.
-   */
-  private readJsonlTimestamps(
-    ccSessionId: string,
-    directory: string,
-  ): Map<string, number> {
-    const timestamps = new Map<string, number>();
-    const projectDir = this.findCCProjectDir(directory);
-    if (!projectDir) return timestamps;
-
-    const sessionFile = join(projectDir, `${ccSessionId}.jsonl`);
-    if (!existsSync(sessionFile)) return timestamps;
-
-    try {
-      const content = readFileSync(sessionFile, "utf-8");
-      for (const line of content.split("\n")) {
-        if (!line.trim()) continue;
-        try {
-          const entry = JSON.parse(line);
-          if (entry.uuid && entry.timestamp) {
-            timestamps.set(entry.uuid, new Date(entry.timestamp).getTime());
-          }
-        } catch {
-          // Skip malformed lines
-        }
-      }
-    } catch (err) {
-      claudeLog.warn(`[Claude] Failed to read timestamps from ${sessionFile}:`, err);
-    }
-
-    return timestamps;
   }
 
   // ==========================================================================
@@ -777,10 +588,10 @@ export class ClaudeCodeAdapter extends EngineAdapter {
 
       // Read timestamps from the raw .jsonl file (SDK strips them)
       const timestamps = directory
-        ? this.readJsonlTimestamps(ccSessionId, directory)
+        ? readJsonlTimestamps(ccSessionId, directory)
         : new Map<string, number>();
 
-      const messages = this.convertSdkMessages(sdkMessages, sessionId, timestamps);
+      const messages = convertSdkMessages(sdkMessages, sessionId, timestamps);
       this.messageHistory.set(sessionId, messages);
       return messages;
     } catch (err) {
@@ -1136,97 +947,6 @@ export class ClaudeCodeAdapter extends EngineAdapter {
       }
 
       this.emit("question.asked", { question });
-    });
-  }
-
-  /**
-   * Handle tool permission requests by routing them through the permission UI.
-   */
-  private handlePermissionRequest(
-    sessionId: string,
-    toolName: string,
-    input: Record<string, unknown>,
-    options: {
-      signal: AbortSignal;
-      suggestions?: PermissionUpdate[];
-      blockedPath?: string;
-      decisionReason?: string;
-      toolUseID: string;
-    },
-  ): Promise<PermissionResult> {
-    const permissionId = timeId("perm");
-
-    // Determine permission kind from tool name
-    const kind: "read" | "edit" | "other" =
-      toolName === "Read" || toolName === "Glob" || toolName === "Grep"
-        ? "read"
-        : toolName === "Write" || toolName === "Edit"
-          ? "edit"
-          : "other";
-
-    // Build a descriptive title
-    let title = `${toolName}`;
-    if (input.command) {
-      title = `Run: ${String(input.command).slice(0, 200)}`;
-    } else if (input.file_path) {
-      title = `${toolName}: ${input.file_path}`;
-    } else if (input.pattern) {
-      title = `${toolName}: ${input.pattern}`;
-    }
-    if (options.blockedPath) {
-      title += ` (blocked: ${options.blockedPath})`;
-    }
-
-    const permOptions: PermissionOption[] = [
-      { id: "allow_once", label: "Allow Once", type: "allow_once" },
-      { id: "allow_always", label: "Always Allow", type: "allow_always" },
-      { id: "reject_once", label: "Deny", type: "reject_once" },
-    ];
-
-    const permission: UnifiedPermission = {
-      id: permissionId,
-      sessionId,
-      engineType: this.engineType,
-      toolCallId: options.toolUseID,
-      title,
-      kind,
-      rawInput: input,
-      options: permOptions,
-      metadata: {
-        toolName,
-        decisionReason: options.decisionReason,
-        blockedPath: options.blockedPath,
-      },
-    };
-
-    claudeLog.info(
-      `[Claude][${sessionId}] Permission request: id=${permissionId}, tool=${toolName}`,
-    );
-
-    return new Promise<PermissionResult>((resolve) => {
-      this.pendingPermissions.set(permissionId, {
-        resolve,
-        permission,
-        suggestions: options.suggestions,
-        input,
-      });
-
-      // Abort handling
-      if (options.signal) {
-        const onAbort = () => {
-          if (this.pendingPermissions.has(permissionId)) {
-            this.pendingPermissions.delete(permissionId);
-            resolve({ behavior: "deny", message: "Aborted" });
-          }
-        };
-        if (options.signal.aborted) {
-          onAbort();
-          return;
-        }
-        options.signal.addEventListener("abort", onAbort, { once: true });
-      }
-
-      this.emit("permission.asked", { permission });
     });
   }
 
@@ -1671,9 +1391,7 @@ export class ClaudeCodeAdapter extends EngineAdapter {
 
           // Create a pending tool part
           const toolPartId = timeId("tp");
-          const normalizedTool = normalizeClaudeToolName(
-            contentBlock.name ?? "unknown",
-          );
+          const normalizedTool = normalizeToolName("claude", contentBlock.name ?? "unknown");
           const toolPart: ToolPart = {
             type: "tool",
             id: toolPartId,
@@ -1853,7 +1571,7 @@ export class ClaudeCodeAdapter extends EngineAdapter {
     toolName: string,
     input: any,
   ): void {
-    const normalizedTool = normalizeClaudeToolName(toolName);
+    const normalizedTool = normalizeToolName("claude", toolName);
     const toolPartId = timeId("tp");
     const toolPart: ToolPart = {
       type: "tool",
@@ -1984,7 +1702,6 @@ export class ClaudeCodeAdapter extends EngineAdapter {
     // Clean up
     this.messageBuffers.delete(sessionId);
     this.toolCallParts.clear();
-    this.toolIdToThoughtId.clear();
 
     // Resolve sendMessage promise
     const resolver = this.sendResolvers.get(sessionId);
@@ -2008,172 +1725,6 @@ export class ClaudeCodeAdapter extends EngineAdapter {
       messageId: buffer.messageId,
       part,
     });
-  }
-
-  // ==========================================================================
-  // Type Conversion Helpers
-  // ==========================================================================
-
-  private sdkSessionToUnified(
-    sdkSession: SDKSessionInfo,
-    directory?: string,
-  ): UnifiedSession {
-    return {
-      id: `cc_${sdkSession.sessionId}`,
-      engineType: this.engineType,
-      directory:
-        (sdkSession.cwd ?? directory ?? "").replaceAll("\\", "/"),
-      title:
-        sdkSession.customTitle ??
-        sdkSession.summary ??
-        sdkSession.firstPrompt?.slice(0, 100) ??
-        "Untitled",
-      time: {
-        created: sdkSession.lastModified,
-        updated: sdkSession.lastModified,
-      },
-      engineMeta: {
-        ccSessionId: sdkSession.sessionId,
-        gitBranch: sdkSession.gitBranch,
-      },
-    };
-  }
-
-  private convertSdkMessages(
-    sdkMessages: any[],
-    sessionId: string,
-    timestamps?: Map<string, number>,
-  ): UnifiedMessage[] {
-    const messages: UnifiedMessage[] = [];
-
-    // Build a lookup from tool_use_id → next user message timestamp.
-    // In the .jsonl, a tool_use block in an assistant message is followed by
-    // a user message containing the tool_result. The time between the assistant
-    // message and the tool_result user message is the tool execution duration.
-    const toolResultTimestamps = new Map<string, number>();
-    if (timestamps && timestamps.size > 0) {
-      for (const msg of sdkMessages) {
-        if (msg.type !== "user") continue;
-        const content = msg.message?.content;
-        if (!Array.isArray(content)) continue;
-        const msgTs = timestamps.get(msg.uuid);
-        if (!msgTs) continue;
-        for (const block of content) {
-          if (block.type === "tool_result" && block.tool_use_id) {
-            toolResultTimestamps.set(block.tool_use_id, msgTs);
-          }
-        }
-      }
-    }
-
-    for (const msg of sdkMessages) {
-      const msgTs = timestamps?.get(msg.uuid) ?? 0;
-
-      if (msg.type === "user") {
-        const msgId = msg.uuid ?? timeId("msg");
-        const parts: UnifiedPart[] = [];
-        const content = msg.message?.content;
-
-        if (typeof content === "string") {
-          parts.push({ type: "text", text: content, id: timeId("pt"), messageId: msgId, sessionId } as TextPart);
-        } else if (Array.isArray(content)) {
-          for (const block of content) {
-            if (block.type === "text") {
-              parts.push({ type: "text", text: block.text, id: timeId("pt"), messageId: msgId, sessionId } as TextPart);
-            }
-          }
-        }
-
-        if (parts.length > 0) {
-          messages.push({
-            id: msgId,
-            sessionId,
-            role: "user",
-            time: { created: msgTs || Date.now() },
-            parts,
-          });
-        }
-      } else if (msg.type === "assistant") {
-        const msgId = msg.uuid ?? timeId("msg");
-        const parts: UnifiedPart[] = [];
-        const content = msg.message?.content;
-
-        if (Array.isArray(content)) {
-          for (const block of content) {
-            if (block.type === "text") {
-              parts.push({ type: "text", text: block.text, id: timeId("pt"), messageId: msgId, sessionId } as TextPart);
-            } else if (block.type === "thinking") {
-              parts.push({
-                type: "reasoning",
-                text: block.thinking,
-                id: timeId("pt"),
-                messageId: msgId,
-                sessionId,
-              } as ReasoningPart);
-            } else if (block.type === "tool_use") {
-              const normalizedTool = normalizeClaudeToolName(block.name ?? "");
-
-              // Calculate tool duration from timestamps
-              const toolStart = msgTs;
-              const toolEnd = toolResultTimestamps.get(block.id) ?? 0;
-              const toolDuration = (toolStart && toolEnd && toolEnd > toolStart)
-                ? toolEnd - toolStart
-                : 0;
-
-              parts.push({
-                type: "step-start",
-                id: timeId("pt"),
-                messageId: msgId,
-                sessionId,
-              } as StepStartPart);
-              parts.push({
-                type: "tool",
-                id: timeId("pt"),
-                messageId: msgId,
-                sessionId,
-                callId: block.id,
-                normalizedTool,
-                originalTool: block.name,
-                title: block.name,
-                kind: inferToolKind(undefined, normalizedTool),
-                state: {
-                  status: "completed",
-                  input: block.input ?? {},
-                  output: "",
-                  time: { start: toolStart, end: toolEnd || toolStart, duration: toolDuration },
-                },
-              } as ToolPart);
-              parts.push({
-                type: "step-finish",
-                id: timeId("pt"),
-                messageId: msgId,
-                sessionId,
-              } as StepFinishPart);
-            }
-          }
-        }
-
-        // Find the next message's timestamp to use as completion time
-        const msgIndex = sdkMessages.indexOf(msg);
-        const nextMsg = sdkMessages[msgIndex + 1];
-        const completedTs = nextMsg ? (timestamps?.get(nextMsg.uuid) ?? 0) : 0;
-
-        if (parts.length > 0) {
-          messages.push({
-            id: msgId,
-            sessionId,
-            role: "assistant",
-            time: {
-              created: msgTs || Date.now(),
-              completed: completedTs || msgTs || undefined,
-            },
-            parts,
-          });
-        }
-      }
-    }
-
-    return messages;
   }
 
   // ==========================================================================
@@ -2212,14 +1763,14 @@ export class ClaudeCodeAdapter extends EngineAdapter {
   // ==========================================================================
 
   private rejectAllPendingPermissions(reason: string): void {
-    for (const [id, pending] of this.pendingPermissions) {
+    for (const [_id, pending] of this.pendingPermissions) {
       pending.resolve({ behavior: "deny", message: reason });
     }
     this.pendingPermissions.clear();
   }
 
   private rejectAllPendingQuestions(reason: string): void {
-    for (const [id, pending] of this.pendingQuestions) {
+    for (const [_id, pending] of this.pendingQuestions) {
       pending.resolve("");
     }
     this.pendingQuestions.clear();

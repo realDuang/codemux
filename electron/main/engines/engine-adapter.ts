@@ -22,6 +22,29 @@ import type {
   PermissionReply,
 } from "../../../src/types/unified";
 
+/**
+ * Accumulates streaming events into a complete message.
+ * Shared between all engine adapters that process streaming responses.
+ */
+export interface MessageBuffer {
+  messageId: string;
+  sessionId: string;
+  parts: UnifiedPart[];
+  textAccumulator: string;
+  textPartId: string | null;
+  reasoningAccumulator: string;
+  reasoningPartId: string | null;
+  startTime: number;
+  tokens?: {
+    input: number;
+    output: number;
+    cache?: { read: number; write: number };
+  };
+  cost?: number;
+  modelId?: string;
+  error?: string;
+}
+
 // --- Adapter Events ---
 
 export interface EngineAdapterEvents {

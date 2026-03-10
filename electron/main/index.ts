@@ -27,9 +27,9 @@ import { authApiServer } from "./services/auth-api-server";
 import { productionServer } from "./services/production-server";
 import { EngineManager } from "./gateway/engine-manager";
 import { GatewayServer } from "./gateway/ws-server";
-import { OpenCodeAdapter } from "./engines/opencode-adapter";
-import { CopilotSdkAdapter } from "./engines/copilot-sdk-adapter";
-import { ClaudeCodeAdapter } from "./engines/claude-code-adapter";
+import { OpenCodeAdapter } from "./engines/opencode";
+import { CopilotSdkAdapter } from "./engines/copilot";
+import { ClaudeCodeAdapter } from "./engines/claude";
 import { ChannelManager } from "./channels/channel-manager";
 import { FeishuAdapter } from "./channels/feishu/feishu-adapter";
 import { updateManager } from "./services/update-manager";
@@ -145,7 +145,7 @@ if (!gotTheLock) {
     ] as const;
     for (const [name, adapter] of engines) {
       const p = (adapter as any).start().then(
-        () => mainLog.warn(`${name} engine started successfully`),
+        () => mainLog.info(`${name} engine started successfully`),
         (err: any) => mainLog.error(`${name} engine failed to start:`, err?.message ?? err),
       );
       enginePromises.push(p);

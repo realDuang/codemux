@@ -1052,31 +1052,22 @@ export class FeishuAdapter extends ChannelAdapter {
   // ============================================================================
 
   private async handleGroupDisbanded(event: FeishuChatDisbandedEvent): Promise<void> {
-    const chatId = event.chat_id;
-    if (!chatId) return;
-
-    feishuLog.info(`Group disbanded: ${chatId}`);
-    const binding = this.sessionMapper.removeGroupBinding(chatId);
-    if (binding && this.gatewayClient) {
-      try {
-        await this.gatewayClient.deleteSession(binding.conversationId);
-        feishuLog.info(`Deleted session ${binding.conversationId} after group disbanded`);
-      } catch (err) {
-        feishuLog.error(`Failed to delete session ${binding.conversationId}:`, err);
-      }
-    }
+    await this.cleanupGroupResources(event.chat_id, "Group disbanded");
   }
 
   private async handleBotRemovedFromGroup(event: FeishuBotRemovedEvent): Promise<void> {
-    const chatId = event.chat_id;
+    await this.cleanupGroupResources(event.chat_id, "Bot removed from group");
+  }
+
+  private async cleanupGroupResources(chatId: string | undefined, reason: string): Promise<void> {
     if (!chatId) return;
 
-    feishuLog.info(`Bot removed from group: ${chatId}`);
+    feishuLog.info(`${reason}: ${chatId}`);
     const binding = this.sessionMapper.removeGroupBinding(chatId);
     if (binding && this.gatewayClient) {
       try {
         await this.gatewayClient.deleteSession(binding.conversationId);
-        feishuLog.info(`Deleted session ${binding.conversationId} after bot removed from group`);
+        feishuLog.info(`Deleted session ${binding.conversationId} after ${reason}`);
       } catch (err) {
         feishuLog.error(`Failed to delete session ${binding.conversationId}:`, err);
       }

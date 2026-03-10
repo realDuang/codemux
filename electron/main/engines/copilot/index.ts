@@ -1,0 +1,878 @@
+// ============================================================================
+// Copilot SDK Adapter — GitHub Copilot integration via @github/copilot-sdk
+// ============================================================================
+
+import { timeId } from "../../utils/id-gen";
+import { CopilotClient, CopilotSession } from "@github/copilot-sdk";
+import type {
+  SessionEvent,
+  SessionConfig,
+  ResumeSessionConfig,
+  PermissionRequestResult,
+} from "@github/copilot-sdk";
+
+import { EngineAdapter, MessageBuffer } from "../engine-adapter";
+import { copilotLog } from "../../services/logger";
+import { inferToolKind, normalizeToolName } from "../../../../src/types/tool-mapping";
+import type {
+  EngineType,
+  EngineStatus,
+  EngineCapabilities,
+  EngineInfo,
+  AuthMethod,
+  UnifiedSession,
+  UnifiedMessage,
+  UnifiedPermission,
+  UnifiedQuestion,
+  UnifiedModelInfo,
+  ModelListResult,
+  UnifiedProject,
+  AgentMode,
+  MessagePromptContent,
+  PermissionReply,
+  ToolPart,
+  TextPart,
+  PermissionOption,
+} from "../../../../src/types/unified";
+
+import {
+  convertEventsToMessages,
+  createUserMessage,
+  buildToolTitle,
+  normalizeTodoInput,
+  normalizeTodoStatus,
+  upsertPart,
+  sdkModelToUnified,
+  metadataToSession,
+} from "./converters";
+
+import {
+  DEFAULT_MODES,
+  readConfigModel,
+  resolvePlatformCli,
+} from "./config";
+
+/** Equivalent to SDK's UserInputRequest */
+interface UserInputRequest {
+  question: string;
+  choices?: string[];
+  allowFreeform?: boolean;
+}
+
+/** Equivalent to SDK's UserInputResponse */
+interface UserInputResponse {
+  answer: string;
+  wasFreeform: boolean;
+}
+
+/** Equivalent to SDK's PermissionRequest */
+interface PermissionRequest {
+  kind: string;
+  toolCallId: string;
+  [key: string]: any;
+}
+
+interface PendingPermission {
+  resolve: (result: PermissionRequestResult) => void;
+  permission: UnifiedPermission;
+}
+
+interface PendingQuestion {
+  resolve: (response: UserInputResponse) => void;
+  question: UnifiedQuestion;
+}
+
+export class CopilotSdkAdapter extends EngineAdapter {
+  readonly engineType: EngineType = "copilot";
+
+  private client: CopilotClient | null = null;
+  private activeSessions = new Map<string, CopilotSession>();
+  private sessionUnsubscribers = new Map<string, () => void>();
+
+  private status: EngineStatus = "stopped";
+  private version: string | undefined;
+  private authenticated: boolean | undefined;
+  private authMessage: string | undefined;
+  private currentModelId: string | null = null;
+  private cachedModels: UnifiedModelInfo[] = [];
+  private sessionModes = new Map<string, string>();
+  private sessionDirectories = new Map<string, string>();
+
+  private sessionTodos = new Map<string, Map<string, { id: string; title: string; status: string }>>();
+  private allowedAlwaysKinds = new Set<string>();
+
+  private messageBuffers = new Map<string, MessageBuffer>();
+  private messageHistory = new Map<string, UnifiedMessage[]>();
+
+  private pendingPermissions = new Map<string, PendingPermission>();
+  private pendingQuestions = new Map<string, PendingQuestion>();
+
+  private idleResolvers = new Map<string, (msg: UnifiedMessage) => void>();
+  private toolCallParts = new Map<string, ToolPart>();
+  private taskCompleteCallIds = new Set<string>();
+  private activeTurnSessions = new Set<string>();
+
+  constructor(private options?: { cliPath?: string; env?: Record<string, string> }) {
+    super();
+  }
+
+  async start(): Promise<void> {
+    if (this.status === "running") return;
+
+    this.setStatus("starting");
+    copilotLog.info("Starting Copilot SDK adapter...");
+
+    try {
+      const cliPath = this.options?.cliPath ?? resolvePlatformCli();
+      if (!cliPath) {
+        throw new Error(
+          `No platform-native Copilot CLI binary found for ${process.platform}-${process.arch}. ` +
+          `Install @github/copilot-${process.platform}-${process.arch} or provide a custom cliPath.`,
+        );
+      }
+      copilotLog.info("Using Copilot CLI binary:", cliPath);
+
+      this.client = new CopilotClient({
+        useStdio: true,
+        autoRestart: true,
+        autoStart: true,
+        cliPath,
+        env: this.options?.env,
+      });
+
+      await this.client.start();
+      await this.client.ping();
+
+      try {
+        const status = await this.client.getStatus();
+        this.version = status.version;
+      } catch {}
+
+      try {
+        const authStatus = await this.client.getAuthStatus();
+        this.authenticated = authStatus.isAuthenticated;
+        this.authMessage = authStatus.isAuthenticated
+          ? authStatus.login ?? authStatus.authType
+          : authStatus.statusMessage ?? "Not authenticated";
+      } catch {}
+
+      this.currentModelId = readConfigModel() ?? null;
+      this.setStatus("running");
+    } catch (err) {
+      copilotLog.error("Failed to start Copilot SDK adapter:", err);
+      this.setStatus("error", err instanceof Error ? err.message : String(err));
+      throw err;
+    }
+  }
+
+  async stop(): Promise<void> {
+    if (this.status === "stopped") return;
+    copilotLog.info("Stopping Copilot SDK adapter...");
+
+    for (const [sessionId, session] of this.activeSessions) {
+      try {
+        const unsub = this.sessionUnsubscribers.get(sessionId);
+        if (unsub) unsub();
+        await session.destroy();
+      } catch (err) {
+        copilotLog.warn(`Error destroying session ${sessionId}:`, err);
+      }
+    }
+    this.activeSessions.clear();
+    this.sessionUnsubscribers.clear();
+
+    this.rejectAllPendingPermissions("Adapter stopped");
+    this.rejectAllPendingQuestions("Adapter stopped");
+
+    if (this.client) {
+      try {
+        await this.client.stop();
+      } catch (err) {
+        copilotLog.warn("Error stopping Copilot client:", err);
+      }
+      this.client = null;
+    }
+
+    this.setStatus("stopped");
+  }
+
+  async healthCheck(): Promise<boolean> {
+    if (!this.client) return false;
+    try {
+      await this.client.ping();
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  getStatus(): EngineStatus { return this.status; }
+
+  getInfo(): EngineInfo {
+    return {
+      type: this.engineType,
+      name: "GitHub Copilot",
+      version: this.version,
+      status: this.status,
+      capabilities: this.getCapabilities(),
+      authMethods: this.getAuthMethods(),
+      authenticated: this.authenticated,
+      authMessage: this.authMessage,
+    };
+  }
+
+  getCapabilities(): EngineCapabilities {
+    return {
+      providerModelHierarchy: false,
+      dynamicModes: true,
+      messageCancellation: true,
+      permissionAlways: true,
+      imageAttachment: true,
+      loadSession: true,
+      listSessions: true,
+      modelSwitchable: true,
+      customModelInput: false,
+      availableModes: this.getModes(),
+    };
+  }
+
+  getAuthMethods(): AuthMethod[] {
+    return [
+      { id: "github", name: "GitHub", description: "Sign in with GitHub to use Copilot" },
+    ];
+  }
+
+  async listSessions(directory?: string): Promise<UnifiedSession[]> {
+    this.ensureClient();
+    try {
+      const metadataList = await this.client!.listSessions();
+      const sessions = metadataList.map((m) => metadataToSession(this.engineType, m));
+      if (directory) {
+        const normDir = directory.replaceAll("\\", "/");
+        return sessions.filter((s) => s.directory === normDir);
+      }
+      return sessions;
+    } catch (err) {
+      copilotLog.warn("Failed to list sessions from SDK:", err);
+      return [];
+    }
+  }
+
+  async createSession(directory: string): Promise<UnifiedSession> {
+    this.ensureClient();
+    const normalizedDir = directory.replaceAll("\\", "/");
+    const mode = "agent";
+
+    const config: SessionConfig = {
+      workingDirectory: directory,
+      streaming: true,
+      model: this.currentModelId ?? undefined,
+      onPermissionRequest: (req, ctx) => this.handlePermissionRequest(req as any, ctx),
+      onUserInputRequest: (req, ctx) => this.handleUserInputRequest(req as any, ctx),
+    };
+
+    const sdkSession = await this.client!.createSession(config);
+    const sessionId = sdkSession.sessionId;
+
+    this.subscribeToSessionEvents(sdkSession);
+    this.activeSessions.set(sessionId, sdkSession);
+    this.sessionModes.set(sessionId, mode);
+    this.sessionDirectories.set(sessionId, directory);
+
+    const now = Date.now();
+    const session: UnifiedSession = {
+      id: sessionId,
+      engineType: this.engineType,
+      directory: normalizedDir,
+      time: { created: now, updated: now },
+    };
+
+    this.emit("session.created", { session });
+    return session;
+  }
+
+  hasSession(_sessionId: string): boolean { return true; }
+  async getSession(sessionId: string): Promise<UnifiedSession | null> { return null; }
+
+  async deleteSession(sessionId: string): Promise<void> {
+    const activeSession = this.activeSessions.get(sessionId);
+    if (activeSession) {
+      const unsub = this.sessionUnsubscribers.get(sessionId);
+      if (unsub) unsub();
+      this.sessionUnsubscribers.delete(sessionId);
+      try {
+        await activeSession.destroy();
+      } catch (err) {}
+      this.activeSessions.delete(sessionId);
+    }
+
+    try {
+      await this.client?.deleteSession(sessionId);
+    } catch (err) {}
+
+    this.messageHistory.delete(sessionId);
+    this.messageBuffers.delete(sessionId);
+    this.sessionModes.delete(sessionId);
+    this.sessionDirectories.delete(sessionId);
+    this.sessionTodos.delete(sessionId);
+    this.activeTurnSessions.delete(sessionId);
+  }
+
+  async sendMessage(
+    sessionId: string,
+    content: MessagePromptContent[],
+    options?: { mode?: string; modelId?: string; directory?: string },
+  ): Promise<UnifiedMessage> {
+    const session = await this.ensureActiveSession(sessionId, options?.directory);
+    const now = Date.now();
+
+    if (options?.modelId && options.modelId !== this.currentModelId) {
+      this.currentModelId = options.modelId;
+      try {
+        await session.rpc.model.switchTo({ modelId: options.modelId });
+      } catch (err) {}
+    }
+
+    if (options?.mode) {
+      const previousMode = this.sessionModes.get(sessionId);
+      this.sessionModes.set(sessionId, options.mode);
+      if (options.mode !== previousMode) {
+        const sdkMode = options.mode === "agent" ? "interactive" : options.mode as any;
+        try {
+          await session.rpc.mode.set({ mode: sdkMode });
+        } catch (err) {}
+      }
+    }
+
+    const promptText = content
+      .filter((c) => c.type === "text" && c.text)
+      .map((c) => c.text!)
+      .join("\n");
+
+    const userMessage = createUserMessage(sessionId, promptText, now);
+    this.appendMessageToHistory(sessionId, userMessage);
+    this.emit("message.updated", { sessionId, message: userMessage });
+
+    const messageId = timeId("msg");
+    const buffer: MessageBuffer = {
+      messageId,
+      sessionId,
+      parts: [],
+      textAccumulator: "",
+      textPartId: null,
+      reasoningAccumulator: "",
+      reasoningPartId: null,
+      startTime: Date.now(),
+      modelId: this.currentModelId ?? undefined,
+    };
+    this.messageBuffers.set(sessionId, buffer);
+
+    const initialMessage = this.bufferToMessage(buffer, false);
+    this.emit("message.updated", { sessionId, message: initialMessage });
+
+    return new Promise<UnifiedMessage>((resolve, reject) => {
+      this.idleResolvers.set(sessionId, resolve);
+      session.send({ prompt: promptText }).catch((err) => {
+        this.idleResolvers.delete(sessionId);
+        const buf = this.messageBuffers.get(sessionId);
+        if (buf) {
+          buf.error = err instanceof Error ? err.message : String(err);
+          this.finalizeBuffer(sessionId);
+        }
+        reject(err);
+      });
+    });
+  }
+
+  async cancelMessage(sessionId: string): Promise<void> {
+    const session = this.activeSessions.get(sessionId);
+    if (!session) return;
+    try {
+      await session.abort();
+    } catch (err) {}
+
+    for (const [id, pending] of this.pendingQuestions) {
+      if (pending.question.sessionId === sessionId) {
+        pending.resolve({ answer: "", wasFreeform: false });
+        this.pendingQuestions.delete(id);
+      }
+    }
+    for (const [id, pending] of this.pendingPermissions) {
+      if (pending.permission.sessionId === sessionId) {
+        pending.resolve({ kind: "denied-interactively-by-user" });
+        this.pendingPermissions.delete(id);
+      }
+    }
+
+    const buffer = this.messageBuffers.get(sessionId);
+    if (buffer) buffer.error = "Cancelled";
+    this.finalizeBuffer(sessionId);
+  }
+
+  async listMessages(sessionId: string): Promise<UnifiedMessage[]> {
+    const cached = this.messageHistory.get(sessionId);
+    if (cached && cached.length > 0) return cached;
+
+    try {
+      const session = await this.ensureActiveSession(sessionId);
+      const events = await session.getMessages();
+      const messages = convertEventsToMessages(sessionId, events);
+      this.messageHistory.set(sessionId, messages);
+      return messages;
+    } catch (err) {
+      return [];
+    }
+  }
+
+  async listModels(): Promise<ModelListResult> {
+    this.ensureClient();
+    try {
+      const sdkModels = await this.client!.listModels();
+      this.cachedModels = sdkModels.map((m: any) => sdkModelToUnified(this.engineType, m));
+    } catch (err) {}
+
+    const configModel = readConfigModel();
+    if (configModel) this.currentModelId = configModel;
+
+    return {
+      models: this.cachedModels,
+      currentModelId: this.currentModelId ?? undefined,
+    };
+  }
+
+  async setModel(sessionId: string, modelId: string): Promise<void> {
+    this.currentModelId = modelId;
+    const session = this.activeSessions.get(sessionId);
+    if (session) {
+      try {
+        await session.rpc.model.switchTo({ modelId });
+      } catch (err) {}
+    }
+  }
+
+  getModes(): AgentMode[] { return DEFAULT_MODES; }
+
+  async setMode(sessionId: string, modeId: string): Promise<void> {
+    this.sessionModes.set(sessionId, modeId);
+    const session = this.activeSessions.get(sessionId);
+    if (session) {
+      const sdkMode = modeId === "agent" ? "interactive" : modeId as any;
+      try {
+        await session.rpc.mode.set({ mode: sdkMode });
+      } catch (err) {}
+    }
+  }
+
+  async replyPermission(permissionId: string, reply: PermissionReply, _sessionId?: string): Promise<void> {
+    const pending = this.pendingPermissions.get(permissionId);
+    if (!pending) return;
+
+    const optionId = reply.optionId;
+    const isApproved = optionId === "allow_once" || optionId === "allow_always";
+
+    if (optionId === "allow_always" && pending.permission.rawInput) {
+      const rawKind = (pending.permission.rawInput as any).kind;
+      if (rawKind) this.allowedAlwaysKinds.add(rawKind);
+    }
+
+    pending.resolve({ kind: isApproved ? "approved" : "denied-interactively-by-user" });
+    this.pendingPermissions.delete(permissionId);
+    this.emit("permission.replied", { permissionId, optionId });
+  }
+
+  async replyQuestion(questionId: string, answers: string[][], _sessionId?: string): Promise<void> {
+    const pending = this.pendingQuestions.get(questionId);
+    if (!pending) return;
+
+    const answer = answers[0]?.[0] ?? "";
+    pending.resolve({
+      answer,
+      wasFreeform: !pending.question.questions[0]?.options?.some((opt) => opt.label === answer),
+    });
+    this.pendingQuestions.delete(questionId);
+    this.emit("question.replied", { questionId, answers });
+  }
+
+  async rejectQuestion(questionId: string, _sessionId?: string): Promise<void> {
+    const pending = this.pendingQuestions.get(questionId);
+    if (!pending) return;
+    pending.resolve({ answer: "", wasFreeform: true });
+    this.pendingQuestions.delete(questionId);
+  }
+
+  async listProjects(): Promise<UnifiedProject[]> { return []; }
+
+  private setStatus(status: EngineStatus, error?: string): void {
+    this.status = status;
+    this.emit("status.changed", { engineType: this.engineType, status, error });
+  }
+
+  private ensureClient(): void {
+    if (!this.client || this.status !== "running") throw new Error("Copilot SDK adapter is not running");
+  }
+
+  private async ensureActiveSession(sessionId: string, directory?: string): Promise<CopilotSession> {
+    const existing = this.activeSessions.get(sessionId);
+    if (existing) return existing;
+    this.ensureClient();
+
+    const workingDirectory = directory || this.sessionDirectories.get(sessionId);
+    const config: ResumeSessionConfig = {
+      streaming: true,
+      workingDirectory,
+      onPermissionRequest: (req, ctx) => this.handlePermissionRequest(req as any, ctx),
+      onUserInputRequest: (req, ctx) => this.handleUserInputRequest(req as any, ctx),
+    };
+
+    try {
+      const sdkSession = await this.client!.resumeSession(sessionId, config);
+      this.subscribeToSessionEvents(sdkSession);
+      this.activeSessions.set(sessionId, sdkSession);
+      if (workingDirectory) this.sessionDirectories.set(sessionId, workingDirectory);
+      return sdkSession;
+    } catch (err) {
+      const sdkSession = await this.client!.createSession({ ...config } as any);
+      this.subscribeToSessionEvents(sdkSession);
+      this.activeSessions.set(sdkSession.sessionId, sdkSession);
+      if (workingDirectory) this.sessionDirectories.set(sdkSession.sessionId, workingDirectory);
+      return sdkSession;
+    }
+  }
+
+  private subscribeToSessionEvents(session: CopilotSession): void {
+    const sessionId = session.sessionId;
+    const oldUnsub = this.sessionUnsubscribers.get(sessionId);
+    if (oldUnsub) oldUnsub();
+    const unsub = session.on((event: SessionEvent) => this.handleSessionEvent(sessionId, event));
+    this.sessionUnsubscribers.set(sessionId, unsub);
+  }
+
+  private handleSessionEvent(sessionId: string, event: SessionEvent): void {
+    try {
+      switch (event.type) {
+        case "assistant.message_delta": this.handleMessageDelta(sessionId, event.data as any); break;
+        case "assistant.reasoning_delta": this.handleReasoningDelta(sessionId, event.data as any); break;
+        case "assistant.message": this.handleAssistantMessage(sessionId, event.data as any); break;
+        case "tool.execution_start": this.handleToolStart(sessionId, event.data as any); break;
+        case "tool.execution_complete": this.handleToolComplete(sessionId, event.data as any); break;
+        case "tool.execution_partial_result": this.handleToolPartialResult(sessionId, event.data as any); break;
+        case "assistant.turn_start": this.handleTurnStart(sessionId, event.data as any); break;
+        case "assistant.turn_end": this.handleTurnEnd(sessionId, event.data as any); break;
+        case "session.idle": this.handleSessionIdle(sessionId); break;
+        case "session.title_changed": this.handleTitleChanged(sessionId, event.data as any); break;
+        case "session.error": this.handleSessionError(sessionId, event.data as any); break;
+        case "session.model_change": this.handleModelChange(sessionId, event.data as any); break;
+        case "session.mode_changed": this.handleModeChanged(sessionId, event.data as any); break;
+        case "assistant.usage": this.handleUsage(sessionId, event.data as any); break;
+        case "abort": this.handleAbort(sessionId, event.data as any); break;
+        case "subagent.started": this.handleSubagentStarted(sessionId, event.data as any); break;
+        case "subagent.completed": this.handleSubagentCompleted(sessionId, event.data as any); break;
+      }
+    } catch (err) {}
+  }
+
+  private handleMessageDelta(sessionId: string, data: { deltaContent: string }): void {
+    const buffer = this.getOrCreateBuffer(sessionId);
+    buffer.textAccumulator += data.deltaContent;
+    if (!buffer.textPartId) buffer.textPartId = timeId("part");
+    const textPart: TextPart = { id: buffer.textPartId, messageId: buffer.messageId, sessionId, type: "text", text: buffer.textAccumulator };
+    upsertPart(buffer.parts, textPart);
+    this.emit("message.part.updated", { sessionId, messageId: buffer.messageId, part: textPart });
+  }
+
+  private handleReasoningDelta(sessionId: string, data: { deltaContent: string }): void {
+    const buffer = this.getOrCreateBuffer(sessionId);
+    buffer.reasoningAccumulator += data.deltaContent;
+    if (!buffer.reasoningPartId) buffer.reasoningPartId = timeId("part");
+    const reasoningPart: any = { id: buffer.reasoningPartId, messageId: buffer.messageId, sessionId, type: "reasoning", text: buffer.reasoningAccumulator };
+    upsertPart(buffer.parts, reasoningPart);
+    this.emit("message.part.updated", { sessionId, messageId: buffer.messageId, part: reasoningPart });
+  }
+
+  private handleAssistantMessage(sessionId: string, data: { content?: string }): void {
+    const buffer = this.messageBuffers.get(sessionId);
+    if (!buffer && data.content) {
+      const newBuffer = this.getOrCreateBuffer(sessionId);
+      newBuffer.textAccumulator = data.content;
+      if (!newBuffer.textPartId) newBuffer.textPartId = timeId("part");
+      const textPart: TextPart = { id: newBuffer.textPartId, messageId: newBuffer.messageId, sessionId, type: "text", text: data.content };
+      upsertPart(newBuffer.parts, textPart);
+      this.emit("message.part.updated", { sessionId, messageId: newBuffer.messageId, part: textPart });
+    }
+  }
+
+  private handleToolStart(sessionId: string, data: { toolCallId: string; toolName: string; arguments?: any }): void {
+    const buffer = this.getOrCreateBuffer(sessionId);
+    this.flushTextAccumulator(buffer, sessionId);
+
+    if (data.toolName === "task_complete") {
+      const summary = data.arguments?.summary || "";
+      this.taskCompleteCallIds.add(data.toolCallId);
+      if (summary) {
+        buffer.textAccumulator += summary;
+        if (!buffer.textPartId) buffer.textPartId = timeId("part");
+        const textPart: TextPart = { id: buffer.textPartId, messageId: buffer.messageId, sessionId, type: "text", text: buffer.textAccumulator };
+        upsertPart(buffer.parts, textPart);
+        this.emit("message.part.updated", { sessionId, messageId: buffer.messageId, part: textPart });
+      }
+      return;
+    }
+
+    const normalizedTool = normalizeToolName("copilot", data.toolName);
+    const sqlQuery = data.arguments?.query || "";
+    if (normalizedTool === "sql" && /\btodos\b/i.test(sqlQuery)) {
+      this.applySqlTodoChanges(sessionId, sqlQuery);
+      this.emitTodoPart(sessionId, buffer, data.toolCallId, "running");
+      return;
+    }
+
+    const toolPart: ToolPart = {
+      id: timeId("part"),
+      messageId: buffer.messageId,
+      sessionId,
+      type: "tool",
+      callId: data.toolCallId,
+      normalizedTool,
+      originalTool: data.toolName,
+      title: buildToolTitle(data.toolName, normalizedTool, data.arguments),
+      kind: inferToolKind(undefined, normalizedTool),
+      state: {
+        status: "running",
+        input: normalizedTool === "todo" ? normalizeTodoInput(data.arguments) : (data.arguments || {}),
+        time: { start: Date.now() },
+      },
+    };
+    this.toolCallParts.set(data.toolCallId, toolPart);
+    buffer.parts.push(toolPart);
+    this.emit("message.part.updated", { sessionId, messageId: buffer.messageId, part: toolPart });
+  }
+
+  private handleToolComplete(sessionId: string, data: { toolCallId: string; success: boolean; result?: any; error?: any }): void {
+    if (this.taskCompleteCallIds.has(data.toolCallId)) {
+      this.taskCompleteCallIds.delete(data.toolCallId);
+      return;
+    }
+    const toolPart = this.toolCallParts.get(data.toolCallId);
+    if (!toolPart) {
+      const buffer = this.messageBuffers.get(sessionId);
+      if (buffer) this.emitTodoPart(sessionId, buffer, data.toolCallId, "completed");
+      return;
+    }
+    const now = Date.now();
+    const startTime = (toolPart.state as any).time?.start || now;
+    const output = data.result?.content || data.error?.message || "";
+    if (data.success) {
+      toolPart.state = { status: "completed", input: toolPart.state.input, output, time: { start: startTime, end: now, duration: now - startTime } };
+    } else {
+      toolPart.state = { status: "error", input: toolPart.state.input, output, error: data.error?.message || "Failed", time: { start: startTime, end: now, duration: now - startTime } };
+    }
+    if (data.result?.detailedContent) toolPart.diff = data.result.detailedContent;
+    const buffer = this.messageBuffers.get(sessionId);
+    if (buffer) upsertPart(buffer.parts, toolPart);
+    this.emit("message.part.updated", { sessionId, messageId: toolPart.messageId, part: toolPart });
+    this.toolCallParts.delete(data.toolCallId);
+  }
+
+  private handleToolPartialResult(sessionId: string, data: { toolCallId: string }): void {
+    const toolPart = this.toolCallParts.get(data.toolCallId);
+    if (toolPart) this.emit("message.part.updated", { sessionId, messageId: toolPart.messageId, part: toolPart });
+  }
+
+  private handleTurnStart(sessionId: string, _data: any): void {
+    this.activeTurnSessions.add(sessionId);
+    const buffer = this.getOrCreateBuffer(sessionId);
+    const stepStartPart: any = { id: timeId("part"), messageId: buffer.messageId, sessionId, type: "step-start" };
+    buffer.parts.push(stepStartPart);
+    this.emit("message.part.updated", { sessionId, messageId: buffer.messageId, part: stepStartPart });
+  }
+
+  private handleTurnEnd(sessionId: string, _data: any): void {
+    this.activeTurnSessions.delete(sessionId);
+    const buffer = this.getOrCreateBuffer(sessionId);
+    this.flushTextAccumulator(buffer, sessionId);
+    const stepFinishPart: any = { id: timeId("part"), messageId: buffer.messageId, sessionId, type: "step-finish" };
+    buffer.parts.push(stepFinishPart);
+    this.emit("message.part.updated", { sessionId, messageId: buffer.messageId, part: stepFinishPart });
+  }
+
+  private handleSessionIdle(sessionId: string): void {
+    const finalMessage = this.finalizeBuffer(sessionId);
+    if (finalMessage) {
+      const resolver = this.idleResolvers.get(sessionId);
+      if (resolver) { this.idleResolvers.delete(sessionId); resolver(finalMessage); }
+    }
+  }
+
+  private handleTitleChanged(sessionId: string, data: { title?: string }): void {
+    if (data.title) this.emit("session.updated", { session: { id: sessionId, engineType: this.engineType, title: data.title } });
+  }
+
+  private handleSessionError(sessionId: string, data: { message?: string }): void {
+    const buffer = this.messageBuffers.get(sessionId);
+    if (buffer) {
+      buffer.error = data.message || "Unknown error";
+      const finalMessage = this.finalizeBuffer(sessionId);
+      if (finalMessage) {
+        const resolver = this.idleResolvers.get(sessionId);
+        if (resolver) { this.idleResolvers.delete(sessionId); resolver(finalMessage); }
+      }
+    }
+  }
+
+  private handleModelChange(sessionId: string, data: { newModel?: string }): void { if (data.newModel) this.currentModelId = data.newModel; }
+  private handleModeChanged(sessionId: string, data: { newMode?: string }): void { if (data.newMode) this.sessionModes.set(sessionId, data.newMode); }
+
+  private handleUsage(sessionId: string, data: any): void {
+    const buffer = this.messageBuffers.get(sessionId);
+    if (!buffer) return;
+    buffer.tokens = { input: data.inputTokens || 0, output: data.outputTokens || 0, cache: data.cacheReadTokens || data.cacheWriteTokens ? { read: data.cacheReadTokens || 0, write: data.cacheWriteTokens || 0 } : undefined };
+    buffer.cost = data.cost;
+    if (data.model) buffer.modelId = data.model;
+  }
+
+  private handleAbort(sessionId: string, _data: any): void {
+    const finalMessage = this.finalizeBuffer(sessionId);
+    if (finalMessage) {
+      const resolver = this.idleResolvers.get(sessionId);
+      if (resolver) { this.idleResolvers.delete(sessionId); resolver(finalMessage); }
+    }
+  }
+
+  private handleSubagentStarted(sessionId: string, data: any): void {
+    const buffer = this.getOrCreateBuffer(sessionId);
+    this.flushTextAccumulator(buffer, sessionId);
+    const toolPart: ToolPart = {
+      id: timeId("part"), messageId: buffer.messageId, sessionId, type: "tool", callId: data.toolCallId, normalizedTool: "task", originalTool: data.agentName,
+      title: data.agentDisplayName || data.agentName, kind: "other",
+      state: { status: "running", input: { agentName: data.agentName, description: data.agentDescription }, time: { start: Date.now() } },
+    };
+    this.toolCallParts.set(data.toolCallId, toolPart);
+    buffer.parts.push(toolPart);
+    this.emit("message.part.updated", { sessionId, messageId: buffer.messageId, part: toolPart });
+  }
+
+  private handleSubagentCompleted(sessionId: string, data: any): void {
+    const toolPart = this.toolCallParts.get(data.toolCallId);
+    if (!toolPart) return;
+    const now = Date.now();
+    const startTime = (toolPart.state as any).time?.start || now;
+    toolPart.state = { status: "completed", input: toolPart.state.input, output: `Subagent ${data.agentDisplayName || data.agentName} completed`, time: { start: startTime, end: now, duration: now - startTime } };
+    const buffer = this.messageBuffers.get(sessionId);
+    if (buffer) upsertPart(buffer.parts, toolPart);
+    this.emit("message.part.updated", { sessionId, messageId: toolPart.messageId, part: toolPart });
+    this.toolCallParts.delete(data.toolCallId);
+  }
+
+  private handlePermissionRequest(req: PermissionRequest, ctx: { sessionId: string }): Promise<PermissionRequestResult> {
+    const sessionId = ctx.sessionId;
+    if ((this.sessionModes.get(sessionId) || "agent") === "autopilot") return Promise.resolve({ kind: "approved" });
+    if (this.allowedAlwaysKinds.has(req.kind)) return Promise.resolve({ kind: "approved" });
+
+    const permissionId = timeId("perm");
+    const kind: any = req.kind === "read" ? "read" : req.kind === "write" || req.kind === "shell" ? "edit" : "other";
+    const options: PermissionOption[] = [
+      { id: "allow_once", label: "Allow Once", type: "allow_once" },
+      { id: "allow_always", label: "Always Allow", type: "allow_always" },
+      { id: "reject_once", label: "Deny", type: "reject_once" },
+    ];
+
+    const permission: UnifiedPermission = { id: permissionId, sessionId, engineType: this.engineType, toolCallId: req.toolCallId, title: req.title || `${req.kind} permission requested`, kind, diff: req.diff, rawInput: { ...req }, options };
+
+    return new Promise<PermissionRequestResult>((resolve) => {
+      this.pendingPermissions.set(permissionId, { resolve, permission });
+      this.emit("permission.asked", { permission });
+    });
+  }
+
+  private handleUserInputRequest(req: UserInputRequest, ctx: { sessionId: string }): Promise<UserInputResponse> {
+    const questionId = timeId("q");
+    const sessionId = ctx.sessionId;
+    const question: UnifiedQuestion = { id: questionId, sessionId, engineType: this.engineType, questions: [{ question: req.question, header: req.question.length > 30 ? req.question.slice(0, 27) + "..." : req.question, options: (req.choices || []).map(c => ({ label: c, description: "" })), multiple: false, custom: req.allowFreeform ?? true }] };
+    return new Promise<UserInputResponse>((resolve) => {
+      this.pendingQuestions.set(questionId, { resolve, question });
+      this.emit("question.asked", { question });
+    });
+  }
+
+  private getOrCreateBuffer(sessionId: string): MessageBuffer {
+    let buffer = this.messageBuffers.get(sessionId);
+    if (!buffer) { buffer = { messageId: timeId("msg"), sessionId, parts: [], textAccumulator: "", textPartId: null, reasoningAccumulator: "", reasoningPartId: null, startTime: Date.now() }; this.messageBuffers.set(sessionId, buffer); }
+    return buffer;
+  }
+
+  private flushTextAccumulator(buffer: MessageBuffer, sessionId: string): void {
+    if (buffer.textAccumulator && buffer.textPartId) {
+      const textPart: TextPart = { id: buffer.textPartId, messageId: buffer.messageId, sessionId, type: "text", text: buffer.textAccumulator };
+      upsertPart(buffer.parts, textPart);
+      buffer.textAccumulator = ""; buffer.textPartId = null;
+    }
+  }
+
+  private finalizeBuffer(sessionId: string): UnifiedMessage | null {
+    const buffer = this.messageBuffers.get(sessionId);
+    if (!buffer) return null;
+    this.flushTextAccumulator(buffer, sessionId);
+    const message = this.bufferToMessage(buffer, true);
+    this.appendMessageToHistory(sessionId, message);
+    this.emit("message.updated", { sessionId, message });
+    this.messageBuffers.delete(sessionId);
+    return message;
+  }
+
+  private bufferToMessage(buffer: MessageBuffer, completed: boolean): UnifiedMessage {
+    return { id: buffer.messageId, sessionId: buffer.sessionId, role: "assistant", time: { created: buffer.startTime, completed: completed ? Date.now() : undefined }, parts: [...buffer.parts], tokens: buffer.tokens, cost: buffer.cost, modelId: buffer.modelId || this.currentModelId || undefined, error: buffer.error, workingDirectory: this.sessionDirectories.get(buffer.sessionId) };
+  }
+
+  private appendMessageToHistory(sessionId: string, message: UnifiedMessage): void {
+    let history = this.messageHistory.get(sessionId);
+    if (!history) { history = []; this.messageHistory.set(sessionId, history); }
+    const idx = history.findIndex((m) => m.id === message.id);
+    if (idx >= 0) history[idx] = message; else history.push(message);
+  }
+
+  private applySqlTodoChanges(sessionId: string, sql: string): void {
+    let todos = this.sessionTodos.get(sessionId);
+    if (!todos) { todos = new Map(); this.sessionTodos.set(sessionId, todos); }
+    const insertPattern = /INSERT\s+INTO\s+todos\b[^)]*\)\s*VALUES\s*([\s\S]+?)(?:;|$)/gi;
+    let m: any;
+    while ((m = insertPattern.exec(sql)) !== null) {
+      const rowPattern = /\(\s*'([^']+)'\s*,\s*'([^']+)'\s*,\s*'([^']+)'\s*\)/g;
+      let rm: any;
+      while ((rm = rowPattern.exec(m[1])) !== null) todos.set(rm[1], { id: rm[1], title: rm[2], status: rm[3] });
+    }
+    const updatePattern = /UPDATE\s+todos\s+SET\s+status\s*=\s*'([^']+)'(?:\s+WHERE\s+id\s+(?:IN\s*\(([^)]+)\)|=\s*'([^']+)'))?/gi;
+    while ((m = updatePattern.exec(sql)) !== null) {
+      const status = m[1], inList = m[2], singleId = m[3];
+      if (inList) { const ids = [...inList.matchAll(/'([^']+)'/g)].map((im: any) => im[1]); for (const id of ids) { const e = todos.get(id); if (e) e.status = status; } }
+      else if (singleId) { const e = todos.get(singleId); if (e) e.status = status; }
+      else { for (const t of todos.values()) t.status = status; }
+    }
+  }
+
+  private getTodosArray(sessionId: string): Array<{ content: string; status: any }> {
+    const todos = this.sessionTodos.get(sessionId);
+    if (!todos || todos.size === 0) return [];
+    return [...todos.values()].map((t) => ({ content: t.title, status: normalizeTodoStatus(t.status) }));
+  }
+
+  private emitTodoPart(sessionId: string, buffer: MessageBuffer, toolCallId: string, status: "running" | "completed"): void {
+    const todos = this.getTodosArray(sessionId);
+    if (todos.length === 0) return;
+    let todoPart = buffer.parts.find((p) => p.type === "tool" && (p as ToolPart).normalizedTool === "todo") as ToolPart | undefined;
+    const now = Date.now(), startTime = todoPart ? ((todoPart.state as any).time?.start || now) : now;
+    const newState = status === "completed" ? { status: "completed" as const, input: { todos }, output: "", time: { start: startTime, end: now, duration: now - startTime } } : { status: "running" as const, input: { todos }, time: { start: startTime } };
+    if (todoPart) todoPart.state = newState;
+    else { todoPart = { id: timeId("part"), messageId: buffer.messageId, sessionId, type: "tool", callId: `todo-synthetic-${toolCallId}`, normalizedTool: "todo", originalTool: "sql", title: "Todo", kind: "other", state: newState }; buffer.parts.push(todoPart); }
+    this.emit("message.part.updated", { sessionId, messageId: buffer.messageId, part: todoPart });
+  }
+
+  private rejectAllPendingPermissions(_reason: string): void {
+    for (const [_id, pending] of this.pendingPermissions) pending.resolve({ kind: "denied-no-approval-rule-and-could-not-request-from-user" });
+    this.pendingPermissions.clear();
+  }
+
+  private rejectAllPendingQuestions(_reason: string): void {
+    for (const [_id, pending] of this.pendingQuestions) pending.resolve({ answer: "", wasFreeform: true });
+    this.pendingQuestions.clear();
+  }
+}

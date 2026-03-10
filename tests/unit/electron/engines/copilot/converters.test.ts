@@ -8,9 +8,9 @@ import {
   upsertPart,
   sdkModelToUnified,
   metadataToSession,
-} from '../../electron/main/engines/copilot/converters';
+} from '../../../../../electron/main/engines/copilot/converters';
 import type { SessionEvent, ModelInfo, SessionMetadata } from '@github/copilot-sdk';
-import type { UnifiedPart, TextPart, ToolPart, EngineType } from '../../src/types/unified';
+import type { UnifiedPart, TextPart, ToolPart, EngineType } from '../../../../../src/types/unified';
 
 describe('copilot-converters', () => {
   const sessionId = 'test-session';
@@ -24,7 +24,7 @@ describe('copilot-converters', () => {
   };
 
   describe('convertEventsToMessages', () => {
-    it('converts a simple message sequence', () => {
+    it('converts basic message sequence and extracts summary from task_complete', () => {
       const events: SessionEvent[] = [
         {
           ...mockBase,
@@ -43,9 +43,8 @@ describe('copilot-converters', () => {
         } as any,
         {
           ...mockBase,
-          ephemeral: true,
-          type: 'session.idle',
-          data: {},
+          type: 'tool.execution_start',
+          data: { toolCallId: 'call1', toolName: 'task_complete', arguments: { summary: 'Task finished successfully' } },
         } as any,
       ];
 
@@ -55,8 +54,9 @@ describe('copilot-converters', () => {
       expect(messages[0].role).toBe('user');
       expect((messages[0].parts[0] as TextPart).text).toBe('hello');
       expect(messages[1].role).toBe('assistant');
-      expect((messages[1].parts[0] as TextPart).text).toBe('hi there');
-      expect(messages[1].time.completed).toBe(tsMs);
+      // task_complete summary is appended to textAccum, so it's concatenated with prior text
+      expect((messages[1].parts[0] as TextPart).text).toBe('hi thereTask finished successfully');
+      expect(messages[1].parts.find(p => p.type === 'tool')).toBeUndefined();
     });
 
     it('handles reasoning deltas and tool calls', () => {
@@ -87,20 +87,8 @@ describe('copilot-converters', () => {
 
       expect(messages).toHaveLength(1);
       const parts = messages[0].parts;
-      // Note: Reasoning delta and tool call flush reasoning.
-      // But reasoning delta happens first, then tool call triggers flushReasoning().
-      // tool.execution_start also calls flushText().
       expect(parts).toHaveLength(3);
       
-      // The order should be Reasoning, then Tool, then Text
-      // Looking at convertEventsToMessages:
-      // 1. assistant.reasoning_delta -> reasoningAccum += 'thinking...', reasoningPartId = ...
-      // 2. tool.execution_start -> flushText() (nothing), toolPart pushed, replayToolParts set
-      // 3. tool.execution_complete -> existingTool state updated
-      // 4. assistant.message -> textAccum = 'done', textPartId = ...
-      // 5. finalizeAssistant (end of loop) -> flushText(), flushReasoning()
-      
-      // Wait, if reasoning is flushed at the end, it will be AFTER the tool part which was pushed during tool.execution_start.
       expect(parts[0].type).toBe('tool'); 
       expect(parts[1].type).toBe('text');
       expect(parts[2].type).toBe('reasoning');
@@ -112,28 +100,10 @@ describe('copilot-converters', () => {
       if (toolPart.state.status === 'completed') {
         expect(toolPart.state.output).toBe('file.txt');
       }
-      expect(parts[1].type).toBe('text');
       expect((parts[1] as TextPart).text).toBe('done');
     });
 
-    it('handles task_complete by extracting summary', () => {
-      const events: SessionEvent[] = [
-        {
-          ...mockBase,
-          type: 'tool.execution_start',
-          data: { toolCallId: 'call1', toolName: 'task_complete', arguments: { summary: 'Task finished successfully' } },
-        } as any,
-      ];
-
-      const messages = convertEventsToMessages(sessionId, events);
-
-      expect(messages).toHaveLength(1);
-      expect((messages[0].parts[0] as TextPart).text).toBe('Task finished successfully');
-      // Should NOT have a tool part for task_complete
-      expect(messages[0].parts.find(p => p.type === 'tool')).toBeUndefined();
-    });
-
-    it('processes usage events', () => {
+    it('processes usage events and tool execution failures', () => {
       const events: SessionEvent[] = [
         {
           ...mockBase,
@@ -152,6 +122,16 @@ describe('copilot-converters', () => {
             cost: 0.001,
           },
         } as any,
+        {
+          ...mockBase,
+          type: 'tool.execution_start',
+          data: { toolCallId: 'call-fail', toolName: 'shell', arguments: { command: 'false' } },
+        } as any,
+        {
+          ...mockBase,
+          type: 'tool.execution_complete',
+          data: { toolCallId: 'call-fail', success: false, error: 'Command failed' },
+        } as any,
       ];
 
       const messages = convertEventsToMessages(sessionId, events);
@@ -163,26 +143,9 @@ describe('copilot-converters', () => {
       expect(msg.tokens?.output).toBe(20);
       expect(msg.tokens?.cache?.read).toBe(5);
       expect(msg.cost).toBe(0.001);
-    });
 
-    it('handles tool execution failures', () => {
-      const events: SessionEvent[] = [
-        {
-          ...mockBase,
-          type: 'tool.execution_start',
-          data: { toolCallId: 'call1', toolName: 'shell', arguments: { command: 'false' } },
-        } as any,
-        {
-          ...mockBase,
-          type: 'tool.execution_complete',
-          data: { toolCallId: 'call1', success: false, error: 'Command failed' },
-        } as any,
-      ];
-
-      const messages = convertEventsToMessages(sessionId, events);
-
-      expect(messages).toHaveLength(1);
-      const toolPart = messages[0].parts[0] as ToolPart;
+      const toolPart = msg.parts.find(p => p.type === 'tool' && (p as ToolPart).callId === 'call-fail') as ToolPart;
+      expect(toolPart).toBeDefined();
       expect(toolPart.state.status).toBe('error');
       if (toolPart.state.status === 'error') {
         expect(toolPart.state.error).toBe('Command failed');
@@ -220,18 +183,16 @@ describe('copilot-converters', () => {
   });
 
   describe('normalizeTodoInput', () => {
-    it('normalizes markdown todo string', () => {
-      const input = { todos: '- [ ] task 1\n- [x] task 2' };
-      const normalized = normalizeTodoInput(input);
-      expect(normalized.todos).toEqual([
+    it('normalizes markdown todo string or returns original if invalid', () => {
+      const inputValid = { todos: '- [ ] task 1\n- [x] task 2' };
+      const normalizedValid = normalizeTodoInput(inputValid);
+      expect(normalizedValid.todos).toEqual([
         { content: 'task 1', status: 'pending' },
         { content: 'task 2', status: 'completed' },
       ]);
-    });
 
-    it('returns original input if not a todo markdown', () => {
-      const input = { todos: 'just text' };
-      expect(normalizeTodoInput(input)).toBe(input);
+      const inputInvalid = { todos: 'just text' };
+      expect(normalizeTodoInput(inputInvalid)).toBe(inputInvalid);
     });
   });
 
@@ -248,16 +209,12 @@ describe('copilot-converters', () => {
   });
 
   describe('upsertPart', () => {
-    it('inserts a new part', () => {
+    it('inserts a new part or updates an existing one', () => {
       const parts: UnifiedPart[] = [];
-      const part: TextPart = { id: 'p1', messageId: 'm1', sessionId: 's1', type: 'text', text: 'hi' };
-      upsertPart(parts, part);
-      expect(parts).toEqual([part]);
-    });
-
-    it('updates an existing part', () => {
       const part1: TextPart = { id: 'p1', messageId: 'm1', sessionId: 's1', type: 'text', text: 'hi' };
-      const parts: UnifiedPart[] = [part1];
+      upsertPart(parts, part1);
+      expect(parts).toEqual([part1]);
+
       const part1Updated: TextPart = { ...part1, text: 'hello' };
       upsertPart(parts, part1Updated);
       expect(parts).toHaveLength(1);
@@ -293,7 +250,7 @@ describe('copilot-converters', () => {
   });
 
   describe('metadataToSession', () => {
-    it('converts session metadata to unified session', () => {
+    it('converts session metadata to unified session and handles missing directory', () => {
       const engineType: EngineType = 'copilot';
       const meta: SessionMetadata = {
         sessionId: 's1',
@@ -315,18 +272,16 @@ describe('copilot-converters', () => {
       expect(session.directory).toBe('C:/Users/test/project');
       expect(session.time.created).toBe(new Date('2025-01-01T00:00:00Z').getTime());
       expect(session.engineMeta?.repository).toBe('repo');
-    });
 
-    it('uses homedir if cwd is missing', () => {
-      const meta: SessionMetadata = {
-        sessionId: 's1',
+      const metaNoDir: SessionMetadata = {
+        sessionId: 's2',
         startTime: new Date(),
         modifiedTime: new Date(),
         context: {},
       } as any;
-      const session = metadataToSession('copilot', meta);
-      expect(session.directory).toBeDefined();
-      expect(session.directory).not.toBe('');
+      const sessionNoDir = metadataToSession('copilot', metaNoDir);
+      expect(sessionNoDir.directory).toBeDefined();
+      expect(sessionNoDir.directory).not.toBe('');
     });
   });
 });

@@ -2,10 +2,10 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import fs from "fs";
 import path from "path";
 import os from "os";
-import { ChannelManager } from "../../electron/main/channels/channel-manager";
-import { ChannelAdapter, type ChannelConfig, type ChannelInfo } from "../../electron/main/channels/channel-adapter";
+import { ChannelManager } from "../../../../electron/main/channels/channel-manager";
+import { ChannelAdapter, type ChannelConfig, type ChannelInfo } from "../../../../electron/main/channels/channel-adapter";
 
-import { channelLog } from "../../electron/main/services/logger";
+import { channelLog } from "../../../../electron/main/services/logger";
 
 // --- Mocks ---
 
@@ -23,7 +23,7 @@ vi.mock("electron", () => ({
   },
 }));
 
-vi.mock("../../electron/main/services/logger", () => ({
+vi.mock("../../../../electron/main/services/logger", () => ({
   channelLog: {
     info: vi.fn(),
     warn: vi.fn(),
@@ -63,7 +63,6 @@ describe("ChannelManager", () => {
     tmpDir = fs.mkdtempSync(tmpDirBase);
     channelConfigDir = path.join(tmpDir, ".channels");
     vi.spyOn(process, "cwd").mockReturnValue(tmpDir);
-    
     manager = new ChannelManager();
     mockAdapter = new MockChannelAdapter("test-channel");
   });
@@ -75,45 +74,43 @@ describe("ChannelManager", () => {
     }
   });
 
-  describe("Adapter Registration", () => {
-    it("registers an adapter and lists it", () => {
+  describe("registerAdapter", () => {
+    it("registers adapters and warns on duplicates", () => {
+      // registers an adapter and lists it
       manager.registerAdapter(mockAdapter);
       const channels = manager.listChannels();
-      
       expect(channels).toHaveLength(1);
       expect(channels[0].type).toBe("test-channel");
       expect(manager.getStatus("test-channel")).toBeDefined();
-    });
 
-    it("logs warning and replaces if already registered", () => {
-        manager.registerAdapter(mockAdapter);
-        const secondAdapter = new MockChannelAdapter("test-channel");
-        manager.registerAdapter(secondAdapter);
-
-        expect(channelLog.warn).toHaveBeenCalledWith(expect.stringContaining("already registered"));
-        expect(manager.getStatus("test-channel")).toBeDefined();
+      // logs warning and replaces if already registered
+      const secondAdapter = new MockChannelAdapter("test-channel");
+      manager.registerAdapter(secondAdapter);
+      expect(channelLog.warn).toHaveBeenCalledWith(expect.stringContaining("already registered"));
+      expect(manager.getStatus("test-channel")).toBeDefined();
     });
   });
 
   describe("Config Persistence", () => {
-    it("startChannel() creates default config and marks as enabled", async () => {
+    it("manages channel start/stop lifecycle and configuration persistence", async () => {
       manager.registerAdapter(mockAdapter);
-      await manager.startChannel("test-channel");
       
+      // startChannel() creates default config and marks as enabled
+      await manager.startChannel("test-channel");
       const config = manager.getConfig("test-channel");
       expect(config?.enabled).toBe(true);
-      
-      // Toggle to verify persistence logic
+
+      // stopChannel() marks config as disabled and saves to disk
       await manager.stopChannel("test-channel");
       const configPath = path.join(channelConfigDir, "test-channel.json");
       expect(fs.existsSync(configPath)).toBe(true);
-      
       const saved = JSON.parse(fs.readFileSync(configPath, "utf-8"));
       expect(saved.type).toBe("test-channel");
       expect(saved.enabled).toBe(false);
+      expect(mockAdapter.stop).toHaveBeenCalled();
     });
 
-    it("startChannel() loads existing config from disk", async () => {
+    it("loads existing configuration from disk on start", async () => {
         if (!fs.existsSync(channelConfigDir)) fs.mkdirSync(channelConfigDir, { recursive: true });
         const existingConfig: ChannelConfig = {
             type: "test-channel",
@@ -122,149 +119,105 @@ describe("ChannelManager", () => {
             options: { key: "val" }
         };
         fs.writeFileSync(path.join(channelConfigDir, "test-channel.json"), JSON.stringify(existingConfig));
-
         manager.registerAdapter(mockAdapter);
         await manager.startChannel("test-channel");
-
         expect(mockAdapter.start).toHaveBeenCalledWith(expect.objectContaining({
             name: "Custom Name",
             options: { key: "val" }
         }));
-        
-        // Should mark as enabled on disk
         const saved = JSON.parse(fs.readFileSync(path.join(channelConfigDir, "test-channel.json"), "utf-8"));
         expect(saved.enabled).toBe(true);
     });
 
-    it("stopChannel() marks config as disabled and saves to disk", async () => {
+    it("handles configuration updates and retrieval", async () => {
         manager.registerAdapter(mockAdapter);
-        await manager.startChannel("test-channel"); // starts and enables
-        await manager.stopChannel("test-channel");
-
-        const saved = JSON.parse(fs.readFileSync(path.join(channelConfigDir, "test-channel.json"), "utf-8"));
-        expect(saved.enabled).toBe(false);
-        expect(mockAdapter.stop).toHaveBeenCalled();
-    });
-
-    it("updateConfig() merges updates and notifies adapter", async () => {
-        manager.registerAdapter(mockAdapter);
-        await manager.startChannel("test-channel");
         
+        // updateConfig() merges updates and notifies adapter
+        await manager.startChannel("test-channel");
         await manager.updateConfig("test-channel", { name: "Updated Name", options: { newKey: "newVal" } });
-
-        const saved = JSON.parse(fs.readFileSync(path.join(channelConfigDir, "test-channel.json"), "utf-8"));
+        let saved = JSON.parse(fs.readFileSync(path.join(channelConfigDir, "test-channel.json"), "utf-8"));
         expect(saved.name).toBe("Updated Name");
         expect(saved.options.newKey).toBe("newVal");
         expect(mockAdapter.updateConfig).toHaveBeenCalled();
-    });
 
-    it("getConfig() returns in-memory config or falls back to disk", async () => {
-        manager.registerAdapter(mockAdapter);
-        
-        // Before start, check fallback to disk
-        if (!fs.existsSync(channelConfigDir)) fs.mkdirSync(channelConfigDir, { recursive: true });
-        fs.writeFileSync(path.join(channelConfigDir, "test-channel.json"), JSON.stringify({ type: "test-channel", name: "Disk Name" }));
-        
-        expect(manager.getConfig("test-channel")?.name).toBe("Disk Name");
-
-        await manager.startChannel("test-channel");
-        expect(manager.getConfig("test-channel")?.type).toBe("test-channel");
-        
+        // getConfig() returns in-memory config or falls back to disk
+        expect(manager.getConfig("test-channel")?.name).toBe("Updated Name");
         expect(manager.getConfig("non-existent")).toBeUndefined();
+
+        // disk fallback test
+        if (!fs.existsSync(channelConfigDir)) fs.mkdirSync(channelConfigDir, { recursive: true });
+        fs.writeFileSync(path.join(channelConfigDir, "disk-channel.json"), JSON.stringify({ type: "disk-channel", name: "Disk Name" }));
+        expect(manager.getConfig("disk-channel")?.name).toBe("Disk Name");
     });
   });
 
   describe("Channel Lifecycle", () => {
-    it("throws for unknown channel type in lifecycle methods", async () => {
+    it("handles unknown channels and mass stop operations", async () => {
+        // throws for unknown channel type in lifecycle methods
         await expect(manager.startChannel("unknown")).rejects.toThrow("not found");
         await expect(manager.stopChannel("unknown")).rejects.toThrow("not found");
         await expect(manager.updateConfig("unknown", {})).rejects.toThrow("not found");
-    });
 
-    it("stopAll() stops all running channels and handles failures", async () => {
+        // stopAll() stops all running channels and handles failures
         const adapter1 = new MockChannelAdapter("c1");
         const adapter2 = new MockChannelAdapter("c2");
         const adapter3 = new MockChannelAdapter("c3");
-        
         manager.registerAdapter(adapter1);
         manager.registerAdapter(adapter2);
         manager.registerAdapter(adapter3);
-
         await manager.startChannel("c1");
         await manager.startChannel("c2");
-        // c3 is stopped
-
-        // Mock failure for c1
         adapter1.stop.mockRejectedValueOnce(new Error("Stop failed"));
-
         await manager.stopAll();
-
         expect(adapter1.stop).toHaveBeenCalled();
         expect(adapter2.stop).toHaveBeenCalled();
-        expect(adapter3.stop).not.toHaveBeenCalled(); // was already stopped
+        expect(adapter3.stop).not.toHaveBeenCalled();
     });
   });
 
-  describe("Init from Config", () => {
-    it("loads persisted configs and auto-starts enabled channels", async () => {
+  describe("initFromConfig", () => {
+    it("reconstructs state from persisted configs and injects runtime context", async () => {
         if (!fs.existsSync(channelConfigDir)) fs.mkdirSync(channelConfigDir, { recursive: true });
         
-        fs.writeFileSync(path.join(channelConfigDir, "c1.json"), JSON.stringify({ type: "c1", enabled: true, options: {} }));
+        // Setup persisted configs
+        fs.writeFileSync(path.join(channelConfigDir, "c1.json"), JSON.stringify({ type: "c1", enabled: true, options: { existing: "val" } }));
         fs.writeFileSync(path.join(channelConfigDir, "c2.json"), JSON.stringify({ type: "c2", enabled: false, options: {} }));
-
+        
         const a1 = new MockChannelAdapter("c1");
         const a2 = new MockChannelAdapter("c2");
         manager.registerAdapter(a1);
         manager.registerAdapter(a2);
 
-        await manager.initFromConfig();
-
-        expect(a1.start).toHaveBeenCalled();
-        expect(a2.start).not.toHaveBeenCalled();
-    });
-
-    it("injects runtime gatewayUrl and handles failures gracefully", async () => {
-        if (!fs.existsSync(channelConfigDir)) fs.mkdirSync(channelConfigDir, { recursive: true });
-        fs.writeFileSync(path.join(channelConfigDir, "c1.json"), JSON.stringify({ type: "c1", enabled: true, options: { existing: "val" } }));
-
-        const a1 = new MockChannelAdapter("c1");
-        manager.registerAdapter(a1);
-        
+        // injects runtime gatewayUrl and handles failures gracefully
         a1.start.mockRejectedValueOnce(new Error("Init start failed"));
-
         await manager.initFromConfig({ gatewayUrl: "http://gateway" });
-
+        
         expect(a1.start).toHaveBeenCalledWith(expect.objectContaining({
             options: expect.objectContaining({ gatewayUrl: "http://gateway", existing: "val" })
         }));
+        expect(a2.start).not.toHaveBeenCalled();
     });
   });
 
-  describe("Config Exclusion of gatewayUrl", () => {
-    it("saveConfig() strips gatewayUrl from persisted options", async () => {
+  describe("Configuration Filtering and Status", () => {
+    it("excludes ephemeral data during save and provides access to channel status", async () => {
         manager.registerAdapter(mockAdapter);
         
-        // We trigger saveConfig via updateConfig with a gatewayUrl in options
+        // saveConfig() strips gatewayUrl from persisted options
         await manager.updateConfig("test-channel", { 
             options: { 
                 apiKey: "secret",
                 gatewayUrl: "http://ephemeral" 
             } 
         });
-
         const configPath = path.join(channelConfigDir, "test-channel.json");
         const saved = JSON.parse(fs.readFileSync(configPath, "utf-8"));
-        
         expect(saved.options.apiKey).toBe("secret");
         expect(saved.options.gatewayUrl).toBeUndefined();
-    });
-  });
 
-  describe("getStatus", () => {
-      it("returns adapter info or undefined", () => {
-          manager.registerAdapter(mockAdapter);
-          expect(manager.getStatus("test-channel")?.type).toBe("test-channel");
-          expect(manager.getStatus("unknown")).toBeUndefined();
-      });
+        // getStatus returns adapter info or undefined
+        expect(manager.getStatus("test-channel")?.type).toBe("test-channel");
+        expect(manager.getStatus("unknown")).toBeUndefined();
+    });
   });
 });

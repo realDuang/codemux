@@ -61,18 +61,23 @@ export function sendJson(res: ServerResponse, data: unknown, status = 200): void
  */
 export function parseBody(req: IncomingMessage): Promise<Record<string, any>> {
   return new Promise((resolve, reject) => {
-    let body = "";
+    const chunks: Buffer[] = [];
+    let totalBytes = 0;
     const MAX_BODY_SIZE = 1024 * 1024; // 1MB
 
     req.on("data", (chunk: Buffer | string) => {
-      body += chunk;
-      if (body.length > MAX_BODY_SIZE) {
+      const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      totalBytes += buf.length;
+      if (totalBytes > MAX_BODY_SIZE) {
         req.destroy();
         reject(new Error("Request body too large"));
+        return;
       }
+      chunks.push(buf);
     });
     req.on("end", () => {
       try {
+        const body = Buffer.concat(chunks).toString("utf8");
         resolve(body ? JSON.parse(body) : {});
       } catch {
         reject(new Error("Invalid JSON"));

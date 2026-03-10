@@ -2,10 +2,10 @@ import {
   createEffect,
   createSignal,
   createMemo,
-  onCleanup,
   Show,
   For,
   onMount,
+  onCleanup,
 } from "solid-js";
 import { Auth } from "../lib/auth";
 import { useNavigate } from "@solidjs/router";
@@ -337,11 +337,10 @@ export default function Chat() {
       if (!disposed) {
         logger.error("[LoadMessages] Failed to load messages:", error);
       }
-      } finally {
-        setLoadingMessages(false);
-        const timer = setTimeout(() => scrollToBottom(), 100);
-        onCleanup(() => clearTimeout(timer));
-      }
+    } finally {
+      setLoadingMessages(false);
+      setTimeout(() => scrollToBottom(), 100);
+    }
     };
 
   // Generation counter to discard stale background loads when initializeSession
@@ -509,8 +508,7 @@ export default function Chat() {
     if (!messageStore.message[sessionId]) {
       await loadSessionMessages(sessionId);
     } else {
-      const timer = setTimeout(() => scrollToBottom(), 100);
-      onCleanup(() => clearTimeout(timer));
+      setTimeout(() => scrollToBottom(), 100);
     }
 
     // Stale check: if the user has already switched to another session
@@ -546,8 +544,7 @@ export default function Chat() {
       }
 
       setMessageStore("message", processedSession.id, []);
-      const timer = setTimeout(() => scrollToBottom(), 100);
-      onCleanup(() => clearTimeout(timer));
+      setTimeout(() => scrollToBottom(), 100);
 
       // Refresh engine capabilities (ACP engines populate modes only after createSession)
       try {
@@ -988,8 +985,7 @@ export default function Chat() {
 
     setMessageStore("part", tempMessageId, [tempPart]);
     setUserScrolledUp(false);
-    const timer = setTimeout(() => scrollToBottom(), 0);
-    onCleanup(() => clearTimeout(timer));
+    setTimeout(() => scrollToBottom(), 0);
 
     try {
       await gateway.sendMessage(sessionId, text, {

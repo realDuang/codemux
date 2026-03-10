@@ -14,7 +14,7 @@ function escapeHtml(str: string): string {
 
 function sanitizeHref(href: string): string {
   const trimmed = href.trim().toLowerCase();
-  if (trimmed.startsWith('javascript:') || trimmed.startsWith('vbscript:') || trimmed.startsWith('data:text/html')) {
+  if (trimmed.startsWith('javascript:') || trimmed.startsWith('vbscript:') || trimmed.startsWith('data:')) {
     return '';
   }
   return href;
@@ -37,7 +37,7 @@ function getMarkedInstance() {
           link(href: string, title: string | null | undefined, text: string) {
             const titleAttr = title ? ` title="${escapeHtml(title)}"` : ""
             const sanitizedHref = escapeHtml(sanitizeHref(href))
-            return `<a href="${sanitizedHref}"${titleAttr} target="_blank" rel="noopener noreferrer">${text || href}</a>`
+            return `<a href="${sanitizedHref}"${titleAttr} target="_blank" rel="noopener noreferrer">${text || escapeHtml(href)}</a>`
           },
         },
       },

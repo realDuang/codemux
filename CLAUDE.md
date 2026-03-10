@@ -1,12 +1,12 @@
 # CodeMux
 
-Remote desktop app and web interface for AI coding assistance. Access OpenCode/Copilot from any device via Electron native app or browser (with Cloudflare Tunnel for public access).
+Multi-engine AI coding assistant client. Access OpenCode, GitHub Copilot, and Claude Code from any device via Electron native app or browser (with Cloudflare Tunnel for public access).
 
 ## Tech Stack
 
 | Layer | Technology |
 |-------|-----------|
-| Desktop Shell | Electron 33 |
+| Desktop Shell | Electron 40 (`electron: ^40.6.1`) |
 | Build System | electron-vite (Vite 5) |
 | Frontend | SolidJS 1.8 + TypeScript 5 |
 | Styling | Tailwind CSS v4 + CSS Modules |

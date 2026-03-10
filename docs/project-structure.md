@@ -37,15 +37,22 @@
 │   │   │       ├── feishu-session-mapper.ts
 │   │   │       └── feishu-types.ts
 │   │   └── services/             # Backend services
-│   │       ├── auth-api-server.ts    # Auth API (token-based)
+│   │       ├── auth-api-server.ts    # Auth API (HTTP on :4097, internal)
 │   │       ├── device-store.ts       # Authorized devices persistence
-│   │       ├── session-store.ts      # Session persistence (filesystem)
+│   │       ├── conversation-store.ts # Session persistence (filesystem)
+│   │       ├── update-manager.ts     # Auto-update management
 │   │       ├── logger.ts             # Logger + settings.json read/write
 │   │       ├── production-server.ts  # Production HTTP server
 │   │       └── tunnel-manager.ts     # Cloudflare Tunnel management
 │   └── preload/
 │       └── index.ts              # contextBridge (electronAPI)
-├── src/                          # SolidJS renderer
+├── shared/                            # Code shared between main & renderer
+│   ├── auth-route-handlers.ts            # Auth route handling logic
+│   ├── device-store-base.ts              # Device store base class
+│   ├── device-store-types.ts             # Device store type definitions
+│   ├── http-utils.ts                     # HTTP utility functions
+│   └── jwt.ts                            # JWT token handling
+├── src/                               # SolidJS renderer
 │   ├── main.tsx                  # App mount point
 │   ├── App.tsx                   # Router setup & i18n provider
 │   ├── pages/
@@ -61,6 +68,11 @@
 │   │   ├── AddProjectModal.tsx   # Add project dialog
 │   │   ├── HideProjectModal.tsx  # Hide project dialog
 │   │   ├── FeishuConfigModal.tsx # Feishu channel config dialog
+│   │   ├── ContextGroup.tsx     # Context group display
+│   │   ├── InputAreaPermission.tsx  # Permission request in input area
+│   │   ├── InputAreaQuestion.tsx    # Question prompt in input area
+│   │   ├── TodoDock.tsx         # Todo dock component
+│   │   ├── UpdateNotification.tsx   # Auto-update notification
 │   │   ├── Collapsible.tsx       # Expand/collapse wrapper
 │   │   ├── AccessRequestNotification.tsx  # Remote access approval toast
 │   │   ├── LanguageSwitcher.tsx  # Language toggle
@@ -75,7 +87,10 @@
 │   │       ├── content-diff.tsx      # Diff viewer
 │   │       ├── content-text.tsx      # Plain text
 │   │       ├── content-error.tsx     # Error display
-│   │       └── common.tsx            # Shared utilities
+│   │       ├── common.tsx            # Shared utilities
+│   │       ├── TextReveal.tsx        # Text reveal animation
+│   │       ├── TextShimmer.tsx       # Text shimmer animation
+│   │       └── tools/               # Tool-specific renderers
 │   ├── stores/
 │   │   ├── session.ts            # Session & project state
 │   │   ├── message.ts            # Messages & parts state
@@ -101,8 +116,13 @@
 │       └── electron.d.ts         # ElectronAPI type declarations
 ├── scripts/                      # Bun scripts (setup, start, update binaries)
 ├── tests/                        # Unit + E2E tests (Vitest + Playwright)
+│   └── unit/                     # Unit tests mirroring source structure
+│       ├── electron/                 # Tests for electron/ sources
+│       ├── shared/                   # Tests for shared/ sources
+│       └── src/                      # Tests for src/ sources
 ├── electron.vite.config.ts       # Build config (main/preload/renderer)
 ├── electron-builder.yml          # Packaging config
 ├── vite.config.ts                # Standalone Vite dev server config
+├── vitest.config.ts              # Vitest config (tests/unit/**/*.test.ts)
 └── package.json
 ```

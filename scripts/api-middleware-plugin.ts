@@ -3,10 +3,9 @@
  * Provides HTTP API endpoints for both regular Vite dev server and Electron dev mode
  */
 
-import os from "os";
 import type { IncomingMessage, ServerResponse } from "http";
 import type { Plugin, ViteDevServer } from "vite";
-import { sendJson, parseBody, extractBearerToken, getClientIp, isLocalhost } from "../shared/http-utils";
+import { sendJson, parseBody, extractBearerToken, getClientIp, isLocalhost, getLocalIp } from "../shared/http-utils";
 
 // ============================================================================
 // Types
@@ -52,32 +51,6 @@ interface TunnelManagerInterface {
   start(port: number): Promise<TunnelInfo>;
   stop(): Promise<void>;
   getInfo(): TunnelInfo;
-}
-
-const virtualInterfacePatterns = [
-  /^docker/i, /^br-/i, /^veth/i, /^vEthernet/i,
-  /^vmnet/i, /^VMware/i, /^VirtualBox/i, /^vboxnet/i,
-  /^Hyper-V/i, /^Default Switch/i, /^WSL/i,
-  /^tun/i, /^tap/i, /^singbox/i, /^sing-box/i, /^clash/i, /^utun/i,
-  /^tailscale/i, /^ZeroTier/i, /^zt/i,
-  /^wg/i, /^wireguard/i, /^ham/i, /^Hamachi/i, /^npcap/i, /^lo/i,
-];
-
-function getLocalIp(): string {
-  const interfaces = os.networkInterfaces();
-  let fallback: string | null = null;
-
-  for (const name of Object.keys(interfaces)) {
-    const nets = interfaces[name];
-    if (!nets) continue;
-    const virtual = virtualInterfacePatterns.some((p) => p.test(name));
-    for (const net of nets) {
-      if (net.internal || net.family !== "IPv4") continue;
-      if (!virtual) return net.address;
-      if (!fallback) fallback = net.address;
-    }
-  }
-  return fallback ?? "localhost";
 }
 
 // ============================================================================

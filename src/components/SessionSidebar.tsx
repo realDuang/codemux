@@ -63,7 +63,6 @@ export function SessionSidebar(props: SessionSidebarProps) {
   const [editingSessionId, setEditingSessionId] = createSignal<string | null>(null);
   const [editingTitle, setEditingTitle] = createSignal("");
   const [pendingDeleteId, setPendingDeleteId] = createSignal<string | null>(null);
-  const [homePath, setHomePath] = createSignal<string | null>(null);
 
   const StatusIndicator = (p: { status: SessionActivityStatus }) => {
     switch (p.status) {
@@ -118,11 +117,9 @@ export function SessionSidebar(props: SessionSidebarProps) {
     }
   };
 
-  // Load homePath once on mount (only in Electron, needed for storage folder button)
+  // Load info once on mount (only in Electron)
   if (isElectron()) {
-    systemAPI.getInfo().then((info) => {
-      if (info) setHomePath(info.homePath);
-    });
+    systemAPI.getInfo();
   }
 
   const getDisplayTitle = (title: string): string => {

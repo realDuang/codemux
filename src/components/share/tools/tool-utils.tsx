@@ -14,7 +14,7 @@ import {
 } from "../../icons";
 import { IconRobot } from "../../icons/custom";
 import { formatDuration } from "../common";
-import type { UnifiedMessage } from "../../../types/unified";
+import type { UnifiedMessage, ToolState } from "../../../types/unified";
 import type { Diagnostic } from "vscode-languageserver-types";
 import { useI18n } from "../../../lib/i18n";
 
@@ -23,9 +23,13 @@ const MIN_DURATION = 2000;
 export type ToolProps = {
   id: string;
   tool: string;
-  state: any; // Using any to avoid complex type matching for now
+  /**
+   * Tool execution state. 
+   * Type is any to allow different tools to access their specific input/output/metadata fields
+   * without complex union discrimination in every component.
+   */
+  state: any;
   message: UnifiedMessage;
-  isLastPart?: boolean;
 };
 
 export interface Todo {
@@ -154,19 +158,20 @@ export function flattenToolArgs(obj: any, prefix: string = ""): Array<[string, a
 }
 
 /** Maps tool name to its corresponding icon */
-export function ToolIcon(props: { tool: string }) {
+export function ToolIcon(props: { tool: string; size?: number }) {
+  const size = () => props.size ?? 14;
   return (
-    <Switch fallback={<IconSparkles width={14} height={14} />}>
-      <Match when={props.tool === "bash" || props.tool === "shell"}><IconCommandLine width={14} height={14} /></Match>
-      <Match when={props.tool === "edit"}><IconPencilSquare width={14} height={14} /></Match>
-      <Match when={props.tool === "write"}><IconDocumentPlus width={14} height={14} /></Match>
-      <Match when={props.tool === "read"}><IconDocument width={14} height={14} /></Match>
-      <Match when={props.tool === "grep"}><IconDocumentMagnifyingGlass width={14} height={14} /></Match>
-      <Match when={props.tool === "glob"}><IconMagnifyingGlass width={14} height={14} /></Match>
-      <Match when={props.tool === "list"}><IconRectangleStack width={14} height={14} /></Match>
-      <Match when={props.tool === "webfetch" || props.tool === "web_fetch"}><IconGlobeAlt width={14} height={14} /></Match>
-      <Match when={props.tool === "task"}><IconRobot width={14} height={14} /></Match>
-      <Match when={props.tool === "todowrite" || props.tool === "todoread" || props.tool === "todo"}><IconQueueList width={14} height={14} /></Match>
+    <Switch fallback={<IconSparkles width={size()} height={size()} />}>
+      <Match when={props.tool === "bash" || props.tool === "shell"}><IconCommandLine width={size()} height={size()} /></Match>
+      <Match when={props.tool === "edit"}><IconPencilSquare width={size()} height={size()} /></Match>
+      <Match when={props.tool === "write"}><IconDocumentPlus width={size()} height={size()} /></Match>
+      <Match when={props.tool === "read"}><IconDocument width={size()} height={size()} /></Match>
+      <Match when={props.tool === "grep"}><IconDocumentMagnifyingGlass width={size()} height={size()} /></Match>
+      <Match when={props.tool === "glob"}><IconMagnifyingGlass width={size()} height={size()} /></Match>
+      <Match when={props.tool === "list"}><IconRectangleStack width={size()} height={size()} /></Match>
+      <Match when={props.tool === "webfetch" || props.tool === "web_fetch"}><IconGlobeAlt width={size()} height={size()} /></Match>
+      <Match when={props.tool === "task"}><IconRobot width={size()} height={size()} /></Match>
+      <Match when={props.tool === "todowrite" || props.tool === "todoread" || props.tool === "todo"}><IconQueueList width={size()} height={size()} /></Match>
     </Switch>
   );
 }

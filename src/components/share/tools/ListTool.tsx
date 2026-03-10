@@ -1,4 +1,4 @@
-import { Switch, Match, createMemo } from "solid-js";
+import { Show, createMemo } from "solid-js";
 import { DateTime } from "luxon";
 import { IconRectangleStack } from "../../icons";
 import { Collapsible } from "../../Collapsible";
@@ -32,15 +32,13 @@ export function ListTool(props: ToolProps) {
         <Collapsible.Arrow />
       </Collapsible.Trigger>
 
-      <Collapsible.Content>
-        <div data-component="tool-result">
-          <Switch>
-            <Match when={props.state.output}>
-               <ContentText expand compact text={props.state.output} />
-            </Match>
-          </Switch>
-        </div>
-      </Collapsible.Content>
+       <Collapsible.Content>
+        <Show when={props.state.output}>
+          <div data-component="tool-result">
+            <ContentText expand compact text={props.state.output} />
+          </div>
+        </Show>
+       </Collapsible.Content>
     </Collapsible>
   );
 }

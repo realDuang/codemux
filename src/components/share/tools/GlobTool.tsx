@@ -19,7 +19,7 @@ export function GlobTool(props: ToolProps) {
             <span data-slot="icon" data-icon-color="indigo"><IconMagnifyingGlass width={14} height={14} /></span>
             <span data-slot="name">Glob</span>
             <span data-slot="target">
-              &ldquo;{props.state.input.pattern}&rdquo;
+              &ldquo;{props.state.input?.pattern}&rdquo;
             </span>
              <Show when={props.state.status === "completed"}>
               <span data-slot="summary" data-color="dimmed">
@@ -38,13 +38,11 @@ export function GlobTool(props: ToolProps) {
        </Collapsible.Trigger>
 
        <Collapsible.Content>
-        <Switch>
-          <Match when={count() > 0 || props.state.output}>
-            <div data-component="tool-result">
-                 <ContentText expand compact text={props.state.output} />
-            </div>
-          </Match>
-        </Switch>
+        <Show when={count() > 0 || props.state.output}>
+          <div data-component="tool-result">
+            <ContentText expand compact text={props.state.output} />
+          </div>
+        </Show>
        </Collapsible.Content>
     </Collapsible>
   );

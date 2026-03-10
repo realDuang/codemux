@@ -222,6 +222,7 @@ export default function Chat() {
     setSendError(msg);
     sendErrorTimer = setTimeout(() => setSendError(null), 3000);
   };
+  onCleanup(() => clearTimeout(sendErrorTimer));
 
   const [deleteProjectInfo, setDeleteProjectInfo] = createSignal<{
     projectID: string;
@@ -260,6 +261,11 @@ export default function Chat() {
       });
     }
   };
+  onCleanup(() => {
+    if (scrollRafId !== null) {
+      cancelAnimationFrame(scrollRafId);
+    }
+  });
 
   const isNearBottom = () => {
     const el = messagesRef();
@@ -269,14 +275,20 @@ export default function Chat() {
   };
 
   let scrollRafPending = false;
+  let scrollRafId2: number | null = null;
   const handleScroll = () => {
     if (scrollRafPending) return;
     scrollRafPending = true;
-    requestAnimationFrame(() => {
+    scrollRafId2 = requestAnimationFrame(() => {
       scrollRafPending = false;
       setUserScrolledUp(!isNearBottom());
     });
   };
+  onCleanup(() => {
+    if (scrollRafId2 !== null) {
+      cancelAnimationFrame(scrollRafId2);
+    }
+  });
 
   const toggleSidebar = () => setIsSidebarOpen((prev) => !prev);
   const toggleSidebarCollapse = () => setIsSidebarCollapsed((prev) => !prev);
@@ -325,11 +337,12 @@ export default function Chat() {
       if (!disposed) {
         logger.error("[LoadMessages] Failed to load messages:", error);
       }
-    } finally {
-      setLoadingMessages(false);
-      setTimeout(() => scrollToBottom(), 100);
-    }
-  };
+      } finally {
+        setLoadingMessages(false);
+        const timer = setTimeout(() => scrollToBottom(), 100);
+        onCleanup(() => clearTimeout(timer));
+      }
+    };
 
   // Generation counter to discard stale background loads when initializeSession
   // is called again (e.g. on gateway reconnect).
@@ -496,7 +509,8 @@ export default function Chat() {
     if (!messageStore.message[sessionId]) {
       await loadSessionMessages(sessionId);
     } else {
-      setTimeout(() => scrollToBottom(), 100);
+      const timer = setTimeout(() => scrollToBottom(), 100);
+      onCleanup(() => clearTimeout(timer));
     }
 
     // Stale check: if the user has already switched to another session
@@ -532,7 +546,8 @@ export default function Chat() {
       }
 
       setMessageStore("message", processedSession.id, []);
-      setTimeout(() => scrollToBottom(), 100);
+      const timer = setTimeout(() => scrollToBottom(), 100);
+      onCleanup(() => clearTimeout(timer));
 
       // Refresh engine capabilities (ACP engines populate modes only after createSession)
       try {
@@ -973,7 +988,8 @@ export default function Chat() {
 
     setMessageStore("part", tempMessageId, [tempPart]);
     setUserScrolledUp(false);
-    setTimeout(() => scrollToBottom(), 0);
+    const timer = setTimeout(() => scrollToBottom(), 0);
+    onCleanup(() => clearTimeout(timer));
 
     try {
       await gateway.sendMessage(sessionId, text, {

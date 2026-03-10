@@ -15,7 +15,7 @@ export function WriteTool(props: ToolProps) {
   const diagnostics = createMemo(() =>
     getDiagnostics(
       props.state.metadata?.diagnostics,
-      props.state.input.filePath,
+      props.state.input?.filePath,
     ),
   );
 

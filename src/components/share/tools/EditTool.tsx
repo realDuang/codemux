@@ -10,12 +10,12 @@ import { ToolDuration, stripWorkingDirectory, getShikiLang, getDiagnostics, form
 
 export function EditTool(props: ToolProps) {
   const filePath = createMemo(() =>
-    stripWorkingDirectory(props.state.input.filePath, props.message.workingDirectory),
+    stripWorkingDirectory(props.state.input?.filePath, props.message.workingDirectory),
   );
   const diagnostics = createMemo(() =>
     getDiagnostics(
       props.state.metadata?.diagnostics,
-      props.state.input.filePath,
+      props.state.input?.filePath,
     ),
   );
 
@@ -49,7 +49,6 @@ export function EditTool(props: ToolProps) {
               <div data-component="diff">
                 <ContentDiff
                   diff={props.state.metadata?.diff}
-                  lang={getShikiLang(filePath() || "")}
                 />
               </div>
             </Match>

@@ -14,7 +14,7 @@ const IS_WIN = process.platform === "win32";
 
 type StreamName = "stdout" | "stderr" | "stdin";
 
-function createStreamErrorHandler(
+export function createStreamErrorHandler(
   streamName: StreamName,
   logUnexpected: (message: string, error: NodeJS.ErrnoException) => void = (message, error) => {
     openCodeLog.warn(message, error);

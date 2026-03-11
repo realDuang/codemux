@@ -659,6 +659,11 @@ export class EngineManager extends EventEmitter {
     // (Some adapters like OpenCode don't emit user message events)
     await this.persistUserMessage(sessionId, content);
 
+    // Title fallback: derive title from first user message if still default.
+    // Run BEFORE adapter.sendMessage so the sidebar updates immediately,
+    // not after the (potentially long-running) engine processing completes.
+    this.applyTitleFallback(sessionId, content);
+
     const result = await adapter.sendMessage(engineSessionId, content, {
       ...options,
       directory: conv.directory,
@@ -671,9 +676,6 @@ export class EngineManager extends EventEmitter {
       conversationStore.clearEngineSession(sessionId);
       this.engineToConvMap.delete(engineSessionId);
     }
-
-    // Title fallback: derive title from first user message if still default
-    this.applyTitleFallback(sessionId, content);
 
     return result;
   }
@@ -713,8 +715,8 @@ export class EngineManager extends EventEmitter {
   }
 
   private isDefaultTitle(title: string): boolean {
-    // Match old engine-generated default titles and ConversationStore's "Chat M-D HH:MM" format
-    return /^(New session|Child session|Chat \d)/.test(title);
+    // Match engine-generated default titles and ConversationStore's "Chat M-D HH:MM" format
+    return /^(New session|New Chat|Child session|Chat \d)/.test(title);
   }
 
   async listMessages(sessionId: string): Promise<UnifiedMessage[]> {

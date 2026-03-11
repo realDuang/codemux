@@ -405,6 +405,20 @@ export class GatewayServer {
         payload: data,
       });
     });
+
+    em.on("message.queued", (data) => {
+      this.broadcast({
+        type: GatewayNotificationType.MESSAGE_QUEUED,
+        payload: data,
+      });
+    });
+
+    em.on("message.queued.consumed", (data) => {
+      this.broadcast({
+        type: GatewayNotificationType.MESSAGE_QUEUED_CONSUMED,
+        payload: data,
+      });
+    });
   }
 
   private broadcast(notification: GatewayNotification): void {

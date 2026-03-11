@@ -73,6 +73,7 @@ export const zh: LocaleDict = {
     disclaimer: "AI 生成的内容可能不准确，请核实重要信息。",
     noModeError: "未选择模式，请先选择模式再发送。",
     noModelError: "未配置模型，请在设置 > 引擎中设置模型。",
+    queued: "排队中",
   },
 
   // Settings page
@@ -174,6 +175,8 @@ export const zh: LocaleDict = {
     buildPlaceholder: "描述你想要构建或修改的内容...",
     autopilotPlaceholder: "描述一个自主执行的任务...",
     send: "发送消息",
+    typeNextMessage: "输入下一条消息...",
+    waitingForResponse: "等待响应...",
   },
 
   // Message Parts

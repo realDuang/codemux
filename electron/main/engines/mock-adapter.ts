@@ -122,6 +122,7 @@ export class MockEngineAdapter extends EngineAdapter {
       listSessions: true,
       modelSwitchable: true,
       customModelInput: false,
+      messageEnqueue: false,
       availableModes: this.getModes(),
     };
   }

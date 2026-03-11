@@ -93,6 +93,19 @@ export interface EngineAdapterEvents {
     status: EngineStatus;
     error?: string;
   }) => void;
+
+  /** A message was enqueued (submitted while engine is busy) */
+  "message.queued": (data: {
+    sessionId: string;
+    messageId: string;
+    queuePosition: number;
+  }) => void;
+
+  /** A previously queued message started being processed */
+  "message.queued.consumed": (data: {
+    sessionId: string;
+    messageId: string;
+  }) => void;
 }
 
 // Type-safe event emitter

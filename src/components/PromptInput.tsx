@@ -106,6 +106,10 @@ interface PromptInputProps {
   onCancel?: () => void;
   /** When true, the session is generating — show stop button and prevent duplicate sends, but keep textarea editable */
   isGenerating?: boolean;
+  /** When true, the engine supports enqueuing messages while busy */
+  canEnqueue?: boolean;
+  /** Number of messages waiting in the queue */
+  queueCount?: number;
   currentAgent?: AgentMode;
   onAgentChange?: (agent: AgentMode) => void;
   availableModes?: AgentMode[];
@@ -159,7 +163,8 @@ export function PromptInput(props: PromptInputProps) {
   const handleKeyDown = (e: KeyboardEvent) => {
     if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
       e.preventDefault();
-      if (text().trim() && !props.isGenerating && !props.disabled) {
+      const canSend = !props.isGenerating || props.canEnqueue;
+      if (text().trim() && canSend && !props.disabled) {
         props.onSend(text(), agent());
         setText("");
       }
@@ -167,7 +172,8 @@ export function PromptInput(props: PromptInputProps) {
   };
 
   const handleSend = () => {
-    if (props.isGenerating || props.disabled) return;
+    const canSend = !props.isGenerating || props.canEnqueue;
+    if (!canSend || props.disabled) return;
 
     if (text().trim()) {
       props.onSend(text(), agent());
@@ -182,8 +188,12 @@ export function PromptInput(props: PromptInputProps) {
     return getModeAccentRing(current, idx === -1 ? 0 : idx);
   });
 
-  // Placeholder text based on active mode
+  // Placeholder text based on active mode and generating state
   const modePlaceholder = createMemo(() => {
+    if (props.isGenerating) {
+      if (props.canEnqueue) return t().prompt.typeNextMessage ?? "Type your next message...";
+      return t().prompt.waitingForResponse ?? "Waiting for response...";
+    }
     const label = getModeDisplayName(agent()).toLowerCase();
     if (label === "plan") return t().prompt.planPlaceholder;
     if (label === "autopilot") return t().prompt.autopilotPlaceholder;
@@ -245,29 +255,48 @@ export function PromptInput(props: PromptInputProps) {
           class={`w-full px-4 py-3 pr-12 bg-transparent resize-none focus:outline-none dark:text-white max-h-[200px] overflow-y-auto text-sm placeholder:text-slate-400 dark:placeholder:text-slate-500 ${props.disabled ? "cursor-not-allowed opacity-50" : ""}`}
           style={{ "min-height": "52px" }}
         />
-        <Show
-          when={props.isGenerating}
-          fallback={
-            <button
-              onClick={handleSend}
-              disabled={!text().trim() || props.disabled}
-              class={`absolute right-2.5 bottom-2.5 p-2 rounded-xl text-white transition-all disabled:bg-slate-200 dark:disabled:bg-slate-700 disabled:text-slate-400 dark:disabled:text-slate-500 shadow-md disabled:shadow-none ${activeAccent().bgHover}`}
-              aria-label={t().prompt.send}
-            >
-              <IconArrowUp width={20} height={20} />
-            </button>
+        {/* 3-state button: Send | Enqueue-Send | Stop (with queue badge) */}
+        {(() => {
+          const isGenerating = props.isGenerating;
+          const hasText = !!text().trim();
+          const showSendButton = !isGenerating || (isGenerating && props.canEnqueue && hasText);
+          const showStopButton = isGenerating && !(props.canEnqueue && hasText);
+
+          if (showSendButton) {
+            return (
+              <button
+                onClick={handleSend}
+                disabled={!hasText || props.disabled}
+                class={`absolute right-2.5 bottom-2.5 p-2 rounded-xl text-white transition-all disabled:bg-slate-200 dark:disabled:bg-slate-700 disabled:text-slate-400 dark:disabled:text-slate-500 shadow-md disabled:shadow-none ${activeAccent().bgHover}`}
+                aria-label={t().prompt.send}
+              >
+                <IconArrowUp width={20} height={20} />
+              </button>
+            );
           }
-        >
-          <button
-            onClick={() => props.onCancel?.()}
-            class="absolute right-2.5 bottom-2.5 p-2 rounded-xl bg-red-500 hover:bg-red-600 text-white transition-all shadow-md"
-            aria-label="Stop"
-          >
-            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
-              <rect x="6" y="6" width="12" height="12" rx="2" />
-            </svg>
-          </button>
-        </Show>
+
+          if (showStopButton) {
+            return (
+              <button
+                onClick={() => props.onCancel?.()}
+                class="absolute right-2.5 bottom-2.5 p-2 rounded-xl bg-red-500 hover:bg-red-600 text-white transition-all shadow-md"
+                aria-label="Stop"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+                  <rect x="6" y="6" width="12" height="12" rx="2" />
+                </svg>
+                {/* Queue count badge */}
+                <Show when={(props.queueCount ?? 0) > 0}>
+                  <span class="absolute -top-1.5 -right-1.5 min-w-[18px] h-[18px] flex items-center justify-center px-1 text-[10px] font-bold bg-amber-500 text-white rounded-full shadow-sm">
+                    {props.queueCount}
+                  </span>
+                </Show>
+              </button>
+            );
+          }
+
+          return null;
+        })()}
       </div>
     </div>
   );

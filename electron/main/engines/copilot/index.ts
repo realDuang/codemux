@@ -107,7 +107,10 @@ export class CopilotSdkAdapter extends EngineAdapter {
   private pendingPermissions = new Map<string, PendingPermission>();
   private pendingQuestions = new Map<string, PendingQuestion>();
 
-  private idleResolvers = new Map<string, (msg: UnifiedMessage) => void>();
+  private idleResolvers = new Map<string, Array<(msg: UnifiedMessage) => void>>();
+  // Queued user messages (deferred emit) — emitted only when the engine
+  // starts processing the queued turn, not at enqueue time.
+  private pendingUserMessages = new Map<string, UnifiedMessage[]>();
   private toolCallParts = new Map<string, ToolPart>();
   private taskCompleteCallIds = new Set<string>();
 
@@ -235,6 +238,7 @@ export class CopilotSdkAdapter extends EngineAdapter {
       listSessions: true,
       modelSwitchable: true,
       customModelInput: false,
+      messageEnqueue: true,
       availableModes: this.getModes(),
     };
   }
@@ -351,6 +355,42 @@ export class CopilotSdkAdapter extends EngineAdapter {
       .map((c) => c.text!)
       .join("\n");
 
+    // --- Enqueue path: engine is already processing this session ---
+    const existingResolvers = this.idleResolvers.get(sessionId);
+    if (existingResolvers && existingResolvers.length > 0) {
+      // Create user message but DON'T emit yet — defer until handleSessionIdle
+      // starts processing this queued turn. Emitting immediately would create
+      // a user bubble while the engine is still working on the previous turn.
+      const userMessage = createUserMessage(sessionId, promptText, now);
+      this.appendMessageToHistory(sessionId, userMessage);
+
+      // Store for deferred emit
+      const pending = this.pendingUserMessages.get(sessionId) ?? [];
+      pending.push(userMessage);
+      this.pendingUserMessages.set(sessionId, pending);
+
+      const queuePosition = existingResolvers.length;
+      this.emit("message.queued", {
+        sessionId,
+        messageId: "",
+        queuePosition,
+      });
+
+      copilotLog.info(`Message enqueued for session ${sessionId} (position ${queuePosition})`);
+
+      return new Promise<UnifiedMessage>((resolve, reject) => {
+        existingResolvers.push(resolve);
+        session.send({ prompt: promptText, mode: "enqueue" as any }).catch((err) => {
+          const idx = existingResolvers.indexOf(resolve);
+          if (idx >= 0) existingResolvers.splice(idx, 1);
+          if (existingResolvers.length === 0) this.idleResolvers.delete(sessionId);
+          reject(err);
+        });
+      });
+    }
+
+    // --- Normal path: session is idle ---
+
     const userMessage = createUserMessage(sessionId, promptText, now);
     this.appendMessageToHistory(sessionId, userMessage);
     this.emit("message.updated", { sessionId, message: userMessage });
@@ -373,9 +413,16 @@ export class CopilotSdkAdapter extends EngineAdapter {
     this.emit("message.updated", { sessionId, message: initialMessage });
 
     return new Promise<UnifiedMessage>((resolve, reject) => {
-      this.idleResolvers.set(sessionId, resolve);
+      const resolvers = this.idleResolvers.get(sessionId) ?? [];
+      resolvers.push(resolve);
+      this.idleResolvers.set(sessionId, resolvers);
       session.send({ prompt: promptText }).catch((err) => {
-        this.idleResolvers.delete(sessionId);
+        const currentResolvers = this.idleResolvers.get(sessionId);
+        if (currentResolvers) {
+          const idx = currentResolvers.indexOf(resolve);
+          if (idx >= 0) currentResolvers.splice(idx, 1);
+          if (currentResolvers.length === 0) this.idleResolvers.delete(sessionId);
+        }
         const buf = this.messageBuffers.get(sessionId);
         if (buf) {
           buf.error = err instanceof Error ? err.message : String(err);
@@ -408,7 +455,15 @@ export class CopilotSdkAdapter extends EngineAdapter {
 
     const buffer = this.messageBuffers.get(sessionId);
     if (buffer) buffer.error = "Cancelled";
-    this.finalizeBuffer(sessionId);
+    const finalMessage = this.finalizeBuffer(sessionId);
+
+    // Resolve ALL pending resolvers (including enqueued) with the cancelled message
+    const resolvers = this.idleResolvers.get(sessionId);
+    if (resolvers && finalMessage) {
+      this.idleResolvers.delete(sessionId);
+      for (const r of resolvers) r(finalMessage);
+    }
+    this.pendingUserMessages.delete(sessionId);
   }
 
   async listMessages(sessionId: string): Promise<UnifiedMessage[]> {
@@ -701,8 +756,25 @@ export class CopilotSdkAdapter extends EngineAdapter {
   private handleSessionIdle(sessionId: string): void {
     const finalMessage = this.finalizeBuffer(sessionId);
     if (finalMessage) {
-      const resolver = this.idleResolvers.get(sessionId);
-      if (resolver) { this.idleResolvers.delete(sessionId); resolver(finalMessage); }
+      const resolvers = this.idleResolvers.get(sessionId);
+      if (resolvers && resolvers.length > 0) {
+        // Copilot CLI processes all enqueued messages in a single turn —
+        // session.idle fires only ONCE after all are done. Resolve ALL resolvers
+        // with the final message (the combined response).
+        this.idleResolvers.delete(sessionId);
+        for (const r of resolvers) r(finalMessage);
+
+        // Clear all deferred user messages and emit queued.consumed for each
+        // remaining queued item so the frontend clears its queue preview.
+        const pendingUsers = this.pendingUserMessages.get(sessionId);
+        if (pendingUsers && pendingUsers.length > 0) {
+          // Emit consumed for each pending user message to drain the frontend queue
+          for (let i = 0; i < pendingUsers.length; i++) {
+            this.emit("message.queued.consumed", { sessionId, messageId: "" });
+          }
+        }
+        this.pendingUserMessages.delete(sessionId);
+      }
     }
   }
 
@@ -717,9 +789,10 @@ export class CopilotSdkAdapter extends EngineAdapter {
       const finalMessage = this.finalizeBuffer(sessionId);
       if (finalMessage) {
         const resolver = this.idleResolvers.get(sessionId);
-        if (resolver) { this.idleResolvers.delete(sessionId); resolver(finalMessage); }
+        if (resolver) { this.idleResolvers.delete(sessionId); for (const r of resolver) r(finalMessage); }
       }
     }
+    this.pendingUserMessages.delete(sessionId);
   }
 
   private handleModelChange(sessionId: string, data: { newModel?: string }): void { if (data.newModel) this.currentModelId = data.newModel; }
@@ -737,8 +810,9 @@ export class CopilotSdkAdapter extends EngineAdapter {
     const finalMessage = this.finalizeBuffer(sessionId);
     if (finalMessage) {
       const resolver = this.idleResolvers.get(sessionId);
-      if (resolver) { this.idleResolvers.delete(sessionId); resolver(finalMessage); }
+      if (resolver) { this.idleResolvers.delete(sessionId); for (const r of resolver) r(finalMessage); }
     }
+    this.pendingUserMessages.delete(sessionId);
   }
 
   private handleSubagentStarted(sessionId: string, data: any): void {

@@ -17,6 +17,7 @@ import { sessionStore, setSessionStore, type SessionInfo } from "../stores/sessi
 import {
   messageStore,
   setMessageStore,
+  type QueuedMessage,
 } from "../stores/message";
 import { MessageList } from "../components/MessageList";
 import { PromptInput } from "../components/PromptInput";
@@ -231,6 +232,20 @@ export default function Chat() {
     return engineInfo?.capabilities?.messageEnqueue ?? false;
   });
 
+  // Number of messages waiting in the queue for the current session
+  const queueCount = createMemo(() => {
+    const sid = sessionStore.current;
+    if (!sid) return 0;
+    return (messageStore.queued[sid] || []).length;
+  });
+
+  // Queued messages for the current session (for preview rendering)
+  const currentQueuedMessages = createMemo(() => {
+    const sid = sessionStore.current;
+    if (!sid) return [];
+    return messageStore.queued[sid] || [];
+  });
+
   // Keep currentAgent in sync: whenever the engine type changes or engine
   // capabilities are refreshed (e.g. ACP modes populated after createSession),
   // reset to the first available mode if the current one doesn't belong to
@@ -439,6 +454,13 @@ export default function Chat() {
         },
         onMessageQueuedConsumed: (sessionId, _messageId) => {
           logger.debug("[WS] message.queued.consumed for session:", sessionId);
+          // Remove the oldest queued message — the adapter has started processing it.
+          // The actual user message bubble will be created by handleMessageUpdated
+          // when the adapter emits message.updated for the real user message.
+          const queued = messageStore.queued[sessionId];
+          if (queued && queued.length > 0) {
+            setMessageStore("queued", sessionId, (draft) => draft.slice(1));
+          }
         },
       });
 
@@ -630,6 +652,7 @@ export default function Chat() {
       setMessageStore("message", sessionId, undefined as any);
       setMessageStore("permission", sessionId, undefined as any);
       setMessageStore("question", sessionId, undefined as any);
+      setMessageStore("queued", sessionId, undefined as any);
 
       // Clear todoPartRef if it points to the deleted session
       const ref = todoPartRef();
@@ -986,12 +1009,17 @@ export default function Chat() {
       // This is the authoritative signal that the engine is done — more reliable than
       // waiting for the sendMessage RPC to resolve (which can happen prematurely in
       // multi-step agent loops like OpenCode).
+      // But DON'T clear if there are still queued messages — the engine will continue
+      // processing them, and we need to keep the sending state active.
       if (
         msgInfo.role === "assistant" &&
         (msgInfo.time.completed || msgInfo.error) &&
         sendingMap()[targetSessionId]
       ) {
-        setSendingFor(targetSessionId, false);
+        const queued = messageStore.queued[targetSessionId];
+        if (!queued || queued.length === 0) {
+          setSendingFor(targetSessionId, false);
+        }
       }
     });
   };
@@ -1122,6 +1150,42 @@ export default function Chat() {
     const tempMessageId = `msg-temp-${Date.now()}`;
     const tempPartId = `part-temp-${Date.now()}`;
 
+    // --- Enqueue path: fire-and-forget ---
+    // When the engine is busy and supports enqueue, we must NOT await the RPC.
+    // The RPC blocks until the engine finishes ALL work (including previously
+    // queued messages), which would prevent the user from sending message #3
+    // while #2's RPC is pending.
+    //
+    // Instead of creating a temp user message (which would steal the isWorking
+    // indicator from the currently processing turn), we store the message in
+    // the queued store. It will be rendered as a preview above the input area.
+    // The actual user message bubble is created when the adapter starts processing
+    // (triggered by message.updated or message.queued.consumed).
+    if (isBusy) {
+      const queuedMsg: QueuedMessage = {
+        id: tempMessageId,
+        text,
+        enqueuedAt: Date.now(),
+      };
+
+      // Add to queued store
+      const existingQueued = messageStore.queued[sessionId] || [];
+      setMessageStore("queued", sessionId, [...existingQueued, queuedMsg]);
+
+      gateway.sendMessage(sessionId, text, {
+        mode: agent.id,
+        modelId,
+      }).catch((error) => {
+        logger.error("[SendMessage] Failed to enqueue message:", error);
+        // Remove from queued store on failure
+        setMessageStore("queued", sessionId, (draft) =>
+          draft.filter((m) => m.id !== tempMessageId),
+        );
+      });
+      return;
+    }
+
+    // --- Normal path: create temp user message and await the RPC ---
     const tempMessageInfo: UnifiedMessage = {
       id: tempMessageId,
       sessionId: sessionId,
@@ -1155,27 +1219,6 @@ export default function Chat() {
     setUserScrolledUp(false);
     setTimeout(() => scrollToBottom(), 0);
 
-    // --- Enqueue path: fire-and-forget ---
-    // When the engine is busy and supports enqueue, we must NOT await the RPC.
-    // The RPC blocks until the engine finishes ALL work (including previously
-    // queued messages), which would prevent the user from sending message #3
-    // while #2's RPC is pending.
-    if (isBusy) {
-      gateway.sendMessage(sessionId, text, {
-        mode: agent.id,
-        modelId,
-      }).catch((error) => {
-        logger.error("[SendMessage] Failed to enqueue message:", error);
-        // Remove the optimistic temp message on failure
-        setMessageStore("message", sessionId, (draft) =>
-          draft.filter((m) => m.id !== tempMessageId),
-        );
-        setMessageStore("part", tempMessageId, undefined as any);
-      });
-      return;
-    }
-
-    // --- Normal path: await the RPC ---
     try {
       await gateway.sendMessage(sessionId, text, {
         mode: agent.id,
@@ -1211,6 +1254,8 @@ export default function Chat() {
     } catch (error) {
       logger.error("[CancelMessage] Failed:", error);
     }
+    // Clear any queued messages — cancel stops everything
+    setMessageStore("queued", sessionId, []);
     setSendingFor(sessionId, false);
   };
 
@@ -1490,11 +1535,28 @@ export default function Chat() {
                         {sendError()}
                       </div>
                     </Show>
+
+                    {/* Queued messages preview — shows what messages are waiting */}
+                    <Show when={currentQueuedMessages().length > 0}>
+                      <div class="mb-2 flex flex-col gap-1">
+                        <For each={currentQueuedMessages()}>
+                          {(queuedMsg) => (
+                            <div class="flex items-center gap-2 px-3 py-1.5 text-xs bg-amber-50/80 dark:bg-amber-900/15 border border-amber-200/50 dark:border-amber-700/30 rounded-lg text-amber-700 dark:text-amber-400">
+                              <span class="w-1.5 h-1.5 rounded-full bg-amber-400 dark:bg-amber-500 animate-pulse flex-shrink-0" />
+                              <span class="truncate flex-1">{queuedMsg.text}</span>
+                              <span class="text-amber-500/60 dark:text-amber-500/40 flex-shrink-0">{t().chat.queued}</span>
+                            </div>
+                          )}
+                        </For>
+                      </div>
+                    </Show>
+
                     <PromptInput
                       onSend={handleSendMessage}
                       onCancel={handleCancelMessage}
                       isGenerating={sending()}
                       canEnqueue={canEnqueue()}
+                      queueCount={queueCount()}
                       currentAgent={currentAgent()}
                       onAgentChange={setCurrentAgent}
                       availableModes={configStore.engines.find(e => e.type === currentEngineType())?.capabilities?.availableModes}

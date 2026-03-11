@@ -1,6 +1,16 @@
 import { createStore } from "solid-js/store";
 import type { UnifiedMessage, UnifiedPart, UnifiedPermission, UnifiedQuestion } from "../types/unified";
 
+/** A message waiting in the queue (not yet processed by the engine). */
+export interface QueuedMessage {
+  /** Temporary ID for tracking */
+  id: string;
+  /** The text content the user typed */
+  text: string;
+  /** Timestamp when enqueued */
+  enqueuedAt: number;
+}
+
 // Storage structure — engine-agnostic
 export const [messageStore, setMessageStore] = createStore<{
   message: {
@@ -15,6 +25,10 @@ export const [messageStore, setMessageStore] = createStore<{
   question: {
     [sessionId: string]: UnifiedQuestion[];  // Question request queue grouped by sessionId
   };
+  /** Messages waiting in the queue — not yet rendered as chat turns. */
+  queued: {
+    [sessionId: string]: QueuedMessage[];
+  };
   // Collapse/expand state, indexed by partId or special key
   expanded: {
     [key: string]: boolean;
@@ -28,6 +42,7 @@ export const [messageStore, setMessageStore] = createStore<{
   part: {},
   permission: {},
   question: {},
+  queued: {},
   expanded: {},
   stepsLoaded: {},
 });

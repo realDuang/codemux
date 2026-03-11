@@ -68,15 +68,18 @@ export class OpenCodeAdapter extends EngineAdapter {
   private sessions = new Map<string, UnifiedSession>();
   private currentDirectory: string | null = null;
 
-  // Message completion tracking: sessionId → resolve + collected parts
-  private pendingMessages = new Map<string, {
+  // Message completion tracking: sessionId → array of pending entries.
+  // The first entry is the "primary" (normal send), subsequent entries are
+  // enqueued messages submitted while the engine was busy.
+  // All entries are resolved together when the session becomes idle.
+  private pendingMessages = new Map<string, Array<{
     resolve: (msg: UnifiedMessage) => void;
     messageId: string | null;
     assistantParts: UnifiedPart[];
     timeoutTimer: ReturnType<typeof setTimeout> | null;
     firstEventTimer: ReturnType<typeof setTimeout> | null;
     promptSent: boolean;
-  }>();
+  }>>();
 
   // Cache of SDK parts by partID for applying message.part.delta increments
   private partCache = new Map<string, SdkPart>();
@@ -188,10 +191,11 @@ export class OpenCodeAdapter extends EngineAdapter {
 
   /** Clear the first-event timer for a session (called when any SSE event arrives) */
   private clearFirstEventTimer(sessionId: string): void {
-    const pending = this.pendingMessages.get(sessionId);
-    if (pending?.firstEventTimer) {
-      clearTimeout(pending.firstEventTimer);
-      pending.firstEventTimer = null;
+    const entries = this.pendingMessages.get(sessionId);
+    const primary = entries?.[0];
+    if (primary?.firstEventTimer) {
+      clearTimeout(primary.firstEventTimer);
+      primary.firstEventTimer = null;
     }
   }
 
@@ -273,7 +277,8 @@ export class OpenCodeAdapter extends EngineAdapter {
 
     // Track parts for pending messages and detect completion via step-finish
     if (sessionID) {
-      const pending = this.pendingMessages.get(sessionID);
+      const entries = this.pendingMessages.get(sessionID);
+      const pending = entries?.[0];
       if (pending) {
         if (pending.messageId === null) {
           if (sdkPart.type === "step-start") {
@@ -347,15 +352,30 @@ export class OpenCodeAdapter extends EngineAdapter {
     // First SSE event for this session — clear the first-event timeout
     this.clearFirstEventTimer(sessionID);
 
-    // Skip user messages — the frontend already handles them via optimistic insert.
-    // OpenCode SSE pushes message.updated for all roles, but re-emitting user messages
-    // causes duplicates in the UI.
-    if (sdkMsg.role === "user") return;
+    // User messages: normally skipped (frontend handles them via optimistic insert).
+    // However, when there are enqueued entries (entries.length > 1), a user message
+    // from OpenCode means the engine has started processing a queued message.
+    // Emit message.queued.consumed and promote the next entry to primary.
+    if (sdkMsg.role === "user") {
+      const entries = this.pendingMessages.get(sessionID);
+      if (entries && entries.length > 1) {
+        // The engine has consumed one queued message — shift the current primary
+        // (which was already resolved or will be resolved by idle) and promote next.
+        // Actually, OpenCode processes all queued messages in a single loop iteration,
+        // but we get user message.updated events for each. Emit consumed for tracking.
+        this.emit("message.queued.consumed", {
+          sessionId: sessionID,
+          messageId: sdkMsg.id,
+        });
+      }
+      return;
+    }
 
     const message = convertMessage(this.engineType, sdkMsg);
 
     if (sdkMsg.role === "assistant") {
-      const pending = this.pendingMessages.get(sessionID);
+      const entries = this.pendingMessages.get(sessionID);
+      const pending = entries?.[0];
       if (pending) {
         // Track the message ID for this pending turn
         if (pending.messageId === null || pending.messageId === sdkMsg.id) {
@@ -412,20 +432,25 @@ export class OpenCodeAdapter extends EngineAdapter {
 
   /**
    * Called when OpenCode signals that a session's agent loop has fully completed.
-   * This is the authoritative "turn done" signal — resolves the pending sendMessage
-   * promise and emits the final message with time.completed to the frontend.
+   * This is the authoritative "turn done" signal — resolves ALL pending sendMessage
+   * promises (including enqueued ones) and emits the final message with time.completed
+   * to the frontend.
    */
   private resolveSessionIdle(sessionID: string): void {
-    const pending = this.pendingMessages.get(sessionID);
-    if (!pending) return;
+    const entries = this.pendingMessages.get(sessionID);
+    if (!entries || entries.length === 0) return;
 
     // Ignore idle events that arrive before promptAsync has been sent.
     // This happens when the pre-prompt abort triggers a session.status: idle
     // SSE event that races with the pending entry registration.
-    if (!pending.promptSent) return;
+    const primary = entries[0];
+    if (!primary.promptSent) return;
 
-    if (pending.timeoutTimer) clearTimeout(pending.timeoutTimer);
-    if (pending.firstEventTimer) clearTimeout(pending.firstEventTimer);
+    // Clear all timers across all entries
+    for (const entry of entries) {
+      if (entry.timeoutTimer) clearTimeout(entry.timeoutTimer);
+      if (entry.firstEventTimer) clearTimeout(entry.firstEventTimer);
+    }
     this.pendingMessages.delete(sessionID);
 
     // Use the last cached message (which has the real time.completed from OpenCode),
@@ -436,11 +461,11 @@ export class OpenCodeAdapter extends EngineAdapter {
     const finalMessage: UnifiedMessage = cachedMessage
       ? { ...cachedMessage, time: { ...cachedMessage.time, completed: cachedMessage.time.completed ?? Date.now() } }
       : {
-          id: pending.messageId ?? "",
+          id: primary.messageId ?? "",
           sessionId: sessionID,
           role: "assistant",
           time: { created: Date.now(), completed: Date.now() },
-          parts: pending.assistantParts,
+          parts: primary.assistantParts,
         };
 
     // Clear part cache for this session
@@ -450,7 +475,20 @@ export class OpenCodeAdapter extends EngineAdapter {
       }
     }
 
-    pending.resolve(finalMessage);
+    // Re-emit the final message WITH time.completed so the frontend clears
+    // the sending state. The earlier emission (handleMessageUpdated) was
+    // stripped of time.completed to prevent premature state clearing during
+    // multi-step agent loops.
+    this.emit("message.updated", {
+      sessionId: sessionID,
+      message: finalMessage,
+    });
+
+    // Resolve ALL pending entries — primary and enqueued — with the final message.
+    // OpenCode processes all queued messages in one loop, so they all complete together.
+    for (const entry of entries) {
+      entry.resolve(finalMessage);
+    }
   }
 
   private handleSessionUpdated(sdkSession: SdkSession): void {
@@ -610,17 +648,19 @@ export class OpenCodeAdapter extends EngineAdapter {
     this.client = null;
 
     // Reject any pending messages
-    for (const [sessionId, pending] of this.pendingMessages) {
-      if (pending.timeoutTimer) clearTimeout(pending.timeoutTimer);
-      if (pending.firstEventTimer) clearTimeout(pending.firstEventTimer);
-      pending.resolve({
-        id: pending.messageId ?? "",
-        sessionId,
-        role: "assistant",
-        time: { created: Date.now() },
-        parts: pending.assistantParts,
-        error: "Engine stopped",
-      });
+    for (const [sessionId, entries] of this.pendingMessages) {
+      for (const entry of entries) {
+        if (entry.timeoutTimer) clearTimeout(entry.timeoutTimer);
+        if (entry.firstEventTimer) clearTimeout(entry.firstEventTimer);
+        entry.resolve({
+          id: entry.messageId ?? "",
+          sessionId,
+          role: "assistant",
+          time: { created: Date.now() },
+          parts: entry.assistantParts,
+          error: "Engine stopped",
+        });
+      }
     }
     this.pendingMessages.clear();
     this.lastEmittedMessage.clear();
@@ -665,6 +705,7 @@ export class OpenCodeAdapter extends EngineAdapter {
       listSessions: true,
       modelSwitchable: true,
       customModelInput: false,
+      messageEnqueue: true,
       availableModes: this.getModes(),
     };
   }
@@ -793,6 +834,77 @@ export class OpenCodeAdapter extends EngineAdapter {
 
     const dir = session?.directory ?? options?.directory ?? this.currentDirectory ?? undefined;
 
+    // --- Enqueue path: engine is already processing this session ---
+    const existingEntries = this.pendingMessages.get(sessionId);
+    if (existingEntries && existingEntries.length > 0) {
+      const client = dir ? this.createClient(dir) : this.ensureClient();
+
+      // Skip abort — submit directly to OpenCode's native queue.
+      // OpenCode persists the user message to DB immediately; the running
+      // agent loop discovers it via `lastUser.id > lastAssistant.id`.
+      const promptResult = await client.session.promptAsync({
+        sessionID: sessionId,
+        directory: dir,
+        parts,
+        agent: options?.mode,
+        model,
+      });
+
+      const promptError = (promptResult as any).error;
+      if (promptError) {
+        const errMsg = typeof promptError === "string"
+          ? promptError
+          : JSON.stringify(promptError);
+        throw new Error(`Failed to enqueue message: ${errMsg}`);
+      }
+
+      // Create a promise that resolves when the session becomes idle
+      const queuePosition = existingEntries.length;
+      const messagePromise = new Promise<UnifiedMessage>((resolve) => {
+        const entry = {
+          resolve,
+          messageId: null as string | null,
+          assistantParts: [] as UnifiedPart[],
+          timeoutTimer: null as ReturnType<typeof setTimeout> | null,
+          firstEventTimer: null as ReturnType<typeof setTimeout> | null,
+          promptSent: true,
+        };
+        existingEntries.push(entry);
+
+        // Timeout after 5 minutes for enqueued messages too
+        entry.timeoutTimer = setTimeout(() => {
+          const entries = this.pendingMessages.get(sessionId);
+          if (entries) {
+            const idx = entries.indexOf(entry);
+            if (idx >= 0) {
+              entries.splice(idx, 1);
+              if (entries.length === 0) this.pendingMessages.delete(sessionId);
+              resolve({
+                id: "",
+                sessionId,
+                role: "assistant",
+                time: { created: Date.now() },
+                parts: [],
+                error: "Enqueued message timeout",
+              });
+            }
+          }
+        }, 300_000);
+      });
+
+      // Emit queue event for the frontend
+      this.emit("message.queued", {
+        sessionId,
+        messageId: "", // Engine assigns the real ID
+        queuePosition,
+      });
+
+      openCodeLog.info(`Message enqueued for session ${sessionId} (position ${queuePosition})`);
+      return messagePromise;
+    }
+
+    // --- Normal path: session is idle ---
+
     // Pre-prompt abort: clear any residual unfinished state in OpenCode.
     // This is harmless if the session is already idle, but critical for sessions
     // that were left in a "busy" state after a previous cancel or crash.
@@ -814,21 +926,26 @@ export class OpenCodeAdapter extends EngineAdapter {
         firstEventTimer: null as ReturnType<typeof setTimeout> | null,
         promptSent: false,
       };
-      this.pendingMessages.set(sessionId, entry);
+      this.pendingMessages.set(sessionId, [entry]);
 
       // Timeout after 5 minutes
       entry.timeoutTimer = setTimeout(() => {
-        if (this.pendingMessages.has(sessionId)) {
-          if (entry.firstEventTimer) clearTimeout(entry.firstEventTimer);
+        const entries = this.pendingMessages.get(sessionId);
+        if (entries && entries.length > 0) {
+          // Timeout the primary — resolve all entries
+          for (const e of entries) {
+            if (e.firstEventTimer) clearTimeout(e.firstEventTimer);
+            if (e.timeoutTimer && e !== entry) clearTimeout(e.timeoutTimer);
+            e.resolve({
+              id: "",
+              sessionId,
+              role: "assistant",
+              time: { created: Date.now() },
+              parts: [],
+              error: "Message timeout",
+            });
+          }
           this.pendingMessages.delete(sessionId);
-          resolve({
-            id: "",
-            sessionId,
-            role: "assistant",
-            time: { created: Date.now() },
-            parts: [],
-            error: "Message timeout",
-          });
         }
       }, 300_000);
     });
@@ -847,9 +964,13 @@ export class OpenCodeAdapter extends EngineAdapter {
     // instead of waiting for SSE (which will never arrive).
     const promptError = (promptResult as any).error;
     if (promptError) {
-      const pending = this.pendingMessages.get(sessionId);
-      if (pending?.timeoutTimer) clearTimeout(pending.timeoutTimer);
-      if (pending?.firstEventTimer) clearTimeout(pending.firstEventTimer);
+      const entries = this.pendingMessages.get(sessionId);
+      if (entries) {
+        for (const e of entries) {
+          if (e.timeoutTimer) clearTimeout(e.timeoutTimer);
+          if (e.firstEventTimer) clearTimeout(e.firstEventTimer);
+        }
+      }
       this.pendingMessages.delete(sessionId);
       const errMsg = typeof promptError === "string"
         ? promptError
@@ -859,26 +980,31 @@ export class OpenCodeAdapter extends EngineAdapter {
 
     // Start first-event timer: if no SSE event arrives within 30s, the session
     // is likely stale (e.g., left in busy state after a crash or failed abort).
-    const pending = this.pendingMessages.get(sessionId);
+    const entries = this.pendingMessages.get(sessionId);
+    const pending = entries?.[0];
     if (pending) {
       // Mark prompt as sent so resolveSessionIdle knows this idle event is real
       // (not from the pre-prompt abort).
       pending.promptSent = true;
 
       pending.firstEventTimer = setTimeout(() => {
-        if (this.pendingMessages.has(sessionId)) {
+        const currentEntries = this.pendingMessages.get(sessionId);
+        if (currentEntries && currentEntries.length > 0) {
           openCodeLog.warn(`No SSE response within 30s for session ${sessionId} — session may be stale`);
-          if (pending.timeoutTimer) clearTimeout(pending.timeoutTimer);
+          // Resolve all entries as stale
+          for (const e of currentEntries) {
+            if (e.timeoutTimer) clearTimeout(e.timeoutTimer);
+            e.resolve({
+              id: "",
+              sessionId,
+              role: "assistant",
+              time: { created: Date.now() },
+              parts: [],
+              error: "No response from engine",
+              staleSession: true,
+            });
+          }
           this.pendingMessages.delete(sessionId);
-          pending.resolve({
-            id: "",
-            sessionId,
-            role: "assistant",
-            time: { created: Date.now() },
-            parts: [],
-            error: "No response from engine",
-            staleSession: true,
-          });
         }
       }, 30_000);
     }
@@ -905,26 +1031,31 @@ export class OpenCodeAdapter extends EngineAdapter {
       openCodeLog.warn("cancelMessage abort call failed:", err);
     });
 
-    // Remove pending state so that subsequent SSE events (the abort error message,
-    // session.status: idle) are NOT suppressed by handleMessageUpdated's stripping
-    // logic (which only activates when a pending entry exists).
-    const pendingEntry = this.pendingMessages.get(sessionId);
-    if (pendingEntry) {
-      if (pendingEntry.timeoutTimer) clearTimeout(pendingEntry.timeoutTimer);
-      if (pendingEntry.firstEventTimer) clearTimeout(pendingEntry.firstEventTimer);
+    // Remove ALL pending entries so that subsequent SSE events (the abort error
+    // message, session.status: idle) are NOT suppressed by handleMessageUpdated's
+    // stripping logic (which only activates when pending entries exist).
+    const entries = this.pendingMessages.get(sessionId);
+    if (entries && entries.length > 0) {
+      for (const entry of entries) {
+        if (entry.timeoutTimer) clearTimeout(entry.timeoutTimer);
+        if (entry.firstEventTimer) clearTimeout(entry.firstEventTimer);
+      }
       this.pendingMessages.delete(sessionId);
       this.lastEmittedMessage.delete(sessionId);
 
-      // Resolve the sendMessage promise immediately so the UI unblocks.
+      // Resolve ALL pending promises immediately so the UI unblocks.
       // The actual error/completed state will arrive via SSE shortly.
-      pendingEntry.resolve({
-        id: pendingEntry.messageId ?? "",
-        sessionId,
-        role: "assistant",
-        time: { created: Date.now(), completed: Date.now() },
-        parts: pendingEntry.assistantParts,
-        error: "Cancelled",
-      });
+      const primary = entries[0];
+      for (const entry of entries) {
+        entry.resolve({
+          id: primary.messageId ?? "",
+          sessionId,
+          role: "assistant",
+          time: { created: Date.now(), completed: Date.now() },
+          parts: primary.assistantParts,
+          error: "Cancelled",
+        });
+      }
     }
   }
 

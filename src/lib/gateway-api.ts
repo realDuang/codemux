@@ -33,6 +33,8 @@ export interface GatewayNotificationHandlers {
   onQuestionAsked?: (question: UnifiedQuestion) => void;
   onQuestionReplied?: (questionId: string, answers: string[][]) => void;
   onEngineStatusChanged?: (engineType: EngineType, status: string, error?: string) => void;
+  onMessageQueued?: (sessionId: string, messageId: string, queuePosition: number) => void;
+  onMessageQueuedConsumed?: (sessionId: string, messageId: string) => void;
   onConnected?: () => void;
   onDisconnected?: (reason: string) => void;
 }
@@ -150,6 +152,14 @@ class GatewayAPI {
 
     this.bind("engine.status.changed", (data) => {
       this.handlers.onEngineStatusChanged?.(data.engineType, data.status, data.error);
+    });
+
+    this.bind("message.queued", (data) => {
+      this.handlers.onMessageQueued?.(data.sessionId, data.messageId, data.queuePosition);
+    });
+
+    this.bind("message.queued.consumed", (data) => {
+      this.handlers.onMessageQueuedConsumed?.(data.sessionId, data.messageId);
     });
   }
 

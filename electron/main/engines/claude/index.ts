@@ -143,11 +143,22 @@ export class ClaudeCodeAdapter extends EngineAdapter {
   // --- Message send completion ---
   private sendResolvers = new Map<
     string,
-    {
+    Array<{
       resolve: (msg: UnifiedMessage) => void;
       reject: (err: Error) => void;
-    }
+    }>
   >();
+
+  // --- Queued user messages (deferred emit) ---
+  // When messages are enqueued while the engine is busy, the user message is
+  // NOT emitted immediately. Instead it is stored here and emitted when the
+  // engine starts processing the queued turn (in processStream).
+  private pendingUserMessages = new Map<string, UnifiedMessage[]>();
+
+  // --- Queued message texts (deferred send to CLI) ---
+  // Claude CLI doesn't reliably queue multiple stdin sends. We maintain our
+  // own text queue and send() one at a time after each stream() completes.
+  private pendingMessageTexts = new Map<string, string[]>();
 
   // --- Tool call tracking ---
   private toolCallParts = new Map<string, ToolPart>();
@@ -269,6 +280,7 @@ export class ClaudeCodeAdapter extends EngineAdapter {
       listSessions: true,
       modelSwitchable: true,
       customModelInput: true,
+      messageEnqueue: true,
       availableModes: this.getModes(),
     };
   }
@@ -349,10 +361,10 @@ export class ClaudeCodeAdapter extends EngineAdapter {
       this.activeAbortControllers.delete(sessionId);
     }
 
-    // Reject pending send promise so callers don't hang
-    const resolver = this.sendResolvers.get(sessionId);
-    if (resolver) {
-      resolver.reject(new Error("Session deleted"));
+    // Reject pending send promises so callers don't hang
+    const resolvers = this.sendResolvers.get(sessionId);
+    if (resolvers) {
+      for (const r of resolvers) r.reject(new Error("Session deleted"));
       this.sendResolvers.delete(sessionId);
     }
 
@@ -418,6 +430,54 @@ export class ClaudeCodeAdapter extends EngineAdapter {
       throw new Error("Message content cannot be empty");
     }
 
+    // --- Enqueue path: engine is already processing this session ---
+    const existingResolvers = this.sendResolvers.get(sessionId);
+    if (existingResolvers && existingResolvers.length > 0) {
+      // Create user message but DON'T emit yet — defer until processStream
+      // starts processing this queued turn. Emitting immediately would create
+      // a user bubble in the frontend while the engine is still working on
+      // the previous turn, causing the isWorking indicator to jump.
+      const userMsgId = timeId("msg");
+      const userMessage: UnifiedMessage = {
+        id: userMsgId,
+        sessionId,
+        role: "user",
+        time: { created: Date.now() },
+        parts: [{ type: "text", text: textContent, id: timeId("pt"), messageId: userMsgId, sessionId } as TextPart],
+      };
+
+      const history = this.messageHistory.get(sessionId) ?? [];
+      history.push(userMessage);
+      this.messageHistory.set(sessionId, history);
+
+      // Store for deferred emit
+      const pending = this.pendingUserMessages.get(sessionId) ?? [];
+      pending.push(userMessage);
+      this.pendingUserMessages.set(sessionId, pending);
+
+      const queuePosition = existingResolvers.length;
+      this.emit("message.queued", {
+        sessionId,
+        messageId: "",
+        queuePosition,
+      });
+
+      claudeLog.info(`[Claude][${sessionId}] Message enqueued (position ${queuePosition})`);
+
+      // DON'T send to stdin yet — Claude CLI doesn't reliably queue multiple
+      // stdin sends. Store the text and send it when processStream finishes
+      // the current turn and is ready for the next one.
+      const pendingTexts = this.pendingMessageTexts.get(sessionId) ?? [];
+      pendingTexts.push(textContent);
+      this.pendingMessageTexts.set(sessionId, pendingTexts);
+
+      return new Promise<UnifiedMessage>((resolve, reject) => {
+        existingResolvers.push({ resolve, reject });
+      });
+    }
+
+    // --- Normal path: session is idle ---
+
     // Create user message
     const userMsgId = timeId("msg");
     const userMessage: UnifiedMessage = {
@@ -480,7 +540,9 @@ export class ClaudeCodeAdapter extends EngineAdapter {
 
     // Send message and process stream
     return new Promise<UnifiedMessage>((resolve, reject) => {
-      this.sendResolvers.set(sessionId, { resolve, reject });
+      const resolvers = this.sendResolvers.get(sessionId) ?? [];
+      resolvers.push({ resolve, reject });
+      this.sendResolvers.set(sessionId, resolvers);
 
       this.processStream(
         v2Session,
@@ -490,10 +552,10 @@ export class ClaudeCodeAdapter extends EngineAdapter {
         abortController,
       ).catch((err) => {
         claudeLog.error(`[Claude][${sessionId}] Stream processing error:`, err);
-        const resolver = this.sendResolvers.get(sessionId);
-        if (resolver) {
+        const currentResolvers = this.sendResolvers.get(sessionId);
+        if (currentResolvers) {
           this.sendResolvers.delete(sessionId);
-          resolver.reject(err);
+          for (const r of currentResolvers) r.reject(err);
         }
       });
     });
@@ -529,13 +591,20 @@ export class ClaudeCodeAdapter extends EngineAdapter {
           // After interrupt, the CLI will emit remaining buffered messages and
           // finally a `result` message. We must consume them to avoid polluting
           // the next conversation turn.
+          // Timeout after 5s to avoid blocking cancel indefinitely if CLI hangs.
           try {
-            for await (const msg of v2Info.session.stream()) {
-              claudeLog.debug(`[Claude][${sessionId}] Drain after interrupt: ${(msg as any).type}`);
-              if ((msg as any).type === "result") break;
-            }
+            const drainTimeout = new Promise<void>((_, reject) =>
+              setTimeout(() => reject(new Error("drain timeout")), 5000)
+            );
+            const drainWork = (async () => {
+              for await (const msg of v2Info.session.stream()) {
+                claudeLog.debug(`[Claude][${sessionId}] Drain after interrupt: ${(msg as any).type}`);
+                if ((msg as any).type === "result") break;
+              }
+            })();
+            await Promise.race([drainWork, drainTimeout]);
           } catch {
-            // Stream may already be closed / errored — safe to ignore
+            // Stream may already be closed / errored / timed out — safe to ignore
           }
         } else {
           claudeLog.info(`[Claude][${sessionId}] Message cancelled (no interrupt available)`);
@@ -1113,6 +1182,11 @@ export class ClaudeCodeAdapter extends EngineAdapter {
    * Send a message to the V2 session and process the streaming response.
    * This is the core of the adapter — it translates SDK stream events into
    * unified parts and emits them to the gateway.
+   *
+   * When enqueued messages exist, the CLI produces multiple result messages
+   * (one per queued message). stream() yields events up to each result then
+   * returns. We loop: finalize the current buffer, resolve the oldest resolver,
+   * and if more resolvers remain, create a new buffer and call stream() again.
    */
   private async processStream(
     v2Session: SDKSession,
@@ -1127,16 +1201,70 @@ export class ClaudeCodeAdapter extends EngineAdapter {
       // Send the message
       await v2Session.send(messageContent);
 
-      // Process stream events
-      for await (const sdkMessage of v2Session.stream()) {
-        if (abortController.signal.aborted) break;
+      // Process stream events — loop to handle multiple turns from enqueued messages
+      while (!abortController.signal.aborted) {
+        for await (const sdkMessage of v2Session.stream()) {
+          if (abortController.signal.aborted) break;
 
-        this.handleSdkMessage(
-          sdkMessage,
+          this.handleSdkMessage(
+            sdkMessage,
+            sessionId,
+            buffer,
+            streamingBlocks,
+          );
+        }
+
+        // stream() returned (hit a result message) — finalize the current turn
+        this.finalizeCurrentTurn(sessionId, buffer, false);
+
+        // Check if more enqueued messages need processing
+        const resolvers = this.sendResolvers.get(sessionId);
+        if (!resolvers || resolvers.length === 0) break;
+
+        // More enqueued messages remain — create a new buffer for the next turn
+        // First, emit the deferred user message (stored during enqueue) so the
+        // frontend creates the user bubble at the right time.
+        const pendingUsers = this.pendingUserMessages.get(sessionId);
+        if (pendingUsers && pendingUsers.length > 0) {
+          const userMsg = pendingUsers.shift()!;
+          if (pendingUsers.length === 0) this.pendingUserMessages.delete(sessionId);
+          this.emit("message.updated", { sessionId, message: userMsg });
+        }
+
+        // Send the next queued text to CLI stdin (one at a time)
+        const pendingTexts = this.pendingMessageTexts.get(sessionId);
+        if (pendingTexts && pendingTexts.length > 0) {
+          const nextText = pendingTexts.shift()!;
+          if (pendingTexts.length === 0) this.pendingMessageTexts.delete(sessionId);
+          await v2Session.send(nextText);
+        }
+
+        buffer = {
+          messageId: timeId("msg"),
           sessionId,
-          buffer,
-          streamingBlocks,
-        );
+          parts: [],
+          textAccumulator: "",
+          textPartId: null,
+          reasoningAccumulator: "",
+          reasoningPartId: null,
+          startTime: Date.now(),
+          modelId: buffer.modelId,
+        };
+        this.messageBuffers.set(sessionId, buffer);
+        streamingBlocks.clear();
+
+        // Emit initial empty assistant message for the next turn
+        this.emit("message.updated", {
+          sessionId,
+          message: {
+            id: buffer.messageId,
+            sessionId,
+            role: "assistant",
+            time: { created: Date.now() },
+            parts: [],
+            workingDirectory: this.sessionDirectories.get(sessionId),
+          },
+        });
       }
     } catch (err: any) {
       if (abortController.signal.aborted) {
@@ -1144,10 +1272,15 @@ export class ClaudeCodeAdapter extends EngineAdapter {
       } else {
         claudeLog.error(`[Claude][${sessionId}] Stream error:`, err);
         buffer.error = err?.message ?? String(err);
+        // Finalize with error — resolves all remaining resolvers
+        this.finalizeBuffer(sessionId, false);
       }
     } finally {
       this.activeAbortControllers.delete(sessionId);
-      this.finalizeBuffer(sessionId, abortController.signal.aborted);
+      // If the loop was broken by abort, finalize any remaining buffer
+      if (this.messageBuffers.has(sessionId)) {
+        this.finalizeBuffer(sessionId, abortController.signal.aborted);
+      }
     }
   }
 
@@ -1653,6 +1786,68 @@ export class ClaudeCodeAdapter extends EngineAdapter {
   // Buffer Finalization
   // ==========================================================================
 
+  /**
+   * Finalize the current turn's buffer and resolve the oldest resolver.
+   * Used when processing enqueued messages — each result message triggers
+   * finalization of one turn, leaving remaining resolvers for subsequent turns.
+   */
+  private finalizeCurrentTurn(sessionId: string, buffer: MessageBuffer, aborted: boolean): void {
+    // Flush any remaining text
+    this.flushTextAccumulator(sessionId, buffer);
+
+    // Build final message
+    const finalMessage: UnifiedMessage = {
+      id: buffer.messageId,
+      sessionId: buffer.sessionId,
+      role: "assistant",
+      time: { created: buffer.startTime, completed: Date.now() },
+      parts: buffer.parts,
+      tokens: buffer.tokens
+        ? {
+            input: buffer.tokens.input,
+            output: buffer.tokens.output,
+            cache: buffer.tokens.cache
+              ? { read: buffer.tokens.cache.read, write: buffer.tokens.cache.write }
+              : undefined,
+          }
+        : undefined,
+      cost: buffer.cost,
+      modelId: buffer.modelId,
+      error: buffer.error,
+      workingDirectory: this.sessionDirectories.get(sessionId),
+    };
+
+    // Add to history
+    const history = this.messageHistory.get(sessionId) ?? [];
+    history.push(finalMessage);
+    this.messageHistory.set(sessionId, history);
+
+    // Emit final message
+    this.emit("message.updated", { sessionId: buffer.sessionId, message: finalMessage });
+
+    // Clean up buffer and tool call parts for this turn
+    this.messageBuffers.delete(sessionId);
+    for (const [key, part] of this.toolCallParts) {
+      if (part.sessionId === sessionId) {
+        this.toolCallParts.delete(key);
+      }
+    }
+
+    // Resolve only the first (oldest) resolver — the one that owns this turn
+    const resolvers = this.sendResolvers.get(sessionId);
+    if (resolvers && resolvers.length > 0) {
+      const first = resolvers.shift()!;
+      first.resolve(finalMessage);
+
+      if (resolvers.length === 0) {
+        this.sendResolvers.delete(sessionId);
+      } else {
+        // More enqueued messages remain
+        this.emit("message.queued.consumed", { sessionId, messageId: "" });
+      }
+    }
+  }
+
   private finalizeBuffer(sessionId: string, aborted: boolean): void {
     const buffer = this.messageBuffers.get(sessionId);
     if (!buffer) return;
@@ -1700,12 +1895,16 @@ export class ClaudeCodeAdapter extends EngineAdapter {
       }
     }
 
-    // Resolve sendMessage promise
-    const resolver = this.sendResolvers.get(sessionId);
-    if (resolver) {
+    // Resolve ALL sendMessage promises (including enqueued) — used for abort/error
+    const resolvers = this.sendResolvers.get(sessionId);
+    if (resolvers) {
       this.sendResolvers.delete(sessionId);
-      resolver.resolve(finalMessage);
+      for (const r of resolvers) r.resolve(finalMessage);
     }
+    // Clear any deferred user messages that were never emitted
+    this.pendingUserMessages.delete(sessionId);
+    // Clear any queued message texts that were never sent to CLI
+    this.pendingMessageTexts.delete(sessionId);
   }
 
   // ==========================================================================

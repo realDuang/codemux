@@ -43,6 +43,8 @@ export interface EngineCapabilities {
   modelSwitchable: boolean;
   /** Whether the user can type arbitrary model IDs not in the model list */
   customModelInput: boolean;
+  /** Whether the engine supports enqueuing messages while another is being processed */
+  messageEnqueue: boolean;
   /** Available agent modes */
   availableModes: AgentMode[];
 }
@@ -506,6 +508,8 @@ export const GatewayNotificationType = {
   QUESTION_REPLIED: "question.replied",
   QUESTION_REJECTED: "question.rejected",
   ENGINE_STATUS_CHANGED: "engine.status.changed",
+  MESSAGE_QUEUED: "message.queued",
+  MESSAGE_QUEUED_CONSUMED: "message.queued.consumed",
 } as const;
 
 // --- Request / Response payload types ---

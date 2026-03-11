@@ -72,6 +72,7 @@ export interface LocaleDict {
     disclaimer: string;
     noModeError: string;
     noModelError: string;
+    queued: string;
   };
 
   // Settings page
@@ -173,6 +174,8 @@ export interface LocaleDict {
     buildPlaceholder: string;
     autopilotPlaceholder: string;
     send: string;
+    typeNextMessage: string;
+    waitingForResponse: string;
   };
 
   // Message Parts
@@ -416,6 +419,7 @@ export const en: LocaleDict = {
     disclaimer: "AI-generated content may be inaccurate. Please verify important information.",
     noModeError: "No mode selected. Please select a mode before sending.",
     noModelError: "No model configured. Please set a model in Settings > Engines.",
+    queued: "Queued",
   },
 
   // Settings page
@@ -517,6 +521,8 @@ export const en: LocaleDict = {
     buildPlaceholder: "Describe what you want to build or change...",
     autopilotPlaceholder: "Describe a task to run autonomously...",
     send: "Send message",
+    typeNextMessage: "Type your next message...",
+    waitingForResponse: "Waiting for response...",
   },
 
   // Message Parts

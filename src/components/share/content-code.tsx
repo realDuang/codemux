@@ -1,4 +1,5 @@
 import { createResource, Suspense } from "solid-js"
+import { CopyButton } from "./CopyButton"
 import style from "./content-code.module.css"
 import { getHighlight, setHighlight, hasHighlight } from "../../lib/highlight-cache"
 
@@ -63,11 +64,13 @@ export function ContentCode(props: Props) {
   return (
     <Suspense>
       <div
-        innerHTML={html()}
         class={style.root}
         data-flush={props.flush === true ? true : undefined}
         data-transparent-bg={props.transparentBg === true ? true : undefined}
-      />
+      >
+        <div innerHTML={html()} />
+        <CopyButton text={() => props.code || ""} />
+      </div>
     </Suspense>
   )
 }

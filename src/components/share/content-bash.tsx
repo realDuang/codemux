@@ -1,5 +1,6 @@
 import style from "./content-bash.module.css"
 import { createResource, createSignal } from "solid-js"
+import { CopyButton } from "./CopyButton"
 import { createOverflow } from "./common"
 import { useI18n } from "../../lib/i18n";
 
@@ -53,6 +54,7 @@ export function ContentBash(props: Props) {
           <div innerHTML={commandHtml()} />
           <div data-slot="output" ref={overflow.ref} innerHTML={outputHtml()} />
         </div>
+        <CopyButton text={() => props.command || ""} />
       </div>
 
       {((!props.expand && overflow.status) || expanded()) && (

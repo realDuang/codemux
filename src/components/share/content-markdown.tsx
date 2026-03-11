@@ -1,4 +1,5 @@
 import { createOverflow } from "./common"
+import { attachCopyButtons } from "./CopyButton"
 import { createResource, createSignal, createEffect, onCleanup } from "solid-js"
 import { useI18n } from "../../lib/i18n"
 import { logger } from "../../lib/logger"
@@ -96,6 +97,7 @@ export function ContentMarkdown(props: Props) {
   )
   const [expanded, setExpanded] = createSignal(false)
   const overflow = createOverflow()
+  let markdownRef: HTMLDivElement | undefined
 
   // Show raw text as fallback while markdown is loading (avoids blank/white screen)
   const displayHtml = () => {
@@ -108,13 +110,19 @@ export function ContentMarkdown(props: Props) {
     return `<p>${escaped.replace(/\n\n/g, "</p><p>").replace(/\n/g, "<br>")}</p>`
   }
 
+  createEffect(() => {
+    const _ = displayHtml()
+    if (!markdownRef) return
+    queueMicrotask(() => attachCopyButtons(markdownRef!))
+  })
+
   return (
     <div
       class={style.root}
       data-highlight={props.highlight === true ? true : undefined}
       data-expanded={expanded() || props.expand === true ? true : undefined}
     >
-      <div data-slot="markdown" ref={overflow.ref} innerHTML={displayHtml()} />
+      <div data-slot="markdown" ref={(el) => { overflow.ref(el); markdownRef = el; }} innerHTML={displayHtml()} />
 
       {((!props.expand && overflow.status) || expanded()) && (
         <button

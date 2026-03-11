@@ -8,6 +8,7 @@
   }
 
   [data-slot="body"] {
+    position: relative;
     border: 1px solid var(--sl-color-divider);
     border-radius: 0.25rem;
     overflow: hidden;

@@ -1,0 +1,47 @@
+[data-component="copy-button"] {
+  position: absolute;
+  top: 0.5rem;
+  right: 0.5rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.625rem;
+  height: 1.625rem;
+  padding: 0;
+  border-radius: 0.25rem;
+  border: none;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+  background: rgba(148, 163, 184, 0.15);
+  color: var(--sl-color-text-dimmed);
+  z-index: 1;
+}
+
+[data-component="copy-button"]:hover {
+  background: rgba(148, 163, 184, 0.3);
+}
+
+[data-component="copy-button"] svg {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+}
+
+*:hover > [data-component="copy-button"],
+[data-component="copy-button"]:focus-visible {
+  opacity: 1;
+}
+
+[data-component="copy-button"][data-copied] {
+  opacity: 1;
+  color: #22c55e;
+}
+
+.dark [data-component="copy-button"] {
+  background: rgba(148, 163, 184, 0.1);
+}
+
+.dark [data-component="copy-button"]:hover {
+  background: rgba(148, 163, 184, 0.2);
+}

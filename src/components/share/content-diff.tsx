@@ -1,5 +1,6 @@
 import { parsePatch } from "diff"
 import { createMemo, For } from "solid-js"
+import { CopyButton } from "./CopyButton"
 import styles from "./content-diff.module.css"
 import { logger } from "../../lib/logger"
 
@@ -65,6 +66,7 @@ export function ContentDiff(props: Props) {
 
   return (
     <div class={styles.root}>
+      <CopyButton text={() => props.diff || ""} />
       <For each={lines()}>
         {(line) => (
           <div class={styles.line} data-type={line.type}>

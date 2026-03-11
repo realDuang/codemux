@@ -157,7 +157,7 @@ export function PromptInput(props: PromptInputProps) {
   };
 
   const handleKeyDown = (e: KeyboardEvent) => {
-    if (e.key === "Enter" && !e.shiftKey) {
+    if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
       e.preventDefault();
       if (text().trim() && !props.isGenerating && !props.disabled) {
         props.onSend(text(), agent());

@@ -49,4 +49,7 @@ package-lock.json
 test-results/
 playwright-report/
 
+# Benchmark artifacts
+.bench/
+
 .channels/

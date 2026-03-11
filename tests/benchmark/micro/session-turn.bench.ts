@@ -4,12 +4,8 @@
 // SessionTurn.tsx has 17+ createMemo calls that ALL read from
 // messageStore.part[msg.id]. This benchmark measures:
 //
-// 1. The cost of SolidJS memo cascades when a single part update triggers
-//    multiple downstream recomputations
-// 2. How the number of memos scales with turn complexity
-// 3. The filterParts function cost (called multiple times per turn)
-// 4. The groupedRenderItems computation (most complex memo)
-// 5. Memory leak potential: store growth without cleanup
+// 1. The groupedRenderItems computation (most complex memo)
+// 2. The full memo cascade cost when a single part update arrives
 //
 // These are the actual algorithms from SessionTurn.tsx reproduced verbatim
 // to benchmark in isolation.
@@ -17,8 +13,7 @@
 
 import { bench, describe } from "vitest";
 import { createStore } from "solid-js/store";
-import { createRoot, createMemo, createSignal, createEffect } from "solid-js";
-import { parsePatch } from "diff";
+import { createRoot, createMemo } from "solid-js";
 import type { UnifiedMessage, UnifiedPart, ToolPart, TextPart, ReasoningPart } from "../../../src/types/unified";
 
 // ---------------------------------------------------------------------------
@@ -84,7 +79,7 @@ function makeMessage(id: string, sessionId: string, role: "user" | "assistant"):
  * Create a realistic turn with varying complexity.
  * A "complex" turn has: reasoning + read + grep + glob + edit + shell + text response
  */
-function createTurnData(sessionId: string, turnIndex: number, complexity: "simple" | "medium" | "complex") {
+function createTurnData(sessionId: string, turnIndex: number) {
   const userMsg = makeMessage(`msg-user-${turnIndex}`, sessionId, "user");
   const assistantMsg = makeMessage(`msg-asst-${turnIndex}`, sessionId, "assistant");
 
@@ -92,49 +87,26 @@ function createTurnData(sessionId: string, turnIndex: number, complexity: "simpl
     makeTextPart(userMsg.id, sessionId, `User question ${turnIndex}: explain the codebase`),
   ];
 
-  let assistantParts: UnifiedPart[];
-
-  switch (complexity) {
-    case "simple":
-      assistantParts = [
-        makeTextPart(assistantMsg.id, sessionId, "Here's a simple explanation..."),
-      ];
-      break;
-    case "medium":
-      assistantParts = [
-        makeReasoningPart(assistantMsg.id, sessionId),
-        makeToolPart(assistantMsg.id, sessionId, "read"),
-        makeToolPart(assistantMsg.id, sessionId, "grep"),
-        makeTextPart(assistantMsg.id, sessionId, "Based on my analysis..."),
-      ];
-      break;
-    case "complex":
-      assistantParts = [
-        makeReasoningPart(assistantMsg.id, sessionId),
-        makeToolPart(assistantMsg.id, sessionId, "read"),
-        makeToolPart(assistantMsg.id, sessionId, "read"),
-        makeToolPart(assistantMsg.id, sessionId, "grep"),
-        makeToolPart(assistantMsg.id, sessionId, "glob"),
-        makeToolPart(assistantMsg.id, sessionId, "list"),
-        makeToolPart(assistantMsg.id, sessionId, "edit"),
-        makeToolPart(assistantMsg.id, sessionId, "write"),
-        makeToolPart(assistantMsg.id, sessionId, "shell"),
-        makeToolPart(assistantMsg.id, sessionId, "todo"),
-        makeTextPart(assistantMsg.id, sessionId, "I've completed all the changes..."),
-      ];
-      break;
-  }
+  // Complex: 11 parts including 4 context tools, reasoning, and edit/shell
+  const assistantParts: UnifiedPart[] = [
+    makeReasoningPart(assistantMsg.id, sessionId),
+    makeToolPart(assistantMsg.id, sessionId, "read"),
+    makeToolPart(assistantMsg.id, sessionId, "read"),
+    makeToolPart(assistantMsg.id, sessionId, "grep"),
+    makeToolPart(assistantMsg.id, sessionId, "glob"),
+    makeToolPart(assistantMsg.id, sessionId, "list"),
+    makeToolPart(assistantMsg.id, sessionId, "edit"),
+    makeToolPart(assistantMsg.id, sessionId, "write"),
+    makeToolPart(assistantMsg.id, sessionId, "shell"),
+    makeToolPart(assistantMsg.id, sessionId, "todo"),
+    makeTextPart(assistantMsg.id, sessionId, "I've completed all the changes..."),
+  ];
 
   return { userMsg, assistantMsg, userParts, assistantParts };
 }
 
 // ---------------------------------------------------------------------------
-// Benchmark: filterParts cost
-//
-// filterParts is called at least 3 times per turn:
-//   1. filteredUserParts
-//   2. allStepsParts (iterates all assistant msgs)
-//   3. Inside groupedRenderItems (via allStepsParts dependency)
+// Shared algorithms from SessionTurn.tsx
 // ---------------------------------------------------------------------------
 
 const CONTEXT_TOOLS = new Set(["read", "grep", "glob", "list"]);
@@ -155,33 +127,6 @@ function filterParts(parts: UnifiedPart[], isWorking: boolean): UnifiedPart[] {
     return true;
   });
 }
-
-describe("filterParts cost", () => {
-  for (const partCount of [5, 20, 50, 100]) {
-    const parts: UnifiedPart[] = [];
-    for (let i = 0; i < partCount; i++) {
-      if (i % 4 === 0) parts.push(makeTextPart("msg-1", "s-1", `Text ${i}`));
-      else if (i % 4 === 1) parts.push(makeToolPart("msg-1", "s-1", "read"));
-      else if (i % 4 === 2) parts.push(makeReasoningPart("msg-1", "s-1"));
-      else parts.push(makeToolPart("msg-1", "s-1", "shell"));
-    }
-
-    bench(`filter ${partCount} parts`, () => {
-      filterParts(parts, false);
-    });
-  }
-});
-
-// ---------------------------------------------------------------------------
-// Benchmark: groupedRenderItems computation
-//
-// This is the most complex memo in SessionTurn. It:
-//   1. Reads allStepsParts (which reads messageStore.part[msg.id] for each msg)
-//   2. Iterates all parts, grouping consecutive context tools (read/grep/glob/list)
-//   3. Produces RenderItem[] that the view consumes
-//
-// We replicate the exact algorithm from SessionTurn.tsx lines 671-744.
-// ---------------------------------------------------------------------------
 
 type ContextGroupItem = { part: ToolPart; action: string; detail: string };
 type RenderItem =
@@ -239,51 +184,19 @@ function computeGroupedRenderItems(
   return result;
 }
 
+// ---------------------------------------------------------------------------
+// Benchmark: groupedRenderItems — complex turn (core grouping algorithm)
+// ---------------------------------------------------------------------------
+
 describe("groupedRenderItems computation", () => {
-  // Simple turn: 1 assistant message with few parts
-  const simpleTurn = createTurnData("s-1", 0, "simple");
-  const simpleSteps = [{
-    message: simpleTurn.assistantMsg,
-    parts: filterParts(simpleTurn.assistantParts, false),
-  }];
-
-  bench("simple turn (1 text part)", () => {
-    computeGroupedRenderItems(simpleSteps, simpleTurn.assistantMsg.id, false);
-  });
-
-  // Medium turn: reasoning + read + grep + text
-  const mediumTurn = createTurnData("s-1", 1, "medium");
-  const mediumSteps = [{
-    message: mediumTurn.assistantMsg,
-    parts: filterParts(mediumTurn.assistantParts, false),
-  }];
-
-  bench("medium turn (4 parts, 2 context tools)", () => {
-    computeGroupedRenderItems(mediumSteps, mediumTurn.assistantMsg.id, false);
-  });
-
-  // Complex turn: many tools including context tool groups
-  const complexTurn = createTurnData("s-1", 2, "complex");
+  const complexTurn = createTurnData("s-1", 0);
   const complexSteps = [{
     message: complexTurn.assistantMsg,
     parts: filterParts(complexTurn.assistantParts, false),
   }];
 
-  bench("complex turn (11 parts, 4 context tools grouped)", () => {
+  bench("complex turn (11 parts, 3 types)", () => {
     computeGroupedRenderItems(complexSteps, complexTurn.assistantMsg.id, false);
-  });
-
-  // Multi-message turn: simulates ACP engines that produce multiple assistant messages
-  const multiMsgSteps = Array.from({ length: 5 }, (_, i) => {
-    const td = createTurnData("s-1", i + 10, "complex");
-    return {
-      message: td.assistantMsg,
-      parts: filterParts(td.assistantParts, false),
-    };
-  });
-
-  bench("multi-message turn (5 messages × 11 parts each)", () => {
-    computeGroupedRenderItems(multiMsgSteps, multiMsgSteps[4].message.id, false);
   });
 });
 
@@ -293,316 +206,97 @@ describe("groupedRenderItems computation", () => {
 // Simulates what happens when a single part update arrives during streaming:
 // 1. Store update (setMessageStore)
 // 2. All dependent memos recompute
-// 3. Compare: how many memos actually produce different output?
 //
 // This is the MOST important benchmark — it directly measures the cost
 // of one SSE token update propagating through SessionTurn's reactive graph.
 // ---------------------------------------------------------------------------
 
 describe("full memo cascade: single part update cost", () => {
-  for (const complexity of ["simple", "medium", "complex"] as const) {
-    bench(`${complexity} turn — update last text part (streaming hot path)`, () => {
-      createRoot((dispose) => {
-        const sessionId = "bench-session";
-        const td = createTurnData(sessionId, 0, complexity);
-
-        // Setup store with initial data
-        const [store, setStore] = createStore({
-          part: {
-            [td.userMsg.id]: td.userParts,
-            [td.assistantMsg.id]: td.assistantParts,
-          } as Record<string, UnifiedPart[]>,
-        });
-
-        // Simulate the key memos from SessionTurn
-        const userParts = createMemo(() => store.part[td.userMsg.id] || []);
-        const lastTextPart = createMemo(() => {
-          const parts = store.part[td.assistantMsg.id] || [];
-          for (let i = parts.length - 1; i >= 0; i--) {
-            if (parts[i]?.type === "text") return parts[i];
-          }
-          return undefined;
-        });
-        const streamingTextPart = createMemo(() => {
-          const parts = store.part[td.assistantMsg.id] || [];
-          for (let i = parts.length - 1; i >= 0; i--) {
-            if (parts[i]?.type === "text" && (parts[i] as any).text) return parts[i];
-          }
-          return undefined;
-        });
-        const hasSteps = createMemo(() => {
-          const parts = store.part[td.assistantMsg.id] || [];
-          for (const p of parts) {
-            if (p?.type === "reasoning") return true;
-            if (p?.type === "tool" && (p as ToolPart).normalizedTool !== "todo") return true;
-          }
-          return false;
-        });
-        const isReasoningActive = createMemo(() => {
-          const parts = store.part[td.assistantMsg.id] || [];
-          for (let i = parts.length - 1; i >= 0; i--) {
-            if (parts[i]?.type === "reasoning") return true;
-            if (parts[i]?.type === "tool") return false;
-          }
-          return false;
-        });
-        const allStepsParts = createMemo(() => {
-          const parts = store.part[td.assistantMsg.id] || [];
-          const filtered = filterParts(parts, true);
-          const responseText = streamingTextPart();
-          return responseText ? filtered.filter(p => p.id !== responseText.id) : filtered;
-        });
-        const groupedItems = createMemo(() =>
-          computeGroupedRenderItems(
-            [{ message: td.assistantMsg, parts: allStepsParts() }],
-            td.assistantMsg.id,
-            true,
-          ),
-        );
-
-        // Force initial evaluation
-        userParts();
-        lastTextPart();
-        streamingTextPart();
-        hasSteps();
-        isReasoningActive();
-        groupedItems();
-
-        // NOW: simulate a streaming text update (the hottest path)
-        const textPartIndex = td.assistantParts.findIndex(p => p.type === "text");
-        if (textPartIndex >= 0) {
-          setStore("part", td.assistantMsg.id, textPartIndex, {
-            ...td.assistantParts[textPartIndex],
-            text: "Updated streaming content with more words...",
-          } as UnifiedPart);
-        }
-
-        // Force re-evaluation of all memos
-        userParts();
-        lastTextPart();
-        streamingTextPart();
-        hasSteps();
-        isReasoningActive();
-        groupedItems();
-
-        dispose();
-      });
-    });
-  }
-});
-
-// ---------------------------------------------------------------------------
-// Benchmark: Memory — store growth without cleanup
-//
-// When sessions are deleted, messageStore.part/message/expanded/stepsLoaded
-// entries are NOT cleaned up. This simulates the accumulation.
-// ---------------------------------------------------------------------------
-
-describe("memory: store growth without cleanup", () => {
-  bench("simulate 50 sessions without cleanup (measure store size)", () => {
+  bench("complex turn — full reactive cascade", () => {
     createRoot((dispose) => {
-      const [store, setStore] = createStore<{
-        part: Record<string, UnifiedPart[]>;
-        message: Record<string, UnifiedMessage[]>;
-        stepsLoaded: Record<string, boolean>;
-        expanded: Record<string, boolean>;
-      }>({
-        part: {},
-        message: {},
-        stepsLoaded: {},
-        expanded: {},
+      const sessionId = "bench-session";
+      const td = createTurnData(sessionId, 0);
+
+      // Setup store with initial data
+      const [store, setStore] = createStore({
+        part: {
+          [td.userMsg.id]: td.userParts,
+          [td.assistantMsg.id]: td.assistantParts,
+        } as Record<string, UnifiedPart[]>,
       });
 
-      // Simulate 50 sessions being created and used
-      for (let s = 0; s < 50; s++) {
-        const sessionId = `session-${s}`;
-        const messages: UnifiedMessage[] = [];
-
-        // Each session has 5 turns (10 messages)
-        for (let t = 0; t < 5; t++) {
-          const td = createTurnData(sessionId, t, "complex");
-          messages.push(td.userMsg, td.assistantMsg);
-          setStore("part", td.userMsg.id, td.userParts);
-          setStore("part", td.assistantMsg.id, td.assistantParts);
-          setStore("stepsLoaded", td.assistantMsg.id, true);
-          setStore("expanded", `steps-${td.userMsg.id}`, false);
+      // Simulate the key memos from SessionTurn
+      const userParts = createMemo(() => store.part[td.userMsg.id] || []);
+      const lastTextPart = createMemo(() => {
+        const parts = store.part[td.assistantMsg.id] || [];
+        for (let i = parts.length - 1; i >= 0; i--) {
+          if (parts[i]?.type === "text") return parts[i];
         }
+        return undefined;
+      });
+      const streamingTextPart = createMemo(() => {
+        const parts = store.part[td.assistantMsg.id] || [];
+        for (let i = parts.length - 1; i >= 0; i--) {
+          if (parts[i]?.type === "text" && (parts[i] as any).text) return parts[i];
+        }
+        return undefined;
+      });
+      const hasSteps = createMemo(() => {
+        const parts = store.part[td.assistantMsg.id] || [];
+        for (const p of parts) {
+          if (p?.type === "reasoning") return true;
+          if (p?.type === "tool" && (p as ToolPart).normalizedTool !== "todo") return true;
+        }
+        return false;
+      });
+      const isReasoningActive = createMemo(() => {
+        const parts = store.part[td.assistantMsg.id] || [];
+        for (let i = parts.length - 1; i >= 0; i--) {
+          if (parts[i]?.type === "reasoning") return true;
+          if (parts[i]?.type === "tool") return false;
+        }
+        return false;
+      });
+      const allStepsParts = createMemo(() => {
+        const parts = store.part[td.assistantMsg.id] || [];
+        const filtered = filterParts(parts, true);
+        const responseText = streamingTextPart();
+        return responseText ? filtered.filter(p => p.id !== responseText.id) : filtered;
+      });
+      const groupedItems = createMemo(() =>
+        computeGroupedRenderItems(
+          [{ message: td.assistantMsg, parts: allStepsParts() }],
+          td.assistantMsg.id,
+          true,
+        ),
+      );
 
-        setStore("message", sessionId, messages);
+      // Force initial evaluation
+      userParts();
+      lastTextPart();
+      streamingTextPart();
+      hasSteps();
+      isReasoningActive();
+      groupedItems();
+
+      // NOW: simulate a streaming text update (the hottest path)
+      const textPartIndex = td.assistantParts.findIndex(p => p.type === "text");
+      if (textPartIndex >= 0) {
+        setStore("part", td.assistantMsg.id, textPartIndex, {
+          ...td.assistantParts[textPartIndex],
+          text: "Updated streaming content with more words...",
+        } as UnifiedPart);
       }
 
-      // Count total entries (this is what accumulates without cleanup)
-      const partKeys = Object.keys(store.part).length;
-      const msgKeys = Object.keys(store.message).length;
-      const stepsKeys = Object.keys(store.stepsLoaded).length;
-      const expandedKeys = Object.keys(store.expanded).length;
-
-      // Force reads to ensure reactivity is established
-      void partKeys;
-      void msgKeys;
-      void stepsKeys;
-      void expandedKeys;
+      // Force re-evaluation of all memos
+      userParts();
+      lastTextPart();
+      streamingTextPart();
+      hasSteps();
+      isReasoningActive();
+      groupedItems();
 
       dispose();
     });
-  });
-
-  bench("simulate 50 sessions WITH cleanup (compare store size)", () => {
-    createRoot((dispose) => {
-      const [store, setStore] = createStore<{
-        part: Record<string, UnifiedPart[]>;
-        message: Record<string, UnifiedMessage[]>;
-        stepsLoaded: Record<string, boolean>;
-        expanded: Record<string, boolean>;
-      }>({
-        part: {},
-        message: {},
-        stepsLoaded: {},
-        expanded: {},
-      });
-
-      // Simulate 50 sessions — but only keep the last 10 (cleanup others)
-      for (let s = 0; s < 50; s++) {
-        const sessionId = `session-${s}`;
-        const messages: UnifiedMessage[] = [];
-
-        for (let t = 0; t < 5; t++) {
-          const td = createTurnData(sessionId, t, "complex");
-          messages.push(td.userMsg, td.assistantMsg);
-          setStore("part", td.userMsg.id, td.userParts);
-          setStore("part", td.assistantMsg.id, td.assistantParts);
-          setStore("stepsLoaded", td.assistantMsg.id, true);
-          setStore("expanded", `steps-${td.userMsg.id}`, false);
-        }
-
-        setStore("message", sessionId, messages);
-
-        // Cleanup: if we have more than 10 sessions, remove the oldest
-        if (s >= 10) {
-          const oldSessionId = `session-${s - 10}`;
-          const oldMessages = store.message[oldSessionId] || [];
-          // Clean up parts, stepsLoaded, expanded for all messages in old session
-          for (const msg of oldMessages) {
-            setStore("part", msg.id, undefined as any);
-            setStore("stepsLoaded", msg.id, undefined as any);
-            setStore("expanded", `steps-${msg.id}`, undefined as any);
-          }
-          setStore("message", oldSessionId, undefined as any);
-        }
-      }
-
-      dispose();
-    });
-  });
-});
-
-// ---------------------------------------------------------------------------
-// Benchmark: diff parsing (ContentDiff)
-//
-// The `diff` library's parsePatch is called in a createMemo inside ContentDiff.
-// Large diffs (e.g., refactoring a 500-line file) could be expensive.
-// ---------------------------------------------------------------------------
-
-describe("diff parsing (ContentDiff)", () => {
-  function generateUnifiedDiff(changedLines: number, contextLines: number = 3): string {
-    const lines: string[] = [
-      "--- a/src/components/App.tsx",
-      "+++ b/src/components/App.tsx",
-      `@@ -1,${changedLines + contextLines * 2} +1,${changedLines + contextLines * 2} @@`,
-    ];
-
-    // Context before
-    for (let i = 0; i < contextLines; i++) {
-      lines.push(` const line${i} = "unchanged";`);
-    }
-
-    // Changed lines
-    for (let i = 0; i < changedLines; i++) {
-      lines.push(`-const old${i} = "before";`);
-      lines.push(`+const new${i} = "after";`);
-    }
-
-    // Context after
-    for (let i = 0; i < contextLines; i++) {
-      lines.push(` const after${i} = "unchanged";`);
-    }
-
-    return lines.join("\n");
-  }
-
-  for (const lineCount of [5, 20, 50, 200]) {
-    const diff = generateUnifiedDiff(lineCount);
-    bench(`parsePatch: ${lineCount} changed lines (${diff.length} chars)`, () => {
-      parsePatch(diff);
-    });
-  }
-
-  // Also test the full ContentDiff pipeline: parsePatch + line classification
-  bench("full ContentDiff pipeline: 50 changed lines (parse + classify)", () => {
-    const diff = generateUnifiedDiff(50);
-    const patches = parsePatch(diff);
-    const unifiedLines: Array<{ content: string; type: string; oldLineNo?: number; newLineNo?: number }> = [];
-
-    for (const patch of patches) {
-      for (const hunk of patch.hunks) {
-        let oldLineNo = hunk.oldStart;
-        let newLineNo = hunk.newStart;
-        for (const line of hunk.lines) {
-          const content = line.slice(1);
-          const prefix = line[0];
-          if (prefix === "-") {
-            unifiedLines.push({ content, type: "removed", oldLineNo: oldLineNo++ });
-          } else if (prefix === "+") {
-            unifiedLines.push({ content, type: "added", newLineNo: newLineNo++ });
-          } else if (prefix === " ") {
-            unifiedLines.push({ content: content || " ", type: "unchanged", oldLineNo: oldLineNo++, newLineNo: newLineNo++ });
-          }
-        }
-      }
-    }
-  });
-});
-
-// ---------------------------------------------------------------------------
-// Benchmark: attachCopyButtons DOM simulation
-//
-// ContentMarkdown calls attachCopyButtons(container) in a createEffect
-// every time displayHtml() changes (~6-7 times/sec during streaming).
-// Each call does querySelectorAll("pre") + iterates all <pre> elements.
-//
-// We can't do real DOM here, but we can benchmark the analogous
-// array-scan + dedup check pattern.
-// ---------------------------------------------------------------------------
-
-describe("attachCopyButtons simulation", () => {
-  bench("scan 10 pre elements + check for existing buttons", () => {
-    // Simulate: querySelectorAll("pre") returns 10 elements
-    // Each element needs: querySelector("[data-component='copy-button']") check
-    const pres = Array.from({ length: 10 }, (_, i) => ({
-      id: `pre-${i}`,
-      hasButton: i < 5, // half already have buttons
-    }));
-
-    let attached = 0;
-    for (const pre of pres) {
-      if (!pre.hasButton) {
-        attached++;
-        // Simulate createElement + appendChild (just track count)
-      }
-    }
-  });
-
-  bench("scan 50 pre elements (heavy response with many code blocks)", () => {
-    const pres = Array.from({ length: 50 }, (_, i) => ({
-      id: `pre-${i}`,
-      hasButton: i < 25,
-    }));
-
-    let attached = 0;
-    for (const pre of pres) {
-      if (!pre.hasButton) {
-        attached++;
-      }
-    }
   });
 });

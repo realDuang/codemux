@@ -103,3 +103,65 @@ jobs:
 
       - name: Run web API tests
         run: bun run test:web-api
+
+  benchmark:
+    name: Performance Regression Check
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      # Find the latest successful workflow run on main to download its baseline artifact
+      - name: Find baseline run ID
+        id: find-baseline
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const runs = await github.rest.actions.listWorkflowRuns({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              workflow_id: 'ci.yml',
+              branch: 'main',
+              status: 'success',
+              per_page: 1,
+            });
+            if (runs.data.workflow_runs.length > 0) {
+              core.setOutput('run-id', runs.data.workflow_runs[0].id);
+              core.setOutput('found', 'true');
+            } else {
+              core.setOutput('found', 'false');
+            }
+
+      - name: Download baseline
+        if: steps.find-baseline.outputs.found == 'true'
+        uses: actions/download-artifact@v4
+        with:
+          name: bench-baseline
+          path: .bench/
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: ${{ steps.find-baseline.outputs.run-id }}
+        continue-on-error: true
+
+      - name: Run benchmarks
+        run: bun run bench:micro -- --outputJson .bench/current.json
+
+      - name: Check for regressions
+        run: bun run bench:check .bench/baseline.json .bench/current.json
+
+      # Upload current results as the new baseline (only on main push)
+      - name: Upload baseline artifact
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        uses: actions/upload-artifact@v4
+        with:
+          name: bench-baseline
+          path: .bench/current.json
+          retention-days: 90

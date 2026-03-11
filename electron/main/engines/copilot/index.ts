@@ -766,11 +766,14 @@ export class CopilotSdkAdapter extends EngineAdapter {
 
         // Clear all deferred user messages and emit queued.consumed for each
         // remaining queued item so the frontend clears its queue preview.
+        // Also emit message.updated for each deferred user message so the frontend
+        // creates the user bubble (the enqueue path doesn't create an optimistic
+        // temp message — it stores the text in a preview queue instead).
         const pendingUsers = this.pendingUserMessages.get(sessionId);
         if (pendingUsers && pendingUsers.length > 0) {
-          // Emit consumed for each pending user message to drain the frontend queue
-          for (let i = 0; i < pendingUsers.length; i++) {
-            this.emit("message.queued.consumed", { sessionId, messageId: "" });
+          for (const userMsg of pendingUsers) {
+            this.emit("message.queued.consumed", { sessionId, messageId: userMsg.id });
+            this.emit("message.updated", { sessionId, message: userMsg });
           }
         }
         this.pendingUserMessages.delete(sessionId);

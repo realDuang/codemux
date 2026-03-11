@@ -374,6 +374,14 @@ export class OpenCodeAdapter extends EngineAdapter {
             sessionId: sessionID,
             messageId: sdkMsg.id,
           });
+          // Emit message.updated for the queued user message so the frontend
+          // creates the user bubble (the enqueue path doesn't create an optimistic
+          // temp message — it stores the text in a preview queue instead).
+          const userMessage = convertMessage(this.engineType, sdkMsg);
+          this.emit("message.updated", {
+            sessionId: sessionID,
+            message: userMessage,
+          });
         }
         // If sdkMsg.id === knownPrimary, it's a repeated update for the primary — skip.
       }

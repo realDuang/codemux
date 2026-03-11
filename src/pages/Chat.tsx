@@ -645,8 +645,16 @@ export default function Chat() {
       // indefinitely as sessions are created and deleted.
       const messages = messageStore.message[sessionId] || [];
       for (const msg of messages) {
+        // Clean up per-part state (expanded is keyed by partId, not messageId)
+        const parts = messageStore.part[msg.id] || [];
+        for (const part of parts) {
+          if (part?.id) {
+            setMessageStore("expanded", part.id, undefined as any);
+          }
+        }
+        // Clean up steps expanded state (keyed as "steps-${messageId}")
+        setMessageStore("expanded", `steps-${msg.id}`, undefined as any);
         setMessageStore("part", msg.id, undefined as any);
-        setMessageStore("expanded", msg.id, undefined as any);
         setMessageStore("stepsLoaded", msg.id, undefined as any);
       }
       setMessageStore("message", sessionId, undefined as any);
@@ -705,13 +713,22 @@ export default function Chat() {
         // Clean up messageStore for each deleted session
         const messages = messageStore.message[session.id] || [];
         for (const msg of messages) {
+          // Clean up per-part state (expanded is keyed by partId, not messageId)
+          const parts = messageStore.part[msg.id] || [];
+          for (const part of parts) {
+            if (part?.id) {
+              setMessageStore("expanded", part.id, undefined as any);
+            }
+          }
+          // Clean up steps expanded state (keyed as "steps-${messageId}")
+          setMessageStore("expanded", `steps-${msg.id}`, undefined as any);
           setMessageStore("part", msg.id, undefined as any);
-          setMessageStore("expanded", msg.id, undefined as any);
           setMessageStore("stepsLoaded", msg.id, undefined as any);
         }
         setMessageStore("message", session.id, undefined as any);
         setMessageStore("permission", session.id, undefined as any);
         setMessageStore("question", session.id, undefined as any);
+        setMessageStore("queued", session.id, undefined as any);
       }
 
       setSessionStore("list", (list) =>

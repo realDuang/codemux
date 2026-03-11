@@ -30,7 +30,6 @@
     "test": "vitest run && playwright test",
     "bench": "vitest bench",
     "bench:micro": "vitest bench tests/benchmark/micro/",
-    "bench:e2e": "vitest bench tests/benchmark/e2e/",
     "bench:e2e:server": "npx tsx tests/benchmark/e2e/run-e2e-benchmark.ts"
   },
   "dependencies": {

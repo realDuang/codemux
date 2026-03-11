@@ -8,7 +8,6 @@ export default defineConfig({
     testTimeout: 10_000,
     benchmark: {
       include: ["tests/benchmark/**/*.bench.ts"],
-      outputJson: "benchmark-results.json",
     },
   },
 });

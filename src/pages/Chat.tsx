@@ -6,6 +6,7 @@ import {
   For,
   onMount,
   onCleanup,
+  batch,
 } from "solid-js";
 import { Auth } from "../lib/auth";
 import { useNavigate } from "@solidjs/router";
@@ -421,6 +422,7 @@ export default function Chat() {
           setWsConnected(false);
         },
         onPartUpdated: handlePartUpdated,
+        onPartsBatch: handlePartsBatch,
         onMessageUpdated: handleMessageUpdated,
         onSessionUpdated: handleSessionUpdated,
         onPermissionAsked: handlePermissionAsked,
@@ -773,55 +775,123 @@ export default function Chat() {
     const messageId = part.messageId;
     const sessionId = part.sessionId;
 
-    // If this part's message doesn't exist yet in the message store,
-    // create a placeholder assistant message so parts can render during streaming.
-    // This is critical for ACP engines (Copilot) where sendMessage blocks until
-    // session/prompt completes, but parts arrive via notifications in the meantime.
-    if (sessionId && messageId) {
-      const messages = messageStore.message[sessionId] || [];
-      const msgExists = messages.some(m => m.id === messageId);
-      if (!msgExists) {
-        const placeholder: UnifiedMessage = {
-          id: messageId,
-          sessionId,
-          role: "assistant",
-          time: { created: Date.now() },
-          parts: [],
-        };
-        // Streaming placeholders are always for the current (latest) turn — append to end.
-        // binarySearch by ID would misplace them when engine IDs (e.g. UUID) sort
-        // before user temp IDs ("msg-temp-...") in lexicographic order.
-        if (!messageStore.message[sessionId]) {
-          setMessageStore("message", sessionId, [placeholder]);
-        } else {
-          setMessageStore("message", sessionId, (draft) => [...draft, placeholder]);
+    batch(() => {
+      // If this part's message doesn't exist yet in the message store,
+      // create a placeholder assistant message so parts can render during streaming.
+      // This is critical for ACP engines (Copilot) where sendMessage blocks until
+      // session/prompt completes, but parts arrive via notifications in the meantime.
+      if (sessionId && messageId) {
+        const messages = messageStore.message[sessionId] || [];
+        const msgExists = messages.some(m => m.id === messageId);
+        if (!msgExists) {
+          const placeholder: UnifiedMessage = {
+            id: messageId,
+            sessionId,
+            role: "assistant",
+            time: { created: Date.now() },
+            parts: [],
+          };
+          // Streaming placeholders are always for the current (latest) turn — append to end.
+          // binarySearch by ID would misplace them when engine IDs (e.g. UUID) sort
+          // before user temp IDs ("msg-temp-...") in lexicographic order.
+          if (!messageStore.message[sessionId]) {
+            setMessageStore("message", sessionId, [placeholder]);
+          } else {
+            setMessageStore("message", sessionId, (draft) => [...draft, placeholder]);
+          }
         }
       }
-    }
 
-    const parts = messageStore.part[messageId] || [];
-    const index = binarySearch(parts, part.id, (p) => p.id);
+      const parts = messageStore.part[messageId] || [];
+      const index = binarySearch(parts, part.id, (p) => p.id);
 
-    if (index.found) {
-      setMessageStore("part", messageId, index.index, part);
-    } else if (!messageStore.part[messageId]) {
-      setMessageStore("part", messageId, [part]);
-    } else {
-      setMessageStore("part", messageId, (draft) => {
-        const newParts = [...draft];
-        newParts.splice(index.index, 0, part);
-        return newParts;
-      });
-    }
-    // Mark steps as loaded for streaming messages so lazy-load won't re-fetch
-    if (!messageStore.stepsLoaded[messageId]) {
-      setMessageStore("stepsLoaded", messageId, true);
-    }
+      if (index.found) {
+        setMessageStore("part", messageId, index.index, part);
+      } else if (!messageStore.part[messageId]) {
+        setMessageStore("part", messageId, [part]);
+      } else {
+        setMessageStore("part", messageId, (draft) => {
+          const newParts = [...draft];
+          newParts.splice(index.index, 0, part);
+          return newParts;
+        });
+      }
+      // Mark steps as loaded for streaming messages so lazy-load won't re-fetch
+      if (!messageStore.stepsLoaded[messageId]) {
+        setMessageStore("stepsLoaded", messageId, true);
+      }
 
-    // Track todo parts for O(1) lookup in currentTodos memo
-    if (part.type === "tool" && (part as any).normalizedTool === "todo" && sessionId) {
-      setTodoPartRef({ sessionId, messageId, partId: part.id });
-    }
+      // Track todo parts for O(1) lookup in currentTodos memo
+      if (part.type === "tool" && (part as any).normalizedTool === "todo" && sessionId) {
+        setTodoPartRef({ sessionId, messageId, partId: part.id });
+      }
+    });
+
+    if (!userScrolledUp()) scheduleScrollToBottom();
+  };
+
+  /**
+   * Handle a batch of parts for the same messageId in a single reactive update.
+   * Called by GatewayClient when multiple distinct parts (e.g. tool parts with
+   * unique IDs) arrive in the same animation frame. Instead of N separate
+   * handlePartUpdated calls (each triggering full reactive cascading), this
+   * merges all parts into one store mutation → one reactive propagation.
+   */
+  const handlePartsBatch = (_sessionId: string, messageId: string, parts: UnifiedPart[]) => {
+    if (parts.length === 0) return;
+
+    const sessionId = parts[0].sessionId;
+
+    batch(() => {
+      // 1. Ensure placeholder message exists (once, not per-part)
+      if (sessionId && messageId) {
+        const messages = messageStore.message[sessionId] || [];
+        const msgExists = messages.some(m => m.id === messageId);
+        if (!msgExists) {
+          const placeholder: UnifiedMessage = {
+            id: messageId,
+            sessionId,
+            role: "assistant",
+            time: { created: Date.now() },
+            parts: [],
+          };
+          if (!messageStore.message[sessionId]) {
+            setMessageStore("message", sessionId, [placeholder]);
+          } else {
+            setMessageStore("message", sessionId, (draft) => [...draft, placeholder]);
+          }
+        }
+      }
+
+      // 2. Merge all incoming parts into the parts array in ONE mutation.
+      //    Build the final array once, avoiding N intermediate array copies.
+      const existingParts = messageStore.part[messageId] || [];
+      const merged = [...existingParts];
+
+      for (const part of parts) {
+        const { found, index } = binarySearch(merged, part.id, (p) => p.id);
+        if (found) {
+          merged[index] = part;
+        } else {
+          merged.splice(index, 0, part);
+        }
+      }
+
+      // Single store mutation for all parts
+      setMessageStore("part", messageId, merged);
+
+      // 3. Mark steps as loaded once
+      if (!messageStore.stepsLoaded[messageId]) {
+        setMessageStore("stepsLoaded", messageId, true);
+      }
+
+      // 4. Track todo parts — check all incoming parts
+      for (const part of parts) {
+        if (part.type === "tool" && (part as any).normalizedTool === "todo" && sessionId) {
+          setTodoPartRef({ sessionId, messageId, partId: part.id });
+        }
+      }
+    });
 
     if (!userScrolledUp()) scheduleScrollToBottom();
   };
@@ -829,99 +899,101 @@ export default function Chat() {
   const handleMessageUpdated = (_sessionId: string, msgInfo: UnifiedMessage) => {
     const targetSessionId = msgInfo.sessionId;
 
-    if (msgInfo.role === "user") {
-      const currentMessages = messageStore.message[targetSessionId] || [];
-      const tempMessages = currentMessages.filter(m => m.id.startsWith("msg-temp-"));
+    batch(() => {
+      if (msgInfo.role === "user") {
+        const currentMessages = messageStore.message[targetSessionId] || [];
+        const tempMessages = currentMessages.filter(m => m.id.startsWith("msg-temp-"));
 
-      if (tempMessages.length > 0) {
-        // Collect temp parts before deleting — if the real message has no parts
-        // (OpenCode often sends user message.updated without parts), we migrate
-        // the optimistic parts to the real message ID so the user bubble stays visible.
-        const hasMsgParts = msgInfo.parts && msgInfo.parts.length > 0;
-        if (!hasMsgParts) {
-          for (const tempMsg of tempMessages) {
-            const tempParts = messageStore.part[tempMsg.id];
-            if (tempParts && tempParts.length > 0) {
-              // Re-key temp parts to use the real message ID
-              const migrated = tempParts.map(p => ({
-                ...p,
-                id: p.id.replace(/^part-temp-/, `part-migrated-`),
-                messageId: msgInfo.id,
-              }));
-              setMessageStore("part", msgInfo.id, migrated);
-              break; // only need one temp message's parts
+        if (tempMessages.length > 0) {
+          // Collect temp parts before deleting — if the real message has no parts
+          // (OpenCode often sends user message.updated without parts), we migrate
+          // the optimistic parts to the real message ID so the user bubble stays visible.
+          const hasMsgParts = msgInfo.parts && msgInfo.parts.length > 0;
+          if (!hasMsgParts) {
+            for (const tempMsg of tempMessages) {
+              const tempParts = messageStore.part[tempMsg.id];
+              if (tempParts && tempParts.length > 0) {
+                // Re-key temp parts to use the real message ID
+                const migrated = tempParts.map(p => ({
+                  ...p,
+                  id: p.id.replace(/^part-temp-/, `part-migrated-`),
+                  messageId: msgInfo.id,
+                }));
+                setMessageStore("part", msgInfo.id, migrated);
+                break; // only need one temp message's parts
+              }
+            }
+          }
+
+          setMessageStore("message", targetSessionId, (draft) =>
+            draft.filter(m => !m.id.startsWith("msg-temp-"))
+          );
+          tempMessages.forEach(tempMsg => {
+            setMessageStore("part", tempMsg.id, undefined as any);
+          });
+        }
+      }
+
+      // Store parts from the incoming message (critical for ACP engines
+      // which emit full messages with parts via message.updated).
+      // If we already have parts from streaming part.updated events,
+      // prefer those since they may have more up-to-date state.
+      if (msgInfo.parts && msgInfo.parts.length > 0) {
+        const existingParts = messageStore.part[msgInfo.id];
+        if (!existingParts || existingParts.length === 0) {
+          // Sort in-place — msgInfo.parts is from the incoming event, safe to mutate
+          msgInfo.parts.sort((a, b) => a.id.localeCompare(b.id));
+          setMessageStore("part", msgInfo.id, msgInfo.parts);
+        } else {
+          // Merge: use existing streaming parts as base, add any new parts
+          // from the final message that weren't received via streaming
+          const existingIds = new Set(existingParts.map(p => p.id));
+          const newParts = msgInfo.parts.filter(p => !existingIds.has(p.id));
+          if (newParts.length > 0) {
+            // Single concat + in-place sort (avoids spread + sort creating 2 arrays)
+            const merged = existingParts.concat(newParts);
+            merged.sort((a, b) => a.id.localeCompare(b.id));
+            setMessageStore("part", msgInfo.id, merged);
+          }
+        }
+
+        // Track todo parts from bulk message updates (ACP engines)
+        if (targetSessionId) {
+          for (let i = msgInfo.parts.length - 1; i >= 0; i--) {
+            const p = msgInfo.parts[i];
+            if (p.type === "tool" && (p as any).normalizedTool === "todo") {
+              setTodoPartRef({ sessionId: targetSessionId, messageId: msgInfo.id, partId: p.id });
+              break;
             }
           }
         }
-
-        setMessageStore("message", targetSessionId, (draft) =>
-          draft.filter(m => !m.id.startsWith("msg-temp-"))
-        );
-        tempMessages.forEach(tempMsg => {
-          setMessageStore("part", tempMsg.id, undefined as any);
-        });
       }
-    }
 
-    // Store parts from the incoming message (critical for ACP engines
-    // which emit full messages with parts via message.updated).
-    // If we already have parts from streaming part.updated events,
-    // prefer those since they may have more up-to-date state.
-    if (msgInfo.parts && msgInfo.parts.length > 0) {
-      const existingParts = messageStore.part[msgInfo.id];
-      if (!existingParts || existingParts.length === 0) {
-        // Sort in-place — msgInfo.parts is from the incoming event, safe to mutate
-        msgInfo.parts.sort((a, b) => a.id.localeCompare(b.id));
-        setMessageStore("part", msgInfo.id, msgInfo.parts);
+      const messages = messageStore.message[targetSessionId] || [];
+      const existingIdx = messages.findIndex(m => m.id === msgInfo.id);
+
+      if (existingIdx >= 0) {
+        // Update existing message in place
+        setMessageStore("message", targetSessionId, existingIdx, msgInfo);
+      } else if (!messageStore.message[targetSessionId]) {
+        setMessageStore("message", targetSessionId, [msgInfo]);
       } else {
-        // Merge: use existing streaming parts as base, add any new parts
-        // from the final message that weren't received via streaming
-        const existingIds = new Set(existingParts.map(p => p.id));
-        const newParts = msgInfo.parts.filter(p => !existingIds.has(p.id));
-        if (newParts.length > 0) {
-          // Single concat + in-place sort (avoids spread + sort creating 2 arrays)
-          const merged = existingParts.concat(newParts);
-          merged.sort((a, b) => a.id.localeCompare(b.id));
-          setMessageStore("part", msgInfo.id, merged);
-        }
+        // New message — append to end (incoming messages are always for the current turn)
+        setMessageStore("message", targetSessionId, (draft) => [...draft, msgInfo]);
       }
 
-      // Track todo parts from bulk message updates (ACP engines)
-      if (targetSessionId) {
-        for (let i = msgInfo.parts.length - 1; i >= 0; i--) {
-          const p = msgInfo.parts[i];
-          if (p.type === "tool" && (p as any).normalizedTool === "todo") {
-            setTodoPartRef({ sessionId: targetSessionId, messageId: msgInfo.id, partId: p.id });
-            break;
-          }
-        }
+      // Auto-clear sending state when assistant message is finalized (completed or errored).
+      // This is the authoritative signal that the engine is done — more reliable than
+      // waiting for the sendMessage RPC to resolve (which can happen prematurely in
+      // multi-step agent loops like OpenCode).
+      if (
+        msgInfo.role === "assistant" &&
+        (msgInfo.time.completed || msgInfo.error) &&
+        sendingMap()[targetSessionId]
+      ) {
+        setSendingFor(targetSessionId, false);
       }
-    }
-
-    const messages = messageStore.message[targetSessionId] || [];
-    const existingIdx = messages.findIndex(m => m.id === msgInfo.id);
-
-    if (existingIdx >= 0) {
-      // Update existing message in place
-      setMessageStore("message", targetSessionId, existingIdx, msgInfo);
-    } else if (!messageStore.message[targetSessionId]) {
-      setMessageStore("message", targetSessionId, [msgInfo]);
-    } else {
-      // New message — append to end (incoming messages are always for the current turn)
-      setMessageStore("message", targetSessionId, (draft) => [...draft, msgInfo]);
-    }
-
-    // Auto-clear sending state when assistant message is finalized (completed or errored).
-    // This is the authoritative signal that the engine is done — more reliable than
-    // waiting for the sendMessage RPC to resolve (which can happen prematurely in
-    // multi-step agent loops like OpenCode).
-    if (
-      msgInfo.role === "assistant" &&
-      (msgInfo.time.completed || msgInfo.error) &&
-      sendingMap()[targetSessionId]
-    ) {
-      setSendingFor(targetSessionId, false);
-    }
+    });
   };
 
   const handleSessionUpdated = (updated: UnifiedSession) => {

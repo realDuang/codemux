@@ -40,6 +40,7 @@ export interface GatewayClientEvents {
 
   /** Push notifications from gateway */
   "message.part.updated": (data: { sessionId: string; part: UnifiedPart }) => void;
+  "message.parts.batch": (data: { sessionId: string; messageId: string; parts: UnifiedPart[] }) => void;
   "message.updated": (data: { sessionId: string; message: UnifiedMessage }) => void;
   "session.updated": (data: { session: UnifiedSession }) => void;
   "session.created": (data: { session: UnifiedSession }) => void;
@@ -330,9 +331,29 @@ export class GatewayClient {
       for (const { type, payload } of nonPartNotifications) {
         this.emit(type as keyof GatewayClientEvents, payload as any);
       }
-      // Then emit deduplicated part updates
-      for (const { type, payload } of dedupedParts.values()) {
-        this.emit(type as keyof GatewayClientEvents, payload as any);
+
+      // Group deduped parts by messageId. When multiple distinct parts arrive
+      // in one frame (e.g. tool-heavy streaming), emit them as a single batch
+      // so the handler can merge them in one store mutation instead of N.
+      const byMessage = new Map<string, { sessionId: string; parts: any[] }>();
+      for (const { payload } of dedupedParts.values()) {
+        const messageId = payload.part.messageId;
+        let group = byMessage.get(messageId);
+        if (!group) {
+          group = { sessionId: payload.sessionId, parts: [] };
+          byMessage.set(messageId, group);
+        }
+        group.parts.push(payload.part);
+      }
+
+      for (const [messageId, { sessionId, parts }] of byMessage) {
+        if (parts.length === 1) {
+          // Single part per message: emit as-is (common case for text streaming)
+          this.emit("message.part.updated", { sessionId, part: parts[0] } as any);
+        } else {
+          // Multiple parts per message: emit batch to avoid N separate store updates
+          this.emit("message.parts.batch", { sessionId, messageId, parts } as any);
+        }
       }
     };
 

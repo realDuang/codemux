@@ -24,6 +24,7 @@ import type {
 
 export interface GatewayNotificationHandlers {
   onPartUpdated?: (sessionId: string, part: UnifiedPart) => void;
+  onPartsBatch?: (sessionId: string, messageId: string, parts: UnifiedPart[]) => void;
   onMessageUpdated?: (sessionId: string, message: UnifiedMessage) => void;
   onSessionUpdated?: (session: UnifiedSession) => void;
   onSessionCreated?: (session: UnifiedSession) => void;
@@ -113,6 +114,10 @@ class GatewayAPI {
 
     this.bind("message.part.updated", (data) => {
       this.handlers.onPartUpdated?.(data.sessionId, data.part);
+    });
+
+    this.bind("message.parts.batch", (data) => {
+      this.handlers.onPartsBatch?.(data.sessionId, data.messageId, data.parts);
     });
 
     this.bind("message.updated", (data) => {

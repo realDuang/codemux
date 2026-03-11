@@ -841,10 +841,12 @@ export default function Chat() {
         s.id === updated.id
           ? {
               ...s,
-              title: updated.title || "",
+              title: updated.title || s.title,
               directory: updated.directory || s.directory || "",
-              createdAt: new Date(updated.time.created).toISOString(),
-              updatedAt: new Date(updated.time.updated).toISOString(),
+              ...(updated.time && {
+                createdAt: new Date(updated.time.created).toISOString(),
+                updatedAt: new Date(updated.time.updated).toISOString(),
+              }),
             }
           : s,
       ),

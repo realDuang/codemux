@@ -88,6 +88,10 @@ export class OpenCodeAdapter extends EngineAdapter {
   // final message when session.status: idle arrives (see resolveSessionIdle).
   private lastEmittedMessage = new Map<string, UnifiedMessage>();
 
+  // Track primary (first) user message IDs per session to avoid false-positive
+  // queued.consumed emissions when the primary user message.updated arrives late.
+  private primaryUserMsgIds = new Map<string, string>();
+
   constructor(options?: { port?: number }) {
     super();
     this.port = options?.port ?? 4096;
@@ -355,18 +359,23 @@ export class OpenCodeAdapter extends EngineAdapter {
     // User messages: normally skipped (frontend handles them via optimistic insert).
     // However, when there are enqueued entries (entries.length > 1), a user message
     // from OpenCode means the engine has started processing a queued message.
-    // Emit message.queued.consumed and promote the next entry to primary.
+    // We must distinguish the primary (first) user message from truly queued ones
+    // to avoid emitting queued.consumed for the primary user message update.
     if (sdkMsg.role === "user") {
       const entries = this.pendingMessages.get(sessionID);
       if (entries && entries.length > 1) {
-        // The engine has consumed one queued message — shift the current primary
-        // (which was already resolved or will be resolved by idle) and promote next.
-        // Actually, OpenCode processes all queued messages in a single loop iteration,
-        // but we get user message.updated events for each. Emit consumed for tracking.
-        this.emit("message.queued.consumed", {
-          sessionId: sessionID,
-          messageId: sdkMsg.id,
-        });
+        const knownPrimary = this.primaryUserMsgIds.get(sessionID);
+        if (!knownPrimary) {
+          // First user message.updated for this queue — record as primary, skip.
+          this.primaryUserMsgIds.set(sessionID, sdkMsg.id);
+        } else if (sdkMsg.id !== knownPrimary) {
+          // A different user message while queue is active — truly queued consumption.
+          this.emit("message.queued.consumed", {
+            sessionId: sessionID,
+            messageId: sdkMsg.id,
+          });
+        }
+        // If sdkMsg.id === knownPrimary, it's a repeated update for the primary — skip.
       }
       return;
     }
@@ -452,6 +461,7 @@ export class OpenCodeAdapter extends EngineAdapter {
       if (entry.firstEventTimer) clearTimeout(entry.firstEventTimer);
     }
     this.pendingMessages.delete(sessionID);
+    this.primaryUserMsgIds.delete(sessionID);
 
     // Use the last cached message (which has the real time.completed from OpenCode),
     // or fall back to constructing one from accumulated parts.
@@ -878,7 +888,10 @@ export class OpenCodeAdapter extends EngineAdapter {
             const idx = entries.indexOf(entry);
             if (idx >= 0) {
               entries.splice(idx, 1);
-              if (entries.length === 0) this.pendingMessages.delete(sessionId);
+              if (entries.length === 0) {
+                this.pendingMessages.delete(sessionId);
+                this.primaryUserMsgIds.delete(sessionId);
+              }
               resolve({
                 id: "",
                 sessionId,
@@ -946,6 +959,7 @@ export class OpenCodeAdapter extends EngineAdapter {
             });
           }
           this.pendingMessages.delete(sessionId);
+          this.primaryUserMsgIds.delete(sessionId);
         }
       }, 300_000);
     });
@@ -972,6 +986,7 @@ export class OpenCodeAdapter extends EngineAdapter {
         }
       }
       this.pendingMessages.delete(sessionId);
+      this.primaryUserMsgIds.delete(sessionId);
       const errMsg = typeof promptError === "string"
         ? promptError
         : JSON.stringify(promptError);
@@ -1005,6 +1020,7 @@ export class OpenCodeAdapter extends EngineAdapter {
             });
           }
           this.pendingMessages.delete(sessionId);
+          this.primaryUserMsgIds.delete(sessionId);
         }
       }, 30_000);
     }
@@ -1041,6 +1057,7 @@ export class OpenCodeAdapter extends EngineAdapter {
         if (entry.firstEventTimer) clearTimeout(entry.firstEventTimer);
       }
       this.pendingMessages.delete(sessionId);
+      this.primaryUserMsgIds.delete(sessionId);
       this.lastEmittedMessage.delete(sessionId);
 
       // Resolve ALL pending promises immediately so the UI unblocks.

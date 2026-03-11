@@ -1,4 +1,3 @@
-#!/usr/bin/env npx tsx
 // =============================================================================
 // E2E Benchmark Runner — Orchestrates test server + benchmark execution
 //

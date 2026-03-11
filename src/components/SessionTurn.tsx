@@ -462,7 +462,7 @@ export function SessionTurn(props: SessionTurnProps) {
     let lastTextPart: UnifiedPart | undefined;
     let streamingTextPart: UnifiedPart | undefined;
     let isReasoningActive = false;
-    let reasoningHeading: string | undefined;
+    let reasoningHeading: string | null | undefined;
     let currentStatus: string | undefined;
 
     // Flags to short-circuit: once found, stop searching
@@ -513,7 +513,10 @@ export function SessionTurn(props: SessionTurnProps) {
 
         // reasoningHeading: last reasoning part across all messages (only when working)
         if (reasoningHeading === undefined && props.isWorking && p.type === "reasoning") {
-          reasoningHeading = extractReasoningHeading((p as any).text) ?? null as any;
+          const heading = extractReasoningHeading((p as any).text);
+          if (heading !== undefined) {
+            reasoningHeading = heading ?? null;
+          }
         }
 
         // currentStatus: last part with computable status (only when working)

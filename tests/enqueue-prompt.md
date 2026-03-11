@@ -73,7 +73,7 @@ Six independent turns, strictly alternating:
 - [ ] **Immediate feedback**: Each user message bubble appears instantly after pressing Enter
 - [ ] **6 independent turns**: No merged responses, no orphaned user messages
 - [ ] **Response isolation**: Assistant 1's steps only reference `enqueue-1.txt`/`enqueue-1b.txt`, Assistant 2's only reference `enqueue-2.txt`
-- [ ] **No queued indicators**: No "Queued" badges, amber borders, or pulse dots in the UI
+- [ ] **No queued indicators**: No amber borders or pulse dots in the UI (queue count badge on Stop button is expected)
 - [ ] **Clean finish**: All `/tmp/codemux-enqueue-*` files deleted, sending state cleared
 - [ ] **Console clean**: No unhandled rejections or WebSocket errors in DevTools
 

@@ -12,12 +12,14 @@
 //
 // Performance:
 //   - index.json fully loaded into memory on init (fast listing)
-//   - Message/step files loaded on-demand
+//   - Message/step files loaded on-demand via async I/O (non-blocking)
 //   - Index writes debounced 500ms
 //   - Atomic writes (.tmp + rename) for crash safety
+//   - Per-conversation write locks prevent concurrent file corruption
 // =============================================================================
 
 import fs from "fs";
+import fsp from "fs/promises";
 import path from "path";
 import { app } from "electron";
 import { conversationStoreLog } from "./logger";
@@ -70,6 +72,9 @@ class ConversationStore {
   private indexDirty = false;
   private indexTimer: ReturnType<typeof setTimeout> | null = null;
 
+  // Per-conversation write locks to prevent concurrent file corruption
+  private writeLocks = new Map<string, Promise<void>>();
+
   // -------------------------------------------------------------------------
   // Lifecycle
   // -------------------------------------------------------------------------
@@ -78,7 +83,7 @@ class ConversationStore {
     if (this.initialized) return;
 
     this.basePath = path.join(app.getPath("userData"), "conversations");
-    this.ensureDir(this.basePath);
+    this.ensureDirSync(this.basePath);
     this.loadIndex();
     this.initialized = true;
     conversationStoreLog.info(
@@ -86,13 +91,13 @@ class ConversationStore {
     );
   }
 
-  flushAll(): void {
+  async flushAll(): Promise<void> {
     if (this.indexDirty) {
       if (this.indexTimer) {
         clearTimeout(this.indexTimer);
         this.indexTimer = null;
       }
-      this.writeIndex();
+      await this.writeIndex();
     }
   }
 
@@ -166,19 +171,24 @@ class ConversationStore {
     this.scheduleIndexWrite();
   }
 
-  delete(id: string): void {
+  async delete(id: string): Promise<void> {
     this.ensureInitialized();
     if (!this.index.has(id)) return;
 
     this.index.delete(id);
 
-    // Delete message and steps files
+    // Delete message and steps files (async, best-effort)
     const msgPath = this.getMessageFilePath(id);
     const stepsPath = this.getStepsFilePath(id);
-    this.safeDelete(msgPath);
-    this.safeDelete(msgPath + ".tmp");
-    this.safeDelete(stepsPath);
-    this.safeDelete(stepsPath + ".tmp");
+    await Promise.all([
+      this.safeDelete(msgPath),
+      this.safeDelete(msgPath + ".tmp"),
+      this.safeDelete(stepsPath),
+      this.safeDelete(stepsPath + ".tmp"),
+    ]);
+
+    // Remove any pending write lock for this conversation
+    this.writeLocks.delete(id);
 
     this.scheduleIndexWrite();
     conversationStoreLog.info(`Deleted conversation ${id}`);
@@ -192,121 +202,127 @@ class ConversationStore {
   // Messages
   // -------------------------------------------------------------------------
 
-  listMessages(id: string): ConversationMessage[] {
+  async listMessages(id: string): Promise<ConversationMessage[]> {
     this.ensureInitialized();
     const filePath = this.getMessageFilePath(id);
 
-    if (!fs.existsSync(filePath)) {
-      return [];
-    }
-
     try {
-      const raw = fs.readFileSync(filePath, "utf-8");
+      const raw = await fsp.readFile(filePath, "utf-8");
       return JSON.parse(raw) as ConversationMessage[];
-    } catch (err) {
-      conversationStoreLog.error(
-        `Failed to read messages for ${id}:`,
-        err,
-      );
+    } catch (err: any) {
+      // ENOENT is expected for new conversations with no messages yet
+      if (err.code !== "ENOENT") {
+        conversationStoreLog.error(
+          `Failed to read messages for ${id}:`,
+          err,
+        );
+      }
       return [];
     }
   }
 
   /**
    * Appends a message to a conversation.
-   * NOTE: Currently performs O(n) I/O by rewriting the entire session file.
-   * For very long conversations, consider an append-only log or write-buffering.
+   * Uses a per-conversation write lock to prevent concurrent file corruption.
    */
-  appendMessage(id: string, msg: ConversationMessage): void {
+  async appendMessage(id: string, msg: ConversationMessage): Promise<void> {
     this.ensureInitialized();
-    const messages = this.listMessages(id);
-    messages.push(msg);
-    this.writeMessages(id, messages);
 
-    // Update meta
-    const conv = this.index.get(id);
-    if (conv) {
-      conv.messageCount = messages.length;
-      conv.updatedAt = Date.now();
+    await this.withWriteLock(id, async () => {
+      const messages = await this.listMessages(id);
+      messages.push(msg);
+      await this.writeMessages(id, messages);
 
-      // Update preview from last text part
-      if (msg.parts.length > 0) {
-        const textPart = msg.parts.find(
-          (p): p is TextPart => p.type === "text",
-        );
-        if (textPart) {
-          conv.preview = textPart.text.slice(0, PREVIEW_LENGTH);
-          if (textPart.text.length > PREVIEW_LENGTH) {
-            conv.preview += "...";
+      // Update meta
+      const conv = this.index.get(id);
+      if (conv) {
+        conv.messageCount = messages.length;
+        conv.updatedAt = Date.now();
+
+        // Update preview from last text part
+        if (msg.parts.length > 0) {
+          const textPart = msg.parts.find(
+            (p): p is TextPart => p.type === "text",
+          );
+          if (textPart) {
+            conv.preview = textPart.text.slice(0, PREVIEW_LENGTH);
+            if (textPart.text.length > PREVIEW_LENGTH) {
+              conv.preview += "...";
+            }
           }
         }
-      }
 
-      // Auto-title from first user message
-      if (messages.length === 1 && msg.role === "user") {
-        const textPart = msg.parts.find(
-          (p): p is TextPart => p.type === "text",
-        );
-        if (textPart) {
-          conv.title =
-            textPart.text.slice(0, 50) +
-            (textPart.text.length > 50 ? "..." : "");
+        // Auto-title from first user message
+        if (messages.length === 1 && msg.role === "user") {
+          const textPart = msg.parts.find(
+            (p): p is TextPart => p.type === "text",
+          );
+          if (textPart) {
+            conv.title =
+              textPart.text.slice(0, 50) +
+              (textPart.text.length > 50 ? "..." : "");
+          }
         }
-      }
 
-      this.scheduleIndexWrite();
-    }
+        this.scheduleIndexWrite();
+      }
+    });
   }
 
-  updateMessage(
+  async updateMessage(
     id: string,
     msgId: string,
     patch: Partial<ConversationMessage>,
-  ): void {
+  ): Promise<void> {
     this.ensureInitialized();
-    const messages = this.listMessages(id);
-    const idx = messages.findIndex((m) => m.id === msgId);
-    if (idx === -1) return;
 
-    const { id: _id, ...allowed } = patch;
-    Object.assign(messages[idx], allowed);
-    this.writeMessages(id, messages);
+    await this.withWriteLock(id, async () => {
+      const messages = await this.listMessages(id);
+      const idx = messages.findIndex((m) => m.id === msgId);
+      if (idx === -1) return;
+
+      const { id: _id, ...allowed } = patch;
+      Object.assign(messages[idx], allowed);
+      await this.writeMessages(id, messages);
+    });
   }
 
   // -------------------------------------------------------------------------
   // Steps
   // -------------------------------------------------------------------------
 
-  getSteps(id: string, messageId: string): UnifiedPart[] {
+  async getSteps(id: string, messageId: string): Promise<UnifiedPart[]> {
     this.ensureInitialized();
-    const stepsFile = this.readStepsFile(id);
+    const stepsFile = await this.readStepsFile(id);
     if (!stepsFile) return [];
     return stepsFile.messages[messageId] ?? [];
   }
 
-  getAllSteps(id: string): StepsFile | null {
+  async getAllSteps(id: string): Promise<StepsFile | null> {
     this.ensureInitialized();
     return this.readStepsFile(id);
   }
 
-  saveSteps(id: string, messageId: string, steps: UnifiedPart[]): void {
+  async saveSteps(id: string, messageId: string, steps: UnifiedPart[]): Promise<void> {
     this.ensureInitialized();
 
     // Truncate large tool outputs before persisting
     const truncated = steps.map((step) => this.truncateStepOutput(step));
 
-    // Read existing steps file or create new
-    let stepsFile = this.readStepsFile(id);
-    if (!stepsFile) {
-      stepsFile = {
-        version: STEPS_FILE_VERSION,
-        conversationId: id,
-        messages: {},
-      };
-    }
+    await this.withWriteLock(`${id}.steps`, async () => {
+      // Read existing steps file or create new
+      let stepsFile = await this.readStepsFile(id);
+      if (!stepsFile) {
+        stepsFile = {
+          version: STEPS_FILE_VERSION,
+          conversationId: id,
+          messages: {},
+        };
+      }
 
-    stepsFile.messages[messageId] = truncated;
-    this.writeStepsFile(id, stepsFile);
+      stepsFile.messages[messageId] = truncated;
+      await this.writeStepsFile(id, stepsFile);
+    });
   }
 
   // -------------------------------------------------------------------------
@@ -384,9 +400,34 @@ class ConversationStore {
   }
 
   // -------------------------------------------------------------------------
+  // Private — Write Lock
+  // -------------------------------------------------------------------------
+
+  /**
+   * Serialize async writes per conversation to prevent concurrent file corruption.
+   * Each conversation (or steps file) gets its own promise chain.
+   */
+  private async withWriteLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
+    const prev = this.writeLocks.get(key) ?? Promise.resolve();
+    let resolve: () => void;
+    const lock = new Promise<void>((r) => { resolve = r; });
+    this.writeLocks.set(key, lock);
+
+    // Wait for previous write to complete before starting ours
+    await prev.catch(() => {}); // ignore previous errors
+
+    try {
+      return await fn();
+    } finally {
+      resolve!();
+    }
+  }
+
+  // -------------------------------------------------------------------------
   // Private — Index Persistence
   // -------------------------------------------------------------------------
 
+  /** Synchronous index load — called once at startup before app is ready */
   private loadIndex(): void {
     const indexPath = this.getIndexPath();
 
@@ -418,7 +459,7 @@ class ConversationStore {
     }
   }
 
-  private writeIndex(): void {
+  private async writeIndex(): Promise<void> {
     this.indexDirty = false;
 
     const conversations = Array.from(this.index.values());
@@ -430,7 +471,7 @@ class ConversationStore {
       conversations,
     };
 
-    this.atomicWrite(this.getIndexPath(), data);
+    await this.atomicWrite(this.getIndexPath(), data);
   }
 
   private scheduleIndexWrite(): void {
@@ -466,29 +507,30 @@ class ConversationStore {
   // Private — Message File I/O
   // -------------------------------------------------------------------------
 
-  private writeMessages(id: string, messages: ConversationMessage[]): void {
-    this.atomicWrite(this.getMessageFilePath(id), messages);
+  private async writeMessages(id: string, messages: ConversationMessage[]): Promise<void> {
+    await this.atomicWrite(this.getMessageFilePath(id), messages);
   }
 
   // -------------------------------------------------------------------------
   // Private — Steps File I/O
   // -------------------------------------------------------------------------
 
-  private readStepsFile(id: string): StepsFile | null {
+  private async readStepsFile(id: string): Promise<StepsFile | null> {
     const filePath = this.getStepsFilePath(id);
-    if (!fs.existsSync(filePath)) return null;
 
     try {
-      const raw = fs.readFileSync(filePath, "utf-8");
+      const raw = await fsp.readFile(filePath, "utf-8");
       return JSON.parse(raw) as StepsFile;
-    } catch (err) {
-      conversationStoreLog.error(`Failed to read steps for ${id}:`, err);
+    } catch (err: any) {
+      if (err.code !== "ENOENT") {
+        conversationStoreLog.error(`Failed to read steps for ${id}:`, err);
+      }
       return null;
     }
   }
 
-  private writeStepsFile(id: string, stepsFile: StepsFile): void {
-    this.atomicWrite(this.getStepsFilePath(id), stepsFile);
+  private async writeStepsFile(id: string, stepsFile: StepsFile): Promise<void> {
+    await this.atomicWrite(this.getStepsFilePath(id), stepsFile);
   }
 
   /**
@@ -533,17 +575,24 @@ class ConversationStore {
     return dir.replaceAll("\\", "/");
   }
 
-  private ensureDir(dirPath: string): void {
+  /** Synchronous dir creation — used only in init() at startup */
+  private ensureDirSync(dirPath: string): void {
     if (!fs.existsSync(dirPath)) {
       fs.mkdirSync(dirPath, { recursive: true });
     }
   }
 
-  private safeDelete(filePath: string): void {
+  private async ensureDir(dirPath: string): Promise<void> {
     try {
-      if (fs.existsSync(filePath)) {
-        fs.rmSync(filePath);
-      }
+      await fsp.mkdir(dirPath, { recursive: true });
+    } catch {
+      // directory already exists or other non-critical error
+    }
+  }
+
+  private async safeDelete(filePath: string): Promise<void> {
+    try {
+      await fsp.rm(filePath, { force: true });
     } catch {
       /* ignore cleanup errors */
     }
@@ -551,19 +600,20 @@ class ConversationStore {
 
   /**
    * Atomic write: write to .tmp file first, then rename.
+   * Uses async I/O to avoid blocking the main process event loop.
    */
-  private atomicWrite(filePath: string, data: unknown): void {
+  private async atomicWrite(filePath: string, data: unknown): Promise<void> {
     const dir = path.dirname(filePath);
-    this.ensureDir(dir);
+    await this.ensureDir(dir);
 
     const tmpPath = filePath + ".tmp";
     try {
-      fs.writeFileSync(tmpPath, JSON.stringify(data, null, 2), "utf-8");
-      fs.renameSync(tmpPath, filePath);
+      await fsp.writeFile(tmpPath, JSON.stringify(data, null, 2), "utf-8");
+      await fsp.rename(tmpPath, filePath);
     } catch (err) {
       conversationStoreLog.error(`Failed to write ${filePath}:`, err);
       try {
-        fs.unlinkSync(tmpPath);
+        await fsp.unlink(tmpPath);
       } catch {
         /* ignore */
       }

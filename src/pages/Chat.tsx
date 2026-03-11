@@ -82,6 +82,14 @@ export default function Chat() {
     setSendingMap((prev) => ({ ...prev, [sessionId]: value }));
   };
 
+  // Track the latest todo part per session — avoids O(N×M) full scan in currentTodos memo.
+  // Updated in handlePartUpdated (O(1) check) and handleMessageUpdated (O(K) scan of incoming parts).
+  const [todoPartRef, setTodoPartRef] = createSignal<{
+    sessionId: string;
+    messageId: string;
+    partId: string;
+  } | null>(null);
+
   // Track sessions that completed while user was viewing another session
   const [unreadSessions, setUnreadSessions] = createSignal<Set<string>>(new Set());
   let prevSendingMap: Record<string, boolean> = {};
@@ -144,28 +152,27 @@ export default function Chat() {
 
   // Extract latest todos from the most recent TodoWrite tool part in the current session.
   // All adapters normalize input.todos to [{ content, status }] arrays before reaching here.
+  //
+  // Performance: uses todoPartRef signal (updated in handlePartUpdated / handleMessageUpdated)
+  // for O(1) lookup instead of O(N×M) full scan of all messages × parts per frame.
   const currentTodos = createMemo(() => {
     const sid = sessionStore.current;
     if (!sid) return [];
-    const messages = messageStore.message[sid] || [];
-    for (let mi = messages.length - 1; mi >= 0; mi--) {
-      const msg = messages[mi];
-      if (msg.role !== "assistant") continue;
-      const parts = messageStore.part[msg.id] || [];
-      for (let pi = parts.length - 1; pi >= 0; pi--) {
-        const p = parts[pi];
-        if (p.type !== "tool" || (p as any).normalizedTool !== "todo") continue;
-        const status = (p as any).state?.status;
-        if (status !== "completed" && status !== "running") continue;
-
-        const todos = (p as any).state?.input?.todos;
-        if (Array.isArray(todos) && todos.length > 0) {
-          return todos as Array<{
-            content: string;
-            status: "pending" | "in_progress" | "completed";
-          }>;
-        }
-      }
+    const ref = todoPartRef();
+    if (!ref || ref.sessionId !== sid) return [];
+    const parts = messageStore.part[ref.messageId];
+    if (!parts) return [];
+    const part = parts.find(p => p.id === ref.partId);
+    if (!part || part.type !== "tool") return [];
+    const tp = part as any;
+    const status = tp.state?.status;
+    if (status !== "completed" && status !== "running") return [];
+    const todos = tp.state?.input?.todos;
+    if (Array.isArray(todos) && todos.length > 0) {
+      return todos as Array<{
+        content: string;
+        status: "pending" | "in_progress" | "completed";
+      }>;
     }
     return [];
   });
@@ -176,6 +183,31 @@ export default function Chat() {
     }
     return title;
   };
+
+  // When the active session changes, scan once for the latest todo part.
+  // This runs only on session switch (O(N×M) once), not on every streaming frame.
+  createEffect(() => {
+    const sid = sessionStore.current;
+    if (!sid) {
+      setTodoPartRef(null);
+      return;
+    }
+    const messages = messageStore.message[sid] || [];
+    for (let mi = messages.length - 1; mi >= 0; mi--) {
+      const msg = messages[mi];
+      if (msg.role !== "assistant") continue;
+      const parts = messageStore.part[msg.id] || [];
+      for (let pi = parts.length - 1; pi >= 0; pi--) {
+        const p = parts[pi];
+        if (p.type === "tool" && (p as any).normalizedTool === "todo") {
+          setTodoPartRef({ sessionId: sid, messageId: msg.id, partId: p.id });
+          return;
+        }
+      }
+    }
+    // No todo part found for this session
+    setTodoPartRef(null);
+  });
 
   // Agent mode state - default to "build" matching OpenCode's default
   const [currentAgent, setCurrentAgent] = createSignal<AgentMode>({ id: "build", label: "Build" });
@@ -190,6 +222,12 @@ export default function Chat() {
     if (!sid) return getDefaultEngineType();
     const session = sessionStore.list.find(s => s.id === sid);
     return session?.engineType || getDefaultEngineType();
+  });
+
+  // Whether the current engine supports enqueuing messages while busy
+  const canEnqueue = createMemo(() => {
+    const engineInfo = configStore.engines.find(e => e.type === currentEngineType());
+    return engineInfo?.capabilities?.messageEnqueue ?? false;
   });
 
   // Keep currentAgent in sync: whenever the engine type changes or engine
@@ -394,6 +432,12 @@ export default function Chat() {
             engines.map(e => e.type === engineType ? { ...e, status: status as any } : e)
           );
         },
+        onMessageQueued: (sessionId, _messageId, _queuePosition) => {
+          logger.debug("[WS] message.queued for session:", sessionId);
+        },
+        onMessageQueuedConsumed: (sessionId, _messageId) => {
+          logger.debug("[WS] message.queued.consumed for session:", sessionId);
+        },
       });
 
       // Load available engines (blocking — needed for UI/Settings before we can proceed)
@@ -572,6 +616,25 @@ export default function Chat() {
     try {
       await gateway.deleteSession(sessionId);
 
+      // Clean up messageStore to prevent memory leaks.
+      // Without this, part/message/expanded/stepsLoaded entries accumulate
+      // indefinitely as sessions are created and deleted.
+      const messages = messageStore.message[sessionId] || [];
+      for (const msg of messages) {
+        setMessageStore("part", msg.id, undefined as any);
+        setMessageStore("expanded", msg.id, undefined as any);
+        setMessageStore("stepsLoaded", msg.id, undefined as any);
+      }
+      setMessageStore("message", sessionId, undefined as any);
+      setMessageStore("permission", sessionId, undefined as any);
+      setMessageStore("question", sessionId, undefined as any);
+
+      // Clear todoPartRef if it points to the deleted session
+      const ref = todoPartRef();
+      if (ref && ref.sessionId === sessionId) {
+        setTodoPartRef(null);
+      }
+
       // Remove from list
       setSessionStore("list", (list) => list.filter((s) => s.id !== sessionId));
 
@@ -614,6 +677,16 @@ export default function Chat() {
 
       for (const session of sessionsToDelete) {
         await gateway.deleteSession(session.id);
+        // Clean up messageStore for each deleted session
+        const messages = messageStore.message[session.id] || [];
+        for (const msg of messages) {
+          setMessageStore("part", msg.id, undefined as any);
+          setMessageStore("expanded", msg.id, undefined as any);
+          setMessageStore("stepsLoaded", msg.id, undefined as any);
+        }
+        setMessageStore("message", session.id, undefined as any);
+        setMessageStore("permission", session.id, undefined as any);
+        setMessageStore("question", session.id, undefined as any);
       }
 
       setSessionStore("list", (list) =>
@@ -744,6 +817,12 @@ export default function Chat() {
     if (!messageStore.stepsLoaded[messageId]) {
       setMessageStore("stepsLoaded", messageId, true);
     }
+
+    // Track todo parts for O(1) lookup in currentTodos memo
+    if (part.type === "tool" && (part as any).normalizedTool === "todo" && sessionId) {
+      setTodoPartRef({ sessionId, messageId, partId: part.id });
+    }
+
     if (!userScrolledUp()) scheduleScrollToBottom();
   };
 
@@ -804,6 +883,17 @@ export default function Chat() {
           const merged = existingParts.concat(newParts);
           merged.sort((a, b) => a.id.localeCompare(b.id));
           setMessageStore("part", msgInfo.id, merged);
+        }
+      }
+
+      // Track todo parts from bulk message updates (ACP engines)
+      if (targetSessionId) {
+        for (let i = msgInfo.parts.length - 1; i >= 0; i--) {
+          const p = msgInfo.parts[i];
+          if (p.type === "tool" && (p as any).normalizedTool === "todo") {
+            setTodoPartRef({ sessionId: targetSessionId, messageId: msgInfo.id, partId: p.id });
+            break;
+          }
         }
       }
     }
@@ -938,7 +1028,11 @@ export default function Chat() {
 
   const handleSendMessage = async (text: string, agent: AgentMode) => {
     const sessionId = sessionStore.current;
-    if (!sessionId || sending()) return;
+    if (!sessionId) return;
+
+    // Allow sending when idle, or when generating if engine supports enqueue
+    const isBusy = sending();
+    if (isBusy && !canEnqueue()) return;
 
     // Validate mode and model before sending
     if (!agent?.id) {
@@ -989,6 +1083,27 @@ export default function Chat() {
     setUserScrolledUp(false);
     setTimeout(() => scrollToBottom(), 0);
 
+    // --- Enqueue path: fire-and-forget ---
+    // When the engine is busy and supports enqueue, we must NOT await the RPC.
+    // The RPC blocks until the engine finishes ALL work (including previously
+    // queued messages), which would prevent the user from sending message #3
+    // while #2's RPC is pending.
+    if (isBusy) {
+      gateway.sendMessage(sessionId, text, {
+        mode: agent.id,
+        modelId,
+      }).catch((error) => {
+        logger.error("[SendMessage] Failed to enqueue message:", error);
+        // Remove the optimistic temp message on failure
+        setMessageStore("message", sessionId, (draft) =>
+          draft.filter((m) => m.id !== tempMessageId),
+        );
+        setMessageStore("part", tempMessageId, undefined as any);
+      });
+      return;
+    }
+
+    // --- Normal path: await the RPC ---
     try {
       await gateway.sendMessage(sessionId, text, {
         mode: agent.id,
@@ -1225,17 +1340,18 @@ export default function Chat() {
               </div>
             }
           >
-            <Show
-              when={!loadingMessages()}
-              fallback={
-                <div class="flex-1 flex items-center justify-center">
-                  <div class="flex flex-col items-center gap-3 text-gray-400">
-                    <div class="w-6 h-6 border-2 border-current border-t-transparent rounded-full animate-spin"></div>
+            {/* Scroll container is ALWAYS in the DOM so the virtualizer
+                maintains a stable reference to getScrollElement(). The loading
+                overlay is rendered on top without destroying the scroll div. */}
+              <div ref={setMessagesRef} onScroll={handleScroll} class="flex-1 overflow-y-auto px-4 md:px-6" style={{ position: "relative" }}>
+                {/* Loading overlay — covers scroll area during message load */}
+                <Show when={loadingMessages()}>
+                  <div class="absolute inset-0 flex items-center justify-center z-10 bg-white/80 dark:bg-zinc-900/80">
+                    <div class="flex flex-col items-center gap-3 text-gray-400">
+                      <div class="w-6 h-6 border-2 border-current border-t-transparent rounded-full animate-spin"></div>
+                    </div>
                   </div>
-                </div>
-              }
-            >
-              <div ref={setMessagesRef} onScroll={handleScroll} class="flex-1 overflow-y-auto px-4 md:px-6">
+                </Show>
                 <div class="max-w-4xl mx-auto w-full py-6">
                   <Show
                     when={sessionStore.current && messageStore.message[sessionStore.current]?.length > 0}
@@ -1306,6 +1422,7 @@ export default function Chat() {
                       onSend={handleSendMessage}
                       onCancel={handleCancelMessage}
                       isGenerating={sending()}
+                      canEnqueue={canEnqueue()}
                       currentAgent={currentAgent()}
                       onAgentChange={setCurrentAgent}
                       availableModes={configStore.engines.find(e => e.type === currentEngineType())?.capabilities?.availableModes}
@@ -1319,7 +1436,6 @@ export default function Chat() {
                   </div>
                 </div>
               </div>
-            </Show>
           </Show>
           </Show>
           </Show>

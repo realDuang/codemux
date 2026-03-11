@@ -453,80 +453,102 @@ export function SessionTurn(props: SessionTurnProps) {
     return questions().filter(q => !matched.has(q.id));
   });
 
-  // Check if there are any step parts (tool, reasoning, step-start, etc.)
-  // For historical sessions, use stepCount from metadata (steps not yet loaded).
-  // For streaming sessions, parts arrive in real-time so scan them directly.
-  const hasSteps = createMemo(() => {
-    for (const assistantMsg of props.assistantMessages) {
-      // Check metadata stepCount (set by listMessages for historical sessions)
-      if (assistantMsg.stepCount && assistantMsg.stepCount > 0) return true;
-      // Also check live parts (for streaming sessions where parts arrive via SSE)
-      const parts = messageStore.part[assistantMsg.id] || [];
-      for (const p of parts) {
-        if (p?.type === "reasoning") return true;
-        // Todo tools are hidden from steps (shown in TodoDock)
-        if (p?.type === "tool" && (p as ToolPart).normalizedTool !== "todo") return true;
-      }
-    }
-    return false;
-  });
-
-  // Get the last text part from assistant messages (the response)
-  const lastTextPart = createMemo(() => {
+  // Combined memo: single reverse scan derives all part-scanning state at once.
+  // Previously 6 separate memos each scanned the same parts arrays, creating
+  // 6× redundant SolidJS subscriptions and 6× the scan work per streaming frame.
+  const derivedPartState = createMemo(() => {
     const msgs = props.assistantMessages;
+    let hasSteps = false;
+    let lastTextPart: UnifiedPart | undefined;
+    let streamingTextPart: UnifiedPart | undefined;
+    let isReasoningActive = false;
+    let reasoningHeading: string | undefined;
+    let currentStatus: string | undefined;
+
+    // Flags to short-circuit: once found, stop searching
+    let foundLastText = false;
+    let foundStreamingText = false;
+    let foundReasoning = false;
+    let foundStatus = false;
+
+    // Reverse scan: most recent message first
     for (let mi = msgs.length - 1; mi >= 0; mi--) {
-      const msgParts = messageStore.part[msgs[mi].id] || [];
-      for (let pi = msgParts.length - 1; pi >= 0; pi--) {
-        const part = msgParts[pi];
-        if (part?.type === "text") return part;
-      }
-    }
-    return undefined;
-  });
+      const msg = msgs[mi];
+      // Check metadata stepCount for historical sessions
+      if (!hasSteps && msg.stepCount && msg.stepCount > 0) hasSteps = true;
 
-  // Get the latest text part during streaming (for live response area)
-  const streamingTextPart = createMemo(() => {
-    if (!props.isWorking) return undefined;
-    const msgs = props.assistantMessages;
-    for (let mi = msgs.length - 1; mi >= 0; mi--) {
-      const msgParts = messageStore.part[msgs[mi].id] || [];
-      for (let pi = msgParts.length - 1; pi >= 0; pi--) {
-        const part = msgParts[pi];
-        if (part?.type === "text" && (part as any).text) return part;
-      }
-    }
-    return undefined;
-  });
+      const parts = messageStore.part[msg.id] || [];
 
-  // Detect if reasoning is the active part (for trigger bar pulse dot)
-  const isReasoningActive = createMemo(() => {
-    if (!props.isWorking) return false;
-    const msgs = props.assistantMessages;
-    if (msgs.length === 0) return false;
-    const lastMsg = msgs[msgs.length - 1];
-    const parts = messageStore.part[lastMsg.id] || [];
-    for (let i = parts.length - 1; i >= 0; i--) {
-      if (parts[i]?.type === "reasoning") return true;
-      if (parts[i]?.type === "tool") return false;
-    }
-    return false;
-  });
-
-  // Extract heading from the latest reasoning part for the trigger bar subtitle
-  const reasoningHeading = createMemo(() => {
-    if (!props.isWorking) return undefined;
-    const msgs = props.assistantMessages;
-    for (let mi = msgs.length - 1; mi >= 0; mi--) {
-      const parts = messageStore.part[msgs[mi].id] || [];
       for (let pi = parts.length - 1; pi >= 0; pi--) {
         const p = parts[pi];
-        if (p?.type === "reasoning") {
-          return extractReasoningHeading((p as any).text);
+        if (!p) continue;
+
+        // hasSteps: any reasoning or non-todo tool
+        if (!hasSteps) {
+          if (p.type === "reasoning") hasSteps = true;
+          else if (p.type === "tool" && (p as ToolPart).normalizedTool !== "todo") hasSteps = true;
+        }
+
+        // lastTextPart: last text part across all messages
+        if (!foundLastText && p.type === "text") {
+          lastTextPart = p;
+          foundLastText = true;
+        }
+
+        // streamingTextPart: last text part with content (only when working)
+        if (!foundStreamingText && props.isWorking && p.type === "text" && (p as any).text) {
+          streamingTextPart = p;
+          foundStreamingText = true;
+        }
+
+        // isReasoningActive: only check last message's parts
+        if (!foundReasoning && mi === msgs.length - 1 && props.isWorking) {
+          if (p.type === "reasoning") {
+            isReasoningActive = true;
+            foundReasoning = true;
+          } else if (p.type === "tool") {
+            foundReasoning = true; // found a tool before reasoning — not active
+          }
+        }
+
+        // reasoningHeading: last reasoning part across all messages (only when working)
+        if (reasoningHeading === undefined && props.isWorking && p.type === "reasoning") {
+          reasoningHeading = extractReasoningHeading((p as any).text) ?? null as any;
+        }
+
+        // currentStatus: last part with computable status (only when working)
+        if (!foundStatus && props.isWorking) {
+          const status = computeStatusFromPart(p, t);
+          if (status) {
+            currentStatus = status;
+            foundStatus = true;
+          }
         }
       }
     }
-    return undefined;
+
+    // Default status when working but no part produced a status
+    if (props.isWorking && !foundStatus) {
+      currentStatus = t().steps.consideringNextSteps;
+    }
+
+    return {
+      hasSteps,
+      lastTextPart,
+      streamingTextPart,
+      isReasoningActive,
+      reasoningHeading: reasoningHeading ?? undefined,
+      currentStatus,
+    };
   });
+
+  // Convenience accessors (unwrap the combined memo for downstream consumers)
+  const hasSteps = () => derivedPartState().hasSteps;
+  const lastTextPart = () => derivedPartState().lastTextPart;
+  const streamingTextPart = () => derivedPartState().streamingTextPart;
+  const isReasoningActive = () => derivedPartState().isReasoningActive;
+  const reasoningHeading = () => derivedPartState().reasoningHeading;
+  const currentStatus = () => derivedPartState().currentStatus;
 
   // Last assistant message ID (for streaming detection)
   const lastAssistantMsgId = () => {
@@ -539,24 +561,6 @@ export function SessionTurn(props: SessionTurnProps) {
     const msgs = props.assistantMessages;
     if (msgs.length === 0) return undefined;
     return msgs[msgs.length - 1].error;
-  });
-
-  // Compute current working status
-  const currentStatus = createMemo(() => {
-    if (!props.isWorking) return undefined;
-
-    const msgs = props.assistantMessages;
-    for (let mi = msgs.length - 1; mi >= 0; mi--) {
-      const msgParts = messageStore.part[msgs[mi].id] || [];
-      for (let pi = msgParts.length - 1; pi >= 0; pi--) {
-        const part = msgParts[pi];
-        if (part) {
-          const status = computeStatusFromPart(part, t);
-          if (status) return status;
-        }
-      }
-    }
-    return t().steps.consideringNextSteps;
   });
 
   // Compute duration — live-ticking while no final endTime, static when done.

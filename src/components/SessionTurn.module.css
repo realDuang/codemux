@@ -25,11 +25,16 @@
   box-shadow: 0 4px 16px -4px rgba(0, 0, 0, 0.4), inset 0 1px 1px rgba(255, 255, 255, 0.05);
 }
 
-/* ─── Steps Trigger (sticky bar) ─── */
+/* ─── Steps Trigger ─── */
+/* NOTE: Do NOT use position:sticky here. When rendered inside a virtualizer
+   row (position:absolute + translateY), sticky positioning fails because the
+   containing block is the absolute-positioned row, not the scroll container.
+   This mismatch causes overlap/misalignment of adjacent virtualizer rows and
+   corrupts the ResizeObserver height measurements, leading to blank content
+   on reload. */
 .stepsTrigger {
-  position: sticky;
-  top: 0;
-  z-index: 10;
+  position: relative;
+  z-index: 2;
   background: transparent;
   margin: 0;
   padding: 0;

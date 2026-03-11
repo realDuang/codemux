@@ -72,6 +72,19 @@ export function MessageList(props: MessageListProps) {
 
   // Virtualizer instance — only active when shouldVirtualize() is true.
   // Uses getter syntax for SolidJS reactivity.
+  //
+  // IMPORTANT: The solid-virtual adapter calls virtualizer.measure() inside a
+  // createComputed whenever any reactive option changes (count, getScrollElement, etc).
+  // measure() clears ALL cached item sizes (itemSizeCache), resetting every row
+  // to estimateSize (150px). For long sessions with dynamically-sized rows
+  // (e.g. expanded steps ~550px), this causes:
+  //   1. Total height to collapse from real → estimated, making content appear blank
+  //   2. Virtual items to be recalculated with wrong offsets, causing overlap
+  //
+  // Mitigations:
+  //   - Use a stable estimateSize that is closer to the average real row height
+  //   - Increase overscan to keep more measured items in the DOM for faster re-measure
+  //   - Remove queueMicrotask from measureElement to avoid measurement lag
   const virtualizer = createVirtualizer({
     get count() {
       return shouldVirtualize() ? turns().length : 0;
@@ -79,8 +92,8 @@ export function MessageList(props: MessageListProps) {
     getScrollElement() {
       return props.scrollContainerRef?.() ?? null;
     },
-    estimateSize: () => 150,
-    overscan: 5,
+    estimateSize: () => 200, // Raised from 150 — closer to avg row height with steps bar
+    overscan: 8, // Raised from 5 — more items kept in DOM for stable measurements
     gap: 20, // matches gap-5 (1.25rem = 20px)
     paddingStart: 12, // matches py-3 top (0.75rem = 12px)
     paddingEnd: 12, // matches py-3 bottom
@@ -90,11 +103,25 @@ export function MessageList(props: MessageListProps) {
     },
   });
 
-  // Measure element callback — use queueMicrotask for SolidJS compatibility
+  // Measure element callback — directly measure without queueMicrotask.
+  // Using queueMicrotask causes a one-tick delay that can race with the
+  // solid-virtual createComputed which clears measurements on the same tick.
+  // Direct measurement ensures the ResizeObserver registration happens
+  // synchronously with DOM insertion, before any cache-clearing.
   const measureElement = (el: HTMLDivElement) => {
     if (!el) return;
-    queueMicrotask(() => virtualizer.measureElement(el));
+    virtualizer.measureElement(el);
   };
+
+  // When turns change (e.g. session switch, new messages), the virtualizer
+  // needs to re-measure. But solid-virtual's createComputed already calls
+  // measure() which clears the cache. We don't need to do anything extra here —
+  // the overscan increase ensures enough items remain in DOM for quick re-measure.
+  //
+  // When the expanded state changes for any steps panel, ResizeObserver on the
+  // virtualizer row will fire and call resizeItem(), which correctly adjusts
+  // scrollAdjustments. No manual intervention needed IF measureElement is
+  // synchronous (which it now is — see above).
 
   return (
     <Show

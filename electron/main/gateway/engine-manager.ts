@@ -297,6 +297,8 @@ export class EngineManager extends EventEmitter {
       "question.asked",
       "question.replied",
       "status.changed",
+      "message.queued",
+      "message.queued.consumed",
     ];
 
     for (const event of simpleEvents) {
@@ -338,7 +340,7 @@ export class EngineManager extends EventEmitter {
    * Only persists completed assistant messages (those with time.completed).
    * User messages are persisted separately in persistUserMessage().
    */
-  private persistMessage(conversationId: string, message: UnifiedMessage): void {
+  private async persistMessage(conversationId: string, message: UnifiedMessage): Promise<void> {
     // User messages are handled in persistUserMessage() to avoid duplicates
     if (message.role === "user") return;
 
@@ -380,13 +382,13 @@ export class EngineManager extends EventEmitter {
       };
 
       // Check if message already exists
-      const existingMessages = conversationStore.listMessages(conversationId);
+      const existingMessages = await conversationStore.listMessages(conversationId);
       const existingIdx = existingMessages.findIndex((m) => m.id === message.id);
 
       if (existingIdx >= 0) {
-        conversationStore.updateMessage(conversationId, message.id, convMessage);
+        await conversationStore.updateMessage(conversationId, message.id, convMessage);
       } else {
-        conversationStore.appendMessage(conversationId, convMessage);
+        await conversationStore.appendMessage(conversationId, convMessage);
       }
 
       // Merge buffered step parts with any steps from the message itself
@@ -399,7 +401,7 @@ export class EngineManager extends EventEmitter {
       }
 
       if (allSteps.length > 0) {
-        conversationStore.saveSteps(conversationId, message.id, allSteps);
+        await conversationStore.saveSteps(conversationId, message.id, allSteps);
       }
 
       // Clean up buffers
@@ -419,7 +421,7 @@ export class EngineManager extends EventEmitter {
    * Called before adapter.sendMessage() to ensure user messages are saved
    * even if the adapter doesn't emit user message events (e.g., OpenCode).
    */
-  private persistUserMessage(conversationId: string, content: MessagePromptContent[]): void {
+  private async persistUserMessage(conversationId: string, content: MessagePromptContent[]): Promise<void> {
     try {
       const now = Date.now();
       const msgId = timeId("msg");
@@ -444,7 +446,7 @@ export class EngineManager extends EventEmitter {
         parts: textParts,
       };
 
-      conversationStore.appendMessage(conversationId, convMessage);
+      await conversationStore.appendMessage(conversationId, convMessage);
 
       engineManagerLog.debug(
         `Persisted user message ${msgId} to conversation ${conversationId}: ${textParts.length} text parts`,
@@ -557,7 +559,7 @@ export class EngineManager extends EventEmitter {
 
     // Clean up buffers for all messages in this session
     try {
-      const messages = conversationStore.listMessages(sessionId);
+      const messages = await conversationStore.listMessages(sessionId);
       for (const msg of messages) {
         this.stepPartsBuffer.delete(msg.id);
         this.contentPartsBuffer.delete(msg.id);
@@ -579,7 +581,7 @@ export class EngineManager extends EventEmitter {
       this.engineToConvMap.delete(conv.engineSessionId);
     }
 
-    conversationStore.delete(sessionId);
+    await conversationStore.delete(sessionId);
     this.sessionEngineMap.delete(sessionId);
   }
 
@@ -597,7 +599,7 @@ export class EngineManager extends EventEmitter {
     for (const conv of projectConvs) {
       // Clean up buffers for all messages in this session
       try {
-        const messages = conversationStore.listMessages(conv.id);
+        const messages = await conversationStore.listMessages(conv.id);
         for (const msg of messages) {
           this.stepPartsBuffer.delete(msg.id);
           this.contentPartsBuffer.delete(msg.id);
@@ -618,7 +620,7 @@ export class EngineManager extends EventEmitter {
         }
         this.engineToConvMap.delete(conv.engineSessionId);
       }
-      conversationStore.delete(conv.id);
+      await conversationStore.delete(conv.id);
       this.sessionEngineMap.delete(conv.id);
     }
   }
@@ -655,7 +657,7 @@ export class EngineManager extends EventEmitter {
 
     // Persist user message before sending to engine
     // (Some adapters like OpenCode don't emit user message events)
-    this.persistUserMessage(sessionId, content);
+    await this.persistUserMessage(sessionId, content);
 
     const result = await adapter.sendMessage(engineSessionId, content, {
       ...options,
@@ -716,8 +718,8 @@ export class EngineManager extends EventEmitter {
   }
 
   async listMessages(sessionId: string): Promise<UnifiedMessage[]> {
-    const messages = conversationStore.listMessages(sessionId);
-    const stepsFile = conversationStore.getAllSteps(sessionId);
+    const messages = await conversationStore.listMessages(sessionId);
+    const stepsFile = await conversationStore.getAllSteps(sessionId);
 
     return messages.map((msg) => {
       // Content parts only — steps are lazy-loaded via getMessageSteps()
@@ -739,7 +741,7 @@ export class EngineManager extends EventEmitter {
   }
 
   async getMessageSteps(sessionId: string, messageId: string): Promise<UnifiedPart[]> {
-    return conversationStore.getSteps(sessionId, messageId);
+    return await conversationStore.getSteps(sessionId, messageId);
   }
 
   // --- Models ---

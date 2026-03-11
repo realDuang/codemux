@@ -30,6 +30,7 @@ describe("ConversationStore", () => {
     (conversationStore as any).index = new Map();
     (conversationStore as any).basePath = "";
     (conversationStore as any).indexDirty = false;
+    (conversationStore as any).writeLocks = new Map();
     if ((conversationStore as any).indexTimer) {
       clearTimeout((conversationStore as any).indexTimer);
       (conversationStore as any).indexTimer = null;
@@ -38,8 +39,8 @@ describe("ConversationStore", () => {
     conversationStore.init();
   });
 
-  afterEach(() => {
-    conversationStore.flushAll();
+  afterEach(async () => {
+    await conversationStore.flushAll();
     try {
       if (fs.existsSync(tmpDir)) {
         fs.rmSync(tmpDir, { recursive: true, force: true });
@@ -63,18 +64,18 @@ describe("ConversationStore", () => {
       expect((conversationStore as any).initialized).toBe(true);
     });
 
-    it("requires initialization and manages pending index changes", () => {
+    it("requires initialization and manages pending index changes", async () => {
       // methods throw if called before init
       (conversationStore as any).initialized = false;
       expect(() => conversationStore.list()).toThrow("ConversationStore not initialized");
-      
+
       // Re-init for flush test
       (conversationStore as any).initialized = true;
-      
+
       // flushAll() writes pending index changes
       conversationStore.create({ engineType: "opencode", directory: "/test" });
       expect((conversationStore as any).indexDirty).toBe(true);
-      conversationStore.flushAll();
+      await conversationStore.flushAll();
       expect((conversationStore as any).indexDirty).toBe(false);
       const indexPath = path.join(tmpDir, "conversations", "index.json");
       expect(fs.existsSync(indexPath)).toBe(true);
@@ -84,10 +85,10 @@ describe("ConversationStore", () => {
   describe("Conversation CRUD", () => {
     it("creates conversations with metadata and handles retrieval", () => {
       // create() returns a ConversationMeta with correct fields
-      const conv = conversationStore.create({ 
-        engineType: "claude", 
+      const conv = conversationStore.create({
+        engineType: "claude",
         directory: "/projects/foo",
-        title: "My Project" 
+        title: "My Project"
       });
       expect(conv.id).toMatch(/^conv_/);
       expect(conv.engineType).toBe("claude");
@@ -98,9 +99,9 @@ describe("ConversationStore", () => {
       expect(conv.messageCount).toBe(0);
 
       // create() generates a default title if not provided
-      const conv2 = conversationStore.create({ 
-        engineType: "opencode", 
-        directory: "/test" 
+      const conv2 = conversationStore.create({
+        engineType: "opencode",
+        directory: "/test"
       });
       expect(conv2.title).toMatch(/^Chat \d+-\d+ \d+:\d+/);
 
@@ -113,7 +114,7 @@ describe("ConversationStore", () => {
       const c1 = conversationStore.create({ engineType: "opencode", directory: "C:\\projects\\foo" });
       const now = Date.now();
       const c2 = conversationStore.create({ engineType: "claude", directory: "/projects/bar" });
-      
+
       // list() returns all conversations sorted by updatedAt desc
       (c2 as any).updatedAt = now + 1000;
       conversationStore.update(c2.id, { updatedAt: now + 1000 });
@@ -138,11 +139,11 @@ describe("ConversationStore", () => {
       const oldUpdatedAt = conv.updatedAt;
       const originalId = conv.id;
       const originalCreatedAt = conv.createdAt;
-      
+
       const future = Date.now() + 100;
       vi.useFakeTimers();
       vi.setSystemTime(future);
-      
+
       // update() updates fields and updatedAt
       conversationStore.update(conv.id, { title: "New Title" });
       const updated = conversationStore.get(conv.id)!;
@@ -155,11 +156,11 @@ describe("ConversationStore", () => {
       const afterHackAttempt = conversationStore.get(conv.id)!;
       expect(afterHackAttempt.id).toBe(originalId);
       expect(afterHackAttempt.createdAt).toBe(originalCreatedAt);
-      
+
       vi.useRealTimers();
     });
 
-    it("manages conversation deletion and renaming", () => {
+    it("manages conversation deletion and renaming", async () => {
       // delete() removes from index and deletes files
       const conv = conversationStore.create({ engineType: "opencode", directory: "/test" });
       const id = conv.id;
@@ -168,8 +169,8 @@ describe("ConversationStore", () => {
       fs.mkdirSync(path.join(tmpDir, "conversations"), { recursive: true });
       fs.writeFileSync(msgPath, "[]");
       fs.writeFileSync(stepsPath, "{}");
-      
-      conversationStore.delete(id);
+
+      await conversationStore.delete(id);
       expect(conversationStore.get(id)).toBeNull();
       expect(fs.existsSync(msgPath)).toBe(false);
       expect(fs.existsSync(stepsPath)).toBe(false);
@@ -189,19 +190,19 @@ describe("ConversationStore", () => {
       parts: [{ type: "text", id: "part_1", messageId: "msg_1", sessionId: "s1", text: "Hello" } as TextPart]
     };
 
-    it("manages message history and previews with content handling", () => {
+    it("manages message history and previews with content handling", async () => {
       // listMessages() returns empty array when no file exists
-      expect(conversationStore.listMessages("non-existent")).toEqual([]);
+      expect(await conversationStore.listMessages("non-existent")).toEqual([]);
 
       // appendMessage() writes to disk and updates meta
       const conv = conversationStore.create({ engineType: "opencode", directory: "/test" });
-      conversationStore.appendMessage(conv.id, mockMsg);
+      await conversationStore.appendMessage(conv.id, mockMsg);
       const updatedConv = conversationStore.get(conv.id)!;
       expect(updatedConv.messageCount).toBe(1);
       expect(updatedConv.preview).toBe("Hello");
       expect(updatedConv.title).toBe("Hello");
-      
-      const messages = conversationStore.listMessages(conv.id);
+
+      const messages = await conversationStore.listMessages(conv.id);
       expect(messages.length).toBe(1);
       expect(messages[0].id).toBe("msg_1");
 
@@ -212,7 +213,7 @@ describe("ConversationStore", () => {
         id: "msg_long_first",
         parts: [{ type: "text", id: "p1", messageId: "msg_long_first", sessionId: "s1", text: "B".repeat(200) } as TextPart]
       };
-      conversationStore.appendMessage(conv2.id, longFirstMsg);
+      await conversationStore.appendMessage(conv2.id, longFirstMsg);
       const conv2Updated = conversationStore.get(conv2.id)!;
       expect(conv2Updated.title.length).toBe(53);
       expect(conv2Updated.title.endsWith("...")).toBe(true);
@@ -224,7 +225,7 @@ describe("ConversationStore", () => {
         id: "msg_long",
         parts: [{ type: "text", id: "p1", messageId: "msg_long", sessionId: "s1", text: longText } as TextPart]
       };
-      conversationStore.appendMessage(conv.id, longMsg);
+      await conversationStore.appendMessage(conv.id, longMsg);
       const updatedLong = conversationStore.get(conv.id)!;
       expect(updatedLong.preview?.length).toBe(103);
       expect(updatedLong.preview?.endsWith("...")).toBe(true);
@@ -232,30 +233,30 @@ describe("ConversationStore", () => {
       expect(updatedLong.title).toBe("Hello");
     });
 
-    it("updates existing messages in history", () => {
+    it("updates existing messages in history", async () => {
       const conv = conversationStore.create({ engineType: "opencode", directory: "/test" });
-      conversationStore.appendMessage(conv.id, mockMsg);
-      conversationStore.updateMessage(conv.id, "msg_1", { role: "assistant" });
-      const messages = conversationStore.listMessages(conv.id);
+      await conversationStore.appendMessage(conv.id, mockMsg);
+      await conversationStore.updateMessage(conv.id, "msg_1", { role: "assistant" });
+      const messages = await conversationStore.listMessages(conv.id);
       expect(messages[0].role).toBe("assistant");
     });
   });
 
   describe("Steps", () => {
-    it("manages reasoning steps with output truncation for large content", () => {
+    it("manages reasoning steps with output truncation for large content", async () => {
       const convId = "conv_123";
       const mockSteps: UnifiedPart[] = [
         { type: "text", id: "s1", messageId: "m1", sessionId: "s1", text: "step 1" } as any
       ];
 
       // getSteps() returns empty array when no steps file
-      expect(conversationStore.getSteps("id", "msgId")).toEqual([]);
+      expect(await conversationStore.getSteps("id", "msgId")).toEqual([]);
 
       // saveSteps() and getSteps() roundtrip
-      conversationStore.saveSteps(convId, "msg_1", mockSteps);
-      const saved = conversationStore.getSteps(convId, "msg_1");
+      await conversationStore.saveSteps(convId, "msg_1", mockSteps);
+      const saved = await conversationStore.getSteps(convId, "msg_1");
       expect(saved).toEqual(mockSteps);
-      const allSteps = conversationStore.getAllSteps(convId);
+      const allSteps = await conversationStore.getAllSteps(convId);
       expect(allSteps?.messages["msg_1"]).toEqual(mockSteps);
 
       // saveSteps() truncates large tool output
@@ -269,8 +270,8 @@ describe("ConversationStore", () => {
         args: {},
         state: { status: "completed", output: largeOutput }
       } as any;
-      conversationStore.saveSteps(convId, "msg_large", [toolStep]);
-      const savedLarge = conversationStore.getSteps(convId, "msg_large")[0] as any;
+      await conversationStore.saveSteps(convId, "msg_large", [toolStep]);
+      const savedLarge = (await conversationStore.getSteps(convId, "msg_large"))[0] as any;
       expect(savedLarge.state.output.length).toBeLessThan(largeOutput.length);
       expect(savedLarge.state.output).toContain("[truncated");
     });
@@ -284,7 +285,7 @@ describe("ConversationStore", () => {
       conversationStore.create({ engineType: "opencode", directory: "/work/project-b" });
       conversationStore.create({ engineType: "opencode", directory: "" });
       conversationStore.create({ engineType: "opencode", directory: "/" });
-      
+
       const projects = conversationStore.deriveProjects();
       expect(projects.length).toBe(3);
       const names = projects.map(p => p.name).sort();
@@ -298,7 +299,7 @@ describe("ConversationStore", () => {
   describe("Engine Session Association", () => {
     it("manages mappings between store conversations and engine sessions", () => {
       const conv = conversationStore.create({ engineType: "opencode", directory: "/test" });
-      
+
       // setEngineSession() and findByEngineSession() work correctly
       conversationStore.setEngineSession(conv.id, "session_99", { model: "gpt-4" });
       const found = conversationStore.findByEngineSession("session_99");
@@ -316,10 +317,10 @@ describe("ConversationStore", () => {
   });
 
   describe("Persistence & Recovery", () => {
-    it("recovers state from disk and handles corruption or version mismatches", () => {
+    it("recovers state from disk and handles corruption or version mismatches", async () => {
       // survives re-initialization (persistence check)
       const conv = conversationStore.create({ engineType: "opencode", directory: "/persist", title: "Keep Me" });
-      conversationStore.flushAll();
+      await conversationStore.flushAll();
       (conversationStore as any).initialized = false;
       (conversationStore as any).index = new Map();
       conversationStore.init();
@@ -343,18 +344,18 @@ describe("ConversationStore", () => {
       expect((conversationStore as any).index.size).toBe(0);
     });
 
-    it("ensures atomic writes even on failures", () => {
+    it("ensures atomic writes even on failures", async () => {
       const conv = conversationStore.create({ engineType: "opencode", directory: "/test" });
       const msgPath = (conversationStore as any).getMessageFilePath(conv.id);
       fs.mkdirSync(msgPath, { recursive: true }); // Make it a directory to force write failure
-      expect(() => (conversationStore as any).writeMessages(conv.id, [])).not.toThrow();
+      await expect((conversationStore as any).writeMessages(conv.id, [])).resolves.not.toThrow();
     });
   });
 
   describe("Edge Cases", () => {
-    it("handles operations on missing conversations and corrupt message files", () => {
+    it("handles operations on missing conversations and corrupt message files", async () => {
       // handles non-existent conversation during delete/update
-      expect(() => conversationStore.delete("invalid")).not.toThrow();
+      await expect(conversationStore.delete("invalid")).resolves.not.toThrow();
       expect(() => conversationStore.update("invalid", { title: "foo" })).not.toThrow();
 
       // listMessages() handles corrupt message file
@@ -362,19 +363,19 @@ describe("ConversationStore", () => {
       const msgPath = (conversationStore as any).getMessageFilePath(conv.id);
       fs.mkdirSync(path.dirname(msgPath), { recursive: true });
       fs.writeFileSync(msgPath, "{ corrupt", "utf-8");
-      expect(conversationStore.listMessages(conv.id)).toEqual([]);
+      expect(await conversationStore.listMessages(conv.id)).toEqual([]);
 
       // updateMessage() handles non-existent message
-      expect(() => conversationStore.updateMessage(conv.id, "invalid", { role: "assistant" })).not.toThrow();
+      await expect(conversationStore.updateMessage(conv.id, "invalid", { role: "assistant" })).resolves.not.toThrow();
     });
 
-    it("handles corrupt step files and manages step output truncation rules", () => {
+    it("handles corrupt step files and manages step output truncation rules", async () => {
       // getSteps() handles corrupt steps file
       const convId = "conv_corrupt";
       const stepsPath = (conversationStore as any).getStepsFilePath(convId);
       fs.mkdirSync(path.dirname(stepsPath), { recursive: true });
       fs.writeFileSync(stepsPath, "{ corrupt", "utf-8");
-      expect(conversationStore.getSteps(convId, "msg_1")).toEqual([]);
+      expect(await conversationStore.getSteps(convId, "msg_1")).toEqual([]);
 
       // truncateStepOutput rules
       const textStep: any = { type: "text", text: "foo" };

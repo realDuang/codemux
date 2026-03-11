@@ -206,7 +206,7 @@ if (!gotTheLock) {
     // Only do synchronous cleanup and let the quit proceed without
     // preventDefault.
     if (updateManager.isInstallingUpdate()) {
-      conversationStore.flushAll();
+      await conversationStore.flushAll();
       gatewayServer.stop();
       return;
     }
@@ -215,7 +215,7 @@ if (!gotTheLock) {
 
     try {
       // Flush conversation store before quit
-      conversationStore.flushAll();
+      await conversationStore.flushAll();
 
       await Promise.all([
         authApiServer.stop(),

@@ -403,7 +403,7 @@ describe("EngineManager", () => {
       expect(eventSpy).toHaveBeenCalled();
     });
 
-    it("persists or updates assistant messages and skips incomplete ones", () => {
+    it("persists or updates assistant messages and skips incomplete ones", async () => {
       // persists assistant message on message.updated when completed
       (conversationStore.listMessages as any).mockReturnValue([]);
       const completedMessage = {
@@ -414,11 +414,14 @@ describe("EngineManager", () => {
         parts: [{ id: "p1", type: "text", text: "done", sessionId: "engine-s1", messageId: "m1" } as any]
       } as any;
       adapterA.emit("message.updated", { sessionId: "engine-s1", message: completedMessage });
+      // persistMessage is fire-and-forget async — wait for microtask queue to flush
+      await new Promise((r) => setTimeout(r, 0));
       expect(conversationStore.appendMessage).toHaveBeenCalledWith("conv1", expect.objectContaining({ id: "m1" }));
 
       // updates existing assistant message on message.updated
       (conversationStore.listMessages as any).mockReturnValue([{ id: "m1" }]);
       adapterA.emit("message.updated", { sessionId: "engine-s1", message: completedMessage });
+      await new Promise((r) => setTimeout(r, 0));
       expect(conversationStore.updateMessage).toHaveBeenCalledWith("conv1", "m1", expect.objectContaining({ id: "m1" }));
 
       // skips persisting incomplete assistant message
@@ -430,6 +433,7 @@ describe("EngineManager", () => {
         parts: []
       } as any;
       adapterA.emit("message.updated", { sessionId: "engine-s1", message: incompleteMessage });
+      await new Promise((r) => setTimeout(r, 0));
       expect(conversationStore.appendMessage).not.toHaveBeenCalledWith("conv1", expect.objectContaining({ id: "m2" }));
     });
 

@@ -80,7 +80,14 @@ AI responses stream in real-time with throttled message updates, and a tool summ
 
 ### Option 1: Desktop App
 
-Download the latest release for your platform:
+**macOS (Recommended — via Homebrew):**
+
+```bash
+brew tap realDuang/codemux
+brew install --cask codemux
+```
+
+**Manual download:**
 
 - **macOS (Apple Silicon)**: `CodeMux-x.x.x-arm64.dmg`
 - **macOS (Intel)**: `CodeMux-x.x.x-x64.dmg`
@@ -88,7 +95,7 @@ Download the latest release for your platform:
 
 The desktop app bundles the Cloudflare Tunnel binary and the gateway server. **OpenCode, Copilot CLI, and Claude Code must be installed separately** (see below).
 
-> ⚠️ **macOS Users**: The app is not code-signed. If macOS shows "App is damaged", run:
+> ⚠️ **macOS Users (manual download)**: The app is not code-signed. If macOS shows "App is damaged", run:
 >
 > ```bash
 > xattr -cr /Applications/CodeMux.app

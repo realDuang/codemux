@@ -281,3 +281,96 @@ jobs:
             artifacts/**/*.exe
             artifacts/**/latest.yml
             artifacts/latest-mac.yml
+
+  # Update Homebrew Tap
+  update-homebrew:
+    name: Update Homebrew Tap
+    needs: [check-version, release]
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Wait for release assets to be available
+        run: sleep 30
+
+      - name: Calculate SHA256 checksums
+        id: sha
+        env:
+          VERSION: ${{ needs.check-version.outputs.version }}
+        run: |
+          ARM64_SHA=$(curl -sL "https://github.com/realDuang/codemux/releases/download/v${VERSION}/CodeMux-${VERSION}-arm64-mac.zip" | shasum -a 256 | cut -d ' ' -f 1)
+          X64_SHA=$(curl -sL "https://github.com/realDuang/codemux/releases/download/v${VERSION}/CodeMux-${VERSION}-mac.zip" | shasum -a 256 | cut -d ' ' -f 1)
+          echo "arm64_sha=${ARM64_SHA}" >> $GITHUB_OUTPUT
+          echo "x64_sha=${X64_SHA}" >> $GITHUB_OUTPUT
+          echo "ARM64 SHA256: ${ARM64_SHA}"
+          echo "X64 SHA256: ${X64_SHA}"
+
+      - name: Generate Cask formula
+        env:
+          VERSION: ${{ needs.check-version.outputs.version }}
+          ARM64_SHA: ${{ steps.sha.outputs.arm64_sha }}
+          X64_SHA: ${{ steps.sha.outputs.x64_sha }}
+        run: |
+          python3 -c "
+          import os
+          v = os.environ['VERSION']
+          arm = os.environ['ARM64_SHA']
+          x64 = os.environ['X64_SHA']
+          formula = '''cask \"codemux\" do
+            version \"{version}\"
+
+            on_arm do
+              sha256 \"{arm64_sha}\"
+              url \"https://github.com/realDuang/codemux/releases/download/v#{{version}}/CodeMux-#{{version}}-arm64-mac.zip\"
+            end
+
+            on_intel do
+              sha256 \"{x64_sha}\"
+              url \"https://github.com/realDuang/codemux/releases/download/v#{{version}}/CodeMux-#{{version}}-mac.zip\"
+            end
+
+            name \"CodeMux\"
+            desc \"Multi-engine AI coding assistant client\"
+            homepage \"https://github.com/realDuang/codemux\"
+
+            livecheck do
+              url :url
+              strategy :github_latest
+            end
+
+            auto_updates true
+            depends_on macos: \">= :ventura\"
+
+            app \"CodeMux.app\"
+
+            zap trash: [
+              \"~/Library/Application Support/codemux\",
+              \"~/Library/Preferences/dev.codemux.app.plist\",
+              \"~/Library/Saved Application State/dev.codemux.app.savedState\",
+            ]
+          end
+          '''.format(version=v, arm64_sha=arm, x64_sha=x64)
+          with open('homebrew/codemux.rb', 'w') as f:
+              f.write(formula)
+          print(formula)
+          "
+          echo "=== Generated codemux.rb ==="
+          cat homebrew/codemux.rb
+
+      - name: Push to Homebrew Tap
+        env:
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          VERSION: ${{ needs.check-version.outputs.version }}
+        run: |
+          git clone https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/realDuang/homebrew-codemux.git tap-repo
+          mkdir -p tap-repo/Casks
+          cp homebrew/codemux.rb tap-repo/Casks/codemux.rb
+          cd tap-repo
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Casks/codemux.rb
+          git diff --cached --quiet && echo "No changes to commit" && exit 0
+          git commit -m "Update CodeMux to v${VERSION}"
+          git push

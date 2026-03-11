@@ -80,7 +80,14 @@ AI応答はスロットル制御されたメッセージ更新でリアルタイ
 
 ### オプション 1: デスクトップアプリ
 
-お使いのプラットフォーム向けの最新リリースをダウンロードしてください：
+**macOS（推奨 — Homebrew 経由）：**
+
+```bash
+brew tap realDuang/codemux
+brew install --cask codemux
+```
+
+**手動ダウンロード：**
 
 - **macOS (Apple Silicon)**: `CodeMux-x.x.x-arm64.dmg`
 - **macOS (Intel)**: `CodeMux-x.x.x-x64.dmg`
@@ -88,7 +95,7 @@ AI応答はスロットル制御されたメッセージ更新でリアルタイ
 
 デスクトップアプリには Cloudflare Tunnel バイナリとゲートウェイサーバーがバンドルされています。**OpenCode、Copilot CLI、Claude Code は別途インストールが必要です**（以下を参照）。
 
-> ⚠️ **macOS ユーザーへ**: このアプリはコード署名されていません。macOS で「アプリが壊れています」と表示される場合は、以下を実行してください：
+> ⚠️ **macOS ユーザーへ（手動ダウンロード）**: このアプリはコード署名されていません。macOS で「アプリが壊れています」と表示される場合は、以下を実行してください：
 >
 > ```bash
 > xattr -cr /Applications/CodeMux.app

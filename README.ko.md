@@ -80,7 +80,14 @@ AI 응답은 스로틀된 메시지 업데이트로 실시간 스트리밍되며
 
 ### 방법 1: 데스크톱 앱
 
-사용 중인 플랫폼에 맞는 최신 릴리스를 다운로드하세요:
+**macOS (권장 — Homebrew 사용):**
+
+```bash
+brew tap realDuang/codemux
+brew install --cask codemux
+```
+
+**수동 다운로드:**
 
 - **macOS (Apple Silicon)**: `CodeMux-x.x.x-arm64.dmg`
 - **macOS (Intel)**: `CodeMux-x.x.x-x64.dmg`
@@ -88,7 +95,7 @@ AI 응답은 스로틀된 메시지 업데이트로 실시간 스트리밍되며
 
 데스크톱 앱에는 Cloudflare Tunnel 바이너리와 게이트웨이 서버가 포함되어 있습니다. **OpenCode, Copilot CLI, Claude Code는 별도로 설치해야 합니다** (아래 참조).
 
-> ⚠️ **macOS 사용자**: 앱이 코드 서명되어 있지 않습니다. macOS에서 "앱이 손상되었습니다"라고 표시되면 다음 명령을 실행하세요:
+> ⚠️ **macOS 사용자 (수동 다운로드)**: 앱이 코드 서명되어 있지 않습니다. macOS에서 "앱이 손상되었습니다"라고 표시되면 다음 명령을 실행하세요:
 >
 > ```bash
 > xattr -cr /Applications/CodeMux.app

@@ -6,5 +6,9 @@ export default defineConfig({
     environment: "node",
     globals: false,
     testTimeout: 10_000,
+    benchmark: {
+      include: ["tests/benchmark/**/*.bench.ts"],
+      outputJson: "benchmark-results.json",
+    },
   },
 });

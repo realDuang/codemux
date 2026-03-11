@@ -499,6 +499,31 @@ export async function startTestServer(
       return;
     }
 
+    // Set streaming response mode on a mock adapter for performance benchmarking
+    if (pathname === "/api/test/set-streaming-mode" && req.method === "POST") {
+      const body = await parseJsonBody(req);
+      const engineType = body.engineType ?? "opencode";
+      const adapter = adapters.get(engineType);
+      if (!adapter) {
+        sendJson(res, { error: `Unknown engine type: ${engineType}` }, 400);
+        return;
+      }
+      adapter.setStreamingMode(
+        body.enabled ?? false,
+        body.tokenIntervalMs ?? 30,
+        body.toolCount ?? 3,
+      );
+      sendJson(res, {
+        success: true,
+        config: {
+          enabled: body.enabled ?? false,
+          tokenIntervalMs: body.tokenIntervalMs ?? 30,
+          toolCount: body.toolCount ?? 3,
+        },
+      });
+      return;
+    }
+
     // Set slow response mode on a mock adapter for cancel testing
     if (pathname === "/api/test/set-slow-mode" && req.method === "POST") {
       const body = await parseJsonBody(req);

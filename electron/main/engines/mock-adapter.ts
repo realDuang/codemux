@@ -26,6 +26,8 @@ import type {
   MessagePromptContent,
   PermissionReply,
   TextPart,
+  ToolPart,
+  ReasoningPart,
 } from "../../../src/types/unified";
 
 export interface MockAdapterOptions {
@@ -49,6 +51,11 @@ export class MockEngineAdapter extends EngineAdapter {
   private currentMode: string = "agent";
   private slowResponseDelay: number = 0;
   private pendingAbort: Map<string, AbortController> = new Map();
+  private streamingConfig: {
+    enabled: boolean;
+    tokenIntervalMs: number;
+    toolCount: number;
+  } = { enabled: false, tokenIntervalMs: 30, toolCount: 3 };
 
   constructor(options: MockAdapterOptions) {
     super();
@@ -235,6 +242,144 @@ export class MockEngineAdapter extends EngineAdapter {
       if (session.title === "New Session" && userText.length > 0) {
         session.title = userText.slice(0, 50);
       }
+    }
+
+    // --- Streaming response mode: simulate realistic token-by-token streaming ---
+    if (this.streamingConfig.enabled) {
+      const abortController = new AbortController();
+      this.pendingAbort.set(sessionId, abortController);
+
+      // Emit session + user message immediately
+      setTimeout(() => {
+        if (session) this.emit("session.updated", { session });
+        this.emit("message.updated", { sessionId, message: userMessage });
+      }, 10);
+
+      return new Promise<UnifiedMessage>((resolve) => {
+        const { tokenIntervalMs, toolCount } = this.streamingConfig;
+        const words = responseText.split(/\s+/);
+        let wordIndex = 0;
+        let toolsEmitted = 0;
+        const allParts: UnifiedPart[] = [];
+
+        // Phase 1: emit reasoning part
+        const reasoningPart: ReasoningPart = {
+          id: orderedId(),
+          messageId: assistantMessageId,
+          sessionId,
+          type: "reasoning",
+          text: "**Analyzing the request**\n\nLet me think about this carefully...",
+        };
+        allParts.push(reasoningPart);
+
+        setTimeout(() => {
+          if (abortController.signal.aborted) return;
+          this.emit("message.part.updated", {
+            sessionId,
+            messageId: assistantMessageId,
+            part: reasoningPart as UnifiedPart,
+          });
+        }, tokenIntervalMs);
+
+        // Phase 2: emit tool parts
+        const toolTypes: Array<ToolPart["normalizedTool"]> = [
+          "read", "grep", "glob", "edit", "shell", "write",
+        ];
+        const toolDelay = tokenIntervalMs * 3;
+
+        for (let i = 0; i < toolCount; i++) {
+          const toolPart: ToolPart = {
+            id: orderedId(),
+            messageId: assistantMessageId,
+            sessionId,
+            type: "tool",
+            callId: `call-stream-${i}`,
+            normalizedTool: toolTypes[i % toolTypes.length],
+            originalTool: toolTypes[i % toolTypes.length],
+            title: `${toolTypes[i % toolTypes.length]} operation ${i + 1}`,
+            kind: ["read", "grep", "glob", "list"].includes(toolTypes[i % toolTypes.length])
+              ? "read" : "edit",
+            state: {
+              status: "completed",
+              input: { file_path: `/src/components/file-${i}.tsx` },
+              output: { content: `result-${i}` },
+              time: { start: now, end: now + 200, duration: 200 },
+            },
+          };
+          allParts.push(toolPart);
+
+          setTimeout(() => {
+            if (abortController.signal.aborted) return;
+            toolsEmitted++;
+            this.emit("message.part.updated", {
+              sessionId,
+              messageId: assistantMessageId,
+              part: toolPart as UnifiedPart,
+            });
+          }, toolDelay * (i + 1) + tokenIntervalMs);
+        }
+
+        // Phase 3: stream text part token by token
+        const textStreamStart = toolDelay * toolCount + tokenIntervalMs * 2;
+        const streamTextPart = { ...textPart, text: "" };
+        allParts.push(streamTextPart as UnifiedPart);
+
+        // Delay the interval start until tools have finished emitting
+        setTimeout(() => {
+          if (abortController.signal.aborted) {
+            this.pendingAbort.delete(sessionId);
+            resolve({
+              ...assistantMessage,
+              time: { created: now + 1, completed: Date.now() },
+              error: "Cancelled",
+              parts: [],
+            });
+            return;
+          }
+
+          const streamInterval = setInterval(() => {
+            if (abortController.signal.aborted) {
+              clearInterval(streamInterval);
+              this.pendingAbort.delete(sessionId);
+              const cancelledMessage: UnifiedMessage = {
+                ...assistantMessage,
+                time: { created: now + 1, completed: Date.now() },
+                error: "Cancelled",
+                parts: [],
+              };
+              this.emit("message.updated", { sessionId, message: cancelledMessage });
+              resolve(cancelledMessage);
+              return;
+            }
+
+            if (wordIndex < words.length) {
+              streamTextPart.text += (wordIndex > 0 ? " " : "") + words[wordIndex];
+              wordIndex++;
+              this.emit("message.part.updated", {
+                sessionId,
+                messageId: assistantMessageId,
+                part: { ...streamTextPart } as UnifiedPart,
+              });
+            } else {
+              clearInterval(streamInterval);
+              this.pendingAbort.delete(sessionId);
+              // Emit final message with all parts
+              const finalMessage: UnifiedMessage = {
+                ...assistantMessage,
+                time: { created: now + 1, completed: Date.now() },
+                parts: allParts,
+              };
+              sessionMessages.push(finalMessage);
+              this.emit("message.updated", { sessionId, message: finalMessage });
+              resolve(finalMessage);
+            }
+          }, tokenIntervalMs);
+
+          abortController.signal.addEventListener("abort", () => {
+            clearInterval(streamInterval);
+          });
+        }, textStreamStart);
+      });
     }
 
     // --- Slow response mode: delay completion so cancel can be tested ---
@@ -440,6 +585,21 @@ export class MockEngineAdapter extends EngineAdapter {
    */
   setSlowMode(delayMs: number): void {
     this.slowResponseDelay = delayMs;
+  }
+
+  /**
+   * Enable streaming mode: token-by-token text emission with tool parts.
+   * Simulates realistic AI streaming for performance benchmarking.
+   *
+   * @param tokenIntervalMs - Delay between each word emission (default 30ms)
+   * @param toolCount - Number of tool parts to emit before streaming text (default 3)
+   */
+  setStreamingMode(
+    enabled: boolean,
+    tokenIntervalMs: number = 30,
+    toolCount: number = 3,
+  ): void {
+    this.streamingConfig = { enabled, tokenIntervalMs, toolCount };
   }
 
   /**

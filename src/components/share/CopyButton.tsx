@@ -36,6 +36,8 @@ export function CopyButton(props: CopyButtonProps) {
       type="button"
       data-component="copy-button"
       data-copied={copied() ? "" : undefined}
+      aria-label={copied() ? "Copied" : "Copy to clipboard"}
+      title={copied() ? "Copied" : "Copy to clipboard"}
       onClick={handleCopy}
     >
       <Show when={copied()} fallback={<span innerHTML={ICON_COPY} />}>
@@ -58,6 +60,8 @@ export function attachCopyButtons(container: HTMLElement) {
     const btn = document.createElement("button")
     btn.type = "button"
     btn.setAttribute("data-component", "copy-button")
+    btn.setAttribute("aria-label", "Copy to clipboard")
+    btn.title = "Copy to clipboard"
     btn.innerHTML = ICON_COPY
 
     btn.addEventListener("click", (e) => {
@@ -70,7 +74,7 @@ export function attachCopyButtons(container: HTMLElement) {
           btn.innerHTML = ICON_COPY
           btn.removeAttribute("data-copied")
         }, 2000)
-      }).catch(() => {})
+      }).catch(err => logger.error("Copy failed", err))
     })
 
     pre.appendChild(btn)

@@ -37,6 +37,7 @@ class UpdateManager {
   private checkTimer: ReturnType<typeof setInterval> | null = null;
   private initialCheckTimer: ReturnType<typeof setTimeout> | null = null;
   private initialized = false;
+  private updating = false;
 
   init(): void {
     // Configure logging
@@ -115,7 +116,20 @@ class UpdateManager {
   }
 
   quitAndInstall(): void {
+    this.updating = true;
+    // On macOS, MacUpdater.quitAndInstall() relies on Squirrel.Mac having
+    // already downloaded the update (squirrelDownloadedUpdate flag). If the
+    // Squirrel download hasn't finished (or failed silently), the method
+    // only registers a listener but won't trigger a new download when
+    // autoInstallOnAppQuit is true. Setting it to false forces a retry.
+    if (process.platform === "darwin") {
+      autoUpdater.autoInstallOnAppQuit = false;
+    }
     autoUpdater.quitAndInstall();
+  }
+
+  isInstallingUpdate(): boolean {
+    return this.updating;
   }
 
   getState(): UpdateState {

@@ -201,9 +201,10 @@ if (!gotTheLock) {
     if (isQuitting) return;
     isQuitting = true;
 
-    // When installing an update on macOS, Squirrel.Mac needs the normal
-    // quit flow to swap the app bundle and relaunch. Only do synchronous
-    // cleanup and let the quit proceed without preventDefault.
+    // When installing an update, the updater needs the normal quit flow to
+    // complete (e.g. Squirrel.Mac swaps the app bundle and relaunches).
+    // Only do synchronous cleanup and let the quit proceed without
+    // preventDefault.
     if (updateManager.isInstallingUpdate()) {
       conversationStore.flushAll();
       gatewayServer.stop();

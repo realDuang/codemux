@@ -125,7 +125,17 @@ class UpdateManager {
     if (process.platform === "darwin") {
       autoUpdater.autoInstallOnAppQuit = false;
     }
-    autoUpdater.quitAndInstall();
+
+    const resetUpdating = () => {
+      this.updating = false;
+    };
+    autoUpdater.once("error", resetUpdating);
+
+    try {
+      autoUpdater.quitAndInstall();
+    } catch {
+      resetUpdating();
+    }
   }
 
   isInstallingUpdate(): boolean {

@@ -92,7 +92,7 @@ export function buildGroupWelcomeCard(
         content: [
           `**项目:** ${projectName}`,
           `**引擎:** ${engineType}`,
-          `**会话:** ${sessionId.slice(0, 12)}...`,
+          `**会话:** ${sessionId}`,
           "",
           "发送消息即可开始对话。可用命令：",
           commands,

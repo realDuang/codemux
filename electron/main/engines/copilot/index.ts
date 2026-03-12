@@ -380,11 +380,25 @@ export class CopilotSdkAdapter extends EngineAdapter {
 
       return new Promise<UnifiedMessage>((resolve, reject) => {
         existingResolvers.push(resolve);
-        session.send({ prompt: promptText, mode: "enqueue" as any }).catch((err) => {
+
+        const handleEnqueueError = (err: unknown) => {
           const idx = existingResolvers.indexOf(resolve);
           if (idx >= 0) existingResolvers.splice(idx, 1);
           if (existingResolvers.length === 0) this.idleResolvers.delete(sessionId);
           reject(err);
+        };
+
+        session.send({ prompt: promptText, mode: "enqueue" as any }).catch(async (err) => {
+          if (this.isSessionExpiredError(err)) {
+            copilotLog.warn(`Session ${sessionId} expired (enqueue), recreating and retrying...`);
+            this.evictStaleSession(sessionId);
+            try {
+              const freshSession = await this.ensureActiveSession(sessionId, options?.directory);
+              freshSession.send({ prompt: promptText, mode: "enqueue" as any }).catch(handleEnqueueError);
+              return;
+            } catch { /* fall through */ }
+          }
+          handleEnqueueError(err);
         });
       });
     }
@@ -416,7 +430,8 @@ export class CopilotSdkAdapter extends EngineAdapter {
       const resolvers = this.idleResolvers.get(sessionId) ?? [];
       resolvers.push(resolve);
       this.idleResolvers.set(sessionId, resolvers);
-      session.send({ prompt: promptText }).catch((err) => {
+
+      const handleSendError = (err: unknown) => {
         const currentResolvers = this.idleResolvers.get(sessionId);
         if (currentResolvers) {
           const idx = currentResolvers.indexOf(resolve);
@@ -429,6 +444,19 @@ export class CopilotSdkAdapter extends EngineAdapter {
           this.finalizeBuffer(sessionId);
         }
         reject(err);
+      };
+
+      session.send({ prompt: promptText }).catch(async (err) => {
+        if (this.isSessionExpiredError(err)) {
+          copilotLog.warn(`Session ${sessionId} expired, recreating and retrying...`);
+          this.evictStaleSession(sessionId);
+          try {
+            const freshSession = await this.ensureActiveSession(sessionId, options?.directory);
+            freshSession.send({ prompt: promptText }).catch(handleSendError);
+            return;
+          } catch { /* fall through to handleSendError */ }
+        }
+        handleSendError(err);
       });
     });
   }
@@ -564,6 +592,19 @@ export class CopilotSdkAdapter extends EngineAdapter {
     this.emit("status.changed", { engineType: this.engineType, status, error });
   }
 
+  private isSessionExpiredError(err: unknown): boolean {
+    const msg = err instanceof Error ? err.message : String(err);
+    return msg.includes("Session not found");
+  }
+
+  /** Remove a stale session from runtime state (activeSessions, event subs). */
+  private evictStaleSession(sessionId: string): void {
+    this.activeSessions.delete(sessionId);
+    const unsub = this.sessionUnsubscribers.get(sessionId);
+    if (unsub) unsub();
+    this.sessionUnsubscribers.delete(sessionId);
+  }
+
   private ensureClient(): void {
     if (!this.client || this.status !== "running") throw new Error("Copilot SDK adapter is not running");
   }
@@ -589,7 +630,7 @@ export class CopilotSdkAdapter extends EngineAdapter {
       return sdkSession;
     } catch (err) {
       const sdkSession = await this.client!.createSession({ ...config } as any);
-      this.subscribeToSessionEvents(sdkSession);
+      this.subscribeToSessionEvents(sdkSession, sessionId);
       this.activeSessions.set(sessionId, sdkSession);
       this.activeSessions.set(sdkSession.sessionId, sdkSession);
       if (workingDirectory) this.sessionDirectories.set(sdkSession.sessionId, workingDirectory);
@@ -597,8 +638,8 @@ export class CopilotSdkAdapter extends EngineAdapter {
     }
   }
 
-  private subscribeToSessionEvents(session: CopilotSession): void {
-    const sessionId = session.sessionId;
+  private subscribeToSessionEvents(session: CopilotSession, eventSessionId?: string): void {
+    const sessionId = eventSessionId || session.sessionId;
     const oldUnsub = this.sessionUnsubscribers.get(sessionId);
     if (oldUnsub) oldUnsub();
     const unsub = session.on((event: SessionEvent) => this.handleSessionEvent(sessionId, event));

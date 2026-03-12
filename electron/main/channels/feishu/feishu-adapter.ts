@@ -618,6 +618,7 @@ export class FeishuAdapter extends ChannelAdapter {
       feishuMessageId: feishuMsgId,
       conversationId: tempSession.conversationId,
       messageId: "",
+      chatId,
       textBuffer: "",
       lastPatchTime: Date.now(),
       patchTimer: null,
@@ -1100,6 +1101,7 @@ export class FeishuAdapter extends ChannelAdapter {
       feishuMessageId: feishuMsgId,
       conversationId: binding.conversationId,
       messageId: "",  // will be set when sendMessage resolves
+      chatId: groupChatId,
       textBuffer: "",
       lastPatchTime: Date.now(),
       patchTimer: null,
@@ -1171,8 +1173,19 @@ export class FeishuAdapter extends ChannelAdapter {
   private applyPartToStreaming(streaming: StreamingSession, part: UnifiedPart): void {
     switch (part.type) {
       case "text":
-        streaming.textBuffer = part.text || "";
-        this.scheduleStreamingPatch(streaming);
+        if (
+          streaming.currentTextPartId &&
+          streaming.currentTextPartId !== part.id &&
+          streaming.textBuffer
+        ) {
+          // New text segment detected — send as a new Feishu message
+          void this.transitionToNewTextSegment(streaming, part);
+        } else {
+          // Same segment or first segment — normal streaming
+          streaming.currentTextPartId = part.id;
+          streaming.textBuffer = part.text || "";
+          this.scheduleStreamingPatch(streaming);
+        }
         break;
       case "tool":
         if (part.normalizedTool) {
@@ -1182,6 +1195,51 @@ export class FeishuAdapter extends ChannelAdapter {
         break;
       default:
         break;
+    }
+  }
+
+  /**
+   * Transition streaming to a new text segment:
+   * finalize current Feishu message, create a new one for the new segment.
+   */
+  private async transitionToNewTextSegment(
+    streaming: StreamingSession,
+    newPart: UnifiedPart & { type: "text" },
+  ): Promise<void> {
+    // 1. Finalize current message (clear timer, patch with final text — no "Thinking..." suffix)
+    if (streaming.patchTimer) {
+      clearTimeout(streaming.patchTimer);
+      streaming.patchTimer = null;
+    }
+    if (streaming.feishuMessageId && streaming.textBuffer) {
+      this.patchFeishuMessage(streaming.feishuMessageId, truncateForFeishu(streaming.textBuffer));
+    }
+
+    // 2. Reset for new segment
+    streaming.textBuffer = newPart.text || "";
+    streaming.currentTextPartId = newPart.id;
+    streaming.feishuMessageId = ""; // prevent patches during message creation
+    streaming.lastPatchTime = Date.now();
+
+    // 3. Create new Feishu message
+    const newMsgId = await this.sendTextMessage(
+      streaming.chatId,
+      formatStreamingText(streaming.textBuffer),
+    );
+
+    if (newMsgId) {
+      streaming.feishuMessageId = newMsgId;
+      if (streaming.completed) {
+        // Race: message completed while creating new Feishu message — finalize now
+        const toolSummary = formatToolSummaryFromCounts(streaming.toolCounts);
+        let finalText = streaming.textBuffer || "（无文本回复）";
+        finalText += toolSummary;
+        this.patchFeishuMessage(newMsgId, truncateForFeishu(finalText));
+      } else {
+        this.scheduleStreamingPatch(streaming);
+      }
+    } else {
+      feishuLog.error("Failed to create new segment message");
     }
   }
 
@@ -1369,7 +1427,7 @@ export class FeishuAdapter extends ChannelAdapter {
   // ============================================================================
 
   private scheduleStreamingPatch(streaming: StreamingSession): void {
-    if (streaming.patchTimer || streaming.completed) return;
+    if (streaming.patchTimer || streaming.completed || !streaming.feishuMessageId) return;
 
     const elapsed = Date.now() - streaming.lastPatchTime;
     const throttleMs = this.config.streamingThrottleMs;

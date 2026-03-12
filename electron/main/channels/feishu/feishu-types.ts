@@ -41,8 +41,12 @@ export interface StreamingSession {
   conversationId: string;
   /** CodeMux message ID */
   messageId: string;
+  /** Feishu chat ID (group or P2P) — needed to create new messages during segment transitions */
+  chatId: string;
   /** Accumulated text content (text parts are cumulative, not incremental) */
   textBuffer: string;
+  /** Current text part ID — used to detect segment transitions */
+  currentTextPartId?: string;
   /** Timestamp of last PATCH call */
   lastPatchTime: number;
   /** Pending patch timer */

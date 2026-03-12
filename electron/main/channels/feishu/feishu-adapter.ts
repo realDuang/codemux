@@ -13,6 +13,11 @@ import {
   type ChannelStatus,
 } from "../channel-adapter";
 import { GatewayWsClient } from "../gateway-ws-client";
+import { StreamingController } from "../streaming/streaming-controller";
+import { TokenBucket } from "../streaming/rate-limiter";
+import { createStreamingSession, type StreamingSession } from "../streaming/streaming-types";
+import { FeishuTransport } from "./feishu-transport";
+import { FeishuRenderer } from "./feishu-renderer";
 import { FeishuSessionMapper } from "./feishu-session-mapper";
 import {
   parseCommand,
@@ -23,19 +28,12 @@ import {
   buildQuestionText,
 } from "./feishu-command-parser";
 import {
-  buildFinalReplyCard,
   buildGroupWelcomeCard,
 } from "./feishu-card-builder";
-import {
-  formatStreamingText,
-  formatToolSummaryFromCounts,
-  truncateForFeishu,
-} from "./feishu-message-formatter";
 import {
   DEFAULT_FEISHU_CONFIG,
   TEMP_SESSION_TTL_MS,
   type FeishuConfig,
-  type StreamingSession,
   type GroupBinding,
   type TempSession,
   type FeishuMessageEvent,
@@ -51,41 +49,6 @@ import type {
   UnifiedQuestion,
 } from "../../../../src/types/unified";
 import { feishuLog } from "../../services/logger";
-
-// --- Rate Limiter (Token Bucket) ---
-
-class TokenBucket {
-  private tokens: number;
-  private lastRefill: number;
-
-  constructor(
-    private capacity: number,
-    private refillRate: number, // tokens per second
-  ) {
-    this.tokens = capacity;
-    this.lastRefill = Date.now();
-  }
-
-  async consume(): Promise<void> {
-    this.refill();
-    if (this.tokens >= 1) {
-      this.tokens -= 1;
-      return;
-    }
-    // Wait for next token
-    const waitMs = ((1 - this.tokens) / this.refillRate) * 1000;
-    await new Promise((resolve) => setTimeout(resolve, Math.ceil(waitMs)));
-    this.refill();
-    this.tokens -= 1;
-  }
-
-  private refill(): void {
-    const now = Date.now();
-    const elapsed = (now - this.lastRefill) / 1000;
-    this.tokens = Math.min(this.capacity, this.tokens + elapsed * this.refillRate);
-    this.lastRefill = now;
-  }
-}
 
 // ============================================================================
 // Feishu Adapter
@@ -107,6 +70,11 @@ export class FeishuAdapter extends ChannelAdapter {
   private gatewayClient: GatewayWsClient | null = null;
   private sessionMapper = new FeishuSessionMapper();
   private rateLimiter = new TokenBucket(5, 5); // 5 tokens, 5/sec refill
+
+  // --- Streaming Architecture ---
+  private transport: FeishuTransport | null = null;
+  private renderer = new FeishuRenderer();
+  private streamingController: StreamingController | null = null;
 
   // --- Lifecycle ---
 
@@ -140,6 +108,14 @@ export class FeishuAdapter extends ChannelAdapter {
         appSecret: this.config.appSecret,
         disableTokenCache: false,
       });
+
+      // 1b. Create transport and streaming controller
+      this.transport = new FeishuTransport(this.larkClient, this.rateLimiter);
+      this.streamingController = new StreamingController(
+        this.transport,
+        this.renderer,
+        { throttleMs: this.config.streamingThrottleMs },
+      );
 
       // 2. Create event dispatcher for receiving messages, card actions, and lifecycle events
       const dispatcher = new lark.EventDispatcher({});
@@ -235,6 +211,8 @@ export class FeishuAdapter extends ChannelAdapter {
     // Setting to null allows GC.
     this.wsClient = null;
     this.larkClient = null;
+    this.transport = null;
+    this.streamingController = null;
 
     this.status = "stopped";
     this.error = undefined;
@@ -412,7 +390,7 @@ export class FeishuAdapter extends ChannelAdapter {
 
     switch (command.command) {
       case "help":
-        await this.sendTextMessage(chatId, buildHelpText());
+        await this.transport!.sendText(chatId, buildHelpText());
         break;
 
       case "project":
@@ -420,7 +398,7 @@ export class FeishuAdapter extends ChannelAdapter {
         break;
 
       default:
-        await this.sendTextMessage(
+        await this.transport!.sendText(
           chatId,
           "📋 此命令仅在会话群聊中可用。使用 /help 查看可用命令。",
         );
@@ -437,7 +415,7 @@ export class FeishuAdapter extends ChannelAdapter {
 
     const projects = await this.gatewayClient.listAllProjects();
     const text = buildProjectListText(projects);
-    await this.sendTextMessage(chatId, text);
+    await this.transport!.sendText(chatId, text);
 
     if (projects.length > 0) {
       // Flatten projects in display order (grouped by engine) for number mapping
@@ -459,7 +437,7 @@ export class FeishuAdapter extends ChannelAdapter {
     const sessions = await this.gatewayClient.listSessions(project.engineType);
     const filtered = sessions.filter((s) => s.directory === project.directory);
     const sessionText = buildSessionListText(filtered, projectName);
-    await this.sendTextMessage(chatId, sessionText);
+    await this.transport!.sendText(chatId, sessionText);
 
     this.sessionMapper.setPendingSelection(chatId, {
       type: "session",
@@ -494,7 +472,7 @@ export class FeishuAdapter extends ChannelAdapter {
         chatId,
       );
     } catch (err) {
-      await this.sendTextMessage(
+      await this.transport!.sendText(
         chatId,
         `📋 创建会话失败：${err instanceof Error ? err.message : String(err)}`,
       );
@@ -511,7 +489,7 @@ export class FeishuAdapter extends ChannelAdapter {
     if (!this.gatewayClient) return;
     const projects = await this.gatewayClient.listAllProjects();
     const text = buildProjectListText(projects);
-    await this.sendMessageTo(receiveId, receiveIdType, "text", JSON.stringify({ text }));
+    await this.transport!.sendMessageTo(receiveId, receiveIdType, "text", JSON.stringify({ text }));
 
     if (projects.length > 0) {
       const flatProjects = this.flattenProjectsByEngine(projects);
@@ -560,7 +538,7 @@ export class FeishuAdapter extends ChannelAdapter {
       this.sessionMapper.setTempSession(chatId, tempSession);
       await this.enqueueP2PMessage(chatId, text);
     } catch (err) {
-      await this.sendTextMessage(
+      await this.transport!.sendText(
         chatId,
         `📋 创建临时会话失败：${err instanceof Error ? err.message : String(err)}`,
       );
@@ -597,7 +575,7 @@ export class FeishuAdapter extends ChannelAdapter {
     tempSession: TempSession,
     text: string,
   ): Promise<void> {
-    if (!this.gatewayClient) {
+    if (!this.gatewayClient || !this.transport || !this.streamingController) {
       // Reset processing state so future messages can still be processed
       tempSession.processing = false;
       feishuLog.error("Gateway client not connected, cannot send P2P message");
@@ -605,8 +583,8 @@ export class FeishuAdapter extends ChannelAdapter {
     }
 
     // Send initial "thinking" message
-    const feishuMsgId = await this.sendTextMessage(chatId, "🤔 思考中...");
-    if (!feishuMsgId) {
+    const platformMsgId = await this.transport.sendText(chatId, "🤔 思考中...");
+    if (!platformMsgId) {
       feishuLog.error("Failed to send P2P thinking message");
       await this.processP2PQueue(chatId);
       return;
@@ -615,17 +593,7 @@ export class FeishuAdapter extends ChannelAdapter {
     tempSession.lastActiveAt = Date.now();
 
     // Create streaming session
-    const streaming: StreamingSession = {
-      feishuMessageId: feishuMsgId,
-      conversationId: tempSession.conversationId,
-      messageId: "",
-      chatId,
-      textBuffer: "",
-      lastPatchTime: Date.now(),
-      patchTimer: null,
-      completed: false,
-      toolCounts: new Map(),
-    };
+    const streaming = createStreamingSession(chatId, tempSession.conversationId, platformMsgId);
     tempSession.streamingSession = streaming;
 
     const sendPromise = this.gatewayClient.sendMessage({
@@ -640,8 +608,8 @@ export class FeishuAdapter extends ChannelAdapter {
       .catch(async (err) => {
         feishuLog.error("P2P sendMessage failed:", err);
         tempSession.streamingSession = undefined;
-        this.patchFeishuMessage(
-          feishuMsgId,
+        this.transport!.updateText(
+          platformMsgId,
           `⚠️ 错误：${err instanceof Error ? err.message : String(err)}`,
         );
         // Session might be invalid — try recreating on next message
@@ -764,7 +732,7 @@ export class FeishuAdapter extends ChannelAdapter {
 
     // Check if this session already has a bound group chat — if so, direct user there
     if (this.sessionMapper.hasGroupForConversation(session.id)) {
-      await this.sendTextMessage(
+      await this.transport!.sendText(
         chatId,
         `📋 此会话已有对应的群聊，请直接在群聊中发送消息。`,
       );
@@ -791,7 +759,7 @@ export class FeishuAdapter extends ChannelAdapter {
   private async handleGroupMessage(groupChatId: string, text: string): Promise<void> {
     const binding = this.sessionMapper.getGroupBinding(groupChatId);
     if (!binding) {
-      await this.sendTextMessage(groupChatId, "📋 此群聊未绑定到 CodeMux 会话。");
+      await this.transport!.sendText(groupChatId, "📋 此群聊未绑定到 CodeMux 会话。");
       return;
     }
 
@@ -814,12 +782,12 @@ export class FeishuAdapter extends ChannelAdapter {
 
     switch (command.command) {
       case "help":
-        await this.sendTextMessage(groupChatId, buildGroupHelpText());
+        await this.transport!.sendText(groupChatId, buildGroupHelpText());
         break;
 
       case "cancel":
         await this.gatewayClient.cancelMessage(binding.conversationId);
-        await this.sendTextMessage(groupChatId, "📋 消息已取消。");
+        await this.transport!.sendText(groupChatId, "📋 消息已取消。");
         break;
 
       case "status": {
@@ -829,20 +797,20 @@ export class FeishuAdapter extends ChannelAdapter {
           `项目：**${projectName}**（${binding.engineType}）`,
           `会话：\`${binding.conversationId}\``,
         ];
-        await this.sendTextMessage(groupChatId, lines.join("\n"));
+        await this.transport!.sendText(groupChatId, lines.join("\n"));
         break;
       }
 
       case "mode": {
         if (!command.args || command.args.length === 0) {
-          await this.sendTextMessage(groupChatId, "📋 用法：/mode <agent|plan|build>");
+          await this.transport!.sendText(groupChatId, "📋 用法：/mode <agent|plan|build>");
           return;
         }
         await this.gatewayClient.setMode({
           sessionId: binding.conversationId,
           modeId: command.args[0],
         });
-        await this.sendTextMessage(groupChatId, `📋 模式已切换为：**${command.args[0]}**`);
+        await this.transport!.sendText(groupChatId, `📋 模式已切换为：**${command.args[0]}**`);
         break;
       }
 
@@ -859,19 +827,19 @@ export class FeishuAdapter extends ChannelAdapter {
           }
           lines.push("─────────────────────────");
           lines.push("使用 /model <model-id> 切换模型。");
-          await this.sendTextMessage(groupChatId, lines.join("\n"));
+          await this.transport!.sendText(groupChatId, lines.join("\n"));
         } else if (command.args && command.args.length > 0) {
           await this.gatewayClient.setModel({
             sessionId: binding.conversationId,
             modelId: command.args[0],
           });
-          await this.sendTextMessage(groupChatId, `📋 模型已切换为：**${command.args[0]}**`);
+          await this.transport!.sendText(groupChatId, `📋 模型已切换为：**${command.args[0]}**`);
         }
         break;
       }
 
       default:
-        await this.sendTextMessage(
+        await this.transport!.sendText(
           groupChatId,
           `📋 未知命令：\`${command.command}\`。使用 /help 查看可用命令。`,
         );
@@ -891,13 +859,12 @@ export class FeishuAdapter extends ChannelAdapter {
     projectName: string,
     p2pChatId?: string,
   ): Promise<void> {
-    if (!this.larkClient || !this.gatewayClient) return;
-
+    if (!this.larkClient || !this.gatewayClient || !this.transport) return;
     // Check if session already has a group
     if (this.sessionMapper.hasGroupForConversation(conversationId)) {
       const existingChatId = this.sessionMapper.findGroupChatIdByConversationId(conversationId);
       if (p2pChatId) {
-        await this.sendTextMessage(
+        await this.transport.sendText(
           p2pChatId,
           `Session already has a group chat. Check your Feishu groups.`,
         );
@@ -938,7 +905,7 @@ export class FeishuAdapter extends ChannelAdapter {
       if (!newChatId) {
         feishuLog.error("Failed to create group chat: no chat_id returned");
         if (p2pChatId) {
-          await this.sendTextMessage(p2pChatId, "Failed to create group chat. Please try again.");
+          await this.transport.sendText(p2pChatId, "Failed to create group chat. Please try again.");
         }
         return;
       }
@@ -959,11 +926,11 @@ export class FeishuAdapter extends ChannelAdapter {
 
       // Send welcome card to the new group
       const welcomeCard = buildGroupWelcomeCard(projectName, engineType, conversationId);
-      await this.sendCardMessage(newChatId, welcomeCard);
+      await this.transport.sendRichContent(newChatId, welcomeCard);
 
       // Notify user in P2P
       if (p2pChatId) {
-        await this.sendTextMessage(
+        await this.transport.sendText(
           p2pChatId,
           `Group created for session. Check your Feishu groups for "${groupName}".`,
         );
@@ -971,7 +938,7 @@ export class FeishuAdapter extends ChannelAdapter {
     } catch (err) {
       feishuLog.error("Failed to create group for session:", err);
       if (p2pChatId) {
-        await this.sendTextMessage(
+        await this.transport.sendText(
           p2pChatId,
           `Failed to create group: ${err instanceof Error ? err.message : String(err)}`,
         );
@@ -1035,7 +1002,7 @@ export class FeishuAdapter extends ChannelAdapter {
       }
 
       case "help": {
-        await this.sendMessageTo(
+        await this.transport!.sendMessageTo(
           receiveId,
           receiveIdType,
           "text",
@@ -1085,11 +1052,11 @@ export class FeishuAdapter extends ChannelAdapter {
     binding: GroupBinding,
     text: string,
   ): Promise<void> {
-    if (!this.gatewayClient) return;
+    if (!this.gatewayClient || !this.transport) return;
 
     // Send initial "thinking" message to Feishu
-    const feishuMsgId = await this.sendTextMessage(groupChatId, "🤔 思考中...");
-    if (!feishuMsgId) {
+    const platformMsgId = await this.transport.sendText(groupChatId, "🤔 思考中...");
+    if (!platformMsgId) {
       feishuLog.error("Failed to send initial thinking message");
       return;
     }
@@ -1098,17 +1065,7 @@ export class FeishuAdapter extends ChannelAdapter {
     // This avoids the race condition where gateway notifications arrive
     // before sendMessage() resolves (which would cause all updates to be dropped).
     const placeholderKey = `pending_${Date.now()}`;
-    const streamingSession: StreamingSession = {
-      feishuMessageId: feishuMsgId,
-      conversationId: binding.conversationId,
-      messageId: "",  // will be set when sendMessage resolves
-      chatId: groupChatId,
-      textBuffer: "",
-      lastPatchTime: Date.now(),
-      patchTimer: null,
-      completed: false,
-      toolCounts: new Map(),
-    };
+    const streamingSession = createStreamingSession(groupChatId, binding.conversationId, platformMsgId);
     this.sessionMapper.registerStreamingSession(groupChatId, placeholderKey, streamingSession);
 
     // Send message to engine via Gateway (non-blocking)
@@ -1131,8 +1088,8 @@ export class FeishuAdapter extends ChannelAdapter {
         feishuLog.error("sendMessage failed:", err);
         // Clean up placeholder and show error
         binding.streamingSessions.delete(placeholderKey);
-        this.patchFeishuMessage(
-          feishuMsgId,
+        this.transport!.updateText(
+          platformMsgId,
           `⚠️ 错误：${err instanceof Error ? err.message : String(err)}`,
         );
       });
@@ -1143,6 +1100,8 @@ export class FeishuAdapter extends ChannelAdapter {
   // ============================================================================
 
   private handlePartUpdated(conversationId: string, part: UnifiedPart): void {
+    if (!this.streamingController) return;
+
     // Try group binding first
     const binding = this.sessionMapper.findGroupByConversationId(conversationId);
     if (binding) {
@@ -1155,7 +1114,7 @@ export class FeishuAdapter extends ChannelAdapter {
         }
       }
       if (streaming) {
-        this.applyPartToStreaming(streaming, part);
+        this.streamingController.applyPart(streaming, part);
       }
       return;
     }
@@ -1165,82 +1124,8 @@ export class FeishuAdapter extends ChannelAdapter {
     if (p2pChatId) {
       const tempSession = this.sessionMapper.getTempSession(p2pChatId);
       if (tempSession?.streamingSession && !tempSession.streamingSession.completed) {
-        this.applyPartToStreaming(tempSession.streamingSession, part);
+        this.streamingController.applyPart(tempSession.streamingSession, part);
       }
-    }
-  }
-
-  /** Apply a part update to a streaming session (shared by group and P2P) */
-  private applyPartToStreaming(streaming: StreamingSession, part: UnifiedPart): void {
-    switch (part.type) {
-      case "text":
-        if (
-          streaming.currentTextPartId &&
-          streaming.currentTextPartId !== part.id &&
-          streaming.textBuffer
-        ) {
-          // New text segment detected — send as a new Feishu message
-          void this.transitionToNewTextSegment(streaming, part);
-        } else {
-          // Same segment or first segment — normal streaming
-          streaming.currentTextPartId = part.id;
-          streaming.textBuffer = part.text || "";
-          this.scheduleStreamingPatch(streaming);
-        }
-        break;
-      case "tool":
-        if (part.normalizedTool) {
-          const count = streaming.toolCounts.get(part.normalizedTool) ?? 0;
-          streaming.toolCounts.set(part.normalizedTool, count + 1);
-        }
-        break;
-      default:
-        break;
-    }
-  }
-
-  /**
-   * Transition streaming to a new text segment:
-   * finalize current Feishu message, create a new one for the new segment.
-   */
-  private async transitionToNewTextSegment(
-    streaming: StreamingSession,
-    newPart: UnifiedPart & { type: "text" },
-  ): Promise<void> {
-    // 1. Finalize current message (clear timer, patch with final text — no "Thinking..." suffix)
-    if (streaming.patchTimer) {
-      clearTimeout(streaming.patchTimer);
-      streaming.patchTimer = null;
-    }
-    if (streaming.feishuMessageId && streaming.textBuffer) {
-      this.patchFeishuMessage(streaming.feishuMessageId, truncateForFeishu(streaming.textBuffer));
-    }
-
-    // 2. Reset for new segment
-    streaming.textBuffer = newPart.text || "";
-    streaming.currentTextPartId = newPart.id;
-    streaming.feishuMessageId = ""; // prevent patches during message creation
-    streaming.lastPatchTime = Date.now();
-
-    // 3. Create new Feishu message
-    const newMsgId = await this.sendTextMessage(
-      streaming.chatId,
-      formatStreamingText(streaming.textBuffer),
-    );
-
-    if (newMsgId) {
-      streaming.feishuMessageId = newMsgId;
-      if (streaming.completed) {
-        // Race: message completed while creating new Feishu message — finalize now
-        const toolSummary = formatToolSummaryFromCounts(streaming.toolCounts);
-        let finalText = streaming.textBuffer || "（无文本回复）";
-        finalText += toolSummary;
-        this.patchFeishuMessage(newMsgId, truncateForFeishu(finalText));
-      } else {
-        this.scheduleStreamingPatch(streaming);
-      }
-    } else {
-      feishuLog.error("Failed to create new segment message");
     }
   }
 
@@ -1281,64 +1166,21 @@ export class FeishuAdapter extends ChannelAdapter {
       }
     }
 
-    if (!streaming) return;
+    if (!streaming || !this.streamingController) return;
 
-    streaming.completed = true;
-    if (streaming.patchTimer) {
-      clearTimeout(streaming.patchTimer);
-      streaming.patchTimer = null;
-    }
-
-    if (message.error) {
-      this.patchFeishuMessage(streaming.feishuMessageId, `⚠️ 错误：${message.error}`);
-      binding.streamingSessions.delete(streamingKey);
-      return;
-    }
-
-    const toolSummary = formatToolSummaryFromCounts(streaming.toolCounts);
-    const finalText = streaming.textBuffer || "（无文本回复）";
-
-    // Replace streaming text message with a Markdown card
-    void this.replaceWithFinalCard(
-      streaming.chatId,
-      streaming.feishuMessageId,
-      finalText,
-      toolSummary,
-    );
+    this.streamingController.finalize(streaming, message);
     binding.streamingSessions.delete(streamingKey);
   }
 
   /** Finalize streaming for a P2P temp session and process next queued message */
   private async finalizeP2PStreaming(chatId: string, message: UnifiedMessage): Promise<void> {
     const tempSession = this.sessionMapper.getTempSession(chatId);
-    if (!tempSession?.streamingSession) return;
+    if (!tempSession?.streamingSession || !this.streamingController) return;
 
     const streaming = tempSession.streamingSession;
-    streaming.completed = true;
-    if (streaming.patchTimer) {
-      clearTimeout(streaming.patchTimer);
-      streaming.patchTimer = null;
-    }
+    this.streamingController.finalize(streaming, message);
 
     tempSession.lastActiveAt = Date.now();
-
-    if (message.error) {
-      this.patchFeishuMessage(streaming.feishuMessageId, `⚠️ 错误：${message.error}`);
-      tempSession.streamingSession = undefined;
-      await this.processP2PQueue(chatId);
-      return;
-    }
-
-    const toolSummary = formatToolSummaryFromCounts(streaming.toolCounts);
-    const finalText = streaming.textBuffer || "（无文本回复）";
-
-    // Replace streaming text message with a Markdown card
-    await this.replaceWithFinalCard(
-      streaming.chatId,
-      streaming.feishuMessageId,
-      finalText,
-      toolSummary,
-    );
     tempSession.streamingSession = undefined;
 
     // Process next queued message
@@ -1392,11 +1234,11 @@ export class FeishuAdapter extends ChannelAdapter {
         q.question || "Agent 有一个问题：",
         options,
       );
-      this.sendTextMessage(targetChatId, text);
+      this.transport!.sendText(targetChatId, text);
       // Note: Question replies via text commands are not yet implemented.
       // For now, auto-approve if possible (handled by handlePermissionAsked).
     } else {
-      this.sendTextMessage(targetChatId, "📋 Agent 提问（无选项）");
+      this.transport!.sendText(targetChatId, "📋 Agent 提问（无选项）");
     }
   }
 
@@ -1427,164 +1269,6 @@ export class FeishuAdapter extends ChannelAdapter {
       feishuLog.info(`Updated group chat name: ${groupChatId} → "${expectedGroupName}"`);
     } catch (err) {
       feishuLog.error(`Failed to update group chat name for ${groupChatId}:`, err);
-    }
-  }
-
-  // ============================================================================
-  // Streaming Patch Logic
-  // ============================================================================
-
-  private scheduleStreamingPatch(streaming: StreamingSession): void {
-    if (streaming.patchTimer || streaming.completed || !streaming.feishuMessageId) return;
-
-    const elapsed = Date.now() - streaming.lastPatchTime;
-    const throttleMs = this.config.streamingThrottleMs;
-    const delay = Math.max(0, throttleMs - elapsed);
-
-    streaming.patchTimer = setTimeout(() => {
-      streaming.patchTimer = null;
-      if (!streaming.completed) {
-        streaming.lastPatchTime = Date.now();
-        const text = formatStreamingText(streaming.textBuffer);
-        this.patchFeishuMessage(streaming.feishuMessageId, truncateForFeishu(text));
-      }
-    }, delay);
-  }
-
-  // ============================================================================
-  // Feishu API Helpers
-  // ============================================================================
-
-  /**
-   * Send a text message to a Feishu chat.
-   * Returns the Feishu message_id, or empty string on failure.
-   */
-  private async sendTextMessage(chatId: string, text: string): Promise<string> {
-    if (!this.larkClient) return "";
-
-    try {
-      await this.rateLimiter.consume();
-      const res = await this.larkClient.im.message.create({
-        params: { receive_id_type: "chat_id" },
-        data: {
-          receive_id: chatId,
-          content: JSON.stringify({ text }),
-          msg_type: "text",
-        },
-      });
-      return (res as any)?.data?.message_id ?? "";
-    } catch (err) {
-      feishuLog.error("Failed to send text message:", err);
-      return "";
-    }
-  }
-
-  /**
-   * Send an interactive card message to a Feishu chat.
-   */
-  private async sendCardMessage(chatId: string, cardJson: string): Promise<string> {
-    if (!this.larkClient) return "";
-
-    try {
-      await this.rateLimiter.consume();
-      const res = await this.larkClient.im.message.create({
-        params: { receive_id_type: "chat_id" },
-        data: {
-          receive_id: chatId,
-          content: cardJson,
-          msg_type: "interactive",
-        },
-      });
-      return (res as any)?.data?.message_id ?? "";
-    } catch (err) {
-      feishuLog.error("Failed to send card message:", err);
-      return "";
-    }
-  }
-
-  /**
-   * Send a message using either chat_id or open_id as receive_id.
-   */
-  private async sendMessageTo(
-    receiveId: string,
-    receiveIdType: string,
-    msgType: string,
-    content: string,
-  ): Promise<string> {
-    if (!this.larkClient) return "";
-
-    try {
-      await this.rateLimiter.consume();
-      const res = await this.larkClient.im.message.create({
-        params: { receive_id_type: receiveIdType as any },
-        data: {
-          receive_id: receiveId,
-          content,
-          msg_type: msgType as any,
-        },
-      });
-      return (res as any)?.data?.message_id ?? "";
-    } catch (err) {
-      feishuLog.error(`Failed to send message (${receiveIdType}=${receiveId}):`, err);
-      return "";
-    }
-  }
-
-  /**
-   * Update (PATCH) an existing Feishu message.
-   */
-  private async patchFeishuMessage(messageId: string, text: string): Promise<void> {
-    if (!this.larkClient || !messageId) return;
-
-    try {
-      await this.rateLimiter.consume();
-      // Use im.message.update (PUT) for text messages.
-      // im.message.patch (PATCH) only works for interactive card messages.
-      await this.larkClient.im.message.update({
-        path: { message_id: messageId },
-        data: {
-          msg_type: "text",
-          content: JSON.stringify({ text }),
-        },
-      });
-    } catch (err) {
-      feishuLog.error(`Failed to update message ${messageId}:`, err);
-    }
-  }
-
-  /**
-   * Delete a Feishu message (used to remove streaming text before sending final card).
-   */
-  private async deleteFeishuMessage(messageId: string): Promise<void> {
-    if (!this.larkClient || !messageId) return;
-
-    try {
-      await this.rateLimiter.consume();
-      await this.larkClient.im.message.delete({
-        path: { message_id: messageId },
-      });
-    } catch (err) {
-      feishuLog.error(`Failed to delete message ${messageId}:`, err);
-    }
-  }
-
-  /**
-   * Replace the streaming text message with a final Markdown card.
-   * Sends a new card message first, then deletes the old text message.
-   */
-  private async replaceWithFinalCard(
-    chatId: string,
-    oldMessageId: string,
-    content: string,
-    toolSummary: string,
-  ): Promise<void> {
-    const cardJson = buildFinalReplyCard(
-      content,
-      toolSummary || undefined,
-    );
-    const newId = await this.sendCardMessage(chatId, cardJson);
-    if (newId) {
-      await this.deleteFeishuMessage(oldMessageId);
     }
   }
 }

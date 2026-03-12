@@ -5,6 +5,11 @@
 // ============================================================================
 
 import type { EngineType, UnifiedProject, UnifiedSession } from "../../../../src/types/unified";
+import type { StreamingSession } from "../streaming/streaming-types";
+
+// Re-export shared types for backward compatibility
+export type { StreamingSession } from "../streaming/streaming-types";
+export { createStreamingSession } from "../streaming/streaming-types";
 
 // --- Feishu Configuration ---
 
@@ -34,28 +39,8 @@ export const TEMP_SESSION_TTL_MS = 2 * 60 * 60 * 1000;
 
 // --- Streaming State ---
 
-export interface StreamingSession {
-  /** Feishu message ID (obtained after initial send) */
-  feishuMessageId: string;
-  /** CodeMux conversation ID */
-  conversationId: string;
-  /** CodeMux message ID */
-  messageId: string;
-  /** Feishu chat ID (group or P2P) — needed to create new messages during segment transitions */
-  chatId: string;
-  /** Accumulated text content (text parts are cumulative, not incremental) */
-  textBuffer: string;
-  /** Current text part ID — used to detect segment transitions */
-  currentTextPartId?: string;
-  /** Timestamp of last PATCH call */
-  lastPatchTime: number;
-  /** Pending patch timer */
-  patchTimer: ReturnType<typeof setTimeout> | null;
-  /** Whether the message is completed */
-  completed: boolean;
-  /** Tool call counts for summary (toolName → count) */
-  toolCounts: Map<string, number>;
-}
+// StreamingSession is now defined in ../streaming/streaming-types.ts
+// and re-exported above for backward compatibility.
 
 // --- Group Binding (One Group = One Session) ---
 

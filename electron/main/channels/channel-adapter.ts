@@ -6,6 +6,20 @@
 
 import { EventEmitter } from "events";
 
+// --- Channel Capabilities ---
+
+/** Declarative capability flags for a channel platform */
+export interface ChannelCapabilities {
+  /** Whether sent messages can be updated/edited after sending */
+  supportsMessageUpdate: boolean;
+  /** Whether the platform supports rich content (cards, embeds, etc.) */
+  supportsRichContent: boolean;
+  /** Whether the adapter splits long responses into multiple messages */
+  supportsMultiSegment: boolean;
+  /** Maximum message size in bytes (for truncation) */
+  maxMessageBytes: number;
+}
+
 // --- Channel Status ---
 
 export type ChannelStatus = "stopped" | "starting" | "running" | "error";

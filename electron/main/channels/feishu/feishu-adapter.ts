@@ -23,6 +23,7 @@ import {
   buildQuestionText,
 } from "./feishu-command-parser";
 import {
+  buildFinalReplyCard,
   buildGroupWelcomeCard,
 } from "./feishu-card-builder";
 import {
@@ -1295,11 +1296,15 @@ export class FeishuAdapter extends ChannelAdapter {
     }
 
     const toolSummary = formatToolSummaryFromCounts(streaming.toolCounts);
-    let finalText = streaming.textBuffer || "（无文本回复）";
-    finalText += toolSummary;
-    finalText = truncateForFeishu(finalText);
+    const finalText = streaming.textBuffer || "（无文本回复）";
 
-    this.patchFeishuMessage(streaming.feishuMessageId, finalText);
+    // Replace streaming text message with a Markdown card
+    void this.replaceWithFinalCard(
+      streaming.chatId,
+      streaming.feishuMessageId,
+      finalText,
+      toolSummary,
+    );
     binding.streamingSessions.delete(streamingKey);
   }
 
@@ -1325,12 +1330,15 @@ export class FeishuAdapter extends ChannelAdapter {
     }
 
     const toolSummary = formatToolSummaryFromCounts(streaming.toolCounts);
-    let finalText = streaming.textBuffer || "（无文本回复）";
-    finalText = `💬 ${finalText}`;
-    finalText += toolSummary;
-    finalText = truncateForFeishu(finalText);
+    const finalText = streaming.textBuffer || "（无文本回复）";
 
-    this.patchFeishuMessage(streaming.feishuMessageId, finalText);
+    // Replace streaming text message with a Markdown card
+    await this.replaceWithFinalCard(
+      streaming.chatId,
+      streaming.feishuMessageId,
+      finalText,
+      toolSummary,
+    );
     tempSession.streamingSession = undefined;
 
     // Process next queued message
@@ -1541,6 +1549,42 @@ export class FeishuAdapter extends ChannelAdapter {
       });
     } catch (err) {
       feishuLog.error(`Failed to update message ${messageId}:`, err);
+    }
+  }
+
+  /**
+   * Delete a Feishu message (used to remove streaming text before sending final card).
+   */
+  private async deleteFeishuMessage(messageId: string): Promise<void> {
+    if (!this.larkClient || !messageId) return;
+
+    try {
+      await this.rateLimiter.consume();
+      await this.larkClient.im.message.delete({
+        path: { message_id: messageId },
+      });
+    } catch (err) {
+      feishuLog.error(`Failed to delete message ${messageId}:`, err);
+    }
+  }
+
+  /**
+   * Replace the streaming text message with a final Markdown card.
+   * Sends a new card message first, then deletes the old text message.
+   */
+  private async replaceWithFinalCard(
+    chatId: string,
+    oldMessageId: string,
+    content: string,
+    toolSummary: string,
+  ): Promise<void> {
+    const cardJson = buildFinalReplyCard(
+      content,
+      toolSummary || undefined,
+    );
+    const newId = await this.sendCardMessage(chatId, cardJson);
+    if (newId) {
+      await this.deleteFeishuMessage(oldMessageId);
     }
   }
 }

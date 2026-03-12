@@ -827,7 +827,7 @@ export class FeishuAdapter extends ChannelAdapter {
         const lines = [
           "📋 **会话状态**\n",
           `项目：**${projectName}**（${binding.engineType}）`,
-          `会话：\`${binding.conversationId.slice(0, 12)}...\``,
+          `会话：\`${binding.conversationId}\``,
         ];
         await this.sendTextMessage(groupChatId, lines.join("\n"));
         break;

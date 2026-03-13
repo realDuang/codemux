@@ -9,7 +9,7 @@ import fs from "fs";
 import path from "path";
 import { app } from "electron";
 import type { EngineType } from "../../../../src/types/unified";
-import type { GroupBinding, P2PChatState, PendingSelection, StreamingSession, TempSession } from "./feishu-types";
+import type { GroupBinding, P2PChatState, PendingQuestion, PendingSelection, StreamingSession, TempSession } from "./feishu-types";
 import { feishuLog } from "../../services/logger";
 
 // --- Persistence helpers ---
@@ -65,6 +65,11 @@ export class FeishuSessionMapper {
 
   /** Reverse index: conversationId → p2pChatId (for temp session notification routing) */
   private tempConversationToChat = new Map<string, string>();
+
+  // --- Pending Questions ---
+
+  /** chatId → PendingQuestion (awaiting user reply) */
+  private pendingQuestions = new Map<string, PendingQuestion>();
 
   // =========================================================================
   // Persistence — load / save group bindings to disk
@@ -389,6 +394,26 @@ export class FeishuSessionMapper {
   /** Find the P2P chat ID that owns a temp session with the given conversation ID */
   findP2PChatByTempConversation(conversationId: string): string | undefined {
     return this.tempConversationToChat.get(conversationId);
+  }
+
+  // =========================================================================
+  // Pending Question Methods
+  // =========================================================================
+
+  /** Set a pending question for a chat (group or P2P) */
+  setPendingQuestion(chatId: string, question: PendingQuestion): void {
+    this.pendingQuestions.set(chatId, question);
+    feishuLog.info(`Set pending question for chat ${chatId}: ${question.questionId}`);
+  }
+
+  /** Get the pending question for a chat */
+  getPendingQuestion(chatId: string): PendingQuestion | undefined {
+    return this.pendingQuestions.get(chatId);
+  }
+
+  /** Clear the pending question for a chat */
+  clearPendingQuestion(chatId: string): void {
+    this.pendingQuestions.delete(chatId);
   }
 
   // =========================================================================

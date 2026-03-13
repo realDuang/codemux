@@ -197,7 +197,7 @@ export function buildQuestionText(
   }
 
   lines.push("─────────────────────────");
-  lines.push("回复数字以回答。");
+  lines.push("回复消息以回答（可直接输入自定义回复）。");
 
   return lines.join("\n");
 }

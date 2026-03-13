@@ -128,7 +128,7 @@ describe('buildQuestionText', () => {
     expect(text).toContain('What to do?');
     expect(text).toContain('1. Option A');
     expect(text).toContain('2. Option B');
-    expect(text).toContain('回复数字');
+    expect(text).toContain('回复消息以回答');
   });
 });
 

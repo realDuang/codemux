@@ -117,6 +117,14 @@ export interface PendingSelection {
   projectName?: string;
 }
 
+// --- Pending Question State ---
+
+/** Tracks a pending question awaiting user reply in a chat */
+export interface PendingQuestion {
+  questionId: string;
+  sessionId: string;
+}
+
 // --- Command Parser Types ---
 
 export interface ParsedCommand {

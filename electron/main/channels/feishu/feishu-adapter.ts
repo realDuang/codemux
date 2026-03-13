@@ -364,21 +364,33 @@ export class FeishuAdapter extends ChannelAdapter {
       return;
     }
 
-    // 2. Check for pending selection (number reply or "new")
+    // 2. Check for pending question — treat any reply as a freeform answer
+    const pendingQ = this.sessionMapper.getPendingQuestion(chatId);
+    if (pendingQ && this.gatewayClient) {
+      this.sessionMapper.clearPendingQuestion(chatId);
+      await this.gatewayClient.replyQuestion({
+        questionId: pendingQ.questionId,
+        answers: [[text]],
+      });
+      feishuLog.info(`Replied to question ${pendingQ.questionId} with freeform answer`);
+      return;
+    }
+
+    // 3. Check for pending selection (number reply or "new")
     const pending = this.sessionMapper.getPendingSelection(chatId);
     if (pending) {
       const handled = await this.handlePendingSelection(chatId, text, pending);
       if (handled) return;
     }
 
-    // 3. Active temp session (not expired)? → send to engine
+    // 4. Active temp session (not expired)? → send to engine
     const tempSession = this.sessionMapper.getTempSession(chatId);
     if (tempSession && !this.isTempSessionExpired(tempSession)) {
       await this.enqueueP2PMessage(chatId, text);
       return;
     }
 
-    // 4. Has lastSelectedProject → auto-create temp session and send
+    // 5. Has lastSelectedProject → auto-create temp session and send
     const p2pState = this.sessionMapper.getP2PChat(chatId);
     if (p2pState?.lastSelectedProject && this.gatewayClient) {
       // Clean up expired temp session if any
@@ -389,7 +401,7 @@ export class FeishuAdapter extends ChannelAdapter {
       return;
     }
 
-    // 5. No project → show project list
+    // 6. No project → show project list
     await this.showProjectList(chatId);
   }
 
@@ -785,6 +797,18 @@ export class FeishuAdapter extends ChannelAdapter {
     const command = parseCommand(text);
     if (command) {
       await this.handleGroupCommand(groupChatId, binding, command);
+      return;
+    }
+
+    // Check for pending question — treat any reply as a freeform answer
+    const pendingQ = this.sessionMapper.getPendingQuestion(groupChatId);
+    if (pendingQ && this.gatewayClient) {
+      this.sessionMapper.clearPendingQuestion(groupChatId);
+      await this.gatewayClient.replyQuestion({
+        questionId: pendingQ.questionId,
+        answers: [[text]],
+      });
+      feishuLog.info(`Replied to question ${pendingQ.questionId} with freeform answer`);
       return;
     }
 
@@ -1273,8 +1297,12 @@ export class FeishuAdapter extends ChannelAdapter {
         options,
       );
       this.transport!.sendText(targetChatId, text);
-      // Note: Question replies via text commands are not yet implemented.
-      // For now, auto-approve if possible (handled by handlePermissionAsked).
+
+      // Store pending question so the next reply is routed as an answer
+      this.sessionMapper.setPendingQuestion(targetChatId, {
+        questionId: question.id,
+        sessionId: question.sessionId,
+      });
     } else {
       this.transport!.sendText(targetChatId, "📋 Agent 提问（无选项）");
     }

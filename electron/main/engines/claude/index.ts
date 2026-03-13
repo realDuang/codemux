@@ -1031,8 +1031,8 @@ export class ClaudeCodeAdapter extends EngineAdapter {
 
     this.pendingQuestions.delete(questionId);
 
-    // Take the first answer's first value
-    const answer = answers[0]?.[0] ?? "";
+    // Combine all answers (selected options + custom text) into one string
+    const answer = (answers[0] ?? []).join("\n") || "";
     pending.resolve(answer);
 
     this.emit("question.replied", { questionId, answers });

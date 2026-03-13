@@ -16,8 +16,6 @@ export interface ChannelCapabilities {
   supportsMessageDelete: boolean;
   /** Whether the platform supports rich content (cards, embeds, etc.) */
   supportsRichContent: boolean;
-  /** Whether the adapter splits long responses into multiple messages */
-  supportsMultiSegment: boolean;
   /** Maximum message size in bytes (for truncation) */
   maxMessageBytes: number;
 }

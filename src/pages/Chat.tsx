@@ -435,6 +435,7 @@ export default function Chat() {
         onPartsBatch: handlePartsBatch,
         onMessageUpdated: handleMessageUpdated,
         onSessionUpdated: handleSessionUpdated,
+        onSessionCreated: handleSessionCreated,
         onPermissionAsked: handlePermissionAsked,
         onPermissionReplied: handlePermissionReplied,
         onQuestionAsked: handleQuestionAsked,
@@ -1093,6 +1094,20 @@ export default function Chat() {
           : s,
       ),
     );
+  };
+
+  const handleSessionCreated = (created: UnifiedSession) => {
+    logger.debug("[WS] session.created received:", created);
+    // Only add if not already in the list (avoid duplicates from local creation)
+    const exists = sessionStore.list.some((s) => s.id === created.id);
+    if (exists) return;
+
+    // Find matching project
+    const project = sessionStore.projects.find(
+      (p) => p.directory === created.directory && p.engineType === created.engineType,
+    );
+
+    setSessionStore("list", (list) => [toSessionInfo(created, project?.id), ...list]);
   };
 
   const handlePermissionAsked = (permission: UnifiedPermission) => {

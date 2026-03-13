@@ -27,6 +27,7 @@ import {
   buildProjectListText,
   buildSessionListText,
   buildQuestionText,
+  buildHistoryText,
 } from "./feishu-command-parser";
 import {
   buildGroupWelcomeCard,
@@ -853,6 +854,12 @@ export class FeishuAdapter extends ChannelAdapter {
           });
           await this.transport!.sendText(groupChatId, `📋 模型已切换为：**${command.args[0]}**`);
         }
+        break;
+      }
+
+      case "history": {
+        const messages = await this.gatewayClient.listMessages(binding.conversationId);
+        await this.transport!.sendText(groupChatId, buildHistoryText(messages));
         break;
       }
 

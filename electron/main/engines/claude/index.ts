@@ -1614,6 +1614,16 @@ export class ClaudeCodeAdapter extends EngineAdapter {
   ): void {
     buffer.textAccumulator += text;
 
+    // Trim leading whitespace from the first text content. Some models send
+    // initial deltas with newlines/whitespace before the actual response,
+    // which would render as empty lines at the top of the message.
+    if (!buffer.leadingTrimmed) {
+      const trimmed = buffer.textAccumulator.trimStart();
+      if (!trimmed) return; // All whitespace so far — buffer but don't emit
+      buffer.textAccumulator = trimmed;
+      buffer.leadingTrimmed = true;
+    }
+
     if (!buffer.textPartId) {
       // Create a new text part
       buffer.textPartId = timeId("tp");

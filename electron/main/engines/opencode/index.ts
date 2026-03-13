@@ -92,6 +92,12 @@ export class OpenCodeAdapter extends EngineAdapter {
   // queued.consumed emissions when the primary user message.updated arrives late.
   private primaryUserMsgIds = new Map<string, string>();
 
+  // Track all user message IDs so handlePartUpdated/handlePartDelta can skip
+  // emitting parts for user messages. Without this, the frontend creates
+  // placeholder "assistant" messages for user-message parts, causing the
+  // user's question to appear as an assistant reply.
+  private userMessageIds = new Set<string>();
+
   constructor(options?: { port?: number }) {
     super();
     this.port = options?.port ?? 4096;
@@ -264,6 +270,11 @@ export class OpenCodeAdapter extends EngineAdapter {
     const messageID = (sdkPart as any).messageID;
     const partID = (sdkPart as any).id;
 
+    // Skip parts belonging to user messages — the frontend handles user text
+    // via optimistic temp messages. Emitting user-message parts would cause
+    // the frontend to create a placeholder "assistant" message for them.
+    if (messageID && this.userMessageIds.has(messageID)) return;
+
     // First SSE event for this session — clear the first-event timeout
     if (sessionID) this.clearFirstEventTimer(sessionID);
 
@@ -311,6 +322,9 @@ export class OpenCodeAdapter extends EngineAdapter {
   }): void {
     const { sessionID, messageID, partID, field, delta } = props;
     if (!sessionID || !partID) return;
+
+    // Skip deltas for user message parts (same reason as handlePartUpdated)
+    if (messageID && this.userMessageIds.has(messageID)) return;
 
     // First SSE event for this session — clear the first-event timeout
     this.clearFirstEventTimer(sessionID);
@@ -362,6 +376,9 @@ export class OpenCodeAdapter extends EngineAdapter {
     // We must distinguish the primary (first) user message from truly queued ones
     // to avoid emitting queued.consumed for the primary user message update.
     if (sdkMsg.role === "user") {
+      // Track user message ID so handlePartUpdated/handlePartDelta skip its parts.
+      this.userMessageIds.add(sdkMsg.id);
+
       const entries = this.pendingMessages.get(sessionID);
       if (entries && entries.length > 1) {
         const knownPrimary = this.primaryUserMsgIds.get(sessionID);

@@ -43,6 +43,8 @@ export interface MessageBuffer {
   cost?: number;
   modelId?: string;
   error?: string;
+  /** Set to true once leading whitespace has been trimmed from textAccumulator */
+  leadingTrimmed?: boolean;
 }
 
 // --- Adapter Events ---

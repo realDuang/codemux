@@ -703,6 +703,17 @@ export class CopilotSdkAdapter extends EngineAdapter {
   private handleMessageDelta(sessionId: string, data: { deltaContent: string }): void {
     const buffer = this.getOrCreateBuffer(sessionId);
     buffer.textAccumulator += data.deltaContent;
+
+    // Trim leading whitespace from the first text content. Some models send
+    // initial deltas with newlines/whitespace before the actual response,
+    // which would render as empty lines at the top of the message.
+    if (!buffer.leadingTrimmed) {
+      const trimmed = buffer.textAccumulator.trimStart();
+      if (!trimmed) return; // All whitespace so far — buffer but don't emit
+      buffer.textAccumulator = trimmed;
+      buffer.leadingTrimmed = true;
+    }
+
     if (!buffer.textPartId) buffer.textPartId = timeId("part");
     const textPart: TextPart = { id: buffer.textPartId, messageId: buffer.messageId, sessionId, type: "text", text: buffer.textAccumulator };
     upsertPart(buffer.parts, textPart);

@@ -299,7 +299,15 @@ export class CopilotSdkAdapter extends EngineAdapter {
   }
 
   hasSession(sessionId: string): boolean {
-    return this.activeSessions.has(sessionId);
+    // Check if session is active in memory
+    if (this.activeSessions.has(sessionId)) {
+      return true;
+    }
+
+    // For Copilot sessions, we can attempt to resume persisted sessions
+    // that might exist in the SDK but not in our active sessions map
+    // Return true to allow ensureActiveSession to handle resume/recreation
+    return sessionId.startsWith("cs_");
   }
   async getSession(sessionId: string): Promise<UnifiedSession | null> { return null; }
 

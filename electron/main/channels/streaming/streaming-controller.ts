@@ -197,16 +197,20 @@ export class StreamingController {
 
     if (message.error) {
       if (this.capabilities.supportsMessageUpdate && session.platformMessageId) {
-        this.transport.updateText(
+        void this.transport.updateText(
           session.platformMessageId,
           `⚠️ Error: ${message.error}`,
-        );
+        ).catch((err) => {
+          console.error(`Failed to update error message: ${err.message}`);
+        });
       } else {
         // Batch mode or no placeholder: send error as new message
-        this.transport.sendText(
+        void this.transport.sendText(
           session.chatId,
           `⚠️ Error: ${message.error}`,
-        );
+        ).catch((err) => {
+          console.error(`Failed to send error message: ${err.message}`);
+        });
       }
       return true;
     }
@@ -267,7 +271,9 @@ export class StreamingController {
         session.lastPatchTime = Date.now();
         const text = this.renderer.renderStreamingUpdate(session.textBuffer);
         const truncated = this.renderer.truncate(text);
-        this.transport.updateText(session.platformMessageId, truncated);
+        void this.transport.updateText(session.platformMessageId, truncated).catch((err) => {
+          console.error(`Failed to update streaming text: ${err.message}`);
+        });
       }
     }, delay);
   }

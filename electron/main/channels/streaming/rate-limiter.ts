@@ -11,6 +11,7 @@
 export class TokenBucket {
   private tokens: number;
   private lastRefill: number;
+  private consuming = false;
 
   constructor(
     private capacity: number,
@@ -21,16 +22,27 @@ export class TokenBucket {
   }
 
   async consume(): Promise<void> {
-    this.refill();
-    if (this.tokens >= 1) {
-      this.tokens -= 1;
-      return;
+    // Prevent race condition by serializing consume operations
+    while (this.consuming) {
+      await new Promise((resolve) => setTimeout(resolve, 1));
     }
-    // Wait for next token
-    const waitMs = ((1 - this.tokens) / this.refillRate) * 1000;
-    await new Promise((resolve) => setTimeout(resolve, Math.ceil(waitMs)));
-    this.refill();
-    this.tokens -= 1;
+
+    this.consuming = true;
+    try {
+      // Loop until we can consume a token
+      while (true) {
+        this.refill();
+        if (this.tokens >= 1) {
+          this.tokens -= 1;
+          return;
+        }
+        // Wait for next token
+        const waitMs = ((1 - this.tokens) / this.refillRate) * 1000;
+        await new Promise((resolve) => setTimeout(resolve, Math.ceil(waitMs)));
+      }
+    } finally {
+      this.consuming = false;
+    }
   }
 
   private refill(): void {

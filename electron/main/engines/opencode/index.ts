@@ -96,7 +96,8 @@ export class OpenCodeAdapter extends EngineAdapter {
   // emitting parts for user messages. Without this, the frontend creates
   // placeholder "assistant" messages for user-message parts, causing the
   // user's question to appear as an assistant reply.
-  private userMessageIds = new Set<string>();
+  // Use a Map to track per-session to allow cleanup when sessions are deleted.
+  private userMessageIds = new Map<string, Set<string>>(); // sessionId -> messageIds
 
   constructor(options?: { port?: number }) {
     super();
@@ -273,7 +274,10 @@ export class OpenCodeAdapter extends EngineAdapter {
     // Skip parts belonging to user messages — the frontend handles user text
     // via optimistic temp messages. Emitting user-message parts would cause
     // the frontend to create a placeholder "assistant" message for them.
-    if (messageID && this.userMessageIds.has(messageID)) return;
+    if (messageID && sessionID) {
+      const sessionUserMsgIds = this.userMessageIds.get(sessionID);
+      if (sessionUserMsgIds?.has(messageID)) return;
+    }
 
     // First SSE event for this session — clear the first-event timeout
     if (sessionID) this.clearFirstEventTimer(sessionID);
@@ -324,7 +328,10 @@ export class OpenCodeAdapter extends EngineAdapter {
     if (!sessionID || !partID) return;
 
     // Skip deltas for user message parts (same reason as handlePartUpdated)
-    if (messageID && this.userMessageIds.has(messageID)) return;
+    if (messageID && sessionID) {
+      const sessionUserMsgIds = this.userMessageIds.get(sessionID);
+      if (sessionUserMsgIds?.has(messageID)) return;
+    }
 
     // First SSE event for this session — clear the first-event timeout
     this.clearFirstEventTimer(sessionID);
@@ -377,7 +384,10 @@ export class OpenCodeAdapter extends EngineAdapter {
     // to avoid emitting queued.consumed for the primary user message update.
     if (sdkMsg.role === "user") {
       // Track user message ID so handlePartUpdated/handlePartDelta skip its parts.
-      this.userMessageIds.add(sdkMsg.id);
+      if (!this.userMessageIds.has(sessionID)) {
+        this.userMessageIds.set(sessionID, new Set());
+      }
+      this.userMessageIds.get(sessionID)!.add(sdkMsg.id);
 
       const entries = this.pendingMessages.get(sessionID);
       if (entries && entries.length > 1) {
@@ -838,6 +848,9 @@ export class OpenCodeAdapter extends EngineAdapter {
       : this.ensureClient();
     await client.session.delete({ sessionID: sessionId });
     this.sessions.delete(sessionId);
+
+    // Clean up user message IDs for this session to prevent memory leak
+    this.userMessageIds.delete(sessionId);
   }
 
   // --- Messages ---

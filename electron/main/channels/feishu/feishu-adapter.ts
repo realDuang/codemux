@@ -27,7 +27,7 @@ import {
   buildProjectListText,
   buildSessionListText,
   buildQuestionText,
-  buildHistoryText,
+  buildHistoryEntries,
 } from "./feishu-command-parser";
 import {
   buildGroupWelcomeCard,
@@ -859,7 +859,15 @@ export class FeishuAdapter extends ChannelAdapter {
 
       case "history": {
         const messages = await this.gatewayClient.listMessages(binding.conversationId);
-        await this.transport!.sendText(groupChatId, buildHistoryText(messages));
+        const entries = buildHistoryEntries(messages);
+        if (entries.length === 0) {
+          await this.transport!.sendText(groupChatId, "📋 暂无会话历史记录。");
+        } else {
+          await this.transport!.sendText(groupChatId, "📋 **会话历史**");
+          for (const entry of entries) {
+            await this.transport!.sendText(groupChatId, `${entry.emoji} ${entry.text}`);
+          }
+        }
         break;
       }
 

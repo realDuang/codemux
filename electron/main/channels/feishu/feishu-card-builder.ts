@@ -21,11 +21,8 @@ export function buildFinalReplyCard(content: string, toolSummary?: string): stri
 
   const elements: unknown[] = [
     {
-      tag: "div",
-      text: {
-        tag: "lark_md",
-        content: cardContent,
-      },
+      tag: "markdown",
+      content: cardContent,
     },
   ];
 
@@ -86,18 +83,15 @@ export function buildGroupWelcomeCard(
 
   const elements: unknown[] = [
     {
-      tag: "div",
-      text: {
-        tag: "lark_md",
-        content: [
-          `**项目:** ${projectName}`,
-          `**引擎:** ${engineType}`,
-          `**会话:** ${sessionId}`,
-          "",
-          "发送消息即可开始对话。可用命令：",
-          commands,
-        ].join("\n"),
-      },
+      tag: "markdown",
+      content: [
+        `**项目:** ${projectName}`,
+        `**引擎:** ${engineType}`,
+        `**会话:** ${sessionId}`,
+        "",
+        "发送消息即可开始对话。可用命令：",
+        commands,
+      ].join("\n"),
     },
   ];
 

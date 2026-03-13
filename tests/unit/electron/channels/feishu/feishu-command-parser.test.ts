@@ -6,7 +6,7 @@ import {
   buildProjectListText,
   buildSessionListText,
   buildQuestionText,
-  buildHistoryText,
+  buildHistoryEntries,
 } from '../../../../../electron/main/channels/feishu/feishu-command-parser';
 
 describe('parseCommand', () => {
@@ -132,9 +132,9 @@ describe('buildQuestionText', () => {
   });
 });
 
-describe('buildHistoryText', () => {
-  it('returns empty message for no messages', () => {
-    expect(buildHistoryText([])).toContain('暂无会话历史');
+describe('buildHistoryEntries', () => {
+  it('returns empty array for no messages', () => {
+    expect(buildHistoryEntries([])).toEqual([]);
   });
 
   it('shows user messages with 👤 and assistant messages with 🤖', () => {
@@ -142,27 +142,27 @@ describe('buildHistoryText', () => {
       { role: 'user', parts: [{ type: 'text', text: 'Hello' }] },
       { role: 'assistant', parts: [{ type: 'text', text: 'Hi there!' }] },
     ];
-    const text = buildHistoryText(messages);
-    expect(text).toContain('👤 Hello');
-    expect(text).toContain('🤖 Hi there!');
-    expect(text).toContain('会话历史');
+    const entries = buildHistoryEntries(messages);
+    expect(entries).toHaveLength(2);
+    expect(entries[0]).toEqual({ emoji: '👤', text: 'Hello' });
+    expect(entries[1]).toEqual({ emoji: '🤖', text: 'Hi there!' });
   });
 
   it('skips non-text parts like tool and step parts', () => {
     const messages: any[] = [
       { role: 'assistant', parts: [{ type: 'tool', normalizedTool: 'shell' }, { type: 'text', text: 'Done' }] },
     ];
-    const text = buildHistoryText(messages);
-    expect(text).toContain('🤖 Done');
-    expect(text).not.toContain('shell');
+    const entries = buildHistoryEntries(messages);
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toEqual({ emoji: '🤖', text: 'Done' });
   });
 
   it('skips messages with no text content', () => {
     const messages: any[] = [
       { role: 'assistant', parts: [{ type: 'tool', normalizedTool: 'edit' }] },
     ];
-    const text = buildHistoryText(messages);
-    expect(text).toContain('暂无会话历史');
+    const entries = buildHistoryEntries(messages);
+    expect(entries).toEqual([]);
   });
 
   it('truncates long messages', () => {
@@ -170,8 +170,9 @@ describe('buildHistoryText', () => {
     const messages: any[] = [
       { role: 'user', parts: [{ type: 'text', text: longText }] },
     ];
-    const text = buildHistoryText(messages);
-    expect(text).toContain('...');
-    expect(text.length).toBeLessThan(longText.length + 100);
+    const entries = buildHistoryEntries(messages);
+    expect(entries).toHaveLength(1);
+    expect(entries[0].text).toContain('...');
+    expect(entries[0].text.length).toBeLessThan(longText.length);
   });
 });

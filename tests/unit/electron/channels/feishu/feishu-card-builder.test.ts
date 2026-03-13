@@ -13,7 +13,7 @@ describe('buildGroupWelcomeCard', () => {
     expect(card.header.title.content).toBe('CodeMux 会话');
     expect(card.header.template).toBe('green');
     
-    const content = card.elements[0].text.content;
+    const content = card.elements[0].content;
     expect(content).toContain(`**项目:** ${projectName}`);
     expect(content).toContain(`**引擎:** ${engineType}`);
     expect(content).toContain(`**会话:** ${sessionId}`);

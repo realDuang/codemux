@@ -205,17 +205,21 @@ export function buildQuestionText(
 /** Max characters per message entry in history display */
 const HISTORY_ENTRY_MAX_CHARS = 500;
 
-/**
- * Build a history text from conversation messages.
- * Shows only user questions and assistant replies (no intermediate steps).
- * Uses emoji to distinguish roles: 👤 user, 🤖 assistant.
- */
-export function buildHistoryText(messages: UnifiedMessage[]): string {
-  if (messages.length === 0) {
-    return "📋 暂无会话历史记录。";
-  }
+/** A single history entry for display as an individual Feishu message */
+export interface HistoryEntry {
+  emoji: string;
+  text: string;
+}
 
-  const lines: string[] = ["📋 **会话历史**", ""];
+/**
+ * Build history entries from conversation messages.
+ * Each message becomes a separate entry with emoji prefix.
+ * Uses 👤 for user messages, 🤖 for assistant messages.
+ */
+export function buildHistoryEntries(messages: UnifiedMessage[]): HistoryEntry[] {
+  if (messages.length === 0) return [];
+
+  const entries: HistoryEntry[] = [];
 
   for (const msg of messages) {
     const textParts = msg.parts.filter((p) => p.type === "text");
@@ -227,12 +231,8 @@ export function buildHistoryText(messages: UnifiedMessage[]): string {
       content.length > HISTORY_ENTRY_MAX_CHARS
         ? content.slice(0, HISTORY_ENTRY_MAX_CHARS) + "..."
         : content;
-    lines.push(`${emoji} ${truncated}`, "");
+    entries.push({ emoji, text: truncated });
   }
 
-  if (lines.length <= 2) {
-    return "📋 暂无会话历史记录。";
-  }
-
-  return lines.join("\n");
+  return entries;
 }

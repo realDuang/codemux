@@ -1290,6 +1290,13 @@ export class FeishuAdapter extends ChannelAdapter {
     const binding = this.sessionMapper.getGroupBinding(groupChatId);
     if (!binding) return;
 
+    // Update streaming session titles for any active streams
+    for (const ss of binding.streamingSessions.values()) {
+      if (!ss.completed) {
+        ss.sessionTitle = session.title;
+      }
+    }
+
     // Derive the project name from directory
     const projectName = binding.directory.split(/[\\/]/).pop() || binding.directory;
 

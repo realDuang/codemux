@@ -23,7 +23,7 @@ export interface MessageRenderer {
    * Format the final reply when a message completes.
    * Returns a RenderedMessage with the appropriate type and content.
    */
-  renderFinalReply(content: string, toolSummary?: string): RenderedMessage;
+  renderFinalReply(content: string, toolSummary?: string, title?: string): RenderedMessage;
 
   /** Truncate text to fit platform message size limit. */
   truncate(text: string): string;

@@ -16,8 +16,8 @@ export class FeishuRenderer implements MessageRenderer {
     return formatStreamingText(textBuffer);
   }
 
-  renderFinalReply(content: string, toolSummary?: string): RenderedMessage {
-    const cardJson = buildFinalReplyCard(content, toolSummary || undefined);
+  renderFinalReply(content: string, toolSummary?: string, title?: string): RenderedMessage {
+    const cardJson = buildFinalReplyCard(content, toolSummary || undefined, title);
     return { type: "rich", content: cardJson };
   }
 

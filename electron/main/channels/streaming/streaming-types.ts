@@ -33,6 +33,8 @@ export interface StreamingSession {
   finalReplySent: boolean;
   /** Tool call counts for summary (normalizedToolName → count) */
   toolCounts: Map<string, number>;
+  /** Session title (updated dynamically when session.updated fires) */
+  sessionTitle?: string;
 }
 
 /** Create a new StreamingSession with default values */

@@ -230,7 +230,7 @@ export class StreamingController {
     const toolSummary = this.formatToolSummary(session.toolCounts);
     const content = session.textBuffer || "（无文本回复）";
 
-    const rendered = this.renderer.renderFinalReply(content, toolSummary);
+    const rendered = this.renderer.renderFinalReply(content, toolSummary, session.sessionTitle);
 
     if (rendered.type === "rich" && this.capabilities.supportsRichContent) {
       // Rich content: send new rich message

@@ -655,14 +655,17 @@ export class EngineManager extends EventEmitter {
     // Cache the engineSessionId → conversationId mapping
     this.engineToConvMap.set(engineSessionId, sessionId);
 
-    // Persist user message before sending to engine
-    // (Some adapters like OpenCode don't emit user message events)
-    await this.persistUserMessage(sessionId, content);
-
     // Title fallback: derive title from first user message if still default.
+    // Run BEFORE persistUserMessage — appendMessage has its own auto-title
+    // logic that silently sets conv.title without emitting session.updated,
+    // which would cause applyTitleFallback to skip (title no longer default).
     // Run BEFORE adapter.sendMessage so the sidebar updates immediately,
     // not after the (potentially long-running) engine processing completes.
     this.applyTitleFallback(sessionId, content);
+
+    // Persist user message before sending to engine
+    // (Some adapters like OpenCode don't emit user message events)
+    await this.persistUserMessage(sessionId, content);
 
     const result = await adapter.sendMessage(engineSessionId, content, {
       ...options,

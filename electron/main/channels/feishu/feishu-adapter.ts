@@ -925,7 +925,7 @@ export class FeishuAdapter extends ChannelAdapter {
       }
 
       // Create Feishu group chat with the user
-      const groupName = `[CodeMux][${projectName}] ${sessionTitle}`;
+      const groupName = `[${projectName}] ${sessionTitle}`;
       const createRes = await this.larkClient.im.chat.create({
         params: { user_id_type: "open_id", set_bot_manager: true },
         data: {
@@ -1295,7 +1295,7 @@ export class FeishuAdapter extends ChannelAdapter {
 
     // Build the expected group name
     const newTitle = session.title || "New Session";
-    const expectedGroupName = `[CodeMux][${projectName}] ${newTitle}`;
+    const expectedGroupName = `[${projectName}] ${newTitle}`;
 
     // Update the Feishu group chat name
     try {

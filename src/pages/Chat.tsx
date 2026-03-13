@@ -13,7 +13,7 @@ import { useNavigate } from "@solidjs/router";
 import { gateway } from "../lib/gateway-api";
 import { logger } from "../lib/logger";
 import { isElectron } from "../lib/platform";
-import { sessionStore, setSessionStore, type SessionInfo } from "../stores/session";
+import { sessionStore, setSessionStore, type SessionInfo, setSendingFor } from "../stores/session";
 import {
   messageStore,
   setMessageStore,
@@ -27,6 +27,7 @@ import { AddProjectModal } from "../components/AddProjectModal";
 import type { UnifiedMessage, UnifiedPart, UnifiedPermission, UnifiedQuestion, UnifiedSession, UnifiedProject, AgentMode, EngineType, SessionActivityStatus } from "../types/unified";
 import { useI18n } from "../lib/i18n";
 import { isDefaultTitle } from "../lib/session-utils";
+import { getSetting, saveSetting } from "../lib/settings";
 
 import { InputAreaQuestion } from "../components/InputAreaQuestion";
 import { InputAreaPermission } from "../components/InputAreaPermission";
@@ -74,15 +75,11 @@ function toSessionInfo(s: UnifiedSession, projectID?: string): SessionInfo {
 export default function Chat() {
   const { t } = useI18n();
   const navigate = useNavigate();
-  // Per-session sending state: one session generating shouldn't block others
-  const [sendingMap, setSendingMap] = createSignal<Record<string, boolean>>({});
+  // Per-session sending state lives in sessionStore.sendingMap (persists across navigations).
   const sending = createMemo(() => {
     const sid = sessionStore.current;
-    return sid ? (sendingMap()[sid] ?? false) : false;
+    return sid ? (sessionStore.sendingMap[sid] ?? false) : false;
   });
-  const setSendingFor = (sessionId: string, value: boolean) => {
-    setSendingMap((prev) => ({ ...prev, [sessionId]: value }));
-  };
 
   // Track the latest todo part per session — avoids O(N×M) full scan in currentTodos memo.
   // Updated in handlePartUpdated (O(1) check) and handleMessageUpdated (O(K) scan of incoming parts).
@@ -96,7 +93,7 @@ export default function Chat() {
   const [unreadSessions, setUnreadSessions] = createSignal<Set<string>>(new Set());
   let prevSendingMap: Record<string, boolean> = {};
   createEffect(() => {
-    const currentMap = sendingMap();
+    const currentMap = { ...sessionStore.sendingMap };
     const currentSession = sessionStore.current;
     for (const [sessionId, wasSending] of Object.entries(prevSendingMap)) {
       if (wasSending && !currentMap[sessionId] && sessionId !== currentSession) {
@@ -116,7 +113,7 @@ export default function Chat() {
     if (pendingPerms && pendingPerms.length > 0) return "waiting";
     const pendingQuestions = messageStore.question[sid];
     if (pendingQuestions && pendingQuestions.length > 0) return "waiting";
-    if (sendingMap()[sid]) return "running";
+    if (sessionStore.sendingMap[sid]) return "running";
     const messages = messageStore.message[sid];
     if (messages && messages.length > 0) {
       let lastAssistant: UnifiedMessage | undefined;
@@ -420,10 +417,8 @@ export default function Chat() {
         return;
       }
 
-      setSessionStore({ loading: true });
-
-      // Initialize gateway connection with notification handlers
-      await gateway.init({
+      // Build notification handlers for this mount's closures
+      const handlers = {
         onConnected: () => {
           logger.debug("[Gateway] Connected/reconnected");
           setWsConnected(true);
@@ -432,7 +427,7 @@ export default function Chat() {
             initializeSession();
           }
         },
-        onDisconnected: (reason) => {
+        onDisconnected: (reason: string) => {
           logger.warn("[Gateway] Disconnected:", reason);
           setWsConnected(false);
         },
@@ -444,25 +439,36 @@ export default function Chat() {
         onPermissionReplied: handlePermissionReplied,
         onQuestionAsked: handleQuestionAsked,
         onQuestionReplied: handleQuestionReplied,
-        onEngineStatusChanged: (engineType, status, error) => {
+        onEngineStatusChanged: (engineType: EngineType, status: string, error?: string) => {
           setConfigStore("engines", (engines) =>
             engines.map(e => e.type === engineType ? { ...e, status: status as any } : e)
           );
         },
-        onMessageQueued: (sessionId, _messageId, _queuePosition) => {
+        onMessageQueued: (sessionId: string, _messageId: string, _queuePosition: number) => {
           logger.debug("[WS] message.queued for session:", sessionId);
         },
-        onMessageQueuedConsumed: (sessionId, _messageId) => {
+        onMessageQueuedConsumed: (sessionId: string, _messageId: string) => {
           logger.debug("[WS] message.queued.consumed for session:", sessionId);
-          // Remove the oldest queued message — the adapter has started processing it.
-          // The actual user message bubble will be created by handleMessageUpdated
-          // when the adapter emits message.updated for the real user message.
           const queued = messageStore.queued[sessionId];
           if (queued && queued.length > 0) {
             setMessageStore("queued", sessionId, (draft) => draft.slice(1));
           }
         },
-      });
+      };
+
+      // If gateway is already initialized (remount after navigation),
+      // just update handlers to point to this mount's closures — no need
+      // to reconnect or reload data.
+      if (gateway.isInitialized) {
+        gateway.setHandlers(handlers);
+        logger.debug("[Init] Gateway already initialized, handlers updated (remount)");
+        return;
+      }
+
+      setSessionStore({ loading: true });
+
+      // First-time initialization: connect gateway and load data
+      await gateway.init(handlers);
 
       // Load available engines (blocking — needed for UI/Settings before we can proceed)
       try {
@@ -524,6 +530,32 @@ export default function Chat() {
           });
 
           setSessionStore("list", sessionInfos);
+
+          // Restore last selected session from previous app launch
+          const lastSessionId = getSetting<string>("lastSessionId");
+          if (lastSessionId && sessionInfos.some(s => s.id === lastSessionId)) {
+            const lastSession = sessionInfos.find(s => s.id === lastSessionId)!;
+
+            // Expand only the project containing this session (collapse others)
+            const expandState: Record<string, boolean> = {};
+            if (lastSession.projectID) {
+              expandState[lastSession.projectID] = true;
+            }
+            setSessionStore("projectExpanded", expandState);
+
+            // Set engine type so sidebar tab switches correctly
+            if (lastSession.engineType) {
+              setConfigStore("currentEngineType", lastSession.engineType);
+            }
+
+            // Select the session and load its messages
+            setSessionStore("current", lastSessionId);
+            try {
+              await loadSessionMessages(lastSessionId);
+            } catch (err) {
+              logger.warn("[Init] Failed to load last session messages:", err);
+            }
+          }
         } catch (err) {
           if (!disposed) logger.error("[Init] Failed to load projects/sessions:", err);
         }
@@ -582,6 +614,9 @@ export default function Chat() {
     // Stale check: if the user has already switched to another session
     // while we were awaiting, skip the rest to avoid useless work.
     if (gen !== switchGeneration) return;
+
+    // Persist last selected session for restore on next app launch
+    saveSetting("lastSessionId", sessionId);
   };
 
   // New session
@@ -1031,7 +1066,7 @@ export default function Chat() {
       if (
         msgInfo.role === "assistant" &&
         (msgInfo.time.completed || msgInfo.error) &&
-        sendingMap()[targetSessionId]
+        sessionStore.sendingMap[targetSessionId]
       ) {
         const queued = messageStore.queued[targetSessionId];
         if (!queued || queued.length === 0) {
@@ -1288,7 +1323,8 @@ export default function Chat() {
 
     onCleanup(() => {
       disposed = true;
-      gateway.destroy();
+      // Gateway stays alive across navigations — handlers are updated on remount.
+      // Only mark disposed to guard in-flight async operations from this mount.
     });
   });
 

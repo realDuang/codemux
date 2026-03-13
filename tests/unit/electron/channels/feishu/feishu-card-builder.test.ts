@@ -16,7 +16,7 @@ describe('buildGroupWelcomeCard', () => {
     const content = card.elements[0].text.content;
     expect(content).toContain(`**项目:** ${projectName}`);
     expect(content).toContain(`**引擎:** ${engineType}`);
-    expect(content).toContain(`**会话:** ${sessionId.slice(0, 12)}...`);
+    expect(content).toContain(`**会话:** ${sessionId}`);
     expect(content).toContain('/cancel');
     expect(content).toContain('/help');
   });

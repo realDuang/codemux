@@ -579,10 +579,12 @@ export class CopilotSdkAdapter extends EngineAdapter {
     const pending = this.pendingQuestions.get(questionId);
     if (!pending) return;
 
-    const answer = answers[0]?.[0] ?? "";
+    // Combine all answers (selected options + custom text) into one string
+    const allAnswers = answers[0] ?? [];
+    const answer = allAnswers.join("\n") || "";
     pending.resolve({
       answer,
-      wasFreeform: !pending.question.questions[0]?.options?.some((opt) => opt.label === answer),
+      wasFreeform: allAnswers.some((a) => !pending.question.questions[0]?.options?.some((opt) => opt.label === a)),
     });
     this.pendingQuestions.delete(questionId);
     this.emit("question.replied", { questionId, answers });

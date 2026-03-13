@@ -298,7 +298,9 @@ export class CopilotSdkAdapter extends EngineAdapter {
     return session;
   }
 
-  hasSession(_sessionId: string): boolean { return true; }
+  hasSession(sessionId: string): boolean {
+    return this.activeSessions.has(sessionId);
+  }
   async getSession(sessionId: string): Promise<UnifiedSession | null> { return null; }
 
   async deleteSession(sessionId: string): Promise<void> {
@@ -594,7 +596,14 @@ export class CopilotSdkAdapter extends EngineAdapter {
 
   private isSessionExpiredError(err: unknown): boolean {
     const msg = err instanceof Error ? err.message : String(err);
-    return msg.includes("Session not found");
+    return (
+      msg.includes("Session not found") ||
+      msg.includes("connection") ||
+      msg.includes("disposed") ||
+      msg.includes("closed") ||
+      msg.includes("EPIPE") ||
+      msg.includes("not running")
+    );
   }
 
   /** Remove a stale session from runtime state (activeSessions, event subs). */
@@ -605,11 +614,27 @@ export class CopilotSdkAdapter extends EngineAdapter {
     this.sessionUnsubscribers.delete(sessionId);
   }
 
+  /** Clear all cached sessions (e.g. after CLI reconnect). */
+  private evictAllSessions(): void {
+    for (const unsub of this.sessionUnsubscribers.values()) {
+      try { unsub(); } catch {}
+    }
+    this.activeSessions.clear();
+    this.sessionUnsubscribers.clear();
+  }
+
   private ensureClient(): void {
     if (!this.client || this.status !== "running") throw new Error("Copilot SDK adapter is not running");
   }
 
   private async ensureActiveSession(sessionId: string, directory?: string): Promise<CopilotSession> {
+    // If client reconnected (e.g. CLI restarted), cached sessions are stale
+    const clientState = this.client?.getState?.();
+    if (clientState && clientState !== "connected") {
+      copilotLog.warn(`Client state is "${clientState}", clearing all cached sessions`);
+      this.evictAllSessions();
+    }
+
     const existing = this.activeSessions.get(sessionId);
     if (existing) return existing;
     this.ensureClient();
@@ -623,12 +648,15 @@ export class CopilotSdkAdapter extends EngineAdapter {
     };
 
     try {
+      copilotLog.info(`Resuming session ${sessionId}...`);
       const sdkSession = await this.client!.resumeSession(sessionId, config);
+      copilotLog.info(`Session ${sessionId} resumed successfully`);
       this.subscribeToSessionEvents(sdkSession);
       this.activeSessions.set(sessionId, sdkSession);
       if (workingDirectory) this.sessionDirectories.set(sessionId, workingDirectory);
       return sdkSession;
     } catch (err) {
+      copilotLog.warn(`Failed to resume session ${sessionId}, creating new session:`, err);
       const sdkSession = await this.client!.createSession({ ...config } as any);
       this.subscribeToSessionEvents(sdkSession, sessionId);
       this.activeSessions.set(sessionId, sdkSession);

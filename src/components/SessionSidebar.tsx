@@ -1,4 +1,4 @@
-import { For, Show, createSignal, createMemo, createEffect } from "solid-js";
+import { For, Show, Switch, Match, createSignal, createMemo, createEffect } from "solid-js";
 import { SessionInfo, sessionStore, setSessionStore, getProjectName } from "../stores/session";
 import { useI18n, formatMessage } from "../lib/i18n";
 import { isDefaultTitle } from "../lib/session-utils";
@@ -65,25 +65,23 @@ export function SessionSidebar(props: SessionSidebarProps) {
   const [pendingDeleteId, setPendingDeleteId] = createSignal<string | null>(null);
 
   const StatusIndicator = (p: { status: SessionActivityStatus }) => {
-    switch (p.status) {
-      case "running":
-        return (
+    return (
+      <Switch>
+        <Match when={p.status === "running"}>
           <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24"
             fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"
             class="text-blue-500 dark:text-blue-400 flex-shrink-0 animate-spin">
             <path d="M21 12a9 9 0 1 1-6.219-8.56" />
           </svg>
-        );
-      case "completed":
-        return (
+        </Match>
+        <Match when={p.status === "completed"}>
           <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24"
             fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"
             class="text-green-500 dark:text-green-400 flex-shrink-0">
             <path d="M20 6 9 17l-5-5" />
           </svg>
-        );
-      case "waiting":
-        return (
+        </Match>
+        <Match when={p.status === "waiting"}>
           <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24"
             fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"
             class="text-amber-500 dark:text-amber-400 flex-shrink-0">
@@ -91,9 +89,8 @@ export function SessionSidebar(props: SessionSidebarProps) {
             <path d="M12 8v4" />
             <path d="M12 16h.01" />
           </svg>
-        );
-      case "cancelled":
-        return (
+        </Match>
+        <Match when={p.status === "cancelled"}>
           <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24"
             fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"
             class="text-amber-500 dark:text-amber-400 flex-shrink-0">
@@ -101,9 +98,8 @@ export function SessionSidebar(props: SessionSidebarProps) {
             <path d="M12 9v4" />
             <path d="M12 17h.01" />
           </svg>
-        );
-      case "error":
-        return (
+        </Match>
+        <Match when={p.status === "error"}>
           <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24"
             fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"
             class="text-red-500 dark:text-red-400 flex-shrink-0">
@@ -111,10 +107,9 @@ export function SessionSidebar(props: SessionSidebarProps) {
             <path d="m15 9-6 6" />
             <path d="m9 9 6 6" />
           </svg>
-        );
-      default:
-        return null;
-    }
+        </Match>
+      </Switch>
+    );
   };
 
   // Load info once on mount (only in Electron)

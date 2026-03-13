@@ -47,16 +47,24 @@ class GatewayAPI {
   private boundHandlers: Array<{ event: string; handler: (...args: any[]) => void }> = [];
 
   /**
+   * Whether the gateway has been initialized (connected + events bound).
+   */
+  get isInitialized(): boolean {
+    return this.initialized;
+  }
+
+  /**
    * Initialize the gateway connection and subscribe to notifications.
    * Call once during app startup (e.g., in a top-level createEffect).
+   * If already initialized, only updates the notification handlers
+   * (useful when Chat remounts after navigation).
    */
   async init(handlers?: GatewayNotificationHandlers): Promise<void> {
-    if (this.initialized) return;
-    this.initialized = true;
-
     if (handlers) {
       this.handlers = handlers;
     }
+    if (this.initialized) return;
+    this.initialized = true;
 
     this.bindEvents();
 

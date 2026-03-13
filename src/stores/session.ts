@@ -22,6 +22,8 @@ export const [sessionStore, setSessionStore] = createStore<{
   initError: string | null;
   projects: UnifiedProject[];
   projectExpanded: ProjectExpandState;
+  /** Per-session sending (streaming) state — persists across Chat navigations. */
+  sendingMap: Record<string, boolean>;
 }>({
   list: [],
   current: null,
@@ -29,7 +31,13 @@ export const [sessionStore, setSessionStore] = createStore<{
   initError: null,
   projects: [],
   projectExpanded: {},
+  sendingMap: {},
 });
+
+/** Set the sending (streaming) state for a session. */
+export function setSendingFor(sessionId: string, value: boolean): void {
+  setSessionStore("sendingMap", sessionId, value);
+}
 
 export function getProjectName(project: UnifiedProject): string {
   if (project.name) return project.name;

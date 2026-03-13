@@ -114,13 +114,15 @@ export class StreamingController {
     session: StreamingSession,
     newPart: UnifiedPart & { type: "text" },
   ): Promise<void> {
-    // Send current buffer as a plain text message (intermediate segment)
-    const truncated = this.renderer.truncate(session.textBuffer);
-    await this.transport.sendText(session.chatId, truncated);
-
-    // Reset for new segment
-    session.textBuffer = newPart.text || "";
+    // Capture old buffer before updating state — state must be updated
+    // synchronously to prevent concurrent transitions from re-entering.
+    const prevBuffer = session.textBuffer;
     session.currentTextPartId = newPart.id;
+    session.textBuffer = newPart.text || "";
+
+    // Send previous buffer as a plain text message (intermediate segment)
+    const truncated = this.renderer.truncate(prevBuffer);
+    await this.transport.sendText(session.chatId, truncated);
   }
 
   /**
@@ -133,23 +135,30 @@ export class StreamingController {
     session: StreamingSession,
     newPart: UnifiedPart & { type: "text" },
   ): Promise<void> {
-    // 1. Finalize current message (clear timer, patch with final text)
+    // ---- Synchronous state capture & update ----
+    // All session state mutations MUST happen before the first `await` to
+    // prevent concurrent `applyPart` calls from seeing stale state and
+    // triggering duplicate transitions (each creating a new message).
     if (session.patchTimer) {
       clearTimeout(session.patchTimer);
       session.patchTimer = null;
     }
-    if (session.platformMessageId && session.textBuffer) {
-      const truncated = this.renderer.truncate(session.textBuffer);
-      await this.transport.updateText(session.platformMessageId, truncated);
-    }
+    const prevMessageId = session.platformMessageId;
+    const prevBuffer = session.textBuffer;
 
-    // 2. Reset for new segment
-    session.textBuffer = newPart.text || "";
     session.currentTextPartId = newPart.id;
+    session.textBuffer = newPart.text || "";
     session.platformMessageId = ""; // prevent patches during message creation
     session.lastPatchTime = Date.now();
 
-    // 3. Create new platform message for the new segment
+    // ---- Async operations ----
+    // 1. Finalize previous message with its final text
+    if (prevMessageId && prevBuffer) {
+      const truncated = this.renderer.truncate(prevBuffer);
+      await this.transport.updateText(prevMessageId, truncated);
+    }
+
+    // 2. Create new platform message for the new segment
     const streamingText = this.renderer.renderStreamingUpdate(session.textBuffer);
     const newMsgId = await this.transport.sendText(session.chatId, streamingText);
 

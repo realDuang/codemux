@@ -77,12 +77,11 @@ export class FeishuAdapter extends ChannelAdapter {
   private renderer = new FeishuRenderer();
   private streamingController: StreamingController | null = null;
 
-  /** Feishu supports message update, delete, rich content, and multi-segment */
+  /** Feishu supports message update, delete, and rich content (interactive cards) */
   private static readonly CAPABILITIES: ChannelCapabilities = {
     supportsMessageUpdate: true,
     supportsMessageDelete: true,
     supportsRichContent: true,
-    supportsMultiSegment: true,
     maxMessageBytes: 28_000,
   };
 
@@ -587,23 +586,25 @@ export class FeishuAdapter extends ChannelAdapter {
     text: string,
   ): Promise<void> {
     if (!this.gatewayClient || !this.transport || !this.streamingController) {
-      // Reset processing state so future messages can still be processed
       tempSession.processing = false;
       feishuLog.error("Gateway client not connected, cannot send P2P message");
       return;
     }
 
-    // Send initial "thinking" message
-    const platformMsgId = await this.transport.sendText(chatId, "🤔 思考中...");
-    if (!platformMsgId) {
-      feishuLog.error("Failed to send P2P thinking message");
-      await this.processP2PQueue(chatId);
-      return;
+    // In streaming mode: send placeholder; in batch mode: skip it
+    let platformMsgId = "";
+    if (!this.streamingController.isBatchMode) {
+      platformMsgId = await this.transport.sendText(chatId, "🤔 思考中...");
+      if (!platformMsgId) {
+        feishuLog.error("Failed to send P2P thinking message");
+        await this.processP2PQueue(chatId);
+        return;
+      }
     }
 
     tempSession.lastActiveAt = Date.now();
 
-    // Create streaming session
+    // Create streaming session (platformMsgId may be empty in batch mode)
     const streaming = createStreamingSession(chatId, tempSession.conversationId, platformMsgId);
     tempSession.streamingSession = streaming;
 
@@ -619,11 +620,17 @@ export class FeishuAdapter extends ChannelAdapter {
       .catch(async (err) => {
         feishuLog.error("P2P sendMessage failed:", err);
         tempSession.streamingSession = undefined;
-        this.transport!.updateText(
-          platformMsgId,
-          `⚠️ 错误：${err instanceof Error ? err.message : String(err)}`,
-        );
-        // Session might be invalid — try recreating on next message
+        if (platformMsgId) {
+          this.transport!.updateText(
+            platformMsgId,
+            `⚠️ 错误：${err instanceof Error ? err.message : String(err)}`,
+          );
+        } else {
+          this.transport!.sendText(
+            chatId,
+            `⚠️ 错误：${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
         const p2pState = this.sessionMapper.getP2PChat(chatId);
         if (p2pState?.lastSelectedProject) {
           await this.cleanupExpiredTempSession(chatId);
@@ -1063,13 +1070,16 @@ export class FeishuAdapter extends ChannelAdapter {
     binding: GroupBinding,
     text: string,
   ): Promise<void> {
-    if (!this.gatewayClient || !this.transport) return;
+    if (!this.gatewayClient || !this.transport || !this.streamingController) return;
 
-    // Send initial "thinking" message to Feishu
-    const platformMsgId = await this.transport.sendText(groupChatId, "🤔 思考中...");
-    if (!platformMsgId) {
-      feishuLog.error("Failed to send initial thinking message");
-      return;
+    // In streaming mode: send placeholder; in batch mode: skip it
+    let platformMsgId = "";
+    if (!this.streamingController.isBatchMode) {
+      platformMsgId = await this.transport.sendText(groupChatId, "🤔 思考中...");
+      if (!platformMsgId) {
+        feishuLog.error("Failed to send initial thinking message");
+        return;
+      }
     }
 
     // Register streaming session IMMEDIATELY with placeholder key.
@@ -1080,8 +1090,6 @@ export class FeishuAdapter extends ChannelAdapter {
     this.sessionMapper.registerStreamingSession(groupChatId, placeholderKey, streamingSession);
 
     // Send message to engine via Gateway (non-blocking)
-    // Streaming updates come via Gateway notifications and are now captured
-    // by the pre-registered streaming session above.
     const sendPromise = this.gatewayClient.sendMessage({
       sessionId: binding.conversationId,
       content: [{ type: "text", text }],
@@ -1089,20 +1097,24 @@ export class FeishuAdapter extends ChannelAdapter {
 
     sendPromise
       .then((msg) => {
-        // Re-key: remove placeholder, register with real msg.id
-        // so handleMessageCompleted can find it by message.id
         streamingSession.messageId = msg.id;
         binding.streamingSessions.delete(placeholderKey);
         this.sessionMapper.registerStreamingSession(groupChatId, msg.id, streamingSession);
       })
       .catch((err) => {
         feishuLog.error("sendMessage failed:", err);
-        // Clean up placeholder and show error
         binding.streamingSessions.delete(placeholderKey);
-        this.transport!.updateText(
-          platformMsgId,
-          `⚠️ 错误：${err instanceof Error ? err.message : String(err)}`,
-        );
+        if (platformMsgId) {
+          this.transport!.updateText(
+            platformMsgId,
+            `⚠️ 错误：${err instanceof Error ? err.message : String(err)}`,
+          );
+        } else {
+          this.transport!.sendText(
+            groupChatId,
+            `⚠️ 错误：${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
       });
   }
 

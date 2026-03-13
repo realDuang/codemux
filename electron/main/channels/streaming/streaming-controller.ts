@@ -6,22 +6,20 @@
 //
 // supportsMessageUpdate = true  → "streaming mode"
 //   Send "thinking..." placeholder, update it with content as it arrives,
-//   finalize with final reply.
+//   finalize with final reply. Multi-segment transitions (new text part →
+//   new platform message) are automatically enabled.
 //
 // supportsMessageUpdate = false → "batch mode"
 //   Silently accumulate text, send only the final reply when complete.
-//   No intermediate messages visible to the user.
+//   No intermediate messages visible to the user. The adapter is responsible
+//   for not sending a placeholder message (check controller.isBatchMode).
 //
 // supportsRichContent = false   → renderer returns type "text"
-//   Final reply sent as plain text update, no rich content.
+//   Final reply sent as plain text, no rich content.
 //
 // supportsMessageDelete = false → no delete-and-replace
 //   When finalizing with rich content, update existing message to a
 //   completion notice instead of deleting it.
-//
-// supportsMultiSegment = false  → no segment transitions
-//   All text accumulated into a single message, no new messages on
-//   segment boundaries.
 // ============================================================================
 
 import type { UnifiedPart, UnifiedMessage } from "../../../../src/types/unified";
@@ -61,13 +59,13 @@ export class StreamingController {
     switch (part.type) {
       case "text":
         if (
-          this.capabilities.supportsMultiSegment &&
           this.capabilities.supportsMessageUpdate &&
           session.currentTextPartId &&
           session.currentTextPartId !== part.id &&
           session.textBuffer
         ) {
           // New text segment detected — transition to a new platform message
+          // (only possible when the platform supports message updates)
           void this.transitionToNewSegment(session, part);
         } else {
           // Same segment, first segment, or batch mode

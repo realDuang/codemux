@@ -6,13 +6,19 @@
 //
 // supportsMessageUpdate = true  → "streaming mode"
 //   Send "thinking..." placeholder, update it with content as it arrives,
-//   finalize with final reply. Multi-segment transitions (new text part →
-//   new platform message) are automatically enabled.
+//   finalize with final reply. On segment boundary: finalize current message
+//   with plain text, create new streaming message.
 //
 // supportsMessageUpdate = false → "batch mode"
-//   Silently accumulate text, send only the final reply when complete.
-//   No intermediate messages visible to the user. The adapter is responsible
-//   for not sending a placeholder message (check controller.isBatchMode).
+//   Silently accumulate text, no intermediate updates visible.
+//   On segment boundary: flush accumulated text as a plain text message,
+//   start accumulating the new segment.
+//   The adapter is responsible for not sending a placeholder message
+//   (check controller.isBatchMode).
+//
+// Both modes handle multi-segment replies: intermediate segments are always
+// delivered as plain text; only the final segment uses rich content (if
+// supported) via finalize → sendFinalReply.
 //
 // supportsRichContent = false   → renderer returns type "text"
 //   Final reply sent as plain text, no rich content.
@@ -59,16 +65,20 @@ export class StreamingController {
     switch (part.type) {
       case "text":
         if (
-          this.capabilities.supportsMessageUpdate &&
           session.currentTextPartId &&
           session.currentTextPartId !== part.id &&
           session.textBuffer
         ) {
-          // New text segment detected — transition to a new platform message
-          // (only possible when the platform supports message updates)
-          void this.transitionToNewSegment(session, part);
+          // New text segment detected
+          if (this.capabilities.supportsMessageUpdate) {
+            // Streaming mode: finalize current message, create new streaming message
+            void this.transitionToNewSegment(session, part);
+          } else {
+            // Batch mode: flush current buffer as plain text, start new segment
+            void this.flushSegmentAsText(session, part);
+          }
         } else {
-          // Same segment, first segment, or batch mode
+          // Same segment or first segment
           session.currentTextPartId = part.id;
           session.textBuffer = part.text || "";
           if (this.capabilities.supportsMessageUpdate) {
@@ -89,13 +99,35 @@ export class StreamingController {
   }
 
   // =========================================================================
-  // Multi-Segment Transition (streaming mode only)
+  // Multi-Segment Transitions
   // =========================================================================
 
   /**
-   * Transition to a new text segment: finalize current platform message
-   * and create a new one for the incoming segment.
-   * Only called when supportsMultiSegment && supportsMessageUpdate.
+   * Flush the current text buffer as a plain text message and start
+   * accumulating the new segment. Used in batch mode (no message update)
+   * when a segment boundary is detected.
+   *
+   * Intermediate segments are always plain text; only the final segment
+   * (handled by finalize → sendFinalReply) uses rich content.
+   */
+  private async flushSegmentAsText(
+    session: StreamingSession,
+    newPart: UnifiedPart & { type: "text" },
+  ): Promise<void> {
+    // Send current buffer as a plain text message (intermediate segment)
+    const truncated = this.renderer.truncate(session.textBuffer);
+    await this.transport.sendText(session.chatId, truncated);
+
+    // Reset for new segment
+    session.textBuffer = newPart.text || "";
+    session.currentTextPartId = newPart.id;
+  }
+
+  /**
+   * Transition to a new text segment in streaming mode: finalize current
+   * platform message with plain text, create a new streaming message for
+   * the incoming segment.
+   * Only called when supportsMessageUpdate is true.
    */
   private async transitionToNewSegment(
     session: StreamingSession,

@@ -12,6 +12,8 @@ import { EventEmitter } from "events";
 export interface ChannelCapabilities {
   /** Whether sent messages can be updated/edited after sending */
   supportsMessageUpdate: boolean;
+  /** Whether sent messages can be deleted */
+  supportsMessageDelete: boolean;
   /** Whether the platform supports rich content (cards, embeds, etc.) */
   supportsRichContent: boolean;
   /** Whether the adapter splits long responses into multiple messages */

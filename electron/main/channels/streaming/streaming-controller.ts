@@ -1,39 +1,49 @@
 // ============================================================================
 // StreamingController — Generic streaming orchestrator for channel adapters
-// Manages streaming session lifecycle: throttled updates, multi-segment
-// transitions, and message finalization. Platform-agnostic.
+// Manages streaming session lifecycle with capability-driven degradation.
+//
+// Degradation strategy based on ChannelCapabilities:
+//
+// supportsMessageUpdate = true  → "streaming mode"
+//   Send "thinking..." placeholder, update it with content as it arrives,
+//   finalize with final reply.
+//
+// supportsMessageUpdate = false → "batch mode"
+//   Silently accumulate text, send only the final reply when complete.
+//   No intermediate messages visible to the user.
+//
+// supportsRichContent = false   → renderer returns type "text"
+//   Final reply sent as plain text update, no rich content.
+//
+// supportsMessageDelete = false → no delete-and-replace
+//   When finalizing with rich content, update existing message to a
+//   completion notice instead of deleting it.
+//
+// supportsMultiSegment = false  → no segment transitions
+//   All text accumulated into a single message, no new messages on
+//   segment boundaries.
 // ============================================================================
 
 import type { UnifiedPart, UnifiedMessage } from "../../../../src/types/unified";
+import type { ChannelCapabilities } from "../channel-adapter";
 import type { MessageTransport } from "./message-transport";
 import type { MessageRenderer } from "./message-renderer";
 import type { StreamingSession, StreamingConfig } from "./streaming-types";
 import { channelLog } from "../../services/logger";
 
 /**
- * Callback invoked after a streaming session is finalized.
- * The adapter uses this to clean up its own session tracking.
- */
-export type FinalizeCallback = (session: StreamingSession) => void;
-
-/**
  * Generic streaming controller for channel adapters.
- *
- * Responsibilities:
- * - Apply incoming part updates (text accumulation, tool counting)
- * - Throttle platform message update API calls
- * - Detect and handle multi-segment text transitions
- * - Finalize streaming sessions when messages complete
  *
  * The adapter owns routing (which streaming session to update) and
  * session tracking. The controller manages the streaming state machine
- * for a single session at a time.
+ * for individual sessions, adapting behavior based on platform capabilities.
  */
 export class StreamingController {
   constructor(
     private transport: MessageTransport,
     private renderer: MessageRenderer,
     private config: StreamingConfig,
+    private capabilities: ChannelCapabilities,
   ) {}
 
   // =========================================================================
@@ -43,11 +53,16 @@ export class StreamingController {
   /**
    * Apply a part update to a streaming session.
    * Handles text accumulation, segment transitions, and tool counting.
+   *
+   * In batch mode (no message update support), text is accumulated
+   * silently without any platform API calls.
    */
   applyPart(session: StreamingSession, part: UnifiedPart): void {
     switch (part.type) {
       case "text":
         if (
+          this.capabilities.supportsMultiSegment &&
+          this.capabilities.supportsMessageUpdate &&
           session.currentTextPartId &&
           session.currentTextPartId !== part.id &&
           session.textBuffer
@@ -55,10 +70,13 @@ export class StreamingController {
           // New text segment detected — transition to a new platform message
           void this.transitionToNewSegment(session, part);
         } else {
-          // Same segment or first segment — normal streaming update
+          // Same segment, first segment, or batch mode
           session.currentTextPartId = part.id;
           session.textBuffer = part.text || "";
-          this.scheduleThrottledUpdate(session);
+          if (this.capabilities.supportsMessageUpdate) {
+            this.scheduleThrottledUpdate(session);
+          }
+          // In batch mode: just accumulate, no API call
         }
         break;
       case "tool":
@@ -73,12 +91,13 @@ export class StreamingController {
   }
 
   // =========================================================================
-  // Multi-Segment Transition
+  // Multi-Segment Transition (streaming mode only)
   // =========================================================================
 
   /**
    * Transition to a new text segment: finalize current platform message
    * and create a new one for the incoming segment.
+   * Only called when supportsMultiSegment && supportsMessageUpdate.
    */
   private async transitionToNewSegment(
     session: StreamingSession,
@@ -125,7 +144,7 @@ export class StreamingController {
    * Finalize a streaming session when the assistant message completes.
    * Sends the final formatted reply and marks the session as completed.
    *
-   * @returns true if a matching session was found and finalized
+   * @returns true if the session was finalized
    */
   finalize(session: StreamingSession, message: UnifiedMessage): boolean {
     if (message.role !== "assistant") return false;
@@ -138,10 +157,18 @@ export class StreamingController {
     }
 
     if (message.error) {
-      this.transport.updateText(
-        session.platformMessageId,
-        `⚠️ Error: ${message.error}`,
-      );
+      if (this.capabilities.supportsMessageUpdate && session.platformMessageId) {
+        this.transport.updateText(
+          session.platformMessageId,
+          `⚠️ Error: ${message.error}`,
+        );
+      } else {
+        // Batch mode or no placeholder: send error as new message
+        this.transport.sendText(
+          session.chatId,
+          `⚠️ Error: ${message.error}`,
+        );
+      }
       return true;
     }
 
@@ -151,7 +178,7 @@ export class StreamingController {
 
   /**
    * Send the final reply for a completed streaming session.
-   * Uses the renderer to format the content and the transport to deliver it.
+   * Adapts delivery strategy based on platform capabilities.
    */
   private async sendFinalReply(session: StreamingSession): Promise<void> {
     const toolSummary = this.formatToolSummary(session.toolCounts);
@@ -159,25 +186,35 @@ export class StreamingController {
 
     const rendered = this.renderer.renderFinalReply(content, toolSummary);
 
-    if (rendered.type === "rich") {
-      // Replace streaming text message with rich content
+    if (rendered.type === "rich" && this.capabilities.supportsRichContent) {
+      // Rich content: send new rich message
       const newId = await this.transport.sendRichContent(session.chatId, rendered.content);
-      if (newId) {
-        await this.transport.deleteMessage(session.platformMessageId);
+      if (newId && session.platformMessageId) {
+        if (this.capabilities.supportsMessageDelete) {
+          // Delete old streaming text message
+          await this.transport.deleteMessage(session.platformMessageId);
+        } else if (this.capabilities.supportsMessageUpdate) {
+          // Can't delete, but can update — replace with completion notice
+          await this.transport.updateText(session.platformMessageId, "✅");
+        }
+        // Can't delete or update — old message stays (acceptable degradation)
       }
-    } else {
-      // Update existing message with final text
+    } else if (this.capabilities.supportsMessageUpdate && session.platformMessageId) {
+      // Text-only or no rich support: update existing message in place
       await this.transport.updateText(session.platformMessageId, rendered.content);
+    } else {
+      // Batch mode: send final reply as a new message
+      await this.transport.sendText(session.chatId, rendered.content);
     }
   }
 
   // =========================================================================
-  // Throttled Update
+  // Throttled Update (streaming mode only)
   // =========================================================================
 
   /**
    * Schedule a throttled update to the platform message.
-   * Ensures we don't exceed the platform's API rate limit.
+   * Only called when supportsMessageUpdate is true.
    */
   private scheduleThrottledUpdate(session: StreamingSession): void {
     if (session.patchTimer || session.completed || !session.platformMessageId) return;
@@ -194,6 +231,15 @@ export class StreamingController {
         this.transport.updateText(session.platformMessageId, truncated);
       }
     }, delay);
+  }
+
+  // =========================================================================
+  // Query
+  // =========================================================================
+
+  /** Whether this controller operates in batch mode (no streaming updates) */
+  get isBatchMode(): boolean {
+    return !this.capabilities.supportsMessageUpdate;
   }
 
   // =========================================================================

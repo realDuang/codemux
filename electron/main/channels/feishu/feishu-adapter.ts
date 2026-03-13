@@ -10,6 +10,7 @@ import {
   ChannelAdapter,
   type ChannelConfig,
   type ChannelInfo,
+  type ChannelCapabilities,
   type ChannelStatus,
 } from "../channel-adapter";
 import { GatewayWsClient } from "../gateway-ws-client";
@@ -76,6 +77,15 @@ export class FeishuAdapter extends ChannelAdapter {
   private renderer = new FeishuRenderer();
   private streamingController: StreamingController | null = null;
 
+  /** Feishu supports message update, delete, rich content, and multi-segment */
+  private static readonly CAPABILITIES: ChannelCapabilities = {
+    supportsMessageUpdate: true,
+    supportsMessageDelete: true,
+    supportsRichContent: true,
+    supportsMultiSegment: true,
+    maxMessageBytes: 28_000,
+  };
+
   // --- Lifecycle ---
 
   async start(config: ChannelConfig): Promise<void> {
@@ -115,6 +125,7 @@ export class FeishuAdapter extends ChannelAdapter {
         this.transport,
         this.renderer,
         { throttleMs: this.config.streamingThrottleMs },
+        FeishuAdapter.CAPABILITIES,
       );
 
       // 2. Create event dispatcher for receiving messages, card actions, and lifecycle events

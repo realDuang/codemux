@@ -1,10 +1,11 @@
 // ============================================================================
 // Feishu Command Parser
 // Parses slash commands from Feishu user messages.
-// Supports: /help, /status, /project, /cancel, /mode, /model
+// Supports: /help, /status, /project, /cancel, /mode, /model, /history
 // ============================================================================
 
 import type { ParsedCommand } from "./feishu-types";
+import type { UnifiedMessage } from "../../../../src/types/unified";
 
 /** Command prefix character */
 const COMMAND_PREFIX = "/";
@@ -96,6 +97,7 @@ export function buildGroupHelpText(): string {
     "`/mode <agent|plan|build>` — 切换模式",
     "`/model list` — 查看可用模型",
     "`/model <id>` — 按 ID 切换模型",
+    "`/history` — 查看会话历史记录",
     "`/help` — 显示此帮助",
     "",
     "发送任意文本即可与 AI 助手对话。",
@@ -196,6 +198,41 @@ export function buildQuestionText(
 
   lines.push("─────────────────────────");
   lines.push("回复数字以回答。");
+
+  return lines.join("\n");
+}
+
+/** Max characters per message entry in history display */
+const HISTORY_ENTRY_MAX_CHARS = 500;
+
+/**
+ * Build a history text from conversation messages.
+ * Shows only user questions and assistant replies (no intermediate steps).
+ * Uses emoji to distinguish roles: 👤 user, 🤖 assistant.
+ */
+export function buildHistoryText(messages: UnifiedMessage[]): string {
+  if (messages.length === 0) {
+    return "📋 暂无会话历史记录。";
+  }
+
+  const lines: string[] = ["📋 **会话历史**", ""];
+
+  for (const msg of messages) {
+    const textParts = msg.parts.filter((p) => p.type === "text");
+    const content = textParts.map((p) => p.text).join("\n").trim();
+    if (!content) continue;
+
+    const emoji = msg.role === "user" ? "👤" : "🤖";
+    const truncated =
+      content.length > HISTORY_ENTRY_MAX_CHARS
+        ? content.slice(0, HISTORY_ENTRY_MAX_CHARS) + "..."
+        : content;
+    lines.push(`${emoji} ${truncated}`, "");
+  }
+
+  if (lines.length <= 2) {
+    return "📋 暂无会话历史记录。";
+  }
 
   return lines.join("\n");
 }

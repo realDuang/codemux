@@ -224,6 +224,9 @@ export class StreamingController {
    * Adapts delivery strategy based on platform capabilities.
    */
   private async sendFinalReply(session: StreamingSession): Promise<void> {
+    if (session.finalReplySent) return;
+    session.finalReplySent = true;
+
     const toolSummary = this.formatToolSummary(session.toolCounts);
     const content = session.textBuffer || "（无文本回复）";
 

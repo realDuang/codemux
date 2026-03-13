@@ -29,6 +29,8 @@ export interface StreamingSession {
   patchTimer: ReturnType<typeof setTimeout> | null;
   /** Whether the message is completed */
   completed: boolean;
+  /** Whether sendFinalReply has already been called (prevents duplicate cards) */
+  finalReplySent: boolean;
   /** Tool call counts for summary (normalizedToolName → count) */
   toolCounts: Map<string, number>;
 }
@@ -48,6 +50,7 @@ export function createStreamingSession(
     lastPatchTime: Date.now(),
     patchTimer: null,
     completed: false,
+    finalReplySent: false,
     toolCounts: new Map(),
   };
 }

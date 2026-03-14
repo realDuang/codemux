@@ -287,6 +287,22 @@ class ConversationStore {
     });
   }
 
+  /**
+   * Idempotently ensure a message exists — creates it only if no message
+   * with the same ID is present. Used for placeholder assistant messages
+   * during incremental step persistence.
+   */
+  async ensureMessage(id: string, msg: ConversationMessage): Promise<void> {
+    this.ensureInitialized();
+
+    await this.withWriteLock(id, async () => {
+      const messages = await this.listMessages(id);
+      if (messages.some((m) => m.id === msg.id)) return;
+      messages.push(msg);
+      await this.writeMessages(id, messages);
+    });
+  }
+
   // -------------------------------------------------------------------------
   // Steps
   // -------------------------------------------------------------------------

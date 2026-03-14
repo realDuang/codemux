@@ -82,6 +82,17 @@ export class EngineManager extends EventEmitter {
   /** Accumulate content-type parts (text/file) during streaming: messageId → (TextPart|FilePart)[] */
   private contentPartsBuffer = new Map<string, Array<TextPart | FilePart>>();
 
+  // --- Incremental step persistence ---
+  /** messageIds whose step buffers have unsaved changes */
+  private dirtySteps = new Set<string>();
+  /** messageId → conversationId mapping for dirty step flush */
+  private messageConvMap = new Map<string, string>();
+  /** messageIds for which a placeholder assistant message has been persisted */
+  private persistedPlaceholders = new Set<string>();
+  /** Timer for debounced step flush (2s interval) */
+  private stepFlushTimer: ReturnType<typeof setTimeout> | null = null;
+  private static readonly STEP_FLUSH_INTERVAL_MS = 2000;
+
   // --- Adapter Registration ---
 
   registerAdapter(adapter: EngineAdapter): void {
@@ -233,6 +244,13 @@ export class EngineManager extends EventEmitter {
           buffer[existingIdx] = part;
         } else {
           buffer.push(part);
+        }
+
+        // Mark for incremental persistence
+        if (convId) {
+          this.messageConvMap.set(messageId, convId);
+          this.dirtySteps.add(messageId);
+          this.scheduleStepFlush();
         }
       }
 
@@ -404,15 +422,67 @@ export class EngineManager extends EventEmitter {
         await conversationStore.saveSteps(conversationId, message.id, allSteps);
       }
 
-      // Clean up buffers
+      // Clean up buffers and incremental persistence state
       this.stepPartsBuffer.delete(message.id);
       this.contentPartsBuffer.delete(message.id);
+      this.dirtySteps.delete(message.id);
+      this.persistedPlaceholders.delete(message.id);
+      this.messageConvMap.delete(message.id);
 
       engineManagerLog.debug(
         `Persisted message ${message.id} (${message.role}) to conversation ${conversationId}: ${contentParts.length} content parts, ${allSteps.length} steps`,
       );
     } catch (err) {
       engineManagerLog.error(`Failed to persist message ${message.id}:`, err);
+    }
+  }
+
+  /**
+   * Schedule a debounced flush of dirty step buffers to disk.
+   * Uses a fixed 2s interval to avoid excessive I/O during streaming.
+   */
+  private scheduleStepFlush(): void {
+    if (this.stepFlushTimer) return;
+    this.stepFlushTimer = setTimeout(() => {
+      this.stepFlushTimer = null;
+      this.flushDirtySteps();
+    }, EngineManager.STEP_FLUSH_INTERVAL_MS);
+  }
+
+  /**
+   * Incrementally persist dirty step buffers to disk.
+   * Ensures a placeholder assistant message exists so that steps are
+   * discoverable via listMessages() even if the message never completes.
+   */
+  private async flushDirtySteps(): Promise<void> {
+    const toFlush = [...this.dirtySteps];
+    this.dirtySteps.clear();
+
+    for (const messageId of toFlush) {
+      const convId = this.messageConvMap.get(messageId);
+      if (!convId) continue;
+
+      const steps = this.stepPartsBuffer.get(messageId);
+      if (!steps || steps.length === 0) continue;
+
+      try {
+        // Ensure placeholder assistant message exists (once per message)
+        if (!this.persistedPlaceholders.has(messageId)) {
+          await conversationStore.ensureMessage(convId, {
+            id: messageId,
+            role: "assistant",
+            time: { created: Date.now() },
+            parts: [],
+          });
+          this.persistedPlaceholders.add(messageId);
+        }
+
+        await conversationStore.saveSteps(convId, messageId, [...steps]);
+      } catch (err) {
+        engineManagerLog.error(`Failed to flush steps for ${messageId}:`, err);
+        // Re-add to dirty set for retry on next schedule
+        this.dirtySteps.add(messageId);
+      }
     }
   }
 
@@ -563,6 +633,9 @@ export class EngineManager extends EventEmitter {
       for (const msg of messages) {
         this.stepPartsBuffer.delete(msg.id);
         this.contentPartsBuffer.delete(msg.id);
+        this.dirtySteps.delete(msg.id);
+        this.messageConvMap.delete(msg.id);
+        this.persistedPlaceholders.delete(msg.id);
       }
     } catch (err) {
       engineManagerLog.warn(`Failed to clean up buffers for session ${sessionId}:`, err);
@@ -603,6 +676,9 @@ export class EngineManager extends EventEmitter {
         for (const msg of messages) {
           this.stepPartsBuffer.delete(msg.id);
           this.contentPartsBuffer.delete(msg.id);
+          this.dirtySteps.delete(msg.id);
+          this.messageConvMap.delete(msg.id);
+          this.persistedPlaceholders.delete(msg.id);
         }
       } catch (err) {
         engineManagerLog.warn(`Failed to clean up buffers for session ${conv.id} during project delete:`, err);

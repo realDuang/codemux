@@ -121,6 +121,7 @@ export interface LocaleDict {
     lanQrScan: string;
     publicQrDesc: string;
     lanQrDesc: string;
+    webApp: string;
     devicesDesc: string;
   };
 
@@ -142,6 +143,7 @@ export interface LocaleDict {
     expandSidebar: string;
     collapseSidebar: string;
     sessions: string;
+    refreshSessions: string;
   };
 
   // Project
@@ -468,6 +470,7 @@ export const en: LocaleDict = {
     lanQrScan: "Scan to access via LAN",
     publicQrDesc: "Suitable for remote connections, may be slower",
     lanQrDesc: "Make sure your phone and computer are on the same Wi-Fi",
+    webApp: "Web App",
     devicesDesc: "Manage devices that can access this server",
   },
 
@@ -489,6 +492,7 @@ export const en: LocaleDict = {
     expandSidebar: "Expand sidebar",
     collapseSidebar: "Collapse sidebar",
     sessions: "Sessions",
+    refreshSessions: "Refresh sessions",
   },
 
   // Project

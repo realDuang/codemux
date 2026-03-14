@@ -41,6 +41,7 @@ export default function EntryPage() {
   const [showPassword, setShowPassword] = createSignal(false);
   const [activeQrTab, setActiveQrTab] = createSignal<"lan" | "public">("lan");
   const [enteringChat, setEnteringChat] = createSignal(false);
+  const [activeTab, setActiveTab] = createSignal<"webApp" | "channels">("webApp");
 
   // Feishu channel states
   const [feishuStatus, setFeishuStatus] = createSignal<ChannelInfo | null>(null);
@@ -634,7 +635,7 @@ export default function EntryPage() {
 
           {/* Main Content */}
           <main class="p-4 md:p-6">
-            <div class="max-w-2xl mx-auto space-y-6">
+            <div class="max-w-3xl mx-auto space-y-6">
 
               {/* Local Mode Banner */}
               <div class="rounded-xl bg-blue-50 dark:bg-blue-900/10 border border-blue-100 dark:border-blue-900/30 p-4 flex gap-3">
@@ -644,340 +645,382 @@ export default function EntryPage() {
                 </div>
               </div>
 
-              {/* Status & Toggle Card */}
-              <div class="bg-white dark:bg-slate-900 rounded-xl border border-gray-200 dark:border-slate-800 shadow-xs overflow-hidden">
-                <div class="p-5 flex items-center justify-between">
-                  <div class="space-y-1">
-                    <div class="flex items-center gap-2">
-                      <h2 class="font-semibold text-base">{t().remote.publicAccess}</h2>
-                      <Show when={tunnelLoading() || tunnelInfo().status === "starting"}>
-                        <span class="inline-flex h-2 w-2 rounded-full bg-yellow-400 animate-pulse"></span>
-                      </Show>
-                      <Show when={!tunnelLoading() && tunnelInfo().status === "running"}>
-                        <span class="inline-flex h-2 w-2 rounded-full bg-green-500"></span>
-                      </Show>
-                    </div>
-                    <p class="text-sm text-gray-500 dark:text-gray-400">
-                      {t().remote.publicAccessDesc}
-                    </p>
-                  </div>
-
+              {/* Vertical Tab Layout */}
+              <div class="flex gap-0 bg-white dark:bg-slate-900 rounded-xl border border-gray-200 dark:border-slate-800 shadow-xs overflow-hidden min-h-[520px]">
+                {/* Left: Tab Navigation */}
+                <nav class="w-44 shrink-0 border-r border-gray-200 dark:border-slate-800 bg-gray-50/50 dark:bg-slate-950/50 p-3 flex flex-col gap-1">
                   <button
-                    onClick={handleTunnelToggle}
-                    disabled={tunnelLoading()}
-                    class={`relative inline-flex h-7 w-12 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:ring-offset-2 ${
-                      tunnelEnabled() ? "bg-blue-600" : "bg-gray-200 dark:bg-slate-700"
-                    } ${tunnelLoading() ? "opacity-50 cursor-not-allowed" : ""}`}
+                    onClick={() => setActiveTab("webApp")}
+                    class={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all text-left ${
+                      activeTab() === "webApp"
+                        ? "bg-white dark:bg-slate-800 text-blue-600 dark:text-blue-400 shadow-xs"
+                        : "text-gray-600 dark:text-gray-400 hover:bg-white/60 dark:hover:bg-slate-800/60 hover:text-gray-900 dark:hover:text-gray-200"
+                    }`}
                   >
-                    <span class="sr-only">Toggle Remote Access</span>
-                    <span
-                      class={`pointer-events-none inline-block h-6 w-6 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
-                        tunnelEnabled() ? "translate-x-5" : "translate-x-0"
-                      }`}
-                    />
+                    <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><path d="M2 12h20"/></svg>
+                    {t().remote.webApp}
                   </button>
-                </div>
+                  <Show when={isElectron()}>
+                    <button
+                      onClick={() => setActiveTab("channels")}
+                      class={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all text-left ${
+                        activeTab() === "channels"
+                          ? "bg-white dark:bg-slate-800 text-blue-600 dark:text-blue-400 shadow-xs"
+                          : "text-gray-600 dark:text-gray-400 hover:bg-white/60 dark:hover:bg-slate-800/60 hover:text-gray-900 dark:hover:text-gray-200"
+                      }`}
+                    >
+                      <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+                      {t().channel.channels}
+                    </button>
+                  </Show>
+                </nav>
 
-                <Show when={tunnelInfo().error}>
-                  <div class="px-5 py-3 bg-red-50 dark:bg-red-900/10 border-t border-red-100 dark:border-red-900/30">
-                    <p class="text-xs text-red-600 dark:text-red-400 flex items-center gap-2">
-                      <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" x2="12" y1="8" y2="12"/><line x1="12" x2="12.01" y1="16" y2="16"/></svg>
-                      {tunnelInfo().error}
-                    </p>
-                  </div>
-                </Show>
-
-                <Show when={tunnelEnabled() && tunnelInfo().status === "starting"}>
-                  <div class="px-5 py-3 bg-blue-50 dark:bg-blue-900/10 border-t border-blue-100 dark:border-blue-900/30">
-                    <p class="text-xs text-blue-600 dark:text-blue-400 flex items-center gap-2">
-                      <svg class="animate-spin" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
-                      {t().remote.starting}
-                    </p>
-                  </div>
-                </Show>
-              </div>
-
-              {/* Warning Banner */}
-              <div class="rounded-xl bg-orange-50 dark:bg-orange-900/10 border border-orange-100 dark:border-orange-900/30 p-4 flex gap-3">
-                <svg xmlns="http://www.w3.org/2000/svg" class="shrink-0 text-orange-600 dark:text-orange-400 mt-0.5" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><line x1="12" x2="12" y1="9" y2="13"/><line x1="12" x2="12.01" y1="17" y2="17"/></svg>
-                <div class="text-sm text-orange-800 dark:text-orange-200">
-                  <span class="font-medium">{t().remote.securityWarning}</span> {t().remote.securityWarningDesc}
-                </div>
-              </div>
-
-              <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-                {/* Left Column: Info */}
-                <div class="space-y-6">
-
-                  {/* Access Code Card */}
-                  <div class="bg-white dark:bg-slate-900 rounded-xl border border-gray-200 dark:border-slate-800 shadow-xs p-5">
-                    <h3 class="text-sm font-medium text-gray-500 dark:text-gray-400 mb-3 flex items-center gap-2">
-                      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
-                      {t().remote.accessPassword}
-                    </h3>
-                    <div class="flex items-center justify-between bg-gray-50 dark:bg-slate-950 rounded-lg border border-gray-200 dark:border-slate-800 px-4 py-3">
-                      <span class="font-mono text-xl font-bold tracking-widest text-gray-900 dark:text-white">
-                        {showPassword() ? accessCode() : "••••••"}
-                      </span>
-                      <div class="flex items-center gap-2">
-                        <button
-                          onClick={() => setShowPassword(!showPassword())}
-                          class="p-1.5 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors rounded-md hover:bg-gray-200 dark:hover:bg-slate-800"
-                          title={showPassword() ? "Hide" : "Show"}
-                        >
-                          <Show when={showPassword()} fallback={
-                            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9.88 9.88a3 3 0 1 0 4.24 4.24"/><path d="M10.73 5.08A10.43 10.43 0 0 1 12 5c7 0 10 7 10 7a13.16 13.16 0 0 1-1.67 2.68"/><path d="M6.61 6.61A13.526 13.526 0 0 0 2 12s3 7 10 7c.44 0 .87-.03 1.28-.09"/><path d="M2 2l20 20"/></svg>
-                          }>
-                            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>
-                          </Show>
-                        </button>
-                        <button
-                          onClick={() => copyToClipboard(accessCode())}
-                          class="p-1.5 text-blue-600 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300 transition-colors rounded-md hover:bg-blue-50 dark:hover:bg-blue-900/30"
-                          title="Copy"
-                        >
-                          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Connection Addresses */}
-                  <div class="bg-white dark:bg-slate-900 rounded-xl border border-gray-200 dark:border-slate-800 shadow-xs overflow-hidden">
-                    <div class="p-4 border-b border-gray-100 dark:border-slate-800/50">
-                      <h3 class="text-sm font-medium text-gray-500 dark:text-gray-400">{t().remote.connectionAddress}</h3>
-                    </div>
-                    <div class="divide-y divide-gray-100 dark:divide-slate-800/50">
-
-                      {/* Public Address */}
-                      <Show when={tunnelInfo().status === "running"}>
-                        <div class="p-4 flex items-center justify-between group hover:bg-gray-50 dark:hover:bg-slate-800/50 transition-colors">
-                          <div class="min-w-0 flex-1 mr-4">
-                            <div class="flex items-center gap-2 mb-1">
-                              <span class="inline-flex items-center justify-center w-5 h-5 rounded bg-green-100 dark:bg-green-900/30 text-green-600 dark:text-green-400">
-                                <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><path d="M2 12h20"/></svg>
-                              </span>
-                              <span class="text-xs font-medium text-gray-500">{t().remote.publicAddress}</span>
+                {/* Right: Tab Content */}
+                <div class="flex-1 p-5 overflow-y-auto">
+                  {/* Web App Tab */}
+                  <Show when={activeTab() === "webApp"}>
+                    <div class="space-y-5">
+                      {/* Status & Toggle Card */}
+                      <div class="rounded-lg border border-gray-200 dark:border-slate-800 overflow-hidden">
+                        <div class="p-4 flex items-center justify-between">
+                          <div class="space-y-1">
+                            <div class="flex items-center gap-2">
+                              <h2 class="font-semibold text-base">{t().remote.publicAccess}</h2>
+                              <Show when={tunnelLoading() || tunnelInfo().status === "starting"}>
+                                <span class="inline-flex h-2 w-2 rounded-full bg-yellow-400 animate-pulse"></span>
+                              </Show>
+                              <Show when={!tunnelLoading() && tunnelInfo().status === "running"}>
+                                <span class="inline-flex h-2 w-2 rounded-full bg-green-500"></span>
+                              </Show>
                             </div>
-                            <p class="font-mono text-sm text-green-700 dark:text-green-400 truncate select-all">{tunnelInfo().url}</p>
+                            <p class="text-sm text-gray-500 dark:text-gray-400">
+                              {t().remote.publicAccessDesc}
+                            </p>
                           </div>
+
                           <button
-                            onClick={() => copyToClipboard(tunnelInfo().url)}
-                            class="p-2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 opacity-0 group-hover:opacity-100 transition-all"
+                            onClick={handleTunnelToggle}
+                            disabled={tunnelLoading()}
+                            class={`relative inline-flex h-7 w-12 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:ring-offset-2 ${
+                              tunnelEnabled() ? "bg-blue-600" : "bg-gray-200 dark:bg-slate-700"
+                            } ${tunnelLoading() ? "opacity-50 cursor-not-allowed" : ""}`}
                           >
-                            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
+                            <span class="sr-only">Toggle Remote Access</span>
+                            <span
+                              class={`pointer-events-none inline-block h-6 w-6 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
+                                tunnelEnabled() ? "translate-x-5" : "translate-x-0"
+                              }`}
+                            />
                           </button>
                         </div>
-                      </Show>
 
-                      {/* LAN Address */}
-                      <div class="p-4 flex items-center justify-between group hover:bg-gray-50 dark:hover:bg-slate-800/50 transition-colors">
-                        <div class="min-w-0 flex-1 mr-4">
-                          <div class="flex items-center gap-2 mb-1">
-                            <span class="inline-flex items-center justify-center w-5 h-5 rounded bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400">
-                              <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.55a11 11 0 0 1 14.08 0"/><path d="M1.42 9a16 16 0 0 1 21.16 0"/><path d="M8.53 16.11a6 6 0 0 1 6.95 0"/><line x1="12" x2="12.01" y1="20" y2="20"/></svg>
-                            </span>
-                            <span class="text-xs font-medium text-gray-500">{t().remote.lanAddress}</span>
+                        <Show when={tunnelInfo().error}>
+                          <div class="px-4 py-3 bg-red-50 dark:bg-red-900/10 border-t border-red-100 dark:border-red-900/30">
+                            <p class="text-xs text-red-600 dark:text-red-400 flex items-center gap-2">
+                              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" x2="12" y1="8" y2="12"/><line x1="12" x2="12.01" y1="16" y2="16"/></svg>
+                              {tunnelInfo().error}
+                            </p>
                           </div>
-                          <p class="font-mono text-sm text-gray-700 dark:text-gray-300 truncate select-all">{getLanUrl()}</p>
-                        </div>
-                        <button
-                          onClick={() => copyToClipboard(getLanUrl())}
-                          class="p-2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 opacity-0 group-hover:opacity-100 transition-all"
-                        >
-                          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
-                        </button>
-                      </div>
+                        </Show>
 
-                      {/* Local Address */}
-                      <div class="p-4 flex items-center justify-between group hover:bg-gray-50 dark:hover:bg-slate-800/50 transition-colors">
-                        <div class="min-w-0 flex-1 mr-4">
-                          <div class="flex items-center gap-2 mb-1">
-                            <span class="inline-flex items-center justify-center w-5 h-5 rounded bg-gray-100 dark:bg-slate-800 text-gray-600 dark:text-gray-400">
-                              <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" x2="16" y1="21" y2="21"/><line x1="12" x2="12" y1="17" y2="21"/></svg>
-                            </span>
-                            <span class="text-xs font-medium text-gray-500">{t().remote.localAddress}</span>
+                        <Show when={tunnelEnabled() && tunnelInfo().status === "starting"}>
+                          <div class="px-4 py-3 bg-blue-50 dark:bg-blue-900/10 border-t border-blue-100 dark:border-blue-900/30">
+                            <p class="text-xs text-blue-600 dark:text-blue-400 flex items-center gap-2">
+                              <svg class="animate-spin" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
+                              {t().remote.starting}
+                            </p>
                           </div>
-                          <p class="font-mono text-sm text-gray-700 dark:text-gray-300 truncate select-all">{getLocalUrl()}</p>
+                        </Show>
+                      </div>
+
+                      {/* Warning Banner */}
+                      <div class="rounded-lg bg-orange-50 dark:bg-orange-900/10 border border-orange-100 dark:border-orange-900/30 p-3 flex gap-3">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="shrink-0 text-orange-600 dark:text-orange-400 mt-0.5" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><line x1="12" x2="12" y1="9" y2="13"/><line x1="12" x2="12.01" y1="17" y2="17"/></svg>
+                        <div class="text-xs text-orange-800 dark:text-orange-200">
+                          <span class="font-medium">{t().remote.securityWarning}</span> {t().remote.securityWarningDesc}
                         </div>
-                        <button
-                          onClick={() => copyToClipboard(getLocalUrl())}
-                          class="p-2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 opacity-0 group-hover:opacity-100 transition-all"
+                      </div>
+
+                      <div class="grid grid-cols-1 md:grid-cols-2 gap-5">
+                        {/* Left Column: Info */}
+                        <div class="space-y-5">
+
+                          {/* Access Code Card */}
+                          <div class="rounded-lg border border-gray-200 dark:border-slate-800 p-4">
+                            <h3 class="text-sm font-medium text-gray-500 dark:text-gray-400 mb-3 flex items-center gap-2">
+                              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+                              {t().remote.accessPassword}
+                            </h3>
+                            <div class="flex items-center justify-between bg-gray-50 dark:bg-slate-950 rounded-lg border border-gray-200 dark:border-slate-800 px-4 py-3">
+                              <span class="font-mono text-xl font-bold tracking-widest text-gray-900 dark:text-white">
+                                {showPassword() ? accessCode() : "••••••"}
+                              </span>
+                              <div class="flex items-center gap-2">
+                                <button
+                                  onClick={() => setShowPassword(!showPassword())}
+                                  class="p-1.5 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors rounded-md hover:bg-gray-200 dark:hover:bg-slate-800"
+                                  title={showPassword() ? "Hide" : "Show"}
+                                >
+                                  <Show when={showPassword()} fallback={
+                                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9.88 9.88a3 3 0 1 0 4.24 4.24"/><path d="M10.73 5.08A10.43 10.43 0 0 1 12 5c7 0 10 7 10 7a13.16 13.16 0 0 1-1.67 2.68"/><path d="M6.61 6.61A13.526 13.526 0 0 0 2 12s3 7 10 7c.44 0 .87-.03 1.28-.09"/><path d="M2 2l20 20"/></svg>
+                                  }>
+                                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>
+                                  </Show>
+                                </button>
+                                <button
+                                  onClick={() => copyToClipboard(accessCode())}
+                                  class="p-1.5 text-blue-600 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300 transition-colors rounded-md hover:bg-blue-50 dark:hover:bg-blue-900/30"
+                                  title="Copy"
+                                >
+                                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
+                                </button>
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* Connection Addresses */}
+                          <div class="rounded-lg border border-gray-200 dark:border-slate-800 overflow-hidden">
+                            <div class="p-3 border-b border-gray-100 dark:border-slate-800/50">
+                              <h3 class="text-sm font-medium text-gray-500 dark:text-gray-400">{t().remote.connectionAddress}</h3>
+                            </div>
+                            <div class="divide-y divide-gray-100 dark:divide-slate-800/50">
+
+                              {/* Public Address */}
+                              <Show when={tunnelInfo().status === "running"}>
+                                <div class="p-3 flex items-center justify-between group hover:bg-gray-50 dark:hover:bg-slate-800/50 transition-colors">
+                                  <div class="min-w-0 flex-1 mr-3">
+                                    <div class="flex items-center gap-2 mb-1">
+                                      <span class="inline-flex items-center justify-center w-5 h-5 rounded bg-green-100 dark:bg-green-900/30 text-green-600 dark:text-green-400">
+                                        <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><path d="M2 12h20"/></svg>
+                                      </span>
+                                      <span class="text-xs font-medium text-gray-500">{t().remote.publicAddress}</span>
+                                    </div>
+                                    <p class="font-mono text-sm text-green-700 dark:text-green-400 truncate select-all">{tunnelInfo().url}</p>
+                                  </div>
+                                  <button
+                                    onClick={() => copyToClipboard(tunnelInfo().url)}
+                                    class="p-2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 opacity-0 group-hover:opacity-100 transition-all"
+                                  >
+                                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
+                                  </button>
+                                </div>
+                              </Show>
+
+                              {/* LAN Address */}
+                              <div class="p-3 flex items-center justify-between group hover:bg-gray-50 dark:hover:bg-slate-800/50 transition-colors">
+                                <div class="min-w-0 flex-1 mr-3">
+                                  <div class="flex items-center gap-2 mb-1">
+                                    <span class="inline-flex items-center justify-center w-5 h-5 rounded bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400">
+                                      <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.55a11 11 0 0 1 14.08 0"/><path d="M1.42 9a16 16 0 0 1 21.16 0"/><path d="M8.53 16.11a6 6 0 0 1 6.95 0"/><line x1="12" x2="12.01" y1="20" y2="20"/></svg>
+                                    </span>
+                                    <span class="text-xs font-medium text-gray-500">{t().remote.lanAddress}</span>
+                                  </div>
+                                  <p class="font-mono text-sm text-gray-700 dark:text-gray-300 truncate select-all">{getLanUrl()}</p>
+                                </div>
+                                <button
+                                  onClick={() => copyToClipboard(getLanUrl())}
+                                  class="p-2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 opacity-0 group-hover:opacity-100 transition-all"
+                                >
+                                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
+                                </button>
+                              </div>
+
+                              {/* Local Address */}
+                              <div class="p-3 flex items-center justify-between group hover:bg-gray-50 dark:hover:bg-slate-800/50 transition-colors">
+                                <div class="min-w-0 flex-1 mr-3">
+                                  <div class="flex items-center gap-2 mb-1">
+                                    <span class="inline-flex items-center justify-center w-5 h-5 rounded bg-gray-100 dark:bg-slate-800 text-gray-600 dark:text-gray-400">
+                                      <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" x2="16" y1="21" y2="21"/><line x1="12" x2="12" y1="17" y2="21"/></svg>
+                                    </span>
+                                    <span class="text-xs font-medium text-gray-500">{t().remote.localAddress}</span>
+                                  </div>
+                                  <p class="font-mono text-sm text-gray-700 dark:text-gray-300 truncate select-all">{getLocalUrl()}</p>
+                                </div>
+                                <button
+                                  onClick={() => copyToClipboard(getLocalUrl())}
+                                  class="p-2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 opacity-0 group-hover:opacity-100 transition-all"
+                                >
+                                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
+                                </button>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Right Column: QR Code */}
+                        <div class="rounded-lg border border-gray-200 dark:border-slate-800 p-5 flex flex-col items-center justify-center min-h-[280px]">
+
+                          <div class="w-full flex justify-center mb-5">
+                            <div class="inline-flex bg-gray-100 dark:bg-slate-800 p-1 rounded-lg">
+                              <button
+                                onClick={() => setActiveQrTab("lan")}
+                                class={`px-4 py-1.5 rounded-md text-sm font-medium transition-all ${activeQrTab() === "lan" ? 'bg-white dark:bg-slate-700 shadow-xs text-gray-900 dark:text-white' : 'text-gray-500 hover:text-gray-700 dark:hover:text-gray-300'}`}
+                              >
+                                {t().remote.lan}
+                              </button>
+                              <button
+                                disabled={tunnelInfo().status !== "running"}
+                                onClick={() => setActiveQrTab("public")}
+                                class={`px-4 py-1.5 rounded-md text-sm font-medium transition-all ${activeQrTab() === "public" ? 'bg-white dark:bg-slate-700 shadow-xs text-green-700 dark:text-green-400' : 'text-gray-500 hover:text-gray-700 dark:hover:text-gray-300'} ${tunnelInfo().status !== "running" ? 'opacity-50 cursor-not-allowed' : ''}`}
+                              >
+                                {t().remote.public}
+                              </button>
+                            </div>
+                          </div>
+
+                          <div class="bg-white p-4 rounded-xl shadow-xs border border-gray-100">
+                            <Switch>
+                              <Match when={activeQrTab() === "public" && tunnelInfo().status === "running"}>
+                                <img
+                                  src={generateQRCode(tunnelInfo().url)}
+                                  alt="Public QR Code"
+                                  class="w-44 h-44 object-contain"
+                                />
+                              </Match>
+                              <Match when={activeQrTab() === "public"}>
+                                <div class="w-44 h-44 flex items-center justify-center bg-gray-50 text-gray-400 text-sm">
+                                  {t().remote.notConnected}
+                                </div>
+                              </Match>
+                              <Match when={activeQrTab() === "lan"}>
+                                <img
+                                  src={generateQRCode(getLanUrl())}
+                                  alt="LAN QR Code"
+                                  class="w-44 h-44 object-contain"
+                                />
+                              </Match>
+                            </Switch>
+                          </div>
+
+                          <div class="mt-4 text-center space-y-1">
+                            <h4 class="font-medium text-sm text-gray-900 dark:text-white">
+                              {activeQrTab() === "public" ? t().remote.publicQrScan : t().remote.lanQrScan}
+                            </h4>
+                            <p class="text-xs text-gray-500 dark:text-gray-400 max-w-[200px]">
+                              {activeQrTab() === "public" ? t().remote.publicQrDesc : t().remote.lanQrDesc}
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Authorized Devices Card */}
+                      <div
+                        onClick={() => navigate("/devices")}
+                        class="rounded-lg border border-gray-200 dark:border-slate-800 p-4 flex items-center justify-between cursor-pointer hover:bg-gray-50 dark:hover:bg-slate-800/50 transition-colors"
+                      >
+                        <div class="flex items-center gap-3">
+                          <div class="w-9 h-9 rounded-lg bg-blue-100 dark:bg-blue-900/30 flex items-center justify-center">
+                            <svg
+                              xmlns="http://www.w3.org/2000/svg"
+                              width="18"
+                              height="18"
+                              viewBox="0 0 24 24"
+                              fill="none"
+                              stroke="currentColor"
+                              stroke-width="2"
+                              stroke-linecap="round"
+                              stroke-linejoin="round"
+                              class="text-blue-600 dark:text-blue-400"
+                            >
+                              <rect width="14" height="20" x="5" y="2" rx="2" ry="2" />
+                              <path d="M12 18h.01" />
+                            </svg>
+                          </div>
+                          <div>
+                            <h3 class="text-sm font-medium text-gray-900 dark:text-white">
+                              {t().devices.title}
+                            </h3>
+                            <p class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+                              {t().remote.devicesDesc}
+                            </p>
+                          </div>
+                        </div>
+                        <svg
+                          xmlns="http://www.w3.org/2000/svg"
+                          width="18"
+                          height="18"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          stroke-width="2"
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                          class="text-gray-400"
                         >
-                          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
-                        </button>
+                          <path d="m9 18 6-6-6-6" />
+                        </svg>
                       </div>
                     </div>
-                  </div>
-                </div>
+                  </Show>
 
-                {/* Right Column: QR Code */}
-                <div class="bg-white dark:bg-slate-900 rounded-xl border border-gray-200 dark:border-slate-800 shadow-xs p-6 flex flex-col items-center justify-center min-h-[300px]">
+                  {/* Channels Tab */}
+                  <Show when={activeTab() === "channels"}>
+                    <div class="space-y-4">
+                      {/* Feishu Bot Row */}
+                      <div class="rounded-lg border border-gray-200 dark:border-slate-800 overflow-hidden">
+                        <div class="p-4 flex items-center justify-between">
+                          <div class="flex items-center gap-3">
+                            <div class="w-9 h-9 rounded-lg bg-indigo-100 dark:bg-indigo-900/30 flex items-center justify-center">
+                              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-indigo-600 dark:text-indigo-400"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+                            </div>
+                            <div>
+                              <div class="flex items-center gap-2">
+                                <h3 class="text-sm font-medium text-gray-900 dark:text-white">
+                                  {t().channel.feishuBot}
+                                </h3>
+                                <Show when={feishuLoading() || feishuStatus()?.status === "starting"}>
+                                  <span class="inline-flex h-2 w-2 rounded-full bg-yellow-400 animate-pulse"></span>
+                                </Show>
+                                <Show when={!feishuLoading() && feishuStatus()?.status === "running"}>
+                                  <span class="inline-flex h-2 w-2 rounded-full bg-green-500"></span>
+                                </Show>
+                                <Show when={!feishuLoading() && feishuStatus()?.status === "error"}>
+                                  <span class="inline-flex h-2 w-2 rounded-full bg-red-500"></span>
+                                </Show>
+                              </div>
+                              <p class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+                                {t().channel.feishuBotDesc}
+                              </p>
+                            </div>
+                          </div>
 
-                  <div class="w-full flex justify-center mb-6">
-                    <div class="inline-flex bg-gray-100 dark:bg-slate-800 p-1 rounded-lg">
-                      <button
-                        onClick={() => setActiveQrTab("lan")}
-                        class={`px-4 py-1.5 rounded-md text-sm font-medium transition-all ${activeQrTab() === "lan" ? 'bg-white dark:bg-slate-700 shadow-xs text-gray-900 dark:text-white' : 'text-gray-500 hover:text-gray-700 dark:hover:text-gray-300'}`}
-                      >
-                        {t().remote.lan}
-                      </button>
-                      <button
-                        disabled={tunnelInfo().status !== "running"}
-                        onClick={() => setActiveQrTab("public")}
-                        class={`px-4 py-1.5 rounded-md text-sm font-medium transition-all ${activeQrTab() === "public" ? 'bg-white dark:bg-slate-700 shadow-xs text-green-700 dark:text-green-400' : 'text-gray-500 hover:text-gray-700 dark:hover:text-gray-300'} ${tunnelInfo().status !== "running" ? 'opacity-50 cursor-not-allowed' : ''}`}
-                      >
-                        {t().remote.public}
-                      </button>
-                    </div>
-                  </div>
-
-                  <div class="bg-white p-4 rounded-xl shadow-xs border border-gray-100">
-                    <Switch>
-                      <Match when={activeQrTab() === "public" && tunnelInfo().status === "running"}>
-                        <img
-                          src={generateQRCode(tunnelInfo().url)}
-                          alt="Public QR Code"
-                          class="w-48 h-48 object-contain"
-                        />
-                      </Match>
-                      <Match when={activeQrTab() === "public"}>
-                        <div class="w-48 h-48 flex items-center justify-center bg-gray-50 text-gray-400 text-sm">
-                          {t().remote.notConnected}
+                          <div class="flex items-center gap-3">
+                            <button
+                              onClick={() => setFeishuConfigOpen(true)}
+                              class="px-3 py-1.5 text-xs font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-slate-800 rounded-lg transition-colors border border-gray-200 dark:border-slate-700"
+                            >
+                              {t().channel.configure}
+                            </button>
+                            <button
+                              onClick={handleFeishuToggle}
+                              disabled={feishuLoading()}
+                              class={`relative inline-flex h-7 w-12 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:ring-offset-2 ${
+                                feishuStatus()?.status === "running" ? "bg-blue-600" : "bg-gray-200 dark:bg-slate-700"
+                              } ${feishuLoading() ? "opacity-50 cursor-not-allowed" : ""}`}
+                            >
+                              <span class="sr-only">Toggle Feishu Bot</span>
+                              <span
+                                class={`pointer-events-none inline-block h-6 w-6 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
+                                  feishuStatus()?.status === "running" ? "translate-x-5" : "translate-x-0"
+                                }`}
+                              />
+                            </button>
+                          </div>
                         </div>
-                      </Match>
-                      <Match when={activeQrTab() === "lan"}>
-                        <img
-                          src={generateQRCode(getLanUrl())}
-                          alt="LAN QR Code"
-                          class="w-48 h-48 object-contain"
-                        />
-                      </Match>
-                    </Switch>
-                  </div>
 
-                  <div class="mt-6 text-center space-y-2">
-                    <h4 class="font-medium text-gray-900 dark:text-white">
-                      {activeQrTab() === "public" ? t().remote.publicQrScan : t().remote.lanQrScan}
-                    </h4>
-                    <p class="text-xs text-gray-500 dark:text-gray-400 max-w-[200px]">
-                      {activeQrTab() === "public" ? t().remote.publicQrDesc : t().remote.lanQrDesc}
-                    </p>
-                  </div>
-                </div>
-              </div>
-
-              {/* Authorized Devices Card */}
-              <div
-                onClick={() => navigate("/devices")}
-                class="bg-white dark:bg-slate-900 rounded-xl border border-gray-200 dark:border-slate-800 shadow-xs p-5 flex items-center justify-between cursor-pointer hover:bg-gray-50 dark:hover:bg-slate-800/50 transition-colors"
-              >
-                <div class="flex items-center gap-4">
-                  <div class="w-10 h-10 rounded-lg bg-blue-100 dark:bg-blue-900/30 flex items-center justify-center">
-                    <svg
-                      xmlns="http://www.w3.org/2000/svg"
-                      width="20"
-                      height="20"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      stroke-width="2"
-                      stroke-linecap="round"
-                      stroke-linejoin="round"
-                      class="text-blue-600 dark:text-blue-400"
-                    >
-                      <rect width="14" height="20" x="5" y="2" rx="2" ry="2" />
-                      <path d="M12 18h.01" />
-                    </svg>
-                  </div>
-                  <div>
-                    <h3 class="text-base font-medium text-gray-900 dark:text-white">
-                      {t().devices.title}
-                    </h3>
-                    <p class="text-sm text-gray-500 dark:text-gray-400 mt-0.5">
-                      {t().remote.devicesDesc}
-                    </p>
-                  </div>
-                </div>
-                <svg
-                  xmlns="http://www.w3.org/2000/svg"
-                  width="20"
-                  height="20"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="2"
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                  class="text-gray-400"
-                >
-                  <path d="m9 18 6-6-6-6" />
-                </svg>
-              </div>
-
-              {/* Feishu Bot Channel Card */}
-              <Show when={isElectron()}>
-                <div class="bg-white dark:bg-slate-900 rounded-xl border border-gray-200 dark:border-slate-800 shadow-xs overflow-hidden">
-                  <div class="p-5 flex items-center justify-between">
-                    <div class="flex items-center gap-4">
-                      <div class="w-10 h-10 rounded-lg bg-indigo-100 dark:bg-indigo-900/30 flex items-center justify-center">
-                        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-indigo-600 dark:text-indigo-400"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+                        <Show when={feishuStatus()?.status === "error" && feishuStatus()?.error}>
+                          <div class="px-4 py-3 bg-red-50 dark:bg-red-900/10 border-t border-red-100 dark:border-red-900/30">
+                            <p class="text-xs text-red-600 dark:text-red-400 flex items-center gap-2">
+                              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" x2="12" y1="8" y2="12"/><line x1="12" x2="12.01" y1="16" y2="16"/></svg>
+                              {feishuStatus()?.error}
+                            </p>
+                          </div>
+                        </Show>
                       </div>
-                      <div class="space-y-1">
-                        <div class="flex items-center gap-2">
-                          <h3 class="text-base font-medium text-gray-900 dark:text-white">
-                            {t().channel.feishuBot}
-                          </h3>
-                          <Show when={feishuLoading() || feishuStatus()?.status === "starting"}>
-                            <span class="inline-flex h-2 w-2 rounded-full bg-yellow-400 animate-pulse"></span>
-                          </Show>
-                          <Show when={!feishuLoading() && feishuStatus()?.status === "running"}>
-                            <span class="inline-flex h-2 w-2 rounded-full bg-green-500"></span>
-                          </Show>
-                          <Show when={!feishuLoading() && feishuStatus()?.status === "error"}>
-                            <span class="inline-flex h-2 w-2 rounded-full bg-red-500"></span>
-                          </Show>
-                        </div>
-                        <p class="text-sm text-gray-500 dark:text-gray-400">
-                          {t().channel.feishuBotDesc}
-                        </p>
-                      </div>
-                    </div>
-
-                    <div class="flex items-center gap-3">
-                      <button
-                        onClick={() => setFeishuConfigOpen(true)}
-                        class="px-3 py-1.5 text-xs font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-slate-800 rounded-lg transition-colors border border-gray-200 dark:border-slate-700"
-                      >
-                        {t().channel.configure}
-                      </button>
-                      <button
-                        onClick={handleFeishuToggle}
-                        disabled={feishuLoading()}
-                        class={`relative inline-flex h-7 w-12 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:ring-offset-2 ${
-                          feishuStatus()?.status === "running" ? "bg-blue-600" : "bg-gray-200 dark:bg-slate-700"
-                        } ${feishuLoading() ? "opacity-50 cursor-not-allowed" : ""}`}
-                      >
-                        <span class="sr-only">Toggle Feishu Bot</span>
-                        <span
-                          class={`pointer-events-none inline-block h-6 w-6 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
-                            feishuStatus()?.status === "running" ? "translate-x-5" : "translate-x-0"
-                          }`}
-                        />
-                      </button>
-                    </div>
-                  </div>
-
-                  <Show when={feishuStatus()?.status === "error" && feishuStatus()?.error}>
-                    <div class="px-5 py-3 bg-red-50 dark:bg-red-900/10 border-t border-red-100 dark:border-red-900/30">
-                      <p class="text-xs text-red-600 dark:text-red-400 flex items-center gap-2">
-                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" x2="12" y1="8" y2="12"/><line x1="12" x2="12.01" y1="16" y2="16"/></svg>
-                        {feishuStatus()?.error}
-                      </p>
                     </div>
                   </Show>
                 </div>
-              </Show>
+              </div>
 
               <FeishuConfigModal
                 isOpen={feishuConfigOpen()}

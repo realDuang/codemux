@@ -122,6 +122,7 @@ export const zh: LocaleDict = {
     lanQrScan: "局域网扫码访问",
     publicQrDesc: "适用于远程连接，速度可能较慢",
     lanQrDesc: "确保手机和电脑连接同一 Wi-Fi",
+    webApp: "网页应用",
     devicesDesc: "管理可以访问此服务器的设备",
   },
 
@@ -143,6 +144,7 @@ export const zh: LocaleDict = {
     expandSidebar: "展开侧边栏",
     collapseSidebar: "收起侧边栏",
     sessions: "会话",
+    refreshSessions: "刷新会话列表",
   },
 
   // Project

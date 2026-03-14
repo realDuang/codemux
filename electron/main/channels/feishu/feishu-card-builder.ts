@@ -78,6 +78,7 @@ export function buildGroupWelcomeCard(
     "/status — 查看会话信息",
     "/mode — 切换模式",
     "/model — 切换模型",
+    "/history — 查看会话历史记录",
     "/help — 显示可用命令",
   ].join("\n");
 

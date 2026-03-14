@@ -1,6 +1,7 @@
 import { app, BrowserWindow } from "electron";
 import fixPath from "fix-path";
 import { mainLog } from "./services/logger";
+// dev restart trigger
 
 // Fix $PATH for packaged macOS/Linux apps launched from GUI.
 // On Windows this is a no-op (Windows inherits PATH correctly from system env).

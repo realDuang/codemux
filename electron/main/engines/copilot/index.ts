@@ -12,6 +12,7 @@ import type {
 } from "@github/copilot-sdk";
 
 import { EngineAdapter, MessageBuffer } from "../engine-adapter";
+import { CODEMUX_IDENTITY_PROMPT } from "../identity-prompt";
 import { copilotLog } from "../../services/logger";
 import { inferToolKind, normalizeToolName } from "../../../../src/types/tool-mapping";
 import type {
@@ -276,6 +277,7 @@ export class CopilotSdkAdapter extends EngineAdapter {
       model: this.currentModelId ?? undefined,
       onPermissionRequest: (req, ctx) => this.handlePermissionRequest(req as any, ctx),
       onUserInputRequest: (req, ctx) => this.handleUserInputRequest(req as any, ctx),
+      systemMessage: { mode: "append" as const, content: CODEMUX_IDENTITY_PROMPT },
     };
 
     const sdkSession = await this.client!.createSession(config);
@@ -304,10 +306,10 @@ export class CopilotSdkAdapter extends EngineAdapter {
       return true;
     }
 
-    // For Copilot sessions, we can attempt to resume persisted sessions
-    // that might exist in the SDK but not in our active sessions map
-    // Return true to allow ensureActiveSession to handle resume/recreation
-    return sessionId.startsWith("cs_");
+    // Copilot CLI persists sessions to disk; even after app restart
+    // (activeSessions cleared), the CLI can resume them via session.resume RPC.
+    // Always return true to let ensureActiveSession attempt resumeSession().
+    return true;
   }
   async getSession(sessionId: string): Promise<UnifiedSession | null> { return null; }
 
@@ -653,27 +655,19 @@ export class CopilotSdkAdapter extends EngineAdapter {
     const config: ResumeSessionConfig = {
       streaming: true,
       workingDirectory,
+      model: this.currentModelId ?? undefined,
+      systemMessage: { mode: "append" as const, content: CODEMUX_IDENTITY_PROMPT },
       onPermissionRequest: (req, ctx) => this.handlePermissionRequest(req as any, ctx),
       onUserInputRequest: (req, ctx) => this.handleUserInputRequest(req as any, ctx),
     };
 
-    try {
-      copilotLog.info(`Resuming session ${sessionId}...`);
-      const sdkSession = await this.client!.resumeSession(sessionId, config);
-      copilotLog.info(`Session ${sessionId} resumed successfully`);
-      this.subscribeToSessionEvents(sdkSession);
-      this.activeSessions.set(sessionId, sdkSession);
-      if (workingDirectory) this.sessionDirectories.set(sessionId, workingDirectory);
-      return sdkSession;
-    } catch (err) {
-      copilotLog.warn(`Failed to resume session ${sessionId}, creating new session:`, err);
-      const sdkSession = await this.client!.createSession({ ...config } as any);
-      this.subscribeToSessionEvents(sdkSession, sessionId);
-      this.activeSessions.set(sessionId, sdkSession);
-      this.activeSessions.set(sdkSession.sessionId, sdkSession);
-      if (workingDirectory) this.sessionDirectories.set(sdkSession.sessionId, workingDirectory);
-      return sdkSession;
-    }
+    copilotLog.info(`Resuming session ${sessionId}...`);
+    const sdkSession = await this.client!.resumeSession(sessionId, config);
+    copilotLog.info(`Session ${sessionId} resumed successfully`);
+    this.subscribeToSessionEvents(sdkSession);
+    this.activeSessions.set(sessionId, sdkSession);
+    if (workingDirectory) this.sessionDirectories.set(sessionId, workingDirectory);
+    return sdkSession;
   }
 
   private subscribeToSessionEvents(session: CopilotSession, eventSessionId?: string): void {

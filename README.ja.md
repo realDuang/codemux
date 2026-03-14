@@ -52,27 +52,44 @@ GitHub Copilot は世界で最も広く採用されているAIコーディング
 - **パブリックインターネット**: ワンクリックで [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/) — ポート転送、VPN、ファイアウォール変更は一切不要
 - **セキュリティ内蔵**: デバイス認証、JWT トークン、Cloudflare 経由のHTTPS、再起動ごとにローテーションされるエフェメラルトンネルURL
 
-### 5. Feishu（Lark）ボット連携
+### 5. IM ボットチャネル
 
-[Feishu](https://www.feishu.cn/) から直接AIコーディングエージェントを使用できます — ブラウザ不要。CodeMux は Feishu ボットとして接続し、チャットメッセージをゲートウェイ経由で任意のエンジンにブリッジします。
+お気に入りのメッセージングアプリから直接AIコーディングエージェントを使用できます — ブラウザ不要。CodeMux は各プラットフォームでボットとして接続し、チャットメッセージをゲートウェイ経由で任意のエンジンにブリッジします。
 
-**1グループ＝1セッション**：各 Feishu グループチャットは単一の CodeMux セッションに対応します。ボットのP2Pチャットでプロジェクトを選択すると、セッション用のグループが自動作成され、会話が分離されて集中できます。
+#### 対応プラットフォーム
 
-**ボットメニューとスラッシュコマンド**で、Feishu 内から完全にコントロール可能：
+| プラットフォーム | イベント受信 | ストリーミング | グループ作成 | リッチコンテンツ |
+|-----------------|-------------|--------------|-------------|----------------|
+| [Feishu (Lark)](https://open.feishu.cn/) | WebSocket（長期接続） | ✅ 編集更新 | ✅ 自動グループ作成 | インタラクティブカード |
+| [DingTalk](https://open.dingtalk.com/) | Stream モード（WS） | ✅ AI カード | ✅ シーングループ | ActionCard / Markdown |
+| [Telegram](https://core.telegram.org/bots/api) | Webhook / ロングポーリング | ✅ sendMessageDraft | ❌ P2Pのみ | MarkdownV2 + インラインキーボード |
+| [WeCom](https://developer.work.weixin.qq.com/) | HTTP コールバック（AES XML） | ❌ バッチモード | ✅ アプリグループチャット | Markdown / テンプレートカード |
+| [Microsoft Teams](https://learn.microsoft.com/en-us/microsoftteams/platform/bots/) | Bot Framework HTTP | ✅ 編集更新 | ❌ P2Pのみ | Adaptive Cards v1.5 |
 
-| コマンド | コンテキスト | 機能 |
-|---------|------------|------|
-| メニュー：プロジェクト切替 | P2P | プロジェクトを参照・選択 |
-| メニュー：新規セッション | P2P | 新しいセッションを作成（以前使用したプロジェクトがあればプロジェクト選択をスキップ） |
-| メニュー：セッション切替 | P2P | 既存セッション間を切り替え |
-| `/cancel` | グループ | 現在のAI応答を停止 |
-| `/mode <agent\|plan\|build>` | グループ | 実行モードを切り替え |
-| `/model list` / `/model <id>` | グループ | モデルの一覧表示・切り替え |
-| `/status` | グループ | セッション情報を表示 |
+#### 共通機能
 
-AI応答はスロットル制御されたメッセージ更新でリアルタイムにストリーミングされ、完了時にツールサマリー（例：`Shell(2), Edit(1)`）が付加されます。
+- **P2Pエントリポイント**：ボットとのプライベートチャットでプロジェクトとセッションを選択
+- **スラッシュコマンド**：`/cancel`、`/status`、`/mode`、`/model`、`/history`、`/help`
+- **ストリーミング応答**：プラットフォームに応じた更新戦略でAIリアルタイム出力
+- **ツールサマリー**：完了時にアクション数を表示（例：`Shell(2), Edit(1)`）
+- **パーミッション自動承認**：エンジンのパーミッションリクエストを自動承認
 
-> **セットアップ**：Feishu 開放プラットフォームでボット機能付きのカスタムアプリを作成し、**WebSocket（長期接続）** モードでイベントサブスクリプションを有効にして、CodeMux で App ID / App Secret を設定してください。詳細は [Feishu 開放プラットフォーム](https://open.feishu.cn/)をご覧ください。
+#### セッションモデル
+
+- **1グループ＝1セッション**（Feishu、DingTalk、WeCom）：各グループチャットが1つのCodeMuxセッションに対応。P2Pでプロジェクト選択 → グループ自動作成。
+- **P2Pダイレクト**（Telegram、Teams）：プライベートチャットで直接対話（一時セッション、2時間TTL）。グループチャットでは@メンションで対話。
+
+#### セットアップ
+
+各プラットフォームの開発者ポータルでボット/アプリを作成し、CodeMux 設定 → チャネルで認証情報を設定してください：
+
+| プラットフォーム | 必要な認証情報 | 開発者ポータル |
+|-----------------|--------------|--------------|
+| Feishu | App ID、App Secret | [open.feishu.cn](https://open.feishu.cn/) |
+| DingTalk | App Key、App Secret、Robot Code | [open.dingtalk.com](https://open.dingtalk.com/) |
+| Telegram | Bot Token（@BotFatherから取得） | [core.telegram.org](https://core.telegram.org/bots) |
+| WeCom | Corp ID、Corp Secret、Agent ID、Callback Token、Encoding AES Key | [developer.work.weixin.qq.com](https://developer.work.weixin.qq.com/) |
+| Teams | Microsoft App ID、App Password | [Azure Portal](https://portal.azure.com/) + [Teams Dev Portal](https://dev.teams.microsoft.com/) |
 
 ---
 
@@ -229,7 +246,7 @@ codemux/
 │   ├── main/
 │   │   ├── engines/          # エンジンアダプター (OpenCode, Copilot, Claude Code)
 │   │   ├── gateway/          # WebSocket サーバー + エンジンルーティング
-│   │   ├── channels/         # 外部メッセージングチャネル (Feishu)
+│   │   ├── channels/         # IM ボットチャネル（Feishu、DingTalk、Telegram、WeCom、Teams）
 │   │   └── services/         # 認証、デバイスストア、トンネル、セッション
 │   └── preload/
 ├── src/                      # SolidJS レンダラー
@@ -269,7 +286,11 @@ codemux/
 - [OpenCode](https://opencode.ai) — 対応エンジン
 - [GitHub Copilot CLI](https://docs.github.com/en/copilot/using-github-copilot/using-github-copilot-coding-agent-in-cli) — 対応エンジン
 - [Claude Code](https://docs.anthropic.com/en/docs/claude-code) — 対応エンジン
-- [Feishu 開放プラットフォーム](https://open.feishu.cn/) — Feishu ボット連携
+- [Feishu 開放プラットフォーム](https://open.feishu.cn/) — Feishu ボットチャネル
+- [DingTalk 開放プラットフォーム](https://open.dingtalk.com/) — DingTalk ボットチャネル
+- [Telegram Bot API](https://core.telegram.org/bots/api) — Telegram ボットチャネル
+- [WeCom 開発者センター](https://developer.work.weixin.qq.com/) — WeCom ボットチャネル
+- [Microsoft Teams プラットフォーム](https://learn.microsoft.com/en-us/microsoftteams/platform/bots/) — Teams ボットチャネル
 
 ---
 

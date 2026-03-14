@@ -52,27 +52,44 @@ GitHub Copilot 是全球使用最广泛的 AI 编程工具。**Copilot CLI** 将
 - **公网**：一键 [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/) —— 无需端口转发、无需 VPN、无需防火墙更改
 - **内置安全机制**：设备授权、JWT 令牌、通过 Cloudflare 的 HTTPS、每次重启时轮换的临时隧道 URL
 
-### 5. 飞书机器人集成
+### 5. IM 机器人渠道
 
-直接在[飞书](https://www.feishu.cn/)中使用你的 AI 编程 Agent —— 无需打开浏览器。CodeMux 以飞书机器人的身份接入，通过网关将聊天消息桥接到任意引擎。
+直接在你常用的即时通讯应用中使用 AI 编程 Agent —— 无需打开浏览器。CodeMux 以机器人身份接入各平台，通过网关将聊天消息桥接到任意引擎。
 
-**一群一会话**：每个飞书群聊对应一个 CodeMux 会话。在机器人的私聊中选择项目后，系统自动创建群聊用于该会话 —— 保持对话独立且专注。
+#### 支持平台
 
-**机器人菜单和斜杠命令**让你在飞书内即可完全掌控：
+| 平台 | 事件接收 | 流式输出 | 创建群组 | 富文本内容 |
+|------|---------|---------|---------|-----------|
+| [飞书](https://open.feishu.cn/) | WebSocket（长连接） | ✅ 编辑更新 | ✅ 自动建群 | 互动卡片 |
+| [钉钉](https://open.dingtalk.com/) | Stream 模式（WS） | ✅ AI 卡片 | ✅ 场景群 | ActionCard / Markdown |
+| [Telegram](https://core.telegram.org/bots/api) | Webhook / 长轮询 | ✅ sendMessageDraft | ❌ 仅私聊 | MarkdownV2 + 内联键盘 |
+| [企业微信](https://developer.work.weixin.qq.com/) | HTTP 回调（AES XML） | ❌ 批量模式 | ✅ 应用群聊 | Markdown / 模板卡片 |
+| [Microsoft Teams](https://learn.microsoft.com/en-us/microsoftteams/platform/bots/) | Bot Framework HTTP | ✅ 编辑更新 | ❌ 仅私聊 | Adaptive Cards v1.5 |
 
-| 命令 | 上下文 | 功能 |
-|------|--------|------|
-| 菜单：切换项目 | 私聊 | 浏览并选择项目 |
-| 菜单：新建会话 | 私聊 | 创建新会话（如果之前使用过项目则跳过项目选择） |
-| 菜单：切换会话 | 私聊 | 在已有会话间切换 |
-| `/cancel` | 群聊 | 停止当前 AI 响应 |
-| `/mode <agent\|plan\|build>` | 群聊 | 切换执行模式 |
-| `/model list` / `/model <id>` | 群聊 | 查看或切换模型 |
-| `/status` | 群聊 | 查看会话信息 |
+#### 通用功能
 
-AI 响应实时流式推送（节流更新），完成时附带工具摘要（如 `Shell(2), Edit(1)`）。
+- **私聊入口**：与机器人私聊选择项目和会话
+- **斜杠命令**：`/cancel`、`/status`、`/mode`、`/model`、`/history`、`/help`
+- **流式响应**：AI 实时输出，根据平台能力自动选择更新策略
+- **工具摘要**：完成时附带操作统计（如 `Shell(2), Edit(1)`）
+- **自动审批权限**：引擎权限请求自动批准
 
-> **配置方式**：在飞书开放平台创建企业自建应用并启用机器人能力，事件订阅选择 **长连接（WebSocket）** 模式，然后在 CodeMux 中配置 App ID / App Secret 即可。详见[飞书开放平台](https://open.feishu.cn/)。
+#### 会话模型
+
+- **一群一会话**（飞书、钉钉、企业微信）：每个群聊对应一个 CodeMux 会话。私聊选择项目 → 自动创建群聊。
+- **私聊直连**（Telegram、Teams）：在私聊中直接交互，使用临时会话（2 小时 TTL）。群聊中 @机器人 交互。
+
+#### 配置方式
+
+每个平台需要在开发者门户创建机器人/应用，然后在 CodeMux 设置 → 渠道中配置凭证：
+
+| 平台 | 需要的凭证 | 开发者门户 |
+|------|-----------|-----------|
+| 飞书 | App ID、App Secret | [open.feishu.cn](https://open.feishu.cn/) |
+| 钉钉 | App Key、App Secret、Robot Code | [open.dingtalk.com](https://open.dingtalk.com/) |
+| Telegram | Bot Token（来自 @BotFather） | [core.telegram.org](https://core.telegram.org/bots) |
+| 企业微信 | 企业 ID、应用密钥、Agent ID、回调 Token、加密密钥 | [developer.work.weixin.qq.com](https://developer.work.weixin.qq.com/) |
+| Teams | Microsoft App ID、应用密码 | [Azure Portal](https://portal.azure.com/) + [Teams 开发者门户](https://dev.teams.microsoft.com/) |
 
 ---
 
@@ -229,7 +246,7 @@ codemux/
 │   ├── main/
 │   │   ├── engines/          # 引擎适配器（OpenCode、Copilot、Claude Code）
 │   │   ├── gateway/          # WebSocket 服务器 + 引擎路由
-│   │   ├── channels/         # 外部消息通道（飞书）
+│   │   ├── channels/         # IM 机器人渠道（飞书、钉钉、Telegram、企业微信、Teams）
 │   │   └── services/         # 认证、设备存储、隧道、会话
 │   └── preload/
 ├── src/                      # SolidJS 渲染层
@@ -269,7 +286,11 @@ codemux/
 - [OpenCode](https://opencode.ai) — 支持的引擎
 - [GitHub Copilot CLI](https://docs.github.com/en/copilot/using-github-copilot/using-github-copilot-coding-agent-in-cli) — 支持的引擎
 - [Claude Code](https://docs.anthropic.com/en/docs/claude-code) — 支持的引擎
-- [飞书开放平台](https://open.feishu.cn/) — 飞书机器人集成
+- [飞书开放平台](https://open.feishu.cn/) — 飞书机器人渠道
+- [钉钉开放平台](https://open.dingtalk.com/) — 钉钉机器人渠道
+- [Telegram Bot API](https://core.telegram.org/bots/api) — Telegram 机器人渠道
+- [企业微信开发者中心](https://developer.work.weixin.qq.com/) — 企业微信机器人渠道
+- [Microsoft Teams 平台](https://learn.microsoft.com/en-us/microsoftteams/platform/bots/) — Teams 机器人渠道
 
 ---
 

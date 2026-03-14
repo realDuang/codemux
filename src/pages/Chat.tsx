@@ -27,6 +27,7 @@ import { AddProjectModal } from "../components/AddProjectModal";
 import type { UnifiedMessage, UnifiedPart, UnifiedPermission, UnifiedQuestion, UnifiedSession, UnifiedProject, AgentMode, EngineType, SessionActivityStatus } from "../types/unified";
 import { useI18n } from "../lib/i18n";
 import { isDefaultTitle } from "../lib/session-utils";
+import { formatTokenCount, formatCost } from "../components/share/common";
 import { getSetting, saveSetting } from "../lib/settings";
 
 import { InputAreaQuestion } from "../components/InputAreaQuestion";
@@ -241,6 +242,23 @@ export default function Chat() {
     const sid = sessionStore.current;
     if (!sid) return [];
     return messageStore.queued[sid] || [];
+  });
+
+  // Aggregate token usage across all assistant messages in the current session
+  const sessionUsage = createMemo(() => {
+    const sid = sessionStore.current;
+    if (!sid) return null;
+    const messages = messageStore.message[sid] ?? [];
+    let input = 0, output = 0, cost = 0;
+    let hasTokens = false, hasCost = false;
+    for (const msg of messages) {
+      if (msg.role !== "assistant" || !msg.tokens) continue;
+      hasTokens = true;
+      input += msg.tokens.input ?? 0;
+      output += msg.tokens.output ?? 0;
+      if (msg.cost != null) { cost += msg.cost; hasCost = true; }
+    }
+    return hasTokens ? { input, output, cost: hasCost ? cost : undefined } : null;
   });
 
   // Keep currentAgent in sync: whenever the engine type changes or engine
@@ -1501,7 +1519,7 @@ export default function Chat() {
 
         {/* Header */}
         <header class="flex items-center justify-between px-4 py-3 border-b border-gray-100 dark:border-zinc-800/50 bg-white/80 dark:bg-zinc-900/80 backdrop-blur-xs sticky top-0 z-10 electron-drag-region">
-          <div class="flex items-center gap-3 electron-no-drag">
+          <div class="flex items-center gap-3 min-w-0 electron-no-drag">
             <button
               onClick={toggleSidebar}
               class="md:hidden p-2 -ml-2 text-gray-500 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-zinc-800 rounded-lg transition-colors"
@@ -1512,7 +1530,7 @@ export default function Chat() {
               {getDisplayTitle(currentSessionTitle())}
             </h1>
             {/* Agent Mode Indicator */}
-            <span class={`px-2 py-0.5 text-[10px] font-medium rounded-full ${
+            <span class={`shrink-0 px-2 py-0.5 text-[10px] font-medium rounded-full ${
               currentAgent().id === "plan"
                 ? "bg-violet-100 text-violet-700 dark:bg-violet-900/30 dark:text-violet-400"
                 : "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400"

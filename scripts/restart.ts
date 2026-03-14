@@ -5,6 +5,9 @@ import { colors } from "./utils";
 const isWindows = process.platform === "win32";
 const projectRoot = path.resolve(import.meta.dirname, "..");
 
+// Ports used by codemux dev services (OpenCode, Auth API, Gateway WS)
+const SERVICE_PORTS = [4096, 4097, 4200];
+
 function sleepSync(ms: number): void {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
@@ -86,6 +89,59 @@ function waitForExit(pids: number[], maxWaitMs = 10000): boolean {
   return !pids.some(pid => isProcessAlive(pid));
 }
 
+// Check if a port is in use
+function isPortInUse(port: number): boolean {
+  try {
+    if (isWindows) {
+      const result = spawnSync("powershell", [
+        "-NoProfile", "-Command",
+        `Get-NetTCPConnection -LocalPort ${port} -State Listen -ErrorAction SilentlyContinue | Select-Object -ExpandProperty OwningProcess`,
+      ], { encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"], timeout: 5000 });
+      return !!(result.stdout?.trim());
+    } else {
+      const result = spawnSync("fuser", [`${port}/tcp`], {
+        encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"], timeout: 5000,
+      });
+      return result.status === 0;
+    }
+  } catch {
+    return false;
+  }
+}
+
+// Kill any process occupying the given ports
+function killProcessesOnPorts(ports: number[]): number[] {
+  const freed: number[] = [];
+  for (const port of ports) {
+    if (!isPortInUse(port)) continue;
+    try {
+      if (isWindows) {
+        spawnSync("powershell", [
+          "-NoProfile", "-Command",
+          `Get-NetTCPConnection -LocalPort ${port} -State Listen -ErrorAction SilentlyContinue | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue }`,
+        ], { encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"], timeout: 5000 });
+      } else {
+        spawnSync("fuser", ["-k", `${port}/tcp`], { stdio: "pipe", timeout: 5000 });
+      }
+      freed.push(port);
+    } catch {
+      // Ignore errors — port may already be freed or process is zombie
+    }
+  }
+  return freed;
+}
+
+// Wait until ports are actually freed (kernel releases the socket)
+function waitForPortsFree(ports: number[], maxWaitMs = 5000): number[] {
+  const start = Date.now();
+  let occupied = ports.filter(p => isPortInUse(p));
+  while (occupied.length > 0 && Date.now() - start < maxWaitMs) {
+    sleepSync(500);
+    occupied = ports.filter(p => isPortInUse(p));
+  }
+  return occupied;
+}
+
 // Start dev server in detached mode
 function startDevServer(): void {
   const child = spawn("npm", ["run", "dev"], {
@@ -133,7 +189,20 @@ function main() {
     }
   }
 
-  // Step 4: Start dev server
+  // Step 4: Clean up service ports (kills orphaned OpenCode processes etc.)
+  const portsInUse = SERVICE_PORTS.filter(p => isPortInUse(p));
+  if (portsInUse.length > 0) {
+    console.log(`${colors.cyan}[*] Cleaning up service ports: ${portsInUse.join(", ")}...${colors.reset}`);
+    killProcessesOnPorts(portsInUse);
+    const stuck = waitForPortsFree(portsInUse);
+    if (stuck.length > 0) {
+      console.log(`${colors.yellow}[!] Ports still occupied (zombie): ${stuck.join(", ")} — may need system restart${colors.reset}`);
+    } else {
+      console.log(`${colors.green}[ok] Service ports freed${colors.reset}`);
+    }
+  }
+
+  // Step 5: Start dev server
   console.log(`${colors.cyan}[*] Starting dev server...${colors.reset}`);
   startDevServer();
   console.log(`${colors.green}[ok] Dev server started (detached)${colors.reset}`);

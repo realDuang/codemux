@@ -331,6 +331,10 @@ export interface LocaleDict {
     corpSecretPlaceholder: string;
     agentId: string;
     agentIdPlaceholder: string;
+    callbackToken: string;
+    callbackTokenPlaceholder: string;
+    callbackEncodingAESKey: string;
+    callbackEncodingAESKeyPlaceholder: string;
     microsoftAppId: string;
     microsoftAppIdPlaceholder: string;
     microsoftAppPassword: string;
@@ -679,15 +683,15 @@ export const en: LocaleDict = {
   channel: {
     channels: "Channels",
     feishuBot: "Feishu Bot",
-    feishuBotDesc: "Connect to Feishu (Lark) for AI coding assistance via bot messages",
+    feishuBotDesc: "Connect to Feishu (Lark) to use CodeMux via bot messages",
     dingtalkBot: "DingTalk Bot",
-    dingtalkBotDesc: "Connect to DingTalk for AI coding assistance via robot messages",
+    dingtalkBotDesc: "Connect to DingTalk to use CodeMux via robot messages",
     telegramBot: "Telegram Bot",
-    telegramBotDesc: "Connect to Telegram for AI coding assistance via bot messages",
+    telegramBotDesc: "Connect to Telegram to use CodeMux via bot messages",
     wecomBot: "WeCom Bot",
-    wecomBotDesc: "Connect to WeCom (WeChat Work) for AI coding assistance via app messages",
+    wecomBotDesc: "Connect to WeCom (WeChat Work) to use CodeMux via app messages",
     teamsBot: "Teams Bot",
-    teamsBotDesc: "Connect to Microsoft Teams for AI coding assistance via bot messages",
+    teamsBotDesc: "Connect to Microsoft Teams to use CodeMux via bot messages",
     appId: "App ID",
     appIdPlaceholder: "Enter Feishu App ID",
     appSecret: "App Secret",
@@ -706,6 +710,10 @@ export const en: LocaleDict = {
     corpSecretPlaceholder: "Enter WeCom App Secret",
     agentId: "Agent ID",
     agentIdPlaceholder: "Enter WeCom Agent ID",
+    callbackToken: "Callback Token",
+    callbackTokenPlaceholder: "Enter WeCom callback verification Token",
+    callbackEncodingAESKey: "Encoding AES Key",
+    callbackEncodingAESKeyPlaceholder: "Enter WeCom callback EncodingAESKey (43 chars)",
     microsoftAppId: "Microsoft App ID",
     microsoftAppIdPlaceholder: "Enter Azure AD App Registration Client ID",
     microsoftAppPassword: "App Password",

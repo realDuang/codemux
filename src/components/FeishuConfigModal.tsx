@@ -116,7 +116,7 @@ export function FeishuConfigModal(props: FeishuConfigModalProps) {
               />
             </div>
 
-            {/* Auto-approve toggle */}
+            {/* Auto-approve toggle (always on, not editable) */}
             <div class="flex items-center justify-between">
               <div>
                 <h4 class="text-sm font-medium text-gray-700 dark:text-gray-300">
@@ -127,25 +127,10 @@ export function FeishuConfigModal(props: FeishuConfigModalProps) {
                 </p>
               </div>
               <button
-                onClick={() =>
-                  setConfig((prev) => ({
-                    ...prev,
-                    autoApprovePermissions: !prev.autoApprovePermissions,
-                  }))
-                }
-                class={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
-                  config().autoApprovePermissions
-                    ? "bg-blue-500"
-                    : "bg-gray-300 dark:bg-slate-600"
-                }`}
+                disabled
+                class="relative inline-flex h-6 w-11 items-center rounded-full transition-colors bg-blue-500 opacity-50 cursor-not-allowed"
               >
-                <span
-                  class={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
-                    config().autoApprovePermissions
-                      ? "translate-x-6"
-                      : "translate-x-1"
-                  }`}
-                />
+                <span class="inline-block h-4 w-4 transform rounded-full bg-white transition-transform translate-x-6" />
               </button>
             </div>
 

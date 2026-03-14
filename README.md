@@ -52,27 +52,44 @@ Access your coding agents from any device — phone, tablet, or another machine 
 - **Public Internet**: One-click [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/) — no port forwarding, no VPN, no firewall changes
 - **Security built-in**: Device authorization, JWT tokens, HTTPS via Cloudflare, ephemeral tunnel URLs that rotate on every restart
 
-### 5. Feishu (Lark) Bot Integration
+### 5. IM Bot Channels
 
-Use your AI coding agents directly from [Feishu](https://www.feishu.cn/) — no browser needed. CodeMux connects as a Feishu bot, bridging chat messages to any engine through the gateway.
+Use your AI coding agents directly from your favorite messaging apps — no browser needed. CodeMux connects as a bot on each platform, bridging chat messages to any engine through the gateway.
 
-**One Group = One Session**: Each Feishu group chat maps to a single CodeMux session. Start a conversation in the bot's P2P chat to select a project, then a group is auto-created for the session — keeping conversations isolated and focused.
+#### Supported Platforms
 
-**Bot menu & slash commands** give full control from within Feishu:
+| Platform | Event Receiving | Streaming | Group Creation | Rich Content |
+|----------|----------------|-----------|----------------|--------------|
+| [Feishu (Lark)](https://open.feishu.cn/) | WebSocket (长连接) | ✅ Edit-in-place | ✅ Auto-create group | Interactive Cards |
+| [DingTalk](https://open.dingtalk.com/) | Stream mode (WS) | ✅ AI Card | ✅ Scene groups | ActionCard / Markdown |
+| [Telegram](https://core.telegram.org/bots/api) | Webhook / Long Polling | ✅ sendMessageDraft | ❌ P2P only | MarkdownV2 + InlineKeyboard |
+| [WeCom](https://developer.work.weixin.qq.com/) | HTTP Callback (AES XML) | ❌ Batch mode | ✅ App group chat | Markdown / Template Card |
+| [Microsoft Teams](https://learn.microsoft.com/en-us/microsoftteams/platform/bots/) | Bot Framework HTTP | ✅ Edit-in-place | ❌ P2P only | Adaptive Cards v1.5 |
 
-| Command | Context | Function |
-|---------|---------|----------|
-| Menu: Switch Project | P2P | Browse and select a project |
-| Menu: New Session | P2P | Create a new session (skips project selection if one was used before) |
-| Menu: Switch Session | P2P | Switch between existing sessions |
-| `/cancel` | Group | Stop the current AI response |
-| `/mode <agent\|plan\|build>` | Group | Switch execution mode |
-| `/model list` / `/model <id>` | Group | List or switch models |
-| `/status` | Group | Show session info |
+#### Common Features
 
-AI responses stream in real-time with throttled message updates, and a tool summary (e.g. `Shell(2), Edit(1)`) is appended on completion.
+- **P2P entry point**: Private chat with the bot to select projects and sessions
+- **Slash commands**: `/cancel`, `/status`, `/mode`, `/model`, `/history`, `/help`
+- **Streaming responses**: Real-time AI output with platform-appropriate update strategy
+- **Tool summary**: Completion messages include action counts (e.g. `Shell(2), Edit(1)`)
+- **Auto-approve permissions**: Engine permission requests are approved automatically
 
-> **Setup**: Create a Feishu custom app with bot capability, enable event subscriptions via **WebSocket (长连接)** mode, and configure the App ID / App Secret in CodeMux. See [Feishu Open Platform](https://open.feishu.cn/) for details.
+#### Session Models
+
+- **One Group = One Session** (Feishu, DingTalk, WeCom): Each group chat maps to a single CodeMux session. Start in P2P → select project → group auto-created.
+- **P2P Direct** (Telegram, Teams): Interact directly in private chat with temporary sessions (2h TTL). In group chats, @mention the bot to interact.
+
+#### Setup
+
+Each platform requires creating a bot/app on its developer portal and configuring credentials in CodeMux Settings → Channels:
+
+| Platform | Required Credentials | Developer Portal |
+|----------|---------------------|-----------------|
+| Feishu | App ID, App Secret | [open.feishu.cn](https://open.feishu.cn/) |
+| DingTalk | App Key, App Secret, Robot Code | [open.dingtalk.com](https://open.dingtalk.com/) |
+| Telegram | Bot Token (from @BotFather) | [core.telegram.org](https://core.telegram.org/bots) |
+| WeCom | Corp ID, Corp Secret, Agent ID, Callback Token, Encoding AES Key | [developer.work.weixin.qq.com](https://developer.work.weixin.qq.com/) |
+| Teams | Microsoft App ID, App Password | [Azure Portal](https://portal.azure.com/) + [Teams Dev Portal](https://dev.teams.microsoft.com/) |
 
 ---
 
@@ -229,7 +246,7 @@ codemux/
 │   ├── main/
 │   │   ├── engines/          # Engine adapters (OpenCode, Copilot, Claude Code)
 │   │   ├── gateway/          # WebSocket server + engine routing
-│   │   ├── channels/         # External messaging channels (Feishu)
+│   │   ├── channels/         # IM bot channels (Feishu, DingTalk, Telegram, WeCom, Teams)
 │   │   └── services/         # Auth, device store, tunnel, sessions
 │   └── preload/
 ├── src/                      # SolidJS renderer
@@ -269,7 +286,11 @@ Contributions are welcome! Please follow these conventions:
 - [OpenCode](https://opencode.ai) — Supported engine
 - [GitHub Copilot CLI](https://docs.github.com/en/copilot/using-github-copilot/using-github-copilot-coding-agent-in-cli) — Supported engine
 - [Claude Code](https://docs.anthropic.com/en/docs/claude-code) — Supported engine
-- [Feishu Open Platform](https://open.feishu.cn/) — Feishu bot integration
+- [Feishu Open Platform](https://open.feishu.cn/) — Feishu bot channel
+- [DingTalk Open Platform](https://open.dingtalk.com/) — DingTalk bot channel
+- [Telegram Bot API](https://core.telegram.org/bots/api) — Telegram bot channel
+- [WeCom Developer Center](https://developer.work.weixin.qq.com/) — WeCom bot channel
+- [Microsoft Teams Platform](https://learn.microsoft.com/en-us/microsoftteams/platform/bots/) — Teams bot channel
 
 ---
 

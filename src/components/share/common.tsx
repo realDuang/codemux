@@ -54,3 +54,15 @@ export function formatDuration(ms: number): string {
 
   return `${ms}ms`
 }
+
+/** Format token count: <1000 as-is, ≥1000 as X.XK, ≥1M as X.XM */
+export function formatTokenCount(count: number): string {
+  if (count < 1000) return String(count);
+  if (count < 1_000_000) return (count / 1000).toFixed(1) + "K";
+  return (count / 1_000_000).toFixed(1) + "M";
+}
+
+/** Format USD cost with 4 decimal places */
+export function formatCost(cost: number): string {
+  return "$" + cost.toFixed(4);
+}

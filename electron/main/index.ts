@@ -32,7 +32,12 @@ import { OpenCodeAdapter } from "./engines/opencode";
 import { CopilotSdkAdapter } from "./engines/copilot";
 import { ClaudeCodeAdapter } from "./engines/claude";
 import { ChannelManager } from "./channels/channel-manager";
+import { WebhookServer } from "./channels/webhook-server";
 import { FeishuAdapter } from "./channels/feishu/feishu-adapter";
+import { DingTalkAdapter } from "./channels/dingtalk/dingtalk-adapter";
+import { TelegramAdapter } from "./channels/telegram/telegram-adapter";
+import { WeComAdapter } from "./channels/wecom/wecom-adapter";
+import { TeamsAdapter } from "./channels/teams/teams-adapter";
 import { updateManager } from "./services/update-manager";
 
 // --- Gateway singleton instances ---
@@ -52,8 +57,15 @@ export { engineManager, gatewayServer };
 
 // --- Channel Manager ---
 const channelManager = new ChannelManager();
-const feishuAdapter = new FeishuAdapter();
-channelManager.registerAdapter(feishuAdapter);
+const webhookServer = new WebhookServer(4098);
+channelManager.setWebhookServer(webhookServer);
+
+// Register all channel adapters
+channelManager.registerAdapter(new FeishuAdapter());
+channelManager.registerAdapter(new DingTalkAdapter());
+channelManager.registerAdapter(new TelegramAdapter());
+channelManager.registerAdapter(new WeComAdapter());
+channelManager.registerAdapter(new TeamsAdapter());
 
 // Export for IPC handlers
 export { channelManager };
@@ -171,6 +183,11 @@ if (!gotTheLock) {
 
       // Initialize channels (after engines are ready and gateway is running)
       try {
+        // Start the shared webhook HTTP server for channels that need it
+        // (Telegram, WeCom, Teams). Feishu and DingTalk use platform WSClient.
+        await webhookServer.start();
+        mainLog.info(`Webhook server started on port ${webhookServer.serverPort}`);
+
         // Determine the actual Gateway WS URL for channel adapters.
         // In production, gateway is attached to the production HTTP server on /ws path.
         // In dev, gateway runs on a standalone port.
@@ -221,6 +238,7 @@ if (!gotTheLock) {
       await Promise.all([
         authApiServer.stop(),
         channelManager.stopAll(),
+        webhookServer.stop(),
         engineManager.stopAll(),
         productionServer.stop(),
         (() => { gatewayServer.stop(); })(),

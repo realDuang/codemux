@@ -203,8 +203,7 @@ export class WeComAdapter extends ChannelAdapter {
         WeComAdapter.CAPABILITIES,
       );
 
-      // 4. Register webhook route (requires WebhookServer instance passed via config)
-      this.webhookServer = (config.options as any)?._webhookServer as WebhookServer | undefined ?? null;
+      // 4. Register webhook route (requires WebhookServer set via setWebhookServer)
       if (this.webhookServer) {
         this.webhookServer.registerRoute(
           WeComAdapter.WEBHOOK_PATH,
@@ -301,6 +300,11 @@ export class WeComAdapter extends ChannelAdapter {
       };
       await this.start(fullConfig);
     }
+  }
+
+  /** Set the WebhookServer instance (called by ChannelManager before start) */
+  setWebhookServer(server: WebhookServer): void {
+    this.webhookServer = server;
   }
 
   // =========================================================================

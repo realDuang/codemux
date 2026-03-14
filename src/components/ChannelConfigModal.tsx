@@ -7,6 +7,8 @@ export interface ConfigField {
   type: "text" | "password" | "number" | "toggle";
   placeholder?: string;
   required?: boolean;
+  /** When true, the field is shown but cannot be changed */
+  disabled?: boolean;
 }
 
 interface ChannelConfigModalProps {
@@ -116,12 +118,13 @@ export function ChannelConfigModal(props: ChannelConfigModalProps) {
                         </h4>
                       </div>
                       <button
-                        onClick={() => updateField(field.key, !config()[field.key])}
+                        onClick={() => { if (!field.disabled) updateField(field.key, !config()[field.key]); }}
+                        disabled={field.disabled}
                         class={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
                           config()[field.key]
                             ? "bg-blue-500"
                             : "bg-gray-300 dark:bg-slate-600"
-                        }`}
+                        } ${field.disabled ? "opacity-50 cursor-not-allowed" : ""}`}
                       >
                         <span
                           class={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${

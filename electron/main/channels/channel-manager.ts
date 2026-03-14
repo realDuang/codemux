@@ -12,6 +12,7 @@ import {
   type ChannelConfig,
   type ChannelInfo,
 } from "./channel-adapter";
+import type { WebhookServer } from "./webhook-server";
 
 // --- Config persistence helpers ---
 
@@ -58,6 +59,16 @@ function saveConfig(config: ChannelConfig): void {
 export class ChannelManager {
   private adapters = new Map<string, ChannelAdapter>();
   private configs = new Map<string, ChannelConfig>();
+  private webhookServer: WebhookServer | null = null;
+
+  /** Set the shared WebhookServer instance for adapters that need HTTP endpoints */
+  setWebhookServer(server: WebhookServer): void {
+    this.webhookServer = server;
+    // Inject into all already-registered adapters that support it
+    for (const adapter of this.adapters.values()) {
+      this.injectWebhookServer(adapter);
+    }
+  }
 
   /** Register a channel adapter (does not start it) */
   registerAdapter(adapter: ChannelAdapter): void {
@@ -66,7 +77,18 @@ export class ChannelManager {
       channelLog.warn(`Channel adapter '${type}' already registered, replacing`);
     }
     this.adapters.set(type, adapter);
+    // Inject webhook server if available
+    if (this.webhookServer) {
+      this.injectWebhookServer(adapter);
+    }
     channelLog.info(`Registered channel adapter: ${type}`);
+  }
+
+  /** Inject WebhookServer into adapters that have a setWebhookServer method */
+  private injectWebhookServer(adapter: ChannelAdapter): void {
+    if (this.webhookServer && typeof (adapter as any).setWebhookServer === "function") {
+      (adapter as any).setWebhookServer(this.webhookServer);
+    }
   }
 
   /** Load persisted config and auto-start enabled channels */

@@ -1,0 +1,54 @@
+.tokenUsage {
+  margin-top: 0.25rem;
+}
+
+.summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  padding: 0;
+  border: none;
+  background: none;
+  cursor: pointer;
+  font-size: 0.6875rem;
+  color: #9ca3af;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.25rem;
+}
+.summary:hover { color: #6b7280; }
+:global(.dark) .summary { color: #71717a; }
+:global(.dark) .summary:hover { color: #a1a1aa; }
+
+.totalTokens { font-weight: 500; }
+.sep { color: #d1d5db; }
+:global(.dark) .sep { color: #52525b; }
+.cost { /* inherits */ }
+.model { max-width: 10rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.chevron {
+  display: inline-flex;
+  transition: transform 150ms ease;
+}
+.chevron[data-expanded] { transform: rotate(180deg); }
+
+.details {
+  display: flex;
+  flex-direction: column;
+  gap: 0.125rem;
+  padding: 0.25rem 0 0 0.5rem;
+  font-size: 0.6875rem;
+  color: #9ca3af;
+  font-variant-numeric: tabular-nums;
+}
+:global(.dark) .details { color: #71717a; }
+
+.detailRow {
+  display: flex;
+  gap: 0.75rem;
+}
+.detailLabel {
+  min-width: 3rem;
+  color: #b0b4ba;
+}
+:global(.dark) .detailLabel { color: #63636e; }
+.detailValue { /* inherits */ }

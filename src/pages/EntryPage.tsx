@@ -84,6 +84,8 @@ export default function EntryPage() {
     corpId: "",
     corpSecret: "",
     agentId: 0,
+    callbackToken: "",
+    callbackEncodingAESKey: "",
     autoApprovePermissions: true,
   });
   const [wecomConfigOpen, setWecomConfigOpen] = createSignal(false);
@@ -634,6 +636,8 @@ export default function EntryPage() {
           corpId: (config.options.corpId as string) || "",
           corpSecret: (config.options.corpSecret as string) || "",
           agentId: (config.options.agentId as number) || 0,
+          callbackToken: (config.options.callbackToken as string) || "",
+          callbackEncodingAESKey: (config.options.callbackEncodingAESKey as string) || "",
           autoApprovePermissions: config.options.autoApprovePermissions !== false,
         });
       }
@@ -653,7 +657,7 @@ export default function EntryPage() {
         setWecomStatus({ type: "wecom", name: "wecom", status: "stopped" });
       } else {
         const cfg = wecomConfig();
-        if (!cfg.corpId || !cfg.corpSecret || !cfg.agentId) {
+        if (!cfg.corpId || !cfg.corpSecret || !cfg.agentId || !cfg.callbackToken || !cfg.callbackEncodingAESKey) {
           setWecomConfigOpen(true);
           setWecomLoading(false);
           return;
@@ -1490,7 +1494,7 @@ export default function EntryPage() {
                         <div class="p-4 flex items-center justify-between">
                           <div class="flex items-center gap-3">
                             <div class="w-9 h-9 rounded-lg bg-green-100 dark:bg-green-900/30 flex items-center justify-center">
-                              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-green-600 dark:text-green-400"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+                              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="currentColor" class="text-green-600 dark:text-green-400"><path d="M8.69 4.47C5.29 5.2 2.8 8.14 2.8 11.6c0 1.73.58 3.33 1.55 4.62l-.97 2.87 3.02-.98c1.12.65 2.42 1.03 3.8 1.08-.2-.6-.3-1.24-.3-1.9 0-3.75 3.15-6.8 7.02-6.8.5 0 .99.06 1.46.16C17.79 7.17 14.93 4.8 11.5 4.4c-.94-.11-1.89-.08-2.81.07zM7.5 8.1a1.05 1.05 0 1 1 0 2.1 1.05 1.05 0 0 1 0-2.1zm5.2 0a1.05 1.05 0 1 1 0 2.1 1.05 1.05 0 0 1 0-2.1z"/><path d="M21.2 17.3c0-2.94-2.87-5.33-6.4-5.33s-6.4 2.39-6.4 5.33c0 2.94 2.87 5.33 6.4 5.33.98 0 1.9-.18 2.73-.5l2.27.74-.72-2.15c.72-1 1.12-2.17 1.12-3.42zm-8.65-.6a.88.88 0 1 1 0-1.75.88.88 0 0 1 0 1.75zm4.5 0a.88.88 0 1 1 0-1.75.88.88 0 0 1 0 1.75z"/></svg>
                             </div>
                             <div>
                               <div class="flex items-center gap-2">
@@ -1552,7 +1556,7 @@ export default function EntryPage() {
                         <div class="p-4 flex items-center justify-between">
                           <div class="flex items-center gap-3">
                             <div class="w-9 h-9 rounded-lg bg-purple-100 dark:bg-purple-900/30 flex items-center justify-center">
-                              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-purple-600 dark:text-purple-400"><path d="M2 16.1A5 5 0 0 1 5.9 20M2 12.05A9 9 0 0 1 9.95 20M2 8V6a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-6"/><line x1="2" x2="2.01" y1="20" y2="20"/></svg>
+                              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="currentColor" class="text-purple-600 dark:text-purple-400"><path d="M19.27 4.26h-3.42v-.7A1.56 1.56 0 0 0 14.3 2H9.7a1.56 1.56 0 0 0-1.55 1.56v.7H4.73A1.73 1.73 0 0 0 3 6v1.73h18V6a1.73 1.73 0 0 0-1.73-1.74zM9.88 3.56a.43.43 0 0 1 .43-.43h3.38a.43.43 0 0 1 .43.43v.7H9.88z"/><path d="M3 9v11.27A1.73 1.73 0 0 0 4.73 22h14.54A1.73 1.73 0 0 0 21 20.27V9zm7.13 8.59H7.36v-2.77h-.01V12.5h2.78v5.09zm3.74 0h-2.37V12.5h2.37zm3.77 0h-2.37V12.5h2.37z"/></svg>
                             </div>
                             <div>
                               <div class="flex items-center gap-2">
@@ -1628,7 +1632,7 @@ export default function EntryPage() {
                   { key: "appKey", label: t().channel.appKey, type: "text", placeholder: t().channel.appKeyPlaceholder, required: true },
                   { key: "appSecret", label: t().channel.appSecret, type: "password", placeholder: t().channel.appSecretPlaceholder, required: true },
                   { key: "robotCode", label: t().channel.robotCode, type: "text", placeholder: t().channel.robotCodePlaceholder },
-                  { key: "autoApprovePermissions", label: t().channel.autoApprove, type: "toggle" },
+                  { key: "autoApprovePermissions", label: t().channel.autoApprove, type: "toggle", disabled: true },
                 ]}
                 initialConfig={dingtalkConfig()}
                 onSave={handleDingtalkConfigSave}
@@ -1641,7 +1645,7 @@ export default function EntryPage() {
                 fields={[
                   { key: "botToken", label: t().channel.botToken, type: "password", placeholder: t().channel.botTokenPlaceholder, required: true },
                   { key: "webhookUrl", label: t().channel.webhookUrl, type: "text", placeholder: t().channel.webhookUrlPlaceholder },
-                  { key: "autoApprovePermissions", label: t().channel.autoApprove, type: "toggle" },
+                  { key: "autoApprovePermissions", label: t().channel.autoApprove, type: "toggle", disabled: true },
                 ]}
                 initialConfig={telegramConfig()}
                 onSave={handleTelegramConfigSave}
@@ -1655,7 +1659,9 @@ export default function EntryPage() {
                   { key: "corpId", label: t().channel.corpId, type: "text", placeholder: t().channel.corpIdPlaceholder, required: true },
                   { key: "corpSecret", label: t().channel.corpSecret, type: "password", placeholder: t().channel.corpSecretPlaceholder, required: true },
                   { key: "agentId", label: t().channel.agentId, type: "number", placeholder: t().channel.agentIdPlaceholder, required: true },
-                  { key: "autoApprovePermissions", label: t().channel.autoApprove, type: "toggle" },
+                  { key: "callbackToken", label: t().channel.callbackToken, type: "text", placeholder: t().channel.callbackTokenPlaceholder, required: true },
+                  { key: "callbackEncodingAESKey", label: t().channel.callbackEncodingAESKey, type: "password", placeholder: t().channel.callbackEncodingAESKeyPlaceholder, required: true },
+                  { key: "autoApprovePermissions", label: t().channel.autoApprove, type: "toggle", disabled: true },
                 ]}
                 initialConfig={wecomConfig()}
                 onSave={handleWecomConfigSave}
@@ -1668,7 +1674,7 @@ export default function EntryPage() {
                 fields={[
                   { key: "microsoftAppId", label: t().channel.microsoftAppId, type: "text", placeholder: t().channel.microsoftAppIdPlaceholder, required: true },
                   { key: "microsoftAppPassword", label: t().channel.microsoftAppPassword, type: "password", placeholder: t().channel.microsoftAppPasswordPlaceholder, required: true },
-                  { key: "autoApprovePermissions", label: t().channel.autoApprove, type: "toggle" },
+                  { key: "autoApprovePermissions", label: t().channel.autoApprove, type: "toggle", disabled: true },
                 ]}
                 initialConfig={teamsConfig()}
                 onSave={handleTeamsConfigSave}

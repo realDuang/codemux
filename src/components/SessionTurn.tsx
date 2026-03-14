@@ -20,6 +20,7 @@ import { useI18n } from "../lib/i18n";
 import { logger } from "../lib/logger";
 import { gateway } from "../lib/gateway-api";
 import type { UnifiedMessage, UnifiedPart, ToolPart, UnifiedPermission } from "../types/unified";
+import { TokenUsage } from "./TokenUsage";
 import styles from "./SessionTurn.module.css";
 
 interface SessionTurnProps {
@@ -991,6 +992,11 @@ export function SessionTurn(props: SessionTurnProps) {
                 />
               </div>
             </div>
+          </Show>
+
+          {/* Per-turn token usage (collapsed by default) */}
+          <Show when={!props.isWorking && props.assistantMessages.length > 0}>
+            <TokenUsage messages={props.assistantMessages} />
           </Show>
 
           {/* Error/Cancelled Banner */}

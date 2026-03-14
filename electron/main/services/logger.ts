@@ -134,6 +134,9 @@ export const windowLog = log.scope("window");
 export const channelLog = log.scope("channel");
 export const feishuLog = log.scope("feishu");
 export const dingtalkLog = log.scope("dingtalk");
+export const telegramLog = log.scope("telegram");
+export const wecomLog = log.scope("wecom");
+export const teamsLog = log.scope("teams");
 
 // Re-export the root logger for ad-hoc usage and renderer log forwarding
 export default log;

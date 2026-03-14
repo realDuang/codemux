@@ -133,6 +133,7 @@ export const tunnelLog = log.scope("tunnel");
 export const windowLog = log.scope("window");
 export const channelLog = log.scope("channel");
 export const feishuLog = log.scope("feishu");
+export const dingtalkLog = log.scope("dingtalk");
 
 // Re-export the root logger for ad-hoc usage and renderer log forwarding
 export default log;

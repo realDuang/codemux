@@ -4,15 +4,15 @@
 
 .root {
   border-radius: 8px;
-  border: 1px solid rgba(99, 102, 241, 0.1);
-  background: rgba(238, 242, 255, 0.35);
+  border: 1px solid #E2E8F0;
+  background: #F8FAFC;
   overflow: hidden;
   margin: 2px 0;
 }
 
 :global(.dark) .root {
-  border-color: rgba(99, 102, 241, 0.08);
-  background: rgba(49, 46, 129, 0.08);
+  border-color: #334155;
+  background: #1E293B;
 }
 
 /* ── Trigger row ── */
@@ -112,12 +112,12 @@
 
 /* ── Expanded list ── */
 .list {
-  border-top: 1px solid rgba(99, 102, 241, 0.08);
+  border-top: 1px solid #E2E8F0;
   padding: 4px 6px 6px;
 }
 
 :global(.dark) .list {
-  border-top-color: rgba(99, 102, 241, 0.06);
+  border-top-color: #334155;
 }
 
 .item {

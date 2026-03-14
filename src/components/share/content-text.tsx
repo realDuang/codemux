@@ -7,6 +7,7 @@ interface Props {
   text: string
   expand?: boolean
   compact?: boolean
+  plain?: boolean
 }
 export function ContentText(props: Props) {
   const { t } = useI18n()
@@ -18,6 +19,7 @@ export function ContentText(props: Props) {
       class={style.root}
       data-expanded={expanded() || props.expand === true ? true : undefined}
       data-compact={props.compact === true ? true : undefined}
+      data-plain={props.plain === true ? true : undefined}
     >
       <pre data-slot="text" ref={overflow.ref}>
         {props.text}

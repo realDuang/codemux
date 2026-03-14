@@ -264,6 +264,7 @@ export default function Chat() {
   const [isMobile, setIsMobile] = createSignal(window.innerWidth < 768);
   // Desktop sidebar collapse (icon-only mode)
   const [isSidebarCollapsed, setIsSidebarCollapsed] = createSignal(false);
+  const [refreshingSessions, setRefreshingSessions] = createSignal(false);
 
   // Send validation error (auto-clears after 3s)
   const [sendError, setSendError] = createSignal<string | null>(null);
@@ -727,6 +728,36 @@ export default function Chat() {
       await gateway.renameSession(sessionId, newTitle);
     } catch (error) {
       logger.error("[RenameSession] Failed:", error);
+    }
+  };
+
+  const handleRefreshSessions = async () => {
+    if (refreshingSessions()) return;
+    setRefreshingSessions(true);
+    logger.debug("[RefreshSessions] Refreshing session list");
+    const minSpinnerDelay = new Promise(resolve => setTimeout(resolve, 1000));
+    try {
+      const [allProjects, allSessions] = await Promise.all([
+        gateway.listAllProjects(),
+        gateway.listAllSessions(),
+      ]);
+      setSessionStore("projects", allProjects);
+      const validDirectories = new Set(allProjects.map(p => p.directory));
+      const filteredSessions = allSessions.filter(s =>
+        s.directory && validDirectories.has(s.directory)
+      );
+      const sessionInfos = filteredSessions.map(s => {
+        const project = allProjects.find(p =>
+          p.directory === s.directory && p.engineType === s.engineType
+        );
+        return toSessionInfo(s, project?.id);
+      });
+      setSessionStore("list", sessionInfos);
+    } catch (error) {
+      logger.error("[RefreshSessions] Failed:", error);
+    } finally {
+      await minSpinnerDelay;
+      setRefreshingSessions(false);
     }
   };
 
@@ -1366,21 +1397,38 @@ export default function Chat() {
           <Show when={!isSidebarCollapsed()}>
             <span class="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider px-1">{t().sidebar.sessions}</span>
           </Show>
-          <button
-            onClick={toggleSidebarCollapse}
-            class="p-1.5 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-zinc-800 rounded-md transition-colors flex-shrink-0"
-            title={isSidebarCollapsed() ? t().sidebar.expandSidebar : t().sidebar.collapseSidebar}
-            aria-label={isSidebarCollapsed() ? t().sidebar.expandSidebar : t().sidebar.collapseSidebar}
-            aria-expanded={!isSidebarCollapsed()}
-          >
-            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <rect width="18" height="18" x="3" y="3" rx="2" />
-              <path d="M9 3v18" />
-              {isSidebarCollapsed() ? <path d="m14 9 3 3-3 3" /> : <path d="m14 9-3 3 3 3" />}
-            </svg>
-          </button>
+          <div class="flex items-center gap-0.5">
+            <Show when={!isSidebarCollapsed()}>
+              <button
+                onClick={handleRefreshSessions}
+                disabled={refreshingSessions()}
+                class="p-1.5 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-zinc-800 rounded-md transition-colors flex-shrink-0 disabled:opacity-50"
+                title={t().sidebar.refreshSessions}
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class={refreshingSessions() ? "animate-spin" : ""}>
+                  <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8" />
+                  <path d="M21 3v5h-5" />
+                  <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16" />
+                  <path d="M8 16H3v5" />
+                </svg>
+              </button>
+            </Show>
+            <button
+              onClick={toggleSidebarCollapse}
+              class="p-1.5 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-zinc-800 rounded-md transition-colors flex-shrink-0"
+              title={isSidebarCollapsed() ? t().sidebar.expandSidebar : t().sidebar.collapseSidebar}
+              aria-label={isSidebarCollapsed() ? t().sidebar.expandSidebar : t().sidebar.collapseSidebar}
+              aria-expanded={!isSidebarCollapsed()}
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <rect width="18" height="18" x="3" y="3" rx="2" />
+                <path d="M9 3v18" />
+                {isSidebarCollapsed() ? <path d="m14 9 3 3-3 3" /> : <path d="m14 9-3 3 3 3" />}
+              </svg>
+            </button>
+          </div>
         </div>
-        <div class="flex flex-col h-full overflow-hidden">
+        <div class="relative flex flex-col h-full overflow-hidden">
           <Show when={!sessionStore.loading}>
             <SessionSidebar
               sessions={sessionStore.list}
@@ -1398,6 +1446,16 @@ export default function Chat() {
               showAddProject={isLocalAccess()}
               collapsed={isSidebarCollapsed() && !isMobile()}
             />
+          </Show>
+          <Show when={refreshingSessions()}>
+            <div class="absolute inset-0 bg-gray-50/60 dark:bg-zinc-950/60 backdrop-blur-[1px] z-10 flex items-center justify-center transition-opacity">
+              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="animate-spin text-gray-400 dark:text-gray-500">
+                <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8" />
+                <path d="M21 3v5h-5" />
+                <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16" />
+                <path d="M8 16H3v5" />
+              </svg>
+            </div>
           </Show>
         </div>
 

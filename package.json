@@ -25,6 +25,7 @@
     "start": "bun scripts/start.ts",
     "update:cloudflared": "bun scripts/update-cloudflared.ts",
     "test:web-api": "bun scripts/test-web-api.ts",
+    "restart": "bun scripts/restart.ts",
     "test:unit": "vitest run",
     "test:e2e": "electron-vite build && playwright test",
     "test": "vitest run && playwright test",

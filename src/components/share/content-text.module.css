@@ -56,6 +56,16 @@
     background-color: var(--sl-color-blue-low);
   }
 
+  &[data-plain] {
+    background: transparent;
+    padding: 0;
+    font-size: 1em;
+
+    [data-slot="text"] {
+      font-family: inherit;
+    }
+  }
+
   [data-component="copy-button"] {
     top: 0.5rem;
     right: calc(0.5rem - 1px);

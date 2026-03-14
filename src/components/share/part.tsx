@@ -33,6 +33,7 @@ import {
 import { Collapsible } from "../Collapsible";
 import { ContentError } from "./content-error";
 import { ContentMarkdown } from "./content-markdown";
+import { ContentText } from "./content-text";
 import { formatDuration, createElapsedTimer } from "./common";
 import {
   ToolIcon,
@@ -140,7 +141,7 @@ export function Part(props: PartProps) {
       <div data-component="content">
         {props.message.role === "user" && props.part.type === "text" && (
           <div data-component="user-text">
-            <ContentMarkdown text={props.part.text} expand={props.last} />
+            <ContentText text={props.part.text} expand={props.last} plain />
           </div>
         )}
         {props.message.role === "assistant" && props.part.type === "text" && (

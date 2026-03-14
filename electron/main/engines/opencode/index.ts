@@ -15,6 +15,7 @@ import {
   type QuestionRequest as SdkQuestionRequest,
 } from "@opencode-ai/sdk/v2";
 import { openCodeLog } from "../../services/logger";
+import { CODEMUX_IDENTITY_PROMPT } from "../identity-prompt";
 import { EngineAdapter } from "../engine-adapter";
 import {
   convertSession,
@@ -896,6 +897,7 @@ export class OpenCodeAdapter extends EngineAdapter {
         parts,
         agent: options?.mode,
         model,
+        system: CODEMUX_IDENTITY_PROMPT,
       });
 
       const promptError = (promptResult as any).error;
@@ -1009,6 +1011,7 @@ export class OpenCodeAdapter extends EngineAdapter {
       parts,
       agent: options?.mode,
       model,
+      system: CODEMUX_IDENTITY_PROMPT,
     });
 
     // SDK uses ThrowOnError=false by default, so errors are returned in the result

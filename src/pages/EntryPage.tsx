@@ -4,6 +4,7 @@ import { Auth } from "../lib/auth";
 import { useI18n } from "../lib/i18n";
 import { LanguageSwitcher } from "../components/LanguageSwitcher";
 import { FeishuConfigModal } from "../components/FeishuConfigModal";
+import { ChannelConfigModal } from "../components/ChannelConfigModal";
 import { logger } from "../lib/logger";
 import { isElectron } from "../lib/platform";
 import { systemAPI, tunnelAPI, channelAPI, type ChannelInfo, type TunnelInfo } from "../lib/electron-api";
@@ -53,6 +54,51 @@ export default function EntryPage() {
   });
   const [feishuConfigOpen, setFeishuConfigOpen] = createSignal(false);
   const [feishuLoading, setFeishuLoading] = createSignal(false);
+
+  // DingTalk channel states
+  const [dingtalkStatus, setDingtalkStatus] = createSignal<ChannelInfo | null>(null);
+  const [dingtalkConfig, setDingtalkConfig] = createSignal({
+    appKey: "",
+    appSecret: "",
+    robotCode: "",
+    autoApprovePermissions: true,
+    streamingThrottleMs: 1500,
+  });
+  const [dingtalkConfigOpen, setDingtalkConfigOpen] = createSignal(false);
+  const [dingtalkLoading, setDingtalkLoading] = createSignal(false);
+
+  // Telegram channel states
+  const [telegramStatus, setTelegramStatus] = createSignal<ChannelInfo | null>(null);
+  const [telegramConfig, setTelegramConfig] = createSignal({
+    botToken: "",
+    webhookUrl: "",
+    autoApprovePermissions: true,
+    streamingThrottleMs: 1500,
+  });
+  const [telegramConfigOpen, setTelegramConfigOpen] = createSignal(false);
+  const [telegramLoading, setTelegramLoading] = createSignal(false);
+
+  // WeCom channel states
+  const [wecomStatus, setWecomStatus] = createSignal<ChannelInfo | null>(null);
+  const [wecomConfig, setWecomConfig] = createSignal({
+    corpId: "",
+    corpSecret: "",
+    agentId: 0,
+    autoApprovePermissions: true,
+  });
+  const [wecomConfigOpen, setWecomConfigOpen] = createSignal(false);
+  const [wecomLoading, setWecomLoading] = createSignal(false);
+
+  // Teams channel states
+  const [teamsStatus, setTeamsStatus] = createSignal<ChannelInfo | null>(null);
+  const [teamsConfig, setTeamsConfig] = createSignal({
+    microsoftAppId: "",
+    microsoftAppPassword: "",
+    autoApprovePermissions: true,
+    streamingThrottleMs: 1500,
+  });
+  const [teamsConfigOpen, setTeamsConfigOpen] = createSignal(false);
+  const [teamsLoading, setTeamsLoading] = createSignal(false);
 
   onMount(async () => {
     logger.debug("[EntryPage] Mounted, checking access type...");
@@ -164,6 +210,10 @@ export default function EntryPage() {
 
     // Load Feishu channel status and config
     loadFeishuStatus();
+    loadDingtalkStatus();
+    loadTelegramStatus();
+    loadWecomStatus();
+    loadTeamsStatus();
   };
 
   const checkTunnelStatus = async () => {
@@ -418,6 +468,299 @@ export default function EntryPage() {
         logger.error("[EntryPage] Failed to start Feishu after config save:", err);
         const newStatus = await channelAPI.getStatus("feishu");
         if (newStatus) setFeishuStatus(newStatus);
+      }
+    }
+  };
+
+  // =========================================================================
+  // DingTalk channel handlers
+  // =========================================================================
+
+  const loadDingtalkStatus = async () => {
+    try {
+      const status = await channelAPI.getStatus("dingtalk");
+      if (status) setDingtalkStatus(status);
+
+      const config = await channelAPI.getConfig("dingtalk");
+      if (config?.options) {
+        setDingtalkConfig({
+          appKey: (config.options.appKey as string) || "",
+          appSecret: (config.options.appSecret as string) || "",
+          robotCode: (config.options.robotCode as string) || "",
+          autoApprovePermissions: config.options.autoApprovePermissions !== false,
+          streamingThrottleMs: (config.options.streamingThrottleMs as number) || 1500,
+        });
+      }
+    } catch (err) {
+      logger.error("[EntryPage] Failed to load DingTalk status:", err);
+    }
+  };
+
+  const handleDingtalkToggle = async () => {
+    const currentStatus = dingtalkStatus();
+    const isRunning = currentStatus?.status === "running" || currentStatus?.status === "starting";
+
+    setDingtalkLoading(true);
+    try {
+      if (isRunning) {
+        await channelAPI.stop("dingtalk");
+        setDingtalkStatus({ type: "dingtalk", name: "dingtalk", status: "stopped" });
+      } else {
+        const cfg = dingtalkConfig();
+        if (!cfg.appKey || !cfg.appSecret) {
+          setDingtalkConfigOpen(true);
+          setDingtalkLoading(false);
+          return;
+        }
+        await channelAPI.start("dingtalk");
+        await new Promise((resolve) => setTimeout(resolve, 1500));
+        const status = await channelAPI.getStatus("dingtalk");
+        if (status) setDingtalkStatus(status);
+      }
+    } catch (err) {
+      logger.error("[EntryPage] Failed to toggle DingTalk:", err);
+      const status = await channelAPI.getStatus("dingtalk");
+      if (status) setDingtalkStatus(status);
+    } finally {
+      setDingtalkLoading(false);
+    }
+  };
+
+  const handleDingtalkConfigSave = async (config: Record<string, unknown>) => {
+    await channelAPI.updateConfig("dingtalk", { options: config });
+    setDingtalkConfig(config as typeof dingtalkConfig extends () => infer R ? R : never);
+
+    const status = dingtalkStatus();
+    if (status?.status !== "running") {
+      try {
+        await channelAPI.start("dingtalk");
+        setTimeout(async () => {
+          const newStatus = await channelAPI.getStatus("dingtalk");
+          if (newStatus) setDingtalkStatus(newStatus);
+        }, 1500);
+      } catch (err) {
+        logger.error("[EntryPage] Failed to start DingTalk after config save:", err);
+        const newStatus = await channelAPI.getStatus("dingtalk");
+        if (newStatus) setDingtalkStatus(newStatus);
+      }
+    }
+  };
+
+  // =========================================================================
+  // Telegram channel handlers
+  // =========================================================================
+
+  const loadTelegramStatus = async () => {
+    try {
+      const status = await channelAPI.getStatus("telegram");
+      if (status) setTelegramStatus(status);
+
+      const config = await channelAPI.getConfig("telegram");
+      if (config?.options) {
+        setTelegramConfig({
+          botToken: (config.options.botToken as string) || "",
+          webhookUrl: (config.options.webhookUrl as string) || "",
+          autoApprovePermissions: config.options.autoApprovePermissions !== false,
+          streamingThrottleMs: (config.options.streamingThrottleMs as number) || 1500,
+        });
+      }
+    } catch (err) {
+      logger.error("[EntryPage] Failed to load Telegram status:", err);
+    }
+  };
+
+  const handleTelegramToggle = async () => {
+    const currentStatus = telegramStatus();
+    const isRunning = currentStatus?.status === "running" || currentStatus?.status === "starting";
+
+    setTelegramLoading(true);
+    try {
+      if (isRunning) {
+        await channelAPI.stop("telegram");
+        setTelegramStatus({ type: "telegram", name: "telegram", status: "stopped" });
+      } else {
+        const cfg = telegramConfig();
+        if (!cfg.botToken) {
+          setTelegramConfigOpen(true);
+          setTelegramLoading(false);
+          return;
+        }
+        await channelAPI.start("telegram");
+        await new Promise((resolve) => setTimeout(resolve, 1500));
+        const status = await channelAPI.getStatus("telegram");
+        if (status) setTelegramStatus(status);
+      }
+    } catch (err) {
+      logger.error("[EntryPage] Failed to toggle Telegram:", err);
+      const status = await channelAPI.getStatus("telegram");
+      if (status) setTelegramStatus(status);
+    } finally {
+      setTelegramLoading(false);
+    }
+  };
+
+  const handleTelegramConfigSave = async (config: Record<string, unknown>) => {
+    await channelAPI.updateConfig("telegram", { options: config });
+    setTelegramConfig(config as typeof telegramConfig extends () => infer R ? R : never);
+
+    const status = telegramStatus();
+    if (status?.status !== "running") {
+      try {
+        await channelAPI.start("telegram");
+        setTimeout(async () => {
+          const newStatus = await channelAPI.getStatus("telegram");
+          if (newStatus) setTelegramStatus(newStatus);
+        }, 1500);
+      } catch (err) {
+        logger.error("[EntryPage] Failed to start Telegram after config save:", err);
+        const newStatus = await channelAPI.getStatus("telegram");
+        if (newStatus) setTelegramStatus(newStatus);
+      }
+    }
+  };
+
+  // =========================================================================
+  // WeCom channel handlers
+  // =========================================================================
+
+  const loadWecomStatus = async () => {
+    try {
+      const status = await channelAPI.getStatus("wecom");
+      if (status) setWecomStatus(status);
+
+      const config = await channelAPI.getConfig("wecom");
+      if (config?.options) {
+        setWecomConfig({
+          corpId: (config.options.corpId as string) || "",
+          corpSecret: (config.options.corpSecret as string) || "",
+          agentId: (config.options.agentId as number) || 0,
+          autoApprovePermissions: config.options.autoApprovePermissions !== false,
+        });
+      }
+    } catch (err) {
+      logger.error("[EntryPage] Failed to load WeCom status:", err);
+    }
+  };
+
+  const handleWecomToggle = async () => {
+    const currentStatus = wecomStatus();
+    const isRunning = currentStatus?.status === "running" || currentStatus?.status === "starting";
+
+    setWecomLoading(true);
+    try {
+      if (isRunning) {
+        await channelAPI.stop("wecom");
+        setWecomStatus({ type: "wecom", name: "wecom", status: "stopped" });
+      } else {
+        const cfg = wecomConfig();
+        if (!cfg.corpId || !cfg.corpSecret || !cfg.agentId) {
+          setWecomConfigOpen(true);
+          setWecomLoading(false);
+          return;
+        }
+        await channelAPI.start("wecom");
+        await new Promise((resolve) => setTimeout(resolve, 1500));
+        const status = await channelAPI.getStatus("wecom");
+        if (status) setWecomStatus(status);
+      }
+    } catch (err) {
+      logger.error("[EntryPage] Failed to toggle WeCom:", err);
+      const status = await channelAPI.getStatus("wecom");
+      if (status) setWecomStatus(status);
+    } finally {
+      setWecomLoading(false);
+    }
+  };
+
+  const handleWecomConfigSave = async (config: Record<string, unknown>) => {
+    await channelAPI.updateConfig("wecom", { options: config });
+    setWecomConfig(config as typeof wecomConfig extends () => infer R ? R : never);
+
+    const status = wecomStatus();
+    if (status?.status !== "running") {
+      try {
+        await channelAPI.start("wecom");
+        setTimeout(async () => {
+          const newStatus = await channelAPI.getStatus("wecom");
+          if (newStatus) setWecomStatus(newStatus);
+        }, 1500);
+      } catch (err) {
+        logger.error("[EntryPage] Failed to start WeCom after config save:", err);
+        const newStatus = await channelAPI.getStatus("wecom");
+        if (newStatus) setWecomStatus(newStatus);
+      }
+    }
+  };
+
+  // =========================================================================
+  // Teams channel handlers
+  // =========================================================================
+
+  const loadTeamsStatus = async () => {
+    try {
+      const status = await channelAPI.getStatus("teams");
+      if (status) setTeamsStatus(status);
+
+      const config = await channelAPI.getConfig("teams");
+      if (config?.options) {
+        setTeamsConfig({
+          microsoftAppId: (config.options.microsoftAppId as string) || "",
+          microsoftAppPassword: (config.options.microsoftAppPassword as string) || "",
+          autoApprovePermissions: config.options.autoApprovePermissions !== false,
+          streamingThrottleMs: (config.options.streamingThrottleMs as number) || 1500,
+        });
+      }
+    } catch (err) {
+      logger.error("[EntryPage] Failed to load Teams status:", err);
+    }
+  };
+
+  const handleTeamsToggle = async () => {
+    const currentStatus = teamsStatus();
+    const isRunning = currentStatus?.status === "running" || currentStatus?.status === "starting";
+
+    setTeamsLoading(true);
+    try {
+      if (isRunning) {
+        await channelAPI.stop("teams");
+        setTeamsStatus({ type: "teams", name: "teams", status: "stopped" });
+      } else {
+        const cfg = teamsConfig();
+        if (!cfg.microsoftAppId || !cfg.microsoftAppPassword) {
+          setTeamsConfigOpen(true);
+          setTeamsLoading(false);
+          return;
+        }
+        await channelAPI.start("teams");
+        await new Promise((resolve) => setTimeout(resolve, 1500));
+        const status = await channelAPI.getStatus("teams");
+        if (status) setTeamsStatus(status);
+      }
+    } catch (err) {
+      logger.error("[EntryPage] Failed to toggle Teams:", err);
+      const status = await channelAPI.getStatus("teams");
+      if (status) setTeamsStatus(status);
+    } finally {
+      setTeamsLoading(false);
+    }
+  };
+
+  const handleTeamsConfigSave = async (config: Record<string, unknown>) => {
+    await channelAPI.updateConfig("teams", { options: config });
+    setTeamsConfig(config as typeof teamsConfig extends () => infer R ? R : never);
+
+    const status = teamsStatus();
+    if (status?.status !== "running") {
+      try {
+        await channelAPI.start("teams");
+        setTimeout(async () => {
+          const newStatus = await channelAPI.getStatus("teams");
+          if (newStatus) setTeamsStatus(newStatus);
+        }, 1500);
+      } catch (err) {
+        logger.error("[EntryPage] Failed to start Teams after config save:", err);
+        const newStatus = await channelAPI.getStatus("teams");
+        if (newStatus) setTeamsStatus(newStatus);
       }
     }
   };
@@ -1017,6 +1360,254 @@ export default function EntryPage() {
                           </div>
                         </Show>
                       </div>
+
+                      {/* DingTalk Bot Row */}
+                      <div class="rounded-lg border border-gray-200 dark:border-slate-800 overflow-hidden">
+                        <div class="p-4 flex items-center justify-between">
+                          <div class="flex items-center gap-3">
+                            <div class="w-9 h-9 rounded-lg bg-blue-100 dark:bg-blue-900/30 flex items-center justify-center">
+                              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-blue-600 dark:text-blue-400"><path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"/></svg>
+                            </div>
+                            <div>
+                              <div class="flex items-center gap-2">
+                                <h3 class="text-sm font-medium text-gray-900 dark:text-white">
+                                  {t().channel.dingtalkBot}
+                                </h3>
+                                <Show when={dingtalkLoading() || dingtalkStatus()?.status === "starting"}>
+                                  <span class="inline-flex h-2 w-2 rounded-full bg-yellow-400 animate-pulse"></span>
+                                </Show>
+                                <Show when={!dingtalkLoading() && dingtalkStatus()?.status === "running"}>
+                                  <span class="inline-flex h-2 w-2 rounded-full bg-green-500"></span>
+                                </Show>
+                                <Show when={!dingtalkLoading() && dingtalkStatus()?.status === "error"}>
+                                  <span class="inline-flex h-2 w-2 rounded-full bg-red-500"></span>
+                                </Show>
+                              </div>
+                              <p class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+                                {t().channel.dingtalkBotDesc}
+                              </p>
+                            </div>
+                          </div>
+
+                          <div class="flex items-center gap-3">
+                            <button
+                              onClick={() => setDingtalkConfigOpen(true)}
+                              class="px-3 py-1.5 text-xs font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-slate-800 rounded-lg transition-colors border border-gray-200 dark:border-slate-700"
+                            >
+                              {t().channel.configure}
+                            </button>
+                            <button
+                              onClick={handleDingtalkToggle}
+                              disabled={dingtalkLoading()}
+                              class={`relative inline-flex h-7 w-12 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:ring-offset-2 ${
+                                dingtalkStatus()?.status === "running" ? "bg-blue-600" : "bg-gray-200 dark:bg-slate-700"
+                              } ${dingtalkLoading() ? "opacity-50 cursor-not-allowed" : ""}`}
+                            >
+                              <span class="sr-only">Toggle DingTalk Bot</span>
+                              <span
+                                class={`pointer-events-none inline-block h-6 w-6 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
+                                  dingtalkStatus()?.status === "running" ? "translate-x-5" : "translate-x-0"
+                                }`}
+                              />
+                            </button>
+                          </div>
+                        </div>
+
+                        <Show when={dingtalkStatus()?.status === "error" && dingtalkStatus()?.error}>
+                          <div class="px-4 py-3 bg-red-50 dark:bg-red-900/10 border-t border-red-100 dark:border-red-900/30">
+                            <p class="text-xs text-red-600 dark:text-red-400 flex items-center gap-2">
+                              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" x2="12" y1="8" y2="12"/><line x1="12" x2="12.01" y1="16" y2="16"/></svg>
+                              {dingtalkStatus()?.error}
+                            </p>
+                          </div>
+                        </Show>
+                      </div>
+
+                      {/* Telegram Bot Row */}
+                      <div class="rounded-lg border border-gray-200 dark:border-slate-800 overflow-hidden">
+                        <div class="p-4 flex items-center justify-between">
+                          <div class="flex items-center gap-3">
+                            <div class="w-9 h-9 rounded-lg bg-sky-100 dark:bg-sky-900/30 flex items-center justify-center">
+                              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-sky-600 dark:text-sky-400"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></svg>
+                            </div>
+                            <div>
+                              <div class="flex items-center gap-2">
+                                <h3 class="text-sm font-medium text-gray-900 dark:text-white">
+                                  {t().channel.telegramBot}
+                                </h3>
+                                <Show when={telegramLoading() || telegramStatus()?.status === "starting"}>
+                                  <span class="inline-flex h-2 w-2 rounded-full bg-yellow-400 animate-pulse"></span>
+                                </Show>
+                                <Show when={!telegramLoading() && telegramStatus()?.status === "running"}>
+                                  <span class="inline-flex h-2 w-2 rounded-full bg-green-500"></span>
+                                </Show>
+                                <Show when={!telegramLoading() && telegramStatus()?.status === "error"}>
+                                  <span class="inline-flex h-2 w-2 rounded-full bg-red-500"></span>
+                                </Show>
+                              </div>
+                              <p class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+                                {t().channel.telegramBotDesc}
+                              </p>
+                            </div>
+                          </div>
+
+                          <div class="flex items-center gap-3">
+                            <button
+                              onClick={() => setTelegramConfigOpen(true)}
+                              class="px-3 py-1.5 text-xs font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-slate-800 rounded-lg transition-colors border border-gray-200 dark:border-slate-700"
+                            >
+                              {t().channel.configure}
+                            </button>
+                            <button
+                              onClick={handleTelegramToggle}
+                              disabled={telegramLoading()}
+                              class={`relative inline-flex h-7 w-12 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:ring-offset-2 ${
+                                telegramStatus()?.status === "running" ? "bg-blue-600" : "bg-gray-200 dark:bg-slate-700"
+                              } ${telegramLoading() ? "opacity-50 cursor-not-allowed" : ""}`}
+                            >
+                              <span class="sr-only">Toggle Telegram Bot</span>
+                              <span
+                                class={`pointer-events-none inline-block h-6 w-6 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
+                                  telegramStatus()?.status === "running" ? "translate-x-5" : "translate-x-0"
+                                }`}
+                              />
+                            </button>
+                          </div>
+                        </div>
+
+                        <Show when={telegramStatus()?.status === "error" && telegramStatus()?.error}>
+                          <div class="px-4 py-3 bg-red-50 dark:bg-red-900/10 border-t border-red-100 dark:border-red-900/30">
+                            <p class="text-xs text-red-600 dark:text-red-400 flex items-center gap-2">
+                              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" x2="12" y1="8" y2="12"/><line x1="12" x2="12.01" y1="16" y2="16"/></svg>
+                              {telegramStatus()?.error}
+                            </p>
+                          </div>
+                        </Show>
+                      </div>
+
+                      {/* WeCom Bot Row */}
+                      <div class="rounded-lg border border-gray-200 dark:border-slate-800 overflow-hidden">
+                        <div class="p-4 flex items-center justify-between">
+                          <div class="flex items-center gap-3">
+                            <div class="w-9 h-9 rounded-lg bg-green-100 dark:bg-green-900/30 flex items-center justify-center">
+                              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-green-600 dark:text-green-400"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+                            </div>
+                            <div>
+                              <div class="flex items-center gap-2">
+                                <h3 class="text-sm font-medium text-gray-900 dark:text-white">
+                                  {t().channel.wecomBot}
+                                </h3>
+                                <Show when={wecomLoading() || wecomStatus()?.status === "starting"}>
+                                  <span class="inline-flex h-2 w-2 rounded-full bg-yellow-400 animate-pulse"></span>
+                                </Show>
+                                <Show when={!wecomLoading() && wecomStatus()?.status === "running"}>
+                                  <span class="inline-flex h-2 w-2 rounded-full bg-green-500"></span>
+                                </Show>
+                                <Show when={!wecomLoading() && wecomStatus()?.status === "error"}>
+                                  <span class="inline-flex h-2 w-2 rounded-full bg-red-500"></span>
+                                </Show>
+                              </div>
+                              <p class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+                                {t().channel.wecomBotDesc}
+                              </p>
+                            </div>
+                          </div>
+
+                          <div class="flex items-center gap-3">
+                            <button
+                              onClick={() => setWecomConfigOpen(true)}
+                              class="px-3 py-1.5 text-xs font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-slate-800 rounded-lg transition-colors border border-gray-200 dark:border-slate-700"
+                            >
+                              {t().channel.configure}
+                            </button>
+                            <button
+                              onClick={handleWecomToggle}
+                              disabled={wecomLoading()}
+                              class={`relative inline-flex h-7 w-12 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:ring-offset-2 ${
+                                wecomStatus()?.status === "running" ? "bg-blue-600" : "bg-gray-200 dark:bg-slate-700"
+                              } ${wecomLoading() ? "opacity-50 cursor-not-allowed" : ""}`}
+                            >
+                              <span class="sr-only">Toggle WeCom Bot</span>
+                              <span
+                                class={`pointer-events-none inline-block h-6 w-6 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
+                                  wecomStatus()?.status === "running" ? "translate-x-5" : "translate-x-0"
+                                }`}
+                              />
+                            </button>
+                          </div>
+                        </div>
+
+                        <Show when={wecomStatus()?.status === "error" && wecomStatus()?.error}>
+                          <div class="px-4 py-3 bg-red-50 dark:bg-red-900/10 border-t border-red-100 dark:border-red-900/30">
+                            <p class="text-xs text-red-600 dark:text-red-400 flex items-center gap-2">
+                              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" x2="12" y1="8" y2="12"/><line x1="12" x2="12.01" y1="16" y2="16"/></svg>
+                              {wecomStatus()?.error}
+                            </p>
+                          </div>
+                        </Show>
+                      </div>
+
+                      {/* Teams Bot Row */}
+                      <div class="rounded-lg border border-gray-200 dark:border-slate-800 overflow-hidden">
+                        <div class="p-4 flex items-center justify-between">
+                          <div class="flex items-center gap-3">
+                            <div class="w-9 h-9 rounded-lg bg-purple-100 dark:bg-purple-900/30 flex items-center justify-center">
+                              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-purple-600 dark:text-purple-400"><path d="M2 16.1A5 5 0 0 1 5.9 20M2 12.05A9 9 0 0 1 9.95 20M2 8V6a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-6"/><line x1="2" x2="2.01" y1="20" y2="20"/></svg>
+                            </div>
+                            <div>
+                              <div class="flex items-center gap-2">
+                                <h3 class="text-sm font-medium text-gray-900 dark:text-white">
+                                  {t().channel.teamsBot}
+                                </h3>
+                                <Show when={teamsLoading() || teamsStatus()?.status === "starting"}>
+                                  <span class="inline-flex h-2 w-2 rounded-full bg-yellow-400 animate-pulse"></span>
+                                </Show>
+                                <Show when={!teamsLoading() && teamsStatus()?.status === "running"}>
+                                  <span class="inline-flex h-2 w-2 rounded-full bg-green-500"></span>
+                                </Show>
+                                <Show when={!teamsLoading() && teamsStatus()?.status === "error"}>
+                                  <span class="inline-flex h-2 w-2 rounded-full bg-red-500"></span>
+                                </Show>
+                              </div>
+                              <p class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+                                {t().channel.teamsBotDesc}
+                              </p>
+                            </div>
+                          </div>
+
+                          <div class="flex items-center gap-3">
+                            <button
+                              onClick={() => setTeamsConfigOpen(true)}
+                              class="px-3 py-1.5 text-xs font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-slate-800 rounded-lg transition-colors border border-gray-200 dark:border-slate-700"
+                            >
+                              {t().channel.configure}
+                            </button>
+                            <button
+                              onClick={handleTeamsToggle}
+                              disabled={teamsLoading()}
+                              class={`relative inline-flex h-7 w-12 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:ring-offset-2 ${
+                                teamsStatus()?.status === "running" ? "bg-blue-600" : "bg-gray-200 dark:bg-slate-700"
+                              } ${teamsLoading() ? "opacity-50 cursor-not-allowed" : ""}`}
+                            >
+                              <span class="sr-only">Toggle Teams Bot</span>
+                              <span
+                                class={`pointer-events-none inline-block h-6 w-6 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
+                                  teamsStatus()?.status === "running" ? "translate-x-5" : "translate-x-0"
+                                }`}
+                              />
+                            </button>
+                          </div>
+                        </div>
+
+                        <Show when={teamsStatus()?.status === "error" && teamsStatus()?.error}>
+                          <div class="px-4 py-3 bg-red-50 dark:bg-red-900/10 border-t border-red-100 dark:border-red-900/30">
+                            <p class="text-xs text-red-600 dark:text-red-400 flex items-center gap-2">
+                              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" x2="12" y1="8" y2="12"/><line x1="12" x2="12.01" y1="16" y2="16"/></svg>
+                              {teamsStatus()?.error}
+                            </p>
+                          </div>
+                        </Show>
+                      </div>
                     </div>
                   </Show>
                 </div>
@@ -1027,6 +1618,60 @@ export default function EntryPage() {
                 onClose={() => setFeishuConfigOpen(false)}
                 initialConfig={feishuConfig()}
                 onSave={handleFeishuConfigSave}
+              />
+
+              <ChannelConfigModal
+                isOpen={dingtalkConfigOpen()}
+                onClose={() => setDingtalkConfigOpen(false)}
+                title={t().channel.dingtalkBot}
+                fields={[
+                  { key: "appKey", label: t().channel.appKey, type: "text", placeholder: t().channel.appKeyPlaceholder, required: true },
+                  { key: "appSecret", label: t().channel.appSecret, type: "password", placeholder: t().channel.appSecretPlaceholder, required: true },
+                  { key: "robotCode", label: t().channel.robotCode, type: "text", placeholder: t().channel.robotCodePlaceholder },
+                  { key: "autoApprovePermissions", label: t().channel.autoApprove, type: "toggle" },
+                ]}
+                initialConfig={dingtalkConfig()}
+                onSave={handleDingtalkConfigSave}
+              />
+
+              <ChannelConfigModal
+                isOpen={telegramConfigOpen()}
+                onClose={() => setTelegramConfigOpen(false)}
+                title={t().channel.telegramBot}
+                fields={[
+                  { key: "botToken", label: t().channel.botToken, type: "password", placeholder: t().channel.botTokenPlaceholder, required: true },
+                  { key: "webhookUrl", label: t().channel.webhookUrl, type: "text", placeholder: t().channel.webhookUrlPlaceholder },
+                  { key: "autoApprovePermissions", label: t().channel.autoApprove, type: "toggle" },
+                ]}
+                initialConfig={telegramConfig()}
+                onSave={handleTelegramConfigSave}
+              />
+
+              <ChannelConfigModal
+                isOpen={wecomConfigOpen()}
+                onClose={() => setWecomConfigOpen(false)}
+                title={t().channel.wecomBot}
+                fields={[
+                  { key: "corpId", label: t().channel.corpId, type: "text", placeholder: t().channel.corpIdPlaceholder, required: true },
+                  { key: "corpSecret", label: t().channel.corpSecret, type: "password", placeholder: t().channel.corpSecretPlaceholder, required: true },
+                  { key: "agentId", label: t().channel.agentId, type: "number", placeholder: t().channel.agentIdPlaceholder, required: true },
+                  { key: "autoApprovePermissions", label: t().channel.autoApprove, type: "toggle" },
+                ]}
+                initialConfig={wecomConfig()}
+                onSave={handleWecomConfigSave}
+              />
+
+              <ChannelConfigModal
+                isOpen={teamsConfigOpen()}
+                onClose={() => setTeamsConfigOpen(false)}
+                title={t().channel.teamsBot}
+                fields={[
+                  { key: "microsoftAppId", label: t().channel.microsoftAppId, type: "text", placeholder: t().channel.microsoftAppIdPlaceholder, required: true },
+                  { key: "microsoftAppPassword", label: t().channel.microsoftAppPassword, type: "password", placeholder: t().channel.microsoftAppPasswordPlaceholder, required: true },
+                  { key: "autoApprovePermissions", label: t().channel.autoApprove, type: "toggle" },
+                ]}
+                initialConfig={teamsConfig()}
+                onSave={handleTeamsConfigSave}
               />
             </div>
           </main>

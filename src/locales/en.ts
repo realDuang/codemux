@@ -305,10 +305,36 @@ export interface LocaleDict {
     channels: string;
     feishuBot: string;
     feishuBotDesc: string;
+    dingtalkBot: string;
+    dingtalkBotDesc: string;
+    telegramBot: string;
+    telegramBotDesc: string;
+    wecomBot: string;
+    wecomBotDesc: string;
+    teamsBot: string;
+    teamsBotDesc: string;
     appId: string;
     appIdPlaceholder: string;
     appSecret: string;
     appSecretPlaceholder: string;
+    appKey: string;
+    appKeyPlaceholder: string;
+    robotCode: string;
+    robotCodePlaceholder: string;
+    botToken: string;
+    botTokenPlaceholder: string;
+    webhookUrl: string;
+    webhookUrlPlaceholder: string;
+    corpId: string;
+    corpIdPlaceholder: string;
+    corpSecret: string;
+    corpSecretPlaceholder: string;
+    agentId: string;
+    agentIdPlaceholder: string;
+    microsoftAppId: string;
+    microsoftAppIdPlaceholder: string;
+    microsoftAppPassword: string;
+    microsoftAppPasswordPlaceholder: string;
     enable: string;
     disable: string;
     status: string;
@@ -654,10 +680,36 @@ export const en: LocaleDict = {
     channels: "Channels",
     feishuBot: "Feishu Bot",
     feishuBotDesc: "Connect to Feishu (Lark) for AI coding assistance via bot messages",
+    dingtalkBot: "DingTalk Bot",
+    dingtalkBotDesc: "Connect to DingTalk for AI coding assistance via robot messages",
+    telegramBot: "Telegram Bot",
+    telegramBotDesc: "Connect to Telegram for AI coding assistance via bot messages",
+    wecomBot: "WeCom Bot",
+    wecomBotDesc: "Connect to WeCom (WeChat Work) for AI coding assistance via app messages",
+    teamsBot: "Teams Bot",
+    teamsBotDesc: "Connect to Microsoft Teams for AI coding assistance via bot messages",
     appId: "App ID",
     appIdPlaceholder: "Enter Feishu App ID",
     appSecret: "App Secret",
     appSecretPlaceholder: "Enter Feishu App Secret",
+    appKey: "App Key",
+    appKeyPlaceholder: "Enter DingTalk App Key",
+    robotCode: "Robot Code",
+    robotCodePlaceholder: "Enter DingTalk Robot Code",
+    botToken: "Bot Token",
+    botTokenPlaceholder: "Enter Telegram Bot Token from @BotFather",
+    webhookUrl: "Webhook URL",
+    webhookUrlPlaceholder: "HTTPS URL for webhook (optional)",
+    corpId: "Corp ID",
+    corpIdPlaceholder: "Enter WeCom Corp ID",
+    corpSecret: "Corp Secret",
+    corpSecretPlaceholder: "Enter WeCom App Secret",
+    agentId: "Agent ID",
+    agentIdPlaceholder: "Enter WeCom Agent ID",
+    microsoftAppId: "Microsoft App ID",
+    microsoftAppIdPlaceholder: "Enter Azure AD App Registration Client ID",
+    microsoftAppPassword: "App Password",
+    microsoftAppPasswordPlaceholder: "Enter Azure AD Client Secret",
     enable: "Enable",
     disable: "Disable",
     status: "Status",

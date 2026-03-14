@@ -8,6 +8,7 @@
 // ============================================================================
 
 import { timeId } from "../../utils/id-gen";
+import { CODEMUX_IDENTITY_PROMPT } from "../identity-prompt";
 import {
   unstable_v2_createSession,
   unstable_v2_resumeSession,
@@ -1119,6 +1120,7 @@ export class ClaudeCodeAdapter extends EngineAdapter {
       permissionMode: opts.permissionMode ?? "default",
       allowedTools: ["Read", "Write", "Edit", "Grep", "Glob", "Bash", "WebFetch", "WebSearch", "Task", "TodoWrite", "TodoRead", "NotebookEdit"],
       canUseTool: this.createCanUseTool(sessionId),
+      systemPrompt: { type: "preset" as const, preset: "claude_code" as const, append: CODEMUX_IDENTITY_PROMPT },
     };
 
     // Set working directory (requires SDK patch: patches/@anthropic-ai+claude-agent-sdk+0.2.63.patch)

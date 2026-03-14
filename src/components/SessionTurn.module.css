@@ -10,19 +10,18 @@
   flex-direction: column;
   gap: 0.75rem;
   padding: 0.75rem 1rem;
-  border: 1px solid rgba(139, 92, 246, 0.2);
+  border: 1px solid #C7D2FE;
   border-radius: 1rem;
-  background: linear-gradient(135deg, rgba(245, 243, 255, 0.8) 0%, rgba(238, 242, 255, 0.6) 100%);
-  backdrop-filter: blur(12px);
-  box-shadow: 0 2px 8px -2px rgba(139, 92, 246, 0.08);
+  background: #EEF2FF;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
   margin-left: auto;
   max-width: 85%;
 }
 
 :global(.dark) .userMessage {
-  border-color: rgba(99, 102, 241, 0.3);
-  background: linear-gradient(135deg, rgba(30, 27, 75, 0.5) 0%, rgba(15, 23, 42, 0.7) 100%);
-  box-shadow: 0 4px 16px -4px rgba(0, 0, 0, 0.4), inset 0 1px 1px rgba(255, 255, 255, 0.05);
+  border-color: #3730A3;
+  background: #1E1B4B;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
 }
 
 /* ─── Steps Trigger ─── */
@@ -269,17 +268,16 @@
   flex-direction: column;
   gap: 0.5rem;
   padding: 0.75rem 1rem;
-  border: 1px solid rgba(20, 184, 166, 0.2);
+  border: 1px solid #E2E8F0;
   border-radius: 1rem;
-  background: linear-gradient(135deg, rgba(240, 253, 250, 0.8) 0%, rgba(236, 254, 255, 0.6) 100%);
-  backdrop-filter: blur(12px);
-  box-shadow: 0 2px 8px -2px rgba(20, 184, 166, 0.1);
+  background: #F1F5F9;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
 }
 
 :global(.dark) .response {
-  border-color: rgba(20, 184, 166, 0.25);
-  background: linear-gradient(135deg, rgba(13, 78, 72, 0.2) 0%, rgba(6, 78, 82, 0.25) 100%);
-  box-shadow: 0 2px 16px -2px rgba(20, 184, 166, 0.12), inset 0 1px 1px rgba(255, 255, 255, 0.04);
+  border-color: #334155;
+  background: #1E293B;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
 }
 
 .responseHeader {

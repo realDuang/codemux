@@ -635,7 +635,7 @@ export default function EntryPage() {
 
           {/* Main Content */}
           <main class="p-4 md:p-6">
-            <div class="max-w-3xl mx-auto space-y-6">
+            <div class="max-w-4xl mx-auto space-y-6">
 
               {/* Local Mode Banner */}
               <div class="rounded-xl bg-blue-50 dark:bg-blue-900/10 border border-blue-100 dark:border-blue-900/30 p-4 flex gap-3">
@@ -1034,7 +1034,7 @@ export default function EntryPage() {
 
         {/* Bottom: Enter Chat Button (sticky) */}
         <div class="sticky bottom-0 bg-white/80 dark:bg-slate-900/80 backdrop-blur-md border-t border-gray-200 dark:border-slate-800 p-4">
-          <div class="max-w-2xl mx-auto">
+          <div class="max-w-4xl mx-auto">
             <button
               onClick={handleEnterChat}
               disabled={enteringChat()}

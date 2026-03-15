@@ -869,6 +869,11 @@ export default function Chat() {
       const existingSession = sessionStore.list.find(s => s.id === newSession.id);
       if (!existingSession) {
         setSessionStore("list", (list) => [processedSession, ...list]);
+      } else if (!existingSession.projectID && processedSession.projectID) {
+        // Session was added by notification handler before project was resolved — fix the link
+        setSessionStore("list", (list) =>
+          list.map(s => s.id === newSession.id ? { ...s, projectID: processedSession.projectID } : s)
+        );
       }
 
       await handleSelectSession(newSession.id);

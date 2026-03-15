@@ -45,7 +45,28 @@ export function convertSession(engineType: EngineType, sdk: SdkSession): Unified
   };
 }
 
-export function convertMessage(engineType: EngineType, sdk: any): UnifiedMessage {
+/** Per-million-token pricing rates */
+export interface ModelPricing {
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+}
+
+/** Calculate USD cost from token counts and per-million-token pricing */
+function computeCost(
+  tokens: { input: number; output: number; cache?: { read: number; write: number } },
+  pricing: ModelPricing,
+): number {
+  return (
+    (tokens.input * pricing.input +
+      tokens.output * pricing.output +
+      (tokens.cache?.read ?? 0) * pricing.cacheRead +
+      (tokens.cache?.write ?? 0) * pricing.cacheWrite) / 1_000_000
+  );
+}
+
+export function convertMessage(engineType: EngineType, sdk: any, pricing?: ModelPricing): UnifiedMessage {
   // SDK Message is a union of UserMessage | AssistantMessage
   // Both have id, sessionID, role, time
   const errorStr = sdk.error
@@ -68,7 +89,7 @@ export function convertMessage(engineType: EngineType, sdk: any): UnifiedMessage
     },
     parts: (sdk.parts ?? []).filter(Boolean).map((p: SdkPart) => convertPart(engineType, p)),
     tokens: sdk.tokens,
-    cost: sdk.cost,
+    cost: sdk.cost || (sdk.tokens && pricing ? computeCost(sdk.tokens, pricing) : undefined),
     modelId: sdk.modelID,
     providerId: sdk.providerID,
     mode: sdk.mode,

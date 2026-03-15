@@ -41,6 +41,7 @@ export interface MessageBuffer {
     cache?: { read: number; write: number };
   };
   cost?: number;
+  costUnit?: "usd" | "premium_requests";
   modelId?: string;
   error?: string;
   /** Set to true once leading whitespace has been trimmed from textAccumulator */

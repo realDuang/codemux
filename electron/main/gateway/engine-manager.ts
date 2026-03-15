@@ -395,6 +395,7 @@ export class EngineManager extends EventEmitter {
         parts: contentParts,
         tokens: message.tokens,
         cost: message.cost,
+        costUnit: message.costUnit,
         modelId: message.modelId,
         error: message.error,
       };
@@ -801,10 +802,14 @@ export class EngineManager extends EventEmitter {
   async listMessages(sessionId: string): Promise<UnifiedMessage[]> {
     const messages = await conversationStore.listMessages(sessionId);
     const stepsFile = await conversationStore.getAllSteps(sessionId);
+    // Backfill costUnit for legacy Copilot data (cost stored without unit)
+    const engineType = this.sessionEngineMap.get(sessionId);
 
     return messages.map((msg) => {
       // Content parts only — steps are lazy-loaded via getMessageSteps()
       const stepCount = (stepsFile?.messages[msg.id] ?? []).length;
+      // Legacy Copilot messages have cost but no costUnit
+      const costUnit = msg.costUnit ?? (msg.cost != null && engineType === "copilot" ? "premium_requests" : undefined);
 
       return {
         id: msg.id,
@@ -815,6 +820,7 @@ export class EngineManager extends EventEmitter {
         stepCount,
         tokens: msg.tokens,
         cost: msg.cost,
+        costUnit,
         modelId: msg.modelId,
         error: msg.error,
       };

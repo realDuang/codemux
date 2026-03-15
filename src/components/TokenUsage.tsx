@@ -1,6 +1,6 @@
 import { Show } from "solid-js";
 import { isExpanded, toggleExpanded } from "../stores/message";
-import { formatTokenCount, formatCost } from "./share/common";
+import { formatTokenCount, formatCostWithUnit } from "./share/common";
 import type { UnifiedMessage } from "../types/unified";
 import styles from "./TokenUsage.module.css";
 
@@ -14,6 +14,7 @@ export function TokenUsage(props: TokenUsageProps) {
     let input = 0, output = 0, cacheRead = 0, cacheWrite = 0, cost = 0;
     let hasTokens = false, hasCost = false, hasCache = false;
     let modelId: string | undefined;
+    let costUnit: "usd" | "premium_requests" | undefined;
 
     for (const msg of props.messages) {
       if (!msg.tokens) continue;
@@ -25,12 +26,12 @@ export function TokenUsage(props: TokenUsageProps) {
         const w = msg.tokens.cache.write ?? 0;
         if (r > 0 || w > 0) { hasCache = true; cacheRead += r; cacheWrite += w; }
       }
-      if (msg.cost != null) { cost += msg.cost; hasCost = true; }
+      if (msg.cost != null) { cost += msg.cost; hasCost = true; costUnit = msg.costUnit; }
       if (!modelId && msg.modelId) modelId = msg.modelId;
     }
 
     if (!hasTokens) return null;
-    return { input, output, total: input + output, cacheRead, cacheWrite, cost, hasCache, hasCost, modelId };
+    return { input, output, total: input + output, cacheRead, cacheWrite, cost, hasCache, hasCost, modelId, costUnit };
   };
 
   const expandKey = () => {
@@ -48,7 +49,7 @@ export function TokenUsage(props: TokenUsageProps) {
             <span class={styles.totalTokens}>{formatTokenCount(u().total)} tokens</span>
             <Show when={u().hasCost}>
               <span class={styles.sep}>·</span>
-              <span class={styles.cost}>{formatCost(u().cost)}</span>
+              <span class={styles.cost}>{formatCostWithUnit(u().cost, u().costUnit)}</span>
             </Show>
             <Show when={u().modelId}>
               <span class={styles.sep}>·</span>
@@ -81,7 +82,7 @@ export function TokenUsage(props: TokenUsageProps) {
               <Show when={u().hasCost}>
                 <div class={styles.detailRow}>
                   <span class={styles.detailLabel}>Cost</span>
-                  <span class={styles.detailValue}>{formatCost(u().cost)}</span>
+                  <span class={styles.detailValue}>{formatCostWithUnit(u().cost, u().costUnit)}</span>
                 </div>
               </Show>
             </div>

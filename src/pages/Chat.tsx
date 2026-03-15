@@ -27,7 +27,7 @@ import { AddProjectModal } from "../components/AddProjectModal";
 import type { UnifiedMessage, UnifiedPart, UnifiedPermission, UnifiedQuestion, UnifiedSession, UnifiedProject, AgentMode, EngineType, SessionActivityStatus } from "../types/unified";
 import { useI18n } from "../lib/i18n";
 import { isDefaultTitle } from "../lib/session-utils";
-import { formatTokenCount, formatCost } from "../components/share/common";
+import { formatTokenCount, formatCostWithUnit } from "../components/share/common";
 import { getSetting, saveSetting } from "../lib/settings";
 
 import { InputAreaQuestion } from "../components/InputAreaQuestion";
@@ -251,14 +251,15 @@ export default function Chat() {
     const messages = messageStore.message[sid] ?? [];
     let input = 0, output = 0, cost = 0;
     let hasTokens = false, hasCost = false;
+    let costUnit: "usd" | "premium_requests" | undefined;
     for (const msg of messages) {
       if (msg.role !== "assistant" || !msg.tokens) continue;
       hasTokens = true;
       input += msg.tokens.input ?? 0;
       output += msg.tokens.output ?? 0;
-      if (msg.cost != null) { cost += msg.cost; hasCost = true; }
+      if (msg.cost != null) { cost += msg.cost; hasCost = true; costUnit = msg.costUnit; }
     }
-    return hasTokens ? { input, output, cost: hasCost ? cost : undefined } : null;
+    return hasTokens ? { input, output, cost: hasCost ? cost : undefined, costUnit } : null;
   });
 
   // Keep currentAgent in sync: whenever the engine type changes or engine
@@ -1708,8 +1709,18 @@ export default function Chat() {
                     />
                   </Show>
                   <div class="mt-2 text-center">
-                    <p class="text-[10px] text-gray-400 dark:text-gray-600">
-                      {t().chat.disclaimer}
+                    <p class="text-[10px] text-gray-400 dark:text-gray-600 tabular-nums">
+                      <Show when={sessionUsage()} fallback={t().chat.disclaimer}>
+                        {(u) => (
+                          <>
+                            <span>Session: ↑{formatTokenCount(u().input)} ↓{formatTokenCount(u().output)} tokens</span>
+                            <Show when={u().cost != null}>
+                              <span class="text-gray-300 dark:text-gray-700"> · </span>
+                              <span>{formatCostWithUnit(u().cost!, u().costUnit)}</span>
+                            </Show>
+                          </>
+                        )}
+                      </Show>
                     </p>
                   </div>
                 </div>

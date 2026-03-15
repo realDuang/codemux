@@ -22,6 +22,7 @@ import {
   convertMessage,
   convertPart,
   convertProviders,
+  type ModelPricing,
 } from "./converters";
 import {
   createOpencodeServer,
@@ -99,6 +100,15 @@ export class OpenCodeAdapter extends EngineAdapter {
   // user's question to appear as an assistant reply.
   // Use a Map to track per-session to allow cleanup when sessions are deleted.
   private userMessageIds = new Map<string, Set<string>>(); // sessionId -> messageIds
+
+  // Cached model pricing (per-million-token rates) keyed by "providerID/modelID"
+  private modelPricing = new Map<string, ModelPricing>();
+
+  /** Look up cached pricing for an SDK message's providerID/modelID */
+  private getPricing(sdk: any): ModelPricing | undefined {
+    if (!sdk.providerID || !sdk.modelID) return undefined;
+    return this.modelPricing.get(`${sdk.providerID}/${sdk.modelID}`);
+  }
 
   constructor(options?: { port?: number }) {
     super();
@@ -416,7 +426,7 @@ export class OpenCodeAdapter extends EngineAdapter {
       return;
     }
 
-    const message = convertMessage(this.engineType, sdkMsg);
+    const message = convertMessage(this.engineType, sdkMsg, this.getPricing(sdkMsg));
 
     if (sdkMsg.role === "assistant") {
       const entries = this.pendingMessages.get(sessionID);
@@ -1130,7 +1140,7 @@ export class OpenCodeAdapter extends EngineAdapter {
       if (wrapper.parts && (!msg.parts || msg.parts.length === 0)) {
         msg.parts = wrapper.parts;
       }
-      return convertMessage(this.engineType, msg);
+      return convertMessage(this.engineType, msg, this.getPricing(msg));
     });
   }
 
@@ -1142,7 +1152,19 @@ export class OpenCodeAdapter extends EngineAdapter {
     if (result.error || !result.data) {
       throw new Error(`Failed to list providers: ${JSON.stringify(result.error)}`);
     }
-    return { models: convertProviders(this.engineType, result.data) };
+    const models = convertProviders(this.engineType, result.data);
+    // Cache pricing for cost calculation in convertMessage
+    for (const m of models) {
+      if (m.cost) {
+        this.modelPricing.set(m.modelId, {
+          input: m.cost.input,
+          output: m.cost.output,
+          cacheRead: m.cost.cache?.read ?? 0,
+          cacheWrite: m.cost.cache?.write ?? 0,
+        });
+      }
+    }
+    return { models };
   }
 
   async setModel(_sessionId: string, _modelId: string): Promise<void> {

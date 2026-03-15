@@ -269,7 +269,7 @@ export class CopilotSdkAdapter extends EngineAdapter {
   async createSession(directory: string): Promise<UnifiedSession> {
     this.ensureClient();
     const normalizedDir = directory.replaceAll("\\", "/");
-    const mode = "agent";
+    const mode = "autopilot";
 
     const config: SessionConfig = {
       workingDirectory: directory,
@@ -888,8 +888,16 @@ export class CopilotSdkAdapter extends EngineAdapter {
   private handleUsage(sessionId: string, data: any): void {
     const buffer = this.messageBuffers.get(sessionId);
     if (!buffer) return;
-    buffer.tokens = { input: data.inputTokens || 0, output: data.outputTokens || 0, cache: data.cacheReadTokens || data.cacheWriteTokens ? { read: data.cacheReadTokens || 0, write: data.cacheWriteTokens || 0 } : undefined };
-    buffer.cost = data.cost;
+    const input = data.inputTokens || 0;
+    const output = data.outputTokens || 0;
+    const cacheRead = data.cacheReadTokens || 0;
+    const cacheWrite = data.cacheWriteTokens || 0;
+    buffer.tokens = { input, output, cache: cacheRead || cacheWrite ? { read: cacheRead, write: cacheWrite } : undefined };
+    // Copilot's `cost` is premium-request count (not USD)
+    if (data.cost != null) {
+      buffer.cost = data.cost;
+      buffer.costUnit = "premium_requests";
+    }
     if (data.model) buffer.modelId = data.model;
   }
 
@@ -929,7 +937,7 @@ export class CopilotSdkAdapter extends EngineAdapter {
 
   private handlePermissionRequest(req: PermissionRequest, ctx: { sessionId: string }): Promise<PermissionRequestResult> {
     const sessionId = ctx.sessionId;
-    if ((this.sessionModes.get(sessionId) || "agent") === "autopilot") return Promise.resolve({ kind: "approved" });
+    if ((this.sessionModes.get(sessionId) || "autopilot") === "autopilot") return Promise.resolve({ kind: "approved" });
     if (this.allowedAlwaysKinds.has(req.kind)) return Promise.resolve({ kind: "approved" });
 
     const permissionId = timeId("perm");
@@ -984,7 +992,7 @@ export class CopilotSdkAdapter extends EngineAdapter {
   }
 
   private bufferToMessage(buffer: MessageBuffer, completed: boolean): UnifiedMessage {
-    return { id: buffer.messageId, sessionId: buffer.sessionId, role: "assistant", time: { created: buffer.startTime, completed: completed ? Date.now() : undefined }, parts: [...buffer.parts], tokens: buffer.tokens, cost: buffer.cost, modelId: buffer.modelId || this.currentModelId || undefined, error: buffer.error, workingDirectory: this.sessionDirectories.get(buffer.sessionId) };
+    return { id: buffer.messageId, sessionId: buffer.sessionId, role: "assistant", time: { created: buffer.startTime, completed: completed ? Date.now() : undefined }, parts: [...buffer.parts], tokens: buffer.tokens, cost: buffer.cost, costUnit: buffer.costUnit, modelId: buffer.modelId || this.currentModelId || undefined, error: buffer.error, workingDirectory: this.sessionDirectories.get(buffer.sessionId) };
   }
 
   private appendMessageToHistory(sessionId: string, message: UnifiedMessage): void {

@@ -143,6 +143,7 @@ describe('copilot-converters', () => {
       expect(msg.tokens?.output).toBe(20);
       expect(msg.tokens?.cache?.read).toBe(5);
       expect(msg.cost).toBe(0.001);
+      expect(msg.costUnit).toBe("premium_requests");
 
       const toolPart = msg.parts.find(p => p.type === 'tool' && (p as ToolPart).callId === 'call-fail') as ToolPart;
       expect(toolPart).toBeDefined();

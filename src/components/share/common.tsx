@@ -66,3 +66,12 @@ export function formatTokenCount(count: number): string {
 export function formatCost(cost: number): string {
   return "$" + cost.toFixed(4);
 }
+
+/** Format cost with unit awareness */
+export function formatCostWithUnit(cost: number, unit?: "usd" | "premium_requests"): string {
+  if (unit === "premium_requests") {
+    const rounded = Math.round(cost);
+    return rounded === 1 ? "1 premium request" : `${rounded} premium requests`;
+  }
+  return "$" + cost.toFixed(4);
+}

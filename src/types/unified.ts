@@ -131,6 +131,8 @@ export interface ConversationMessage {
     reasoning?: number;
   };
   cost?: number;
+  /** Unit for the cost field: "usd" (default) or "premium_requests" */
+  costUnit?: "usd" | "premium_requests";
   modelId?: string;
   error?: string;
 }
@@ -194,6 +196,8 @@ export interface UnifiedMessage {
     reasoning?: number;
   };
   cost?: number;
+  /** Unit for the cost field: "usd" (default) or "premium_requests" */
+  costUnit?: "usd" | "premium_requests";
   modelId?: string;
   providerId?: string;
   mode?: string;

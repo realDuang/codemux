@@ -254,18 +254,18 @@ export function convertEventsToMessages(
             cacheWriteTokens?: number;
             cost?: number;
           };
+          const cacheRead = uData.cacheReadTokens ?? 0;
+          const cacheWrite = uData.cacheWriteTokens ?? 0;
           msg.tokens = {
             input: uData.inputTokens ?? 0,
             output: uData.outputTokens ?? 0,
-            cache:
-              uData.cacheReadTokens || uData.cacheWriteTokens
-                ? {
-                    read: uData.cacheReadTokens ?? 0,
-                    write: uData.cacheWriteTokens ?? 0,
-                  }
-                : undefined,
+            cache: cacheRead || cacheWrite ? { read: cacheRead, write: cacheWrite } : undefined,
           };
-          msg.cost = uData.cost;
+          // Copilot's `cost` is a premium-request count (not USD)
+          if (uData.cost != null) {
+            msg.cost = uData.cost;
+            msg.costUnit = "premium_requests";
+          }
           if (uData.model) msg.modelId = uData.model;
         }
         break;

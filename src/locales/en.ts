@@ -358,6 +358,16 @@ export interface LocaleDict {
     saving: string;
   };
 
+  // Token Usage
+  tokenUsage: {
+    tokens: string;
+    input: string;
+    output: string;
+    cache: string;
+    cost: string;
+    cacheReadWrite: string;
+  };
+
   // Update
   update: {
     title: string;
@@ -737,6 +747,16 @@ export const en: LocaleDict = {
     configRequired: "App ID and App Secret are required to enable the bot",
     save: "Save",
     saving: "Saving...",
+  },
+
+  // Token Usage
+  tokenUsage: {
+    tokens: "tokens",
+    input: "Input",
+    output: "Output",
+    cache: "Cache",
+    cost: "Cost",
+    cacheReadWrite: "{read} read / {write} write",
   },
 
   // Update

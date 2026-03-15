@@ -359,6 +359,16 @@ export const zh: LocaleDict = {
     saving: "保存中...",
   },
 
+  // Token Usage
+  tokenUsage: {
+    tokens: "tokens",
+    input: "输入",
+    output: "输出",
+    cache: "缓存",
+    cost: "费用",
+    cacheReadWrite: "读取 {read} / 写入 {write}",
+  },
+
   // Update
   update: {
     title: "更新",

@@ -70,7 +70,7 @@ function killProcesses(pids: number[]): void {
         // /T kills the process tree, /F forces termination
         spawnSync("taskkill", ["/T", "/F", "/PID", String(pid)], { stdio: "pipe" });
       } else {
-        process.kill(-pid, "SIGTERM");
+        process.kill(pid, "SIGTERM");
       }
     } catch {
       // Process may have already exited

@@ -1,6 +1,7 @@
 import { Show } from "solid-js";
 import { isExpanded, toggleExpanded } from "../stores/message";
 import { formatTokenCount, formatCostWithUnit } from "./share/common";
+import { useI18n, formatMessage } from "../lib/i18n";
 import type { UnifiedMessage } from "../types/unified";
 import styles from "./TokenUsage.module.css";
 
@@ -10,6 +11,7 @@ interface TokenUsageProps {
 }
 
 export function TokenUsage(props: TokenUsageProps) {
+  const { t } = useI18n();
   const usage = () => {
     let input = 0, output = 0, cacheRead = 0, cacheWrite = 0, cost = 0;
     let hasTokens = false, hasCost = false, hasCache = false;
@@ -46,7 +48,7 @@ export function TokenUsage(props: TokenUsageProps) {
       {(u) => (
         <div class={styles.tokenUsage}>
           <button type="button" class={styles.summary} onClick={handleToggle}>
-            <span class={styles.totalTokens}>{formatTokenCount(u().total)} tokens</span>
+            <span class={styles.totalTokens}>{formatTokenCount(u().total)} {t().tokenUsage.tokens}</span>
             <Show when={u().hasCost}>
               <span class={styles.sep}>·</span>
               <span class={styles.cost}>{formatCostWithUnit(u().cost, u().costUnit)}</span>
@@ -66,22 +68,22 @@ export function TokenUsage(props: TokenUsageProps) {
           <Show when={expanded()}>
             <div class={styles.details}>
               <div class={styles.detailRow}>
-                <span class={styles.detailLabel}>Input</span>
+                <span class={styles.detailLabel}>{t().tokenUsage.input}</span>
                 <span class={styles.detailValue}>{u().input.toLocaleString()}</span>
               </div>
               <div class={styles.detailRow}>
-                <span class={styles.detailLabel}>Output</span>
+                <span class={styles.detailLabel}>{t().tokenUsage.output}</span>
                 <span class={styles.detailValue}>{u().output.toLocaleString()}</span>
               </div>
               <Show when={u().hasCache}>
                 <div class={styles.detailRow}>
-                  <span class={styles.detailLabel}>Cache</span>
-                  <span class={styles.detailValue}>{u().cacheRead.toLocaleString()} read / {u().cacheWrite.toLocaleString()} write</span>
+                  <span class={styles.detailLabel}>{t().tokenUsage.cache}</span>
+                  <span class={styles.detailValue}>{formatMessage(t().tokenUsage.cacheReadWrite, { read: u().cacheRead.toLocaleString(), write: u().cacheWrite.toLocaleString() })}</span>
                 </div>
               </Show>
               <Show when={u().hasCost}>
                 <div class={styles.detailRow}>
-                  <span class={styles.detailLabel}>Cost</span>
+                  <span class={styles.detailLabel}>{t().tokenUsage.cost}</span>
                   <span class={styles.detailValue}>{formatCostWithUnit(u().cost, u().costUnit)}</span>
                 </div>
               </Show>

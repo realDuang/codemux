@@ -145,9 +145,10 @@ export function ChannelConfigModal(props: ChannelConfigModalProps) {
                       type={field.type}
                       value={(config()[field.key] as string | number) ?? ""}
                       onInput={(e) => {
+                        const raw = e.currentTarget.value;
                         const val = field.type === "number"
-                          ? Number(e.currentTarget.value)
-                          : e.currentTarget.value;
+                          ? (raw === "" ? undefined : Number(raw))
+                          : raw;
                         updateField(field.key, val);
                       }}
                       placeholder={field.placeholder}

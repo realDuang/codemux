@@ -58,7 +58,7 @@ export function formatDuration(ms: number): string {
 /** Format token count: <1000 as-is, ≥1000 as X.XK, ≥1M as X.XM */
 export function formatTokenCount(count: number): string {
   if (count < 1000) return String(count);
-  if (count < 1_000_000) return (count / 1000).toFixed(1) + "K";
+  if (count < 999_950) return (count / 1000).toFixed(1) + "K";
   return (count / 1_000_000).toFixed(1) + "M";
 }
 

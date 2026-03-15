@@ -128,10 +128,11 @@ class TrayManager {
           fs.mkdirSync(autostartDir, { recursive: true });
         }
         const appPath = process.execPath;
+        const quotedPath = appPath.includes(" ") ? `"${appPath}"` : appPath;
         const content = `[Desktop Entry]
 Type=Application
 Name=CodeMux
-Exec=${appPath} --hidden
+Exec=${quotedPath} --hidden
 Terminal=false
 X-GNOME-Autostart-enabled=true
 `;

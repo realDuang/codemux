@@ -374,6 +374,8 @@ export const zh: LocaleDict = {
     error: "检查更新失败",
     autoCheck: "自动检查更新",
     autoCheckDesc: "启动时自动检查更新",
+    launchAtLogin: "开机自启动",
+    launchAtLoginDesc: "登录计算机时自动启动 CodeMux",
     releaseNotes: "更新内容",
     retry: "重试",
   },

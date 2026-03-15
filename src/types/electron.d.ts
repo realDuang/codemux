@@ -107,6 +107,11 @@ interface ElectronAPI {
     onUpdateError: (callback: (state: UpdateState) => void) => () => void;
     onStatusChange: (callback: (state: UpdateState) => void) => () => void;
   };
+
+  autostart?: {
+    isEnabled: () => Promise<boolean>;
+    setEnabled: (enabled: boolean) => Promise<{ success: boolean }>;
+  };
 }
 
 interface UpdateState {

@@ -446,7 +446,9 @@ export class EngineManager extends EventEmitter {
     if (this.stepFlushTimer) return;
     this.stepFlushTimer = setTimeout(() => {
       this.stepFlushTimer = null;
-      this.flushDirtySteps();
+      void this.flushDirtySteps().catch((err) => {
+        engineManagerLog.warn("flushDirtySteps failed:", err);
+      });
     }, EngineManager.STEP_FLUSH_INTERVAL_MS);
   }
 

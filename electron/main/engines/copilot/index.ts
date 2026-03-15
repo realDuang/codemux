@@ -662,12 +662,33 @@ export class CopilotSdkAdapter extends EngineAdapter {
     };
 
     copilotLog.info(`Resuming session ${sessionId}...`);
-    const sdkSession = await this.client!.resumeSession(sessionId, config);
-    copilotLog.info(`Session ${sessionId} resumed successfully`);
-    this.subscribeToSessionEvents(sdkSession);
-    this.activeSessions.set(sessionId, sdkSession);
-    if (workingDirectory) this.sessionDirectories.set(sessionId, workingDirectory);
-    return sdkSession;
+    try {
+      const sdkSession = await this.client!.resumeSession(sessionId, config);
+      copilotLog.info(`Session ${sessionId} resumed successfully`);
+      this.subscribeToSessionEvents(sdkSession);
+      this.activeSessions.set(sessionId, sdkSession);
+      if (workingDirectory) this.sessionDirectories.set(sessionId, workingDirectory);
+      return sdkSession;
+    } catch (err: any) {
+      const msg = String(err?.message || err);
+      if (msg.includes("not found") || msg.includes("Not found") || msg.includes("no such session")) {
+        copilotLog.warn(`Session ${sessionId} not found on resume, creating new session`);
+        const newConfig: SessionConfig = {
+          streaming: true,
+          workingDirectory,
+          model: this.currentModelId ?? undefined,
+          systemMessage: { mode: "append" as const, content: CODEMUX_IDENTITY_PROMPT },
+          onPermissionRequest: (req, ctx) => this.handlePermissionRequest(req as any, ctx),
+          onUserInputRequest: (req, ctx) => this.handleUserInputRequest(req as any, ctx),
+        };
+        const newSession = await this.client!.createSession(newConfig);
+        this.subscribeToSessionEvents(newSession);
+        this.activeSessions.set(sessionId, newSession);
+        if (workingDirectory) this.sessionDirectories.set(sessionId, workingDirectory);
+        return newSession;
+      }
+      throw err;
+    }
   }
 
   private subscribeToSessionEvents(session: CopilotSession, eventSessionId?: string): void {

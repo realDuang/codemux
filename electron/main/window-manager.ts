@@ -126,9 +126,9 @@ export function getMainWindow(): BrowserWindow | null {
   return mainWindow;
 }
 
-function updateTrayMenu(): void {
+async function updateTrayMenu(): Promise<void> {
   try {
-    const { trayManager } = require("./services/tray-manager");
+    const { trayManager } = await import("./services/tray-manager");
     trayManager.updateContextMenu();
   } catch {
     // tray-manager not available

@@ -129,7 +129,17 @@ export class WebhookServer {
       }
 
       // Read request body
-      const rawBody = await this.readBody(req);
+      let rawBody: Buffer;
+      try {
+        rawBody = await this.readBody(req);
+      } catch (err: any) {
+        if (err?.message?.includes("5MB")) {
+          res.writeHead(413, { "Content-Type": "text/plain" });
+          res.end("Request Entity Too Large");
+          return;
+        }
+        throw err;
+      }
       const contentType = (req.headers["content-type"] || "").toLowerCase();
 
       // Parse body based on content type
@@ -182,9 +192,19 @@ export class WebhookServer {
   }
 
   private readBody(req: http.IncomingMessage): Promise<Buffer> {
+    const MAX_BODY_SIZE = 5 * 1024 * 1024; // 5MB
     return new Promise((resolve, reject) => {
       const chunks: Buffer[] = [];
-      req.on("data", (chunk: Buffer) => chunks.push(chunk));
+      let totalSize = 0;
+      req.on("data", (chunk: Buffer) => {
+        totalSize += chunk.length;
+        if (totalSize > MAX_BODY_SIZE) {
+          req.destroy();
+          reject(new Error("Body exceeds 5MB limit"));
+          return;
+        }
+        chunks.push(chunk);
+      });
       req.on("end", () => resolve(Buffer.concat(chunks)));
       req.on("error", reject);
     });

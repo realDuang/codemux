@@ -1,5 +1,6 @@
 import { app, Tray, Menu, nativeImage } from "electron";
 import { join } from "path";
+import fs from "fs";
 import { getMainWindow, createWindow } from "../window-manager";
 import { loadSettings, saveSettings } from "./logger";
 
@@ -119,10 +120,8 @@ class TrayManager {
 
   private setLinuxAutostart(enabled: boolean): void {
     try {
-      const fs = require("fs");
-      const path = require("path");
-      const autostartDir = path.join(app.getPath("home"), ".config", "autostart");
-      const desktopFile = path.join(autostartDir, "codemux.desktop");
+      const autostartDir = join(app.getPath("home"), ".config", "autostart");
+      const desktopFile = join(autostartDir, "codemux.desktop");
 
       if (enabled) {
         if (!fs.existsSync(autostartDir)) {

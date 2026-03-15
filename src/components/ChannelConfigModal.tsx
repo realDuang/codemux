@@ -36,7 +36,7 @@ export function ChannelConfigModal(props: ChannelConfigModalProps) {
       if (!field.required) return true;
       const val = config()[field.key];
       if (typeof val === "string") return val.trim() !== "";
-      if (typeof val === "number") return true;
+      if (typeof val === "number") return Number.isFinite(val);
       return val != null;
     });
   });

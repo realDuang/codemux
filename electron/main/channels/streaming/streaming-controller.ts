@@ -225,7 +225,6 @@ export class StreamingController {
    */
   private async sendFinalReply(session: StreamingSession): Promise<void> {
     if (session.finalReplySent) return;
-    session.finalReplySent = true;
 
     const toolSummary = this.formatToolSummary(session.toolCounts);
     const content = session.textBuffer || "（无文本回复）";
@@ -252,6 +251,8 @@ export class StreamingController {
       // Batch mode: send final reply as a new message
       await this.transport.sendText(session.chatId, rendered.content);
     }
+
+    session.finalReplySent = true;
   }
 
   // =========================================================================

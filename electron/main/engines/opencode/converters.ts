@@ -89,7 +89,7 @@ export function convertMessage(engineType: EngineType, sdk: any, pricing?: Model
     },
     parts: (sdk.parts ?? []).filter(Boolean).map((p: SdkPart) => convertPart(engineType, p)),
     tokens: sdk.tokens,
-    cost: sdk.cost || (sdk.tokens && pricing ? computeCost(sdk.tokens, pricing) : undefined),
+    cost: sdk.cost ?? (sdk.tokens && pricing ? computeCost(sdk.tokens, pricing) : undefined),
     modelId: sdk.modelID,
     providerId: sdk.providerID,
     mode: sdk.mode,

@@ -300,6 +300,27 @@ class ConversationStore {
       if (messages.some((m) => m.id === msg.id)) return;
       messages.push(msg);
       await this.writeMessages(id, messages);
+
+      // Update meta (same as appendMessage)
+      const conv = this.index.get(id);
+      if (conv) {
+        conv.messageCount = messages.length;
+        conv.updatedAt = Date.now();
+
+        if (msg.parts.length > 0) {
+          const textPart = msg.parts.find(
+            (p): p is TextPart => p.type === "text",
+          );
+          if (textPart) {
+            conv.preview = textPart.text.slice(0, PREVIEW_LENGTH);
+            if (textPart.text.length > PREVIEW_LENGTH) {
+              conv.preview += "...";
+            }
+          }
+        }
+
+        this.scheduleIndexWrite();
+      }
     });
   }
 

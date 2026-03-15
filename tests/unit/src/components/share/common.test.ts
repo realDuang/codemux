@@ -8,7 +8,7 @@ describe("formatTokenCount", () => {
     [1000, "1.0K"],
     [1500, "1.5K"],
     [12345, "12.3K"],
-    [999999, "1000.0K"],
+    [999999, "1.0M"],
     [1000000, "1.0M"],
     [1234567, "1.2M"],
   ] as const)("formats %d as %s", (input, expected) => {

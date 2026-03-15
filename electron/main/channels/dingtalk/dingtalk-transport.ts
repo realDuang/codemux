@@ -31,7 +31,7 @@ export class DingTalkTransport implements MessageTransport {
 
   /**
    * Send a text message to a DingTalk chat.
-   * Uses markdown msgtype for better formatting.
+   * Uses sampleText msgtype for plain text messages.
    *
    * For group chats, chatId is the openConversationId.
    * For individual chats, chatId is the user's staffId/userId.

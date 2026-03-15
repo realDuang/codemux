@@ -659,7 +659,14 @@ export default function Chat() {
       const projectID = project?.id || undefined;
       const processedSession = toSessionInfo(newSession, projectID);
 
-      setSessionStore("list", (list) => [processedSession, ...list]);
+      const existingSession = sessionStore.list.find(s => s.id === processedSession.id);
+      if (!existingSession) {
+        setSessionStore("list", (list) => [processedSession, ...list]);
+      } else if (!existingSession.projectID && processedSession.projectID) {
+        setSessionStore("list", (list) =>
+          list.map(s => s.id === processedSession.id ? { ...s, projectID: processedSession.projectID } : s)
+        );
+      }
       setSessionStore("current", processedSession.id);
       setSessionStore("initError", null);
       setConfigStore("currentEngineType", engineType as import("../types/unified").EngineType);

@@ -5,6 +5,7 @@ import { deviceStore } from "./services/device-store";
 import { tunnelManager } from "./services/tunnel-manager";
 import { productionServer } from "./services/production-server";
 import { updateManager } from "./services/update-manager";
+import { trayManager } from "./services/tray-manager";
 import { getLogFilePath, getFileLogLevel, setFileLogLevel, loadSettings, saveSettings } from "./services/logger";
 import { isStartupReady } from "./index";
 import { channelManager } from "./index";
@@ -287,6 +288,19 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle("update:isAutoCheckEnabled", async () => {
     return updateManager.isAutoCheckEnabled();
+  });
+
+  // ===========================================================================
+  // Launch at Login
+  // ===========================================================================
+
+  ipcMain.handle("autostart:isEnabled", async () => {
+    return trayManager.isLaunchAtLoginEnabled();
+  });
+
+  ipcMain.handle("autostart:setEnabled", async (_, enabled: boolean) => {
+    trayManager.setLaunchAtLogin(enabled);
+    return { success: true };
   });
 
   // ===========================================================================

@@ -373,6 +373,8 @@ export interface LocaleDict {
     error: string;
     autoCheck: string;
     autoCheckDesc: string;
+    launchAtLogin: string;
+    launchAtLoginDesc: string;
     releaseNotes: string;
     retry: string;
   };
@@ -752,6 +754,8 @@ export const en: LocaleDict = {
     error: "Update check failed",
     autoCheck: "Auto-check for updates",
     autoCheckDesc: "Automatically check for updates on startup",
+    launchAtLogin: "Launch at Login",
+    launchAtLoginDesc: "Automatically start CodeMux when you log in to your computer",
     releaseNotes: "What's new",
     retry: "Retry",
   },

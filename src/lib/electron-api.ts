@@ -321,6 +321,11 @@ function getUpdateAPI(): any {
   return (api as any)?.update ?? null;
 }
 
+function getAutostartAPI(): any {
+  const api = getElectronAPI();
+  return (api as any)?.autostart ?? null;
+}
+
 export const updateAPI = {
   async checkForUpdates(): Promise<UpdateStateInfo | null> {
     const update = getUpdateAPI();
@@ -370,6 +375,19 @@ export const updateAPI = {
   onStatusChange(callback: (state: UpdateStateInfo) => void): (() => void) | null {
     const update = getUpdateAPI();
     return update ? update.onStatusChange(callback) : null;
+  },
+};
+
+// Autostart API
+export const autostartAPI = {
+  async isEnabled(): Promise<boolean> {
+    const api = getAutostartAPI();
+    return api ? api.isEnabled() : false;
+  },
+
+  async setEnabled(enabled: boolean): Promise<void> {
+    const api = getAutostartAPI();
+    if (api) await api.setEnabled(enabled);
   },
 };
 

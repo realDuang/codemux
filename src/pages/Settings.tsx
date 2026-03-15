@@ -7,7 +7,7 @@ import { useAuthGuard } from "../lib/useAuthGuard";
 import { isElectron } from "../lib/platform";
 import { Auth } from "../lib/auth";
 import { configStore, saveEngineModelSelection, isEngineEnabled, setEngineEnabled } from "../stores/config";
-import { systemAPI, updateAPI } from "../lib/electron-api";
+import { systemAPI, updateAPI, autostartAPI } from "../lib/electron-api";
 import type { UnifiedModelInfo } from "../types/unified";
 
 export default function Settings() {
@@ -25,6 +25,7 @@ export default function Settings() {
   const [appVersion, setAppVersion] = createSignal("");
   const [updateCheckStatus, setUpdateCheckStatus] = createSignal<"idle" | "checking" | "up-to-date" | "available" | "error">("idle");
   const [autoCheckEnabled, setAutoCheckEnabled] = createSignal(true);
+  const [launchAtLoginEnabled, setLaunchAtLoginEnabled] = createSignal(false);
 
   const logLevels = ["error", "warn", "info", "verbose", "debug", "silly"];
 
@@ -41,6 +42,9 @@ export default function Settings() {
 
       const autoCheck = await updateAPI.isAutoCheckEnabled();
       setAutoCheckEnabled(autoCheck);
+
+      const launchAtLogin = await autostartAPI.isEnabled();
+      setLaunchAtLoginEnabled(launchAtLogin);
 
       const api = (window as any).electronAPI;
       if (api?.log) {
@@ -148,6 +152,12 @@ export default function Settings() {
     const newValue = !autoCheckEnabled();
     setAutoCheckEnabled(newValue);
     await updateAPI.setAutoCheck(newValue);
+  };
+
+  const handleLaunchAtLoginToggle = async () => {
+    const newValue = !launchAtLoginEnabled();
+    setLaunchAtLoginEnabled(newValue);
+    await autostartAPI.setEnabled(newValue);
   };
 
   const statusDotColor = (engine: { status: string; authenticated?: boolean }): string => {
@@ -583,7 +593,7 @@ export default function Settings() {
                     </div>
                   </div>
                   {/* Auto-check toggle */}
-                  <div class="p-4 sm:p-6 flex items-center justify-between gap-4">
+                  <div class="p-4 sm:p-6 flex items-center justify-between gap-4 border-b border-gray-200 dark:border-slate-700">
                     <div>
                       <h3 class="text-base font-medium text-gray-900 dark:text-white">
                         {t().update.autoCheck}
@@ -604,6 +614,33 @@ export default function Settings() {
                         <span
                           class={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
                             autoCheckEnabled() ? "translate-x-6" : "translate-x-1"
+                          }`}
+                        />
+                      </button>
+                    </div>
+                  </div>
+                  {/* Launch at Login toggle */}
+                  <div class="p-4 sm:p-6 flex items-center justify-between gap-4">
+                    <div>
+                      <h3 class="text-base font-medium text-gray-900 dark:text-white">
+                        {t().update.launchAtLogin}
+                      </h3>
+                      <p class="text-sm text-gray-500 dark:text-gray-400 mt-1">
+                        {t().update.launchAtLoginDesc}
+                      </p>
+                    </div>
+                    <div class="flex-shrink-0">
+                      <button
+                        onClick={handleLaunchAtLoginToggle}
+                        class={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                          launchAtLoginEnabled() ? "bg-blue-600" : "bg-gray-300 dark:bg-slate-600"
+                        }`}
+                        role="switch"
+                        aria-checked={launchAtLoginEnabled()}
+                      >
+                        <span
+                          class={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                            launchAtLoginEnabled() ? "translate-x-6" : "translate-x-1"
                           }`}
                         />
                       </button>

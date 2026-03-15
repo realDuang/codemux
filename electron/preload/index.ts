@@ -129,6 +129,12 @@ const electronAPI = {
       return () => { ipcRenderer.removeListener("update:status", handler); };
     },
   },
+
+  // Autostart API
+  autostart: {
+    isEnabled: () => ipcRenderer.invoke("autostart:isEnabled") as Promise<boolean>,
+    setEnabled: (enabled: boolean) => ipcRenderer.invoke("autostart:setEnabled", enabled),
+  },
 };
 
 contextBridge.exposeInMainWorld("electronAPI", electronAPI);

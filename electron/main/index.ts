@@ -39,6 +39,7 @@ import { TelegramAdapter } from "./channels/telegram/telegram-adapter";
 import { WeComAdapter } from "./channels/wecom/wecom-adapter";
 import { TeamsAdapter } from "./channels/teams/teams-adapter";
 import { updateManager } from "./services/update-manager";
+import { trayManager } from "./services/tray-manager";
 
 // --- Gateway singleton instances ---
 const engineManager = new EngineManager();
@@ -91,6 +92,7 @@ if (!gotTheLock) {
   app.on("second-instance", () => {
     const mainWindow = getMainWindow();
     if (mainWindow && !mainWindow.isDestroyed()) {
+      if (!mainWindow.isVisible()) mainWindow.show();
       if (mainWindow.isMinimized()) mainWindow.restore();
       mainWindow.focus();
     }
@@ -165,7 +167,11 @@ if (!gotTheLock) {
     }
 
     // Create main window
-    createWindow();
+    const isHiddenStart = process.argv.includes("--hidden");
+    createWindow(isHiddenStart);
+
+    // Initialize system tray
+    trayManager.init();
 
     // Initialize auto-updater (only in packaged mode)
     if (app.isPackaged) {
@@ -201,7 +207,11 @@ if (!gotTheLock) {
     });
 
     app.on("activate", () => {
-      if (BrowserWindow.getAllWindows().length === 0) {
+      const mainWindow = getMainWindow();
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.show();
+        mainWindow.focus();
+      } else if (BrowserWindow.getAllWindows().length === 0) {
         createWindow();
       }
     });
@@ -224,6 +234,7 @@ if (!gotTheLock) {
     // Only do synchronous cleanup and let the quit proceed without
     // preventDefault.
     if (updateManager.isInstallingUpdate()) {
+      trayManager.destroy();
       await conversationStore.flushAll();
       gatewayServer.stop();
       return;
@@ -232,6 +243,8 @@ if (!gotTheLock) {
     event.preventDefault();
 
     try {
+      trayManager.destroy();
+
       // Flush conversation store before quit
       await conversationStore.flushAll();
 

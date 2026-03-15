@@ -16,7 +16,7 @@ describe('copilot/config.ts', () => {
   describe('DEFAULT_MODES', () => {
     it('contains agent, plan, and autopilot modes', () => {
       expect(DEFAULT_MODES).toHaveLength(3);
-      expect(DEFAULT_MODES.map(m => m.id)).toEqual(['agent', 'plan', 'autopilot']);
+      expect(DEFAULT_MODES.map(m => m.id)).toEqual(['autopilot', 'agent', 'plan']);
     });
   });
 

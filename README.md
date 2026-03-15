@@ -4,7 +4,7 @@
 
 **[English](./README.md)** | [简体中文](./README.zh-CN.md) | [日本語](./README.ja.md) | [한국어](./README.ko.md)
 
-**The First Open-Source GUI for GitHub Copilot CLI.**
+**Multi-Engine AI Coding Client with Full Remote Agent Experience.**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
@@ -20,13 +20,7 @@
 
 ## Why CodeMux?
 
-### 1. First GUI for GitHub Copilot CLI
-
-GitHub Copilot is the most widely adopted AI coding tool in the world. **Copilot CLI** brings its full agentic capabilities to the terminal — but there's no graphical interface for it.
-
-**CodeMux is the first — and currently only — open-source GUI for Copilot CLI.** It connects at the protocol level (JSON-RPC over stdio), giving you Copilot's complete agentic coding experience in a visual interface.
-
-### 2. Multi-Engine, Not Multi-Model
+### 1. Multi-Engine, Not Multi-Model
 
 This is not a chat wrapper that swaps API keys. CodeMux is a **protocol-level gateway** — each engine runs with its own runtime, sessions, tool execution, and capabilities fully preserved.
 
@@ -38,13 +32,32 @@ Switch between engines from a single interface. Each keeps its full power — fi
 | **[GitHub Copilot CLI](https://docs.github.com/en/copilot/using-github-copilot/using-github-copilot-coding-agent-in-cli)** | JSON-RPC/stdio | ✅ Stable |
 | **[Claude Code](https://claude.ai/code)** | SDK (stdio) | ✅ Stable |
 
-### 3. Agent Chain-of-Thought Visualization
+> 💡 CodeMux is also the **first — and currently only — open-source GUI for GitHub Copilot CLI**, connecting at the protocol level (JSON-RPC over stdio) to deliver Copilot's complete agentic coding experience in a visual interface.
+
+### 2. Agent Chain-of-Thought Visualization
 
 Every agent action is rendered as an expandable step — file diffs, shell commands, search results, tool calls — so you can see exactly what the agent is doing and why, not just the final answer.
 
 <img src="https://raw.githubusercontent.com/realDuang/codemux/main/assets/screenshots/chat-steps.jpg" alt="CodeMux - Step-by-Step Agent Visualization" width="700" />
 
-### 4. Zero-Config Secure Remote Access
+This isn't limited to the desktop app. **The full chain-of-thought experience is preserved across every access method** — whether you're on a browser via LAN or public internet, or interacting through an IM bot on your phone.
+
+### 3. True Remote Agent Experience
+
+Tools like [OpenClaw](https://github.com/openclaw/openclaw) have popularized the idea of accessing AI from messaging apps — send a message on WhatsApp or Telegram, get a text reply. But for AI-assisted coding, a text reply isn't enough. You need to see what the agent is **thinking**, what files it's **editing**, what commands it's **running** — in real time.
+
+**CodeMux bridges this gap.** Whether you access from a browser or an IM platform, you get the complete agent experience with structured streaming:
+
+| Capability | CodeMux | Text-based assistants |
+|------------|---------|----------------------|
+| Streaming output | ✅ Token-level real-time streaming | ⚠️ Complete reply or chunked text |
+| Thinking steps | ✅ Each tool call rendered as expandable step | ❌ Final answer only |
+| File diffs | ✅ Inline diff viewer with syntax highlighting | ❌ Plain text or none |
+| Shell commands | ✅ Command + output rendered in real time | ❌ Text summary at best |
+| Multi-engine | ✅ Switch between OpenCode / Copilot / Claude Code | ❌ Single model / provider |
+| Coding context | ✅ Project-aware sessions with full tool access | ⚠️ Generic assistant context |
+
+#### Browser Remote Access
 
 Access your coding agents from any device — phone, tablet, or another machine — without touching a single config file.
 
@@ -52,11 +65,11 @@ Access your coding agents from any device — phone, tablet, or another machine 
 - **Public Internet**: One-click [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/) — no port forwarding, no VPN, no firewall changes
 - **Security built-in**: Device authorization, JWT tokens, HTTPS via Cloudflare, ephemeral tunnel URLs that rotate on every restart
 
-### 5. IM Bot Channels
+#### IM Bot Channels
 
-Use your AI coding agents directly from your favorite messaging apps — no browser needed. CodeMux connects as a bot on each platform, bridging chat messages to any engine through the gateway.
+Use your AI coding agents directly from your favorite messaging apps with **real-time streaming and structured rich content** — not just plain text replies.
 
-#### Supported Platforms
+##### Supported Platforms
 
 | Platform | Event Receiving | Streaming | Group Creation | Rich Content |
 |----------|----------------|-----------|----------------|--------------|
@@ -66,7 +79,7 @@ Use your AI coding agents directly from your favorite messaging apps — no brow
 | [WeCom](https://developer.work.weixin.qq.com/) | HTTP Callback (AES XML) | ❌ Batch mode | ✅ App group chat | Markdown / Template Card |
 | [Microsoft Teams](https://learn.microsoft.com/en-us/microsoftteams/platform/bots/) | Bot Framework HTTP | ✅ Edit-in-place | ❌ P2P only | Adaptive Cards v1.5 |
 
-#### Common Features
+##### Common Features
 
 - **P2P entry point**: Private chat with the bot to select projects and sessions
 - **Slash commands**: `/cancel`, `/status`, `/mode`, `/model`, `/history`, `/help`
@@ -74,12 +87,12 @@ Use your AI coding agents directly from your favorite messaging apps — no brow
 - **Tool summary**: Completion messages include action counts (e.g. `Shell(2), Edit(1)`)
 - **Auto-approve permissions**: Engine permission requests are approved automatically
 
-#### Session Models
+##### Session Models
 
 - **One Group = One Session** (Feishu, DingTalk, WeCom): Each group chat maps to a single CodeMux session. Start in P2P → select project → group auto-created.
 - **P2P Direct** (Telegram, Teams): Interact directly in private chat with temporary sessions (2h TTL). In group chats, @mention the bot to interact.
 
-#### Setup
+##### Setup
 
 Each platform requires creating a bot/app on its developer portal and configuring credentials in CodeMux Settings → Channels:
 
@@ -144,39 +157,15 @@ bun run dev
 
 ---
 
-## Remote Access
+## Remote Access & Channels
 
-### LAN Access
+### How to Connect
 
-1. Open CodeMux and go to **Remote Access** in settings
-2. Find your machine's IP address on the page
-3. Open `http://<your-ip>:5173` from another device
-4. Enter the 6-digit access code or scan the QR code
-
-<img src="https://raw.githubusercontent.com/realDuang/codemux/main/assets/screenshots/remote-access.jpg" alt="CodeMux - Remote Access" width="700" />
-
-### Public Internet Access
-
-Access from anywhere with Cloudflare Tunnel — **no port forwarding, no firewall changes, no VPN:**
-
-1. Toggle **"Public Access"** in the Remote Access section
-2. Share the generated `*.trycloudflare.com` URL
-3. Remote device authenticates with the access code
-
-```
-Your Phone/Tablet
-       ↓
-https://xyz.trycloudflare.com
-       ↓
-  Cloudflare Network
-       ↓
-  Your Workstation (CodeMux Gateway)
-       ↓
-  ┌─────────┬──────────┬───────────┐
-  │OpenCode │ Copilot  │  Claude   │
-  │ Engine  │  Engine  │  Engine   │
-  └─────────┴──────────┴───────────┘
-```
+| Method | Setup | Best For |
+|--------|-------|----------|
+| **LAN Browser** | Open `http://<your-ip>:5173`, enter 6-digit code or scan QR | Quick access from another device on the same network |
+| **Public Internet** | Toggle "Public Access" → share `*.trycloudflare.com` URL | Access from anywhere, no port forwarding needed |
+| **IM Bot** | Configure bot credentials in Settings → Channels | Interact from Feishu, DingTalk, Telegram, WeCom, or Teams |
 
 ### Security & Device Management
 
@@ -189,8 +178,6 @@ https://xyz.trycloudflare.com
 
 Manage connected devices from the Devices page — view last access time, rename for identification, or revoke access per-device.
 
-<img src="https://raw.githubusercontent.com/realDuang/codemux/main/assets/screenshots/devices-management.jpg" alt="CodeMux - Device Management" width="700" />
-
 > CodeMux is designed for personal use. Revoke devices you no longer use and disable the public tunnel when not needed.
 
 ---
@@ -199,28 +186,35 @@ Manage connected devices from the Devices page — view last access time, rename
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│  SolidJS UI (Desktop via Electron / Web via Browser)            │
-│                          │                                      │
+│                        Access Layer                             │
+│                                                                 │
+│  ┌──────────┐  ┌───────────────┐  ┌──────────────────────────┐  │
+│  │ Electron │  │ Browser (LAN/ │  │ IM Bots (Feishu/DingTalk │  │
+│  │   App    │  │  Cloudflare)  │  │ /Telegram/WeCom/Teams)   │  │
+│  └────┬─────┘  └──────┬────────┘  └────────────┬─────────────┘  │
+│       │               │                        │                │
+│       └───────────────┼────────────────────────┘                │
+│                       │                                         │
 │              WebSocket (JSON-RPC)                               │
-│                          │                                      │
-│              ┌───────────┴───────────┐                          │
-│              │    Gateway Server     │                          │
-│              │    (Engine Manager)   │                          │
-│              └───┬───────┬───────┬───┘                          │
-│                  │       │       │                              │
-│            ┌─────┘    ┌──┘      ┌┘                              │
-│            │          │         │                               │
-│      ┌─────┴─────┐ ┌──┴────┐ ┌──┴─────┐                         │
-│      │ OpenCode  │ │Copilot│ │ Claude │                         │
-│      │ Adapter   │ │Adapter│ │Adapter │                         │
-│      │(HTTP+SSE) │ │ (ACP) │ │ (SDK)  │                         │
-│      └───────────┘ └───────┘ └────────┘                         │
+│                       │                                         │
+│              ┌────────┴────────┐                                │
+│              │  Gateway Server │                                │
+│              │ (Engine Manager)│                                │
+│              └──┬──────┬─────┬┘                                 │
+│                 │      │     │                                  │
+│           ┌─────┘   ┌──┘    └──┐                                │
+│           │         │          │                                │
+│     ┌─────┴─────┐ ┌─┴──────┐ ┌┴───────┐                        │
+│     │ OpenCode  │ │Copilot │ │ Claude │                        │
+│     │ Adapter   │ │Adapter │ │Adapter │                        │
+│     │(HTTP+SSE) │ │(stdio) │ │ (SDK)  │                        │
+│     └───────────┘ └────────┘ └────────┘                        │
 │                                                                 │
 │     Unified Type System: UnifiedPart, ToolPart, AgentMode       │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-All engines share a **normalized type system** — tool calls, file operations, diffs, and messages are mapped to a common format (`UnifiedPart`), so the UI doesn't need to know which engine is running.
+All access methods — desktop app, remote browser, and IM bots — connect through the same WebSocket gateway. Engines share a **normalized type system**, so tool calls, file diffs, and streaming messages are rendered identically regardless of which engine or access method is used.
 
 ---
 

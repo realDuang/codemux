@@ -4,7 +4,7 @@
 
 [English](./README.md) | **[简体中文](./README.zh-CN.md)** | [日本語](./README.ja.md) | [한국어](./README.ko.md)
 
-**首个开源的 GitHub Copilot CLI 图形界面。**
+**多引擎 AI 编程客户端，完整的远程 Agent 体验。**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
@@ -20,13 +20,7 @@
 
 ## 为什么选择 CodeMux？
 
-### 1. 首个 GitHub Copilot CLI 图形界面
-
-GitHub Copilot 是全球使用最广泛的 AI 编程工具。**Copilot CLI** 将其完整的 Agent 能力带入终端 —— 但它没有图形界面。
-
-**CodeMux 是首个 —— 也是目前唯一的 —— Copilot CLI 开源图形界面。** 它在协议层面连接（JSON-RPC over stdio），让你在可视化界面中获得 Copilot 完整的 Agent 编程体验。
-
-### 2. 多引擎，而非多模型
+### 1. 多引擎，而非多模型
 
 这不是一个切换 API Key 的聊天封装。CodeMux 是一个**协议级网关** —— 每个引擎运行在自己的运行时中，会话、工具执行和能力都完整保留。
 
@@ -38,13 +32,32 @@ GitHub Copilot 是全球使用最广泛的 AI 编程工具。**Copilot CLI** 将
 | **[GitHub Copilot CLI](https://docs.github.com/en/copilot/using-github-copilot/using-github-copilot-coding-agent-in-cli)** | JSON-RPC/stdio | ✅ 稳定 |
 | **[Claude Code](https://claude.ai/code)** | SDK (stdio) | ✅ 稳定 |
 
-### 3. Agent 思维链可视化
+> 💡 CodeMux 同时也是**首个 —— 也是目前唯一的 —— Copilot CLI 开源图形界面**，在协议层面连接（JSON-RPC over stdio），让你在可视化界面中获得 Copilot 完整的 Agent 编程体验。
+
+### 2. Agent 思维链可视化
 
 每个 Agent 操作都渲染为可展开的步骤 —— 文件 diff、Shell 命令、搜索结果、工具调用 —— 让你清楚地看到 Agent 在做什么以及为什么这样做，而不仅仅是最终答案。
 
 <img src="https://raw.githubusercontent.com/realDuang/codemux/main/assets/screenshots/chat-steps.jpg" alt="CodeMux - 逐步 Agent 可视化" width="700" />
 
-### 4. 零配置安全远程访问
+这不仅限于桌面应用。**完整的思维链体验在每种访问方式中都得以保留** —— 无论你是通过局域网或公网在浏览器中访问，还是通过手机上的 IM 机器人进行交互。
+
+### 3. 真正的远程 Agent 体验
+
+[OpenClaw](https://github.com/openclaw/openclaw) 等工具让"从即时通讯应用访问 AI"的想法广为流行 —— 在 WhatsApp 或 Telegram 上发条消息，收到一段文字回复。但对于 AI 辅助编程来说，一段文字回复远远不够。你需要看到 Agent 在**思考**什么、在**编辑**哪些文件、在**运行**什么命令 —— 而且是实时的。
+
+**CodeMux 弥合了这一差距。** 无论你从浏览器还是 IM 平台访问，都能获得完整的 Agent 体验和结构化流式传输：
+
+| 能力 | CodeMux | 基于文本的助手 |
+|------|---------|--------------|
+| 流式输出 | ✅ Token 级实时流式传输 | ⚠️ 完整回复或分块文本 |
+| 思考步骤 | ✅ 每个工具调用渲染为可展开的步骤 | ❌ 仅有最终答案 |
+| 文件差异 | ✅ 带语法高亮的内联 diff 查看器 | ❌ 纯文本或无 |
+| Shell 命令 | ✅ 命令 + 输出实时渲染 | ❌ 充其量是文本摘要 |
+| 多引擎 | ✅ 在 OpenCode / Copilot / Claude Code 间切换 | ❌ 单一模型/提供商 |
+| 编程上下文 | ✅ 项目感知的会话，完整工具访问 | ⚠️ 通用助手上下文 |
+
+#### 浏览器远程访问
 
 从任何设备访问你的编程 Agent —— 手机、平板或另一台电脑 —— 无需修改任何配置文件。
 
@@ -52,11 +65,11 @@ GitHub Copilot 是全球使用最广泛的 AI 编程工具。**Copilot CLI** 将
 - **公网**：一键 [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/) —— 无需端口转发、无需 VPN、无需防火墙更改
 - **内置安全机制**：设备授权、JWT 令牌、通过 Cloudflare 的 HTTPS、每次重启时轮换的临时隧道 URL
 
-### 5. IM 机器人渠道
+#### IM 机器人渠道
 
-直接在你常用的即时通讯应用中使用 AI 编程 Agent —— 无需打开浏览器。CodeMux 以机器人身份接入各平台，通过网关将聊天消息桥接到任意引擎。
+直接在你常用的即时通讯应用中使用 AI 编程 Agent，享受**实时流式传输和结构化富内容** —— 而不仅仅是纯文本回复。
 
-#### 支持平台
+##### 支持平台
 
 | 平台 | 事件接收 | 流式输出 | 创建群组 | 富文本内容 |
 |------|---------|---------|---------|-----------|
@@ -66,7 +79,7 @@ GitHub Copilot 是全球使用最广泛的 AI 编程工具。**Copilot CLI** 将
 | [企业微信](https://developer.work.weixin.qq.com/) | HTTP 回调（AES XML） | ❌ 批量模式 | ✅ 应用群聊 | Markdown / 模板卡片 |
 | [Microsoft Teams](https://learn.microsoft.com/en-us/microsoftteams/platform/bots/) | Bot Framework HTTP | ✅ 编辑更新 | ❌ 仅私聊 | Adaptive Cards v1.5 |
 
-#### 通用功能
+##### 通用功能
 
 - **私聊入口**：与机器人私聊选择项目和会话
 - **斜杠命令**：`/cancel`、`/status`、`/mode`、`/model`、`/history`、`/help`
@@ -74,12 +87,12 @@ GitHub Copilot 是全球使用最广泛的 AI 编程工具。**Copilot CLI** 将
 - **工具摘要**：完成时附带操作统计（如 `Shell(2), Edit(1)`）
 - **自动审批权限**：引擎权限请求自动批准
 
-#### 会话模型
+##### 会话模型
 
 - **一群一会话**（飞书、钉钉、企业微信）：每个群聊对应一个 CodeMux 会话。私聊选择项目 → 自动创建群聊。
 - **私聊直连**（Telegram、Teams）：在私聊中直接交互，使用临时会话（2 小时 TTL）。群聊中 @机器人 交互。
 
-#### 配置方式
+##### 配置方式
 
 每个平台需要在开发者门户创建机器人/应用，然后在 CodeMux 设置 → 渠道中配置凭证：
 
@@ -144,39 +157,15 @@ bun run dev
 
 ---
 
-## 远程访问
+## 远程访问与渠道
 
-### 局域网访问
+### 连接方式
 
-1. 打开 CodeMux，进入设置中的**远程访问**
-2. 在页面上找到你机器的 IP 地址
-3. 从另一台设备打开 `http://<your-ip>:5173`
-4. 输入 6 位访问码或扫描二维码
-
-<img src="https://raw.githubusercontent.com/realDuang/codemux/main/assets/screenshots/remote-access.jpg" alt="CodeMux - 远程访问" width="700" />
-
-### 公网访问
-
-通过 Cloudflare Tunnel 从任何地方访问 —— **无需端口转发、无需防火墙更改、无需 VPN：**
-
-1. 在远程访问部分开启**"公网访问"**
-2. 分享生成的 `*.trycloudflare.com` URL
-3. 远程设备使用访问码进行认证
-
-```
-你的手机/平板
-       ↓
-https://xyz.trycloudflare.com
-       ↓
-  Cloudflare 网络
-       ↓
-  你的工作站（CodeMux 网关）
-       ↓
-  ┌─────────┬──────────┬───────────┐
-  │OpenCode │ Copilot  │  Claude   │
-  │ Engine  │  Engine  │  Engine   │
-  └─────────┴──────────┴───────────┘
-```
+| 方式 | 配置 | 适用场景 |
+|------|------|---------|
+| **局域网浏览器** | 打开 `http://<你的IP>:5173`，输入 6 位访问码或扫描二维码 | 同一网络下从另一台设备快速访问 |
+| **公网** | 开启"公网访问" → 分享 `*.trycloudflare.com` URL | 从任何地方访问，无需端口转发 |
+| **IM 机器人** | 在设置 → 渠道中配置机器人凭证 | 通过飞书、钉钉、Telegram、企业微信或 Teams 交互 |
 
 ### 安全与设备管理
 
@@ -189,8 +178,6 @@ https://xyz.trycloudflare.com
 
 在设备管理页面管理已连接的设备 —— 查看最后访问时间、重命名以便识别，或按设备撤销访问权限。
 
-<img src="https://raw.githubusercontent.com/realDuang/codemux/main/assets/screenshots/devices-management.jpg" alt="CodeMux - 设备管理" width="700" />
-
 > CodeMux 专为个人使用设计。请撤销不再使用的设备，并在不需要时关闭公网隧道。
 
 ---
@@ -199,28 +186,35 @@ https://xyz.trycloudflare.com
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│  SolidJS UI（桌面端通过 Electron / 网页端通过浏览器）              │
-│                          │                                      │
-│              WebSocket (JSON-RPC)                               │
-│                          │                                      │
-│              ┌───────────┴───────────┐                          │
-│              │      网关服务器        │                          │
-│              │    （引擎管理器）       │                          │
-│              └───┬───────┬───────┬───┘                          │
-│                  │       │       │                              │
-│            ┌─────┘    ┌──┘      ┌┘                              │
-│            │          │         │                               │
-│      ┌─────┴─────┐ ┌──┴────┐ ┌──┴─────┐                         │
-│      │ OpenCode  │ │Copilot│ │ Claude │                         │
-│      │  适配器   │ │ 适配器│ │ 适配器  │                         │
-│      │(HTTP+SSE) │ │ (ACP) │ │ (SDK)  │                         │
-│      └───────────┘ └───────┘ └────────┘                         │
+│                          接入层                                  │
 │                                                                 │
-│     统一类型系统：UnifiedPart, ToolPart, AgentMode                │
+│  ┌──────────┐  ┌───────────────┐  ┌──────────────────────────┐  │
+│  │ Electron │  │ 浏览器（局域网│  │ IM 机器人（飞书/钉钉/    │  │
+│  │  桌面端  │  │ /Cloudflare） │  │ Telegram/企业微信/Teams） │  │
+│  └────┬─────┘  └──────┬────────┘  └────────────┬─────────────┘  │
+│       │               │                        │                │
+│       └───────────────┼────────────────────────┘                │
+│                       │                                         │
+│              WebSocket (JSON-RPC)                               │
+│                       │                                         │
+│              ┌────────┴────────┐                                │
+│              │    网关服务器    │                                │
+│              │  （引擎管理器） │                                │
+│              └──┬──────┬─────┬┘                                 │
+│                 │      │     │                                  │
+│           ┌─────┘   ┌──┘    └──┐                                │
+│           │         │          │                                │
+│     ┌─────┴─────┐ ┌─┴──────┐ ┌┴───────┐                        │
+│     │ OpenCode  │ │Copilot │ │ Claude │                        │
+│     │  适配器   │ │ 适配器 │ │ 适配器 │                        │
+│     │(HTTP+SSE) │ │(stdio) │ │ (SDK)  │                        │
+│     └───────────┘ └────────┘ └────────┘                        │
+│                                                                 │
+│     统一类型系统：UnifiedPart, ToolPart, AgentMode               │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-所有引擎共享一个**标准化类型系统** —— 工具调用、文件操作、diff 和消息都映射到统一格式（`UnifiedPart`），因此 UI 无需关心当前运行的是哪个引擎。
+所有访问方式 —— 桌面应用、远程浏览器和 IM 机器人 —— 都通过同一个 WebSocket 网关连接。引擎共享**标准化类型系统**，因此无论使用哪个引擎或访问方式，工具调用、文件 diff 和流式消息都以完全相同的方式呈现。
 
 ---
 

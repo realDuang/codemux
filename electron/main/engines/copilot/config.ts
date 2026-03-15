@@ -9,9 +9,9 @@ import type { AgentMode } from "../../../../src/types/unified";
 // ============================================================================
 
 export const DEFAULT_MODES: AgentMode[] = [
+  { id: "autopilot", label: "Autopilot", description: "Fully autonomous mode" },
   { id: "agent", label: "Agent", description: "Interactive coding agent" },
   { id: "plan", label: "Plan", description: "Plan before executing" },
-  { id: "autopilot", label: "Autopilot", description: "Fully autonomous mode" },
 ];
 
 // ============================================================================

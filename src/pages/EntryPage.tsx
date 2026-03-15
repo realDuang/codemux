@@ -1027,59 +1027,6 @@ export default function EntryPage() {
                   {/* Web App Tab */}
                   <Show when={activeTab() === "webApp"}>
                     <div class="space-y-5">
-                      {/* Status & Toggle Card */}
-                      <div class="rounded-lg border border-gray-200 dark:border-slate-800 overflow-hidden">
-                        <div class="p-4 flex items-center justify-between">
-                          <div class="space-y-1">
-                            <div class="flex items-center gap-2">
-                              <h2 class="font-semibold text-base">{t().remote.publicAccess}</h2>
-                              <Show when={tunnelLoading() || tunnelInfo().status === "starting"}>
-                                <span class="inline-flex h-2 w-2 rounded-full bg-yellow-400 animate-pulse"></span>
-                              </Show>
-                              <Show when={!tunnelLoading() && tunnelInfo().status === "running"}>
-                                <span class="inline-flex h-2 w-2 rounded-full bg-green-500"></span>
-                              </Show>
-                            </div>
-                            <p class="text-sm text-gray-500 dark:text-gray-400">
-                              {t().remote.publicAccessDesc}
-                            </p>
-                          </div>
-
-                          <button
-                            onClick={handleTunnelToggle}
-                            disabled={tunnelLoading()}
-                            class={`relative inline-flex h-7 w-12 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:ring-offset-2 ${
-                              tunnelEnabled() ? "bg-blue-600" : "bg-gray-200 dark:bg-slate-700"
-                            } ${tunnelLoading() ? "opacity-50 cursor-not-allowed" : ""}`}
-                          >
-                            <span class="sr-only">Toggle Remote Access</span>
-                            <span
-                              class={`pointer-events-none inline-block h-6 w-6 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
-                                tunnelEnabled() ? "translate-x-5" : "translate-x-0"
-                              }`}
-                            />
-                          </button>
-                        </div>
-
-                        <Show when={tunnelInfo().error}>
-                          <div class="px-4 py-3 bg-red-50 dark:bg-red-900/10 border-t border-red-100 dark:border-red-900/30">
-                            <p class="text-xs text-red-600 dark:text-red-400 flex items-center gap-2">
-                              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" x2="12" y1="8" y2="12"/><line x1="12" x2="12.01" y1="16" y2="16"/></svg>
-                              {tunnelInfo().error}
-                            </p>
-                          </div>
-                        </Show>
-
-                        <Show when={tunnelEnabled() && tunnelInfo().status === "starting"}>
-                          <div class="px-4 py-3 bg-blue-50 dark:bg-blue-900/10 border-t border-blue-100 dark:border-blue-900/30">
-                            <p class="text-xs text-blue-600 dark:text-blue-400 flex items-center gap-2">
-                              <svg class="animate-spin" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
-                              {t().remote.starting}
-                            </p>
-                          </div>
-                        </Show>
-                      </div>
-
                       {/* Warning Banner */}
                       <div class="rounded-lg bg-orange-50 dark:bg-orange-900/10 border border-orange-100 dark:border-orange-900/30 p-3 flex gap-3">
                         <svg xmlns="http://www.w3.org/2000/svg" class="shrink-0 text-orange-600 dark:text-orange-400 mt-0.5" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><line x1="12" x2="12" y1="9" y2="13"/><line x1="12" x2="12.01" y1="17" y2="17"/></svg>
@@ -1248,6 +1195,59 @@ export default function EntryPage() {
                             </p>
                           </div>
                         </div>
+                      </div>
+
+                      {/* Status & Toggle Card */}
+                      <div class="rounded-lg border border-gray-200 dark:border-slate-800 overflow-hidden">
+                        <div class="p-4 flex items-center justify-between">
+                          <div class="space-y-1">
+                            <div class="flex items-center gap-2">
+                              <h2 class="font-semibold text-base">{t().remote.publicAccess}</h2>
+                              <Show when={tunnelLoading() || tunnelInfo().status === "starting"}>
+                                <span class="inline-flex h-2 w-2 rounded-full bg-yellow-400 animate-pulse"></span>
+                              </Show>
+                              <Show when={!tunnelLoading() && tunnelInfo().status === "running"}>
+                                <span class="inline-flex h-2 w-2 rounded-full bg-green-500"></span>
+                              </Show>
+                            </div>
+                            <p class="text-sm text-gray-500 dark:text-gray-400">
+                              {t().remote.publicAccessDesc}
+                            </p>
+                          </div>
+
+                          <button
+                            onClick={handleTunnelToggle}
+                            disabled={tunnelLoading()}
+                            class={`relative inline-flex h-7 w-12 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:ring-offset-2 ${
+                              tunnelEnabled() ? "bg-blue-600" : "bg-gray-200 dark:bg-slate-700"
+                            } ${tunnelLoading() ? "opacity-50 cursor-not-allowed" : ""}`}
+                          >
+                            <span class="sr-only">Toggle Remote Access</span>
+                            <span
+                              class={`pointer-events-none inline-block h-6 w-6 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
+                                tunnelEnabled() ? "translate-x-5" : "translate-x-0"
+                              }`}
+                            />
+                          </button>
+                        </div>
+
+                        <Show when={tunnelInfo().error}>
+                          <div class="px-4 py-3 bg-red-50 dark:bg-red-900/10 border-t border-red-100 dark:border-red-900/30">
+                            <p class="text-xs text-red-600 dark:text-red-400 flex items-center gap-2">
+                              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" x2="12" y1="8" y2="12"/><line x1="12" x2="12.01" y1="16" y2="16"/></svg>
+                              {tunnelInfo().error}
+                            </p>
+                          </div>
+                        </Show>
+
+                        <Show when={tunnelEnabled() && tunnelInfo().status === "starting"}>
+                          <div class="px-4 py-3 bg-blue-50 dark:bg-blue-900/10 border-t border-blue-100 dark:border-blue-900/30">
+                            <p class="text-xs text-blue-600 dark:text-blue-400 flex items-center gap-2">
+                              <svg class="animate-spin" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
+                              {t().remote.starting}
+                            </p>
+                          </div>
+                        </Show>
                       </div>
 
                       {/* Authorized Devices Card */}

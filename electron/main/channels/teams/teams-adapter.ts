@@ -419,9 +419,14 @@ export class TeamsAdapter extends ChannelAdapter {
       this.sessionMapper.setUserIdMapping(userId, chatId);
       await this.handleP2PMessage(chatId, userId, text);
     } else {
-      // Group or channel message — only process if bot is @mentioned or it's a command
+      // Group or channel message
       const botId = activity.recipient?.id || this.config.microsoftAppId;
-      if (this.isBotMentioned(activity, botId) || text.trim().startsWith("/")) {
+      const hasMention = this.isBotMentioned(activity, botId);
+      const isCommand = text.trim().startsWith("/");
+      const hasPending = !!this.sessionMapper.getPendingSelection(chatId);
+      const hasPendingQuestion = !!this.sessionMapper.getPendingQuestion(chatId);
+
+      if (hasMention || isCommand || hasPending || hasPendingQuestion) {
         const content = stripMentions(text, botId);
         await this.handleGroupMessage(chatId, content, activity.serviceUrl);
       }

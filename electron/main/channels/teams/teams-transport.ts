@@ -30,7 +30,11 @@ export class TeamsTransport implements MessageTransport {
     private appId: string,
     appPassword: string,
     private rateLimiter: TokenBucket,
+    private tenantId?: string,
   ) {
+    // SingleTenant bots use tenant-specific endpoint; MultiTenant uses botframework.com
+    const authority = tenantId || "botframework.com";
+    channelLog.info(`${LOG_PREFIX} Token authority: ${authority}`);
     this.tokenManager = new TokenManager(async () => {
       const params = new URLSearchParams({
         grant_type: "client_credentials",
@@ -39,7 +43,7 @@ export class TeamsTransport implements MessageTransport {
         scope: "https://api.botframework.com/.default",
       });
       const res = await fetch(
-        "https://login.microsoftonline.com/botframework.com/oauth2/v2.0/token",
+        `https://login.microsoftonline.com/${authority}/oauth2/v2.0/token`,
         { method: "POST", body: params },
       );
       if (!res.ok) {

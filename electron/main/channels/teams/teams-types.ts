@@ -22,6 +22,8 @@ export interface TeamsConfig {
   microsoftAppId: string;
   /** Azure AD App Registration client secret */
   microsoftAppPassword: string;
+  /** Azure AD tenant ID (required for SingleTenant bots) */
+  tenantId: string;
   /** Auto-approve all permission requests from engines */
   autoApprovePermissions: boolean;
   /** Throttle interval (ms) for streaming message updates */
@@ -35,6 +37,7 @@ export interface TeamsConfig {
 export const DEFAULT_TEAMS_CONFIG: TeamsConfig = {
   microsoftAppId: "",
   microsoftAppPassword: "",
+  tenantId: "",
   autoApprovePermissions: true,
   streamingThrottleMs: 1500,
   skipAuth: false,

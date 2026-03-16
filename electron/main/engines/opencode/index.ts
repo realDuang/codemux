@@ -56,7 +56,7 @@ import type {
 export class OpenCodeAdapter extends EngineAdapter {
   readonly engineType: EngineType = "opencode";
 
-  private server: { url: string; close(): void } | null = null;
+  private server: { url: string; close(): Promise<void> } | null = null;
   private port: number;
   private status: EngineStatus = "stopped";
   private version: string | undefined;
@@ -695,7 +695,7 @@ export class OpenCodeAdapter extends EngineAdapter {
     this.disconnectSSE();
 
     if (this.server) {
-      this.server.close();
+      await this.server.close();
       this.server = null;
     }
 

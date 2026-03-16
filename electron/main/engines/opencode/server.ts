@@ -37,7 +37,7 @@ export function createStreamErrorHandler(
  *
  * On non-Windows platforms this behaves identically to the SDK version.
  */
-export function createOpencodeServer(options?: ServerOptions): Promise<{ url: string; close(): void }> {
+export function createOpencodeServer(options?: ServerOptions): Promise<{ url: string; close(): Promise<void> }> {
   const opts = Object.assign(
     { hostname: "127.0.0.1", port: 4096, timeout: 5000 },
     options ?? {},
@@ -130,16 +130,33 @@ export function createOpencodeServer(options?: ServerOptions): Promise<{ url: st
 
   return url.then((resolvedUrl) => ({
     url: resolvedUrl,
-    close() {
-      if (IS_WIN) {
-        // On Windows, proc.kill() sends SIGTERM which doesn't reliably kill
-        // child processes spawned via .cmd. Use taskkill /T to kill the process tree.
-        if (proc.pid) {
-          spawn("taskkill", ["/pid", String(proc.pid), "/T", "/F"], { stdio: "ignore" });
+    close(): Promise<void> {
+      return new Promise<void>((resolve) => {
+        // If the process already exited, resolve immediately
+        if (proc.exitCode !== null || proc.killed) {
+          resolve();
+          return;
         }
-      } else {
-        proc.kill();
-      }
+
+        // Resolve when the process actually exits
+        const timeout = setTimeout(() => {
+          resolve();
+        }, 5000);
+        proc.once("exit", () => {
+          clearTimeout(timeout);
+          resolve();
+        });
+
+        if (IS_WIN) {
+          // On Windows, proc.kill() sends SIGTERM which doesn't reliably kill
+          // child processes spawned via .cmd. Use taskkill /T to kill the process tree.
+          if (proc.pid) {
+            spawn("taskkill", ["/pid", String(proc.pid), "/T", "/F"], { stdio: "ignore" });
+          }
+        } else {
+          proc.kill();
+        }
+      });
     },
   }));
 }

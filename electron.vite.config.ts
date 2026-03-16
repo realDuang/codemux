@@ -76,10 +76,7 @@ export default defineConfig({
       hmr: false,
       host: true,
       port: 5173,
-      allowedHosts: [
-        "localhost",
-        ".trycloudflare.com",
-      ],
+      allowedHosts: true,
       proxy: {
         // Proxy Gateway WebSocket to the Gateway server
         '/ws': {

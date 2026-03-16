@@ -1600,6 +1600,8 @@ export default function EntryPage() {
                                   <code class="text-[11px] font-mono bg-gray-100 dark:bg-slate-800 px-1.5 py-0.5 rounded text-blue-600 dark:text-blue-400 border border-gray-200 dark:border-slate-700">{tunnelInfo().url}/api/messages</code>
                                   <br/>
                                   <span class="text-gray-400 dark:text-gray-500">{t().channel.teamsWebhookGuide}</span>
+                                  <br/>
+                                  <span class="text-gray-400 dark:text-gray-500">{t().channel.teamsInstallHint}</span>
                                 </div>
                               </div>
                             </Show>

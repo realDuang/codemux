@@ -32,6 +32,7 @@ import { BaseSessionMapper, type PersistedBinding } from "../base-session-mapper
 import { createStreamingSession, type StreamingSession } from "../streaming/streaming-types";
 import { TeamsTransport } from "./teams-transport";
 import { TeamsRenderer } from "./teams-renderer";
+import { ensureTeamsAppPackage } from "./teams-manifest";
 import {
   parseCommand,
   stripMentions,
@@ -210,6 +211,11 @@ export class TeamsAdapter extends ChannelAdapter {
       this.emit("status.changed", this.status);
       this.emit("connected");
       channelLog.info(`${LOG_PREFIX} Adapter started successfully`);
+
+      // Auto-generate Teams app package (manifest + icons + zip) if not present
+      ensureTeamsAppPackage(this.config.microsoftAppId).catch((err) => {
+        channelLog.warn(`${LOG_PREFIX} Failed to generate app package:`, err);
+      });
     } catch (err) {
       this.status = "error";
       this.error = err instanceof Error ? err.message : String(err);

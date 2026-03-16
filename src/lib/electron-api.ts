@@ -23,7 +23,6 @@ export interface TunnelInfo {
 }
 
 export interface TunnelConfig {
-  tunnelName?: string;
   hostname?: string;
 }
 

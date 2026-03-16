@@ -2,11 +2,10 @@ import { spawn, ChildProcess } from "child_process";
 import { app } from "electron";
 import path from "path";
 import fs from "fs";
+import os from "os";
 import { tunnelLog } from "./logger";
 
 export interface TunnelConfig {
-  /** Named tunnel name (from `cloudflared tunnel create <name>`) */
-  tunnelName?: string;
   /** Custom hostname for named tunnel (e.g. "codemux.example.com") */
   hostname?: string;
 }
@@ -44,12 +43,44 @@ class TunnelManager {
     return path.join(resourcesPath, "cloudflared", `${platform}-${arch}`, binaryName);
   }
 
+  /**
+   * Auto-detect tunnel UUID from cloudflared credential files.
+   * Scans ~/.cloudflared/ for UUID.json files. Uses most recent if multiple.
+   */
+  private detectTunnelId(): string | null {
+    const cloudflaredDir = path.join(os.homedir(), ".cloudflared");
+    if (!fs.existsSync(cloudflaredDir)) return null;
+
+    const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.json$/;
+    const credFiles = fs.readdirSync(cloudflaredDir).filter((f) => uuidPattern.test(f));
+
+    if (credFiles.length === 0) return null;
+    if (credFiles.length === 1) return credFiles[0].replace(".json", "");
+
+    // Multiple tunnels — pick most recently created
+    const withStats = credFiles.map((f) => ({
+      uuid: f.replace(".json", ""),
+      mtime: fs.statSync(path.join(cloudflaredDir, f)).mtime.getTime(),
+    }));
+    withStats.sort((a, b) => b.mtime - a.mtime);
+    return withStats[0].uuid;
+  }
+
   async start(port: number, config?: TunnelConfig): Promise<TunnelInfo> {
     if (this.process) {
       return this.info;
     }
 
-    const isNamed = !!(config?.tunnelName && config?.hostname);
+    const hostname = config?.hostname?.trim();
+    let tunnelId: string | null = null;
+    if (hostname) {
+      tunnelId = this.detectTunnelId();
+      if (!tunnelId) {
+        tunnelLog.warn("Named tunnel hostname configured but no tunnel credentials found in ~/.cloudflared/");
+      }
+    }
+    const isNamed = !!(hostname && tunnelId);
+
     this.stoppedByUser = false;
     this.info = {
       url: "",
@@ -66,20 +97,19 @@ class TunnelManager {
       }
 
       const args = isNamed
-        ? ["tunnel", "run", "--url", `http://localhost:${port}`, config!.tunnelName!]
+        ? ["tunnel", "run", "--url", `http://localhost:${port}`, tunnelId!]
         : ["tunnel", "--url", `http://localhost:${port}`];
 
       this.process = spawn(cloudflaredPath, args);
 
       // For named tunnels, URL is known in advance
       if (isNamed) {
-        const hostname = config!.hostname!;
         this.info = {
-          url: hostname.startsWith("https://") ? hostname : `https://${hostname}`,
+          url: hostname!.startsWith("https://") ? hostname! : `https://${hostname}`,
           status: "running",
           startTime: this.info.startTime,
         };
-        tunnelLog.info(`Named tunnel started: ${this.info.url}`);
+        tunnelLog.info(`Named tunnel started (${tunnelId}): ${this.info.url}`);
       }
 
       const handleOutput = (data: Buffer) => {
@@ -97,11 +127,6 @@ class TunnelManager {
             };
             tunnelLog.info("URL Ready:", this.info.url);
           }
-        }
-
-        // Detect named tunnel connection established
-        if (isNamed && output.includes("Registered tunnel connection")) {
-          tunnelLog.info("Named tunnel connection confirmed");
         }
       };
 

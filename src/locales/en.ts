@@ -131,11 +131,8 @@ export interface LocaleDict {
     noteUrlChangesDesc: string;
     namedTunnel: string;
     namedTunnelDesc: string;
-    tunnelName: string;
-    tunnelNamePlaceholder: string;
     tunnelHostname: string;
     tunnelHostnamePlaceholder: string;
-    namedTunnelSaved: string;
     namedTunnelActive: string;
     namedTunnelSetupHint: string;
     noteSecurity: string;
@@ -560,13 +557,10 @@ export const en: LocaleDict = {
     noteUrlChangesDesc: "Free tunnel URLs change on each restart. Webhook channels will need their platform callback URLs reconfigured. Use a Named Tunnel for a fixed domain.",
     namedTunnel: "Named Tunnel (Fixed Domain)",
     namedTunnelDesc: "Use a Cloudflare Named Tunnel for a fixed domain that won't change on restart. Free with any Cloudflare-managed domain.",
-    tunnelName: "Tunnel Name",
-    tunnelNamePlaceholder: "e.g. codemux",
-    tunnelHostname: "Hostname",
+    tunnelHostname: "Domain",
     tunnelHostnamePlaceholder: "e.g. codemux.example.com",
-    namedTunnelSaved: "Named Tunnel configuration saved",
     namedTunnelActive: "Named Tunnel active — domain is fixed across restarts",
-    namedTunnelSetupHint: "Run `cloudflared tunnel create <name>` and `cloudflared tunnel route dns <name> <hostname>` first.",
+    namedTunnelSetupHint: "Run `cloudflared tunnel login`, `cloudflared tunnel create <name>` and `cloudflared tunnel route dns <name> <domain>` first.",
     noteSecurity: "Access Security",
     noteSecurityDesc: "Web access requires a 6-digit password. Webhook endpoints are validated by each channel's SDK signature/token verification.",
     noteKeepRunning: "Keep App Running",

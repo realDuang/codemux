@@ -156,7 +156,7 @@ export function registerIpcHandlers(): void {
 
     // Read tunnel config from settings
     const settings = loadSettings();
-    const tunnelConfig = settings.tunnelConfig as { tunnelName?: string; hostname?: string } | undefined;
+    const tunnelConfig = settings.tunnelConfig as { hostname?: string } | undefined;
 
     return tunnelManager.start(actualPort, tunnelConfig);
   });

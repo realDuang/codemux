@@ -40,10 +40,9 @@ export default function EntryPage() {
 
   // Named Tunnel config
   const savedTunnelConfig = getSetting<TunnelConfig>("tunnelConfig") || {};
-  const [namedTunnelName, setNamedTunnelName] = createSignal(savedTunnelConfig.tunnelName || "");
   const [namedTunnelHostname, setNamedTunnelHostname] = createSignal(savedTunnelConfig.hostname || "");
 
-  const isNamedTunnel = () => !!(namedTunnelName() && namedTunnelHostname());
+  const isNamedTunnel = () => !!namedTunnelHostname().trim();
   const [localIp, setLocalIp] = createSignal("127.0.0.1");
   const [accessCode, setAccessCode] = createSignal("......");
   const [port, setPort] = createSignal(5174);
@@ -403,11 +402,8 @@ export default function EntryPage() {
   };
 
   const saveNamedTunnelConfig = () => {
-    const name = namedTunnelName().trim();
     const hostname = namedTunnelHostname().trim();
-    const config: TunnelConfig = name && hostname
-      ? { tunnelName: name, hostname }
-      : {};
+    const config: TunnelConfig = hostname ? { hostname } : {};
     saveSetting("tunnelConfig", config);
   };
 
@@ -1802,29 +1798,16 @@ export default function EntryPage() {
                           </h3>
                           <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">{t().remote.namedTunnelDesc}</p>
 
-                          <div class="mt-3 space-y-2.5">
-                            <div>
-                              <label class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">{t().remote.tunnelName}</label>
-                              <input
-                                type="text"
-                                value={namedTunnelName()}
-                                onInput={(e) => setNamedTunnelName(e.currentTarget.value)}
-                                onBlur={saveNamedTunnelConfig}
-                                placeholder={t().remote.tunnelNamePlaceholder}
-                                class="w-full px-3 py-1.5 text-sm rounded-md border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                              />
-                            </div>
-                            <div>
-                              <label class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">{t().remote.tunnelHostname}</label>
-                              <input
-                                type="text"
-                                value={namedTunnelHostname()}
-                                onInput={(e) => setNamedTunnelHostname(e.currentTarget.value)}
-                                onBlur={saveNamedTunnelConfig}
-                                placeholder={t().remote.tunnelHostnamePlaceholder}
-                                class="w-full px-3 py-1.5 text-sm rounded-md border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                              />
-                            </div>
+                          <div class="mt-3">
+                            <label class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">{t().remote.tunnelHostname}</label>
+                            <input
+                              type="text"
+                              value={namedTunnelHostname()}
+                              onInput={(e) => setNamedTunnelHostname(e.currentTarget.value)}
+                              onBlur={saveNamedTunnelConfig}
+                              placeholder={t().remote.tunnelHostnamePlaceholder}
+                              class="w-full px-3 py-1.5 text-sm rounded-md border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                            />
                           </div>
 
                           <Show when={!isNamedTunnel()}>

@@ -22,6 +22,11 @@ export interface TunnelInfo {
   error?: string;
 }
 
+export interface TunnelConfig {
+  tunnelName?: string;
+  hostname?: string;
+}
+
 export interface DeviceInfo {
   id: string;
   name: string;

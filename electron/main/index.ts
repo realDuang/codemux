@@ -254,8 +254,9 @@ if (!gotTheLock) {
         webhookServer.stop(),
         engineManager.stopAll(),
         productionServer.stop(),
-        (() => { gatewayServer.stop(); })(),
       ]);
+
+      gatewayServer.stop();
     } catch (err) {
       mainLog.error("Cleanup error:", err);
     }

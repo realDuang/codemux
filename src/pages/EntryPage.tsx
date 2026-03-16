@@ -7,7 +7,8 @@ import { FeishuConfigModal } from "../components/FeishuConfigModal";
 import { ChannelConfigModal } from "../components/ChannelConfigModal";
 import { logger } from "../lib/logger";
 import { isElectron } from "../lib/platform";
-import { systemAPI, tunnelAPI, channelAPI, type ChannelInfo, type TunnelInfo } from "../lib/electron-api";
+import { systemAPI, tunnelAPI, channelAPI, type ChannelInfo, type TunnelInfo, type TunnelConfig } from "../lib/electron-api";
+import { getSetting, saveSetting } from "../lib/settings";
 
 export default function EntryPage() {
   const { t } = useI18n();
@@ -36,6 +37,13 @@ export default function EntryPage() {
     status: "stopped",
   });
   const [tunnelLoading, setTunnelLoading] = createSignal(false);
+
+  // Named Tunnel config
+  const savedTunnelConfig = getSetting<TunnelConfig>("tunnelConfig") || {};
+  const [namedTunnelName, setNamedTunnelName] = createSignal(savedTunnelConfig.tunnelName || "");
+  const [namedTunnelHostname, setNamedTunnelHostname] = createSignal(savedTunnelConfig.hostname || "");
+
+  const isNamedTunnel = () => !!(namedTunnelName() && namedTunnelHostname());
   const [localIp, setLocalIp] = createSignal("127.0.0.1");
   const [accessCode, setAccessCode] = createSignal("......");
   const [port, setPort] = createSignal(5174);
@@ -392,6 +400,15 @@ export default function EntryPage() {
     } finally {
       setTunnelLoading(false);
     }
+  };
+
+  const saveNamedTunnelConfig = () => {
+    const name = namedTunnelName().trim();
+    const hostname = namedTunnelHostname().trim();
+    const config: TunnelConfig = name && hostname
+      ? { tunnelName: name, hostname }
+      : {};
+    saveSetting("tunnelConfig", config);
   };
 
   // =========================================================================
@@ -1772,6 +1789,51 @@ export default function EntryPage() {
                             </p>
                           </div>
                         </Show>
+                      </div>
+
+                      {/* Named Tunnel Configuration */}
+                      <div class="rounded-lg border border-gray-200 dark:border-slate-800 overflow-hidden">
+                        <div class="p-4">
+                          <h3 class="text-sm font-medium text-gray-900 dark:text-white flex items-center gap-2">
+                            {t().remote.namedTunnel}
+                            <Show when={isNamedTunnel()}>
+                              <span class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400">✓</span>
+                            </Show>
+                          </h3>
+                          <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">{t().remote.namedTunnelDesc}</p>
+
+                          <div class="mt-3 space-y-2.5">
+                            <div>
+                              <label class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">{t().remote.tunnelName}</label>
+                              <input
+                                type="text"
+                                value={namedTunnelName()}
+                                onInput={(e) => setNamedTunnelName(e.currentTarget.value)}
+                                onBlur={saveNamedTunnelConfig}
+                                placeholder={t().remote.tunnelNamePlaceholder}
+                                class="w-full px-3 py-1.5 text-sm rounded-md border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                              />
+                            </div>
+                            <div>
+                              <label class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">{t().remote.tunnelHostname}</label>
+                              <input
+                                type="text"
+                                value={namedTunnelHostname()}
+                                onInput={(e) => setNamedTunnelHostname(e.currentTarget.value)}
+                                onBlur={saveNamedTunnelConfig}
+                                placeholder={t().remote.tunnelHostnamePlaceholder}
+                                class="w-full px-3 py-1.5 text-sm rounded-md border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                              />
+                            </div>
+                          </div>
+
+                          <Show when={!isNamedTunnel()}>
+                            <p class="mt-2 text-[11px] text-gray-400 dark:text-gray-500">{t().remote.namedTunnelSetupHint}</p>
+                          </Show>
+                          <Show when={isNamedTunnel()}>
+                            <p class="mt-2 text-[11px] text-green-600 dark:text-green-400">{t().remote.namedTunnelActive}</p>
+                          </Show>
+                        </div>
                       </div>
 
                       {/* Notes */}

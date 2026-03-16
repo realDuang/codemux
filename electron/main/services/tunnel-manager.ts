@@ -4,6 +4,13 @@ import path from "path";
 import fs from "fs";
 import { tunnelLog } from "./logger";
 
+export interface TunnelConfig {
+  /** Named tunnel name (from `cloudflared tunnel create <name>`) */
+  tunnelName?: string;
+  /** Custom hostname for named tunnel (e.g. "codemux.example.com") */
+  hostname?: string;
+}
+
 interface TunnelInfo {
   url: string;
   status: "starting" | "running" | "stopped" | "error";
@@ -37,11 +44,12 @@ class TunnelManager {
     return path.join(resourcesPath, "cloudflared", `${platform}-${arch}`, binaryName);
   }
 
-  async start(port: number): Promise<TunnelInfo> {
+  async start(port: number, config?: TunnelConfig): Promise<TunnelInfo> {
     if (this.process) {
       return this.info;
     }
 
+    const isNamed = !!(config?.tunnelName && config?.hostname);
     this.stoppedByUser = false;
     this.info = {
       url: "",
@@ -57,20 +65,43 @@ class TunnelManager {
         throw new Error(`Cloudflared binary not found at ${cloudflaredPath}`);
       }
 
-      this.process = spawn(cloudflaredPath, ["tunnel", "--url", `http://localhost:${port}`]);
+      const args = isNamed
+        ? ["tunnel", "run", "--url", `http://localhost:${port}`, config!.tunnelName!]
+        : ["tunnel", "--url", `http://localhost:${port}`];
+
+      this.process = spawn(cloudflaredPath, args);
+
+      // For named tunnels, URL is known in advance
+      if (isNamed) {
+        const hostname = config!.hostname!;
+        this.info = {
+          url: hostname.startsWith("https://") ? hostname : `https://${hostname}`,
+          status: "running",
+          startTime: this.info.startTime,
+        };
+        tunnelLog.info(`Named tunnel started: ${this.info.url}`);
+      }
 
       const handleOutput = (data: Buffer) => {
         const output = data.toString();
         tunnelLog.info(output);
 
-        const urlMatch = output.match(/https?:\/\/[\S]+\.trycloudflare\.com/);
-        if (urlMatch) {
-          this.info = {
-            url: urlMatch[0],
-            status: "running",
-            startTime: this.info.startTime,
-          };
-          tunnelLog.info("URL Ready:", this.info.url);
+        // For quick tunnels, parse URL from stdout
+        if (!isNamed) {
+          const urlMatch = output.match(/https?:\/\/[\S]+\.trycloudflare\.com/);
+          if (urlMatch) {
+            this.info = {
+              url: urlMatch[0],
+              status: "running",
+              startTime: this.info.startTime,
+            };
+            tunnelLog.info("URL Ready:", this.info.url);
+          }
+        }
+
+        // Detect named tunnel connection established
+        if (isNamed && output.includes("Registered tunnel connection")) {
+          tunnelLog.info("Named tunnel connection confirmed");
         }
       };
 

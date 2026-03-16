@@ -77,7 +77,7 @@ export function parseCommand(text: string): ParsedCommand | null {
  * Strip @mention tags from Teams message text.
  * Teams wraps mentions in <at>BotName</at> tags.
  */
-export function stripMentions(text: string, botId: string): string {
+export function stripMentions(text: string, _botId: string): string {
   return text.replace(/<at>.*?<\/at>/gi, "").trim();
 }
 

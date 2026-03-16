@@ -157,7 +157,12 @@ export default function Settings() {
   const handleLaunchAtLoginToggle = async () => {
     const newValue = !launchAtLoginEnabled();
     setLaunchAtLoginEnabled(newValue);
-    await autostartAPI.setEnabled(newValue);
+    try {
+      await autostartAPI.setEnabled(newValue);
+    } catch (error) {
+      setLaunchAtLoginEnabled(!newValue);
+      console.error("[Settings] Failed to toggle launch at login:", error);
+    }
   };
 
   const statusDotColor = (engine: { status: string; authenticated?: boolean }): string => {

@@ -321,6 +321,38 @@ export default function Chat() {
     if (el) el.scrollTop = el.scrollHeight;
   };
 
+  // Stabilized scroll-to-bottom for session entry. After the initial scroll,
+  // the virtualizer may re-measure items (via our createEffect fix) which
+  // changes totalSize and shifts the "real" bottom. This retries a few times
+  // until the scroll position stabilizes, avoiding a visual gap at the end.
+  // Safe for non-virtualized lists — the first recheck finds scrollTop is
+  // already at the bottom and stops immediately.
+  let stableScrollRafId: number | null = null;
+  const scrollToBottomStable = () => {
+    const el = messagesRef();
+    if (!el) return;
+    el.scrollTop = el.scrollHeight;
+
+    let retries = 0;
+    const recheck = () => {
+      if (retries >= 5) return;
+      retries++;
+      stableScrollRafId = requestAnimationFrame(() => {
+        stableScrollRafId = null;
+        if (el.scrollHeight - el.scrollTop - el.clientHeight > 1) {
+          el.scrollTop = el.scrollHeight;
+          recheck();
+        }
+      });
+    };
+    recheck();
+  };
+  onCleanup(() => {
+    if (stableScrollRafId !== null) {
+      cancelAnimationFrame(stableScrollRafId);
+    }
+  });
+
   // Debounced scrollToBottom for high-frequency part updates —
   // coalesces multiple calls within the same frame into one.
   let scrollRafId: number | null = null;
@@ -410,12 +442,11 @@ export default function Chat() {
       }
     } finally {
       setLoadingMessages(false);
-      setTimeout(() => scrollToBottom(), 100);
+      setTimeout(() => scrollToBottomStable(), 100);
     }
     };
 
   // Generation counter to discard stale background loads when initializeSession
-  // is called again (e.g. on gateway reconnect).
   let initGeneration = 0;
 
   const initializeSession = async () => {
@@ -629,7 +660,7 @@ export default function Chat() {
     if (!messageStore.message[sessionId]) {
       await loadSessionMessages(sessionId);
     } else {
-      setTimeout(() => scrollToBottom(), 100);
+      setTimeout(() => scrollToBottomStable(), 100);
     }
 
     // Stale check: if the user has already switched to another session
@@ -675,7 +706,7 @@ export default function Chat() {
       }
 
       setMessageStore("message", processedSession.id, []);
-      setTimeout(() => scrollToBottom(), 100);
+      setTimeout(() => scrollToBottomStable(), 100);
 
       // Refresh engine capabilities (ACP engines populate modes only after createSession)
       try {

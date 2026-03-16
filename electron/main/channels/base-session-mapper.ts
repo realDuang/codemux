@@ -125,6 +125,9 @@ export class BaseSessionMapper<
   // --- Pending Questions ---
   private pendingQuestions = new Map<string, BasePendingQuestion>();
 
+  // --- Standalone Pending Selections (for non-P2P chats like group chats) ---
+  private standalonePendingSelections = new Map<string, BasePendingSelection>();
+
   // --- Persistence ---
   private readonly channelType: string;
   private readonly bindingsFileName: string;
@@ -298,11 +301,14 @@ export class BaseSessionMapper<
     const state = this.p2pChats.get(chatId);
     if (state) {
       state.pendingSelection = selection;
+    } else {
+      this.standalonePendingSelections.set(chatId, selection);
     }
   }
 
   getPendingSelection(chatId: string): BasePendingSelection | undefined {
-    return this.p2pChats.get(chatId)?.pendingSelection;
+    return this.p2pChats.get(chatId)?.pendingSelection
+      ?? this.standalonePendingSelections.get(chatId);
   }
 
   clearPendingSelection(chatId: string): void {
@@ -310,6 +316,7 @@ export class BaseSessionMapper<
     if (state) {
       state.pendingSelection = undefined;
     }
+    this.standalonePendingSelections.delete(chatId);
   }
 
   // =========================================================================

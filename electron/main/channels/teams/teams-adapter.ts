@@ -1019,6 +1019,18 @@ export class TeamsAdapter extends ChannelAdapter {
     const binding = this.sessionMapper.getGroupBinding(groupChatId);
 
     if (!binding) {
+      // Check for pending selection first (from a previous /bind flow)
+      const pending = this.sessionMapper.getPendingSelection(groupChatId);
+      if (pending) {
+        const handled = await this.handleGroupPendingSelection(
+          groupChatId,
+          text,
+          pending,
+          serviceUrl,
+        );
+        if (handled) return;
+      }
+
       // No binding yet — show help on how to bind
       const command = parseCommand(text);
       if (command?.command === "help") {
@@ -1077,6 +1089,147 @@ export class TeamsAdapter extends ChannelAdapter {
         projects: flatProjects,
       });
     }
+  }
+
+  /** Handle pending selection reply in group context (project or session) */
+  private async handleGroupPendingSelection(
+    groupChatId: string,
+    text: string,
+    pending: TeamsPendingSelection,
+    serviceUrl: string,
+  ): Promise<boolean> {
+    if (pending.type === "project") {
+      return this.handleGroupProjectSelection(
+        groupChatId,
+        text,
+        pending,
+        serviceUrl,
+      );
+    }
+    if (pending.type === "session") {
+      return this.handleGroupSessionSelection(
+        groupChatId,
+        text,
+        pending,
+        serviceUrl,
+      );
+    }
+    return false;
+  }
+
+  /** Handle project number selection for group binding */
+  private async handleGroupProjectSelection(
+    groupChatId: string,
+    text: string,
+    pending: TeamsPendingSelection,
+    serviceUrl: string,
+  ): Promise<boolean> {
+    const num = parseInt(text.trim(), 10);
+    if (
+      isNaN(num) ||
+      num < 1 ||
+      !pending.projects ||
+      num > pending.projects.length
+    ) {
+      return false;
+    }
+
+    const project = pending.projects[num - 1];
+    const projectName =
+      project.name || project.directory.split(/[\\/]/).pop() || project.directory;
+
+    this.sessionMapper.clearPendingSelection(groupChatId);
+
+    // Show session list for group binding
+    if (!this.gatewayClient) return false;
+    const sessions = await this.gatewayClient.listSessions(project.engineType);
+    const filtered = sessions.filter((s) => s.directory === project.directory);
+    const sessionText = buildSessionListText(filtered, projectName);
+    await this.transport!.sendText(groupChatId, sessionText);
+
+    this.sessionMapper.setPendingSelection(groupChatId, {
+      type: "session",
+      sessions: filtered,
+      engineType: project.engineType,
+      directory: project.directory,
+      projectId: project.id,
+      projectName,
+    });
+    return true;
+  }
+
+  /** Handle session selection for group binding — creates a group binding */
+  private async handleGroupSessionSelection(
+    groupChatId: string,
+    text: string,
+    pending: TeamsPendingSelection,
+    serviceUrl: string,
+  ): Promise<boolean> {
+    if (!pending.engineType || !pending.directory || !pending.projectId) {
+      return false;
+    }
+    if (!this.gatewayClient) return false;
+
+    const trimmed = text.trim().toLowerCase();
+    let conversationId: string;
+    let sessionTitle: string;
+
+    if (trimmed === "new") {
+      // Create a new session
+      try {
+        const session = await this.gatewayClient.createSession({
+          engineType: pending.engineType,
+          directory: pending.directory,
+        });
+        conversationId = session.id;
+        sessionTitle = session.title || session.id.slice(0, 8);
+      } catch (err) {
+        this.sessionMapper.clearPendingSelection(groupChatId);
+        await this.transport!.sendText(
+          groupChatId,
+          `📋 创建会话失败：${err instanceof Error ? err.message : String(err)}`,
+        );
+        return true;
+      }
+    } else {
+      const num = parseInt(trimmed, 10);
+      if (
+        isNaN(num) ||
+        num < 1 ||
+        !pending.sessions ||
+        num > pending.sessions.length
+      ) {
+        return false;
+      }
+      const session = pending.sessions[num - 1];
+      conversationId = session.id;
+      sessionTitle = session.title || session.id.slice(0, 8);
+    }
+
+    this.sessionMapper.clearPendingSelection(groupChatId);
+
+    // Create group binding
+    const binding: TeamsGroupBinding = {
+      chatId: groupChatId,
+      conversationId,
+      engineType: pending.engineType,
+      directory: pending.directory,
+      projectId: pending.projectId,
+      serviceUrl,
+      streamingSessions: new Map(),
+      createdAt: Date.now(),
+    };
+    this.sessionMapper.createGroupBinding(binding);
+
+    const projectName =
+      pending.projectName ||
+      pending.directory.split(/[\\/]/).pop() ||
+      pending.directory;
+    await this.transport!.sendText(
+      groupChatId,
+      `✅ 群聊已绑定到项目 ${projectName}（会话：${sessionTitle}）\n@我 或使用 /command 与 AI 助手对话。`,
+    );
+    return true;
   }
 
   private async handleGroupCommand(

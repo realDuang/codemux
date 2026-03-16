@@ -120,17 +120,21 @@ export class ChannelManager {
       throw new Error(`Channel adapter '${type}' not found`);
     }
 
+    // Always reload from disk and merge with in-memory config
+    const diskConfig = loadConfig(type);
     let config = this.configs.get(type);
     if (!config) {
-      // Load from disk or create default
-      config = loadConfig(type) ?? {
+      config = diskConfig ?? {
         type,
         name: type,
         enabled: true,
         options: {},
       };
-      this.configs.set(type, config);
+    } else if (diskConfig) {
+      // Merge: disk as base, in-memory overrides (preserves disk-only fields like tenantId)
+      config.options = { ...diskConfig.options, ...config.options };
     }
+    this.configs.set(type, config);
 
     channelLog.info(`Starting channel: ${type}`);
     await adapter.start(config);
@@ -164,7 +168,9 @@ export class ChannelManager {
   listChannels(): ChannelInfo[] {
     const result: ChannelInfo[] = [];
     for (const adapter of this.adapters.values()) {
-      result.push(adapter.getInfo());
+      const info = adapter.getInfo();
+      info.webhookMeta = adapter.getWebhookMeta();
+      result.push(info);
     }
     return result;
   }
@@ -210,7 +216,10 @@ export class ChannelManager {
   /** Get status for a specific channel */
   getStatus(type: string): ChannelInfo | undefined {
     const adapter = this.adapters.get(type);
-    return adapter?.getInfo();
+    if (!adapter) return undefined;
+    const info = adapter.getInfo();
+    info.webhookMeta = adapter.getWebhookMeta();
+    return info;
   }
 
   /** Stop all channels (for app shutdown) */

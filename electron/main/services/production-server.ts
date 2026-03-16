@@ -15,6 +15,7 @@ import { handleAuthRoutes, handleLogRoutes } from "../../../shared/auth-route-ha
 
 const DEFAULT_PORT = 5173;
 const OPENCODE_PORT = 4096;
+const WEBHOOK_PORT = 4098;
 
 // MIME types for static file serving
 const MIME_TYPES: Record<string, string> = {
@@ -74,6 +75,53 @@ function proxyToOpenCode(
     proxyReq.on("error", (err) => {
       prodServerLog.error("Proxy to OpenCode failed:", err.message);
       sendJson(res, { error: "OpenCode service unavailable", details: err.message }, 503);
+    });
+
+    if (bodyBuffer.length > 0) {
+      proxyReq.write(bodyBuffer);
+    }
+    proxyReq.end();
+  });
+
+  req.on("error", (err) => {
+    prodServerLog.error("Request error:", err);
+    sendJson(res, { error: "Request failed" }, 500);
+  });
+}
+
+/**
+ * Proxy a request to the shared WebhookServer (for channel webhooks)
+ */
+function proxyToWebhook(
+  req: http.IncomingMessage,
+  res: http.ServerResponse,
+  targetPath: string
+): void {
+  let body: Buffer[] = [];
+
+  req.on("data", (chunk) => body.push(chunk));
+  req.on("end", () => {
+    const bodyBuffer = Buffer.concat(body);
+
+    const options: http.RequestOptions = {
+      hostname: "127.0.0.1",
+      port: WEBHOOK_PORT,
+      path: targetPath,
+      method: req.method,
+      headers: {
+        ...req.headers,
+        host: `127.0.0.1:${WEBHOOK_PORT}`,
+      },
+    };
+
+    const proxyReq = http.request(options, (proxyRes) => {
+      res.writeHead(proxyRes.statusCode || 500, proxyRes.headers);
+      proxyRes.pipe(res);
+    });
+
+    proxyReq.on("error", (err) => {
+      prodServerLog.error("Proxy to webhook failed:", err.message);
+      sendJson(res, { error: "Webhook service unavailable", details: err.message }, 503);
     });
 
     if (bodyBuffer.length > 0) {
@@ -225,6 +273,14 @@ class ProductionServer {
     // ========================================================================
     if (pathname.startsWith("/api/tunnel")) {
       sendJson(res, { error: "Tunnel APIs should be accessed via Electron IPC" }, 400);
+      return;
+    }
+
+    // ========================================================================
+    // Webhook Routes: Proxy /api/messages and /webhook/* to WebhookServer
+    // ========================================================================
+    if (pathname === "/api/messages" || pathname.startsWith("/webhook/")) {
+      proxyToWebhook(req, res, pathname + url.search);
       return;
     }
 

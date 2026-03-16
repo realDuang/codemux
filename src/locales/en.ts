@@ -123,6 +123,20 @@ export interface LocaleDict {
     lanQrDesc: string;
     webApp: string;
     devicesDesc: string;
+    publicAccessTab: string;
+    publicAccessTabDesc: string;
+    tunnelRunning: string;
+    tunnelStopped: string;
+    noteUrlChanges: string;
+    noteUrlChangesDesc: string;
+    noteSecurity: string;
+    noteSecurityDesc: string;
+    noteKeepRunning: string;
+    noteKeepRunningDesc: string;
+    notes: string;
+    publicAccessEnabled: string;
+    publicAccessDisabled: string;
+    goToPublicAccess: string;
   };
 
   // Session Sidebar
@@ -339,6 +353,8 @@ export interface LocaleDict {
     microsoftAppIdPlaceholder: string;
     microsoftAppPassword: string;
     microsoftAppPasswordPlaceholder: string;
+    tenantId: string;
+    tenantIdPlaceholder: string;
     enable: string;
     disable: string;
     status: string;
@@ -356,6 +372,15 @@ export interface LocaleDict {
     configRequired: string;
     save: string;
     saving: string;
+    directConnect: string;
+    directConnectBadge: string;
+    webhookConnect: string;
+    webhookConnectBadge: string;
+    tunnelRequired: string;
+    tunnelRequiredDesc: string;
+    teamsWebhookGuide: string;
+    wecomWebhookGuide: string;
+    webhookEndpoint: string;
   };
 
   // Token Usage
@@ -517,6 +542,20 @@ export const en: LocaleDict = {
     lanQrDesc: "Make sure your phone and computer are on the same Wi-Fi",
     webApp: "Web App",
     devicesDesc: "Manage devices that can access this server",
+    publicAccessTab: "Public Access",
+    publicAccessTabDesc: "Expose local services to the internet via Cloudflare Tunnel for remote web access and webhook-based channel messaging",
+    tunnelRunning: "Running",
+    tunnelStopped: "Not Running",
+    noteUrlChanges: "URL Changes on Restart",
+    noteUrlChangesDesc: "Free tunnel URLs change on each restart. Webhook channels will need their platform callback URLs reconfigured.",
+    noteSecurity: "Access Security",
+    noteSecurityDesc: "Web access requires a 6-digit password. Webhook endpoints are validated by each channel's SDK signature/token verification.",
+    noteKeepRunning: "Keep App Running",
+    noteKeepRunningDesc: "The tunnel depends on the local CodeMux process. Closing the app or sleeping the machine will interrupt public access.",
+    notes: "Notes",
+    publicAccessEnabled: "Public Access enabled — Cloudflare Tunnel running",
+    publicAccessDisabled: "Public Access not enabled — go to enable Tunnel",
+    goToPublicAccess: "Go to Public Access",
   },
 
   // Session Sidebar
@@ -733,6 +772,8 @@ export const en: LocaleDict = {
     microsoftAppIdPlaceholder: "Enter Azure AD App Registration Client ID",
     microsoftAppPassword: "App Password",
     microsoftAppPasswordPlaceholder: "Enter Azure AD Client Secret",
+    tenantId: "Tenant ID",
+    tenantIdPlaceholder: "Azure AD Tenant ID (for SingleTenant bots)",
     enable: "Enable",
     disable: "Disable",
     status: "Status",
@@ -750,6 +791,15 @@ export const en: LocaleDict = {
     configRequired: "App ID and App Secret are required to enable the bot",
     save: "Save",
     saving: "Saving...",
+    directConnect: "Direct",
+    directConnectBadge: "Outbound",
+    webhookConnect: "Requires Public Access",
+    webhookConnectBadge: "Webhook",
+    tunnelRequired: "Public Access not enabled",
+    tunnelRequiredDesc: "Go to Public Access tab to enable Tunnel for webhook channels",
+    teamsWebhookGuide: "Configure this URL as Messaging Endpoint in Azure Bot Service → Settings",
+    wecomWebhookGuide: "Configure this URL as callback URL in WeCom Admin Console → App → Receive Messages",
+    webhookEndpoint: "Endpoint",
   },
 
   // Token Usage

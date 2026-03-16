@@ -37,6 +37,16 @@ export interface ChannelConfig {
   options: Record<string, unknown>;
 }
 
+// --- Webhook Meta ---
+
+/** Metadata for channels that receive messages via HTTP webhook */
+export interface WebhookMeta {
+  /** Webhook route path (e.g., "/api/messages", "/webhook/wecom") */
+  path: string;
+  /** i18n key for platform-specific configuration guide */
+  platformConfigGuide: string;
+}
+
 // --- Channel Info ---
 
 export interface ChannelInfo {
@@ -46,6 +56,8 @@ export interface ChannelInfo {
   error?: string;
   /** Channel-specific stats (e.g., connected chats count) */
   stats?: Record<string, unknown>;
+  /** Webhook metadata if channel requires public URL */
+  webhookMeta?: WebhookMeta | null;
 }
 
 // --- Channel Adapter Events ---
@@ -98,4 +110,9 @@ export abstract class ChannelAdapter extends EventEmitter {
 
   /** Update configuration at runtime (may trigger restart if running) */
   abstract updateConfig(config: Partial<ChannelConfig>): Promise<void>;
+
+  /** Return webhook metadata if this channel needs a public HTTP endpoint, or null */
+  getWebhookMeta(): WebhookMeta | null {
+    return null;
+  }
 }

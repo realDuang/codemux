@@ -87,12 +87,12 @@ interface ElectronAPI {
   };
 
   channel?: {
-    list: () => Promise<Array<{ type: string; name: string; status: "stopped" | "starting" | "running" | "error"; error?: string }>>;
+    list: () => Promise<Array<{ type: string; name: string; status: "stopped" | "starting" | "running" | "error"; error?: string; webhookMeta?: { path: string; platformConfigGuide: string } | null }>>;
     getConfig: (type: string) => Promise<{ type: string; name: string; enabled: boolean; options: Record<string, unknown> } | null>;
     updateConfig: (type: string, updates: any) => Promise<void>;
     start: (type: string) => Promise<void>;
     stop: (type: string) => Promise<void>;
-    getStatus: (type: string) => Promise<{ type: string; name: string; status: "stopped" | "starting" | "running" | "error"; error?: string } | null>;
+    getStatus: (type: string) => Promise<{ type: string; name: string; status: "stopped" | "starting" | "running" | "error"; error?: string; webhookMeta?: { path: string; platformConfigGuide: string } | null } | null>;
   };
 
   update?: {

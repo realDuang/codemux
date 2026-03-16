@@ -94,6 +94,15 @@ export default defineConfig({
           // Handle SSE connections properly
           ws: false,
         },
+        // Proxy webhook endpoints to the WebhookServer
+        '/api/messages': {
+          target: 'http://localhost:4098',
+          changeOrigin: true,
+        },
+        '/webhook': {
+          target: 'http://localhost:4098',
+          changeOrigin: true,
+        },
       },
     },
   },

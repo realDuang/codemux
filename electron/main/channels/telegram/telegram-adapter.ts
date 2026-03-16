@@ -203,10 +203,9 @@ export class TelegramAdapter extends ChannelAdapter {
     // Stop polling
     this.pollingActive = false;
 
-    // Unregister webhook route
+    // Unregister webhook route (keep webhookServer ref for restart)
     if (this.webhookServer) {
       this.webhookServer.unregisterRoute("/webhook/telegram");
-      this.webhookServer = null;
     }
 
     // Delete webhook from Telegram servers

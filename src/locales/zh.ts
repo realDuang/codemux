@@ -367,6 +367,9 @@ export const zh: LocaleDict = {
     cache: "缓存",
     cost: "费用",
     cacheReadWrite: "读取 {read} / 写入 {write}",
+    sessionSummary: "会话：↑{input} ↓{output} tokens",
+    premiumRequest: "{count} 次高级请求",
+    premiumRequests: "{count} 次高级请求",
   },
 
   // Update

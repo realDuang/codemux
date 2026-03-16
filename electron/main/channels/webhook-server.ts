@@ -196,16 +196,19 @@ export class WebhookServer {
     return new Promise((resolve, reject) => {
       const chunks: Buffer[] = [];
       let totalSize = 0;
+      let rejected = false;
       req.on("data", (chunk: Buffer) => {
+        if (rejected) return;
         totalSize += chunk.length;
         if (totalSize > MAX_BODY_SIZE) {
-          req.destroy();
+          rejected = true;
+          req.removeAllListeners("data");
           reject(new Error("Body exceeds 5MB limit"));
           return;
         }
         chunks.push(chunk);
       });
-      req.on("end", () => resolve(Buffer.concat(chunks)));
+      req.on("end", () => { if (!rejected) resolve(Buffer.concat(chunks)); });
       req.on("error", reject);
     });
   }

@@ -366,6 +366,9 @@ export interface LocaleDict {
     cache: string;
     cost: string;
     cacheReadWrite: string;
+    sessionSummary: string;
+    premiumRequest: string;
+    premiumRequests: string;
   };
 
   // Update
@@ -757,6 +760,9 @@ export const en: LocaleDict = {
     cache: "Cache",
     cost: "Cost",
     cacheReadWrite: "{read} read / {write} write",
+    sessionSummary: "Session: ↑{input} ↓{output} tokens",
+    premiumRequest: "{count} premium request",
+    premiumRequests: "{count} premium requests",
   },
 
   // Update

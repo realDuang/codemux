@@ -25,7 +25,7 @@ import { SessionSidebar } from "../components/SessionSidebar";
 import { HideProjectModal } from "../components/HideProjectModal";
 import { AddProjectModal } from "../components/AddProjectModal";
 import type { UnifiedMessage, UnifiedPart, UnifiedPermission, UnifiedQuestion, UnifiedSession, UnifiedProject, AgentMode, EngineType, SessionActivityStatus } from "../types/unified";
-import { useI18n } from "../lib/i18n";
+import { useI18n, formatMessage } from "../lib/i18n";
 import { isDefaultTitle } from "../lib/session-utils";
 import { formatTokenCount, formatCostWithUnit } from "../components/share/common";
 import { getSetting, saveSetting } from "../lib/settings";
@@ -772,10 +772,13 @@ export default function Chat() {
       const filteredSessions = allSessions.filter(s =>
         s.directory && validDirectories.has(s.directory)
       );
+      // Build index for O(1) project lookup by engineType|directory
+      const projectIndex = new Map<string, UnifiedProject>();
+      for (const p of allProjects) {
+        projectIndex.set(`${p.engineType}|${p.directory}`, p);
+      }
       const sessionInfos = filteredSessions.map(s => {
-        const project = allProjects.find(p =>
-          p.directory === s.directory && p.engineType === s.engineType
-        );
+        const project = projectIndex.get(`${s.engineType}|${s.directory}`);
         return toSessionInfo(s, project?.id);
       });
       setSessionStore("list", sessionInfos);
@@ -1725,10 +1728,10 @@ export default function Chat() {
                       <Show when={sessionUsage()} fallback={t().chat.disclaimer}>
                         {(u) => (
                           <>
-                            <span>Session: ↑{formatTokenCount(u().input)} ↓{formatTokenCount(u().output)} tokens</span>
+                            <span>{formatMessage(t().tokenUsage.sessionSummary, { input: formatTokenCount(u().input), output: formatTokenCount(u().output) })}</span>
                             <Show when={u().cost != null}>
                               <span class="text-gray-300 dark:text-gray-700"> · </span>
-                              <span>{formatCostWithUnit(u().cost!, u().costUnit)}</span>
+                              <span>{formatCostWithUnit(u().cost!, u().costUnit, t)}</span>
                             </Show>
                           </>
                         )}

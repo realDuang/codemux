@@ -196,6 +196,15 @@ export default defineConfig({
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/opencode-api/, ""),
       },
+      // Proxy webhook endpoints to the WebhookServer
+      "/api/messages": {
+        target: "http://localhost:4098",
+        changeOrigin: true,
+      },
+      "/webhook": {
+        target: "http://localhost:4098",
+        changeOrigin: true,
+      },
     },
   },
 });

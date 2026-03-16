@@ -23,6 +23,7 @@ import {
   type ChannelInfo,
   type ChannelCapabilities,
   type ChannelStatus,
+  type WebhookMeta,
 } from "../channel-adapter";
 import { GatewayWsClient } from "../gateway-ws-client";
 import { StreamingController } from "../streaming/streaming-controller";
@@ -98,6 +99,10 @@ class TeamsSessionMapper extends BaseSessionMapper<TeamsGroupBinding> {
 export class TeamsAdapter extends ChannelAdapter {
   readonly channelType = "teams";
 
+  override getWebhookMeta(): WebhookMeta {
+    return { path: "/api/messages", platformConfigGuide: "channel.teamsWebhookGuide" };
+  }
+
   // --- State ---
   private status: ChannelStatus = "stopped";
   private error?: string;
@@ -154,6 +159,10 @@ export class TeamsAdapter extends ChannelAdapter {
       ...(config.options as unknown as Partial<TeamsConfig>),
     };
 
+    channelLog.info(
+      `${LOG_PREFIX} Config: appId=${this.config.microsoftAppId}, tenantId=${this.config.tenantId || "(none)"}`,
+    );
+
     if (!this.config.microsoftAppId || !this.config.microsoftAppPassword) {
       this.status = "error";
       this.error = "Missing microsoftAppId or microsoftAppPassword";
@@ -167,6 +176,7 @@ export class TeamsAdapter extends ChannelAdapter {
         this.config.microsoftAppId,
         this.config.microsoftAppPassword,
         this.rateLimiter,
+        this.config.tenantId || undefined,
       );
       this.streamingController = new StreamingController(
         this.transport,
@@ -219,10 +229,9 @@ export class TeamsAdapter extends ChannelAdapter {
   async stop(): Promise<void> {
     channelLog.info(`${LOG_PREFIX} Stopping adapter...`);
 
-    // Unregister webhook route
+    // Unregister webhook route (keep webhookServer ref for restart)
     if (this.webhookServer) {
       this.webhookServer.unregisterRoute("/api/messages");
-      this.webhookServer = null;
     }
 
     // Clean up streaming timers

@@ -17,6 +17,7 @@ import {
   type ChannelInfo,
   type ChannelCapabilities,
   type ChannelStatus,
+  type WebhookMeta,
 } from "../channel-adapter";
 import { GatewayWsClient } from "../gateway-ws-client";
 import { StreamingController } from "../streaming/streaming-controller";
@@ -102,6 +103,10 @@ class WeComSessionMapper extends BaseSessionMapper<WeComGroupBinding> {
 
 export class WeComAdapter extends ChannelAdapter {
   readonly channelType = "wecom";
+
+  override getWebhookMeta(): WebhookMeta {
+    return { path: "/webhook/wecom", platformConfigGuide: "channel.wecomWebhookGuide" };
+  }
 
   // --- State ---
   private status: ChannelStatus = "stopped";
@@ -247,10 +252,9 @@ export class WeComAdapter extends ChannelAdapter {
     // Clean up streaming timers
     this.sessionMapper.cleanup();
 
-    // Unregister webhook
+    // Unregister webhook (keep webhookServer ref for restart)
     if (this.webhookServer) {
       this.webhookServer.unregisterRoute(WeComAdapter.WEBHOOK_PATH);
-      this.webhookServer = null;
     }
 
     // Disconnect Gateway WS

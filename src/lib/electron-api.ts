@@ -258,6 +258,7 @@ export interface ChannelInfo {
   name: string;
   status: "stopped" | "starting" | "running" | "error";
   error?: string;
+  webhookMeta?: { path: string; platformConfigGuide: string } | null;
 }
 
 export const channelAPI = {

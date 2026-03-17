@@ -129,6 +129,7 @@ export interface LocaleDict {
     tunnelStopped: string;
     noteUrlChanges: string;
     noteUrlChangesDesc: string;
+    noteUrlFixedDomain: string;
     namedTunnel: string;
     namedTunnelDesc: string;
     tunnelHostname: string;
@@ -554,10 +555,11 @@ export const en: LocaleDict = {
     tunnelRunning: "Running",
     tunnelStopped: "Not Running",
     noteUrlChanges: "URL Changes on Restart",
-    noteUrlChangesDesc: "Free tunnel URLs change on each restart. Webhook channels will need their platform callback URLs reconfigured. Use a Named Tunnel for a fixed domain.",
+    noteUrlChangesDesc: "Free tunnel URLs change on each restart. Webhook channels will need their platform callback URLs reconfigured. Configure a Named Tunnel above for a fixed domain.",
+    noteUrlFixedDomain: "Named Tunnel configured — your domain stays the same across restarts.",
     namedTunnel: "Named Tunnel (Fixed Domain)",
     namedTunnelDesc: "Use a Cloudflare Named Tunnel for a fixed domain that won't change on restart. Free with any Cloudflare-managed domain.",
-    tunnelHostname: "Domain",
+    tunnelHostname: "Domain (Optional)",
     tunnelHostnamePlaceholder: "e.g. codemux.example.com",
     namedTunnelActive: "Named Tunnel active — domain is fixed across restarts",
     namedTunnelSetupHint: "Run `cloudflared tunnel login`, `cloudflared tunnel create <name>` and `cloudflared tunnel route dns <name> <domain>` first.",

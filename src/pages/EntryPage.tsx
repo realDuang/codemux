@@ -403,8 +403,12 @@ export default function EntryPage() {
 
   const saveNamedTunnelConfig = () => {
     const hostname = namedTunnelHostname().trim();
-    const config: TunnelConfig = hostname ? { hostname } : {};
-    saveSetting("tunnelConfig", config);
+    if (hostname) {
+      saveSetting("tunnelConfig", { hostname });
+    } else {
+      // Clear the config entirely when hostname is removed
+      saveSetting("tunnelConfig", undefined);
+    }
   };
 
   // =========================================================================
@@ -1824,12 +1828,27 @@ export default function EntryPage() {
                         <h3 class="text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider mb-3">{t().remote.notes}</h3>
                         <div class="space-y-2">
                           <div class="rounded-lg border border-gray-200 dark:border-slate-800 p-3.5 flex items-start gap-3">
-                            <div class="w-7 h-7 rounded-md bg-amber-100 dark:bg-amber-900/30 flex items-center justify-center shrink-0">
-                              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-amber-600 dark:text-amber-400"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                            <div class={`w-7 h-7 rounded-md flex items-center justify-center shrink-0 ${
+                              isNamedTunnel()
+                                ? "bg-green-100 dark:bg-green-900/30"
+                                : "bg-amber-100 dark:bg-amber-900/30"
+                            }`}>
+                              <Show when={isNamedTunnel()} fallback={
+                                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-amber-600 dark:text-amber-400"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                              }>
+                                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-green-600 dark:text-green-400"><polyline points="20 6 9 17 4 12"/></svg>
+                              </Show>
                             </div>
                             <div>
-                              <div class="text-sm font-medium text-gray-900 dark:text-white">{t().remote.noteUrlChanges}</div>
-                              <div class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">{t().remote.noteUrlChangesDesc}</div>
+                              <Show when={isNamedTunnel()} fallback={
+                                <>
+                                  <div class="text-sm font-medium text-gray-900 dark:text-white">{t().remote.noteUrlChanges}</div>
+                                  <div class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">{t().remote.noteUrlChangesDesc}</div>
+                                </>
+                              }>
+                                <div class="text-sm font-medium text-gray-900 dark:text-white">{t().remote.namedTunnel}</div>
+                                <div class="text-xs text-green-600 dark:text-green-400 mt-0.5">{t().remote.noteUrlFixedDomain}</div>
+                              </Show>
                             </div>
                           </div>
                           <div class="rounded-lg border border-gray-200 dark:border-slate-800 p-3.5 flex items-start gap-3">

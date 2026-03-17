@@ -5,6 +5,7 @@
 
 import fs from "fs";
 import path from "path";
+import { deflateSync } from "node:zlib";
 import { app } from "electron";
 import { channelLog } from "../../services/logger";
 
@@ -64,8 +65,6 @@ function generatePlaceholderPng(color: [number, number, number]): Buffer {
 
   // IDAT: raw pixel data (filter byte 0 + RGBA)
   const rawRow = Buffer.from([0, r, g, b, 255]);
-  // Deflate with zlib
-  const { deflateSync } = require("zlib") as typeof import("zlib");
   const compressed = deflateSync(rawRow);
 
   return Buffer.concat([

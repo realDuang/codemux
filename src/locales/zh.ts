@@ -389,7 +389,7 @@ export const zh: LocaleDict = {
     teamsWebhookGuide: "请将此 URL 配置到 Azure Bot Service → Settings → Messaging Endpoint",
     wecomWebhookGuide: "请将此 URL 配置到企业微信管理后台 → 应用 → 接收消息 → 回调 URL",
     webhookEndpoint: "Endpoint",
-    teamsInstallHint: "安装 Bot 到 Teams：应用 → 管理你的应用 → 上传自定义应用 → 选择 .channels/teams-app.zip",
+    teamsInstallHint: "安装 Bot 到 Teams：应用 → 管理你的应用 → 上传自定义应用 → 选择生成的 teams-app.zip（位于项目 .channels/ 目录或应用数据目录中）",
   },
 
   // Token Usage

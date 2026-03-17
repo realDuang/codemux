@@ -92,15 +92,27 @@ function proxyToOpenCode(
 /**
  * Proxy a request to the shared WebhookServer (for channel webhooks)
  */
+const MAX_WEBHOOK_BODY_BYTES = 1024 * 1024; // 1 MB
+
 function proxyToWebhook(
   req: http.IncomingMessage,
   res: http.ServerResponse,
   targetPath: string
 ): void {
   let body: Buffer[] = [];
+  let totalLength = 0;
 
-  req.on("data", (chunk) => body.push(chunk));
+  req.on("data", (chunk: Buffer) => {
+    totalLength += chunk.length;
+    if (totalLength > MAX_WEBHOOK_BODY_BYTES) {
+      req.destroy();
+      sendJson(res, { error: "Payload too large" }, 413);
+      return;
+    }
+    body.push(chunk);
+  });
   req.on("end", () => {
+    if (totalLength > MAX_WEBHOOK_BODY_BYTES) return;
     const bodyBuffer = Buffer.concat(body);
 
     const options: http.RequestOptions = {

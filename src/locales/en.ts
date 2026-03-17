@@ -815,7 +815,7 @@ export const en: LocaleDict = {
     teamsWebhookGuide: "Configure this URL as Messaging Endpoint in Azure Bot Service → Settings",
     wecomWebhookGuide: "Configure this URL as callback URL in WeCom Admin Console → App → Receive Messages",
     webhookEndpoint: "Endpoint",
-    teamsInstallHint: "Install the bot in Teams: Apps → Manage your apps → Upload a custom app → select the generated zip file from .channels/teams-app.zip",
+    teamsInstallHint: "Install the bot in Teams: Apps → Manage your apps → Upload a custom app → select the generated teams-app.zip (in project .channels/ folder or app data directory)",
   },
 
   // Token Usage

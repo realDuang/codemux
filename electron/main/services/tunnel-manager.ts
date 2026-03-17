@@ -102,14 +102,15 @@ class TunnelManager {
 
       this.process = spawn(cloudflaredPath, args);
 
-      // For named tunnels, URL is known in advance
+      // For named tunnels, URL is known in advance but keep "starting" until
+      // cloudflared confirms it's connected (observed via stdout/stderr output)
       if (isNamed) {
         this.info = {
           url: hostname!.startsWith("https://") ? hostname! : `https://${hostname}`,
-          status: "running",
+          status: "starting",
           startTime: this.info.startTime,
         };
-        tunnelLog.info(`Named tunnel started (${tunnelId}): ${this.info.url}`);
+        tunnelLog.info(`Named tunnel starting (${tunnelId}): ${this.info.url}`);
       }
 
       const handleOutput = (data: Buffer) => {
@@ -126,6 +127,12 @@ class TunnelManager {
               startTime: this.info.startTime,
             };
             tunnelLog.info("URL Ready:", this.info.url);
+          }
+        } else if (this.info.status === "starting") {
+          // Named tunnel: detect readiness from cloudflared output
+          if (output.includes("Registered tunnel connection") || output.includes("Connection registered")) {
+            this.info = { ...this.info, status: "running" };
+            tunnelLog.info("Named tunnel ready:", this.info.url);
           }
         }
       };

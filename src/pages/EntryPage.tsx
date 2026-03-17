@@ -332,6 +332,7 @@ export default function EntryPage() {
 
   const startTunnel = async () => {
     setTunnelLoading(true);
+    saveNamedTunnelConfig();
     try {
       let info: TunnelInfo;
 

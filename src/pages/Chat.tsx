@@ -322,11 +322,9 @@ export default function Chat() {
   };
 
   // Stabilized scroll-to-bottom for session entry. After the initial scroll,
-  // the virtualizer may re-measure items (via our createEffect fix) which
-  // changes totalSize and shifts the "real" bottom. This retries a few times
-  // until the scroll position stabilizes, avoiding a visual gap at the end.
-  // Safe for non-virtualized lists — the first recheck finds scrollTop is
-  // already at the bottom and stops immediately.
+  // CSS content-visibility may cause layout shifts as items become visible,
+  // changing scrollHeight. This retries via rAF a few times until the scroll
+  // position stabilizes, avoiding a visual gap at the end.
   let stableScrollRafId: number | null = null;
   const scrollToBottomStable = () => {
     const el = messagesRef();

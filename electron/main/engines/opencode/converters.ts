@@ -75,9 +75,12 @@ export function convertMessage(engineType: EngineType, sdk: any, pricing?: Model
 
   // Normalize OpenCode's abort error to the unified "Cancelled" convention
   // so the frontend uses a single check (error === "Cancelled") across all engines.
-  const normalizedError = errorStr && (
-    errorStr === "MessageAbortedError" || (sdk.error?.name === "MessageAbortedError")
-  ) ? "Cancelled" : errorStr;
+  // Only normalize when errorStr itself IS "MessageAbortedError" (i.e. no meaningful
+  // underlying message). When the abort wraps a real error (e.g. rate-limit 429),
+  // sdk.error.message carries the actual reason and must be preserved.
+  const normalizedError = errorStr === "MessageAbortedError"
+    ? "Cancelled"
+    : errorStr;
 
   return {
     id: sdk.id,

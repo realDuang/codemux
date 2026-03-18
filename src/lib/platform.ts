@@ -24,9 +24,9 @@ const MACOS_TITLE_BAR_HEIGHT = 38;
 export function initElectronTitleBar(): void {
   if (!isElectron()) return;
 
-  // Detect macOS (via navigator.platform or userAgent)
-  const isMacOS = navigator.platform.toUpperCase().indexOf('MAC') >= 0 ||
-                  navigator.userAgent.toUpperCase().indexOf('MAC') >= 0;
+  // Detect macOS (userAgentData preferred, userAgent as fallback)
+  const isMacOS = (navigator as any).userAgentData?.platform === "macOS" ||
+                  /Mac/i.test(navigator.userAgent);
 
   if (isMacOS) {
     document.documentElement.style.setProperty(

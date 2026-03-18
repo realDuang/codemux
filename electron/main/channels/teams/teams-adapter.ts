@@ -684,9 +684,7 @@ export class TeamsAdapter extends ChannelAdapter {
     projectName: string,
   ): Promise<void> {
     if (!this.gatewayClient) return;
-    const sessions = await this.gatewayClient.listSessions(
-      project.engineType,
-    );
+    const sessions = await this.gatewayClient.listAllSessions();
     const filtered = sessions.filter((s) => s.directory === project.directory);
     const sessionText = buildSessionListText(filtered, projectName);
     await this.transport!.sendText(chatId, sessionText);
@@ -891,21 +889,11 @@ export class TeamsAdapter extends ChannelAdapter {
     this.sessionMapper.clearTempSession(chatId);
   }
 
-  /** Flatten projects grouped by engine type (same order as buildProjectListText) */
+  /** Return projects in display order (same order as buildProjectListText) */
   private flattenProjectsByEngine(
     projects: import("../../../../src/types/unified").UnifiedProject[],
   ): import("../../../../src/types/unified").UnifiedProject[] {
-    const grouped = new Map<string, typeof projects>();
-    for (const p of projects) {
-      const key = p.engineType || "unknown";
-      if (!grouped.has(key)) grouped.set(key, []);
-      grouped.get(key)!.push(p);
-    }
-    const flat: typeof projects = [];
-    for (const engineProjects of grouped.values()) {
-      flat.push(...engineProjects);
-    }
-    return flat;
+    return projects;
   }
 
   /** Handle a pending selection reply (number or "new") */
@@ -1147,7 +1135,7 @@ export class TeamsAdapter extends ChannelAdapter {
 
     // Show session list for group binding
     if (!this.gatewayClient) return false;
-    const sessions = await this.gatewayClient.listSessions(project.engineType || "opencode");
+    const sessions = await this.gatewayClient.listAllSessions();
     const filtered = sessions.filter((s) => s.directory === project.directory);
     const sessionText = buildSessionListText(filtered, projectName);
     await this.transport!.sendText(groupChatId, sessionText);

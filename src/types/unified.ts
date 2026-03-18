@@ -333,7 +333,7 @@ export interface PermissionOption {
   id: string;
   label: string;
   /** Unified kind. ACP uses: allow_once, allow_always, reject_once, reject_always */
-  type: "accept_once" | "accept_always" | "reject" | "allow_once" | "allow_always" | "reject_once" | "reject_always" | string;
+  type: "accept_once" | "accept_always" | "reject" | "allow_once" | "allow_always" | "reject_once" | "reject_always";
 }
 
 export interface UnifiedPermission {

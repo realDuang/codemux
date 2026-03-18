@@ -95,7 +95,7 @@ export abstract class DeviceStoreBase {
   protected save(data?: DeviceStoreData): void {
     const toSave = data || this.getData();
     const filePath = this.getFilePath();
-    fs.writeFileSync(filePath, JSON.stringify(toSave, null, 2));
+    fs.writeFileSync(filePath, JSON.stringify(toSave, null, 2), { mode: 0o600 });
   }
 
   // ---------------------------------------------------------------------------

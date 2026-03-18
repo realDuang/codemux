@@ -41,14 +41,32 @@ export function getLocalIp(osModule?: typeof import("os")): string {
   return fallback ?? "localhost";
 }
 
+// =============================================================================
+// CORS
+// =============================================================================
+
+const ALLOWED_ORIGINS = new Set([
+  "http://localhost:5173",
+  "http://localhost:5174",
+  "http://127.0.0.1:5173",
+  "http://127.0.0.1:5174",
+]);
+
+function getCorsOrigin(req: IncomingMessage): string {
+  const origin = req.headers.origin;
+  if (origin && ALLOWED_ORIGINS.has(origin)) return origin;
+  return "http://localhost:5173";
+}
+
 /**
  * Send a JSON response with optional status code and CORS headers.
  */
-export function sendJson(res: ServerResponse, data: unknown, status = 200): void {
+export function sendJson(res: ServerResponse, data: unknown, status = 200, req?: IncomingMessage): void {
   const body = JSON.stringify(data);
+  const origin = req ? getCorsOrigin(req) : "http://localhost:5173";
   res.writeHead(status, {
     "Content-Type": "application/json",
-    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Origin": origin,
     "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS, PATCH",
     "Access-Control-Allow-Headers": "Content-Type, Authorization, x-opencode-directory",
   });

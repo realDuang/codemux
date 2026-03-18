@@ -55,6 +55,11 @@ export function verifyJWT(token: string, secret: string): { valid: boolean; payl
     if (parts.length !== 3) return { valid: false };
 
     const [headerB64, payloadB64, signature] = parts;
+
+    // Validate algorithm (defense-in-depth)
+    const header = JSON.parse(base64UrlDecode(headerB64));
+    if (header.alg !== "HS256") return { valid: false };
+
     const expectedSignature = createHmacSignature(`${headerB64}.${payloadB64}`, secret);
 
     const sigBuf = Buffer.from(signature);

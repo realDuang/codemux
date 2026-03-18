@@ -62,10 +62,12 @@ export class GatewayServer {
       throw new Error("Gateway server already started");
     }
 
+    const WS_MAX_PAYLOAD = 1 * 1024 * 1024; // 1MB
+
     if ("server" in options) {
-      this.wss = new WebSocketServer({ server: options.server, path: options.path });
+      this.wss = new WebSocketServer({ server: options.server, path: options.path, maxPayload: WS_MAX_PAYLOAD });
     } else {
-      this.wss = new WebSocketServer({ port: options.port });
+      this.wss = new WebSocketServer({ port: options.port, maxPayload: WS_MAX_PAYLOAD });
     }
     this.wss.on("connection", (ws, req) => this.handleConnection(ws, req));
     this.wss.on("error", (err) => {

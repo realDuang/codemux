@@ -86,8 +86,9 @@ export function saveSetting(key: string, value: unknown): void {
   // Always write to localStorage as well for web mode and as immediate cache
   try {
     localStorage.setItem(`settings:${key}`, JSON.stringify(value));
-  } catch {
+  } catch (err) {
     // storage full or unavailable
+    console.warn("[Settings] Failed to save to localStorage:", err);
   }
 }
 

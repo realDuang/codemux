@@ -32,7 +32,7 @@ describe('DeviceStoreBase', () => {
   describe('Persistence & Lifecycle', () => {
     it('initializes correctly: creates file, loads existing, or handles corrupt JSON', () => {
       // Create file case
-      expect(fs.writeFileSync).toHaveBeenCalledWith(testPath, expect.stringContaining('{}'));
+      expect(fs.writeFileSync).toHaveBeenCalledWith(testPath, expect.stringContaining('{}'), { mode: 0o600 });
 
       // Load existing case
       (fs.existsSync as any).mockReturnValue(true);

@@ -6,8 +6,6 @@ import {
   getActiveMode,
   countProjectGroups,
   countSessions,
-  hasEngineBadge,
-  switchEngineTab,
   expandAllProjects,
 } from "../setup/test-helpers";
 
@@ -24,39 +22,27 @@ test.describe("Sidebar", () => {
 
   // --- Project Display ---
 
-  test("should display project groups across engine tabs", async ({ page }) => {
-    // With engine tabs, projects are split across tabs.
-    // OpenCode tab: project-alpha(OC) = 1 project
-    const ocCount = await countProjectGroups(page);
-    expect(ocCount).toBeGreaterThanOrEqual(1);
-
-    // Copilot tab: project-beta(CP) + project-alpha(CP) = 2 projects
-    await switchEngineTab(page, "Copilot");
-    const cpCount = await countProjectGroups(page);
-    expect(cpCount).toBeGreaterThanOrEqual(2);
-
-    // Total across both tabs
-    expect(ocCount + cpCount).toBeGreaterThanOrEqual(3);
+  test("should display all project groups in unified list", async ({ page }) => {
+    // Projects are engine-agnostic now — all shown in one list.
+    // Seed data has project-alpha and project-beta directories.
+    const count = await countProjectGroups(page);
+    expect(count).toBeGreaterThanOrEqual(2);
   });
 
-  test("should display engine badges for project groups", async ({ page }) => {
-    // project-alpha with opencode engine should have "OC" badge (default tab)
-    const hasOC = await hasEngineBadge(page, "project-alpha", "OC");
+  test("should display engine badges on session items", async ({ page }) => {
+    // Engine badges are now on session rows, not project headers.
+    // Expand all projects and check for badge text in session items.
+    await expandAllProjects(page);
+    // "OC" badge should appear on opencode sessions
+    const hasOC = await page.getByText("OC").first().isVisible().catch(() => false);
     expect(hasOC).toBe(true);
-
-    // project-beta with copilot engine — switch to Copilot tab
-    await switchEngineTab(page, "Copilot");
-    const hasCopilot = await hasEngineBadge(page, "project-beta", "Copilot");
-    expect(hasCopilot).toBe(true);
   });
 
-  test("should display session titles across engine tabs", async ({ page }) => {
-    // OpenCode tab sessions (projects expanded by navigateToChat)
+  test("should display session titles from all engines", async ({ page }) => {
+    // All sessions visible in a single unified list (no tab switching needed)
+    await expandAllProjects(page);
     await expect(page.getByText("Fix authentication bug")).toBeVisible({ timeout: 5_000 });
     await expect(page.getByText("Add unit tests")).toBeVisible({ timeout: 5_000 });
-
-    // Copilot tab sessions
-    await switchEngineTab(page, "Copilot");
     await expect(page.getByText("Refactor database layer")).toBeVisible({ timeout: 5_000 });
     await expect(page.getByText("Cross-engine test session")).toBeVisible({ timeout: 5_000 });
   });
@@ -120,15 +106,11 @@ test.describe("Sidebar", () => {
 
   // --- Session Count ---
 
-  test("should show correct total session count across tabs", async ({ page }) => {
-    // With engine tabs, count sessions per tab and sum.
-    // OpenCode: 3 sessions (project-alpha)
-    const ocCount = await countSessions(page);
-
-    // Copilot: 2 sessions (project-beta + project-alpha)
-    await switchEngineTab(page, "Copilot");
-    const cpCount = await countSessions(page);
-
-    expect(ocCount + cpCount).toBe(5);
+  test("should show correct total session count", async ({ page }) => {
+    // All sessions visible in one list now (no tabs).
+    // Seed data has 5 sessions total across all engines.
+    await expandAllProjects(page);
+    const totalCount = await countSessions(page);
+    expect(totalCount).toBe(5);
   });
 });

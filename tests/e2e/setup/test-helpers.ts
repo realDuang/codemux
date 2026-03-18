@@ -297,7 +297,6 @@ export async function autoConfirmDialogs(page: Page): Promise<void> {
 export async function addProject(
   page: Page,
   directory: string,
-  engine: string,
 ): Promise<void> {
   // Click "Add Project" button in the sidebar
   await solidClickByText(page, "Add Project");
@@ -309,10 +308,7 @@ export async function addProject(
   // Fill in the project path
   await solidFillInput(page, 'input[type="text"]', directory);
 
-  // Select the engine
-  await solidSelectOption(page, "select", engine);
-
-  // Click confirm button in dialog
+  // Click confirm button in dialog (no engine selector — engine is per-session)
   await page.evaluate(() => {
     const dialog = document.querySelector('[role="dialog"]');
     if (!dialog) return;

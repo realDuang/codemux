@@ -128,25 +128,11 @@ export function buildProjectListText(
     return "📋 未找到项目。请先在 CodeMux 中启动一个会话。";
   }
 
-  // Group projects by engine type
-  const grouped = new Map<string, typeof projects>();
-  for (const p of projects) {
-    const key = p.engineType || "unknown";
-    if (!grouped.has(key)) grouped.set(key, []);
-    grouped.get(key)!.push(p);
-  }
-
   const lines: string[] = ["📋 项目列表", "─────────────────────────"];
-  let index = 1;
-
-  for (const [engineType, engineProjects] of grouped) {
-    lines.push(`[${engineType.toUpperCase()}]`);
-    for (const p of engineProjects) {
-      const name =
-        p.name || p.directory.split(/[\\/]/).pop() || p.directory;
-      lines.push(`  ${index}. ${name}`);
-      index++;
-    }
+  for (let i = 0; i < projects.length; i++) {
+    const p = projects[i];
+    const name = p.name || p.directory.split(/[\\/]/).pop() || p.directory;
+    lines.push(`  ${i + 1}. ${name}`);
   }
 
   lines.push("─────────────────────────");
@@ -182,7 +168,8 @@ export function buildSessionListText(
     for (let i = 0; i < limited.length; i++) {
       const s = limited[i];
       const title = s.title || `Session ${s.id.slice(0, 8)}`;
-      lines.push(`  ${i + 1}. ${title}`);
+      const engineLabel = s.engineType ? ` [${s.engineType}]` : "";
+      lines.push(`  ${i + 1}. ${title}${engineLabel}`);
     }
   }
 

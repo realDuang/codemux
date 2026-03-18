@@ -80,15 +80,13 @@ describe('buildProjectListText', () => {
     expect(buildProjectListText([])).toContain('未找到项目');
   });
 
-  it('groups projects by engine type with numbering', () => {
+  it('lists projects with sequential numbering', () => {
     const projects: any[] = [
-      { name: 'P1', engineType: 'opencode', directory: '/d1' },
-      { name: 'P2', engineType: 'feishu', directory: '/d2' },
+      { name: 'P1', directory: '/d1' },
+      { name: 'P2', directory: '/d2' },
     ];
     const text = buildProjectListText(projects);
-    expect(text).toContain('[OPENCODE]');
     expect(text).toContain('1. P1');
-    expect(text).toContain('[FEISHU]');
     expect(text).toContain('2. P2');
     expect(text).toContain('回复数字');
   });

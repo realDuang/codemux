@@ -58,6 +58,15 @@ import { isExpanded, toggleExpanded } from "../../stores/message";
 
 import styles from "./part.module.css";
 
+/** Typed accessor for tool state input fields (state.input is `unknown`) */
+function getToolInput(state: ToolPart["state"]): Record<string, any> | undefined {
+  if (state.status === "pending") return state.input as Record<string, any> | undefined;
+  if (state.status === "running" || state.status === "completed" || state.status === "error") {
+    return state.input as Record<string, any> | undefined;
+  }
+  return undefined;
+}
+
 export interface PartProps {
   index: number;
   message: UnifiedMessage;
@@ -273,12 +282,13 @@ export function Part(props: PartProps) {
               </span>
               <span data-slot="name">{(props.part as ToolPart).title || (props.part as ToolPart).originalTool}</span>
               <span data-slot="target">
-                {props.part.state.status === "running" && (props.part.state as any).input?.description}
-                {props.part.state.status === "running" && (props.part.state as any).input?.filePath}
-                {props.part.state.status === "running" && (props.part.state as any).input?.command && 
-                  ((props.part.state as any).input.command.length > 50 
-                    ? (props.part.state as any).input.command.slice(0, 50) + "..." 
-                    : (props.part.state as any).input.command)}
+                {(() => { const inp = getToolInput(props.part.state); return props.part.state.status === "running" && inp ? (
+                  <>
+                    {inp.description}
+                    {inp.filePath}
+                    {inp.command && (inp.command.length > 50 ? inp.command.slice(0, 50) + "..." : inp.command)}
+                  </>
+                ) : null; })()}
               </span>
             </div>
             <PermissionPrompt
@@ -317,7 +327,7 @@ export function Part(props: PartProps) {
             <>
               <div data-component="tool" data-tool={(props.part as ToolPart).normalizedTool}>
                 {/* Guard: if tool state has no input (e.g. interrupted session replay), render FallbackTool */}
-                {!(props.part.state as any).input ? (
+                {!getToolInput(props.part.state) ? (
                     <FallbackTool
                     message={props.message}
                     id={props.part.id}
@@ -438,7 +448,7 @@ function Footer(props: ParentProps<{ title: string }>) {
 
 /** Running tool card with live elapsed timer */
 function RunningToolCard(props: { part: ToolPart }) {
-  const startTime = () => (props.part.state as any).time?.start ?? Date.now();
+  const startTime = () => getToolInput(props.part.state)?.time?.start ?? (props.part.state as any).time?.start ?? Date.now();
   const isRunning = () =>
     props.part.state.status === "pending" || props.part.state.status === "running";
   const elapsed = createElapsedTimer(startTime, isRunning);
@@ -450,11 +460,11 @@ function RunningToolCard(props: { part: ToolPart }) {
           <ToolIcon tool={props.part.normalizedTool} />
         </span>
         <span data-slot="name">{props.part.title || props.part.normalizedTool}</span>
-        <Show when={props.part.state.status === "running" && (props.part.state as any).input}>
+        <Show when={props.part.state.status === "running" && getToolInput(props.part.state)}>
           <span data-slot="target">
-            {(props.part.state as any).input?.description}
-            {(props.part.state as any).input?.filePath}
-            {(props.part.state as any).input?.pattern}
+            {getToolInput(props.part.state)?.description}
+            {getToolInput(props.part.state)?.filePath}
+            {getToolInput(props.part.state)?.pattern}
           </span>
         </Show>
         <span data-slot="status">{formatDuration(elapsed())}</span>

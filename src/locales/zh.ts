@@ -166,6 +166,7 @@ export const zh: LocaleDict = {
     collapseSidebar: "收起侧边栏",
     sessions: "会话",
     refreshSessions: "刷新会话列表",
+    defaultEngine: "默认引擎",
   },
 
   // Project

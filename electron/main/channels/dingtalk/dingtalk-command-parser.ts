@@ -117,7 +117,7 @@ export function buildProjectListText(
   // Group projects by engine type
   const grouped = new Map<string, typeof projects>();
   for (const p of projects) {
-    const key = p.engineType;
+    const key = p.engineType || "unknown";
     if (!grouped.has(key)) grouped.set(key, []);
     grouped.get(key)!.push(p);
   }

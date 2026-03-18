@@ -22,6 +22,8 @@ interface ConfigState {
   engineModelSelections: Record<string, EngineModelSelection>;
   /** Engine enabled state, keyed by engine type. Missing = true (default enabled). */
   enabledEngines: Record<string, boolean>;
+  /** User-chosen default engine for new sessions, persisted to settings.json */
+  defaultNewSessionEngine: string | null;
 }
 
 export const [configStore, setConfigStore] = createStore<ConfigState>({
@@ -34,6 +36,7 @@ export const [configStore, setConfigStore] = createStore<ConfigState>({
   engineModels: {},
   engineModelSelections: {},
   enabledEngines: {},
+  defaultNewSessionEngine: null,
 });
 
 export function loadEngineModelSelection(engineType: string): EngineModelSelection | null {
@@ -109,14 +112,40 @@ export function restoreEngineModelSelections(): void {
 // Default engine resolution
 // ---------------------------------------------------------------------------
 
-/** Get the default engine type: first running engine, or first engine, or "opencode". */
+/**
+ * Get the default engine type for new sessions.
+ * Priority: user setting > current session's engine > first running engine > "opencode".
+ */
 export function getDefaultEngineType(): string {
+  // User-configured default engine for new sessions
+  const userDefault = configStore.defaultNewSessionEngine;
+  if (userDefault) {
+    // Validate that the engine is still running + enabled
+    const engine = configStore.engines.find(e => e.type === userDefault);
+    if (engine && engine.status === "running" && isEngineEnabled(userDefault)) {
+      return userDefault;
+    }
+  }
   return (
     configStore.currentEngineType ||
-    configStore.engines.find((e) => e.status === "running")?.type ||
+    configStore.engines.find((e) => e.status === "running" && isEngineEnabled(e.type))?.type ||
     configStore.engines[0]?.type ||
     "opencode"
   );
+}
+
+/** Set the default engine for new sessions and persist to settings. */
+export function setDefaultNewSessionEngine(engineType: string): void {
+  setConfigStore("defaultNewSessionEngine", engineType);
+  saveSetting("defaultEngine", engineType);
+}
+
+/** Restore the default engine setting from settings.json. */
+export function restoreDefaultEngine(): void {
+  const saved = getSetting<string>("defaultEngine");
+  if (saved) {
+    setConfigStore("defaultNewSessionEngine", saved);
+  }
 }
 
 // ---------------------------------------------------------------------------

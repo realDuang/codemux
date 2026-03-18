@@ -556,10 +556,9 @@ export class MockEngineAdapter extends EngineAdapter {
       if (!directorySet.has(session.directory)) {
         const dirName = session.directory.split(/[\\/]/).pop() ?? session.directory;
         directorySet.set(session.directory, {
-          id: `project-${this.engineType}-${session.directory.replace(/[^a-zA-Z0-9]/g, "-")}`,
+          id: `dir-${session.directory.replace(/\\/g, "/")}`,
           directory: session.directory,
           name: dirName,
-          engineType: this.engineType,
         });
       }
     }

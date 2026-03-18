@@ -675,7 +675,7 @@ export class FeishuAdapter extends ChannelAdapter {
   ): import("../../../../src/types/unified").UnifiedProject[] {
     const grouped = new Map<string, typeof projects>();
     for (const p of projects) {
-      const key = p.engineType;
+      const key = p.engineType || "unknown";
       if (!grouped.has(key)) grouped.set(key, []);
       grouped.get(key)!.push(p);
     }
@@ -718,7 +718,7 @@ export class FeishuAdapter extends ChannelAdapter {
     // Save last selected project
     const projectRef = {
       directory: project.directory,
-      engineType: project.engineType,
+      engineType: project.engineType || "opencode",
       projectId: project.id,
     };
     this.sessionMapper.setP2PLastProject(chatId, projectRef);

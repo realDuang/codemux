@@ -165,6 +165,7 @@ export interface LocaleDict {
     collapseSidebar: string;
     sessions: string;
     refreshSessions: string;
+    defaultEngine: string;
   };
 
   // Project
@@ -592,6 +593,7 @@ export const en: LocaleDict = {
     collapseSidebar: "Collapse sidebar",
     sessions: "Sessions",
     refreshSessions: "Refresh sessions",
+    defaultEngine: "Default Engine",
   },
 
   // Project

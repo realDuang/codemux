@@ -34,7 +34,7 @@ import { InputAreaQuestion } from "../components/InputAreaQuestion";
 import { InputAreaPermission } from "../components/InputAreaPermission";
 import { TodoDock } from "../components/TodoDock";
 
-import { configStore, setConfigStore, getSelectedModelForEngine, restoreEngineModelSelections, isEngineEnabled, restoreEnabledEngines, getDefaultEngineType } from "../stores/config";
+import { configStore, setConfigStore, getSelectedModelForEngine, restoreEngineModelSelections, isEngineEnabled, restoreEnabledEngines, getDefaultEngineType, restoreDefaultEngine } from "../stores/config";
 
 // Binary search helper (consistent with opencode desktop)
 function binarySearch<T>(
@@ -222,6 +222,17 @@ export default function Chat() {
     if (!sid) return getDefaultEngineType();
     const session = sessionStore.list.find(s => s.id === sid);
     return session?.engineType || getDefaultEngineType();
+  });
+
+  // Engine badge for title bar
+  const currentEngineBadge = createMemo(() => {
+    const et = currentEngineType();
+    switch (et) {
+      case "opencode": return { label: "OC", class: "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400" };
+      case "copilot": return { label: "Copilot", class: "bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400" };
+      case "claude": return { label: "Claude", class: "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400" };
+      default: return { label: et, class: "bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-400" };
+    }
   });
 
   // Whether the current engine supports enqueuing messages while busy
@@ -525,6 +536,7 @@ export default function Chat() {
         const engines = await gateway.listEngines();
         setConfigStore("engines", engines);
         restoreEnabledEngines();
+        restoreDefaultEngine();
         const runningEngine = engines.find(e => e.status === "running" && isEngineEnabled(e.type));
         if (runningEngine) {
           setConfigStore("currentEngineType", runningEngine.type);
@@ -573,9 +585,7 @@ export default function Chat() {
           );
 
           const sessionInfos = filteredSessions.map(s => {
-            const project = allProjects.find(p =>
-              p.directory === s.directory && p.engineType === s.engineType
-            );
+            const project = allProjects.find(p => p.directory === s.directory);
             return toSessionInfo(s, project?.id);
           });
 
@@ -675,16 +685,13 @@ export default function Chat() {
 
     try {
       const dir = directory || sessionStore.projects[0]?.directory || ".";
-      // Use explicitly-passed engineType (from sidebar "+" button) when available,
-      // otherwise resolve from project binding or global default.
+      // Use explicitly-passed engineType when available, otherwise use global default engine.
       const engineType = explicitEngineType || getDefaultEngineType();
       const newSession = await gateway.createSession(engineType, dir);
       logger.debug("[NewSession] Created:", newSession);
 
-      // Match project by both directory AND engine type to avoid cross-engine mismatch
-      // (same directory can exist under both OC and Copilot engines).
-      const project = sessionStore.projects.find(p => p.directory === dir && p.engineType === engineType)
-        || sessionStore.projects.find(p => p.directory === dir);
+      // Match project by directory (projects are engine-agnostic now).
+      const project = sessionStore.projects.find(p => p.directory === dir);
       const projectID = project?.id || undefined;
       const processedSession = toSessionInfo(newSession, projectID);
 
@@ -870,8 +877,8 @@ export default function Chat() {
     }
   };
 
-  const handleAddProject = async (directory: string, engineType?: EngineType) => {
-    const resolvedEngineType = engineType || getDefaultEngineType() as EngineType;
+  const handleAddProject = async (directory: string) => {
+    const resolvedEngineType = getDefaultEngineType() as EngineType;
     logger.debug("[AddProject] Initializing project for directory:", directory);
 
     try {
@@ -886,13 +893,13 @@ export default function Chat() {
       // For engines that don't support listing projects,
       // construct a project entry from the session info
       if (!project && newSession) {
-        const projectID = newSession.projectId || `${resolvedEngineType}-${directory}`;
+        const normalizedDir = directory.replaceAll("\\", "/");
+        const projectID = newSession.projectId || `dir-${normalizedDir}`;
         const dirName = directory.split(/[/\\]/).filter(Boolean).pop() || directory;
         project = {
           id: projectID,
           directory,
           name: dirName,
-          engineType: resolvedEngineType,
         };
       }
 
@@ -1582,6 +1589,12 @@ export default function Chat() {
             }`}>
               {currentAgent().label}
             </span>
+            {/* Engine Badge */}
+            <Show when={sessionStore.current}>
+              <span class={`shrink-0 px-2 py-0.5 text-[10px] font-medium rounded-full ${currentEngineBadge().class}`}>
+                {currentEngineBadge().label}
+              </span>
+            </Show>
           </div>
           <Show when={!wsConnected()}>
             <div class="flex items-center gap-1.5 px-2 py-1 rounded-full bg-red-50 dark:bg-red-900/20 electron-no-drag">

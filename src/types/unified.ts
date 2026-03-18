@@ -405,7 +405,8 @@ export interface UnifiedProject {
   id: string;
   directory: string;
   name?: string;
-  engineType: EngineType;
+  /** Engine type — optional. Projects are engine-agnostic (sessions carry their own engineType). */
+  engineType?: EngineType;
   /** Engine-specific data */
   engineMeta?: Record<string, unknown>;
 }

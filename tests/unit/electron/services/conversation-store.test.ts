@@ -278,7 +278,7 @@ describe("ConversationStore", () => {
   });
 
   describe("Project Derivation", () => {
-    it("derives distinct projects from conversation directories and engines", () => {
+    it("derives distinct projects from conversation directories", () => {
       conversationStore.create({ engineType: "opencode", directory: "/work/project-a" });
       conversationStore.create({ engineType: "opencode", directory: "/work/project-a" });
       conversationStore.create({ engineType: "claude", directory: "/work/project-a" });
@@ -287,12 +287,13 @@ describe("ConversationStore", () => {
       conversationStore.create({ engineType: "opencode", directory: "/" });
 
       const projects = conversationStore.deriveProjects();
-      expect(projects.length).toBe(3);
+      // Projects are now grouped by directory only (engine-agnostic)
+      expect(projects.length).toBe(2);
       const names = projects.map(p => p.name).sort();
-      expect(names).toEqual(["project-a", "project-a", "project-b"]);
+      expect(names).toEqual(["project-a", "project-b"]);
       const ids = projects.map(p => p.id).sort();
-      expect(ids).toContain("opencode-/work/project-a");
-      expect(ids).toContain("claude-/work/project-a");
+      expect(ids).toContain("dir-/work/project-a");
+      expect(ids).toContain("dir-/work/project-b");
     });
   });
 

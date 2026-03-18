@@ -646,7 +646,7 @@ export class WeComAdapter extends ChannelAdapter {
 
     const projectRef = {
       directory: project.directory,
-      engineType: project.engineType,
+      engineType: project.engineType || "opencode",
       projectId: project.id,
     };
     this.sessionMapper.setP2PLastProject(chatId, projectRef);
@@ -834,7 +834,7 @@ export class WeComAdapter extends ChannelAdapter {
   ): import("../../../../src/types/unified").UnifiedProject[] {
     const grouped = new Map<string, typeof projects>();
     for (const p of projects) {
-      const key = p.engineType;
+      const key = p.engineType || "unknown";
       if (!grouped.has(key)) grouped.set(key, []);
       grouped.get(key)!.push(p);
     }

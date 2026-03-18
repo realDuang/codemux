@@ -367,36 +367,29 @@ class ConversationStore {
   // -------------------------------------------------------------------------
 
   /**
-   * Derive projects by grouping conversations by (directory, engineType).
-   * Each unique combination becomes a virtual project.
+   * Derive projects by grouping conversations by directory.
+   * Each unique directory becomes a single project (engine-agnostic).
    */
   deriveProjects(): UnifiedProject[] {
     this.ensureInitialized();
-    const dirEngineMap = new Map<
-      string,
-      { directory: string; engineType: EngineType }
-    >();
+    const dirMap = new Map<string, { directory: string }>();
 
     for (const conv of this.index.values()) {
       if (!conv.directory || conv.directory === "/") continue;
-      const key = `${conv.engineType}::${this.normalizeDir(conv.directory)}`;
-      if (!dirEngineMap.has(key)) {
-        dirEngineMap.set(key, {
-          directory: conv.directory,
-          engineType: conv.engineType,
-        });
+      const key = this.normalizeDir(conv.directory);
+      if (!dirMap.has(key)) {
+        dirMap.set(key, { directory: conv.directory });
       }
     }
 
     const projects: UnifiedProject[] = [];
-    for (const { directory, engineType } of dirEngineMap.values()) {
+    for (const { directory } of dirMap.values()) {
       const name =
         directory.split(/[/\\]/).filter(Boolean).pop() || directory;
       projects.push({
-        id: `${engineType}-${this.normalizeDir(directory)}`,
+        id: `dir-${this.normalizeDir(directory)}`,
         directory,
         name,
-        engineType,
       });
     }
     return projects;

@@ -897,7 +897,7 @@ export class TeamsAdapter extends ChannelAdapter {
   ): import("../../../../src/types/unified").UnifiedProject[] {
     const grouped = new Map<string, typeof projects>();
     for (const p of projects) {
-      const key = p.engineType;
+      const key = p.engineType || "unknown";
       if (!grouped.has(key)) grouped.set(key, []);
       grouped.get(key)!.push(p);
     }
@@ -946,7 +946,7 @@ export class TeamsAdapter extends ChannelAdapter {
 
     const projectRef = {
       directory: project.directory,
-      engineType: project.engineType,
+      engineType: project.engineType || "opencode",
       projectId: project.id,
     };
     this.sessionMapper.setP2PLastProject(chatId, projectRef);
@@ -1147,7 +1147,7 @@ export class TeamsAdapter extends ChannelAdapter {
 
     // Show session list for group binding
     if (!this.gatewayClient) return false;
-    const sessions = await this.gatewayClient.listSessions(project.engineType);
+    const sessions = await this.gatewayClient.listSessions(project.engineType || "opencode");
     const filtered = sessions.filter((s) => s.directory === project.directory);
     const sessionText = buildSessionListText(filtered, projectName);
     await this.transport!.sendText(groupChatId, sessionText);
@@ -1155,7 +1155,7 @@ export class TeamsAdapter extends ChannelAdapter {
     this.sessionMapper.setPendingSelection(groupChatId, {
       type: "session",
       sessions: filtered,
-      engineType: project.engineType,
+      engineType: project.engineType || "opencode",
       directory: project.directory,
       projectId: project.id,
       projectName,

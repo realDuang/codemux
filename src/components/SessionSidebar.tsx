@@ -1,9 +1,9 @@
-import { For, Show, Switch, Match, createSignal, createMemo, createEffect } from "solid-js";
+import { For, Show, Switch, Match, createSignal, createMemo } from "solid-js";
 import { SessionInfo, sessionStore, setSessionStore, getProjectName } from "../stores/session";
 import { useI18n, formatMessage } from "../lib/i18n";
 import { isDefaultTitle } from "../lib/session-utils";
 import type { UnifiedProject, EngineType, SessionActivityStatus } from "../types/unified";
-import { configStore, isEngineEnabled, getDefaultEngineType } from "../stores/config";
+import { configStore, isEngineEnabled, getDefaultEngineType, setDefaultNewSessionEngine } from "../stores/config";
 import { ProjectStore } from "../lib/project-store";
 import { isElectron } from "../lib/platform";
 import { systemAPI } from "../lib/electron-api";
@@ -29,22 +29,6 @@ interface ProjectGroup {
   project: UnifiedProject | null;
   name: string;
   sessions: SessionInfo[];
-}
-
-// Engine section — groups projects by engine type
-interface EngineSection {
-  engineType: string;
-  label: string;
-  projects: ProjectGroup[];
-}
-
-function getEngineLabel(engineType: string): string {
-  switch (engineType) {
-    case "opencode": return "OpenCode";
-    case "copilot": return "Copilot";
-    case "claude": return "Claude";
-    default: return engineType;
-  }
 }
 
 function getEngineBadge(engineType?: string): { label: string; class: string } | null {
@@ -162,81 +146,10 @@ export function SessionSidebar(props: SessionSidebarProps) {
     return result;
   });
 
-  // Group projects by engine type
-  const engineSections = createMemo((): EngineSection[] => {
-    const groups = projectGroups();
-    const engineMap = new Map<string, ProjectGroup[]>();
-
-    for (const group of groups) {
-      const engineType = group.project?.engineType || getDefaultEngineType();
-      if (!engineMap.has(engineType)) {
-        engineMap.set(engineType, []);
-      }
-      engineMap.get(engineType)!.push(group);
-    }
-
-    const sections: EngineSection[] = [];
-    for (const [engineType, projects] of engineMap) {
-      sections.push({
-        engineType,
-        label: getEngineLabel(engineType),
-        projects,
-      });
-    }
-
-    return sections;
-  });
-
-  const multipleEngines = createMemo(() => engineSections().length > 1);
-
-  // Engine tab state
-  const [activeTab, setActiveTab] = createSignal<string | null>(null);
-
+  // Running + enabled engines for default engine selector
   const runningEngines = createMemo(() =>
     configStore.engines.filter(e => e.status === "running" && isEngineEnabled(e.type))
   );
-
-  const showTabs = createMemo(() => runningEngines().length > 1);
-
-  // Auto-initialize/reset activeTab when running engines change
-  createEffect(() => {
-    if (showTabs()) {
-      const current = activeTab();
-      const running = runningEngines();
-      if (!current || !running.some(e => e.type === current)) {
-        setActiveTab(running[0]?.type ?? null);
-      }
-    } else {
-      setActiveTab(null);
-    }
-  });
-
-  // Auto-switch tab when user selects a session from a different engine
-  // Only track currentSessionId changes, not activeTab changes
-  let prevSessionId: string | null = null;
-  createEffect(() => {
-    const currentId = props.currentSessionId;
-    if (currentId === prevSessionId) return;
-    prevSessionId = currentId;
-
-    if (!showTabs() || !currentId) return;
-    const session = props.sessions.find(s => s.id === currentId);
-    if (session?.engineType && session.engineType !== activeTab()) {
-      if (runningEngines().some(e => e.type === session.engineType)) {
-        setActiveTab(session.engineType);
-      }
-    }
-  });
-
-  // Filtered sections based on active tab (or running engines when tabs are hidden)
-  const visibleSections = createMemo(() => {
-    const tab = activeTab();
-    const sections = engineSections();
-    if (tab) return sections.filter(s => s.engineType === tab);
-    // When no tabs shown (single engine or none), still filter to running+enabled engines only
-    const running = runningEngines();
-    return sections.filter(s => running.some(e => e.type === s.engineType));
-  });
 
   // Check if project is expanded
   const isProjectExpanded = (directory: string): boolean => {
@@ -306,53 +219,27 @@ export function SessionSidebar(props: SessionSidebarProps) {
 
   return (
     <div class="w-full bg-gray-50 dark:bg-slate-950 border-r border-gray-200 dark:border-slate-800 flex flex-col h-full overflow-hidden">
-      {/* Engine Tab Bar */}
-      <Show when={showTabs()}>
-        <Show when={!props.collapsed} fallback={
-          <div class="flex items-center justify-center px-1 pt-2 pb-1 border-b border-gray-200 dark:border-slate-800">
-            <span class={`text-[10px] font-medium px-1.5 py-0.5 rounded-full leading-none ${
-              getEngineBadge(activeTab() ?? "")?.class ?? "bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-400"
-            }`}>
-              {getEngineBadge(activeTab() ?? "")?.label ?? ""}
-            </span>
-          </div>
-        }>
-          <div class="flex items-center gap-1 px-2 pt-2 pb-1 border-b border-gray-200 dark:border-slate-800">
+      {/* Default Engine Selector (only when multiple engines available) */}
+      <Show when={runningEngines().length > 1 && !props.collapsed}>
+        <div class="flex items-center gap-2 px-3 pt-2 pb-1 border-b border-gray-200 dark:border-slate-800">
+          <span class="text-[11px] font-medium text-gray-500 dark:text-gray-400 whitespace-nowrap">{t().sidebar.defaultEngine}</span>
+          <select
+            value={getDefaultEngineType()}
+            onChange={(e) => setDefaultNewSessionEngine(e.target.value)}
+            class="flex-1 min-w-0 text-xs px-2 py-1 bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-md text-gray-700 dark:text-gray-300 focus:outline-none focus:ring-1 focus:ring-blue-500"
+          >
             <For each={runningEngines()}>
-              {(engine) => {
-                const isActive = () => activeTab() === engine.type;
-                const projectCount = () =>
-                  engineSections().find(s => s.engineType === engine.type)?.projects.length ?? 0;
-                const badge = () => getEngineBadge(engine.type);
-
-                return (
-                  <button
-                    class={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
-                      isActive()
-                        ? "bg-white dark:bg-slate-800 text-gray-900 dark:text-gray-100 shadow-sm"
-                        : "text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-slate-900"
-                    }`}
-                    onClick={() => setActiveTab(engine.type)}
-                  >
-                    <span>{getEngineLabel(engine.type)}</span>
-                    <span class={`text-[10px] px-1.5 py-0.5 rounded-full leading-none ${
-                      isActive()
-                        ? (badge()?.class ?? "bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-400")
-                        : "bg-gray-100 text-gray-400 dark:bg-slate-800 dark:text-gray-500"
-                    }`}>
-                      {projectCount()}
-                    </span>
-                  </button>
-                );
-              }}
+              {(engine) => (
+                <option value={engine.type}>{engine.name}</option>
+              )}
             </For>
-          </div>
-        </Show>
+          </select>
+        </div>
       </Show>
       {/* Session List */}
       <div class={`flex-1 overflow-y-auto ${props.collapsed ? "px-1" : "px-2"} py-2`}>
         <Show
-          when={visibleSections().length > 0}
+          when={projectGroups().length > 0}
           fallback={
             <Show when={!props.collapsed}>
                 <div class="p-8 text-center">
@@ -379,63 +266,43 @@ export function SessionSidebar(props: SessionSidebarProps) {
           {/* Collapsed mode: show only project icons */}
           <Show when={props.collapsed}>
             <div class="flex flex-col items-center gap-1">
-              <For each={visibleSections()}>
-                {(section) => (
-                  <For each={section.projects}>
-                    {(project) => {
-                      const hasActiveSession = () =>
-                        project.sessions.some(s => s.id === props.currentSessionId);
-                      return (
-                        <button
-                          class={`w-10 h-10 rounded-lg flex items-center justify-center transition-all ${
-                            hasActiveSession()
-                              ? "ring-2 ring-blue-500 ring-offset-1 dark:ring-offset-slate-950"
-                              : "hover:bg-gray-100 dark:hover:bg-slate-800"
-                          }`}
-                          onClick={() => {
-                            // If the current session already belongs to this project, keep it selected
-                            if (hasActiveSession() && props.currentSessionId) {
-                              props.onSelectSession(props.currentSessionId);
-                              return;
-                            }
-                            // Otherwise, fall back to the first session
-                            const firstSession = project.sessions[0];
-                            if (firstSession) props.onSelectSession(firstSession.id);
-                          }}
-                          title={project.name}
-                          aria-label={project.name}
-                        >
-                          <div
-                            class={`w-7 h-7 rounded flex items-center justify-center text-white text-xs font-medium ${getProjectColor(project.name)}`}
-                          >
-                            {getProjectInitial(project.name)}
-                          </div>
-                        </button>
-                      );
-                    }}
-                  </For>
-                )}
+              <For each={projectGroups()}>
+                {(project) => {
+                  const hasActiveSession = () =>
+                    project.sessions.some(s => s.id === props.currentSessionId);
+                  return (
+                    <button
+                      class={`w-10 h-10 rounded-lg flex items-center justify-center transition-all ${
+                        hasActiveSession()
+                          ? "ring-2 ring-blue-500 ring-offset-1 dark:ring-offset-slate-950"
+                          : "hover:bg-gray-100 dark:hover:bg-slate-800"
+                      }`}
+                      onClick={() => {
+                        if (hasActiveSession() && props.currentSessionId) {
+                          props.onSelectSession(props.currentSessionId);
+                          return;
+                        }
+                        const firstSession = project.sessions[0];
+                        if (firstSession) props.onSelectSession(firstSession.id);
+                      }}
+                      title={project.name}
+                      aria-label={project.name}
+                    >
+                      <div
+                        class={`w-7 h-7 rounded flex items-center justify-center text-white text-xs font-medium ${getProjectColor(project.name)}`}
+                      >
+                        {getProjectInitial(project.name)}
+                      </div>
+                    </button>
+                  );
+                }}
               </For>
             </div>
           </Show>
 
           {/* Expanded mode: full session list */}
           <Show when={!props.collapsed}>
-          <For each={visibleSections()}>
-            {(section) => (
-              <>
-                {/* Engine separator label (only when multiple engines and no tabs) */}
-                <Show when={multipleEngines() && !showTabs()}>
-                  <div class="flex items-center justify-between px-2 py-1.5 mt-1 first:mt-0">
-                    <span class="text-[11px] font-semibold uppercase tracking-wider text-gray-400 dark:text-gray-500">
-                      {section.label}
-                    </span>
-                    <span class="text-[10px] text-gray-400 dark:text-gray-500">
-                      {section.projects.length}
-                    </span>
-                  </div>
-                </Show>
-                <For each={section.projects}>
+          <For each={projectGroups()}>
             {(project) => {
               const isHovered = () => hoveredProject() === project.projectID;
               const isExpanded = () => isProjectExpanded(project.projectID);
@@ -482,13 +349,6 @@ export function SessionSidebar(props: SessionSidebarProps) {
                           <span class="text-sm font-medium text-gray-700 dark:text-gray-300 truncate">
                             {project.name}
                           </span>
-                          <Show when={getEngineBadge(project.project?.engineType)}>
-                            {(badge) => (
-                              <span class={`text-[10px] font-medium px-1.5 py-0.5 rounded-full leading-none flex-shrink-0 ${badge().class}`}>
-                                {badge().label}
-                              </span>
-                            )}
-                          </Show>
                         </div>
                         <span class="text-[10px] text-gray-400 dark:text-gray-500 truncate block">
                           {project.project?.directory || project.sessions[0]?.directory || ""}
@@ -502,7 +362,7 @@ export function SessionSidebar(props: SessionSidebarProps) {
                         class="p-1 text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 rounded transition-all"
                         onClick={(e) => {
                           e.stopPropagation();
-                          props.onNewSession(project.project ? getProjectDirectory(project.project) : undefined, project.project?.engineType);
+                          props.onNewSession(project.project ? getProjectDirectory(project.project) : undefined);
                         }}
                         title={t().sidebar.newSession}
                       >
@@ -628,6 +488,13 @@ export function SessionSidebar(props: SessionSidebarProps) {
                                       />
                                     </Show>
                                     <Show when={!isEditing()}>
+                                      <Show when={getEngineBadge(session.engineType)}>
+                                        {(badge) => (
+                                          <span class={`text-[9px] font-medium px-1 py-0.5 rounded leading-none flex-shrink-0 ${badge().class}`}>
+                                            {badge().label}
+                                          </span>
+                                        )}
+                                      </Show>
                                       <span class="text-[10px] text-gray-400 dark:text-gray-500 flex-shrink-0">
                                         {formatDate(session.updatedAt)}
                                       </span>
@@ -744,9 +611,6 @@ export function SessionSidebar(props: SessionSidebarProps) {
                 </div>
               );
             }}
-          </For>
-              </>
-            )}
           </For>
           </Show>
         </Show>

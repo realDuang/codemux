@@ -16,9 +16,7 @@ import {
   countProjectGroups,
   countSessions,
   selectSession,
-  hasEngineBadge,
   reseedTestData,
-  switchEngineTab,
   expandAllProjects,
 } from "../setup/test-helpers";
 
@@ -37,12 +35,12 @@ test.describe("Project - Create", () => {
     await navigateToChat(page);
   });
 
-  test("should add a new project with opencode engine", async ({ page }) => {
+  test("should add a new project", async ({ page }) => {
     // Count project groups before adding
     const groupsBefore = await countProjectGroups(page);
 
-    // Add a new project with opencode engine
-    await addProject(page, "/test/new-project", "opencode");
+    // Add a new project (engine is determined by default engine setting)
+    await addProject(page, "/test/new-project");
 
     // Wait for the project name to appear in the sidebar
     await expect(page.getByText("new-project").first()).toBeVisible({ timeout: 10_000 });
@@ -50,33 +48,22 @@ test.describe("Project - Create", () => {
     // Verify project count increased by 1
     const groupsAfter = await countProjectGroups(page);
     expect(groupsAfter).toBe(groupsBefore + 1);
-
-    // Verify the engine badge shows "OC" (blue badge for opencode)
-    const hasBadge = await hasEngineBadge(page, "new-project", "OC");
-    expect(hasBadge).toBe(true);
   });
 
-  test("should add a project with copilot engine", async ({ page }) => {
-    // Add a new project with copilot engine
-    await addProject(page, "/test/copilot-project", "copilot");
-
-    // Switch to Copilot tab to see the new project
-    await switchEngineTab(page, "Copilot");
+  test("should add another project", async ({ page }) => {
+    // Add a new project
+    await addProject(page, "/test/copilot-project");
 
     // Wait for the project to appear
     await expect(page.getByText("copilot-project").first()).toBeVisible({ timeout: 10_000 });
-
-    // Verify the engine badge shows "Copilot" (purple badge)
-    const hasBadge = await hasEngineBadge(page, "copilot-project", "Copilot");
-    expect(hasBadge).toBe(true);
   });
 
-  test("should dedup when adding same path and same engine", async ({ page }) => {
-    // Count project groups before — seed data already has project-alpha with opencode
+  test("should dedup when adding same path", async ({ page }) => {
+    // Count project groups before — seed data already has project-alpha
     const groupsBefore = await countProjectGroups(page);
 
-    // Attempt to add the same project-alpha with opencode engine (exact duplicate)
-    await addProject(page, "/test/project-alpha", "opencode");
+    // Attempt to add the same project-alpha (duplicate path)
+    await addProject(page, "/test/project-alpha");
 
     // Wait a moment for any potential UI update
     await page.waitForTimeout(1000);
@@ -86,34 +73,23 @@ test.describe("Project - Create", () => {
     expect(groupsAfter).toBe(groupsBefore);
   });
 
-  test("should NOT dedup when adding same path but different engine", async ({ page }) => {
-    // Count initial project groups on OpenCode tab
+  test("should also dedup when adding same path again", async ({ page }) => {
+    // Projects are grouped by directory only now.
+    // Adding same path again should not create a new project.
     const groupsBefore = await countProjectGroups(page);
 
-    // Note: project-alpha already exists with both opencode and copilot in seed data.
-    // Use a fresh path to demonstrate that same path + different engines = no dedup.
-    await addProject(page, "/test/new-dedup-test", "opencode");
-
-    // Wait for the first project to appear (on OpenCode tab)
+    await addProject(page, "/test/new-dedup-test");
     await expect(page.getByText("new-dedup-test").first()).toBeVisible({ timeout: 10_000 });
 
-    // Verify project count increased by 1 on the OpenCode tab
     const groupsAfterFirst = await countProjectGroups(page);
     expect(groupsAfterFirst).toBe(groupsBefore + 1);
 
-    // Now add the same path but with a different engine (copilot)
-    await addProject(page, "/test/new-dedup-test", "copilot");
+    // Adding same path again should not increase count
+    await addProject(page, "/test/new-dedup-test");
+    await page.waitForTimeout(1000);
 
-    // Switch to Copilot tab to check the copilot project was added
-    await switchEngineTab(page, "Copilot");
-
-    // Wait for the copilot version to appear
-    await expect(page.getByText("new-dedup-test").first()).toBeVisible({ timeout: 10_000 });
-
-    // Verify OpenCode tab still has the same count (no dedup with copilot)
-    await switchEngineTab(page, "OpenCode");
     const groupsAfterSecond = await countProjectGroups(page);
-    expect(groupsAfterSecond).toBe(groupsBefore + 1);
+    expect(groupsAfterSecond).toBe(groupsAfterFirst);
   });
 });
 

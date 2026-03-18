@@ -808,13 +808,13 @@ export default function Chat() {
       const filteredSessions = allSessions.filter(s =>
         s.directory && validDirectories.has(s.directory)
       );
-      // Build index for O(1) project lookup by engineType|directory
+      // Build index for O(1) project lookup by directory
       const projectIndex = new Map<string, UnifiedProject>();
       for (const p of allProjects) {
-        projectIndex.set(`${p.engineType}|${p.directory}`, p);
+        projectIndex.set(p.directory, p);
       }
       const sessionInfos = filteredSessions.map(s => {
-        const project = projectIndex.get(`${s.engineType}|${s.directory}`);
+        const project = projectIndex.get(s.directory);
         return toSessionInfo(s, project?.id);
       });
       setSessionStore("list", sessionInfos);

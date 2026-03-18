@@ -782,7 +782,19 @@ export class EngineManager extends EventEmitter {
     const conv = conversationStore.get(sessionId);
     if (!conv?.engineSessionId) return;
     const adapter = this.getAdapterForSession(sessionId);
-    return adapter.cancelMessage(conv.engineSessionId, conv.directory);
+    await adapter.cancelMessage(conv.engineSessionId, conv.directory);
+
+    // Clean up buffered parts for this session's in-flight messages.
+    // Normally persistMessage() handles cleanup on message.updated, but if
+    // the engine drops the completion event (crash/timeout), buffers linger.
+    for (const [messageId, convId] of this.messageConvMap) {
+      if (convId === sessionId) {
+        this.stepPartsBuffer.delete(messageId);
+        this.contentPartsBuffer.delete(messageId);
+        this.dirtySteps.delete(messageId);
+        this.messageConvMap.delete(messageId);
+      }
+    }
   }
 
   /**

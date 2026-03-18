@@ -54,6 +54,8 @@ import type {
 
 import { sdkSessionToUnified, convertSdkMessages } from "./converters";
 import { deleteCCSessionFile, readJsonlTimestamps } from "./cc-session-files";
+import { createRequire } from "node:module";
+import { sep } from "node:path";
 
 // ============================================================================
 // V2 Session Info — Tracks a persistent SDK session
@@ -796,6 +798,7 @@ export class ClaudeCodeAdapter extends EngineAdapter {
       // Don't let stale env var override the user's model selection
       const sdkEnv = { ...env };
       delete sdkEnv.ANTHROPIC_MODEL;
+      delete sdkEnv.ELECTRON_RUN_AS_NODE;
 
       const q = sdkQuery({
         prompt: "",
@@ -803,6 +806,7 @@ export class ClaudeCodeAdapter extends EngineAdapter {
           model: this.currentModelId ?? "claude-sonnet-4-20250514",
           env: sdkEnv,
           abortController: new AbortController(),
+          pathToClaudeCodeExecutable: this.resolveCliPath(),
         } as any,
       });
 
@@ -1060,6 +1064,25 @@ export class ClaudeCodeAdapter extends EngineAdapter {
   // ==========================================================================
 
   /**
+   * Resolve the SDK's cli.js path for child process spawning.
+   * In production Electron, the SDK is inside app.asar but child processes
+   * can't read from ASAR archives. Rewrite to the app.asar.unpacked path.
+   */
+  private resolveCliPath(): string | undefined {
+    try {
+      const _require = createRequire(import.meta.url);
+      const cliPath = _require.resolve("@anthropic-ai/claude-agent-sdk/cli.js");
+      const asarMarker = `app.asar${sep}`;
+      if (cliPath.includes(asarMarker)) {
+        return cliPath.replace(asarMarker, `app.asar.unpacked${sep}`);
+      }
+      return cliPath;
+    } catch {
+      return undefined; // Let SDK resolve it with default logic
+    }
+  }
+
+  /**
    * Get or create a V2 Session for the given session ID.
    * V2 Sessions enable process reuse — subsequent messages reuse the running
    * Claude Code subprocess.
@@ -1109,6 +1132,9 @@ export class ClaudeCodeAdapter extends EngineAdapter {
     };
     // Don't let stale env var override the user's model selection
     delete env.ANTHROPIC_MODEL;
+    // Remove ELECTRON_RUN_AS_NODE which leaks from Electron and can
+    // interfere with child process behavior
+    delete env.ELECTRON_RUN_AS_NODE;
 
     // Build SDK session options
     // We use 'as any' because the SDK v0.2.x SDKSessionOptions type is still
@@ -1121,6 +1147,7 @@ export class ClaudeCodeAdapter extends EngineAdapter {
       allowedTools: ["Read", "Write", "Edit", "Grep", "Glob", "Bash", "WebFetch", "WebSearch", "Task", "TodoWrite", "TodoRead", "NotebookEdit"],
       canUseTool: this.createCanUseTool(sessionId),
       systemPrompt: { type: "preset" as const, preset: "claude_code" as const, append: CODEMUX_IDENTITY_PROMPT },
+      pathToClaudeCodeExecutable: this.resolveCliPath(),
     };
 
     // Set working directory (requires SDK patch: patches/@anthropic-ai+claude-agent-sdk+0.2.63.patch)

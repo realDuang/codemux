@@ -25,9 +25,16 @@ export interface UpdateState {
     total: number;
   };
   error?: string;
+  downloadUrl?: string;
 }
 
 const CHECK_INTERVAL_MS = 4 * 60 * 60 * 1000; // 4 hours
+
+const GITHUB_RELEASES_URL = "https://github.com/realDuang/codemux/releases";
+
+function isCodeSignError(message: string): boolean {
+  return /code.?sign/i.test(message) || message.includes("代码不含资源");
+}
 
 class UpdateManager {
   private status: UpdateStatus = "idle";
@@ -43,9 +50,16 @@ class UpdateManager {
     // Configure logging
     autoUpdater.logger = log;
 
-    // Auto-download in background
-    autoUpdater.autoDownload = true;
-    autoUpdater.autoInstallOnAppQuit = true;
+    // macOS: Disable auto-download since Squirrel.Mac requires code signing
+    // which is not configured. Only check for version updates and show a
+    // manual download link. Same approach as hello-halo.
+    // Windows: Auto-download in background and install on quit.
+    if (process.platform === "darwin") {
+      autoUpdater.autoDownload = false;
+    } else {
+      autoUpdater.autoDownload = true;
+      autoUpdater.autoInstallOnAppQuit = true;
+    }
 
     // Register event listeners
     autoUpdater.on("checking-for-update", () => {
@@ -54,9 +68,18 @@ class UpdateManager {
     });
 
     autoUpdater.on("update-available", (info: UpdateInfo) => {
-      this.status = "available";
       this.updateInfo = info;
-      this.sendToRenderer("update:available", this.getState());
+      if (process.platform === "darwin") {
+        // macOS: skip download, show manual download link directly
+        this.status = "available";
+        const version = info.version;
+        const state = this.getState();
+        state.downloadUrl = `${GITHUB_RELEASES_URL}/tag/v${version}`;
+        this.sendToRenderer("update:available", state);
+      } else {
+        this.status = "available";
+        this.sendToRenderer("update:available", this.getState());
+      }
     });
 
     autoUpdater.on("update-not-available", (_info: UpdateInfo) => {
@@ -163,6 +186,12 @@ class UpdateManager {
 
     if (this.errorMessage) {
       state.error = this.errorMessage;
+      if (isCodeSignError(this.errorMessage)) {
+        const version = this.updateInfo?.version;
+        state.downloadUrl = version
+          ? `${GITHUB_RELEASES_URL}/tag/v${version}`
+          : `${GITHUB_RELEASES_URL}/latest`;
+      }
     }
 
     return state;

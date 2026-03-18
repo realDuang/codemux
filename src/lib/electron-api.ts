@@ -315,6 +315,7 @@ export interface UpdateStateInfo {
     total: number;
   };
   error?: string;
+  downloadUrl?: string;
 }
 
 // Auto Update API

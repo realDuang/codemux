@@ -46,13 +46,16 @@ export function UpdateNotification() {
       clearErrorTimer();
       setState(s);
       setDismissed(false);
-      // Auto-dismiss error notification after 10 seconds
-      errorDismissTimer = setTimeout(() => {
-        errorDismissTimer = null;
-        if (state()?.status === "error") {
-          setDismissed(true);
-        }
-      }, 10_000);
+      // Auto-dismiss generic error notifications after 10 seconds,
+      // but keep code signing errors visible (user needs the download link)
+      if (!s.downloadUrl) {
+        errorDismissTimer = setTimeout(() => {
+          errorDismissTimer = null;
+          if (state()?.status === "error") {
+            setDismissed(true);
+          }
+        }, 10_000);
+      }
     }));
 
     addCleanup(updateAPI.onStatusChange((s) => {
@@ -120,8 +123,45 @@ export function UpdateNotification() {
             </div>
           </Show>
 
-          {/* Downloading state */}
-          <Show when={state()?.status === "available" || state()?.status === "downloading"}>
+          {/* Available with manual download (macOS unsigned) */}
+          <Show when={state()?.status === "available" && state()?.downloadUrl}>
+            <div class="p-4">
+              <div class="flex items-center gap-2.5 mb-3">
+                <div class="w-8 h-8 rounded-full bg-blue-50 dark:bg-blue-900/20 flex items-center justify-center text-blue-600 dark:text-blue-400">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/>
+                  </svg>
+                </div>
+                <div>
+                  <p class="text-sm font-medium text-gray-900 dark:text-gray-100">
+                    {t().update.codeSignError}
+                  </p>
+                  <Show when={state()?.version}>
+                    <p class="text-xs text-gray-500 dark:text-gray-400">v{state()!.version}</p>
+                  </Show>
+                </div>
+              </div>
+              <div class="flex gap-2">
+                <button
+                  onClick={handleDismiss}
+                  class="flex-1 px-3 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-slate-800 hover:bg-gray-200 dark:hover:bg-slate-700 rounded-lg transition-colors"
+                >
+                  {t().update.restartLater}
+                </button>
+                <a
+                  href={state()!.downloadUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  class="flex-1 px-3 py-2 text-sm font-medium text-center text-white bg-blue-600 hover:bg-blue-700 active:bg-blue-800 rounded-lg transition-colors"
+                >
+                  {t().update.manualDownload}
+                </a>
+              </div>
+            </div>
+          </Show>
+
+          {/* Downloading state (or available without downloadUrl = auto-download pending) */}
+          <Show when={(state()?.status === "available" && !state()?.downloadUrl) || state()?.status === "downloading"}>
             <div class="p-4">
               <div class="flex items-center justify-between mb-3">
                 <div class="flex items-center gap-2.5">
@@ -207,16 +247,27 @@ export function UpdateNotification() {
                     </svg>
                   </div>
                   <p class="text-sm font-medium text-gray-900 dark:text-gray-100">
-                    {t().update.error}
+                    {state()?.downloadUrl ? t().update.codeSignError : t().update.error}
                   </p>
                 </div>
                 <div class="flex items-center gap-1">
-                  <button
-                    onClick={handleRetry}
-                    class="px-3 py-1.5 text-xs font-medium text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded-lg transition-colors"
-                  >
-                    {t().update.retry}
-                  </button>
+                  <Show when={state()?.downloadUrl} fallback={
+                    <button
+                      onClick={handleRetry}
+                      class="px-3 py-1.5 text-xs font-medium text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded-lg transition-colors"
+                    >
+                      {t().update.retry}
+                    </button>
+                  }>
+                    <a
+                      href={state()!.downloadUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      class="px-3 py-1.5 text-xs font-medium text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded-lg transition-colors"
+                    >
+                      {t().update.manualDownload}
+                    </a>
+                  </Show>
                   <button
                     onClick={handleDismiss}
                     class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors p-1"

@@ -454,154 +454,156 @@ export function SessionSidebar(props: SessionSidebarProps) {
                               }`}
                               onClick={() => !isEditing() && props.onSelectSession(session.id)}
                             >
-                              <div class="flex items-center justify-between gap-2">
-                                <div class="flex-1 min-w-0">
-                                  <div class="flex items-center gap-1.5">
-                                    <Show when={sessionStatus() !== "idle"}>
-                                      <StatusIndicator status={sessionStatus()} />
-                                    </Show>
-                                    <Show
-                                      when={isEditing()}
-                                      fallback={
-                                        <div
-                                          class={`text-sm truncate ${
-                                            isActive() || sessionStatus() === "completed" || sessionStatus() === "cancelled" || sessionStatus() === "error"
-                                              ? "text-gray-900 dark:text-gray-100 font-medium"
-                                              : "text-gray-600 dark:text-gray-400"
-                                          }`}
-                                          onDblClick={startEditing}
-                                          title={session.id}
-                                        >
-                                          {getDisplayTitle(session.title)}
-                                        </div>
-                                      }
+                              {/* Line 1: Status + Title */}
+                              <div class="flex items-center gap-1.5 min-w-0">
+                                <Show when={sessionStatus() !== "idle"}>
+                                  <StatusIndicator status={sessionStatus()} />
+                                </Show>
+                                <Show
+                                  when={isEditing()}
+                                  fallback={
+                                    <div
+                                      class={`text-sm truncate ${
+                                        isActive() || sessionStatus() === "completed" || sessionStatus() === "cancelled" || sessionStatus() === "error"
+                                          ? "text-gray-900 dark:text-gray-100 font-medium"
+                                          : "text-gray-600 dark:text-gray-400"
+                                      }`}
+                                      onDblClick={startEditing}
+                                      title={session.id}
                                     >
-                                      <input
-                                        type="text"
-                                        value={editingTitle()}
-                                        onInput={(e) => setEditingTitle(e.currentTarget.value)}
-                                        onKeyDown={handleKeyDown}
-                                        onBlur={saveTitle}
-                                        autofocus
-                                        class="text-sm w-full px-1 py-0.5 bg-white dark:bg-slate-700 border border-blue-500 rounded outline-none text-gray-900 dark:text-gray-100"
-                                        onClick={(e) => e.stopPropagation()}
-                                      />
-                                    </Show>
-                                    <Show when={!isEditing()}>
-                                      <Show when={getEngineBadge(session.engineType)}>
-                                        {(badge) => (
-                                          <span class={`text-[9px] font-medium px-1 py-0.5 rounded leading-none flex-shrink-0 ${badge().class}`}>
-                                            {badge().label}
-                                          </span>
-                                        )}
-                                      </Show>
-                                      <span class="text-[10px] text-gray-400 dark:text-gray-500 flex-shrink-0">
-                                        {formatDate(session.updatedAt)}
-                                      </span>
-                                    </Show>
-                                  </div>
-                                </div>
-
-                                <Show when={!isEditing()}>
-                                  <Show
-                                    when={pendingDeleteId() !== session.id}
-                                    fallback={
-                                      <div class="flex items-center gap-1 flex-shrink-0">
-                                        <button
-                                          onClick={(e) => {
-                                            e.stopPropagation();
-                                            props.onDeleteSession(session.id);
-                                            setPendingDeleteId(null);
-                                          }}
-                                          class="px-2 py-1 text-[10px] font-medium text-white bg-red-500 hover:bg-red-600 rounded transition-colors"
-                                        >
-                                          {t().common.confirm}
-                                        </button>
-                                        <button
-                                          onClick={(e) => {
-                                            e.stopPropagation();
-                                            setPendingDeleteId(null);
-                                          }}
-                                          class="px-2 py-1 text-[10px] font-medium text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-slate-700 rounded transition-colors"
-                                        >
-                                          {t().common.cancel}
-                                        </button>
-                                      </div>
-                                    }
-                                  >
-                                  <div class="flex items-center gap-0.5 flex-shrink-0">
-                                    <button
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        navigator.clipboard.writeText(session.id).catch(() => {});
-                                      }}
-                                      class="opacity-0 group-hover:opacity-100 p-1.5 text-gray-400 hover:text-green-500 hover:bg-green-50 dark:hover:bg-green-900/20 rounded transition-all"
-                                      title={`${t().sidebar.copySessionId}: ${session.id}`}
-                                    >
-                                      <svg
-                                        xmlns="http://www.w3.org/2000/svg"
-                                        width="12"
-                                        height="12"
-                                        viewBox="0 0 24 24"
-                                        fill="none"
-                                        stroke="currentColor"
-                                        stroke-width="2"
-                                        stroke-linecap="round"
-                                        stroke-linejoin="round"
-                                      >
-                                        <rect width="14" height="14" x="8" y="8" rx="2" ry="2" />
-                                        <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" />
-                                      </svg>
-                                    </button>
-                                    <button
-                                      onClick={startEditing}
-                                      class="opacity-0 group-hover:opacity-100 p-1.5 text-gray-400 hover:text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded transition-all"
-                                      title={t().sidebar.renameSession}
-                                    >
-                                      <svg
-                                        xmlns="http://www.w3.org/2000/svg"
-                                        width="12"
-                                        height="12"
-                                        viewBox="0 0 24 24"
-                                        fill="none"
-                                        stroke="currentColor"
-                                        stroke-width="2"
-                                        stroke-linecap="round"
-                                        stroke-linejoin="round"
-                                      >
-                                        <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
-                                        <path d="m15 5 4 4" />
-                                      </svg>
-                                    </button>
-                                    <button
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        e.preventDefault();
-                                        setPendingDeleteId(session.id);
-                                      }}
-                                      class="opacity-0 group-hover:opacity-100 p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded transition-all"
-                                      title={t().sidebar.deleteSession}
-                                    >
-                                      <svg
-                                        xmlns="http://www.w3.org/2000/svg"
-                                        width="12"
-                                        height="12"
-                                        viewBox="0 0 24 24"
-                                        fill="none"
-                                        stroke="currentColor"
-                                        stroke-width="2"
-                                        stroke-linecap="round"
-                                        stroke-linejoin="round"
-                                      >
-                                        <path d="M3 6h18" />
-                                        <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" />
-                                        <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" />
-                                      </svg>
-                                    </button>
-                                  </div>
-                                  </Show>
+                                      {getDisplayTitle(session.title)}
+                                    </div>
+                                  }
+                                >
+                                  <input
+                                    type="text"
+                                    value={editingTitle()}
+                                    onInput={(e) => setEditingTitle(e.currentTarget.value)}
+                                    onKeyDown={handleKeyDown}
+                                    onBlur={saveTitle}
+                                    autofocus
+                                    class="text-sm w-full px-1 py-0.5 bg-white dark:bg-slate-700 border border-blue-500 rounded outline-none text-gray-900 dark:text-gray-100"
+                                    onClick={(e) => e.stopPropagation()}
+                                  />
                                 </Show>
                               </div>
+
+                              {/* Line 2: Engine badge + Time */}
+                              <Show when={!isEditing()}>
+                                <div class="flex items-center gap-1.5 mt-0.5">
+                                  <Show when={getEngineBadge(session.engineType)}>
+                                    {(badge) => (
+                                      <span class={`text-[9px] font-medium px-1 py-0.5 rounded leading-none flex-shrink-0 ${badge().class}`}>
+                                        {badge().label}
+                                      </span>
+                                    )}
+                                  </Show>
+                                  <span class="text-[10px] text-gray-400 dark:text-gray-500">
+                                    {formatDate(session.updatedAt)}
+                                  </span>
+                                </div>
+                              </Show>
+
+                              {/* Overlay action buttons on hover */}
+                              <Show when={!isEditing()}>
+                                <Show
+                                  when={pendingDeleteId() !== session.id}
+                                  fallback={
+                                    <div class="absolute right-1 top-1/2 -translate-y-1/2 flex items-center gap-1 bg-white dark:bg-slate-800 rounded-md shadow-sm px-1 py-0.5">
+                                      <button
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          props.onDeleteSession(session.id);
+                                          setPendingDeleteId(null);
+                                        }}
+                                        class="px-2 py-1 text-[10px] font-medium text-white bg-red-500 hover:bg-red-600 rounded transition-colors"
+                                      >
+                                        {t().common.confirm}
+                                      </button>
+                                      <button
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          setPendingDeleteId(null);
+                                        }}
+                                        class="px-2 py-1 text-[10px] font-medium text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-slate-700 rounded transition-colors"
+                                      >
+                                        {t().common.cancel}
+                                      </button>
+                                    </div>
+                                  }
+                                >
+                                <div class="absolute right-1 top-1/2 -translate-y-1/2 hidden group-hover:flex items-center gap-0.5 bg-white/90 dark:bg-slate-800/90 backdrop-blur-xs rounded-md shadow-sm px-0.5 py-0.5">
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      navigator.clipboard.writeText(session.id).catch(() => {});
+                                    }}
+                                    class="p-1.5 text-gray-400 hover:text-green-500 hover:bg-green-50 dark:hover:bg-green-900/20 rounded transition-all"
+                                    title={`${t().sidebar.copySessionId}: ${session.id}`}
+                                  >
+                                    <svg
+                                      xmlns="http://www.w3.org/2000/svg"
+                                      width="12"
+                                      height="12"
+                                      viewBox="0 0 24 24"
+                                      fill="none"
+                                      stroke="currentColor"
+                                      stroke-width="2"
+                                      stroke-linecap="round"
+                                      stroke-linejoin="round"
+                                    >
+                                      <rect width="14" height="14" x="8" y="8" rx="2" ry="2" />
+                                      <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" />
+                                    </svg>
+                                  </button>
+                                  <button
+                                    onClick={startEditing}
+                                    class="p-1.5 text-gray-400 hover:text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded transition-all"
+                                    title={t().sidebar.renameSession}
+                                  >
+                                    <svg
+                                      xmlns="http://www.w3.org/2000/svg"
+                                      width="12"
+                                      height="12"
+                                      viewBox="0 0 24 24"
+                                      fill="none"
+                                      stroke="currentColor"
+                                      stroke-width="2"
+                                      stroke-linecap="round"
+                                      stroke-linejoin="round"
+                                    >
+                                      <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
+                                      <path d="m15 5 4 4" />
+                                    </svg>
+                                  </button>
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      e.preventDefault();
+                                      setPendingDeleteId(session.id);
+                                    }}
+                                    class="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded transition-all"
+                                    title={t().sidebar.deleteSession}
+                                  >
+                                    <svg
+                                      xmlns="http://www.w3.org/2000/svg"
+                                      width="12"
+                                      height="12"
+                                      viewBox="0 0 24 24"
+                                      fill="none"
+                                      stroke="currentColor"
+                                      stroke-width="2"
+                                      stroke-linecap="round"
+                                      stroke-linejoin="round"
+                                    >
+                                      <path d="M3 6h18" />
+                                      <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" />
+                                      <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" />
+                                    </svg>
+                                  </button>
+                                </div>
+                                </Show>
+                              </Show>
                             </div>
                           );
                         }}

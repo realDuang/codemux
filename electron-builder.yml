@@ -16,6 +16,7 @@ asarUnpack:
 extraMetadata:
   main: out/main/index.mjs
 mac:
+  identity: null
   target:
     - target: dmg
     - target: zip

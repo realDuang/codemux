@@ -419,6 +419,8 @@ export const zh: LocaleDict = {
     restartNow: "立即重启",
     restartLater: "稍后",
     error: "检查更新失败",
+    codeSignError: "发现新版本，请手动下载安装",
+    manualDownload: "前往下载",
     autoCheck: "自动检查更新",
     autoCheckDesc: "启动时自动检查更新",
     launchAtLogin: "开机自启动",

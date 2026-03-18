@@ -418,6 +418,8 @@ export interface LocaleDict {
     restartNow: string;
     restartLater: string;
     error: string;
+    codeSignError: string;
+    manualDownload: string;
     autoCheck: string;
     autoCheckDesc: string;
     launchAtLogin: string;
@@ -846,6 +848,8 @@ export const en: LocaleDict = {
     restartNow: "Restart Now",
     restartLater: "Later",
     error: "Update check failed",
+    codeSignError: "New version available, please download manually",
+    manualDownload: "Download",
     autoCheck: "Auto-check for updates",
     autoCheckDesc: "Automatically check for updates on startup",
     launchAtLogin: "Launch at Login",

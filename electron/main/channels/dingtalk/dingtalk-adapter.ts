@@ -756,7 +756,7 @@ export class DingTalkAdapter extends ChannelAdapter {
     await this.createGroupForSession(
       senderId,
       session.id,
-      pending.engineType,
+      session.engineType,
       pending.directory,
       pending.projectId,
       pending.projectName || "",

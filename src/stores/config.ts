@@ -23,7 +23,7 @@ interface ConfigState {
   /** Engine enabled state, keyed by engine type. Missing = true (default enabled). */
   enabledEngines: Record<string, boolean>;
   /** User-chosen default engine for new sessions, persisted to settings.json */
-  defaultNewSessionEngine: string | null;
+  defaultNewSessionEngine: EngineType | null;
 }
 
 export const [configStore, setConfigStore] = createStore<ConfigState>({
@@ -135,7 +135,7 @@ export function getDefaultEngineType(): string {
 }
 
 /** Set the default engine for new sessions and persist to settings. */
-export function setDefaultNewSessionEngine(engineType: string): void {
+export function setDefaultNewSessionEngine(engineType: EngineType): void {
   setConfigStore("defaultNewSessionEngine", engineType);
   saveSetting("defaultEngine", engineType);
 }
@@ -144,7 +144,7 @@ export function setDefaultNewSessionEngine(engineType: string): void {
 export function restoreDefaultEngine(): void {
   const saved = getSetting<string>("defaultEngine");
   if (saved) {
-    setConfigStore("defaultNewSessionEngine", saved);
+    setConfigStore("defaultNewSessionEngine", saved as EngineType);
   }
 }
 

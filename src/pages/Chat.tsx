@@ -27,7 +27,7 @@ import { AddProjectModal } from "../components/AddProjectModal";
 import type { UnifiedMessage, UnifiedPart, UnifiedPermission, UnifiedQuestion, UnifiedSession, UnifiedProject, AgentMode, EngineType, SessionActivityStatus } from "../types/unified";
 import { useI18n, formatMessage } from "../lib/i18n";
 import { isDefaultTitle } from "../lib/session-utils";
-import { formatTokenCount, formatCostWithUnit } from "../components/share/common";
+import { formatTokenCount, formatCostWithUnit, getEngineBadge } from "../components/share/common";
 import { getSetting, saveSetting } from "../lib/settings";
 
 import { InputAreaQuestion } from "../components/InputAreaQuestion";
@@ -225,15 +225,9 @@ export default function Chat() {
   });
 
   // Engine badge for title bar
-  const currentEngineBadge = createMemo(() => {
-    const et = currentEngineType();
-    switch (et) {
-      case "opencode": return { label: "OC", class: "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400" };
-      case "copilot": return { label: "Copilot", class: "bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400" };
-      case "claude": return { label: "Claude", class: "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400" };
-      default: return { label: et, class: "bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-400" };
-    }
-  });
+  const currentEngineBadge = createMemo(() =>
+    getEngineBadge(currentEngineType()) ?? { label: currentEngineType(), class: "bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-400" }
+  );
 
   // Whether the current engine supports enqueuing messages while busy
   const canEnqueue = createMemo(() => {

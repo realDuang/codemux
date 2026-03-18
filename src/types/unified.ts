@@ -164,7 +164,7 @@ export interface UnifiedSession {
   directory: string;
   title?: string;
   parentId?: string;
-  /** Resolved project ID — populated by SessionStore from (directory, engineType) */
+  /** Resolved project ID — populated by SessionStore from directory */
   projectId?: string;
   time: {
     created: number;

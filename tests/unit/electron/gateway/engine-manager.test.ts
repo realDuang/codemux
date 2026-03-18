@@ -234,7 +234,7 @@ describe("EngineManager", () => {
       const conv1 = { id: "c1", engineType: "opencode", directory: "/dir1", engineSessionId: "es1" };
       (conversationStore.list as any).mockReturnValue([conv1]);
       (conversationStore.listMessages as any).mockReturnValue([{ id: "m1" }]);
-      await engineManager.deleteProject("opencode-/dir1");
+      await engineManager.deleteProject("dir-/dir1");
       expect(adapterA.deleteSession).toHaveBeenCalledWith("es1");
       expect(conversationStore.delete).toHaveBeenCalledWith("c1");
 

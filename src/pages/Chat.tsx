@@ -1203,9 +1203,9 @@ export default function Chat() {
     const exists = sessionStore.list.some((s) => s.id === created.id);
     if (exists) return;
 
-    // Find matching project
+    // Find matching project by directory
     const project = sessionStore.projects.find(
-      (p) => p.directory === created.directory && p.engineType === created.engineType,
+      (p) => p.directory === created.directory,
     );
 
     setSessionStore("list", (list) => [toSessionInfo(created, project?.id), ...list]);

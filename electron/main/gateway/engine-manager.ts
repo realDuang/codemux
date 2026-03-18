@@ -668,7 +668,7 @@ export class EngineManager extends EventEmitter {
   async deleteProject(projectId: string): Promise<void> {
     const allConvs = conversationStore.list();
     const projectConvs = allConvs.filter((conv) => {
-      const derived = `${conv.engineType}-${conv.directory.replaceAll("\\", "/")}`;
+      const derived = `dir-${conv.directory.replaceAll("\\", "/")}`;
       return derived === projectId;
     });
 

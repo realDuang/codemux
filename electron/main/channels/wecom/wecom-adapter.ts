@@ -696,7 +696,7 @@ export class WeComAdapter extends ChannelAdapter {
     await this.createGroupForSession(
       userId,
       session.id,
-      pending.engineType,
+      session.engineType,
       pending.directory,
       pending.projectId,
       pending.projectName || "",

@@ -763,7 +763,7 @@ export class FeishuAdapter extends ChannelAdapter {
     await this.createGroupForSession(
       userOpenId,
       session.id,
-      pending.engineType,
+      session.engineType,
       pending.directory,
       pending.projectId,
       pending.projectName || "",

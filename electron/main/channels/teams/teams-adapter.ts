@@ -984,7 +984,7 @@ export class TeamsAdapter extends ChannelAdapter {
     // Bind the selected session as a temp session for P2P
     const tempSession: TeamsTempSession = {
       conversationId: session.id,
-      engineType: pending.engineType,
+      engineType: session.engineType,
       directory: pending.directory,
       projectId: pending.projectId,
       lastActiveAt: Date.now(),
@@ -1166,6 +1166,7 @@ export class TeamsAdapter extends ChannelAdapter {
     const trimmed = text.trim().toLowerCase();
     let conversationId: string;
     let sessionTitle: string;
+    let selectedEngineType = pending.engineType!;
 
     if (trimmed === "new") {
       // Create a new session
@@ -1197,6 +1198,7 @@ export class TeamsAdapter extends ChannelAdapter {
       const session = pending.sessions[num - 1];
       conversationId = session.id;
       sessionTitle = session.title || session.id.slice(0, 8);
+      selectedEngineType = session.engineType;
     }
 
     this.sessionMapper.clearPendingSelection(groupChatId);
@@ -1205,7 +1207,7 @@ export class TeamsAdapter extends ChannelAdapter {
     const binding: TeamsGroupBinding = {
       chatId: groupChatId,
       conversationId,
-      engineType: pending.engineType,
+      engineType: selectedEngineType,
       directory: pending.directory,
       projectId: pending.projectId,
       serviceUrl,

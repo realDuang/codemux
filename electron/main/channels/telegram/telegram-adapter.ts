@@ -892,7 +892,7 @@ export class TelegramAdapter extends ChannelAdapter {
     // Bind the selected session as a temp session for P2P
     const tempSession: TelegramTempSession = {
       conversationId: session.id,
-      engineType: pending.engineType,
+      engineType: session.engineType,
       directory: pending.directory,
       projectId: pending.projectId,
       lastActiveAt: Date.now(),

@@ -31,11 +31,12 @@ test.describe("Sidebar", () => {
 
   test("should display engine badges on session items", async ({ page }) => {
     // Engine badges are now on session rows, not project headers.
-    // Expand all projects and check for badge text in session items.
+    // Expand all projects so session items (with badges) become visible.
     await expandAllProjects(page);
-    // "OC" badge should appear on opencode sessions
-    const hasOC = await page.getByText("OC").first().isVisible().catch(() => false);
-    expect(hasOC).toBe(true);
+    await page.waitForTimeout(500);
+    // "OC" badge should appear on opencode sessions (use exact match to avoid partial)
+    const ocBadge = page.locator("span").filter({ hasText: /^OC$/ }).first();
+    await expect(ocBadge).toBeVisible({ timeout: 5_000 });
   });
 
   test("should display session titles from all engines", async ({ page }) => {

@@ -209,14 +209,14 @@ test.describe("Project - Delete (Hide)", () => {
   });
 
   test("should delete project-beta and its session", async ({ page }) => {
-    // Switch to Copilot tab where project-beta lives
-    await switchEngineTab(page, "Copilot");
+    // project-beta is visible in the unified project list (no tabs needed)
 
     // Verify project-beta and its session exist in seed data
     await expect(page.getByText("project-beta").first()).toBeVisible({ timeout: 5_000 });
+    await expandAllProjects(page);
     await expect(page.getByText("Refactor database layer").first()).toBeVisible({ timeout: 5_000 });
 
-    // Count sessions before deletion (on Copilot tab)
+    // Count sessions before deletion
     const sessionsBefore = await countSessions(page);
 
     // Hide (delete) project-beta
@@ -228,7 +228,7 @@ test.describe("Project - Delete (Hide)", () => {
     // Verify its session "Refactor database layer" is also removed
     await expect(page.getByText("Refactor database layer")).toHaveCount(0, { timeout: 5_000 });
 
-    // Verify total session count on Copilot tab decreased by 1
+    // Verify total session count decreased by 1
     const sessionsAfter = await countSessions(page);
     expect(sessionsAfter).toBe(sessionsBefore - 1);
   });

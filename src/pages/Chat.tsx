@@ -1581,6 +1581,12 @@ export default function Chat() {
             <h1 class="text-base font-semibold text-gray-900 dark:text-white truncate">
               {getDisplayTitle(currentSessionTitle())}
             </h1>
+            {/* Engine Badge */}
+            <Show when={sessionStore.current}>
+              <span class={`shrink-0 px-2 py-0.5 text-[10px] font-medium rounded-full ${currentEngineBadge().class}`}>
+                {currentEngineBadge().label}
+              </span>
+            </Show>
             {/* Agent Mode Indicator */}
             <span class={`shrink-0 px-2 py-0.5 text-[10px] font-medium rounded-full ${
               currentAgent().id === "plan"
@@ -1589,12 +1595,6 @@ export default function Chat() {
             }`}>
               {currentAgent().label}
             </span>
-            {/* Engine Badge */}
-            <Show when={sessionStore.current}>
-              <span class={`shrink-0 px-2 py-0.5 text-[10px] font-medium rounded-full ${currentEngineBadge().class}`}>
-                {currentEngineBadge().label}
-              </span>
-            </Show>
           </div>
           <Show when={!wsConnected()}>
             <div class="flex items-center gap-1.5 px-2 py-1 rounded-full bg-red-50 dark:bg-red-900/20 electron-no-drag">

@@ -208,11 +208,17 @@ class GatewayAPI {
   sendMessage(
     sessionId: string,
     text: string,
-    options?: { mode?: string; modelId?: string },
+    options?: { mode?: string; modelId?: string; images?: import("../types/unified").ImageAttachment[] },
   ): Promise<UnifiedMessage> {
+    const content: import("../types/unified").MessagePromptContent[] = [{ type: "text", text }];
+    if (options?.images) {
+      for (const img of options.images) {
+        content.push({ type: "image", data: img.data, mimeType: img.mimeType });
+      }
+    }
     return gatewayClient.sendMessage({
       sessionId,
-      content: [{ type: "text", text }],
+      content,
       mode: options?.mode,
       modelId: options?.modelId,
     });

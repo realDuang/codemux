@@ -534,8 +534,24 @@ export interface MessageSendRequest {
 export interface MessagePromptContent {
   type: "text" | "image";
   text?: string;
-  /** Base64 or URL for image type */
+  /** Base64-encoded image data (without data: prefix) for image type */
   data?: string;
+  /** MIME type for image (e.g. "image/png", "image/jpeg") */
+  mimeType?: string;
+}
+
+/** Image attachment from the frontend, carried through gateway to adapters */
+export interface ImageAttachment {
+  /** Unique ID for this attachment */
+  id: string;
+  /** Display file name */
+  name: string;
+  /** MIME type (image/png, image/jpeg, image/gif, image/webp) */
+  mimeType: string;
+  /** Base64-encoded image data (without data: prefix) */
+  data: string;
+  /** Original file size in bytes (before base64 encoding) */
+  size: number;
 }
 
 export interface PermissionReplyRequest {

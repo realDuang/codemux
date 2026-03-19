@@ -499,30 +499,44 @@ export class EngineManager extends EventEmitter {
       const now = Date.now();
       const msgId = timeId("msg");
 
-      // Build text parts from prompt content
-      const textParts: TextPart[] = content
-        .filter((c) => c.type === "text" && c.text)
-        .map((c, idx) => ({
-          type: "text" as const,
-          id: `${msgId}_p${idx}`,
-          messageId: msgId,
-          sessionId: conversationId,
-          text: c.text!,
-        }));
+      // Build parts from prompt content (text + image placeholders)
+      const parts: Array<TextPart> = [];
+      let partIdx = 0;
+      for (const c of content) {
+        if (c.type === "text" && c.text) {
+          parts.push({
+            type: "text" as const,
+            id: `${msgId}_p${partIdx++}`,
+            messageId: msgId,
+            sessionId: conversationId,
+            text: c.text,
+          });
+        } else if (c.type === "image" && c.data) {
+          // Store image as a text placeholder — base64 data is not persisted
+          // to avoid bloating conversation files
+          parts.push({
+            type: "text" as const,
+            id: `${msgId}_p${partIdx++}`,
+            messageId: msgId,
+            sessionId: conversationId,
+            text: `[Image: ${c.mimeType ?? "image"}]`,
+          });
+        }
+      }
 
-      if (textParts.length === 0) return;
+      if (parts.length === 0) return;
 
       const convMessage: ConversationMessage = {
         id: msgId,
         role: "user",
         time: { created: now, completed: now },
-        parts: textParts,
+        parts,
       };
 
       await conversationStore.appendMessage(conversationId, convMessage);
 
       engineManagerLog.debug(
-        `Persisted user message ${msgId} to conversation ${conversationId}: ${textParts.length} text parts`,
+        `Persisted user message ${msgId} to conversation ${conversationId}: ${parts.length} parts`,
       );
     } catch (err) {
       engineManagerLog.error(`Failed to persist user message for conversation ${conversationId}:`, err);

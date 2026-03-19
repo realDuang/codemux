@@ -62,7 +62,7 @@ export class GatewayServer {
       throw new Error("Gateway server already started");
     }
 
-    const WS_MAX_PAYLOAD = 1 * 1024 * 1024; // 1MB
+    const WS_MAX_PAYLOAD = 20 * 1024 * 1024; // 20MB — image attachments can be large
 
     if ("server" in options) {
       this.wss = new WebSocketServer({ server: options.server, path: options.path, maxPayload: WS_MAX_PAYLOAD });

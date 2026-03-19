@@ -1,7 +1,11 @@
 import { createSignal, createEffect, createMemo, For, Show } from "solid-js";
 import { IconArrowUp } from "./icons";
 import { useI18n } from "../lib/i18n";
-import type { AgentMode } from "../types/unified";
+import type { AgentMode, ImageAttachment } from "../types/unified";
+
+const ACCEPTED_IMAGE_TYPES = ["image/jpeg", "image/png", "image/gif", "image/webp"];
+const MAX_IMAGE_SIZE = 10 * 1024 * 1024; // 10MB
+const MAX_IMAGES = 5;
 
 const defaultModes: AgentMode[] = [
   { id: "build", label: "Build" },
@@ -102,7 +106,7 @@ function getModeIcon(mode: AgentMode, index: number) {
 }
 
 interface PromptInputProps {
-  onSend: (text: string, agent: AgentMode) => void;
+  onSend: (text: string, agent: AgentMode, images?: ImageAttachment[]) => void;
   onCancel?: () => void;
   /** When true, the session is generating — show stop button and prevent duplicate sends, but keep textarea editable */
   isGenerating?: boolean;
@@ -115,12 +119,77 @@ interface PromptInputProps {
   availableModes?: AgentMode[];
   /** When true, the input is disabled (e.g., no session or modes not loaded yet) */
   disabled?: boolean;
+  /** Whether the current engine supports image attachments */
+  imageAttachmentEnabled?: boolean;
 }
 
 export function PromptInput(props: PromptInputProps) {
   const { t } = useI18n();
   const [text, setText] = createSignal("");
   const [textarea, setTextarea] = createSignal<HTMLTextAreaElement>();
+  const [images, setImages] = createSignal<ImageAttachment[]>([]);
+  const [dragOver, setDragOver] = createSignal(false);
+  let fileInputRef: HTMLInputElement | undefined;
+  let pasteCounter = 0;
+
+  const addImageFromFile = (file: File) => {
+    if (!ACCEPTED_IMAGE_TYPES.includes(file.type)) return;
+    if (file.size > MAX_IMAGE_SIZE) return;
+    if (images().length >= MAX_IMAGES) return;
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      const dataUrl = reader.result as string;
+      const base64 = dataUrl.split(",")[1];
+      if (!base64) return;
+      setImages((prev) => [
+        ...prev,
+        {
+          id: `img_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+          name: file.name || `paste-${++pasteCounter}.png`,
+          mimeType: file.type,
+          data: base64,
+          size: file.size,
+        },
+      ]);
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const removeImage = (id: string) => {
+    setImages((prev) => prev.filter((img) => img.id !== id));
+  };
+
+  const handlePaste = (e: ClipboardEvent) => {
+    if (!props.imageAttachmentEnabled) return;
+    const items = e.clipboardData?.items;
+    if (!items) return;
+    for (const item of items) {
+      if (item.type.startsWith("image/")) {
+        e.preventDefault();
+        const file = item.getAsFile();
+        if (file) addImageFromFile(file);
+      }
+    }
+  };
+
+  const handleDrop = (e: DragEvent) => {
+    e.preventDefault();
+    setDragOver(false);
+    if (!props.imageAttachmentEnabled) return;
+    const files = e.dataTransfer?.files;
+    if (!files) return;
+    for (const file of files) {
+      if (file.type.startsWith("image/")) addImageFromFile(file);
+    }
+  };
+
+  const handleDragOver = (e: DragEvent) => {
+    e.preventDefault();
+    if (props.imageAttachmentEnabled) setDragOver(true);
+  };
+
+  const handleDragLeave = () => setDragOver(false);
 
   const modes = createMemo(() =>
     props.availableModes && props.availableModes.length > 0
@@ -164,9 +233,12 @@ export function PromptInput(props: PromptInputProps) {
     if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
       e.preventDefault();
       const canSend = !props.isGenerating || props.canEnqueue;
-      if (text().trim() && canSend && !props.disabled) {
-        props.onSend(text(), agent());
+      const hasContent = text().trim() || images().length > 0;
+      if (hasContent && canSend && !props.disabled) {
+        const imgs = images().length > 0 ? [...images()] : undefined;
+        props.onSend(text(), agent(), imgs);
         setText("");
+        setImages([]);
       }
     }
   };
@@ -175,9 +247,12 @@ export function PromptInput(props: PromptInputProps) {
     const canSend = !props.isGenerating || props.canEnqueue;
     if (!canSend || props.disabled) return;
 
-    if (text().trim()) {
-      props.onSend(text(), agent());
+    const hasContent = text().trim() || images().length > 0;
+    if (hasContent) {
+      const imgs = images().length > 0 ? [...images()] : undefined;
+      props.onSend(text(), agent(), imgs);
       setText("");
+      setImages([]);
     }
   };
 
@@ -235,8 +310,37 @@ export function PromptInput(props: PromptInputProps) {
 
       {/* Input area */}
       <div
-        class={`relative rounded-2xl border shadow-lg shadow-black/[0.03] dark:shadow-black/20 focus-within:ring-2 focus-within:border-transparent transition-all ${activeAccent().bg} ${activeAccent().border} ${activeAccent().ring}`}
+        class={`relative rounded-2xl border shadow-lg shadow-black/[0.03] dark:shadow-black/20 focus-within:ring-2 focus-within:border-transparent transition-all ${activeAccent().bg} ${activeAccent().border} ${activeAccent().ring} ${dragOver() ? "ring-2 ring-blue-400 border-blue-400" : ""}`}
+        onDragOver={handleDragOver}
+        onDragLeave={handleDragLeave}
+        onDrop={handleDrop}
       >
+        {/* Image preview area */}
+        <Show when={images().length > 0}>
+          <div class="flex gap-2 px-3 pt-3 pb-1 overflow-x-auto">
+            <For each={images()}>
+              {(img) => (
+                <div class="relative flex-shrink-0 w-12 h-12 rounded-lg overflow-hidden bg-slate-200 dark:bg-slate-700 group">
+                  <img
+                    src={`data:${img.mimeType};base64,${img.data}`}
+                    alt={img.name}
+                    class="w-full h-full object-cover"
+                  />
+                  <button
+                    onClick={() => removeImage(img.id)}
+                    class="absolute -top-1 -right-1 w-4 h-4 bg-red-500 text-white rounded-full text-[10px] flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+                    aria-label="Remove image"
+                  >
+                    ✕
+                  </button>
+                  <div class="absolute bottom-0 left-0 right-0 bg-black/50 text-white text-[8px] px-1 truncate">
+                    {img.name}
+                  </div>
+                </div>
+              )}
+            </For>
+          </div>
+        </Show>
         <textarea
           ref={setTextarea}
           value={text()}
@@ -245,6 +349,7 @@ export function PromptInput(props: PromptInputProps) {
             adjustHeight();
           }}
           onKeyDown={handleKeyDown}
+          onPaste={handlePaste}
           disabled={props.disabled}
           placeholder={
             props.disabled
@@ -252,26 +357,54 @@ export function PromptInput(props: PromptInputProps) {
               : modePlaceholder()
           }
           rows={1}
-          class={`w-full px-4 py-3 pr-12 bg-transparent resize-none focus:outline-none dark:text-white max-h-[200px] overflow-y-auto text-sm placeholder:text-slate-400 dark:placeholder:text-slate-500 ${props.disabled ? "cursor-not-allowed opacity-50" : ""}`}
+          class={`w-full px-4 py-3 pr-20 bg-transparent resize-none focus:outline-none dark:text-white max-h-[200px] overflow-y-auto text-sm placeholder:text-slate-400 dark:placeholder:text-slate-500 ${props.disabled ? "cursor-not-allowed opacity-50" : ""}`}
           style={{ "min-height": "52px" }}
         />
-        {/* 3-state button: Send | Enqueue-Send | Stop (with queue badge) */}
+        {/* Hidden file input for image selection */}
+        <input
+          ref={(el) => { fileInputRef = el; }}
+          type="file"
+          accept="image/jpeg,image/png,image/gif,image/webp"
+          multiple
+          class="hidden"
+          onChange={(e) => {
+            const files = e.currentTarget.files;
+            if (files) for (const f of files) addImageFromFile(f);
+            e.currentTarget.value = "";
+          }}
+        />
+        {/* Attachment button + 3-state send button */}
         {(() => {
           const isGenerating = props.isGenerating;
-          const hasText = !!text().trim();
-          const showSendButton = !isGenerating || (isGenerating && props.canEnqueue && hasText);
-          const showStopButton = isGenerating && !(props.canEnqueue && hasText);
+          const hasContent = !!text().trim() || images().length > 0;
+          const showSendButton = !isGenerating || (isGenerating && props.canEnqueue && hasContent);
+          const showStopButton = isGenerating && !(props.canEnqueue && hasContent);
 
           if (showSendButton) {
             return (
-              <button
-                onClick={handleSend}
-                disabled={!hasText || props.disabled}
-                class={`absolute right-2.5 bottom-2.5 p-2 rounded-xl text-white transition-all disabled:bg-slate-200 dark:disabled:bg-slate-700 disabled:text-slate-400 dark:disabled:text-slate-500 shadow-md disabled:shadow-none ${activeAccent().bgHover}`}
-                aria-label={t().prompt.send}
-              >
-                <IconArrowUp width={20} height={20} />
-              </button>
+              <div class="absolute right-2.5 bottom-2.5 flex items-center gap-1">
+                <Show when={props.imageAttachmentEnabled}>
+                  <button
+                    onClick={() => fileInputRef?.click()}
+                    disabled={props.disabled || images().length >= MAX_IMAGES}
+                    class="p-2 rounded-xl text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 transition-colors disabled:opacity-30"
+                    aria-label="Attach image"
+                    title="Attach image"
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                      <path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48" />
+                    </svg>
+                  </button>
+                </Show>
+                <button
+                  onClick={handleSend}
+                  disabled={!hasContent || props.disabled}
+                  class={`p-2 rounded-xl text-white transition-all disabled:bg-slate-200 dark:disabled:bg-slate-700 disabled:text-slate-400 dark:disabled:text-slate-500 shadow-md disabled:shadow-none ${activeAccent().bgHover}`}
+                  aria-label={t().prompt.send}
+                >
+                  <IconArrowUp width={20} height={20} />
+                </button>
+              </div>
             );
           }
 

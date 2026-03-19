@@ -756,7 +756,7 @@ export class OpenCodeAdapter extends EngineAdapter {
       dynamicModes: false,
       messageCancellation: true,
       permissionAlways: true,
-      imageAttachment: false,
+      imageAttachment: true,
       loadSession: true,
       listSessions: true,
       modelSwitchable: true,
@@ -873,11 +873,24 @@ export class OpenCodeAdapter extends EngineAdapter {
   ): Promise<UnifiedMessage> {
     const session = this.sessions.get(sessionId);
 
-    // Build prompt parts
-    const parts = content.map((c) => ({
-      type: "text" as const,
-      text: c.text ?? "",
-    }));
+    // Build prompt parts — text and image
+    const parts: Array<{ type: "text"; text: string } | { type: "file"; mime: string; url: string; filename?: string }> = [];
+    for (const c of content) {
+      if (c.type === "text" && c.text) {
+        parts.push({ type: "text" as const, text: c.text });
+      } else if (c.type === "image" && c.data) {
+        const mime = c.mimeType ?? "image/png";
+        parts.push({
+          type: "file" as const,
+          mime,
+          url: `data:${mime};base64,${c.data}`,
+          filename: "image.png",
+        });
+      }
+    }
+    if (parts.length === 0) {
+      parts.push({ type: "text" as const, text: "" });
+    }
 
     // Build model spec if provided
     let model: { providerID: string; modelID: string } | undefined;

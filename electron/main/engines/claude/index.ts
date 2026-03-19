@@ -278,7 +278,7 @@ export class ClaudeCodeAdapter extends EngineAdapter {
       dynamicModes: false,
       messageCancellation: true,
       permissionAlways: false,
-      imageAttachment: false,
+      imageAttachment: true,
       loadSession: true,
       listSessions: true,
       modelSwitchable: true,
@@ -429,8 +429,37 @@ export class ClaudeCodeAdapter extends EngineAdapter {
       .map((c) => c.text)
       .join("\n");
 
-    if (!textContent.trim()) {
+    // Check if there are image attachments
+    const imageContents = content.filter((c) => c.type === "image" && c.data);
+    const hasImages = imageContents.length > 0;
+
+    if (!textContent.trim() && !hasImages) {
       throw new Error("Message content cannot be empty");
+    }
+
+    // Build the message to send — string for text-only, SDKUserMessage for multimodal
+    let messageToSend: string | object = textContent;
+    if (hasImages) {
+      const contentBlocks: Array<{ type: string; [key: string]: any }> = [];
+      if (textContent.trim()) {
+        contentBlocks.push({ type: "text", text: textContent });
+      }
+      for (const img of imageContents) {
+        contentBlocks.push({
+          type: "image",
+          source: {
+            type: "base64",
+            media_type: img.mimeType ?? "image/png",
+            data: img.data!,
+          },
+        });
+      }
+      messageToSend = {
+        type: "user",
+        message: { role: "user", content: contentBlocks },
+        parent_tool_use_id: null,
+        session_id: "",
+      };
     }
 
     // --- Enqueue path: engine is already processing this session ---
@@ -550,7 +579,7 @@ export class ClaudeCodeAdapter extends EngineAdapter {
       this.processStream(
         v2Session,
         sessionId,
-        textContent,
+        messageToSend,
         buffer,
         abortController,
       ).catch((err) => {
@@ -1220,15 +1249,15 @@ export class ClaudeCodeAdapter extends EngineAdapter {
   private async processStream(
     v2Session: SDKSession,
     sessionId: string,
-    messageContent: string,
+    messageContent: string | object,
     buffer: MessageBuffer,
     abortController: AbortController,
   ): Promise<void> {
     const streamingBlocks = new Map<number, StreamingBlock>();
 
     try {
-      // Send the message
-      await v2Session.send(messageContent);
+      // Send the message — string for text-only, SDKUserMessage for multimodal
+      await v2Session.send(messageContent as any);
 
       // Process stream events — loop to handle multiple turns from enqueued messages
       while (!abortController.signal.aborted) {

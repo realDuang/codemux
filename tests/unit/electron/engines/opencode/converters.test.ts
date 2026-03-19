@@ -149,6 +149,14 @@ describe('OpenCode Converters', () => {
         time: { created: 1 }
       };
       expect(convertMessage(ENGINE_TYPE, msgWithErrorObj).error).toBe('Custom Error');
+
+      // Rate limit wrapped in MessageAbortedError should preserve the real message
+      const msgWithAbortWrappedError = {
+        id: 'm5',
+        error: { name: 'MessageAbortedError', message: 'Too Many Requests: Sorry, you\'ve exceeded your rate limits.' },
+        time: { created: 1 }
+      };
+      expect(convertMessage(ENGINE_TYPE, msgWithAbortWrappedError).error).toBe('Too Many Requests: Sorry, you\'ve exceeded your rate limits.');
     });
   });
 

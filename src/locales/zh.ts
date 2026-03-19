@@ -167,6 +167,8 @@ export const zh: LocaleDict = {
     sessions: "会话",
     refreshSessions: "刷新会话列表",
     defaultEngine: "默认引擎",
+    searchPlaceholder: "搜索会话...",
+    noSearchResults: "没有匹配的会话",
   },
 
   // Project
@@ -201,6 +203,10 @@ export const zh: LocaleDict = {
     send: "发送消息",
     typeNextMessage: "输入下一条消息...",
     waitingForResponse: "等待响应...",
+    attachImage: "添加图片",
+    imageTooLarge: "图片过大（最大 10MB）",
+    imageUnsupportedType: "不支持的图片格式",
+    imageLimitReached: "每条消息最多 5 张图片",
   },
 
   // Message Parts
@@ -427,5 +433,15 @@ export const zh: LocaleDict = {
     launchAtLoginDesc: "登录计算机时自动启动 CodeMux",
     releaseNotes: "更新内容",
     retry: "重试",
+  },
+
+  // Notifications
+  notification: {
+    messageSendFailed: "消息发送失败，请重试。",
+    sessionCreateFailed: "会话创建失败。",
+    sessionDeleteFailed: "会话删除失败。",
+    gatewayDisconnected: "连接已断开，正在重连...",
+    gatewayReconnected: "连接已恢复。",
+    engineError: "引擎错误：{message}",
   },
 };

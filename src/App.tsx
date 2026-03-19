@@ -1,25 +1,39 @@
 import { Router, HashRouter, Route, useNavigate, Navigate } from "@solidjs/router";
-import { createEffect, createSignal, onMount, Show, type ParentComponent } from "solid-js";
+import { createEffect, createSignal, lazy, onMount, Show, Suspense, type ParentComponent } from "solid-js";
 import { Auth } from "./lib/auth";
 import { I18nProvider, useI18n } from "./lib/i18n";
 import { logger } from "./lib/logger";
 import { initElectronTitleBar, isElectron } from "./lib/platform";
 import "./lib/theme";
-import EntryPage from "./pages/EntryPage";
-import Chat from "./pages/Chat";
-import Settings from "./pages/Settings";
-import Devices from "./pages/Devices";
 import { AccessRequestNotification } from "./components/AccessRequestNotification";
 import { UpdateNotification } from "./components/UpdateNotification";
+import { NotificationToast } from "./components/NotificationToast";
+import { Spinner } from "./components/Spinner";
+import EntryPage from "./pages/EntryPage";
+
+const Chat = lazy(() => import("./pages/Chat"));
+const Settings = lazy(() => import("./pages/Settings"));
+const Devices = lazy(() => import("./pages/Devices"));
+
+// Layout that wraps route content with Suspense for lazy-loaded pages
+const RouteLayout: ParentComponent = (props) => (
+  <Suspense fallback={
+    <div class="fixed inset-0 flex items-center justify-center bg-gray-50 dark:bg-slate-950">
+      <Spinner size="large" class="text-blue-500" />
+    </div>
+  }>
+    {props.children}
+  </Suspense>
+);
 
 // Use HashRouter for Electron (file:// protocol) and regular Router for web
 // HashRouter uses URL hashes (#/path) which work with file:// protocol
 const AppRouter: ParentComponent = (props) => {
   // In production Electron, use HashRouter for file:// protocol compatibility
   if (isElectron() && window.location.protocol === "file:") {
-    return <HashRouter>{props.children}</HashRouter>;
+    return <HashRouter root={RouteLayout}>{props.children}</HashRouter>;
   }
-  return <Router>{props.children}</Router>;
+  return <Router root={RouteLayout}>{props.children}</Router>;
 };
 
 // Redirect component for /login route
@@ -222,6 +236,7 @@ function App() {
         <StartupSplash />
       </Show>
       <Show when={appReady()}>
+        <NotificationToast />
         <AccessRequestNotification />
         <UpdateNotification />
         <AppRouter>

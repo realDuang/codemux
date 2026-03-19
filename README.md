@@ -94,7 +94,9 @@ Use your AI coding agents directly from your favorite messaging apps with **real
 
 ##### Setup
 
-Each platform requires creating a bot/app on its developer portal and configuring credentials in CodeMux Settings → Channels:
+Each platform requires creating a bot/app on its developer portal and configuring credentials in CodeMux Settings → Channels.
+
+📖 **[Detailed setup guide →](docs/channels/README.md)** — Step-by-step instructions for each platform, including permissions, webhook configuration, and troubleshooting.
 
 | Platform | Required Credentials | Developer Portal |
 |----------|---------------------|-----------------|
@@ -102,7 +104,7 @@ Each platform requires creating a bot/app on its developer portal and configurin
 | DingTalk | App Key, App Secret, Robot Code | [open.dingtalk.com](https://open.dingtalk.com/) |
 | Telegram | Bot Token (from @BotFather) | [core.telegram.org](https://core.telegram.org/bots) |
 | WeCom | Corp ID, Corp Secret, Agent ID, Callback Token, Encoding AES Key | [developer.work.weixin.qq.com](https://developer.work.weixin.qq.com/) |
-| Teams | Microsoft App ID, App Password | [Azure Portal](https://portal.azure.com/) + [Teams Dev Portal](https://dev.teams.microsoft.com/) |
+| Teams | Microsoft App ID, App Password, Tenant ID | [Azure Portal](https://portal.azure.com/) + [Teams Dev Portal](https://dev.teams.microsoft.com/) |
 
 ---
 

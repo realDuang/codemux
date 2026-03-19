@@ -26,6 +26,7 @@ import { HideProjectModal } from "../components/HideProjectModal";
 import { AddProjectModal } from "../components/AddProjectModal";
 import type { UnifiedMessage, UnifiedPart, UnifiedPermission, UnifiedQuestion, UnifiedSession, UnifiedProject, AgentMode, EngineType, SessionActivityStatus } from "../types/unified";
 import { useI18n, formatMessage } from "../lib/i18n";
+import { notify } from "../lib/notifications";
 import { isDefaultTitle } from "../lib/session-utils";
 import { formatTokenCount, formatCostWithUnit, getEngineBadge } from "../components/share/common";
 import { getSetting, saveSetting } from "../lib/settings";
@@ -475,6 +476,9 @@ export default function Chat() {
       const handlers = {
         onConnected: () => {
           logger.debug("[Gateway] Connected/reconnected");
+          if (!wsConnected()) {
+            notify(t().notification.gatewayReconnected, "info", 3000);
+          }
           setWsConnected(true);
           // If we were in error state, re-initialize on reconnect
           if (sessionStore.initError) {
@@ -484,6 +488,7 @@ export default function Chat() {
         onDisconnected: (reason: string) => {
           logger.warn("[Gateway] Disconnected:", reason);
           setWsConnected(false);
+          notify(t().notification.gatewayDisconnected, "warning", 8000);
         },
         onPartUpdated: handlePartUpdated,
         onPartsBatch: handlePartsBatch,
@@ -498,6 +503,9 @@ export default function Chat() {
           setConfigStore("engines", (engines) =>
             engines.map(e => e.type === engineType ? { ...e, status: status as any } : e)
           );
+          if (status === "error" && error) {
+            notify(formatMessage(t().notification.engineError, { message: error }));
+          }
         },
         onMessageQueued: (sessionId: string, _messageId: string, _queuePosition: number) => {
           logger.debug("[WS] message.queued for session:", sessionId);
@@ -723,6 +731,7 @@ export default function Chat() {
       }
     } catch (error) {
       logger.error("[NewSession] Failed to create session:", error);
+      notify(t().notification.sessionCreateFailed);
     }
   };
 
@@ -770,6 +779,7 @@ export default function Chat() {
       }
     } catch (error) {
       logger.error("[DeleteSession] Failed to delete session:", error);
+      notify(t().notification.sessionDeleteFailed);
     }
   };
 
@@ -1288,7 +1298,7 @@ export default function Chat() {
     handleSendMessage("Continue where you left off.", currentAgent());
   };
 
-  const handleSendMessage = async (text: string, agent: AgentMode) => {
+  const handleSendMessage = async (text: string, agent: AgentMode, images?: import("../types/unified").ImageAttachment[]) => {
     const sessionId = sessionStore.current;
     if (!sessionId) return;
 
@@ -1337,8 +1347,10 @@ export default function Chat() {
       gateway.sendMessage(sessionId, text, {
         mode: agent.id,
         modelId,
+        images,
       }).catch((error) => {
         logger.error("[SendMessage] Failed to enqueue message:", error);
+        notify(t().notification.messageSendFailed);
         // Remove from queued store on failure
         setMessageStore("queued", sessionId, (draft) =>
           draft.filter((m) => m.id !== tempMessageId),
@@ -1385,6 +1397,7 @@ export default function Chat() {
       await gateway.sendMessage(sessionId, text, {
         mode: agent.id,
         modelId,
+        images,
       });
       // sendMessage RPC resolved — the engine considers the prompt handled.
       // However, in multi-step agent loops (e.g. OpenCode), the RPC may resolve
@@ -1399,6 +1412,7 @@ export default function Chat() {
       }
     } catch (error) {
       logger.error("[SendMessage] Failed to send message:", error);
+      notify(t().notification.messageSendFailed);
       // Remove the optimistic temp message on failure
       setMessageStore("message", sessionId, (draft) =>
         draft.filter((m) => m.id !== tempMessageId),
@@ -1462,21 +1476,6 @@ export default function Chat() {
             <span class="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider px-1">{t().sidebar.sessions}</span>
           </Show>
           <div class="flex items-center gap-0.5">
-            <Show when={!isSidebarCollapsed()}>
-              <button
-                onClick={handleRefreshSessions}
-                disabled={refreshingSessions()}
-                class="p-1.5 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-zinc-800 rounded-md transition-colors flex-shrink-0 disabled:opacity-50"
-                title={t().sidebar.refreshSessions}
-              >
-                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class={refreshingSessions() ? "animate-spin" : ""}>
-                  <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8" />
-                  <path d="M21 3v5h-5" />
-                  <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16" />
-                  <path d="M8 16H3v5" />
-                </svg>
-              </button>
-            </Show>
             <button
               onClick={toggleSidebarCollapse}
               class="p-1.5 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-zinc-800 rounded-md transition-colors flex-shrink-0"
@@ -1507,6 +1506,8 @@ export default function Chat() {
                 setDeleteProjectInfo({ projectID, projectName, sessionCount })
               }
               onAddProject={() => setShowAddProjectModal(true)}
+              onRefreshSessions={handleRefreshSessions}
+              refreshingSessions={refreshingSessions()}
               showAddProject={isLocalAccess()}
               collapsed={isSidebarCollapsed() && !isMobile()}
             />
@@ -1757,6 +1758,7 @@ export default function Chat() {
                       onAgentChange={setCurrentAgent}
                       availableModes={configStore.engines.find(e => e.type === currentEngineType())?.capabilities?.availableModes}
                       disabled={!sessionStore.current}
+                      imageAttachmentEnabled={configStore.engines.find(e => e.type === currentEngineType())?.capabilities?.imageAttachment ?? false}
                     />
                   </Show>
                   <div class="mt-2 text-center">

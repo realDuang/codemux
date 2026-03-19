@@ -5,6 +5,7 @@ import { useI18n } from "../../lib/i18n"
 import { logger } from "../../lib/logger"
 import style from "./content-markdown.module.css"
 import { getHighlight, setHighlight } from "../../lib/highlight-cache"
+import { highlightCode, resolveLang } from "../../lib/shiki-highlighter"
 
 // Lazy-initialized marked instance with Shiki integration
 let markedInstancePromise: Promise<any> | null = null
@@ -24,10 +25,9 @@ function sanitizeHref(href: string): string {
 function getMarkedInstance() {
   if (markedInstancePromise) return markedInstancePromise
   markedInstancePromise = (async () => {
-    const [{ marked }, { codeToHtml }, { default: markedShiki }, { transformerNotationDiff }] =
+    const [{ marked }, { default: markedShiki }, { transformerNotationDiff }] =
       await Promise.all([
         import("marked"),
-        import("shiki"),
         import("marked-shiki"),
         import("@shikijs/transformers"),
       ])
@@ -44,16 +44,12 @@ function getMarkedInstance() {
       },
       markedShiki({
         async highlight(code: string, lang: string) {
-          const cacheKey = `${lang || "text"}:${code}`
+          const resolved = resolveLang(lang)
+          const cacheKey = `${resolved}:${code}`
           const cached = getHighlight(cacheKey)
           if (cached) return cached
 
-          const html = await codeToHtml(code, {
-            lang: lang || "text",
-            themes: {
-              light: "github-light",
-              dark: "one-dark-pro",
-            },
+          const html = await highlightCode(code, resolved, {
             transformers: [transformerNotationDiff()],
           })
           setHighlight(cacheKey, html)

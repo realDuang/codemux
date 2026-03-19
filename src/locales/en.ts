@@ -166,6 +166,8 @@ export interface LocaleDict {
     sessions: string;
     refreshSessions: string;
     defaultEngine: string;
+    searchPlaceholder: string;
+    noSearchResults: string;
   };
 
   // Project
@@ -200,6 +202,10 @@ export interface LocaleDict {
     send: string;
     typeNextMessage: string;
     waitingForResponse: string;
+    attachImage: string;
+    imageTooLarge: string;
+    imageUnsupportedType: string;
+    imageLimitReached: string;
   };
 
   // Message Parts
@@ -427,6 +433,16 @@ export interface LocaleDict {
     releaseNotes: string;
     retry: string;
   };
+
+  // Notifications
+  notification: {
+    messageSendFailed: string;
+    sessionCreateFailed: string;
+    sessionDeleteFailed: string;
+    gatewayDisconnected: string;
+    gatewayReconnected: string;
+    engineError: string;
+  };
 }
 
 export const en: LocaleDict = {
@@ -596,6 +612,8 @@ export const en: LocaleDict = {
     sessions: "Sessions",
     refreshSessions: "Refresh sessions",
     defaultEngine: "Default Engine",
+    searchPlaceholder: "Search sessions...",
+    noSearchResults: "No matching sessions",
   },
 
   // Project
@@ -630,6 +648,10 @@ export const en: LocaleDict = {
     send: "Send message",
     typeNextMessage: "Type your next message...",
     waitingForResponse: "Waiting for response...",
+    attachImage: "Attach image",
+    imageTooLarge: "Image too large (max 10MB)",
+    imageUnsupportedType: "Unsupported image type",
+    imageLimitReached: "Maximum 5 images per message",
   },
 
   // Message Parts
@@ -856,5 +878,15 @@ export const en: LocaleDict = {
     launchAtLoginDesc: "Automatically start CodeMux when you log in to your computer",
     releaseNotes: "What's new",
     retry: "Retry",
+  },
+
+  // Notifications
+  notification: {
+    messageSendFailed: "Failed to send message. Please try again.",
+    sessionCreateFailed: "Failed to create session.",
+    sessionDeleteFailed: "Failed to delete session.",
+    gatewayDisconnected: "Connection lost. Reconnecting...",
+    gatewayReconnected: "Connection restored.",
+    engineError: "Engine error: {message}",
   },
 };

@@ -2,6 +2,10 @@
 // Copilot SDK Adapter — GitHub Copilot integration via @github/copilot-sdk
 // ============================================================================
 
+import { writeFileSync, unlinkSync, mkdtempSync } from "fs";
+import { join } from "path";
+import { tmpdir } from "os";
+
 import { timeId } from "../../utils/id-gen";
 import { CopilotClient, CopilotSession } from "@github/copilot-sdk";
 import type {
@@ -109,6 +113,9 @@ export class CopilotSdkAdapter extends EngineAdapter {
   private pendingQuestions = new Map<string, PendingQuestion>();
 
   private idleResolvers = new Map<string, Array<(msg: UnifiedMessage) => void>>();
+  // Timeout handles for idle resolvers — prevents memory leaks when CLI crashes
+  private resolverTimeouts = new Map<string, NodeJS.Timeout[]>();
+  private static readonly RESOLVER_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
   // Queued user messages (deferred emit) — emitted only when the engine
   // starts processing the queued turn, not at enqueue time.
   private pendingUserMessages = new Map<string, UnifiedMessage[]>();
@@ -117,6 +124,48 @@ export class CopilotSdkAdapter extends EngineAdapter {
 
   constructor(private options?: { cliPath?: string; env?: Record<string, string> }) {
     super();
+  }
+
+  /**
+   * Register a timeout for an idle resolver. If the resolver isn't resolved
+   * within RESOLVER_TIMEOUT_MS, it is rejected and cleaned up to prevent
+   * memory leaks when the Copilot CLI crashes or hangs.
+   */
+  private addResolverTimeout(
+    sessionId: string,
+    resolve: (msg: UnifiedMessage) => void,
+    reject: (err: Error) => void,
+  ): void {
+    const timeout = setTimeout(() => {
+      copilotLog.warn(`[Copilot][${sessionId}] Resolver timed out after ${CopilotSdkAdapter.RESOLVER_TIMEOUT_MS / 1000}s`);
+      const resolvers = this.idleResolvers.get(sessionId);
+      if (resolvers) {
+        const idx = resolvers.indexOf(resolve);
+        if (idx >= 0) resolvers.splice(idx, 1);
+        if (resolvers.length === 0) this.idleResolvers.delete(sessionId);
+      }
+      // Finalize buffer with error so UI shows a failure state
+      const buffer = this.messageBuffers.get(sessionId);
+      if (buffer) {
+        buffer.error = "Request timed out";
+        this.finalizeBuffer(sessionId);
+      }
+      this.clearResolverTimeouts(sessionId);
+      reject(new Error("Copilot request timed out"));
+    }, CopilotSdkAdapter.RESOLVER_TIMEOUT_MS);
+
+    const timeouts = this.resolverTimeouts.get(sessionId) ?? [];
+    timeouts.push(timeout);
+    this.resolverTimeouts.set(sessionId, timeouts);
+  }
+
+  /** Clear all pending resolver timeouts for a session. */
+  private clearResolverTimeouts(sessionId: string): void {
+    const timeouts = this.resolverTimeouts.get(sessionId);
+    if (timeouts) {
+      for (const t of timeouts) clearTimeout(t);
+      this.resolverTimeouts.delete(sessionId);
+    }
   }
 
   async start(): Promise<void> {
@@ -367,6 +416,32 @@ export class CopilotSdkAdapter extends EngineAdapter {
       .map((c) => c.text!)
       .join("\n");
 
+    // Build file attachments for images — Copilot CLI accepts image files
+    // via type:"file" attachments and automatically processes them for vision
+    const imageContents = content.filter((c) => c.type === "image" && c.data);
+    const tempImagePaths: string[] = [];
+    const attachments: Array<{ type: "file"; path: string; displayName?: string }> = [];
+
+    for (const img of imageContents) {
+      try {
+        const ext = img.mimeType?.split("/")[1] ?? "png";
+        const tmpDir = mkdtempSync(join(tmpdir(), "codemux-img-"));
+        const tmpPath = join(tmpDir, `image.${ext}`);
+        writeFileSync(tmpPath, Buffer.from(img.data!, "base64"));
+        tempImagePaths.push(tmpPath);
+        attachments.push({ type: "file", path: tmpPath, displayName: `image.${ext}` });
+      } catch (err) {
+        copilotLog.warn(`Failed to write temp image file:`, err);
+      }
+    }
+
+    // Cleanup temp files after send completes (deferred)
+    const cleanupTempImages = () => {
+      for (const p of tempImagePaths) {
+        try { unlinkSync(p); } catch {}
+      }
+    };
+
     // --- Enqueue path: engine is already processing this session ---
     const existingResolvers = this.idleResolvers.get(sessionId);
     if (existingResolvers && existingResolvers.length > 0) {
@@ -392,6 +467,7 @@ export class CopilotSdkAdapter extends EngineAdapter {
 
       return new Promise<UnifiedMessage>((resolve, reject) => {
         existingResolvers.push(resolve);
+        this.addResolverTimeout(sessionId, resolve, reject);
 
         const handleEnqueueError = (err: unknown) => {
           const idx = existingResolvers.indexOf(resolve);
@@ -400,13 +476,13 @@ export class CopilotSdkAdapter extends EngineAdapter {
           reject(err);
         };
 
-        session.send({ prompt: promptText, mode: "enqueue" as any }).catch(async (err) => {
+        session.send({ prompt: promptText, attachments: attachments.length > 0 ? attachments : undefined, mode: "enqueue" as any }).catch(async (err) => {
           if (this.isSessionExpiredError(err)) {
             copilotLog.warn(`Session ${sessionId} expired (enqueue), recreating and retrying...`);
             this.evictStaleSession(sessionId);
             try {
               const freshSession = await this.ensureActiveSession(sessionId, options?.directory);
-              freshSession.send({ prompt: promptText, mode: "enqueue" as any }).catch(handleEnqueueError);
+              freshSession.send({ prompt: promptText, attachments: attachments.length > 0 ? attachments : undefined, mode: "enqueue" as any }).catch(handleEnqueueError);
               return;
             } catch { /* fall through */ }
           }
@@ -442,6 +518,7 @@ export class CopilotSdkAdapter extends EngineAdapter {
       const resolvers = this.idleResolvers.get(sessionId) ?? [];
       resolvers.push(resolve);
       this.idleResolvers.set(sessionId, resolvers);
+      this.addResolverTimeout(sessionId, resolve, reject);
 
       const handleSendError = (err: unknown) => {
         const currentResolvers = this.idleResolvers.get(sessionId);
@@ -458,18 +535,21 @@ export class CopilotSdkAdapter extends EngineAdapter {
         reject(err);
       };
 
-      session.send({ prompt: promptText }).catch(async (err) => {
+      session.send({ prompt: promptText, attachments: attachments.length > 0 ? attachments : undefined }).catch(async (err) => {
         if (this.isSessionExpiredError(err)) {
           copilotLog.warn(`Session ${sessionId} expired, recreating and retrying...`);
           this.evictStaleSession(sessionId);
           try {
             const freshSession = await this.ensureActiveSession(sessionId, options?.directory);
-            freshSession.send({ prompt: promptText }).catch(handleSendError);
+            freshSession.send({ prompt: promptText, attachments: attachments.length > 0 ? attachments : undefined }).catch(handleSendError);
             return;
           } catch { /* fall through to handleSendError */ }
         }
         handleSendError(err);
       });
+
+      // Cleanup temp image files after a delay — CLI reads them synchronously
+      if (tempImagePaths.length > 0) setTimeout(cleanupTempImages, 5000);
     });
   }
 
@@ -503,6 +583,7 @@ export class CopilotSdkAdapter extends EngineAdapter {
       this.idleResolvers.delete(sessionId);
       for (const r of resolvers) r(finalMessage);
     }
+    this.clearResolverTimeouts(sessionId);
     this.pendingUserMessages.delete(sessionId);
   }
 
@@ -867,6 +948,7 @@ export class CopilotSdkAdapter extends EngineAdapter {
         // session.idle fires only ONCE after all are done. Resolve ALL resolvers
         // with the final message (the combined response).
         this.idleResolvers.delete(sessionId);
+        this.clearResolverTimeouts(sessionId);
         for (const r of resolvers) r(finalMessage);
 
         // Clear all deferred user messages and emit queued.consumed for each
@@ -900,6 +982,7 @@ export class CopilotSdkAdapter extends EngineAdapter {
         if (resolver) { this.idleResolvers.delete(sessionId); for (const r of resolver) r(finalMessage); }
       }
     }
+    this.clearResolverTimeouts(sessionId);
     this.pendingUserMessages.delete(sessionId);
   }
 
@@ -928,6 +1011,7 @@ export class CopilotSdkAdapter extends EngineAdapter {
       const resolver = this.idleResolvers.get(sessionId);
       if (resolver) { this.idleResolvers.delete(sessionId); for (const r of resolver) r(finalMessage); }
     }
+    this.clearResolverTimeouts(sessionId);
     this.pendingUserMessages.delete(sessionId);
   }
 

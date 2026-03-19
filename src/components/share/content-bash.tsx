@@ -4,6 +4,7 @@ import { CopyButton } from "./CopyButton"
 import { createOverflow } from "./common"
 import { useI18n } from "../../lib/i18n";
 import { getHighlight, setHighlight, hasHighlight } from "../../lib/highlight-cache"
+import { highlightCode } from "../../lib/shiki-highlighter"
 
 /**
  * Maximum number of lines to syntax-highlight.
@@ -12,7 +13,7 @@ import { getHighlight, setHighlight, hasHighlight } from "../../lib/highlight-ca
  */
 const MAX_HIGHLIGHT_LINES = 200
 
-async function highlightCode(code: string, lang: string): Promise<string> {
+async function highlightBash(code: string, lang: string): Promise<string> {
   if (!code) return ""
 
   const cacheKey = `${lang}:${code}`
@@ -36,14 +37,7 @@ async function highlightCode(code: string, lang: string): Promise<string> {
     overflowHtml = `<pre style="opacity:0.7"><code>${escaped}</code></pre>`
   }
 
-  const { codeToHtml } = await import("shiki")
-  const html = await codeToHtml(codeToHighlight, {
-    lang,
-    themes: {
-      light: "github-light",
-      dark: "one-dark-pro",
-    },
-  })
+  const html = await highlightCode(codeToHighlight, lang)
 
   const result = html + overflowHtml
   setHighlight(cacheKey, result)
@@ -66,7 +60,7 @@ export function ContentBash(props: Props) {
 
   const [outputHtml] = createResource(
     () => props.output,
-    (output) => highlightCode(output, "console"),
+    (output) => highlightBash(output, "console"),
   )
 
   const [expanded, setExpanded] = createSignal(false)

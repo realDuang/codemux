@@ -53,22 +53,34 @@ export function convertSdkMessages(
 ): UnifiedMessage[] {
   const messages: UnifiedMessage[] = [];
 
-  // Build a lookup from tool_use_id → next user message timestamp.
+  // Build lookups from tool_use_id → timestamp and output content.
   // In the .jsonl, a tool_use block in an assistant message is followed by
   // a user message containing the tool_result. The time between the assistant
   // message and the tool_result user message is the tool execution duration.
   const toolResultTimestamps = new Map<string, number>();
-  if (timestamps && timestamps.size > 0) {
-    for (const msg of sdkMessages) {
-      if (msg.type !== "user") continue;
-      const content = msg.message?.content;
-      if (!Array.isArray(content)) continue;
-      const msgTs = timestamps.get(msg.uuid);
-      if (!msgTs) continue;
-      for (const block of content) {
-        if (block.type === "tool_result" && block.tool_use_id) {
-          toolResultTimestamps.set(block.tool_use_id, msgTs);
+  const toolResultOutputs = new Map<string, { output: string; isError: boolean }>();
+  for (const msg of sdkMessages) {
+    if (msg.type !== "user") continue;
+    const content = msg.message?.content;
+    if (!Array.isArray(content)) continue;
+    const msgTs = timestamps?.get(msg.uuid) ?? 0;
+    for (const block of content) {
+      if (block.type === "tool_result" && block.tool_use_id) {
+        if (msgTs) toolResultTimestamps.set(block.tool_use_id, msgTs);
+        // Extract tool output text
+        let output = "";
+        if (typeof block.content === "string") {
+          output = block.content;
+        } else if (Array.isArray(block.content)) {
+          output = block.content
+            .filter((c: any) => c.type === "text")
+            .map((c: any) => c.text)
+            .join("\n");
         }
+        toolResultOutputs.set(block.tool_use_id, {
+          output,
+          isError: !!block.is_error,
+        });
       }
     }
   }
@@ -127,6 +139,22 @@ export function convertSdkMessages(
               ? toolEnd - toolStart
               : 0;
 
+            // Get tool output from the corresponding tool_result message
+            const result = toolResultOutputs.get(block.id);
+            const toolState = result?.isError
+              ? {
+                  status: "error" as const,
+                  input: block.input ?? {},
+                  error: result.output,
+                  time: { start: toolStart, end: toolEnd || toolStart, duration: toolDuration },
+                }
+              : {
+                  status: "completed" as const,
+                  input: block.input ?? {},
+                  output: result?.output ?? "",
+                  time: { start: toolStart, end: toolEnd || toolStart, duration: toolDuration },
+                };
+
             parts.push({
               type: "step-start",
               id: timeId("pt"),
@@ -143,12 +171,7 @@ export function convertSdkMessages(
               originalTool: block.name,
               title: block.name,
               kind: inferToolKind(undefined, normalizedTool),
-              state: {
-                status: "completed",
-                input: block.input ?? {},
-                output: "",
-                time: { start: toolStart, end: toolEnd || toolStart, duration: toolDuration },
-              },
+              state: toolState,
             } as ToolPart);
             parts.push({
               type: "step-finish",

@@ -94,7 +94,9 @@
 
 ##### 配置方式
 
-每个平台需要在开发者门户创建机器人/应用，然后在 CodeMux 设置 → 渠道中配置凭证：
+每个平台需要在开发者门户创建机器人/应用，然后在 CodeMux 设置 → 渠道中配置凭证。
+
+📖 **[详细配置指南 →](docs/channels/README.md)** — 包含各平台的完整步骤、权限配置、Webhook 设置及常见问题排查。
 
 | 平台 | 需要的凭证 | 开发者门户 |
 |------|-----------|-----------|
@@ -102,7 +104,7 @@
 | 钉钉 | App Key、App Secret、Robot Code | [open.dingtalk.com](https://open.dingtalk.com/) |
 | Telegram | Bot Token（来自 @BotFather） | [core.telegram.org](https://core.telegram.org/bots) |
 | 企业微信 | 企业 ID、应用密钥、Agent ID、回调 Token、加密密钥 | [developer.work.weixin.qq.com](https://developer.work.weixin.qq.com/) |
-| Teams | Microsoft App ID、应用密码 | [Azure Portal](https://portal.azure.com/) + [Teams 开发者门户](https://dev.teams.microsoft.com/) |
+| Teams | Microsoft App ID、应用密码、Tenant ID | [Azure Portal](https://portal.azure.com/) + [Teams 开发者门户](https://dev.teams.microsoft.com/) |
 
 ---
 

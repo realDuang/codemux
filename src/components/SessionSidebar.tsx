@@ -20,6 +20,8 @@ interface SessionSidebarProps {
   onRenameSession: (sessionId: string, newTitle: string) => void;
   onDeleteProjectSessions: (projectID: string, projectName: string, sessionCount: number) => void;
   onAddProject: () => void;
+  onRefreshSessions?: () => void;
+  refreshingSessions?: boolean;
   showAddProject?: boolean;
   collapsed?: boolean;
 }
@@ -38,6 +40,7 @@ export function SessionSidebar(props: SessionSidebarProps) {
   const [editingSessionId, setEditingSessionId] = createSignal<string | null>(null);
   const [editingTitle, setEditingTitle] = createSignal("");
   const [pendingDeleteId, setPendingDeleteId] = createSignal<string | null>(null);
+  const [searchQuery, setSearchQuery] = createSignal("");
 
   const StatusIndicator = (p: { status: SessionActivityStatus }) => {
     return (
@@ -137,6 +140,31 @@ export function SessionSidebar(props: SessionSidebarProps) {
     return result;
   });
 
+  // Filter project groups by search query (matches session title or project name)
+  const filteredProjectGroups = createMemo((): ProjectGroup[] => {
+    const query = searchQuery().trim().toLowerCase();
+    if (!query) return projectGroups();
+
+    const filtered: ProjectGroup[] = [];
+    for (const group of projectGroups()) {
+      // If project name matches, include all its sessions
+      if (group.name.toLowerCase().includes(query)) {
+        filtered.push(group);
+        continue;
+      }
+      // Otherwise, filter sessions by title
+      const matchingSessions = group.sessions.filter(
+        (s) => (s.title || "").toLowerCase().includes(query),
+      );
+      if (matchingSessions.length > 0) {
+        filtered.push({ ...group, sessions: matchingSessions });
+      }
+    }
+    return filtered;
+  });
+
+  const isSearching = () => searchQuery().trim().length > 0;
+
   // Running + enabled engines for default engine selector
   const runningEngines = createMemo(() =>
     configStore.engines.filter(e => e.status === "running" && isEngineEnabled(e.type))
@@ -210,21 +238,71 @@ export function SessionSidebar(props: SessionSidebarProps) {
 
   return (
     <div class="w-full bg-gray-50 dark:bg-slate-950 border-r border-gray-200 dark:border-slate-800 flex flex-col h-full overflow-hidden">
-      {/* Default Engine Selector (only when multiple engines available) */}
-      <Show when={runningEngines().length > 1 && !props.collapsed}>
-        <div class="flex items-center gap-2 px-3 pt-2 pb-1 border-b border-gray-200 dark:border-slate-800">
-          <span class="text-[11px] font-medium text-gray-500 dark:text-gray-400 whitespace-nowrap">{t().sidebar.defaultEngine}</span>
-          <select
-            value={getDefaultEngineType()}
-            onChange={(e) => setDefaultNewSessionEngine(e.target.value)}
-            class="flex-1 min-w-0 text-xs px-2 py-1 bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-md text-gray-700 dark:text-gray-300 focus:outline-none focus:ring-1 focus:ring-blue-500"
-          >
-            <For each={runningEngines()}>
-              {(engine) => (
-                <option value={engine.type}>{engine.name}</option>
-              )}
-            </For>
-          </select>
+      {/* Search Box + Add Project Button */}
+      <Show when={!props.collapsed && projectGroups().length > 0}>
+        <div class="flex items-center gap-1.5 px-2 pt-2">
+          <div class="relative flex-1 min-w-0">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              class="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none"
+            >
+              <circle cx="11" cy="11" r="8" />
+              <path d="m21 21-4.3-4.3" />
+            </svg>
+            <input
+              type="text"
+              value={searchQuery()}
+              onInput={(e) => setSearchQuery(e.currentTarget.value)}
+              onKeyDown={(e) => { if (e.key === "Escape") setSearchQuery(""); }}
+              placeholder={t().sidebar.searchPlaceholder}
+              class="w-full pl-8 pr-7 py-1.5 text-xs bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-md text-gray-700 dark:text-gray-300 placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+            />
+            <Show when={searchQuery().length > 0}>
+              <button
+                onClick={() => setSearchQuery("")}
+                class="absolute right-1.5 top-1/2 -translate-y-1/2 p-0.5 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 rounded"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M18 6 6 18" /><path d="m6 6 12 12" />
+                </svg>
+              </button>
+            </Show>
+          </div>
+          <Show when={props.showAddProject !== false}>
+            <button
+              onClick={props.onAddProject}
+              class="flex-shrink-0 p-1.5 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-slate-800 rounded-md transition-colors"
+              title={t().project.add}
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z" />
+                <path d="M12 10v6" /><path d="M9 13h6" />
+              </svg>
+            </button>
+          </Show>
+          <Show when={props.onRefreshSessions}>
+            <button
+              onClick={props.onRefreshSessions}
+              disabled={props.refreshingSessions}
+              class="flex-shrink-0 p-1.5 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-slate-800 rounded-md transition-colors disabled:opacity-50"
+              title={t().sidebar.refreshSessions}
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class={props.refreshingSessions ? "animate-spin" : ""}>
+                <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8" />
+                <path d="M21 3v5h-5" />
+                <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16" />
+                <path d="M8 16H3v5" />
+              </svg>
+            </button>
+          </Show>
         </div>
       </Show>
       {/* Session List */}
@@ -257,7 +335,7 @@ export function SessionSidebar(props: SessionSidebarProps) {
           {/* Collapsed mode: show only project icons */}
           <Show when={props.collapsed}>
             <div class="flex flex-col items-center gap-1">
-              <For each={projectGroups()}>
+              <For each={filteredProjectGroups()}>
                 {(project) => {
                   const hasActiveSession = () =>
                     project.sessions.some(s => s.id === props.currentSessionId);
@@ -293,10 +371,10 @@ export function SessionSidebar(props: SessionSidebarProps) {
 
           {/* Expanded mode: full session list */}
           <Show when={!props.collapsed}>
-          <For each={projectGroups()}>
+          <For each={filteredProjectGroups()}>
             {(project) => {
               const isHovered = () => hoveredProject() === project.projectID;
-              const isExpanded = () => isProjectExpanded(project.projectID);
+              const isExpanded = () => isSearching() || isProjectExpanded(project.projectID);
 
               return (
                 <div class="mb-2">
@@ -605,36 +683,32 @@ export function SessionSidebar(props: SessionSidebarProps) {
               );
             }}
           </For>
+          <Show when={isSearching() && filteredProjectGroups().length === 0}>
+            <div class="p-6 text-center">
+              <p class="text-sm text-gray-400 dark:text-gray-500">{t().sidebar.noSearchResults}</p>
+            </div>
+          </Show>
           </Show>
         </Show>
       </div>
 
-      <Show when={props.showAddProject !== false}>
-        <div class={`${props.collapsed ? "px-1" : "px-2"} py-2 border-t border-gray-200 dark:border-slate-800`}>
-          <button
-            onClick={props.onAddProject}
-            class={`w-full flex items-center ${props.collapsed ? "justify-center p-2" : "gap-2 px-3 py-2"} text-sm text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-slate-800 hover:text-gray-900 dark:hover:text-white rounded-lg transition-colors`}
-            title={t().project.add}
-          >
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              width="16"
-              height="16"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-              stroke-linecap="round"
-              stroke-linejoin="round"
+      {/* Default Engine Selector (footer, only when multiple engines available) */}
+      <Show when={runningEngines().length > 1 && !props.collapsed}>
+        <div class="px-3 py-2 border-t border-gray-200 dark:border-slate-800">
+          <div class="flex items-center gap-2">
+            <span class="text-[11px] font-medium text-gray-500 dark:text-gray-400 whitespace-nowrap">{t().sidebar.defaultEngine}</span>
+            <select
+              value={getDefaultEngineType()}
+              onChange={(e) => setDefaultNewSessionEngine(e.target.value)}
+              class="flex-1 min-w-0 text-xs px-2 py-1 bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-md text-gray-700 dark:text-gray-300 focus:outline-none focus:ring-1 focus:ring-blue-500"
             >
-              <path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z" />
-              <path d="M12 10v6" />
-              <path d="M9 13h6" />
-            </svg>
-            <Show when={!props.collapsed}>
-              {t().project.add}
-            </Show>
-          </button>
+              <For each={runningEngines()}>
+                {(engine) => (
+                  <option value={engine.type}>{engine.name}</option>
+                )}
+              </For>
+            </select>
+          </div>
         </div>
       </Show>
     </div>

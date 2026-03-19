@@ -2,31 +2,23 @@ import { createResource, Suspense } from "solid-js"
 import { CopyButton } from "./CopyButton"
 import style from "./content-code.module.css"
 import { getHighlight, setHighlight, hasHighlight } from "../../lib/highlight-cache"
+import { highlightCode, resolveLang } from "../../lib/shiki-highlighter"
 
 async function highlight(code: string, lang?: string, transparentBg?: boolean) {
-  const cacheKey = `${lang || "text"}:${transparentBg ? "t" : "f"}:${code}`
+  const resolved = resolveLang(lang)
+  const cacheKey = `${resolved}:${transparentBg ? "t" : "f"}:${code}`
   if (hasHighlight(cacheKey)) {
     return getHighlight(cacheKey)!
   }
 
-  const [{ codeToHtml, bundledLanguages }, { transformerNotationDiff }] = await Promise.all([
-    import("shiki"),
-    import("@shikijs/transformers"),
-  ])
-
-  const result = await codeToHtml(code, {
-    lang: lang && lang in bundledLanguages ? lang : "text",
-    themes: {
-      light: "github-light",
-      dark: "one-dark-pro",
-    },
+  const { transformerNotationDiff } = await import("@shikijs/transformers")
+  const result = await highlightCode(code, resolved, {
     transformers: [transformerNotationDiff()],
+    transparentBg,
   })
 
-  const finalResult = transparentBg ? result.replace(/style="background-color:[^"]*"/, 'style="background-color:transparent"') : result
-
-  setHighlight(cacheKey, finalResult)
-  return finalResult
+  setHighlight(cacheKey, result)
+  return result
 }
 
 interface Props {

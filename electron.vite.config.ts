@@ -56,6 +56,11 @@ export default defineConfig({
         input: {
           index: resolve(__dirname, 'index.html'),
         },
+        output: {
+          manualChunks: {
+            shiki: ['shiki', '@shikijs/core', '@shikijs/transformers'],
+          },
+        },
       },
     },
     plugins: [

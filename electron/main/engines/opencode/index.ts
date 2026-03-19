@@ -1144,6 +1144,24 @@ export class OpenCodeAdapter extends EngineAdapter {
     });
   }
 
+  async getHistoricalMessages(
+    engineSessionId: string,
+    directory: string,
+  ): Promise<UnifiedMessage[]> {
+    const client = this.createClient(directory);
+    const result = await client.session.messages({ sessionID: engineSessionId });
+    if (result.error) {
+      throw new Error(`Failed to list messages: ${JSON.stringify(result.error)}`);
+    }
+    return (result.data ?? []).map((wrapper: any) => {
+      const msg = wrapper.info ?? wrapper;
+      if (wrapper.parts && (!msg.parts || msg.parts.length === 0)) {
+        msg.parts = wrapper.parts;
+      }
+      return convertMessage(this.engineType, msg, this.getPricing(msg));
+    });
+  }
+
   // --- Models ---
 
   async listModels(): Promise<ModelListResult> {

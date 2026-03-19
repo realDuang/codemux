@@ -574,12 +574,14 @@ export default function Chat() {
 
           // Filter sessions to valid directories only
           const validDirectories = new Set(allProjects.map(p => p.directory));
+          const normDir = (d: string) => d.replaceAll("\\", "/");
           const filteredSessions = allSessions.filter(s =>
-            s.directory && validDirectories.has(s.directory)
+            s.directory && validDirectories.has(normDir(s.directory))
           );
 
           const sessionInfos = filteredSessions.map(s => {
-            const project = allProjects.find(p => p.directory === s.directory);
+            const nd = normDir(s.directory);
+            const project = allProjects.find(p => p.directory === nd);
             return toSessionInfo(s, project?.id);
           });
 
@@ -799,8 +801,9 @@ export default function Chat() {
       ]);
       setSessionStore("projects", allProjects);
       const validDirectories = new Set(allProjects.map(p => p.directory));
+      const normDir = (d: string) => d.replaceAll("\\", "/");
       const filteredSessions = allSessions.filter(s =>
-        s.directory && validDirectories.has(s.directory)
+        s.directory && validDirectories.has(normDir(s.directory))
       );
       // Build index for O(1) project lookup by directory
       const projectIndex = new Map<string, UnifiedProject>();
@@ -808,7 +811,7 @@ export default function Chat() {
         projectIndex.set(p.directory, p);
       }
       const sessionInfos = filteredSessions.map(s => {
-        const project = projectIndex.get(s.directory);
+        const project = projectIndex.get(normDir(s.directory));
         return toSessionInfo(s, project?.id);
       });
       setSessionStore("list", sessionInfos);

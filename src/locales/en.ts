@@ -98,6 +98,22 @@ export interface LocaleDict {
     openConversationsFolder: string;
     logLevel: string;
     logLevelDesc: string;
+    importHistory: string;
+    importHistoryDesc: string;
+    importPreview: string;
+    importExecute: string;
+    importLast10: string;
+    importLast50: string;
+    importLast100: string;
+    importAll: string;
+    importAlreadyImported: string;
+    importWillReimport: string;
+    importProgress: string;
+    importComplete: string;
+    importCompleteDesc: string;
+    importNoSessions: string;
+    importError: string;
+    importSkipped: string;
   };
 
   // Remote Access page
@@ -528,6 +544,22 @@ export const en: LocaleDict = {
     openConversationsFolder: "Open Folder",
     logLevel: "Log Level",
     logLevelDesc: "Minimum severity level for writing logs to file",
+    importHistory: "Import History",
+    importHistoryDesc: "Import historical sessions from this engine into CodeMux",
+    importPreview: "Preview",
+    importExecute: "Import Selected",
+    importLast10: "Last 10",
+    importLast50: "Last 50",
+    importLast100: "Last 100",
+    importAll: "All",
+    importAlreadyImported: "Already imported",
+    importWillReimport: "Will reimport",
+    importProgress: "Importing {completed}/{total}: {title}",
+    importComplete: "Import Complete",
+    importCompleteDesc: "{imported} imported, {skipped} skipped, {errors} errors",
+    importNoSessions: "No new sessions found to import",
+    importError: "Failed to import",
+    importSkipped: "Skipped (already imported)",
   },
 
   // Remote Access page

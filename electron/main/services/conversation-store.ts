@@ -378,7 +378,8 @@ class ConversationStore {
       if (!conv.directory || conv.directory === "/") continue;
       const key = this.normalizeDir(conv.directory);
       if (!dirMap.has(key)) {
-        dirMap.set(key, { directory: conv.directory });
+        // Always store the normalized (forward-slash) form as the canonical directory
+        dirMap.set(key, { directory: key });
       }
     }
 
@@ -387,7 +388,7 @@ class ConversationStore {
       const name =
         directory.split(/[/\\]/).filter(Boolean).pop() || directory;
       projects.push({
-        id: `dir-${this.normalizeDir(directory)}`,
+        id: `dir-${directory}`,
         directory,
         name,
       });
@@ -427,6 +428,111 @@ class ConversationStore {
       if (conv.engineSessionId === engineSessionId) return conv;
     }
     return null;
+  }
+
+  // -------------------------------------------------------------------------
+  // Historical Session Import
+  // -------------------------------------------------------------------------
+
+  /**
+   * Collect all engine session IDs for a given engine type, for O(1) dedup lookups.
+   * For Claude, also includes engineMeta.ccSessionId values.
+   */
+  findAllEngineSessionIds(engineType: EngineType): Set<string> {
+    this.ensureInitialized();
+    const ids = new Set<string>();
+    for (const conv of this.index.values()) {
+      if (conv.engineType !== engineType) continue;
+      if (conv.engineSessionId) ids.add(conv.engineSessionId);
+      // Claude stores the real CC session ID in engineMeta
+      const ccId = conv.engineMeta?.ccSessionId;
+      if (typeof ccId === "string") ids.add(ccId);
+    }
+    return ids;
+  }
+
+  /**
+   * Import a complete conversation (meta + messages + steps) in one operation.
+   * Used for importing historical sessions from engines.
+   */
+  async importConversation(params: {
+    engineType: EngineType;
+    directory: string;
+    title: string;
+    createdAt: number;
+    updatedAt: number;
+    engineSessionId: string;
+    engineMeta?: Record<string, unknown>;
+    messages: ConversationMessage[];
+    steps: Record<string, UnifiedPart[]>;
+  }): Promise<ConversationMeta> {
+    this.ensureInitialized();
+
+    const convId = timeId("conv");
+    const conv: ConversationMeta = {
+      id: convId,
+      engineType: params.engineType,
+      directory: params.directory,
+      title: params.title,
+      createdAt: params.createdAt,
+      updatedAt: params.updatedAt,
+      messageCount: params.messages.length,
+      engineSessionId: params.engineSessionId,
+      engineMeta: params.engineMeta,
+      imported: true,
+    };
+
+    // Rewrite sessionId in all parts to use the conversation ID
+    const rewrittenMessages = params.messages.map((msg) => ({
+      ...msg,
+      parts: msg.parts.map((p) => ({ ...p, sessionId: convId })),
+    }));
+
+    // Set preview from last text part
+    for (let i = rewrittenMessages.length - 1; i >= 0; i--) {
+      const textPart = rewrittenMessages[i].parts.find(
+        (p): p is TextPart => p.type === "text",
+      );
+      if (textPart) {
+        conv.preview = textPart.text.slice(0, PREVIEW_LENGTH);
+        if (textPart.text.length > PREVIEW_LENGTH) conv.preview += "...";
+        break;
+      }
+    }
+
+    // Write messages file
+    if (rewrittenMessages.length > 0) {
+      await this.atomicWrite(this.getMessageFilePath(convId), rewrittenMessages);
+    }
+
+    // Write steps file
+    const stepEntries = Object.entries(params.steps);
+    if (stepEntries.length > 0) {
+      // Truncate large tool outputs and rewrite sessionId
+      const truncatedSteps: Record<string, UnifiedPart[]> = {};
+      for (const [msgId, parts] of stepEntries) {
+        truncatedSteps[msgId] = parts.map((s) => {
+          const rewritten = { ...s, sessionId: convId } as UnifiedPart;
+          return this.truncateStepOutput(rewritten);
+        });
+      }
+
+      const stepsFile: StepsFile = {
+        version: STEPS_FILE_VERSION,
+        conversationId: convId,
+        messages: truncatedSteps,
+      };
+      await this.atomicWrite(this.getStepsFilePath(convId), stepsFile);
+    }
+
+    // Add to index
+    this.index.set(convId, conv);
+    this.scheduleIndexWrite();
+
+    conversationStoreLog.info(
+      `Imported conversation ${convId} (${conv.engineType}, ${params.messages.length} msgs, ${stepEntries.length} msgs with steps)`,
+    );
+    return conv;
   }
 
   // -------------------------------------------------------------------------

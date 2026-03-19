@@ -22,6 +22,9 @@ import type {
   PermissionReply,
   ConversationMeta,
   ConversationMessage,
+  ImportableSession,
+  SessionImportResult,
+  SessionImportProgress,
 } from "../../../src/types/unified";
 
 // --- Helpers ---
@@ -366,15 +369,18 @@ export class EngineManager extends EventEmitter {
     if (!isCompleted) return; // Skip incomplete assistant messages (initial empty emit)
 
     try {
-      // Split parts into content vs steps
+      // Split parts into content vs steps, rewriting sessionId to conversationId
       const contentParts: Array<TextPart | FilePart> = [];
       const stepParts: UnifiedPart[] = [];
 
       for (const part of message.parts || []) {
-        if (this.isContentPart(part)) {
-          contentParts.push(part);
+        const rewritten = part.sessionId !== conversationId
+          ? { ...part, sessionId: conversationId }
+          : part;
+        if (this.isContentPart(rewritten)) {
+          contentParts.push(rewritten);
         } else {
-          stepParts.push(part);
+          stepParts.push(rewritten);
         }
       }
 
@@ -383,7 +389,10 @@ export class EngineManager extends EventEmitter {
       const bufferedContent = this.contentPartsBuffer.get(message.id) || [];
       for (const bp of bufferedContent) {
         if (!contentParts.some((p) => p.id === bp.id)) {
-          contentParts.push(bp);
+          const rewritten = bp.sessionId !== conversationId
+            ? { ...bp, sessionId: conversationId } as TextPart | FilePart
+            : bp;
+          contentParts.push(rewritten);
         }
       }
 
@@ -415,7 +424,10 @@ export class EngineManager extends EventEmitter {
       const allSteps = [...stepParts];
       for (const bp of bufferedSteps) {
         if (!allSteps.some((s) => s.id === bp.id)) {
-          allSteps.push(bp);
+          const rewritten = bp.sessionId !== conversationId
+            ? { ...bp, sessionId: conversationId }
+            : bp;
+          allSteps.push(rewritten);
         }
       }
 
@@ -480,7 +492,11 @@ export class EngineManager extends EventEmitter {
           this.persistedPlaceholders.add(messageId);
         }
 
-        await conversationStore.saveSteps(convId, messageId, [...steps]);
+        // Rewrite sessionId in steps to use conversationId before persisting
+        const rewrittenSteps = steps.map((s) =>
+          s.sessionId !== convId ? { ...s, sessionId: convId } : s,
+        );
+        await conversationStore.saveSteps(convId, messageId, [...rewrittenSteps]);
       } catch (err) {
         engineManagerLog.error(`Failed to flush steps for ${messageId}:`, err);
         // Re-add to dirty set for retry on next schedule
@@ -963,5 +979,168 @@ export class EngineManager extends EventEmitter {
   /** Return all projects derived from conversations */
   listAllProjects(): UnifiedProject[] {
     return conversationStore.deriveProjects();
+  }
+
+  // --- Historical Session Import ---
+
+  /**
+   * Preview importable sessions from an engine.
+   * Returns all historical sessions with dedup flags marking already-imported ones.
+   */
+  async importPreview(engineType: EngineType, limit: number): Promise<ImportableSession[]> {
+    const adapter = this.getAdapterOrThrow(engineType);
+    const sessions = await adapter.listHistoricalSessions(limit);
+
+    // Build dedup set: all known engine session IDs for this engine type
+    const existingIds = conversationStore.findAllEngineSessionIds(engineType);
+
+    for (const s of sessions) {
+      // Check both the direct engine session ID and any nested IDs (e.g. Claude's ccSessionId)
+      const ccId = s.engineMeta?.ccSessionId;
+      s.alreadyImported =
+        existingIds.has(s.engineSessionId) ||
+        (typeof ccId === "string" && existingIds.has(ccId));
+    }
+
+    return sessions;
+  }
+
+  /**
+   * Execute import of selected sessions from an engine.
+   * Fetches full message history and persists to ConversationStore.
+   */
+  async importExecute(
+    engineType: EngineType,
+    sessions: Array<{
+      engineSessionId: string;
+      directory: string;
+      title: string;
+      createdAt: number;
+      updatedAt: number;
+      engineMeta?: Record<string, unknown>;
+    }>,
+  ): Promise<SessionImportResult> {
+    const adapter = this.getAdapterOrThrow(engineType);
+
+    const result: SessionImportResult = { imported: 0, skipped: 0, errors: [] };
+    const total = sessions.length;
+
+    for (let i = 0; i < sessions.length; i++) {
+      const s = sessions[i];
+
+      // If already imported, delete the old CodeMux conversation to allow reimport.
+      // Only deletes local ConversationStore data — does NOT touch the engine session.
+      const ccId = s.engineMeta?.ccSessionId;
+      const existingConv = this.findImportedConversation(engineType, s.engineSessionId, ccId);
+      if (existingConv) {
+        engineManagerLog.info(`Reimporting: deleting old conversation ${existingConv.id} for engine session ${s.engineSessionId}`);
+        await conversationStore.delete(existingConv.id);
+        this.sessionEngineMap.delete(existingConv.id);
+        if (existingConv.engineSessionId) {
+          this.engineToConvMap.delete(existingConv.engineSessionId);
+        }
+      }
+
+      try {
+        // Fetch messages from engine
+        const messages = await adapter.getHistoricalMessages(
+          s.engineSessionId,
+          s.directory,
+          s.engineMeta,
+        );
+
+        engineManagerLog.info(
+          `Import ${s.engineSessionId}: got ${messages.length} messages (${messages.filter(m => m.role === "user").length} user, ${messages.filter(m => m.role === "assistant").length} assistant)`,
+        );
+
+        // Split each message's parts into content (text/file) and steps (everything else)
+        const convMessages: ConversationMessage[] = [];
+        const allSteps: Record<string, UnifiedPart[]> = {};
+
+        for (const msg of messages) {
+          const contentParts: Array<TextPart | FilePart> = [];
+          const stepParts: UnifiedPart[] = [];
+
+          for (const part of msg.parts || []) {
+            if (part.type === "text" || part.type === "file") {
+              contentParts.push(part as TextPart | FilePart);
+            } else {
+              stepParts.push(part);
+            }
+          }
+
+          convMessages.push({
+            id: msg.id,
+            role: msg.role,
+            time: msg.time,
+            parts: contentParts,
+            tokens: msg.tokens,
+            cost: msg.cost,
+            costUnit: msg.costUnit,
+            modelId: msg.modelId,
+            error: msg.error,
+          });
+
+          if (stepParts.length > 0) {
+            allSteps[msg.id] = stepParts;
+          }
+        }
+
+        // Determine the engineSessionId to store
+        // For Claude: store the cc_ prefixed ID, and keep ccSessionId in engineMeta
+        const storedEngineSessionId = s.engineSessionId;
+
+        const conv = await conversationStore.importConversation({
+          engineType,
+          directory: s.directory,
+          title: s.title,
+          createdAt: s.createdAt,
+          updatedAt: s.updatedAt,
+          engineSessionId: storedEngineSessionId,
+          engineMeta: s.engineMeta,
+          messages: convMessages,
+          steps: allSteps,
+        });
+
+        // Register in routing tables
+        this.sessionEngineMap.set(conv.id, engineType);
+        this.engineToConvMap.set(storedEngineSessionId, conv.id);
+
+        result.imported++;
+      } catch (err: any) {
+        const errMsg = `${s.title}: ${err?.message ?? String(err)}`;
+        result.errors.push(errMsg);
+        engineManagerLog.warn(`Failed to import session ${s.engineSessionId}:`, err);
+      }
+
+      this.emitImportProgress(total, i + 1, s.title, result.errors);
+    }
+
+    engineManagerLog.info(
+      `Import complete: ${result.imported} imported, ${result.skipped} skipped, ${result.errors.length} errors`,
+    );
+    return result;
+  }
+
+  private emitImportProgress(total: number, completed: number, currentTitle: string, errors: string[]): void {
+    const progress: SessionImportProgress = { total, completed, currentTitle, errors: [...errors] };
+    this.emit("session.import.progress" as any, progress);
+  }
+
+  /**
+   * Find an existing imported conversation by engine session ID.
+   * Returns null if not found or if the conversation was not imported.
+   */
+  private findImportedConversation(
+    engineType: EngineType,
+    engineSessionId: string,
+    ccSessionId?: string | unknown,
+  ): ConversationMeta | null {
+    for (const conv of conversationStore.list({ engineType })) {
+      if (!conv.imported) continue;
+      if (conv.engineSessionId === engineSessionId) return conv;
+      if (typeof ccSessionId === "string" && conv.engineMeta?.ccSessionId === ccSessionId) return conv;
+    }
+    return null;
   }
 }

@@ -20,6 +20,7 @@ import type {
   AgentMode,
   MessagePromptContent,
   PermissionReply,
+  ImportableSession,
 } from "../../../src/types/unified";
 
 /**
@@ -201,6 +202,34 @@ export abstract class EngineAdapter extends EventEmitter {
 
   /** List messages for a session */
   abstract listMessages(sessionId: string): Promise<UnifiedMessage[]>;
+
+  // --- Historical Import ---
+
+  /** List historical sessions from the engine with a count limit (0 = all) */
+  async listHistoricalSessions(limit: number): Promise<ImportableSession[]> {
+    const sessions = await this.listSessions();
+    sessions.sort((a, b) => (b.time?.updated ?? 0) - (a.time?.updated ?? 0));
+    const sliced = limit > 0 ? sessions.slice(0, limit) : sessions;
+    return sliced.map((s) => ({
+      engineSessionId: s.id,
+      title: s.title ?? "Untitled",
+      directory: s.directory,
+      createdAt: s.time?.created ?? 0,
+      updatedAt: s.time?.updated ?? 0,
+      alreadyImported: false,
+      engineMeta: s.engineMeta,
+    }));
+  }
+
+  /**
+   * Retrieve full message history for a historical session.
+   * Unlike listMessages(), this works with sessions that are NOT active in memory.
+   */
+  abstract getHistoricalMessages(
+    engineSessionId: string,
+    directory: string,
+    engineMeta?: Record<string, unknown>,
+  ): Promise<UnifiedMessage[]>;
 
   // --- Models ---
 

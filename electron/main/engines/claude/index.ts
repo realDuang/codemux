@@ -672,6 +672,33 @@ export class ClaudeCodeAdapter extends EngineAdapter {
     }
   }
 
+  async getHistoricalMessages(
+    engineSessionId: string,
+    directory: string,
+    engineMeta?: Record<string, unknown>,
+  ): Promise<UnifiedMessage[]> {
+    // engineSessionId for Claude is "cc_<ccSessionId>", extract the real CC session ID
+    const ccSessionId =
+      (engineMeta?.ccSessionId as string) ??
+      (engineSessionId.startsWith("cc_") ? engineSessionId.slice(3) : engineSessionId);
+
+    try {
+      const sdkMessages = await sdkGetSessionMessages(
+        ccSessionId,
+        directory ? { dir: directory } : undefined,
+      );
+
+      const timestamps = directory
+        ? readJsonlTimestamps(ccSessionId, directory)
+        : new Map<string, number>();
+
+      return convertSdkMessages(sdkMessages, engineSessionId, timestamps);
+    } catch (err) {
+      claudeLog.warn(`[Claude] Failed to get historical messages for ${ccSessionId}:`, err);
+      return [];
+    }
+  }
+
   // ==========================================================================
   // Models
   // ==========================================================================

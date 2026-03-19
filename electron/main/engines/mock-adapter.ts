@@ -477,6 +477,10 @@ export class MockEngineAdapter extends EngineAdapter {
     return this.messages.get(sessionId) ?? [];
   }
 
+  async getHistoricalMessages(): Promise<UnifiedMessage[]> {
+    return [];
+  }
+
   // ---------------------------------------------------------------------------
   // Models
   // ---------------------------------------------------------------------------

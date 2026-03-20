@@ -111,7 +111,7 @@ export function SessionSidebar(props: SessionSidebarProps) {
       groups.set(project.id, []);
     }
 
-    const rootSessions = props.sessions;
+    const rootSessions = props.sessions.filter(s => isEngineEnabled(s.engineType));
 
     for (const session of rootSessions) {
       const projectID = session.projectID || "";

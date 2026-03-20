@@ -36,6 +36,11 @@ vi.mock("../../../../electron/main/services/logger", () => ({
     error: vi.fn(),
     debug: vi.fn(),
   },
+  getDefaultEngineFromSettings: vi.fn(() => "opencode"),
+}));
+
+vi.mock("../../../../electron/main/services/default-workspace", () => ({
+  getDefaultWorkspacePath: vi.fn(() => "/mock/userData/workspace"),
 }));
 
 vi.mock("../../../../electron/main/utils/id-gen", () => ({
@@ -472,11 +477,46 @@ describe("EngineManager", () => {
       (conversationStore.list as any).mockReturnValue([{ id: "c1", engineType: "opencode", time: {created: 1} }]);
       const all = engineManager.listAllSessions();
       expect(all).toHaveLength(1);
+    });
+  });
 
-      // listAllProjects returns derived projects
-      (conversationStore.deriveProjects as any).mockReturnValue([{ id: "p1" }]);
+  describe("listAllProjects — default workspace", () => {
+    it("appends default workspace when not already in derived projects", () => {
+      (conversationStore.deriveProjects as any).mockReturnValue([
+        { id: "p1", directory: "/myproject", name: "myproject" },
+      ]);
+      const projects = engineManager.listAllProjects();
+      expect(projects).toHaveLength(2);
+
+      const defaultProject = projects.find(p => p.isDefault);
+      expect(defaultProject).toBeDefined();
+      expect(defaultProject!.directory).toBe("/mock/userData/workspace");
+      expect(defaultProject!.name).toBe("Default Workspace");
+    });
+
+    it("marks existing project as default when directory matches", () => {
+      (conversationStore.deriveProjects as any).mockReturnValue([
+        { id: "p1", directory: "/mock/userData/workspace", name: "workspace" },
+      ]);
       const projects = engineManager.listAllProjects();
       expect(projects).toHaveLength(1);
+      expect(projects[0].isDefault).toBe(true);
+    });
+
+    it("handles backslash normalization for Windows paths", () => {
+      (conversationStore.deriveProjects as any).mockReturnValue([
+        { id: "p1", directory: "\\mock\\userData\\workspace", name: "workspace" },
+      ]);
+      const projects = engineManager.listAllProjects();
+      expect(projects).toHaveLength(1);
+      expect(projects[0].isDefault).toBe(true);
+    });
+
+    it("returns only default workspace when no other projects exist", () => {
+      (conversationStore.deriveProjects as any).mockReturnValue([]);
+      const projects = engineManager.listAllProjects();
+      expect(projects).toHaveLength(1);
+      expect(projects[0].isDefault).toBe(true);
     });
   });
 });

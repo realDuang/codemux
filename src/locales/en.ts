@@ -114,6 +114,8 @@ export interface LocaleDict {
     importNoSessions: string;
     importError: string;
     importSkipped: string;
+    showDefaultWorkspace: string;
+    showDefaultWorkspaceDesc: string;
   };
 
   // Remote Access page
@@ -184,6 +186,7 @@ export interface LocaleDict {
     defaultEngine: string;
     searchPlaceholder: string;
     noSearchResults: string;
+    defaultWorkspace: string;
   };
 
   // Project
@@ -577,6 +580,8 @@ export const en: LocaleDict = {
     importNoSessions: "No new sessions found to import",
     importError: "Failed to import",
     importSkipped: "Skipped (already imported)",
+    showDefaultWorkspace: "Show default workspace in sidebar",
+    showDefaultWorkspaceDesc: "Display the default workspace project group in the sidebar",
   },
 
   // Remote Access page
@@ -647,6 +652,7 @@ export const en: LocaleDict = {
     defaultEngine: "Default Engine",
     searchPlaceholder: "Search sessions...",
     noSearchResults: "No matching sessions",
+    defaultWorkspace: "Default Workspace",
   },
 
   // Project

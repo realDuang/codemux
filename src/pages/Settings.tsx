@@ -11,6 +11,7 @@ import { configStore, saveEngineModelSelection, isEngineEnabled, setEngineEnable
 import { sessionStore, setSessionStore } from "../stores/session";
 import { gateway } from "../lib/gateway-api";
 import { systemAPI, updateAPI, autostartAPI } from "../lib/electron-api";
+import { getSetting, saveSetting } from "../lib/settings";
 import type { UnifiedModelInfo, EngineType, UnifiedSession } from "../types/unified";
 
 export default function Settings() {
@@ -32,6 +33,17 @@ export default function Settings() {
 
   // Import history modal state
   const [importModalEngine, setImportModalEngine] = createSignal<EngineType | null>(null);
+
+  // Default workspace visibility
+  const [showDefaultWorkspace, setShowDefaultWorkspace] = createSignal(
+    getSetting<boolean>("showDefaultWorkspace") ?? false,
+  );
+
+  const handleShowDefaultWorkspaceToggle = () => {
+    const newValue = !showDefaultWorkspace();
+    setShowDefaultWorkspace(newValue);
+    saveSetting("showDefaultWorkspace", newValue);
+  };
 
   const logLevels = ["error", "warn", "info", "verbose", "debug", "silly"];
 
@@ -231,7 +243,7 @@ export default function Settings() {
                   </div>
                 </div>
                 {/* Theme Setting */}
-                <div class="p-4 sm:p-6 flex items-center justify-between gap-4">
+                <div class="p-4 sm:p-6 flex items-center justify-between gap-4 border-b border-gray-200 dark:border-slate-700">
                   <div>
                     <h3 class="text-base font-medium text-gray-900 dark:text-white">
                       {t().settings.theme}
@@ -242,6 +254,33 @@ export default function Settings() {
                   </div>
                   <div class="flex-shrink-0">
                     <ThemeSwitcher />
+                  </div>
+                </div>
+                {/* Show Default Workspace toggle */}
+                <div class="p-4 sm:p-6 flex items-center justify-between gap-4">
+                  <div>
+                    <h3 class="text-base font-medium text-gray-900 dark:text-white">
+                      {t().settings.showDefaultWorkspace}
+                    </h3>
+                    <p class="text-sm text-gray-500 dark:text-gray-400 mt-1">
+                      {t().settings.showDefaultWorkspaceDesc}
+                    </p>
+                  </div>
+                  <div class="flex-shrink-0">
+                    <button
+                      onClick={handleShowDefaultWorkspaceToggle}
+                      class={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                        showDefaultWorkspace() ? "bg-blue-600" : "bg-gray-300 dark:bg-slate-600"
+                      }`}
+                      role="switch"
+                      aria-checked={showDefaultWorkspace()}
+                    >
+                      <span
+                        class={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                          showDefaultWorkspace() ? "translate-x-6" : "translate-x-1"
+                        }`}
+                      />
+                    </button>
                   </div>
                 </div>
               </div>

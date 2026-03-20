@@ -115,6 +115,8 @@ export const zh: LocaleDict = {
     importNoSessions: "没有找到可导入的新会话",
     importError: "导入失败",
     importSkipped: "已跳过（已导入）",
+    showDefaultWorkspace: "在侧边栏显示默认工作区",
+    showDefaultWorkspaceDesc: "在侧边栏中显示默认工作区项目分组",
   },
 
   // Remote Access page
@@ -185,6 +187,7 @@ export const zh: LocaleDict = {
     defaultEngine: "默认引擎",
     searchPlaceholder: "搜索会话...",
     noSearchResults: "没有匹配的会话",
+    defaultWorkspace: "默认工作区",
   },
 
   // Project

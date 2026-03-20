@@ -5,6 +5,7 @@
 import { EventEmitter } from "events";
 import { EngineAdapter, type EngineAdapterEvents } from "../engines/engine-adapter";
 import { conversationStore } from "../services/conversation-store";
+import { getDefaultWorkspacePath } from "../services/default-workspace";
 import { engineManagerLog, getDefaultEngineFromSettings } from "../services/logger";
 import { timeId } from "../utils/id-gen";
 import type {
@@ -1025,9 +1026,27 @@ export class EngineManager extends EventEmitter {
     return conversationStore.list().map(convToSession);
   }
 
-  /** Return all projects derived from conversations */
+  /** Return all projects derived from conversations, always including the default workspace */
   listAllProjects(): UnifiedProject[] {
-    return conversationStore.deriveProjects();
+    const projects = conversationStore.deriveProjects();
+    const defaultDir = getDefaultWorkspacePath().replaceAll("\\", "/");
+    const alreadyExists = projects.some(
+      (p) => p.directory.replaceAll("\\", "/") === defaultDir,
+    );
+    if (!alreadyExists) {
+      projects.push({
+        id: `dir-${defaultDir}`,
+        directory: defaultDir,
+        name: "Default Workspace",
+        isDefault: true,
+      });
+    } else {
+      const existing = projects.find(
+        (p) => p.directory.replaceAll("\\", "/") === defaultDir,
+      );
+      if (existing) existing.isDefault = true;
+    }
+    return projects;
   }
 
   // --- Historical Session Import ---

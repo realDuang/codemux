@@ -688,7 +688,8 @@ export default function Chat() {
     logger.debug("[NewSession] Creating new session in directory:", directory, "engineType:", explicitEngineType);
 
     try {
-      const dir = directory || sessionStore.projects[0]?.directory || ".";
+      const defaultProject = sessionStore.projects.find(p => p.isDefault);
+      const dir = directory || defaultProject?.directory || sessionStore.projects[0]?.directory || ".";
       // Use explicitly-passed engineType when available, otherwise use global default engine.
       const engineType = explicitEngineType || getDefaultEngineType();
       const newSession = await gateway.createSession(engineType, dir);

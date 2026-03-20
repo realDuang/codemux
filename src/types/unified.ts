@@ -411,6 +411,8 @@ export interface UnifiedProject {
   engineType?: EngineType;
   /** Engine-specific data */
   engineMeta?: Record<string, unknown>;
+  /** Marks the default workspace project (auto-created fallback directory) */
+  isDefault?: boolean;
 }
 
 // ============================================================================

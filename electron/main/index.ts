@@ -40,6 +40,7 @@ import { WeComAdapter } from "./channels/wecom/wecom-adapter";
 import { TeamsAdapter } from "./channels/teams/teams-adapter";
 import { updateManager } from "./services/update-manager";
 import { trayManager } from "./services/tray-manager";
+import { ensureDefaultWorkspace } from "./services/default-workspace";
 
 // --- Gateway singleton instances ---
 const engineManager = new EngineManager();
@@ -99,6 +100,9 @@ if (!gotTheLock) {
   });
 
   app.whenReady().then(async () => {
+    // Ensure default workspace directory exists
+    ensureDefaultWorkspace();
+
     // Initialize DeviceStore (needs to be after app ready)
     deviceStore.init();
 

@@ -8,6 +8,7 @@ import { getEngineBadge } from "./share/common";
 import { ProjectStore } from "../lib/project-store";
 import { isElectron } from "../lib/platform";
 import { systemAPI } from "../lib/electron-api";
+import { getSetting } from "../lib/settings";
 
 interface SessionSidebarProps {
   sessions: SessionInfo[];
@@ -105,7 +106,12 @@ export function SessionSidebar(props: SessionSidebarProps) {
   const projectGroups = createMemo((): ProjectGroup[] => {
     const groups: Map<string, SessionInfo[]> = new Map();
 
-    const filteredProjects = props.projects.filter((p) => p.directory !== "/");
+    const showDefaultWs = getSetting<boolean>("showDefaultWorkspace") ?? false;
+    const filteredProjects = props.projects.filter((p) => {
+      if (p.directory === "/") return false;
+      if (p.isDefault && !showDefaultWs) return false;
+      return true;
+    });
 
     for (const project of filteredProjects) {
       groups.set(project.id, []);
@@ -122,22 +128,31 @@ export function SessionSidebar(props: SessionSidebarProps) {
     }
 
     const result: ProjectGroup[] = [];
+    const defaultGroups: ProjectGroup[] = [];
     for (const [projectID, sessions] of groups) {
       if (sessions.length === 0) continue; // Only show projects that have sessions
       const project = filteredProjects.find((p) => p.id === projectID) || null;
       if (!project) continue;
 
-      const name = getProjectName(project);
+      // Use i18n name for default workspace
+      const name = project.isDefault ? t().sidebar.defaultWorkspace : getProjectName(project);
 
-      result.push({
+      const group: ProjectGroup = {
         projectID,
         project,
         name,
         sessions,
-      });
+      };
+
+      // Sort default workspace last
+      if (project.isDefault) {
+        defaultGroups.push(group);
+      } else {
+        result.push(group);
+      }
     }
 
-    return result;
+    return [...result, ...defaultGroups];
   });
 
   // Filter project groups by search query (matches session title or project name)

@@ -28,11 +28,7 @@ export function AddProjectModal(props: AddProjectModalProps) {
       props.onClose();
     } catch (e) {
       const errorMessage = e instanceof Error ? e.message : "";
-      if (errorMessage === "NOT_GIT_REPO") {
-        setError(t().project.notGitRepo);
-      } else {
-        setError(errorMessage || t().project.addFailed);
-      }
+      setError(errorMessage || t().project.addFailed);
     } finally {
       setLoading(false);
     }

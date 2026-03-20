@@ -199,7 +199,6 @@ export interface LocaleDict {
     browseNotSupported: string;
     adding: string;
     addFailed: string;
-    notGitRepo: string;
     hideTitle: string;
     hideConfirm: string;
     sessionCount: string;
@@ -665,7 +664,6 @@ export const en: LocaleDict = {
     browseNotSupported: "Folder selection not supported in this browser",
     adding: "Adding project...",
     addFailed: "Failed to add project",
-    notGitRepo: "The specified path is not a valid git repository",
     hideTitle: "Delete Project Sessions",
     hideConfirm: "Delete all sessions for project \"{name}\"?",
     sessionCount: "This will delete {count} session(s).",

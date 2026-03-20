@@ -200,7 +200,6 @@ export const zh: LocaleDict = {
     browseNotSupported: "当前浏览器不支持文件夹选择",
     adding: "正在添加项目...",
     addFailed: "添加项目失败",
-    notGitRepo: "指定路径不是有效的 git 仓库",
     hideTitle: "删除项目会话",
     hideConfirm: "删除项目「{name}」的所有会话？",
     sessionCount: "这将删除 {count} 个会话。",

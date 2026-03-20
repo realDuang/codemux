@@ -1450,41 +1450,6 @@ export default function Chat() {
     return session?.title || "";
   });
 
-  const currentSessionParts = createMemo(() => {
-    const sid = sessionStore.current;
-    if (!sid) return [];
-    const messages = messageStore.message[sid] || [];
-    const allParts: UnifiedPart[] = [];
-    for (const msg of messages) {
-      const parts = messageStore.part[msg.id];
-      if (parts) allParts.push(...parts);
-    }
-    return allParts;
-  });
-
-  // Load step parts (which contain ToolParts) when git panel is open
-  createEffect(() => {
-    if (!gitPanelOpen()) return;
-    const sid = sessionStore.current;
-    if (!sid) return;
-    const messages = messageStore.message[sid] || [];
-
-    for (const msg of messages) {
-      if ((msg.stepCount ?? 0) > 0 && !messageStore.stepsLoaded[msg.id]) {
-        gateway.getMessageSteps(sid, msg.id).then((steps) => {
-          if (disposed) return;
-          const existing = messageStore.part[msg.id] || [];
-          const existingIds = new Set(existing.map((p) => p.id));
-          const newSteps = steps.filter((s) => !existingIds.has(s.id));
-          if (newSteps.length > 0) {
-            setMessageStore("part", msg.id, [...existing, ...newSteps].sort((a, b) => a.id.localeCompare(b.id)));
-          }
-          setMessageStore("stepsLoaded", msg.id, true);
-        }).catch(() => { /* ignore — panel will show empty */ });
-      }
-    }
-  });
-
   createEffect(() => {
     initializeSession();
 
@@ -1862,7 +1827,7 @@ export default function Chat() {
       <Show when={gitPanelOpen() && sessionStore.current}>
         <div class={gitPanelCollapsed() ? "w-9 flex-shrink-0" : "w-80 flex-shrink-0"} style={{ transition: "width 200ms ease" }}>
           <GitChangesPanel
-            sessionParts={currentSessionParts()}
+            sessionId={sessionStore.current}
             isWorking={sending()}
             collapsed={gitPanelCollapsed()}
             onToggleCollapse={() => setGitPanelCollapsed(!gitPanelCollapsed())}

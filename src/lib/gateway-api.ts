@@ -326,6 +326,12 @@ class GatewayAPI {
       }
     });
   }
+
+  // --- File Changes ---
+
+  getSessionFileChanges(sessionId: string): Promise<import("../types/unified").SessionFileChange[]> {
+    return gatewayClient.getSessionFileChanges(sessionId);
+  }
 }
 
 export const gateway = new GatewayAPI();

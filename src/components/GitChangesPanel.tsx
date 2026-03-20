@@ -5,35 +5,32 @@
  *   1. File list — shows changed files with status badges
  *   2. Diff view — drill-down into a single file's diff with Shiki syntax highlighting
  *
- * Data source: ToolPart (write/edit) extracted from session messages.
- * Works identically for all engines, all projects (git or non-git), and historical sessions.
+ * Data source: backend `session.fileChanges` endpoint that extracts write/edit
+ * ToolPart metadata from .steps.json — lightweight, no full step loading.
  */
 
 import {
   createSignal,
-  createMemo,
+  createResource,
   Show,
   For,
+  createMemo,
 } from "solid-js";
 import { useI18n } from "../lib/i18n";
-import { extractFileChanges, type ExtractedFileChange } from "../lib/extract-file-changes";
+import { gateway } from "../lib/gateway-api";
 import { resolveLang } from "../lib/shiki-highlighter";
 import { ContentDiff } from "./share/content-diff";
-import type { UnifiedPart } from "../types/unified";
+import type { SessionFileChange } from "../types/unified";
 import styles from "./GitChangesPanel.module.css";
-
-// --- Status badge labels ---
 
 const STATUS_LETTERS: Record<string, string> = {
   created: "A",
   modified: "M",
 };
 
-// --- Types ---
-
 interface GitChangesPanelProps {
-  /** All parts for the current session */
-  sessionParts: UnifiedPart[];
+  /** Current session ID */
+  sessionId: string | null;
   /** Whether the AI is currently streaming */
   isWorking: boolean;
   /** Whether the panel is collapsed */
@@ -42,22 +39,45 @@ interface GitChangesPanelProps {
   onToggleCollapse: () => void;
 }
 
-// --- Component ---
-
 export function GitChangesPanel(props: GitChangesPanelProps) {
   const { t } = useI18n();
-  const [selectedFile, setSelectedFile] = createSignal<ExtractedFileChange | null>(null);
+  const [selectedFile, setSelectedFile] = createSignal<SessionFileChange | null>(null);
 
-  // Reactively extract file changes from session parts
-  const fileEntries = createMemo(() => extractFileChanges(props.sessionParts));
+  // Track working→idle transitions to auto-refresh
+  let wasWorking = false;
+  const [refreshTick, setRefreshTick] = createSignal(0);
+  createMemo(() => {
+    const working = props.isWorking;
+    if (wasWorking && !working) {
+      setRefreshTick((c) => c + 1);
+    }
+    wasWorking = working;
+  });
 
-  const handleFileClick = (file: ExtractedFileChange) => {
+  // Fetch file changes from backend (reads .steps.json, extracts paths+diffs)
+  const [fileChanges] = createResource(
+    () => {
+      const sid = props.sessionId;
+      if (!sid) return null;
+      const _ = refreshTick(); // reactive dependency for auto-refresh
+      return sid;
+    },
+    async (sessionId) => {
+      try {
+        return await gateway.getSessionFileChanges(sessionId);
+      } catch {
+        return [];
+      }
+    },
+  );
+
+  const entries = () => fileChanges() ?? [];
+
+  const handleFileClick = (file: SessionFileChange) => {
     if (file.diff || file.content) {
       setSelectedFile(file);
     }
   };
-
-  const handleBack = () => setSelectedFile(null);
 
   const fileBasename = (path: string) => {
     const parts = path.replace(/\\/g, "/").split("/");
@@ -82,8 +102,8 @@ export function GitChangesPanel(props: GitChangesPanelProps) {
           <span class={styles.collapsedIcon}>
             <FileChangesIcon size={16} />
           </span>
-          <Show when={fileEntries().length > 0}>
-            <span class={styles.collapsedBadge}>{fileEntries().length}</span>
+          <Show when={entries().length > 0}>
+            <span class={styles.collapsedBadge}>{entries().length}</span>
           </Show>
         </div>
       </div>
@@ -98,7 +118,7 @@ export function GitChangesPanel(props: GitChangesPanelProps) {
     return (
       <div class={styles.root}>
         <div class={styles.diffHeader}>
-          <button class={styles.backBtn} onClick={handleBack}>
+          <button class={styles.backBtn} onClick={() => setSelectedFile(null)}>
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
               <path d="m15 18-6-6 6-6" />
             </svg>
@@ -114,13 +134,8 @@ export function GitChangesPanel(props: GitChangesPanelProps) {
             fallback={
               <Show
                 when={selected.content}
-                fallback={
-                  <div class={styles.emptyState}>
-                    {t().gitPanel.noChanges}
-                  </div>
-                }
+                fallback={<div class={styles.emptyState}>{t().gitPanel.noChanges}</div>}
               >
-                {/* For write tools without diff, show file content as all-added */}
                 <ContentDiff
                   diff={`--- /dev/null\n+++ b/${selected.path}\n@@ -0,0 +1,${selected.content!.split("\n").length} @@\n${selected.content!.split("\n").map((l) => `+${l}`).join("\n")}`}
                   language={lang}
@@ -138,14 +153,13 @@ export function GitChangesPanel(props: GitChangesPanelProps) {
   // --- File list view ---
   return (
     <div class={styles.root}>
-      {/* Header */}
       <div class={styles.header}>
         <span class={styles.headerIcon}>
           <FileChangesIcon size={14} />
         </span>
         <span class={styles.headerTitle}>{t().gitPanel.title}</span>
-        <Show when={fileEntries().length > 0}>
-          <span class={styles.headerBadge}>{fileEntries().length}</span>
+        <Show when={entries().length > 0}>
+          <span class={styles.headerBadge}>{entries().length}</span>
         </Show>
         <div class={styles.headerActions}>
           <button
@@ -160,23 +174,16 @@ export function GitChangesPanel(props: GitChangesPanelProps) {
         </div>
       </div>
 
-      {/* File list */}
       <div class={styles.fileList}>
         <Show
-          when={fileEntries().length > 0}
+          when={!fileChanges.loading && entries().length > 0}
           fallback={
-            <div class={styles.emptyState}>
-              <span class={styles.emptyIcon}>
-                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" opacity="0.4">
-                  <circle cx="12" cy="12" r="10" />
-                  <path d="m9 12 2 2 4-4" />
-                </svg>
-              </span>
-              {t().gitPanel.noChanges}
-            </div>
+            <Show when={fileChanges.loading}>
+              <div class={styles.emptyState}>{t().gitPanel.loading}</div>
+            </Show>
           }
         >
-          <For each={fileEntries()}>
+          <For each={entries()}>
             {(file) => (
               <div
                 class={styles.fileItem}
@@ -186,10 +193,7 @@ export function GitChangesPanel(props: GitChangesPanelProps) {
                 <span
                   class={styles.statusBadge}
                   data-status={file.status}
-                  title={
-                    (t().gitPanel as Record<string, string>)[file.status] ??
-                    file.status
-                  }
+                  title={(t().gitPanel as Record<string, string>)[file.status] ?? file.status}
                 >
                   {STATUS_LETTERS[file.status] ?? "M"}
                 </span>
@@ -208,26 +212,26 @@ export function GitChangesPanel(props: GitChangesPanelProps) {
             )}
           </For>
         </Show>
+        <Show when={!fileChanges.loading && entries().length === 0}>
+          <div class={styles.emptyState}>
+            <span class={styles.emptyIcon}>
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" opacity="0.4">
+                <circle cx="12" cy="12" r="10" />
+                <path d="m9 12 2 2 4-4" />
+              </svg>
+            </span>
+            {t().gitPanel.noChanges}
+          </div>
+        </Show>
       </div>
     </div>
   );
 }
 
-// --- Inline icon ---
-
 function FileChangesIcon(props: { size?: number }) {
   const s = props.size ?? 16;
   return (
-    <svg
-      width={s}
-      height={s}
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      stroke-width="2"
-      stroke-linecap="round"
-      stroke-linejoin="round"
-    >
+    <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
       <path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z" />
       <path d="M14 2v4a2 2 0 0 0 2 2h4" />
       <path d="M9 15h6" />

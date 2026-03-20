@@ -33,6 +33,7 @@ import {
   type SessionImportExecuteRequest,
   type SessionImportResult,
   type SessionImportProgress,
+  type SessionFileChange,
 } from "../types/unified";
 
 // --- Event types emitted by GatewayClient ---
@@ -495,6 +496,12 @@ export class GatewayClient {
   importExecute(req: SessionImportExecuteRequest): Promise<SessionImportResult> {
     // No timeout — importing many sessions with full messages can take minutes
     return this.request(GatewayRequestType.SESSION_IMPORT_EXECUTE, req, 0);
+  }
+
+  // --- File Changes API ---
+
+  getSessionFileChanges(sessionId: string): Promise<SessionFileChange[]> {
+    return this.request(GatewayRequestType.SESSION_FILE_CHANGES, { sessionId });
   }
 
   // --- Log forwarding (fire-and-forget, no response expected) ---

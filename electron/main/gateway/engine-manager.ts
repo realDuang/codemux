@@ -13,6 +13,7 @@ import type {
   UnifiedSession,
   UnifiedMessage,
   UnifiedPart,
+  ToolPart,
   TextPart,
   FilePart,
   ModelListResult,
@@ -877,6 +878,74 @@ export class EngineManager extends EventEmitter {
 
   async getMessageSteps(sessionId: string, messageId: string): Promise<UnifiedPart[]> {
     return await conversationStore.getSteps(sessionId, messageId);
+  }
+
+  /**
+   * Extract lightweight file change metadata from step parts.
+   * Reads .steps.json and returns only paths + diffs for write/edit tool parts.
+   * Much cheaper than loading full step parts into the frontend store.
+   */
+  async getSessionFileChanges(sessionId: string): Promise<Array<{
+    path: string;
+    status: "created" | "modified";
+    diff?: string;
+    content?: string;
+    langExt?: string;
+  }>> {
+    const stepsFile = await conversationStore.getAllSteps(sessionId);
+    if (!stepsFile) return [];
+
+    const fileMap = new Map<string, {
+      path: string;
+      status: "created" | "modified";
+      diff?: string;
+      content?: string;
+      langExt?: string;
+    }>();
+
+    for (const parts of Object.values(stepsFile.messages)) {
+      for (const part of parts) {
+        if (part.type !== "tool") continue;
+        const tool = part as ToolPart;
+        if (tool.normalizedTool !== "write" && tool.normalizedTool !== "edit") continue;
+
+        const filePath = this.resolveToolFilePath(tool);
+        if (!filePath) continue;
+
+        const ext = filePath.split(".").pop() ?? "";
+        const diff = this.resolveToolDiff(tool);
+        const content = tool.normalizedTool === "write"
+          ? ((tool.state as any)?.input?.content as string | undefined)
+          : undefined;
+
+        const existing = fileMap.get(filePath);
+        if (!existing) {
+          fileMap.set(filePath, { path: filePath, status: tool.normalizedTool === "write" ? "created" : "modified", diff, content, langExt: ext });
+        } else {
+          if (tool.normalizedTool === "edit") existing.status = "modified";
+          if (diff) existing.diff = diff;
+          if (content) existing.content = content;
+        }
+      }
+    }
+
+    return Array.from(fileMap.values()).sort((a, b) => a.path.localeCompare(b.path));
+  }
+
+  private resolveToolFilePath(tool: ToolPart): string | undefined {
+    const input = (tool.state as any)?.input as Record<string, unknown> | undefined;
+    if (input?.filePath && typeof input.filePath === "string") return input.filePath;
+    if (input?.file_path && typeof input.file_path === "string") return input.file_path;
+    if (input?.path && typeof input.path === "string") return input.path;
+    if (tool.locations?.[0]?.path) return tool.locations[0].path;
+    return undefined;
+  }
+
+  private resolveToolDiff(tool: ToolPart): string | undefined {
+    if (tool.diff) return tool.diff;
+    const metadata = (tool.state as any)?.metadata as Record<string, unknown> | undefined;
+    if (metadata?.diff && typeof metadata.diff === "string") return metadata.diff;
+    return undefined;
   }
 
   // --- Models ---

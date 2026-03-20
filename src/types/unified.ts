@@ -504,6 +504,9 @@ export const GatewayRequestType = {
 
   // Logging (renderer → main)
   LOG_SEND: "log.send",
+
+  // File changes (lightweight extraction from steps)
+  SESSION_FILE_CHANGES: "session.fileChanges",
 } as const;
 
 // --- Notification type constants ---
@@ -610,7 +613,15 @@ export interface SessionImportExecuteRequest {
   }>;
 }
 
-// --- Git types (reserved for future use) ---
+// --- File changes (lightweight extraction from step parts) ---
+
+export interface SessionFileChange {
+  path: string;
+  status: "created" | "modified";
+  diff?: string;
+  content?: string;
+  langExt?: string;
+}
 
 export interface SessionImportProgress {
   total: number;

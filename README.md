@@ -56,6 +56,19 @@ Tools like [OpenClaw](https://github.com/openclaw/openclaw) have popularized the
 | Shell commands | ✅ Command + output rendered in real time | ❌ Text summary at best |
 | Multi-engine | ✅ Switch between OpenCode / Copilot / Claude Code | ❌ Single model / provider |
 | Coding context | ✅ Project-aware sessions with full tool access | ⚠️ Generic assistant context |
+| Image input | ✅ Paste/drag images for all engines to analyze | ❌ Text-only input |
+
+### 4. Multimodal Support
+
+Text-based coding tools are limited to text input. CodeMux breaks this barrier — **attach images to your prompts and let the AI see what you see**.
+
+Paste a screenshot, drag in a design mockup, or upload an error image — all three engines can analyze images natively. Each engine adapter translates images into its native format behind the scenes, while you get a unified experience:
+
+- **Upload methods**: File picker, drag & drop, clipboard paste
+- **Supported formats**: JPEG, PNG, GIF, WebP (up to 4 images per message, 3MB each)
+- **Inline preview**: Thumbnails shown before sending, images rendered in chat history
+
+> This works across all access methods — desktop, remote browser, and IM bots — wherever CodeMux runs, image input follows.
 
 #### Browser Remote Access
 

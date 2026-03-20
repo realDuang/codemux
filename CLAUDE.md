@@ -95,6 +95,19 @@ All engines share normalized types defined in `src/types/unified.ts`:
 - `ToolPart.normalizedTool`: `shell`, `read`, `write`, `edit`, `grep`, `glob`, `list`, `web_fetch`, `task`, `todo`, `sql`, `unknown`
 - Tool name mapping from engine-specific names in `src/types/tool-mapping.ts`
 
+### Multimodal (Image Attachments)
+
+All engines support image attachments via a unified pipeline:
+
+- **Frontend**: `PromptInput.tsx` handles file picker, drag & drop, and clipboard paste. Images are read as base64 via `FileReader`, stored as `ImageAttachment` objects (id, name, mimeType, data, size). Constraints: JPEG/PNG/GIF/WebP, max 3MB per image, max 4 per message.
+- **Unified types**: `MessagePromptContent` carries `{ type: "image", data, mimeType }` alongside text content. `FilePart` renders images in chat. `EngineCapabilities.imageAttachment` flag indicates engine support.
+- **Gateway**: WebSocket max payload is 20MB to accommodate base64-encoded images. Images flow as `MessagePromptContent[]` through the same `message.send` request type.
+- **Engine adapters**:
+  - **OpenCode**: Converts to `FilePartInput` with `data:` URLs
+  - **Claude**: Builds Anthropic multimodal content blocks (`source.type: "base64"`)
+  - **Copilot**: Decodes base64 to temp files, passes file paths via `attachments`, cleans up after 5s
+- **Rendering**: `part.tsx` renders `FilePart` with `<img>` tags using data URLs and `loading="lazy"`
+
 ### Routes
 
 | Path | Component | Auth Required |

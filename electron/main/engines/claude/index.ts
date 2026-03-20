@@ -125,6 +125,7 @@ export class ClaudeCodeAdapter extends EngineAdapter {
 
   // --- State ---
   private status: EngineStatus = "stopped";
+  private lastError: string | undefined;
   private version: string | undefined;
   private currentModelId: string | null = null;
   private cachedModels: UnifiedModelInfo[] = [];
@@ -265,6 +266,7 @@ export class ClaudeCodeAdapter extends EngineAdapter {
       status: this.status,
       capabilities: this.getCapabilities(),
       authMethods: this.getAuthMethods(),
+      errorMessage: this.status === "error" ? this.lastError : undefined,
     };
   }
 
@@ -2076,6 +2078,7 @@ export class ClaudeCodeAdapter extends EngineAdapter {
     error?: string,
   ): void {
     this.status = status;
+    this.lastError = error;
     this.emit("status.changed", {
       engineType: this.engineType,
       status,

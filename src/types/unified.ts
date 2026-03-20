@@ -22,6 +22,8 @@ export interface EngineInfo {
   authenticated?: boolean;
   /** Human-readable auth status message (e.g. username or error) */
   authMessage?: string;
+  /** Error message when status is "error" */
+  errorMessage?: string;
 }
 
 export interface EngineCapabilities {

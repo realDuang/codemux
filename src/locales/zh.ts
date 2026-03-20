@@ -346,9 +346,8 @@ export const zh: LocaleDict = {
     modelInputPlaceholder: "输入模型 ID（如 claude-sonnet-4-20250514）",
     enabled: "已启用",
     disabled: "已停用",
+    unavailable: "不可用",
   },
-
-  // Channels
   channel: {
     channels: "渠道",
     feishuBot: "飞书机器人",

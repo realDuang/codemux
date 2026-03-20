@@ -345,6 +345,7 @@ export interface LocaleDict {
     modelInputPlaceholder: string;
     enabled: string;
     disabled: string;
+    unavailable: string;
   };
 
   // Channels
@@ -810,9 +811,8 @@ export const en: LocaleDict = {
     modelInputPlaceholder: "Enter model ID (e.g. claude-sonnet-4-20250514)",
     enabled: "Enabled",
     disabled: "Disabled",
+    unavailable: "Unavailable",
   },
-
-  // Channels
   channel: {
     channels: "Channels",
     feishuBot: "Feishu Bot",

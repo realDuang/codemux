@@ -95,6 +95,7 @@ export class CopilotSdkAdapter extends EngineAdapter {
   private sessionUnsubscribers = new Map<string, () => void>();
 
   private status: EngineStatus = "stopped";
+  private lastError: string | undefined;
   private version: string | undefined;
   private authenticated: boolean | undefined;
   private authMessage: string | undefined;
@@ -229,6 +230,7 @@ export class CopilotSdkAdapter extends EngineAdapter {
       authMethods: this.getAuthMethods(),
       authenticated: this.authenticated,
       authMessage: this.authMessage,
+      errorMessage: this.status === "error" ? this.lastError : undefined,
     };
   }
 
@@ -681,6 +683,7 @@ export class CopilotSdkAdapter extends EngineAdapter {
 
   private setStatus(status: EngineStatus, error?: string): void {
     this.status = status;
+    this.lastError = error;
     this.emit("status.changed", { engineType: this.engineType, status, error });
   }
 

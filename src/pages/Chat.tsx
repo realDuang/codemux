@@ -501,7 +501,11 @@ export default function Chat() {
         onQuestionReplied: handleQuestionReplied,
         onEngineStatusChanged: (engineType: EngineType, status: string, error?: string) => {
           setConfigStore("engines", (engines) =>
-            engines.map(e => e.type === engineType ? { ...e, status: status as any } : e)
+            engines.map(e => e.type === engineType ? {
+              ...e,
+              status: status as any,
+              errorMessage: status === "error" ? error : undefined,
+            } : e)
           );
           if (status === "error" && error) {
             notify(formatMessage(t().notification.engineError, { message: error }));

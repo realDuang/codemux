@@ -5,7 +5,7 @@
 import { EventEmitter } from "events";
 import { EngineAdapter, type EngineAdapterEvents } from "../engines/engine-adapter";
 import { conversationStore } from "../services/conversation-store";
-import { engineManagerLog, loadSettings, getDefaultEngineFromSettings } from "../services/logger";
+import { engineManagerLog, getDefaultEngineFromSettings } from "../services/logger";
 import { timeId } from "../utils/id-gen";
 import type {
   EngineType,

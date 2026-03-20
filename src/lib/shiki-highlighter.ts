@@ -23,6 +23,26 @@ const CORE_LANGUAGES = [
 
 const CORE_LANGUAGE_SET = new Set<string>(CORE_LANGUAGES);
 
+/** Common aliases for Markdown fence labels. */
+const LANG_ALIASES: Record<string, string> = {
+  ts: "typescript",
+  js: "javascript",
+  py: "python",
+  rb: "ruby",
+  rs: "rust",
+  cs: "csharp",
+  sh: "bash",
+  zsh: "bash",
+  yml: "yaml",
+  md: "markdown",
+  jsonc: "json",
+  htm: "html",
+  "c++": "cpp",
+  "objective-c": "c",
+  objc: "c",
+  kt: "kotlin",
+};
+
 /** Check whether a language is in the bundled whitelist. */
 export function isSupportedLang(lang: string): boolean {
   return CORE_LANGUAGE_SET.has(lang);
@@ -31,7 +51,8 @@ export function isSupportedLang(lang: string): boolean {
 /** Resolve a language id — returns the id if supported, "plaintext" otherwise. */
 export function resolveLang(lang: string | undefined): string {
   if (!lang) return "plaintext";
-  return isSupportedLang(lang) ? lang : "plaintext";
+  const normalized = LANG_ALIASES[lang] ?? lang;
+  return isSupportedLang(normalized) ? normalized : "plaintext";
 }
 
 let instance: HighlighterGeneric<any, any> | null = null;

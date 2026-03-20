@@ -682,9 +682,9 @@ export const en: LocaleDict = {
     typeNextMessage: "Type your next message...",
     waitingForResponse: "Waiting for response...",
     attachImage: "Attach image",
-    imageTooLarge: "Image too large (max 10MB)",
+    imageTooLarge: "Image too large (max 3MB)",
     imageUnsupportedType: "Unsupported image type",
-    imageLimitReached: "Maximum 5 images per message",
+    imageLimitReached: "Maximum 4 images per message",
     removeImage: "Remove image",
   },
 

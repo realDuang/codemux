@@ -78,7 +78,6 @@ export class OpenCodeAdapter extends EngineAdapter {
     resolve: (msg: UnifiedMessage) => void;
     messageId: string | null;
     assistantParts: UnifiedPart[];
-    timeoutTimer: ReturnType<typeof setTimeout> | null;
     firstEventTimer: ReturnType<typeof setTimeout> | null;
     promptSent: boolean;
   }>>();
@@ -505,7 +504,6 @@ export class OpenCodeAdapter extends EngineAdapter {
 
     // Clear all timers across all entries
     for (const entry of entries) {
-      if (entry.timeoutTimer) clearTimeout(entry.timeoutTimer);
       if (entry.firstEventTimer) clearTimeout(entry.firstEventTimer);
     }
     this.pendingMessages.delete(sessionID);
@@ -708,7 +706,6 @@ export class OpenCodeAdapter extends EngineAdapter {
     // Reject any pending messages
     for (const [sessionId, entries] of this.pendingMessages) {
       for (const entry of entries) {
-        if (entry.timeoutTimer) clearTimeout(entry.timeoutTimer);
         if (entry.firstEventTimer) clearTimeout(entry.firstEventTimer);
         entry.resolve({
           id: entry.messageId ?? "",
@@ -940,7 +937,6 @@ export class OpenCodeAdapter extends EngineAdapter {
           resolve,
           messageId: null as string | null,
           assistantParts: [] as UnifiedPart[],
-          timeoutTimer: null as ReturnType<typeof setTimeout> | null,
           firstEventTimer: null as ReturnType<typeof setTimeout> | null,
           promptSent: true,
         };
@@ -977,7 +973,6 @@ export class OpenCodeAdapter extends EngineAdapter {
         resolve,
         messageId: null as string | null,
         assistantParts: [] as UnifiedPart[],
-        timeoutTimer: null as ReturnType<typeof setTimeout> | null,
         firstEventTimer: null as ReturnType<typeof setTimeout> | null,
         promptSent: false,
       };
@@ -1002,7 +997,6 @@ export class OpenCodeAdapter extends EngineAdapter {
       const entries = this.pendingMessages.get(sessionId);
       if (entries) {
         for (const e of entries) {
-          if (e.timeoutTimer) clearTimeout(e.timeoutTimer);
           if (e.firstEventTimer) clearTimeout(e.firstEventTimer);
         }
       }
@@ -1029,7 +1023,6 @@ export class OpenCodeAdapter extends EngineAdapter {
           openCodeLog.warn(`No SSE response within 30s for session ${sessionId} — session may be stale`);
           // Resolve all entries as stale
           for (const e of currentEntries) {
-            if (e.timeoutTimer) clearTimeout(e.timeoutTimer);
             e.resolve({
               id: "",
               sessionId,
@@ -1074,7 +1067,6 @@ export class OpenCodeAdapter extends EngineAdapter {
     const entries = this.pendingMessages.get(sessionId);
     if (entries && entries.length > 0) {
       for (const entry of entries) {
-        if (entry.timeoutTimer) clearTimeout(entry.timeoutTimer);
         if (entry.firstEventTimer) clearTimeout(entry.firstEventTimer);
       }
       this.pendingMessages.delete(sessionId);

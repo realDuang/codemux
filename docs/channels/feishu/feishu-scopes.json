@@ -1,0 +1,105 @@
+{
+  "_comment": "Feishu (Lark) permission scopes required by CodeMux bot. Import these scopes in the Feishu Open Platform developer console under Permissions & Scopes.",
+  "scopes": [
+    {
+      "scope": "im:message",
+      "description": "获取与发送单聊、群组消息",
+      "purpose": "Core messaging — send, edit, delete messages",
+      "required": true
+    },
+    {
+      "scope": "im:message:send_as_bot",
+      "description": "以应用的身份发消息",
+      "purpose": "Send messages with bot identity",
+      "required": true
+    },
+    {
+      "scope": "im:message:send",
+      "description": "发送消息V2",
+      "purpose": "Send messages (newer API version)",
+      "required": true
+    },
+    {
+      "scope": "im:message:update",
+      "description": "更新消息",
+      "purpose": "Edit messages (streaming updates)",
+      "required": true
+    },
+    {
+      "scope": "im:message:recall",
+      "description": "撤回消息",
+      "purpose": "Delete (recall) bot messages",
+      "required": true
+    },
+    {
+      "scope": "im:chat",
+      "description": "获取与更新群组信息",
+      "purpose": "Create and update group chats",
+      "required": true
+    },
+    {
+      "scope": "im:chat:create",
+      "description": "创建群",
+      "purpose": "Create group chats for sessions",
+      "required": true
+    },
+    {
+      "scope": "im:chat:update",
+      "description": "更新群信息",
+      "purpose": "Update group chat name on session title change",
+      "required": true
+    },
+    {
+      "scope": "im:message.p2p_msg:readonly",
+      "description": "读取用户发给机器人的单聊消息",
+      "purpose": "Event subscription — receive P2P messages",
+      "required": true
+    },
+    {
+      "scope": "im:message.group_msg:readonly",
+      "description": "获取群聊中所有的用户聊天消息",
+      "purpose": "Event subscription — receive all group messages (not just @bot)",
+      "required": true
+    },
+    {
+      "scope": "im:chat:readonly",
+      "description": "获取群组信息",
+      "purpose": "Event subscription — group lifecycle events (disbanded, bot added/removed)",
+      "required": true
+    },
+    {
+      "scope": "im:chat:operate_as_owner",
+      "description": "更新应用所创建群的群信息",
+      "purpose": "Manage groups created by the bot (fallback for group updates)",
+      "required": false
+    },
+    {
+      "scope": "im:chat.members:bot_access",
+      "description": "订阅机器人进、出群事件",
+      "purpose": "Event subscription — bot added/removed from group events",
+      "required": false
+    },
+    {
+      "scope": "im:resource",
+      "description": "获取消息中的资源文件",
+      "purpose": "Access message resources (images, files) for future features",
+      "required": false
+    }
+  ],
+  "scope_list": [
+    "im:message",
+    "im:message:send_as_bot",
+    "im:message:send",
+    "im:message:update",
+    "im:message:recall",
+    "im:chat",
+    "im:chat:create",
+    "im:chat:update",
+    "im:message.p2p_msg:readonly",
+    "im:message.group_msg:readonly",
+    "im:chat:readonly",
+    "im:chat:operate_as_owner",
+    "im:chat.members:bot_access",
+    "im:resource"
+  ]
+}

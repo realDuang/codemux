@@ -116,6 +116,9 @@ export class CopilotSdkAdapter extends EngineAdapter {
   // Timeout handles for idle resolvers — prevents memory leaks when CLI crashes
   private resolverTimeouts = new Map<string, NodeJS.Timeout[]>();
   private static readonly RESOLVER_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
+  // Track last streaming event time per session — used to convert the absolute
+  // timeout into an inactivity timeout (reset on each event).
+  private sessionLastActivity = new Map<string, number>();
   // Queued user messages (deferred emit) — emitted only when the engine
   // starts processing the queued turn, not at enqueue time.
   private pendingUserMessages = new Map<string, UnifiedMessage[]>();
@@ -127,36 +130,57 @@ export class CopilotSdkAdapter extends EngineAdapter {
   }
 
   /**
-   * Register a timeout for an idle resolver. If the resolver isn't resolved
-   * within RESOLVER_TIMEOUT_MS, it is rejected and cleaned up to prevent
-   * memory leaks when the Copilot CLI crashes or hangs.
+   * Register a timeout for an idle resolver. The timeout is an *inactivity*
+   * timeout: it resets whenever a streaming event arrives (tracked via
+   * sessionLastActivity). If no events arrive for RESOLVER_TIMEOUT_MS, the
+   * resolver is rejected to prevent memory leaks from crashed/hung CLIs.
    */
   private addResolverTimeout(
     sessionId: string,
     resolve: (msg: UnifiedMessage) => void,
     reject: (err: Error) => void,
   ): void {
-    const timeout = setTimeout(() => {
-      copilotLog.warn(`[Copilot][${sessionId}] Resolver timed out after ${CopilotSdkAdapter.RESOLVER_TIMEOUT_MS / 1000}s`);
-      const resolvers = this.idleResolvers.get(sessionId);
-      if (resolvers) {
-        const idx = resolvers.indexOf(resolve);
-        if (idx >= 0) resolvers.splice(idx, 1);
-        if (resolvers.length === 0) this.idleResolvers.delete(sessionId);
-      }
-      // Finalize buffer with error so UI shows a failure state
-      const buffer = this.messageBuffers.get(sessionId);
-      if (buffer) {
-        buffer.error = "Request timed out";
-        this.finalizeBuffer(sessionId);
-      }
-      this.clearResolverTimeouts(sessionId);
-      reject(new Error("Copilot request timed out"));
-    }, CopilotSdkAdapter.RESOLVER_TIMEOUT_MS);
+    this.sessionLastActivity.set(sessionId, Date.now());
 
-    const timeouts = this.resolverTimeouts.get(sessionId) ?? [];
-    timeouts.push(timeout);
-    this.resolverTimeouts.set(sessionId, timeouts);
+    const scheduleCheck = (delay: number) => {
+      const timeout = setTimeout(() => {
+        const lastActivity = this.sessionLastActivity.get(sessionId) ?? 0;
+        const sinceLastActivity = Date.now() - lastActivity;
+
+        if (sinceLastActivity < CopilotSdkAdapter.RESOLVER_TIMEOUT_MS) {
+          // Engine was active recently — reschedule for remaining time
+          const timeouts = this.resolverTimeouts.get(sessionId);
+          if (timeouts) {
+            const idx = timeouts.indexOf(timeout);
+            if (idx >= 0) timeouts.splice(idx, 1);
+          }
+          scheduleCheck(CopilotSdkAdapter.RESOLVER_TIMEOUT_MS - sinceLastActivity);
+          return;
+        }
+
+        copilotLog.warn(`[Copilot][${sessionId}] Resolver timed out after ${CopilotSdkAdapter.RESOLVER_TIMEOUT_MS / 1000}s of inactivity`);
+        const resolvers = this.idleResolvers.get(sessionId);
+        if (resolvers) {
+          const idx = resolvers.indexOf(resolve);
+          if (idx >= 0) resolvers.splice(idx, 1);
+          if (resolvers.length === 0) this.idleResolvers.delete(sessionId);
+        }
+        // Finalize buffer with error so UI shows a failure state
+        const buffer = this.messageBuffers.get(sessionId);
+        if (buffer) {
+          buffer.error = "Request timed out";
+          this.finalizeBuffer(sessionId);
+        }
+        this.clearResolverTimeouts(sessionId);
+        reject(new Error("Copilot request timed out"));
+      }, delay);
+
+      const timeouts = this.resolverTimeouts.get(sessionId) ?? [];
+      timeouts.push(timeout);
+      this.resolverTimeouts.set(sessionId, timeouts);
+    };
+
+    scheduleCheck(CopilotSdkAdapter.RESOLVER_TIMEOUT_MS);
   }
 
   /** Clear all pending resolver timeouts for a session. */
@@ -166,6 +190,7 @@ export class CopilotSdkAdapter extends EngineAdapter {
       for (const t of timeouts) clearTimeout(t);
       this.resolverTimeouts.delete(sessionId);
     }
+    this.sessionLastActivity.delete(sessionId);
   }
 
   async start(): Promise<void> {
@@ -813,6 +838,10 @@ export class CopilotSdkAdapter extends EngineAdapter {
   }
 
   private handleSessionEvent(sessionId: string, event: SessionEvent): void {
+    // Track activity for inactivity-based timeout reschedule
+    if (event.type !== "session.idle" && event.type !== "session.error" && event.type !== "abort") {
+      this.sessionLastActivity.set(sessionId, Date.now());
+    }
     try {
       switch (event.type) {
         case "assistant.message_delta": this.handleMessageDelta(sessionId, event.data as any); break;

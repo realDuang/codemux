@@ -588,7 +588,7 @@ export class CopilotSdkAdapter extends EngineAdapter {
       return messages;
     } catch (err: any) {
       copilotLog.warn(`Failed to get historical messages for ${engineSessionId}:`, err?.message);
-      return [];
+      throw err;
     } finally {
       if (session) {
         try { await session.destroy(); } catch { /* ignore */ }

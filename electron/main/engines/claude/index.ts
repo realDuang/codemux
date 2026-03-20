@@ -724,7 +724,7 @@ export class ClaudeCodeAdapter extends EngineAdapter {
       return convertSdkMessages(sdkMessages, engineSessionId, timestamps);
     } catch (err) {
       claudeLog.warn(`[Claude] Failed to get historical messages for ${ccSessionId}:`, err);
-      return [];
+      throw err;
     }
   }
 

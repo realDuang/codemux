@@ -269,7 +269,7 @@ export default function Chat() {
   });
 
   // Keep currentAgent in sync: whenever the engine type changes or engine
-  // capabilities are refreshed (e.g. ACP modes populated after createSession),
+  // capabilities are refreshed (e.g. modes populated after createSession),
   // reset to the first available mode if the current one doesn't belong to
   // the active engine.
   createEffect(() => {
@@ -717,7 +717,7 @@ export default function Chat() {
       setMessageStore("message", processedSession.id, []);
       setTimeout(() => scrollToBottomStable(), 100);
 
-      // Refresh engine capabilities (ACP engines populate modes only after createSession)
+      // Refresh engine capabilities (Copilot/Claude populate modes only after createSession)
       try {
         const engines = await gateway.listEngines();
         setConfigStore("engines", engines);
@@ -962,7 +962,7 @@ export default function Chat() {
     batch(() => {
       // If this part's message doesn't exist yet in the message store,
       // create a placeholder assistant message so parts can render during streaming.
-      // This is critical for ACP engines (Copilot) where sendMessage blocks until
+      // This is critical for Copilot/Claude where sendMessage blocks until
       // session/prompt completes, but parts arrive via notifications in the meantime.
       if (sessionId && messageId) {
         const messages = messageStore.message[sessionId] || [];
@@ -1118,7 +1118,7 @@ export default function Chat() {
         }
       }
 
-      // Store parts from the incoming message (critical for ACP engines
+      // Store parts from the incoming message (critical for Copilot/Claude
       // which emit full messages with parts via message.updated).
       // If we already have parts from streaming part.updated events,
       // prefer those since they may have more up-to-date state.
@@ -1141,7 +1141,7 @@ export default function Chat() {
           }
         }
 
-        // Track todo parts from bulk message updates (ACP engines)
+        // Track todo parts from bulk message updates (Copilot/Claude)
         if (targetSessionId) {
           for (let i = msgInfo.parts.length - 1; i >= 0; i--) {
             const p = msgInfo.parts[i];

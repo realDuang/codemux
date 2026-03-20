@@ -25,9 +25,9 @@ export interface EngineInfo {
 }
 
 export interface EngineCapabilities {
-  /** OpenCode uses Provider→Model hierarchy; ACP engines use flat list */
+  /** OpenCode uses Provider→Model hierarchy; Copilot/Claude use flat list */
   providerModelHierarchy: boolean;
-  /** Whether modes can change per session (ACP true, OpenCode static) */
+  /** Whether modes can change per session (Copilot/Claude true, OpenCode static) */
   dynamicModes: boolean;
   /** Whether in-flight message cancellation is supported */
   messageCancellation: boolean;
@@ -59,7 +59,7 @@ export interface AuthMethod {
 // --- Mode ---
 
 export interface AgentMode {
-  /** Mode identifier. Full URI for ACP engines, short string for OpenCode */
+  /** Mode identifier. Full URI for Copilot/Claude, short string for OpenCode */
   id: string;
   /** Human-readable label (e.g., "Agent", "Plan", "Build") */
   label: string;
@@ -181,7 +181,7 @@ export interface UnifiedSession {
 export type MessageRole = "user" | "assistant";
 
 export interface UnifiedMessage {
-  /** ULID for OpenCode; synthetic UUID for ACP engines */
+  /** ULID for OpenCode; synthetic UUID for Copilot/Claude */
   id: string;
   sessionId: string;
   role: MessageRole;
@@ -219,7 +219,7 @@ export interface UnifiedMessage {
 // --- Part (discriminated union) ---
 
 interface PartBase {
-  /** Part ID: ULID for OpenCode, synthetic UUID for ACP */
+  /** Part ID: ULID for OpenCode, synthetic UUID for Copilot/Claude */
   id: string;
   messageId: string;
   sessionId: string;
@@ -313,9 +313,9 @@ export interface ToolPart extends PartBase {
   kind: "read" | "edit" | "other";
   /** Tool execution state */
   state: ToolState;
-  /** File locations affected (from ACP's locations[]) */
+  /** File locations affected (from SDK's locations[]) */
   locations?: Array<{ path: string }>;
-  /** Diff preview content (from ACP's rawOutput.detailedContent or rawInput.diff) */
+  /** Diff preview content (from SDK's rawOutput.detailedContent or rawInput.diff) */
   diff?: string;
 }
 
@@ -334,7 +334,7 @@ export type UnifiedPart =
 export interface PermissionOption {
   id: string;
   label: string;
-  /** Unified kind. ACP uses: allow_once, allow_always, reject_once, reject_always */
+  /** Unified kind. Copilot/Claude use: allow_once, allow_always, reject_once, reject_always */
   type: "accept_once" | "accept_always" | "reject" | "allow_once" | "allow_always" | "reject_once" | "reject_always";
 }
 
@@ -352,7 +352,7 @@ export interface UnifiedPermission {
   diff?: string;
   /** Raw input for context */
   rawInput?: unknown;
-  /** Available response options (2 for ACP, 3 for OpenCode) */
+  /** Available response options (2 for Copilot/Claude, 3 for OpenCode) */
   options: PermissionOption[];
   /** OpenCode-specific fields */
   permission?: string;

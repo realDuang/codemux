@@ -96,12 +96,12 @@ export function normalizeToolNameWithMap(
  * Infer the operation kind from a kind hint or the normalized tool name.
  */
 export function inferToolKind(
-  acpKind?: string,
+  sdkKind?: string,
   normalizedTool?: NormalizedToolName,
 ): "read" | "edit" | "other" {
-  // ACP provides kind directly
-  if (acpKind === "read") return "read";
-  if (acpKind === "edit") return "edit";
+  // SDK provides kind directly
+  if (sdkKind === "read") return "read";
+  if (sdkKind === "edit") return "edit";
 
   // Fallback: infer from normalized tool name
   if (normalizedTool) {

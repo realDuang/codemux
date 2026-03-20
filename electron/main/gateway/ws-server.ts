@@ -345,6 +345,11 @@ export class GatewayServer {
         return this.engineManager.importExecute(req.engineType, req.sessions);
       }
 
+      case GatewayRequestType.SESSION_FILE_CHANGES: {
+        const { sessionId } = p as { sessionId: string };
+        return this.engineManager.getSessionFileChanges(sessionId);
+      }
+
       default:
         throw Object.assign(
           new Error(`Unknown request type: ${type}`),

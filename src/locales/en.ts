@@ -460,6 +460,18 @@ export interface LocaleDict {
     gatewayReconnected: string;
     engineError: string;
   };
+
+  // Git Changes Panel
+  gitPanel: {
+    title: string;
+    noChanges: string;
+    collapse: string;
+    expand: string;
+    back: string;
+    modified: string;
+    created: string;
+    loading: string;
+  };
 }
 
 export const en: LocaleDict = {
@@ -922,5 +934,17 @@ export const en: LocaleDict = {
     gatewayDisconnected: "Connection lost. Reconnecting...",
     gatewayReconnected: "Connection restored.",
     engineError: "Engine error: {message}",
+  },
+
+  // Git Changes Panel
+  gitPanel: {
+    title: "Changes",
+    noChanges: "No file changes in this session",
+    collapse: "Collapse",
+    expand: "Expand",
+    back: "Back",
+    modified: "Modified",
+    created: "Created",
+    loading: "Loading…",
   },
 };

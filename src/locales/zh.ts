@@ -461,4 +461,16 @@ export const zh: LocaleDict = {
     gatewayReconnected: "连接已恢复。",
     engineError: "引擎错误：{message}",
   },
+
+  // Git Changes Panel
+  gitPanel: {
+    title: "文件变更",
+    noChanges: "本会话无文件变更",
+    collapse: "折叠",
+    expand: "展开",
+    back: "返回",
+    modified: "修改",
+    created: "新建",
+    loading: "加载中…",
+  },
 };

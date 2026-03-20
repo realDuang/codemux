@@ -101,6 +101,8 @@ export interface TempSession {
   messageQueue: string[];
   /** Whether currently processing a message */
   processing: boolean;
+  /** Whether the usage hint has been shown for this temp session */
+  hintShown?: boolean;
 }
 
 /** Pending selection context for P2P text-based project/session selection */

@@ -32,6 +32,7 @@ import {
 import {
   buildGroupWelcomeCard,
 } from "./feishu-card-builder";
+import { buildTempSessionHintText } from "./feishu-message-formatter";
 import {
   DEFAULT_FEISHU_CONFIG,
   TEMP_SESSION_TTL_MS,
@@ -1265,6 +1266,12 @@ export class FeishuAdapter extends ChannelAdapter {
 
     tempSession.lastActiveAt = Date.now();
     tempSession.streamingSession = undefined;
+
+    // Show usage hint once per temp session (after first reply completes)
+    if (!tempSession.hintShown && this.transport) {
+      tempSession.hintShown = true;
+      await this.transport.sendText(chatId, buildTempSessionHintText());
+    }
 
     // Process next queued message
     await this.processP2PQueue(chatId);

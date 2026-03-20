@@ -34,6 +34,7 @@ import { getSetting, saveSetting } from "../lib/settings";
 import { InputAreaQuestion } from "../components/InputAreaQuestion";
 import { InputAreaPermission } from "../components/InputAreaPermission";
 import { TodoDock } from "../components/TodoDock";
+import { GitChangesPanel } from "../components/GitChangesPanel";
 
 import { configStore, setConfigStore, getSelectedModelForEngine, restoreEngineModelSelections, isEngineEnabled, restoreEnabledEngines, getDefaultEngineType, restoreDefaultEngine } from "../stores/config";
 
@@ -290,6 +291,10 @@ export default function Chat() {
   // Desktop sidebar collapse (icon-only mode)
   const [isSidebarCollapsed, setIsSidebarCollapsed] = createSignal(false);
   const [refreshingSessions, setRefreshingSessions] = createSignal(false);
+
+  // Git changes panel state
+  const [gitPanelOpen, setGitPanelOpen] = createSignal(false);
+  const [gitPanelCollapsed, setGitPanelCollapsed] = createSignal(false);
 
   // Send validation error (auto-clears after 3s)
   const [sendError, setSendError] = createSignal<string | null>(null);
@@ -1445,6 +1450,25 @@ export default function Chat() {
     return session?.title || "";
   });
 
+  const currentSessionDirectory = createMemo(() => {
+    const sid = sessionStore.current;
+    if (!sid) return undefined;
+    const session = sessionStore.list.find(s => s.id === sid);
+    return session?.directory;
+  });
+
+  const currentSessionParts = createMemo(() => {
+    const sid = sessionStore.current;
+    if (!sid) return [];
+    const messages = messageStore.message[sid] || [];
+    const allParts: UnifiedPart[] = [];
+    for (const msg of messages) {
+      const parts = messageStore.part[msg.id];
+      if (parts) allParts.push(...parts);
+    }
+    return allParts;
+  });
+
   createEffect(() => {
     initializeSession();
 
@@ -1564,6 +1588,9 @@ export default function Chat() {
         </div>
       </aside>
 
+      {/* Main Chat Area + Git Panel Wrapper */}
+      <div class="flex-1 flex overflow-hidden min-w-0">
+
       {/* Main Chat Area */}
       <div class="flex-1 flex flex-col overflow-hidden min-w-0 bg-white dark:bg-zinc-900 electron-safe-top">
 
@@ -1594,12 +1621,40 @@ export default function Chat() {
               {currentAgent().label}
             </span>
           </div>
-          <Show when={!wsConnected()}>
-            <div class="flex items-center gap-1.5 px-2 py-1 rounded-full bg-red-50 dark:bg-red-900/20 electron-no-drag">
-              <span class="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
-              <span class="text-[11px] font-medium text-red-600 dark:text-red-400">Disconnected</span>
-            </div>
-          </Show>
+          <div class="flex items-center gap-2 electron-no-drag">
+            {/* Git Changes Panel Toggle */}
+            <Show when={sessionStore.current}>
+              <button
+                onClick={() => {
+                  if (!gitPanelOpen()) {
+                    setGitPanelOpen(true);
+                    setGitPanelCollapsed(false);
+                  } else {
+                    setGitPanelOpen(false);
+                  }
+                }}
+                class={`p-1.5 rounded-lg transition-colors ${
+                  gitPanelOpen()
+                    ? "text-indigo-600 bg-indigo-50 dark:text-indigo-400 dark:bg-indigo-900/30"
+                    : "text-gray-400 hover:text-gray-600 hover:bg-gray-100 dark:hover:text-gray-300 dark:hover:bg-zinc-800"
+                }`}
+                title={t().gitPanel.title}
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <line x1="6" y1="3" x2="6" y2="15" />
+                  <circle cx="18" cy="6" r="3" />
+                  <circle cx="6" cy="18" r="3" />
+                  <path d="M18 9a9 9 0 0 1-9 9" />
+                </svg>
+              </button>
+            </Show>
+            <Show when={!wsConnected()}>
+              <div class="flex items-center gap-1.5 px-2 py-1 rounded-full bg-red-50 dark:bg-red-900/20">
+                <span class="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
+                <span class="text-[11px] font-medium text-red-600 dark:text-red-400">Disconnected</span>
+              </div>
+            </Show>
+          </div>
         </header>
 
         {/* Message List */}
@@ -1786,6 +1841,21 @@ export default function Chat() {
           </Show>
         </main>
       </div>
+
+      {/* Git Changes Panel */}
+      <Show when={gitPanelOpen() && sessionStore.current}>
+        <div class={gitPanelCollapsed() ? "w-9 flex-shrink-0" : "w-80 flex-shrink-0"} style={{ transition: "width 200ms ease" }}>
+          <GitChangesPanel
+            directory={currentSessionDirectory()}
+            sessionParts={currentSessionParts()}
+            isWorking={sending()}
+            collapsed={gitPanelCollapsed()}
+            onToggleCollapse={() => setGitPanelCollapsed(!gitPanelCollapsed())}
+          />
+        </div>
+      </Show>
+
+      </div>{/* End Main + Git Panel Wrapper */}
 
       <HideProjectModal
         isOpen={deleteProjectInfo() !== null}

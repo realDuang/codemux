@@ -460,6 +460,29 @@ export interface LocaleDict {
     gatewayReconnected: string;
     engineError: string;
   };
+
+  // Git Changes Panel
+  gitPanel: {
+    title: string;
+    noChanges: string;
+    notGitRepo: string;
+    refresh: string;
+    collapse: string;
+    expand: string;
+    back: string;
+    added: string;
+    modified: string;
+    deleted: string;
+    renamed: string;
+    untracked: string;
+    created: string;
+    insertions: string;
+    deletions: string;
+    loading: string;
+    errorLoading: string;
+    branch: string;
+    filesChanged: string;
+  };
 }
 
 export const en: LocaleDict = {
@@ -922,5 +945,28 @@ export const en: LocaleDict = {
     gatewayDisconnected: "Connection lost. Reconnecting...",
     gatewayReconnected: "Connection restored.",
     engineError: "Engine error: {message}",
+  },
+
+  // Git Changes Panel
+  gitPanel: {
+    title: "Changes",
+    noChanges: "No changes detected",
+    notGitRepo: "Not a Git repository — showing AI file operations",
+    refresh: "Refresh",
+    collapse: "Collapse",
+    expand: "Expand",
+    back: "Back",
+    added: "Added",
+    modified: "Modified",
+    deleted: "Deleted",
+    renamed: "Renamed",
+    untracked: "Untracked",
+    created: "Created",
+    insertions: "+{count}",
+    deletions: "-{count}",
+    loading: "Loading changes…",
+    errorLoading: "Failed to load changes",
+    branch: "Branch: {name}",
+    filesChanged: "{count} files changed",
   },
 };

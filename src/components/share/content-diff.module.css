@@ -107,4 +107,13 @@
   padding-right: 1rem;
   overflow-x: visible;
   white-space: pre;
+
+  /* Shiki token colors via CSS custom properties */
+  code span[style] {
+    color: var(--sl);
+  }
+
+  :global(.dark) & code span[style] {
+    color: var(--sd);
+  }
 }

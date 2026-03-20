@@ -504,6 +504,10 @@ export const GatewayRequestType = {
 
   // Logging (renderer → main)
   LOG_SEND: "log.send",
+
+  // Git
+  GIT_STATUS: "git.status",
+  GIT_FILE_DIFF: "git.fileDiff",
 } as const;
 
 // --- Notification type constants ---
@@ -608,6 +612,34 @@ export interface SessionImportExecuteRequest {
     updatedAt: number;
     engineMeta?: Record<string, unknown>;
   }>;
+}
+
+// --- Git types ---
+
+export type GitFileStatus =
+  | "added"
+  | "modified"
+  | "deleted"
+  | "renamed"
+  | "untracked";
+
+export interface GitFileChange {
+  path: string;
+  status: GitFileStatus;
+  oldPath?: string;
+  insertions?: number;
+  deletions?: number;
+}
+
+export interface GitStatusResponse {
+  isGitRepo: boolean;
+  branch?: string;
+  files: GitFileChange[];
+}
+
+export interface GitFileDiffResponse {
+  diff: string;
+  language: string;
 }
 
 export interface SessionImportProgress {

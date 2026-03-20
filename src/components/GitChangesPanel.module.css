@@ -1,0 +1,465 @@
+/* ═══════════════════════════════════════════════════
+   GitChangesPanel — Right sidebar for git diff preview
+   ═══════════════════════════════════════════════════ */
+
+.root {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  border-left: 1px solid rgba(99, 102, 241, 0.15);
+  background: linear-gradient(
+    180deg,
+    rgba(248, 250, 252, 0.95) 0%,
+    rgba(241, 245, 249, 0.9) 100%
+  );
+  backdrop-filter: blur(12px);
+  overflow: hidden;
+  transition: width 200ms ease;
+}
+
+:global(.dark) .root {
+  border-color: rgba(99, 102, 241, 0.12);
+  background: linear-gradient(
+    180deg,
+    rgba(15, 23, 42, 0.95) 0%,
+    rgba(2, 6, 23, 0.9) 100%
+  );
+}
+
+/* Subtle left-edge glow */
+.root::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  width: 1px;
+  background: linear-gradient(
+    180deg,
+    transparent 0%,
+    rgba(99, 102, 241, 0.3) 30%,
+    rgba(168, 85, 247, 0.4) 50%,
+    rgba(99, 102, 241, 0.3) 70%,
+    transparent 100%
+  );
+  opacity: 0.5;
+}
+
+:global(.dark) .root::before {
+  opacity: 0.3;
+}
+
+/* ── Collapsed state ── */
+.collapsed {
+  width: 36px !important;
+  min-width: 36px !important;
+  cursor: pointer;
+}
+
+.collapsed:hover {
+  background: rgba(99, 102, 241, 0.06);
+}
+
+:global(.dark) .collapsed:hover {
+  background: rgba(99, 102, 241, 0.08);
+}
+
+.collapsedContent {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding-top: 12px;
+  gap: 8px;
+}
+
+.collapsedIcon {
+  color: rgba(99, 102, 241, 0.6);
+  display: flex;
+  align-items: center;
+}
+
+:global(.dark) .collapsedIcon {
+  color: rgba(129, 140, 248, 0.6);
+}
+
+.collapsedBadge {
+  font-size: 0.6rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  padding: 2px 5px;
+  border-radius: 6px;
+  background: rgba(99, 102, 241, 0.12);
+  color: rgba(67, 56, 202, 0.7);
+  writing-mode: horizontal-tb;
+}
+
+:global(.dark) .collapsedBadge {
+  background: rgba(99, 102, 241, 0.15);
+  color: rgba(165, 180, 252, 0.7);
+}
+
+/* ── Header ── */
+.header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid rgba(99, 102, 241, 0.1);
+  flex-shrink: 0;
+}
+
+:global(.dark) .header {
+  border-bottom-color: rgba(99, 102, 241, 0.08);
+}
+
+.headerIcon {
+  color: rgba(99, 102, 241, 0.7);
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+}
+
+:global(.dark) .headerIcon {
+  color: rgba(129, 140, 248, 0.7);
+}
+
+.headerTitle {
+  font-size: 0.6875rem;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  color: rgba(67, 56, 202, 0.7);
+  flex: 1;
+  min-width: 0;
+}
+
+:global(.dark) .headerTitle {
+  color: rgba(165, 180, 252, 0.7);
+}
+
+.headerBadge {
+  font-size: 0.625rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  padding: 1px 6px;
+  border-radius: 6px;
+  background: rgba(99, 102, 241, 0.12);
+  color: rgba(67, 56, 202, 0.7);
+}
+
+:global(.dark) .headerBadge {
+  background: rgba(99, 102, 241, 0.15);
+  color: rgba(165, 180, 252, 0.7);
+}
+
+.headerActions {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.iconBtn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 4px;
+  border: none;
+  background: transparent;
+  color: rgba(99, 102, 241, 0.5);
+  cursor: pointer;
+  transition: all 120ms ease;
+  padding: 0;
+}
+
+.iconBtn:hover {
+  background: rgba(99, 102, 241, 0.1);
+  color: rgba(99, 102, 241, 0.8);
+}
+
+:global(.dark) .iconBtn {
+  color: rgba(129, 140, 248, 0.5);
+}
+
+:global(.dark) .iconBtn:hover {
+  background: rgba(99, 102, 241, 0.12);
+  color: rgba(129, 140, 248, 0.8);
+}
+
+/* Spinning refresh animation */
+.spinning {
+  animation: spin 800ms linear infinite;
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+/* ── Branch info ── */
+.branchInfo {
+  padding: 4px 12px 6px;
+  font-size: 0.65rem;
+  color: rgba(100, 116, 139, 0.7);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+:global(.dark) .branchInfo {
+  color: rgba(148, 163, 184, 0.5);
+}
+
+/* ── File list ── */
+.fileList {
+  flex: 1;
+  overflow-y: auto;
+  padding: 4px 6px;
+}
+
+.fileItem {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background-color 120ms ease;
+  font-size: 0.75rem;
+  line-height: 1.4;
+}
+
+.fileItem:hover {
+  background: rgba(99, 102, 241, 0.06);
+}
+
+:global(.dark) .fileItem:hover {
+  background: rgba(99, 102, 241, 0.08);
+}
+
+/* ── Status badge ── */
+.statusBadge {
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+  border-radius: 3px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.6rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.statusBadge[data-status="added"],
+.statusBadge[data-status="created"] {
+  background: rgba(34, 197, 94, 0.15);
+  color: #16a34a;
+}
+
+:global(.dark) .statusBadge[data-status="added"],
+:global(.dark) .statusBadge[data-status="created"] {
+  background: rgba(34, 197, 94, 0.12);
+  color: #4ade80;
+}
+
+.statusBadge[data-status="modified"] {
+  background: rgba(234, 179, 8, 0.15);
+  color: #ca8a04;
+}
+
+:global(.dark) .statusBadge[data-status="modified"] {
+  background: rgba(234, 179, 8, 0.12);
+  color: #fbbf24;
+}
+
+.statusBadge[data-status="deleted"] {
+  background: rgba(239, 68, 68, 0.15);
+  color: #dc2626;
+}
+
+:global(.dark) .statusBadge[data-status="deleted"] {
+  background: rgba(239, 68, 68, 0.12);
+  color: #f87171;
+}
+
+.statusBadge[data-status="renamed"] {
+  background: rgba(59, 130, 246, 0.15);
+  color: #2563eb;
+}
+
+:global(.dark) .statusBadge[data-status="renamed"] {
+  background: rgba(59, 130, 246, 0.12);
+  color: #60a5fa;
+}
+
+.statusBadge[data-status="untracked"] {
+  background: rgba(148, 163, 184, 0.15);
+  color: #64748b;
+}
+
+:global(.dark) .statusBadge[data-status="untracked"] {
+  background: rgba(148, 163, 184, 0.12);
+  color: #94a3b8;
+}
+
+/* ── File path ── */
+.filePath {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: rgba(30, 41, 59, 0.8);
+}
+
+:global(.dark) .filePath {
+  color: rgba(203, 213, 225, 0.8);
+}
+
+.fileDir {
+  color: rgba(100, 116, 139, 0.6);
+}
+
+:global(.dark) .fileDir {
+  color: rgba(148, 163, 184, 0.4);
+}
+
+/* ── Stats ── */
+.fileStats {
+  flex-shrink: 0;
+  font-size: 0.65rem;
+  font-variant-numeric: tabular-nums;
+  display: flex;
+  gap: 4px;
+}
+
+.statAdd {
+  color: #16a34a;
+}
+
+:global(.dark) .statAdd {
+  color: #4ade80;
+}
+
+.statDel {
+  color: #dc2626;
+}
+
+:global(.dark) .statDel {
+  color: #f87171;
+}
+
+/* ── Empty / loading states ── */
+.emptyState {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 32px 16px;
+  gap: 8px;
+  color: rgba(100, 116, 139, 0.6);
+  font-size: 0.75rem;
+  text-align: center;
+}
+
+:global(.dark) .emptyState {
+  color: rgba(148, 163, 184, 0.5);
+}
+
+.emptyIcon {
+  opacity: 0.4;
+}
+
+/* ── Diff view (drill-down) ── */
+.diffHeader {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid rgba(99, 102, 241, 0.1);
+  flex-shrink: 0;
+}
+
+:global(.dark) .diffHeader {
+  border-bottom-color: rgba(99, 102, 241, 0.08);
+}
+
+.backBtn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  border: none;
+  background: transparent;
+  color: rgba(99, 102, 241, 0.7);
+  cursor: pointer;
+  font-size: 0.7rem;
+  font-weight: 600;
+  padding: 4px 8px;
+  border-radius: 4px;
+  transition: all 120ms ease;
+}
+
+.backBtn:hover {
+  background: rgba(99, 102, 241, 0.1);
+  color: rgba(99, 102, 241, 0.9);
+}
+
+:global(.dark) .backBtn {
+  color: rgba(129, 140, 248, 0.7);
+}
+
+:global(.dark) .backBtn:hover {
+  background: rgba(99, 102, 241, 0.12);
+  color: rgba(129, 140, 248, 0.9);
+}
+
+.diffFileName {
+  flex: 1;
+  min-width: 0;
+  font-size: 0.7rem;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: rgba(30, 41, 59, 0.8);
+}
+
+:global(.dark) .diffFileName {
+  color: rgba(203, 213, 225, 0.8);
+}
+
+.diffContent {
+  flex: 1;
+  overflow: auto;
+  padding: 4px;
+}
+
+.diffContent .root {
+  border: none;
+  border-radius: 0;
+}
+
+.diffLoading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 32px;
+  color: rgba(100, 116, 139, 0.5);
+  font-size: 0.75rem;
+}
+
+:global(.dark) .diffLoading {
+  color: rgba(148, 163, 184, 0.4);
+}
+
+/* ── Reduced motion ── */
+@media (prefers-reduced-motion: reduce) {
+  .root {
+    transition: none;
+  }
+  .spinning {
+    animation: none;
+  }
+}

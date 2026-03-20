@@ -419,29 +419,27 @@ export default function Settings() {
                                 </Show>
                               </div>
                             </div>
-                            {/* Toggle switch: reflects persisted enabled flag, independent of runtime status */}
-                            {(() => {
-                              const isOn = isEngineEnabled(engine.type);
-                              return (
-                                <button
-                                  onClick={() => setEngineEnabled(engine.type, !isEngineEnabled(engine.type))}
-                                  class={`relative inline-flex h-6 w-11 flex-shrink-0 rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
-                                    isOn
-                                      ? "bg-blue-600 cursor-pointer focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 dark:focus:ring-offset-slate-800"
-                                      : "bg-gray-200 dark:bg-slate-600 cursor-pointer focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 dark:focus:ring-offset-slate-800"
-                                  }`}
-                                  role="switch"
-                                  aria-checked={isOn}
-                                  aria-label={isOn ? t().engine.enabled : t().engine.disabled}
-                                >
-                                  <span
-                                    class={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
-                                      isOn ? "translate-x-5" : "translate-x-0"
-                                    }`}
-                                  />
-                                </button>
-                              );
-                            })()}
+                            {/* Toggle switch: ON only when running+enabled, disabled when not running */}
+                            <button
+                              onClick={() => engine.status === "running" && setEngineEnabled(engine.type, !isEngineEnabled(engine.type))}
+                              disabled={engine.status !== "running"}
+                              class={`relative inline-flex h-6 w-11 flex-shrink-0 rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                                engine.status !== "running"
+                                  ? "bg-gray-200 dark:bg-slate-700 opacity-50 cursor-not-allowed"
+                                  : isEngineEnabled(engine.type)
+                                    ? "bg-blue-600 cursor-pointer focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 dark:focus:ring-offset-slate-800"
+                                    : "bg-gray-200 dark:bg-slate-600 cursor-pointer focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 dark:focus:ring-offset-slate-800"
+                              }`}
+                              role="switch"
+                              aria-checked={engine.status === "running" && isEngineEnabled(engine.type)}
+                              aria-label={engine.status === "running" && isEngineEnabled(engine.type) ? t().engine.enabled : t().engine.disabled}
+                            >
+                              <span
+                                class={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
+                                  engine.status === "running" && isEngineEnabled(engine.type) ? "translate-x-5" : "translate-x-0"
+                                }`}
+                              />
+                            </button>
                           </div>
 
                           {/* Model selector - only for running + enabled engines */}

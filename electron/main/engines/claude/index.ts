@@ -850,26 +850,25 @@ export class ClaudeCodeAdapter extends EngineAdapter {
    * Works with CLI OAuth auth but only returns Anthropic official models.
    */
   private async fetchModelsViaSdk(env: Record<string, string | undefined>): Promise<void> {
+    claudeLog.info("[Claude] Fetching models via SDK query (fallback)...");
+
+    // Don't let stale env var override the user's model selection
+    const sdkEnv = { ...env };
+    delete sdkEnv.ANTHROPIC_MODEL;
+    delete sdkEnv.ELECTRON_RUN_AS_NODE;
+
+    const q = sdkQuery({
+      prompt: "",
+      options: {
+        model: this.currentModelId ?? "claude-sonnet-4-20250514",
+        env: sdkEnv,
+        abortController: new AbortController(),
+        pathToClaudeCodeExecutable: this.resolveCliPath(),
+      } as any,
+    });
+
     try {
-      claudeLog.info("[Claude] Fetching models via SDK query (fallback)...");
-
-      // Don't let stale env var override the user's model selection
-      const sdkEnv = { ...env };
-      delete sdkEnv.ANTHROPIC_MODEL;
-      delete sdkEnv.ELECTRON_RUN_AS_NODE;
-
-      const q = sdkQuery({
-        prompt: "",
-        options: {
-          model: this.currentModelId ?? "claude-sonnet-4-20250514",
-          env: sdkEnv,
-          abortController: new AbortController(),
-          pathToClaudeCodeExecutable: this.resolveCliPath(),
-        } as any,
-      });
-
       const models = await q.supportedModels();
-      q.close();
 
       if (models && models.length > 0) {
         this.cachedModels = models.map((m) => ({
@@ -880,10 +879,10 @@ export class ClaudeCodeAdapter extends EngineAdapter {
         }));
         claudeLog.info(`[Claude] Loaded ${this.cachedModels.length} models via SDK`);
       } else {
-        claudeLog.warn("[Claude] SDK returned empty model list");
+        throw new Error("Claude Code SDK returned empty model list — is Claude Code CLI installed and authenticated?");
       }
-    } catch (err) {
-      claudeLog.warn("[Claude] Failed to fetch models via SDK:", err);
+    } finally {
+      q.close();
     }
   }
 

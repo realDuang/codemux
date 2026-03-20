@@ -310,8 +310,22 @@ export async function addProject(
   const dialog = page.getByRole("dialog", { name: /Add Project/i });
   await expect(dialog).toBeVisible({ timeout: 5_000 });
 
-  // Fill in the project path
-  await solidFillInput(page, 'input[type="text"]', directory);
+  // Fill in the project path (scope to dialog to avoid hitting sidebar search input)
+  await page.evaluate(
+    ({ val }) => {
+      const dialog = document.querySelector('[role="dialog"]');
+      if (!dialog) return;
+      const input = dialog.querySelector('input[type="text"]') as HTMLInputElement;
+      if (!input) return;
+      const setter = Object.getOwnPropertyDescriptor(
+        HTMLInputElement.prototype,
+        "value",
+      )!.set!;
+      setter.call(input, val);
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    },
+    { val: directory },
+  );
 
   // Click confirm button in dialog (no engine selector — engine is per-session)
   await page.evaluate(() => {

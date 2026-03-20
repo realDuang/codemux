@@ -46,13 +46,18 @@ export async function getHighlighter(): Promise<HighlighterGeneric<any, any>> {
   if (initPromise) return initPromise;
 
   initPromise = (async () => {
-    const { createHighlighter } = await import("shiki");
-    const highlighter = await createHighlighter({
-      themes: ["github-light", "one-dark-pro"],
-      langs: [...CORE_LANGUAGES],
-    });
-    instance = highlighter;
-    return highlighter;
+    try {
+      const { createHighlighter } = await import("shiki");
+      const highlighter = await createHighlighter({
+        themes: ["github-light", "one-dark-pro"],
+        langs: [...CORE_LANGUAGES],
+      });
+      instance = highlighter;
+      return highlighter;
+    } catch (err) {
+      initPromise = null;
+      throw err;
+    }
   })();
 
   return initPromise;

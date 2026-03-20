@@ -63,7 +63,7 @@ function getCorsOrigin(req: IncomingMessage): string {
  */
 export function sendJson(res: ServerResponse, data: unknown, status = 200, req?: IncomingMessage): void {
   const body = JSON.stringify(data);
-  const origin = req ? getCorsOrigin(req) : "http://localhost:5173";
+  const origin = req ? getCorsOrigin(req) : "*";
   res.writeHead(status, {
     "Content-Type": "application/json",
     "Access-Control-Allow-Origin": origin,

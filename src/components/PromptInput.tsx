@@ -1,6 +1,7 @@
 import { createSignal, createEffect, createMemo, For, Show } from "solid-js";
 import { IconArrowUp } from "./icons";
 import { useI18n } from "../lib/i18n";
+import { notify } from "../lib/notifications";
 import type { AgentMode, ImageAttachment } from "../types/unified";
 
 const ACCEPTED_IMAGE_TYPES = ["image/jpeg", "image/png", "image/gif", "image/webp"];
@@ -133,9 +134,18 @@ export function PromptInput(props: PromptInputProps) {
   let pasteCounter = 0;
 
   const addImageFromFile = (file: File) => {
-    if (!ACCEPTED_IMAGE_TYPES.includes(file.type)) return;
-    if (file.size > MAX_IMAGE_SIZE) return;
-    if (images().length >= MAX_IMAGES) return;
+    if (!ACCEPTED_IMAGE_TYPES.includes(file.type)) {
+      notify(t().prompt.imageUnsupportedType, "warning", 3000);
+      return;
+    }
+    if (file.size > MAX_IMAGE_SIZE) {
+      notify(t().prompt.imageTooLarge, "warning", 3000);
+      return;
+    }
+    if (images().length >= MAX_IMAGES) {
+      notify(t().prompt.imageLimitReached, "warning", 3000);
+      return;
+    }
 
     const reader = new FileReader();
     reader.onload = () => {
@@ -146,7 +156,7 @@ export function PromptInput(props: PromptInputProps) {
         ...prev,
         {
           id: `img_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-          name: file.name || `paste-${++pasteCounter}.png`,
+          name: file.name || `paste-${++pasteCounter}.${(file.type.split("/")[1]) || "png"}`,
           mimeType: file.type,
           data: base64,
           size: file.size,
@@ -329,7 +339,7 @@ export function PromptInput(props: PromptInputProps) {
                   <button
                     onClick={() => removeImage(img.id)}
                     class="absolute -top-1 -right-1 w-4 h-4 bg-red-500 text-white rounded-full text-[10px] flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
-                    aria-label="Remove image"
+                    aria-label={t().prompt.removeImage}
                   >
                     ✕
                   </button>
@@ -388,8 +398,8 @@ export function PromptInput(props: PromptInputProps) {
                     onClick={() => fileInputRef?.click()}
                     disabled={props.disabled || images().length >= MAX_IMAGES}
                     class="p-2 rounded-xl text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 transition-colors disabled:opacity-30"
-                    aria-label="Attach image"
-                    title="Attach image"
+                    aria-label={t().prompt.attachImage}
+                    title={t().prompt.attachImage}
                   >
                     <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                       <path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48" />

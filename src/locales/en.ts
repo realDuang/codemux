@@ -222,6 +222,7 @@ export interface LocaleDict {
     imageTooLarge: string;
     imageUnsupportedType: string;
     imageLimitReached: string;
+    removeImage: string;
   };
 
   // Message Parts
@@ -684,6 +685,7 @@ export const en: LocaleDict = {
     imageTooLarge: "Image too large (max 10MB)",
     imageUnsupportedType: "Unsupported image type",
     imageLimitReached: "Maximum 5 images per message",
+    removeImage: "Remove image",
   },
 
   // Message Parts

@@ -335,7 +335,7 @@ export function SessionSidebar(props: SessionSidebarProps) {
           {/* Collapsed mode: show only project icons */}
           <Show when={props.collapsed}>
             <div class="flex flex-col items-center gap-1">
-              <For each={filteredProjectGroups()}>
+              <For each={projectGroups()}>
                 {(project) => {
                   const hasActiveSession = () =>
                     project.sessions.some(s => s.id === props.currentSessionId);

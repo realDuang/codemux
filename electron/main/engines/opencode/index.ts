@@ -221,38 +221,6 @@ export class OpenCodeAdapter extends EngineAdapter {
     }
   }
 
-  /** Reset the 5-minute timeout timer for all pending entries in a session.
-   *  This converts the timeout from an absolute deadline into an inactivity
-   *  timeout — as long as SSE events keep arriving, the timer resets. */
-  private resetTimeoutTimers(sessionId: string): void {
-    const entries = this.pendingMessages.get(sessionId);
-    if (!entries) return;
-    for (const entry of entries) {
-      if (entry.timeoutTimer) {
-        clearTimeout(entry.timeoutTimer);
-        entry.timeoutTimer = setTimeout(() => {
-          const currentEntries = this.pendingMessages.get(sessionId);
-          if (currentEntries && currentEntries.length > 0) {
-            for (const e of currentEntries) {
-              if (e.firstEventTimer) clearTimeout(e.firstEventTimer);
-              if (e.timeoutTimer && e !== entry) clearTimeout(e.timeoutTimer);
-              e.resolve({
-                id: "",
-                sessionId,
-                role: "assistant",
-                time: { created: Date.now() },
-                parts: [],
-                error: "Message timeout",
-              });
-            }
-            this.pendingMessages.delete(sessionId);
-            this.primaryUserMsgIds.delete(sessionId);
-          }
-        }, 300_000);
-      }
-    }
-  }
-
   private handleSdkEvent(event: SdkEvent): void {
     switch (event.type) {
       case "message.part.updated":
@@ -325,7 +293,6 @@ export class OpenCodeAdapter extends EngineAdapter {
     // First SSE event for this session — clear the first-event timeout
     if (sessionID) {
       this.clearFirstEventTimer(sessionID);
-      this.resetTimeoutTimers(sessionID);
     }
 
     // Cache the SDK part for delta accumulation
@@ -381,7 +348,6 @@ export class OpenCodeAdapter extends EngineAdapter {
 
     // First SSE event for this session — clear the first-event timeout
     this.clearFirstEventTimer(sessionID);
-    this.resetTimeoutTimers(sessionID);
 
     // Get or create cached part
     let cached = this.partCache.get(partID);
@@ -423,7 +389,6 @@ export class OpenCodeAdapter extends EngineAdapter {
 
     // First SSE event for this session — clear the first-event timeout
     this.clearFirstEventTimer(sessionID);
-    this.resetTimeoutTimers(sessionID);
 
     // User messages: normally skipped (frontend handles them via optimistic insert).
     // However, when there are enqueued entries (entries.length > 1), a user message
@@ -980,29 +945,6 @@ export class OpenCodeAdapter extends EngineAdapter {
           promptSent: true,
         };
         existingEntries.push(entry);
-
-        // Timeout after 5 minutes for enqueued messages too
-        entry.timeoutTimer = setTimeout(() => {
-          const entries = this.pendingMessages.get(sessionId);
-          if (entries) {
-            const idx = entries.indexOf(entry);
-            if (idx >= 0) {
-              entries.splice(idx, 1);
-              if (entries.length === 0) {
-                this.pendingMessages.delete(sessionId);
-                this.primaryUserMsgIds.delete(sessionId);
-              }
-              resolve({
-                id: "",
-                sessionId,
-                role: "assistant",
-                time: { created: Date.now() },
-                parts: [],
-                error: "Enqueued message timeout",
-              });
-            }
-          }
-        }, 300_000);
       });
 
       // Emit queue event for the frontend
@@ -1040,28 +982,6 @@ export class OpenCodeAdapter extends EngineAdapter {
         promptSent: false,
       };
       this.pendingMessages.set(sessionId, [entry]);
-
-      // Timeout after 5 minutes
-      entry.timeoutTimer = setTimeout(() => {
-        const entries = this.pendingMessages.get(sessionId);
-        if (entries && entries.length > 0) {
-          // Timeout the primary — resolve all entries
-          for (const e of entries) {
-            if (e.firstEventTimer) clearTimeout(e.firstEventTimer);
-            if (e.timeoutTimer && e !== entry) clearTimeout(e.timeoutTimer);
-            e.resolve({
-              id: "",
-              sessionId,
-              role: "assistant",
-              time: { created: Date.now() },
-              parts: [],
-              error: "Message timeout",
-            });
-          }
-          this.pendingMessages.delete(sessionId);
-          this.primaryUserMsgIds.delete(sessionId);
-        }
-      }, 300_000);
     });
 
     // Fire async prompt via SDK (returns 204, response comes via SSE)

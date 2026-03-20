@@ -5,7 +5,7 @@ import { isDefaultTitle } from "../lib/session-utils";
 import type { UnifiedProject, EngineType, SessionActivityStatus } from "../types/unified";
 import { configStore, isEngineEnabled, getDefaultEngineType, setDefaultNewSessionEngine } from "../stores/config";
 import { getEngineBadge } from "./share/common";
-import { ProjectStore } from "../lib/project-store";
+
 import { isElectron } from "../lib/platform";
 import { systemAPI } from "../lib/electron-api";
 import { getSetting } from "../lib/settings";
@@ -248,7 +248,7 @@ export function SessionSidebar(props: SessionSidebarProps) {
   };
 
   const getProjectDirectory = (project: UnifiedProject): string | undefined => {
-    return ProjectStore.getPath(project.id) || project.directory || undefined;
+    return project.directory || undefined;
   };
 
   return (

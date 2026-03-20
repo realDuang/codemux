@@ -103,7 +103,6 @@
 │   │   ├── i18n.tsx              # I18n provider & useI18n hook
 │   │   ├── theme.ts              # Theme management
 │   │   ├── platform.ts           # Platform detection (Electron/web/remote)
-│   │   ├── project-store.ts      # Project visibility preferences
 │   │   ├── useAuthGuard.ts       # Route auth guard hook
 │   │   ├── electron-api.ts       # Typed electronAPI accessor
 │   │   └── logger.ts             # Configurable logger (VITE_LOG_LEVEL)

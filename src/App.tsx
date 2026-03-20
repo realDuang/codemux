@@ -11,29 +11,28 @@ import { NotificationToast } from "./components/NotificationToast";
 import { Spinner } from "./components/Spinner";
 import EntryPage from "./pages/EntryPage";
 
-const Chat = lazy(() => import("./pages/Chat"));
-const Settings = lazy(() => import("./pages/Settings"));
-const Devices = lazy(() => import("./pages/Devices"));
-
-// Layout that wraps route content with Suspense for lazy-loaded pages
-const RouteLayout: ParentComponent = (props) => (
-  <Suspense fallback={
-    <div class="fixed inset-0 flex items-center justify-center bg-gray-50 dark:bg-slate-950">
-      <Spinner size="large" class="text-blue-500" />
-    </div>
-  }>
-    {props.children}
-  </Suspense>
+const PageFallback = () => (
+  <div class="fixed inset-0 flex items-center justify-center bg-gray-50 dark:bg-slate-950">
+    <Spinner size="large" class="text-blue-500" />
+  </div>
 );
+
+const ChatLazy = lazy(() => import("./pages/Chat"));
+const SettingsLazy = lazy(() => import("./pages/Settings"));
+const DevicesLazy = lazy(() => import("./pages/Devices"));
+
+const Chat = () => <Suspense fallback={<PageFallback />}><ChatLazy /></Suspense>;
+const Settings = () => <Suspense fallback={<PageFallback />}><SettingsLazy /></Suspense>;
+const Devices = () => <Suspense fallback={<PageFallback />}><DevicesLazy /></Suspense>;
 
 // Use HashRouter for Electron (file:// protocol) and regular Router for web
 // HashRouter uses URL hashes (#/path) which work with file:// protocol
 const AppRouter: ParentComponent = (props) => {
   // In production Electron, use HashRouter for file:// protocol compatibility
   if (isElectron() && window.location.protocol === "file:") {
-    return <HashRouter root={RouteLayout}>{props.children}</HashRouter>;
+    return <HashRouter>{props.children}</HashRouter>;
   }
-  return <Router root={RouteLayout}>{props.children}</Router>;
+  return <Router>{props.children}</Router>;
 };
 
 // Redirect component for /login route

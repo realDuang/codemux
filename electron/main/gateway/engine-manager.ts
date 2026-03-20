@@ -350,6 +350,10 @@ export class EngineManager extends EventEmitter {
             return;
           }
         }
+        // Don't forward session.created if we can't resolve the conversation ID.
+        // This happens during lazy engine session creation in sendMessage() —
+        // the frontend already knows about the session via the prior createSession() call.
+        if (event === "session.created") return;
         this.emit(event, data);
       });
     }

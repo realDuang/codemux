@@ -57,7 +57,7 @@ import type {
   UnifiedPermission,
   UnifiedQuestion,
 } from "../../../../src/types/unified";
-import { channelLog } from "../../services/logger";
+import { channelLog, getDefaultEngineFromSettings } from "../../services/logger";
 import type { WebhookServer, WebhookRequest, WebhookResponse } from "../webhook-server";
 
 const LOG_PREFIX = "[Telegram]";
@@ -851,7 +851,7 @@ export class TelegramAdapter extends ChannelAdapter {
 
     const projectRef = {
       directory: project.directory,
-      engineType: project.engineType || "opencode",
+      engineType: project.engineType || getDefaultEngineFromSettings(),
       projectId: project.id,
     };
     this.sessionMapper.setP2PLastProject(chatId, projectRef);

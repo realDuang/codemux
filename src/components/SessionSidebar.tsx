@@ -1,4 +1,4 @@
-import { For, Show, Switch, Match, createSignal, createMemo } from "solid-js";
+import { For, Show, Switch, Match, createSignal, createMemo, createEffect } from "solid-js";
 import { SessionInfo, sessionStore, setSessionStore, getProjectName } from "../stores/session";
 import { useI18n, formatMessage } from "../lib/i18n";
 import { isDefaultTitle } from "../lib/session-utils";
@@ -111,7 +111,7 @@ export function SessionSidebar(props: SessionSidebarProps) {
       groups.set(project.id, []);
     }
 
-    const rootSessions = props.sessions;
+    const rootSessions = props.sessions.filter(s => isEngineEnabled(s.engineType));
 
     for (const session of rootSessions) {
       const projectID = session.projectID || "";
@@ -692,12 +692,20 @@ export function SessionSidebar(props: SessionSidebarProps) {
         </Show>
       </div>
 
-      {/* Default Engine Selector (footer, only when multiple engines available) */}
-      <Show when={runningEngines().length > 1 && !props.collapsed}>
+      {/* Default Engine Selector (footer, visible when at least one engine available) */}
+      <Show when={runningEngines().length >= 1 && !props.collapsed}>
         <div class="px-3 py-2 border-t border-gray-200 dark:border-slate-800">
           <div class="flex items-center gap-2">
             <span class="text-[11px] font-medium text-gray-500 dark:text-gray-400 whitespace-nowrap">{t().sidebar.defaultEngine}</span>
             <select
+              ref={(el) => {
+                // Re-apply value after <For> recreates option elements
+                createEffect(() => {
+                  const val = getDefaultEngineType();
+                  runningEngines();
+                  queueMicrotask(() => { el.value = val; });
+                });
+              }}
               value={getDefaultEngineType()}
               onChange={(e) => setDefaultNewSessionEngine(e.target.value)}
               class="flex-1 min-w-0 text-xs px-2 py-1 bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-md text-gray-700 dark:text-gray-300 focus:outline-none focus:ring-1 focus:ring-blue-500"

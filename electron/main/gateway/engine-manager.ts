@@ -5,7 +5,7 @@
 import { EventEmitter } from "events";
 import { EngineAdapter, type EngineAdapterEvents } from "../engines/engine-adapter";
 import { conversationStore } from "../services/conversation-store";
-import { engineManagerLog } from "../services/logger";
+import { engineManagerLog, getDefaultEngineFromSettings } from "../services/logger";
 import { timeId } from "../utils/id-gen";
 import type {
   EngineType,
@@ -618,6 +618,25 @@ export class EngineManager extends EventEmitter {
 
   listEngines(): EngineInfo[] {
     return Array.from(this.adapters.values()).map((a) => a.getInfo());
+  }
+
+  /**
+   * Get the user-configured default engine type from settings.json.
+   * Falls back to the first running engine, then to the first registered engine.
+   */
+  getDefaultEngineType(): EngineType {
+    const saved = getDefaultEngineFromSettings();
+    const adapter = this.adapters.get(saved as EngineType);
+    if (adapter && adapter.getInfo().status === "running") {
+      return saved as EngineType;
+    }
+    // Fallback: first running engine
+    for (const [type, adapter] of this.adapters) {
+      if (adapter.getInfo().status === "running") return type;
+    }
+    // Last resort: first registered engine
+    const first = this.adapters.keys().next();
+    return (first.done ? "opencode" : first.value) as EngineType;
   }
 
   getEngineInfo(engineType: EngineType): EngineInfo {

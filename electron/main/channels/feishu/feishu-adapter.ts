@@ -50,7 +50,7 @@ import type {
   UnifiedPermission,
   UnifiedQuestion,
 } from "../../../../src/types/unified";
-import { feishuLog } from "../../services/logger";
+import { feishuLog, getDefaultEngineFromSettings } from "../../services/logger";
 
 // ============================================================================
 // Feishu Adapter
@@ -708,7 +708,7 @@ export class FeishuAdapter extends ChannelAdapter {
     // Save last selected project
     const projectRef = {
       directory: project.directory,
-      engineType: project.engineType || "opencode",
+      engineType: project.engineType || getDefaultEngineFromSettings(),
       projectId: project.id,
     };
     this.sessionMapper.setP2PLastProject(chatId, projectRef);

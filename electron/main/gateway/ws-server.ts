@@ -25,6 +25,8 @@ import {
   type ProjectSetEngineRequest,
   type ModelSetRequest,
   type ModeSetRequest,
+  type SessionImportPreviewRequest,
+  type SessionImportExecuteRequest,
 } from "../../../src/types/unified";
 
 interface ClientConnection {
@@ -332,6 +334,17 @@ export class GatewayServer {
       case GatewayRequestType.IMPORT_LEGACY_PROJECTS:
         return { imported: 0 }; // Legacy import no longer needed
 
+      // Session import (from engine history)
+      case GatewayRequestType.SESSION_IMPORT_PREVIEW: {
+        const req = p as SessionImportPreviewRequest;
+        return this.engineManager.importPreview(req.engineType, req.limit);
+      }
+
+      case GatewayRequestType.SESSION_IMPORT_EXECUTE: {
+        const req = p as SessionImportExecuteRequest;
+        return this.engineManager.importExecute(req.engineType, req.sessions);
+      }
+
       default:
         throw Object.assign(
           new Error(`Unknown request type: ${type}`),
@@ -418,6 +431,13 @@ export class GatewayServer {
     em.on("message.queued.consumed", (data) => {
       this.broadcast({
         type: GatewayNotificationType.MESSAGE_QUEUED_CONSUMED,
+        payload: data,
+      });
+    });
+
+    em.on("session.import.progress" as any, (data: any) => {
+      this.broadcast({
+        type: GatewayNotificationType.SESSION_IMPORT_PROGRESS,
         payload: data,
       });
     });

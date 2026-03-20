@@ -602,6 +602,38 @@ export class CopilotSdkAdapter extends EngineAdapter {
     }
   }
 
+  async getHistoricalMessages(
+    engineSessionId: string,
+    directory: string,
+  ): Promise<UnifiedMessage[]> {
+    this.ensureClient();
+    let session: CopilotSession | undefined;
+    try {
+      const config: ResumeSessionConfig = {
+        streaming: true,
+        workingDirectory: directory,
+        onPermissionRequest: () => ({ kind: "denied-interactively-by-user" as const }),
+      };
+      session = await this.client!.resumeSession(engineSessionId, config);
+      const events = await session.getMessages();
+      copilotLog.info(
+        `[Copilot] getHistoricalMessages(${engineSessionId}): ${events.length} events`,
+      );
+      const messages = convertEventsToMessages(engineSessionId, events);
+      copilotLog.info(
+        `[Copilot] Converted to ${messages.length} messages (${messages.filter(m => m.role === "user").length} user, ${messages.filter(m => m.role === "assistant").length} assistant)`,
+      );
+      return messages;
+    } catch (err: any) {
+      copilotLog.warn(`Failed to get historical messages for ${engineSessionId}:`, err?.message);
+      return [];
+    } finally {
+      if (session) {
+        try { await session.destroy(); } catch { /* ignore */ }
+      }
+    }
+  }
+
   async listModels(): Promise<ModelListResult> {
     this.ensureClient();
     try {

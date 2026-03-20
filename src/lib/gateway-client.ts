@@ -28,6 +28,11 @@ import {
   type ProjectSetEngineRequest,
   type ModelSetRequest,
   type ModeSetRequest,
+  type ImportableSession,
+  type SessionImportPreviewRequest,
+  type SessionImportExecuteRequest,
+  type SessionImportResult,
+  type SessionImportProgress,
 } from "../types/unified";
 
 // --- Event types emitted by GatewayClient ---
@@ -51,6 +56,7 @@ export interface GatewayClientEvents {
   "engine.status.changed": (data: { engineType: EngineType; status: string; error?: string }) => void;
   "message.queued": (data: { sessionId: string; messageId: string; queuePosition: number }) => void;
   "message.queued.consumed": (data: { sessionId: string; messageId: string }) => void;
+  "session.import.progress": (data: SessionImportProgress) => void;
 }
 
 // --- Pending request tracking ---
@@ -478,6 +484,17 @@ export class GatewayClient {
     projects: UnifiedProject[],
   ): Promise<{ success: boolean }> {
     return this.request(GatewayRequestType.IMPORT_LEGACY_PROJECTS, { projects });
+  }
+
+  // --- Session Import API ---
+
+  importPreview(req: SessionImportPreviewRequest): Promise<ImportableSession[]> {
+    return this.request(GatewayRequestType.SESSION_IMPORT_PREVIEW, req);
+  }
+
+  importExecute(req: SessionImportExecuteRequest): Promise<SessionImportResult> {
+    // No timeout — importing many sessions with full messages can take minutes
+    return this.request(GatewayRequestType.SESSION_IMPORT_EXECUTE, req, 0);
   }
 
   // --- Log forwarding (fire-and-forget, no response expected) ---

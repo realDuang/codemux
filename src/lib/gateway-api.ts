@@ -18,6 +18,9 @@ import type {
   UnifiedProject,
   UnifiedPermission,
   UnifiedQuestion,
+  ImportableSession,
+  SessionImportResult,
+  SessionImportProgress,
 } from "../types/unified";
 
 // --- Notification callback types ---
@@ -294,6 +297,34 @@ class GatewayAPI {
 
   async importLegacyProjects(projects: UnifiedProject[]): Promise<{ success: boolean }> {
     return gatewayClient.importLegacyProjects(projects);
+  }
+
+  // --- Session Import ---
+
+  importPreview(engineType: EngineType, limit: number): Promise<ImportableSession[]> {
+    return gatewayClient.importPreview({ engineType, limit });
+  }
+
+  importExecute(
+    engineType: EngineType,
+    sessions: Array<{
+      engineSessionId: string;
+      directory: string;
+      title: string;
+      createdAt: number;
+      updatedAt: number;
+      engineMeta?: Record<string, unknown>;
+    }>,
+    onProgress?: (progress: SessionImportProgress) => void,
+  ): Promise<SessionImportResult> {
+    if (onProgress) {
+      gatewayClient.on("session.import.progress", onProgress);
+    }
+    return gatewayClient.importExecute({ engineType, sessions }).finally(() => {
+      if (onProgress) {
+        gatewayClient.off("session.import.progress", onProgress);
+      }
+    });
   }
 }
 

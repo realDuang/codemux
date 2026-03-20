@@ -116,6 +116,8 @@ export interface ConversationMeta {
   engineSessionId?: string;
   /** Engine-specific metadata (e.g. ccSessionId, projectID) */
   engineMeta?: Record<string, unknown>;
+  /** True if this conversation was imported from engine history (don't delete engine data) */
+  imported?: boolean;
 }
 
 export interface ConversationMessage {
@@ -496,6 +498,10 @@ export const GatewayRequestType = {
   // Legacy migration
   IMPORT_LEGACY_PROJECTS: "import.legacyProjects",
 
+  // Session import (from engine history)
+  SESSION_IMPORT_PREVIEW: "session.import.preview",
+  SESSION_IMPORT_EXECUTE: "session.import.execute",
+
   // Logging (renderer → main)
   LOG_SEND: "log.send",
 } as const;
@@ -515,6 +521,7 @@ export const GatewayNotificationType = {
   ENGINE_STATUS_CHANGED: "engine.status.changed",
   MESSAGE_QUEUED: "message.queued",
   MESSAGE_QUEUED_CONSUMED: "message.queued.consumed",
+  SESSION_IMPORT_PROGRESS: "session.import.progress",
 } as const;
 
 // --- Request / Response payload types ---
@@ -572,4 +579,46 @@ export interface ModelSetRequest {
 export interface ModeSetRequest {
   sessionId: string;
   modeId: string;
+}
+
+// --- Session Import types ---
+
+export interface ImportableSession {
+  engineSessionId: string;
+  title: string;
+  directory: string;
+  createdAt: number;
+  updatedAt: number;
+  alreadyImported: boolean;
+  engineMeta?: Record<string, unknown>;
+}
+
+export interface SessionImportPreviewRequest {
+  engineType: EngineType;
+  limit: number; // 10, 50, 100, or 0 for all
+}
+
+export interface SessionImportExecuteRequest {
+  engineType: EngineType;
+  sessions: Array<{
+    engineSessionId: string;
+    directory: string;
+    title: string;
+    createdAt: number;
+    updatedAt: number;
+    engineMeta?: Record<string, unknown>;
+  }>;
+}
+
+export interface SessionImportProgress {
+  total: number;
+  completed: number;
+  currentTitle: string;
+  errors: string[];
+}
+
+export interface SessionImportResult {
+  imported: number;
+  skipped: number;
+  errors: string[];
 }

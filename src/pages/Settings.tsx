@@ -2,13 +2,16 @@ import { For, Show, Switch, Match, createSignal, createMemo, onMount } from "sol
 import { useNavigate } from "@solidjs/router";
 import { LanguageSwitcher } from "../components/LanguageSwitcher";
 import { ThemeSwitcher } from "../components/ThemeSwitcher";
+import ImportHistoryModal from "../components/ImportHistoryModal";
 import { useI18n } from "../lib/i18n";
 import { useAuthGuard } from "../lib/useAuthGuard";
 import { isElectron } from "../lib/platform";
 import { Auth } from "../lib/auth";
 import { configStore, saveEngineModelSelection, isEngineEnabled, setEngineEnabled } from "../stores/config";
+import { sessionStore, setSessionStore } from "../stores/session";
+import { gateway } from "../lib/gateway-api";
 import { systemAPI, updateAPI, autostartAPI } from "../lib/electron-api";
-import type { UnifiedModelInfo } from "../types/unified";
+import type { UnifiedModelInfo, EngineType, UnifiedSession } from "../types/unified";
 
 export default function Settings() {
   const { t } = useI18n();
@@ -26,6 +29,9 @@ export default function Settings() {
   const [updateCheckStatus, setUpdateCheckStatus] = createSignal<"idle" | "checking" | "up-to-date" | "available" | "error">("idle");
   const [autoCheckEnabled, setAutoCheckEnabled] = createSignal(true);
   const [launchAtLoginEnabled, setLaunchAtLoginEnabled] = createSignal(false);
+
+  // Import history modal state
+  const [importModalEngine, setImportModalEngine] = createSignal<EngineType | null>(null);
 
   const logLevels = ["error", "warn", "info", "verbose", "debug", "silly"];
 
@@ -458,6 +464,18 @@ export default function Settings() {
                               </div>
                             </div>
                           </Show>
+
+                          {/* Import History button - only for running + enabled engines */}
+                          <Show when={engine.status === "running" && isEngineEnabled(engine.type)}>
+                            <div class="px-4 sm:px-6 pb-4 sm:pb-6 pt-0 -mt-2">
+                              <button
+                                onClick={() => setImportModalEngine(engine.type)}
+                                class="text-sm text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-300 transition-colors"
+                              >
+                                {t().settings.importHistory}
+                              </button>
+                            </div>
+                          </Show>
                         </div>
                       );
                     }}
@@ -658,6 +676,39 @@ export default function Settings() {
           </div>
         </main>
       </div>
+
+      {/* Import History Modal */}
+      <Show when={importModalEngine()}>
+        <ImportHistoryModal
+          engineType={importModalEngine()!}
+          onClose={() => setImportModalEngine(null)}
+          onImportComplete={async () => {
+            // Refresh session list so imported sessions appear immediately
+            try {
+              const [allProjects, allSessions] = await Promise.all([
+                gateway.listAllProjects(),
+                gateway.listAllSessions(),
+              ]);
+              setSessionStore("projects", allProjects);
+              const validDirs = new Set(allProjects.map(p => p.directory));
+              const normDir = (d: string) => d.replaceAll("\\", "/");
+              const projectIndex = new Map(allProjects.map(p => [p.directory, p]));
+              const infos = allSessions
+                .filter(s => s.directory && validDirs.has(normDir(s.directory)))
+                .map((s: UnifiedSession) => ({
+                  id: s.id,
+                  engineType: s.engineType,
+                  title: s.title || "",
+                  directory: s.directory || "",
+                  projectID: s.projectId ?? projectIndex.get(normDir(s.directory))?.id,
+                  createdAt: new Date(s.time.created).toISOString(),
+                  updatedAt: new Date(s.time.updated).toISOString(),
+                }));
+              setSessionStore("list", infos);
+            } catch { /* ignore */ }
+          }}
+        />
+      </Show>
     </div>
   );
 }

@@ -52,6 +52,7 @@ export function createWindow(hidden = false): BrowserWindow {
 
   mainWindow.on("ready-to-show", () => {
     if (!hidden) {
+      mainWindow?.maximize();
       mainWindow?.show();
     }
   });

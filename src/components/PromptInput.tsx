@@ -5,8 +5,8 @@ import { notify } from "../lib/notifications";
 import type { AgentMode, ImageAttachment } from "../types/unified";
 
 const ACCEPTED_IMAGE_TYPES = ["image/jpeg", "image/png", "image/gif", "image/webp"];
-const MAX_IMAGE_SIZE = 10 * 1024 * 1024; // 10MB
-const MAX_IMAGES = 5;
+const MAX_IMAGE_SIZE = 3 * 1024 * 1024; // 3MB per image — stays within WS payload limits after base64/JSON overhead
+const MAX_IMAGES = 4;
 
 const defaultModes: AgentMode[] = [
   { id: "build", label: "Build" },
@@ -174,9 +174,11 @@ export function PromptInput(props: PromptInputProps) {
     if (!props.imageAttachmentEnabled) return;
     const items = e.clipboardData?.items;
     if (!items) return;
+    // Only prevent default paste if clipboard has no text (image-only paste)
+    const hasText = Array.from(items).some((item) => item.type === "text/plain");
     for (const item of items) {
       if (item.type.startsWith("image/")) {
-        e.preventDefault();
+        if (!hasText) e.preventDefault();
         const file = item.getAsFile();
         if (file) addImageFromFile(file);
       }

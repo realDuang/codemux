@@ -434,13 +434,16 @@ export class CopilotSdkAdapter extends EngineAdapter {
         existingResolvers.push(resolve);
 
         const handleEnqueueError = (err: unknown) => {
+          cleanupTempImages();
           const idx = existingResolvers.indexOf(resolve);
           if (idx >= 0) existingResolvers.splice(idx, 1);
           if (existingResolvers.length === 0) this.idleResolvers.delete(sessionId);
           reject(err);
         };
 
-        session.send({ prompt: promptText, attachments: attachments.length > 0 ? attachments : undefined, mode: "enqueue" as any }).catch(async (err) => {
+        session.send({ prompt: promptText, attachments: attachments.length > 0 ? attachments : undefined, mode: "enqueue" as any }).then(() => {
+          cleanupTempImages();
+        }).catch(async (err) => {
           if (this.isSessionExpiredError(err)) {
             copilotLog.warn(`Session ${sessionId} expired (enqueue), recreating and retrying...`);
             this.evictStaleSession(sessionId);

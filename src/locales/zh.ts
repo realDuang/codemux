@@ -220,9 +220,9 @@ export const zh: LocaleDict = {
     typeNextMessage: "输入下一条消息...",
     waitingForResponse: "等待响应...",
     attachImage: "添加图片",
-    imageTooLarge: "图片过大（最大 10MB）",
+    imageTooLarge: "图片过大（最大 3MB）",
     imageUnsupportedType: "不支持的图片格式",
-    imageLimitReached: "每条消息最多 5 张图片",
+    imageLimitReached: "每条消息最多 4 张图片",
     removeImage: "移除图片",
   },
 

@@ -42,47 +42,85 @@ Connect CodeMux to Feishu using the official WebSocket SDK — no public URL or 
    > CodeMux uses Feishu's WebSocket SDK to receive events. Do **not** use HTTP callback mode.
 3. Subscribe to these events:
 
-| Event | Name | Purpose |
-|-------|------|---------|
-| `im.message.receive_v1` | Receive messages | **Required** — receives user messages |
-| `im.chat.member.bot.added_v1` | Bot added to group | Optional — tracks group membership |
-| `im.chat.member.bot.deleted_v1` | Bot removed from group | Optional — cleans up bindings |
-| `im.chat.disbanded_v1` | Group disbanded | Optional — cleans up bindings |
+| Event | Name | Required | Purpose |
+|-------|------|----------|---------|
+| `im.message.receive_v1` | Receive messages (接收消息) | ✅ Yes | Receives user messages in P2P and group chats |
+| `application.bot.menu_v6` | Bot menu event (机器人自定义菜单事件) | ✅ Yes | Receives custom menu click events |
+| `im.chat.disbanded_v1` | Group disbanded (解散群) | ✅ Yes | Cleans up session bindings when group is dissolved |
+| `im.chat.member.bot.deleted_v1` | Bot removed from group (机器人被移出群) | ✅ Yes | Cleans up session bindings when bot is removed |
+| `im.chat.member.bot.added_v1` | Bot added to group (机器人进群) | Recommended | Tracks group membership changes |
+| `im.chat.access_event.bot_p2p_chat_entered_v1` | User enters bot P2P chat | Recommended | Suppressed internally, subscribe to avoid SDK warnings |
+| `im.message.message_read_v1` | Message read (消息已读) | Recommended | Suppressed internally, subscribe to avoid SDK warnings |
 
 ## Step 4: Set Permissions
 
-Go to **Permissions & Scopes** (权限管理) and request the following scopes:
+Go to **Permissions & Scopes** (权限管理) and request the following scopes.
 
-| Scope | Purpose | Required |
-|-------|---------|----------|
-| `im:message` | Send and receive messages | ✅ Yes |
-| `im:message:send_as_bot` | Send messages as the bot | ✅ Yes |
-| `im:chat` | Read group chat information | ✅ Yes |
-| `im:chat:create` | Create group chats | ✅ Yes (for auto-create group) |
-| `im:resource` | Access chat resources | Recommended |
+> **Tip**: You can import all scopes at once using the JSON file at [`feishu-scopes.json`](feishu-scopes.json). In the Feishu developer console, go to **Permissions & Scopes** → **Batch Enable** (批量开通), and paste the scope list from the JSON file.
 
-After adding permissions, click **Submit for Approval** (提交审核). For enterprise internal apps, approval is usually instant.
+### API Call Permissions
 
-## Step 5: Publish the App
+These scopes are required for the bot to call Feishu APIs (send messages, manage groups, etc.):
+
+| Scope | Description | Purpose | Required |
+|-------|-------------|---------|----------|
+| `im:message` | 获取与发送单聊、群组消息 | Core messaging — send, edit, delete messages | ✅ Yes |
+| `im:message:send_as_bot` | 以应用的身份发消息 | Send messages with bot identity | ✅ Yes |
+| `im:message:send` | 发送消息V2 | Send messages (newer API version) | ✅ Yes |
+| `im:message:update` | 更新消息 | Edit messages (used for streaming updates) | ✅ Yes |
+| `im:message:recall` | 撤回消息 | Delete (recall) bot messages | ✅ Yes |
+| `im:chat` | 获取与更新群组信息 | Create and update group chats | ✅ Yes |
+| `im:chat:create` | 创建群 | Create group chats for sessions | ✅ Yes |
+| `im:chat:update` | 更新群信息 | Update group chat name when session title changes | ✅ Yes |
+| `im:chat:operate_as_owner` | 更新应用所创建群的群信息 | Manage groups created by the bot | Recommended |
+| `im:resource` | 获取消息中的资源文件 | Access message resources (images, files) | Recommended |
+
+### Event Subscription Permissions
+
+These scopes control **which events** the bot can receive. They are separate from API call permissions — you must enable them for the event subscriptions in Step 3 to work:
+
+| Scope | Description | Events Covered | Required |
+|-------|-------------|----------------|----------|
+| `im:message.p2p_msg:readonly` | 读取用户发给机器人的单聊消息 | `im.message.receive_v1` — P2P messages | ✅ Yes |
+| `im:message.group_msg:readonly` | 获取群聊中所有的用户聊天消息 | `im.message.receive_v1` — all group messages | ✅ Yes |
+| `im:chat:readonly` | 获取群组信息 | `im.chat.disbanded_v1`, bot added/removed events | ✅ Yes |
+| `im:chat.members:bot_access` | 订阅机器人进、出群事件 | `im.chat.member.bot.added_v1`, `im.chat.member.bot.deleted_v1` | Recommended |
+
+> **Important**: `im:message.group_msg:readonly` (not `im:message.group_at_msg:readonly`) is required. CodeMux needs to receive **all** messages in group chats, not just messages that @mention the bot.
+
+> **Note**: The `application.bot.menu_v6` event requires **no** additional permission scope — it is available to all apps with bot capability enabled.
+
+After adding all permissions, click **Submit for Approval** (提交审核). For enterprise internal apps, approval is usually instant.
+
+## Step 5: Configure Bot Custom Menu
+
+The bot custom menu provides clickable quick-action buttons in the chat input area. This is the primary way for users to navigate projects and sessions from their mobile devices.
+
+1. In the app dashboard, go to **Bot** (机器人) → **Bot Menu** (机器人菜单)
+2. Click **Add Menu** (添加菜单) for each item below
+3. For each menu item, select **Type** = **Event** (事件), not "Redirect URL"
+4. Enter the **Event Key** (事件标识) exactly as shown:
+
+| Event Key | Label (CN) | Label (EN) | Description |
+|-----------|-----------|-----------|-------------|
+| `switch_project` | 切换项目 | Switch Project | Show project list for selection |
+| `new_session` | 新建会话 | New Session | Create a new session in the last-used project |
+| `switch_session` | 切换会话 | Switch Session | Show session list for the last-used project |
+| `help` | 帮助 | Help | Display available commands and usage guide |
+
+> **Note**: The event keys above must match exactly — they are hardcoded in CodeMux's bot menu handler. You can customize the display labels freely.
+
+5. Save the menu configuration
+
+When a user clicks a menu item, Feishu sends an `application.bot.menu_v6` event to CodeMux. The bot responds in the user's P2P chat with the appropriate content (project list, session list, help text, etc.).
+
+## Step 6: Publish the App
 
 1. Go to **Version Management** (版本管理)
 2. Click **Create Version** (创建版本)
 3. Set the **Availability Scope** (可用范围) — choose which departments/users can use the bot
 4. Submit for review
    > Internal apps (企业自建应用) are typically auto-approved
-
-## Step 6: (Optional) Configure Bot Menu
-
-Go to **Bot** (机器人) → **Bot Menu** (机器人菜单) to add quick actions:
-
-| Menu Key | Label | Description |
-|----------|-------|-------------|
-| `switch_project` | Switch Project | Show project list |
-| `new_session` | New Session | Create a new session |
-| `switch_session` | Switch Session | Show session list |
-| `help` | Help | Display help text |
-
-These appear as clickable buttons in the chat input area.
 
 ## Step 7: Configure in CodeMux
 
@@ -139,8 +177,12 @@ Update throttle is 1.5 seconds by default to stay within Feishu's API rate limit
 | Problem | Possible Cause | Solution |
 |---------|---------------|----------|
 | Bot doesn't receive messages | Wrong event receiving mode | Ensure **Long Connection** (长连接) is selected, not HTTP callback |
+| Bot receives P2P but not group messages | Missing event permission | Enable `im:message.group_msg:readonly` (not just `im:message.group_at_msg:readonly`) |
+| Bot only receives @mentions in groups | Wrong event permission | Switch from `im:message.group_at_msg:readonly` to `im:message.group_msg:readonly` |
 | "Missing appId or appSecret" | Empty credentials | Re-enter App ID and App Secret in CodeMux config |
-| Group creation fails | Missing permissions | Verify `im:chat:create` scope is approved |
+| Group creation fails | Missing permissions | Verify `im:chat` and `im:chat:create` scopes are approved |
+| Bot can't update group name | Missing permissions | Verify `im:chat:update` or `im:chat:operate_as_owner` scope is approved |
+| Bot menu clicks not working | Event not subscribed | Ensure `application.bot.menu_v6` event is subscribed in Event Configuration |
 | Bot doesn't appear in contacts | App not published | Go to Version Management → create and publish a version |
 | Messages truncated | Content exceeds 25KB | Normal behavior — long responses are truncated with a notice |
 | Permission errors on startup | App not approved | Check version approval status in Feishu Open Platform |

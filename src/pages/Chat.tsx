@@ -1462,6 +1462,29 @@ export default function Chat() {
     return allParts;
   });
 
+  // Load step parts (which contain ToolParts) when git panel is open
+  createEffect(() => {
+    if (!gitPanelOpen()) return;
+    const sid = sessionStore.current;
+    if (!sid) return;
+    const messages = messageStore.message[sid] || [];
+
+    for (const msg of messages) {
+      if ((msg.stepCount ?? 0) > 0 && !messageStore.stepsLoaded[msg.id]) {
+        gateway.getMessageSteps(sid, msg.id).then((steps) => {
+          if (disposed) return;
+          const existing = messageStore.part[msg.id] || [];
+          const existingIds = new Set(existing.map((p) => p.id));
+          const newSteps = steps.filter((s) => !existingIds.has(s.id));
+          if (newSteps.length > 0) {
+            setMessageStore("part", msg.id, [...existing, ...newSteps].sort((a, b) => a.id.localeCompare(b.id)));
+          }
+          setMessageStore("stepsLoaded", msg.id, true);
+        }).catch(() => { /* ignore — panel will show empty */ });
+      }
+    }
+  });
+
   createEffect(() => {
     initializeSession();
 

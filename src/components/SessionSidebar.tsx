@@ -8,7 +8,6 @@ import { getEngineBadge } from "./share/common";
 
 import { isElectron } from "../lib/platform";
 import { systemAPI } from "../lib/electron-api";
-import { getSetting } from "../lib/settings";
 
 interface SessionSidebarProps {
   sessions: SessionInfo[];
@@ -106,7 +105,7 @@ export function SessionSidebar(props: SessionSidebarProps) {
   const projectGroups = createMemo((): ProjectGroup[] => {
     const groups: Map<string, SessionInfo[]> = new Map();
 
-    const showDefaultWs = getSetting<boolean>("showDefaultWorkspace") ?? false;
+    const showDefaultWs = sessionStore.showDefaultWorkspace;
     const filteredProjects = props.projects.filter((p) => {
       if (p.directory === "/") return false;
       if (p.isDefault && !showDefaultWs) return false;

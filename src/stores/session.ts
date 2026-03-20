@@ -24,6 +24,8 @@ export const [sessionStore, setSessionStore] = createStore<{
   projectExpanded: ProjectExpandState;
   /** Per-session sending (streaming) state — persists across Chat navigations. */
   sendingMap: Record<string, boolean>;
+  /** Whether to show default workspace in sidebar (reactive mirror of setting). */
+  showDefaultWorkspace: boolean;
 }>({
   list: [],
   current: null,
@@ -32,6 +34,7 @@ export const [sessionStore, setSessionStore] = createStore<{
   projects: [],
   projectExpanded: {},
   sendingMap: {},
+  showDefaultWorkspace: false,
 });
 
 /** Set the sending (streaming) state for a session. */

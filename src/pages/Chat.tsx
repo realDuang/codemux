@@ -532,7 +532,10 @@ export default function Chat() {
         return;
       }
 
-      setSessionStore({ loading: true });
+      setSessionStore({
+        loading: true,
+        showDefaultWorkspace: getSetting<boolean>("showDefaultWorkspace") ?? false,
+      });
 
       // First-time initialization: connect gateway and load data
       await gateway.init(handlers);

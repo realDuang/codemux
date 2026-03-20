@@ -1037,7 +1037,7 @@ export class EngineManager extends EventEmitter {
       projects.push({
         id: `dir-${defaultDir}`,
         directory: defaultDir,
-        name: "Default Workspace",
+        name: "workspace",
         isDefault: true,
       });
     } else {

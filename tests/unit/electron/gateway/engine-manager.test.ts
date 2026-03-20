@@ -491,7 +491,7 @@ describe("EngineManager", () => {
       const defaultProject = projects.find(p => p.isDefault);
       expect(defaultProject).toBeDefined();
       expect(defaultProject!.directory).toBe("/mock/userData/workspace");
-      expect(defaultProject!.name).toBe("Default Workspace");
+      expect(defaultProject!.name).toBe("workspace");
     });
 
     it("marks existing project as default when directory matches", () => {

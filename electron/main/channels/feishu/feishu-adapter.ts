@@ -456,10 +456,10 @@ export class FeishuAdapter extends ChannelAdapter {
     const allProjects = await this.gatewayClient.listAllProjects();
     // Filter out default workspace — users should only pick real projects
     const projects = allProjects.filter(p => !p.isDefault);
-    const text = buildProjectListText(projects);
-    await this.transport!.sendText(chatId, text);
 
     if (projects.length > 0) {
+      const text = buildProjectListText(projects);
+      await this.transport!.sendText(chatId, text);
       // Flatten projects in display order (grouped by engine) for number mapping
       const flatProjects = this.flattenProjectsByEngine(projects);
       this.sessionMapper.setPendingSelection(chatId, {
@@ -467,7 +467,7 @@ export class FeishuAdapter extends ChannelAdapter {
         projects: flatProjects,
       });
     } else {
-      // No real projects — auto-create session in default workspace
+      // No real projects — auto-use default workspace without showing empty list
       const defaultProject = allProjects.find(p => p.isDefault);
       if (defaultProject) {
         const defaultRef = {
@@ -476,6 +476,10 @@ export class FeishuAdapter extends ChannelAdapter {
           projectId: defaultProject.id,
         };
         this.sessionMapper.setP2PLastProject(chatId, defaultRef);
+      } else {
+        // No projects at all — show empty project list message
+        const text = buildProjectListText(projects);
+        await this.transport!.sendText(chatId, text);
       }
     }
   }

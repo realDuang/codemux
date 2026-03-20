@@ -298,8 +298,13 @@ export async function addProject(
   page: Page,
   directory: string,
 ): Promise<void> {
-  // Click "Add Project" button in the sidebar
-  await solidClickByText(page, "Add Project");
+  // Click "Add Project" button in the sidebar (icon-only button with title)
+  await page.evaluate(() => {
+    const btn = document.querySelector('button[title="Add Project"]') as HTMLButtonElement;
+    if (btn) {
+      btn.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, composed: true }));
+    }
+  });
 
   // Wait for dialog to appear
   const dialog = page.getByRole("dialog", { name: /Add Project/i });

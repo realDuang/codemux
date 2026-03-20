@@ -56,7 +56,7 @@ import type {
   UnifiedPermission,
   UnifiedQuestion,
 } from "../../../../src/types/unified";
-import { dingtalkLog } from "../../services/logger";
+import { dingtalkLog, getDefaultEngineFromSettings } from "../../services/logger";
 
 // ============================================================================
 // DingTalk Session Mapper (extends BaseSessionMapper with ownerUserId)
@@ -705,7 +705,7 @@ export class DingTalkAdapter extends ChannelAdapter {
 
     const projectRef = {
       directory: project.directory,
-      engineType: project.engineType || "opencode",
+      engineType: project.engineType || getDefaultEngineFromSettings(),
       projectId: project.id,
     };
     this.sessionMapper.setP2PLastProject(chatId, projectRef);

@@ -326,16 +326,6 @@ class GatewayAPI {
       }
     });
   }
-
-  // --- Git ---
-
-  gitStatus(directory: string): Promise<import("../types/unified").GitStatusResponse> {
-    return gatewayClient.gitStatus(directory);
-  }
-
-  gitFileDiff(directory: string, filePath: string): Promise<import("../types/unified").GitFileDiffResponse> {
-    return gatewayClient.gitFileDiff(directory, filePath);
-  }
 }
 
 export const gateway = new GatewayAPI();

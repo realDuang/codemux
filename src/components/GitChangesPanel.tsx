@@ -1,54 +1,40 @@
 /**
- * GitChangesPanel — Right sidebar showing git changes for the current session.
+ * GitChangesPanel — Right sidebar showing file changes for the current session.
  *
  * Two views:
- *   1. File list — shows changed files with status badges and +/-stats
- *   2. Diff view — drill-down into a single file's unified diff with Shiki syntax highlighting
+ *   1. File list — shows changed files with status badges
+ *   2. Diff view — drill-down into a single file's diff with Shiki syntax highlighting
  *
- * Data source:
- *   - Git repo: queries gateway git.status / git.fileDiff
- *   - Non-git: falls back to extracting write/edit tool parts from messages
+ * Data source: ToolPart (write/edit) extracted from session messages.
+ * Works identically for all engines, all projects (git or non-git), and historical sessions.
  */
 
 import {
   createSignal,
-  createResource,
   createMemo,
   Show,
   For,
-  onCleanup,
 } from "solid-js";
-import { useI18n, formatMessage } from "../lib/i18n";
-import { gateway } from "../lib/gateway-api";
-import { extractFileChanges } from "../lib/extract-file-changes";
+import { useI18n } from "../lib/i18n";
+import { extractFileChanges, type ExtractedFileChange } from "../lib/extract-file-changes";
 import { resolveLang } from "../lib/shiki-highlighter";
 import { ContentDiff } from "./share/content-diff";
-import type {
-  GitFileChange,
-  GitStatusResponse,
-  UnifiedPart,
-} from "../types/unified";
+import type { UnifiedPart } from "../types/unified";
 import styles from "./GitChangesPanel.module.css";
 
 // --- Status badge labels ---
 
 const STATUS_LETTERS: Record<string, string> = {
-  added: "A",
-  modified: "M",
-  deleted: "D",
-  renamed: "R",
-  untracked: "?",
   created: "A",
+  modified: "M",
 };
 
 // --- Types ---
 
 interface GitChangesPanelProps {
-  /** Project directory for the current session */
-  directory: string | undefined;
-  /** All parts for the current session (used for non-git fallback) */
+  /** All parts for the current session */
   sessionParts: UnifiedPart[];
-  /** Whether the AI is currently streaming (triggers auto-refresh on finish) */
+  /** Whether the AI is currently streaming */
   isWorking: boolean;
   /** Whether the panel is collapsed */
   collapsed: boolean;
@@ -56,114 +42,22 @@ interface GitChangesPanelProps {
   onToggleCollapse: () => void;
 }
 
-interface FileEntry {
-  path: string;
-  status: string;
-  oldPath?: string;
-  insertions?: number;
-  deletions?: number;
-  isGit: boolean;
-}
-
 // --- Component ---
 
 export function GitChangesPanel(props: GitChangesPanelProps) {
   const { t } = useI18n();
-  const [selectedFile, setSelectedFile] = createSignal<FileEntry | null>(null);
-  const [refreshCounter, setRefreshCounter] = createSignal(0);
-  const [isRefreshing, setIsRefreshing] = createSignal(false);
+  const [selectedFile, setSelectedFile] = createSignal<ExtractedFileChange | null>(null);
 
-  // Track working state transitions for auto-refresh
-  let wasWorking = false;
-  const checkAutoRefresh = () => {
-    if (wasWorking && !props.isWorking) {
-      setRefreshCounter((c) => c + 1);
+  // Reactively extract file changes from session parts
+  const fileEntries = createMemo(() => extractFileChanges(props.sessionParts));
+
+  const handleFileClick = (file: ExtractedFileChange) => {
+    if (file.diff || file.content) {
+      setSelectedFile(file);
     }
-    wasWorking = props.isWorking;
   };
 
-  // Use createMemo to trigger the effect reactively
-  createMemo(() => {
-    const _ = props.isWorking;
-    checkAutoRefresh();
-  });
-
-  // Fetch git status (or fall back to parts extraction)
-  const [statusData] = createResource(
-    () => ({
-      dir: props.directory,
-      counter: refreshCounter(),
-    }),
-    async ({ dir }) => {
-      if (!dir) return { isGitRepo: false, files: [], branch: undefined };
-
-      try {
-        const result: GitStatusResponse = await gateway.gitStatus(dir);
-        return result;
-      } catch {
-        return { isGitRepo: false, files: [], branch: undefined };
-      }
-    },
-  );
-
-  // Compute file entries: git data or fallback from parts
-  const fileEntries = createMemo<FileEntry[]>(() => {
-    const data = statusData();
-    if (!data) return [];
-
-    if (data.isGitRepo) {
-      return data.files.map((f: GitFileChange) => ({
-        path: f.path,
-        status: f.status,
-        oldPath: f.oldPath,
-        insertions: f.insertions,
-        deletions: f.deletions,
-        isGit: true,
-      }));
-    }
-
-    // Non-git fallback: extract from tool parts
-    const changes = extractFileChanges(props.sessionParts);
-    return changes.map((c) => ({
-      path: c.path,
-      status: c.status,
-      isGit: false,
-    }));
-  });
-
-  // Fetch diff for selected file
-  const [diffData] = createResource(
-    () => {
-      const file = selectedFile();
-      return file && props.directory
-        ? { dir: props.directory, file }
-        : null;
-    },
-    async ({ dir, file }) => {
-      if (!file.isGit) return { diff: "", language: "" };
-      try {
-        return await gateway.gitFileDiff(dir, file.path);
-      } catch {
-        return { diff: "", language: "" };
-      }
-    },
-  );
-
-  const handleRefresh = () => {
-    setIsRefreshing(true);
-    setRefreshCounter((c) => c + 1);
-    // Clear spinning state after resource resolves
-    setTimeout(() => setIsRefreshing(false), 600);
-  };
-
-  const handleFileClick = (file: FileEntry) => {
-    if (file.status === "deleted" && !file.isGit) return;
-    setSelectedFile(file);
-  };
-
-  const handleBack = () => {
-    setSelectedFile(null);
-  };
+  const handleBack = () => setSelectedFile(null);
 
   const fileBasename = (path: string) => {
     const parts = path.replace(/\\/g, "/").split("/");
@@ -186,7 +80,7 @@ export function GitChangesPanel(props: GitChangesPanelProps) {
       >
         <div class={styles.collapsedContent}>
           <span class={styles.collapsedIcon}>
-            <GitBranchIcon size={16} />
+            <FileChangesIcon size={16} />
           </span>
           <Show when={fileEntries().length > 0}>
             <span class={styles.collapsedBadge}>{fileEntries().length}</span>
@@ -199,7 +93,7 @@ export function GitChangesPanel(props: GitChangesPanelProps) {
   // --- Diff drill-down view ---
   const selected = selectedFile();
   if (selected) {
-    const lang = resolveLang(selected.path.split(".").pop());
+    const lang = resolveLang(selected.langExt);
 
     return (
       <div class={styles.root}>
@@ -216,19 +110,25 @@ export function GitChangesPanel(props: GitChangesPanelProps) {
         </div>
         <div class={styles.diffContent}>
           <Show
-            when={!diffData.loading}
-            fallback={<div class={styles.diffLoading}>{t().gitPanel.loading}</div>}
+            when={selected.diff}
+            fallback={
+              <Show
+                when={selected.content}
+                fallback={
+                  <div class={styles.emptyState}>
+                    {t().gitPanel.noChanges}
+                  </div>
+                }
+              >
+                {/* For write tools without diff, show file content as all-added */}
+                <ContentDiff
+                  diff={`--- /dev/null\n+++ b/${selected.path}\n@@ -0,0 +1,${selected.content!.split("\n").length} @@\n${selected.content!.split("\n").map((l) => `+${l}`).join("\n")}`}
+                  language={lang}
+                />
+              </Show>
+            }
           >
-            <Show
-              when={diffData()?.diff}
-              fallback={
-                <div class={styles.emptyState}>
-                  {t().gitPanel.noChanges}
-                </div>
-              }
-            >
-              <ContentDiff diff={diffData()!.diff} language={lang} />
-            </Show>
+            <ContentDiff diff={selected.diff!} language={lang} />
           </Show>
         </div>
       </div>
@@ -241,35 +141,13 @@ export function GitChangesPanel(props: GitChangesPanelProps) {
       {/* Header */}
       <div class={styles.header}>
         <span class={styles.headerIcon}>
-          <GitBranchIcon size={14} />
+          <FileChangesIcon size={14} />
         </span>
         <span class={styles.headerTitle}>{t().gitPanel.title}</span>
         <Show when={fileEntries().length > 0}>
           <span class={styles.headerBadge}>{fileEntries().length}</span>
         </Show>
         <div class={styles.headerActions}>
-          <button
-            class={styles.iconBtn}
-            onClick={handleRefresh}
-            title={t().gitPanel.refresh}
-          >
-            <svg
-              class={isRefreshing() ? styles.spinning : ""}
-              width="13"
-              height="13"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-            >
-              <path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
-              <path d="M3 3v5h5" />
-              <path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16" />
-              <path d="M16 16h5v5" />
-            </svg>
-          </button>
           <button
             class={styles.iconBtn}
             onClick={props.onToggleCollapse}
@@ -282,48 +160,27 @@ export function GitChangesPanel(props: GitChangesPanelProps) {
         </div>
       </div>
 
-      {/* Branch info */}
-      <Show when={statusData()?.branch}>
-        <div class={styles.branchInfo}>
-          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-            <line x1="6" y1="3" x2="6" y2="15" />
-            <circle cx="18" cy="6" r="3" />
-            <circle cx="6" cy="18" r="3" />
-            <path d="M18 9a9 9 0 0 1-9 9" />
-          </svg>
-          {statusData()!.branch}
-        </div>
-      </Show>
-
-      {/* Non-git notice */}
-      <Show when={statusData() && !statusData()!.isGitRepo && fileEntries().length > 0}>
-        <div class={styles.branchInfo}>
-          {t().gitPanel.notGitRepo}
-        </div>
-      </Show>
-
       {/* File list */}
       <div class={styles.fileList}>
         <Show
           when={fileEntries().length > 0}
           fallback={
-            <Show when={!statusData.loading}>
-              <div class={styles.emptyState}>
-                <span class={styles.emptyIcon}>
-                  <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" opacity="0.4">
-                    <circle cx="12" cy="12" r="10" />
-                    <path d="m9 12 2 2 4-4" />
-                  </svg>
-                </span>
-                {t().gitPanel.noChanges}
-              </div>
-            </Show>
+            <div class={styles.emptyState}>
+              <span class={styles.emptyIcon}>
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" opacity="0.4">
+                  <circle cx="12" cy="12" r="10" />
+                  <path d="m9 12 2 2 4-4" />
+                </svg>
+              </span>
+              {t().gitPanel.noChanges}
+            </div>
           }
         >
           <For each={fileEntries()}>
             {(file) => (
               <div
                 class={styles.fileItem}
+                data-clickable={file.diff || file.content ? "" : undefined}
                 onClick={() => handleFileClick(file)}
               >
                 <span
@@ -334,20 +191,17 @@ export function GitChangesPanel(props: GitChangesPanelProps) {
                     file.status
                   }
                 >
-                  {STATUS_LETTERS[file.status] ?? "?"}
+                  {STATUS_LETTERS[file.status] ?? "M"}
                 </span>
                 <span class={styles.filePath} title={file.path}>
                   <span class={styles.fileDir}>{fileDirectory(file.path)}</span>
                   {fileBasename(file.path)}
                 </span>
-                <Show when={file.insertions != null || file.deletions != null}>
+                <Show when={file.diff || file.content}>
                   <span class={styles.fileStats}>
-                    <Show when={file.insertions != null && file.insertions > 0}>
-                      <span class={styles.statAdd}>+{file.insertions}</span>
-                    </Show>
-                    <Show when={file.deletions != null && file.deletions > 0}>
-                      <span class={styles.statDel}>-{file.deletions}</span>
-                    </Show>
+                    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" opacity="0.4">
+                      <path d="m9 18 6-6-6-6" />
+                    </svg>
                   </span>
                 </Show>
               </div>
@@ -359,9 +213,9 @@ export function GitChangesPanel(props: GitChangesPanelProps) {
   );
 }
 
-// --- Inline icon components ---
+// --- Inline icon ---
 
-function GitBranchIcon(props: { size?: number }) {
+function FileChangesIcon(props: { size?: number }) {
   const s = props.size ?? 16;
   return (
     <svg
@@ -374,10 +228,10 @@ function GitBranchIcon(props: { size?: number }) {
       stroke-linecap="round"
       stroke-linejoin="round"
     >
-      <line x1="6" y1="3" x2="6" y2="15" />
-      <circle cx="18" cy="6" r="3" />
-      <circle cx="6" cy="18" r="3" />
-      <path d="M18 9a9 9 0 0 1-9 9" />
+      <path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z" />
+      <path d="M14 2v4a2 2 0 0 0 2 2h4" />
+      <path d="M9 15h6" />
+      <path d="M12 12v6" />
     </svg>
   );
 }

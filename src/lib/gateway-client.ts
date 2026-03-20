@@ -33,8 +33,6 @@ import {
   type SessionImportExecuteRequest,
   type SessionImportResult,
   type SessionImportProgress,
-  type GitStatusResponse,
-  type GitFileDiffResponse,
 } from "../types/unified";
 
 // --- Event types emitted by GatewayClient ---
@@ -497,16 +495,6 @@ export class GatewayClient {
   importExecute(req: SessionImportExecuteRequest): Promise<SessionImportResult> {
     // No timeout — importing many sessions with full messages can take minutes
     return this.request(GatewayRequestType.SESSION_IMPORT_EXECUTE, req, 0);
-  }
-
-  // --- Git API ---
-
-  gitStatus(directory: string): Promise<GitStatusResponse> {
-    return this.request(GatewayRequestType.GIT_STATUS, { directory });
-  }
-
-  gitFileDiff(directory: string, filePath: string): Promise<GitFileDiffResponse> {
-    return this.request(GatewayRequestType.GIT_FILE_DIFF, { directory, filePath });
   }
 
   // --- Log forwarding (fire-and-forget, no response expected) ---

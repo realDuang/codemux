@@ -1450,13 +1450,6 @@ export default function Chat() {
     return session?.title || "";
   });
 
-  const currentSessionDirectory = createMemo(() => {
-    const sid = sessionStore.current;
-    if (!sid) return undefined;
-    const session = sessionStore.list.find(s => s.id === sid);
-    return session?.directory;
-  });
-
   const currentSessionParts = createMemo(() => {
     const sid = sessionStore.current;
     if (!sid) return [];
@@ -1846,7 +1839,6 @@ export default function Chat() {
       <Show when={gitPanelOpen() && sessionStore.current}>
         <div class={gitPanelCollapsed() ? "w-9 flex-shrink-0" : "w-80 flex-shrink-0"} style={{ transition: "width 200ms ease" }}>
           <GitChangesPanel
-            directory={currentSessionDirectory()}
             sessionParts={currentSessionParts()}
             isWorking={sending()}
             collapsed={gitPanelCollapsed()}

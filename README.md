@@ -70,13 +70,21 @@ Paste a screenshot, drag in a design mockup, or upload an error image — all th
 
 > This works across all access methods — desktop, remote browser, and IM bots — wherever CodeMux runs, image input follows.
 
+### And More
+
+- **Agent mode switching**: Toggle between Build / Plan / Autopilot modes per engine — each with its own behavior and prompt style
+- **Live todo panel**: Agent-generated task lists displayed above the input area with real-time progress tracking
+- **Permission approvals**: Approve or deny sensitive operations (shell, file edits) inline — with "always allow" for trusted patterns
+- **Interactive questions**: Engines can ask single/multi-select questions with descriptions and custom input
+- **Per-engine model selection**: Pick different models for each engine independently; Copilot and Claude Code support custom model ID input
+
 #### Browser Remote Access
 
 Access your coding agents from any device — phone, tablet, or another machine — without touching a single config file.
 
 - **LAN**: Auto-detected IP + QR code, ready in seconds
-- **Public Internet**: One-click [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/) — no port forwarding, no VPN, no firewall changes
-- **Security built-in**: Device authorization, JWT tokens, HTTPS via Cloudflare, ephemeral tunnel URLs that rotate on every restart
+- **Public Internet**: One-click [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/) — no port forwarding, no VPN, no firewall changes. Supports both **quick tunnels** (random ephemeral URL, zero config) and **named tunnels** (persistent custom domain via `~/.cloudflared/` credentials)
+- **Security built-in**: Device authorization, JWT tokens, HTTPS via Cloudflare; quick tunnel URLs rotate on every restart, named tunnels preserve your custom hostname
 
 #### IM Bot Channels
 

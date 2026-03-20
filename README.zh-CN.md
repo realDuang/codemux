@@ -70,13 +70,21 @@
 
 > 这在所有访问方式中都有效 —— 桌面端、远程浏览器和 IM 机器人 —— CodeMux 运行在哪里，图片输入就跟到哪里。
 
+### 更多特性
+
+- **Agent 模式切换**：在 Build / Plan / Autopilot 等模式间切换 —— 每种模式有不同的行为和提示风格
+- **实时任务面板**：Agent 生成的任务列表显示在输入框上方，实时追踪完成进度
+- **权限审批**：内联审批或拒绝敏感操作（Shell、文件编辑） —— 支持"始终允许"以简化可信操作
+- **交互式问答**：引擎可发起单选/多选问题，支持描述文字和自定义输入
+- **每引擎独立选模型**：为每个引擎独立选择模型；Copilot 和 Claude Code 支持手动输入自定义模型 ID
+
 #### 浏览器远程访问
 
 从任何设备访问你的编程 Agent —— 手机、平板或另一台电脑 —— 无需修改任何配置文件。
 
 - **局域网**：自动检测 IP + 二维码，几秒内即可就绪
-- **公网**：一键 [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/) —— 无需端口转发、无需 VPN、无需防火墙更改
-- **内置安全机制**：设备授权、JWT 令牌、通过 Cloudflare 的 HTTPS、每次重启时轮换的临时隧道 URL
+- **公网**：一键 [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/) —— 无需端口转发、无需 VPN、无需防火墙更改。支持**快速隧道**（随机临时 URL，零配置）和**命名隧道**（通过 `~/.cloudflared/` 凭证持久化自定义域名）
+- **内置安全机制**：设备授权、JWT 令牌、通过 Cloudflare 的 HTTPS；快速隧道 URL 每次重启时轮换，命名隧道保留你的自定义主机名
 
 #### IM 机器人渠道
 

@@ -10,6 +10,7 @@ import { UpdateNotification } from "./components/UpdateNotification";
 import { NotificationToast } from "./components/NotificationToast";
 import { Spinner } from "./components/Spinner";
 import EntryPage from "./pages/EntryPage";
+import Chat from "./pages/Chat";
 
 const PageFallback = () => (
   <div class="fixed inset-0 flex items-center justify-center bg-gray-50 dark:bg-slate-950">
@@ -17,11 +18,9 @@ const PageFallback = () => (
   </div>
 );
 
-const ChatLazy = lazy(() => import("./pages/Chat"));
 const SettingsLazy = lazy(() => import("./pages/Settings"));
 const DevicesLazy = lazy(() => import("./pages/Devices"));
 
-const Chat = () => <Suspense fallback={<PageFallback />}><ChatLazy /></Suspense>;
 const Settings = () => <Suspense fallback={<PageFallback />}><SettingsLazy /></Suspense>;
 const Devices = () => <Suspense fallback={<PageFallback />}><DevicesLazy /></Suspense>;
 

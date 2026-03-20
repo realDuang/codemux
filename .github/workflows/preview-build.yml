@@ -1,0 +1,220 @@
+name: Preview Build
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'package.json'
+
+permissions:
+  contents: read
+  pull-requests: write
+  actions: read
+
+concurrency:
+  group: preview-build-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  detect-version-bump:
+    name: Detect Version Bump
+    runs-on: ubuntu-latest
+    outputs:
+      version_changed: ${{ steps.check.outputs.version_changed }}
+      new_version: ${{ steps.check.outputs.new_version }}
+      old_version: ${{ steps.check.outputs.old_version }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Compare versions
+        id: check
+        run: |
+          NEW_VERSION=$(node -p "require('./package.json').version")
+
+          git show ${{ github.event.pull_request.base.sha }}:package.json > /tmp/base-package.json
+          OLD_VERSION=$(node -p "require('/tmp/base-package.json').version")
+
+          echo "Base version: $OLD_VERSION"
+          echo "PR version:   $NEW_VERSION"
+
+          if [ "$NEW_VERSION" != "$OLD_VERSION" ]; then
+            echo "✅ Version changed: $OLD_VERSION → $NEW_VERSION"
+            echo "version_changed=true" >> $GITHUB_OUTPUT
+            echo "new_version=$NEW_VERSION" >> $GITHUB_OUTPUT
+            echo "old_version=$OLD_VERSION" >> $GITHUB_OUTPUT
+          else
+            echo "⏭️ Version unchanged, skipping preview build"
+            echo "version_changed=false" >> $GITHUB_OUTPUT
+          fi
+
+  build-macos:
+    name: Build macOS (${{ matrix.arch }})
+    needs: detect-version-bump
+    if: needs.detect-version-bump.outputs.version_changed == 'true'
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            runner: macos-latest
+          - arch: x64
+            runner: macos-15-intel
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Download Cloudflared binary
+        run: bun run update:cloudflared
+        env:
+          TARGET_ARCH: ${{ matrix.arch }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build app
+        run: bun run build
+
+      - name: Run predist script
+        run: bun scripts/predist.ts
+        env:
+          TARGET_ARCH: ${{ matrix.arch }}
+
+      - name: Package for macOS ${{ matrix.arch }}
+        run: npx electron-builder --mac --${{ matrix.arch }} --publish never
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: false
+
+      - name: Upload macOS artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: preview-macos-${{ matrix.arch }}
+          path: |
+            release/*.dmg
+            release/*.zip
+          retention-days: 14
+
+  build-windows:
+    name: Build Windows
+    needs: detect-version-bump
+    if: needs.detect-version-bump.outputs.version_changed == 'true'
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Download Cloudflared binary
+        run: bun run update:cloudflared
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build app
+        run: bun run build
+
+      - name: Run predist script
+        run: bun scripts/predist.ts
+
+      - name: Package for Windows
+        run: npx electron-builder --win --publish never
+
+      - name: Upload Windows artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: preview-windows-x64
+          path: release/*.exe
+          retention-days: 14
+
+  post-comment:
+    name: Post Download Links
+    needs: [detect-version-bump, build-macos, build-windows]
+    if: needs.detect-version-bump.outputs.version_changed == 'true' && !cancelled()
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Determine build status
+        id: status
+        run: |
+          if [ "${{ needs.build-macos.result }}" = "success" ] && [ "${{ needs.build-windows.result }}" = "success" ]; then
+            echo "all_success=true" >> $GITHUB_OUTPUT
+          else
+            echo "all_success=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Comment on PR
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const newVersion = '${{ needs.detect-version-bump.outputs.new_version }}';
+            const oldVersion = '${{ needs.detect-version-bump.outputs.old_version }}';
+            const allSuccess = '${{ steps.status.outputs.all_success }}' === 'true';
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+
+            const macosArm64 = '${{ needs.build-macos.result }}' === 'success' ? '✅' : '❌';
+            const macosX64 = '${{ needs.build-macos.result }}' === 'success' ? '✅' : '❌';
+            const windows = '${{ needs.build-windows.result }}' === 'success' ? '✅' : '❌';
+
+            const statusIcon = allSuccess ? '📦' : '⚠️';
+            const statusText = allSuccess ? 'All builds succeeded' : 'Some builds failed';
+
+            const body = [
+              `## ${statusIcon} Preview Build — v${oldVersion} → v${newVersion}`,
+              ``,
+              `${statusText}. [View workflow run](${runUrl})`,
+              ``,
+              `| Platform | Architecture | Status |`,
+              `|----------|-------------|--------|`,
+              `| macOS | arm64 (Apple Silicon) | ${macosArm64} |`,
+              `| macOS | x64 (Intel) | ${macosX64} |`,
+              `| Windows | x64 | ${windows} |`,
+              ``,
+              `### 📥 Download`,
+              `Go to the [Actions run artifacts section](${runUrl}#artifacts) to download installers.`,
+              `Artifacts are retained for **14 days**.`,
+            ].join('\n');
+
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+
+            const marker = 'Preview Build —';
+            const existing = comments.find(c =>
+              c.user.type === 'Bot' && c.body && c.body.includes(marker)
+            );
+
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body,
+              });
+            }

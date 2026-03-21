@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { mkdirSync, writeFileSync, rmSync, symlinkSync } from "node:fs";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
@@ -257,6 +258,90 @@ describe("file-service", () => {
     it("returns empty string for non-existent files", async () => {
       const diff = await getGitDiff(REPO_DIR, "nonexistent-file-12345.txt");
       expect(diff).toBe("");
+    });
+  });
+
+  describe("readFile binary detection", () => {
+    it("detects binary by extension (tier 1) for common types", async () => {
+      // A .png with plain text content is still detected as binary via extension
+      const fakePng = join(TEST_DIR, "text-as.png");
+      writeFileSync(fakePng, "This is plain text, not a real PNG image");
+      const result = await readFile(fakePng, TEST_DIR);
+      expect(result.binary).toBe(true);
+      expect(result.mimeType).toBe("image/png");
+    });
+
+    it("detects text files with unknown extensions as text", async () => {
+      const textFile = join(TEST_DIR, "notes.myext");
+      writeFileSync(textFile, "Normal text file\nwith line breaks\n");
+      const result = await readFile(textFile, TEST_DIR);
+      expect(result.binary).toBe(false);
+      expect(result.content).toBe("Normal text file\nwith line breaks\n");
+    });
+
+    it("detects files with NULL bytes as binary (tier 2)", async () => {
+      // .myext2 is not in BINARY_EXTENSIONS — tier 2 content check kicks in
+      const nullFile = join(TEST_DIR, "nulls.myext2");
+      writeFileSync(nullFile, Buffer.from("header\x00\x00payload\x00end"));
+      const result = await readFile(nullFile, TEST_DIR);
+      expect(result.binary).toBe(true);
+    });
+
+    it("returns too-large message for files exceeding 1MB", async () => {
+      const bigFile = join(TEST_DIR, "oversized.log");
+      writeFileSync(bigFile, "a".repeat(Math.ceil(1.1 * 1024 * 1024)));
+      const result = await readFile(bigFile, TEST_DIR);
+      expect(result.content).toMatch(/\[File too large: .+MB\]/);
+      expect(result.binary).toBe(false);
+      expect(result.size).toBeGreaterThan(1024 * 1024);
+    });
+  });
+
+  describe("path traversal prevention", () => {
+    it("blocks reading files outside workspace via ..", async () => {
+      const workspace = await mkdtemp(join(tmpdir(), "ws-boundary-"));
+      await writeFile(join(workspace, "safe.txt"), "hello");
+
+      try {
+        const result = await readFile(
+          join(workspace, "..", "etc", "passwd"),
+          workspace,
+        );
+        expect(result.content).toBe("");
+        expect(result.size).toBe(0);
+      } finally {
+        await rm(workspace, { recursive: true, force: true });
+      }
+    });
+
+    it("blocks symlink that resolves outside workspace", async () => {
+      const workspace = await mkdtemp(join(tmpdir(), "symlink-ws-"));
+      const outsideDir = await mkdtemp(join(tmpdir(), "outside-"));
+      const outsideFile = join(outsideDir, "secret.txt");
+      await writeFile(outsideFile, "sensitive data");
+
+      let symlinkCreated = false;
+      try {
+        symlinkSync(outsideFile, join(workspace, "link.txt"));
+        symlinkCreated = true;
+      } catch {
+        // Symlinks may require elevated privileges on Windows — skip gracefully
+      }
+
+      try {
+        if (symlinkCreated) {
+          const result = await readFile(
+            join(workspace, "link.txt"),
+            workspace,
+          );
+          // realpathSync resolves symlink to outside target → blocked
+          expect(result.content).toBe("");
+          expect(result.size).toBe(0);
+        }
+      } finally {
+        await rm(workspace, { recursive: true, force: true });
+        await rm(outsideDir, { recursive: true, force: true });
+      }
     });
   });
 });

@@ -2,31 +2,16 @@ import { readdir, readFile as fsReadFile, stat } from "node:fs/promises";
 import { realpathSync, existsSync } from "node:fs";
 import { join, sep, extname, basename } from "node:path";
 import { execFile } from "node:child_process";
+import type {
+  FileExplorerNode,
+  FileExplorerContent,
+  GitFileStatus,
+} from "../../../src/types/unified";
 
-// ─── Types ───────────────────────────────────────────────────────────────────
-
-export interface FileNode {
-  name: string;
-  path: string;
-  absolutePath: string;
-  type: "file" | "directory";
-  ignored: boolean;
-  size?: number;
-}
-
-export interface FileContent {
-  content: string;
-  binary: boolean;
-  size: number;
-  mimeType?: string;
-}
-
-export interface GitFileStatus {
-  path: string;
-  status: "added" | "modified" | "deleted" | "renamed" | "untracked";
-  added?: number;
-  removed?: number;
-}
+// Re-export with original names for backward compatibility
+export type FileNode = FileExplorerNode;
+export type FileContent = FileExplorerContent;
+export type { GitFileStatus };
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 

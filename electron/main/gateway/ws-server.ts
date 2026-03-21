@@ -8,6 +8,7 @@ import { WebSocketServer, WebSocket } from "ws";
 import { randomUUID } from "crypto";
 import type { Server } from "http";
 import { EngineManager } from "./engine-manager";
+import * as fileService from "../services/file-service";
 import { gatewayLog } from "../services/logger";
 import log from "../services/logger";
 import { conversationStore } from "../services/conversation-store";
@@ -343,6 +344,27 @@ export class GatewayServer {
       case GatewayRequestType.SESSION_IMPORT_EXECUTE: {
         const req = p as SessionImportExecuteRequest;
         return this.engineManager.importExecute(req.engineType, req.sessions);
+      }
+
+      // File Explorer
+      case GatewayRequestType.FILE_LIST: {
+        const { directory } = p as { directory: string };
+        return fileService.listDirectory(directory);
+      }
+
+      case GatewayRequestType.FILE_READ: {
+        const { path: filePath, directory } = p as { path: string; directory: string };
+        return fileService.readFile(filePath, directory);
+      }
+
+      case GatewayRequestType.FILE_GIT_STATUS: {
+        const { directory } = p as { directory: string };
+        return fileService.getGitStatus(directory);
+      }
+
+      case GatewayRequestType.FILE_GIT_DIFF: {
+        const { directory, path: filePath } = p as { directory: string; path: string };
+        return fileService.getGitDiff(directory, filePath);
       }
 
       default:

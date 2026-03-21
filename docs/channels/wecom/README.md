@@ -9,7 +9,7 @@ Connect CodeMux to WeCom (WeChat Work) using HTTP callbacks. Requires a Cloudfla
 | Connection | HTTP Callback (AES-encrypted XML) — requires tunnel |
 | Streaming | ❌ Batch mode only (messages cannot be edited) |
 | Rich Content | ✅ Markdown |
-| Group Creation | ✅ App group chat (应用群聊) |
+| Interaction Mode | P2P direct chat (user ↔ bot) |
 | Max Message Size | 2,048 bytes |
 | Rate Limit | 30 messages/min per user |
 
@@ -65,7 +65,19 @@ This is the critical step — WeCom needs to reach your CodeMux instance via HTT
 > ```
 > This produces a 44-character string — use the first 43 characters.
 
-## Step 4: Set Permissions
+## Step 4: Set Enterprise Trusted IP (企业可信IP)
+
+WeCom requires all API calls (sending messages, etc.) to originate from whitelisted IPs.
+
+1. Go to your app's detail page
+2. Scroll to **Enterprise Trusted IP** (企业可信IP)
+3. Add the **public IP** of your server/machine
+
+> ⚠️ **Home/dynamic IP users**: Your public IP may change periodically. If the bot suddenly stops replying, check if your IP has changed and update the whitelist.
+>
+> To find your current public IP, run: `curl https://ifconfig.me`
+
+## Step 5: Set Permissions
 
 The app should have these permissions (usually granted by default for custom apps):
 
@@ -73,10 +85,9 @@ The app should have these permissions (usually granted by default for custom app
 |-----------|---------|
 | Send messages (发送应用消息) | Send replies to users |
 | Receive messages (接收成员消息) | Receive user messages via callback |
-| Manage group chats (管理内部群) | Create/manage app group chats |
 | Message recall (消息撤回) | Delete bot messages |
 
-## Step 5: Configure in CodeMux
+## Step 6: Configure in CodeMux
 
 1. **Important**: Set up and start Cloudflare Tunnel first
 2. Open CodeMux → go to the remote access page → **Channels** tab
@@ -94,16 +105,17 @@ The app should have these permissions (usually granted by default for custom app
 5. Click **Save** — the channel will start automatically
 6. Now go back to WeCom Admin Console and save the callback URL configuration (Step 3, point 4)
 
+> ⚠️ **Important**: Make sure there are no leading/trailing spaces in the credential fields. Whitespace in Corp ID, Token, or EncodingAESKey will cause verification failures.
+
 ## Usage
 
 ### Getting Started
 
 1. Open WeCom and find the app in your application list
 2. Send any message to the app
-3. The bot shows available projects — select one
+3. The bot shows available projects — select one by number
 4. Choose to create a new session or use an existing one
-5. An **app group chat** (应用群聊) is automatically created for the session
-6. All messages in that group are routed to the AI engine
+5. Once a session is active, all messages are routed to the AI engine directly in the chat
 
 ### Batch Mode (No Streaming)
 
@@ -114,11 +126,12 @@ WeCom **does not support editing sent messages**. Because of this:
 3. The full response is sent as a single Markdown message
 4. For long responses, the message may be truncated at 2,048 bytes with a "...（内容已截断，请在 CodeMux 中查看完整回复）" notice
 
-### Session ↔ Group Mapping
+### Session Management
 
-- Each CodeMux session maps to one WeCom app group chat
-- Group name format: `CodeMux: ProjectName`
-- Bindings are persisted to disk and survive app restarts
+- Sessions are managed in the P2P chat (user ↔ bot direct messages)
+- Use `/project` to switch projects, `/session` to switch sessions
+- Use `/help` to see all available commands
+- Session state is persisted and survives app restarts
 
 ## Limitations
 
@@ -135,12 +148,14 @@ WeCom **does not support editing sent messages**. Because of this:
 | Problem | Possible Cause | Solution |
 |---------|---------------|----------|
 | "URL verification failed" | Tunnel not running or URL wrong | Start Cloudflare Tunnel, verify URL matches exactly |
+| "URL verification failed" (signature OK) | Whitespace in Corp ID / AES key | Re-copy credentials without leading/trailing spaces |
 | Messages not received | Token/AES key mismatch | Re-copy Token and EncodingAESKey from WeCom admin — they must match exactly |
 | "Invalid corp ID" | Wrong Corp ID | Find it in **My Enterprise** → **Enterprise Information** |
-| Group creation fails | Missing group management permission | Verify the app has group chat management scope |
-| "Callback IP not whitelisted" | WeCom requires IP whitelist | Add your server's IP to the app's **Enterprise Trusted IP** (企业可信IP) list |
+| "not allow to access from your ip" (60020) | Server IP not whitelisted | Add your public IP to **Enterprise Trusted IP** in app settings |
+| "Callback IP not whitelisted" | WeCom requires IP whitelist | Same as above — add IP to Enterprise Trusted IP |
 | Messages truncated | Normal — 2KB limit | Use CodeMux web UI for long responses |
 | Bot responds slowly | Batch mode + AI processing time | Normal — WeCom shows response only after AI completes |
+| Tunnel returns error 1033 | DNS not pointing to tunnel | Run `cloudflared tunnel route dns <tunnel-id> <hostname>` to create CNAME |
 
 ## Technical Details
 
@@ -148,6 +163,6 @@ WeCom **does not support editing sent messages**. Because of this:
 - **Webhook Endpoint**: `/webhook/wecom` (POST)
 - **Authentication**: Token verification + AES message decryption
 - **Message Format**: Markdown text (no ActionCards in current implementation)
-- **Group API**: `POST /cgi-bin/appchat/create` for group creation
-- **Persistence**: Group bindings saved to `~/.channels/wecom-bindings.json`
+- **Group API**: Not used — WeCom requires ≥2 members for group chats, so P2P mode is used instead
+- **Persistence**: Session state saved to `~/.channels/wecom-bindings.json`
 - **Rate Limiting**: TokenBucket — 5 burst capacity, 0.5 tokens/sec (30/min)

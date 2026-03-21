@@ -111,6 +111,7 @@ export class WebhookServer {
     try {
       const url = new URL(req.url || "/", `http://localhost:${this.port}`);
       const pathname = url.pathname;
+      channelLog.verbose(`[Webhook] ${req.method} ${pathname}`);
 
       // Find matching route handler (longest prefix match)
       let matchedPrefix = "";

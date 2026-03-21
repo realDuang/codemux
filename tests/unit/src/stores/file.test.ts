@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { getGitStatusLabel, getGitStatusColor } from "../../../../src/stores/file";
+import { getGitStatusLabel, getGitStatusColor, getFileGitStatus, setFileStore } from "../../../../src/stores/file";
 
 describe("file store helpers", () => {
   describe("getGitStatusLabel", () => {
@@ -32,6 +32,37 @@ describe("file store helpers", () => {
     });
     it("returns yellow for modified", () => {
       expect(getGitStatusColor("modified")).toContain("yellow");
+    });
+  });
+
+  describe("getFileGitStatus", () => {
+    it("returns matching GitFileStatus when gitStatus is populated", () => {
+      setFileStore("gitStatus", [
+        { path: "src/main.ts", status: "modified", added: 5, removed: 2 },
+        { path: "README.md", status: "untracked", added: 10 },
+      ]);
+
+      const result = getFileGitStatus("src/main.ts");
+      expect(result).toBeDefined();
+      expect(result!.path).toBe("src/main.ts");
+      expect(result!.status).toBe("modified");
+      expect(result!.added).toBe(5);
+      expect(result!.removed).toBe(2);
+    });
+
+    it("returns undefined for paths not in gitStatus", () => {
+      setFileStore("gitStatus", [
+        { path: "src/main.ts", status: "modified" },
+      ]);
+
+      const result = getFileGitStatus("nonexistent.ts");
+      expect(result).toBeUndefined();
+    });
+
+    it("returns undefined when gitStatus is empty", () => {
+      setFileStore("gitStatus", []);
+      const result = getFileGitStatus("any-file.ts");
+      expect(result).toBeUndefined();
     });
   });
 });

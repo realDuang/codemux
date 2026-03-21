@@ -93,7 +93,6 @@ const NON_IGNORED_DOTFILES = new Set([
   ".commitlintrc",
   ".husky",
   ".changeset",
-  ".github",
 ]);
 
 const BINARY_EXTENSIONS = new Set([
@@ -102,8 +101,7 @@ const BINARY_EXTENSIONS = new Set([
   "app", "deb", "rpm", "dmg", "iso", "img",
   // Images
   "png", "jpg", "jpeg", "gif", "bmp", "ico", "icns", "webp", "tiff", "tif",
-  "psd", "ai", "eps", "svg+xml", "raw", "cr2", "nef", "heic", "heif", "avif",
-  "jxl",
+  "psd", "ai", "eps", "raw", "cr2", "nef", "heic", "heif", "avif", "jxl",
   // Audio
   "mp3", "wav", "flac", "aac", "ogg", "wma", "m4a", "opus", "aiff", "mid",
   "midi",
@@ -135,7 +133,7 @@ const BINARY_EXTENSIONS = new Set([
   // Node
   "node",
   // Compiled assets
-  "map", "min.js", "min.css",
+  "map",
   // Apple
   "car", "nib", "storyboardc",
   // Misc
@@ -367,8 +365,22 @@ export async function readFile(
   }
 
   // Tier 2: Content-based binary detection (read first 8KB)
-  const buffer = await fsReadFile(filePath);
-  const checkSlice = buffer.subarray(0, BINARY_DETECT_CHUNK);
+  const { createReadStream } = await import("node:fs");
+  const detectChunks: Buffer[] = [];
+  let detectLen = 0;
+  await new Promise<void>((resolve, reject) => {
+    const stream = createReadStream(filePath, {
+      start: 0,
+      end: BINARY_DETECT_CHUNK - 1,
+    });
+    stream.on("data", (chunk: Buffer) => {
+      detectChunks.push(chunk);
+      detectLen += chunk.length;
+    });
+    stream.on("end", resolve);
+    stream.on("error", reject);
+  });
+  const checkSlice = Buffer.concat(detectChunks, detectLen);
 
   if (isBinaryByContent(checkSlice)) {
     if (size > BINARY_MAX_SIZE) {
@@ -379,6 +391,7 @@ export async function readFile(
         mimeType: getMimeType(filePath),
       };
     }
+    const buffer = await fsReadFile(filePath);
     return {
       content: buffer.toString("base64"),
       binary: true,
@@ -397,6 +410,7 @@ export async function readFile(
     };
   }
 
+  const buffer = await fsReadFile(filePath);
   return {
     content: buffer.toString("utf-8"),
     binary: false,

@@ -9,6 +9,7 @@ import {
 } from "solid-js";
 import { ContentCode } from "./share/content-code";
 import { ContentDiff } from "./share/content-diff";
+import { FileSearchBar } from "./FileSearchBar";
 import { Spinner } from "./Spinner";
 import {
   fileStore,
@@ -189,7 +190,19 @@ function ImagePreview(props: { mimeType: string; data: string }) {
 export function FilePreview() {
   const { t } = useI18n();
   const [viewMode, setViewMode] = createSignal<"content" | "diff">("content");
+  const [showSearch, setShowSearch] = createSignal(false);
   let scrollRef: HTMLDivElement | undefined;
+
+  onMount(() => {
+    const handler = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === "f") {
+        e.preventDefault();
+        setShowSearch(true);
+      }
+    };
+    document.addEventListener("keydown", handler);
+    onCleanup(() => document.removeEventListener("keydown", handler));
+  });
 
   const preview = createMemo(() => fileStore.preview);
   const lang = createMemo(() =>
@@ -311,6 +324,14 @@ export function FilePreview() {
               </svg>
             </button>
           </div>
+
+          {/* Search bar */}
+          <Show when={showSearch() && preview()?.content && !preview()!.content!.binary}>
+            <FileSearchBar
+              content={preview()!.content!.content}
+              onClose={() => setShowSearch(false)}
+            />
+          </Show>
 
           {/* Content */}
           <div

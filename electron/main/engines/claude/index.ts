@@ -127,6 +127,8 @@ export class ClaudeCodeAdapter extends EngineAdapter {
   private status: EngineStatus = "stopped";
   private lastError: string | undefined;
   private version: string | undefined;
+  private authenticated: boolean | undefined;
+  private authMessage: string | undefined;
   private currentModelId: string | null = null;
   private cachedModels: UnifiedModelInfo[] = [];
   private sessionModes = new Map<string, string>();
@@ -206,6 +208,9 @@ export class ClaudeCodeAdapter extends EngineAdapter {
       // Start cleanup interval
       this.startSessionCleanup();
 
+      // Check authentication via SDK accountInfo()
+      await this.checkAuthentication();
+
       // Fetch model list via SDK (uses CLI's own auth)
       // Must complete before setStatus("running") so frontend gets models on first listModels() call
       await this.refreshModelCache();
@@ -216,6 +221,49 @@ export class ClaudeCodeAdapter extends EngineAdapter {
       claudeLog.error("Failed to start Claude Code adapter:", err);
       this.setStatus("error", err instanceof Error ? err.message : String(err));
       throw err;
+    }
+  }
+
+  /**
+   * Check if Claude Code has valid authentication by querying accountInfo().
+   * tokenSource === "none" means no auth is configured.
+   */
+  private async checkAuthentication(): Promise<void> {
+    try {
+      const env: Record<string, string | undefined> = {
+        ...process.env,
+        ...this.options?.env,
+      };
+      const sdkEnv = { ...env };
+      delete sdkEnv.ELECTRON_RUN_AS_NODE;
+
+      const q = sdkQuery({
+        prompt: "",
+        options: {
+          model: this.currentModelId ?? "claude-sonnet-4-20250514",
+          env: sdkEnv,
+          abortController: new AbortController(),
+          pathToClaudeCodeExecutable: this.resolveCliPath(),
+        } as any,
+      });
+
+      try {
+        const info = await q.accountInfo();
+        if (!info || info.tokenSource === "none") {
+          this.authenticated = false;
+          this.authMessage = "Not authenticated";
+          claudeLog.warn("[Claude] No authentication configured (tokenSource: none)");
+        } else {
+          this.authenticated = true;
+          this.authMessage = info.tokenSource;
+          claudeLog.info(`[Claude] Authenticated via ${info.tokenSource}`);
+        }
+      } finally {
+        q.close();
+      }
+    } catch (err) {
+      claudeLog.warn("[Claude] Failed to check authentication:", err);
+      this.authenticated = undefined;
     }
   }
 
@@ -266,6 +314,8 @@ export class ClaudeCodeAdapter extends EngineAdapter {
       status: this.status,
       capabilities: this.getCapabilities(),
       authMethods: this.getAuthMethods(),
+      authenticated: this.authenticated,
+      authMessage: this.authMessage,
       errorMessage: this.status === "error" ? this.lastError : undefined,
     };
   }
@@ -850,39 +900,43 @@ export class ClaudeCodeAdapter extends EngineAdapter {
    * Works with CLI OAuth auth but only returns Anthropic official models.
    */
   private async fetchModelsViaSdk(env: Record<string, string | undefined>): Promise<void> {
-    claudeLog.info("[Claude] Fetching models via SDK query (fallback)...");
-
-    // Don't let stale env var override the user's model selection
-    const sdkEnv = { ...env };
-    delete sdkEnv.ANTHROPIC_MODEL;
-    delete sdkEnv.ELECTRON_RUN_AS_NODE;
-
-    const q = sdkQuery({
-      prompt: "",
-      options: {
-        model: this.currentModelId ?? "claude-sonnet-4-20250514",
-        env: sdkEnv,
-        abortController: new AbortController(),
-        pathToClaudeCodeExecutable: this.resolveCliPath(),
-      } as any,
-    });
-
     try {
-      const models = await q.supportedModels();
+      claudeLog.info("[Claude] Fetching models via SDK query (fallback)...");
 
-      if (models && models.length > 0) {
-        this.cachedModels = models.map((m) => ({
-          modelId: m.value,
-          name: m.displayName || m.value,
-          description: m.description || "",
-          engineType: "claude" as EngineType,
-        }));
-        claudeLog.info(`[Claude] Loaded ${this.cachedModels.length} models via SDK`);
-      } else {
-        throw new Error("Claude Code SDK returned empty model list — is Claude Code CLI installed and authenticated?");
+      // Don't let stale env var override the user's model selection
+      const sdkEnv = { ...env };
+      delete sdkEnv.ANTHROPIC_MODEL;
+      delete sdkEnv.ELECTRON_RUN_AS_NODE;
+
+      const q = sdkQuery({
+        prompt: "",
+        options: {
+          model: this.currentModelId ?? "claude-sonnet-4-20250514",
+          env: sdkEnv,
+          abortController: new AbortController(),
+          pathToClaudeCodeExecutable: this.resolveCliPath(),
+        } as any,
+      });
+
+      try {
+        const models = await q.supportedModels();
+
+        if (models && models.length > 0) {
+          this.cachedModels = models.map((m) => ({
+            modelId: m.value,
+            name: m.displayName || m.value,
+            description: m.description || "",
+            engineType: "claude" as EngineType,
+          }));
+          claudeLog.info(`[Claude] Loaded ${this.cachedModels.length} models via SDK`);
+        } else {
+          claudeLog.warn("[Claude] SDK returned empty model list");
+        }
+      } finally {
+        q.close();
       }
-    } finally {
-      q.close();
+    } catch (err) {
+      claudeLog.warn("[Claude] Failed to fetch models via SDK:", err);
     }
   }
 

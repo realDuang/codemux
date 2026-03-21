@@ -5,6 +5,7 @@ import type {
   FileExplorerContent,
   GitFileStatus,
 } from "../types/unified";
+import { getSetting, saveSetting } from "../lib/settings";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -54,9 +55,9 @@ interface FileStoreState {
 // ---------------------------------------------------------------------------
 
 export const [fileStore, setFileStore] = createStore<FileStoreState>({
-  panelOpen: false,
-  panelWidth: 260,
-  activeTab: "files",
+  panelOpen: (getSetting("fileExplorerPanelOpen") as boolean | undefined) ?? false,
+  panelWidth: (getSetting("fileExplorerPanelWidth") as number | undefined) ?? 260,
+  activeTab: (getSetting("fileExplorerActiveTab") as "files" | "changes" | undefined) ?? "files",
   rootDirectory: null,
   directories: {},
   preview: null,
@@ -128,6 +129,7 @@ const inflight = new Map<string, Promise<any>>();
 
 export function togglePanel(): void {
   setFileStore("panelOpen", (v) => !v);
+  saveSetting("fileExplorerPanelOpen", fileStore.panelOpen);
 }
 
 export function openPanel(): void {
@@ -139,7 +141,9 @@ export function closePanel(): void {
 }
 
 export function setPanelWidth(width: number): void {
-  setFileStore("panelWidth", width);
+  const clamped = Math.max(200, Math.min(600, width));
+  setFileStore("panelWidth", clamped);
+  saveSetting("fileExplorerPanelWidth", clamped);
 }
 
 // ---------------------------------------------------------------------------
@@ -148,6 +152,7 @@ export function setPanelWidth(width: number): void {
 
 export function setActiveFileTab(tab: "files" | "changes"): void {
   setFileStore("activeTab", tab);
+  saveSetting("fileExplorerActiveTab", tab);
 }
 
 // ---------------------------------------------------------------------------

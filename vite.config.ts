@@ -1,6 +1,7 @@
 import { defineConfig } from "vite";
 import tailwindcss from "@tailwindcss/vite";
 import solid from "vite-plugin-solid";
+import { iconsSpritesheet } from "vite-plugin-icons-spritesheet";
 import os from "os";
 import type { IncomingMessage } from "http";
 import { tunnelManager } from "./scripts/tunnel-manager";
@@ -32,6 +33,12 @@ export default defineConfig({
   plugins: [
     tailwindcss(),
     solid(),
+    iconsSpritesheet({
+      withTypes: true,
+      inputDir: "node_modules/material-icon-theme/icons",
+      outputDir: "src/components/file-icons",
+      fileName: "sprite.svg",
+    }),
     {
       name: "standalone-auth-api",
       configureServer(server) {

@@ -245,6 +245,31 @@ export interface FilePart extends PartBase {
   url: string;
 }
 
+// --- File Explorer Types ---
+
+export interface FileExplorerNode {
+  name: string;
+  path: string;
+  absolutePath: string;
+  type: "file" | "directory";
+  ignored: boolean;
+  size?: number;
+}
+
+export interface FileExplorerContent {
+  content: string;
+  binary: boolean;
+  size: number;
+  mimeType?: string;
+}
+
+export interface GitFileStatus {
+  path: string;
+  status: "added" | "modified" | "deleted" | "renamed" | "untracked";
+  added?: number;
+  removed?: number;
+}
+
 export interface StepStartPart extends PartBase {
   type: "step-start";
 }
@@ -508,6 +533,12 @@ export const GatewayRequestType = {
 
   // Logging (renderer → main)
   LOG_SEND: "log.send",
+
+  // File Explorer
+  FILE_LIST: "file.list",
+  FILE_READ: "file.read",
+  FILE_GIT_STATUS: "file.gitStatus",
+  FILE_GIT_DIFF: "file.gitDiff",
 } as const;
 
 // --- Notification type constants ---

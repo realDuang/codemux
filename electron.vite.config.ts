@@ -1,6 +1,7 @@
 import { defineConfig, externalizeDepsPlugin } from 'electron-vite';
 import solid from 'vite-plugin-solid';
 import tailwindcss from '@tailwindcss/vite';
+import { iconsSpritesheet } from 'vite-plugin-icons-spritesheet';
 import { resolve } from 'path';
 import { createLogger } from 'vite';
 import { createAuthProxyPlugin } from './scripts/auth-proxy-plugin';
@@ -66,6 +67,12 @@ export default defineConfig({
     plugins: [
       tailwindcss(),
       solid(),
+      iconsSpritesheet({
+        withTypes: true,
+        inputDir: 'node_modules/material-icon-theme/icons',
+        outputDir: 'src/components/file-icons',
+        fileName: 'sprite.svg',
+      }),
       // Proxy auth/device API requests to Electron's internal Auth API server
       createAuthProxyPlugin({
         tunnelManager,

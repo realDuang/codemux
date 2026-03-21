@@ -285,6 +285,9 @@ export async function previewFile(
     loading: true,
   });
 
+  const rootDir = fileStore.rootDirectory;
+  if (!rootDir) return;
+
   const key = `readFile:${absolutePath}`;
 
   // Dedup: reuse in-flight request
@@ -311,7 +314,7 @@ export async function previewFile(
     return;
   }
 
-  const promise = gateway.readFile(absolutePath);
+  const promise = gateway.readFile(absolutePath, rootDir);
   inflight.set(key, promise);
 
   try {
@@ -390,12 +393,19 @@ export function closeTab(path: string): void {
     } else {
       const next = newTabs[Math.min(idx, newTabs.length - 1)];
       setFileStore("openTabs", "active", next.path);
+      // Load the file content for the newly active tab
+      previewFile(next.absolutePath, next.name, next.path);
     }
   }
 }
 
 export function switchTab(path: string): void {
   setFileStore("openTabs", "active", path);
+  // Load the file content for the newly active tab
+  const tab = fileStore.openTabs.all.find((t) => t.path === path);
+  if (tab) {
+    previewFile(tab.absolutePath, tab.name, tab.path);
+  }
 }
 
 export function saveTabScroll(

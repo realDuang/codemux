@@ -335,8 +335,8 @@ class GatewayAPI {
     return gatewayClient.listFiles(directory);
   }
 
-  readFile(path: string): Promise<FileExplorerContent> {
-    return gatewayClient.readFile(path);
+  readFile(path: string, directory: string): Promise<FileExplorerContent> {
+    return gatewayClient.readFile(path, directory);
   }
 
   getGitStatus(directory: string): Promise<GitFileStatus[]> {

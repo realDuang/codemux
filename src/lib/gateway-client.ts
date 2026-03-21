@@ -506,8 +506,8 @@ export class GatewayClient {
     return this.request(GatewayRequestType.FILE_LIST, { directory });
   }
 
-  readFile(path: string): Promise<FileExplorerContent> {
-    return this.request(GatewayRequestType.FILE_READ, { path });
+  readFile(path: string, directory: string): Promise<FileExplorerContent> {
+    return this.request(GatewayRequestType.FILE_READ, { path, directory });
   }
 
   getGitStatus(directory: string): Promise<GitFileStatus[]> {

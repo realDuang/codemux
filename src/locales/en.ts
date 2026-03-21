@@ -463,6 +463,38 @@ export interface LocaleDict {
     gatewayReconnected: string;
     engineError: string;
   };
+
+  // File Explorer
+  fileExplorer: {
+    togglePanel: string;
+    allFiles: string;
+    changes: string;
+    changesCount: string;
+    refresh: string;
+    close: string;
+    content: string;
+    diff: string;
+    noProject: string;
+    noChanges: string;
+    noDiff: string;
+    binaryFile: string;
+    selectFileToPreview: string;
+    fileTooLarge: string;
+    searchPlaceholder: string;
+    closeTab: string;
+    linesAdded: string;
+    linesRemoved: string;
+    imageZoomIn: string;
+    imageZoomOut: string;
+    imageFitToWindow: string;
+    imageResetZoom: string;
+    searchInFile: string;
+    searchNext: string;
+    searchPrev: string;
+    searchClose: string;
+    noResults: string;
+    matchCount: string;
+  };
 }
 
 export const en: LocaleDict = {
@@ -926,5 +958,37 @@ export const en: LocaleDict = {
     gatewayDisconnected: "Connection lost. Reconnecting...",
     gatewayReconnected: "Connection restored.",
     engineError: "Engine error: {message}",
+  },
+
+  // File Explorer
+  fileExplorer: {
+    togglePanel: "Toggle file explorer",
+    allFiles: "Files",
+    changes: "Changes",
+    changesCount: "{count} changes",
+    refresh: "Refresh",
+    close: "Close",
+    content: "Content",
+    diff: "Diff",
+    noProject: "No project directory",
+    noChanges: "No changes detected",
+    noDiff: "No diff available",
+    binaryFile: "Binary file cannot be previewed",
+    selectFileToPreview: "Select a file to preview",
+    fileTooLarge: "File is too large to preview",
+    searchPlaceholder: "Search files...",
+    closeTab: "Close tab",
+    linesAdded: "+{count}",
+    linesRemoved: "-{count}",
+    imageZoomIn: "Zoom in",
+    imageZoomOut: "Zoom out",
+    imageFitToWindow: "Fit to window",
+    imageResetZoom: "Reset zoom",
+    searchInFile: "Search in file",
+    searchNext: "Next match",
+    searchPrev: "Previous match",
+    searchClose: "Close search",
+    noResults: "No results",
+    matchCount: "{current} of {total}",
   },
 };

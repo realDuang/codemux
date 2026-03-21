@@ -16,7 +16,6 @@ import {
   setFileStore,
   setActiveFileTab,
   setRootDirectory,
-  loadGitStatus,
   closePanel,
   setSearchQuery,
 } from "../stores/file";
@@ -101,7 +100,6 @@ export function FileExplorer() {
     const dir = currentDirectory();
     if (dir) {
       setRootDirectory(dir);
-      loadGitStatus(dir);
     }
   };
 
@@ -199,7 +197,7 @@ export function FileExplorer() {
       </div>
 
       {/* Main content area */}
-      <div class="flex min-h-0 flex-1 flex-col">
+      <div class="relative flex min-h-0 flex-1 flex-col">
         {/* File tree section */}
         <div
           class="overflow-y-auto"
@@ -266,6 +264,7 @@ export function FileExplorer() {
         <Show when={hasPreview()}>
           <ResizeHandle
             direction="vertical"
+            edge="end"
             size={treeHeight()}
             min={15}
             max={85}

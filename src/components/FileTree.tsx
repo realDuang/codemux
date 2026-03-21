@@ -1,4 +1,4 @@
-import { For, Show, createMemo } from "solid-js";
+import { For, Show, createMemo, createEffect } from "solid-js";
 import { FileIcon } from "./FileIcon";
 import { Spinner } from "./Spinner";
 import {
@@ -117,8 +117,8 @@ function FileTreeNode(props: FileTreeNodeProps) {
     return false;
   });
 
-  // Trigger auto-expand via effect-like memo
-  createMemo(() => {
+  // Trigger auto-expand via effect
+  createEffect(() => {
     if (shouldAutoExpand() && !isExpanded() && !isLoading()) {
       toggleDirectory(props.rootDirectory, props.node.path);
     }

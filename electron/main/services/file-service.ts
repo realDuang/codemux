@@ -358,7 +358,8 @@ export async function readFile(
       start: 0,
       end: BINARY_DETECT_CHUNK - 1,
     });
-    stream.on("data", (chunk: Buffer) => {
+    stream.on("data", (chunk: Buffer | string) => {
+      if (typeof chunk === "string") chunk = Buffer.from(chunk);
       detectChunks.push(chunk);
       detectLen += chunk.length;
     });

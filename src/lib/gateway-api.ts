@@ -21,6 +21,9 @@ import type {
   ImportableSession,
   SessionImportResult,
   SessionImportProgress,
+  FileExplorerNode,
+  FileExplorerContent,
+  GitFileStatus,
 } from "../types/unified";
 
 // --- Notification callback types ---
@@ -325,6 +328,23 @@ class GatewayAPI {
         gatewayClient.off("session.import.progress", onProgress);
       }
     });
+  }
+  // --- File Explorer ---
+
+  listFiles(directory: string): Promise<FileExplorerNode[]> {
+    return gatewayClient.listFiles(directory);
+  }
+
+  readFile(path: string): Promise<FileExplorerContent> {
+    return gatewayClient.readFile(path);
+  }
+
+  getGitStatus(directory: string): Promise<GitFileStatus[]> {
+    return gatewayClient.getGitStatus(directory);
+  }
+
+  getGitDiff(directory: string, path: string): Promise<string> {
+    return gatewayClient.getGitDiff(directory, path);
   }
 }
 

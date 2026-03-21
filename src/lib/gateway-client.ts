@@ -33,6 +33,9 @@ import {
   type SessionImportExecuteRequest,
   type SessionImportResult,
   type SessionImportProgress,
+  type FileExplorerNode,
+  type FileExplorerContent,
+  type GitFileStatus,
 } from "../types/unified";
 
 // --- Event types emitted by GatewayClient ---
@@ -495,6 +498,24 @@ export class GatewayClient {
   importExecute(req: SessionImportExecuteRequest): Promise<SessionImportResult> {
     // No timeout — importing many sessions with full messages can take minutes
     return this.request(GatewayRequestType.SESSION_IMPORT_EXECUTE, req, 0);
+  }
+
+  // --- File Explorer API ---
+
+  listFiles(directory: string): Promise<FileExplorerNode[]> {
+    return this.request(GatewayRequestType.FILE_LIST, { directory });
+  }
+
+  readFile(path: string): Promise<FileExplorerContent> {
+    return this.request(GatewayRequestType.FILE_READ, { path });
+  }
+
+  getGitStatus(directory: string): Promise<GitFileStatus[]> {
+    return this.request(GatewayRequestType.FILE_GIT_STATUS, { directory });
+  }
+
+  getGitDiff(directory: string, path: string): Promise<string> {
+    return this.request(GatewayRequestType.FILE_GIT_DIFF, { directory, path });
   }
 
   // --- Log forwarding (fire-and-forget, no response expected) ---

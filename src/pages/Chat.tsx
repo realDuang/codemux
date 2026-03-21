@@ -34,6 +34,8 @@ import { getSetting, saveSetting } from "../lib/settings";
 import { InputAreaQuestion } from "../components/InputAreaQuestion";
 import { InputAreaPermission } from "../components/InputAreaPermission";
 import { TodoDock } from "../components/TodoDock";
+import { FileExplorer } from "../components/FileExplorer";
+import { fileStore, togglePanel } from "../stores/file";
 
 import { configStore, setConfigStore, getSelectedModelForEngine, restoreEngineModelSelections, isEngineEnabled, restoreEnabledEngines, getDefaultEngineType, restoreDefaultEngine } from "../stores/config";
 
@@ -1573,6 +1575,7 @@ export default function Chat() {
       </aside>
 
       {/* Main Chat Area */}
+      <div class="flex-1 flex overflow-hidden min-w-0">
       <div class="flex-1 flex flex-col overflow-hidden min-w-0 bg-white dark:bg-zinc-900 electron-safe-top">
 
         {/* Header */}
@@ -1602,6 +1605,25 @@ export default function Chat() {
               {currentAgent().label}
             </span>
           </div>
+          {/* File explorer toggle — desktop only */}
+          <Show when={sessionStore.current}>
+            <button
+              onClick={togglePanel}
+              class={`hidden md:flex p-1.5 rounded-md transition-colors electron-no-drag ${
+                fileStore.panelOpen
+                  ? "bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400"
+                  : "text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-zinc-800"
+              }`}
+              title={t().fileExplorer.togglePanel}
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24"
+                fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/>
+                <path d="M14 2v4a2 2 0 0 0 2 2h4"/>
+                <path d="M10 12H6"/><path d="M10 16H6"/><path d="M10 8H6"/>
+              </svg>
+            </button>
+          </Show>
           <Show when={!wsConnected()}>
             <div class="flex items-center gap-1.5 px-2 py-1 rounded-full bg-red-50 dark:bg-red-900/20 electron-no-drag">
               <span class="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
@@ -1793,6 +1815,20 @@ export default function Chat() {
           </Show>
           </Show>
         </main>
+      </div>
+      {/* File Explorer Right Panel */}
+      <Show when={fileStore.panelOpen}>
+        <div
+          class="hidden md:flex flex-col overflow-hidden flex-shrink-0"
+          classList={{
+            "transition-[width] duration-[240ms] ease-[cubic-bezier(0.22,1,0.36,1)] will-change-[width] motion-reduce:transition-none": true,
+          }}
+          style={{ width: `${fileStore.panelWidth}px` }}
+          aria-label="File explorer"
+        >
+          <FileExplorer />
+        </div>
+      </Show>
       </div>
 
       <HideProjectModal

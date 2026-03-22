@@ -178,6 +178,7 @@ export interface LocaleDict {
     daysAgo: string;
     files: string;
     openStorageFolder: string;
+    openInFileExplorer: string;
     copySessionId: string;
     expandSidebar: string;
     collapseSidebar: string;
@@ -677,6 +678,7 @@ export const en: LocaleDict = {
     daysAgo: "{count}d ago",
     files: "{count} files",
     openStorageFolder: "Open storage folder",
+    openInFileExplorer: "Open in file explorer",
     copySessionId: "Copy session ID",
     expandSidebar: "Expand sidebar",
     collapseSidebar: "Collapse sidebar",

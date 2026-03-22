@@ -179,6 +179,7 @@ export const zh: LocaleDict = {
     daysAgo: "{count}天前",
     files: "{count} 文件",
     openStorageFolder: "打开存储文件夹",
+    openInFileExplorer: "在文件管理器中打开",
     copySessionId: "复制会话 ID",
     expandSidebar: "展开侧边栏",
     collapseSidebar: "收起侧边栏",

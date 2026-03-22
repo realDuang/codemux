@@ -37,10 +37,12 @@ describe("file store helpers", () => {
 
   describe("getFileGitStatus", () => {
     it("returns matching GitFileStatus when gitStatus is populated", () => {
-      setFileStore("gitStatus", [
-        { path: "src/main.ts", status: "modified", added: 5, removed: 2 },
-        { path: "README.md", status: "untracked", added: 10 },
-      ]);
+      const entries = [
+        { path: "src/main.ts", status: "modified" as const, added: 5, removed: 2 },
+        { path: "README.md", status: "untracked" as const, added: 10 },
+      ];
+      setFileStore("gitStatus", entries);
+      setFileStore("gitStatusByPath", Object.fromEntries(entries.map((e) => [e.path, e])));
 
       const result = getFileGitStatus("src/main.ts");
       expect(result).toBeDefined();
@@ -51,9 +53,11 @@ describe("file store helpers", () => {
     });
 
     it("returns undefined for paths not in gitStatus", () => {
-      setFileStore("gitStatus", [
-        { path: "src/main.ts", status: "modified" },
-      ]);
+      const entries = [
+        { path: "src/main.ts", status: "modified" as const },
+      ];
+      setFileStore("gitStatus", entries);
+      setFileStore("gitStatusByPath", Object.fromEntries(entries.map((e) => [e.path, e])));
 
       const result = getFileGitStatus("nonexistent.ts");
       expect(result).toBeUndefined();
@@ -61,6 +65,7 @@ describe("file store helpers", () => {
 
     it("returns undefined when gitStatus is empty", () => {
       setFileStore("gitStatus", []);
+      setFileStore("gitStatusByPath", {});
       const result = getFileGitStatus("any-file.ts");
       expect(result).toBeUndefined();
     });

@@ -1,4 +1,5 @@
-import { createStore } from "solid-js/store";
+import { createStore, reconcile } from "solid-js/store";
+import { batch } from "solid-js";
 import { gateway } from "../lib/gateway-api";
 import type {
   FileExplorerNode,
@@ -47,6 +48,7 @@ interface FileStoreState {
   preview: FilePreviewState | null;
   openTabs: { active: string | null; all: OpenTab[] };
   gitStatus: GitFileStatus[];
+  gitStatusByPath: Record<string, GitFileStatus>;
   gitStatusLoading: boolean;
   searchQuery: string;
 }
@@ -65,6 +67,7 @@ export const [fileStore, setFileStore] = createStore<FileStoreState>({
   preview: null,
   openTabs: { active: null, all: [] },
   gitStatus: [],
+  gitStatusByPath: {},
   gitStatusLoading: false,
   searchQuery: "",
 });
@@ -171,14 +174,15 @@ export async function setRootDirectory(
   directory: string | null,
 ): Promise<void> {
   // Reset state
-  setFileStore({
-    rootDirectory: directory,
-    directories: {},
-    preview: null,
-    openTabs: { active: null, all: [] },
-    gitStatus: [],
-    gitStatusLoading: false,
-    searchQuery: "",
+  batch(() => {
+    setFileStore("rootDirectory", directory);
+    setFileStore("directories", reconcile({}));
+    setFileStore("preview", null);
+    setFileStore("openTabs", reconcile({ active: null, all: [] }));
+    setFileStore("gitStatus", reconcile([]));
+    setFileStore("gitStatusByPath", reconcile({}));
+    setFileStore("gitStatusLoading", false);
+    setFileStore("searchQuery", "");
   });
 
   if (!directory) return;
@@ -222,11 +226,16 @@ export async function loadDirectory(
         path:
           relativePath === "." ? node.name : `${relativePath}/${node.name}`,
       }));
-      setFileStore("directories", relativePath, {
-        expanded: true,
-        loaded: true,
-        loading: false,
-        children: adjustedChildren,
+      batch(() => {
+        setFileStore("directories", relativePath, "expanded", true);
+        setFileStore("directories", relativePath, "loaded", true);
+        setFileStore("directories", relativePath, "loading", false);
+        setFileStore(
+          "directories",
+          relativePath,
+          "children",
+          reconcile(adjustedChildren),
+        );
       });
     })
     .catch((err: unknown) => {
@@ -425,17 +434,24 @@ export function switchTab(path: string): void {
   }
 }
 
+let scrollDebounceTimer: ReturnType<typeof setTimeout> | undefined;
+
 export function saveTabScroll(
   path: string,
   scrollTop: number,
   scrollLeft?: number,
 ): void {
-  const idx = fileStore.openTabs.all.findIndex((t) => t.path === path);
-  if (idx === -1) return;
-  setFileStore("openTabs", "all", idx, "scrollTop", scrollTop);
-  if (scrollLeft !== undefined) {
-    setFileStore("openTabs", "all", idx, "scrollLeft", scrollLeft);
-  }
+  clearTimeout(scrollDebounceTimer);
+  scrollDebounceTimer = setTimeout(() => {
+    const idx = fileStore.openTabs.all.findIndex((t) => t.path === path);
+    if (idx === -1) return;
+    batch(() => {
+      setFileStore("openTabs", "all", idx, "scrollTop", scrollTop);
+      if (scrollLeft !== undefined) {
+        setFileStore("openTabs", "all", idx, "scrollLeft", scrollLeft);
+      }
+    });
+  }, 150);
 }
 
 // ---------------------------------------------------------------------------
@@ -447,9 +463,17 @@ export async function loadGitStatus(directory: string): Promise<void> {
 
   try {
     const status = await gateway.getGitStatus(directory);
-    setFileStore("gitStatus", status);
+    const byPath: Record<string, GitFileStatus> = {};
+    for (const s of status) byPath[s.path] = s;
+    batch(() => {
+      setFileStore("gitStatus", reconcile(status));
+      setFileStore("gitStatusByPath", reconcile(byPath));
+    });
   } catch {
-    setFileStore("gitStatus", []);
+    batch(() => {
+      setFileStore("gitStatus", reconcile([]));
+      setFileStore("gitStatusByPath", reconcile({}));
+    });
   } finally {
     setFileStore("gitStatusLoading", false);
   }
@@ -458,7 +482,7 @@ export async function loadGitStatus(directory: string): Promise<void> {
 export function getFileGitStatus(
   relativePath: string,
 ): GitFileStatus | undefined {
-  return fileStore.gitStatus.find((s) => s.path === relativePath);
+  return fileStore.gitStatusByPath[relativePath];
 }
 
 export function getGitStatusLabel(status: GitFileStatus["status"]): string {
@@ -488,6 +512,7 @@ export function setSearchQuery(query: string): void {
 let fileChangeDebounceTimer: ReturnType<typeof setTimeout> | undefined;
 let lastGitRefreshTime = 0;
 const GIT_REFRESH_MAX_WAIT = 2000; // Force refresh at least every 2s during rapid changes
+const pendingChangeDirs = new Set<string>();
 
 export function handleFileChanged(event: {
   type: string;
@@ -497,6 +522,15 @@ export function handleFileChanged(event: {
   const dir = fileStore.rootDirectory;
   if (!dir || event.directory !== dir) return;
 
+  // Collect affected directory key so debounced flushes refresh all changed dirs
+  const relativePath = event.path
+    .replace(dir, "")
+    .replace(/^[\/\\]/, "")
+    .split(/[\/\\]/)
+    .slice(0, -1)
+    .join("/");
+  pendingChangeDirs.add(relativePath || ".");
+
   clearTimeout(fileChangeDebounceTimer);
 
   const now = Date.now();
@@ -505,32 +539,28 @@ export function handleFileChanged(event: {
   // If enough time has passed since the last refresh, fire immediately
   // (leading edge of throttle). Otherwise debounce with 500ms trailing edge.
   if (timeSinceLastRefresh >= GIT_REFRESH_MAX_WAIT) {
-    flushFileChange(dir, event.path);
+    flushFileChanges(dir);
   } else {
     fileChangeDebounceTimer = setTimeout(() => {
-      flushFileChange(dir, event.path);
+      flushFileChanges(dir);
     }, 500);
   }
 }
 
-function flushFileChange(dir: string, changedPath: string): void {
+function flushFileChanges(dir: string): void {
   lastGitRefreshTime = Date.now();
 
-  // Compute relative directory of the changed file
-  const relativePath = changedPath
-    .replace(dir, "")
-    .replace(/^[\/\\]/, "")
-    .split(/[\/\\]/)
-    .slice(0, -1)
-    .join("/");
-  const dirKey = relativePath || ".";
+  const dirs = [...pendingChangeDirs];
+  pendingChangeDirs.clear();
 
-  // Reload the directory that changed
-  if (fileStore.directories[dirKey]?.loaded) {
-    loadDirectory(dir, dirKey);
+  // Reload all directories that changed during the debounce window
+  for (const dirKey of dirs) {
+    if (fileStore.directories[dirKey]?.loaded) {
+      loadDirectory(dir, dirKey);
+    }
   }
 
-  // Also refresh git status
+  // Refresh git status once
   loadGitStatus(dir);
 }
 

@@ -1,5 +1,17 @@
 import { describe, it, expect } from "vitest";
-import { getGitStatusLabel, getGitStatusColor, getFileGitStatus, setFileStore } from "../../../../src/stores/file";
+import {
+  getGitStatusLabel,
+  getGitStatusColor,
+  getFileGitStatus,
+  setFileStore,
+  fileStore,
+  togglePanel,
+  openPanel,
+  closePanel,
+  setPanelWidth,
+  setTreeWidth,
+  setActiveFileTab,
+} from "../../../../src/stores/file";
 
 describe("file store helpers", () => {
   describe("getGitStatusLabel", () => {
@@ -68,6 +80,83 @@ describe("file store helpers", () => {
       setFileStore("gitStatusByPath", {});
       const result = getFileGitStatus("any-file.ts");
       expect(result).toBeUndefined();
+    });
+  });
+
+  describe("gitStatusByPath lookup", () => {
+    it("provides O(1) lookup by path after git status loads", () => {
+      const entries = [
+        { path: "src/a.ts", status: "modified" as const, added: 1, removed: 0 },
+        { path: "src/b.ts", status: "added" as const, added: 10 },
+        { path: "lib/c.ts", status: "deleted" as const, removed: 5 },
+        { path: "README.md", status: "untracked" as const },
+      ];
+      setFileStore("gitStatus", entries);
+      setFileStore(
+        "gitStatusByPath",
+        Object.fromEntries(entries.map((e) => [e.path, e])),
+      );
+
+      expect(getFileGitStatus("src/a.ts")?.status).toBe("modified");
+      expect(getFileGitStatus("src/b.ts")?.status).toBe("added");
+      expect(getFileGitStatus("lib/c.ts")?.status).toBe("deleted");
+      expect(getFileGitStatus("README.md")?.status).toBe("untracked");
+      expect(getFileGitStatus("nonexistent")).toBeUndefined();
+    });
+  });
+
+  describe("panel state", () => {
+    it("togglePanel flips panelOpen", () => {
+      setFileStore("panelOpen", false);
+      expect(fileStore.panelOpen).toBe(false);
+      togglePanel();
+      expect(fileStore.panelOpen).toBe(true);
+      togglePanel();
+      expect(fileStore.panelOpen).toBe(false);
+    });
+
+    it("openPanel sets panelOpen to true", () => {
+      setFileStore("panelOpen", false);
+      openPanel();
+      expect(fileStore.panelOpen).toBe(true);
+      // Calling again is idempotent
+      openPanel();
+      expect(fileStore.panelOpen).toBe(true);
+    });
+
+    it("closePanel sets panelOpen to false", () => {
+      setFileStore("panelOpen", true);
+      closePanel();
+      expect(fileStore.panelOpen).toBe(false);
+    });
+  });
+
+  describe("panel dimensions", () => {
+    it("setPanelWidth clamps to [300, 1200]", () => {
+      setPanelWidth(100);
+      expect(fileStore.panelWidth).toBe(300);
+      setPanelWidth(2000);
+      expect(fileStore.panelWidth).toBe(1200);
+      setPanelWidth(600);
+      expect(fileStore.panelWidth).toBe(600);
+    });
+
+    it("setTreeWidth clamps to [120, 400]", () => {
+      setTreeWidth(50);
+      expect(fileStore.treeWidth).toBe(120);
+      setTreeWidth(999);
+      expect(fileStore.treeWidth).toBe(400);
+      setTreeWidth(250);
+      expect(fileStore.treeWidth).toBe(250);
+    });
+  });
+
+  describe("tab state", () => {
+    it("setActiveFileTab switches between files and changes", () => {
+      setActiveFileTab("files");
+      expect(fileStore.activeTab).toBe("files");
+      setActiveFileTab("changes");
+      expect(fileStore.activeTab).toBe("changes");
     });
   });
 });

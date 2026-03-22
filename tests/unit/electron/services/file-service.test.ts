@@ -297,6 +297,70 @@ describe("file-service", () => {
     });
   });
 
+  describe("listDirectory performance characteristics", () => {
+    let manyFilesDir: string;
+
+    beforeAll(async () => {
+      manyFilesDir = join(tmpdir(), `codemux-many-files-${Date.now()}`);
+      mkdirSync(manyFilesDir, { recursive: true });
+      mkdirSync(join(manyFilesDir, "zz-dir"), { recursive: true });
+      mkdirSync(join(manyFilesDir, "aa-dir"), { recursive: true });
+      for (let i = 0; i < 120; i++) {
+        const name = `file-${String(i).padStart(3, "0")}.txt`;
+        writeFileSync(join(manyFilesDir, name), `content ${i}`);
+      }
+    });
+
+    afterAll(() => {
+      rmSync(manyFilesDir, { recursive: true, force: true });
+    });
+
+    it("handles directories with many entries (100+ files)", async () => {
+      const nodes = await listDirectory(manyFilesDir);
+      // 2 directories + 120 files
+      expect(nodes.length).toBe(122);
+      // Should still be sorted: dirs first, then files
+      const firstFileIdx = nodes.findIndex((n) => n.type === "file");
+      const lastDirIdx = nodes.findLastIndex((n) => n.type === "directory");
+      expect(lastDirIdx).toBeLessThan(firstFileIdx);
+    });
+
+    it("maintains correct sort order with many entries", async () => {
+      const nodes = await listDirectory(manyFilesDir);
+      const dirNames = nodes
+        .filter((n) => n.type === "directory")
+        .map((n) => n.name);
+      expect(dirNames).toEqual(["aa-dir", "zz-dir"]);
+
+      const fileNames = nodes
+        .filter((n) => n.type === "file")
+        .map((n) => n.name);
+      const sorted = [...fileNames].sort((a, b) =>
+        a.toLowerCase().localeCompare(b.toLowerCase()),
+      );
+      expect(fileNames).toEqual(sorted);
+    });
+  });
+
+  describe("getGitStatus with real project", () => {
+    const REPO_DIR = join(__dirname, "..", "..", "..", "..");
+
+    it("returns status entries with valid shapes", async () => {
+      const status = await getGitStatus(REPO_DIR);
+      expect(Array.isArray(status)).toBe(true);
+      for (const entry of status) {
+        expect(entry).toHaveProperty("path");
+        expect(entry).toHaveProperty("status");
+        expect(typeof entry.path).toBe("string");
+        expect(["added", "modified", "deleted", "renamed", "untracked"]).toContain(
+          entry.status,
+        );
+        if (entry.added !== undefined) expect(typeof entry.added).toBe("number");
+        if (entry.removed !== undefined) expect(typeof entry.removed).toBe("number");
+      }
+    });
+  });
+
   describe("path traversal prevention", () => {
     it("blocks reading files outside workspace via ..", async () => {
       const workspace = await mkdtemp(join(tmpdir(), "ws-boundary-"));

@@ -221,7 +221,7 @@ export default function Settings() {
       <div class="flex-1 flex flex-col overflow-hidden max-w-4xl mx-auto w-full">
 
         {/* Main Content */}
-        <main class="flex-1 overflow-y-auto px-6 pb-8 pt-6">
+        <main class="flex-1 overflow-y-auto px-3 sm:px-6 pb-8 pt-6">
           <div class="space-y-8">
             {/* General Settings Section */}
             <section>
@@ -416,7 +416,7 @@ export default function Settings() {
 
                           {/* Model selector - only for running + enabled engines */}
                           <Show when={showModelSelector() && isEngineEnabled(engine.type)}>
-                            <div class="px-4 sm:px-6 pb-4 sm:pb-6 pt-0 flex items-center justify-between gap-4 -mt-2">
+                            <div class="px-4 sm:px-6 pb-4 sm:pb-6 pt-0 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 sm:gap-4 -mt-2">
                               <div>
                                 <h4 class="text-sm font-medium text-gray-700 dark:text-gray-300">
                                   {t().engine.defaultModel}
@@ -425,7 +425,7 @@ export default function Settings() {
                                   {t().engine.defaultModelDesc}
                                 </p>
                               </div>
-                              <div class="flex-shrink-0">
+                              <div class="flex-shrink-0 w-full sm:w-auto">
                                 <Show
                                   when={engine.capabilities?.customModelInput}
                                   fallback={
@@ -433,7 +433,7 @@ export default function Settings() {
                                       value={selectedModelId()}
                                       onChange={(e) => handleModelSelect(e.currentTarget.value)}
                                       disabled={engine.capabilities?.modelSwitchable === false}
-                                      class={`w-[260px] px-3 py-1.5 text-sm font-medium rounded-lg border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-gray-700 dark:text-gray-300 transition-colors ${engine.capabilities?.modelSwitchable === false ? "opacity-60 cursor-not-allowed" : "cursor-pointer hover:bg-gray-100 dark:hover:bg-slate-600"}`}
+                                      class={`w-full sm:w-[260px] px-3 py-1.5 text-sm font-medium rounded-lg border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-gray-700 dark:text-gray-300 transition-colors ${engine.capabilities?.modelSwitchable === false ? "opacity-60 cursor-not-allowed" : "cursor-pointer hover:bg-gray-100 dark:hover:bg-slate-600"}`}
                                     >
                                       <For each={providerGroups()}>
                                         {([pid, group]) => (
@@ -467,7 +467,7 @@ export default function Settings() {
                                     value={selectedModelId()}
                                     onChange={(e) => handleModelSelect(e.currentTarget.value)}
                                     placeholder="Enter model ID..."
-                                    class="w-[260px] px-3 py-1.5 text-sm font-medium rounded-lg border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-gray-700 dark:text-gray-300 transition-colors hover:bg-gray-100 dark:hover:bg-slate-600"
+                                    class="w-full sm:w-[260px] px-3 py-1.5 text-sm font-medium rounded-lg border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-gray-700 dark:text-gray-300 transition-colors hover:bg-gray-100 dark:hover:bg-slate-600"
                                   />
                                   <datalist id={`models-${engine.type}`}>
                                     <For each={models()}>

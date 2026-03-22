@@ -27,6 +27,7 @@
     height: 1.625rem;
     text-align: center;
     padding: 0 3.25rem;
+    overflow: hidden;
 
     > span {
       max-width: min(100%, 140ch);

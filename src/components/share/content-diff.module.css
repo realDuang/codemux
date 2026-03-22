@@ -105,6 +105,25 @@
   flex: 1;
   min-width: 0;
   padding-right: 1rem;
-  overflow-x: visible;
+  overflow-x: auto;
   white-space: pre;
+  -webkit-overflow-scrolling: touch;
+}
+
+@media (max-width: 640px) {
+  .lineNo {
+    min-width: 2ch;
+    padding: 0 0.25ch;
+    font-size: 0.6rem;
+  }
+
+  .prefix {
+    min-width: 1.5ch;
+    padding: 0 0.25ch;
+  }
+
+  .content {
+    padding-right: 0.5rem;
+    font-size: 0.65rem;
+  }
 }

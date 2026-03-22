@@ -327,10 +327,11 @@
   align-items: center;
   gap: 8px;
   margin-top: 12px;
+  flex-wrap: wrap;
 }
 
 .btnDismiss {
-  padding: 5px 12px;
+  padding: 7px 14px;
   border-radius: 8px;
   font-size: 0.8125rem;
   font-weight: 500;
@@ -339,6 +340,7 @@
   border: none;
   background: rgba(239, 68, 68, 0.1);
   color: rgba(185, 28, 28, 0.85);
+  min-height: 36px;
 }
 
 :global(.dark) .btnDismiss {
@@ -355,7 +357,7 @@
 }
 
 .btnNav {
-  padding: 5px 12px;
+  padding: 7px 14px;
   border-radius: 8px;
   font-size: 0.8125rem;
   font-weight: 500;
@@ -364,6 +366,7 @@
   border: 1px solid rgba(99, 102, 241, 0.2);
   background: transparent;
   color: rgba(79, 70, 229, 0.85);
+  min-height: 36px;
 }
 
 :global(.dark) .btnNav {
@@ -380,7 +383,7 @@
 }
 
 .btnSubmit {
-  padding: 5px 14px;
+  padding: 7px 14px;
   border-radius: 8px;
   font-size: 0.8125rem;
   font-weight: 500;
@@ -390,6 +393,7 @@
   background: rgba(79, 70, 229, 0.85);
   color: white;
   margin-left: auto;
+  min-height: 36px;
 }
 
 :global(.dark) .btnSubmit {

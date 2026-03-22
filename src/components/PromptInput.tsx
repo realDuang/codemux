@@ -28,12 +28,11 @@ function getModeDisplayName(mode: AgentMode): string {
 /** Return the active-state background colour class for a mode button. */
 function getModeColor(mode: AgentMode, index: number): string {
   const label = getModeDisplayName(mode).toLowerCase();
-  if (label === "build" || label === "interactive" || label === "default") return "bg-indigo-600";
+  if (label === "default" || label === "interactive" || label === "build") return "bg-indigo-600";
   if (label === "plan") return "bg-cyan-600";
-  if (label === "autopilot") return "bg-emerald-600";
-  if (label === "auto-accept") return "bg-amber-600";
+  if (label === "autopilot" || label === "auto-accept") return "bg-emerald-600";
   // Fallback by position
-  const palette = ["bg-indigo-600", "bg-cyan-600", "bg-emerald-600", "bg-amber-600"];
+  const palette = ["bg-indigo-600", "bg-cyan-600", "bg-emerald-600"];
   if (index < palette.length) return palette[index];
   return "bg-slate-600";
 }
@@ -53,25 +52,18 @@ function getModeAccentRing(mode: AgentMode, index: number): {
       border: "border-cyan-200/40 dark:border-cyan-600/30",
       bgHover: "bg-cyan-600 hover:bg-cyan-700",
     };
-  if (label === "autopilot")
+  if (label === "autopilot" || label === "auto-accept")
     return {
       bg: "bg-emerald-50/60 dark:bg-slate-800/70 backdrop-blur-xl",
       ring: "focus-within:ring-emerald-500/40",
       border: "border-emerald-200/40 dark:border-emerald-600/30",
       bgHover: "bg-emerald-600 hover:bg-emerald-700",
     };
-  if (label === "auto-accept")
-    return {
-      bg: "bg-amber-50/60 dark:bg-slate-800/70 backdrop-blur-xl",
-      ring: "focus-within:ring-amber-500/40",
-      border: "border-amber-200/40 dark:border-amber-600/30",
-      bgHover: "bg-amber-600 hover:bg-amber-700",
-    };
-  // Default (build / interactive / default / first mode / unknown)
+  // Default / Interactive / Build / unknown
   return {
-    bg: "bg-white/60 dark:bg-slate-800/70 backdrop-blur-xl",
+    bg: "bg-indigo-50/60 dark:bg-slate-800/70 backdrop-blur-xl",
     ring: "focus-within:ring-indigo-500/40",
-    border: "border-slate-200/40 dark:border-slate-600/30",
+    border: "border-indigo-200/40 dark:border-indigo-600/30",
     bgHover: "bg-indigo-600 hover:bg-indigo-700",
   };
 }
@@ -115,7 +107,7 @@ const MODE_ICONS: Array<() => any> = [
 
 function getModeIcon(mode: AgentMode, index: number) {
   const label = getModeDisplayName(mode).toLowerCase();
-  if (label === "build" || label === "interactive" || label === "default") return MODE_ICONS[0]();
+  if (label === "default" || label === "interactive" || label === "build") return MODE_ICONS[0]();
   if (label === "plan") return MODE_ICONS[1]();
   if (label === "autopilot") return MODE_ICONS[2]();
   if (label === "auto-accept") return MODE_ICONS[3]();
@@ -323,7 +315,7 @@ export function PromptInput(props: PromptInputProps) {
                   onClick={() => handleAgentChange(mode)}
                   class={`px-2 sm:px-3 py-1.5 text-xs font-medium rounded-lg transition-all flex items-center gap-1 sm:gap-1.5 min-h-[36px] ${
                     isActive()
-                      ? `${color} text-white shadow-md shadow-indigo-500/20`
+                      ? `${color} text-white shadow-md shadow-current/20`
                       : "bg-slate-100/60 dark:bg-slate-800/60 text-slate-500 dark:text-slate-400 hover:bg-slate-200/80 dark:hover:bg-slate-700/60 backdrop-blur-sm"
                   }`}
                   title={mode.description ?? displayName}

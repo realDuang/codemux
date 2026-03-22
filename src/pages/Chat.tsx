@@ -1502,9 +1502,9 @@ export default function Chat() {
           {/* Mobile sidebar toggle */}
           <button
             onClick={toggleSidebar}
-            class="md:hidden p-1.5 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-slate-800 rounded-md transition-colors"
+            class="md:hidden p-2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-slate-800 rounded-md transition-colors min-w-[36px] min-h-[36px] flex items-center justify-center"
           >
-            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" x2="20" y1="12" y2="12" /><line x1="4" x2="20" y1="6" y2="6" /><line x1="4" x2="20" y1="18" y2="18" /></svg>
+            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" x2="20" y1="12" y2="12" /><line x1="4" x2="20" y1="6" y2="6" /><line x1="4" x2="20" y1="18" y2="18" /></svg>
           </button>
 
           {/* Desktop sidebar collapse/expand toggle */}
@@ -1522,7 +1522,7 @@ export default function Chat() {
         </div>
 
         {/* Center: Session title + badges (draggable gap) */}
-        <div class="flex-1 flex items-center justify-center gap-2 min-w-0 px-4">
+        <div class="flex-1 flex items-center justify-center gap-1.5 sm:gap-2 min-w-0 px-2 sm:px-4 overflow-hidden">
           <Show when={sessionStore.current}>
             <h1 class="text-[13px] font-medium text-gray-600 dark:text-gray-400 truncate electron-no-drag">
               {getDisplayTitle(currentSessionTitle())}
@@ -1531,9 +1531,14 @@ export default function Chat() {
               {currentEngineBadge().label}
             </span>
             <span class={`shrink-0 px-1.5 py-0.5 text-[10px] font-medium rounded-full electron-no-drag ${
-              currentAgent().id === "plan"
-                ? "bg-violet-100 text-violet-700 dark:bg-violet-900/30 dark:text-violet-400"
-                : "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400"
+              (() => {
+                const id = currentAgent().id;
+                if (id === "plan")
+                  return "bg-cyan-100 text-cyan-700 dark:bg-cyan-900/30 dark:text-cyan-400";
+                if (id === "autopilot" || id === "acceptEdits")
+                  return "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400";
+                return "bg-indigo-100 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-400";
+              })()
             }`}>
               {currentAgent().label}
             </span>
@@ -1720,7 +1725,7 @@ export default function Chat() {
             {/* Scroll container is ALWAYS in the DOM so the virtualizer
                 maintains a stable reference to getScrollElement(). The loading
                 overlay is rendered on top without destroying the scroll div. */}
-              <div ref={setMessagesRef} onScroll={handleScroll} class="flex-1 overflow-y-auto px-4 md:px-6" style={{ position: "relative" }}>
+              <div ref={setMessagesRef} onScroll={handleScroll} class="flex-1 overflow-y-auto px-2 sm:px-4 md:px-6" style={{ position: "relative" }}>
                 {/* Loading overlay — covers scroll area during message load */}
                 <Show when={loadingMessages()}>
                   <div class="absolute inset-0 flex items-center justify-center z-10 bg-white/80 dark:bg-slate-900/80">
@@ -1752,7 +1757,7 @@ export default function Chat() {
               </div>
 
               {/* Input Area */}
-              <div class="p-4 bg-white/90 dark:bg-slate-900/90 backdrop-blur-xs border-t border-gray-100 dark:border-slate-800 relative z-20">
+              <div class="p-2 sm:p-4 bg-white/90 dark:bg-slate-900/90 backdrop-blur-xs border-t border-gray-100 dark:border-slate-800 relative z-20">
                 <div class="max-w-4xl mx-auto w-full">
                   {/* TodoDock — persistent task list above input */}
                   <Show when={currentTodos().length > 0}>

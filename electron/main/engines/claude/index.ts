@@ -103,8 +103,9 @@ interface PendingQuestion {
 // ============================================================================
 
 const DEFAULT_MODES: AgentMode[] = [
-  { id: "agent", label: "Agent", description: "Interactive coding agent" },
-  { id: "plan", label: "Plan", description: "Plan before executing" },
+  { id: "default", label: "Default", description: "Standard behavior, prompts for dangerous operations" },
+  { id: "acceptEdits", label: "Auto-Accept", description: "Auto-accept file edit operations" },
+  { id: "plan", label: "Plan", description: "Planning mode, no actual tool execution" },
 ];
 
 // ============================================================================
@@ -604,9 +605,8 @@ export class ClaudeCodeAdapter extends EngineAdapter {
     this.emit("message.updated", { sessionId, message: assistantMessage });
 
     // Determine permission mode from mode option
-    const mode = options?.mode ?? this.sessionModes.get(sessionId) ?? "agent";
-    const permissionMode =
-      mode === "plan" ? ("plan" as const) : ("default" as const);
+    const mode = options?.mode ?? this.sessionModes.get(sessionId) ?? "default";
+    const permissionMode = mode as "default" | "plan" | "acceptEdits" | "dontAsk";
 
     // Get or create V2 session
     const v2Session = await this.getOrCreateV2Session(
@@ -975,15 +975,24 @@ export class ClaudeCodeAdapter extends EngineAdapter {
     this.sessionModes.set(sessionId, modeId);
     claudeLog.info(`[Claude][${sessionId}] Mode set to: ${modeId}`);
 
-    // Close existing session to force recreation with new permission mode
     const v2Info = this.v2Sessions.get(sessionId);
     if (v2Info) {
+      // Update tracked permissionMode
+      v2Info.permissionMode = modeId as any;
+
+      // Use the internal Query API to switch permission mode at runtime
+      // (same pattern as cancelMessage's interrupt() call)
       try {
-        v2Info.session.close();
-      } catch {
-        // Ignore
+        const query = (v2Info.session as any).query;
+        if (query && typeof query.setPermissionMode === "function") {
+          await query.setPermissionMode(modeId);
+          claudeLog.info(`[Claude][${sessionId}] Permission mode switched to: ${modeId}`);
+        } else {
+          claudeLog.warn(`[Claude][${sessionId}] setPermissionMode not available on query, will apply on next message`);
+        }
+      } catch (err) {
+        claudeLog.warn(`[Claude][${sessionId}] Failed to set permission mode:`, err);
       }
-      this.v2Sessions.delete(sessionId);
     }
   }
 

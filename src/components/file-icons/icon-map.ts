@@ -3217,7 +3217,17 @@ export const FILE_EXTENSIONS: Record<string, string> = {
   "cue": "cue",
   "lean": "lean",
   "sls": "salt",
-  "m2": "macaulay2"
+  "m2": "macaulay2",
+  "ts": "typescript",
+  "mts": "typescript",
+  "cts": "typescript",
+  "js": "javascript",
+  "cjs": "javascript",
+  "html": "html",
+  "yml": "yaml",
+  "yaml": "yaml",
+  "hrl": "erlang",
+  "gvy": "groovy"
 };
 
 export const FOLDER_NAMES: Record<string, string> = {

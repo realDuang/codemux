@@ -15,6 +15,7 @@ import {
   setRootDirectory,
   closePanel,
   setSearchQuery,
+  loadGitStatus,
 } from "../stores/file";
 import { sessionStore } from "../stores/session";
 import { useI18n } from "../lib/i18n";
@@ -95,7 +96,7 @@ export function FileExplorer() {
   const handleRefresh= () => {
     const dir = currentDirectory();
     if (dir) {
-      setRootDirectory(dir);
+      loadGitStatus(dir);
     }
   };
 

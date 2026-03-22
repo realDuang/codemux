@@ -469,7 +469,7 @@ export const zh: LocaleDict = {
     allFiles: "文件",
     changes: "变更",
     changesCount: "{count} 个变更",
-    refresh: "刷新",
+    refresh: "刷新 Git 状态",
     close: "关闭",
     content: "内容",
     diff: "差异",

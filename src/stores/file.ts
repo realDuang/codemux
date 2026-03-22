@@ -176,6 +176,8 @@ export async function setRootDirectory(
   if (!directory) return;
 
   await Promise.all([loadDirectory(directory, "."), loadGitStatus(directory)]);
+  // Start watching for changes
+  gateway.watchDirectory(directory).catch(() => {});
 }
 
 export async function loadDirectory(
@@ -469,4 +471,39 @@ export function getGitStatusColor(status: GitFileStatus["status"]): string {
 
 export function setSearchQuery(query: string): void {
   setFileStore("searchQuery", query);
+}
+
+// ---------------------------------------------------------------------------
+// File watcher
+// ---------------------------------------------------------------------------
+
+let fileChangeDebounceTimer: ReturnType<typeof setTimeout> | undefined;
+
+export function handleFileChanged(event: {
+  type: string;
+  path: string;
+  directory: string;
+}): void {
+  const dir = fileStore.rootDirectory;
+  if (!dir || event.directory !== dir) return;
+
+  clearTimeout(fileChangeDebounceTimer);
+  fileChangeDebounceTimer = setTimeout(() => {
+    // Compute relative directory of the changed file
+    const relativePath = event.path
+      .replace(dir, "")
+      .replace(/^[\/\\]/, "")
+      .split(/[\/\\]/)
+      .slice(0, -1)
+      .join("/");
+    const dirKey = relativePath || ".";
+
+    // Reload the directory that changed
+    if (fileStore.directories[dirKey]?.loaded) {
+      loadDirectory(dir, dirKey);
+    }
+
+    // Also refresh git status
+    loadGitStatus(dir);
+  }, 500);
 }

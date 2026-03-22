@@ -1839,23 +1839,30 @@ export default function Chat() {
       </div>
       {/* File Explorer Right Panel */}
       <Show when={fileStore.panelOpen}>
-        <div
-          class="relative hidden md:flex flex-col overflow-hidden flex-shrink-0"
-          style={{ width: `${fileStore.panelWidth}px` }}
-          aria-label="File explorer"
-        >
-          <ResizeHandle
-            direction="horizontal"
-            edge="start"
-            size={fileStore.panelWidth}
-            min={300}
-            max={Math.min(1200, Math.floor(window.innerWidth * 0.6))}
-            collapseThreshold={200}
-            onResize={setPanelWidth}
-            onCollapse={closePanel}
-          />
-          <FileExplorer />
-        </div>
+        {(() => {
+          const hasPreview = () => fileStore.preview !== null && fileStore.openTabs.all.length > 0;
+          const effectiveWidth = () => hasPreview() ? fileStore.panelWidth : Math.min(fileStore.panelWidth, 300);
+          const effectiveMin = () => hasPreview() ? 400 : 200;
+          return (
+            <div
+              class="relative hidden md:flex flex-col overflow-hidden flex-shrink-0 transition-[width] duration-200 ease-out"
+              style={{ width: `${effectiveWidth()}px` }}
+              aria-label="File explorer"
+            >
+              <ResizeHandle
+                direction="horizontal"
+                edge="start"
+                size={effectiveWidth()}
+                min={effectiveMin()}
+                max={Math.min(1200, Math.floor(window.innerWidth * 0.6))}
+                collapseThreshold={160}
+                onResize={setPanelWidth}
+                onCollapse={closePanel}
+              />
+              <FileExplorer />
+            </div>
+          );
+        })()}
       </Show>
       </div>
       </div>

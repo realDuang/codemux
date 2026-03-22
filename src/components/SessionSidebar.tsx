@@ -251,7 +251,7 @@ export function SessionSidebar(props: SessionSidebarProps) {
   };
 
   return (
-    <div class="w-full bg-gray-50 dark:bg-slate-950 border-r border-gray-200 dark:border-slate-800 flex flex-col h-full overflow-hidden">
+    <div class="w-full bg-gray-50 dark:bg-zinc-950 border-r border-gray-200 dark:border-zinc-800 flex flex-col h-full overflow-hidden">
       {/* Search Box + Add Project Button */}
       <Show when={!props.collapsed && projectGroups().length > 0}>
         <div class="flex items-center gap-1.5 px-2 pt-2">
@@ -277,7 +277,7 @@ export function SessionSidebar(props: SessionSidebarProps) {
               onInput={(e) => setSearchQuery(e.currentTarget.value)}
               onKeyDown={(e) => { if (e.key === "Escape") setSearchQuery(""); }}
               placeholder={t().sidebar.searchPlaceholder}
-              class="w-full pl-8 pr-7 py-1.5 text-xs bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-md text-gray-700 dark:text-gray-300 placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+              class="w-full pl-8 pr-7 py-1.5 text-xs bg-white dark:bg-zinc-800 border border-gray-200 dark:border-zinc-700 rounded-md text-gray-700 dark:text-gray-300 placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
             />
             <Show when={searchQuery().length > 0}>
               <button
@@ -293,7 +293,7 @@ export function SessionSidebar(props: SessionSidebarProps) {
           <Show when={props.showAddProject !== false}>
             <button
               onClick={props.onAddProject}
-              class="flex-shrink-0 p-1.5 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-slate-800 rounded-md transition-colors"
+              class="flex-shrink-0 p-1.5 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-zinc-800 rounded-md transition-colors"
               title={t().project.add}
             >
               <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -306,7 +306,7 @@ export function SessionSidebar(props: SessionSidebarProps) {
             <button
               onClick={props.onRefreshSessions}
               disabled={props.refreshingSessions}
-              class="flex-shrink-0 p-1.5 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-slate-800 rounded-md transition-colors disabled:opacity-50"
+              class="flex-shrink-0 p-1.5 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-zinc-800 rounded-md transition-colors disabled:opacity-50"
               title={t().sidebar.refreshSessions}
             >
               <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class={props.refreshingSessions ? "animate-spin" : ""}>
@@ -326,7 +326,7 @@ export function SessionSidebar(props: SessionSidebarProps) {
           fallback={
             <Show when={!props.collapsed}>
                 <div class="p-8 text-center">
-                  <div class="inline-flex items-center justify-center w-10 h-10 rounded-full bg-gray-100 dark:bg-slate-800 mb-3 text-gray-400">
+                  <div class="inline-flex items-center justify-center w-10 h-10 rounded-full bg-gray-100 dark:bg-zinc-800 mb-3 text-gray-400">
                     <svg
                       xmlns="http://www.w3.org/2000/svg"
                       width="20"
@@ -357,8 +357,8 @@ export function SessionSidebar(props: SessionSidebarProps) {
                     <button
                       class={`w-10 h-10 rounded-lg flex items-center justify-center transition-all ${
                         hasActiveSession()
-                          ? "ring-2 ring-blue-500 ring-offset-1 dark:ring-offset-slate-950"
-                          : "hover:bg-gray-100 dark:hover:bg-slate-800"
+                          ? "ring-2 ring-blue-500 ring-offset-1 dark:ring-offset-zinc-950"
+                          : "hover:bg-gray-100 dark:hover:bg-zinc-800"
                       }`}
                       onClick={() => {
                         if (hasActiveSession() && props.currentSessionId) {
@@ -394,7 +394,7 @@ export function SessionSidebar(props: SessionSidebarProps) {
                 <div class="mb-2">
                   {/* Project Header */}
                   <div
-                    class="group flex items-center justify-between px-2 py-1.5 rounded-md cursor-pointer hover:bg-gray-100 dark:hover:bg-slate-900 transition-colors"
+                    class="group flex items-center justify-between px-2 py-1.5 rounded-md cursor-pointer hover:bg-gray-100 dark:hover:bg-zinc-900 transition-colors"
                     onMouseEnter={() => setHoveredProject(project.projectID)}
                     onMouseLeave={() => setHoveredProject(null)}
                     onClick={() => toggleProjectExpanded(project.projectID)}
@@ -540,8 +540,8 @@ export function SessionSidebar(props: SessionSidebarProps) {
                             <div
                               class={`group relative px-3 py-2 mb-0.5 rounded-md cursor-pointer transition-all duration-150 ${
                                 isActive()
-                                  ? "bg-white dark:bg-slate-800 shadow-xs"
-                                  : "hover:bg-gray-100 dark:hover:bg-slate-900"
+                                  ? "bg-white dark:bg-zinc-800 shadow-xs"
+                                  : "hover:bg-gray-100 dark:hover:bg-zinc-900"
                               }`}
                               onClick={() => !isEditing() && props.onSelectSession(session.id)}
                             >
@@ -573,7 +573,7 @@ export function SessionSidebar(props: SessionSidebarProps) {
                                     onKeyDown={handleKeyDown}
                                     onBlur={saveTitle}
                                     autofocus
-                                    class="text-sm w-full px-1 py-0.5 bg-white dark:bg-slate-700 border border-blue-500 rounded outline-none text-gray-900 dark:text-gray-100"
+                                    class="text-sm w-full px-1 py-0.5 bg-white dark:bg-zinc-700 border border-blue-500 rounded outline-none text-gray-900 dark:text-gray-100"
                                     onClick={(e) => e.stopPropagation()}
                                   />
                                 </Show>
@@ -600,7 +600,7 @@ export function SessionSidebar(props: SessionSidebarProps) {
                                 <Show
                                   when={pendingDeleteId() !== session.id}
                                   fallback={
-                                    <div class="absolute right-1 top-1/2 -translate-y-1/2 flex items-center gap-1 bg-white dark:bg-slate-800 rounded-md shadow-sm px-1 py-0.5">
+                                    <div class="absolute right-1 top-1/2 -translate-y-1/2 flex items-center gap-1 bg-white dark:bg-zinc-800 rounded-md shadow-sm px-1 py-0.5">
                                       <button
                                         onClick={(e) => {
                                           e.stopPropagation();
@@ -616,14 +616,14 @@ export function SessionSidebar(props: SessionSidebarProps) {
                                           e.stopPropagation();
                                           setPendingDeleteId(null);
                                         }}
-                                        class="px-2 py-1 text-[10px] font-medium text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-slate-700 rounded transition-colors"
+                                        class="px-2 py-1 text-[10px] font-medium text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-zinc-700 rounded transition-colors"
                                       >
                                         {t().common.cancel}
                                       </button>
                                     </div>
                                   }
                                 >
-                                <div class="absolute right-1 top-1/2 -translate-y-1/2 hidden group-hover:flex items-center gap-0.5 bg-white/90 dark:bg-slate-800/90 backdrop-blur-xs rounded-md shadow-sm px-0.5 py-0.5">
+                                <div class="absolute right-1 top-1/2 -translate-y-1/2 hidden group-hover:flex items-center gap-0.5 bg-white/90 dark:bg-zinc-800/90 backdrop-blur-xs rounded-md shadow-sm px-0.5 py-0.5">
                                   <button
                                     onClick={(e) => {
                                       e.stopPropagation();
@@ -716,7 +716,7 @@ export function SessionSidebar(props: SessionSidebarProps) {
 
       {/* Default Engine Selector (footer, visible when at least one engine available) */}
       <Show when={runningEngines().length >= 1 && !props.collapsed}>
-        <div class="px-3 py-2 border-t border-gray-200 dark:border-slate-800">
+        <div class="px-3 py-2 border-t border-gray-200 dark:border-zinc-800">
           <div class="flex items-center gap-2">
             <span class="text-[11px] font-medium text-gray-500 dark:text-gray-400 whitespace-nowrap">{t().sidebar.defaultEngine}</span>
             <select
@@ -730,7 +730,7 @@ export function SessionSidebar(props: SessionSidebarProps) {
               }}
               value={getDefaultEngineType()}
               onChange={(e) => setDefaultNewSessionEngine(e.target.value)}
-              class="flex-1 min-w-0 text-xs px-2 py-1 bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-md text-gray-700 dark:text-gray-300 focus:outline-none focus:ring-1 focus:ring-blue-500"
+              class="flex-1 min-w-0 text-xs px-2 py-1 bg-white dark:bg-zinc-800 border border-gray-200 dark:border-zinc-700 rounded-md text-gray-700 dark:text-gray-300 focus:outline-none focus:ring-1 focus:ring-blue-500"
             >
               <For each={runningEngines()}>
                 {(engine) => (

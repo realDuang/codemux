@@ -64,10 +64,10 @@ function DeviceCard(props: DeviceCardProps) {
 
   const borderClass = props.isCurrent
     ? "border-2 border-blue-500 dark:border-blue-600"
-    : "border border-gray-200 dark:border-slate-800";
+    : "border border-gray-200 dark:border-zinc-800";
 
   return (
-    <div class={`bg-white dark:bg-slate-900 rounded-xl ${borderClass} shadow-xs overflow-hidden`}>
+    <div class={`bg-white dark:bg-zinc-900 rounded-xl ${borderClass} shadow-xs overflow-hidden`}>
       <div class="p-5">
         <div class="flex items-start justify-between">
           <div class="flex items-start gap-3">
@@ -82,7 +82,7 @@ function DeviceCard(props: DeviceCardProps) {
                     type="text"
                     value={props.newName}
                     onInput={(e) => props.onNewNameChange(e.currentTarget.value)}
-                    class="px-2 py-1 text-sm border rounded dark:bg-slate-800 dark:border-slate-700"
+                    class="px-2 py-1 text-sm border rounded dark:bg-zinc-800 dark:border-zinc-700"
                     placeholder={t().devices.renameDevicePlaceholder}
                     onKeyDown={(e) => {
                       if (e.key === "Enter") props.onConfirmRename();

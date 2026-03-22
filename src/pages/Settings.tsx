@@ -189,7 +189,7 @@ export default function Settings() {
     if (engine.status === "running") return "bg-emerald-500";
     if (engine.status === "starting") return "bg-amber-500";
     if (engine.status === "error") return "bg-red-500";
-    return "bg-slate-400";
+    return "bg-zinc-400";
   };
 
   return (
@@ -228,9 +228,9 @@ export default function Settings() {
               <h2 class="text-sm font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-4 px-1">
                 {t().settings.general}
               </h2>
-              <div class="bg-white dark:bg-slate-800 rounded-xl shadow-xs border border-gray-200 dark:border-slate-700 overflow-visible">
+              <div class="bg-white dark:bg-zinc-800 rounded-xl shadow-xs border border-gray-200 dark:border-zinc-700 overflow-visible">
                 {/* Language Setting */}
-                <div class="p-4 sm:p-6 flex items-center justify-between gap-4 border-b border-gray-200 dark:border-slate-700">
+                <div class="p-4 sm:p-6 flex items-center justify-between gap-4 border-b border-gray-200 dark:border-zinc-700">
                   <div>
                     <h3 class="text-base font-medium text-gray-900 dark:text-white">
                       {t().settings.language}
@@ -262,18 +262,18 @@ export default function Settings() {
 
             {/* Engines Section */}
             <section>
-              <h2 class="text-sm font-medium text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-4 px-1">
+              <h2 class="text-sm font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-4 px-1">
                 {t().engine.engines}
               </h2>
               <Show
                 when={configStore.engines.length > 0}
                 fallback={
-                  <div class="bg-white dark:bg-slate-800 rounded-xl shadow-xs border border-slate-200 dark:border-slate-700 p-6 text-center text-sm text-slate-400 dark:text-slate-500">
+                  <div class="bg-white dark:bg-zinc-800 rounded-xl shadow-xs border border-zinc-200 dark:border-zinc-700 p-6 text-center text-sm text-zinc-400 dark:text-zinc-500">
                     {t().engine.noEngines}
                   </div>
                 }
               >
-                <div class="bg-white dark:bg-slate-800 rounded-xl shadow-xs border border-slate-200 dark:border-slate-700">
+                <div class="bg-white dark:bg-zinc-800 rounded-xl shadow-xs border border-zinc-200 dark:border-zinc-700">
                   <For each={configStore.engines}>
                     {(engine, index) => {
                       const models = createMemo(() => configStore.engineModels[engine.type] || []);
@@ -314,7 +314,7 @@ export default function Settings() {
 
                       return (
                         <div
-                          class={index() < configStore.engines.length - 1 ? "border-b border-slate-100 dark:border-slate-700" : ""}
+                          class={index() < configStore.engines.length - 1 ? "border-b border-zinc-100 dark:border-zinc-700" : ""}
                         >
                           <div class="p-4 sm:p-6 flex items-center justify-between gap-4">
                             <div class="flex items-center gap-3 min-w-0">
@@ -397,10 +397,10 @@ export default function Settings() {
                               disabled={engine.status !== "running"}
                               class={`relative inline-flex h-6 w-11 flex-shrink-0 rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
                                 engine.status !== "running"
-                                  ? "bg-gray-200 dark:bg-slate-700 opacity-50 cursor-not-allowed"
+                                  ? "bg-gray-200 dark:bg-zinc-700 opacity-50 cursor-not-allowed"
                                   : isEngineEnabled(engine.type)
-                                    ? "bg-blue-600 cursor-pointer focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 dark:focus:ring-offset-slate-800"
-                                    : "bg-gray-200 dark:bg-slate-600 cursor-pointer focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 dark:focus:ring-offset-slate-800"
+                                    ? "bg-blue-600 cursor-pointer focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 dark:focus:ring-offset-zinc-800"
+                                    : "bg-gray-200 dark:bg-zinc-600 cursor-pointer focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 dark:focus:ring-offset-zinc-800"
                               }`}
                               role="switch"
                               aria-checked={engine.status === "running" && isEngineEnabled(engine.type)}
@@ -433,7 +433,7 @@ export default function Settings() {
                                       value={selectedModelId()}
                                       onChange={(e) => handleModelSelect(e.currentTarget.value)}
                                       disabled={engine.capabilities?.modelSwitchable === false}
-                                      class={`w-[260px] px-3 py-1.5 text-sm font-medium rounded-lg border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-gray-700 dark:text-gray-300 transition-colors ${engine.capabilities?.modelSwitchable === false ? "opacity-60 cursor-not-allowed" : "cursor-pointer hover:bg-gray-100 dark:hover:bg-slate-600"}`}
+                                      class={`w-[260px] px-3 py-1.5 text-sm font-medium rounded-lg border border-gray-300 dark:border-zinc-600 bg-white dark:bg-zinc-700 text-gray-700 dark:text-gray-300 transition-colors ${engine.capabilities?.modelSwitchable === false ? "opacity-60 cursor-not-allowed" : "cursor-pointer hover:bg-gray-100 dark:hover:bg-zinc-600"}`}
                                     >
                                       <For each={providerGroups()}>
                                         {([pid, group]) => (
@@ -467,7 +467,7 @@ export default function Settings() {
                                     value={selectedModelId()}
                                     onChange={(e) => handleModelSelect(e.currentTarget.value)}
                                     placeholder="Enter model ID..."
-                                    class="w-[260px] px-3 py-1.5 text-sm font-medium rounded-lg border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-gray-700 dark:text-gray-300 transition-colors hover:bg-gray-100 dark:hover:bg-slate-600"
+                                    class="w-[260px] px-3 py-1.5 text-sm font-medium rounded-lg border border-gray-300 dark:border-zinc-600 bg-white dark:bg-zinc-700 text-gray-700 dark:text-gray-300 transition-colors hover:bg-gray-100 dark:hover:bg-zinc-600"
                                   />
                                   <datalist id={`models-${engine.type}`}>
                                     <For each={models()}>
@@ -506,9 +506,9 @@ export default function Settings() {
                 <h2 class="text-sm font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-4 px-1">
                   {t().settings.logging}
                 </h2>
-                <div class="bg-white dark:bg-slate-800 rounded-xl shadow-xs border border-gray-200 dark:border-slate-700 overflow-visible">
+                <div class="bg-white dark:bg-zinc-800 rounded-xl shadow-xs border border-gray-200 dark:border-zinc-700 overflow-visible">
                   {/* Log file path */}
-                  <div class="p-4 sm:p-6 flex items-center justify-between gap-4 border-b border-gray-200 dark:border-slate-700">
+                  <div class="p-4 sm:p-6 flex items-center justify-between gap-4 border-b border-gray-200 dark:border-zinc-700">
                     <div class="min-w-0">
                       <h3 class="text-base font-medium text-gray-900 dark:text-white">
                         {t().settings.logFilePath}
@@ -527,7 +527,7 @@ export default function Settings() {
                         <button
                           onClick={handleOpenLogFolder}
                           disabled={!logPath()}
-                          class="px-3 py-1.5 text-sm font-medium rounded-lg border border-gray-300 dark:border-slate-600 text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-slate-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                          class="px-3 py-1.5 text-sm font-medium rounded-lg border border-gray-300 dark:border-zinc-600 text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-zinc-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                         >
                           {t().settings.openLogFolder}
                         </button>
@@ -536,7 +536,7 @@ export default function Settings() {
                   </div>
                   {/* Conversations storage */}
                   <Show when={isElectron()}>
-                    <div class="p-4 sm:p-6 flex items-center justify-between gap-4 border-b border-gray-200 dark:border-slate-700">
+                    <div class="p-4 sm:p-6 flex items-center justify-between gap-4 border-b border-gray-200 dark:border-zinc-700">
                       <div class="min-w-0">
                         <h3 class="text-base font-medium text-gray-900 dark:text-white">
                           {t().settings.conversationsPath}
@@ -554,7 +554,7 @@ export default function Settings() {
                         <button
                           onClick={handleOpenConversationsFolder}
                           disabled={!conversationsPath()}
-                          class="px-3 py-1.5 text-sm font-medium rounded-lg border border-gray-300 dark:border-slate-600 text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-slate-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                          class="px-3 py-1.5 text-sm font-medium rounded-lg border border-gray-300 dark:border-zinc-600 text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-zinc-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                         >
                           {t().settings.openConversationsFolder}
                         </button>
@@ -562,7 +562,7 @@ export default function Settings() {
                     </div>
                   </Show>
                   {/* Log level */}
-                  <div class="p-4 sm:p-6 flex items-center justify-between gap-4 border-b border-gray-200 dark:border-slate-700">
+                  <div class="p-4 sm:p-6 flex items-center justify-between gap-4 border-b border-gray-200 dark:border-zinc-700">
                     <div>
                       <h3 class="text-base font-medium text-gray-900 dark:text-white">
                         {t().settings.logLevel}
@@ -575,7 +575,7 @@ export default function Settings() {
                       <select
                         value={logLevel()}
                         onChange={(e) => handleLogLevelChange(e.currentTarget.value)}
-                        class="px-3 py-1.5 text-sm font-medium rounded-lg border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-slate-600 transition-colors cursor-pointer"
+                        class="px-3 py-1.5 text-sm font-medium rounded-lg border border-gray-300 dark:border-zinc-600 bg-white dark:bg-zinc-700 text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-zinc-600 transition-colors cursor-pointer"
                       >
                         <For each={logLevels}>
                           {(level) => (
@@ -599,7 +599,7 @@ export default function Settings() {
                       <button
                         onClick={handleShowDefaultWorkspaceToggle}
                         class={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
-                          showDefaultWorkspace() ? "bg-blue-600" : "bg-gray-300 dark:bg-slate-600"
+                          showDefaultWorkspace() ? "bg-blue-600" : "bg-gray-300 dark:bg-zinc-600"
                         }`}
                         role="switch"
                         aria-checked={showDefaultWorkspace()}
@@ -623,9 +623,9 @@ export default function Settings() {
                 <h2 class="text-sm font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-4 px-1">
                   {t().update.title}
                 </h2>
-                <div class="bg-white dark:bg-slate-800 rounded-xl shadow-xs border border-gray-200 dark:border-slate-700 overflow-visible">
+                <div class="bg-white dark:bg-zinc-800 rounded-xl shadow-xs border border-gray-200 dark:border-zinc-700 overflow-visible">
                   {/* Current version + check for updates */}
-                  <div class="p-4 sm:p-6 flex items-center justify-between gap-4 border-b border-gray-200 dark:border-slate-700">
+                  <div class="p-4 sm:p-6 flex items-center justify-between gap-4 border-b border-gray-200 dark:border-zinc-700">
                     <div>
                       <h3 class="text-base font-medium text-gray-900 dark:text-white">
                         {t().update.currentVersion}
@@ -653,14 +653,14 @@ export default function Settings() {
                       <button
                         onClick={handleCheckForUpdates}
                         disabled={updateCheckStatus() === "checking"}
-                        class="px-3 py-1.5 text-sm font-medium rounded-lg border border-gray-300 dark:border-slate-600 text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-slate-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                        class="px-3 py-1.5 text-sm font-medium rounded-lg border border-gray-300 dark:border-zinc-600 text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-zinc-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                       >
                         {updateCheckStatus() === "checking" ? t().update.checking : t().update.checkForUpdates}
                       </button>
                     </div>
                   </div>
                   {/* Auto-check toggle */}
-                  <div class="p-4 sm:p-6 flex items-center justify-between gap-4 border-b border-gray-200 dark:border-slate-700">
+                  <div class="p-4 sm:p-6 flex items-center justify-between gap-4 border-b border-gray-200 dark:border-zinc-700">
                     <div>
                       <h3 class="text-base font-medium text-gray-900 dark:text-white">
                         {t().update.autoCheck}
@@ -673,7 +673,7 @@ export default function Settings() {
                       <button
                         onClick={handleAutoCheckToggle}
                         class={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
-                          autoCheckEnabled() ? "bg-blue-600" : "bg-gray-300 dark:bg-slate-600"
+                          autoCheckEnabled() ? "bg-blue-600" : "bg-gray-300 dark:bg-zinc-600"
                         }`}
                         role="switch"
                         aria-checked={autoCheckEnabled()}
@@ -700,7 +700,7 @@ export default function Settings() {
                       <button
                         onClick={handleLaunchAtLoginToggle}
                         class={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
-                          launchAtLoginEnabled() ? "bg-blue-600" : "bg-gray-300 dark:bg-slate-600"
+                          launchAtLoginEnabled() ? "bg-blue-600" : "bg-gray-300 dark:bg-zinc-600"
                         }`}
                         role="switch"
                         aria-checked={launchAtLoginEnabled()}

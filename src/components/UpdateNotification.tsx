@@ -96,7 +96,7 @@ export function UpdateNotification() {
   return (
     <Show when={shouldShow()}>
       <div class="fixed bottom-6 right-6 z-50 w-80 max-w-[calc(100vw-3rem)] font-sans animate-in fade-in slide-in-from-bottom-4 duration-300">
-        <div class="bg-white dark:bg-slate-900 rounded-xl shadow-2xl border border-gray-100 dark:border-slate-800 overflow-hidden">
+        <div class="bg-white dark:bg-zinc-900 rounded-xl shadow-2xl border border-gray-100 dark:border-zinc-800 overflow-hidden">
           {/* Checking state */}
           <Show when={state()?.status === "checking"}>
             <div class="p-4">
@@ -144,7 +144,7 @@ export function UpdateNotification() {
               <div class="flex gap-2">
                 <button
                   onClick={handleDismiss}
-                  class="flex-1 px-3 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-slate-800 hover:bg-gray-200 dark:hover:bg-slate-700 rounded-lg transition-colors"
+                  class="flex-1 px-3 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-zinc-800 hover:bg-gray-200 dark:hover:bg-zinc-700 rounded-lg transition-colors"
                 >
                   {t().update.restartLater}
                 </button>
@@ -189,7 +189,7 @@ export function UpdateNotification() {
                 </button>
               </div>
               {/* Progress bar */}
-              <div class="w-full h-1.5 bg-gray-100 dark:bg-slate-800 rounded-full overflow-hidden">
+              <div class="w-full h-1.5 bg-gray-100 dark:bg-zinc-800 rounded-full overflow-hidden">
                 <div
                   class="h-full bg-blue-500 rounded-full transition-all duration-300"
                   style={{ width: `${Math.round(progressPercent())}%` }}
@@ -222,7 +222,7 @@ export function UpdateNotification() {
               <div class="flex gap-2">
                 <button
                   onClick={handleDismiss}
-                  class="flex-1 px-3 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-slate-800 hover:bg-gray-200 dark:hover:bg-slate-700 rounded-lg transition-colors"
+                  class="flex-1 px-3 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-zinc-800 hover:bg-gray-200 dark:hover:bg-zinc-700 rounded-lg transition-colors"
                 >
                   {t().update.restartLater}
                 </button>

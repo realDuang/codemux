@@ -231,7 +231,7 @@ export default function Chat() {
 
   // Engine badge for title bar
   const currentEngineBadge = createMemo(() =>
-    getEngineBadge(currentEngineType()) ?? { label: currentEngineType(), class: "bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-400" }
+    getEngineBadge(currentEngineType()) ?? { label: currentEngineType(), class: "bg-zinc-100 text-zinc-600 dark:bg-zinc-700 dark:text-zinc-400" }
   );
 
   // Whether the current engine supports enqueuing messages while busy

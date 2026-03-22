@@ -856,7 +856,7 @@ export default function EntryPage() {
       {/* Remote access: Show login form or approval status */}
       <Show when={!checking() && !isHost()}>
         <div class="flex-1 flex items-center justify-center p-4">
-          <div class="w-full max-w-md p-8 bg-white dark:bg-slate-800 rounded-lg shadow-md transition-all duration-300">
+          <div class="w-full max-w-md p-8 bg-white dark:bg-zinc-800 rounded-lg shadow-md transition-all duration-300">
             <Show when={!waitingApproval()} fallback={
               <div class="text-center space-y-6">
                 <Switch>
@@ -874,7 +874,7 @@ export default function EntryPage() {
                       {t().approval.waitingDesc}
                     </p>
                     
-                    <div class="bg-gray-50 dark:bg-slate-700/50 rounded-lg p-4 text-left text-sm space-y-2">
+                    <div class="bg-gray-50 dark:bg-zinc-700/50 rounded-lg p-4 text-left text-sm space-y-2">
                       <div class="flex justify-between">
                         <span class="text-gray-500 dark:text-gray-400">{t().approval.deviceName}:</span>
                         <span class="font-medium text-gray-900 dark:text-white">{deviceInfo()?.name}</span>
@@ -895,7 +895,7 @@ export default function EntryPage() {
 
                     <button
                       onClick={handleRetry}
-                      class="w-full mt-4 py-2 px-4 border border-gray-300 dark:border-slate-600 hover:bg-gray-50 dark:hover:bg-slate-700 text-gray-700 dark:text-gray-300 font-medium rounded-md transition-colors"
+                      class="w-full mt-4 py-2 px-4 border border-gray-300 dark:border-zinc-600 hover:bg-gray-50 dark:hover:bg-zinc-700 text-gray-700 dark:text-gray-300 font-medium rounded-md transition-colors"
                     >
                       {t().common.cancel}
                     </button>
@@ -917,7 +917,7 @@ export default function EntryPage() {
                     </p>
                     <button
                       onClick={handleRetry}
-                      class="w-full py-2 px-4 bg-gray-200 dark:bg-slate-700 hover:bg-gray-300 dark:hover:bg-slate-600 text-gray-800 dark:text-white font-medium rounded-md transition-colors"
+                      class="w-full py-2 px-4 bg-gray-200 dark:bg-zinc-700 hover:bg-gray-300 dark:hover:bg-zinc-600 text-gray-800 dark:text-white font-medium rounded-md transition-colors"
                     >
                       {t().approval.tryAgain}
                     </button>
@@ -961,7 +961,7 @@ export default function EntryPage() {
                     value={code()}
                     onInput={(e) => setCode(e.currentTarget.value)}
                     placeholder={t().login.placeholder}
-                    class="w-full px-4 py-2 border rounded-md focus:ring-2 focus:ring-blue-500 focus:outline-none dark:bg-slate-700 dark:border-slate-600 dark:text-white text-center text-lg tracking-widest font-mono"
+                    class="w-full px-4 py-2 border rounded-md focus:ring-2 focus:ring-blue-500 focus:outline-none dark:bg-zinc-700 dark:border-zinc-600 dark:text-white text-center text-lg tracking-widest font-mono"
                     maxLength={6}
                     disabled={loginLoading()}
                     autofocus
@@ -1011,16 +1011,16 @@ export default function EntryPage() {
               </div>
 
               {/* Vertical Tab Layout */}
-              <div class="flex gap-0 bg-white dark:bg-slate-900 rounded-xl border border-gray-200 dark:border-slate-800 shadow-xs overflow-hidden min-h-[520px]">
+              <div class="flex gap-0 bg-white dark:bg-zinc-900 rounded-xl border border-gray-200 dark:border-zinc-800 shadow-xs overflow-hidden min-h-[520px]">
                 {/* Left: Tab Navigation */}
-                <nav class="w-44 shrink-0 border-r border-gray-200 dark:border-slate-800 bg-gray-50/50 dark:bg-slate-950/50 p-3 flex flex-col gap-1">
+                <nav class="w-44 shrink-0 border-r border-gray-200 dark:border-zinc-800 bg-gray-50/50 dark:bg-zinc-950/50 p-3 flex flex-col gap-1">
                   <Show when={isElectron()}>
                     <button
                       onClick={() => setActiveTab("channels")}
                       class={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all text-left ${
                         activeTab() === "channels"
-                          ? "bg-white dark:bg-slate-800 text-blue-600 dark:text-blue-400 shadow-xs"
-                          : "text-gray-600 dark:text-gray-400 hover:bg-white/60 dark:hover:bg-slate-800/60 hover:text-gray-900 dark:hover:text-gray-200"
+                          ? "bg-white dark:bg-zinc-800 text-blue-600 dark:text-blue-400 shadow-xs"
+                          : "text-gray-600 dark:text-gray-400 hover:bg-white/60 dark:hover:bg-zinc-800/60 hover:text-gray-900 dark:hover:text-gray-200"
                       }`}
                     >
                       <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
@@ -1031,8 +1031,8 @@ export default function EntryPage() {
                     onClick={() => setActiveTab("webApp")}
                     class={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all text-left ${
                       activeTab() === "webApp"
-                        ? "bg-white dark:bg-slate-800 text-blue-600 dark:text-blue-400 shadow-xs"
-                        : "text-gray-600 dark:text-gray-400 hover:bg-white/60 dark:hover:bg-slate-800/60 hover:text-gray-900 dark:hover:text-gray-200"
+                        ? "bg-white dark:bg-zinc-800 text-blue-600 dark:text-blue-400 shadow-xs"
+                        : "text-gray-600 dark:text-gray-400 hover:bg-white/60 dark:hover:bg-zinc-800/60 hover:text-gray-900 dark:hover:text-gray-200"
                     }`}
                   >
                     <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18"/><path d="M9 21V9"/></svg>
@@ -1043,8 +1043,8 @@ export default function EntryPage() {
                       onClick={() => setActiveTab("publicAccess")}
                       class={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all text-left relative ${
                         activeTab() === "publicAccess"
-                          ? "bg-white dark:bg-slate-800 text-blue-600 dark:text-blue-400 shadow-xs"
-                          : "text-gray-600 dark:text-gray-400 hover:bg-white/60 dark:hover:bg-slate-800/60 hover:text-gray-900 dark:hover:text-gray-200"
+                          ? "bg-white dark:bg-zinc-800 text-blue-600 dark:text-blue-400 shadow-xs"
+                          : "text-gray-600 dark:text-gray-400 hover:bg-white/60 dark:hover:bg-zinc-800/60 hover:text-gray-900 dark:hover:text-gray-200"
                       }`}
                     >
                       <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><path d="M2 12h20"/></svg>
@@ -1077,19 +1077,19 @@ export default function EntryPage() {
                         <div class="space-y-5">
 
                           {/* Access Code Card */}
-                          <div class="rounded-lg border border-gray-200 dark:border-slate-800 p-4">
+                          <div class="rounded-lg border border-gray-200 dark:border-zinc-800 p-4">
                             <h3 class="text-sm font-medium text-gray-500 dark:text-gray-400 mb-3 flex items-center gap-2">
                               <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
                               {t().remote.accessPassword}
                             </h3>
-                            <div class="flex items-center justify-between bg-gray-50 dark:bg-slate-950 rounded-lg border border-gray-200 dark:border-slate-800 px-4 py-3">
+                            <div class="flex items-center justify-between bg-gray-50 dark:bg-zinc-950 rounded-lg border border-gray-200 dark:border-zinc-800 px-4 py-3">
                               <span class="font-mono text-xl font-bold tracking-widest text-gray-900 dark:text-white">
                                 {showPassword() ? accessCode() : "••••••"}
                               </span>
                               <div class="flex items-center gap-2">
                                 <button
                                   onClick={() => setShowPassword(!showPassword())}
-                                  class="p-1.5 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors rounded-md hover:bg-gray-200 dark:hover:bg-slate-800"
+                                  class="p-1.5 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors rounded-md hover:bg-gray-200 dark:hover:bg-zinc-800"
                                   title={showPassword() ? "Hide" : "Show"}
                                 >
                                   <Show when={showPassword()} fallback={
@@ -1110,15 +1110,15 @@ export default function EntryPage() {
                           </div>
 
                           {/* Connection Addresses */}
-                          <div class="rounded-lg border border-gray-200 dark:border-slate-800 overflow-hidden">
-                            <div class="p-3 border-b border-gray-100 dark:border-slate-800/50">
+                          <div class="rounded-lg border border-gray-200 dark:border-zinc-800 overflow-hidden">
+                            <div class="p-3 border-b border-gray-100 dark:border-zinc-800/50">
                               <h3 class="text-sm font-medium text-gray-500 dark:text-gray-400">{t().remote.connectionAddress}</h3>
                             </div>
-                            <div class="divide-y divide-gray-100 dark:divide-slate-800/50">
+                            <div class="divide-y divide-gray-100 dark:divide-zinc-800/50">
 
                               {/* Public Address */}
                               <Show when={tunnelInfo().status === "running"}>
-                                <div class="p-3 flex items-center justify-between group hover:bg-gray-50 dark:hover:bg-slate-800/50 transition-colors">
+                                <div class="p-3 flex items-center justify-between group hover:bg-gray-50 dark:hover:bg-zinc-800/50 transition-colors">
                                   <div class="min-w-0 flex-1 mr-3">
                                     <div class="flex items-center gap-2 mb-1">
                                       <span class="inline-flex items-center justify-center w-5 h-5 rounded bg-green-100 dark:bg-green-900/30 text-green-600 dark:text-green-400">
@@ -1138,7 +1138,7 @@ export default function EntryPage() {
                               </Show>
 
                               {/* LAN Address */}
-                              <div class="p-3 flex items-center justify-between group hover:bg-gray-50 dark:hover:bg-slate-800/50 transition-colors">
+                              <div class="p-3 flex items-center justify-between group hover:bg-gray-50 dark:hover:bg-zinc-800/50 transition-colors">
                                 <div class="min-w-0 flex-1 mr-3">
                                   <div class="flex items-center gap-2 mb-1">
                                     <span class="inline-flex items-center justify-center w-5 h-5 rounded bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400">
@@ -1157,10 +1157,10 @@ export default function EntryPage() {
                               </div>
 
                               {/* Local Address */}
-                              <div class="p-3 flex items-center justify-between group hover:bg-gray-50 dark:hover:bg-slate-800/50 transition-colors">
+                              <div class="p-3 flex items-center justify-between group hover:bg-gray-50 dark:hover:bg-zinc-800/50 transition-colors">
                                 <div class="min-w-0 flex-1 mr-3">
                                   <div class="flex items-center gap-2 mb-1">
-                                    <span class="inline-flex items-center justify-center w-5 h-5 rounded bg-gray-100 dark:bg-slate-800 text-gray-600 dark:text-gray-400">
+                                    <span class="inline-flex items-center justify-center w-5 h-5 rounded bg-gray-100 dark:bg-zinc-800 text-gray-600 dark:text-gray-400">
                                       <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" x2="16" y1="21" y2="21"/><line x1="12" x2="12" y1="17" y2="21"/></svg>
                                     </span>
                                     <span class="text-xs font-medium text-gray-500">{t().remote.localAddress}</span>
@@ -1179,20 +1179,20 @@ export default function EntryPage() {
                         </div>
 
                         {/* Right Column: QR Code */}
-                        <div class="rounded-lg border border-gray-200 dark:border-slate-800 p-5 flex flex-col items-center justify-center min-h-[280px]">
+                        <div class="rounded-lg border border-gray-200 dark:border-zinc-800 p-5 flex flex-col items-center justify-center min-h-[280px]">
 
                           <div class="w-full flex justify-center mb-5">
-                            <div class="inline-flex bg-gray-100 dark:bg-slate-800 p-1 rounded-lg">
+                            <div class="inline-flex bg-gray-100 dark:bg-zinc-800 p-1 rounded-lg">
                               <button
                                 onClick={() => setActiveQrTab("lan")}
-                                class={`px-4 py-1.5 rounded-md text-sm font-medium transition-all ${activeQrTab() === "lan" ? 'bg-white dark:bg-slate-700 shadow-xs text-gray-900 dark:text-white' : 'text-gray-500 hover:text-gray-700 dark:hover:text-gray-300'}`}
+                                class={`px-4 py-1.5 rounded-md text-sm font-medium transition-all ${activeQrTab() === "lan" ? 'bg-white dark:bg-zinc-700 shadow-xs text-gray-900 dark:text-white' : 'text-gray-500 hover:text-gray-700 dark:hover:text-gray-300'}`}
                               >
                                 {t().remote.lan}
                               </button>
                               <button
                                 disabled={tunnelInfo().status !== "running"}
                                 onClick={() => setActiveQrTab("public")}
-                                class={`px-4 py-1.5 rounded-md text-sm font-medium transition-all ${activeQrTab() === "public" ? 'bg-white dark:bg-slate-700 shadow-xs text-green-700 dark:text-green-400' : 'text-gray-500 hover:text-gray-700 dark:hover:text-gray-300'} ${tunnelInfo().status !== "running" ? 'opacity-50 cursor-not-allowed' : ''}`}
+                                class={`px-4 py-1.5 rounded-md text-sm font-medium transition-all ${activeQrTab() === "public" ? 'bg-white dark:bg-zinc-700 shadow-xs text-green-700 dark:text-green-400' : 'text-gray-500 hover:text-gray-700 dark:hover:text-gray-300'} ${tunnelInfo().status !== "running" ? 'opacity-50 cursor-not-allowed' : ''}`}
                               >
                                 {t().remote.public}
                               </button>
@@ -1238,13 +1238,13 @@ export default function EntryPage() {
                       <Show when={isElectron()}>
                         <div
                           onClick={() => setActiveTab("publicAccess")}
-                          class="rounded-lg border border-gray-200 dark:border-slate-800 p-4 flex items-center justify-between cursor-pointer hover:bg-gray-50 dark:hover:bg-slate-800/50 transition-colors"
+                          class="rounded-lg border border-gray-200 dark:border-zinc-800 p-4 flex items-center justify-between cursor-pointer hover:bg-gray-50 dark:hover:bg-zinc-800/50 transition-colors"
                         >
                           <div class="flex items-center gap-3">
                             <div class={`w-9 h-9 rounded-lg flex items-center justify-center ${
                               tunnelInfo().status === "running"
                                 ? "bg-green-100 dark:bg-green-900/30"
-                                : "bg-gray-100 dark:bg-slate-800"
+                                : "bg-gray-100 dark:bg-zinc-800"
                             }`}>
                               <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class={tunnelInfo().status === "running" ? "text-green-600 dark:text-green-400" : "text-gray-400 dark:text-gray-500"}>
                                 <circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><path d="M2 12h20"/>
@@ -1274,7 +1274,7 @@ export default function EntryPage() {
                       {/* Authorized Devices Card */}
                       <div
                         onClick={() => navigate("/devices")}
-                        class="rounded-lg border border-gray-200 dark:border-slate-800 p-4 flex items-center justify-between cursor-pointer hover:bg-gray-50 dark:hover:bg-slate-800/50 transition-colors"
+                        class="rounded-lg border border-gray-200 dark:border-zinc-800 p-4 flex items-center justify-between cursor-pointer hover:bg-gray-50 dark:hover:bg-zinc-800/50 transition-colors"
                       >
                         <div class="flex items-center gap-3">
                           <div class="w-9 h-9 rounded-lg bg-blue-100 dark:bg-blue-900/30 flex items-center justify-center">
@@ -1329,11 +1329,11 @@ export default function EntryPage() {
                         <div class="flex items-center gap-2 mb-3">
                           <h3 class="text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider">{t().channel.directConnect}</h3>
                           <span class="text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-green-100 dark:bg-green-900/30 text-green-600 dark:text-green-400">{t().channel.directConnectBadge}</span>
-                          <div class="flex-1 h-px bg-gray-100 dark:bg-slate-800"></div>
+                          <div class="flex-1 h-px bg-gray-100 dark:bg-zinc-800"></div>
                         </div>
                         <div class="space-y-3">
                           {/* Feishu Bot Row */}
-                          <div class="rounded-lg border border-gray-200 dark:border-slate-800 overflow-hidden">
+                          <div class="rounded-lg border border-gray-200 dark:border-zinc-800 overflow-hidden">
                             <div class="p-4 flex items-center justify-between">
                               <div class="flex items-center gap-3">
                                 <div class="w-9 h-9 rounded-lg bg-indigo-100 dark:bg-indigo-900/30 flex items-center justify-center">
@@ -1363,7 +1363,7 @@ export default function EntryPage() {
                               <div class="flex items-center gap-3">
                                 <button
                                   onClick={() => setFeishuConfigOpen(true)}
-                                  class="px-3 py-1.5 text-xs font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-slate-800 rounded-lg transition-colors border border-gray-200 dark:border-slate-700"
+                                  class="px-3 py-1.5 text-xs font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-zinc-800 rounded-lg transition-colors border border-gray-200 dark:border-zinc-700"
                                 >
                                   {t().channel.configure}
                                 </button>
@@ -1371,7 +1371,7 @@ export default function EntryPage() {
                                   onClick={handleFeishuToggle}
                                   disabled={feishuLoading()}
                                   class={`relative inline-flex h-7 w-12 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:ring-offset-2 ${
-                                    feishuStatus()?.status === "running" ? "bg-blue-600" : "bg-gray-200 dark:bg-slate-700"
+                                    feishuStatus()?.status === "running" ? "bg-blue-600" : "bg-gray-200 dark:bg-zinc-700"
                                   } ${feishuLoading() ? "opacity-50 cursor-not-allowed" : ""}`}
                                 >
                                   <span class="sr-only">Toggle Feishu Bot</span>
@@ -1395,7 +1395,7 @@ export default function EntryPage() {
                           </div>
 
                           {/* DingTalk Bot Row */}
-                          <div class="rounded-lg border border-gray-200 dark:border-slate-800 overflow-hidden">
+                          <div class="rounded-lg border border-gray-200 dark:border-zinc-800 overflow-hidden">
                             <div class="p-4 flex items-center justify-between">
                               <div class="flex items-center gap-3">
                                 <div class="w-9 h-9 rounded-lg bg-blue-100 dark:bg-blue-900/30 flex items-center justify-center">
@@ -1425,7 +1425,7 @@ export default function EntryPage() {
                               <div class="flex items-center gap-3">
                                 <button
                                   onClick={() => setDingtalkConfigOpen(true)}
-                                  class="px-3 py-1.5 text-xs font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-slate-800 rounded-lg transition-colors border border-gray-200 dark:border-slate-700"
+                                  class="px-3 py-1.5 text-xs font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-zinc-800 rounded-lg transition-colors border border-gray-200 dark:border-zinc-700"
                                 >
                                   {t().channel.configure}
                                 </button>
@@ -1433,7 +1433,7 @@ export default function EntryPage() {
                                   onClick={handleDingtalkToggle}
                                   disabled={dingtalkLoading()}
                                   class={`relative inline-flex h-7 w-12 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:ring-offset-2 ${
-                                    dingtalkStatus()?.status === "running" ? "bg-blue-600" : "bg-gray-200 dark:bg-slate-700"
+                                    dingtalkStatus()?.status === "running" ? "bg-blue-600" : "bg-gray-200 dark:bg-zinc-700"
                                   } ${dingtalkLoading() ? "opacity-50 cursor-not-allowed" : ""}`}
                                 >
                                   <span class="sr-only">Toggle DingTalk Bot</span>
@@ -1457,7 +1457,7 @@ export default function EntryPage() {
                           </div>
 
                           {/* Telegram Bot Row */}
-                          <div class="rounded-lg border border-gray-200 dark:border-slate-800 overflow-hidden">
+                          <div class="rounded-lg border border-gray-200 dark:border-zinc-800 overflow-hidden">
                             <div class="p-4 flex items-center justify-between">
                               <div class="flex items-center gap-3">
                                 <div class="w-9 h-9 rounded-lg bg-sky-100 dark:bg-sky-900/30 flex items-center justify-center">
@@ -1487,7 +1487,7 @@ export default function EntryPage() {
                               <div class="flex items-center gap-3">
                                 <button
                                   onClick={() => setTelegramConfigOpen(true)}
-                                  class="px-3 py-1.5 text-xs font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-slate-800 rounded-lg transition-colors border border-gray-200 dark:border-slate-700"
+                                  class="px-3 py-1.5 text-xs font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-zinc-800 rounded-lg transition-colors border border-gray-200 dark:border-zinc-700"
                                 >
                                   {t().channel.configure}
                                 </button>
@@ -1495,7 +1495,7 @@ export default function EntryPage() {
                                   onClick={handleTelegramToggle}
                                   disabled={telegramLoading()}
                                   class={`relative inline-flex h-7 w-12 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:ring-offset-2 ${
-                                    telegramStatus()?.status === "running" ? "bg-blue-600" : "bg-gray-200 dark:bg-slate-700"
+                                    telegramStatus()?.status === "running" ? "bg-blue-600" : "bg-gray-200 dark:bg-zinc-700"
                                   } ${telegramLoading() ? "opacity-50 cursor-not-allowed" : ""}`}
                                 >
                                   <span class="sr-only">Toggle Telegram Bot</span>
@@ -1525,7 +1525,7 @@ export default function EntryPage() {
                         <div class="flex items-center gap-2 mb-3">
                           <h3 class="text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider">{t().channel.webhookConnect}</h3>
                           <span class="text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-amber-100 dark:bg-amber-900/30 text-amber-600 dark:text-amber-400">{t().channel.webhookConnectBadge}</span>
-                          <div class="flex-1 h-px bg-gray-100 dark:bg-slate-800"></div>
+                          <div class="flex-1 h-px bg-gray-100 dark:bg-zinc-800"></div>
                         </div>
 
                         {/* Tunnel required banner when tunnel is not running */}
@@ -1547,7 +1547,7 @@ export default function EntryPage() {
 
                         <div class={`space-y-3 ${tunnelInfo().status !== "running" ? "opacity-55" : ""}`}>
                           {/* Teams Bot Row */}
-                          <div class="rounded-lg border border-gray-200 dark:border-slate-800 overflow-hidden">
+                          <div class="rounded-lg border border-gray-200 dark:border-zinc-800 overflow-hidden">
                             <div class="p-4 flex items-center justify-between">
                               <div class="flex items-center gap-3">
                                 <div class="w-9 h-9 rounded-lg bg-purple-100 dark:bg-purple-900/30 flex items-center justify-center">
@@ -1577,7 +1577,7 @@ export default function EntryPage() {
                               <div class="flex items-center gap-3">
                                 <button
                                   onClick={() => setTeamsConfigOpen(true)}
-                                  class="px-3 py-1.5 text-xs font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-slate-800 rounded-lg transition-colors border border-gray-200 dark:border-slate-700"
+                                  class="px-3 py-1.5 text-xs font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-zinc-800 rounded-lg transition-colors border border-gray-200 dark:border-zinc-700"
                                 >
                                   {t().channel.configure}
                                 </button>
@@ -1585,7 +1585,7 @@ export default function EntryPage() {
                                   onClick={handleTeamsToggle}
                                   disabled={teamsLoading() || tunnelInfo().status !== "running"}
                                   class={`relative inline-flex h-7 w-12 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:ring-offset-2 ${
-                                    teamsStatus()?.status === "running" ? "bg-blue-600" : "bg-gray-200 dark:bg-slate-700"
+                                    teamsStatus()?.status === "running" ? "bg-blue-600" : "bg-gray-200 dark:bg-zinc-700"
                                   } ${teamsLoading() || tunnelInfo().status !== "running" ? "opacity-50 cursor-not-allowed" : ""}`}
                                 >
                                   <span class="sr-only">Toggle Teams Bot</span>
@@ -1613,7 +1613,7 @@ export default function EntryPage() {
                                 <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-blue-500 dark:text-blue-400 shrink-0 mt-0.5"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
                                 <div class="text-xs text-gray-600 dark:text-gray-400 leading-relaxed">
                                   <span class="text-gray-500 dark:text-gray-500">{t().channel.webhookEndpoint}:</span>{" "}
-                                  <code class="text-[11px] font-mono bg-gray-100 dark:bg-slate-800 px-1.5 py-0.5 rounded text-blue-600 dark:text-blue-400 border border-gray-200 dark:border-slate-700">{tunnelInfo().url}/api/messages</code>
+                                  <code class="text-[11px] font-mono bg-gray-100 dark:bg-zinc-800 px-1.5 py-0.5 rounded text-blue-600 dark:text-blue-400 border border-gray-200 dark:border-zinc-700">{tunnelInfo().url}/api/messages</code>
                                   <br/>
                                   <span class="text-gray-400 dark:text-gray-500">{t().channel.teamsWebhookGuide}</span>
                                   <br/>
@@ -1624,7 +1624,7 @@ export default function EntryPage() {
                           </div>
 
                           {/* WeCom Bot Row */}
-                          <div class="rounded-lg border border-gray-200 dark:border-slate-800 overflow-hidden">
+                          <div class="rounded-lg border border-gray-200 dark:border-zinc-800 overflow-hidden">
                             <div class="p-4 flex items-center justify-between">
                               <div class="flex items-center gap-3">
                                 <div class="w-9 h-9 rounded-lg bg-green-100 dark:bg-green-900/30 flex items-center justify-center">
@@ -1654,7 +1654,7 @@ export default function EntryPage() {
                               <div class="flex items-center gap-3">
                                 <button
                                   onClick={() => setWecomConfigOpen(true)}
-                                  class="px-3 py-1.5 text-xs font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-slate-800 rounded-lg transition-colors border border-gray-200 dark:border-slate-700"
+                                  class="px-3 py-1.5 text-xs font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-zinc-800 rounded-lg transition-colors border border-gray-200 dark:border-zinc-700"
                                 >
                                   {t().channel.configure}
                                 </button>
@@ -1662,7 +1662,7 @@ export default function EntryPage() {
                                   onClick={handleWecomToggle}
                                   disabled={wecomLoading() || tunnelInfo().status !== "running"}
                                   class={`relative inline-flex h-7 w-12 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:ring-offset-2 ${
-                                    wecomStatus()?.status === "running" ? "bg-blue-600" : "bg-gray-200 dark:bg-slate-700"
+                                    wecomStatus()?.status === "running" ? "bg-blue-600" : "bg-gray-200 dark:bg-zinc-700"
                                   } ${wecomLoading() || tunnelInfo().status !== "running" ? "opacity-50 cursor-not-allowed" : ""}`}
                                 >
                                   <span class="sr-only">Toggle WeCom Bot</span>
@@ -1690,7 +1690,7 @@ export default function EntryPage() {
                                 <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-blue-500 dark:text-blue-400 shrink-0 mt-0.5"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
                                 <div class="text-xs text-gray-600 dark:text-gray-400 leading-relaxed">
                                   <span class="text-gray-500 dark:text-gray-500">{t().channel.webhookEndpoint}:</span>{" "}
-                                  <code class="text-[11px] font-mono bg-gray-100 dark:bg-slate-800 px-1.5 py-0.5 rounded text-blue-600 dark:text-blue-400 border border-gray-200 dark:border-slate-700">{tunnelInfo().url}/webhook/wecom</code>
+                                  <code class="text-[11px] font-mono bg-gray-100 dark:bg-zinc-800 px-1.5 py-0.5 rounded text-blue-600 dark:text-blue-400 border border-gray-200 dark:border-zinc-700">{tunnelInfo().url}/webhook/wecom</code>
                                   <br/>
                                   <span class="text-gray-400 dark:text-gray-500">{t().channel.wecomWebhookGuide}</span>
                                 </div>
@@ -1711,13 +1711,13 @@ export default function EntryPage() {
                       </div>
 
                       {/* Tunnel Toggle Card */}
-                      <div class="rounded-lg border border-gray-200 dark:border-slate-800 overflow-hidden">
+                      <div class="rounded-lg border border-gray-200 dark:border-zinc-800 overflow-hidden">
                         <div class="p-4 flex items-center justify-between">
                           <div class="flex items-center gap-3">
                             <div class={`w-9 h-9 rounded-lg flex items-center justify-center ${
                               tunnelInfo().status === "running"
                                 ? "bg-blue-100 dark:bg-blue-900/30"
-                                : "bg-gray-100 dark:bg-slate-800"
+                                : "bg-gray-100 dark:bg-zinc-800"
                             }`}>
                               <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class={tunnelInfo().status === "running" ? "text-blue-600 dark:text-blue-400" : "text-gray-400 dark:text-gray-500"}>
                                 <circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><path d="M2 12h20"/>
@@ -1742,7 +1742,7 @@ export default function EntryPage() {
                             onClick={handleTunnelToggle}
                             disabled={tunnelLoading()}
                             class={`relative inline-flex h-7 w-12 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:ring-offset-2 ${
-                              tunnelEnabled() ? "bg-blue-600" : "bg-gray-200 dark:bg-slate-700"
+                              tunnelEnabled() ? "bg-blue-600" : "bg-gray-200 dark:bg-zinc-700"
                             } ${tunnelLoading() ? "opacity-50 cursor-not-allowed" : ""}`}
                           >
                             <span class="sr-only">Toggle Tunnel</span>
@@ -1755,14 +1755,14 @@ export default function EntryPage() {
                         </div>
 
                         <Show when={tunnelInfo().status === "running" && tunnelInfo().url}>
-                          <div class="px-4 py-3 border-t border-gray-100 dark:border-slate-800">
-                            <div class="flex items-center justify-between bg-gray-50 dark:bg-slate-950 rounded-lg border border-gray-200 dark:border-slate-800 px-3 py-2">
+                          <div class="px-4 py-3 border-t border-gray-100 dark:border-zinc-800">
+                            <div class="flex items-center justify-between bg-gray-50 dark:bg-zinc-950 rounded-lg border border-gray-200 dark:border-zinc-800 px-3 py-2">
                               <span class="font-mono text-xs text-blue-600 dark:text-blue-400 truncate">{tunnelInfo().url}</span>
                               <button
                                 onClick={() => {
                                   navigator.clipboard.writeText(tunnelInfo().url);
                                 }}
-                                class="shrink-0 ml-2 p-1 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors rounded hover:bg-gray-200 dark:hover:bg-slate-800"
+                                class="shrink-0 ml-2 p-1 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors rounded hover:bg-gray-200 dark:hover:bg-zinc-800"
                                 title={t().common.copied}
                               >
                                 <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
@@ -1791,7 +1791,7 @@ export default function EntryPage() {
                       </div>
 
                       {/* Named Tunnel Configuration */}
-                      <div class="rounded-lg border border-gray-200 dark:border-slate-800 overflow-hidden">
+                      <div class="rounded-lg border border-gray-200 dark:border-zinc-800 overflow-hidden">
                         <div class="p-4">
                           <h3 class="text-sm font-medium text-gray-900 dark:text-white flex items-center gap-2">
                             {t().remote.namedTunnel}
@@ -1809,7 +1809,7 @@ export default function EntryPage() {
                               onInput={(e) => setNamedTunnelHostname(e.currentTarget.value)}
                               onBlur={saveNamedTunnelConfig}
                               placeholder={t().remote.tunnelHostnamePlaceholder}
-                              class="w-full px-3 py-1.5 text-sm rounded-md border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                              class="w-full px-3 py-1.5 text-sm rounded-md border border-gray-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                             />
                           </div>
 
@@ -1826,7 +1826,7 @@ export default function EntryPage() {
                       <div>
                         <h3 class="text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider mb-3">{t().remote.notes}</h3>
                         <div class="space-y-2">
-                          <div class="rounded-lg border border-gray-200 dark:border-slate-800 p-3.5 flex items-start gap-3">
+                          <div class="rounded-lg border border-gray-200 dark:border-zinc-800 p-3.5 flex items-start gap-3">
                             <div class={`w-7 h-7 rounded-md flex items-center justify-center shrink-0 ${
                               isNamedTunnel()
                                 ? "bg-green-100 dark:bg-green-900/30"
@@ -1850,7 +1850,7 @@ export default function EntryPage() {
                               </Show>
                             </div>
                           </div>
-                          <div class="rounded-lg border border-gray-200 dark:border-slate-800 p-3.5 flex items-start gap-3">
+                          <div class="rounded-lg border border-gray-200 dark:border-zinc-800 p-3.5 flex items-start gap-3">
                             <div class="w-7 h-7 rounded-md bg-green-100 dark:bg-green-900/30 flex items-center justify-center shrink-0">
                               <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-green-600 dark:text-green-400"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
                             </div>
@@ -1859,7 +1859,7 @@ export default function EntryPage() {
                               <div class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">{t().remote.noteSecurityDesc}</div>
                             </div>
                           </div>
-                          <div class="rounded-lg border border-gray-200 dark:border-slate-800 p-3.5 flex items-start gap-3">
+                          <div class="rounded-lg border border-gray-200 dark:border-zinc-800 p-3.5 flex items-start gap-3">
                             <div class="w-7 h-7 rounded-md bg-blue-100 dark:bg-blue-900/30 flex items-center justify-center shrink-0">
                               <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-blue-600 dark:text-blue-400"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
                             </div>
@@ -1943,7 +1943,7 @@ export default function EntryPage() {
         </div>
 
         {/* Bottom: Enter Chat Button (sticky) */}
-        <div class="sticky bottom-0 bg-white/80 dark:bg-slate-900/80 backdrop-blur-md border-t border-gray-200 dark:border-slate-800 p-4">
+        <div class="sticky bottom-0 bg-white/80 dark:bg-zinc-900/80 backdrop-blur-md border-t border-gray-200 dark:border-zinc-800 p-4">
           <div class="max-w-4xl mx-auto">
             <button
               onClick={handleEnterChat}

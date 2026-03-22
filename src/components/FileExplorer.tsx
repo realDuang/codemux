@@ -11,13 +11,10 @@ import { ResizeHandle } from "./ResizeHandle";
 import { Spinner } from "./Spinner";
 import {
   fileStore,
-  setFileStore,
   setActiveFileTab,
   setRootDirectory,
-  closePanel,
   setSearchQuery,
   setTreeWidth,
-  loadGitStatus,
 } from "../stores/file";
 import { sessionStore } from "../stores/session";
 import { useI18n } from "../lib/i18n";
@@ -95,13 +92,6 @@ export function FileExplorer() {
     () => fileStore.preview !== null && fileStore.openTabs.all.length > 0,
   );
 
-  const handleRefresh = () => {
-    const dir = currentDirectory();
-    if (dir) {
-      loadGitStatus(dir);
-    }
-  };
-
   // Max tree width based on panel width (leave at least 250px for preview)
   const maxTreeWidth = createMemo(() =>
     Math.max(150, fileStore.panelWidth - 250),
@@ -136,34 +126,6 @@ export function FileExplorer() {
                 {fileStore.gitStatus.length}
               </span>
             </Show>
-          </button>
-        </div>
-        <div class="flex items-center gap-0.5">
-          <button
-            class="rounded p-1 text-gray-400 transition-colors hover:bg-gray-200 hover:text-gray-600 dark:text-slate-500 dark:hover:bg-slate-700 dark:hover:text-slate-300"
-            onClick={handleRefresh}
-            title={t().fileExplorer.refresh}
-          >
-            <svg
-              class="h-3.5 w-3.5"
-              viewBox="0 0 16 16"
-              fill="currentColor"
-            >
-              <path d="M13.65 2.35A7.96 7.96 0 0 0 8 0a8 8 0 1 0 8 8h-2a6 6 0 1 1-1.76-4.24L10 6h6V0l-2.35 2.35z" />
-            </svg>
-          </button>
-          <button
-            class="rounded p-1 text-gray-400 transition-colors hover:bg-gray-200 hover:text-gray-600 dark:text-slate-500 dark:hover:bg-slate-700 dark:hover:text-slate-300"
-            onClick={() => closePanel()}
-            title={t().fileExplorer.close}
-          >
-            <svg
-              class="h-3.5 w-3.5"
-              viewBox="0 0 16 16"
-              fill="currentColor"
-            >
-              <path d="M12.59 3.41L8 7.99 3.41 3.41 2 4.82l4.59 4.59L2 13.99l1.41 1.41L8 10.82l4.59 4.58 1.41-1.41-4.59-4.58 4.59-4.59-1.41-1.41z" />
-            </svg>
           </button>
         </div>
       </div>

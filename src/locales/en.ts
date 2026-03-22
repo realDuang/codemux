@@ -471,8 +471,6 @@ export interface LocaleDict {
     allFiles: string;
     changes: string;
     changesCount: string;
-    refresh: string;
-    close: string;
     content: string;
     diff: string;
     noProject: string;
@@ -969,8 +967,6 @@ export const en: LocaleDict = {
     allFiles: "Files",
     changes: "Changes",
     changesCount: "{count} changes",
-    refresh: "Refresh git status",
-    close: "Close",
     content: "Content",
     diff: "Diff",
     noProject: "No project directory",

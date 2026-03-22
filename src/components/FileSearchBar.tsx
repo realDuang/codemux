@@ -3,45 +3,139 @@ import { useI18n } from "../lib/i18n";
 
 interface FileSearchBarProps {
   content: string;
+  scrollContainer: HTMLDivElement | undefined;
   onClose: () => void;
 }
 
 export function FileSearchBar(props: FileSearchBarProps) {
   const { t } = useI18n();
   const [query, setQuery] = createSignal("");
-  const [matches, setMatches] = createSignal<number[]>([]);
-  const [currentMatch, setCurrentMatch] = createSignal(0);
+  const [matchCount, setMatchCount] = createSignal(0);
+  const [currentIndex, setCurrentIndex] = createSignal(0);
   let inputRef: HTMLInputElement | undefined;
+  let highlightElements: HTMLElement[] = [];
 
   onMount(() => inputRef?.focus());
 
-  createEffect(on(query, (q) => {
-    if (!q || q.length < 2) {
-      setMatches([]);
-      setCurrentMatch(0);
+  onCleanup(() => clearHighlights());
+
+  function clearHighlights() {
+    for (const el of highlightElements) {
+      const parent = el.parentNode;
+      if (parent) {
+        parent.replaceChild(document.createTextNode(el.textContent || ""), el);
+        parent.normalize();
+      }
+    }
+    highlightElements = [];
+  }
+
+  function highlightMatches(searchText: string) {
+    clearHighlights();
+
+    const container = props.scrollContainer;
+    if (!container || !searchText || searchText.length < 2) {
+      setMatchCount(0);
+      setCurrentIndex(0);
       return;
     }
-    const content = props.content.toLowerCase();
-    const search = q.toLowerCase();
-    const positions: number[] = [];
-    let idx = content.indexOf(search);
-    while (idx !== -1) {
-      positions.push(idx);
-      idx = content.indexOf(search, idx + 1);
+
+    const searchLower = searchText.toLowerCase();
+    const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT);
+    const textNodes: Text[] = [];
+
+    let node: Text | null;
+    while ((node = walker.nextNode() as Text | null)) {
+      if (node.textContent && node.textContent.toLowerCase().includes(searchLower)) {
+        textNodes.push(node);
+      }
     }
-    setMatches(positions);
-    setCurrentMatch(positions.length > 0 ? 1 : 0);
-  }));
+
+    let count = 0;
+    for (const textNode of textNodes) {
+      const text = textNode.textContent || "";
+      const lowerText = text.toLowerCase();
+      const parts: (string | { match: string; index: number })[] = [];
+      let lastEnd = 0;
+      let idx = lowerText.indexOf(searchLower);
+
+      while (idx !== -1) {
+        if (idx > lastEnd) {
+          parts.push(text.slice(lastEnd, idx));
+        }
+        parts.push({ match: text.slice(idx, idx + searchText.length), index: count });
+        count++;
+        lastEnd = idx + searchText.length;
+        idx = lowerText.indexOf(searchLower, lastEnd);
+      }
+
+      if (parts.length === 0) continue;
+      if (lastEnd < text.length) {
+        parts.push(text.slice(lastEnd));
+      }
+
+      const parent = textNode.parentNode;
+      if (!parent) continue;
+
+      const fragment = document.createDocumentFragment();
+      for (const part of parts) {
+        if (typeof part === "string") {
+          fragment.appendChild(document.createTextNode(part));
+        } else {
+          const mark = document.createElement("mark");
+          mark.className = "file-search-highlight";
+          mark.dataset.matchIndex = String(part.index);
+          mark.textContent = part.match;
+          fragment.appendChild(mark);
+          highlightElements.push(mark);
+        }
+      }
+      parent.replaceChild(fragment, textNode);
+    }
+
+    setMatchCount(count);
+    if (count > 0) {
+      setCurrentIndex(1);
+      scrollToMatch(0);
+    } else {
+      setCurrentIndex(0);
+    }
+  }
+
+  function scrollToMatch(index: number) {
+    for (const el of highlightElements) {
+      el.className = "file-search-highlight";
+    }
+    if (index >= 0 && index < highlightElements.length) {
+      const target = highlightElements[index];
+      target.className = "file-search-highlight-current";
+      target.scrollIntoView({ block: "center", behavior: "smooth" });
+    }
+  }
 
   const goNext = () => {
-    if (matches().length === 0) return;
-    setCurrentMatch((c) => c >= matches().length ? 1 : c + 1);
+    const count = matchCount();
+    if (count === 0) return;
+    const next = currentIndex() >= count ? 1 : currentIndex() + 1;
+    setCurrentIndex(next);
+    scrollToMatch(next - 1);
   };
 
   const goPrev = () => {
-    if (matches().length === 0) return;
-    setCurrentMatch((c) => c <= 1 ? matches().length : c - 1);
+    const count = matchCount();
+    if (count === 0) return;
+    const prev = currentIndex() <= 1 ? count : currentIndex() - 1;
+    setCurrentIndex(prev);
+    scrollToMatch(prev - 1);
   };
+
+  let highlightTimer: ReturnType<typeof setTimeout> | undefined;
+  createEffect(on(query, (q) => {
+    clearTimeout(highlightTimer);
+    highlightTimer = setTimeout(() => highlightMatches(q), 200);
+  }));
+
+  onCleanup(() => clearTimeout(highlightTimer));
 
   const handleKeyDown = (e: KeyboardEvent) => {
     if (e.key === "Escape") {
@@ -70,8 +164,8 @@ export function FileSearchBar(props: FileSearchBarProps) {
       />
       <Show when={query().length >= 2}>
         <span class="text-[11px] text-gray-400 tabular-nums flex-shrink-0">
-          {matches().length > 0
-            ? `${currentMatch()} / ${matches().length}`
+          {matchCount() > 0
+            ? `${currentIndex()} / ${matchCount()}`
             : t().fileExplorer.noResults}
         </span>
       </Show>

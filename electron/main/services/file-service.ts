@@ -573,14 +573,25 @@ export function watchDirectory(directory: string): void {
       "**/__pycache__/**",
       "**/coverage/**",
       "**/.cache/**",
+      "**/target/**",
+      "**/.turbo/**",
+      "**/.parcel-cache/**",
+      "**/.webpack/**",
+      "**/venv/**",
+      "**/.venv/**",
     ],
     persistent: true,
     ignoreInitial: true,
-    depth: 20,
+    depth: 5, // shallow watch — deeper changes rarely need real-time updates
+    ignorePermissionErrors: true, // suppress EACCES/EPERM on Windows
     awaitWriteFinish: {
-      stabilityThreshold: 300,
-      pollInterval: 100,
+      stabilityThreshold: 500,
+      pollInterval: 200,
     },
+  });
+
+  watcher.on("error", () => {
+    // Silently ignore watcher errors (permission denied, etc.)
   });
 
   watcher

@@ -41,6 +41,7 @@ export interface GatewayNotificationHandlers {
   onEngineStatusChanged?: (engineType: EngineType, status: string, error?: string) => void;
   onMessageQueued?: (sessionId: string, messageId: string, queuePosition: number) => void;
   onMessageQueuedConsumed?: (sessionId: string, messageId: string) => void;
+  onFileChanged?: (event: { type: string; path: string; directory: string }) => void;
   onConnected?: () => void;
   onDisconnected?: (reason: string) => void;
 }
@@ -174,6 +175,10 @@ class GatewayAPI {
 
     this.bind("message.queued.consumed", (data) => {
       this.handlers.onMessageQueuedConsumed?.(data.sessionId, data.messageId);
+    });
+
+    this.bind("file.changed", (event) => {
+      this.handlers.onFileChanged?.(event);
     });
   }
 
@@ -345,6 +350,14 @@ class GatewayAPI {
 
   getGitDiff(directory: string, path: string): Promise<string> {
     return gatewayClient.getGitDiff(directory, path);
+  }
+
+  watchDirectory(directory: string): Promise<void> {
+    return gatewayClient.watchDirectory(directory);
+  }
+
+  unwatchDirectory(directory: string): Promise<void> {
+    return gatewayClient.unwatchDirectory(directory);
   }
 }
 

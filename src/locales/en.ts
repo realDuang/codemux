@@ -966,7 +966,7 @@ export const en: LocaleDict = {
     allFiles: "Files",
     changes: "Changes",
     changesCount: "{count} changes",
-    refresh: "Refresh",
+    refresh: "Refresh git status",
     close: "Close",
     content: "Content",
     diff: "Diff",

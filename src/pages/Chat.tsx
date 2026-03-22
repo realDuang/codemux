@@ -37,6 +37,7 @@ import { TodoDock } from "../components/TodoDock";
 import { FileExplorer } from "../components/FileExplorer";
 import { ResizeHandle } from "../components/ResizeHandle";
 import { fileStore, togglePanel, setPanelWidth, closePanel } from "../stores/file";
+import { handleFileChanged } from "../stores/file";
 
 import { configStore, setConfigStore, getSelectedModelForEngine, restoreEngineModelSelections, isEngineEnabled, restoreEnabledEngines, getDefaultEngineType, restoreDefaultEngine } from "../stores/config";
 
@@ -524,6 +525,7 @@ export default function Chat() {
             setMessageStore("queued", sessionId, (draft) => draft.slice(1));
           }
         },
+        onFileChanged: handleFileChanged,
       };
 
       // If gateway is already initialized (remount after navigation),

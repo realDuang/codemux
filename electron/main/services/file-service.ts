@@ -2,6 +2,7 @@ import { readdir, readFile as fsReadFile, stat } from "node:fs/promises";
 import { realpathSync, existsSync } from "node:fs";
 import { join, sep, extname, basename } from "node:path";
 import { execFile } from "node:child_process";
+import { watch, type FSWatcher } from "chokidar";
 import type {
   FileExplorerNode,
   FileExplorerContent,
@@ -535,4 +536,82 @@ export async function getGitDiff(
   }
 
   return "";
+}
+
+// ---------------------------------------------------------------------------
+// File Watcher
+// ---------------------------------------------------------------------------
+
+const watchers = new Map<string, FSWatcher>();
+
+export type FileChangeEvent = {
+  type: "add" | "change" | "unlink" | "addDir" | "unlinkDir";
+  path: string;
+  directory: string;
+};
+
+export type FileChangeCallback = (event: FileChangeEvent) => void;
+
+let changeCallback: FileChangeCallback | null = null;
+
+export function onFileChange(callback: FileChangeCallback): void {
+  changeCallback = callback;
+}
+
+export function watchDirectory(directory: string): void {
+  if (watchers.has(directory)) return;
+
+  const watcher = watch(directory, {
+    ignored: [
+      /(^|[\/\\])\../, // hidden files/dirs
+      "**/node_modules/**",
+      "**/.git/**",
+      "**/dist/**",
+      "**/build/**",
+      "**/out/**",
+      "**/.next/**",
+      "**/__pycache__/**",
+      "**/coverage/**",
+      "**/.cache/**",
+    ],
+    persistent: true,
+    ignoreInitial: true,
+    depth: 20,
+    awaitWriteFinish: {
+      stabilityThreshold: 300,
+      pollInterval: 100,
+    },
+  });
+
+  watcher
+    .on("add", (path) => changeCallback?.({ type: "add", path, directory }))
+    .on("change", (path) =>
+      changeCallback?.({ type: "change", path, directory }),
+    )
+    .on("unlink", (path) =>
+      changeCallback?.({ type: "unlink", path, directory }),
+    )
+    .on("addDir", (path) =>
+      changeCallback?.({ type: "addDir", path, directory }),
+    )
+    .on("unlinkDir", (path) =>
+      changeCallback?.({ type: "unlinkDir", path, directory }),
+    );
+
+  watchers.set(directory, watcher);
+}
+
+export function unwatchDirectory(directory: string): void {
+  const watcher = watchers.get(directory);
+  if (watcher) {
+    watcher.close();
+    watchers.delete(directory);
+  }
+}
+
+export function unwatchAll(): void {
+  for (const [, watcher] of watchers) {
+    watcher.close();
+  }
+  watchers.clear();
 }

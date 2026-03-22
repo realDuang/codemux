@@ -60,6 +60,7 @@ export interface GatewayClientEvents {
   "message.queued": (data: { sessionId: string; messageId: string; queuePosition: number }) => void;
   "message.queued.consumed": (data: { sessionId: string; messageId: string }) => void;
   "session.import.progress": (data: SessionImportProgress) => void;
+  "file.changed": (event: { type: string; path: string; directory: string }) => void;
 }
 
 // --- Pending request tracking ---
@@ -516,6 +517,14 @@ export class GatewayClient {
 
   getGitDiff(directory: string, path: string): Promise<string> {
     return this.request(GatewayRequestType.FILE_GIT_DIFF, { directory, path });
+  }
+
+  watchDirectory(directory: string): Promise<void> {
+    return this.request(GatewayRequestType.FILE_WATCH, { directory });
+  }
+
+  unwatchDirectory(directory: string): Promise<void> {
+    return this.request(GatewayRequestType.FILE_UNWATCH, { directory });
   }
 
   // --- Log forwarding (fire-and-forget, no response expected) ---

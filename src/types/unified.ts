@@ -539,6 +539,8 @@ export const GatewayRequestType = {
   FILE_READ: "file.read",
   FILE_GIT_STATUS: "file.gitStatus",
   FILE_GIT_DIFF: "file.gitDiff",
+  FILE_WATCH: "file.watch",
+  FILE_UNWATCH: "file.unwatch",
 } as const;
 
 // --- Notification type constants ---
@@ -557,6 +559,7 @@ export const GatewayNotificationType = {
   MESSAGE_QUEUED: "message.queued",
   MESSAGE_QUEUED_CONSUMED: "message.queued.consumed",
   SESSION_IMPORT_PROGRESS: "session.import.progress",
+  FILE_CHANGED: "file.changed",
 } as const;
 
 // --- Request / Response payload types ---

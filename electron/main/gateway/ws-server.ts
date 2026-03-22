@@ -9,6 +9,10 @@ import { randomUUID } from "crypto";
 import type { Server } from "http";
 import { EngineManager } from "./engine-manager";
 import * as fileService from "../services/file-service";
+import {
+  onFileChange,
+  unwatchAll,
+} from "../services/file-service";
 import { gatewayLog } from "../services/logger";
 import log from "../services/logger";
 import { conversationStore } from "../services/conversation-store";
@@ -52,6 +56,13 @@ export class GatewayServer {
     this.engineManager = engineManager;
     this.authValidator = options?.authValidator;
     this.subscribeToEngineEvents();
+
+    onFileChange((event) => {
+      this.broadcast({
+        type: GatewayNotificationType.FILE_CHANGED,
+        payload: event,
+      });
+    });
   }
 
   // --- Server Lifecycle ---
@@ -91,6 +102,7 @@ export class GatewayServer {
   }
 
   stop(): void {
+    unwatchAll();
     if (this.pingInterval) {
       clearInterval(this.pingInterval);
       this.pingInterval = null;
@@ -365,6 +377,18 @@ export class GatewayServer {
       case GatewayRequestType.FILE_GIT_DIFF: {
         const { directory, path: filePath } = p as { directory: string; path: string };
         return fileService.getGitDiff(directory, filePath);
+      }
+
+      case GatewayRequestType.FILE_WATCH: {
+        const { directory } = p as { directory: string };
+        fileService.watchDirectory(directory);
+        return { success: true };
+      }
+
+      case GatewayRequestType.FILE_UNWATCH: {
+        const { directory } = p as { directory: string };
+        fileService.unwatchDirectory(directory);
+        return { success: true };
       }
 
       default:

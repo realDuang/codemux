@@ -35,7 +35,8 @@ import { InputAreaQuestion } from "../components/InputAreaQuestion";
 import { InputAreaPermission } from "../components/InputAreaPermission";
 import { TodoDock } from "../components/TodoDock";
 import { FileExplorer } from "../components/FileExplorer";
-import { fileStore, togglePanel } from "../stores/file";
+import { ResizeHandle } from "../components/ResizeHandle";
+import { fileStore, togglePanel, setPanelWidth, closePanel } from "../stores/file";
 
 import { configStore, setConfigStore, getSelectedModelForEngine, restoreEngineModelSelections, isEngineEnabled, restoreEnabledEngines, getDefaultEngineType, restoreDefaultEngine } from "../stores/config";
 
@@ -1819,13 +1820,20 @@ export default function Chat() {
       {/* File Explorer Right Panel */}
       <Show when={fileStore.panelOpen}>
         <div
-          class="hidden md:flex flex-col overflow-hidden flex-shrink-0"
-          classList={{
-            "transition-[width] duration-[240ms] ease-[cubic-bezier(0.22,1,0.36,1)] will-change-[width] motion-reduce:transition-none": true,
-          }}
+          class="relative hidden md:flex flex-col overflow-hidden flex-shrink-0"
           style={{ width: `${fileStore.panelWidth}px` }}
           aria-label="File explorer"
         >
+          <ResizeHandle
+            direction="horizontal"
+            edge="start"
+            size={fileStore.panelWidth}
+            min={200}
+            max={600}
+            collapseThreshold={160}
+            onResize={setPanelWidth}
+            onCollapse={closePanel}
+          />
           <FileExplorer />
         </div>
       </Show>

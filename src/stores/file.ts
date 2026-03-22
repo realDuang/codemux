@@ -205,11 +205,18 @@ export async function loadDirectory(
   const promise = gateway
     .listFiles(fullPath)
     .then((children) => {
+      // The service returns `path: entry.name` (just the filename).
+      // Prepend the parent relativePath so nested lookups work correctly.
+      const adjustedChildren = children.map((node) => ({
+        ...node,
+        path:
+          relativePath === "." ? node.name : `${relativePath}/${node.name}`,
+      }));
       setFileStore("directories", relativePath, {
         expanded: true,
         loaded: true,
         loading: false,
-        children,
+        children: adjustedChildren,
       });
     })
     .catch((err: unknown) => {

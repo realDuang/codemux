@@ -7,6 +7,8 @@ import {
   onMount,
   onCleanup,
   batch,
+  lazy,
+  Suspense,
 } from "solid-js";
 import { Auth } from "../lib/auth";
 import { useNavigate } from "@solidjs/router";
@@ -34,7 +36,11 @@ import { getSetting, saveSetting } from "../lib/settings";
 import { InputAreaQuestion } from "../components/InputAreaQuestion";
 import { InputAreaPermission } from "../components/InputAreaPermission";
 import { TodoDock } from "../components/TodoDock";
-import { FileExplorer } from "../components/FileExplorer";
+const FileExplorer = lazy(() =>
+  import("../components/FileExplorer").then((m) => ({
+    default: m.FileExplorer,
+  })),
+);
 import { ResizeHandle } from "../components/ResizeHandle";
 import { fileStore, togglePanel, setPanelWidth, closePanel } from "../stores/file";
 import { handleFileChanged, refreshGitStatus } from "../stores/file";
@@ -1862,7 +1868,9 @@ export default function Chat() {
                 onResize={setPanelWidth}
                 onCollapse={closePanel}
               />
-              <FileExplorer />
+              <Suspense>
+                <FileExplorer />
+              </Suspense>
             </div>
           );
         })()}

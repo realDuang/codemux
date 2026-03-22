@@ -263,51 +263,44 @@ export async function listDirectory(directory: string): Promise<FileNode[]> {
   // Collect sibling names for contextual rules (bin alongside obj)
   const siblingNames = new Set(entries.map((e) => e.name));
 
-  const nodes: FileNode[] = [];
+  // Build nodes with parallel stat() calls
+  const nodePromises = entries
+    .filter((entry) => !SKIP_ENTRIES.has(entry.name))
+    .map(async (entry) => {
+      const name = entry.name;
+      const isDir = entry.isDirectory();
+      const type: "file" | "directory" = isDir ? "directory" : "file";
+      const absolutePath = join(directory, name);
 
-  for (const entry of entries) {
-    const name = entry.name;
+      let ignored = false;
 
-    if (SKIP_ENTRIES.has(name)) continue;
+      if (isDir) {
+        if (DIMMED_DIRS.has(name)) {
+          ignored = true;
+        } else if (name === "bin" && siblingNames.has("obj")) {
+          ignored = true;
+        }
+      }
 
-    const isDir = entry.isDirectory();
-    const type = isDir ? "directory" : "file";
-    const absolutePath = join(directory, name);
-
-    let ignored = false;
-
-    if (isDir) {
-      if (DIMMED_DIRS.has(name)) {
-        ignored = true;
-      } else if (name === "bin" && siblingNames.has("obj")) {
+      // Hidden files/dirs (starting with .)
+      if (name.startsWith(".") && !NON_IGNORED_DOTFILES.has(name)) {
         ignored = true;
       }
-    }
 
-    // Hidden files/dirs (starting with .)
-    if (name.startsWith(".") && !NON_IGNORED_DOTFILES.has(name)) {
-      ignored = true;
-    }
-
-    let size: number | undefined;
-    if (!isDir) {
-      try {
-        const fileStat = await stat(absolutePath);
-        size = fileStat.size;
-      } catch {
-        // Ignore stat errors
+      let size: number | undefined;
+      if (!isDir) {
+        try {
+          const fileStat = await stat(absolutePath);
+          size = fileStat.size;
+        } catch {
+          // Ignore stat errors
+        }
       }
-    }
 
-    nodes.push({
-      name,
-      path: name,
-      absolutePath,
-      type,
-      ignored,
-      size,
+      return { name, path: name, absolutePath, type, ignored, size } as FileNode;
     });
-  }
+
+  const nodes = await Promise.all(nodePromises);
 
   // Sort: directories first, then alphabetically case-insensitive
   nodes.sort((a, b) => {
@@ -441,26 +434,32 @@ export async function getGitStatus(
     }
   }
 
-  // 2. Untracked files
+  // 2. Untracked files (count lines in parallel)
   const untrackedOutput = await execGit(directory, [
     "ls-files",
     "--others",
     "--exclude-standard",
   ]);
   if (untrackedOutput) {
-    for (const line of untrackedOutput.split("\n")) {
-      const filePath = line.trim();
-      if (!filePath) continue;
+    const untrackedPaths = untrackedOutput
+      .split("\n")
+      .map((l) => l.trim())
+      .filter(Boolean);
 
-      // Count lines for untracked files
-      let lineCount: number | undefined;
-      try {
-        const content = await fsReadFile(join(directory, filePath), "utf-8");
-        lineCount = content.split("\n").length;
-      } catch {
-        // Ignore read errors
-      }
+    const results = await Promise.all(
+      untrackedPaths.map(async (filePath) => {
+        let lineCount: number | undefined;
+        try {
+          const content = await fsReadFile(join(directory, filePath), "utf-8");
+          lineCount = content.split("\n").length;
+        } catch {
+          // Ignore read errors
+        }
+        return { filePath, lineCount };
+      }),
+    );
 
+    for (const { filePath, lineCount } of results) {
       statusMap.set(filePath, {
         path: filePath,
         status: "untracked",

@@ -185,7 +185,7 @@ export class CopilotSdkAdapter extends EngineAdapter {
       try {
         const unsub = this.sessionUnsubscribers.get(sessionId);
         if (unsub) unsub();
-        await session.destroy();
+        await session.disconnect();
       } catch (err) {
         copilotLog.warn(`Error destroying session ${sessionId}:`, err);
       }
@@ -326,7 +326,7 @@ export class CopilotSdkAdapter extends EngineAdapter {
       if (unsub) unsub();
       this.sessionUnsubscribers.delete(sessionId);
       try {
-        await activeSession.destroy();
+        await activeSession.disconnect();
       } catch (err) {}
       this.activeSessions.delete(sessionId);
     }
@@ -596,7 +596,7 @@ export class CopilotSdkAdapter extends EngineAdapter {
       throw err;
     } finally {
       if (session) {
-        try { await session.destroy(); } catch { /* ignore */ }
+        try { await session.disconnect(); } catch { /* ignore */ }
       }
     }
   }

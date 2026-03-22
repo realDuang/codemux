@@ -73,6 +73,7 @@ export interface LocaleDict {
     noModeError: string;
     noModelError: string;
     queued: string;
+    disconnected: string;
   };
 
   // Settings page
@@ -571,6 +572,7 @@ export const en: LocaleDict = {
     noModeError: "No mode selected. Please select a mode before sending.",
     noModelError: "No model configured. Please set a model in Settings > Engines.",
     queued: "Queued",
+    disconnected: "Disconnected",
   },
 
   // Settings page

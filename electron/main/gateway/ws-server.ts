@@ -361,7 +361,7 @@ export class GatewayServer {
       // File Explorer
       case GatewayRequestType.FILE_LIST: {
         const { directory } = p as { directory: string };
-        return fileService.listDirectory(directory);
+        return fileService.listDirectory(directory, directory);
       }
 
       case GatewayRequestType.FILE_READ: {

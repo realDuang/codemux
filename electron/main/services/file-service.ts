@@ -258,7 +258,10 @@ const STAT_BATCH_SIZE = 50;
 
 // ─── Public API ──────────────────────────────────────────────────────────────
 
-export async function listDirectory(directory: string): Promise<FileNode[]> {
+export async function listDirectory(directory: string, workspaceDir?: string): Promise<FileNode[]> {
+  if (workspaceDir && !isPathWithinBoundary(directory, workspaceDir)) {
+    return [];
+  }
   if (!existsSync(directory)) return [];
 
   let entries;
@@ -394,9 +397,9 @@ export async function readFile(
 export async function getGitStatus(
   directory: string,
 ): Promise<GitFileStatus[]> {
-  // Quick check: is this even a git repo?
-  const gitDir = join(directory, ".git");
-  if (!existsSync(gitDir)) return [];
+  // Quick check: is this even a git repo? (rev-parse works in subdirectories too)
+  const isRepo = await execGit(directory, ["rev-parse", "--is-inside-work-tree"]);
+  if (!isRepo || isRepo.trim() !== "true") return [];
 
   const statusMap = new Map<string, GitFileStatus>();
 

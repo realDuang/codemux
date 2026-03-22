@@ -222,7 +222,7 @@ describe("file-service", () => {
   });
 
   describe("getGitStatus", () => {
-    const REPO_DIR = join(__dirname, "..", "..", "..", "..");
+    const REPO_DIR = process.cwd();
 
     it("returns git status for the codemux repo", async () => {
       const statuses = await getGitStatus(REPO_DIR);
@@ -244,7 +244,7 @@ describe("file-service", () => {
   });
 
   describe("getGitDiff", () => {
-    const REPO_DIR = join(__dirname, "..", "..", "..", "..");
+    const REPO_DIR = process.cwd();
 
     it("returns a string (may be empty if file unchanged)", async () => {
       const diff = await getGitDiff(REPO_DIR, "package.json");

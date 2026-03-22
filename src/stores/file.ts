@@ -133,16 +133,19 @@ const inflight = new Map<string, Promise<any>>();
 // ---------------------------------------------------------------------------
 
 export function togglePanel(): void {
-  setFileStore("panelOpen", (v) => !v);
-  saveSetting("fileExplorerPanelOpen", fileStore.panelOpen);
+  const next = !fileStore.panelOpen;
+  setFileStore("panelOpen", next);
+  saveSetting("fileExplorerPanelOpen", next);
 }
 
 export function openPanel(): void {
   setFileStore("panelOpen", true);
+  saveSetting("fileExplorerPanelOpen", true);
 }
 
 export function closePanel(): void {
   setFileStore("panelOpen", false);
+  saveSetting("fileExplorerPanelOpen", false);
 }
 
 export function setPanelWidth(width: number): void {
@@ -186,6 +189,9 @@ export async function setRootDirectory(
   // Clear in-flight request deduplication
   inflight.clear();
 
+  // Reset git status guard so a new directory can fetch status
+  gitStatusInFlight = false;
+
   // Reset store state
   batch(() => {
     setFileStore("rootDirectory", directory);
@@ -208,6 +214,7 @@ export async function setRootDirectory(
 export async function loadDirectory(
   rootDir: string,
   relativePath: string,
+  forceExpand = true,
 ): Promise<void> {
   const key = `listFiles:${rootDir}:${relativePath}`;
 
@@ -240,7 +247,8 @@ export async function loadDirectory(
           relativePath === "." ? node.name : `${relativePath}/${node.name}`,
       }));
       batch(() => {
-        setFileStore("directories", relativePath, "expanded", true);
+        const shouldExpand = forceExpand || (fileStore.directories[relativePath]?.expanded ?? false);
+        setFileStore("directories", relativePath, "expanded", shouldExpand);
         setFileStore("directories", relativePath, "loaded", true);
         setFileStore("directories", relativePath, "loading", false);
         setFileStore(
@@ -288,7 +296,7 @@ export async function toggleDirectory(
   }
 
   // First expand — lazy load
-  await loadDirectory(rootDir, relativePath);
+  await loadDirectory(rootDir, relativePath, true);
 }
 
 // ---------------------------------------------------------------------------
@@ -606,7 +614,7 @@ function flushFileChanges(dir: string): void {
   // Reload all directories that changed during the debounce window
   for (const dirKey of dirs) {
     if (fileStore.directories[dirKey]?.loaded) {
-      loadDirectory(dir, dirKey);
+      loadDirectory(dir, dirKey, false);
     }
   }
 

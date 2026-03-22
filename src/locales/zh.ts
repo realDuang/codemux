@@ -74,6 +74,7 @@ export const zh: LocaleDict = {
     noModeError: "未选择模式，请先选择模式再发送。",
     noModelError: "未配置模型，请在设置 > 引擎中设置模型。",
     queued: "排队中",
+    disconnected: "已断开",
   },
 
   // Settings page

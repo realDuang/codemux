@@ -19,7 +19,7 @@ import {
 } from "../../../electron/main/services/file-service";
 import { join } from "node:path";
 
-const projectDir = join(__dirname, "..", "..", "..");
+const projectDir = process.cwd();
 
 describe("Project Switch Performance", () => {
   bench("listDirectory + getGitStatus (simulates panel open)", async () => {

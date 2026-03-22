@@ -278,13 +278,6 @@ export default function Chat() {
     return hasTokens ? { input, output, cost: hasCost ? cost : undefined, costUnit } : null;
   });
 
-  const currentDirectory = createMemo(() => {
-    const sid = sessionStore.current;
-    if (!sid) return null;
-    const session = sessionStore.list.find((s) => s.id === sid);
-    return session?.directory || null;
-  });
-
   // Keep currentAgent in sync: whenever the engine type changes or engine
   // capabilities are refreshed (e.g. modes populated after createSession),
   // reset to the first available mode if the current one doesn't belong to
@@ -1568,7 +1561,7 @@ export default function Chat() {
           <Show when={!wsConnected()}>
             <div class="flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-red-50 dark:bg-red-900/20">
               <span class="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" />
-              <span class="text-[10px] font-medium text-red-600 dark:text-red-400">Disconnected</span>
+              <span class="text-[10px] font-medium text-red-600 dark:text-red-400">{t().chat.disconnected}</span>
             </div>
           </Show>
         </div>

@@ -135,10 +135,9 @@ test.describe("File Explorer", () => {
 
       // A preview panel or tab should appear
       // File preview shows content or "Select a file to preview" placeholder disappears
-      const previewContent = panel.locator("pre, code, [class*='preview']");
-      const hasPreview = await previewContent.first().isVisible({ timeout: 5_000 }).catch(() => false);
-      // Preview may or may not render depending on file type — just verify no crash
-      expect(hasPreview || true).toBeTruthy();
+      // After clicking a file, verify a preview container appeared
+      const previewContainer = panel.locator("[class*='preview'], pre, code");
+      await expect(previewContainer.first()).toBeVisible({ timeout: 5_000 });
     }
   });
 

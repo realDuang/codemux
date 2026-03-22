@@ -2,7 +2,7 @@ import { createSignal, createResource, For, Show, onMount, type JSX } from "soli
 import { useNavigate } from "@solidjs/router";
 import { Auth, type DeviceInfo } from "../lib/auth";
 import { useI18n, formatMessage } from "../lib/i18n";
-import { isElectron, isWindows } from "../lib/platform";
+import { isElectron, isWindows, isMacOS } from "../lib/platform";
 
 // ============================================================================
 // Helper Functions
@@ -224,21 +224,30 @@ export default function Devices() {
   };
 
   return (
-    <div class="flex flex-col h-screen bg-gray-50/50 dark:bg-slate-950 font-sans text-gray-900 dark:text-gray-100 electron-safe-top">
-      {/* Header */}
-      <header class={`sticky top-0 z-10 backdrop-blur-md bg-white/70 dark:bg-slate-900/70 border-b border-gray-200 dark:border-slate-800 px-4 h-14 flex items-center justify-between electron-drag-region ${isWindows() && isElectron() ? 'electron-titlebar-pad-right' : ''}`}>
-        <div class="flex items-center gap-2 electron-no-drag">
+    <div class="flex flex-col h-screen bg-gray-50/50 dark:bg-slate-950 font-sans text-gray-900 dark:text-gray-100">
+      {/* Unified Titlebar */}
+      <div
+        class={`w-full flex-shrink-0 flex items-center px-2 border-b border-gray-200 dark:border-zinc-800 bg-gray-50 dark:bg-slate-950 electron-drag-region
+          ${isMacOS() && isElectron() ? 'pl-[72px]' : ''}
+          ${isWindows() && isElectron() ? 'pr-[140px]' : ''}`}
+        style={{ height: "var(--electron-title-bar-height, 40px)", "min-height": "var(--electron-title-bar-height, 40px)" }}
+      >
+        <div class="flex items-center gap-2 electron-no-drag flex-shrink-0">
+          <img src="/assets/logo.png" alt="CodeMux" class="w-5 h-5 rounded" />
+          <span class="text-[13px] font-semibold text-gray-700 dark:text-gray-300 hidden sm:inline">CodeMux</span>
+          <span class="text-gray-300 dark:text-gray-600 hidden sm:inline">|</span>
           <button
             onClick={() => navigate("/")}
-            class="p-2 -ml-2 rounded-lg hover:bg-gray-100 dark:hover:bg-slate-800 text-gray-600 dark:text-gray-400 transition-colors"
+            class="p-1 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-200 dark:hover:bg-zinc-700 rounded transition-colors"
           >
-            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <path d="m15 18-6-6 6-6"/>
             </svg>
           </button>
-          <h1 class="font-semibold text-lg">{t().devices.title}</h1>
+          <h1 class="text-[13px] font-medium text-gray-600 dark:text-gray-400">{t().devices.title}</h1>
         </div>
-      </header>
+        <div class="flex-1" />
+      </div>
 
       {/* Main Content */}
       <main class="flex-1 overflow-y-auto p-4 md:p-6">

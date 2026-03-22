@@ -5,7 +5,7 @@ import { ThemeSwitcher } from "../components/ThemeSwitcher";
 import ImportHistoryModal from "../components/ImportHistoryModal";
 import { useI18n } from "../lib/i18n";
 import { useAuthGuard } from "../lib/useAuthGuard";
-import { isElectron, isWindows } from "../lib/platform";
+import { isElectron, isWindows, isMacOS } from "../lib/platform";
 import { Auth } from "../lib/auth";
 import { configStore, saveEngineModelSelection, isEngineEnabled, setEngineEnabled } from "../stores/config";
 import { sessionStore, setSessionStore } from "../stores/session";
@@ -193,32 +193,32 @@ export default function Settings() {
   };
 
   return (
-    <div class="flex h-screen bg-gray-50 dark:bg-slate-900 font-sans text-gray-900 dark:text-gray-100 electron-safe-top">
-      <div class="flex-1 flex flex-col overflow-hidden max-w-4xl mx-auto w-full">
-        {/* Header */}
-        <header class={`flex items-center gap-4 px-6 py-6 electron-drag-region ${isWindows() && isElectron() ? 'electron-titlebar-pad-right' : ''}`}>
+    <div class="flex flex-col h-screen bg-gray-50 dark:bg-slate-900 font-sans text-gray-900 dark:text-gray-100">
+      {/* Unified Titlebar */}
+      <div
+        class={`w-full flex-shrink-0 flex items-center px-2 border-b border-gray-200 dark:border-zinc-800 bg-gray-50 dark:bg-slate-900 electron-drag-region
+          ${isMacOS() && isElectron() ? 'pl-[72px]' : ''}
+          ${isWindows() && isElectron() ? 'pr-[140px]' : ''}`}
+        style={{ height: "var(--electron-title-bar-height, 40px)", "min-height": "var(--electron-title-bar-height, 40px)" }}
+      >
+        <div class="flex items-center gap-2 electron-no-drag flex-shrink-0">
+          <img src="/assets/logo.png" alt="CodeMux" class="w-5 h-5 rounded" />
+          <span class="text-[13px] font-semibold text-gray-700 dark:text-gray-300 hidden sm:inline">CodeMux</span>
+          <span class="text-gray-300 dark:text-gray-600 hidden sm:inline">|</span>
           <button
             onClick={() => navigate("/chat")}
-            class="p-2 -ml-2 text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-slate-800 rounded-lg transition-colors electron-no-drag"
+            class="p-1 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-200 dark:hover:bg-zinc-700 rounded transition-colors"
           >
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              width="20"
-              height="20"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-            >
+            <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <path d="m15 18-6-6 6-6" />
             </svg>
           </button>
-          <h1 class="text-2xl font-bold text-gray-900 dark:text-white">
-            {t().settings.title}
-          </h1>
-        </header>
+          <h1 class="text-[13px] font-medium text-gray-600 dark:text-gray-400">{t().settings.title}</h1>
+        </div>
+        <div class="flex-1" />
+      </div>
+
+      <div class="flex-1 flex flex-col overflow-hidden max-w-4xl mx-auto w-full">
 
         {/* Main Content */}
         <main class="flex-1 overflow-y-auto px-6 pb-8">

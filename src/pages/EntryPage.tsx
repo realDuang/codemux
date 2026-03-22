@@ -6,7 +6,7 @@ import { LanguageSwitcher } from "../components/LanguageSwitcher";
 import { FeishuConfigModal } from "../components/FeishuConfigModal";
 import { ChannelConfigModal } from "../components/ChannelConfigModal";
 import { logger } from "../lib/logger";
-import { isElectron } from "../lib/platform";
+import { isElectron, isWindows, isMacOS } from "../lib/platform";
 import { systemAPI, tunnelAPI, channelAPI, type ChannelInfo, type TunnelInfo, type TunnelConfig } from "../lib/electron-api";
 import { getSetting, saveSetting } from "../lib/settings";
 
@@ -825,13 +825,23 @@ export default function EntryPage() {
   // =========================================================================
 
   return (
-    <div class="flex flex-col h-screen overflow-hidden bg-gray-50/50 dark:bg-slate-950 font-sans text-gray-900 dark:text-gray-100 electron-safe-top">
-      {/* Language switcher for remote login page (non-host mode) */}
-      <Show when={!isHost()}>
-        <div class="absolute top-4 right-4 z-20" style={{ top: "calc(1rem + var(--electron-title-bar-height, 0px))" }}>
+    <div class="flex flex-col h-screen overflow-hidden bg-gray-50/50 dark:bg-slate-950 font-sans text-gray-900 dark:text-gray-100">
+      {/* Unified Titlebar */}
+      <div
+        class={`w-full flex-shrink-0 flex items-center px-2 border-b border-gray-200 dark:border-zinc-800 bg-gray-50/50 dark:bg-slate-950 electron-drag-region
+          ${isMacOS() && isElectron() ? 'pl-[72px]' : ''}
+          ${isWindows() && isElectron() ? 'pr-[140px]' : ''}`}
+        style={{ height: "var(--electron-title-bar-height, 40px)", "min-height": "var(--electron-title-bar-height, 40px)" }}
+      >
+        <div class="flex items-center gap-2 electron-no-drag flex-shrink-0">
+          <img src="/assets/logo.png" alt="CodeMux" class="w-5 h-5 rounded" />
+          <span class="text-[13px] font-semibold text-gray-700 dark:text-gray-300 hidden sm:inline">CodeMux</span>
+        </div>
+        <div class="flex-1" />
+        <div class="electron-no-drag">
           <LanguageSwitcher />
         </div>
-      </Show>
+      </div>
 
       {/* Loading state */}
       <Show when={checking()}>
@@ -987,18 +997,6 @@ export default function EntryPage() {
       {/* Host mode (Electron): Show remote access config + enter chat button */}
       <Show when={!checking() && isHost()}>
         <div class="flex-1 overflow-y-auto">
-          {/* Header */}
-          <header class="sticky top-0 z-10 backdrop-blur-md bg-white/70 dark:bg-slate-900/70 border-b border-gray-200 dark:border-slate-800 px-4 h-14 flex items-center justify-between">
-            <div class="flex items-center gap-2">
-              <h1 class="font-semibold text-lg">{t().remote.title}</h1>
-            </div>
-            <div class="flex items-center gap-3">
-              <LanguageSwitcher />
-              <div class="text-xs font-medium px-2 py-1 rounded bg-gray-100 dark:bg-slate-800 text-gray-500 dark:text-gray-400">
-                CodeMux
-              </div>
-            </div>
-          </header>
 
           {/* Main Content */}
           <main class="p-4 md:p-6">

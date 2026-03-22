@@ -96,8 +96,9 @@ body {
   -moz-osx-font-smoothing: grayscale;
 }
 
-/* Electron macOS title bar safe area */
-.electron-macos .electron-safe-top {
+/* Electron title bar safe area — macOS + Windows */
+.electron-macos .electron-safe-top,
+.electron-windows .electron-safe-top {
   padding-top: var(--electron-title-bar-height);
 }
 

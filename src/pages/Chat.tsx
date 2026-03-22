@@ -12,7 +12,7 @@ import { Auth } from "../lib/auth";
 import { useNavigate } from "@solidjs/router";
 import { gateway } from "../lib/gateway-api";
 import { logger } from "../lib/logger";
-import { isElectron, isWindows } from "../lib/platform";
+import { isElectron, isWindows, isMacOS } from "../lib/platform";
 import { sessionStore, setSessionStore, type SessionInfo, setSendingFor } from "../stores/session";
 import {
   messageStore,
@@ -1469,7 +1469,17 @@ export default function Chat() {
   });
 
   return (
-    <div class="flex h-screen bg-gray-50/50 dark:bg-zinc-950 font-sans text-gray-900 dark:text-gray-100 overflow-hidden relative">
+    <div class="flex flex-col h-screen bg-gray-50/50 dark:bg-zinc-950 font-sans text-gray-900 dark:text-gray-100 overflow-hidden relative">
+
+      {/* Windows/macOS titlebar drag region — spans full width */}
+      <Show when={isElectron() && (isWindows() || isMacOS())}>
+        <div
+          class={`w-full flex-shrink-0 electron-drag-region ${isWindows() ? 'electron-titlebar-pad-right' : ''}`}
+          style={{ height: "var(--electron-title-bar-height, 0px)" }}
+        />
+      </Show>
+
+      <div class="flex flex-1 overflow-hidden">
 
       {/* Mobile Sidebar Overlay */}
       <Show when={isMobile() && isSidebarOpen()}>
@@ -1482,7 +1492,7 @@ export default function Chat() {
       {/* Sidebar - Desktop: Static, Mobile: Drawer */}
       <aside
         class={`
-          fixed md:static inset-y-0 left-0 z-30 ${isSidebarCollapsed() ? "md:w-14" : "w-72"} bg-gray-50 dark:bg-zinc-950 border-r border-gray-200 dark:border-zinc-800 transform transition-[width,transform] duration-300 ease-in-out flex flex-col justify-between electron-safe-top
+          fixed md:static inset-y-0 left-0 z-30 ${isSidebarCollapsed() ? "md:w-14" : "w-72"} bg-gray-50 dark:bg-zinc-950 border-r border-gray-200 dark:border-zinc-800 transform transition-[width,transform] duration-300 ease-in-out flex flex-col justify-between
           ${isSidebarOpen() ? "translate-x-0 w-72" : "-translate-x-full md:translate-x-0"}
         `}
       >
@@ -1579,10 +1589,10 @@ export default function Chat() {
 
       {/* Main Chat Area */}
       <div class="flex-1 flex overflow-hidden min-w-0">
-      <div class="flex-1 flex flex-col overflow-hidden min-w-0 bg-white dark:bg-zinc-900 electron-safe-top">
+      <div class="flex-1 flex flex-col overflow-hidden min-w-0 bg-white dark:bg-zinc-900">
 
         {/* Header */}
-        <header class={`flex items-center justify-between px-4 py-3 border-b border-gray-100 dark:border-zinc-800/50 bg-white/80 dark:bg-zinc-900/80 backdrop-blur-xs sticky top-0 z-10 electron-drag-region ${isWindows() && isElectron() ? 'electron-titlebar-pad-right' : ''}`}>
+        <header class="flex items-center justify-between px-4 py-3 border-b border-gray-100 dark:border-zinc-800/50 bg-white/80 dark:bg-zinc-900/80 backdrop-blur-xs sticky top-0 z-10 electron-drag-region">
           <div class="flex items-center gap-3 min-w-0 electron-no-drag">
             <button
               onClick={toggleSidebar}
@@ -1839,6 +1849,7 @@ export default function Chat() {
           <FileExplorer />
         </div>
       </Show>
+      </div>
       </div>
 
       <HideProjectModal

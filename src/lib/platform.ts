@@ -30,6 +30,7 @@ export function isMacOS(): boolean {
  * trafficLightPosition.y = 16, plus button height ~12px, plus some padding
  */
 const MACOS_TITLE_BAR_HEIGHT = 38;
+const WINDOWS_TITLE_BAR_HEIGHT = 40;
 
 /**
  * Initialize Electron title bar safe area
@@ -45,6 +46,10 @@ export function initElectronTitleBar(): void {
     );
     document.documentElement.classList.add('electron-macos');
   } else if (isWindows()) {
+    document.documentElement.style.setProperty(
+      '--electron-title-bar-height',
+      `${WINDOWS_TITLE_BAR_HEIGHT}px`
+    );
     document.documentElement.classList.add('electron-windows');
   }
 }

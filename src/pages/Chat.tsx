@@ -1486,25 +1486,25 @@ export default function Chat() {
         style={{ height: "var(--electron-title-bar-height, 40px)", "min-height": "var(--electron-title-bar-height, 40px)" }}
       >
         {/* Left: Logo + Sidebar toggle */}
-        <div class="flex items-center gap-2 electron-no-drag flex-shrink-0">
+        <div class="flex items-center gap-1.5 electron-no-drag flex-shrink-0">
           <img src="/assets/logo.png" alt="CodeMux" class="w-5 h-5 rounded" />
-          <span class="text-[13px] font-semibold text-gray-700 dark:text-gray-300 hidden sm:inline">CodeMux</span>
+          <span class="text-[13px] font-semibold text-gray-700 dark:text-gray-300 hidden sm:inline mr-0.5">CodeMux</span>
 
           {/* Mobile sidebar toggle */}
           <button
             onClick={toggleSidebar}
-            class="md:hidden p-1 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-200 dark:hover:bg-slate-700 rounded transition-colors"
+            class="md:hidden p-1.5 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-slate-800 rounded-md transition-colors"
           >
-            <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" x2="20" y1="12" y2="12" /><line x1="4" x2="20" y1="6" y2="6" /><line x1="4" x2="20" y1="18" y2="18" /></svg>
+            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" x2="20" y1="12" y2="12" /><line x1="4" x2="20" y1="6" y2="6" /><line x1="4" x2="20" y1="18" y2="18" /></svg>
           </button>
 
           {/* Desktop sidebar collapse/expand toggle */}
           <button
             onClick={toggleSidebarCollapse}
-            class="hidden md:inline-flex p-1 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-200 dark:hover:bg-slate-700 rounded transition-colors"
+            class="hidden md:inline-flex p-1.5 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-slate-800 rounded-md transition-colors"
             title={isSidebarCollapsed() ? t().sidebar.expandSidebar : t().sidebar.collapseSidebar}
           >
-            <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <rect width="18" height="18" x="3" y="3" rx="2" />
               <path d="M9 3v18" />
               {isSidebarCollapsed() ? <path d="m14 9 3 3-3 3" /> : <path d="m14 9-3 3 3 3" />}
@@ -1531,19 +1531,19 @@ export default function Chat() {
           </Show>
         </div>
 
-        {/* Right: File explorer toggle + open folder + connection status */}
-        <div class="flex items-center gap-1 electron-no-drag flex-shrink-0">
+        {/* Right: File explorer toggle + connection status */}
+        <div class="flex items-center gap-1.5 electron-no-drag flex-shrink-0">
           <Show when={sessionStore.current}>
             <button
               onClick={togglePanel}
-              class={`hidden md:flex p-1 rounded transition-colors ${
+              class={`hidden md:inline-flex p-1.5 rounded-md transition-colors ${
                 fileStore.panelOpen
                   ? "bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400"
-                  : "text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-200 dark:hover:bg-slate-700"
+                  : "text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-slate-800"
               }`}
               title={t().fileExplorer.togglePanel}
             >
-              <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                 <path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/>
                 <path d="M14 2v4a2 2 0 0 0 2 2h4"/>
                 <path d="M10 12H6"/><path d="M10 16H6"/><path d="M10 8H6"/>

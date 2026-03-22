@@ -44,11 +44,16 @@ export function createWindow(hidden = false): BrowserWindow {
       : process.platform === "win32"
         ? {
             titleBarStyle: "hidden" as const,
-            titleBarOverlay: {
-              color: "#020617",       // slate-950
-              symbolColor: "#94a3b8", // slate-400
-              height: 40,
-            },
+            titleBarOverlay: (() => {
+              const settings = loadSettings();
+              const theme = settings.theme as string | undefined;
+              const isDark = theme === "dark" || (!theme && true) || (theme === "system" && true);
+              // Determine effective theme — default to dark if unknown/system
+              // Will be corrected by renderer's syncTitleBarOverlay once loaded
+              return isDark
+                ? { color: "#020617", symbolColor: "#94a3b8", height: 40 }  // slate-950
+                : { color: "#f8fafc", symbolColor: "#475569", height: 40 }; // slate-50
+            })(),
           }
         : {}),
     webPreferences: {

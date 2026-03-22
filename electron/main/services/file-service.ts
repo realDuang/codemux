@@ -413,6 +413,10 @@ export async function readFile(
 export async function getGitStatus(
   directory: string,
 ): Promise<GitFileStatus[]> {
+  // Quick check: is this even a git repo?
+  const gitDir = join(directory, ".git");
+  if (!existsSync(gitDir)) return [];
+
   const statusMap = new Map<string, GitFileStatus>();
 
   // 1. Modified files with +/- line counts
@@ -445,7 +449,7 @@ export async function getGitStatus(
     }
   }
 
-  // 2. Untracked files (count lines in parallel)
+  // 2. Untracked files (skip line counting — too expensive for large repos)
   const untrackedOutput = await execGit(directory, [
     "ls-files",
     "--others",
@@ -455,26 +459,13 @@ export async function getGitStatus(
     const untrackedPaths = untrackedOutput
       .split("\n")
       .map((l) => l.trim())
-      .filter(Boolean);
+      .filter(Boolean)
+      .slice(0, 200); // cap at 200 untracked files to avoid flooding
 
-    const results = await Promise.all(
-      untrackedPaths.map(async (filePath) => {
-        let lineCount: number | undefined;
-        try {
-          const content = await fsReadFile(join(directory, filePath), "utf-8");
-          lineCount = content.split("\n").length;
-        } catch {
-          // Ignore read errors
-        }
-        return { filePath, lineCount };
-      }),
-    );
-
-    for (const { filePath, lineCount } of results) {
+    for (const filePath of untrackedPaths) {
       statusMap.set(filePath, {
         path: filePath,
         status: "untracked",
-        added: lineCount,
       });
     }
   }

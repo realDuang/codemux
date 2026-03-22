@@ -498,11 +498,18 @@ export function saveTabScroll(
 // Git
 // ---------------------------------------------------------------------------
 
+let gitStatusInFlight = false;
+
 export async function loadGitStatus(directory: string): Promise<void> {
+  // Skip if already loading (prevent stacking from rapid watcher events)
+  if (gitStatusInFlight) return;
+  gitStatusInFlight = true;
   setFileStore("gitStatusLoading", true);
 
   try {
     const status = await gateway.getGitStatus(directory);
+    // Only apply if still viewing this directory
+    if (fileStore.rootDirectory !== directory) return;
     const byPath: Record<string, GitFileStatus> = {};
     for (const s of status) byPath[s.path] = s;
     batch(() => {
@@ -510,11 +517,14 @@ export async function loadGitStatus(directory: string): Promise<void> {
       setFileStore("gitStatusByPath", reconcile(byPath));
     });
   } catch {
-    batch(() => {
-      setFileStore("gitStatus", reconcile([]));
-      setFileStore("gitStatusByPath", reconcile({}));
-    });
+    if (fileStore.rootDirectory === directory) {
+      batch(() => {
+        setFileStore("gitStatus", reconcile([]));
+        setFileStore("gitStatusByPath", reconcile({}));
+      });
+    }
   } finally {
+    gitStatusInFlight = false;
     setFileStore("gitStatusLoading", false);
   }
 }

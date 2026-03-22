@@ -1868,9 +1868,9 @@ export default function Chat() {
             direction="horizontal"
             edge="start"
             size={fileStore.panelWidth}
-            min={200}
-            max={600}
-            collapseThreshold={160}
+            min={300}
+            max={Math.min(1200, Math.floor(window.innerWidth * 0.6))}
+            collapseThreshold={200}
             onResize={setPanelWidth}
             onCollapse={closePanel}
           />

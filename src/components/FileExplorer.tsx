@@ -102,9 +102,9 @@ export function FileExplorer() {
     }
   };
 
-  // Max tree width based on panel width (leave at least 200px for preview)
+  // Max tree width based on panel width (leave at least 250px for preview)
   const maxTreeWidth = createMemo(() =>
-    Math.max(150, fileStore.panelWidth - 200),
+    Math.max(150, fileStore.panelWidth - 250),
   );
 
   return (

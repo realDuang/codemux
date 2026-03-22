@@ -57,8 +57,8 @@ interface FileStoreState {
 
 export const [fileStore, setFileStore] = createStore<FileStoreState>({
   panelOpen: (getSetting("fileExplorerPanelOpen") as boolean | undefined) ?? false,
-  panelWidth: (getSetting("fileExplorerPanelWidth") as number | undefined) ?? 260,
-  treeWidth: (getSetting("fileExplorerTreeWidth") as number | undefined) ?? 200,
+  panelWidth: (getSetting("fileExplorerPanelWidth") as number | undefined) ?? 520,
+  treeWidth: (getSetting("fileExplorerTreeWidth") as number | undefined) ?? 220,
   activeTab: (getSetting("fileExplorerActiveTab") as "files" | "changes" | undefined) ?? "files",
   rootDirectory: null,
   directories: {},
@@ -143,7 +143,7 @@ export function closePanel(): void {
 }
 
 export function setPanelWidth(width: number): void {
-  const clamped = Math.max(200, Math.min(600, width));
+  const clamped = Math.max(300, Math.min(1200, width));
   setFileStore("panelWidth", clamped);
   saveSetting("fileExplorerPanelWidth", clamped);
 }

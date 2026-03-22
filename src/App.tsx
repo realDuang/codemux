@@ -13,7 +13,7 @@ import EntryPage from "./pages/EntryPage";
 import Chat from "./pages/Chat";
 
 const PageFallback = () => (
-  <div class="fixed inset-0 flex items-center justify-center bg-gray-50 dark:bg-zinc-950">
+  <div class="fixed inset-0 flex items-center justify-center bg-gray-50 dark:bg-slate-950">
     <Spinner size="large" class="text-blue-500" />
   </div>
 );
@@ -75,7 +75,7 @@ function StartupSplash() {
   const { t } = useI18n();
 
   return (
-    <div class="fixed inset-0 z-[9999] flex items-center justify-center bg-gray-50 dark:bg-zinc-950 electron-safe-top overflow-hidden">
+    <div class="fixed inset-0 z-[9999] flex items-center justify-center bg-gray-50 dark:bg-slate-950 electron-safe-top overflow-hidden">
       {/* Animated background glow */}
       <div class="absolute inset-0 flex items-center justify-center pointer-events-none">
         <div

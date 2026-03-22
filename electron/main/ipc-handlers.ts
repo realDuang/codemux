@@ -309,6 +309,25 @@ export function registerIpcHandlers(): void {
   });
 
   // ===========================================================================
+  // Titlebar
+  // ===========================================================================
+
+  ipcMain.handle("update-title-bar-overlay", (_, options: { color: string; symbolColor: string }) => {
+    const win = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0];
+    if (win && process.platform === "win32") {
+      try {
+        win.setTitleBarOverlay({
+          color: options.color,
+          symbolColor: options.symbolColor,
+          height: 40,
+        });
+      } catch {
+        // Ignore errors on older Electron versions
+      }
+    }
+  });
+
+  // ===========================================================================
   // Startup
   // ===========================================================================
 

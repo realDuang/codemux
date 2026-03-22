@@ -19,24 +19,24 @@ export function FileTabs() {
 
   return (
     <Show when={fileStore.openTabs.all.length > 0}>
-      <div class="flex items-center border-b border-gray-200 dark:border-zinc-700 bg-gray-50 dark:bg-zinc-950 overflow-x-auto shrink-0 scrollbar-none">
+      <div class="flex items-center border-b border-gray-200 dark:border-slate-700 bg-gray-50 dark:bg-slate-950 overflow-x-auto shrink-0 scrollbar-none">
         <For each={fileStore.openTabs.all}>
           {(tab) => {
             const isActive = () => fileStore.openTabs.active === tab.path;
 
             return (
               <button
-                class={`group flex items-center gap-1.5 px-3 h-[28px] text-[13px] border-r border-gray-200 dark:border-zinc-700 shrink-0 transition-colors ${
+                class={`group flex items-center gap-1.5 px-3 h-[28px] text-[13px] border-r border-gray-200 dark:border-slate-700 shrink-0 transition-colors ${
                   isActive()
-                    ? "bg-white dark:bg-zinc-900 text-gray-900 dark:text-zinc-100"
-                    : "text-gray-500 dark:text-zinc-400 hover:bg-gray-100 dark:hover:bg-zinc-800/50"
+                    ? "bg-white dark:bg-slate-900 text-gray-900 dark:text-slate-100"
+                    : "text-gray-500 dark:text-slate-400 hover:bg-gray-100 dark:hover:bg-slate-800/50"
                 }`}
                 onClick={() => switchTab(tab.path)}
                 onMouseDown={(e) => handleMiddleClick(e, tab.path)}
               >
                 <span class="truncate max-w-[120px]">{tab.name}</span>
                 <span
-                  class={`flex items-center justify-center w-4 h-4 rounded hover:bg-gray-200 dark:hover:bg-zinc-700 ${
+                  class={`flex items-center justify-center w-4 h-4 rounded hover:bg-gray-200 dark:hover:bg-slate-700 ${
                     isActive()
                       ? "opacity-60 hover:opacity-100"
                       : "opacity-0 group-hover:opacity-60 hover:!opacity-100"

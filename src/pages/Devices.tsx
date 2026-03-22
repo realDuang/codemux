@@ -64,10 +64,10 @@ function DeviceCard(props: DeviceCardProps) {
 
   const borderClass = props.isCurrent
     ? "border-2 border-blue-500 dark:border-blue-600"
-    : "border border-gray-200 dark:border-zinc-800";
+    : "border border-gray-200 dark:border-slate-800";
 
   return (
-    <div class={`bg-white dark:bg-zinc-900 rounded-xl ${borderClass} shadow-xs overflow-hidden`}>
+    <div class={`bg-white dark:bg-slate-900 rounded-xl ${borderClass} shadow-xs overflow-hidden`}>
       <div class="p-5">
         <div class="flex items-start justify-between">
           <div class="flex items-start gap-3">
@@ -82,7 +82,7 @@ function DeviceCard(props: DeviceCardProps) {
                     type="text"
                     value={props.newName}
                     onInput={(e) => props.onNewNameChange(e.currentTarget.value)}
-                    class="px-2 py-1 text-sm border rounded dark:bg-zinc-800 dark:border-zinc-700"
+                    class="px-2 py-1 text-sm border rounded dark:bg-slate-800 dark:border-slate-700"
                     placeholder={t().devices.renameDevicePlaceholder}
                     onKeyDown={(e) => {
                       if (e.key === "Enter") props.onConfirmRename();
@@ -224,10 +224,10 @@ export default function Devices() {
   };
 
   return (
-    <div class="flex flex-col h-screen bg-gray-50/50 dark:bg-zinc-950 font-sans text-gray-900 dark:text-gray-100">
+    <div class="flex flex-col h-screen bg-gray-50/50 dark:bg-slate-950 font-sans text-gray-900 dark:text-gray-100">
       {/* Unified Titlebar */}
       <div
-        class={`w-full flex-shrink-0 flex items-center px-2 border-b border-gray-200 dark:border-zinc-800 bg-gray-50 dark:bg-zinc-950 electron-drag-region
+        class={`w-full flex-shrink-0 flex items-center px-2 border-b border-gray-200 dark:border-slate-800 bg-gray-50 dark:bg-slate-950 electron-drag-region
           ${isMacOS() && isElectron() ? 'pl-[72px]' : ''}
           ${isWindows() && isElectron() ? 'pr-[140px]' : ''}`}
         style={{ height: "var(--electron-title-bar-height, 40px)", "min-height": "var(--electron-title-bar-height, 40px)" }}
@@ -238,7 +238,7 @@ export default function Devices() {
           <span class="text-gray-300 dark:text-gray-600 hidden sm:inline">|</span>
           <button
             onClick={() => navigate("/")}
-            class="p-1 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-200 dark:hover:bg-zinc-700 rounded transition-colors"
+            class="p-1 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-200 dark:hover:bg-slate-700 rounded transition-colors"
           >
             <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <path d="m15 18-6-6 6-6"/>

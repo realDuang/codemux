@@ -53,7 +53,7 @@ export function FileSearchBar(props: FileSearchBarProps) {
   };
 
   return (
-    <div class="flex items-center gap-2 px-3 py-1.5 bg-gray-50 dark:bg-zinc-800 border-b border-gray-200 dark:border-zinc-700">
+    <div class="flex items-center gap-2 px-3 py-1.5 bg-gray-50 dark:bg-slate-800 border-b border-gray-200 dark:border-slate-700">
       <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24"
         fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
         class="text-gray-400 flex-shrink-0">

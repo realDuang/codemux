@@ -135,7 +135,7 @@ function FileTreeNode(props: FileTreeNodeProps) {
   return (
     <div class="group">
       <button
-        class={`w-full flex items-center gap-1 py-[3px] rounded-sm cursor-pointer hover:bg-gray-100 dark:hover:bg-zinc-800 ${
+        class={`w-full flex items-center gap-1 py-[3px] rounded-sm cursor-pointer hover:bg-gray-100 dark:hover:bg-slate-800 ${
           isActive() ? "bg-blue-100 dark:bg-blue-900/40" : ""
         } ${props.node.ignored ? "opacity-50" : ""}`}
         style={{ "padding-left": paddingLeft(), "font-size": "13px" }}

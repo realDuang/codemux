@@ -34,7 +34,7 @@ function getModeColor(mode: AgentMode, index: number): string {
   // Fallback by position
   const palette = ["bg-indigo-600", "bg-cyan-600", "bg-emerald-600"];
   if (index < palette.length) return palette[index];
-  return "bg-zinc-600";
+  return "bg-slate-600";
 }
 
 /** Return the textarea / send-button accent colour for the active mode. */
@@ -47,23 +47,23 @@ function getModeAccentRing(mode: AgentMode, index: number): {
   const label = getModeDisplayName(mode).toLowerCase();
   if (label === "plan")
     return {
-      bg: "bg-cyan-50/60 dark:bg-zinc-800/70 backdrop-blur-xl",
+      bg: "bg-cyan-50/60 dark:bg-slate-800/70 backdrop-blur-xl",
       ring: "focus-within:ring-cyan-500/40",
       border: "border-cyan-200/40 dark:border-cyan-600/30",
       bgHover: "bg-cyan-600 hover:bg-cyan-700",
     };
   if (label === "autopilot")
     return {
-      bg: "bg-emerald-50/60 dark:bg-zinc-800/70 backdrop-blur-xl",
+      bg: "bg-emerald-50/60 dark:bg-slate-800/70 backdrop-blur-xl",
       ring: "focus-within:ring-emerald-500/40",
       border: "border-emerald-200/40 dark:border-emerald-600/30",
       bgHover: "bg-emerald-600 hover:bg-emerald-700",
     };
   // Default (build / agent / first mode / unknown)
   return {
-    bg: "bg-white/60 dark:bg-zinc-800/70 backdrop-blur-xl",
+    bg: "bg-white/60 dark:bg-slate-800/70 backdrop-blur-xl",
     ring: "focus-within:ring-indigo-500/40",
-    border: "border-zinc-200/40 dark:border-zinc-600/30",
+    border: "border-slate-200/40 dark:border-slate-600/30",
     bgHover: "bg-indigo-600 hover:bg-indigo-700",
   };
 }
@@ -307,7 +307,7 @@ export function PromptInput(props: PromptInputProps) {
                   class={`px-3 py-1.5 text-xs font-medium rounded-lg transition-all flex items-center gap-1.5 ${
                     isActive()
                       ? `${color} text-white shadow-md shadow-indigo-500/20`
-                      : "bg-zinc-100/60 dark:bg-zinc-800/60 text-zinc-500 dark:text-zinc-400 hover:bg-zinc-200/80 dark:hover:bg-zinc-700/60 backdrop-blur-sm"
+                      : "bg-slate-100/60 dark:bg-slate-800/60 text-slate-500 dark:text-slate-400 hover:bg-slate-200/80 dark:hover:bg-slate-700/60 backdrop-blur-sm"
                   }`}
                   title={mode.description ?? displayName}
                 >
@@ -332,7 +332,7 @@ export function PromptInput(props: PromptInputProps) {
           <div class="flex gap-2 px-3 pt-3 pb-1 overflow-x-auto">
             <For each={images()}>
               {(img) => (
-                <div class="relative flex-shrink-0 w-12 h-12 rounded-lg overflow-hidden bg-zinc-200 dark:bg-zinc-700 group">
+                <div class="relative flex-shrink-0 w-12 h-12 rounded-lg overflow-hidden bg-slate-200 dark:bg-slate-700 group">
                   <img
                     src={`data:${img.mimeType};base64,${img.data}`}
                     alt={img.name}
@@ -369,7 +369,7 @@ export function PromptInput(props: PromptInputProps) {
               : modePlaceholder()
           }
           rows={1}
-          class={`w-full px-4 py-3 pr-20 bg-transparent resize-none focus:outline-none dark:text-white max-h-[200px] overflow-y-auto text-sm placeholder:text-zinc-400 dark:placeholder:text-zinc-500 ${props.disabled ? "cursor-not-allowed opacity-50" : ""}`}
+          class={`w-full px-4 py-3 pr-20 bg-transparent resize-none focus:outline-none dark:text-white max-h-[200px] overflow-y-auto text-sm placeholder:text-slate-400 dark:placeholder:text-slate-500 ${props.disabled ? "cursor-not-allowed opacity-50" : ""}`}
           style={{ "min-height": "52px" }}
         />
         {/* Hidden file input for image selection */}
@@ -399,7 +399,7 @@ export function PromptInput(props: PromptInputProps) {
                   <button
                     onClick={() => fileInputRef?.click()}
                     disabled={props.disabled || images().length >= MAX_IMAGES}
-                    class="p-2 rounded-xl text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300 transition-colors disabled:opacity-30"
+                    class="p-2 rounded-xl text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 transition-colors disabled:opacity-30"
                     aria-label={t().prompt.attachImage}
                     title={t().prompt.attachImage}
                   >
@@ -411,7 +411,7 @@ export function PromptInput(props: PromptInputProps) {
                 <button
                   onClick={handleSend}
                   disabled={!hasContent || props.disabled}
-                  class={`p-2 rounded-xl text-white transition-all disabled:bg-zinc-200 dark:disabled:bg-zinc-700 disabled:text-zinc-400 dark:disabled:text-zinc-500 shadow-md disabled:shadow-none ${activeAccent().bgHover}`}
+                  class={`p-2 rounded-xl text-white transition-all disabled:bg-slate-200 dark:disabled:bg-slate-700 disabled:text-slate-400 dark:disabled:text-slate-500 shadow-md disabled:shadow-none ${activeAccent().bgHover}`}
                   aria-label={t().prompt.send}
                 >
                   <IconArrowUp width={20} height={20} />

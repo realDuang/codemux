@@ -106,30 +106,30 @@ function ImagePreview(props: { mimeType: string; data: string }) {
   return (
     <div class="flex flex-col h-full">
       {/* Toolbar */}
-      <div class="flex items-center gap-1 px-3 py-1.5 border-b border-gray-200 dark:border-zinc-700 text-xs">
+      <div class="flex items-center gap-1 px-3 py-1.5 border-b border-gray-200 dark:border-slate-700 text-xs">
         <button
-          class="px-2 py-0.5 rounded hover:bg-gray-100 dark:hover:bg-zinc-800"
+          class="px-2 py-0.5 rounded hover:bg-gray-100 dark:hover:bg-slate-800"
           onClick={() => setZoom((z) => Math.min(5, z * 1.25))}
           title={t().fileExplorer.imageZoomIn}
         >
           +
         </button>
         <button
-          class="px-2 py-0.5 rounded hover:bg-gray-100 dark:hover:bg-zinc-800"
+          class="px-2 py-0.5 rounded hover:bg-gray-100 dark:hover:bg-slate-800"
           onClick={() => setZoom((z) => Math.max(0.1, z * 0.8))}
           title={t().fileExplorer.imageZoomOut}
         >
           −
         </button>
         <button
-          class="px-2 py-0.5 rounded hover:bg-gray-100 dark:hover:bg-zinc-800"
+          class="px-2 py-0.5 rounded hover:bg-gray-100 dark:hover:bg-slate-800"
           onClick={fitToWindow}
           title={t().fileExplorer.imageFitToWindow}
         >
           ⊡
         </button>
         <button
-          class="px-2 py-0.5 rounded hover:bg-gray-100 dark:hover:bg-zinc-800"
+          class="px-2 py-0.5 rounded hover:bg-gray-100 dark:hover:bg-slate-800"
           onClick={() => {
             setZoom(1);
             setPan({ x: 0, y: 0 });
@@ -138,11 +138,11 @@ function ImagePreview(props: { mimeType: string; data: string }) {
         >
           1:1
         </button>
-        <span class="ml-2 text-gray-500 dark:text-zinc-400">
+        <span class="ml-2 text-gray-500 dark:text-slate-400">
           {Math.round(zoom() * 100)}%
         </span>
         <Show when={naturalSize()}>
-          <span class="ml-2 text-gray-400 dark:text-zinc-500">
+          <span class="ml-2 text-gray-400 dark:text-slate-500">
             {naturalSize()!.w} × {naturalSize()!.h}
           </span>
         </Show>
@@ -267,20 +267,20 @@ export function FilePreview() {
   return (
     <Show when={preview()}>
       {(prev) => (
-        <div class="flex flex-col h-full bg-white dark:bg-zinc-900">
+        <div class="flex flex-col h-full bg-white dark:bg-slate-900">
           {/* Slim info bar: path + content/diff toggle */}
-          <div class="flex items-center justify-between px-3 py-1 border-b border-gray-200 dark:border-zinc-700 bg-gray-50/50 dark:bg-zinc-800/30 shrink-0 min-h-[28px]">
+          <div class="flex items-center justify-between px-3 py-1 border-b border-gray-200 dark:border-slate-700 bg-gray-50/50 dark:bg-slate-800/30 shrink-0 min-h-[28px]">
             <span class="text-[11px] text-gray-400 dark:text-gray-500 truncate">
               {prev().path}
             </span>
 
             <Show when={hasGitChanges()}>
-              <div class="flex rounded border border-gray-200 dark:border-zinc-700 overflow-hidden text-[11px] shrink-0 ml-2">
+              <div class="flex rounded border border-gray-200 dark:border-slate-700 overflow-hidden text-[11px] shrink-0 ml-2">
                 <button
                   class={`px-1.5 py-0.5 ${
                     viewMode() === "content"
                       ? "bg-blue-50 text-blue-600 dark:bg-blue-900/20 dark:text-blue-400"
-                      : "text-gray-600 dark:text-zinc-400 hover:bg-gray-50 dark:hover:bg-zinc-800"
+                      : "text-gray-600 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-slate-800"
                   }`}
                   onClick={() => setViewMode("content")}
                 >
@@ -290,7 +290,7 @@ export function FilePreview() {
                   class={`px-1.5 py-0.5 ${
                     viewMode() === "diff"
                       ? "bg-blue-50 text-blue-600 dark:bg-blue-900/20 dark:text-blue-400"
-                      : "text-gray-600 dark:text-zinc-400 hover:bg-gray-50 dark:hover:bg-zinc-800"
+                      : "text-gray-600 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-slate-800"
                   }`}
                   onClick={() => setViewMode("diff")}
                 >
@@ -347,7 +347,7 @@ export function FilePreview() {
                       !content().mimeType?.startsWith("image/")
                     }
                   >
-                    <div class="flex items-center justify-center h-full text-gray-400 dark:text-zinc-500 text-sm">
+                    <div class="flex items-center justify-center h-full text-gray-400 dark:text-slate-500 text-sm">
                       {t().fileExplorer.binaryFile}
                     </div>
                   </Show>

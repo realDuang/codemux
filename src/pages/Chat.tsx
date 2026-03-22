@@ -231,7 +231,7 @@ export default function Chat() {
 
   // Engine badge for title bar
   const currentEngineBadge = createMemo(() =>
-    getEngineBadge(currentEngineType()) ?? { label: currentEngineType(), class: "bg-zinc-100 text-zinc-600 dark:bg-zinc-700 dark:text-zinc-400" }
+    getEngineBadge(currentEngineType()) ?? { label: currentEngineType(), class: "bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-400" }
   );
 
   // Whether the current engine supports enqueuing messages while busy
@@ -1476,11 +1476,11 @@ export default function Chat() {
   });
 
   return (
-    <div class="flex flex-col h-screen bg-gray-50/50 dark:bg-zinc-950 font-sans text-gray-900 dark:text-gray-100 overflow-hidden relative">
+    <div class="flex flex-col h-screen bg-gray-50/50 dark:bg-slate-950 font-sans text-gray-900 dark:text-gray-100 overflow-hidden relative">
 
       {/* Unified Titlebar — 40px, spans full width */}
       <div
-        class={`w-full flex-shrink-0 flex items-center px-2 border-b border-gray-200 dark:border-zinc-800 bg-gray-50 dark:bg-zinc-950 electron-drag-region
+        class={`w-full flex-shrink-0 flex items-center px-2 border-b border-gray-200 dark:border-slate-800 bg-gray-50 dark:bg-slate-950 electron-drag-region
           ${isMacOS() && isElectron() ? 'pl-[72px]' : ''}
           ${isWindows() && isElectron() ? 'pr-[140px]' : ''}`}
         style={{ height: "var(--electron-title-bar-height, 40px)", "min-height": "var(--electron-title-bar-height, 40px)" }}
@@ -1493,7 +1493,7 @@ export default function Chat() {
           {/* Mobile sidebar toggle */}
           <button
             onClick={toggleSidebar}
-            class="md:hidden p-1 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-200 dark:hover:bg-zinc-700 rounded transition-colors"
+            class="md:hidden p-1 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-200 dark:hover:bg-slate-700 rounded transition-colors"
           >
             <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" x2="20" y1="12" y2="12" /><line x1="4" x2="20" y1="6" y2="6" /><line x1="4" x2="20" y1="18" y2="18" /></svg>
           </button>
@@ -1501,7 +1501,7 @@ export default function Chat() {
           {/* Desktop sidebar collapse/expand toggle */}
           <button
             onClick={toggleSidebarCollapse}
-            class="hidden md:inline-flex p-1 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-200 dark:hover:bg-zinc-700 rounded transition-colors"
+            class="hidden md:inline-flex p-1 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-200 dark:hover:bg-slate-700 rounded transition-colors"
             title={isSidebarCollapsed() ? t().sidebar.expandSidebar : t().sidebar.collapseSidebar}
           >
             <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -1539,7 +1539,7 @@ export default function Chat() {
               class={`hidden md:flex p-1 rounded transition-colors ${
                 fileStore.panelOpen
                   ? "bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400"
-                  : "text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-200 dark:hover:bg-zinc-700"
+                  : "text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-200 dark:hover:bg-slate-700"
               }`}
               title={t().fileExplorer.togglePanel}
             >
@@ -1573,7 +1573,7 @@ export default function Chat() {
       {/* Sidebar - Desktop: Static, Mobile: Drawer */}
       <aside
         class={`
-          fixed md:static inset-y-0 left-0 z-30 ${isSidebarCollapsed() ? "md:w-14" : "w-72"} bg-gray-50 dark:bg-zinc-950 border-r border-gray-200 dark:border-zinc-800 transform transition-[width,transform] duration-300 ease-in-out flex flex-col justify-between
+          fixed md:static inset-y-0 left-0 z-30 ${isSidebarCollapsed() ? "md:w-14" : "w-72"} bg-gray-50 dark:bg-slate-950 border-r border-gray-200 dark:border-slate-800 transform transition-[width,transform] duration-300 ease-in-out flex flex-col justify-between
           ${isSidebarOpen() ? "translate-x-0 w-72" : "-translate-x-full md:translate-x-0"}
         `}
       >
@@ -1599,7 +1599,7 @@ export default function Chat() {
             />
           </Show>
           <Show when={refreshingSessions()}>
-            <div class="absolute inset-0 bg-gray-50/60 dark:bg-zinc-950/60 backdrop-blur-[1px] z-10 flex items-center justify-center transition-opacity">
+            <div class="absolute inset-0 bg-gray-50/60 dark:bg-slate-950/60 backdrop-blur-[1px] z-10 flex items-center justify-center transition-opacity">
               <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="animate-spin text-gray-400 dark:text-gray-500">
                 <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8" />
                 <path d="M21 3v5h-5" />
@@ -1611,11 +1611,11 @@ export default function Chat() {
         </div>
 
         {/* User Actions Footer in Sidebar */}
-        <div class={`${isSidebarCollapsed() && !isMobile() ? "px-1 py-2" : "p-3"} border-t border-gray-200 dark:border-zinc-800 space-y-1 bg-gray-50 dark:bg-zinc-950`}>
+        <div class={`${isSidebarCollapsed() && !isMobile() ? "px-1 py-2" : "p-3"} border-t border-gray-200 dark:border-slate-800 space-y-1 bg-gray-50 dark:bg-slate-950`}>
           <Show when={isLocalAccess()}>
             <button
               onClick={() => navigate("/")}
-              class={`w-full flex items-center ${isSidebarCollapsed() && !isMobile() ? "justify-center p-2" : "gap-3 px-3 py-2"} text-sm font-medium text-gray-600 dark:text-gray-400 hover:bg-white dark:hover:bg-zinc-800 hover:text-gray-900 dark:hover:text-white rounded-lg transition-all shadow-xs hover:shadow-sm`}
+              class={`w-full flex items-center ${isSidebarCollapsed() && !isMobile() ? "justify-center p-2" : "gap-3 px-3 py-2"} text-sm font-medium text-gray-600 dark:text-gray-400 hover:bg-white dark:hover:bg-slate-800 hover:text-gray-900 dark:hover:text-white rounded-lg transition-all shadow-xs hover:shadow-sm`}
               title={t().chat.remoteAccess}
             >
               <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="20" height="14" x="2" y="3" rx="2" /><line x1="8" x2="16" y1="21" y2="21" /><line x1="12" x2="12" y1="17" y2="21" /></svg>
@@ -1626,7 +1626,7 @@ export default function Chat() {
           </Show>
           <button
             onClick={() => navigate("/settings")}
-            class={`w-full flex items-center ${isSidebarCollapsed() && !isMobile() ? "justify-center p-2" : "gap-3 px-3 py-2"} text-sm font-medium text-gray-600 dark:text-gray-400 hover:bg-white dark:hover:bg-zinc-800 hover:text-gray-900 dark:hover:text-white rounded-lg transition-all shadow-xs hover:shadow-sm`}
+            class={`w-full flex items-center ${isSidebarCollapsed() && !isMobile() ? "justify-center p-2" : "gap-3 px-3 py-2"} text-sm font-medium text-gray-600 dark:text-gray-400 hover:bg-white dark:hover:bg-slate-800 hover:text-gray-900 dark:hover:text-white rounded-lg transition-all shadow-xs hover:shadow-sm`}
             title={t().chat.settings}
           >
             <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.09a2 2 0 0 1-1-1.74v-.51a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" /><circle cx="12" cy="12" r="3" /></svg>
@@ -1649,7 +1649,7 @@ export default function Chat() {
 
       {/* Main Chat Area */}
       <div class="flex-1 flex overflow-hidden min-w-0">
-      <div class="flex-1 flex flex-col overflow-hidden min-w-0 bg-white dark:bg-zinc-900">
+      <div class="flex-1 flex flex-col overflow-hidden min-w-0 bg-white dark:bg-slate-900">
 
 
 
@@ -1695,7 +1695,7 @@ export default function Chat() {
             fallback={
               <div class="flex-1 flex items-center justify-center">
                 <div class="flex flex-col items-center gap-4 text-center px-6">
-                  <div class="w-16 h-16 bg-gray-100 dark:bg-zinc-800 rounded-2xl flex items-center justify-center text-gray-400 dark:text-gray-500">
+                  <div class="w-16 h-16 bg-gray-100 dark:bg-slate-800 rounded-2xl flex items-center justify-center text-gray-400 dark:text-gray-500">
                     <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M14 9a2 2 0 0 1-2 2H6l-4 4V4c0-1.1.9-2 2-2h8a2 2 0 0 1 2 2v5Z" /><path d="M18 9h2a2 2 0 0 1 2 2v11l-4-4h-6a2 2 0 0 1-2-2v-1" /></svg>
                   </div>
                   <h2 class="text-xl font-semibold text-gray-900 dark:text-white">
@@ -1714,7 +1714,7 @@ export default function Chat() {
               <div ref={setMessagesRef} onScroll={handleScroll} class="flex-1 overflow-y-auto px-4 md:px-6" style={{ position: "relative" }}>
                 {/* Loading overlay — covers scroll area during message load */}
                 <Show when={loadingMessages()}>
-                  <div class="absolute inset-0 flex items-center justify-center z-10 bg-white/80 dark:bg-zinc-900/80">
+                  <div class="absolute inset-0 flex items-center justify-center z-10 bg-white/80 dark:bg-slate-900/80">
                     <div class="flex flex-col items-center gap-3 text-gray-400">
                       <div class="w-6 h-6 border-2 border-current border-t-transparent rounded-full animate-spin"></div>
                     </div>
@@ -1725,7 +1725,7 @@ export default function Chat() {
                     when={sessionStore.current && messageStore.message[sessionStore.current]?.length > 0}
                     fallback={
                       <div class="flex flex-col items-center justify-center h-[50vh] text-center px-4">
-                        <div class="w-16 h-16 bg-gray-100 dark:bg-zinc-800 rounded-2xl flex items-center justify-center mb-6 text-gray-400 dark:text-gray-500">
+                        <div class="w-16 h-16 bg-gray-100 dark:bg-slate-800 rounded-2xl flex items-center justify-center mb-6 text-gray-400 dark:text-gray-500">
                           <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M14 9a2 2 0 0 1-2 2H6l-4 4V4c0-1.1.9-2 2-2h8a2 2 0 0 1 2 2v5Z" /><path d="M18 9h2a2 2 0 0 1 2 2v11l-4-4h-6a2 2 0 0 1-2-2v-1" /></svg>
                         </div>
                         <h2 class="text-xl font-semibold text-gray-900 dark:text-white mb-2">
@@ -1743,7 +1743,7 @@ export default function Chat() {
               </div>
 
               {/* Input Area */}
-              <div class="p-4 bg-white/90 dark:bg-zinc-900/90 backdrop-blur-xs border-t border-gray-100 dark:border-zinc-800 relative z-20">
+              <div class="p-4 bg-white/90 dark:bg-slate-900/90 backdrop-blur-xs border-t border-gray-100 dark:border-slate-800 relative z-20">
                 <div class="max-w-4xl mx-auto w-full">
                   {/* TodoDock — persistent task list above input */}
                   <Show when={currentTodos().length > 0}>

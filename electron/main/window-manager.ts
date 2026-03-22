@@ -45,8 +45,8 @@ export function createWindow(hidden = false): BrowserWindow {
         ? {
             titleBarStyle: "hidden" as const,
             titleBarOverlay: {
-              color: "#09090b",       // zinc-950 (match dark theme bg)
-              symbolColor: "#a1a1aa", // zinc-400
+              color: "#020617",       // slate-950
+              symbolColor: "#94a3b8", // slate-400
               height: 40,
             },
           }

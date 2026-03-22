@@ -12,6 +12,8 @@ const electronAPI = {
     openExternal: (url: string) => ipcRenderer.invoke("system:openExternal", url),
     selectDirectory: () => ipcRenderer.invoke("system:selectDirectory"),
     openPath: (folderPath: string) => ipcRenderer.invoke("system:openPath", folderPath),
+    updateTitleBarOverlay: (options: { color: string; symbolColor: string }) =>
+      ipcRenderer.invoke("update-title-bar-overlay", options),
   },
 
   // Auth API

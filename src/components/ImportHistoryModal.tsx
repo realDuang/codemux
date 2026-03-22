@@ -108,9 +108,9 @@ export default function ImportHistoryModal(props: Props) {
 
   return (
     <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={(e) => { if (e.target === e.currentTarget && phase() !== "importing") props.onClose(); }}>
-      <div class="bg-white dark:bg-zinc-800 rounded-xl shadow-2xl border border-zinc-200 dark:border-zinc-700 w-full max-w-xl max-h-[80vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+      <div class="bg-white dark:bg-slate-800 rounded-xl shadow-2xl border border-slate-200 dark:border-slate-700 w-full max-w-xl max-h-[80vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
         {/* Header */}
-        <div class="px-6 py-4 border-b border-zinc-200 dark:border-zinc-700 flex items-center justify-between">
+        <div class="px-6 py-4 border-b border-slate-200 dark:border-slate-700 flex items-center justify-between">
           <h3 class="text-lg font-semibold text-gray-900 dark:text-white">
             {t().settings.importHistory}
           </h3>
@@ -139,7 +139,7 @@ export default function ImportHistoryModal(props: Props) {
                     class={`px-4 py-2 text-sm rounded-lg border transition-colors ${
                       limit() === opt.value
                         ? "bg-blue-600 text-white border-blue-600"
-                        : "bg-white dark:bg-zinc-700 text-gray-700 dark:text-gray-300 border-gray-300 dark:border-zinc-600 hover:bg-gray-50 dark:hover:bg-zinc-600"
+                        : "bg-white dark:bg-slate-700 text-gray-700 dark:text-gray-300 border-gray-300 dark:border-slate-600 hover:bg-gray-50 dark:hover:bg-slate-600"
                     }`}
                   >
                     {opt.label}
@@ -166,7 +166,7 @@ export default function ImportHistoryModal(props: Props) {
                     type="checkbox"
                     checked={selectedCount() === importableSessions().length && importableSessions().length > 0}
                     onChange={toggleAll}
-                    class="rounded border-gray-300 dark:border-zinc-600"
+                    class="rounded border-gray-300 dark:border-slate-600"
                   />
                   {selectedCount()}/{sessions().length}
                 </label>
@@ -178,14 +178,14 @@ export default function ImportHistoryModal(props: Props) {
                       s.alreadyImported
                         ? (selected().has(s.engineSessionId)
                           ? "bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800"
-                          : "bg-gray-50 dark:bg-zinc-700/50")
-                        : "hover:bg-gray-50 dark:hover:bg-zinc-700/50"
+                          : "bg-gray-50 dark:bg-slate-700/50")
+                        : "hover:bg-gray-50 dark:hover:bg-slate-700/50"
                     }`}>
                       <input
                         type="checkbox"
                         checked={selected().has(s.engineSessionId)}
                         onChange={() => toggleSession(s.engineSessionId)}
-                        class="rounded border-gray-300 dark:border-zinc-600 flex-shrink-0"
+                        class="rounded border-gray-300 dark:border-slate-600 flex-shrink-0"
                       />
                       <div class="min-w-0 flex-1">
                         <div class="truncate font-medium text-gray-800 dark:text-gray-200">
@@ -218,7 +218,7 @@ export default function ImportHistoryModal(props: Props) {
           <Show when={phase() === "importing"}>
             <div class="py-8 text-center">
               <div class="mb-4">
-                <div class="w-full bg-gray-200 dark:bg-zinc-700 rounded-full h-2">
+                <div class="w-full bg-gray-200 dark:bg-slate-700 rounded-full h-2">
                   <div
                     class="bg-blue-600 h-2 rounded-full transition-all duration-300"
                     style={{ width: `${progress() ? (progress()!.completed / progress()!.total) * 100 : 0}%` }}
@@ -263,11 +263,11 @@ export default function ImportHistoryModal(props: Props) {
         </div>
 
         {/* Footer */}
-        <div class="px-6 py-4 border-t border-zinc-200 dark:border-zinc-700 flex justify-end gap-3">
+        <div class="px-6 py-4 border-t border-slate-200 dark:border-slate-700 flex justify-end gap-3">
           <Show when={phase() === "select"}>
             <button
               onClick={props.onClose}
-              class="px-4 py-2 text-sm rounded-lg border border-gray-300 dark:border-zinc-600 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-zinc-700"
+              class="px-4 py-2 text-sm rounded-lg border border-gray-300 dark:border-slate-600 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-slate-700"
             >
               {t().common.cancel}
             </button>
@@ -283,7 +283,7 @@ export default function ImportHistoryModal(props: Props) {
           <Show when={phase() === "preview"}>
             <button
               onClick={() => setPhase("select")}
-              class="px-4 py-2 text-sm rounded-lg border border-gray-300 dark:border-zinc-600 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-zinc-700"
+              class="px-4 py-2 text-sm rounded-lg border border-gray-300 dark:border-slate-600 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-slate-700"
             >
               {t().settings.back}
             </button>

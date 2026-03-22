@@ -108,15 +108,15 @@ export function FileExplorer() {
   );
 
   return (
-    <div class="flex h-full flex-col border-l border-gray-200 bg-white dark:border-zinc-800 dark:bg-zinc-900">
+    <div class="flex h-full flex-col border-l border-gray-200 bg-white dark:border-slate-800 dark:bg-slate-900">
       {/* Header: Files/Changes tabs + actions */}
-      <div class="flex items-center border-b border-gray-200 bg-gray-50/50 px-2 py-1.5 dark:border-zinc-800 dark:bg-zinc-900 shrink-0">
+      <div class="flex items-center border-b border-gray-200 bg-gray-50/50 px-2 py-1.5 dark:border-slate-800 dark:bg-slate-900 shrink-0">
         <div class="flex flex-1 items-center gap-1">
           <button
             class={`rounded px-2 py-1 text-xs font-medium transition-colors ${
               fileStore.activeTab === "files"
-                ? "bg-white text-gray-900 shadow-sm dark:bg-zinc-800 dark:text-zinc-100"
-                : "text-gray-500 hover:text-gray-700 dark:text-zinc-400 dark:hover:text-zinc-200"
+                ? "bg-white text-gray-900 shadow-sm dark:bg-slate-800 dark:text-slate-100"
+                : "text-gray-500 hover:text-gray-700 dark:text-slate-400 dark:hover:text-slate-200"
             }`}
             onClick={() => setActiveFileTab("files")}
           >
@@ -125,8 +125,8 @@ export function FileExplorer() {
           <button
             class={`flex items-center gap-1 rounded px-2 py-1 text-xs font-medium transition-colors ${
               fileStore.activeTab === "changes"
-                ? "bg-white text-gray-900 shadow-sm dark:bg-zinc-800 dark:text-zinc-100"
-                : "text-gray-500 hover:text-gray-700 dark:text-zinc-400 dark:hover:text-zinc-200"
+                ? "bg-white text-gray-900 shadow-sm dark:bg-slate-800 dark:text-slate-100"
+                : "text-gray-500 hover:text-gray-700 dark:text-slate-400 dark:hover:text-slate-200"
             }`}
             onClick={() => setActiveFileTab("changes")}
           >
@@ -140,7 +140,7 @@ export function FileExplorer() {
         </div>
         <div class="flex items-center gap-0.5">
           <button
-            class="rounded p-1 text-gray-400 transition-colors hover:bg-gray-200 hover:text-gray-600 dark:text-zinc-500 dark:hover:bg-zinc-700 dark:hover:text-zinc-300"
+            class="rounded p-1 text-gray-400 transition-colors hover:bg-gray-200 hover:text-gray-600 dark:text-slate-500 dark:hover:bg-slate-700 dark:hover:text-slate-300"
             onClick={handleRefresh}
             title={t().fileExplorer.refresh}
           >
@@ -153,7 +153,7 @@ export function FileExplorer() {
             </svg>
           </button>
           <button
-            class="rounded p-1 text-gray-400 transition-colors hover:bg-gray-200 hover:text-gray-600 dark:text-zinc-500 dark:hover:bg-zinc-700 dark:hover:text-zinc-300"
+            class="rounded p-1 text-gray-400 transition-colors hover:bg-gray-200 hover:text-gray-600 dark:text-slate-500 dark:hover:bg-slate-700 dark:hover:text-slate-300"
             onClick={() => closePanel()}
             title={t().fileExplorer.close}
           >
@@ -176,9 +176,9 @@ export function FileExplorer() {
           style={{ width: hasPreview() ? `${fileStore.treeWidth}px` : "100%" }}
         >
           {/* Search input */}
-          <div class="relative border-b border-gray-200 px-2 py-1.5 dark:border-zinc-800 shrink-0">
+          <div class="relative border-b border-gray-200 px-2 py-1.5 dark:border-slate-800 shrink-0">
             <svg
-              class="absolute left-3.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-gray-400 dark:text-zinc-500"
+              class="absolute left-3.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-gray-400 dark:text-slate-500"
               viewBox="0 0 16 16"
               fill="currentColor"
             >
@@ -186,14 +186,14 @@ export function FileExplorer() {
             </svg>
             <input
               type="text"
-              class="w-full rounded bg-gray-100 py-1 pl-7 pr-7 text-xs text-gray-900 placeholder-gray-400 outline-none focus:ring-1 focus:ring-blue-500 dark:bg-zinc-800 dark:text-zinc-100 dark:placeholder-zinc-500"
+              class="w-full rounded bg-gray-100 py-1 pl-7 pr-7 text-xs text-gray-900 placeholder-gray-400 outline-none focus:ring-1 focus:ring-blue-500 dark:bg-slate-800 dark:text-slate-100 dark:placeholder-slate-500"
               placeholder={t().fileExplorer.searchPlaceholder}
               value={fileStore.searchQuery}
               onInput={(e) => setSearchQuery(e.currentTarget.value)}
             />
             <Show when={fileStore.searchQuery}>
               <button
-                class="absolute right-3.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 dark:text-zinc-500 dark:hover:text-zinc-300"
+                class="absolute right-3.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 dark:text-slate-500 dark:hover:text-slate-300"
                 onClick={() => setSearchQuery("")}
               >
                 <svg
@@ -212,7 +212,7 @@ export function FileExplorer() {
             <Show
               when={currentDirectory()}
               fallback={
-                <div class="flex h-full items-center justify-center p-4 text-xs text-gray-400 dark:text-zinc-500">
+                <div class="flex h-full items-center justify-center p-4 text-xs text-gray-400 dark:text-slate-500">
                   {t().fileExplorer.noProject}
                 </div>
               }
@@ -240,7 +240,7 @@ export function FileExplorer() {
                         : displayedNodes().length > 0
                     }
                     fallback={
-                      <div class="flex h-full items-center justify-center p-4 text-xs text-gray-400 dark:text-zinc-500">
+                      <div class="flex h-full items-center justify-center p-4 text-xs text-gray-400 dark:text-slate-500">
                         {fileStore.activeTab === "changes"
                           ? t().fileExplorer.noChanges
                           : t().fileExplorer.noProject}
@@ -279,7 +279,7 @@ export function FileExplorer() {
 
         {/* Right: Tabs + Preview */}
         <Show when={hasPreview()}>
-          <div class="flex-1 flex flex-col min-w-0 overflow-hidden border-l border-gray-200 dark:border-zinc-800">
+          <div class="flex-1 flex flex-col min-w-0 overflow-hidden border-l border-gray-200 dark:border-slate-800">
             <FileTabs />
             <div class="min-h-0 flex-1 overflow-auto">
               <FilePreview />

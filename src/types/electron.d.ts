@@ -17,6 +17,7 @@ interface ElectronAPI {
     openExternal: (url: string) => Promise<void>;
     selectDirectory: () => Promise<string | null>;
     openPath: (folderPath: string) => Promise<string>;
+    updateTitleBarOverlay: (options: { color: string; symbolColor: string }) => Promise<void>;
   };
 
   auth: {

@@ -311,7 +311,9 @@ export async function previewFile(
       absolutePath,
       name,
       content: cached,
+      diff: undefined,
       loading: false,
+      error: undefined,
     });
     return;
   }
@@ -321,7 +323,10 @@ export async function previewFile(
     path: relativePath,
     absolutePath,
     name,
+    content: undefined,
+    diff: undefined,
     loading: true,
+    error: undefined,
   });
 
   const rootDir = fileStore.rootDirectory;
@@ -333,22 +338,29 @@ export async function previewFile(
   if (inflight.has(key)) {
     try {
       const content = (await inflight.get(key)) as FileExplorerContent;
-      setFileStore("preview", {
-        path: relativePath,
-        absolutePath,
-        name,
-        content,
-        loading: false,
-      });
+      if (fileStore.openTabs.active === relativePath) {
+        setFileStore("preview", {
+          path: relativePath,
+          absolutePath,
+          name,
+          content,
+          diff: undefined,
+          loading: false,
+          error: undefined,
+        });
+      }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
-      setFileStore("preview", {
-        path: relativePath,
-        absolutePath,
-        name,
-        loading: false,
-        error: msg,
-      });
+      if (fileStore.openTabs.active === relativePath) {
+        setFileStore("preview", {
+          path: relativePath,
+          absolutePath,
+          name,
+          diff: undefined,
+          loading: false,
+          error: msg,
+        });
+      }
     }
     return;
   }
@@ -359,22 +371,30 @@ export async function previewFile(
   try {
     const content = await promise;
     cacheSet(absolutePath, content);
-    setFileStore("preview", {
-      path: relativePath,
-      absolutePath,
-      name,
-      content,
-      loading: false,
-    });
+    // Only apply if this file is still the active preview
+    if (fileStore.openTabs.active === relativePath) {
+      setFileStore("preview", {
+        path: relativePath,
+        absolutePath,
+        name,
+        content,
+        diff: undefined,
+        loading: false,
+        error: undefined,
+      });
+    }
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
-    setFileStore("preview", {
-      path: relativePath,
-      absolutePath,
-      name,
-      loading: false,
-      error: msg,
-    });
+    if (fileStore.openTabs.active === relativePath) {
+      setFileStore("preview", {
+        path: relativePath,
+        absolutePath,
+        name,
+        diff: undefined,
+        loading: false,
+        error: msg,
+      });
+    }
   } finally {
     inflight.delete(key);
   }
@@ -386,14 +406,21 @@ export async function loadDiff(
 ): Promise<void> {
   if (!fileStore.preview) return;
 
+  // Remember which file we're loading diff for
+  const targetPath = relativePath;
   setFileStore("preview", "loading", true);
 
   try {
     const diff = await gateway.getGitDiff(directory, relativePath);
-    setFileStore("preview", { diff, loading: false, error: undefined });
+    // Only apply if preview is still showing the same file
+    if (fileStore.preview?.path === targetPath) {
+      setFileStore("preview", { diff, loading: false, error: undefined });
+    }
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
-    setFileStore("preview", { loading: false, error: msg });
+    if (fileStore.preview?.path === targetPath) {
+      setFileStore("preview", { loading: false, error: msg });
+    }
   }
 }
 

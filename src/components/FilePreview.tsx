@@ -214,11 +214,14 @@ export function FilePreview() {
     return !!getFileGitStatus(p.path);
   });
 
-  // Default to diff view when opened from Changes tab on a file with changes
+  // Reset view mode and close search when switching files
   createEffect(
     on(
       () => preview()?.path,
       () => {
+        // Close search bar when file changes
+        setShowSearch(false);
+        
         if (hasGitChanges() && fileStore.activeTab === "changes") {
           setViewMode("diff");
         } else {

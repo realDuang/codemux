@@ -486,6 +486,8 @@ export function setSearchQuery(query: string): void {
 // ---------------------------------------------------------------------------
 
 let fileChangeDebounceTimer: ReturnType<typeof setTimeout> | undefined;
+let lastGitRefreshTime = 0;
+const GIT_REFRESH_MAX_WAIT = 2000; // Force refresh at least every 2s during rapid changes
 
 export function handleFileChanged(event: {
   type: string;
@@ -496,22 +498,49 @@ export function handleFileChanged(event: {
   if (!dir || event.directory !== dir) return;
 
   clearTimeout(fileChangeDebounceTimer);
-  fileChangeDebounceTimer = setTimeout(() => {
-    // Compute relative directory of the changed file
-    const relativePath = event.path
-      .replace(dir, "")
-      .replace(/^[\/\\]/, "")
-      .split(/[\/\\]/)
-      .slice(0, -1)
-      .join("/");
-    const dirKey = relativePath || ".";
 
-    // Reload the directory that changed
-    if (fileStore.directories[dirKey]?.loaded) {
-      loadDirectory(dir, dirKey);
-    }
+  const now = Date.now();
+  const timeSinceLastRefresh = now - lastGitRefreshTime;
 
-    // Also refresh git status
-    loadGitStatus(dir);
-  }, 500);
+  // If enough time has passed since the last refresh, fire immediately
+  // (leading edge of throttle). Otherwise debounce with 500ms trailing edge.
+  if (timeSinceLastRefresh >= GIT_REFRESH_MAX_WAIT) {
+    flushFileChange(dir, event.path);
+  } else {
+    fileChangeDebounceTimer = setTimeout(() => {
+      flushFileChange(dir, event.path);
+    }, 500);
+  }
+}
+
+function flushFileChange(dir: string, changedPath: string): void {
+  lastGitRefreshTime = Date.now();
+
+  // Compute relative directory of the changed file
+  const relativePath = changedPath
+    .replace(dir, "")
+    .replace(/^[\/\\]/, "")
+    .split(/[\/\\]/)
+    .slice(0, -1)
+    .join("/");
+  const dirKey = relativePath || ".";
+
+  // Reload the directory that changed
+  if (fileStore.directories[dirKey]?.loaded) {
+    loadDirectory(dir, dirKey);
+  }
+
+  // Also refresh git status
+  loadGitStatus(dir);
+}
+
+/**
+ * Refresh git status for the current root directory.
+ * Called externally when engine activity completes (message finished, etc.)
+ * to catch changes that don't trigger filesystem events (e.g. git operations).
+ */
+export function refreshGitStatus(): void {
+  const dir = fileStore.rootDirectory;
+  if (!dir || !fileStore.panelOpen) return;
+  loadGitStatus(dir);
 }

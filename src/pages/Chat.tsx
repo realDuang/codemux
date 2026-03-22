@@ -37,7 +37,7 @@ import { TodoDock } from "../components/TodoDock";
 import { FileExplorer } from "../components/FileExplorer";
 import { ResizeHandle } from "../components/ResizeHandle";
 import { fileStore, togglePanel, setPanelWidth, closePanel } from "../stores/file";
-import { handleFileChanged } from "../stores/file";
+import { handleFileChanged, refreshGitStatus } from "../stores/file";
 
 import { configStore, setConfigStore, getSelectedModelForEngine, restoreEngineModelSelections, isEngineEnabled, restoreEnabledEngines, getDefaultEngineType, restoreDefaultEngine } from "../stores/config";
 
@@ -1201,6 +1201,9 @@ export default function Chat() {
         if (!queued || queued.length === 0) {
           setSendingFor(targetSessionId, false);
         }
+        // Refresh git status after engine finishes — engine file changes
+        // may not trigger filesystem events (e.g. git operations inside .git/)
+        refreshGitStatus();
       }
     });
   };

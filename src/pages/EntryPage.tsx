@@ -825,10 +825,10 @@ export default function EntryPage() {
   // =========================================================================
 
   return (
-    <div class="flex flex-col h-screen overflow-hidden bg-gray-50/50 dark:bg-slate-950 font-sans text-gray-900 dark:text-gray-100">
+    <div class="flex flex-col h-screen overflow-hidden bg-gray-50/50 dark:bg-zinc-950 font-sans text-gray-900 dark:text-gray-100">
       {/* Unified Titlebar */}
       <div
-        class={`w-full flex-shrink-0 flex items-center px-2 border-b border-gray-200 dark:border-zinc-800 bg-gray-50/50 dark:bg-slate-950 electron-drag-region
+        class={`w-full flex-shrink-0 flex items-center px-2 border-b border-gray-200 dark:border-zinc-800 bg-gray-50/50 dark:bg-zinc-950 electron-drag-region
           ${isMacOS() && isElectron() ? 'pl-[72px]' : ''}
           ${isWindows() && isElectron() ? 'pr-[140px]' : ''}`}
         style={{ height: "var(--electron-title-bar-height, 40px)", "min-height": "var(--electron-title-bar-height, 40px)" }}

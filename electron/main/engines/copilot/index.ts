@@ -361,7 +361,7 @@ export class CopilotSdkAdapter extends EngineAdapter {
       const previousMode = this.sessionModes.get(sessionId);
       this.sessionModes.set(sessionId, options.mode);
       if (options.mode !== previousMode) {
-        const sdkMode = options.mode === "agent" ? "interactive" : options.mode as any;
+        const sdkMode = options.mode as any;
         try {
           await session.rpc.mode.set({ mode: sdkMode });
         } catch (err) {}
@@ -633,7 +633,7 @@ export class CopilotSdkAdapter extends EngineAdapter {
     this.sessionModes.set(sessionId, modeId);
     const session = this.activeSessions.get(sessionId);
     if (session) {
-      const sdkMode = modeId === "agent" ? "interactive" : modeId as any;
+      const sdkMode = modeId as any;
       try {
         await session.rpc.mode.set({ mode: sdkMode });
       } catch (err) {}

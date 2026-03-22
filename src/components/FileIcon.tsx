@@ -1,5 +1,5 @@
 import { createMemo } from "solid-js";
-import spriteUrl from "./file-icons/sprite.svg?url";
+const spriteUrl = "/assets/file-icons-sprite.svg";
 import {
   FILE_NAMES,
   FILE_EXTENSIONS,

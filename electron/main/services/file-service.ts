@@ -582,7 +582,7 @@ export function watchDirectory(directory: string): void {
     ],
     persistent: true,
     ignoreInitial: true,
-    depth: 5, // shallow watch — deeper changes rarely need real-time updates
+    depth: 99, // effectively unlimited — ignorePermissionErrors handles inaccessible dirs
     ignorePermissionErrors: true, // suppress EACCES/EPERM on Windows
     awaitWriteFinish: {
       stabilityThreshold: 500,

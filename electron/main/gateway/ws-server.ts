@@ -360,8 +360,8 @@ export class GatewayServer {
 
       // File Explorer
       case GatewayRequestType.FILE_LIST: {
-        const { directory } = p as { directory: string };
-        return fileService.listDirectory(directory, directory);
+        const { directory, rootDirectory } = p as { directory: string; rootDirectory?: string };
+        return fileService.listDirectory(directory, rootDirectory ?? directory);
       }
 
       case GatewayRequestType.FILE_READ: {

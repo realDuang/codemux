@@ -49,6 +49,8 @@ interface FileStoreState {
   openTabs: { active: string | null; all: OpenTab[] };
   gitStatus: GitFileStatus[];
   gitStatusByPath: Record<string, GitFileStatus>;
+  /** Precomputed: whether each directory has changed files (for O(1) dot indicator lookup) */
+  gitDirHasChanges: Record<string, boolean>;
   gitStatusLoading: boolean;
   searchQuery: string;
 }
@@ -68,6 +70,7 @@ export const [fileStore, setFileStore] = createStore<FileStoreState>({
   openTabs: { active: null, all: [] },
   gitStatus: [],
   gitStatusByPath: {},
+  gitDirHasChanges: {},
   gitStatusLoading: false,
   searchQuery: "",
 });
@@ -200,6 +203,7 @@ export async function setRootDirectory(
     setFileStore("openTabs", reconcile({ active: null, all: [] }));
     setFileStore("gitStatus", reconcile([]));
     setFileStore("gitStatusByPath", reconcile({}));
+    setFileStore("gitDirHasChanges", reconcile({}));
     setFileStore("gitStatusLoading", false);
     setFileStore("searchQuery", "");
   });
@@ -237,7 +241,7 @@ export async function loadDirectory(
       : `${rootDir}/${relativePath}`.replace(/\\/g, "/");
 
   const promise = gateway
-    .listFiles(fullPath)
+    .listFiles(fullPath, rootDir)
     .then((children) => {
       // The service returns `path: entry.name` (just the filename).
       // Prepend the parent relativePath so nested lookups work correctly.
@@ -519,16 +523,26 @@ export async function loadGitStatus(directory: string): Promise<void> {
     // Only apply if still viewing this directory
     if (fileStore.rootDirectory !== directory) return;
     const byPath: Record<string, GitFileStatus> = {};
-    for (const s of status) byPath[s.path] = s;
+    const dirChanges: Record<string, boolean> = {};
+    for (const s of status) {
+      byPath[s.path] = s;
+      // Mark all parent directories as having changes
+      const parts = s.path.split("/");
+      for (let i = 1; i < parts.length; i++) {
+        dirChanges[parts.slice(0, i).join("/")] = true;
+      }
+    }
     batch(() => {
       setFileStore("gitStatus", reconcile(status));
       setFileStore("gitStatusByPath", reconcile(byPath));
+      setFileStore("gitDirHasChanges", reconcile(dirChanges));
     });
   } catch {
     if (fileStore.rootDirectory === directory) {
       batch(() => {
         setFileStore("gitStatus", reconcile([]));
         setFileStore("gitStatusByPath", reconcile({}));
+        setFileStore("gitDirHasChanges", reconcile({}));
       });
     }
   } finally {
@@ -553,6 +567,10 @@ export function getGitStatusColor(status: GitFileStatus["status"]): string {
   if (status === "added" || status === "untracked") return "text-green-500";
   if (status === "deleted") return "text-red-500";
   return "text-yellow-500";
+}
+
+export function dirHasGitChanges(relativePath: string): boolean {
+  return !!fileStore.gitDirHasChanges[relativePath];
 }
 
 // ---------------------------------------------------------------------------

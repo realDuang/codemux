@@ -8,6 +8,7 @@ import {
   getFileGitStatus,
   getGitStatusLabel,
   getGitStatusColor,
+  dirHasGitChanges,
 } from "../stores/file";
 import type { FileExplorerNode } from "../types/unified";
 
@@ -79,29 +80,13 @@ function FileTreeNode(props: FileTreeNodeProps) {
 
   const status = createMemo(() => getFileGitStatus(props.node.path));
 
-  // For directories: check if any descendant has git changes
-  const dirHasChanges = createMemo(() => {
-    if (!isDir()) return false;
-    const prefix = props.node.path.endsWith("/")
-      ? props.node.path
-      : props.node.path + "/";
-    return fileStore.gitStatus.some((s) => s.path.startsWith(prefix));
-  });
+  // For directories: O(1) check via precomputed map
+  const hasChanges = () => isDir() && dirHasGitChanges(props.node.path);
 
-  const dirDotColor = createMemo(() => {
-    if (!dirHasChanges()) return "";
-    const prefix = props.node.path.endsWith("/")
-      ? props.node.path
-      : props.node.path + "/";
-    // Pick the "most important" status color among children
-    const childStatuses = fileStore.gitStatus
-      .filter((s) => s.path.startsWith(prefix))
-      .map((s) => s.status);
-    if (childStatuses.includes("added") || childStatuses.includes("untracked"))
-      return "bg-green-500";
-    if (childStatuses.includes("deleted")) return "bg-red-500";
-    return "bg-yellow-500";
-  });
+  const dirDotColor = () => {
+    if (!hasChanges()) return "";
+    return "bg-yellow-500"; // simplified — directory dot is always yellow (mixed changes)
+  };
 
   const paddingLeft = () => `${8 + props.level * 16}px`;
 
@@ -211,7 +196,7 @@ function FileTreeNode(props: FileTreeNodeProps) {
         </Show>
 
         {/* Directory dot indicator */}
-        <Show when={isDir() && dirHasChanges()}>
+        <Show when={isDir() && hasChanges()}>
           <span class="flex items-center mr-2 flex-shrink-0">
             <span class={`w-1.5 h-1.5 rounded-full ${dirDotColor()}`} />
           </span>

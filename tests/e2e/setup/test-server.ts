@@ -427,6 +427,48 @@ export async function startTestServer(
         return { success: true };
       }
 
+      // --- File Explorer (mock responses for E2E testing) ---
+      case GatewayRequestType.FILE_LIST: {
+        return [
+          { name: "src", path: "src", absolutePath: `${p.directory}/src`, type: "directory", ignored: false },
+          { name: "electron", path: "electron", absolutePath: `${p.directory}/electron`, type: "directory", ignored: false },
+          { name: "tests", path: "tests", absolutePath: `${p.directory}/tests`, type: "directory", ignored: false },
+          { name: "node_modules", path: "node_modules", absolutePath: `${p.directory}/node_modules`, type: "directory", ignored: true },
+          { name: "package.json", path: "package.json", absolutePath: `${p.directory}/package.json`, type: "file", ignored: false, size: 2048 },
+          { name: "tsconfig.json", path: "tsconfig.json", absolutePath: `${p.directory}/tsconfig.json`, type: "file", ignored: false, size: 512 },
+          { name: "README.md", path: "README.md", absolutePath: `${p.directory}/README.md`, type: "file", ignored: false, size: 4096 },
+        ];
+      }
+
+      case GatewayRequestType.FILE_READ: {
+        return {
+          content: `// Mock file content for: ${p.path}\nexport const hello = "world";\n`,
+          binary: false,
+          size: 64,
+          mimeType: "text/typescript",
+        };
+      }
+
+      case GatewayRequestType.FILE_GIT_STATUS: {
+        return [
+          { path: "src/main.tsx", status: "modified", added: 5, removed: 2 },
+          { path: "README.md", status: "modified", added: 10, removed: 3 },
+          { path: "src/new-file.ts", status: "added", added: 20, removed: 0 },
+        ];
+      }
+
+      case GatewayRequestType.FILE_GIT_DIFF: {
+        return `--- a/${p.path}\n+++ b/${p.path}\n@@ -1,3 +1,5 @@\n+// New line\n export const x = 1;\n-export const y = 2;\n+export const y = 3;\n+export const z = 4;\n`;
+      }
+
+      case GatewayRequestType.FILE_WATCH: {
+        return { success: true };
+      }
+
+      case GatewayRequestType.FILE_UNWATCH: {
+        return { success: true };
+      }
+
       // --- Log (fire-and-forget, no response needed) ---
       case GatewayRequestType.LOG_SEND: {
         // Silently swallow renderer log forwarding in test mode

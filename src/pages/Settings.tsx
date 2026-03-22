@@ -5,7 +5,7 @@ import { ThemeSwitcher } from "../components/ThemeSwitcher";
 import ImportHistoryModal from "../components/ImportHistoryModal";
 import { useI18n } from "../lib/i18n";
 import { useAuthGuard } from "../lib/useAuthGuard";
-import { isElectron } from "../lib/platform";
+import { isElectron, isWindows } from "../lib/platform";
 import { Auth } from "../lib/auth";
 import { configStore, saveEngineModelSelection, isEngineEnabled, setEngineEnabled } from "../stores/config";
 import { sessionStore, setSessionStore } from "../stores/session";
@@ -196,7 +196,7 @@ export default function Settings() {
     <div class="flex h-screen bg-gray-50 dark:bg-slate-900 font-sans text-gray-900 dark:text-gray-100 electron-safe-top">
       <div class="flex-1 flex flex-col overflow-hidden max-w-4xl mx-auto w-full">
         {/* Header */}
-        <header class="flex items-center gap-4 px-6 py-6 electron-drag-region">
+        <header class={`flex items-center gap-4 px-6 py-6 electron-drag-region ${isWindows() && isElectron() ? 'electron-titlebar-pad-right' : ''}`}>
           <button
             onClick={() => navigate("/chat")}
             class="p-2 -ml-2 text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-slate-800 rounded-lg transition-colors electron-no-drag"

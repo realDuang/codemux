@@ -12,7 +12,7 @@ import { Auth } from "../lib/auth";
 import { useNavigate } from "@solidjs/router";
 import { gateway } from "../lib/gateway-api";
 import { logger } from "../lib/logger";
-import { isElectron } from "../lib/platform";
+import { isElectron, isWindows } from "../lib/platform";
 import { sessionStore, setSessionStore, type SessionInfo, setSendingFor } from "../stores/session";
 import {
   messageStore,
@@ -1580,7 +1580,7 @@ export default function Chat() {
       <div class="flex-1 flex flex-col overflow-hidden min-w-0 bg-white dark:bg-zinc-900 electron-safe-top">
 
         {/* Header */}
-        <header class="flex items-center justify-between px-4 py-3 border-b border-gray-100 dark:border-zinc-800/50 bg-white/80 dark:bg-zinc-900/80 backdrop-blur-xs sticky top-0 z-10 electron-drag-region">
+        <header class={`flex items-center justify-between px-4 py-3 border-b border-gray-100 dark:border-zinc-800/50 bg-white/80 dark:bg-zinc-900/80 backdrop-blur-xs sticky top-0 z-10 electron-drag-region ${isWindows() && isElectron() ? 'electron-titlebar-pad-right' : ''}`}>
           <div class="flex items-center gap-3 min-w-0 electron-no-drag">
             <button
               onClick={toggleSidebar}

@@ -2,7 +2,7 @@ import { createSignal, createResource, For, Show, onMount, type JSX } from "soli
 import { useNavigate } from "@solidjs/router";
 import { Auth, type DeviceInfo } from "../lib/auth";
 import { useI18n, formatMessage } from "../lib/i18n";
-import { isElectron } from "../lib/platform";
+import { isElectron, isWindows } from "../lib/platform";
 
 // ============================================================================
 // Helper Functions
@@ -226,7 +226,7 @@ export default function Devices() {
   return (
     <div class="flex flex-col h-screen bg-gray-50/50 dark:bg-slate-950 font-sans text-gray-900 dark:text-gray-100 electron-safe-top">
       {/* Header */}
-      <header class="sticky top-0 z-10 backdrop-blur-md bg-white/70 dark:bg-slate-900/70 border-b border-gray-200 dark:border-slate-800 px-4 h-14 flex items-center justify-between electron-drag-region">
+      <header class={`sticky top-0 z-10 backdrop-blur-md bg-white/70 dark:bg-slate-900/70 border-b border-gray-200 dark:border-slate-800 px-4 h-14 flex items-center justify-between electron-drag-region ${isWindows() && isElectron() ? 'electron-titlebar-pad-right' : ''}`}>
         <div class="flex items-center gap-2 electron-no-drag">
           <button
             onClick={() => navigate("/")}

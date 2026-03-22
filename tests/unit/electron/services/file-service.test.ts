@@ -339,7 +339,7 @@ describe("file-service", () => {
   });
 
   describe("getGitStatus with real project", () => {
-    const REPO_DIR = join(__dirname, "..", "..", "..", "..");
+    const REPO_DIR = process.cwd();
 
     it("returns status entries with valid shapes", async () => {
       const status = await getGitStatus(REPO_DIR);

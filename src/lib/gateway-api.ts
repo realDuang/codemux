@@ -336,8 +336,8 @@ class GatewayAPI {
   }
   // --- File Explorer ---
 
-  listFiles(directory: string): Promise<FileExplorerNode[]> {
-    return gatewayClient.listFiles(directory);
+  listFiles(directory: string, rootDirectory: string): Promise<FileExplorerNode[]> {
+    return gatewayClient.listFiles(directory, rootDirectory);
   }
 
   readFile(path: string, directory: string): Promise<FileExplorerContent> {

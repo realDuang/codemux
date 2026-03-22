@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, shell } from "electron";
+import { app, BrowserWindow, dialog, shell, nativeTheme } from "electron";
 import { join } from "path";
 import { loadSettings, saveSettings } from "./services/logger";
 
@@ -47,9 +47,7 @@ export function createWindow(hidden = false): BrowserWindow {
             titleBarOverlay: (() => {
               const settings = loadSettings();
               const theme = settings.theme as string | undefined;
-              const isDark = theme === "dark" || (!theme && true) || (theme === "system" && true);
-              // Determine effective theme — default to dark if unknown/system
-              // Will be corrected by renderer's syncTitleBarOverlay once loaded
+              const isDark = theme === "dark" || (theme !== "light" && nativeTheme.shouldUseDarkColors);
               return isDark
                 ? { color: "#020617", symbolColor: "#94a3b8", height: 40 }  // slate-950
                 : { color: "#f8fafc", symbolColor: "#475569", height: 40 }; // slate-50

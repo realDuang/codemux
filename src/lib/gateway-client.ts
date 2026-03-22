@@ -503,8 +503,8 @@ export class GatewayClient {
 
   // --- File Explorer API ---
 
-  listFiles(directory: string): Promise<FileExplorerNode[]> {
-    return this.request(GatewayRequestType.FILE_LIST, { directory });
+  listFiles(directory: string, rootDirectory: string): Promise<FileExplorerNode[]> {
+    return this.request(GatewayRequestType.FILE_LIST, { directory, rootDirectory });
   }
 
   readFile(path: string, directory: string): Promise<FileExplorerContent> {

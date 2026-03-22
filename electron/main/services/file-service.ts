@@ -316,8 +316,9 @@ export async function readFile(
     return { content: "", binary: false, size: 0 };
   }
 
-  const fileStat = await stat(filePath);
-  const size = fileStat.size;
+  try {
+    const fileStat = await stat(filePath);
+    const size = fileStat.size;
 
   // Tier 1: Extension-based binary detection
   if (isBinaryByExtension(filePath)) {
@@ -392,6 +393,9 @@ export async function readFile(
     size,
     mimeType: getMimeType(filePath),
   };
+  } catch {
+    return { content: "", binary: false, size: 0 };
+  }
 }
 
 export async function getGitStatus(

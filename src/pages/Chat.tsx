@@ -272,6 +272,13 @@ export default function Chat() {
     return hasTokens ? { input, output, cost: hasCost ? cost : undefined, costUnit } : null;
   });
 
+  const currentDirectory = createMemo(() => {
+    const sid = sessionStore.current;
+    if (!sid) return null;
+    const session = sessionStore.list.find((s) => s.id === sid);
+    return session?.directory || null;
+  });
+
   // Keep currentAgent in sync: whenever the engine type changes or engine
   // capabilities are refreshed (e.g. modes populated after createSession),
   // reset to the first available mode if the current one doesn't belong to
@@ -1524,7 +1531,7 @@ export default function Chat() {
           </Show>
         </div>
 
-        {/* Right: File explorer toggle + connection status */}
+        {/* Right: File explorer toggle + open folder + connection status */}
         <div class="flex items-center gap-1 electron-no-drag flex-shrink-0">
           <Show when={sessionStore.current}>
             <button
@@ -1540,6 +1547,26 @@ export default function Chat() {
                 <path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/>
                 <path d="M14 2v4a2 2 0 0 0 2 2h4"/>
                 <path d="M10 12H6"/><path d="M10 16H6"/><path d="M10 8H6"/>
+              </svg>
+            </button>
+          </Show>
+
+          {/* Open in system file explorer (Electron only) */}
+          <Show when={isElectron() && sessionStore.current && currentDirectory()}>
+            <button
+              onClick={() => {
+                const dir = currentDirectory();
+                if (dir && window.electronAPI?.system?.openPath) {
+                  window.electronAPI.system.openPath(dir);
+                }
+              }}
+              class="hidden md:flex p-1 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-200 dark:hover:bg-zinc-700 rounded transition-colors"
+              title={t().fileExplorer.openInExplorer}
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/>
+                <path d="M12 10v6"/>
+                <path d="m9 13 3-3 3 3"/>
               </svg>
             </button>
           </Show>

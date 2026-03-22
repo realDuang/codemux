@@ -40,6 +40,7 @@ interface OpenTab {
 interface FileStoreState {
   panelOpen: boolean;
   panelWidth: number;
+  treeWidth: number;
   activeTab: "files" | "changes";
   rootDirectory: string | null;
   directories: Record<string, DirectoryState>; // keyed by relative path ("." for root)
@@ -57,6 +58,7 @@ interface FileStoreState {
 export const [fileStore, setFileStore] = createStore<FileStoreState>({
   panelOpen: (getSetting("fileExplorerPanelOpen") as boolean | undefined) ?? false,
   panelWidth: (getSetting("fileExplorerPanelWidth") as number | undefined) ?? 260,
+  treeWidth: (getSetting("fileExplorerTreeWidth") as number | undefined) ?? 200,
   activeTab: (getSetting("fileExplorerActiveTab") as "files" | "changes" | undefined) ?? "files",
   rootDirectory: null,
   directories: {},
@@ -144,6 +146,12 @@ export function setPanelWidth(width: number): void {
   const clamped = Math.max(200, Math.min(600, width));
   setFileStore("panelWidth", clamped);
   saveSetting("fileExplorerPanelWidth", clamped);
+}
+
+export function setTreeWidth(width: number): void {
+  const clamped = Math.max(120, Math.min(400, width));
+  setFileStore("treeWidth", clamped);
+  saveSetting("fileExplorerTreeWidth", clamped);
 }
 
 // ---------------------------------------------------------------------------

@@ -494,6 +494,7 @@ export interface LocaleDict {
     searchClose: string;
     noResults: string;
     matchCount: string;
+    openInExplorer: string;
   };
 }
 
@@ -990,5 +991,6 @@ export const en: LocaleDict = {
     searchClose: "Close search",
     noResults: "No results",
     matchCount: "{current} of {total}",
+    openInExplorer: "Open in file explorer",
   },
 };

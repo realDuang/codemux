@@ -35,13 +35,22 @@ export function createWindow(hidden = false): BrowserWindow {
     minHeight: 600,
     show: false,
     autoHideMenuBar: true,
-    // macOS-specific title bar styling
+    // Platform-specific title bar styling
     ...(process.platform === "darwin"
       ? {
           titleBarStyle: "hiddenInset" as const,
           trafficLightPosition: { x: 16, y: 16 },
         }
-      : {}),
+      : process.platform === "win32"
+        ? {
+            titleBarStyle: "hidden" as const,
+            titleBarOverlay: {
+              color: "#09090b",       // zinc-950 (match dark theme bg)
+              symbolColor: "#a1a1aa", // zinc-400
+              height: 40,
+            },
+          }
+        : {}),
     webPreferences: {
       preload: join(__dirname, "../preload/index.cjs"),
       sandbox: false, // Required for IPC communication in preload

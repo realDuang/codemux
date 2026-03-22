@@ -11,6 +11,20 @@ export function isBrowser(): boolean {
   return !isElectron();
 }
 
+/** Detect Windows platform */
+export function isWindows(): boolean {
+  return typeof navigator !== "undefined" &&
+    ((navigator as any).userAgentData?.platform === "Windows" ||
+     /Windows/i.test(navigator.userAgent));
+}
+
+/** Detect macOS platform */
+export function isMacOS(): boolean {
+  return typeof navigator !== "undefined" &&
+    ((navigator as any).userAgentData?.platform === "macOS" ||
+     /Mac/i.test(navigator.userAgent));
+}
+
 /**
  * macOS title bar height (when using hiddenInset style)
  * trafficLightPosition.y = 16, plus button height ~12px, plus some padding
@@ -19,20 +33,18 @@ const MACOS_TITLE_BAR_HEIGHT = 38;
 
 /**
  * Initialize Electron title bar safe area
- * When using hiddenInset title bar on macOS, add top padding to content
+ * Sets platform classes and CSS custom properties for custom titlebars
  */
 export function initElectronTitleBar(): void {
   if (!isElectron()) return;
 
-  // Detect macOS (userAgentData preferred, userAgent as fallback)
-  const isMacOS = (navigator as any).userAgentData?.platform === "macOS" ||
-                  /Mac/i.test(navigator.userAgent);
-
-  if (isMacOS) {
+  if (isMacOS()) {
     document.documentElement.style.setProperty(
       '--electron-title-bar-height',
       `${MACOS_TITLE_BAR_HEIGHT}px`
     );
     document.documentElement.classList.add('electron-macos');
+  } else if (isWindows()) {
+    document.documentElement.classList.add('electron-windows');
   }
 }

@@ -284,42 +284,23 @@ export async function listDirectory(directory: string): Promise<FileNode[]> {
 
   const truncated = filtered.slice(0, MAX_DIR_ENTRIES);
 
-  // Build nodes — batch stat() calls to avoid file handle exhaustion
-  const nodes: FileNode[] = [];
+  // Build nodes — no stat() calls (matching OpenCode's approach for speed)
+  const nodes: FileNode[] = truncated.map((entry) => {
+    const name = entry.name;
+    const isDir = entry.isDirectory();
+    const absolutePath = join(directory, name);
 
-  for (let i = 0; i < truncated.length; i += STAT_BATCH_SIZE) {
-    const batch = truncated.slice(i, i + STAT_BATCH_SIZE);
-    const batchNodes = await Promise.all(
-      batch.map(async (entry) => {
-        const name = entry.name;
-        const isDir = entry.isDirectory();
-        const absolutePath = join(directory, name);
+    let ignored = false;
+    if (isDir) {
+      if (DIMMED_DIRS.has(name)) ignored = true;
+      else if (name === "bin" && siblingNames.has("obj")) ignored = true;
+    }
+    if (name.startsWith(".") && !NON_IGNORED_DOTFILES.has(name)) {
+      ignored = true;
+    }
 
-        let ignored = false;
-        if (isDir) {
-          if (DIMMED_DIRS.has(name)) ignored = true;
-          else if (name === "bin" && siblingNames.has("obj")) ignored = true;
-        }
-        if (name.startsWith(".") && !NON_IGNORED_DOTFILES.has(name)) {
-          ignored = true;
-        }
-
-        // Only stat files (for size), skip stat for directories
-        let size: number | undefined;
-        if (!isDir) {
-          try {
-            const fileStat = await stat(absolutePath);
-            size = fileStat.size;
-          } catch {
-            // Ignore stat errors
-          }
-        }
-
-        return { name, path: name, absolutePath, type: isDir ? "directory" : "file", ignored, size } as FileNode;
-      }),
-    );
-    nodes.push(...batchNodes);
-  }
+    return { name, path: name, absolutePath, type: isDir ? "directory" : "file", ignored } as FileNode;
+  });
 
   return nodes;
 }
@@ -449,7 +430,7 @@ export async function getGitStatus(
     }
   }
 
-  // 2. Untracked files (skip line counting — too expensive for large repos)
+  // 2. Untracked files (count lines for small files, skip large ones)
   const untrackedOutput = await execGit(directory, [
     "ls-files",
     "--others",
@@ -459,14 +440,36 @@ export async function getGitStatus(
     const untrackedPaths = untrackedOutput
       .split("\n")
       .map((l) => l.trim())
-      .filter(Boolean)
-      .slice(0, 200); // cap at 200 untracked files to avoid flooding
+      .filter(Boolean);
 
-    for (const filePath of untrackedPaths) {
-      statusMap.set(filePath, {
-        path: filePath,
-        status: "untracked",
-      });
+    // Process in batches to avoid file-handle exhaustion
+    for (let i = 0; i < untrackedPaths.length; i += STAT_BATCH_SIZE) {
+      const batch = untrackedPaths.slice(i, i + STAT_BATCH_SIZE);
+      const results = await Promise.all(
+        batch.map(async (filePath) => {
+          let lineCount: number | undefined;
+          try {
+            const fullPath = join(directory, filePath);
+            const fileStat = await stat(fullPath);
+            // Only count lines for files under 512KB
+            if (fileStat.size < 512 * 1024) {
+              const content = await fsReadFile(fullPath, "utf-8");
+              lineCount = content.split("\n").length;
+            }
+          } catch {
+            // Ignore read errors
+          }
+          return { filePath, lineCount };
+        }),
+      );
+
+      for (const { filePath, lineCount } of results) {
+        statusMap.set(filePath, {
+          path: filePath,
+          status: "untracked",
+          added: lineCount,
+        });
+      }
     }
   }
 
@@ -565,12 +568,21 @@ export function watchDirectory(directory: string): void {
   // Close all existing watchers — only one project is watched at a time
   unwatchAll();
 
-  // Safety: skip directories that are too close to filesystem root (likely not a project)
-  // A proper project dir is at least 2-3 levels deep (e.g., /Users/me/project or C:\Users\me\project)
-  const parts = directory.replace(/\\/g, "/").split("/").filter(Boolean);
-  if (parts.length < 3) {
-    return; // Too shallow — root, drive, or top-level system directory
-  }
+  // Check if directory is within a git repository (works for subdirectories too)
+  // git rev-parse --show-toplevel succeeds inside any git repo, fails outside
+  execFile(
+    "git",
+    ["rev-parse", "--show-toplevel"],
+    { cwd: directory, timeout: 3000 },
+    (error) => {
+      if (error) return; // Not under git — no need to watch
+      startWatcher(directory);
+    },
+  );
+}
+
+function startWatcher(directory: string): void {
+  if (watchers.has(directory)) return;
 
   const watcher = watch(directory, {
     ignored: [

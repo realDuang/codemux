@@ -126,14 +126,10 @@ describe("file-service", () => {
       expect(hiddenDir?.ignored).toBe(true);
     });
 
-    it("includes file size for files", async () => {
+    it("does not include file size (no stat calls for speed)", async () => {
       const nodes = await listDirectory(TEST_DIR);
       const readme = nodes.find((n) => n.name === "README.md");
-      expect(readme?.size).toBeGreaterThan(0);
-
-      // Directories should not have size
-      const src = nodes.find((n) => n.name === "src");
-      expect(src?.size).toBeUndefined();
+      expect(readme?.size).toBeUndefined();
     });
 
     it("returns correct absolutePath and path", async () => {

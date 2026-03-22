@@ -173,7 +173,20 @@ export function setActiveFileTab(tab: "files" | "changes"): void {
 export async function setRootDirectory(
   directory: string | null,
 ): Promise<void> {
-  // Reset state
+  // Unwatch the old directory before switching
+  const oldDir = fileStore.rootDirectory;
+  if (oldDir && oldDir !== directory) {
+    gateway.unwatchDirectory(oldDir).catch(() => {});
+  }
+
+  // Clear LRU content cache
+  contentCache.clear();
+  totalBytes = 0;
+
+  // Clear in-flight request deduplication
+  inflight.clear();
+
+  // Reset store state
   batch(() => {
     setFileStore("rootDirectory", directory);
     setFileStore("directories", reconcile({}));

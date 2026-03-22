@@ -560,6 +560,9 @@ export function onFileChange(callback: FileChangeCallback): void {
 export function watchDirectory(directory: string): void {
   if (watchers.has(directory)) return;
 
+  // Close all existing watchers — only one project is watched at a time
+  unwatchAll();
+
   const watcher = watch(directory, {
     ignored: [
       /(^|[\/\\])\../, // hidden files/dirs

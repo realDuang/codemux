@@ -3,6 +3,7 @@ import {
   createMemo,
   createEffect,
   on,
+  onCleanup,
 } from "solid-js";
 import { FileTree } from "./FileTree";
 import { FileTabs } from "./FileTabs";
@@ -17,6 +18,7 @@ import {
   setTreeWidth,
 } from "../stores/file";
 import { sessionStore } from "../stores/session";
+import { gateway } from "../lib/gateway-api";
 import { useI18n } from "../lib/i18n";
 import type { FileExplorerNode } from "../types/unified";
 
@@ -38,6 +40,14 @@ export function FileExplorer() {
       setRootDirectory(dir);
     }),
   );
+
+  // Cleanup watcher when component unmounts
+  onCleanup(() => {
+    const dir = fileStore.rootDirectory;
+    if (dir) {
+      gateway.unwatchDirectory(dir).catch(() => {});
+    }
+  });
 
   // Root nodes from the file store
   const rootNodes = createMemo(

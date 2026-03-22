@@ -1471,13 +1471,87 @@ export default function Chat() {
   return (
     <div class="flex flex-col h-screen bg-gray-50/50 dark:bg-zinc-950 font-sans text-gray-900 dark:text-gray-100 overflow-hidden relative">
 
-      {/* Windows/macOS titlebar drag region — spans full width */}
-      <Show when={isElectron() && (isWindows() || isMacOS())}>
-        <div
-          class={`w-full flex-shrink-0 electron-drag-region ${isWindows() ? 'electron-titlebar-pad-right' : ''}`}
-          style={{ height: "var(--electron-title-bar-height, 0px)" }}
-        />
-      </Show>
+      {/* Unified Titlebar — 40px, spans full width */}
+      <div
+        class={`w-full flex-shrink-0 flex items-center px-2 border-b border-gray-200 dark:border-zinc-800 bg-gray-50 dark:bg-zinc-950 electron-drag-region
+          ${isMacOS() && isElectron() ? 'pl-[72px]' : ''}
+          ${isWindows() && isElectron() ? 'pr-[140px]' : ''}`}
+        style={{ height: "var(--electron-title-bar-height, 40px)", "min-height": "var(--electron-title-bar-height, 40px)" }}
+      >
+        {/* Left: Logo + Sidebar toggle */}
+        <div class="flex items-center gap-2 electron-no-drag flex-shrink-0">
+          <img src="/assets/logo.png" alt="CodeMux" class="w-5 h-5 rounded" />
+          <span class="text-[13px] font-semibold text-gray-700 dark:text-gray-300 hidden sm:inline">CodeMux</span>
+
+          {/* Mobile sidebar toggle */}
+          <button
+            onClick={toggleSidebar}
+            class="md:hidden p-1 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-200 dark:hover:bg-zinc-700 rounded transition-colors"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" x2="20" y1="12" y2="12" /><line x1="4" x2="20" y1="6" y2="6" /><line x1="4" x2="20" y1="18" y2="18" /></svg>
+          </button>
+
+          {/* Desktop sidebar collapse/expand toggle */}
+          <button
+            onClick={toggleSidebarCollapse}
+            class="hidden md:inline-flex p-1 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-200 dark:hover:bg-zinc-700 rounded transition-colors"
+            title={isSidebarCollapsed() ? t().sidebar.expandSidebar : t().sidebar.collapseSidebar}
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <rect width="18" height="18" x="3" y="3" rx="2" />
+              <path d="M9 3v18" />
+              {isSidebarCollapsed() ? <path d="m14 9 3 3-3 3" /> : <path d="m14 9-3 3 3 3" />}
+            </svg>
+          </button>
+        </div>
+
+        {/* Center: Session title + badges (draggable gap) */}
+        <div class="flex-1 flex items-center justify-center gap-2 min-w-0 px-4">
+          <Show when={sessionStore.current}>
+            <h1 class="text-[13px] font-medium text-gray-600 dark:text-gray-400 truncate electron-no-drag">
+              {getDisplayTitle(currentSessionTitle())}
+            </h1>
+            <span class={`shrink-0 px-1.5 py-0.5 text-[10px] font-medium rounded-full electron-no-drag ${currentEngineBadge().class}`}>
+              {currentEngineBadge().label}
+            </span>
+            <span class={`shrink-0 px-1.5 py-0.5 text-[10px] font-medium rounded-full electron-no-drag ${
+              currentAgent().id === "plan"
+                ? "bg-violet-100 text-violet-700 dark:bg-violet-900/30 dark:text-violet-400"
+                : "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400"
+            }`}>
+              {currentAgent().label}
+            </span>
+          </Show>
+        </div>
+
+        {/* Right: File explorer toggle + connection status */}
+        <div class="flex items-center gap-1 electron-no-drag flex-shrink-0">
+          <Show when={sessionStore.current}>
+            <button
+              onClick={togglePanel}
+              class={`hidden md:flex p-1 rounded transition-colors ${
+                fileStore.panelOpen
+                  ? "bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400"
+                  : "text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-200 dark:hover:bg-zinc-700"
+              }`}
+              title={t().fileExplorer.togglePanel}
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/>
+                <path d="M14 2v4a2 2 0 0 0 2 2h4"/>
+                <path d="M10 12H6"/><path d="M10 16H6"/><path d="M10 8H6"/>
+              </svg>
+            </button>
+          </Show>
+
+          <Show when={!wsConnected()}>
+            <div class="flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-red-50 dark:bg-red-900/20">
+              <span class="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" />
+              <span class="text-[10px] font-medium text-red-600 dark:text-red-400">Disconnected</span>
+            </div>
+          </Show>
+        </div>
+      </div>
 
       <div class="flex flex-1 overflow-hidden">
 
@@ -1496,27 +1570,6 @@ export default function Chat() {
           ${isSidebarOpen() ? "translate-x-0 w-72" : "-translate-x-full md:translate-x-0"}
         `}
       >
-        {/* Sidebar Collapse Toggle (desktop only) */}
-        <div class="hidden md:flex items-center justify-between px-2 pt-2 pb-1 border-b border-gray-200 dark:border-zinc-800">
-          <Show when={!isSidebarCollapsed()}>
-            <span class="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider px-1">{t().sidebar.sessions}</span>
-          </Show>
-          <div class="flex items-center gap-0.5">
-            <button
-              onClick={toggleSidebarCollapse}
-              class="p-1.5 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-zinc-800 rounded-md transition-colors flex-shrink-0"
-              title={isSidebarCollapsed() ? t().sidebar.expandSidebar : t().sidebar.collapseSidebar}
-              aria-label={isSidebarCollapsed() ? t().sidebar.expandSidebar : t().sidebar.collapseSidebar}
-              aria-expanded={!isSidebarCollapsed()}
-            >
-              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <rect width="18" height="18" x="3" y="3" rx="2" />
-                <path d="M9 3v18" />
-                {isSidebarCollapsed() ? <path d="m14 9 3 3-3 3" /> : <path d="m14 9-3 3 3 3" />}
-              </svg>
-            </button>
-          </div>
-        </div>
         <div class="relative flex flex-col h-full overflow-hidden">
           <Show when={!sessionStore.loading}>
             <SessionSidebar
@@ -1591,59 +1644,7 @@ export default function Chat() {
       <div class="flex-1 flex overflow-hidden min-w-0">
       <div class="flex-1 flex flex-col overflow-hidden min-w-0 bg-white dark:bg-zinc-900">
 
-        {/* Header */}
-        <header class="flex items-center justify-between px-4 py-3 border-b border-gray-100 dark:border-zinc-800/50 bg-white/80 dark:bg-zinc-900/80 backdrop-blur-xs sticky top-0 z-10 electron-drag-region">
-          <div class="flex items-center gap-3 min-w-0 electron-no-drag">
-            <button
-              onClick={toggleSidebar}
-              class="md:hidden p-2 -ml-2 text-gray-500 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-zinc-800 rounded-lg transition-colors"
-            >
-              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" x2="20" y1="12" y2="12" /><line x1="4" x2="20" y1="6" y2="6" /><line x1="4" x2="20" y1="18" y2="18" /></svg>
-            </button>
-            <h1 class="text-base font-semibold text-gray-900 dark:text-white truncate">
-              {getDisplayTitle(currentSessionTitle())}
-            </h1>
-            {/* Engine Badge */}
-            <Show when={sessionStore.current}>
-              <span class={`shrink-0 px-2 py-0.5 text-[10px] font-medium rounded-full ${currentEngineBadge().class}`}>
-                {currentEngineBadge().label}
-              </span>
-            </Show>
-            {/* Agent Mode Indicator */}
-            <span class={`shrink-0 px-2 py-0.5 text-[10px] font-medium rounded-full ${
-              currentAgent().id === "plan"
-                ? "bg-violet-100 text-violet-700 dark:bg-violet-900/30 dark:text-violet-400"
-                : "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400"
-            }`}>
-              {currentAgent().label}
-            </span>
-          </div>
-          {/* File explorer toggle — desktop only */}
-          <Show when={sessionStore.current}>
-            <button
-              onClick={togglePanel}
-              class={`hidden md:flex p-1.5 rounded-md transition-colors electron-no-drag ${
-                fileStore.panelOpen
-                  ? "bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400"
-                  : "text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-zinc-800"
-              }`}
-              title={t().fileExplorer.togglePanel}
-            >
-              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24"
-                fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/>
-                <path d="M14 2v4a2 2 0 0 0 2 2h4"/>
-                <path d="M10 12H6"/><path d="M10 16H6"/><path d="M10 8H6"/>
-              </svg>
-            </button>
-          </Show>
-          <Show when={!wsConnected()}>
-            <div class="flex items-center gap-1.5 px-2 py-1 rounded-full bg-red-50 dark:bg-red-900/20 electron-no-drag">
-              <span class="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
-              <span class="text-[11px] font-medium text-red-600 dark:text-red-400">Disconnected</span>
-            </div>
-          </Show>
-        </header>
+
 
         {/* Message List */}
         <main class="flex-1 flex flex-col overflow-hidden relative">

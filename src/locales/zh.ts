@@ -493,5 +493,6 @@ export const zh: LocaleDict = {
     searchClose: "关闭搜索",
     noResults: "无结果",
     matchCount: "第 {current} 个，共 {total} 个",
+    openInExplorer: "在文件管理器中打开",
   },
 };

@@ -13,7 +13,6 @@ import { FileSearchBar } from "./FileSearchBar";
 import { Spinner } from "./Spinner";
 import {
   fileStore,
-  setFileStore,
   loadDiff,
   saveTabScroll,
   getFileGitStatus,
@@ -265,28 +264,20 @@ export function FilePreview() {
     }
   }
 
-  function handleClose() {
-    setFileStore("preview", null);
-    setFileStore("openTabs", "active", null);
-  }
-
   return (
     <Show when={preview()}>
       {(prev) => (
         <div class="flex flex-col h-full bg-white dark:bg-zinc-900">
-          {/* Header */}
-          <div class="flex items-center gap-2 px-3 py-1.5 border-b border-gray-200 dark:border-zinc-700 text-[13px] min-h-[34px] shrink-0">
-            <span class="font-semibold text-gray-900 dark:text-zinc-100 truncate">
-              {prev().name}
-            </span>
-            <span class="text-gray-400 dark:text-zinc-500 truncate flex-1 text-xs">
+          {/* Slim info bar: path + content/diff toggle */}
+          <div class="flex items-center justify-between px-3 py-1 border-b border-gray-200 dark:border-zinc-700 bg-gray-50/50 dark:bg-zinc-800/30 shrink-0 min-h-[28px]">
+            <span class="text-[11px] text-gray-400 dark:text-gray-500 truncate">
               {prev().path}
             </span>
 
             <Show when={hasGitChanges()}>
-              <div class="flex rounded border border-gray-200 dark:border-zinc-700 overflow-hidden text-xs shrink-0">
+              <div class="flex rounded border border-gray-200 dark:border-zinc-700 overflow-hidden text-[11px] shrink-0 ml-2">
                 <button
-                  class={`px-2 py-0.5 ${
+                  class={`px-1.5 py-0.5 ${
                     viewMode() === "content"
                       ? "bg-blue-50 text-blue-600 dark:bg-blue-900/20 dark:text-blue-400"
                       : "text-gray-600 dark:text-zinc-400 hover:bg-gray-50 dark:hover:bg-zinc-800"
@@ -296,7 +287,7 @@ export function FilePreview() {
                   {t().fileExplorer.content}
                 </button>
                 <button
-                  class={`px-2 py-0.5 ${
+                  class={`px-1.5 py-0.5 ${
                     viewMode() === "diff"
                       ? "bg-blue-50 text-blue-600 dark:bg-blue-900/20 dark:text-blue-400"
                       : "text-gray-600 dark:text-zinc-400 hover:bg-gray-50 dark:hover:bg-zinc-800"
@@ -307,22 +298,6 @@ export function FilePreview() {
                 </button>
               </div>
             </Show>
-
-            <button
-              class="ml-1 p-0.5 rounded text-gray-400 dark:text-zinc-500 hover:text-gray-600 dark:hover:text-zinc-300 hover:bg-gray-100 dark:hover:bg-zinc-800 shrink-0"
-              onClick={handleClose}
-              title={t().fileExplorer.close}
-            >
-              <svg
-                class="w-4 h-4"
-                viewBox="0 0 16 16"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="1.5"
-              >
-                <path d="M4 4l8 8M12 4l-8 8" />
-              </svg>
-            </button>
           </div>
 
           {/* Search bar */}

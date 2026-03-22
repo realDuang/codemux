@@ -304,6 +304,7 @@ export function FilePreview() {
           <Show when={showSearch() && preview()?.content && !preview()!.content!.binary}>
             <FileSearchBar
               content={preview()!.content!.content}
+              scrollContainer={scrollRef}
               onClose={() => setShowSearch(false)}
             />
           </Show>

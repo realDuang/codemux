@@ -1010,10 +1010,10 @@ export default function EntryPage() {
                 </div>
               </div>
 
-              {/* Vertical Tab Layout */}
-              <div class="flex gap-0 bg-white dark:bg-slate-900 rounded-xl border border-gray-200 dark:border-slate-800 shadow-xs overflow-hidden min-h-[520px]">
-                {/* Left: Tab Navigation */}
-                <nav class="w-44 shrink-0 border-r border-gray-200 dark:border-slate-800 bg-gray-50/50 dark:bg-slate-950/50 p-3 flex flex-col gap-1">
+              {/* Vertical Tab Layout (horizontal on mobile) */}
+              <div class="flex flex-col md:flex-row gap-0 bg-white dark:bg-slate-900 rounded-xl border border-gray-200 dark:border-slate-800 shadow-xs overflow-hidden md:min-h-[520px]">
+                {/* Left: Tab Navigation (top on mobile) */}
+                <nav class="w-full md:w-44 shrink-0 border-b md:border-b-0 md:border-r border-gray-200 dark:border-slate-800 bg-gray-50/50 dark:bg-slate-950/50 p-2 md:p-3 flex md:flex-col gap-1 overflow-x-auto">
                   <Show when={isElectron()}>
                     <button
                       onClick={() => setActiveTab("channels")}

@@ -94,6 +94,17 @@ body {
   font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  /* Prevent horizontal overflow on mobile */
+  overflow-x: hidden;
+}
+
+/* ── Mobile touch & overflow helpers ── */
+@media (max-width: 640px) {
+  /* Improve momentum scrolling on iOS */
+  .overflow-y-auto,
+  .overflow-x-auto {
+    -webkit-overflow-scrolling: touch;
+  }
 }
 
 /* Electron title bar safe area — macOS + Windows */
@@ -256,4 +267,24 @@ body {
 }
 [data-component="resize-handle"][data-direction="vertical"][data-edge="end"]::after {
   bottom: 3px;
+}
+
+/* File search highlighting */
+.file-search-highlight {
+  background-color: rgba(255, 213, 79, 0.4);
+  border-radius: 2px;
+  box-decoration-break: clone;
+}
+.file-search-highlight-current {
+  background-color: rgba(255, 152, 0, 0.6);
+  border-radius: 2px;
+  outline: 2px solid #ff9800;
+  box-decoration-break: clone;
+}
+.dark .file-search-highlight {
+  background-color: rgba(255, 213, 79, 0.25);
+}
+.dark .file-search-highlight-current {
+  background-color: rgba(255, 152, 0, 0.4);
+  outline-color: #ffb74d;
 }

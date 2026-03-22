@@ -464,8 +464,24 @@ export function SessionSidebar(props: SessionSidebarProps) {
                           <path d="M12 5v14" />
                         </svg>
                       </button>
+                      {/* Open in file explorer (Electron only) */}
+                      <Show when={isElectron() && project.project}>
+                        <button
+                          class="p-1 text-gray-400 hover:text-amber-600 dark:hover:text-amber-400 rounded transition-all"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            const dir = getProjectDirectory(project.project!);
+                            if (dir) systemAPI.openPath(dir);
+                          }}
+                          title={t().sidebar.openInFileExplorer}
+                        >
+                          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/>
+                            <path d="M12 10v6"/><path d="m9 13 3-3 3 3"/>
+                          </svg>
+                        </button>
+                      </Show>
                       <button
-                        class="p-1 text-gray-400 hover:text-red-500 dark:hover:text-red-400 rounded transition-all"
                         onClick={(e) => {
                           e.stopPropagation();
                           props.onDeleteProjectSessions(project.projectID, project.name, project.sessions.length);

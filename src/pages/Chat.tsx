@@ -1551,26 +1551,6 @@ export default function Chat() {
             </button>
           </Show>
 
-          {/* Open in system file explorer (Electron only) */}
-          <Show when={isElectron() && sessionStore.current && currentDirectory()}>
-            <button
-              onClick={() => {
-                const dir = currentDirectory();
-                if (dir && window.electronAPI?.system?.openPath) {
-                  window.electronAPI.system.openPath(dir);
-                }
-              }}
-              class="hidden md:flex p-1 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-200 dark:hover:bg-zinc-700 rounded transition-colors"
-              title={t().fileExplorer.openInExplorer}
-            >
-              <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/>
-                <path d="M12 10v6"/>
-                <path d="m9 13 3-3 3 3"/>
-              </svg>
-            </button>
-          </Show>
-
           <Show when={!wsConnected()}>
             <div class="flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-red-50 dark:bg-red-900/20">
               <span class="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" />

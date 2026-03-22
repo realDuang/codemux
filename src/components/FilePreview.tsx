@@ -218,11 +218,12 @@ export function FilePreview() {
   createEffect(
     on(
       () => preview()?.path,
-      () => {
+      (newPath) => {
         // Close search bar when file changes
         setShowSearch(false);
         
-        if (hasGitChanges() && fileStore.activeTab === "changes") {
+        // Determine view mode: diff for changed files opened from Changes tab
+        if (newPath && fileStore.activeTab === "changes" && getFileGitStatus(newPath)) {
           setViewMode("diff");
         } else {
           setViewMode("content");
@@ -231,17 +232,15 @@ export function FilePreview() {
     ),
   );
 
-  // Load diff when switching to diff mode
-  createEffect(
-    on(viewMode, (mode) => {
-      if (mode === "diff" && fileStore.rootDirectory && preview()) {
-        const p = preview()!;
-        if (!p.diff) {
-          loadDiff(fileStore.rootDirectory!, p.path);
-        }
-      }
-    }),
-  );
+  // Load diff when viewMode changes to "diff" or when preview path changes while in diff mode
+  createEffect(() => {
+    const mode = viewMode();
+    const p = preview();
+    const rootDir = fileStore.rootDirectory;
+    if (mode === "diff" && rootDir && p && !p.diff && !p.loading) {
+      loadDiff(rootDir, p.path);
+    }
+  });
 
   // Restore scroll position when switching tabs
   createEffect(

@@ -248,6 +248,14 @@ function execGit(cwd: string, args: string[]): Promise<string> {
   });
 }
 
+// ─── Constants ───────────────────────────────────────────────────────────────
+
+/** Max entries to return from a single directory listing */
+const MAX_DIR_ENTRIES = 500;
+
+/** Max entries to stat in parallel (avoid file-handle exhaustion) */
+const STAT_BATCH_SIZE = 50;
+
 // ─── Public API ──────────────────────────────────────────────────────────────
 
 export async function listDirectory(directory: string): Promise<FileNode[]> {
@@ -260,55 +268,58 @@ export async function listDirectory(directory: string): Promise<FileNode[]> {
     return [];
   }
 
+  // Filter out skipped entries
+  const filtered = entries.filter((entry) => !SKIP_ENTRIES.has(entry.name));
+
   // Collect sibling names for contextual rules (bin alongside obj)
   const siblingNames = new Set(entries.map((e) => e.name));
 
-  // Build nodes with parallel stat() calls
-  const nodePromises = entries
-    .filter((entry) => !SKIP_ENTRIES.has(entry.name))
-    .map(async (entry) => {
-      const name = entry.name;
-      const isDir = entry.isDirectory();
-      const type: "file" | "directory" = isDir ? "directory" : "file";
-      const absolutePath = join(directory, name);
-
-      let ignored = false;
-
-      if (isDir) {
-        if (DIMMED_DIRS.has(name)) {
-          ignored = true;
-        } else if (name === "bin" && siblingNames.has("obj")) {
-          ignored = true;
-        }
-      }
-
-      // Hidden files/dirs (starting with .)
-      if (name.startsWith(".") && !NON_IGNORED_DOTFILES.has(name)) {
-        ignored = true;
-      }
-
-      let size: number | undefined;
-      if (!isDir) {
-        try {
-          const fileStat = await stat(absolutePath);
-          size = fileStat.size;
-        } catch {
-          // Ignore stat errors
-        }
-      }
-
-      return { name, path: name, absolutePath, type, ignored, size } as FileNode;
-    });
-
-  const nodes = await Promise.all(nodePromises);
-
-  // Sort: directories first, then alphabetically case-insensitive
-  nodes.sort((a, b) => {
-    if (a.type !== b.type) {
-      return a.type === "directory" ? -1 : 1;
-    }
+  // Truncate if too many entries — sort first so dirs come before files
+  filtered.sort((a, b) => {
+    const aDir = a.isDirectory() ? 0 : 1;
+    const bDir = b.isDirectory() ? 0 : 1;
+    if (aDir !== bDir) return aDir - bDir;
     return a.name.toLowerCase().localeCompare(b.name.toLowerCase());
   });
+
+  const truncated = filtered.slice(0, MAX_DIR_ENTRIES);
+
+  // Build nodes — batch stat() calls to avoid file handle exhaustion
+  const nodes: FileNode[] = [];
+
+  for (let i = 0; i < truncated.length; i += STAT_BATCH_SIZE) {
+    const batch = truncated.slice(i, i + STAT_BATCH_SIZE);
+    const batchNodes = await Promise.all(
+      batch.map(async (entry) => {
+        const name = entry.name;
+        const isDir = entry.isDirectory();
+        const absolutePath = join(directory, name);
+
+        let ignored = false;
+        if (isDir) {
+          if (DIMMED_DIRS.has(name)) ignored = true;
+          else if (name === "bin" && siblingNames.has("obj")) ignored = true;
+        }
+        if (name.startsWith(".") && !NON_IGNORED_DOTFILES.has(name)) {
+          ignored = true;
+        }
+
+        // Only stat files (for size), skip stat for directories
+        let size: number | undefined;
+        if (!isDir) {
+          try {
+            const fileStat = await stat(absolutePath);
+            size = fileStat.size;
+          } catch {
+            // Ignore stat errors
+          }
+        }
+
+        return { name, path: name, absolutePath, type: isDir ? "directory" : "file", ignored, size } as FileNode;
+      }),
+    );
+    nodes.push(...batchNodes);
+  }
 
   return nodes;
 }
@@ -562,6 +573,13 @@ export function watchDirectory(directory: string): void {
 
   // Close all existing watchers — only one project is watched at a time
   unwatchAll();
+
+  // Safety: skip directories that are too close to filesystem root (likely not a project)
+  // A proper project dir is at least 2-3 levels deep (e.g., /Users/me/project or C:\Users\me\project)
+  const parts = directory.replace(/\\/g, "/").split("/").filter(Boolean);
+  if (parts.length < 3) {
+    return; // Too shallow — root, drive, or top-level system directory
+  }
 
   const watcher = watch(directory, {
     ignored: [

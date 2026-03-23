@@ -53,14 +53,10 @@ export class FeishuTransport implements MessageTransport {
   async deleteMessage(messageId: string): Promise<void> {
     if (!messageId) return;
 
-    try {
-      await this.rateLimiter.consume();
-      await this.larkClient.im.message.delete({
-        path: { message_id: messageId },
-      });
-    } catch (err) {
-      feishuLog.error(`Failed to delete message ${messageId}:`, err);
-    }
+    await this.rateLimiter.consume();
+    await this.larkClient.im.message.delete({
+      path: { message_id: messageId },
+    });
   }
 
   async sendRichContent(chatId: string, cardJson: string): Promise<string> {

@@ -6,7 +6,7 @@ import { LanguageSwitcher } from "../components/LanguageSwitcher";
 import { FeishuConfigModal } from "../components/FeishuConfigModal";
 import { ChannelConfigModal } from "../components/ChannelConfigModal";
 import { logger } from "../lib/logger";
-import { isElectron, isWindows, isMacOS } from "../lib/platform";
+import { isElectron } from "../lib/platform";
 import { systemAPI, tunnelAPI, channelAPI, type ChannelInfo, type TunnelInfo, type TunnelConfig } from "../lib/electron-api";
 import { getSetting, saveSetting } from "../lib/settings";
 
@@ -828,9 +828,7 @@ export default function EntryPage() {
     <div class="flex flex-col h-screen overflow-hidden bg-gray-50/50 dark:bg-slate-950 font-sans text-gray-900 dark:text-gray-100">
       {/* Unified Titlebar */}
       <div
-        class={`w-full flex-shrink-0 flex items-center px-2 border-b border-gray-200 dark:border-slate-800 bg-gray-50/50 dark:bg-slate-950 electron-drag-region
-          ${isMacOS() && isElectron() ? 'pl-[72px]' : ''}
-          ${isWindows() && isElectron() ? 'pr-[140px]' : ''}`}
+        class="w-full flex-shrink-0 flex items-center px-2 border-b border-gray-200 dark:border-slate-800 bg-gray-50/50 dark:bg-slate-950 electron-drag-region electron-titlebar-pad-left electron-titlebar-pad-right"
         style={{ height: "var(--electron-title-bar-height, 40px)", "min-height": "var(--electron-title-bar-height, 40px)" }}
       >
         <div class="flex items-center gap-2 electron-no-drag flex-shrink-0">

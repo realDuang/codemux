@@ -117,12 +117,8 @@ export class TeamsTransport implements MessageTransport {
     const { conversationId, activityId } = this.parseMessageId(messageId);
     if (!conversationId || !activityId) return;
 
-    try {
-      await this.rateLimiter.consume();
-      await this.callBotApi(conversationId, "DELETE", activityId);
-    } catch (err) {
-      channelLog.error(`${LOG_PREFIX} Failed to delete message ${messageId}:`, err);
-    }
+    await this.rateLimiter.consume();
+    await this.callBotApi(conversationId, "DELETE", activityId);
   }
 
   /**

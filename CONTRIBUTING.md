@@ -62,6 +62,14 @@ chore: update Shiki language whitelist
 docs: add channel development guide
 ```
 
+## Discussions & Feature Requests
+
+Before starting work on a new feature, check our [**GitHub Discussions**](https://github.com/realDuang/codemux/discussions):
+
+- [**Roadmap**](https://github.com/realDuang/codemux/discussions/61) — See what's planned and in progress
+- [**Ideas**](https://github.com/realDuang/codemux/discussions/categories/ideas) — Propose new features or vote on existing ones
+- [**Q&A**](https://github.com/realDuang/codemux/discussions/categories/q-a) — Ask questions about the codebase or architecture
+
 ## Pull Requests
 
 1. Create a feature branch from `main`

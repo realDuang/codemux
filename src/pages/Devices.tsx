@@ -2,7 +2,7 @@ import { createSignal, createResource, For, Show, onMount, type JSX } from "soli
 import { useNavigate } from "@solidjs/router";
 import { Auth, type DeviceInfo } from "../lib/auth";
 import { useI18n, formatMessage } from "../lib/i18n";
-import { isElectron, isWindows, isMacOS } from "../lib/platform";
+import { isElectron } from "../lib/platform";
 
 // ============================================================================
 // Helper Functions
@@ -227,9 +227,7 @@ export default function Devices() {
     <div class="flex flex-col h-screen bg-gray-50/50 dark:bg-slate-950 font-sans text-gray-900 dark:text-gray-100">
       {/* Unified Titlebar */}
       <div
-        class={`w-full flex-shrink-0 flex items-center px-2 border-b border-gray-200 dark:border-slate-800 bg-gray-50 dark:bg-slate-950 electron-drag-region
-          ${isMacOS() && isElectron() ? 'pl-[72px]' : ''}
-          ${isWindows() && isElectron() ? 'pr-[140px]' : ''}`}
+        class="w-full flex-shrink-0 flex items-center px-2 border-b border-gray-200 dark:border-slate-800 bg-gray-50 dark:bg-slate-950 electron-drag-region electron-titlebar-pad-left electron-titlebar-pad-right"
         style={{ height: "var(--electron-title-bar-height, 40px)", "min-height": "var(--electron-title-bar-height, 40px)" }}
       >
         <div class="flex items-center gap-2 electron-no-drag flex-shrink-0">

@@ -14,7 +14,7 @@ import { Auth } from "../lib/auth";
 import { useNavigate } from "@solidjs/router";
 import { gateway } from "../lib/gateway-api";
 import { logger } from "../lib/logger";
-import { isElectron, isWindows, isMacOS } from "../lib/platform";
+import { isElectron } from "../lib/platform";
 import { sessionStore, setSessionStore, type SessionInfo, setSendingFor } from "../stores/session";
 import {
   messageStore,
@@ -1482,9 +1482,7 @@ export default function Chat() {
 
       {/* Unified Titlebar — 40px, spans full width */}
       <div
-        class={`w-full flex-shrink-0 flex items-center px-2 border-b border-gray-200 dark:border-slate-800 bg-gray-50 dark:bg-slate-950 electron-drag-region
-          ${isMacOS() && isElectron() ? 'pl-[72px]' : ''}
-          ${isWindows() && isElectron() ? 'pr-[140px]' : ''}`}
+        class="w-full flex-shrink-0 flex items-center px-2 border-b border-gray-200 dark:border-slate-800 bg-gray-50 dark:bg-slate-950 electron-drag-region electron-titlebar-pad-left electron-titlebar-pad-right"
         style={{ height: "var(--electron-title-bar-height, 40px)", "min-height": "var(--electron-title-bar-height, 40px)" }}
       >
         {/* Left: Logo + Sidebar toggle */}
@@ -1847,12 +1845,18 @@ export default function Chat() {
       {/* File Explorer Right Panel */}
       <Show when={fileStore.panelOpen}>
         {(() => {
+          const [widthReady, setWidthReady] = createSignal(false);
+          // Defer transition to avoid layout thrashing during initial mount
+          setTimeout(() => setWidthReady(true), 300);
+
           const hasPreview = () => fileStore.preview !== null && fileStore.openTabs.all.length > 0;
           const effectiveWidth = () => hasPreview() ? fileStore.panelWidth : Math.min(fileStore.panelWidth, 300);
           const effectiveMin = () => hasPreview() ? 400 : 200;
           return (
             <div
-              class="relative hidden md:flex flex-col overflow-hidden flex-shrink-0 transition-[width] duration-200 ease-out"
+              class={`relative hidden md:flex flex-col overflow-hidden flex-shrink-0 ${
+                widthReady() ? "transition-[width] duration-200 ease-out" : ""
+              }`}
               style={{ width: `${effectiveWidth()}px` }}
               aria-label="File explorer"
             >

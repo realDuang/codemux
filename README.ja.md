@@ -297,7 +297,9 @@ codemux/
 
 ## リンク
 
-- [Issue & 機能リクエスト](https://github.com/realDuang/codemux/issues)
+- [ディスカッション](https://github.com/realDuang/codemux/discussions) — ロードマップ、機能リクエスト、コミュニティ会話
+- [ロードマップ](https://github.com/realDuang/codemux/discussions/61) — 開発ロードマップとマイルストーン追跡
+- [Issue](https://github.com/realDuang/codemux/issues) — バグ報告
 - [OpenCode](https://opencode.ai) — 対応エンジン
 - [GitHub Copilot CLI](https://docs.github.com/en/copilot/using-github-copilot/using-github-copilot-coding-agent-in-cli) — 対応エンジン
 - [Claude Code](https://docs.anthropic.com/en/docs/claude-code) — 対応エンジン

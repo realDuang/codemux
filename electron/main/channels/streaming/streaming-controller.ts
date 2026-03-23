@@ -225,6 +225,13 @@ export class StreamingController {
    */
   private async sendFinalReply(session: StreamingSession): Promise<void> {
     if (session.finalReplySent) return;
+    session.finalReplySent = true; // Set early to prevent any concurrent patches
+
+    // Defensive: clear any lingering patch timer that may fire after finalize()
+    if (session.patchTimer) {
+      clearTimeout(session.patchTimer);
+      session.patchTimer = null;
+    }
 
     const toolSummary = this.formatToolSummary(session.toolCounts);
     const content = session.textBuffer || "（无文本回复）";
@@ -236,8 +243,8 @@ export class StreamingController {
       const newId = await this.transport.sendRichContent(session.chatId, rendered.content);
       if (newId && session.platformMessageId) {
         if (this.capabilities.supportsMessageDelete) {
-          // Delete old streaming text message
-          await this.transport.deleteMessage(session.platformMessageId);
+          // Delete old streaming text message (with retry)
+          await this.deleteWithRetry(session.platformMessageId);
         } else if (this.capabilities.supportsMessageUpdate) {
           // Can't delete, but can update — replace with completion notice
           await this.transport.updateText(session.platformMessageId, "✅");
@@ -251,8 +258,6 @@ export class StreamingController {
       // Batch mode: send final reply as a new message
       await this.transport.sendText(session.chatId, rendered.content);
     }
-
-    session.finalReplySent = true;
   }
 
   // =========================================================================
@@ -264,14 +269,14 @@ export class StreamingController {
    * Only called when supportsMessageUpdate is true.
    */
   private scheduleThrottledUpdate(session: StreamingSession): void {
-    if (session.patchTimer || session.completed || !session.platformMessageId) return;
+    if (session.patchTimer || session.completed || session.finalReplySent || !session.platformMessageId) return;
 
     const elapsed = Date.now() - session.lastPatchTime;
     const delay = Math.max(0, this.config.throttleMs - elapsed);
 
     session.patchTimer = setTimeout(() => {
       session.patchTimer = null;
-      if (!session.completed) {
+      if (!session.completed && !session.finalReplySent) {
         session.lastPatchTime = Date.now();
         const text = this.renderer.renderStreamingUpdate(session.textBuffer);
         const truncated = this.renderer.truncate(text);
@@ -317,5 +322,31 @@ export class StreamingController {
       .join(", ");
 
     return `\n\n---\n执行了 ${total} 个操作：${details}`;
+  }
+
+  /** Delete a message with retry (up to 3 attempts with exponential backoff) */
+  private async deleteWithRetry(messageId: string, maxAttempts = 3): Promise<void> {
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        await this.transport.deleteMessage(messageId);
+        return;
+      } catch (err) {
+        if (attempt < maxAttempts) {
+          await new Promise((r) => setTimeout(r, 500 * attempt));
+        } else {
+          channelLog.error(
+            `Failed to delete message ${messageId} after ${maxAttempts} attempts`,
+          );
+          // Best-effort: if we can update, replace content as fallback
+          if (this.capabilities.supportsMessageUpdate) {
+            try {
+              await this.transport.updateText(messageId, "✅");
+            } catch {
+              // Truly exhausted — give up silently
+            }
+          }
+        }
+      }
+    }
   }
 }

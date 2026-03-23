@@ -299,7 +299,9 @@ codemux/
 
 ## 链接
 
-- [问题反馈与功能建议](https://github.com/realDuang/codemux/issues)
+- [社区讨论](https://github.com/realDuang/codemux/discussions) — 路线图、功能建议与社区交流
+- [路线图](https://github.com/realDuang/codemux/discussions/61) — 开发路线图与里程碑追踪
+- [问题反馈](https://github.com/realDuang/codemux/issues) — Bug 报告
 - [OpenCode](https://opencode.ai) — 支持的引擎
 - [GitHub Copilot CLI](https://docs.github.com/en/copilot/using-github-copilot/using-github-copilot-coding-agent-in-cli) — 支持的引擎
 - [Claude Code](https://docs.anthropic.com/en/docs/claude-code) — 支持的引擎

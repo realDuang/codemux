@@ -299,7 +299,9 @@ Contributions are welcome! Please follow these conventions:
 
 ## Links
 
-- [Issues & Feature Requests](https://github.com/realDuang/codemux/issues)
+- [Discussions](https://github.com/realDuang/codemux/discussions) — Roadmap, feature requests & community conversations
+- [Roadmap](https://github.com/realDuang/codemux/discussions/61) — Development roadmap and milestone tracking
+- [Issues](https://github.com/realDuang/codemux/issues) — Bug reports
 - [OpenCode](https://opencode.ai) — Supported engine
 - [GitHub Copilot CLI](https://docs.github.com/en/copilot/using-github-copilot/using-github-copilot-coding-agent-in-cli) — Supported engine
 - [Claude Code](https://docs.anthropic.com/en/docs/claude-code) — Supported engine

@@ -5,7 +5,7 @@ import { ThemeSwitcher } from "../components/ThemeSwitcher";
 import ImportHistoryModal from "../components/ImportHistoryModal";
 import { useI18n } from "../lib/i18n";
 import { useAuthGuard } from "../lib/useAuthGuard";
-import { isElectron, isWindows, isMacOS } from "../lib/platform";
+import { isElectron } from "../lib/platform";
 import { Auth } from "../lib/auth";
 import { configStore, saveEngineModelSelection, isEngineEnabled, setEngineEnabled } from "../stores/config";
 import { sessionStore, setSessionStore } from "../stores/session";
@@ -196,9 +196,7 @@ export default function Settings() {
     <div class="flex flex-col h-screen bg-gray-50 dark:bg-slate-950 font-sans text-gray-900 dark:text-gray-100">
       {/* Unified Titlebar */}
       <div
-        class={`w-full flex-shrink-0 flex items-center px-2 border-b border-gray-200 dark:border-slate-800 bg-gray-50 dark:bg-slate-950 electron-drag-region
-          ${isMacOS() && isElectron() ? 'pl-[72px]' : ''}
-          ${isWindows() && isElectron() ? 'pr-[140px]' : ''}`}
+        class="w-full flex-shrink-0 flex items-center px-2 border-b border-gray-200 dark:border-slate-800 bg-gray-50 dark:bg-slate-950 electron-drag-region electron-titlebar-pad-left electron-titlebar-pad-right"
         style={{ height: "var(--electron-title-bar-height, 40px)", "min-height": "var(--electron-title-bar-height, 40px)" }}
       >
         <div class="flex items-center gap-2 electron-no-drag flex-shrink-0">

@@ -297,7 +297,9 @@ codemux/
 
 ## 링크
 
-- [이슈 및 기능 요청](https://github.com/realDuang/codemux/issues)
+- [토론](https://github.com/realDuang/codemux/discussions) — 로드맵, 기능 요청 및 커뮤니티 대화
+- [로드맵](https://github.com/realDuang/codemux/discussions/61) — 개발 로드맵 및 마일스톤 추적
+- [이슈](https://github.com/realDuang/codemux/issues) — 버그 리포트
 - [OpenCode](https://opencode.ai) — 지원 엔진
 - [GitHub Copilot CLI](https://docs.github.com/en/copilot/using-github-copilot/using-github-copilot-coding-agent-in-cli) — 지원 엔진
 - [Claude Code](https://docs.anthropic.com/en/docs/claude-code) — 지원 엔진

@@ -180,7 +180,14 @@ export function FileExplorer() {
           </div>
 
           {/* File tree */}
-          <div class="min-h-0 flex-1 overflow-y-auto">
+          <div
+            class="min-h-0 flex-1 overflow-y-auto"
+            style={{
+              contain: "strict",
+              "overflow-anchor": "none",
+              "will-change": "transform",
+            }}
+          >
             <Show
               when={currentDirectory()}
               fallback={

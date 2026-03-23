@@ -2,7 +2,7 @@ import { readdir, readFile as fsReadFile, stat } from "node:fs/promises";
 import { realpathSync, existsSync } from "node:fs";
 import { join, sep, extname, basename } from "node:path";
 import { execFile } from "node:child_process";
-import { watch, type FSWatcher } from "chokidar";
+import type * as ParcelWatcher from "@parcel/watcher";
 import type {
   FileExplorerNode,
   FileExplorerContent,
@@ -253,8 +253,6 @@ function execGit(cwd: string, args: string[]): Promise<string> {
 /** Max entries to return from a single directory listing */
 const MAX_DIR_ENTRIES = 500;
 
-/** Max entries to stat in parallel (avoid file-handle exhaustion) */
-const STAT_BATCH_SIZE = 50;
 
 // ─── Public API ──────────────────────────────────────────────────────────────
 
@@ -437,46 +435,20 @@ export async function getGitStatus(
     }
   }
 
-  // 2. Untracked files (count lines for small files, skip large ones)
+  // 2. Untracked files (status only — no line counting to avoid expensive I/O)
   const untrackedOutput = await execGit(directory, [
     "ls-files",
     "--others",
     "--exclude-standard",
   ]);
   if (untrackedOutput) {
-    const untrackedPaths = untrackedOutput
-      .split("\n")
-      .map((l) => l.trim())
-      .filter(Boolean);
-
-    // Process in batches to avoid file-handle exhaustion
-    for (let i = 0; i < untrackedPaths.length; i += STAT_BATCH_SIZE) {
-      const batch = untrackedPaths.slice(i, i + STAT_BATCH_SIZE);
-      const results = await Promise.all(
-        batch.map(async (filePath) => {
-          let lineCount: number | undefined;
-          try {
-            const fullPath = join(directory, filePath);
-            const fileStat = await stat(fullPath);
-            // Only count lines for files under 512KB
-            if (fileStat.size < 512 * 1024) {
-              const content = await fsReadFile(fullPath, "utf-8");
-              lineCount = content.split("\n").length;
-            }
-          } catch {
-            // Ignore read errors
-          }
-          return { filePath, lineCount };
-        }),
-      );
-
-      for (const { filePath, lineCount } of results) {
-        statusMap.set(filePath, {
-          path: filePath,
-          status: "untracked",
-          added: lineCount,
-        });
-      }
+    for (const line of untrackedOutput.split("\n")) {
+      const filePath = line.trim();
+      if (!filePath) continue;
+      statusMap.set(filePath, {
+        path: filePath,
+        status: "untracked",
+      });
     }
   }
 
@@ -550,10 +522,48 @@ export async function getGitDiff(
 }
 
 // ---------------------------------------------------------------------------
-// File Watcher
+// File Watcher — @parcel/watcher (OS-native: ReadDirectoryChangesW / FSEvents / inotify)
 // ---------------------------------------------------------------------------
 
-const watchers = new Map<string, FSWatcher>();
+// Lazy-load @parcel/watcher with platform-specific native binding
+function getWatcher(): typeof import("@parcel/watcher") {
+  const suffix = process.platform === "linux" ? "-glibc" : "";
+  const bindingName = `@parcel/watcher-${process.platform}-${process.arch}${suffix}`;
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const binding = require(bindingName);
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { createWrapper } = require("@parcel/watcher/wrapper");
+    return createWrapper(binding) as typeof import("@parcel/watcher");
+  } catch {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    return require("@parcel/watcher");
+  }
+}
+
+const PARCEL_BACKEND: string | undefined = (() => {
+  switch (process.platform) {
+    case "win32": return "windows";
+    case "darwin": return "fs-events";
+    case "linux": return "inotify";
+    default: return undefined;
+  }
+})();
+
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(
+      () => reject(new Error(`Timed out after ${ms}ms`)),
+      ms,
+    );
+    promise.then(
+      (val) => { clearTimeout(timer); resolve(val); },
+      (err) => { clearTimeout(timer); reject(err); },
+    );
+  });
+}
+
+const subscriptions = new Map<string, ParcelWatcher.AsyncSubscription>();
 
 export type FileChangeEvent = {
   type: "add" | "change" | "unlink" | "addDir" | "unlinkDir";
@@ -570,7 +580,7 @@ export function onFileChange(callback: FileChangeCallback): void {
 }
 
 export function watchDirectory(directory: string): void {
-  if (watchers.has(directory)) return;
+  if (subscriptions.has(directory)) return;
 
   // Close all existing watchers — only one project is watched at a time
   unwatchAll();
@@ -588,71 +598,68 @@ export function watchDirectory(directory: string): void {
   );
 }
 
-function startWatcher(directory: string): void {
-  if (watchers.has(directory)) return;
+async function startWatcher(directory: string): Promise<void> {
+  if (subscriptions.has(directory)) return;
 
-  const watcher = watch(directory, {
-    ignored: [
-      /(^|[\/\\])\../, // hidden files/dirs
-      "**/node_modules/**",
-      "**/.git/**",
-      "**/dist/**",
-      "**/build/**",
-      "**/out/**",
-      "**/.next/**",
-      "**/__pycache__/**",
-      "**/coverage/**",
-      "**/.cache/**",
-      "**/target/**",
-      "**/.turbo/**",
-      "**/.parcel-cache/**",
-      "**/.webpack/**",
-      "**/venv/**",
-      "**/.venv/**",
-    ],
-    persistent: true,
-    ignoreInitial: true,
-    depth: 8, // balance between coverage and performance — deeper changes use manual refresh
-    ignorePermissionErrors: true, // suppress EACCES/EPERM on Windows
-    awaitWriteFinish: {
-      stabilityThreshold: 500,
-      pollInterval: 200,
-    },
-  });
+  const watcher = getWatcher();
 
-  watcher.on("error", () => {
-    // Silently ignore watcher errors (permission denied, etc.)
-  });
+  // Map @parcel/watcher events to CodeMux's FileChangeEvent format
+  const callback: ParcelWatcher.SubscribeCallback = (err, events) => {
+    if (err || !changeCallback) return;
+    for (const evt of events) {
+      let type: FileChangeEvent["type"];
+      switch (evt.type) {
+        case "create": type = "add"; break;
+        case "update": type = "change"; break;
+        case "delete": type = "unlink"; break;
+        default: continue;
+      }
+      changeCallback({ type, path: evt.path, directory });
+    }
+  };
 
-  watcher
-    .on("add", (path) => changeCallback?.({ type: "add", path, directory }))
-    .on("change", (path) =>
-      changeCallback?.({ type: "change", path, directory }),
-    )
-    .on("unlink", (path) =>
-      changeCallback?.({ type: "unlink", path, directory }),
-    )
-    .on("addDir", (path) =>
-      changeCallback?.({ type: "addDir", path, directory }),
-    )
-    .on("unlinkDir", (path) =>
-      changeCallback?.({ type: "unlinkDir", path, directory }),
+  try {
+    const subscription = await withTimeout(
+      watcher.subscribe(directory, callback, {
+        ignore: [
+          ".*",
+          "node_modules",
+          ".git",
+          "dist",
+          "build",
+          "out",
+          ".next",
+          "__pycache__",
+          "coverage",
+          ".cache",
+          "target",
+          ".turbo",
+          ".parcel-cache",
+          ".webpack",
+          "venv",
+          ".venv",
+        ],
+        backend: PARCEL_BACKEND,
+      }),
+      10_000,
     );
-
-  watchers.set(directory, watcher);
+    subscriptions.set(directory, subscription);
+  } catch {
+    // Silently ignore watcher errors (permission denied, native binding issues, etc.)
+  }
 }
 
 export function unwatchDirectory(directory: string): void {
-  const watcher = watchers.get(directory);
-  if (watcher) {
-    watcher.close();
-    watchers.delete(directory);
+  const sub = subscriptions.get(directory);
+  if (sub) {
+    sub.unsubscribe().catch(() => {});
+    subscriptions.delete(directory);
   }
 }
 
 export function unwatchAll(): void {
-  for (const [, watcher] of watchers) {
-    watcher.close();
+  for (const [, sub] of subscriptions) {
+    sub.unsubscribe().catch(() => {});
   }
-  watchers.clear();
+  subscriptions.clear();
 }

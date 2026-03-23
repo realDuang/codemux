@@ -1489,7 +1489,7 @@ export default function Chat() {
       >
         {/* Left: Logo + Sidebar toggle */}
         <div class="flex items-center gap-1.5 electron-no-drag flex-shrink-0">
-          <img src="/assets/logo.png" alt="CodeMux" class="w-5 h-5 rounded" />
+          <img src={`${import.meta.env.BASE_URL}assets/logo.png`} alt="CodeMux" class="w-5 h-5 rounded" />
           <span class="text-[13px] font-semibold text-gray-700 dark:text-gray-300 hidden sm:inline mr-0.5">CodeMux</span>
 
           {/* Mobile sidebar toggle */}

@@ -202,7 +202,7 @@ export default function Settings() {
         style={{ height: "var(--electron-title-bar-height, 40px)", "min-height": "var(--electron-title-bar-height, 40px)" }}
       >
         <div class="flex items-center gap-2 electron-no-drag flex-shrink-0">
-          <img src="/assets/logo.png" alt="CodeMux" class="w-5 h-5 rounded" />
+          <img src={`${import.meta.env.BASE_URL}assets/logo.png`} alt="CodeMux" class="w-5 h-5 rounded" />
           <span class="text-[13px] font-semibold text-gray-700 dark:text-gray-300 hidden sm:inline">CodeMux</span>
           <span class="text-gray-300 dark:text-gray-600 hidden sm:inline">|</span>
           <button

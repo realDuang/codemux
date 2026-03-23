@@ -140,6 +140,15 @@ export interface ParsedCommand {
   raw: string;
 }
 
+// --- Feishu Shared Types ---
+
+/** Shared Feishu Open Platform user identifier shape */
+export interface FeishuUserId {
+  union_id?: string;
+  user_id?: string;
+  open_id?: string;
+}
+
 // --- Feishu Bot Menu Event Data ---
 
 export interface FeishuBotMenuEvent {
@@ -151,11 +160,7 @@ export interface FeishuBotMenuEvent {
   /** Operator (user who clicked the menu) */
   operator?: {
     operator_name?: string;
-    operator_id?: {
-      open_id?: string;
-      union_id?: string;
-      user_id?: string;
-    };
+    operator_id?: FeishuUserId;
   };
   timestamp?: number;
   tenant_key?: string;
@@ -190,38 +195,22 @@ export interface FeishuMessageEvent {
 
 export interface FeishuChatDisbandedEvent {
   chat_id?: string;
-  operator_id?: {
-    union_id?: string;
-    user_id?: string;
-    open_id?: string;
-  };
+  operator_id?: FeishuUserId;
   name?: string;
 }
 
 export interface FeishuBotRemovedEvent {
   chat_id?: string;
-  operator_id?: {
-    union_id?: string;
-    user_id?: string;
-    open_id?: string;
-  };
+  operator_id?: FeishuUserId;
   name?: string;
 }
 
 export interface FeishuUserRemovedEvent {
   chat_id?: string;
-  operator_id?: {
-    union_id?: string;
-    user_id?: string;
-    open_id?: string;
-  };
+  operator_id?: FeishuUserId;
   users?: Array<{
     name?: string;
     tenant_key?: string;
-    user_id?: {
-      union_id?: string;
-      user_id?: string;
-      open_id?: string;
-    };
+    user_id?: FeishuUserId;
   }>;
 }

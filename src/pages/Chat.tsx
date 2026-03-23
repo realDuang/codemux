@@ -1847,7 +1847,8 @@ export default function Chat() {
         {(() => {
           const [widthReady, setWidthReady] = createSignal(false);
           // Defer transition to avoid layout thrashing during initial mount
-          setTimeout(() => setWidthReady(true), 300);
+          const timerId = setTimeout(() => setWidthReady(true), 300);
+          onCleanup(() => clearTimeout(timerId));
 
           const hasPreview = () => fileStore.preview !== null && fileStore.openTabs.all.length > 0;
           const effectiveWidth = () => hasPreview() ? fileStore.panelWidth : Math.min(fileStore.panelWidth, 300);

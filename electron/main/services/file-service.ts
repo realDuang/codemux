@@ -1,5 +1,5 @@
 import { readdir, readFile as fsReadFile, stat } from "node:fs/promises";
-import { realpathSync, existsSync } from "node:fs";
+import { realpathSync } from "node:fs";
 import { join, sep, extname, basename } from "node:path";
 import { execFile } from "node:child_process";
 import type * as ParcelWatcher from "@parcel/watcher";
@@ -260,7 +260,6 @@ export async function listDirectory(directory: string, workspaceDir?: string): P
   if (workspaceDir && !isPathWithinBoundary(directory, workspaceDir)) {
     return [];
   }
-  if (!existsSync(directory)) return [];
 
   let entries;
   try {
@@ -405,12 +404,14 @@ export async function getGitStatus(
 
   const statusMap = new Map<string, GitFileStatus>();
 
-  // 1. Modified files with +/- line counts
-  const diffOutput = await execGit(directory, [
-    "diff",
-    "--numstat",
-    "HEAD",
+  // Run all three independent git commands in parallel
+  const [diffOutput, untrackedOutput, deletedOutput] = await Promise.all([
+    execGit(directory, ["diff", "--numstat", "HEAD"]),
+    execGit(directory, ["ls-files", "--others", "--exclude-standard"]),
+    execGit(directory, ["diff", "--name-only", "--diff-filter=D", "HEAD"]),
   ]);
+
+  // 1. Modified files with +/- line counts
   if (diffOutput) {
     for (const line of diffOutput.split("\n")) {
       if (!line.trim()) continue;
@@ -436,11 +437,6 @@ export async function getGitStatus(
   }
 
   // 2. Untracked files (status only — no line counting to avoid expensive I/O)
-  const untrackedOutput = await execGit(directory, [
-    "ls-files",
-    "--others",
-    "--exclude-standard",
-  ]);
   if (untrackedOutput) {
     for (const line of untrackedOutput.split("\n")) {
       const filePath = line.trim();
@@ -453,12 +449,6 @@ export async function getGitStatus(
   }
 
   // 3. Deleted files
-  const deletedOutput = await execGit(directory, [
-    "diff",
-    "--name-only",
-    "--diff-filter=D",
-    "HEAD",
-  ]);
   if (deletedOutput) {
     for (const line of deletedOutput.split("\n")) {
       const filePath = line.trim();
@@ -566,7 +556,7 @@ function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
 const subscriptions = new Map<string, ParcelWatcher.AsyncSubscription>();
 
 export type FileChangeEvent = {
-  type: "add" | "change" | "unlink" | "addDir" | "unlinkDir";
+  type: "add" | "change" | "unlink";
   path: string;
   directory: string;
 };

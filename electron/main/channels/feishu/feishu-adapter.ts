@@ -43,6 +43,7 @@ import {
   type FeishuBotMenuEvent,
   type FeishuChatDisbandedEvent,
   type FeishuBotRemovedEvent,
+  type FeishuUserRemovedEvent,
 } from "./feishu-types";
 import type {
   EngineType,
@@ -158,6 +159,13 @@ export class FeishuAdapter extends ChannelAdapter {
             await this.handleBotRemovedFromGroup(data as FeishuBotRemovedEvent);
           } catch (err) {
             feishuLog.error("Error handling bot removed event:", err);
+          }
+        },
+        "im.chat.member.user.deleted_v1": async (data: unknown) => {
+          try {
+            await this.handleUserRemovedFromGroup(data as FeishuUserRemovedEvent);
+          } catch (err) {
+            feishuLog.error("Error handling user removed event:", err);
           }
         },
         // Suppress warnings for events we don't handle
@@ -1109,6 +1117,20 @@ export class FeishuAdapter extends ChannelAdapter {
 
   private async handleBotRemovedFromGroup(event: FeishuBotRemovedEvent): Promise<void> {
     await this.cleanupGroupResources(event.chat_id, "Bot removed from group");
+  }
+
+  private async handleUserRemovedFromGroup(event: FeishuUserRemovedEvent): Promise<void> {
+    const chatId = event.chat_id;
+    if (!chatId) return;
+
+    const binding = this.sessionMapper.getGroupBinding(chatId);
+    if (!binding) return;
+
+    // Clean up when the group owner leaves — no human user remains
+    const removedOpenIds = (event.users ?? []).map(u => u.user_id?.open_id).filter(Boolean);
+    if (removedOpenIds.includes(binding.ownerOpenId)) {
+      await this.cleanupGroupResources(chatId, "Owner left group");
+    }
   }
 
   private async cleanupGroupResources(chatId: string | undefined, reason: string): Promise<void> {

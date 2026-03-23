@@ -207,3 +207,21 @@ export interface FeishuBotRemovedEvent {
   };
   name?: string;
 }
+
+export interface FeishuUserRemovedEvent {
+  chat_id?: string;
+  operator_id?: {
+    union_id?: string;
+    user_id?: string;
+    open_id?: string;
+  };
+  users?: Array<{
+    name?: string;
+    tenant_key?: string;
+    user_id?: {
+      union_id?: string;
+      user_id?: string;
+      open_id?: string;
+    };
+  }>;
+}

@@ -324,18 +324,20 @@ export class StreamingController {
     return `\n\n---\n执行了 ${total} 个操作：${details}`;
   }
 
+  private static readonly DELETE_MAX_RETRIES = 3;
+
   /** Delete a message with retry (up to 3 attempts with exponential backoff) */
-  private async deleteWithRetry(messageId: string, maxAttempts = 3): Promise<void> {
-    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+  private async deleteWithRetry(messageId: string): Promise<void> {
+    for (let attempt = 1; attempt <= StreamingController.DELETE_MAX_RETRIES; attempt++) {
       try {
         await this.transport.deleteMessage(messageId);
         return;
       } catch (err) {
-        if (attempt < maxAttempts) {
+        if (attempt < StreamingController.DELETE_MAX_RETRIES) {
           await new Promise((r) => setTimeout(r, 500 * attempt));
         } else {
           channelLog.error(
-            `Failed to delete message ${messageId} after ${maxAttempts} attempts`,
+            `Failed to delete message ${messageId} after ${StreamingController.DELETE_MAX_RETRIES} attempts`,
           );
           // Best-effort: if we can update, replace content as fallback
           if (this.capabilities.supportsMessageUpdate) {

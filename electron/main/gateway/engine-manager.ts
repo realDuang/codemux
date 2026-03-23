@@ -1038,10 +1038,10 @@ export class EngineManager extends EventEmitter {
   listAllProjects(): UnifiedProject[] {
     const projects = conversationStore.deriveProjects();
     const defaultDir = normalizeDir(getDefaultWorkspacePath());
-    const alreadyExists = projects.some(
+    const existing = projects.find(
       (p) => normalizeDir(p.directory) === defaultDir,
     );
-    if (!alreadyExists) {
+    if (!existing) {
       projects.push({
         id: `dir-${defaultDir}`,
         directory: defaultDir,
@@ -1049,10 +1049,7 @@ export class EngineManager extends EventEmitter {
         isDefault: true,
       });
     } else {
-      const existing = projects.find(
-        (p) => normalizeDir(p.directory) === defaultDir,
-      );
-      if (existing) existing.isDefault = true;
+      existing.isDefault = true;
     }
     return projects;
   }

@@ -185,7 +185,6 @@ export function FileExplorer() {
             style={{
               contain: "strict",
               "overflow-anchor": "none",
-              "will-change": "transform",
             }}
           >
             <Show

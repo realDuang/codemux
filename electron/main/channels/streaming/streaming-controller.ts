@@ -243,8 +243,8 @@ export class StreamingController {
       const newId = await this.transport.sendRichContent(session.chatId, rendered.content);
       if (newId && session.platformMessageId) {
         if (this.capabilities.supportsMessageDelete) {
-          // Delete old streaming text message (with retry)
-          await this.deleteWithRetry(session.platformMessageId);
+          // Delete old streaming text message (best-effort, don't block final reply)
+          void this.deleteWithRetry(session.platformMessageId);
         } else if (this.capabilities.supportsMessageUpdate) {
           // Can't delete, but can update — replace with completion notice
           await this.transport.updateText(session.platformMessageId, "✅");

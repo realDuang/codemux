@@ -1,5 +1,5 @@
 import { readdir, readFile as fsReadFile, stat } from "node:fs/promises";
-import { realpathSync } from "node:fs";
+import { realpathSync, createReadStream } from "node:fs";
 import { join, sep, extname, basename } from "node:path";
 import { execFile } from "node:child_process";
 import type * as ParcelWatcher from "@parcel/watcher";
@@ -337,7 +337,6 @@ export async function readFile(
   }
 
   // Tier 2: Content-based binary detection (read first 8KB)
-  const { createReadStream } = await import("node:fs");
   const detectChunks: Buffer[] = [];
   let detectLen = 0;
   await new Promise<void>((resolve, reject) => {
@@ -468,21 +467,13 @@ export async function getGitDiff(
   directory: string,
   filePath: string,
 ): Promise<string> {
-  // Try staged diff first
-  const stagedDiff = await execGit(directory, [
-    "diff",
-    "--cached",
-    "--",
-    filePath,
+  // Run staged and unstaged diffs in parallel
+  const [stagedDiff, unstagedDiff] = await Promise.all([
+    execGit(directory, ["diff", "--cached", "--", filePath]),
+    execGit(directory, ["diff", "--", filePath]),
   ]);
-  if (stagedDiff.trim()) return stagedDiff;
 
-  // Try unstaged diff
-  const unstagedDiff = await execGit(directory, [
-    "diff",
-    "--",
-    filePath,
-  ]);
+  if (stagedDiff.trim()) return stagedDiff;
   if (unstagedDiff.trim()) return unstagedDiff;
 
   // Check if untracked
@@ -515,8 +506,10 @@ export async function getGitDiff(
 // File Watcher — @parcel/watcher (OS-native: ReadDirectoryChangesW / FSEvents / inotify)
 // ---------------------------------------------------------------------------
 
-// Lazy-load @parcel/watcher with platform-specific native binding
+// Lazy-load @parcel/watcher with platform-specific native binding (cached)
+let _cachedWatcher: typeof import("@parcel/watcher") | null = null;
 function getWatcher(): typeof import("@parcel/watcher") {
+  if (_cachedWatcher) return _cachedWatcher;
   const suffix = process.platform === "linux" ? "-glibc" : "";
   const bindingName = `@parcel/watcher-${process.platform}-${process.arch}${suffix}`;
   try {
@@ -524,14 +517,15 @@ function getWatcher(): typeof import("@parcel/watcher") {
     const binding = require(bindingName);
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const { createWrapper } = require("@parcel/watcher/wrapper");
-    return createWrapper(binding) as typeof import("@parcel/watcher");
+    _cachedWatcher = createWrapper(binding) as typeof import("@parcel/watcher");
   } catch {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
-    return require("@parcel/watcher");
+    _cachedWatcher = require("@parcel/watcher");
   }
+  return _cachedWatcher!;
 }
 
-const PARCEL_BACKEND: string | undefined = (() => {
+const PARCEL_BACKEND: ParcelWatcher.BackendType | undefined = (() => {
   switch (process.platform) {
     case "win32": return "windows";
     case "darwin": return "fs-events";
@@ -552,6 +546,9 @@ function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
     );
   });
 }
+
+/** Directories to exclude from file watching (superset of DIMMED_DIRS + dotfiles) */
+const WATCHER_IGNORE: string[] = [".*", ".git", ...DIMMED_DIRS];
 
 const subscriptions = new Map<string, ParcelWatcher.AsyncSubscription>();
 
@@ -611,24 +608,7 @@ async function startWatcher(directory: string): Promise<void> {
   try {
     const subscription = await withTimeout(
       watcher.subscribe(directory, callback, {
-        ignore: [
-          ".*",
-          "node_modules",
-          ".git",
-          "dist",
-          "build",
-          "out",
-          ".next",
-          "__pycache__",
-          "coverage",
-          ".cache",
-          "target",
-          ".turbo",
-          ".parcel-cache",
-          ".webpack",
-          "venv",
-          ".venv",
-        ],
+        ignore: WATCHER_IGNORE,
         backend: PARCEL_BACKEND,
       }),
       10_000,

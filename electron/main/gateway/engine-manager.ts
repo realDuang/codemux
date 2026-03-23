@@ -32,7 +32,7 @@ import type {
 
 /** Normalize directory separators to forward slashes (Windows compat) */
 function normalizeDir(dir: string): string {
-  return dir ? dir.replaceAll("\\", "/") : dir;
+  return dir.replaceAll("\\", "/");
 }
 
 /** Convert ConversationMeta → UnifiedSession for wire compatibility */
@@ -1039,7 +1039,7 @@ export class EngineManager extends EventEmitter {
     const projects = conversationStore.deriveProjects();
     const defaultDir = normalizeDir(getDefaultWorkspacePath());
     const existing = projects.find(
-      (p) => normalizeDir(p.directory) === defaultDir,
+      (p) => p.directory === defaultDir,
     );
     if (!existing) {
       projects.push({

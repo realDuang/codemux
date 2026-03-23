@@ -1237,15 +1237,9 @@ export class ClaudeCodeAdapter extends EngineAdapter {
         }
       }
 
-      // Check if session is still ready
-      try {
-        // V2 session transport may have died; we detect this when stream() fails
-        existing.lastUsedAt = Date.now();
-        return existing.session;
-      } catch {
-        // Session is dead, recreate
-        this.cleanupSession(sessionId, "session not ready");
-      }
+      // Session is ready — update usage timestamp and return
+      existing.lastUsedAt = Date.now();
+      return existing.session;
     }
 
     claudeLog.info(

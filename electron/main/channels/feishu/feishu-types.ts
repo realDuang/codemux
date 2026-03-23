@@ -182,11 +182,7 @@ export interface FeishuMessageEvent {
     }>;
   };
   sender: {
-    sender_id: {
-      open_id: string;
-      union_id?: string;
-      user_id?: string;
-    };
+    sender_id: FeishuUserId & { open_id: string };
     sender_type: string;
   };
 }

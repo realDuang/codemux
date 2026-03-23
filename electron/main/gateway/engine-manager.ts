@@ -30,12 +30,17 @@ import type {
 
 // --- Helpers ---
 
+/** Normalize directory separators to forward slashes (Windows compat) */
+function normalizeDir(dir: string): string {
+  return dir ? dir.replaceAll("\\", "/") : dir;
+}
+
 /** Convert ConversationMeta → UnifiedSession for wire compatibility */
 function convToSession(conv: ConversationMeta): UnifiedSession {
   return {
     id: conv.id,
     engineType: conv.engineType,
-    directory: conv.directory,
+    directory: normalizeDir(conv.directory),
     title: conv.title,
     time: {
       created: conv.createdAt,
@@ -139,7 +144,7 @@ export class EngineManager extends EventEmitter {
 
   /** Get adapter for a directory based on project binding */
   private getAdapterForDirectory(directory: string): EngineAdapter {
-    const engineType = this.projectBindings.get(directory.replaceAll("\\", "/"));
+    const engineType = this.projectBindings.get(normalizeDir(directory));
     if (!engineType) {
       throw new Error(`No engine binding found for directory: ${directory}`);
     }
@@ -568,11 +573,11 @@ export class EngineManager extends EventEmitter {
 
   setProjectEngine(directory: string, engineType: EngineType): void {
     this.getAdapterOrThrow(engineType); // Validate engine exists
-    this.projectBindings.set(directory.replaceAll("\\", "/"), engineType);
+    this.projectBindings.set(normalizeDir(directory), engineType);
   }
 
   getProjectEngine(directory: string): EngineType | undefined {
-    return this.projectBindings.get(directory.replaceAll("\\", "/"));
+    return this.projectBindings.get(normalizeDir(directory));
   }
 
   getProjectBindings(): Map<string, EngineType> {
@@ -581,7 +586,7 @@ export class EngineManager extends EventEmitter {
 
   loadProjectBindings(bindings: Record<string, EngineType>): void {
     for (const [dir, engine] of Object.entries(bindings)) {
-      this.projectBindings.set(dir.replaceAll("\\", "/"), engine);
+      this.projectBindings.set(normalizeDir(dir), engine);
     }
   }
 
@@ -672,7 +677,10 @@ export class EngineManager extends EventEmitter {
     this.getAdapterOrThrow(engineType); // Validate engine exists
     const conv = conversationStore.create({ engineType, directory });
     this.sessionEngineMap.set(conv.id, engineType);
-    return convToSession(conv);
+    const session = convToSession(conv);
+    // Broadcast to all connected clients (e.g., UI) so session lists update in real-time
+    this.emit("session.created", { session });
+    return session;
   }
 
   async getSession(sessionId: string): Promise<UnifiedSession | null> {
@@ -722,7 +730,7 @@ export class EngineManager extends EventEmitter {
   async deleteProject(projectId: string): Promise<void> {
     const allConvs = conversationStore.list();
     const projectConvs = allConvs.filter((conv) => {
-      const derived = `dir-${conv.directory.replaceAll("\\", "/")}`;
+      const derived = `dir-${normalizeDir(conv.directory)}`;
       return derived === projectId;
     });
 
@@ -1010,7 +1018,7 @@ export class EngineManager extends EventEmitter {
       }
       // Derive project bindings from conversations
       if (conv.directory) {
-        const normDir = conv.directory.replaceAll("\\", "/");
+        const normDir = normalizeDir(conv.directory);
         if (normDir && normDir !== "/" && !this.projectBindings.has(normDir)) {
           this.projectBindings.set(normDir, conv.engineType);
         }
@@ -1029,9 +1037,9 @@ export class EngineManager extends EventEmitter {
   /** Return all projects derived from conversations, always including the default workspace */
   listAllProjects(): UnifiedProject[] {
     const projects = conversationStore.deriveProjects();
-    const defaultDir = getDefaultWorkspacePath().replaceAll("\\", "/");
+    const defaultDir = normalizeDir(getDefaultWorkspacePath());
     const alreadyExists = projects.some(
-      (p) => p.directory.replaceAll("\\", "/") === defaultDir,
+      (p) => normalizeDir(p.directory) === defaultDir,
     );
     if (!alreadyExists) {
       projects.push({
@@ -1042,7 +1050,7 @@ export class EngineManager extends EventEmitter {
       });
     } else {
       const existing = projects.find(
-        (p) => p.directory.replaceAll("\\", "/") === defaultDir,
+        (p) => normalizeDir(p.directory) === defaultDir,
       );
       if (existing) existing.isDefault = true;
     }

@@ -13,6 +13,7 @@ files:
   - package.json
 asarUnpack:
   - node_modules/@github/copilot-*/**
+  - node_modules/@parcel/watcher*/**
 extraMetadata:
   main: out/main/index.mjs
 mac:

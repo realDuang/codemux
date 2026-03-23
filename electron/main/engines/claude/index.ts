@@ -1217,23 +1217,34 @@ export class ClaudeCodeAdapter extends EngineAdapter {
   ): Promise<SDKSession> {
     const existing = this.v2Sessions.get(sessionId);
     if (existing) {
-      // Check if permissionMode changed — must recreate session if so
+      // Check if permissionMode changed — switch at runtime without destroying session
       const requestedMode = opts.permissionMode ?? "default";
       if (existing.permissionMode !== requestedMode) {
         claudeLog.info(
-          `[Claude][${sessionId}] permissionMode changed from ${existing.permissionMode} to ${requestedMode}, recreating session`,
+          `[Claude][${sessionId}] permissionMode changed from ${existing.permissionMode} to ${requestedMode}, switching at runtime`,
         );
-        this.cleanupSession(sessionId, "permissionMode changed");
-      } else {
-        // Check if session is still ready
+        existing.permissionMode = requestedMode;
         try {
-          // V2 session transport may have died; we detect this when stream() fails
-          existing.lastUsedAt = Date.now();
-          return existing.session;
-        } catch {
-          // Session is dead, recreate
-          this.cleanupSession(sessionId, "session not ready");
+          const query = (existing.session as any).query;
+          if (query && typeof query.setPermissionMode === "function") {
+            await query.setPermissionMode(requestedMode);
+            claudeLog.info(`[Claude][${sessionId}] Permission mode switched to: ${requestedMode}`);
+          } else {
+            claudeLog.warn(`[Claude][${sessionId}] setPermissionMode not available on query, will apply on next message`);
+          }
+        } catch (err) {
+          claudeLog.warn(`[Claude][${sessionId}] Failed to set permission mode at runtime:`, err);
         }
+      }
+
+      // Check if session is still ready
+      try {
+        // V2 session transport may have died; we detect this when stream() fails
+        existing.lastUsedAt = Date.now();
+        return existing.session;
+      } catch {
+        // Session is dead, recreate
+        this.cleanupSession(sessionId, "session not ready");
       }
     }
 

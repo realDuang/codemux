@@ -11,7 +11,7 @@ Multi-engine AI coding assistant client. Access OpenCode, GitHub Copilot, and Cl
 | Frontend | SolidJS 1.8 + TypeScript 5 |
 | Styling | Tailwind CSS v4 + CSS Modules |
 | Routing | @solidjs/router (HashRouter in Electron, BrowserRouter in web) |
-| i18n | @solid-primitives/i18n (en, zh) |
+| i18n | @solid-primitives/i18n (en, zh, ru) |
 | Markdown | marked + shiki (syntax highlighting) |
 | Backend Comm | WebSocket (ws) with custom JSON RPC protocol |
 | Packaging | electron-builder (DMG for macOS, NSIS for Windows) |
@@ -165,9 +165,9 @@ npm run dist:mac   # macOS DMG
 
 ### i18n
 
-- Two locales: `en` (default), `zh`
+- Three locales: `en` (default), `zh`, `ru`
 - Persisted in `settings.json` (key: `locale`)
-- Dictionary files: `src/locales/en.ts`, `src/locales/zh.ts`
+- Dictionary files: `src/locales/en.ts`, `src/locales/zh.ts`, `src/locales/ru.ts`
 - Usage: `const t = useI18n(); t().chat.sendMessage`
 
 ### Settings Persistence
@@ -189,7 +189,7 @@ Settings shape:
 ```json
 {
   "theme": "light" | "dark" | "system",
-  "locale": "en" | "zh",
+  "locale": "en" | "zh" | "ru",
   "logLevel": "error" | "warn" | "info" | "verbose" | "debug" | "silly",
   "engineModels": {
     "opencode": { "providerID": "...", "modelID": "..." },

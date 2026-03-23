@@ -2,7 +2,7 @@
 
 # CodeMux
 
-[English](./README.md) | **[简体中文](./README.zh-CN.md)** | [日本語](./README.ja.md) | [한국어](./README.ko.md)
+[English](./README.md) | **[简体中文](./README.zh-CN.md)** | [日本語](./README.ja.md) | [한국어](./README.ko.md) | [Русский](./README.ru.md)
 
 **多引擎 AI 编程客户端，完整的远程 Agent 体验。**
 

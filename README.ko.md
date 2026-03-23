@@ -2,7 +2,7 @@
 
 # CodeMux
 
-[English](./README.md) | [简体中文](./README.zh-CN.md) | [日本語](./README.ja.md) | **[한국어](./README.ko.md)**
+[English](./README.md) | [简体中文](./README.zh-CN.md) | [日本語](./README.ja.md) | **[한국어](./README.ko.md)** | [Русский](./README.ru.md)
 
 **완전한 원격 Agent 경험을 제공하는 멀티 엔진 AI 코딩 클라이언트.**
 

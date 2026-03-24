@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CodeMux — Multi-Engine AI Coding Client</title>
+  <meta name="description" content="The first open-source GUI for GitHub Copilot CLI. Unify OpenCode, Copilot CLI, and Claude Code with zero-config remote access from any device.">
+  <meta property="og:title" content="CodeMux — Multi-Engine AI Coding Client">
+  <meta property="og:description" content="One GUI. Three AI engines. Zero-config remote access.">
+  <meta property="og:type" content="website">
+  <meta name="twitter:card" content="summary_large_image">
+  <link rel="icon" type="image/png" href="logo.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+</head>
+<body>
+
+  <!-- ===== NAVIGATION ===== -->
+  <nav class="nav" id="nav">
+    <a href="#hero" class="nav-logo">
+      <img src="logo.png" alt="CodeMux" class="nav-logo-img">
+      <span>CODEMUX</span>
+    </a>
+    <div class="nav-right">
+      <ul class="nav-links" id="nav-links">
+        <li><a href="#overview" data-i18n="nav.overview">Overview</a></li>
+        <li><a href="#engines" data-i18n="nav.engines">Engines</a></li>
+        <li><a href="#features" data-i18n="nav.features">Features</a></li>
+        <li><a href="#access" data-i18n="nav.access">Access</a></li>
+        <li><a href="#install" data-i18n="nav.install">Install</a></li>
+        <li><a href="https://github.com/realDuang/codemux" target="_blank">GitHub</a></li>
+      </ul>
+      <div class="lang-switch">
+        <button class="lang-btn active" data-lang="en">EN</button>
+        <button class="lang-btn" data-lang="zh">中</button>
+      </div>
+      <button class="nav-mobile-btn" id="nav-toggle" aria-label="Toggle menu">[ MENU ]</button>
+    </div>
+  </nav>
+
+  <!-- ===== HERO ===== -->
+  <header id="hero">
+    <canvas id="matrix-canvas"></canvas>
+    <div class="hero-content">
+      <img src="logo.png" alt="" class="hero-logo" aria-hidden="true">
+      <div class="glitch-wrapper">
+        <h1 class="glitch" data-text="CODEMUX">CODEMUX</h1>
+      </div>
+      <p class="hero-subtitle" id="hero-subtitle">
+        <span class="cursor"></span>
+      </p>
+      <div class="hero-engines reveal">
+        <span class="engine-badge cyan">OpenCode</span>
+        <span class="engine-badge magenta">GitHub Copilot CLI</span>
+        <span class="engine-badge purple">Claude Code</span>
+      </div>
+      <div class="hero-cta reveal">
+        <a href="https://github.com/realDuang/codemux/releases" target="_blank" class="btn primary" data-i18n="hero.download">DOWNLOAD</a>
+        <a href="https://github.com/realDuang/codemux" target="_blank" class="btn magenta">GITHUB</a>
+      </div>
+    </div>
+    <div class="scroll-indicator">
+      <svg viewBox="0 0 24 24" fill="none" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+    </div>
+  </header>
+
+  <!-- ===== OVERVIEW ===== -->
+  <section id="overview">
+    <div class="section">
+      <div class="overview-grid">
+        <div class="overview-text reveal">
+          <div class="section-label">// SYSTEM OVERVIEW</div>
+          <h2 class="section-title" data-i18n="overview.title">What Is CodeMux?</h2>
+          <p data-i18n="overview.p1">
+            CodeMux is <span class="highlight">not another AI chat wrapper</span>. It is a
+            <span class="highlight">protocol-level gateway</span> that unifies multiple AI coding
+            engines under one interface.
+          </p>
+          <p data-i18n="overview.p2">
+            Each engine runs in its own sandbox with <span class="highlight">full file editing</span>,
+            <span class="highlight">shell access</span>, and <span class="highlight">session management</span>
+            preserved. Direct protocol integration (HTTP/REST, JSON-RPC/stdio, SDK) ensures
+            zero capability loss.
+          </p>
+          <p data-i18n="overview.p3">
+            Access from desktop, browser (LAN or public internet via Cloudflare Tunnel), or
+            IM bots (Feishu, DingTalk, Telegram, WeCom, Teams) &mdash; all with full agent chain-of-thought
+            visualization.
+          </p>
+        </div>
+        <div class="arch-diagram reveal hud-frame" style="transition-delay: 0.2s">
+          <div class="arch-layer" data-i18n="arch.access">Access Layer<br><small style="color:var(--text-secondary)">Electron / Browser / IM Bots</small></div>
+          <div class="arch-arrow">&#x2193; WebSocket</div>
+          <div class="arch-layer gateway" data-i18n="arch.gateway">Gateway Server<br><small style="color:var(--text-secondary)">Engine Manager + Router</small></div>
+          <div class="arch-arrow">&#x2193; Protocol Adapters</div>
+          <div class="arch-engines">
+            <div class="arch-engine oc">OpenCode<small>HTTP/SSE</small></div>
+            <div class="arch-engine cp">Copilot CLI<small>JSON-RPC</small></div>
+            <div class="arch-engine cc">Claude Code<small>SDK/stdio</small></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== ENGINES ===== -->
+  <section id="engines">
+    <div class="section">
+      <div class="engines-header reveal">
+        <div class="section-label">// ENGINE MATRIX</div>
+        <h2 class="section-title" data-i18n="engines.title">Three Engines. One Interface.</h2>
+        <p class="engines-tagline" data-i18n="engines.tagline">One GUI. Three powerful engines. Zero compromises.</p>
+      </div>
+      <div class="engine-cards">
+        <div class="engine-card reveal" data-color="cyan" style="transition-delay: 0.1s; border-color: rgba(91,196,247,0.15);">
+          <span class="engine-icon">&#9889;</span>
+          <h3 class="engine-name">OpenCode</h3>
+          <span class="engine-protocol">HTTP REST + SSE</span>
+          <p class="engine-desc" data-i18n="engines.opencode">Web-based engine with streaming responses. Full coding capabilities through HTTP protocol with Server-Sent Events for real-time output.</p>
+        </div>
+        <div class="engine-card reveal" data-color="magenta" style="transition-delay: 0.25s; border-color: rgba(255,0,170,0.15);">
+          <span class="engine-icon">&#129302;</span>
+          <h3 class="engine-name">GitHub Copilot CLI</h3>
+          <span class="engine-protocol">JSON-RPC / stdio</span>
+          <p class="engine-desc" data-i18n="engines.copilot">The first open-source GUI for Copilot CLI at protocol level. Full JSON-RPC integration with stdio transport for native performance.</p>
+        </div>
+        <div class="engine-card reveal" data-color="purple" style="transition-delay: 0.4s; border-color: rgba(176,124,247,0.15);">
+          <span class="engine-icon">&#129504;</span>
+          <h3 class="engine-name">Claude Code</h3>
+          <span class="engine-protocol">SDK / stdio</span>
+          <p class="engine-desc" data-i18n="engines.claude">Powered by @anthropic-ai/claude-agent-sdk. Deep integration through the official SDK for maximum capability and reliability.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== FEATURES ===== -->
+  <section id="features">
+    <canvas id="particle-canvas"></canvas>
+    <div class="section">
+      <div class="features-header reveal">
+        <div class="section-label">// FEATURE MATRIX</div>
+        <h2 class="section-title" data-i18n="features.title">Capabilities</h2>
+      </div>
+      <div class="feature-grid">
+        <div class="feature-card reveal" style="transition-delay: 0.05s">
+          <span class="feature-icon">&#128279;</span>
+          <h3 class="feature-title" data-i18n="features.cot.title">Agent Chain-of-Thought</h3>
+          <p class="feature-desc" data-i18n="features.cot.desc">See every step your AI takes. File diffs with syntax highlighting, shell commands, search results &mdash; full transparency across desktop, browser, and IM.</p>
+        </div>
+        <div class="feature-card reveal" style="transition-delay: 0.15s">
+          <span class="feature-icon">&#127760;</span>
+          <h3 class="feature-title" data-i18n="features.remote.title">Zero-Config Remote Access</h3>
+          <p class="feature-desc" data-i18n="features.remote.desc">Access from any device over LAN (auto-detected IP + QR code) or the public internet via Cloudflare Tunnel. JWT auth + HTTPS built in.</p>
+        </div>
+        <div class="feature-card reveal" style="transition-delay: 0.25s">
+          <span class="feature-icon">&#128172;</span>
+          <h3 class="feature-title" data-i18n="features.im.title">IM Bot Integration</h3>
+          <p class="feature-desc" data-i18n="features.im.desc">Connect through Feishu, DingTalk, Telegram, WeCom, or Microsoft Teams. Real-time streaming with full agent capabilities in your favorite IM.</p>
+        </div>
+        <div class="feature-card reveal" style="transition-delay: 0.35s">
+          <span class="feature-icon">&#128444;&#65039;</span>
+          <h3 class="feature-title" data-i18n="features.multimodal.title">Multimodal Input</h3>
+          <p class="feature-desc" data-i18n="features.multimodal.desc">Drag, drop, or paste images. JPEG, PNG, GIF, WebP &mdash; up to 4 images per message. Supported natively across all engines and access methods.</p>
+        </div>
+        <div class="feature-card reveal" style="transition-delay: 0.45s">
+          <span class="feature-icon">&#127919;</span>
+          <h3 class="feature-title" data-i18n="features.modes.title">Agent Modes</h3>
+          <p class="feature-desc" data-i18n="features.modes.desc">Switch between Build, Plan, and Autopilot modes. Live task lists with real-time progress. Inline permission approvals for sensitive operations.</p>
+        </div>
+        <div class="feature-card reveal" style="transition-delay: 0.55s">
+          <span class="feature-icon">&#9889;</span>
+          <h3 class="feature-title" data-i18n="features.tech.title">Modern Tech Stack</h3>
+          <p class="feature-desc" data-i18n="features.tech.desc">Built with Electron 40, SolidJS, TypeScript (strict mode), and Tailwind CSS. Fast, reactive, and fully type-safe from frontend to backend.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== REMOTE ACCESS ===== -->
+  <section id="access">
+    <div class="section">
+      <div class="access-header reveal">
+        <div class="section-label">// NETWORK TOPOLOGY</div>
+        <h2 class="section-title" data-i18n="access.title">Access Everywhere</h2>
+      </div>
+      <div class="network-container">
+        <div class="network-graph reveal" id="network-graph">
+          <svg class="connection-lines" id="connection-svg"></svg>
+          <!-- Hub -->
+          <div class="hub-node">
+            <span>&#128300;</span>
+            <span>CODEMUX</span>
+          </div>
+          <!-- Platform Nodes -->
+          <div class="platform-node"><span>&#128187;</span><span>Electron</span></div>
+          <div class="platform-node"><span>&#127758;</span><span>Browser</span></div>
+          <div class="platform-node"><span>&#9993;&#65039;</span><span data-i18n="access.feishu">Feishu</span></div>
+          <div class="platform-node"><span>&#128276;</span><span data-i18n="access.dingtalk">DingTalk</span></div>
+          <div class="platform-node"><span>&#9992;&#65039;</span><span>Telegram</span></div>
+          <div class="platform-node"><span>&#128272;</span><span data-i18n="access.wecom">WeCom</span></div>
+          <div class="platform-node"><span>&#129309;</span><span>Teams</span></div>
+          <div class="platform-node"><span>&#9729;&#65039;</span><span data-i18n="access.tunnel">Tunnel</span></div>
+        </div>
+        <div class="security-box reveal hud-frame">
+          <h3>&#128274; <span data-i18n="access.security">SECURITY PROTOCOLS</span></h3>
+          <ul>
+            <li data-i18n="access.s1">Device authorization with 6-digit codes</li>
+            <li data-i18n="access.s2">Per-device JWT token authentication</li>
+            <li data-i18n="access.s3">HTTPS via Cloudflare for public tunnels</li>
+            <li data-i18n="access.s4">Ephemeral URLs rotate on restart</li>
+            <li data-i18n="access.s5">Custom domain via named tunnels</li>
+            <li data-i18n="access.s6">Inline permission request approval</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== INSTALLATION ===== -->
+  <section id="install">
+    <div class="section">
+      <div class="install-header reveal">
+        <div class="section-label">// SYSTEM INSTALL</div>
+        <h2 class="section-title" data-i18n="install.title">Get Started</h2>
+      </div>
+      <div class="terminal reveal">
+        <div class="terminal-header">
+          <div class="terminal-dot red"></div>
+          <div class="terminal-dot yellow"></div>
+          <div class="terminal-dot green"></div>
+          <span class="terminal-title">codemux@terminal</span>
+        </div>
+        <div class="terminal-tabs">
+          <button class="terminal-tab active" data-tab="macos">macOS</button>
+          <button class="terminal-tab" data-tab="windows">Windows</button>
+          <button class="terminal-tab" data-tab="source" data-i18n="install.source">From Source</button>
+        </div>
+        <div class="terminal-body">
+          <button class="copy-btn" id="copy-btn">COPY</button>
+          <div class="terminal-content active" data-content="macos">
+            <div><span class="comment" data-i18n="install.brew_comment"># Install via Homebrew</span></div>
+            <div><span class="prompt">$ </span><span class="command">brew tap realDuang/codemux</span></div>
+            <div><span class="prompt">$ </span><span class="command">brew install --cask codemux</span></div>
+            <div>&nbsp;</div>
+            <div><span class="comment" data-i18n="install.download_comment"># Or download directly:</span></div>
+            <div><span class="prompt">  </span><span class="url">Apple Silicon (M1+): .dmg</span></div>
+            <div><span class="prompt">  </span><span class="url">Intel x64: .dmg</span></div>
+          </div>
+          <div class="terminal-content" data-content="windows">
+            <div><span class="comment" data-i18n="install.win_comment"># Download the installer</span></div>
+            <div><span class="prompt">  </span><span class="url">CodeMux-setup.exe</span></div>
+            <div>&nbsp;</div>
+            <div><span class="comment" data-i18n="install.release_comment"># Or download from GitHub Releases:</span></div>
+            <div><span class="prompt">$ </span><span class="command">start https://github.com/realDuang/codemux/releases</span></div>
+          </div>
+          <div class="terminal-content" data-content="source">
+            <div><span class="comment" data-i18n="install.source_comment"># Clone and build from source</span></div>
+            <div><span class="prompt">$ </span><span class="command">git clone https://github.com/realDuang/codemux.git</span></div>
+            <div><span class="prompt">$ </span><span class="command">cd codemux</span></div>
+            <div><span class="prompt">$ </span><span class="command">bun install</span></div>
+            <div><span class="prompt">$ </span><span class="command">bun run update:cloudflared</span></div>
+            <div><span class="prompt">$ </span><span class="command">bun run dev</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== FOOTER ===== -->
+  <footer>
+    <div class="footer-logo">
+      <img src="logo.png" alt="CodeMux" class="footer-logo-img">
+      <span>CODEMUX</span>
+    </div>
+    <div class="footer-links">
+      <a href="https://github.com/realDuang/codemux" target="_blank">GitHub</a>
+      <a href="https://github.com/realDuang/codemux/discussions" target="_blank" data-i18n="footer.discussions">Discussions</a>
+      <a href="https://github.com/realDuang/codemux/blob/main/CONTRIBUTING.md" target="_blank" data-i18n="footer.contributing">Contributing</a>
+      <a href="https://github.com/realDuang/codemux/releases" target="_blank" data-i18n="footer.releases">Releases</a>
+    </div>
+    <div class="hud-status">
+      <span class="hud-item">SYS.STATUS: ONLINE</span>
+      <span class="hud-item">BUILD: STABLE</span>
+      <span class="hud-item">ENGINES: 3 ACTIVE</span>
+      <span class="hud-item">PROTOCOL: SECURE</span>
+    </div>
+    <p class="footer-copy">MIT License &middot; Made with &#9889; by <a href="https://github.com/realDuang" target="_blank">realDuang</a></p>
+  </footer>
+
+  <script type="module" src="/src/scripts/main.ts"></script>
+</body>
+</html>

@@ -52,6 +52,9 @@ playwright-report/
 # Benchmark artifacts
 .bench/
 
+# Coverage reports
+coverage/
+
 .channels/
 
 continuous-analysis/

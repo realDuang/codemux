@@ -41,11 +41,11 @@ jobs:
             echo "version=$VERSION" >> $GITHUB_OUTPUT
             exit 0
           fi
-          
+
           # For main branch push, check package.json version
           CURRENT_VERSION=$(node -p "require('./package.json').version")
           echo "Current version: $CURRENT_VERSION"
-          
+
           # Check if tag already exists
           if git rev-parse "v$CURRENT_VERSION" >/dev/null 2>&1; then
             echo "Tag v$CURRENT_VERSION already exists, skipping release"
@@ -79,6 +79,8 @@ jobs:
         uses: oven-sh/setup-bun@v2
         with:
           bun-version: latest
+          cache: true
+          cache-dependency-path: bun.lock
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
@@ -142,6 +144,8 @@ jobs:
         uses: oven-sh/setup-bun@v2
         with:
           bun-version: latest
+          cache: true
+          cache-dependency-path: bun.lock
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
@@ -177,10 +181,60 @@ jobs:
             release/latest.yml
           if-no-files-found: error
 
+  # #57 Build for Linux
+  build-linux:
+    name: Build Linux
+    needs: check-version
+    if: needs.check-version.outputs.should_release == 'true'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+          cache: true
+          cache-dependency-path: bun.lock
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Build app
+        run: bun run build
+
+      - name: Run predist script
+        run: bun scripts/predist.ts
+
+      - name: Package for Linux
+        run: npx electron-builder --linux --publish never
+
+      - name: Verify release artifacts
+        run: |
+          echo "=== All release artifacts ==="
+          ls -la release/
+          echo ""
+          echo "=== Checking required files ==="
+          ls release/*.AppImage 2>/dev/null && echo "✓ AppImage file(s) exist" || echo "✗ AppImage file(s) MISSING"
+          ls release/*.deb 2>/dev/null && echo "✓ deb file(s) exist" || echo "✗ deb file(s) MISSING"
+          test -f release/latest-linux.yml && echo "✓ latest-linux.yml exists" || echo "✗ latest-linux.yml MISSING"
+
+      - name: Upload Linux artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-x64
+          path: |
+            release/*.AppImage
+            release/*.deb
+            release/latest-linux.yml
+          if-no-files-found: error
+
   # Create GitHub Release (skip for PRs)
   release:
     name: Create Release
-    needs: [check-version, build-macos, build-windows]
+    needs: [check-version, build-macos, build-windows, build-linux]
     if: needs.check-version.outputs.should_release == 'true'
     runs-on: ubuntu-latest
 
@@ -199,7 +253,7 @@ jobs:
           find artifacts -type f | sort
           echo ""
           echo "=== Checking required update files ==="
-          find artifacts -name "latest.yml" -o -name "latest-mac.yml" | sort
+          find artifacts -name "latest.yml" -o -name "latest-mac.yml" -o -name "latest-linux.yml" | sort
           find artifacts -name "*.zip" | sort
 
       - name: Merge macOS latest-mac.yml for multi-arch support
@@ -265,7 +319,10 @@ jobs:
             artifacts/**/*.dmg
             artifacts/**/*.zip
             artifacts/**/*.exe
+            artifacts/**/*.AppImage
+            artifacts/**/*.deb
             artifacts/**/latest.yml
+            artifacts/**/latest-linux.yml
             artifacts/latest-mac.yml
 
   # Update Homebrew Tap

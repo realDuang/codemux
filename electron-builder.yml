@@ -38,6 +38,21 @@ win:
       to: cloudflared/win32-${arch}
       filter:
         - "**/*"
+linux:
+  icon: public/assets/icon.png
+  category: Development
+  target:
+    - target: AppImage
+      arch:
+        - x64
+    - target: deb
+      arch:
+        - x64
+  desktop:
+    Name: CodeMux
+    Comment: Multi-engine AI coding assistant client
+    Categories: Development;IDE;
+    StartupWMClass: codemux
 nsis:
   oneClick: false
   perMachine: false

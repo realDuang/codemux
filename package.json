@@ -1,6 +1,6 @@
 {
   "name": "codemux",
-  "version": "1.5.0",
+  "version": "1.5.1",
   "type": "module",
   "description": "A unified AI coding assistant client - access multiple AI coding engines from any device via desktop app or web interface",
   "author": "realDuang",
@@ -67,7 +67,7 @@
     "@types/ws": "^8.18.1",
     "bun-types": "latest",
     "electron": "^40.6.1",
-    "electron-builder": "^25.1.8",
+    "electron-builder": "^26.0.0",
     "electron-vite": "^2.3.0",
     "patch-package": "^8.0.1",
     "tailwindcss": "^4.0.0",

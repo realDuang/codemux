@@ -6,7 +6,14 @@ import { translations, type Lang } from './i18n';
 // ===========================
 // i18n System
 // ===========================
-let currentLang: Lang = (localStorage.getItem('codemux-lang') as Lang) || 'en';
+const supportedLangs: Lang[] = ['en', 'zh'];
+
+function isValidLang(value: string | null): value is Lang {
+  return value !== null && supportedLangs.includes(value as Lang);
+}
+
+const storedLang = localStorage.getItem('codemux-lang');
+let currentLang: Lang = isValidLang(storedLang) ? storedLang : 'en';
 
 function applyLanguage(lang: Lang): void {
   currentLang = lang;
@@ -35,8 +42,8 @@ function applyLanguage(lang: Lang): void {
 function initI18n(): void {
   document.querySelectorAll<HTMLElement>('.lang-btn').forEach(btn => {
     btn.addEventListener('click', () => {
-      const lang = btn.dataset.lang as Lang;
-      if (lang && lang !== currentLang) {
+      const lang = btn.dataset.lang;
+      if (isValidLang(lang) && lang !== currentLang) {
         applyLanguage(lang);
       }
     });
@@ -273,13 +280,16 @@ function initNav(): void {
 
   toggle.addEventListener('click', () => {
     links.classList.toggle('open');
-    toggle.textContent = links.classList.contains('open') ? '[ CLOSE ]' : '[ MENU ]';
+    const isOpen = links.classList.contains('open');
+    toggle.textContent = isOpen ? '[ CLOSE ]' : '[ MENU ]';
+    toggle.setAttribute('aria-expanded', String(isOpen));
   });
 
   links.querySelectorAll('a').forEach(a => {
     a.addEventListener('click', () => {
       links.classList.remove('open');
       toggle.textContent = '[ MENU ]';
+      toggle.setAttribute('aria-expanded', 'false');
     });
   });
 }

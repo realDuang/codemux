@@ -77,8 +77,7 @@ export default tseslint.config(
       ...solid.rules,
       // SolidJS uses innerHTML for rendering markdown/HTML content safely
       "solid/no-innerhtml": "warn",
-      // SolidJS ref pattern: let ref; <div ref={ref}> — not a real unassigned var
-      "no-unassigned-vars": "off",
+      // SolidJS ref pattern: let ref; <div ref={ref}> is handled correctly by @typescript-eslint/no-unused-vars
     },
   },
 

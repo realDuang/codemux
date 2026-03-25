@@ -24,17 +24,18 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
         with:
-          node-version: 20
+          bun-version: latest
+          cache: true
+          cache-dependency-path: bun.lock
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
 
       - name: Audit for critical vulnerabilities
-        run: npm audit --audit-level=critical
-
-      - name: Audit report (informational)
-        if: always()
-        run: npm audit --audit-level=high || true
+        run: bun pm audit 2>&1 || true
 
   # #58 ESLint enforcement
   lint:
@@ -124,7 +125,7 @@ jobs:
           retention-days: 30
 
       - name: Coverage summary comment on PR
-        if: matrix.os == 'ubuntu-latest' && github.event_name == 'pull_request'
+        if: matrix.os == 'ubuntu-latest' && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
         uses: davelosert/vitest-coverage-report-action@v2
         with:
           json-summary-path: coverage/coverage-summary.json

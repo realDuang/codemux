@@ -1,11 +1,11 @@
-import { For, Show, Switch, Match, createSignal, createMemo } from "solid-js";
+import { For, Show, Switch, Match, createSignal, createMemo, createEffect } from "solid-js";
 import { SessionInfo, sessionStore, setSessionStore, getProjectName } from "../stores/session";
 import { useI18n, formatMessage } from "../lib/i18n";
 import { isDefaultTitle } from "../lib/session-utils";
 import type { UnifiedProject, EngineType, SessionActivityStatus } from "../types/unified";
 import { configStore, isEngineEnabled, getDefaultEngineType, setDefaultNewSessionEngine } from "../stores/config";
 import { getEngineBadge } from "./share/common";
-import { ProjectStore } from "../lib/project-store";
+
 import { isElectron } from "../lib/platform";
 import { systemAPI } from "../lib/electron-api";
 
@@ -105,13 +105,18 @@ export function SessionSidebar(props: SessionSidebarProps) {
   const projectGroups = createMemo((): ProjectGroup[] => {
     const groups: Map<string, SessionInfo[]> = new Map();
 
-    const filteredProjects = props.projects.filter((p) => p.directory !== "/");
+    const showDefaultWs = sessionStore.showDefaultWorkspace;
+    const filteredProjects = props.projects.filter((p) => {
+      if (p.directory === "/") return false;
+      if (p.isDefault && !showDefaultWs) return false;
+      return true;
+    });
 
     for (const project of filteredProjects) {
       groups.set(project.id, []);
     }
 
-    const rootSessions = props.sessions;
+    const rootSessions = props.sessions.filter(s => isEngineEnabled(s.engineType));
 
     for (const session of rootSessions) {
       const projectID = session.projectID || "";
@@ -122,22 +127,31 @@ export function SessionSidebar(props: SessionSidebarProps) {
     }
 
     const result: ProjectGroup[] = [];
+    const defaultGroups: ProjectGroup[] = [];
     for (const [projectID, sessions] of groups) {
       if (sessions.length === 0) continue; // Only show projects that have sessions
       const project = filteredProjects.find((p) => p.id === projectID) || null;
       if (!project) continue;
 
-      const name = getProjectName(project);
+      // Use i18n name for default workspace
+      const name = project.isDefault ? t().sidebar.defaultWorkspace : getProjectName(project);
 
-      result.push({
+      const group: ProjectGroup = {
         projectID,
         project,
         name,
         sessions,
-      });
+      };
+
+      // Sort default workspace last
+      if (project.isDefault) {
+        defaultGroups.push(group);
+      } else {
+        result.push(group);
+      }
     }
 
-    return result;
+    return [...result, ...defaultGroups];
   });
 
   // Filter project groups by search query (matches session title or project name)
@@ -233,7 +247,7 @@ export function SessionSidebar(props: SessionSidebarProps) {
   };
 
   const getProjectDirectory = (project: UnifiedProject): string | undefined => {
-    return ProjectStore.getPath(project.id) || project.directory || undefined;
+    return project.directory || undefined;
   };
 
   return (
@@ -425,8 +439,25 @@ export function SessionSidebar(props: SessionSidebarProps) {
                       </div>
                     </div>
 
-                    {/* New session button on hover */}
+                    {/* Action buttons on hover */}
                     <div class={`flex items-center gap-0.5 ${isHovered() ? "opacity-100" : "opacity-0"}`}>
+                      {/* Open in file explorer (Electron only) — first */}
+                      <Show when={isElectron() && project.project}>
+                        <button
+                          class="p-1 text-gray-400 hover:text-amber-600 dark:hover:text-amber-400 rounded transition-all"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            const dir = getProjectDirectory(project.project!);
+                            if (dir) systemAPI.openPath(dir);
+                          }}
+                          title={t().sidebar.openInFileExplorer}
+                        >
+                          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/>
+                          </svg>
+                        </button>
+                      </Show>
+                      {/* New session */}
                       <button
                         class="p-1 text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 rounded transition-all"
                         onClick={(e) => {
@@ -435,21 +466,12 @@ export function SessionSidebar(props: SessionSidebarProps) {
                         }}
                         title={t().sidebar.newSession}
                       >
-                        <svg
-                          xmlns="http://www.w3.org/2000/svg"
-                          width="14"
-                          height="14"
-                          viewBox="0 0 24 24"
-                          fill="none"
-                          stroke="currentColor"
-                          stroke-width="2"
-                          stroke-linecap="round"
-                          stroke-linejoin="round"
-                        >
+                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                           <path d="M5 12h14" />
                           <path d="M12 5v14" />
                         </svg>
                       </button>
+                      {/* Hide project */}
                       <button
                         class="p-1 text-gray-400 hover:text-red-500 dark:hover:text-red-400 rounded transition-all"
                         onClick={(e) => {
@@ -692,12 +714,20 @@ export function SessionSidebar(props: SessionSidebarProps) {
         </Show>
       </div>
 
-      {/* Default Engine Selector (footer, only when multiple engines available) */}
-      <Show when={runningEngines().length > 1 && !props.collapsed}>
+      {/* Default Engine Selector (footer, visible when at least one engine available) */}
+      <Show when={runningEngines().length >= 1 && !props.collapsed}>
         <div class="px-3 py-2 border-t border-gray-200 dark:border-slate-800">
           <div class="flex items-center gap-2">
             <span class="text-[11px] font-medium text-gray-500 dark:text-gray-400 whitespace-nowrap">{t().sidebar.defaultEngine}</span>
             <select
+              ref={(el) => {
+                // Re-apply value after <For> recreates option elements
+                createEffect(() => {
+                  const val = getDefaultEngineType();
+                  runningEngines();
+                  queueMicrotask(() => { el.value = val; });
+                });
+              }}
               value={getDefaultEngineType()}
               onChange={(e) => setDefaultNewSessionEngine(e.target.value)}
               class="flex-1 min-w-0 text-xs px-2 py-1 bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-md text-gray-700 dark:text-gray-300 focus:outline-none focus:ring-1 focus:ring-blue-500"

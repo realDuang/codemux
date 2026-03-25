@@ -73,6 +73,7 @@ export interface LocaleDict {
     noModeError: string;
     noModelError: string;
     queued: string;
+    disconnected: string;
   };
 
   // Settings page
@@ -114,6 +115,8 @@ export interface LocaleDict {
     importNoSessions: string;
     importError: string;
     importSkipped: string;
+    showDefaultWorkspace: string;
+    showDefaultWorkspaceDesc: string;
   };
 
   // Remote Access page
@@ -176,6 +179,7 @@ export interface LocaleDict {
     daysAgo: string;
     files: string;
     openStorageFolder: string;
+    openInFileExplorer: string;
     copySessionId: string;
     expandSidebar: string;
     collapseSidebar: string;
@@ -184,6 +188,7 @@ export interface LocaleDict {
     defaultEngine: string;
     searchPlaceholder: string;
     noSearchResults: string;
+    defaultWorkspace: string;
   };
 
   // Project
@@ -196,7 +201,6 @@ export interface LocaleDict {
     browseNotSupported: string;
     adding: string;
     addFailed: string;
-    notGitRepo: string;
     hideTitle: string;
     hideConfirm: string;
     sessionCount: string;
@@ -343,6 +347,7 @@ export interface LocaleDict {
     modelInputPlaceholder: string;
     enabled: string;
     disabled: string;
+    unavailable: string;
   };
 
   // Channels
@@ -464,6 +469,37 @@ export interface LocaleDict {
     gatewayReconnected: string;
     engineError: string;
   };
+
+  // File Explorer
+  fileExplorer: {
+    togglePanel: string;
+    allFiles: string;
+    changes: string;
+    changesCount: string;
+    content: string;
+    diff: string;
+    noProject: string;
+    noChanges: string;
+    noDiff: string;
+    binaryFile: string;
+    selectFileToPreview: string;
+    fileTooLarge: string;
+    searchPlaceholder: string;
+    closeTab: string;
+    linesAdded: string;
+    linesRemoved: string;
+    imageZoomIn: string;
+    imageZoomOut: string;
+    imageFitToWindow: string;
+    imageResetZoom: string;
+    searchInFile: string;
+    searchNext: string;
+    searchPrev: string;
+    searchClose: string;
+    noResults: string;
+    matchCount: string;
+    openInExplorer: string;
+  };
 }
 
 export const en: LocaleDict = {
@@ -540,6 +576,7 @@ export const en: LocaleDict = {
     noModeError: "No mode selected. Please select a mode before sending.",
     noModelError: "No model configured. Please set a model in Settings > Engines.",
     queued: "Queued",
+    disconnected: "Disconnected",
   },
 
   // Settings page
@@ -581,6 +618,8 @@ export const en: LocaleDict = {
     importNoSessions: "No new sessions found to import",
     importError: "Failed to import",
     importSkipped: "Skipped (already imported)",
+    showDefaultWorkspace: "Show default workspace in sidebar",
+    showDefaultWorkspaceDesc: "Display the default workspace project group in the sidebar",
   },
 
   // Remote Access page
@@ -643,6 +682,7 @@ export const en: LocaleDict = {
     daysAgo: "{count}d ago",
     files: "{count} files",
     openStorageFolder: "Open storage folder",
+    openInFileExplorer: "Open in file explorer",
     copySessionId: "Copy session ID",
     expandSidebar: "Expand sidebar",
     collapseSidebar: "Collapse sidebar",
@@ -651,6 +691,7 @@ export const en: LocaleDict = {
     defaultEngine: "Default Engine",
     searchPlaceholder: "Search sessions...",
     noSearchResults: "No matching sessions",
+    defaultWorkspace: "Default Workspace",
   },
 
   // Project
@@ -663,7 +704,6 @@ export const en: LocaleDict = {
     browseNotSupported: "Folder selection not supported in this browser",
     adding: "Adding project...",
     addFailed: "Failed to add project",
-    notGitRepo: "The specified path is not a valid git repository",
     hideTitle: "Delete Project Sessions",
     hideConfirm: "Delete all sessions for project \"{name}\"?",
     sessionCount: "This will delete {count} session(s).",
@@ -810,9 +850,8 @@ export const en: LocaleDict = {
     modelInputPlaceholder: "Enter model ID (e.g. claude-sonnet-4-20250514)",
     enabled: "Enabled",
     disabled: "Disabled",
+    unavailable: "Unavailable",
   },
-
-  // Channels
   channel: {
     channels: "Channels",
     feishuBot: "Feishu / Lark Bot",
@@ -930,5 +969,36 @@ export const en: LocaleDict = {
     gatewayDisconnected: "Connection lost. Reconnecting...",
     gatewayReconnected: "Connection restored.",
     engineError: "Engine error: {message}",
+  },
+
+  // File Explorer
+  fileExplorer: {
+    togglePanel: "Toggle file explorer",
+    allFiles: "Files",
+    changes: "Changes",
+    changesCount: "{count} changes",
+    content: "Content",
+    diff: "Diff",
+    noProject: "No project directory",
+    noChanges: "No changes detected",
+    noDiff: "No diff available",
+    binaryFile: "Binary file cannot be previewed",
+    selectFileToPreview: "Select a file to preview",
+    fileTooLarge: "File is too large to preview",
+    searchPlaceholder: "Search files...",
+    closeTab: "Close tab",
+    linesAdded: "+{count}",
+    linesRemoved: "-{count}",
+    imageZoomIn: "Zoom in",
+    imageZoomOut: "Zoom out",
+    imageFitToWindow: "Fit to window",
+    imageResetZoom: "Reset zoom",
+    searchInFile: "Search in file",
+    searchNext: "Next match",
+    searchPrev: "Previous match",
+    searchClose: "Close search",
+    noResults: "No results",
+    matchCount: "{current} of {total}",
+    openInExplorer: "Open in file explorer",
   },
 };

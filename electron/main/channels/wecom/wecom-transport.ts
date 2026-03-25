@@ -39,20 +39,16 @@ export class WeComTransport implements MessageTransport {
   /** Recall (delete) a message by msgid. */
   async deleteMessage(messageId: string): Promise<void> {
     if (!messageId) return;
-    try {
-      await this.rateLimiter.consume();
-      const token = await this.tokenManager.getToken();
-      const res = await fetch(`${WECOM_API_BASE}/message/recall?access_token=${token}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ msgid: messageId }),
-      });
-      const data = (await res.json()) as { errcode: number; errmsg: string };
-      if (data.errcode !== 0) {
-        channelLog.error(`[WeCom] Failed to recall message ${messageId}: ${data.errmsg}`);
-      }
-    } catch (err) {
-      channelLog.error(`[WeCom] Failed to recall message ${messageId}:`, err);
+    await this.rateLimiter.consume();
+    const token = await this.tokenManager.getToken();
+    const res = await fetch(`${WECOM_API_BASE}/message/recall?access_token=${token}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ msgid: messageId }),
+    });
+    const data = (await res.json()) as { errcode: number; errmsg: string };
+    if (data.errcode !== 0) {
+      throw new Error(`WeCom recall failed for ${messageId}: ${data.errmsg}`);
     }
   }
 

@@ -103,8 +103,9 @@ interface PendingQuestion {
 // ============================================================================
 
 const DEFAULT_MODES: AgentMode[] = [
-  { id: "agent", label: "Agent", description: "Interactive coding agent" },
-  { id: "plan", label: "Plan", description: "Plan before executing" },
+  { id: "default", label: "Default", description: "Standard behavior, prompts for dangerous operations" },
+  { id: "acceptEdits", label: "Auto-Accept", description: "Auto-accept file edit operations" },
+  { id: "plan", label: "Plan", description: "Planning mode, no actual tool execution" },
 ];
 
 // ============================================================================
@@ -125,7 +126,10 @@ export class ClaudeCodeAdapter extends EngineAdapter {
 
   // --- State ---
   private status: EngineStatus = "stopped";
+  private lastError: string | undefined;
   private version: string | undefined;
+  private authenticated: boolean | undefined;
+  private authMessage: string | undefined;
   private currentModelId: string | null = null;
   private cachedModels: UnifiedModelInfo[] = [];
   private sessionModes = new Map<string, string>();
@@ -205,6 +209,9 @@ export class ClaudeCodeAdapter extends EngineAdapter {
       // Start cleanup interval
       this.startSessionCleanup();
 
+      // Check authentication via SDK accountInfo()
+      await this.checkAuthentication();
+
       // Fetch model list via SDK (uses CLI's own auth)
       // Must complete before setStatus("running") so frontend gets models on first listModels() call
       await this.refreshModelCache();
@@ -218,12 +225,103 @@ export class ClaudeCodeAdapter extends EngineAdapter {
     }
   }
 
+  /**
+   * Check if Claude Code has valid authentication by querying accountInfo().
+   * tokenSource === "none" means no auth is configured.
+   */
+  private async checkAuthentication(): Promise<void> {
+    try {
+      const env: Record<string, string | undefined> = {
+        ...process.env,
+        ...this.options?.env,
+      };
+      const sdkEnv = { ...env };
+      delete sdkEnv.ELECTRON_RUN_AS_NODE;
+
+      const q = sdkQuery({
+        prompt: "",
+        options: {
+          model: this.currentModelId ?? "claude-sonnet-4-20250514",
+          env: sdkEnv,
+          abortController: new AbortController(),
+          pathToClaudeCodeExecutable: this.resolveCliPath(),
+        } as any,
+      });
+
+      try {
+        const info = await q.accountInfo();
+        if (!info || info.tokenSource === "none") {
+          this.authenticated = false;
+          this.authMessage = "Not authenticated";
+          claudeLog.warn("[Claude] No authentication configured (tokenSource: none)");
+        } else {
+          this.authenticated = true;
+          this.authMessage = info.tokenSource;
+          claudeLog.info(`[Claude] Authenticated via ${info.tokenSource}`);
+        }
+      } finally {
+        q.close();
+      }
+    } catch (err) {
+      claudeLog.warn("[Claude] Failed to check authentication:", err);
+      this.authenticated = undefined;
+    }
+  }
+
   async stop(): Promise<void> {
     if (this.status === "stopped") return;
 
     claudeLog.info("Stopping Claude Code adapter...");
 
-    // Close all V2 sessions
+    // Gracefully interrupt all sessions that have active requests first.
+    // interrupt() tells the CC CLI subprocess to stop the current turn cleanly,
+    // preserving server-side session state. Without this, session.close() kills
+    // the process mid-stream, corrupting the CC session and causing context loss
+    // on next resume.
+    //
+    // NOTE: We do NOT drain the stream here (unlike cancelMessage). Drain exists
+    // so the *next* send()+stream() cycle starts clean, but stop() is terminal —
+    // there is no next cycle. More importantly, draining during Electron's
+    // will-quit flow triggers NAPI crashes because the native CC SDK module is
+    // being torn down while we're still iterating its async iterator.
+    const interruptPromises: Promise<void>[] = [];
+    for (const [sessionId, info] of this.v2Sessions) {
+      // Only need to interrupt sessions with active requests
+      if (!this.activeAbortControllers.has(sessionId)) continue;
+
+      const buffer = this.messageBuffers.get(sessionId);
+      if (buffer) buffer.error = "Cancelled";
+
+      const controller = this.activeAbortControllers.get(sessionId);
+      if (controller) {
+        controller.abort();
+        this.activeAbortControllers.delete(sessionId);
+      }
+
+      interruptPromises.push(
+        (async () => {
+          try {
+            const query = (info.session as any).query;
+            if (query && typeof query.interrupt === "function") {
+              await query.interrupt();
+              claudeLog.info(`[Claude][${sessionId}] V2 session interrupted during stop`);
+            }
+          } catch (e) {
+            claudeLog.warn(`[Claude][${sessionId}] Error interrupting session during stop:`, e);
+          }
+          // Finalize the buffer so the message is properly completed
+          this.finalizeBuffer(sessionId, true);
+        })()
+      );
+    }
+
+    // Wait for all interrupts to settle (with a hard cap so stop() never hangs)
+    if (interruptPromises.length > 0) {
+      const hardTimeout = new Promise<void>((resolve) => setTimeout(resolve, 3000));
+      await Promise.race([Promise.allSettled(interruptPromises), hardTimeout]);
+    }
+
+    // Now close all V2 sessions cleanly
     for (const [sessionId, info] of this.v2Sessions) {
       try {
         info.session.close();
@@ -233,7 +331,7 @@ export class ClaudeCodeAdapter extends EngineAdapter {
     }
     this.v2Sessions.clear();
 
-    // Abort all active requests
+    // Abort any remaining active requests (sessions without V2 info)
     for (const [, controller] of this.activeAbortControllers) {
       controller.abort();
     }
@@ -265,6 +363,9 @@ export class ClaudeCodeAdapter extends EngineAdapter {
       status: this.status,
       capabilities: this.getCapabilities(),
       authMethods: this.getAuthMethods(),
+      authenticated: this.authenticated,
+      authMessage: this.authMessage,
+      errorMessage: this.status === "error" ? this.lastError : undefined,
     };
   }
 
@@ -552,9 +653,8 @@ export class ClaudeCodeAdapter extends EngineAdapter {
     this.emit("message.updated", { sessionId, message: assistantMessage });
 
     // Determine permission mode from mode option
-    const mode = options?.mode ?? this.sessionModes.get(sessionId) ?? "agent";
-    const permissionMode =
-      mode === "plan" ? ("plan" as const) : ("default" as const);
+    const mode = options?.mode ?? this.sessionModes.get(sessionId) ?? "default";
+    const permissionMode = mode as "default" | "plan" | "acceptEdits" | "dontAsk";
 
     // Get or create V2 session
     const v2Session = await this.getOrCreateV2Session(
@@ -771,21 +871,21 @@ export class ClaudeCodeAdapter extends EngineAdapter {
     credential: { type: "api-key"; value: string } | { type: "bearer"; value: string },
     baseUrlEnv?: string,
   ): Promise<boolean> {
-    try {
-      // Normalize base URL: strip trailing slashes and known path suffixes
-      let baseUrl = (baseUrlEnv || "https://api.anthropic.com").replace(/\/+$/, "");
-      const suffixes = ["/chat/completions", "/completions", "/responses", "/v1/chat"];
-      for (const suffix of suffixes) {
-        if (baseUrl.endsWith(suffix)) {
-          baseUrl = baseUrl.slice(0, -suffix.length);
-          break;
-        }
+    // Normalize base URL: strip trailing slashes and known path suffixes
+    let baseUrl = (baseUrlEnv || "https://api.anthropic.com").replace(/\/+$/, "");
+    const suffixes = ["/chat/completions", "/completions", "/responses", "/v1/chat"];
+    for (const suffix of suffixes) {
+      if (baseUrl.endsWith(suffix)) {
+        baseUrl = baseUrl.slice(0, -suffix.length);
+        break;
       }
-      if (!baseUrl.includes("/v1")) {
-        baseUrl = `${baseUrl}/v1`;
-      }
-      const modelsUrl = `${baseUrl}/models`;
+    }
+    if (!baseUrl.includes("/v1")) {
+      baseUrl = `${baseUrl}/v1`;
+    }
+    const modelsUrl = `${baseUrl}/models`;
 
+    try {
       // Build auth headers based on credential type and target host
       const isAnthropicNative = new URL(modelsUrl).hostname.endsWith("anthropic.com");
       let headers: Record<string, string> = { "Content-Type": "application/json" };
@@ -838,7 +938,22 @@ export class ClaudeCodeAdapter extends EngineAdapter {
       claudeLog.warn("[Claude] Models API returned empty list");
       return false;
     } catch (err) {
-      claudeLog.warn("[Claude] Failed to fetch models via HTTP:", err);
+      const cause = err instanceof TypeError ? (err as { cause?: NodeJS.ErrnoException }).cause : undefined;
+      const code = cause?.code;
+
+      if (code === "ENOTFOUND") {
+        claudeLog.warn(`[Claude] Cannot resolve host for ${modelsUrl} — DNS lookup failed`);
+      } else if (code === "ECONNREFUSED") {
+        claudeLog.warn(`[Claude] Connection refused: ${modelsUrl}`);
+      } else if (code === "ETIMEDOUT" || code === "UND_ERR_CONNECT_TIMEOUT") {
+        claudeLog.warn(`[Claude] Connection timed out: ${modelsUrl}`);
+      } else if (code === "ECONNRESET") {
+        claudeLog.warn(`[Claude] Connection reset: ${modelsUrl}`);
+      } else if (err instanceof DOMException && err.name === "TimeoutError") {
+        claudeLog.warn("[Claude] Models request timed out (AbortSignal)");
+      } else {
+        claudeLog.warn("[Claude] Failed to fetch models via HTTP:", err);
+      }
       return false;
     }
   }
@@ -866,19 +981,22 @@ export class ClaudeCodeAdapter extends EngineAdapter {
         } as any,
       });
 
-      const models = await q.supportedModels();
-      q.close();
+      try {
+        const models = await q.supportedModels();
 
-      if (models && models.length > 0) {
-        this.cachedModels = models.map((m) => ({
-          modelId: m.value,
-          name: m.displayName || m.value,
-          description: m.description || "",
-          engineType: "claude" as EngineType,
-        }));
-        claudeLog.info(`[Claude] Loaded ${this.cachedModels.length} models via SDK`);
-      } else {
-        claudeLog.warn("[Claude] SDK returned empty model list");
+        if (models && models.length > 0) {
+          this.cachedModels = models.map((m) => ({
+            modelId: m.value,
+            name: m.displayName || m.value,
+            description: m.description || "",
+            engineType: "claude" as EngineType,
+          }));
+          claudeLog.info(`[Claude] Loaded ${this.cachedModels.length} models via SDK`);
+        } else {
+          claudeLog.warn("[Claude] SDK returned empty model list");
+        }
+      } finally {
+        q.close();
       }
     } catch (err) {
       claudeLog.warn("[Claude] Failed to fetch models via SDK:", err);
@@ -899,6 +1017,10 @@ export class ClaudeCodeAdapter extends EngineAdapter {
     // Close existing session to force recreation with new model
     const v2Info = this.v2Sessions.get(sessionId);
     if (v2Info) {
+      // Preserve ccSessionId so the recreated session resumes context
+      if (v2Info.capturedSessionId) {
+        this.sessionCcIds.set(sessionId, v2Info.capturedSessionId);
+      }
       try {
         v2Info.session.close();
       } catch {
@@ -920,15 +1042,24 @@ export class ClaudeCodeAdapter extends EngineAdapter {
     this.sessionModes.set(sessionId, modeId);
     claudeLog.info(`[Claude][${sessionId}] Mode set to: ${modeId}`);
 
-    // Close existing session to force recreation with new permission mode
     const v2Info = this.v2Sessions.get(sessionId);
     if (v2Info) {
+      // Update tracked permissionMode
+      v2Info.permissionMode = modeId as any;
+
+      // Use the internal Query API to switch permission mode at runtime
+      // (same pattern as cancelMessage's interrupt() call)
       try {
-        v2Info.session.close();
-      } catch {
-        // Ignore
+        const query = (v2Info.session as any).query;
+        if (query && typeof query.setPermissionMode === "function") {
+          await query.setPermissionMode(modeId);
+          claudeLog.info(`[Claude][${sessionId}] Permission mode switched to: ${modeId}`);
+        } else {
+          claudeLog.warn(`[Claude][${sessionId}] setPermissionMode not available on query, will apply on next message`);
+        }
+      } catch (err) {
+        claudeLog.warn(`[Claude][${sessionId}] Failed to set permission mode:`, err);
       }
-      this.v2Sessions.delete(sessionId);
     }
   }
 
@@ -984,9 +1115,9 @@ export class ClaudeCodeAdapter extends EngineAdapter {
    */
   private createCanUseTool(sessionId: string): CanUseTool {
     return async (
-      _toolName: string,
+      toolName: string,
       input: Record<string, unknown>,
-      _options: {
+      options: {
         signal: AbortSignal;
         suggestions?: PermissionUpdate[];
         blockedPath?: string;
@@ -995,11 +1126,94 @@ export class ClaudeCodeAdapter extends EngineAdapter {
         agentID?: string;
       },
     ): Promise<PermissionResult> => {
-      // --- Auto-approve all tools ---
-      // Permissions are controlled via allowedTools + this callback.
-      // We auto-allow everything to avoid blocking the agent workflow.
+      // --- ExitPlanMode: intercept and ask user for confirmation ---
+      if (toolName === "ExitPlanMode") {
+        return this.handleExitPlanMode(sessionId, input, options);
+      }
+
+      // --- All other tools: auto-approve ---
       return { behavior: "allow", updatedInput: input };
     };
+  }
+
+  /**
+   * Intercept ExitPlanMode: the plan content has already been streamed as text
+   * parts to the frontend. We convert this tool call into a question asking the
+   * user to approve or reject the plan before execution continues.
+   *
+   * Flow: canUseTool blocks → emit question.asked → frontend shows confirm UI
+   *       → user replies → resolve promise → SDK gets allow/deny
+   */
+  private handleExitPlanMode(
+    sessionId: string,
+    input: Record<string, unknown>,
+    options: { signal: AbortSignal; toolUseID: string },
+  ): Promise<PermissionResult> {
+    const questionId = timeId("q");
+
+    const allowedPrompts = input.allowedPrompts as
+      | Array<{ tool: string; prompt: string }>
+      | undefined;
+
+    const question: UnifiedQuestion = {
+      id: questionId,
+      sessionId,
+      engineType: this.engineType,
+      toolCallId: options.toolUseID,
+      questions: [
+        {
+          question: "The plan is ready for your review. Do you approve it?",
+          header: "Plan Review",
+          options: [
+            { label: "Approve", description: "Approve the plan and start implementation" },
+            { label: "Reject", description: "Reject the plan and continue planning" },
+          ],
+          multiple: false,
+          custom: true, // allow user to type custom feedback
+        },
+      ],
+      metadata: allowedPrompts ? { allowedPrompts } : undefined,
+    };
+
+    claudeLog.info(
+      `[Claude][${sessionId}] ExitPlanMode intercepted: questionId=${questionId}`,
+    );
+
+    return new Promise<PermissionResult>((resolve) => {
+      this.pendingQuestions.set(questionId, {
+        resolve: (answer: string) => {
+          const approved =
+            answer.toLowerCase().includes("approve") ||
+            answer === "0"; // first option index
+          if (approved) {
+            resolve({ behavior: "allow", updatedInput: input });
+          } else {
+            resolve({
+              behavior: "deny",
+              message: answer || "Plan rejected by user",
+            });
+          }
+        },
+        question,
+      });
+
+      // Abort handling (same pattern as handleAskUserQuestion)
+      if (options.signal) {
+        const onAbort = () => {
+          if (this.pendingQuestions.has(questionId)) {
+            this.pendingQuestions.delete(questionId);
+            resolve({ behavior: "deny", message: "Aborted" });
+          }
+        };
+        if (options.signal.aborted) {
+          onAbort();
+          return;
+        }
+        options.signal.addEventListener("abort", onAbort, { once: true });
+      }
+
+      this.emit("question.asked", { question });
+    });
   }
 
   /**
@@ -1153,24 +1367,29 @@ export class ClaudeCodeAdapter extends EngineAdapter {
   ): Promise<SDKSession> {
     const existing = this.v2Sessions.get(sessionId);
     if (existing) {
-      // Check if permissionMode changed — must recreate session if so
+      // Check if permissionMode changed — switch at runtime without destroying session
       const requestedMode = opts.permissionMode ?? "default";
       if (existing.permissionMode !== requestedMode) {
         claudeLog.info(
-          `[Claude][${sessionId}] permissionMode changed from ${existing.permissionMode} to ${requestedMode}, recreating session`,
+          `[Claude][${sessionId}] permissionMode changed from ${existing.permissionMode} to ${requestedMode}, switching at runtime`,
         );
-        this.cleanupSession(sessionId, "permissionMode changed");
-      } else {
-        // Check if session is still ready
+        existing.permissionMode = requestedMode;
         try {
-          // V2 session transport may have died; we detect this when stream() fails
-          existing.lastUsedAt = Date.now();
-          return existing.session;
-        } catch {
-          // Session is dead, recreate
-          this.cleanupSession(sessionId, "session not ready");
+          const query = (existing.session as any).query;
+          if (query && typeof query.setPermissionMode === "function") {
+            await query.setPermissionMode(requestedMode);
+            claudeLog.info(`[Claude][${sessionId}] Permission mode switched to: ${requestedMode}`);
+          } else {
+            claudeLog.warn(`[Claude][${sessionId}] setPermissionMode not available on query, will apply on next message`);
+          }
+        } catch (err) {
+          claudeLog.warn(`[Claude][${sessionId}] Failed to set permission mode at runtime:`, err);
         }
       }
+
+      // Session is ready — update usage timestamp and return
+      existing.lastUsedAt = Date.now();
+      return existing.session;
     }
 
     claudeLog.info(
@@ -1206,7 +1425,7 @@ export class ClaudeCodeAdapter extends EngineAdapter {
       pathToClaudeCodeExecutable: this.resolveCliPath(),
     };
 
-    // Set working directory (requires SDK patch: patches/@anthropic-ai+claude-agent-sdk+0.2.63.patch)
+    // Set working directory (natively supported since SDK v0.2.81)
     if (directory) {
       sdkOptions.cwd = directory.replaceAll("/", process.platform === "win32" ? "\\" : "/");
     }
@@ -1249,6 +1468,12 @@ export class ClaudeCodeAdapter extends EngineAdapter {
     if (!info) return;
 
     claudeLog.info(`[Claude][${sessionId}] Cleaning up session: ${reason}`);
+
+    // Preserve ccSessionId before destroying the V2 session so that
+    // getOrCreateV2Session() can resume instead of creating a fresh session.
+    if (info.capturedSessionId) {
+      this.sessionCcIds.set(sessionId, info.capturedSessionId);
+    }
 
     try {
       info.session.close();
@@ -1425,11 +1650,16 @@ export class ClaudeCodeAdapter extends EngineAdapter {
       const ccSessionId = msg.session_id;
 
       if (ccSessionId) {
-        // Store the CC session ID in the in-memory V2 session for future resumption
+        // Store the CC session ID for future resumption — both in the V2 session
+        // object AND in the persistent sessionCcIds map. The latter survives V2
+        // session destruction (idle timeout, setModel, stop) so that
+        // getOrCreateV2Session() can still call resumeSession() instead of
+        // creating a brand-new session and losing conversation context.
         const v2Info = this.v2Sessions.get(sessionId);
         if (v2Info) {
           v2Info.capturedSessionId = ccSessionId;
         }
+        this.sessionCcIds.set(sessionId, ccSessionId);
 
         // Emit ccSessionId so EngineManager can persist it in ConversationStore
         this.emit("session.updated", {
@@ -2076,6 +2306,7 @@ export class ClaudeCodeAdapter extends EngineAdapter {
     error?: string,
   ): void {
     this.status = status;
+    this.lastError = error;
     this.emit("status.changed", {
       engineType: this.engineType,
       status,

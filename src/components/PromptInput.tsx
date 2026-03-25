@@ -28,9 +28,9 @@ function getModeDisplayName(mode: AgentMode): string {
 /** Return the active-state background colour class for a mode button. */
 function getModeColor(mode: AgentMode, index: number): string {
   const label = getModeDisplayName(mode).toLowerCase();
-  if (label === "build" || label === "agent") return "bg-indigo-600";
+  if (label === "default" || label === "interactive" || label === "build") return "bg-indigo-600";
   if (label === "plan") return "bg-cyan-600";
-  if (label === "autopilot") return "bg-emerald-600";
+  if (label === "autopilot" || label === "auto-accept") return "bg-emerald-600";
   // Fallback by position
   const palette = ["bg-indigo-600", "bg-cyan-600", "bg-emerald-600"];
   if (index < palette.length) return palette[index];
@@ -52,18 +52,18 @@ function getModeAccentRing(mode: AgentMode, index: number): {
       border: "border-cyan-200/40 dark:border-cyan-600/30",
       bgHover: "bg-cyan-600 hover:bg-cyan-700",
     };
-  if (label === "autopilot")
+  if (label === "autopilot" || label === "auto-accept")
     return {
       bg: "bg-emerald-50/60 dark:bg-slate-800/70 backdrop-blur-xl",
       ring: "focus-within:ring-emerald-500/40",
       border: "border-emerald-200/40 dark:border-emerald-600/30",
       bgHover: "bg-emerald-600 hover:bg-emerald-700",
     };
-  // Default (build / agent / first mode / unknown)
+  // Default / Interactive / Build / unknown
   return {
-    bg: "bg-white/60 dark:bg-slate-800/70 backdrop-blur-xl",
+    bg: "bg-indigo-50/60 dark:bg-slate-800/70 backdrop-blur-xl",
     ring: "focus-within:ring-indigo-500/40",
-    border: "border-slate-200/40 dark:border-slate-600/30",
+    border: "border-indigo-200/40 dark:border-indigo-600/30",
     bgHover: "bg-indigo-600 hover:bg-indigo-700",
   };
 }
@@ -96,13 +96,21 @@ const MODE_ICONS: Array<() => any> = [
       <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
     </svg>
   ),
+  // 3 — check-circle / auto-accept
+  () => (
+    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
+      <polyline points="22 4 12 14.01 9 11.01" />
+    </svg>
+  ),
 ];
 
 function getModeIcon(mode: AgentMode, index: number) {
   const label = getModeDisplayName(mode).toLowerCase();
-  if (label === "build" || label === "agent") return MODE_ICONS[0]();
+  if (label === "default" || label === "interactive" || label === "build") return MODE_ICONS[0]();
   if (label === "plan") return MODE_ICONS[1]();
   if (label === "autopilot") return MODE_ICONS[2]();
+  if (label === "auto-accept") return MODE_ICONS[3]();
   return MODE_ICONS[index % MODE_ICONS.length]();
 }
 
@@ -218,7 +226,8 @@ export function PromptInput(props: PromptInputProps) {
     const el = textarea();
     if (!el) return;
     el.style.height = "auto";
-    el.style.height = `${Math.min(el.scrollHeight, 200)}px`;
+    const maxHeight = window.innerWidth < 640 ? 120 : 200;
+    el.style.height = `${Math.min(el.scrollHeight, maxHeight)}px`;
   };
 
   createEffect(() => {
@@ -284,16 +293,16 @@ export function PromptInput(props: PromptInputProps) {
     const label = getModeDisplayName(agent()).toLowerCase();
     if (label === "plan") return t().prompt.planPlaceholder;
     if (label === "autopilot") return t().prompt.autopilotPlaceholder;
-    if (label === "build" || label === "agent") return t().prompt.buildPlaceholder;
+    if (label === "build" || label === "interactive" || label === "default") return t().prompt.buildPlaceholder;
     return t().prompt.placeholder;
   });
 
   return (
     <div class="w-full max-w-4xl mx-auto">
       {/* Agent selector and Model selector row */}
-      <div class="flex items-center justify-between gap-2 mb-2 px-1 flex-wrap">
+      <div class="flex items-center justify-between gap-1.5 sm:gap-2 mb-2 px-1 flex-wrap">
         {/* Agent mode buttons - left side */}
-        <div class="flex gap-2">
+        <div class="flex gap-1.5 sm:gap-2">
           <For each={modes()}>
             {(mode, index) => {
               const displayName = getModeDisplayName(mode);
@@ -304,15 +313,15 @@ export function PromptInput(props: PromptInputProps) {
               return (
                 <button
                   onClick={() => handleAgentChange(mode)}
-                  class={`px-3 py-1.5 text-xs font-medium rounded-lg transition-all flex items-center gap-1.5 ${
+                  class={`px-2 sm:px-3 py-1.5 text-xs font-medium rounded-lg transition-all flex items-center gap-1 sm:gap-1.5 min-h-[36px] ${
                     isActive()
-                      ? `${color} text-white shadow-md shadow-indigo-500/20`
+                      ? `${color} text-white shadow-md shadow-current/20`
                       : "bg-slate-100/60 dark:bg-slate-800/60 text-slate-500 dark:text-slate-400 hover:bg-slate-200/80 dark:hover:bg-slate-700/60 backdrop-blur-sm"
                   }`}
                   title={mode.description ?? displayName}
                 >
                   {icon}
-                  {displayName}
+                  <span class="hidden sm:inline">{displayName}</span>
                 </button>
               );
             }}
@@ -369,7 +378,7 @@ export function PromptInput(props: PromptInputProps) {
               : modePlaceholder()
           }
           rows={1}
-          class={`w-full px-4 py-3 pr-20 bg-transparent resize-none focus:outline-none dark:text-white max-h-[200px] overflow-y-auto text-sm placeholder:text-slate-400 dark:placeholder:text-slate-500 ${props.disabled ? "cursor-not-allowed opacity-50" : ""}`}
+          class={`w-full px-3 sm:px-4 py-3 pr-16 sm:pr-20 bg-transparent resize-none focus:outline-none dark:text-white max-h-[120px] sm:max-h-[200px] overflow-y-auto text-sm placeholder:text-slate-400 dark:placeholder:text-slate-500 ${props.disabled ? "cursor-not-allowed opacity-50" : ""}`}
           style={{ "min-height": "52px" }}
         />
         {/* Hidden file input for image selection */}

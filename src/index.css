@@ -13,8 +13,11 @@
 }
 
 :root {
-  /* Electron title bar safe area - set via JS when in Electron with hiddenInset */
-  --electron-title-bar-height: 0px;
+  /* Title bar height — 40px default for web; overridden to 38/40px by
+     initElectronTitleBar() in Electron.  The .electron-safe-top padding
+     is scoped to .electron-macos / .electron-windows, so this default
+     does NOT add padding in web mode. */
+  --electron-title-bar-height: 40px;
 
   --color-background: hsl(0, 20%, 99%);
   --color-background-weak: hsl(0, 8%, 97%);
@@ -94,20 +97,44 @@ body {
   font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  /* Prevent horizontal overflow on mobile */
+  overflow-x: hidden;
 }
 
-/* Electron macOS title bar safe area */
-.electron-macos .electron-safe-top {
+/* ── Mobile touch & overflow helpers ── */
+@media (max-width: 640px) {
+  /* Improve momentum scrolling on iOS */
+  .overflow-y-auto,
+  .overflow-x-auto {
+    -webkit-overflow-scrolling: touch;
+  }
+}
+
+/* Electron title bar safe area — macOS + Windows */
+.electron-macos .electron-safe-top,
+.electron-windows .electron-safe-top {
   padding-top: var(--electron-title-bar-height);
 }
 
-/* Make the title bar area draggable on macOS */
-.electron-macos .electron-drag-region {
+/* Draggable titlebar region — applies on all Electron platforms with custom titlebar */
+.electron-macos .electron-drag-region,
+.electron-windows .electron-drag-region {
   -webkit-app-region: drag;
 }
 
-.electron-macos .electron-no-drag {
+.electron-macos .electron-no-drag,
+.electron-windows .electron-no-drag {
   -webkit-app-region: no-drag;
+}
+
+/* macOS titlebar: reserve space for traffic lights (close/minimize/maximize) on the left */
+.electron-macos .electron-titlebar-pad-left {
+  padding-left: 72px;
+}
+
+/* Windows titlebar overlay: reserve space for native window controls (≈138px) */
+.electron-windows .electron-titlebar-pad-right {
+  padding-right: 140px;
 }
 
 /* ── Custom Scrollbar ── */
@@ -185,4 +212,87 @@ body {
   font-style: var(--shiki-dark-font-style) !important;
   font-weight: var(--shiki-dark-font-weight) !important;
   text-decoration: var(--shiki-dark-text-decoration) !important;
+}
+
+/* ResizeHandle */
+[data-component="resize-handle"] {
+  position: absolute;
+  z-index: 10;
+}
+[data-component="resize-handle"]::after {
+  content: "";
+  position: absolute;
+  opacity: 0;
+  transition: opacity 0.15s ease-in-out;
+  background-color: var(--color-border, #3b82f6);
+}
+[data-component="resize-handle"]:hover::after,
+[data-component="resize-handle"]:active::after {
+  opacity: 1;
+}
+[data-component="resize-handle"][data-direction="horizontal"] {
+  top: 0;
+  bottom: 0;
+  width: 8px;
+  cursor: col-resize;
+}
+[data-component="resize-handle"][data-direction="horizontal"]::after {
+  top: 0;
+  bottom: 0;
+  width: 2px;
+}
+[data-component="resize-handle"][data-direction="horizontal"][data-edge="start"] {
+  left: -4px;
+}
+[data-component="resize-handle"][data-direction="horizontal"][data-edge="start"]::after {
+  left: 3px;
+}
+[data-component="resize-handle"][data-direction="horizontal"][data-edge="end"] {
+  right: -4px;
+}
+[data-component="resize-handle"][data-direction="horizontal"][data-edge="end"]::after {
+  right: 3px;
+}
+[data-component="resize-handle"][data-direction="vertical"] {
+  left: 0;
+  right: 0;
+  height: 8px;
+  cursor: row-resize;
+}
+[data-component="resize-handle"][data-direction="vertical"]::after {
+  left: 0;
+  right: 0;
+  height: 2px;
+}
+[data-component="resize-handle"][data-direction="vertical"][data-edge="start"] {
+  top: -4px;
+}
+[data-component="resize-handle"][data-direction="vertical"][data-edge="start"]::after {
+  top: 3px;
+}
+[data-component="resize-handle"][data-direction="vertical"][data-edge="end"] {
+  bottom: -4px;
+}
+[data-component="resize-handle"][data-direction="vertical"][data-edge="end"]::after {
+  bottom: 3px;
+}
+
+/* File search highlighting */
+.file-search-highlight {
+  background-color: rgba(255, 213, 79, 0.4);
+  border-radius: 2px;
+  box-decoration-break: clone;
+}
+.file-search-highlight-current {
+  background-color: rgba(255, 152, 0, 0.6);
+  border-radius: 2px;
+  outline: 2px solid #ff9800;
+  box-decoration-break: clone;
+}
+.dark .file-search-highlight {
+  background-color: rgba(255, 213, 79, 0.25);
+}
+.dark .file-search-highlight-current {
+  background-color: rgba(255, 152, 0, 0.4);
+  outline-color: #ffb74d;
 }

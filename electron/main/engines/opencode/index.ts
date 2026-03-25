@@ -48,6 +48,7 @@ import type {
   PermissionOption,
   QuestionInfo,
 } from "../../../../src/types/unified";
+import { OPENCODE_PORT } from "../../../../shared/ports";
 
 /**
  * OpenCode Engine Adapter
@@ -59,6 +60,7 @@ export class OpenCodeAdapter extends EngineAdapter {
   private server: { url: string; close(): Promise<void> } | null = null;
   private port: number;
   private status: EngineStatus = "stopped";
+  private lastError: string | undefined;
   private version: string | undefined;
   private connectedProviders: string[] = [];
   private client: OpencodeClient | null = null;
@@ -111,7 +113,7 @@ export class OpenCodeAdapter extends EngineAdapter {
 
   constructor(options?: { port?: number }) {
     super();
-    this.port = options?.port ?? 4096;
+    this.port = options?.port ?? OPENCODE_PORT;
   }
 
   private get baseUrl(): string {
@@ -632,6 +634,7 @@ export class OpenCodeAdapter extends EngineAdapter {
     if (this.server) return;
 
     this.status = "starting";
+    this.lastError = undefined;
     this.emit("status.changed", { engineType: this.engineType, status: this.status });
 
     // Use SDK to spawn and manage the OpenCode server process
@@ -652,6 +655,7 @@ export class OpenCodeAdapter extends EngineAdapter {
       openCodeLog.info(`OpenCode server started at ${this.server.url}`);
     } catch (err: any) {
       this.status = "error";
+      this.lastError = err.message;
       this.emit("status.changed", {
         engineType: this.engineType,
         status: "error",
@@ -746,6 +750,7 @@ export class OpenCodeAdapter extends EngineAdapter {
       authMessage: hasProviders
         ? this.connectedProviders.join(", ")
         : undefined,
+      errorMessage: this.status === "error" ? this.lastError : undefined,
     };
   }
 

@@ -102,15 +102,11 @@ export class TelegramTransport implements MessageTransport {
     const { chatId, msgId } = this.parseMessageId(messageId);
     if (!chatId || !msgId) return;
 
-    try {
-      await this.rateLimiter.consume();
-      await this.callApi("deleteMessage", {
-        chat_id: chatId,
-        message_id: Number(msgId),
-      });
-    } catch (err) {
-      channelLog.error(`${LOG_PREFIX} Failed to delete message ${messageId}:`, err);
-    }
+    await this.rateLimiter.consume();
+    await this.callApi("deleteMessage", {
+      chat_id: chatId,
+      message_id: Number(msgId),
+    });
   }
 
   /**

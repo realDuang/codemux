@@ -59,7 +59,7 @@ export function FeishuConfigModal(props: FeishuConfigModalProps) {
           role="dialog"
           aria-modal="true"
           aria-labelledby="feishu-config-modal-title"
-          class="relative bg-white dark:bg-slate-900 rounded-xl shadow-2xl w-full max-w-md mx-4 overflow-hidden"
+          class="relative bg-white dark:bg-slate-900 rounded-xl shadow-2xl w-full max-w-md mx-4 overflow-hidden flex flex-col max-h-[calc(100vh-2rem)]"
         >
           {/* Header */}
           <div class="flex items-center justify-between px-6 py-4 border-b border-gray-200 dark:border-slate-800">
@@ -88,7 +88,7 @@ export function FeishuConfigModal(props: FeishuConfigModalProps) {
           </div>
 
           {/* Body */}
-          <div class="p-6 space-y-5">
+          <div class="p-6 space-y-5 overflow-y-auto flex-1">
             {/* Platform */}
             <div>
               <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5">
@@ -106,7 +106,6 @@ export function FeishuConfigModal(props: FeishuConfigModalProps) {
                 {t().channel.platformDesc}
               </p>
             </div>
-
             {/* App ID */}
             <div>
               <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5">
@@ -162,7 +161,7 @@ export function FeishuConfigModal(props: FeishuConfigModalProps) {
           </div>
 
           {/* Footer */}
-          <div class="flex justify-end gap-3 px-6 py-4 border-t border-gray-200 dark:border-slate-800 bg-gray-50 dark:bg-slate-900/50">
+          <div class="flex flex-col-reverse sm:flex-row justify-end gap-2 sm:gap-3 px-6 py-4 border-t border-gray-200 dark:border-slate-800 bg-gray-50 dark:bg-slate-900/50 flex-shrink-0">
             <button
               onClick={props.onClose}
               class="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-slate-800 rounded-lg transition-colors"

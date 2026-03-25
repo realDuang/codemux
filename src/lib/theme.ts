@@ -25,6 +25,27 @@ function getSystemTheme(): "light" | "dark" {
   return "light";
 }
 
+function syncTitleBarOverlay(theme: "light" | "dark"): void {
+  if (typeof window === "undefined") return;
+
+  const doSync = () => {
+    const electronAPI = (window as any).electronAPI;
+    const updateFn = electronAPI?.system?.updateTitleBarOverlay;
+    if (!updateFn) return false;
+
+    if (theme === "dark") {
+      updateFn({ color: "#020617", symbolColor: "#94a3b8" }); // slate-950
+    } else {
+      updateFn({ color: "#f8fafc", symbolColor: "#475569" }); // slate-50
+    }
+    return true;
+  };
+
+  if (!doSync()) {
+    setTimeout(doSync, 200);
+  }
+}
+
 function applyTheme(theme: ThemeMode): void {
   const root = document.documentElement;
   const effectiveTheme = theme === "system" ? getSystemTheme() : theme;
@@ -35,6 +56,7 @@ function applyTheme(theme: ThemeMode): void {
     root.classList.remove("dark");
   }
 
+  syncTitleBarOverlay(effectiveTheme);
   logger.debug("[Theme] Applied:", theme, "→", effectiveTheme);
 }
 

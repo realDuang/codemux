@@ -74,6 +74,7 @@ export const zh: LocaleDict = {
     noModeError: "未选择模式，请先选择模式再发送。",
     noModelError: "未配置模型，请在设置 > 引擎中设置模型。",
     queued: "排队中",
+    disconnected: "已断开",
   },
 
   // Settings page
@@ -115,6 +116,8 @@ export const zh: LocaleDict = {
     importNoSessions: "没有找到可导入的新会话",
     importError: "导入失败",
     importSkipped: "已跳过（已导入）",
+    showDefaultWorkspace: "在侧边栏显示默认工作区",
+    showDefaultWorkspaceDesc: "在侧边栏中显示默认工作区项目分组",
   },
 
   // Remote Access page
@@ -177,6 +180,7 @@ export const zh: LocaleDict = {
     daysAgo: "{count}天前",
     files: "{count} 文件",
     openStorageFolder: "打开存储文件夹",
+    openInFileExplorer: "在文件管理器中打开",
     copySessionId: "复制会话 ID",
     expandSidebar: "展开侧边栏",
     collapseSidebar: "收起侧边栏",
@@ -185,6 +189,7 @@ export const zh: LocaleDict = {
     defaultEngine: "默认引擎",
     searchPlaceholder: "搜索会话...",
     noSearchResults: "没有匹配的会话",
+    defaultWorkspace: "默认工作区",
   },
 
   // Project
@@ -197,7 +202,6 @@ export const zh: LocaleDict = {
     browseNotSupported: "当前浏览器不支持文件夹选择",
     adding: "正在添加项目...",
     addFailed: "添加项目失败",
-    notGitRepo: "指定路径不是有效的 git 仓库",
     hideTitle: "删除项目会话",
     hideConfirm: "删除项目「{name}」的所有会话？",
     sessionCount: "这将删除 {count} 个会话。",
@@ -344,9 +348,8 @@ export const zh: LocaleDict = {
     modelInputPlaceholder: "输入模型 ID（如 claude-sonnet-4-20250514）",
     enabled: "已启用",
     disabled: "已停用",
+    unavailable: "不可用",
   },
-
-  // Channels
   channel: {
     channels: "渠道",
     feishuBot: "飞书 / Lark 机器人",
@@ -464,5 +467,36 @@ export const zh: LocaleDict = {
     gatewayDisconnected: "连接已断开，正在重连...",
     gatewayReconnected: "连接已恢复。",
     engineError: "引擎错误：{message}",
+  },
+
+  // File Explorer
+  fileExplorer: {
+    togglePanel: "切换文件浏览器",
+    allFiles: "文件",
+    changes: "变更",
+    changesCount: "{count} 个变更",
+    content: "内容",
+    diff: "差异",
+    noProject: "没有项目目录",
+    noChanges: "没有检测到变更",
+    noDiff: "没有可用的差异",
+    binaryFile: "无法预览二进制文件",
+    selectFileToPreview: "选择文件以预览",
+    fileTooLarge: "文件太大，无法预览",
+    searchPlaceholder: "搜索文件...",
+    closeTab: "关闭标签页",
+    linesAdded: "+{count}",
+    linesRemoved: "-{count}",
+    imageZoomIn: "放大",
+    imageZoomOut: "缩小",
+    imageFitToWindow: "适应窗口",
+    imageResetZoom: "重置缩放",
+    searchInFile: "文件内搜索",
+    searchNext: "下一个匹配",
+    searchPrev: "上一个匹配",
+    searchClose: "关闭搜索",
+    noResults: "无结果",
+    matchCount: "第 {current} 个，共 {total} 个",
+    openInExplorer: "在文件管理器中打开",
   },
 };

@@ -66,6 +66,31 @@ class TunnelManager {
     return withStats[0].uuid;
   }
 
+  /**
+   * Generate an isolated cloudflared config file in the app data directory.
+   * This prevents conflicts with system-level cloudflared that may use
+   * ~/.cloudflared/config.yml with different ingress rules.
+   */
+  private writeNamedTunnelConfig(tunnelId: string, hostname: string, port: number): string {
+    const userDataPath = app.getPath("userData");
+    const configPath = path.join(userDataPath, "cloudflared-config.yml");
+    const credentialsPath = path.join(os.homedir(), ".cloudflared", `${tunnelId}.json`);
+
+    const bareHostname = hostname.replace(/^https?:\/\//, "");
+    const yaml = [
+      `tunnel: ${tunnelId}`,
+      `credentials-file: ${credentialsPath}`,
+      `ingress:`,
+      `  - hostname: ${bareHostname}`,
+      `    service: http://localhost:${port}`,
+      `  - service: http_status:404`,
+    ].join("\n") + "\n";
+
+    fs.writeFileSync(configPath, yaml, "utf-8");
+    tunnelLog.info(`Generated cloudflared config at ${configPath}`);
+    return configPath;
+  }
+
   async start(port: number, config?: TunnelConfig): Promise<TunnelInfo> {
     if (this.process) {
       return this.info;
@@ -96,9 +121,16 @@ class TunnelManager {
         throw new Error(`Cloudflared binary not found at ${cloudflaredPath}`);
       }
 
-      const args = isNamed
-        ? ["tunnel", "run", "--url", `http://localhost:${port}`, tunnelId!]
-        : ["tunnel", "--url", `http://localhost:${port}`];
+      let args: string[];
+      if (isNamed) {
+        // Generate an isolated config file so CodeMux's cloudflared connector
+        // doesn't conflict with any system-level cloudflared using the default
+        // ~/.cloudflared/config.yml with different ingress rules.
+        const configPath = this.writeNamedTunnelConfig(tunnelId!, hostname!, port);
+        args = ["tunnel", "--config", configPath, "run"];
+      } else {
+        args = ["tunnel", "--url", `http://localhost:${port}`];
+      }
 
       this.process = spawn(cloudflaredPath, args);
 

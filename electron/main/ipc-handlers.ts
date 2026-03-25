@@ -9,6 +9,7 @@ import { trayManager } from "./services/tray-manager";
 import { getLogFilePath, getFileLogLevel, setFileLogLevel, loadSettings, saveSettings } from "./services/logger";
 import { isStartupReady } from "./index";
 import { channelManager } from "./index";
+import { GATEWAY_PORT } from "../../shared/ports";
 
 export function registerIpcHandlers(): void {
   // ===========================================================================
@@ -201,7 +202,7 @@ export function registerIpcHandlers(): void {
     if (app.isPackaged && productionServer.isRunning()) {
       return `ws://127.0.0.1:${productionServer.getPort()}/ws`;
     }
-    return `ws://127.0.0.1:4200`;
+    return `ws://127.0.0.1:${GATEWAY_PORT}`;
   });
 
   // ===========================================================================
@@ -306,6 +307,25 @@ export function registerIpcHandlers(): void {
   ipcMain.handle("autostart:setEnabled", async (_, enabled: boolean) => {
     trayManager.setLaunchAtLogin(enabled);
     return { success: true };
+  });
+
+  // ===========================================================================
+  // Titlebar
+  // ===========================================================================
+
+  ipcMain.handle("update-title-bar-overlay", (_, options: { color: string; symbolColor: string }) => {
+    const win = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0];
+    if (win && process.platform === "win32") {
+      try {
+        win.setTitleBarOverlay({
+          color: options.color,
+          symbolColor: options.symbolColor,
+          height: 40,
+        });
+      } catch {
+        // Ignore errors on older Electron versions
+      }
+    }
   });
 
   // ===========================================================================

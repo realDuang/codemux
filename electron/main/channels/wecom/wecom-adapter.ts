@@ -52,7 +52,7 @@ import type {
   UnifiedPermission,
   UnifiedQuestion,
 } from "../../../../src/types/unified";
-import { channelLog } from "../../services/logger";
+import { channelLog, getDefaultEngineFromSettings } from "../../services/logger";
 
 // ============================================================================
 // XML Parsing Helper
@@ -61,9 +61,11 @@ import { channelLog } from "../../services/logger";
 /** Simple regex-based XML parser for WeCom callback messages */
 function parseXml(xml: string): Record<string, string> {
   const result: Record<string, string> = {};
+  // Strip outer <xml>...</xml> wrapper if present, so we only parse inner elements
+  const inner = xml.replace(/^\s*<xml>\s*/i, "").replace(/\s*<\/xml>\s*$/i, "");
   const regex = /<(\w+)><!\[CDATA\[(.*?)\]\]><\/\1>|<(\w+)>(.*?)<\/\3>/gs;
   let match;
-  while ((match = regex.exec(xml)) !== null) {
+  while ((match = regex.exec(inner)) !== null) {
     const key = match[1] || match[3];
     const value = match[2] || match[4];
     if (key && value !== undefined) result[key] = value;
@@ -155,6 +157,12 @@ export class WeComAdapter extends ChannelAdapter {
       ...DEFAULT_WECOM_CONFIG,
       ...(config.options as unknown as Partial<WeComConfig>),
     };
+
+    // Trim whitespace from all string config values to prevent subtle mismatches
+    if (this.config.corpId) this.config.corpId = this.config.corpId.trim();
+    if (this.config.corpSecret) this.config.corpSecret = this.config.corpSecret.trim();
+    if (this.config.callbackToken) this.config.callbackToken = this.config.callbackToken.trim();
+    if (this.config.callbackEncodingAESKey) this.config.callbackEncodingAESKey = this.config.callbackEncodingAESKey.trim();
 
     if (!this.config.corpId || !this.config.corpSecret) {
       this.status = "error";
@@ -360,17 +368,26 @@ export class WeComAdapter extends ChannelAdapter {
   /** Handle GET request for callback URL verification */
   private handleUrlVerification(req: WebhookRequest): WebhookResponse {
     if (!this.crypto) {
+      channelLog.error("[WeCom] Crypto not initialized");
       return { status: 500, body: "Crypto not initialized" };
     }
 
     const { msg_signature, timestamp, nonce, echostr } = req.query;
     if (!msg_signature || !timestamp || !nonce || !echostr) {
+      channelLog.error("[WeCom] URL verification: missing required parameters");
       return { status: 400, body: "Missing required parameters" };
     }
 
     const plaintext = this.crypto.verifyUrl(msg_signature, timestamp, nonce, echostr);
     if (plaintext === null) {
-      channelLog.error("[WeCom] URL verification failed");
+      // Provide actionable error: distinguish signature vs decrypt failure
+      const sigMatch = this.crypto.generateSignature(timestamp, nonce, echostr) === msg_signature;
+      if (sigMatch) {
+        const debug = this.crypto.debugDecrypt(echostr);
+        channelLog.error(`[WeCom] URL verification failed: signature OK but decrypt failed: ${debug.error}`);
+      } else {
+        channelLog.error("[WeCom] URL verification failed: signature mismatch (check Token config)");
+      }
       return { status: 403, body: "Verification failed" };
     }
 
@@ -385,6 +402,7 @@ export class WeComAdapter extends ChannelAdapter {
   /** Handle POST request with encrypted XML message */
   private async handleIncomingMessage(req: WebhookRequest): Promise<WebhookResponse> {
     if (!this.crypto) {
+      channelLog.error("[WeCom] POST: Crypto not initialized");
       return { status: 500, body: "Crypto not initialized" };
     }
 
@@ -398,6 +416,7 @@ export class WeComAdapter extends ChannelAdapter {
     const outerParsed = parseXml(outerXml);
     const encryptedContent = outerParsed["Encrypt"];
     if (!encryptedContent) {
+      channelLog.error("[WeCom] POST: Missing <Encrypt> in callback XML");
       return { status: 400, body: "Missing Encrypt element" };
     }
 
@@ -599,14 +618,24 @@ export class WeComAdapter extends ChannelAdapter {
         engineType: project.engineType,
         directory: project.directory,
       });
-      await this.createGroupForSession(
-        userId,
-        session.id,
-        project.engineType,
-        project.directory,
-        project.projectId,
-        projectName,
+
+      // WeCom's appchat/create API requires at least 2 members, so we cannot
+      // create a 1-on-1 group chat like Feishu.  Instead, use P2P temp session
+      // mode: messages are exchanged directly in the user↔bot chat.
+      const tempSession: BaseTempSession = {
+        conversationId: session.id,
+        engineType: project.engineType,
+        directory: project.directory,
+        projectId: project.projectId,
+        lastActiveAt: Date.now(),
+        messageQueue: [],
+        processing: false,
+      };
+      this.sessionMapper.setTempSession(chatId, tempSession);
+
+      await this.transport.sendText(
         chatId,
+        `✅ 已创建新会话 [${projectName}]\n直接发送消息即可开始对话。`,
       );
     } catch (err) {
       await this.transport.sendText(
@@ -646,7 +675,7 @@ export class WeComAdapter extends ChannelAdapter {
 
     const projectRef = {
       directory: project.directory,
-      engineType: project.engineType || "opencode",
+      engineType: project.engineType || getDefaultEngineFromSettings(),
       projectId: project.id,
     };
     this.sessionMapper.setP2PLastProject(chatId, projectRef);
@@ -693,14 +722,21 @@ export class WeComAdapter extends ChannelAdapter {
       return true;
     }
 
-    await this.createGroupForSession(
-      userId,
-      session.id,
-      session.engineType,
-      pending.directory,
-      pending.projectId,
-      pending.projectName || "",
+    // Use P2P temp session instead of group chat (WeCom requires ≥2 members for groups)
+    const tempSession: BaseTempSession = {
+      conversationId: session.id,
+      engineType: session.engineType,
+      directory: pending.directory,
+      projectId: pending.projectId,
+      lastActiveAt: Date.now(),
+      messageQueue: [],
+      processing: false,
+    };
+    this.sessionMapper.setTempSession(chatId, tempSession);
+
+    await this.transport!.sendText(
       chatId,
+      `✅ 已切换到会话 [${pending.projectName || session.id}]\n直接发送消息即可继续对话。`,
     );
 
     return true;

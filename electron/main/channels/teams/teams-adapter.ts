@@ -61,7 +61,7 @@ import type {
   UnifiedPermission,
   UnifiedQuestion,
 } from "../../../../src/types/unified";
-import { channelLog } from "../../services/logger";
+import { channelLog, getDefaultEngineFromSettings } from "../../services/logger";
 import type { WebhookServer, WebhookRequest, WebhookResponse } from "../webhook-server";
 
 const LOG_PREFIX = "[Teams]";
@@ -934,7 +934,7 @@ export class TeamsAdapter extends ChannelAdapter {
 
     const projectRef = {
       directory: project.directory,
-      engineType: project.engineType || "opencode",
+      engineType: project.engineType || getDefaultEngineFromSettings(),
       projectId: project.id,
     };
     this.sessionMapper.setP2PLastProject(chatId, projectRef);
@@ -1143,7 +1143,7 @@ export class TeamsAdapter extends ChannelAdapter {
     this.sessionMapper.setPendingSelection(groupChatId, {
       type: "session",
       sessions: filtered,
-      engineType: project.engineType || "opencode",
+      engineType: project.engineType || getDefaultEngineFromSettings(),
       directory: project.directory,
       projectId: project.id,
       projectName,

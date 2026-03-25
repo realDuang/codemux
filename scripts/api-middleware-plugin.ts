@@ -6,6 +6,7 @@
 import type { IncomingMessage, ServerResponse } from "http";
 import type { Plugin, ViteDevServer } from "vite";
 import { sendJson, parseBody, extractBearerToken, getClientIp, isLocalhost, getLocalIp } from "../shared/http-utils";
+import { WEB_PORT } from "../shared/ports";
 
 // ============================================================================
 // Types
@@ -63,7 +64,7 @@ export interface ApiMiddlewareOptions {
 }
 
 export function createApiMiddlewarePlugin(options: ApiMiddlewareOptions): Plugin {
-  const { deviceStore, tunnelManager, defaultPort = 5173 } = options;
+  const { deviceStore, tunnelManager, defaultPort = WEB_PORT } = options;
 
   return {
     name: "api-middleware",

@@ -1,0 +1,78 @@
+/* ========== CSS Custom Properties ========== */
+:root {
+  --bg-void: #0a0a0f;
+  --bg-surface: #12121a;
+  --bg-panel: #1a1a2e;
+  --neon-cyan: #5BC4F7;
+  --neon-magenta: #ff00aa;
+  --neon-purple: #B07CF7;
+  --neon-green: #00ff88;
+  --neon-amber: #f59e0b;
+  --text-primary: #e0e0e8;
+  --text-secondary: #7a7a8e;
+  --font-heading: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-body: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-mono: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace;
+}
+
+/* ========== Reset & Base ========== */
+*, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body {
+  font-family: var(--font-body);
+  background: var(--bg-void);
+  color: var(--text-primary);
+  overflow-x: hidden;
+  line-height: 1.6;
+  font-weight: 400;
+}
+
+/* ========== CRT Scanlines Overlay ========== */
+body::after {
+  content: '';
+  position: fixed;
+  top: 0; left: 0;
+  width: 100%; height: 100%;
+  background: repeating-linear-gradient(
+    0deg,
+    transparent,
+    transparent 2px,
+    rgba(0,0,0,0.06) 2px,
+    rgba(0,0,0,0.06) 4px
+  );
+  pointer-events: none;
+  z-index: 9999;
+}
+
+/* CRT Vignette */
+body::before {
+  content: '';
+  position: fixed;
+  top: 0; left: 0;
+  width: 100%; height: 100%;
+  background: radial-gradient(ellipse at center, transparent 50%, rgba(0,0,0,0.5) 100%);
+  pointer-events: none;
+  z-index: 9998;
+}
+
+/* ========== Scrollbar ========== */
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: var(--bg-void); }
+::-webkit-scrollbar-thumb { background: var(--neon-cyan); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--neon-magenta); }
+
+/* ========== Typography ========== */
+h1, h2, h3, h4 { font-family: var(--font-heading); font-weight: 800; letter-spacing: -0.02em; }
+a { color: var(--neon-cyan); text-decoration: none; transition: all 0.3s; }
+a:hover { color: var(--neon-magenta); text-shadow: 0 0 10px var(--neon-magenta); }
+
+/* ========== Reduced Motion ========== */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+  body::after, #matrix-canvas, #particle-canvas { display: none; }
+  .reveal { opacity: 1; transform: none; }
+}

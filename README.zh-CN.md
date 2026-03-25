@@ -2,7 +2,7 @@
 
 # CodeMux
 
-[English](./README.md) | **[简体中文](./README.zh-CN.md)** | [日本語](./README.ja.md) | [한국어](./README.ko.md)
+[English](./README.md) | **[简体中文](./README.zh-CN.md)** | [日本語](./README.ja.md) | [한국어](./README.ko.md) | [Русский](./README.ru.md)
 
 **多引擎 AI 编程客户端，完整的远程 Agent 体验。**
 
@@ -56,14 +56,35 @@
 | Shell 命令 | ✅ 命令 + 输出实时渲染 | ❌ 充其量是文本摘要 |
 | 多引擎 | ✅ 在 OpenCode / Copilot / Claude Code 间切换 | ❌ 单一模型/提供商 |
 | 编程上下文 | ✅ 项目感知的会话，完整工具访问 | ⚠️ 通用助手上下文 |
+| 图片输入 | ✅ 粘贴/拖拽图片，所有引擎均可分析 | ❌ 仅支持文本输入 |
+
+### 4. 多模态支持
+
+基于文本的编程工具只能处理文字输入。CodeMux 打破了这一限制 —— **在提示中附加图片，让 AI 看到你所看到的**。
+
+粘贴截图、拖入设计稿、上传报错截图 —— 三个引擎都能原生分析图片。每个引擎适配器在幕后将图片转换为其原生格式，而你获得的是统一的体验：
+
+- **上传方式**：文件选择器、拖放上传、剪贴板粘贴
+- **支持格式**：JPEG、PNG、GIF、WebP（每条消息最多 4 张图片，每张最大 3MB）
+- **内联预览**：发送前显示缩略图，图片在聊天记录中直接渲染
+
+> 这在所有访问方式中都有效 —— 桌面端、远程浏览器和 IM 机器人 —— CodeMux 运行在哪里，图片输入就跟到哪里。
+
+### 更多特性
+
+- **Agent 模式切换**：在 Build / Plan / Autopilot 等模式间切换 —— 每种模式有不同的行为和提示风格
+- **实时任务面板**：Agent 生成的任务列表显示在输入框上方，实时追踪完成进度
+- **权限审批**：内联审批或拒绝敏感操作（Shell、文件编辑） —— 支持"始终允许"以简化可信操作
+- **交互式问答**：引擎可发起单选/多选问题，支持描述文字和自定义输入
+- **每引擎独立选模型**：为每个引擎独立选择模型；Copilot 和 Claude Code 支持手动输入自定义模型 ID
 
 #### 浏览器远程访问
 
 从任何设备访问你的编程 Agent —— 手机、平板或另一台电脑 —— 无需修改任何配置文件。
 
 - **局域网**：自动检测 IP + 二维码，几秒内即可就绪
-- **公网**：一键 [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/) —— 无需端口转发、无需 VPN、无需防火墙更改
-- **内置安全机制**：设备授权、JWT 令牌、通过 Cloudflare 的 HTTPS、每次重启时轮换的临时隧道 URL
+- **公网**：一键 [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/) —— 无需端口转发、无需 VPN、无需防火墙更改。支持**快速隧道**（随机临时 URL，零配置）和**命名隧道**（通过 `~/.cloudflared/` 凭证持久化自定义域名）
+- **内置安全机制**：设备授权、JWT 令牌、通过 Cloudflare 的 HTTPS；快速隧道 URL 每次重启时轮换，命名隧道保留你的自定义主机名
 
 #### IM 机器人渠道
 
@@ -165,7 +186,7 @@ bun run dev
 
 | 方式 | 配置 | 适用场景 |
 |------|------|---------|
-| **局域网浏览器** | 打开 `http://<你的IP>:5173`，输入 6 位访问码或扫描二维码 | 同一网络下从另一台设备快速访问 |
+| **局域网浏览器** | 打开 `http://<你的IP>:8233`，输入 6 位访问码或扫描二维码 | 同一网络下从另一台设备快速访问 |
 | **公网** | 开启"公网访问" → 分享 `*.trycloudflare.com` URL | 从任何地方访问，无需端口转发 |
 | **IM 机器人** | 在设置 → 渠道中配置机器人凭证 | 通过飞书、钉钉、Telegram、企业微信或 Teams 交互 |
 
@@ -278,7 +299,9 @@ codemux/
 
 ## 链接
 
-- [问题反馈与功能建议](https://github.com/realDuang/codemux/issues)
+- [社区讨论](https://github.com/realDuang/codemux/discussions) — 路线图、功能建议与社区交流
+- [路线图](https://github.com/realDuang/codemux/discussions/61) — 开发路线图与里程碑追踪
+- [问题反馈](https://github.com/realDuang/codemux/issues) — Bug 报告
 - [OpenCode](https://opencode.ai) — 支持的引擎
 - [GitHub Copilot CLI](https://docs.github.com/en/copilot/using-github-copilot/using-github-copilot-coding-agent-in-cli) — 支持的引擎
 - [Claude Code](https://docs.anthropic.com/en/docs/claude-code) — 支持的引擎

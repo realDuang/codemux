@@ -10,9 +10,9 @@ import os from "os";
 import type { IncomingMessage, ServerResponse } from "http";
 import type { Plugin, ViteDevServer } from "vite";
 import { sendJson, getClientIp, isLocalhost } from "../shared/http-utils";
+import { AUTH_API_PORT, WEB_PORT } from "../shared/ports";
 
-// Electron's internal Auth API server port (must match auth-api-server.ts)
-const AUTH_API_PORT = 4097;
+// Electron's internal Auth API server port (imported from shared/ports)
 
 const virtualInterfacePatterns = [
   /^docker/i, /^br-/i, /^veth/i, /^vEthernet/i,
@@ -117,7 +117,7 @@ export interface AuthProxyPluginOptions {
 }
 
 export function createAuthProxyPlugin(options: AuthProxyPluginOptions = {}): Plugin {
-  const { tunnelManager, defaultPort = 5173 } = options;
+  const { tunnelManager, defaultPort = WEB_PORT } = options;
 
   return {
     name: "auth-api-proxy",

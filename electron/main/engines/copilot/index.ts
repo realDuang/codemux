@@ -95,6 +95,7 @@ export class CopilotSdkAdapter extends EngineAdapter {
   private sessionUnsubscribers = new Map<string, () => void>();
 
   private status: EngineStatus = "stopped";
+  private lastError: string | undefined;
   private version: string | undefined;
   private authenticated: boolean | undefined;
   private authMessage: string | undefined;
@@ -184,7 +185,7 @@ export class CopilotSdkAdapter extends EngineAdapter {
       try {
         const unsub = this.sessionUnsubscribers.get(sessionId);
         if (unsub) unsub();
-        await session.destroy();
+        await session.disconnect();
       } catch (err) {
         copilotLog.warn(`Error destroying session ${sessionId}:`, err);
       }
@@ -229,6 +230,7 @@ export class CopilotSdkAdapter extends EngineAdapter {
       authMethods: this.getAuthMethods(),
       authenticated: this.authenticated,
       authMessage: this.authMessage,
+      errorMessage: this.status === "error" ? this.lastError : undefined,
     };
   }
 
@@ -324,7 +326,7 @@ export class CopilotSdkAdapter extends EngineAdapter {
       if (unsub) unsub();
       this.sessionUnsubscribers.delete(sessionId);
       try {
-        await activeSession.destroy();
+        await activeSession.disconnect();
       } catch (err) {}
       this.activeSessions.delete(sessionId);
     }
@@ -359,7 +361,7 @@ export class CopilotSdkAdapter extends EngineAdapter {
       const previousMode = this.sessionModes.get(sessionId);
       this.sessionModes.set(sessionId, options.mode);
       if (options.mode !== previousMode) {
-        const sdkMode = options.mode === "agent" ? "interactive" : options.mode as any;
+        const sdkMode = options.mode as any;
         try {
           await session.rpc.mode.set({ mode: sdkMode });
         } catch (err) {}
@@ -594,7 +596,7 @@ export class CopilotSdkAdapter extends EngineAdapter {
       throw err;
     } finally {
       if (session) {
-        try { await session.destroy(); } catch { /* ignore */ }
+        try { await session.disconnect(); } catch { /* ignore */ }
       }
     }
   }
@@ -631,7 +633,7 @@ export class CopilotSdkAdapter extends EngineAdapter {
     this.sessionModes.set(sessionId, modeId);
     const session = this.activeSessions.get(sessionId);
     if (session) {
-      const sdkMode = modeId === "agent" ? "interactive" : modeId as any;
+      const sdkMode = modeId as any;
       try {
         await session.rpc.mode.set({ mode: sdkMode });
       } catch (err) {}
@@ -681,6 +683,7 @@ export class CopilotSdkAdapter extends EngineAdapter {
 
   private setStatus(status: EngineStatus, error?: string): void {
     this.status = status;
+    this.lastError = error;
     this.emit("status.changed", { engineType: this.engineType, status, error });
   }
 

@@ -40,6 +40,34 @@ export class WeComCrypto {
     return this.decrypt(echostr);
   }
 
+  /** Debug version of decrypt that returns error details instead of null */
+  debugDecrypt(encrypted: string): { result: string | null; error?: string } {
+    try {
+      const encryptedBuf = Buffer.from(encrypted, "base64");
+      const decipher = crypto.createDecipheriv("aes-256-cbc", this.aesKey, this.iv);
+      decipher.setAutoPadding(false);
+      const decrypted = Buffer.concat([decipher.update(encryptedBuf), decipher.final()]);
+
+      const padLen = decrypted[decrypted.length - 1];
+      if (padLen < 1 || padLen > 32) {
+        return { result: null, error: `Invalid PKCS#7 pad length: ${padLen}` };
+      }
+      const unpadded = decrypted.subarray(0, decrypted.length - padLen);
+
+      const msgLen = unpadded.readUInt32BE(16);
+      const msg = unpadded.subarray(20, 20 + msgLen).toString("utf-8");
+      const receivedCorpId = unpadded.subarray(20 + msgLen).toString("utf-8");
+
+      if (receivedCorpId !== this.corpId) {
+        return { result: null, error: `CorpId mismatch: received="${receivedCorpId}", expected="${this.corpId}"` };
+      }
+
+      return { result: msg };
+    } catch (err: any) {
+      return { result: null, error: `Decrypt exception: ${err.message}` };
+    }
+  }
+
   /**
    * Decrypt an incoming callback message (POST request).
    * Validates signature, then decrypts the encrypted XML content.
@@ -105,9 +133,7 @@ export class WeComCrypto {
       const receivedCorpId = unpadded.subarray(20 + msgLen).toString("utf-8");
 
       // Verify corpId
-      if (receivedCorpId !== this.corpId) {
-        return null;
-      }
+      if (receivedCorpId !== this.corpId) return null;
 
       return msg;
     } catch {

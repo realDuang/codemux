@@ -5,7 +5,7 @@ export function LanguageSwitcher() {
   const { locale, setLocale } = useI18n();
   const [isOpen, setIsOpen] = createSignal(false);
 
-  const locales: LocaleCode[] = ["en", "zh"];
+  const locales: LocaleCode[] = ["en", "zh", "ru"];
 
   return (
     <div class="relative">

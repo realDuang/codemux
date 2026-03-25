@@ -52,6 +52,7 @@ Connect CodeMux to Feishu or Lark using the official WebSocket SDK — no public
 | `application.bot.menu_v6` | Bot menu event (机器人自定义菜单事件) | ✅ Yes | Receives custom menu click events |
 | `im.chat.disbanded_v1` | Group disbanded (解散群) | ✅ Yes | Cleans up session bindings when group is dissolved |
 | `im.chat.member.bot.deleted_v1` | Bot removed from group (机器人被移出群) | ✅ Yes | Cleans up session bindings when bot is removed |
+| `im.chat.member.user.deleted_v1` | User left/removed from group (用户主动退群或被移出群聊) | ✅ Yes | Cleans up session when the group owner leaves |
 | `im.chat.member.bot.added_v1` | Bot added to group (机器人进群) | Recommended | Tracks group membership changes |
 | `im.chat.access_event.bot_p2p_chat_entered_v1` | User enters bot P2P chat | Recommended | Suppressed internally, subscribe to avoid SDK warnings |
 | `im.message.message_read_v1` | Message read (消息已读) | Recommended | Suppressed internally, subscribe to avoid SDK warnings |

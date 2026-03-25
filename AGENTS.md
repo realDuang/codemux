@@ -13,7 +13,7 @@
 | Frontend | SolidJS 1.8 + TypeScript 5 |
 | Styling | Tailwind CSS v4 + CSS Modules |
 | Routing | @solidjs/router (HashRouter in Electron, BrowserRouter in web) |
-| i18n | @solid-primitives/i18n (en, zh) |
+| i18n | @solid-primitives/i18n (en, zh, ru) |
 | Markdown | marked 11 + shiki 1.22 (syntax highlighting) |
 | Backend Comm | WebSocket (ws) with custom JSON-RPC protocol |
 | Packaging | electron-builder (DMG for macOS, NSIS for Windows) |
@@ -125,7 +125,6 @@ codemux/
 │   │   ├── i18n.tsx                   # I18n provider & useI18n hook
 │   │   ├── theme.ts                   # Theme management
 │   │   ├── platform.ts                # Platform detection (Electron/web/remote)
-│   │   ├── project-store.ts           # Project visibility preferences
 │   │   ├── useAuthGuard.ts            # Route auth guard hook
 │   │   ├── electron-api.ts            # Typed electronAPI accessor
 │   │   └── logger.ts                  # Configurable logger (VITE_LOG_LEVEL)
@@ -171,7 +170,7 @@ SolidJS UI
 
 | Service | Port | Protocol |
 |---------|------|----------|
-| Vite Dev Server | 5173 | HTTP |
+| Vite Dev Server | 8233 | HTTP |
 | Gateway WebSocket | 4200 | WS |
 | OpenCode Adapter | 4096 | HTTP + SSE |
 | Auth API Server | 4097 | HTTP (internal) |
@@ -392,7 +391,7 @@ Settings shape:
 ```json
 {
   "theme": "light | dark | system",
-  "locale": "en | zh",
+  "locale": "en | zh | ru",
   "logLevel": "error | warn | info | verbose | debug | silly",
   "engineModels": {
     "opencode": { "providerID": "...", "modelID": "..." },
@@ -437,7 +436,7 @@ import { useI18n, formatMessage } from "../lib/i18n";
 
 - **Never hardcode user-facing strings** — always use `t()`
 - **Use `formatMessage()` for interpolation** — never concatenate strings
-- **Keep all locale files in sync** — when adding keys, update both `en.ts` and `zh.ts`
+- **Keep all locale files in sync** — when adding keys, update `en.ts`, `zh.ts`, and `ru.ts`
 
 ---
 

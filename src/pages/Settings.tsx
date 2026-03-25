@@ -11,6 +11,7 @@ import { configStore, saveEngineModelSelection, isEngineEnabled, setEngineEnable
 import { sessionStore, setSessionStore } from "../stores/session";
 import { gateway } from "../lib/gateway-api";
 import { systemAPI, updateAPI, autostartAPI } from "../lib/electron-api";
+import { getSetting, saveSetting } from "../lib/settings";
 import type { UnifiedModelInfo, EngineType, UnifiedSession } from "../types/unified";
 
 export default function Settings() {
@@ -32,6 +33,18 @@ export default function Settings() {
 
   // Import history modal state
   const [importModalEngine, setImportModalEngine] = createSignal<EngineType | null>(null);
+
+  // Default workspace visibility
+  const [showDefaultWorkspace, setShowDefaultWorkspace] = createSignal(
+    getSetting<boolean>("showDefaultWorkspace") ?? false,
+  );
+
+  const handleShowDefaultWorkspaceToggle = () => {
+    const newValue = !showDefaultWorkspace();
+    setShowDefaultWorkspace(newValue);
+    saveSetting("showDefaultWorkspace", newValue);
+    setSessionStore("showDefaultWorkspace", newValue);
+  };
 
   const logLevels = ["error", "warn", "info", "verbose", "debug", "silly"];
 
@@ -180,35 +193,33 @@ export default function Settings() {
   };
 
   return (
-    <div class="flex h-screen bg-gray-50 dark:bg-slate-900 font-sans text-gray-900 dark:text-gray-100 electron-safe-top">
-      <div class="flex-1 flex flex-col overflow-hidden max-w-4xl mx-auto w-full">
-        {/* Header */}
-        <header class="flex items-center gap-4 px-6 py-6 electron-drag-region">
+    <div class="flex flex-col h-screen bg-gray-50 dark:bg-slate-950 font-sans text-gray-900 dark:text-gray-100">
+      {/* Unified Titlebar */}
+      <div
+        class="w-full flex-shrink-0 flex items-center px-2 border-b border-gray-200 dark:border-slate-800 bg-gray-50 dark:bg-slate-950 electron-drag-region electron-titlebar-pad-left electron-titlebar-pad-right"
+        style={{ height: "var(--electron-title-bar-height, 40px)", "min-height": "var(--electron-title-bar-height, 40px)" }}
+      >
+        <div class="flex items-center gap-2 electron-no-drag flex-shrink-0">
+          <img src={`${import.meta.env.BASE_URL}assets/logo.png`} alt="CodeMux" class="w-5 h-5 rounded" />
+          <span class="text-[13px] font-semibold text-gray-700 dark:text-gray-300 hidden sm:inline">CodeMux</span>
+          <span class="text-gray-300 dark:text-gray-600 hidden sm:inline">|</span>
           <button
             onClick={() => navigate("/chat")}
-            class="p-2 -ml-2 text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-slate-800 rounded-lg transition-colors electron-no-drag"
+            class="p-1 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-200 dark:hover:bg-slate-700 rounded transition-colors"
           >
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              width="20"
-              height="20"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-            >
+            <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <path d="m15 18-6-6 6-6" />
             </svg>
           </button>
-          <h1 class="text-2xl font-bold text-gray-900 dark:text-white">
-            {t().settings.title}
-          </h1>
-        </header>
+          <h1 class="text-[13px] font-medium text-gray-600 dark:text-gray-400">{t().settings.title}</h1>
+        </div>
+        <div class="flex-1" />
+      </div>
+
+      <div class="flex-1 flex flex-col overflow-hidden max-w-4xl mx-auto w-full">
 
         {/* Main Content */}
-        <main class="flex-1 overflow-y-auto px-6 pb-8">
+        <main class="flex-1 overflow-y-auto px-3 sm:px-6 pb-8 pt-6">
           <div class="space-y-8">
             {/* General Settings Section */}
             <section>
@@ -305,15 +316,13 @@ export default function Settings() {
                         >
                           <div class="p-4 sm:p-6 flex items-center justify-between gap-4">
                             <div class="flex items-center gap-3 min-w-0">
-                              {/* Status indicator dot — hidden when engine is disabled */}
-                              <Show when={isEngineEnabled(engine.type)}>
-                                <span
-                                  class={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${statusDotColor(engine)}`}
-                                />
-                              </Show>
+                              {/* Status indicator dot */}
+                              <span
+                                class={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${statusDotColor(engine)}`}
+                              />
                               <div class="min-w-0">
                                 <div class="flex items-center gap-2">
-                                  <span class={`text-base font-medium truncate ${isEngineEnabled(engine.type) ? "text-gray-900 dark:text-white" : "text-gray-400 dark:text-gray-500"}`}>
+                                  <span class={`text-base font-medium truncate ${engine.status === "running" ? "text-gray-900 dark:text-white" : "text-gray-400 dark:text-gray-500"}`}>
                                     {engine.name}
                                   </span>
                                   {/* Engine type badge */}
@@ -335,64 +344,69 @@ export default function Settings() {
                                     </Match>
                                   </Switch>
                                 </div>
-                                {/* Status text, auth info, version — only shown when enabled */}
-                                <Show when={isEngineEnabled(engine.type)}>
-                                  <div class="flex items-center gap-2 mt-0.5">
-                                    {/* Status text */}
-                                    <span class="text-sm text-gray-500 dark:text-gray-400">
-                                      <Switch>
-                                        <Match when={engine.status === "running" && engine.authenticated === false}>
-                                          <span class="text-amber-600 dark:text-amber-400">{t().engine.notAuthenticated}</span>
-                                        </Match>
-                                        <Match when={engine.status === "running"}>
-                                          {t().engine.running}
-                                        </Match>
-                                        <Match when={engine.status === "starting"}>
-                                          {t().engine.starting}
-                                        </Match>
-                                        <Match when={engine.status === "error"}>
-                                          {t().engine.error}
-                                        </Match>
-                                        <Match when={engine.status === "stopped"}>
-                                          {t().engine.stopped}
-                                        </Match>
-                                      </Switch>
-                                    </span>
-                                    {/* Auth info */}
-                                    <Show when={engine.authMessage}>
-                                      <span class={`text-xs ${engine.authenticated ? "text-emerald-600 dark:text-emerald-400" : "text-amber-600 dark:text-amber-400"}`}>
-                                        {engine.authMessage}
-                                      </span>
-                                    </Show>
-                                    {/* Version */}
-                                    <Show when={engine.version}>
-                                      <span class="text-xs text-gray-400 dark:text-gray-500">
-                                        v{engine.version}
-                                      </span>
-                                    </Show>
-                                  </div>
-                                </Show>
-                                {/* Show "Disabled" label when engine is off */}
-                                <Show when={!isEngineEnabled(engine.type)}>
-                                  <span class="block text-sm text-gray-400 dark:text-gray-500 mt-0.5">
-                                    {t().engine.disabled}
+                                {/* Status text, auth info, version */}
+                                <div class="flex items-center gap-2 mt-0.5">
+                                  <span class="text-sm text-gray-500 dark:text-gray-400">
+                                    <Switch>
+                                      <Match when={engine.status === "running" && engine.authenticated === false}>
+                                        <span class="text-amber-600 dark:text-amber-400">{t().engine.notAuthenticated}</span>
+                                      </Match>
+                                      <Match when={engine.status === "running" && !isEngineEnabled(engine.type)}>
+                                        {t().engine.disabled}
+                                      </Match>
+                                      <Match when={engine.status === "running"}>
+                                        {t().engine.running}
+                                      </Match>
+                                      <Match when={engine.status === "starting"}>
+                                        {t().engine.starting}
+                                      </Match>
+                                      <Match when={engine.status === "error"}>
+                                        <span class="text-red-600 dark:text-red-400">{t().engine.unavailable}</span>
+                                      </Match>
+                                      <Match when={engine.status === "stopped"}>
+                                        {t().engine.unavailable}
+                                      </Match>
+                                    </Switch>
                                   </span>
+                                  {/* Auth info */}
+                                  <Show when={engine.status === "running" && engine.authMessage}>
+                                    <span class={`text-xs ${engine.authenticated ? "text-emerald-600 dark:text-emerald-400" : "text-amber-600 dark:text-amber-400"}`}>
+                                      {engine.authMessage}
+                                    </span>
+                                  </Show>
+                                  {/* Version */}
+                                  <Show when={engine.version}>
+                                    <span class="text-xs text-gray-400 dark:text-gray-500">
+                                      v{engine.version}
+                                    </span>
+                                  </Show>
+                                </div>
+                                {/* Error details */}
+                                <Show when={engine.status === "error" && engine.errorMessage}>
+                                  <p class="text-xs text-red-500 dark:text-red-400 mt-1 break-words">
+                                    {engine.errorMessage}
+                                  </p>
                                 </Show>
                               </div>
                             </div>
-                            {/* Toggle switch */}
+                            {/* Toggle switch: ON only when running+enabled, disabled when not running */}
                             <button
-                              onClick={() => setEngineEnabled(engine.type, !isEngineEnabled(engine.type))}
-                              class={`relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 dark:focus:ring-offset-slate-800 ${
-                                isEngineEnabled(engine.type) ? "bg-blue-600" : "bg-gray-200 dark:bg-slate-600"
+                              onClick={() => engine.status === "running" && setEngineEnabled(engine.type, !isEngineEnabled(engine.type))}
+                              disabled={engine.status !== "running"}
+                              class={`relative inline-flex h-6 w-11 flex-shrink-0 rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                                engine.status !== "running"
+                                  ? "bg-gray-200 dark:bg-slate-700 opacity-50 cursor-not-allowed"
+                                  : isEngineEnabled(engine.type)
+                                    ? "bg-blue-600 cursor-pointer focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 dark:focus:ring-offset-slate-800"
+                                    : "bg-gray-200 dark:bg-slate-600 cursor-pointer focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 dark:focus:ring-offset-slate-800"
                               }`}
                               role="switch"
-                              aria-checked={isEngineEnabled(engine.type)}
-                              aria-label={isEngineEnabled(engine.type) ? t().engine.enabled : t().engine.disabled}
+                              aria-checked={engine.status === "running" && isEngineEnabled(engine.type)}
+                              aria-label={engine.status === "running" && isEngineEnabled(engine.type) ? t().engine.enabled : t().engine.disabled}
                             >
                               <span
                                 class={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
-                                  isEngineEnabled(engine.type) ? "translate-x-5" : "translate-x-0"
+                                  engine.status === "running" && isEngineEnabled(engine.type) ? "translate-x-5" : "translate-x-0"
                                 }`}
                               />
                             </button>
@@ -400,7 +414,7 @@ export default function Settings() {
 
                           {/* Model selector - only for running + enabled engines */}
                           <Show when={showModelSelector() && isEngineEnabled(engine.type)}>
-                            <div class="px-4 sm:px-6 pb-4 sm:pb-6 pt-0 flex items-center justify-between gap-4 -mt-2">
+                            <div class="px-4 sm:px-6 pb-4 sm:pb-6 pt-0 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 sm:gap-4 -mt-2">
                               <div>
                                 <h4 class="text-sm font-medium text-gray-700 dark:text-gray-300">
                                   {t().engine.defaultModel}
@@ -409,7 +423,7 @@ export default function Settings() {
                                   {t().engine.defaultModelDesc}
                                 </p>
                               </div>
-                              <div class="flex-shrink-0">
+                              <div class="flex-shrink-0 w-full sm:w-auto">
                                 <Show
                                   when={engine.capabilities?.customModelInput}
                                   fallback={
@@ -417,7 +431,7 @@ export default function Settings() {
                                       value={selectedModelId()}
                                       onChange={(e) => handleModelSelect(e.currentTarget.value)}
                                       disabled={engine.capabilities?.modelSwitchable === false}
-                                      class={`w-[260px] px-3 py-1.5 text-sm font-medium rounded-lg border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-gray-700 dark:text-gray-300 transition-colors ${engine.capabilities?.modelSwitchable === false ? "opacity-60 cursor-not-allowed" : "cursor-pointer hover:bg-gray-100 dark:hover:bg-slate-600"}`}
+                                      class={`w-full sm:w-[260px] px-3 py-1.5 text-sm font-medium rounded-lg border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-gray-700 dark:text-gray-300 transition-colors ${engine.capabilities?.modelSwitchable === false ? "opacity-60 cursor-not-allowed" : "cursor-pointer hover:bg-gray-100 dark:hover:bg-slate-600"}`}
                                     >
                                       <For each={providerGroups()}>
                                         {([pid, group]) => (
@@ -451,7 +465,7 @@ export default function Settings() {
                                     value={selectedModelId()}
                                     onChange={(e) => handleModelSelect(e.currentTarget.value)}
                                     placeholder="Enter model ID..."
-                                    class="w-[260px] px-3 py-1.5 text-sm font-medium rounded-lg border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-gray-700 dark:text-gray-300 transition-colors hover:bg-gray-100 dark:hover:bg-slate-600"
+                                    class="w-full sm:w-[260px] px-3 py-1.5 text-sm font-medium rounded-lg border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-gray-700 dark:text-gray-300 transition-colors hover:bg-gray-100 dark:hover:bg-slate-600"
                                   />
                                   <datalist id={`models-${engine.type}`}>
                                     <For each={models()}>
@@ -546,7 +560,7 @@ export default function Settings() {
                     </div>
                   </Show>
                   {/* Log level */}
-                  <div class="p-4 sm:p-6 flex items-center justify-between gap-4">
+                  <div class="p-4 sm:p-6 flex items-center justify-between gap-4 border-b border-gray-200 dark:border-slate-700">
                     <div>
                       <h3 class="text-base font-medium text-gray-900 dark:text-white">
                         {t().settings.logLevel}
@@ -567,6 +581,34 @@ export default function Settings() {
                           )}
                         </For>
                       </select>
+                    </div>
+                  </div>
+                  {/* Show Default Workspace toggle */}
+                  <div class="p-4 sm:p-6 flex items-center justify-between gap-4">
+                    <div>
+                      <h3 class="text-base font-medium text-gray-900 dark:text-white">
+                        {t().settings.showDefaultWorkspace}
+                      </h3>
+                      <p class="text-sm text-gray-500 dark:text-gray-400 mt-1">
+                        {t().settings.showDefaultWorkspaceDesc}
+                      </p>
+                    </div>
+                    <div class="flex-shrink-0">
+                      <button
+                        onClick={handleShowDefaultWorkspaceToggle}
+                        class={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                          showDefaultWorkspace() ? "bg-blue-600" : "bg-gray-300 dark:bg-slate-600"
+                        }`}
+                        role="switch"
+                        aria-checked={showDefaultWorkspace()}
+                        aria-label={t().settings.showDefaultWorkspace}
+                      >
+                        <span
+                          class={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                            showDefaultWorkspace() ? "translate-x-6" : "translate-x-1"
+                          }`}
+                        />
+                      </button>
                     </div>
                   </div>
                 </div>

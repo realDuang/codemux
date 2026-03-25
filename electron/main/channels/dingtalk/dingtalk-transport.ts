@@ -72,28 +72,24 @@ export class DingTalkTransport implements MessageTransport {
   async deleteMessage(messageId: string): Promise<void> {
     if (!messageId) return;
 
-    try {
-      await this.rateLimiter.consume();
-      const token = await this.tokenManager.getToken();
+    await this.rateLimiter.consume();
+    const token = await this.tokenManager.getToken();
 
-      // Try group recall first, fall back silently if it fails
-      const res = await fetch(`${API_BASE}/robot/groupMessages/recall`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-acs-dingtalk-access-token": token,
-        },
-        body: JSON.stringify({
-          robotCode: this.robotCode,
-          processQueryKeys: [messageId],
-        }),
-      });
+    // Try group recall first, fall back silently if it fails
+    const res = await fetch(`${API_BASE}/robot/groupMessages/recall`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-acs-dingtalk-access-token": token,
+      },
+      body: JSON.stringify({
+        robotCode: this.robotCode,
+        processQueryKeys: [messageId],
+      }),
+    });
 
-      if (!res.ok) {
-        dingtalkLog.verbose(`Group recall failed (may be individual msg): ${res.status}`);
-      }
-    } catch (err) {
-      dingtalkLog.error(`Failed to delete message ${messageId}:`, err);
+    if (!res.ok) {
+      throw new Error(`DingTalk group recall failed for ${messageId}: ${res.status}`);
     }
   }
 

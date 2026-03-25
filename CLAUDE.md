@@ -11,7 +11,7 @@ Multi-engine AI coding assistant client. Access OpenCode, GitHub Copilot, and Cl
 | Frontend | SolidJS 1.8 + TypeScript 5 |
 | Styling | Tailwind CSS v4 + CSS Modules |
 | Routing | @solidjs/router (HashRouter in Electron, BrowserRouter in web) |
-| i18n | @solid-primitives/i18n (en, zh) |
+| i18n | @solid-primitives/i18n (en, zh, ru) |
 | Markdown | marked + shiki (syntax highlighting) |
 | Backend Comm | WebSocket (ws) with custom JSON RPC protocol |
 | Packaging | electron-builder (DMG for macOS, NSIS for Windows) |
@@ -51,7 +51,7 @@ SolidJS UI
 
 | Service | Port | Protocol |
 |---------|------|----------|
-| Vite Dev Server | 5173 | HTTP |
+| Vite Dev Server | 8233 | HTTP |
 | Gateway WebSocket | 4200 | WS |
 | OpenCode Adapter | 4096 | HTTP + SSE |
 | Auth API Server | 4097 | HTTP |
@@ -95,6 +95,19 @@ All engines share normalized types defined in `src/types/unified.ts`:
 - `ToolPart.normalizedTool`: `shell`, `read`, `write`, `edit`, `grep`, `glob`, `list`, `web_fetch`, `task`, `todo`, `sql`, `unknown`
 - Tool name mapping from engine-specific names in `src/types/tool-mapping.ts`
 
+### Multimodal (Image Attachments)
+
+All engines support image attachments via a unified pipeline:
+
+- **Frontend**: `PromptInput.tsx` handles file picker, drag & drop, and clipboard paste. Images are read as base64 via `FileReader`, stored as `ImageAttachment` objects (id, name, mimeType, data, size). Constraints: JPEG/PNG/GIF/WebP, max 3MB per image, max 4 per message.
+- **Unified types**: `MessagePromptContent` carries `{ type: "image", data, mimeType }` alongside text content. `FilePart` renders images in chat. `EngineCapabilities.imageAttachment` flag indicates engine support.
+- **Gateway**: WebSocket max payload is 20MB to accommodate base64-encoded images. Images flow as `MessagePromptContent[]` through the same `message.send` request type.
+- **Engine adapters**:
+  - **OpenCode**: Converts to `FilePartInput` with `data:` URLs
+  - **Claude**: Builds Anthropic multimodal content blocks (`source.type: "base64"`)
+  - **Copilot**: Decodes base64 to temp files, passes file paths via `attachments`, cleans up after 5s
+- **Rendering**: `part.tsx` renders `FilePart` with `<img>` tags using data URLs and `loading="lazy"`
+
 ### Routes
 
 | Path | Component | Auth Required |
@@ -113,6 +126,10 @@ All engines share normalized types defined in `src/types/unified.ts`:
 - Engine behavioral differences are expressed through `EngineCapabilities` flags (e.g. `customModelInput`, `providerModelHierarchy`), not engine name checks.
 - Default engine resolution uses `getDefaultEngineType()` from `config.ts`, not hardcoded strings.
 - Example: Copilot's `sql` tool operating on the `todos` table is intercepted and converted to a synthetic `normalizedTool: "todo"` part by the adapter — the frontend sees the same todo format as OpenCode/Claude.
+
+## Git Policy
+
+**Do NOT run `git commit` or `git push` unless the user explicitly asks for it.**
 
 ## Development
 
@@ -152,9 +169,9 @@ npm run dist:mac   # macOS DMG
 
 ### i18n
 
-- Two locales: `en` (default), `zh`
+- Three locales: `en` (default), `zh`, `ru`
 - Persisted in `settings.json` (key: `locale`)
-- Dictionary files: `src/locales/en.ts`, `src/locales/zh.ts`
+- Dictionary files: `src/locales/en.ts`, `src/locales/zh.ts`, `src/locales/ru.ts`
 - Usage: `const t = useI18n(); t().chat.sendMessage`
 
 ### Settings Persistence
@@ -176,7 +193,7 @@ Settings shape:
 ```json
 {
   "theme": "light" | "dark" | "system",
-  "locale": "en" | "zh",
+  "locale": "en" | "zh" | "ru",
   "logLevel": "error" | "warn" | "info" | "verbose" | "debug" | "silly",
   "engineModels": {
     "opencode": { "providerID": "...", "modelID": "..." },

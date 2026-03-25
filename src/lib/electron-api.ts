@@ -4,6 +4,7 @@
  */
 
 import { isElectron } from "./platform";
+import { WEB_PORT, WEB_STANDALONE_PORT, GATEWAY_PORT } from "../../shared/ports";
 
 // Type definitions
 interface SystemInfo {
@@ -205,7 +206,7 @@ export const devicesAPI = {
 
 // Tunnel API
 export const tunnelAPI = {
-  async start(port: number = 5174): Promise<TunnelInfo | null> {
+  async start(port: number = WEB_STANDALONE_PORT): Promise<TunnelInfo | null> {
     const api = getElectronAPI();
     return api ? api.tunnel.start(port) : null;
   },
@@ -232,7 +233,7 @@ export const tunnelAPI = {
 export const serverAPI = {
   async getPort(): Promise<number> {
     const api = getElectronAPI();
-    return api?.server ? api.server.getPort() : 5173;
+    return api?.server ? api.server.getPort() : WEB_PORT;
   },
 
   async isRunning(): Promise<boolean> {
@@ -245,7 +246,7 @@ export const serverAPI = {
 export const gatewayAPI = {
   async getWsUrl(): Promise<string> {
     const api = getElectronAPI();
-    return api?.gateway ? api.gateway.getPort() : "ws://127.0.0.1:4200";
+    return api?.gateway ? api.gateway.getPort() : `ws://127.0.0.1:${GATEWAY_PORT}`;
   },
 };
 

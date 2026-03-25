@@ -115,6 +115,16 @@ export function getLogFilePath(): string {
 
 export { loadSettings, saveSettings };
 
+/** Read the user-configured default engine type from settings.json. */
+export function getDefaultEngineFromSettings(): string {
+  const settings = loadSettings();
+  const value = settings?.defaultEngine;
+  if (typeof value === "string" && value.length > 0) {
+    return value;
+  }
+  return "opencode";
+}
+
 // Export pre-configured scoped loggers for each module.
 // Usage: import { mainLog } from "../services/logger";
 //        mainLog.info("message");

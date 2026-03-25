@@ -1,6 +1,7 @@
 import { defineConfig } from "vite";
 import tailwindcss from "@tailwindcss/vite";
 import solid from "vite-plugin-solid";
+
 import os from "os";
 import type { IncomingMessage } from "http";
 import { tunnelManager } from "./scripts/tunnel-manager";
@@ -14,7 +15,7 @@ import { handleAuthRoutes } from "./shared/auth-route-handlers";
 // ============================================================================
 
 function parseUrl(req: IncomingMessage): URL {
-  return new URL(req.url || "", `http://localhost:5174`);
+  return new URL(req.url || "", `http://localhost:8234`);
 }
 
 const localAuthOptions = {
@@ -117,7 +118,7 @@ export default defineConfig({
 
           sendJson(res, {
             localIp: getLocalIp(),
-            port: 5174,
+            port: 8234,
           });
         });
 
@@ -147,7 +148,7 @@ export default defineConfig({
 
           try {
             if (req.url === "/api/tunnel/start" && req.method === "POST") {
-              const info = await tunnelManager.start(5174);
+              const info = await tunnelManager.start(8234);
               sendJson(res, info);
               return;
             }
@@ -174,7 +175,7 @@ export default defineConfig({
     },
   ],
   server: {
-    port: 5174,
+    port: 8234,
     host: true,
     allowedHosts: true,
     proxy: {

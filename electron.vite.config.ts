@@ -1,6 +1,7 @@
 import { defineConfig, externalizeDepsPlugin } from 'electron-vite';
 import solid from 'vite-plugin-solid';
 import tailwindcss from '@tailwindcss/vite';
+
 import { resolve } from 'path';
 import { createLogger } from 'vite';
 import { createAuthProxyPlugin } from './scripts/auth-proxy-plugin';
@@ -69,7 +70,7 @@ export default defineConfig({
       // Proxy auth/device API requests to Electron's internal Auth API server
       createAuthProxyPlugin({
         tunnelManager,
-        defaultPort: 5173,
+        defaultPort: 8233,
       }),
     ],
     resolve: {
@@ -80,7 +81,7 @@ export default defineConfig({
     server: {
       hmr: false,
       host: true,
-      port: 5173,
+      port: 8233,
       allowedHosts: true,
       proxy: {
         // Proxy Gateway WebSocket to the Gateway server

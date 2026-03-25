@@ -39,7 +39,7 @@ export function HideProjectModal(props: HideProjectModalProps) {
           role="dialog"
           aria-modal="true"
           aria-labelledby="hide-project-modal-title"
-          class="relative bg-white dark:bg-slate-900 rounded-xl shadow-2xl w-full max-w-md mx-4 overflow-hidden"
+          class="relative bg-white dark:bg-slate-900 rounded-xl shadow-2xl w-full max-w-md mx-4 overflow-hidden flex flex-col max-h-[calc(100vh-2rem)]"
         >
           <div class="flex items-center justify-between px-6 py-4 border-b border-gray-200 dark:border-slate-800">
             <h2 id="hide-project-modal-title" class="text-lg font-semibold text-gray-900 dark:text-white">
@@ -55,7 +55,7 @@ export function HideProjectModal(props: HideProjectModalProps) {
             </button>
           </div>
 
-          <div class="p-6 space-y-4">
+          <div class="p-6 space-y-4 overflow-y-auto flex-1">
             <div class="flex items-start gap-3">
               <div class="flex-shrink-0 w-10 h-10 bg-amber-100 dark:bg-amber-900/30 rounded-full flex items-center justify-center">
                 <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-amber-600 dark:text-amber-400">
@@ -82,7 +82,7 @@ export function HideProjectModal(props: HideProjectModalProps) {
             </div>
           </div>
 
-          <div class="flex justify-end gap-3 px-6 py-4 border-t border-gray-200 dark:border-slate-800 bg-gray-50 dark:bg-slate-900/50">
+          <div class="flex flex-col-reverse sm:flex-row justify-end gap-2 sm:gap-3 px-6 py-4 border-t border-gray-200 dark:border-slate-800 bg-gray-50 dark:bg-slate-900/50 flex-shrink-0">
             <button
               onClick={props.onClose}
               class="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-slate-800 rounded-lg transition-colors"

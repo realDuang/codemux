@@ -114,24 +114,21 @@ export function restoreEngineModelSelections(): void {
 
 /**
  * Get the default engine type for new sessions.
- * Priority: user setting > current session's engine > first running engine > "opencode".
+ * Single source of truth: settings.json "defaultEngine".
+ * Falls back to first running+enabled engine when the saved value is unavailable.
  */
 export function getDefaultEngineType(): string {
-  // User-configured default engine for new sessions
+  // User-configured default engine for new sessions (from settings.json)
   const userDefault = configStore.defaultNewSessionEngine;
   if (userDefault) {
-    // Validate that the engine is still running + enabled
     const engine = configStore.engines.find(e => e.type === userDefault);
     if (engine && engine.status === "running" && isEngineEnabled(userDefault)) {
       return userDefault;
     }
   }
-  return (
-    configStore.currentEngineType ||
-    configStore.engines.find((e) => e.status === "running" && isEngineEnabled(e.type))?.type ||
-    configStore.engines[0]?.type ||
-    "opencode"
-  );
+  // Fallback: first running + enabled engine
+  const fallback = configStore.engines.find((e) => e.status === "running" && isEngineEnabled(e.type));
+  return fallback?.type || configStore.engines[0]?.type || "opencode";
 }
 
 /** Set the default engine for new sessions and persist to settings. */

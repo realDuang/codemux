@@ -114,12 +114,17 @@ describe('config store', () => {
   });
 
   describe('getDefaultEngineType', () => {
-    it('returns currentEngineType when set', () => {
-      setConfigStore('currentEngineType', 'claude');
+    it('returns defaultNewSessionEngine when set and engine is running + enabled', () => {
+      setConfigStore('defaultNewSessionEngine', 'claude');
+      setConfigStore('engines', [
+        { type: 'opencode', status: 'running' },
+        { type: 'claude', status: 'running' },
+      ]);
+      setConfigStore('enabledEngines', 'claude', true);
       expect(getDefaultEngineType()).toBe('claude');
     });
 
-    it('returns first running engine when no current engine', () => {
+    it('returns first running engine when no default set', () => {
       setConfigStore('engines', [
         { type: 'e1', status: 'idle' },
         { type: 'e2', status: 'running' },

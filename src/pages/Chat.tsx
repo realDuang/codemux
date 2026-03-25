@@ -7,6 +7,8 @@ import {
   onMount,
   onCleanup,
   batch,
+  lazy,
+  Suspense,
 } from "solid-js";
 import { Auth } from "../lib/auth";
 import { useNavigate } from "@solidjs/router";
@@ -34,6 +36,14 @@ import { getSetting, saveSetting } from "../lib/settings";
 import { InputAreaQuestion } from "../components/InputAreaQuestion";
 import { InputAreaPermission } from "../components/InputAreaPermission";
 import { TodoDock } from "../components/TodoDock";
+const FileExplorer = lazy(() =>
+  import("../components/FileExplorer").then((m) => ({
+    default: m.FileExplorer,
+  })),
+);
+import { ResizeHandle } from "../components/ResizeHandle";
+import { fileStore, togglePanel, setPanelWidth, closePanel } from "../stores/file";
+import { handleFileChanged, refreshGitStatus } from "../stores/file";
 
 import { configStore, setConfigStore, getSelectedModelForEngine, restoreEngineModelSelections, isEngineEnabled, restoreEnabledEngines, getDefaultEngineType, restoreDefaultEngine } from "../stores/config";
 
@@ -501,7 +511,11 @@ export default function Chat() {
         onQuestionReplied: handleQuestionReplied,
         onEngineStatusChanged: (engineType: EngineType, status: string, error?: string) => {
           setConfigStore("engines", (engines) =>
-            engines.map(e => e.type === engineType ? { ...e, status: status as any } : e)
+            engines.map(e => e.type === engineType ? {
+              ...e,
+              status: status as any,
+              errorMessage: status === "error" ? error : undefined,
+            } : e)
           );
           if (status === "error" && error) {
             notify(formatMessage(t().notification.engineError, { message: error }));
@@ -517,6 +531,7 @@ export default function Chat() {
             setMessageStore("queued", sessionId, (draft) => draft.slice(1));
           }
         },
+        onFileChanged: handleFileChanged,
       };
 
       // If gateway is already initialized (remount after navigation),
@@ -528,7 +543,10 @@ export default function Chat() {
         return;
       }
 
-      setSessionStore({ loading: true });
+      setSessionStore({
+        loading: true,
+        showDefaultWorkspace: getSetting<boolean>("showDefaultWorkspace") ?? false,
+      });
 
       // First-time initialization: connect gateway and load data
       await gateway.init(handlers);
@@ -688,7 +706,8 @@ export default function Chat() {
     logger.debug("[NewSession] Creating new session in directory:", directory, "engineType:", explicitEngineType);
 
     try {
-      const dir = directory || sessionStore.projects[0]?.directory || ".";
+      const defaultProject = sessionStore.projects.find(p => p.isDefault);
+      const dir = directory || defaultProject?.directory || sessionStore.projects[0]?.directory || ".";
       // Use explicitly-passed engineType when available, otherwise use global default engine.
       const engineType = explicitEngineType || getDefaultEngineType();
       const newSession = await gateway.createSession(engineType, dir);
@@ -1181,6 +1200,9 @@ export default function Chat() {
         if (!queued || queued.length === 0) {
           setSendingFor(targetSessionId, false);
         }
+        // Refresh git status after engine finishes — engine file changes
+        // may not trigger filesystem events (e.g. git operations inside .git/)
+        refreshGitStatus();
       }
     });
   };
@@ -1456,7 +1478,94 @@ export default function Chat() {
   });
 
   return (
-    <div class="flex h-screen bg-gray-50/50 dark:bg-zinc-950 font-sans text-gray-900 dark:text-gray-100 overflow-hidden relative">
+    <div class="flex flex-col h-screen bg-gray-50/50 dark:bg-slate-950 font-sans text-gray-900 dark:text-gray-100 overflow-hidden relative">
+
+      {/* Unified Titlebar — 40px, spans full width */}
+      <div
+        class="w-full flex-shrink-0 flex items-center px-2 border-b border-gray-200 dark:border-slate-800 bg-gray-50 dark:bg-slate-950 electron-drag-region electron-titlebar-pad-left electron-titlebar-pad-right"
+        style={{ height: "var(--electron-title-bar-height, 40px)", "min-height": "var(--electron-title-bar-height, 40px)" }}
+      >
+        {/* Left: Logo + Sidebar toggle */}
+        <div class="flex items-center gap-1.5 electron-no-drag flex-shrink-0">
+          <img src={`${import.meta.env.BASE_URL}assets/logo.png`} alt="CodeMux" class="w-5 h-5 rounded" />
+          <span class="text-[13px] font-semibold text-gray-700 dark:text-gray-300 hidden sm:inline mr-0.5">CodeMux</span>
+
+          {/* Mobile sidebar toggle */}
+          <button
+            onClick={toggleSidebar}
+            class="md:hidden p-2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-slate-800 rounded-md transition-colors min-w-[36px] min-h-[36px] flex items-center justify-center"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" x2="20" y1="12" y2="12" /><line x1="4" x2="20" y1="6" y2="6" /><line x1="4" x2="20" y1="18" y2="18" /></svg>
+          </button>
+
+          {/* Desktop sidebar collapse/expand toggle */}
+          <button
+            onClick={toggleSidebarCollapse}
+            class="hidden md:inline-flex p-1.5 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-slate-800 rounded-md transition-colors"
+            title={isSidebarCollapsed() ? t().sidebar.expandSidebar : t().sidebar.collapseSidebar}
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <rect width="18" height="18" x="3" y="3" rx="2" />
+              <path d="M9 3v18" />
+              {isSidebarCollapsed() ? <path d="m14 9 3 3-3 3" /> : <path d="m14 9-3 3 3 3" />}
+            </svg>
+          </button>
+        </div>
+
+        {/* Center: Session title + badges (draggable gap) */}
+        <div class="flex-1 flex items-center justify-center gap-1.5 sm:gap-2 min-w-0 px-2 sm:px-4 overflow-hidden">
+          <Show when={sessionStore.current}>
+            <h1 class="text-[13px] font-medium text-gray-600 dark:text-gray-400 truncate electron-no-drag">
+              {getDisplayTitle(currentSessionTitle())}
+            </h1>
+            <span class={`shrink-0 px-1.5 py-0.5 text-[10px] font-medium rounded-full electron-no-drag ${currentEngineBadge().class}`}>
+              {currentEngineBadge().label}
+            </span>
+            <span class={`shrink-0 px-1.5 py-0.5 text-[10px] font-medium rounded-full electron-no-drag ${
+              (() => {
+                const id = currentAgent().id;
+                if (id === "plan")
+                  return "bg-cyan-100 text-cyan-700 dark:bg-cyan-900/30 dark:text-cyan-400";
+                if (id === "autopilot" || id === "acceptEdits")
+                  return "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400";
+                return "bg-indigo-100 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-400";
+              })()
+            }`}>
+              {currentAgent().label}
+            </span>
+          </Show>
+        </div>
+
+        {/* Right: File explorer toggle + connection status */}
+        <div class="flex items-center gap-1.5 electron-no-drag flex-shrink-0">
+          <Show when={sessionStore.current}>
+            <button
+              onClick={togglePanel}
+              class={`hidden md:inline-flex p-1.5 rounded-md transition-colors ${
+                fileStore.panelOpen
+                  ? "bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400"
+                  : "text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-slate-800"
+              }`}
+              title={t().fileExplorer.togglePanel}
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/>
+                <path d="M14 2v4a2 2 0 0 0 2 2h4"/>
+                <path d="M10 12H6"/><path d="M10 16H6"/><path d="M10 8H6"/>
+              </svg>
+            </button>
+          </Show>
+
+          <Show when={!wsConnected()}>
+            <div class="flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-red-50 dark:bg-red-900/20">
+              <span class="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" />
+              <span class="text-[10px] font-medium text-red-600 dark:text-red-400">{t().chat.disconnected}</span>
+            </div>
+          </Show>
+        </div>
+      </div>
+
+      <div class="flex flex-1 overflow-hidden">
 
       {/* Mobile Sidebar Overlay */}
       <Show when={isMobile() && isSidebarOpen()}>
@@ -1469,31 +1578,10 @@ export default function Chat() {
       {/* Sidebar - Desktop: Static, Mobile: Drawer */}
       <aside
         class={`
-          fixed md:static inset-y-0 left-0 z-30 ${isSidebarCollapsed() ? "md:w-14" : "w-72"} bg-gray-50 dark:bg-zinc-950 border-r border-gray-200 dark:border-zinc-800 transform transition-[width,transform] duration-300 ease-in-out flex flex-col justify-between electron-safe-top
+          fixed md:static inset-y-0 left-0 z-30 ${isSidebarCollapsed() ? "md:w-14" : "w-72"} bg-gray-50 dark:bg-slate-950 border-r border-gray-200 dark:border-slate-800 transform transition-[width,transform] duration-300 ease-in-out flex flex-col justify-between
           ${isSidebarOpen() ? "translate-x-0 w-72" : "-translate-x-full md:translate-x-0"}
         `}
       >
-        {/* Sidebar Collapse Toggle (desktop only) */}
-        <div class="hidden md:flex items-center justify-between px-2 pt-2 pb-1 border-b border-gray-200 dark:border-zinc-800">
-          <Show when={!isSidebarCollapsed()}>
-            <span class="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider px-1">{t().sidebar.sessions}</span>
-          </Show>
-          <div class="flex items-center gap-0.5">
-            <button
-              onClick={toggleSidebarCollapse}
-              class="p-1.5 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-zinc-800 rounded-md transition-colors flex-shrink-0"
-              title={isSidebarCollapsed() ? t().sidebar.expandSidebar : t().sidebar.collapseSidebar}
-              aria-label={isSidebarCollapsed() ? t().sidebar.expandSidebar : t().sidebar.collapseSidebar}
-              aria-expanded={!isSidebarCollapsed()}
-            >
-              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <rect width="18" height="18" x="3" y="3" rx="2" />
-                <path d="M9 3v18" />
-                {isSidebarCollapsed() ? <path d="m14 9 3 3-3 3" /> : <path d="m14 9-3 3 3 3" />}
-              </svg>
-            </button>
-          </div>
-        </div>
         <div class="relative flex flex-col h-full overflow-hidden">
           <Show when={!sessionStore.loading}>
             <SessionSidebar
@@ -1516,7 +1604,7 @@ export default function Chat() {
             />
           </Show>
           <Show when={refreshingSessions()}>
-            <div class="absolute inset-0 bg-gray-50/60 dark:bg-zinc-950/60 backdrop-blur-[1px] z-10 flex items-center justify-center transition-opacity">
+            <div class="absolute inset-0 bg-gray-50/60 dark:bg-slate-950/60 backdrop-blur-[1px] z-10 flex items-center justify-center transition-opacity">
               <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="animate-spin text-gray-400 dark:text-gray-500">
                 <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8" />
                 <path d="M21 3v5h-5" />
@@ -1528,11 +1616,11 @@ export default function Chat() {
         </div>
 
         {/* User Actions Footer in Sidebar */}
-        <div class={`${isSidebarCollapsed() && !isMobile() ? "px-1 py-2" : "p-3"} border-t border-gray-200 dark:border-zinc-800 space-y-1 bg-gray-50 dark:bg-zinc-950`}>
+        <div class={`${isSidebarCollapsed() && !isMobile() ? "px-1 py-2" : "p-3"} border-t border-gray-200 dark:border-slate-800 space-y-1 bg-gray-50 dark:bg-slate-950`}>
           <Show when={isLocalAccess()}>
             <button
               onClick={() => navigate("/")}
-              class={`w-full flex items-center ${isSidebarCollapsed() && !isMobile() ? "justify-center p-2" : "gap-3 px-3 py-2"} text-sm font-medium text-gray-600 dark:text-gray-400 hover:bg-white dark:hover:bg-zinc-800 hover:text-gray-900 dark:hover:text-white rounded-lg transition-all shadow-xs hover:shadow-sm`}
+              class={`w-full flex items-center ${isSidebarCollapsed() && !isMobile() ? "justify-center p-2" : "gap-3 px-3 py-2"} text-sm font-medium text-gray-600 dark:text-gray-400 hover:bg-white dark:hover:bg-slate-800 hover:text-gray-900 dark:hover:text-white rounded-lg transition-all shadow-xs hover:shadow-sm`}
               title={t().chat.remoteAccess}
             >
               <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="20" height="14" x="2" y="3" rx="2" /><line x1="8" x2="16" y1="21" y2="21" /><line x1="12" x2="12" y1="17" y2="21" /></svg>
@@ -1543,7 +1631,7 @@ export default function Chat() {
           </Show>
           <button
             onClick={() => navigate("/settings")}
-            class={`w-full flex items-center ${isSidebarCollapsed() && !isMobile() ? "justify-center p-2" : "gap-3 px-3 py-2"} text-sm font-medium text-gray-600 dark:text-gray-400 hover:bg-white dark:hover:bg-zinc-800 hover:text-gray-900 dark:hover:text-white rounded-lg transition-all shadow-xs hover:shadow-sm`}
+            class={`w-full flex items-center ${isSidebarCollapsed() && !isMobile() ? "justify-center p-2" : "gap-3 px-3 py-2"} text-sm font-medium text-gray-600 dark:text-gray-400 hover:bg-white dark:hover:bg-slate-800 hover:text-gray-900 dark:hover:text-white rounded-lg transition-all shadow-xs hover:shadow-sm`}
             title={t().chat.settings}
           >
             <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.09a2 2 0 0 1-1-1.74v-.51a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" /><circle cx="12" cy="12" r="3" /></svg>
@@ -1565,42 +1653,10 @@ export default function Chat() {
       </aside>
 
       {/* Main Chat Area */}
-      <div class="flex-1 flex flex-col overflow-hidden min-w-0 bg-white dark:bg-zinc-900 electron-safe-top">
+      <div class="flex-1 flex overflow-hidden min-w-0">
+      <div class="flex-1 flex flex-col overflow-hidden min-w-0 bg-white dark:bg-slate-900">
 
-        {/* Header */}
-        <header class="flex items-center justify-between px-4 py-3 border-b border-gray-100 dark:border-zinc-800/50 bg-white/80 dark:bg-zinc-900/80 backdrop-blur-xs sticky top-0 z-10 electron-drag-region">
-          <div class="flex items-center gap-3 min-w-0 electron-no-drag">
-            <button
-              onClick={toggleSidebar}
-              class="md:hidden p-2 -ml-2 text-gray-500 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-zinc-800 rounded-lg transition-colors"
-            >
-              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" x2="20" y1="12" y2="12" /><line x1="4" x2="20" y1="6" y2="6" /><line x1="4" x2="20" y1="18" y2="18" /></svg>
-            </button>
-            <h1 class="text-base font-semibold text-gray-900 dark:text-white truncate">
-              {getDisplayTitle(currentSessionTitle())}
-            </h1>
-            {/* Engine Badge */}
-            <Show when={sessionStore.current}>
-              <span class={`shrink-0 px-2 py-0.5 text-[10px] font-medium rounded-full ${currentEngineBadge().class}`}>
-                {currentEngineBadge().label}
-              </span>
-            </Show>
-            {/* Agent Mode Indicator */}
-            <span class={`shrink-0 px-2 py-0.5 text-[10px] font-medium rounded-full ${
-              currentAgent().id === "plan"
-                ? "bg-violet-100 text-violet-700 dark:bg-violet-900/30 dark:text-violet-400"
-                : "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400"
-            }`}>
-              {currentAgent().label}
-            </span>
-          </div>
-          <Show when={!wsConnected()}>
-            <div class="flex items-center gap-1.5 px-2 py-1 rounded-full bg-red-50 dark:bg-red-900/20 electron-no-drag">
-              <span class="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
-              <span class="text-[11px] font-medium text-red-600 dark:text-red-400">Disconnected</span>
-            </div>
-          </Show>
-        </header>
+
 
         {/* Message List */}
         <main class="flex-1 flex flex-col overflow-hidden relative">
@@ -1644,7 +1700,7 @@ export default function Chat() {
             fallback={
               <div class="flex-1 flex items-center justify-center">
                 <div class="flex flex-col items-center gap-4 text-center px-6">
-                  <div class="w-16 h-16 bg-gray-100 dark:bg-zinc-800 rounded-2xl flex items-center justify-center text-gray-400 dark:text-gray-500">
+                  <div class="w-16 h-16 bg-gray-100 dark:bg-slate-800 rounded-2xl flex items-center justify-center text-gray-400 dark:text-gray-500">
                     <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M14 9a2 2 0 0 1-2 2H6l-4 4V4c0-1.1.9-2 2-2h8a2 2 0 0 1 2 2v5Z" /><path d="M18 9h2a2 2 0 0 1 2 2v11l-4-4h-6a2 2 0 0 1-2-2v-1" /></svg>
                   </div>
                   <h2 class="text-xl font-semibold text-gray-900 dark:text-white">
@@ -1660,10 +1716,10 @@ export default function Chat() {
             {/* Scroll container is ALWAYS in the DOM so the virtualizer
                 maintains a stable reference to getScrollElement(). The loading
                 overlay is rendered on top without destroying the scroll div. */}
-              <div ref={setMessagesRef} onScroll={handleScroll} class="flex-1 overflow-y-auto px-4 md:px-6" style={{ position: "relative" }}>
+              <div ref={setMessagesRef} onScroll={handleScroll} class="flex-1 overflow-y-auto px-2 sm:px-4 md:px-6" style={{ position: "relative" }}>
                 {/* Loading overlay — covers scroll area during message load */}
                 <Show when={loadingMessages()}>
-                  <div class="absolute inset-0 flex items-center justify-center z-10 bg-white/80 dark:bg-zinc-900/80">
+                  <div class="absolute inset-0 flex items-center justify-center z-10 bg-white/80 dark:bg-slate-900/80">
                     <div class="flex flex-col items-center gap-3 text-gray-400">
                       <div class="w-6 h-6 border-2 border-current border-t-transparent rounded-full animate-spin"></div>
                     </div>
@@ -1674,7 +1730,7 @@ export default function Chat() {
                     when={sessionStore.current && messageStore.message[sessionStore.current]?.length > 0}
                     fallback={
                       <div class="flex flex-col items-center justify-center h-[50vh] text-center px-4">
-                        <div class="w-16 h-16 bg-gray-100 dark:bg-zinc-800 rounded-2xl flex items-center justify-center mb-6 text-gray-400 dark:text-gray-500">
+                        <div class="w-16 h-16 bg-gray-100 dark:bg-slate-800 rounded-2xl flex items-center justify-center mb-6 text-gray-400 dark:text-gray-500">
                           <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M14 9a2 2 0 0 1-2 2H6l-4 4V4c0-1.1.9-2 2-2h8a2 2 0 0 1 2 2v5Z" /><path d="M18 9h2a2 2 0 0 1 2 2v11l-4-4h-6a2 2 0 0 1-2-2v-1" /></svg>
                         </div>
                         <h2 class="text-xl font-semibold text-gray-900 dark:text-white mb-2">
@@ -1692,7 +1748,7 @@ export default function Chat() {
               </div>
 
               {/* Input Area */}
-              <div class="p-4 bg-white/90 dark:bg-zinc-900/90 backdrop-blur-xs border-t border-gray-100 dark:border-zinc-800 relative z-20">
+              <div class="p-2 sm:p-4 bg-white/90 dark:bg-slate-900/90 backdrop-blur-xs border-t border-gray-100 dark:border-slate-800 relative z-20">
                 <div class="max-w-4xl mx-auto w-full">
                   {/* TodoDock — persistent task list above input */}
                   <Show when={currentTodos().length > 0}>
@@ -1785,6 +1841,44 @@ export default function Chat() {
           </Show>
           </Show>
         </main>
+      </div>
+      {/* File Explorer Right Panel */}
+      <Show when={fileStore.panelOpen}>
+        {(() => {
+          const [widthReady, setWidthReady] = createSignal(false);
+          // Defer transition to avoid layout thrashing during initial mount
+          const timerId = setTimeout(() => setWidthReady(true), 300);
+          onCleanup(() => clearTimeout(timerId));
+
+          const hasPreview = () => fileStore.preview !== null && fileStore.openTabs.all.length > 0;
+          const effectiveWidth = () => hasPreview() ? fileStore.panelWidth : Math.min(fileStore.panelWidth, 300);
+          const effectiveMin = () => hasPreview() ? 400 : 200;
+          return (
+            <div
+              class={`relative hidden md:flex flex-col overflow-hidden flex-shrink-0 ${
+                widthReady() ? "transition-[width] duration-200 ease-out" : ""
+              }`}
+              style={{ width: `${effectiveWidth()}px` }}
+              aria-label="File explorer"
+            >
+              <ResizeHandle
+                direction="horizontal"
+                edge="start"
+                size={effectiveWidth()}
+                min={effectiveMin()}
+                max={Math.min(1200, Math.floor(window.innerWidth * 0.6))}
+                collapseThreshold={160}
+                onResize={setPanelWidth}
+                onCollapse={closePanel}
+              />
+              <Suspense>
+                <FileExplorer />
+              </Suspense>
+            </div>
+          );
+        })()}
+      </Show>
+      </div>
       </div>
 
       <HideProjectModal

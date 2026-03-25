@@ -10,6 +10,7 @@ import type { BaseGroupBinding } from "../base-session-mapper";
 // Re-export shared streaming types for convenience
 export type { StreamingSession } from "../streaming/streaming-types";
 export { createStreamingSession } from "../streaming/streaming-types";
+import { GATEWAY_PORT } from "../../../../shared/ports";
 
 // --- DingTalk Configuration ---
 
@@ -37,7 +38,7 @@ export const DEFAULT_DINGTALK_CONFIG: DingTalkConfig = {
   useStreamMode: true,
   autoApprovePermissions: true,
   streamingThrottleMs: 1500,
-  gatewayUrl: "ws://127.0.0.1:4200",
+  gatewayUrl: `ws://127.0.0.1:${GATEWAY_PORT}`,
 };
 
 /** TTL for temporary P2P sessions (2 hours in ms) */

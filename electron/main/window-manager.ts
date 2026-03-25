@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, shell } from "electron";
+import { app, BrowserWindow, dialog, shell, nativeTheme } from "electron";
 import { join } from "path";
 import { loadSettings, saveSettings } from "./services/logger";
 
@@ -35,13 +35,25 @@ export function createWindow(hidden = false): BrowserWindow {
     minHeight: 600,
     show: false,
     autoHideMenuBar: true,
-    // macOS-specific title bar styling
+    // Platform-specific title bar styling
     ...(process.platform === "darwin"
       ? {
           titleBarStyle: "hiddenInset" as const,
           trafficLightPosition: { x: 16, y: 16 },
         }
-      : {}),
+      : process.platform === "win32"
+        ? {
+            titleBarStyle: "hidden" as const,
+            titleBarOverlay: (() => {
+              const settings = loadSettings();
+              const theme = settings.theme as string | undefined;
+              const isDark = theme === "dark" || (theme !== "light" && nativeTheme.shouldUseDarkColors);
+              return isDark
+                ? { color: "#020617", symbolColor: "#94a3b8", height: 40 }  // slate-950
+                : { color: "#f8fafc", symbolColor: "#475569", height: 40 }; // slate-50
+            })(),
+          }
+        : {}),
     webPreferences: {
       preload: join(__dirname, "../preload/index.cjs"),
       sandbox: false, // Required for IPC communication in preload

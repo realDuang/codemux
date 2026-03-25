@@ -32,6 +32,7 @@ import {
 import {
   buildGroupWelcomeCard,
 } from "./feishu-card-builder";
+import { buildTempSessionHintText } from "./feishu-message-formatter";
 import {
   DEFAULT_FEISHU_CONFIG,
   TEMP_SESSION_TTL_MS,
@@ -42,6 +43,7 @@ import {
   type FeishuBotMenuEvent,
   type FeishuChatDisbandedEvent,
   type FeishuBotRemovedEvent,
+  type FeishuUserRemovedEvent,
 } from "./feishu-types";
 import {
   formatFeishuStartupError,
@@ -55,7 +57,7 @@ import type {
   UnifiedPermission,
   UnifiedQuestion,
 } from "../../../../src/types/unified";
-import { feishuLog } from "../../services/logger";
+import { feishuLog, getDefaultEngineFromSettings } from "../../services/logger";
 
 interface WsStartupMonitor {
   readyPromise: Promise<void>;
@@ -319,6 +321,13 @@ export class FeishuAdapter extends ChannelAdapter {
             feishuLog.error("Error handling bot removed event:", err);
           }
         },
+        "im.chat.member.user.deleted_v1": async (data: unknown) => {
+          try {
+            await this.handleUserRemovedFromGroup(data as FeishuUserRemovedEvent);
+          } catch (err) {
+            feishuLog.error("Error handling user removed event:", err);
+          }
+        },
         // Suppress warnings for events we don't handle
         "im.chat.access_event.bot_p2p_chat_entered_v1": async () => {},
         "im.message.message_read_v1": async () => {},
@@ -574,7 +583,23 @@ export class FeishuAdapter extends ChannelAdapter {
       return;
     }
 
-    // 6. No project → show project list
+    // 6. No project → use default workspace as fallback
+    if (this.gatewayClient) {
+      const allProjects = await this.gatewayClient.listAllProjects();
+      const defaultProject = allProjects.find(p => p.isDefault);
+      if (defaultProject) {
+        const defaultRef = {
+          directory: defaultProject.directory,
+          engineType: defaultProject.engineType || getDefaultEngineFromSettings(),
+          projectId: defaultProject.id,
+        };
+        this.sessionMapper.setP2PLastProject(chatId, defaultRef);
+        await this.createTempSessionAndSend(chatId, defaultRef, text);
+        return;
+      }
+    }
+
+    // 7. Fallback: show project list
     await this.showProjectList(chatId);
   }
 
@@ -609,17 +634,34 @@ export class FeishuAdapter extends ChannelAdapter {
   private async showProjectList(chatId: string): Promise<void> {
     if (!this.gatewayClient) return;
 
-    const projects = await this.gatewayClient.listAllProjects();
-    const text = buildProjectListText(projects);
-    await this.transport!.sendText(chatId, text);
+    const allProjects = await this.gatewayClient.listAllProjects();
+    // Filter out default workspace — users should only pick real projects
+    const projects = allProjects.filter(p => !p.isDefault);
 
     if (projects.length > 0) {
+      const text = buildProjectListText(projects);
+      await this.transport!.sendText(chatId, text);
       // Flatten projects in display order (grouped by engine) for number mapping
       const flatProjects = this.flattenProjectsByEngine(projects);
       this.sessionMapper.setPendingSelection(chatId, {
         type: "project",
         projects: flatProjects,
       });
+    } else {
+      // No real projects — auto-use default workspace without showing empty list
+      const defaultProject = allProjects.find(p => p.isDefault);
+      if (defaultProject) {
+        const defaultRef = {
+          directory: defaultProject.directory,
+          engineType: defaultProject.engineType || getDefaultEngineFromSettings(),
+          projectId: defaultProject.id,
+        };
+        this.sessionMapper.setP2PLastProject(chatId, defaultRef);
+      } else {
+        // No projects at all — show empty project list message
+        const text = buildProjectListText(projects);
+        await this.transport!.sendText(chatId, text);
+      }
     }
   }
 
@@ -683,7 +725,9 @@ export class FeishuAdapter extends ChannelAdapter {
     receiveIdType: string,
   ): Promise<void> {
     if (!this.gatewayClient) return;
-    const projects = await this.gatewayClient.listAllProjects();
+    const allProjects = await this.gatewayClient.listAllProjects();
+    // Filter out default workspace — users should only pick real projects
+    const projects = allProjects.filter(p => !p.isDefault);
     const text = buildProjectListText(projects);
     await this.transport!.sendMessageTo(receiveId, receiveIdType, "text", JSON.stringify({ text }));
 
@@ -842,11 +886,11 @@ export class FeishuAdapter extends ChannelAdapter {
     this.sessionMapper.clearTempSession(chatId);
   }
 
-  /** Return projects in display order (same order as buildProjectListText) */
+  /** Return projects in display order, excluding default workspace */
   private flattenProjectsByEngine(
     projects: import("../../../../src/types/unified").UnifiedProject[],
   ): import("../../../../src/types/unified").UnifiedProject[] {
-    return projects;
+    return projects.filter(p => !p.isDefault);
   }
 
   /** Handle a pending selection reply (number or "new") */
@@ -881,7 +925,7 @@ export class FeishuAdapter extends ChannelAdapter {
     // Save last selected project
     const projectRef = {
       directory: project.directory,
-      engineType: project.engineType || "opencode",
+      engineType: project.engineType || getDefaultEngineFromSettings(),
       projectId: project.id,
     };
     this.sessionMapper.setP2PLastProject(chatId, projectRef);
@@ -1248,6 +1292,20 @@ export class FeishuAdapter extends ChannelAdapter {
     await this.cleanupGroupResources(event.chat_id, "Bot removed from group");
   }
 
+  private async handleUserRemovedFromGroup(event: FeishuUserRemovedEvent): Promise<void> {
+    const chatId = event.chat_id;
+    if (!chatId) return;
+
+    const binding = this.sessionMapper.getGroupBinding(chatId);
+    if (!binding) return;
+
+    // Clean up when the group owner leaves — no human user remains
+    const removedOpenIds = (event.users ?? []).map(u => u.user_id?.open_id).filter(Boolean);
+    if (removedOpenIds.includes(binding.ownerOpenId)) {
+      await this.cleanupGroupResources(chatId, "Owner left group");
+    }
+  }
+
   private async cleanupGroupResources(chatId: string | undefined, reason: string): Promise<void> {
     if (!chatId) return;
 
@@ -1407,6 +1465,12 @@ export class FeishuAdapter extends ChannelAdapter {
 
     tempSession.lastActiveAt = Date.now();
     tempSession.streamingSession = undefined;
+
+    // Show usage hint once per temp session (after first reply completes)
+    if (!tempSession.hintShown && this.transport) {
+      tempSession.hintShown = true;
+      await this.transport.sendText(chatId, buildTempSessionHintText());
+    }
 
     // Process next queued message
     await this.processP2PQueue(chatId);

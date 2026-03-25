@@ -6,16 +6,13 @@ import { deviceStore } from "./device-store";
 import { prodServerLog, getLogFilePath, getFileLogLevel, setFileLogLevel } from "./logger";
 import { sendJson, getClientIp, isLocalhost, getLocalIp } from "../../../shared/http-utils";
 import { handleAuthRoutes, handleLogRoutes } from "../../../shared/auth-route-handlers";
+import { WEB_PORT, OPENCODE_PORT, WEBHOOK_PORT } from "../../../shared/ports";
 
 // ============================================================================
 // Production HTTP Server
 // Serves static files and proxies API requests when running in packaged mode.
 // This is required for Cloudflare Tunnel to work - it needs an HTTP server.
 // ============================================================================
-
-const DEFAULT_PORT = 5173;
-const OPENCODE_PORT = 4096;
-const WEBHOOK_PORT = 4098;
 
 // MIME types for static file serving
 const MIME_TYPES: Record<string, string> = {
@@ -150,7 +147,7 @@ function proxyToWebhook(
 
 class ProductionServer {
   private server: http.Server | null = null;
-  private port: number = DEFAULT_PORT;
+  private port: number = WEB_PORT;
   private staticRoot: string = "";
 
   getPort(): number {
@@ -165,7 +162,7 @@ class ProductionServer {
     return this.server;
   }
 
-  async start(port: number = DEFAULT_PORT): Promise<number> {
+  async start(port: number = WEB_PORT): Promise<number> {
     if (this.server) {
       return this.port;
     }

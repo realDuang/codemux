@@ -16,6 +16,15 @@
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
   margin-left: auto;
   max-width: 85%;
+  overflow-wrap: break-word;
+  word-break: break-word;
+}
+
+@media (max-width: 480px) {
+  .userMessage {
+    max-width: 92%;
+    padding: 0.625rem 0.75rem;
+  }
 }
 
 :global(.dark) .userMessage {

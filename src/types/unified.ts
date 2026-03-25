@@ -22,6 +22,8 @@ export interface EngineInfo {
   authenticated?: boolean;
   /** Human-readable auth status message (e.g. username or error) */
   authMessage?: string;
+  /** Error message when status is "error" */
+  errorMessage?: string;
 }
 
 export interface EngineCapabilities {
@@ -243,6 +245,31 @@ export interface FilePart extends PartBase {
   url: string;
 }
 
+// --- File Explorer Types ---
+
+export interface FileExplorerNode {
+  name: string;
+  path: string;
+  absolutePath: string;
+  type: "file" | "directory";
+  ignored: boolean;
+  size?: number;
+}
+
+export interface FileExplorerContent {
+  content: string;
+  binary: boolean;
+  size: number;
+  mimeType?: string;
+}
+
+export interface GitFileStatus {
+  path: string;
+  status: "added" | "modified" | "deleted" | "renamed" | "untracked";
+  added?: number;
+  removed?: number;
+}
+
 export interface StepStartPart extends PartBase {
   type: "step-start";
 }
@@ -411,6 +438,8 @@ export interface UnifiedProject {
   engineType?: EngineType;
   /** Engine-specific data */
   engineMeta?: Record<string, unknown>;
+  /** Marks the default workspace project (auto-created fallback directory) */
+  isDefault?: boolean;
 }
 
 // ============================================================================
@@ -504,6 +533,14 @@ export const GatewayRequestType = {
 
   // Logging (renderer → main)
   LOG_SEND: "log.send",
+
+  // File Explorer
+  FILE_LIST: "file.list",
+  FILE_READ: "file.read",
+  FILE_GIT_STATUS: "file.gitStatus",
+  FILE_GIT_DIFF: "file.gitDiff",
+  FILE_WATCH: "file.watch",
+  FILE_UNWATCH: "file.unwatch",
 } as const;
 
 // --- Notification type constants ---
@@ -522,6 +559,7 @@ export const GatewayNotificationType = {
   MESSAGE_QUEUED: "message.queued",
   MESSAGE_QUEUED_CONSUMED: "message.queued.consumed",
   SESSION_IMPORT_PROGRESS: "session.import.progress",
+  FILE_CHANGED: "file.changed",
 } as const;
 
 // --- Request / Response payload types ---

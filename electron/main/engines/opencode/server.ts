@@ -9,6 +9,7 @@ import * as net from "net";
 import { execFile, spawn } from "child_process";
 import type { ServerOptions } from "@opencode-ai/sdk/v2";
 import { openCodeLog } from "../../services/logger";
+import { OPENCODE_PORT } from "../../../../shared/ports";
 
 const IS_WIN = process.platform === "win32";
 
@@ -39,7 +40,7 @@ export function createStreamErrorHandler(
  */
 export function createOpencodeServer(options?: ServerOptions): Promise<{ url: string; close(): Promise<void> }> {
   const opts = Object.assign(
-    { hostname: "127.0.0.1", port: 4096, timeout: 5000 },
+    { hostname: "127.0.0.1", port: OPENCODE_PORT, timeout: 5000 },
     options ?? {},
   );
 

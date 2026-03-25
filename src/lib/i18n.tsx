@@ -8,21 +8,24 @@ import {
 } from "solid-js";
 import { en, type LocaleDict } from "../locales/en";
 import { zh } from "../locales/zh";
+import { ru } from "../locales/ru";
 import { getSetting, saveSetting } from "./settings";
 
 // Supported locales
-export type LocaleCode = "en" | "zh";
+export type LocaleCode = "en" | "zh" | "ru";
 
 // Dictionary for all locales
 const dictionaries: Record<LocaleCode, LocaleDict> = {
   en,
   zh,
+  ru,
 };
 
 // Locale display names
 export const localeNames: Record<LocaleCode, string> = {
   en: "English",
   zh: "简体中文",
+  ru: "Русский",
 };
 
 // Get saved locale from settings or use English as default

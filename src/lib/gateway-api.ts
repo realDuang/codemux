@@ -21,6 +21,9 @@ import type {
   ImportableSession,
   SessionImportResult,
   SessionImportProgress,
+  FileExplorerNode,
+  FileExplorerContent,
+  GitFileStatus,
 } from "../types/unified";
 
 // --- Notification callback types ---
@@ -38,6 +41,7 @@ export interface GatewayNotificationHandlers {
   onEngineStatusChanged?: (engineType: EngineType, status: string, error?: string) => void;
   onMessageQueued?: (sessionId: string, messageId: string, queuePosition: number) => void;
   onMessageQueuedConsumed?: (sessionId: string, messageId: string) => void;
+  onFileChanged?: (event: { type: string; path: string; directory: string }) => void;
   onConnected?: () => void;
   onDisconnected?: (reason: string) => void;
 }
@@ -171,6 +175,10 @@ class GatewayAPI {
 
     this.bind("message.queued.consumed", (data) => {
       this.handlers.onMessageQueuedConsumed?.(data.sessionId, data.messageId);
+    });
+
+    this.bind("file.changed", (event) => {
+      this.handlers.onFileChanged?.(event);
     });
   }
 
@@ -325,6 +333,31 @@ class GatewayAPI {
         gatewayClient.off("session.import.progress", onProgress);
       }
     });
+  }
+  // --- File Explorer ---
+
+  listFiles(directory: string, rootDirectory: string): Promise<FileExplorerNode[]> {
+    return gatewayClient.listFiles(directory, rootDirectory);
+  }
+
+  readFile(path: string, directory: string): Promise<FileExplorerContent> {
+    return gatewayClient.readFile(path, directory);
+  }
+
+  getGitStatus(directory: string): Promise<GitFileStatus[]> {
+    return gatewayClient.getGitStatus(directory);
+  }
+
+  getGitDiff(directory: string, path: string): Promise<string> {
+    return gatewayClient.getGitDiff(directory, path);
+  }
+
+  watchDirectory(directory: string): Promise<void> {
+    return gatewayClient.watchDirectory(directory);
+  }
+
+  unwatchDirectory(directory: string): Promise<void> {
+    return gatewayClient.unwatchDirectory(directory);
   }
 }
 

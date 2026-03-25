@@ -6,6 +6,7 @@
 
 import type { EngineType, UnifiedProject, UnifiedSession } from "../../../../src/types/unified";
 import type { StreamingSession } from "../streaming/streaming-types";
+import { GATEWAY_PORT } from "../../../../shared/ports";
 
 // Re-export shared types for backward compatibility
 export type { StreamingSession } from "../streaming/streaming-types";
@@ -36,7 +37,7 @@ export const DEFAULT_FEISHU_CONFIG: FeishuConfig = {
   appSecret: "",
   autoApprovePermissions: true,
   streamingThrottleMs: 1500,
-  gatewayUrl: "ws://127.0.0.1:4200",
+  gatewayUrl: `ws://127.0.0.1:${GATEWAY_PORT}`,
 };
 
 /** TTL for temporary P2P sessions (2 hours in ms) */
@@ -106,6 +107,8 @@ export interface TempSession {
   messageQueue: string[];
   /** Whether currently processing a message */
   processing: boolean;
+  /** Whether the usage hint has been shown for this temp session */
+  hintShown?: boolean;
 }
 
 /** Pending selection context for P2P text-based project/session selection */
@@ -143,6 +146,15 @@ export interface ParsedCommand {
   raw: string;
 }
 
+// --- Feishu Shared Types ---
+
+/** Shared Feishu Open Platform user identifier shape */
+export interface FeishuUserId {
+  union_id?: string;
+  user_id?: string;
+  open_id?: string;
+}
+
 // --- Feishu Bot Menu Event Data ---
 
 export interface FeishuBotMenuEvent {
@@ -154,11 +166,7 @@ export interface FeishuBotMenuEvent {
   /** Operator (user who clicked the menu) */
   operator?: {
     operator_name?: string;
-    operator_id?: {
-      open_id?: string;
-      union_id?: string;
-      user_id?: string;
-    };
+    operator_id?: FeishuUserId;
   };
   timestamp?: number;
   tenant_key?: string;
@@ -180,11 +188,7 @@ export interface FeishuMessageEvent {
     }>;
   };
   sender: {
-    sender_id: {
-      open_id: string;
-      union_id?: string;
-      user_id?: string;
-    };
+    sender_id: FeishuUserId & { open_id: string };
     sender_type: string;
   };
 }
@@ -193,20 +197,22 @@ export interface FeishuMessageEvent {
 
 export interface FeishuChatDisbandedEvent {
   chat_id?: string;
-  operator_id?: {
-    union_id?: string;
-    user_id?: string;
-    open_id?: string;
-  };
+  operator_id?: FeishuUserId;
   name?: string;
 }
 
 export interface FeishuBotRemovedEvent {
   chat_id?: string;
-  operator_id?: {
-    union_id?: string;
-    user_id?: string;
-    open_id?: string;
-  };
+  operator_id?: FeishuUserId;
   name?: string;
+}
+
+export interface FeishuUserRemovedEvent {
+  chat_id?: string;
+  operator_id?: FeishuUserId;
+  users?: Array<{
+    name?: string;
+    tenant_key?: string;
+    user_id?: FeishuUserId;
+  }>;
 }

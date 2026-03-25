@@ -6,6 +6,7 @@ import { LanguageSwitcher } from "../components/LanguageSwitcher";
 import { FeishuConfigModal } from "../components/FeishuConfigModal";
 import { ChannelConfigModal } from "../components/ChannelConfigModal";
 import { logger } from "../lib/logger";
+import { WEB_PORT, WEB_STANDALONE_PORT } from "../../shared/ports";
 import { isElectron } from "../lib/platform";
 import { systemAPI, tunnelAPI, channelAPI, type ChannelInfo, type TunnelInfo, type TunnelConfig } from "../lib/electron-api";
 import { getSetting, saveSetting } from "../lib/settings";
@@ -45,7 +46,7 @@ export default function EntryPage() {
   const isNamedTunnel = () => !!namedTunnelHostname().trim();
   const [localIp, setLocalIp] = createSignal("127.0.0.1");
   const [accessCode, setAccessCode] = createSignal("......");
-  const [port, setPort] = createSignal(5174);
+  const [port, setPort] = createSignal(WEB_STANDALONE_PORT);
   const [showPassword, setShowPassword] = createSignal(false);
   const [activeQrTab, setActiveQrTab] = createSignal<"lan" | "public">("lan");
   const [enteringChat, setEnteringChat] = createSignal(false);
@@ -184,13 +185,13 @@ export default function EntryPage() {
         if (localIpResult) setLocalIp(localIpResult);
 
         // For port, use the current window's port in dev mode
-        // In production (file:// protocol), use default port 5173
+        // In production (file:// protocol), use default port WEB_PORT
         const currentPort = window.location.port;
         if (currentPort) {
           setPort(parseInt(currentPort, 10));
         } else {
-          // Production Electron: default to 5173
-          setPort(5173);
+          // Production Electron: default to WEB_PORT
+          setPort(WEB_PORT);
         }
       } else {
         // Browser: use HTTP API
@@ -828,13 +829,21 @@ export default function EntryPage() {
   // =========================================================================
 
   return (
-    <div class="flex flex-col h-screen overflow-hidden bg-gray-50/50 dark:bg-slate-950 font-sans text-gray-900 dark:text-gray-100 electron-safe-top">
-      {/* Language switcher for remote login page (non-host mode) */}
-      <Show when={!isHost()}>
-        <div class="absolute top-4 right-4 z-20" style={{ top: "calc(1rem + var(--electron-title-bar-height, 0px))" }}>
+    <div class="flex flex-col h-screen overflow-hidden bg-gray-50/50 dark:bg-slate-950 font-sans text-gray-900 dark:text-gray-100">
+      {/* Unified Titlebar */}
+      <div
+        class="w-full flex-shrink-0 flex items-center px-2 border-b border-gray-200 dark:border-slate-800 bg-gray-50/50 dark:bg-slate-950 electron-drag-region electron-titlebar-pad-left electron-titlebar-pad-right"
+        style={{ height: "var(--electron-title-bar-height, 40px)", "min-height": "var(--electron-title-bar-height, 40px)" }}
+      >
+        <div class="flex items-center gap-2 electron-no-drag flex-shrink-0">
+          <img src={`${import.meta.env.BASE_URL}assets/logo.png`} alt="CodeMux" class="w-5 h-5 rounded" />
+          <span class="text-[13px] font-semibold text-gray-700 dark:text-gray-300 hidden sm:inline">CodeMux</span>
+        </div>
+        <div class="flex-1" />
+        <div class="electron-no-drag">
           <LanguageSwitcher />
         </div>
-      </Show>
+      </div>
 
       {/* Loading state */}
       <Show when={checking()}>
@@ -990,18 +999,6 @@ export default function EntryPage() {
       {/* Host mode (Electron): Show remote access config + enter chat button */}
       <Show when={!checking() && isHost()}>
         <div class="flex-1 overflow-y-auto">
-          {/* Header */}
-          <header class="sticky top-0 z-10 backdrop-blur-md bg-white/70 dark:bg-slate-900/70 border-b border-gray-200 dark:border-slate-800 px-4 h-14 flex items-center justify-between">
-            <div class="flex items-center gap-2">
-              <h1 class="font-semibold text-lg">{t().remote.title}</h1>
-            </div>
-            <div class="flex items-center gap-3">
-              <LanguageSwitcher />
-              <div class="text-xs font-medium px-2 py-1 rounded bg-gray-100 dark:bg-slate-800 text-gray-500 dark:text-gray-400">
-                CodeMux
-              </div>
-            </div>
-          </header>
 
           {/* Main Content */}
           <main class="p-4 md:p-6">
@@ -1015,45 +1012,45 @@ export default function EntryPage() {
                 </div>
               </div>
 
-              {/* Vertical Tab Layout */}
-              <div class="flex gap-0 bg-white dark:bg-slate-900 rounded-xl border border-gray-200 dark:border-slate-800 shadow-xs overflow-hidden min-h-[520px]">
-                {/* Left: Tab Navigation */}
-                <nav class="w-44 shrink-0 border-r border-gray-200 dark:border-slate-800 bg-gray-50/50 dark:bg-slate-950/50 p-3 flex flex-col gap-1">
+              {/* Vertical Tab Layout (horizontal on mobile) */}
+              <div class="flex flex-col md:flex-row gap-0 bg-white dark:bg-slate-900 rounded-xl border border-gray-200 dark:border-slate-800 shadow-xs overflow-hidden md:min-h-[520px]">
+                {/* Left: Tab Navigation (top on mobile) */}
+                <nav class="w-full md:w-auto md:min-w-44 md:max-w-56 shrink-0 border-b md:border-b-0 md:border-r border-gray-200 dark:border-slate-800 bg-gray-50/50 dark:bg-slate-950/50 p-2 md:p-3 flex md:flex-col gap-1 overflow-x-auto">
                   <Show when={isElectron()}>
                     <button
                       onClick={() => setActiveTab("channels")}
-                      class={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all text-left ${
+                      class={`flex items-center gap-2 md:gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all text-left whitespace-nowrap ${
                         activeTab() === "channels"
                           ? "bg-white dark:bg-slate-800 text-blue-600 dark:text-blue-400 shadow-xs"
                           : "text-gray-600 dark:text-gray-400 hover:bg-white/60 dark:hover:bg-slate-800/60 hover:text-gray-900 dark:hover:text-gray-200"
                       }`}
                     >
-                      <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
-                      {t().channel.channels}
+                      <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="shrink-0"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+                      <span class="hidden md:inline">{t().channel.channels}</span>
                     </button>
                   </Show>
                   <button
                     onClick={() => setActiveTab("webApp")}
-                    class={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all text-left ${
+                    class={`flex items-center gap-2 md:gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all text-left whitespace-nowrap ${
                       activeTab() === "webApp"
                         ? "bg-white dark:bg-slate-800 text-blue-600 dark:text-blue-400 shadow-xs"
                         : "text-gray-600 dark:text-gray-400 hover:bg-white/60 dark:hover:bg-slate-800/60 hover:text-gray-900 dark:hover:text-gray-200"
                     }`}
                   >
-                    <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18"/><path d="M9 21V9"/></svg>
-                    {t().remote.webApp}
+                    <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="shrink-0"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18"/><path d="M9 21V9"/></svg>
+                    <span class="hidden md:inline">{t().remote.webApp}</span>
                   </button>
                   <Show when={isElectron()}>
                     <button
                       onClick={() => setActiveTab("publicAccess")}
-                      class={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all text-left relative ${
+                      class={`flex items-center gap-2 md:gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all text-left relative whitespace-nowrap ${
                         activeTab() === "publicAccess"
                           ? "bg-white dark:bg-slate-800 text-blue-600 dark:text-blue-400 shadow-xs"
                           : "text-gray-600 dark:text-gray-400 hover:bg-white/60 dark:hover:bg-slate-800/60 hover:text-gray-900 dark:hover:text-gray-200"
                       }`}
                     >
-                      <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><path d="M2 12h20"/></svg>
-                      {t().remote.publicAccessTab}
+                      <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="shrink-0"><circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><path d="M2 12h20"/></svg>
+                      <span class="hidden md:inline">{t().remote.publicAccessTab}</span>
                       <Show when={tunnelInfo().status === "running"}>
                         <span class="absolute right-2.5 top-1/2 -translate-y-1/2 inline-flex h-1.5 w-1.5 rounded-full bg-green-500"></span>
                       </Show>
@@ -1064,8 +1061,8 @@ export default function EntryPage() {
                   </Show>
                 </nav>
 
-                {/* Right: Tab Content */}
-                <div class="flex-1 p-5 overflow-y-auto">
+                {/* Right: Tab Content (bottom on mobile) */}
+                <div class="flex-1 p-3 md:p-5 overflow-y-auto">
                   {/* Web App Tab */}
                   <Show when={activeTab() === "webApp"}>
                     <div class="space-y-5">

@@ -170,7 +170,7 @@ SolidJS UI
 
 | Service | Port | Protocol |
 |---------|------|----------|
-| Vite Dev Server | 5173 | HTTP |
+| Vite Dev Server | 8233 | HTTP |
 | Gateway WebSocket | 4200 | WS |
 | OpenCode Adapter | 4096 | HTTP + SSE |
 | Auth API Server | 4097 | HTTP (internal) |

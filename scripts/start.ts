@@ -2,6 +2,7 @@ import { spawn, spawnSync } from "child_process";
 import * as fs from "fs";
 import * as path from "path";
 import { colors, commandExists, confirm } from "./utils";
+import { WEB_STANDALONE_PORT, OPENCODE_PORT } from "../shared/ports";
 
 const isWindows = process.platform === "win32";
 
@@ -111,7 +112,7 @@ async function main() {
   console.log("Starting OpenCode Server...");
   const opencodeProcess = spawn(
     "opencode",
-    ["serve", "--hostname", "0.0.0.0", "--port", "4096", "--cors"],
+    ["serve", "--hostname", "0.0.0.0", "--port", String(OPENCODE_PORT), "--cors"],
     {
       stdio: "inherit",
       shell: isWindows,
@@ -124,18 +125,18 @@ async function main() {
 
   // 2. Start Vite dev server
   console.log("Starting Web UI...");
-  const viteProcess = spawn("vite", ["--host", "--port", "5174"], {
+  const viteProcess = spawn("vite", ["--host", "--port", String(WEB_STANDALONE_PORT)], {
     stdio: "inherit",
     shell: isWindows,
     env: {
       ...process.env,
-      VITE_OPENCODE_API: "http://localhost:4096",
+      VITE_OPENCODE_API: `http://localhost:${OPENCODE_PORT}`,
     },
   });
 
   console.log("\n" + "=".repeat(60));
   console.log("All services started!");
-  console.log("Web UI: http://localhost:5174");
+  console.log(`Web UI: http://localhost:${WEB_STANDALONE_PORT}`);
   console.log(`Use code: ${authCode}`);
   console.log("=".repeat(60) + "\n");
 

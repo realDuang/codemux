@@ -1121,9 +1121,9 @@ export class ClaudeCodeAdapter extends EngineAdapter {
    */
   private createCanUseTool(sessionId: string): CanUseTool {
     return async (
-      _toolName: string,
+      toolName: string,
       input: Record<string, unknown>,
-      _options: {
+      options: {
         signal: AbortSignal;
         suggestions?: PermissionUpdate[];
         blockedPath?: string;
@@ -1132,11 +1132,94 @@ export class ClaudeCodeAdapter extends EngineAdapter {
         agentID?: string;
       },
     ): Promise<PermissionResult> => {
-      // --- Auto-approve all tools ---
-      // Permissions are controlled via allowedTools + this callback.
-      // We auto-allow everything to avoid blocking the agent workflow.
+      // --- ExitPlanMode: intercept and ask user for confirmation ---
+      if (toolName === "ExitPlanMode") {
+        return this.handleExitPlanMode(sessionId, input, options);
+      }
+
+      // --- All other tools: auto-approve ---
       return { behavior: "allow", updatedInput: input };
     };
+  }
+
+  /**
+   * Intercept ExitPlanMode: the plan content has already been streamed as text
+   * parts to the frontend. We convert this tool call into a question asking the
+   * user to approve or reject the plan before execution continues.
+   *
+   * Flow: canUseTool blocks → emit question.asked → frontend shows confirm UI
+   *       → user replies → resolve promise → SDK gets allow/deny
+   */
+  private handleExitPlanMode(
+    sessionId: string,
+    input: Record<string, unknown>,
+    options: { signal: AbortSignal; toolUseID: string },
+  ): Promise<PermissionResult> {
+    const questionId = timeId("q");
+
+    const allowedPrompts = input.allowedPrompts as
+      | Array<{ tool: string; prompt: string }>
+      | undefined;
+
+    const question: UnifiedQuestion = {
+      id: questionId,
+      sessionId,
+      engineType: this.engineType,
+      toolCallId: options.toolUseID,
+      questions: [
+        {
+          question: "The plan is ready for your review. Do you approve it?",
+          header: "Plan Review",
+          options: [
+            { label: "Approve", description: "Approve the plan and start implementation" },
+            { label: "Reject", description: "Reject the plan and continue planning" },
+          ],
+          multiple: false,
+          custom: true, // allow user to type custom feedback
+        },
+      ],
+      metadata: allowedPrompts ? { allowedPrompts } : undefined,
+    };
+
+    claudeLog.info(
+      `[Claude][${sessionId}] ExitPlanMode intercepted: questionId=${questionId}`,
+    );
+
+    return new Promise<PermissionResult>((resolve) => {
+      this.pendingQuestions.set(questionId, {
+        resolve: (answer: string) => {
+          const approved =
+            answer.toLowerCase().includes("approve") ||
+            answer === "0"; // first option index
+          if (approved) {
+            resolve({ behavior: "allow", updatedInput: input });
+          } else {
+            resolve({
+              behavior: "deny",
+              message: answer || "Plan rejected by user",
+            });
+          }
+        },
+        question,
+      });
+
+      // Abort handling (same pattern as handleAskUserQuestion)
+      if (options.signal) {
+        const onAbort = () => {
+          if (this.pendingQuestions.has(questionId)) {
+            this.pendingQuestions.delete(questionId);
+            resolve({ behavior: "deny", message: "Aborted" });
+          }
+        };
+        if (options.signal.aborted) {
+          onAbort();
+          return;
+        }
+        options.signal.addEventListener("abort", onAbort, { once: true });
+      }
+
+      this.emit("question.asked", { question });
+    });
   }
 
   /**

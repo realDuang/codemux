@@ -1,12 +1,13 @@
 import { spawn, spawnSync } from "child_process";
 import * as path from "path";
 import { colors } from "./utils";
+import { OPENCODE_PORT, AUTH_API_PORT, GATEWAY_PORT } from "../shared/ports";
 
 const isWindows = process.platform === "win32";
 const projectRoot = path.resolve(import.meta.dirname, "..");
 
 // Ports used by codemux dev services (OpenCode, Auth API, Gateway WS)
-const SERVICE_PORTS = [4096, 4097, 4200];
+const SERVICE_PORTS = [OPENCODE_PORT, AUTH_API_PORT, GATEWAY_PORT];
 
 function sleepSync(ms: number): void {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);

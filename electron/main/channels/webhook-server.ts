@@ -6,6 +6,7 @@
 
 import http from "http";
 import { channelLog } from "../services/logger";
+import { WEBHOOK_PORT } from "../../../shared/ports";
 
 /** Parsed webhook request */
 export interface WebhookRequest {
@@ -42,7 +43,7 @@ export class WebhookServer {
   private routes = new Map<string, WebhookHandler>();
   private port: number;
 
-  constructor(port = 4098) {
+  constructor(port = WEBHOOK_PORT) {
     this.port = port;
   }
 

@@ -11,6 +11,7 @@ import type { BaseGroupBinding } from "../base-session-mapper";
 // Re-export shared streaming types for convenience
 export type { StreamingSession } from "../streaming/streaming-types";
 export { createStreamingSession } from "../streaming/streaming-types";
+import { GATEWAY_PORT } from "../../../../shared/ports";
 
 // --- Telegram Configuration ---
 
@@ -38,7 +39,7 @@ export const DEFAULT_TELEGRAM_CONFIG: TelegramConfig = {
   autoApprovePermissions: true,
   streamingThrottleMs: 1500,
   useMessageDraft: true,
-  gatewayUrl: "ws://127.0.0.1:4200",
+  gatewayUrl: `ws://127.0.0.1:${GATEWAY_PORT}`,
 };
 
 /** TTL for temporary P2P sessions (2 hours in ms) */

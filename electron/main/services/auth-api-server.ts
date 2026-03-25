@@ -3,6 +3,7 @@ import { deviceStore } from "./device-store";
 import { authLog, getLogFilePath, getFileLogLevel, setFileLogLevel } from "./logger";
 import { sendJson } from "../../../shared/http-utils";
 import { handleAuthRoutes, handleLogRoutes } from "../../../shared/auth-route-handlers";
+import { AUTH_API_PORT } from "../../../shared/ports";
 
 // ============================================================================
 // Internal Auth API Server
@@ -10,8 +11,6 @@ import { handleAuthRoutes, handleLogRoutes } from "../../../shared/auth-route-ha
 // In development, Vite proxies requests here. In production, Electron handles
 // everything via IPC, so this server is only used in development.
 // ============================================================================
-
-const AUTH_API_PORT = 4097; // Internal port, not exposed externally
 
 class AuthApiServer {
   private server: http.Server | null = null;

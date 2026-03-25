@@ -186,7 +186,7 @@ bun run dev
 
 | Method | Setup | Best For |
 |--------|-------|----------|
-| **LAN Browser** | Open `http://<your-ip>:5173`, enter 6-digit code or scan QR | Quick access from another device on the same network |
+| **LAN Browser** | Open `http://<your-ip>:8233`, enter 6-digit code or scan QR | Quick access from another device on the same network |
 | **Public Internet** | Toggle "Public Access" → share `*.trycloudflare.com` URL | Access from anywhere, no port forwarding needed |
 | **IM Bot** | Configure bot credentials in Settings → Channels | Interact from Feishu, DingTalk, Telegram, WeCom, or Teams |
 

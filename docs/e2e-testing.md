@@ -11,7 +11,7 @@ Complete methodology for autonomous end-to-end testing of the app through Halo's
 env -u ELECTRON_RUN_AS_NODE npx electron-vite dev
 ```
 
-Run with `run_in_background: true`. Wait for all services (5173, 4200, 4096, 4097).
+Run with `run_in_background: true`. Wait for all services (8233, 4200, 4096, 4097).
 
 ## browser_evaluate: MUST Pass args
 

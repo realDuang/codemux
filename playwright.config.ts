@@ -13,7 +13,7 @@ export default defineConfig({
   globalTeardown: "./tests/e2e/global-teardown.ts",
 
   use: {
-    baseURL: process.env.TEST_BASE_URL || "http://127.0.0.1:5173",
+    baseURL: process.env.TEST_BASE_URL || "http://127.0.0.1:8233",
     trace: "on-first-retry",
     screenshot: "only-on-failure",
   },

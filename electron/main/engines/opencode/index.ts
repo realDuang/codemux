@@ -50,6 +50,7 @@ import type {
   EngineCommand,
   CommandInvokeResult,
 } from "../../../../src/types/unified";
+import { OPENCODE_PORT } from "../../../../shared/ports";
 
 /**
  * OpenCode Engine Adapter
@@ -115,7 +116,7 @@ export class OpenCodeAdapter extends EngineAdapter {
 
   constructor(options?: { port?: number }) {
     super();
-    this.port = options?.port ?? 4096;
+    this.port = options?.port ?? OPENCODE_PORT;
   }
 
   private get baseUrl(): string {

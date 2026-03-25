@@ -5,6 +5,7 @@
 // ============================================================================
 
 import WebSocket from "ws";
+import { GATEWAY_PORT } from "../../../shared/ports";
 import {
   GatewayRequestType,
   GatewayNotificationType,
@@ -79,7 +80,7 @@ export class GatewayWsClient {
   private wsUrl: string;
   private listeners = new Map<string, Set<EventHandler>>();
 
-  constructor(url: string = "ws://127.0.0.1:4200") {
+  constructor(url: string = `ws://127.0.0.1:${GATEWAY_PORT}`) {
     this.wsUrl = url;
   }
 

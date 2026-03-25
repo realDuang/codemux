@@ -41,13 +41,14 @@ import { TeamsAdapter } from "./channels/teams/teams-adapter";
 import { updateManager } from "./services/update-manager";
 import { trayManager } from "./services/tray-manager";
 import { ensureDefaultWorkspace } from "./services/default-workspace";
+import { GATEWAY_PORT, OPENCODE_PORT, WEBHOOK_PORT, WEB_PORT } from "../../shared/ports";
 
 // --- Gateway singleton instances ---
 const engineManager = new EngineManager();
 const gatewayServer = new GatewayServer(engineManager);
 
 // Register engine adapters
-const openCodeAdapter = new OpenCodeAdapter({ port: 4096 });
+const openCodeAdapter = new OpenCodeAdapter({ port: OPENCODE_PORT });
 const copilotAdapter = new CopilotSdkAdapter();
 const claudeAdapter = new ClaudeCodeAdapter();
 engineManager.registerAdapter(openCodeAdapter);
@@ -59,7 +60,7 @@ export { engineManager, gatewayServer };
 
 // --- Channel Manager ---
 const channelManager = new ChannelManager();
-const webhookServer = new WebhookServer(4098);
+const webhookServer = new WebhookServer(WEBHOOK_PORT);
 channelManager.setWebhookServer(webhookServer);
 
 // Register all channel adapters
@@ -72,8 +73,7 @@ channelManager.registerAdapter(new TeamsAdapter());
 // Export for IPC handlers
 export { channelManager };
 
-// Gateway WS port
-const GATEWAY_PORT = 4200;
+// Gateway WS port — imported from shared/ports
 
 // Startup readiness tracking
 let startupReady = false;
@@ -127,7 +127,7 @@ if (!gotTheLock) {
       // In production mode, start the production HTTP server
       // This is required for Cloudflare Tunnel to work
       try {
-        const port = await productionServer.start(5173);
+        const port = await productionServer.start(WEB_PORT);
         mainLog.info(`Production server started on port ${port}`);
       } catch (err) {
         mainLog.error("Failed to start Production server:", err);
@@ -202,7 +202,7 @@ if (!gotTheLock) {
         // In production, gateway is attached to the production HTTP server on /ws path.
         // In dev, gateway runs on a standalone port.
         const gatewayUrl = app.isPackaged && productionServer.isRunning()
-          ? "ws://127.0.0.1:5173/ws"
+          ? `ws://127.0.0.1:${WEB_PORT}/ws`
           : `ws://127.0.0.1:${GATEWAY_PORT}`;
         await channelManager.initFromConfig({ gatewayUrl });
       } catch (err) {

@@ -12,9 +12,10 @@ import { spawn, type ChildProcess } from "child_process";
 import * as fs from "fs";
 import * as path from "path";
 import { colors } from "./utils";
+import { WEB_STANDALONE_PORT, OPENCODE_PORT } from "../shared/ports";
 
 const isWindows = process.platform === "win32";
-const BASE_URL = "http://localhost:5174";
+const BASE_URL = `http://localhost:${WEB_STANDALONE_PORT}`;
 
 // Store auth token and access code for tests that need them
 let authToken: string = "";
@@ -193,13 +194,13 @@ async function main() {
 
     // Start Vite server
     log("> Starting Vite dev server...", "cyan");
-    viteProcess = spawn("vite", ["--host", "--port", "5174"], {
+    viteProcess = spawn("vite", ["--host", "--port", String(WEB_STANDALONE_PORT)], {
       stdio: ["ignore", "pipe", "pipe"],
       shell: isWindows,
       env: {
         ...process.env,
         // Don't need OpenCode API for these tests
-        VITE_OPENCODE_API: "http://localhost:4096",
+        VITE_OPENCODE_API: `http://localhost:${OPENCODE_PORT}`,
       },
     });
 

@@ -5,6 +5,7 @@
 // ============================================================================
 
 import type { BaseGroupBinding } from "../base-session-mapper";
+import { GATEWAY_PORT } from "../../../../shared/ports";
 
 // --- WeCom Configuration ---
 
@@ -32,7 +33,7 @@ export const DEFAULT_WECOM_CONFIG: WeComConfig = {
   callbackToken: "",
   callbackEncodingAESKey: "",
   autoApprovePermissions: true,
-  gatewayUrl: "ws://127.0.0.1:4200",
+  gatewayUrl: `ws://127.0.0.1:${GATEWAY_PORT}`,
 };
 
 /** TTL for temporary P2P sessions (2 hours in ms) */

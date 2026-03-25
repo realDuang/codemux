@@ -6,6 +6,7 @@
 
 import type { EngineType, UnifiedProject, UnifiedSession } from "../../../../src/types/unified";
 import type { StreamingSession } from "../streaming/streaming-types";
+import { GATEWAY_PORT } from "../../../../shared/ports";
 
 // Re-export shared types for backward compatibility
 export type { StreamingSession } from "../streaming/streaming-types";
@@ -31,7 +32,7 @@ export const DEFAULT_FEISHU_CONFIG: FeishuConfig = {
   appSecret: "",
   autoApprovePermissions: true,
   streamingThrottleMs: 1500,
-  gatewayUrl: "ws://127.0.0.1:4200",
+  gatewayUrl: `ws://127.0.0.1:${GATEWAY_PORT}`,
 };
 
 /** TTL for temporary P2P sessions (2 hours in ms) */

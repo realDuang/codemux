@@ -273,7 +273,55 @@ export class ClaudeCodeAdapter extends EngineAdapter {
 
     claudeLog.info("Stopping Claude Code adapter...");
 
-    // Close all V2 sessions
+    // Gracefully interrupt all sessions that have active requests first.
+    // interrupt() tells the CC CLI subprocess to stop the current turn cleanly,
+    // preserving server-side session state. Without this, session.close() kills
+    // the process mid-stream, corrupting the CC session and causing context loss
+    // on next resume.
+    //
+    // NOTE: We do NOT drain the stream here (unlike cancelMessage). Drain exists
+    // so the *next* send()+stream() cycle starts clean, but stop() is terminal —
+    // there is no next cycle. More importantly, draining during Electron's
+    // will-quit flow triggers NAPI crashes because the native CC SDK module is
+    // being torn down while we're still iterating its async iterator.
+    const interruptPromises: Promise<void>[] = [];
+    for (const [sessionId, info] of this.v2Sessions) {
+      // Only need to interrupt sessions with active requests
+      if (!this.activeAbortControllers.has(sessionId)) continue;
+
+      const buffer = this.messageBuffers.get(sessionId);
+      if (buffer) buffer.error = "Cancelled";
+
+      const controller = this.activeAbortControllers.get(sessionId);
+      if (controller) {
+        controller.abort();
+        this.activeAbortControllers.delete(sessionId);
+      }
+
+      interruptPromises.push(
+        (async () => {
+          try {
+            const query = (info.session as any).query;
+            if (query && typeof query.interrupt === "function") {
+              await query.interrupt();
+              claudeLog.info(`[Claude][${sessionId}] V2 session interrupted during stop`);
+            }
+          } catch (e) {
+            claudeLog.warn(`[Claude][${sessionId}] Error interrupting session during stop:`, e);
+          }
+          // Finalize the buffer so the message is properly completed
+          this.finalizeBuffer(sessionId, true);
+        })()
+      );
+    }
+
+    // Wait for all interrupts to settle (with a hard cap so stop() never hangs)
+    if (interruptPromises.length > 0) {
+      const hardTimeout = new Promise<void>((resolve) => setTimeout(resolve, 3000));
+      await Promise.race([Promise.allSettled(interruptPromises), hardTimeout]);
+    }
+
+    // Now close all V2 sessions cleanly
     for (const [sessionId, info] of this.v2Sessions) {
       try {
         info.session.close();
@@ -283,7 +331,7 @@ export class ClaudeCodeAdapter extends EngineAdapter {
     }
     this.v2Sessions.clear();
 
-    // Abort all active requests
+    // Abort any remaining active requests (sessions without V2 info)
     for (const [, controller] of this.activeAbortControllers) {
       controller.abort();
     }

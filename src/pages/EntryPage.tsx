@@ -6,6 +6,7 @@ import { LanguageSwitcher } from "../components/LanguageSwitcher";
 import { FeishuConfigModal } from "../components/FeishuConfigModal";
 import { ChannelConfigModal } from "../components/ChannelConfigModal";
 import { logger } from "../lib/logger";
+import { WEB_PORT, WEB_STANDALONE_PORT } from "../../shared/ports";
 import { isElectron } from "../lib/platform";
 import { systemAPI, tunnelAPI, channelAPI, type ChannelInfo, type TunnelInfo, type TunnelConfig } from "../lib/electron-api";
 import { getSetting, saveSetting } from "../lib/settings";
@@ -45,7 +46,7 @@ export default function EntryPage() {
   const isNamedTunnel = () => !!namedTunnelHostname().trim();
   const [localIp, setLocalIp] = createSignal("127.0.0.1");
   const [accessCode, setAccessCode] = createSignal("......");
-  const [port, setPort] = createSignal(5174);
+  const [port, setPort] = createSignal(WEB_STANDALONE_PORT);
   const [showPassword, setShowPassword] = createSignal(false);
   const [activeQrTab, setActiveQrTab] = createSignal<"lan" | "public">("lan");
   const [enteringChat, setEnteringChat] = createSignal(false);
@@ -183,13 +184,13 @@ export default function EntryPage() {
         if (localIpResult) setLocalIp(localIpResult);
 
         // For port, use the current window's port in dev mode
-        // In production (file:// protocol), use default port 5173
+        // In production (file:// protocol), use default port WEB_PORT
         const currentPort = window.location.port;
         if (currentPort) {
           setPort(parseInt(currentPort, 10));
         } else {
-          // Production Electron: default to 5173
-          setPort(5173);
+          // Production Electron: default to WEB_PORT
+          setPort(WEB_PORT);
         }
       } else {
         // Browser: use HTTP API

@@ -1,5 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "http";
 import os from "os";
+import { WEB_PORT, WEB_STANDALONE_PORT } from "./ports";
 
 // =============================================================================
 // Common HTTP utilities shared across Vite plugins, Electron servers, and tests
@@ -46,16 +47,16 @@ export function getLocalIp(osModule?: typeof import("os")): string {
 // =============================================================================
 
 const ALLOWED_ORIGINS = new Set([
-  "http://localhost:5173",
-  "http://localhost:5174",
-  "http://127.0.0.1:5173",
-  "http://127.0.0.1:5174",
+  `http://localhost:${WEB_PORT}`,
+  `http://localhost:${WEB_STANDALONE_PORT}`,
+  `http://127.0.0.1:${WEB_PORT}`,
+  `http://127.0.0.1:${WEB_STANDALONE_PORT}`,
 ]);
 
 function getCorsOrigin(req: IncomingMessage): string {
   const origin = req.headers.origin;
   if (origin && ALLOWED_ORIGINS.has(origin)) return origin;
-  return "http://localhost:5173";
+  return `http://localhost:${WEB_PORT}`;
 }
 
 /**

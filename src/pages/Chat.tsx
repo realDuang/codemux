@@ -297,17 +297,20 @@ export default function Chat() {
     }
   });
 
-  // Fetch available slash commands when the engine type changes
+  // Fetch available slash commands when the engine type or session changes
   createEffect(() => {
     const engineType = currentEngineType();
+    const sid = sessionStore.current;
     const engineInfo = configStore.engines.find(e => e.type === engineType);
     const supportsCommands = engineInfo?.capabilities?.slashCommands ?? false;
     if (!supportsCommands) {
       setAvailableCommands([]);
       return;
     }
-    // Fetch commands from the gateway (fire-and-forget)
-    gateway.listCommands(engineType).then(
+    // Fetch commands from the gateway — pass sessionId so the adapter can
+    // look up the active engine session (needed for Copilot/Claude to fetch
+    // commands from the correct session).
+    gateway.listCommands(engineType, sid ?? undefined).then(
       (cmds) => {
         // Guard against stale responses if engine type changed while fetching
         if (currentEngineType() === engineType) {

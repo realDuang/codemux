@@ -1339,11 +1339,26 @@ export class ClaudeCodeAdapter extends EngineAdapter {
   // Slash Commands
   // ==========================================================================
 
-  override async listCommands(_sessionId?: string): Promise<EngineCommand[]> {
+  override async listCommands(sessionId?: string): Promise<EngineCommand[]> {
+    // If we already have commands from the init message (slash_commands + skills), use them.
     if (this.availableCommands.length > 0) return this.availableCommands;
+
+    // If a session is active and has received its init message, try to refresh
+    // by looking up the cached commands. The init message populates
+    // this.availableCommands, so if it's empty, the session hasn't initialized yet.
+    // In that case, return the well-known list as a fallback.
+    if (sessionId) {
+      // Check if the V2 session exists and has been initialized
+      const v2Info = this.v2Sessions.get(sessionId);
+      if (v2Info && this.availableCommands.length > 0) {
+        return this.availableCommands;
+      }
+    }
+
     // Fallback: well-known Claude Code commands with descriptions.
     // The SDK's SDKSystemMessage.slash_commands is string[] (names only),
-    // so we maintain this static list to provide descriptions.
+    // so we maintain this static list to provide descriptions before the
+    // init message arrives.
     return this.getWellKnownCommands();
   }
 
@@ -1662,6 +1677,12 @@ export class ClaudeCodeAdapter extends EngineAdapter {
         this.handleSystemMessage(msg, sessionId, buffer);
         break;
 
+      // local_command_output — slash commands like /help, /cost produce this
+      // message type with the command's textual output.
+      // Note: the SDK uses a flat { type, subtype } structure, but the stream
+      // yields this as a top-level type for local command results.
+      // We check both the top-level type AND the subtype in handleSystemMessage.
+
       case "assistant":
         this.handleAssistantMessage(msg, sessionId, buffer);
         break;
@@ -1752,10 +1773,35 @@ export class ClaudeCodeAdapter extends EngineAdapter {
             argumentHint: known?.argumentHint,
           };
         });
+
+        // Also extract user-installed skills (separate array in init message).
+        // Skills are custom extensions loaded from project/personal directories.
+        if (Array.isArray(msg.skills)) {
+          for (const skillName of msg.skills) {
+            // Avoid duplicates (in case a skill name matches a built-in command)
+            if (!this.availableCommands.some(c => c.name === skillName)) {
+              this.availableCommands.push({
+                name: skillName,
+                description: "",
+                source: "skill",
+              });
+            }
+          }
+        }
+
         this.emit("commands.changed", {
           engineType: this.engineType,
           commands: this.availableCommands,
         });
+      }
+    } else if (msg.subtype === "local_command_output") {
+      // Slash command output (e.g., /help, /cost, /compact).
+      // The SDK emits this as { type: "system", subtype: "local_command_output", content: "..." }.
+      // Render the output as a text part in the current assistant message.
+      const output = msg.content ?? "";
+      if (output) {
+        claudeLog.info(`[Claude][${sessionId}] local_command_output: ${output.slice(0, 100)}...`);
+        this.appendText(sessionId, buffer, output);
       }
     } else if (msg.subtype === "status") {
       // Handle status changes (e.g., compacting)

@@ -21,6 +21,8 @@ import type {
   MessagePromptContent,
   PermissionReply,
   ImportableSession,
+  EngineCommand,
+  CommandInvokeResult,
 } from "../../../src/types/unified";
 
 /**
@@ -109,6 +111,12 @@ export interface EngineAdapterEvents {
   "message.queued.consumed": (data: {
     sessionId: string;
     messageId: string;
+  }) => void;
+
+  /** Available slash commands / skills changed (e.g. after session init, Copilot skills reload) */
+  "commands.changed": (data: {
+    engineType: EngineType;
+    commands: EngineCommand[];
   }) => void;
 }
 
@@ -275,4 +283,31 @@ export abstract class EngineAdapter extends EventEmitter {
 
   /** List projects (directories with engine bindings) */
   abstract listProjects(): Promise<UnifiedProject[]>;
+
+  // --- Slash Commands / Skills ---
+
+  /**
+   * List available slash commands for this engine.
+   * Default: returns empty array (engine doesn't support commands).
+   * @param sessionId Optional session ID for session-scoped command lists
+   */
+  async listCommands(_sessionId?: string): Promise<EngineCommand[]> {
+    return [];
+  }
+
+  /**
+   * Invoke a slash command. Returns a result indicating whether the command
+   * was handled natively or should fall through to sendMessage.
+   *
+   * Default: returns { handledAsCommand: false }, causing the caller to
+   * fall back to sending "/commandName args" as a regular message.
+   */
+  async invokeCommand(
+    _sessionId: string,
+    _commandName: string,
+    _args: string,
+    _options?: { mode?: string; modelId?: string; directory?: string },
+  ): Promise<CommandInvokeResult> {
+    return { handledAsCommand: false };
+  }
 }

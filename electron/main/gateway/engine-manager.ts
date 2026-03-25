@@ -26,6 +26,8 @@ import type {
   ImportableSession,
   SessionImportResult,
   SessionImportProgress,
+  EngineCommand,
+  CommandInvokeResult,
 } from "../../../src/types/unified";
 
 // --- Helpers ---
@@ -101,6 +103,9 @@ export class EngineManager extends EventEmitter {
   /** Timer for debounced step flush (2s interval) */
   private stepFlushTimer: ReturnType<typeof setTimeout> | null = null;
   private static readonly STEP_FLUSH_INTERVAL_MS = 2000;
+
+  /** Track which sessions have active sendMessage calls (for idle detection) */
+  private activeSessions = new Set<string>();
 
   // --- Adapter Registration ---
 
@@ -326,6 +331,7 @@ export class EngineManager extends EventEmitter {
       "status.changed",
       "message.queued",
       "message.queued.consumed",
+      "commands.changed",
     ];
 
     for (const event of simpleEvents) {
@@ -778,6 +784,8 @@ export class EngineManager extends EventEmitter {
     content: MessagePromptContent[],
     options?: { mode?: string; modelId?: string },
   ): Promise<UnifiedMessage> {
+    this.activeSessions.add(sessionId);
+    try {
     const conv = conversationStore.get(sessionId);
     if (!conv) throw new Error(`Conversation not found: ${sessionId}`);
 
@@ -822,6 +830,14 @@ export class EngineManager extends EventEmitter {
     }
 
     return result;
+    } finally {
+      this.activeSessions.delete(sessionId);
+    }
+  }
+
+  /** Check if a session is idle (not actively processing a message) */
+  isSessionIdle(sessionId: string): boolean {
+    return !this.activeSessions.has(sessionId);
   }
 
   async cancelMessage(sessionId: string): Promise<void> {
@@ -905,6 +921,65 @@ export class EngineManager extends EventEmitter {
 
   async getMessageSteps(sessionId: string, messageId: string): Promise<UnifiedPart[]> {
     return await conversationStore.getSteps(sessionId, messageId);
+  }
+
+  // --- Slash Commands ---
+
+  async listCommands(engineType: EngineType, sessionId?: string): Promise<EngineCommand[]> {
+    const adapter = this.adapters.get(engineType);
+    if (!adapter) return [];
+
+    if (sessionId) {
+      const conv = conversationStore.get(sessionId);
+      return adapter.listCommands(conv?.engineSessionId ?? undefined);
+    }
+
+    return adapter.listCommands();
+  }
+
+  async invokeCommand(
+    sessionId: string,
+    commandName: string,
+    args: string,
+    options?: { mode?: string; modelId?: string },
+  ): Promise<CommandInvokeResult> {
+    const conv = conversationStore.get(sessionId);
+    if (!conv) throw new Error(`Conversation not found: ${sessionId}`);
+
+    const adapter = this.getAdapterForSession(sessionId);
+
+    // Lazy engine session creation (same pattern as sendMessage)
+    let engineSessionId = conv.engineSessionId;
+    if (!engineSessionId || !adapter.hasSession(engineSessionId)) {
+      const engineSession = await adapter.createSession(conv.directory, conv.engineMeta);
+      engineSessionId = engineSession.id;
+      conversationStore.setEngineSession(sessionId, engineSessionId, engineSession.engineMeta);
+    }
+    this.engineToConvMap.set(engineSessionId, sessionId);
+
+    // Persist user command message
+    const commandText = `/${commandName}${args ? ` ${args}` : ""}`;
+    this.applyTitleFallback(sessionId, [{ type: "text", text: commandText }]);
+    await this.persistUserMessage(sessionId, [{ type: "text", text: commandText }]);
+
+    const result = await adapter.invokeCommand(
+      engineSessionId,
+      commandName,
+      args,
+      { ...options, directory: conv.directory },
+    );
+
+    // If the adapter couldn't handle it, fall back to sendMessage
+    if (!result.handledAsCommand) {
+      const message = await adapter.sendMessage(
+        engineSessionId,
+        [{ type: "text", text: commandText }],
+        { ...options, directory: conv.directory },
+      );
+      return { handledAsCommand: false, message };
+    }
+
+    return result;
   }
 
   // --- Models ---

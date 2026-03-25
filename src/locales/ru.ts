@@ -229,6 +229,7 @@ export const ru: LocaleDict = {
     imageUnsupportedType: "Неподдерживаемый формат изображения",
     imageLimitReached: "Максимум 4 изображения на сообщение",
     removeImage: "Удалить изображение",
+    noCommandsFound: "Команды не найдены",
   },
 
   // Message Parts

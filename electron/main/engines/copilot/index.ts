@@ -38,6 +38,8 @@ import type {
   ToolPart,
   TextPart,
   PermissionOption,
+  EngineCommand,
+  CommandInvokeResult,
 } from "../../../../src/types/unified";
 
 import {
@@ -106,6 +108,7 @@ export class CopilotSdkAdapter extends EngineAdapter {
 
   private sessionTodos = new Map<string, Map<string, { id: string; title: string; status: string }>>();
   private allowedAlwaysKinds = new Set<string>();
+  private cachedCommands: EngineCommand[] = [];
 
   private messageBuffers = new Map<string, MessageBuffer>();
   private messageHistory = new Map<string, UnifiedMessage[]>();
@@ -246,6 +249,7 @@ export class CopilotSdkAdapter extends EngineAdapter {
       modelSwitchable: true,
       customModelInput: false,
       messageEnqueue: true,
+      slashCommands: true,
       availableModes: this.getModes(),
     };
   }
@@ -303,6 +307,12 @@ export class CopilotSdkAdapter extends EngineAdapter {
     };
 
     this.emit("session.created", { session });
+
+    // Fetch initial skills/commands for slash command support
+    this.fetchSkills(sdkSession).catch(err => {
+      copilotLog.warn(`Failed to fetch initial skills for session ${sessionId}:`, err);
+    });
+
     return session;
   }
 
@@ -680,6 +690,51 @@ export class CopilotSdkAdapter extends EngineAdapter {
   }
 
   async listProjects(): Promise<UnifiedProject[]> { return []; }
+
+  // --- Slash Commands / Skills ---
+
+  private async fetchSkills(session: CopilotSession): Promise<void> {
+    try {
+      const result = await session.rpc.skills.list();
+      const skills = (result as any)?.skills ?? (result as any) ?? [];
+      if (Array.isArray(skills)) {
+        this.cachedCommands = skills
+          .filter((s: any) => s.userInvocable !== false)
+          .map((s: any) => ({
+            name: s.name,
+            description: s.description ?? "",
+            source: s.source,
+            userInvocable: s.userInvocable,
+          }));
+        this.emit("commands.changed", {
+          engineType: this.engineType,
+          commands: this.cachedCommands,
+        });
+      }
+    } catch (err) {
+      copilotLog.warn("Failed to list skills:", err);
+    }
+  }
+
+  override async listCommands(_sessionId?: string): Promise<EngineCommand[]> {
+    return this.cachedCommands;
+  }
+
+  override async invokeCommand(
+    sessionId: string,
+    commandName: string,
+    args: string,
+    options?: { mode?: string; modelId?: string; directory?: string },
+  ): Promise<CommandInvokeResult> {
+    // Copilot CLI natively intercepts /skill messages
+    const commandText = `/${commandName}${args ? ` ${args}` : ""}`;
+    const message = await this.sendMessage(
+      sessionId,
+      [{ type: "text", text: commandText }],
+      options,
+    );
+    return { handledAsCommand: true, message };
+  }
 
   private setStatus(status: EngineStatus, error?: string): void {
     this.status = status;

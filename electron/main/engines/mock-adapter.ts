@@ -123,6 +123,7 @@ export class MockEngineAdapter extends EngineAdapter {
       modelSwitchable: true,
       customModelInput: false,
       messageEnqueue: false,
+      slashCommands: false,
       availableModes: this.getModes(),
     };
   }

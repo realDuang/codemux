@@ -127,6 +127,10 @@ All engines support image attachments via a unified pipeline:
 - Default engine resolution uses `getDefaultEngineType()` from `config.ts`, not hardcoded strings.
 - Example: Copilot's `sql` tool operating on the `todos` table is intercepted and converted to a synthetic `normalizedTool: "todo"` part by the adapter — the frontend sees the same todo format as OpenCode/Claude.
 
+## Git Policy
+
+**Do NOT run `git commit` or `git push` unless the user explicitly asks for it.**
+
 ## Development
 
 ```bash

@@ -823,21 +823,21 @@ export class ClaudeCodeAdapter extends EngineAdapter {
     credential: { type: "api-key"; value: string } | { type: "bearer"; value: string },
     baseUrlEnv?: string,
   ): Promise<boolean> {
-    try {
-      // Normalize base URL: strip trailing slashes and known path suffixes
-      let baseUrl = (baseUrlEnv || "https://api.anthropic.com").replace(/\/+$/, "");
-      const suffixes = ["/chat/completions", "/completions", "/responses", "/v1/chat"];
-      for (const suffix of suffixes) {
-        if (baseUrl.endsWith(suffix)) {
-          baseUrl = baseUrl.slice(0, -suffix.length);
-          break;
-        }
+    // Normalize base URL: strip trailing slashes and known path suffixes
+    let baseUrl = (baseUrlEnv || "https://api.anthropic.com").replace(/\/+$/, "");
+    const suffixes = ["/chat/completions", "/completions", "/responses", "/v1/chat"];
+    for (const suffix of suffixes) {
+      if (baseUrl.endsWith(suffix)) {
+        baseUrl = baseUrl.slice(0, -suffix.length);
+        break;
       }
-      if (!baseUrl.includes("/v1")) {
-        baseUrl = `${baseUrl}/v1`;
-      }
-      const modelsUrl = `${baseUrl}/models`;
+    }
+    if (!baseUrl.includes("/v1")) {
+      baseUrl = `${baseUrl}/v1`;
+    }
+    const modelsUrl = `${baseUrl}/models`;
 
+    try {
       // Build auth headers based on credential type and target host
       const isAnthropicNative = new URL(modelsUrl).hostname.endsWith("anthropic.com");
       let headers: Record<string, string> = { "Content-Type": "application/json" };
@@ -890,7 +890,22 @@ export class ClaudeCodeAdapter extends EngineAdapter {
       claudeLog.warn("[Claude] Models API returned empty list");
       return false;
     } catch (err) {
-      claudeLog.warn("[Claude] Failed to fetch models via HTTP:", err);
+      const cause = err instanceof TypeError ? (err as { cause?: NodeJS.ErrnoException }).cause : undefined;
+      const code = cause?.code;
+
+      if (code === "ENOTFOUND") {
+        claudeLog.warn(`[Claude] Cannot resolve host for ${modelsUrl} — DNS lookup failed`);
+      } else if (code === "ECONNREFUSED") {
+        claudeLog.warn(`[Claude] Connection refused: ${modelsUrl}`);
+      } else if (code === "ETIMEDOUT" || code === "UND_ERR_CONNECT_TIMEOUT") {
+        claudeLog.warn(`[Claude] Connection timed out: ${modelsUrl}`);
+      } else if (code === "ECONNRESET") {
+        claudeLog.warn(`[Claude] Connection reset: ${modelsUrl}`);
+      } else if (err instanceof DOMException && err.name === "TimeoutError") {
+        claudeLog.warn("[Claude] Models request timed out (AbortSignal)");
+      } else {
+        claudeLog.warn("[Claude] Failed to fetch models via HTTP:", err);
+      }
       return false;
     }
   }
@@ -954,6 +969,10 @@ export class ClaudeCodeAdapter extends EngineAdapter {
     // Close existing session to force recreation with new model
     const v2Info = this.v2Sessions.get(sessionId);
     if (v2Info) {
+      // Preserve ccSessionId so the recreated session resumes context
+      if (v2Info.capturedSessionId) {
+        this.sessionCcIds.set(sessionId, v2Info.capturedSessionId);
+      }
       try {
         v2Info.session.close();
       } catch {
@@ -1275,7 +1294,7 @@ export class ClaudeCodeAdapter extends EngineAdapter {
       pathToClaudeCodeExecutable: this.resolveCliPath(),
     };
 
-    // Set working directory (requires SDK patch: patches/@anthropic-ai+claude-agent-sdk+0.2.63.patch)
+    // Set working directory (natively supported since SDK v0.2.81)
     if (directory) {
       sdkOptions.cwd = directory.replaceAll("/", process.platform === "win32" ? "\\" : "/");
     }
@@ -1318,6 +1337,12 @@ export class ClaudeCodeAdapter extends EngineAdapter {
     if (!info) return;
 
     claudeLog.info(`[Claude][${sessionId}] Cleaning up session: ${reason}`);
+
+    // Preserve ccSessionId before destroying the V2 session so that
+    // getOrCreateV2Session() can resume instead of creating a fresh session.
+    if (info.capturedSessionId) {
+      this.sessionCcIds.set(sessionId, info.capturedSessionId);
+    }
 
     try {
       info.session.close();
@@ -1494,11 +1519,16 @@ export class ClaudeCodeAdapter extends EngineAdapter {
       const ccSessionId = msg.session_id;
 
       if (ccSessionId) {
-        // Store the CC session ID in the in-memory V2 session for future resumption
+        // Store the CC session ID for future resumption — both in the V2 session
+        // object AND in the persistent sessionCcIds map. The latter survives V2
+        // session destruction (idle timeout, setModel, stop) so that
+        // getOrCreateV2Session() can still call resumeSession() instead of
+        // creating a brand-new session and losing conversation context.
         const v2Info = this.v2Sessions.get(sessionId);
         if (v2Info) {
           v2Info.capturedSessionId = ccSessionId;
         }
+        this.sessionCcIds.set(sessionId, ccSessionId);
 
         // Emit ccSessionId so EngineManager can persist it in ConversationStore
         this.emit("session.updated", {

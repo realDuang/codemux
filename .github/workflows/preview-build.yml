@@ -73,6 +73,8 @@ jobs:
         uses: oven-sh/setup-bun@v2
         with:
           bun-version: latest
+          cache: true
+          cache-dependency-path: bun.lock
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
@@ -119,6 +121,8 @@ jobs:
         uses: oven-sh/setup-bun@v2
         with:
           bun-version: latest
+          cache: true
+          cache-dependency-path: bun.lock
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
@@ -144,9 +148,48 @@ jobs:
           path: release/*.exe
           retention-days: 14
 
+  # #57 Linux build support
+  build-linux:
+    name: Build Linux
+    needs: detect-version-bump
+    if: needs.detect-version-bump.outputs.version_changed == 'true'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+          cache: true
+          cache-dependency-path: bun.lock
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Build app
+        run: bun run build
+
+      - name: Run predist script
+        run: bun scripts/predist.ts
+
+      - name: Package for Linux
+        run: npx electron-builder --linux --publish never
+
+      - name: Upload Linux artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: preview-linux-x64
+          path: |
+            release/*.AppImage
+            release/*.deb
+          retention-days: 14
+
   post-comment:
     name: Post Download Links
-    needs: [detect-version-bump, build-macos, build-windows]
+    needs: [detect-version-bump, build-macos, build-windows, build-linux]
     if: needs.detect-version-bump.outputs.version_changed == 'true' && !cancelled()
     runs-on: ubuntu-latest
 
@@ -154,7 +197,7 @@ jobs:
       - name: Determine build status
         id: status
         run: |
-          if [ "${{ needs.build-macos.result }}" = "success" ] && [ "${{ needs.build-windows.result }}" = "success" ]; then
+          if [ "${{ needs.build-macos.result }}" = "success" ] && [ "${{ needs.build-windows.result }}" = "success" ] && [ "${{ needs.build-linux.result }}" = "success" ]; then
             echo "all_success=true" >> $GITHUB_OUTPUT
           else
             echo "all_success=false" >> $GITHUB_OUTPUT
@@ -172,6 +215,7 @@ jobs:
             const macosArm64 = '${{ needs.build-macos.result }}' === 'success' ? '✅' : '❌';
             const macosX64 = '${{ needs.build-macos.result }}' === 'success' ? '✅' : '❌';
             const windows = '${{ needs.build-windows.result }}' === 'success' ? '✅' : '❌';
+            const linux = '${{ needs.build-linux.result }}' === 'success' ? '✅' : '❌';
 
             const statusIcon = allSuccess ? '📦' : '⚠️';
             const statusText = allSuccess ? 'All builds succeeded' : 'Some builds failed';
@@ -186,6 +230,7 @@ jobs:
               `| macOS | arm64 (Apple Silicon) | ${macosArm64} |`,
               `| macOS | x64 (Intel) | ${macosX64} |`,
               `| Windows | x64 | ${windows} |`,
+              `| Linux | x64 | ${linux} |`,
               ``,
               `### 📥 Download`,
               `Go to the [Actions run artifacts section](${runUrl}#artifacts) to download installers.`,

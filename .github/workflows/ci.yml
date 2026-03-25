@@ -8,8 +8,57 @@ on:
 
 permissions:
   contents: read
+  pull-requests: write
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
+  # #53 Dependency vulnerability scanning
+  audit:
+    name: Dependency Audit
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+          cache: true
+          cache-dependency-path: bun.lock
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Audit for critical vulnerabilities
+        run: bun pm audit 2>&1 || true
+
+  # #58 ESLint enforcement
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+          cache: true
+          cache-dependency-path: bun.lock
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Run ESLint
+        run: bun run lint
+
   typecheck:
     name: Type Check
     runs-on: ubuntu-latest
@@ -22,6 +71,8 @@ jobs:
         uses: oven-sh/setup-bun@v2
         with:
           bun-version: latest
+          cache: true
+          cache-dependency-path: bun.lock
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
@@ -32,9 +83,15 @@ jobs:
       - name: Verify build
         run: bun run build
 
+  # #54 Multi-platform testing + #55 Coverage reporting
   unit-test:
-    name: Unit Tests
-    runs-on: ubuntu-latest
+    name: Unit Tests (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # Run all platforms on push to main, only ubuntu on PRs to save cost
+        os: ${{ github.event_name == 'push' && fromJSON('["ubuntu-latest","macos-latest","windows-latest"]') || fromJSON('["ubuntu-latest"]') }}
 
     steps:
       - name: Checkout repository
@@ -44,17 +101,45 @@ jobs:
         uses: oven-sh/setup-bun@v2
         with:
           bun-version: latest
+          cache: true
+          cache-dependency-path: bun.lock
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
+      # Coverage only on ubuntu to avoid duplicate reports
+      - name: Run unit tests with coverage
+        if: matrix.os == 'ubuntu-latest'
+        run: bun run test:unit --coverage
+
       - name: Run unit tests
+        if: matrix.os != 'ubuntu-latest'
         run: bun run test:unit
 
+      - name: Upload coverage report
+        if: matrix.os == 'ubuntu-latest' && always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage/
+          retention-days: 30
+
+      - name: Coverage summary comment on PR
+        if: matrix.os == 'ubuntu-latest' && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+        uses: davelosert/vitest-coverage-report-action@v2
+        with:
+          json-summary-path: coverage/coverage-summary.json
+          json-final-path: coverage/coverage-final.json
+
+  # #54 Multi-platform E2E testing
   e2e-test:
-    name: E2E Tests
-    runs-on: ubuntu-latest
+    name: E2E Tests (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
     needs: typecheck
+    strategy:
+      fail-fast: false
+      matrix:
+        os: ${{ github.event_name == 'push' && fromJSON('["ubuntu-latest","macos-latest","windows-latest"]') || fromJSON('["ubuntu-latest"]') }}
 
     steps:
       - name: Checkout repository
@@ -64,6 +149,8 @@ jobs:
         uses: oven-sh/setup-bun@v2
         with:
           bun-version: latest
+          cache: true
+          cache-dependency-path: bun.lock
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
@@ -74,14 +161,20 @@ jobs:
       - name: Install Playwright browsers
         run: bunx playwright install --with-deps chromium
 
-      - name: Run E2E tests
+      # Linux needs xvfb for headless Electron
+      - name: Run E2E tests (Linux)
+        if: matrix.os == 'ubuntu-latest'
+        run: xvfb-run --auto-servernum bun run test:e2e
+
+      - name: Run E2E tests (macOS/Windows)
+        if: matrix.os != 'ubuntu-latest'
         run: bun run test:e2e
 
       - name: Upload test artifacts
         uses: actions/upload-artifact@v4
         if: failure()
         with:
-          name: playwright-report
+          name: playwright-report-${{ matrix.os }}
           path: test-results/
           retention-days: 7
 
@@ -97,6 +190,8 @@ jobs:
         uses: oven-sh/setup-bun@v2
         with:
           bun-version: latest
+          cache: true
+          cache-dependency-path: bun.lock
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
@@ -116,6 +211,8 @@ jobs:
         uses: oven-sh/setup-bun@v2
         with:
           bun-version: latest
+          cache: true
+          cache-dependency-path: bun.lock
 
       - name: Install dependencies
         run: bun install --frozen-lockfile

@@ -1294,7 +1294,7 @@ export class ClaudeCodeAdapter extends EngineAdapter {
       pathToClaudeCodeExecutable: this.resolveCliPath(),
     };
 
-    // Set working directory (requires SDK patch: patches/@anthropic-ai+claude-agent-sdk+0.2.63.patch)
+    // Set working directory (natively supported since SDK v0.2.81)
     if (directory) {
       sdkOptions.cwd = directory.replaceAll("/", process.platform === "win32" ? "\\" : "/");
     }

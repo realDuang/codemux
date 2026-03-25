@@ -144,6 +144,10 @@ export class FeishuAdapter extends ChannelAdapter {
     );
   }
 
+  private getPlatformName(platform = this.config.platform): "Feishu" | "Lark" {
+    return platform === "lark" ? "Lark" : "Feishu";
+  }
+
   private createWsStartupMonitor(platform: "feishu" | "lark", platformConfigured: boolean): WsStartupMonitor {
     let isSettled = false;
     let resolveReady!: () => void;
@@ -247,7 +251,7 @@ export class FeishuAdapter extends ChannelAdapter {
 
   async start(config: ChannelConfig): Promise<void> {
     if (this.status === "running") {
-      feishuLog.warn("Feishu adapter already running, stopping first");
+      feishuLog.warn(`${this.getPlatformName()} adapter already running, stopping first`);
       await this.stop();
     }
 
@@ -264,7 +268,7 @@ export class FeishuAdapter extends ChannelAdapter {
       this.status = "error";
       this.error = "Missing appId or appSecret";
       this.emit("status.changed", this.status);
-      throw new Error("Feishu appId and appSecret are required");
+      throw new Error(`${this.getPlatformName()} appId and appSecret are required`);
     }
 
     let wsStartup: WsStartupMonitor | null = null;
@@ -297,7 +301,7 @@ export class FeishuAdapter extends ChannelAdapter {
           try {
             await this.handleFeishuMessage(data as FeishuMessageEvent);
           } catch (err) {
-            feishuLog.error("Error handling Feishu message:", err);
+            feishuLog.error(`Error handling ${this.getPlatformName()} message:`, err);
           }
         },
         "application.bot.menu_v6": async (data: unknown) => {
@@ -344,7 +348,7 @@ export class FeishuAdapter extends ChannelAdapter {
 
       await this.wsClient.start({ eventDispatcher: dispatcher });
       await wsStartup.readyPromise;
-      feishuLog.info("Feishu WSClient connected to cloud");
+      feishuLog.info(`${this.getPlatformName()} WSClient connected to cloud`);
 
       // 4. Connect to local Gateway
       this.gatewayClient = new GatewayWsClient(this.config.gatewayUrl);
@@ -360,14 +364,14 @@ export class FeishuAdapter extends ChannelAdapter {
       this.status = "running";
       this.emit("status.changed", this.status);
       this.emit("connected");
-      feishuLog.info("Feishu adapter started successfully");
+      feishuLog.info(`${this.getPlatformName()} adapter started successfully`);
     } catch (err) {
       wsStartup?.cancel();
       const normalizedMessage = formatFeishuStartupError(err, this.config.platform, platformConfigured);
       this.status = "error";
       this.error = normalizedMessage;
       this.emit("status.changed", this.status);
-      feishuLog.error("Failed to start Feishu adapter:", err);
+      feishuLog.error(`Failed to start ${this.getPlatformName()} adapter:`, err);
       // Clean up partial init (preserve error state)
       const savedStatus = this.status;
       const savedError = this.error;
@@ -380,7 +384,7 @@ export class FeishuAdapter extends ChannelAdapter {
   }
 
   async stop(): Promise<void> {
-    feishuLog.info("Stopping Feishu adapter...");
+    feishuLog.info(`Stopping ${this.getPlatformName()} adapter...`);
 
     // Clean up streaming timers
     this.sessionMapper.cleanup();
@@ -396,7 +400,7 @@ export class FeishuAdapter extends ChannelAdapter {
       try {
         this.wsClient.close({ force: true });
       } catch (err) {
-        feishuLog.warn("Failed to close Feishu WSClient cleanly:", err);
+        feishuLog.warn(`Failed to close ${this.getPlatformName()} WSClient cleanly:`, err);
       }
       this.wsClient = null;
     }
@@ -408,7 +412,7 @@ export class FeishuAdapter extends ChannelAdapter {
     this.error = undefined;
     this.emit("status.changed", this.status);
     this.emit("disconnected", "stopped");
-    feishuLog.info("Feishu adapter stopped");
+    feishuLog.info(`${this.getPlatformName()} adapter stopped`);
   }
 
   getInfo(): ChannelInfo {
@@ -433,7 +437,7 @@ export class FeishuAdapter extends ChannelAdapter {
 
     // If credentials or platform changed while running, restart
     if (shouldRestart) {
-      feishuLog.info("Credentials or platform changed, restarting Feishu adapter");
+      feishuLog.info(`Credentials or platform changed, restarting ${this.getPlatformName()} adapter`);
       await this.stop();
       const fullConfig: ChannelConfig = {
         type: "feishu",

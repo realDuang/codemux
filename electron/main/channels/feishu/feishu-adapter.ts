@@ -57,6 +57,18 @@ import type {
 } from "../../../../src/types/unified";
 import { feishuLog } from "../../services/logger";
 
+interface WsStartupMonitor {
+  readyPromise: Promise<void>;
+  cancel: () => void;
+  logger: {
+    error: (...args: unknown[]) => void;
+    warn: (...args: unknown[]) => void;
+    info: (...args: unknown[]) => void;
+    debug: (...args: unknown[]) => void;
+    trace: (...args: unknown[]) => void;
+  };
+}
+
 // ============================================================================
 // Feishu Adapter
 // ============================================================================
@@ -91,7 +103,46 @@ export class FeishuAdapter extends ChannelAdapter {
     maxMessageBytes: 28_000,
   };
 
-  private createWsStartupMonitor(platform: "feishu" | "lark", platformConfigured: boolean) {
+  private mergeConfig(baseConfig: FeishuConfig, updates?: Partial<FeishuConfig>): FeishuConfig {
+    if (!updates) {
+      return { ...baseConfig };
+    }
+
+    return {
+      ...baseConfig,
+      ...(updates.appId !== undefined ? { appId: updates.appId } : {}),
+      ...(updates.appSecret !== undefined ? { appSecret: updates.appSecret } : {}),
+      ...(updates.autoApprovePermissions !== undefined
+        ? { autoApprovePermissions: updates.autoApprovePermissions }
+        : {}),
+      ...(updates.streamingThrottleMs !== undefined
+        ? { streamingThrottleMs: updates.streamingThrottleMs }
+        : {}),
+      ...(updates.gatewayUrl !== undefined ? { gatewayUrl: updates.gatewayUrl } : {}),
+      platform:
+        updates.platform !== undefined
+          ? normalizeFeishuPlatform(updates.platform)
+          : baseConfig.platform,
+    };
+  }
+
+  private shouldRestartAfterConfigUpdate(
+    previousConfig: FeishuConfig,
+    updates?: Partial<FeishuConfig>,
+  ): boolean {
+    if (!updates) {
+      return false;
+    }
+
+    return (
+      (updates.appId !== undefined && updates.appId !== previousConfig.appId) ||
+      (updates.appSecret !== undefined && updates.appSecret !== previousConfig.appSecret) ||
+      (updates.platform !== undefined &&
+        normalizeFeishuPlatform(updates.platform) !== previousConfig.platform)
+    );
+  }
+
+  private createWsStartupMonitor(platform: "feishu" | "lark", platformConfigured: boolean): WsStartupMonitor {
     let isSettled = false;
     let resolveReady!: () => void;
     let rejectReady!: (error: Error) => void;
@@ -100,6 +151,7 @@ export class FeishuAdapter extends ChannelAdapter {
       resolveReady = resolve;
       rejectReady = reject;
     });
+    readyPromise.catch(() => undefined);
 
     const settleReady = () => {
       if (isSettled) return;
@@ -113,6 +165,13 @@ export class FeishuAdapter extends ChannelAdapter {
       isSettled = true;
       clearTimeout(timeoutId);
       rejectReady(new Error(message));
+    };
+
+    const cancel = () => {
+      if (isSettled) return;
+      isSettled = true;
+      clearTimeout(timeoutId);
+      resolveReady();
     };
 
     const normalizeLogArgs = (args: unknown[]): unknown[] => (
@@ -131,6 +190,9 @@ export class FeishuAdapter extends ChannelAdapter {
     const handleLog = (level: "error" | "warn" | "info" | "debug" | "trace", args: unknown[]) => {
       const normalizedArgs = normalizeLogArgs(args);
       const text = stringifyLogArgs(normalizedArgs);
+      const isReadyLog = text.includes("ws client ready");
+      const isStartupFailure =
+        this.status === "starting" && (text.includes("system busy") || text.includes("PingInterval"));
 
       switch (level) {
         case "error":
@@ -140,25 +202,21 @@ export class FeishuAdapter extends ChannelAdapter {
           feishuLog.warn(...normalizedArgs);
           break;
         case "info":
-          feishuLog.info(...normalizedArgs);
+          if (isReadyLog) {
+            feishuLog.info(...normalizedArgs);
+          }
           break;
         case "debug":
-          feishuLog.debug(...normalizedArgs);
-          break;
         case "trace":
-          feishuLog.debug(...normalizedArgs);
           break;
       }
 
-      if (text.includes("ws client ready")) {
+      if (isReadyLog) {
         settleReady();
         return;
       }
 
-      if (
-        this.status === "starting" &&
-        (text.includes("system busy") || text.includes("PingInterval"))
-      ) {
+      if (isStartupFailure) {
         settleError(formatFeishuStartupError(text, platform, platformConfigured));
       }
     };
@@ -172,6 +230,7 @@ export class FeishuAdapter extends ChannelAdapter {
 
     return {
       readyPromise,
+      cancel,
       logger: {
         error: (...args: unknown[]) => handleLog("error", args),
         warn: (...args: unknown[]) => handleLog("warn", args),
@@ -197,11 +256,7 @@ export class FeishuAdapter extends ChannelAdapter {
     // Merge config
     const options = (config.options as Partial<FeishuConfig> | undefined) ?? {};
     const platformConfigured = options.platform === "feishu" || options.platform === "lark";
-    this.config = {
-      ...DEFAULT_FEISHU_CONFIG,
-      ...options,
-      platform: normalizeFeishuPlatform(options.platform),
-    };
+    this.config = this.mergeConfig(DEFAULT_FEISHU_CONFIG, options);
 
     if (!this.config.appId || !this.config.appSecret) {
       this.status = "error";
@@ -210,9 +265,11 @@ export class FeishuAdapter extends ChannelAdapter {
       throw new Error("Feishu appId and appSecret are required");
     }
 
+    let wsStartup: WsStartupMonitor | null = null;
+
     try {
       const domain = getLarkDomain(this.config.platform);
-      const wsStartup = this.createWsStartupMonitor(this.config.platform, platformConfigured);
+      wsStartup = this.createWsStartupMonitor(this.config.platform, platformConfigured);
 
       // 1. Create Lark REST client
       this.larkClient = new lark.Client({
@@ -296,6 +353,7 @@ export class FeishuAdapter extends ChannelAdapter {
       this.emit("connected");
       feishuLog.info("Feishu adapter started successfully");
     } catch (err) {
+      wsStartup?.cancel();
       const normalizedMessage = formatFeishuStartupError(err, this.config.platform, platformConfigured);
       this.status = "error";
       this.error = normalizedMessage;
@@ -356,19 +414,13 @@ export class FeishuAdapter extends ChannelAdapter {
   async updateConfig(config: Partial<ChannelConfig>): Promise<void> {
     const wasRunning = this.status === "running";
     const newOptions = config.options as Partial<FeishuConfig> | undefined;
+    const previousConfig = { ...this.config };
 
     if (newOptions) {
-      this.config = {
-        ...this.config,
-        ...newOptions,
-        platform: normalizeFeishuPlatform(newOptions.platform ?? this.config.platform),
-      };
+      this.config = this.mergeConfig(this.config, newOptions);
     }
 
-    const shouldRestart =
-      wasRunning &&
-      newOptions &&
-      ("appId" in newOptions || "appSecret" in newOptions || "platform" in newOptions);
+    const shouldRestart = wasRunning && this.shouldRestartAfterConfigUpdate(previousConfig, newOptions);
 
     // If credentials or platform changed while running, restart
     if (shouldRestart) {

@@ -11,12 +11,16 @@ import type { StreamingSession } from "../streaming/streaming-types";
 export type { StreamingSession } from "../streaming/streaming-types";
 export { createStreamingSession } from "../streaming/streaming-types";
 
-// --- Feishu Configuration ---
+// --- Feishu / Lark Configuration ---
+
+export type FeishuPlatform = "feishu" | "lark";
 
 export interface FeishuConfig {
-  /** Feishu Open Platform App ID */
+  /** Feishu or Lark developer console platform */
+  platform: FeishuPlatform;
+  /** Feishu / Lark Open Platform App ID */
   appId: string;
-  /** Feishu Open Platform App Secret */
+  /** Feishu / Lark Open Platform App Secret */
   appSecret: string;
   /** Auto-approve all permission requests from engines */
   autoApprovePermissions: boolean;
@@ -27,6 +31,7 @@ export interface FeishuConfig {
 }
 
 export const DEFAULT_FEISHU_CONFIG: FeishuConfig = {
+  platform: "feishu",
   appId: "",
   appSecret: "",
   autoApprovePermissions: true,

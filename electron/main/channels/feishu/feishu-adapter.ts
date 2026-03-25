@@ -1,5 +1,5 @@
 // ============================================================================
-// Feishu Channel Adapter
+// Feishu / Lark Channel Adapter
 // Connects Feishu (Lark) bot to CodeMux via Gateway WebSocket.
 // Architecture: One Group = One Session
 // P2P chat = entry point (project selection), Group chat = session interaction.
@@ -43,6 +43,11 @@ import {
   type FeishuChatDisbandedEvent,
   type FeishuBotRemovedEvent,
 } from "./feishu-types";
+import {
+  formatFeishuStartupError,
+  getLarkDomain,
+  normalizeFeishuPlatform,
+} from "./feishu-platform";
 import type {
   EngineType,
   UnifiedPart,
@@ -86,6 +91,97 @@ export class FeishuAdapter extends ChannelAdapter {
     maxMessageBytes: 28_000,
   };
 
+  private createWsStartupMonitor(platform: "feishu" | "lark", platformConfigured: boolean) {
+    let isSettled = false;
+    let resolveReady!: () => void;
+    let rejectReady!: (error: Error) => void;
+
+    const readyPromise = new Promise<void>((resolve, reject) => {
+      resolveReady = resolve;
+      rejectReady = reject;
+    });
+
+    const settleReady = () => {
+      if (isSettled) return;
+      isSettled = true;
+      clearTimeout(timeoutId);
+      resolveReady();
+    };
+
+    const settleError = (message: string) => {
+      if (isSettled) return;
+      isSettled = true;
+      clearTimeout(timeoutId);
+      rejectReady(new Error(message));
+    };
+
+    const normalizeLogArgs = (args: unknown[]): unknown[] => (
+      args.length === 1 && Array.isArray(args[0]) ? args[0] as unknown[] : args
+    );
+
+    const stringifyLogArgs = (args: unknown[]): string => args
+      .map((arg) => {
+        if (typeof arg === "string") return arg;
+        if (arg instanceof Error) return arg.message;
+        if (Array.isArray(arg)) return arg.join(" ");
+        return String(arg);
+      })
+      .join(" ");
+
+    const handleLog = (level: "error" | "warn" | "info" | "debug" | "trace", args: unknown[]) => {
+      const normalizedArgs = normalizeLogArgs(args);
+      const text = stringifyLogArgs(normalizedArgs);
+
+      switch (level) {
+        case "error":
+          feishuLog.error(...normalizedArgs);
+          break;
+        case "warn":
+          feishuLog.warn(...normalizedArgs);
+          break;
+        case "info":
+          feishuLog.info(...normalizedArgs);
+          break;
+        case "debug":
+          feishuLog.debug(...normalizedArgs);
+          break;
+        case "trace":
+          feishuLog.debug(...normalizedArgs);
+          break;
+      }
+
+      if (text.includes("ws client ready")) {
+        settleReady();
+        return;
+      }
+
+      if (
+        this.status === "starting" &&
+        (text.includes("system busy") || text.includes("PingInterval"))
+      ) {
+        settleError(formatFeishuStartupError(text, platform, platformConfigured));
+      }
+    };
+
+    const platformName = platform === "lark" ? "Lark" : "Feishu";
+    const timeoutId = setTimeout(() => {
+      settleError(
+        `Timed out waiting for ${platformName} websocket connection. Verify the app is self-built, long connection is enabled in the correct developer console, and the selected platform matches your tenant.`,
+      );
+    }, 15000);
+
+    return {
+      readyPromise,
+      logger: {
+        error: (...args: unknown[]) => handleLog("error", args),
+        warn: (...args: unknown[]) => handleLog("warn", args),
+        info: (...args: unknown[]) => handleLog("info", args),
+        debug: (...args: unknown[]) => handleLog("debug", args),
+        trace: (...args: unknown[]) => handleLog("trace", args),
+      },
+    };
+  }
+
   // --- Lifecycle ---
 
   async start(config: ChannelConfig): Promise<void> {
@@ -99,9 +195,12 @@ export class FeishuAdapter extends ChannelAdapter {
     this.emit("status.changed", this.status);
 
     // Merge config
+    const options = (config.options as Partial<FeishuConfig> | undefined) ?? {};
+    const platformConfigured = options.platform === "feishu" || options.platform === "lark";
     this.config = {
       ...DEFAULT_FEISHU_CONFIG,
-      ...(config.options as unknown as Partial<FeishuConfig>),
+      ...options,
+      platform: normalizeFeishuPlatform(options.platform),
     };
 
     if (!this.config.appId || !this.config.appSecret) {
@@ -112,10 +211,14 @@ export class FeishuAdapter extends ChannelAdapter {
     }
 
     try {
+      const domain = getLarkDomain(this.config.platform);
+      const wsStartup = this.createWsStartupMonitor(this.config.platform, platformConfigured);
+
       // 1. Create Lark REST client
       this.larkClient = new lark.Client({
         appId: this.config.appId,
         appSecret: this.config.appSecret,
+        domain,
         disableTokenCache: false,
       });
 
@@ -168,10 +271,13 @@ export class FeishuAdapter extends ChannelAdapter {
       this.wsClient = new lark.WSClient({
         appId: this.config.appId,
         appSecret: this.config.appSecret,
-        loggerLevel: lark.LoggerLevel.warn,
+        domain,
+        loggerLevel: lark.LoggerLevel.info,
+        logger: wsStartup.logger,
       });
 
       await this.wsClient.start({ eventDispatcher: dispatcher });
+      await wsStartup.readyPromise;
       feishuLog.info("Feishu WSClient connected to cloud");
 
       // 4. Connect to local Gateway
@@ -190,8 +296,9 @@ export class FeishuAdapter extends ChannelAdapter {
       this.emit("connected");
       feishuLog.info("Feishu adapter started successfully");
     } catch (err) {
+      const normalizedMessage = formatFeishuStartupError(err, this.config.platform, platformConfigured);
       this.status = "error";
-      this.error = err instanceof Error ? err.message : String(err);
+      this.error = normalizedMessage;
       this.emit("status.changed", this.status);
       feishuLog.error("Failed to start Feishu adapter:", err);
       // Clean up partial init (preserve error state)
@@ -217,10 +324,15 @@ export class FeishuAdapter extends ChannelAdapter {
       this.gatewayClient = null;
     }
 
-    // Disconnect Feishu WSClient
-    // Note: lark.WSClient doesn't have a clean stop/close API in all versions.
-    // Setting to null allows GC.
-    this.wsClient = null;
+    // Disconnect Feishu WSClient and stop its reconnect loop.
+    if (this.wsClient) {
+      try {
+        this.wsClient.close({ force: true });
+      } catch (err) {
+        feishuLog.warn("Failed to close Feishu WSClient cleanly:", err);
+      }
+      this.wsClient = null;
+    }
     this.larkClient = null;
     this.transport = null;
     this.streamingController = null;
@@ -235,7 +347,7 @@ export class FeishuAdapter extends ChannelAdapter {
   getInfo(): ChannelInfo {
     return {
       type: this.channelType,
-      name: "Feishu Bot",
+      name: "Feishu / Lark Bot",
       status: this.status,
       error: this.error,
     };
@@ -246,16 +358,25 @@ export class FeishuAdapter extends ChannelAdapter {
     const newOptions = config.options as Partial<FeishuConfig> | undefined;
 
     if (newOptions) {
-      this.config = { ...this.config, ...newOptions };
+      this.config = {
+        ...this.config,
+        ...newOptions,
+        platform: normalizeFeishuPlatform(newOptions.platform ?? this.config.platform),
+      };
     }
 
-    // If credentials changed while running, restart
-    if (wasRunning && newOptions && (newOptions.appId || newOptions.appSecret)) {
-      feishuLog.info("Credentials changed, restarting Feishu adapter");
+    const shouldRestart =
+      wasRunning &&
+      newOptions &&
+      ("appId" in newOptions || "appSecret" in newOptions || "platform" in newOptions);
+
+    // If credentials or platform changed while running, restart
+    if (shouldRestart) {
+      feishuLog.info("Credentials or platform changed, restarting Feishu adapter");
       await this.stop();
       const fullConfig: ChannelConfig = {
         type: "feishu",
-        name: "Feishu Bot",
+        name: "Feishu / Lark Bot",
         enabled: true,
         options: this.config as unknown as Record<string, unknown>,
       };

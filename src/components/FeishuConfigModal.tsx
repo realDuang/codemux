@@ -2,6 +2,7 @@ import { createSignal, createEffect, Show } from "solid-js";
 import { useI18n } from "../lib/i18n";
 
 interface FeishuConfig {
+  platform: "feishu" | "lark";
   appId: string;
   appSecret: string;
   autoApprovePermissions: boolean;
@@ -88,6 +89,24 @@ export function FeishuConfigModal(props: FeishuConfigModalProps) {
 
           {/* Body */}
           <div class="p-6 space-y-5">
+            {/* Platform */}
+            <div>
+              <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5">
+                {t().channel.platform}
+              </label>
+              <select
+                value={config().platform}
+                onChange={(e) => setConfig((prev) => ({ ...prev, platform: e.currentTarget.value as "feishu" | "lark" }))}
+                class="w-full px-3 py-2 text-sm rounded-lg border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              >
+                <option value="feishu">{t().channel.platformFeishu}</option>
+                <option value="lark">{t().channel.platformLark}</option>
+              </select>
+              <p class="text-xs text-gray-400 dark:text-gray-500 mt-1.5">
+                {t().channel.platformDesc}
+              </p>
+            </div>
+
             {/* App ID */}
             <div>
               <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5">

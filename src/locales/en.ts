@@ -350,6 +350,10 @@ export interface LocaleDict {
     channels: string;
     feishuBot: string;
     feishuBotDesc: string;
+    platform: string;
+    platformDesc: string;
+    platformFeishu: string;
+    platformLark: string;
     dingtalkBot: string;
     dingtalkBotDesc: string;
     telegramBot: string;
@@ -811,8 +815,12 @@ export const en: LocaleDict = {
   // Channels
   channel: {
     channels: "Channels",
-    feishuBot: "Feishu Bot",
-    feishuBotDesc: "Connect to Feishu (Lark) to use CodeMux via bot messages",
+    feishuBot: "Feishu / Lark Bot",
+    feishuBotDesc: "Connect to Feishu or Lark to use CodeMux via bot messages",
+    platform: "Platform",
+    platformDesc: "Choose the developer console that matches your bot app",
+    platformFeishu: "Feishu (open.feishu.cn)",
+    platformLark: "Lark (open.larksuite.com)",
     dingtalkBot: "DingTalk Bot",
     dingtalkBotDesc: "Connect to DingTalk to use CodeMux via robot messages",
     telegramBot: "Telegram Bot",
@@ -822,9 +830,9 @@ export const en: LocaleDict = {
     teamsBot: "Teams Bot",
     teamsBotDesc: "Connect to Microsoft Teams to use CodeMux via bot messages",
     appId: "App ID",
-    appIdPlaceholder: "Enter Feishu App ID",
+    appIdPlaceholder: "Enter Feishu / Lark App ID",
     appSecret: "App Secret",
-    appSecretPlaceholder: "Enter Feishu App Secret",
+    appSecretPlaceholder: "Enter Feishu / Lark App Secret",
     appKey: "App Key",
     appKeyPlaceholder: "Enter DingTalk App Key",
     robotCode: "Robot Code",
@@ -860,7 +868,7 @@ export const en: LocaleDict = {
     autoApproveDesc: "Automatically approve engine permission requests",
     advanced: "Advanced Settings",
     streamingThrottle: "Streaming Throttle",
-    streamingThrottleDesc: "Minimum interval between Feishu message updates",
+    streamingThrottleDesc: "Minimum interval between Feishu / Lark message updates",
     ms: "ms",
     configure: "Configure",
     configRequired: "App ID and App Secret are required to enable the bot",

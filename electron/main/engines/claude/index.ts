@@ -1341,7 +1341,14 @@ export class ClaudeCodeAdapter extends EngineAdapter {
 
   override async listCommands(_sessionId?: string): Promise<EngineCommand[]> {
     if (this.availableCommands.length > 0) return this.availableCommands;
-    // Fallback: well-known Claude Code commands
+    // Fallback: well-known Claude Code commands with descriptions.
+    // The SDK's SDKSystemMessage.slash_commands is string[] (names only),
+    // so we maintain this static list to provide descriptions.
+    return this.getWellKnownCommands();
+  }
+
+  /** Well-known Claude Code commands with descriptions for autocomplete. */
+  private getWellKnownCommands(): EngineCommand[] {
     return [
       { name: "help", description: "Show available commands" },
       { name: "compact", description: "Compact conversation context" },
@@ -1732,13 +1739,19 @@ export class ClaudeCodeAdapter extends EngineAdapter {
         `[Claude][${sessionId}] System init: session=${ccSessionId}, model=${msg.model}`,
       );
 
-      // Extract commands if available
-      if (Array.isArray(msg.commands)) {
-        this.availableCommands = msg.commands.map((cmd: any) => ({
-          name: cmd.name,
-          description: cmd.description ?? "",
-          argumentHint: cmd.argumentHint,
-        }));
+      // Extract slash command names from init message (string[] only — no descriptions).
+      // Enrich with descriptions from the well-known commands list.
+      if (Array.isArray(msg.slash_commands)) {
+        const wellKnown = this.getWellKnownCommands();
+        const wellKnownMap = new Map(wellKnown.map(c => [c.name, c]));
+        this.availableCommands = msg.slash_commands.map((name: string) => {
+          const known = wellKnownMap.get(name);
+          return {
+            name,
+            description: known?.description ?? "",
+            argumentHint: known?.argumentHint,
+          };
+        });
         this.emit("commands.changed", {
           engineType: this.engineType,
           commands: this.availableCommands,

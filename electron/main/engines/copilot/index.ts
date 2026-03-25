@@ -726,7 +726,9 @@ export class CopilotSdkAdapter extends EngineAdapter {
     args: string,
     options?: { mode?: string; modelId?: string; directory?: string },
   ): Promise<CommandInvokeResult> {
-    // Copilot CLI natively intercepts /skill messages
+    // Send the command as text — Copilot CLI intercepts /command prefix.
+    // The CLI emits a command.execute event which we acknowledge via
+    // handlePendingCommand() in handleCommandExecute().
     const commandText = `/${commandName}${args ? ` ${args}` : ""}`;
     const message = await this.sendMessage(
       sessionId,
@@ -734,6 +736,50 @@ export class CopilotSdkAdapter extends EngineAdapter {
       options,
     );
     return { handledAsCommand: true, message };
+  }
+
+  /**
+   * Handle command.execute event from Copilot CLI.
+   * The CLI dispatches this when it intercepts a /command in user input.
+   * We must acknowledge it via handlePendingCommand() so the CLI can proceed.
+   */
+  private async handleCommandExecute(
+    sessionId: string,
+    data: { requestId: string; command: string; commandName: string; args: string },
+  ): Promise<void> {
+    copilotLog.info(
+      `[Copilot][${sessionId}] command.execute: /${data.commandName} ${data.args} (requestId=${data.requestId})`,
+    );
+    try {
+      const session = this.activeSessions.get(sessionId);
+      if (session) {
+        await session.rpc.commands.handlePendingCommand({ requestId: data.requestId });
+      }
+    } catch (err) {
+      copilotLog.warn(`[Copilot][${sessionId}] Failed to acknowledge command:`, err);
+    }
+  }
+
+  /**
+   * Handle commands.changed event — refresh the cached command list.
+   */
+  private handleCommandsChanged(
+    sessionId: string,
+    data: { commands: Array<{ name: string; description?: string }> },
+  ): void {
+    if (Array.isArray(data?.commands)) {
+      this.cachedCommands = data.commands.map(cmd => ({
+        name: cmd.name,
+        description: cmd.description ?? "",
+      }));
+      this.emit("commands.changed", {
+        engineType: this.engineType,
+        commands: this.cachedCommands,
+      });
+      copilotLog.info(
+        `[Copilot][${sessionId}] Commands updated: ${this.cachedCommands.length} commands`,
+      );
+    }
   }
 
   private setStatus(status: EngineStatus, error?: string): void {
@@ -855,6 +901,18 @@ export class CopilotSdkAdapter extends EngineAdapter {
         case "abort": this.handleAbort(sessionId, event.data as any); break;
         case "subagent.started": this.handleSubagentStarted(sessionId, event.data as any); break;
         case "subagent.completed": this.handleSubagentCompleted(sessionId, event.data as any); break;
+
+        // --- Slash Command events ---
+        case "command.execute":
+          this.handleCommandExecute(sessionId, event.data as any);
+          break;
+        case "command.completed":
+          // Command completed — no action needed on our side
+          copilotLog.info(`[Copilot][${sessionId}] Command completed: requestId=${(event.data as any)?.requestId}`);
+          break;
+        case "commands.changed":
+          this.handleCommandsChanged(sessionId, event.data as any);
+          break;
       }
     } catch (err) {
       copilotLog.warn(`Error handling session event for session ${sessionId}:`, err);

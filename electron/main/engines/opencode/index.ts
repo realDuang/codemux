@@ -1271,7 +1271,7 @@ export class OpenCodeAdapter extends EngineAdapter {
       });
       const commands = result.data ?? [];
       if (Array.isArray(commands)) {
-        this.cachedCommands = commands.map((cmd: any) => ({
+        this.cachedCommands = commands.map((cmd) => ({
           name: cmd.name,
           description: cmd.description ?? "",
           argumentHint: cmd.template ? `<${cmd.template}>` : undefined,
@@ -1313,7 +1313,7 @@ export class OpenCodeAdapter extends EngineAdapter {
     }
 
     try {
-      const result = await (client.session as any).command({
+      const result = await client.session.command({
         sessionID: sessionId,
         directory: dir,
         command: commandName,

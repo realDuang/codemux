@@ -1672,16 +1672,16 @@ export class ClaudeCodeAdapter extends EngineAdapter {
     buffer: MessageBuffer,
     streamingBlocks: Map<number, StreamingBlock>,
   ): void {
+    // DEBUG: Log every SDK message type/subtype to trace slash command handling
+    const msgAny = msg as any;
+    claudeLog.info(
+      `[Claude][${sessionId}] handleSdkMessage: type=${msgAny.type}, subtype=${msgAny.subtype ?? "N/A"}, keys=[${Object.keys(msgAny).join(",")}]`,
+    );
+
     switch (msg.type) {
       case "system":
         this.handleSystemMessage(msg, sessionId, buffer);
         break;
-
-      // local_command_output — slash commands like /help, /cost produce this
-      // message type with the command's textual output.
-      // Note: the SDK uses a flat { type, subtype } structure, but the stream
-      // yields this as a top-level type for local command results.
-      // We check both the top-level type AND the subtype in handleSystemMessage.
 
       case "assistant":
         this.handleAssistantMessage(msg, sessionId, buffer);
@@ -1705,9 +1705,9 @@ export class ClaudeCodeAdapter extends EngineAdapter {
         break;
 
       default:
-        // tool_progress, auth_status, etc. — log but don't process
+        // Log full detail for debugging unhandled message types
         claudeLog.info(
-          `[Claude][${sessionId}] Unhandled message type: ${(msg as any).type}`,
+          `[Claude][${sessionId}] Unhandled message: type=${(msg as any).type}, subtype=${(msg as any).subtype}, content=${JSON.stringify(msg).slice(0, 300)}`,
         );
         break;
     }
@@ -1721,6 +1721,9 @@ export class ClaudeCodeAdapter extends EngineAdapter {
     sessionId: string,
     buffer: MessageBuffer,
   ): void {
+    claudeLog.info(
+      `[Claude][${sessionId}] handleSystemMessage: subtype=${msg.subtype}, keys=[${Object.keys(msg).join(",")}]`,
+    );
     if (msg.subtype === "init") {
       const ccSessionId = msg.session_id;
 
@@ -1757,7 +1760,7 @@ export class ClaudeCodeAdapter extends EngineAdapter {
       }
 
       claudeLog.info(
-        `[Claude][${sessionId}] System init: session=${ccSessionId}, model=${msg.model}`,
+        `[Claude][${sessionId}] System init: session=${ccSessionId}, model=${msg.model}, slash_commands=${JSON.stringify(msg.slash_commands)?.slice(0, 200)}, skills=${JSON.stringify(msg.skills)?.slice(0, 200)}`,
       );
 
       // Extract slash command names from init message (string[] only — no descriptions).
@@ -1793,15 +1796,21 @@ export class ClaudeCodeAdapter extends EngineAdapter {
           engineType: this.engineType,
           commands: this.availableCommands,
         });
+        claudeLog.info(
+          `[Claude][${sessionId}] Commands updated: ${this.availableCommands.length} total (${this.availableCommands.filter(c => c.source === "skill").length} skills)`,
+        );
       }
     } else if (msg.subtype === "local_command_output") {
       // Slash command output (e.g., /help, /cost, /compact).
-      // The SDK emits this as { type: "system", subtype: "local_command_output", content: "..." }.
-      // Render the output as a text part in the current assistant message.
       const output = msg.content ?? "";
+      claudeLog.info(
+        `[Claude][${sessionId}] >>> local_command_output RECEIVED! content_length=${output.length}, buffer_id=${buffer.messageId}, first_100_chars=${output.slice(0, 100)}`,
+      );
       if (output) {
-        claudeLog.info(`[Claude][${sessionId}] local_command_output: ${output.slice(0, 100)}...`);
         this.appendText(sessionId, buffer, output);
+        claudeLog.info(`[Claude][${sessionId}] >>> appendText called, buffer.parts.length=${buffer.parts.length}`);
+      } else {
+        claudeLog.warn(`[Claude][${sessionId}] >>> local_command_output content was EMPTY!`);
       }
     } else if (msg.subtype === "status") {
       // Handle status changes (e.g., compacting)
@@ -1837,8 +1846,21 @@ export class ClaudeCodeAdapter extends EngineAdapter {
       };
     }
 
+    // Handle content — may be a string (from slash command output via Ko1())
+    // or an array of content blocks (from normal LLM responses).
+    const content = betaMessage.content;
+    if (typeof content === "string") {
+      // Slash command output converted by SDK: content is plain text
+      if (content.trim()) {
+        this.appendText(sessionId, buffer, content);
+      }
+      return;
+    }
+
+    if (!Array.isArray(content)) return;
+
     // Process content blocks
-    for (const block of betaMessage.content) {
+    for (const block of content) {
       if (block.type === "text") {
         this.appendText(sessionId, buffer, block.text ?? "");
       } else if (block.type === "thinking") {
@@ -1860,7 +1882,10 @@ export class ClaudeCodeAdapter extends EngineAdapter {
   }
 
   /**
-   * Handle user messages from the stream (typically tool_result).
+   * Handle user messages from the stream.
+   * These include tool_result blocks (normal flow) and also synthetic user
+   * messages from slash command output (CLI wraps output in user messages
+   * for commands with display !== "system").
    */
   private handleUserMessage(
     msg: any,
@@ -1870,9 +1895,30 @@ export class ClaudeCodeAdapter extends EngineAdapter {
     const betaMessage = msg.message;
     if (!betaMessage?.content) return;
 
+    // Ignore synthetic replay messages — these are echoes of the command input,
+    // not actual output we should display.
+    if (msg.isReplay || msg.isSynthetic) return;
+
+    // String content — may be slash command output stripped of XML tags
+    if (typeof betaMessage.content === "string") {
+      const text = betaMessage.content.trim();
+      if (text) {
+        this.appendText(sessionId, buffer, text);
+      }
+      return;
+    }
+
+    if (!Array.isArray(betaMessage.content)) return;
+
     for (const block of betaMessage.content) {
       if (block.type === "tool_result") {
         this.handleToolResult(sessionId, buffer, block);
+      } else if (block.type === "text") {
+        // Text blocks in user messages — from slash command output
+        const text = (block.text ?? "").trim();
+        if (text) {
+          this.appendText(sessionId, buffer, text);
+        }
       }
     }
   }
@@ -1904,6 +1950,20 @@ export class ClaudeCodeAdapter extends EngineAdapter {
     // Check for error results
     if (msg.is_error) {
       buffer.error = msg.result ?? "Unknown error";
+    }
+
+    // For slash commands: if the buffer has no text content but the result
+    // message carries text, use it as the command output. This handles
+    // local-jsx commands where the JSX rendering doesn't produce stream
+    // messages but the CLI records a result text.
+    if (
+      !msg.is_error &&
+      typeof msg.result === "string" &&
+      msg.result.trim() &&
+      buffer.parts.length === 0 &&
+      !buffer.textAccumulator
+    ) {
+      this.appendText(sessionId, buffer, msg.result);
     }
 
     claudeLog.info(

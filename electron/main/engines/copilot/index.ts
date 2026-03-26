@@ -699,7 +699,9 @@ export class CopilotSdkAdapter extends EngineAdapter {
 
   private async fetchSkills(session: CopilotSession): Promise<void> {
     try {
+      copilotLog.info(`[Copilot] fetchSkills: calling session.rpc.skills.list()...`);
       const result = await session.rpc.skills.list();
+      copilotLog.info(`[Copilot] fetchSkills: raw result = ${JSON.stringify(result).slice(0, 500)}`);
       const skills = (result as any)?.skills ?? (result as any) ?? [];
       if (Array.isArray(skills)) {
         this.cachedCommands = skills
@@ -710,13 +712,16 @@ export class CopilotSdkAdapter extends EngineAdapter {
             source: s.source,
             userInvocable: s.userInvocable,
           }));
+        copilotLog.info(`[Copilot] fetchSkills: cached ${this.cachedCommands.length} commands: ${this.cachedCommands.map(c => c.name).join(", ")}`);
         this.emit("commands.changed", {
           engineType: this.engineType,
           commands: this.cachedCommands,
         });
+      } else {
+        copilotLog.warn(`[Copilot] fetchSkills: skills is not an array: ${typeof skills}`);
       }
     } catch (err) {
-      copilotLog.warn("Failed to list skills:", err);
+      copilotLog.warn(`[Copilot] fetchSkills FAILED:`, err);
     }
   }
 
@@ -724,10 +729,26 @@ export class CopilotSdkAdapter extends EngineAdapter {
     // If cached commands are available, return them immediately.
     if (this.cachedCommands.length > 0) return this.cachedCommands;
 
+    copilotLog.info(`[Copilot] listCommands: cache empty, sessionId=${sessionId ?? "none"}, activeSessions=${this.activeSessions.size}`);
+
     // Cache is empty — try to fetch from the active session.
     // This handles the case where the initial fetch was skipped or failed.
     if (sessionId) {
-      const session = this.activeSessions.get(sessionId);
+      let session = this.activeSessions.get(sessionId);
+      if (!session) {
+        // Session not active yet — try to activate it so we can fetch skills.
+        // This covers the case where listCommands is called before the user
+        // sends their first message (lazy session creation).
+        const directory = this.sessionDirectories.get(sessionId);
+        if (directory) {
+          try {
+            copilotLog.info(`[Copilot] listCommands: activating session ${sessionId} to fetch skills`);
+            session = await this.ensureActiveSession(sessionId, directory);
+          } catch (err) {
+            copilotLog.warn(`[Copilot] listCommands: failed to activate session:`, err);
+          }
+        }
+      }
       if (session) {
         try {
           await this.fetchSkills(session);
@@ -943,6 +964,10 @@ export class CopilotSdkAdapter extends EngineAdapter {
 
   private handleSessionEvent(sessionId: string, event: SessionEvent): void {
     try {
+      // DEBUG: Log ALL session events (not just known ones) to trace slash command behavior
+      copilotLog.info(
+        `[Copilot][${sessionId}] SessionEvent: type=${event.type}, ephemeral=${(event as any).ephemeral ?? false}`,
+      );
       switch (event.type) {
         case "assistant.message_delta": this.handleMessageDelta(sessionId, event.data as any); break;
         case "assistant.reasoning_delta": this.handleReasoningDelta(sessionId, event.data as any); break;

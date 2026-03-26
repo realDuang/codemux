@@ -680,9 +680,18 @@ export class EngineManager extends EventEmitter {
     engineType: EngineType,
     directory: string,
   ): Promise<UnifiedSession> {
-    this.getAdapterOrThrow(engineType); // Validate engine exists
+    const adapter = this.getAdapterOrThrow(engineType); // Validate engine exists
     const conv = conversationStore.create({ engineType, directory });
     this.sessionEngineMap.set(conv.id, engineType);
+
+    // Create the engine session immediately (not lazily on first sendMessage).
+    // This ensures that engine-specific initialization (like fetching Copilot skills
+    // or Claude V2 session init) happens at session creation time, so features
+    // like slash command autocomplete work before the user sends a message.
+    const engineSession = await adapter.createSession(conv.directory, conv.engineMeta);
+    conversationStore.setEngineSession(conv.id, engineSession.id, engineSession.engineMeta);
+    this.engineToConvMap.set(engineSession.id, conv.id);
+
     const session = convToSession(conv);
     // Broadcast to all connected clients (e.g., UI) so session lists update in real-time
     this.emit("session.created", { session });
@@ -931,7 +940,7 @@ export class EngineManager extends EventEmitter {
 
     if (sessionId) {
       const conv = conversationStore.get(sessionId);
-      return adapter.listCommands(conv?.engineSessionId ?? undefined);
+      return adapter.listCommands(conv?.engineSessionId ?? undefined, conv?.directory);
     }
 
     return adapter.listCommands();

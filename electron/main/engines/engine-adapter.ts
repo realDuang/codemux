@@ -290,8 +290,9 @@ export abstract class EngineAdapter extends EventEmitter {
    * List available slash commands for this engine.
    * Default: returns empty array (engine doesn't support commands).
    * @param sessionId Optional session ID for session-scoped command lists
+   * @param directory Optional working directory (for resuming/creating sessions to fetch commands)
    */
-  async listCommands(_sessionId?: string): Promise<EngineCommand[]> {
+  async listCommands(_sessionId?: string, _directory?: string): Promise<EngineCommand[]> {
     return [];
   }
 

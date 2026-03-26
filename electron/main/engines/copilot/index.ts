@@ -725,7 +725,7 @@ export class CopilotSdkAdapter extends EngineAdapter {
     }
   }
 
-  override async listCommands(sessionId?: string): Promise<EngineCommand[]> {
+  override async listCommands(sessionId?: string, directory?: string): Promise<EngineCommand[]> {
     // If cached commands are available, return them immediately.
     if (this.cachedCommands.length > 0) return this.cachedCommands;
 
@@ -737,13 +737,13 @@ export class CopilotSdkAdapter extends EngineAdapter {
       let session = this.activeSessions.get(sessionId);
       if (!session) {
         // Session not active yet — try to activate it so we can fetch skills.
-        // This covers the case where listCommands is called before the user
-        // sends their first message (lazy session creation).
-        const directory = this.sessionDirectories.get(sessionId);
-        if (directory) {
+        // Use the directory passed from engine-manager (from conversationStore),
+        // falling back to the in-memory sessionDirectories map.
+        const dir = directory || this.sessionDirectories.get(sessionId);
+        if (dir) {
           try {
             copilotLog.info(`[Copilot] listCommands: activating session ${sessionId} to fetch skills`);
-            session = await this.ensureActiveSession(sessionId, directory);
+            session = await this.ensureActiveSession(sessionId, dir);
           } catch (err) {
             copilotLog.warn(`[Copilot] listCommands: failed to activate session:`, err);
           }

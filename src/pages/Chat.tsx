@@ -9,6 +9,7 @@ import {
   batch,
   lazy,
   Suspense,
+  untrack,
 } from "solid-js";
 import { Auth } from "../lib/auth";
 import { useNavigate } from "@solidjs/router";
@@ -297,19 +298,22 @@ export default function Chat() {
     }
   });
 
-  // Fetch available slash commands when the engine type or session changes
+  // Fetch available slash commands when the engine type changes.
+  // Commands are adapter-level (shared across all sessions of the same engine),
+  // so we only need to fetch once per engine switch. Subsequent updates arrive
+  // via the commands.changed push notification.
   createEffect(() => {
     const engineType = currentEngineType();
-    const sid = sessionStore.current;
     const engineInfo = configStore.engines.find(e => e.type === engineType);
     const supportsCommands = engineInfo?.capabilities?.slashCommands ?? false;
     if (!supportsCommands) {
       setAvailableCommands([]);
       return;
     }
-    // Fetch commands from the gateway — pass sessionId so the adapter can
-    // look up the active engine session (needed for Copilot/Claude to fetch
-    // commands from the correct session).
+    // Pass the current sessionId so the adapter can resolve the working
+    // directory (needed for the first-time warmup / skill fetch).
+    // Use untrack so session switches don't re-trigger this effect.
+    const sid = untrack(() => sessionStore.current);
     gateway.listCommands(engineType, sid ?? undefined).then(
       (cmds) => {
         // Guard against stale responses if engine type changed while fetching

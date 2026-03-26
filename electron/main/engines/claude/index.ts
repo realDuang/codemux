@@ -128,6 +128,10 @@ export class ClaudeCodeAdapter extends EngineAdapter {
 
   // --- Slash commands ---
   private availableCommands: EngineCommand[] = [];
+  /** Cached user-installed skill names, for system prompt injection */
+  private cachedSkillNames: string[] = [];
+  /** In-flight warmup promise — prevents concurrent warmups and lets listCommands await it */
+  private warmupPromise: Promise<void> | null = null;
 
   // --- State ---
   private status: EngineStatus = "stopped";
@@ -451,6 +455,9 @@ export class ClaudeCodeAdapter extends EngineAdapter {
       this.sessionCcIds.set(sessionId, meta.ccSessionId);
     }
     this.emit("session.created", { session });
+
+    // Warm up in background — store the promise so listCommands() can await it.
+    this.triggerWarmup(directory);
 
     return session;
   }
@@ -1339,47 +1346,46 @@ export class ClaudeCodeAdapter extends EngineAdapter {
   // Slash Commands
   // ==========================================================================
 
-  override async listCommands(sessionId?: string): Promise<EngineCommand[]> {
-    // If we already have commands from the init message (slash_commands + skills), use them.
+  override async listCommands(sessionId?: string, directory?: string): Promise<EngineCommand[]> {
+    // Fast path: commands already populated
     if (this.availableCommands.length > 0) return this.availableCommands;
 
-    // If a session is active and has received its init message, try to refresh
-    // by looking up the cached commands. The init message populates
-    // this.availableCommands, so if it's empty, the session hasn't initialized yet.
-    // In that case, return the well-known list as a fallback.
-    if (sessionId) {
-      // Check if the V2 session exists and has been initialized
-      const v2Info = this.v2Sessions.get(sessionId);
-      if (v2Info && this.availableCommands.length > 0) {
-        return this.availableCommands;
+    // Commands not yet available — trigger warmup if not already running,
+    // then await it so the first listCommands() call returns real data
+    // instead of a hardcoded fallback.
+    const dir = directory || (sessionId && this.sessionDirectories.get(sessionId)) || ".";
+    this.triggerWarmup(dir);
+
+    if (this.warmupPromise) {
+      try {
+        await this.warmupPromise;
+      } catch {
+        // warmup failed — fall through to fallback
       }
     }
 
-    // Fallback: well-known Claude Code commands with descriptions.
-    // The SDK's SDKSystemMessage.slash_commands is string[] (names only),
-    // so we maintain this static list to provide descriptions before the
-    // init message arrives.
-    return this.getWellKnownCommands();
+    if (this.availableCommands.length > 0) return this.availableCommands;
+
+    // Fallback: minimal list if warmup failed entirely
+    return [
+      { name: "compact", description: "Compact conversation context" },
+      { name: "context", description: "Show current context window usage" },
+      { name: "cost", description: "Show token usage and cost" },
+    ];
   }
 
-  /** Well-known Claude Code commands with descriptions for autocomplete. */
-  private getWellKnownCommands(): EngineCommand[] {
-    return [
-      { name: "help", description: "Show available commands" },
-      { name: "compact", description: "Compact conversation context" },
-      { name: "clear", description: "Clear conversation history" },
-      { name: "config", description: "View/modify configuration" },
-      { name: "cost", description: "Show token usage and cost" },
-      { name: "init", description: "Initialize project CLAUDE.md" },
-      { name: "doctor", description: "Check Claude Code installation" },
-      { name: "review", description: "Review code changes" },
-      { name: "memory", description: "Edit CLAUDE.md memory" },
-      { name: "model", description: "Switch model" },
-      { name: "login", description: "Login to Anthropic" },
-      { name: "logout", description: "Logout from Anthropic" },
-      { name: "bug", description: "Report a bug" },
-      { name: "mcp", description: "Manage MCP servers" },
-    ];
+  /**
+   * Trigger a warmup if one isn't already in progress and commands haven't
+   * been populated yet. Safe to call multiple times — deduplicates via
+   * warmupPromise.
+   */
+  private triggerWarmup(directory: string): void {
+    if (this.availableCommands.length > 0) return;
+    if (this.warmupPromise) return;
+
+    this.warmupPromise = this.warmupV2Session("warmup", directory)
+      .catch((err) => claudeLog.warn("[Claude] Warmup failed:", err))
+      .finally(() => { this.warmupPromise = null; });
   }
 
   override async invokeCommand(
@@ -1484,13 +1490,20 @@ export class ClaudeCodeAdapter extends EngineAdapter {
     // We use 'as any' because the SDK v0.2.x SDKSessionOptions type is still
     // narrower than the internal Options type. The SDK internally passes these
     // through to ProcessTransport which accepts all Options fields.
+
+    // Build system prompt append: identity + cached user skills
+    let promptAppend = CODEMUX_IDENTITY_PROMPT;
+    if (this.cachedSkillNames.length > 0) {
+      promptAppend += `\n\nThe user has installed the following additional skills (invokable via the Skill tool): ${this.cachedSkillNames.join(", ")}. When the user's request matches one of these skills, use the Skill tool to invoke it.`;
+    }
+
     const sdkOptions: any = {
       model: opts.model ?? this.currentModelId ?? "claude-sonnet-4-20250514",
       env,
       permissionMode: opts.permissionMode ?? "default",
       allowedTools: ["Read", "Write", "Edit", "Grep", "Glob", "Bash", "WebFetch", "WebSearch", "Task", "TodoWrite", "TodoRead", "NotebookEdit"],
       canUseTool: this.createCanUseTool(sessionId),
-      systemPrompt: { type: "preset" as const, preset: "claude_code" as const, append: CODEMUX_IDENTITY_PROMPT },
+      systemPrompt: { type: "preset" as const, preset: "claude_code" as const, append: promptAppend },
       pathToClaudeCodeExecutable: this.resolveCliPath(),
     };
 
@@ -1551,6 +1564,93 @@ export class ClaudeCodeAdapter extends EngineAdapter {
     }
 
     this.v2Sessions.delete(sessionId);
+  }
+
+  /**
+   * Built-in commands that ship with Claude Code. Used to distinguish
+   * user-installed skills from built-in slash commands.
+   */
+  private static readonly BUILT_IN_COMMANDS = new Set([
+    "compact", "context", "cost", "init", "review",
+    "help", "clear", "config", "doctor", "memory", "model",
+    "login", "logout", "bug", "mcp", "approved-tools",
+    "pr-comments", "release-notes", "listen",
+  ]);
+
+  private isBuiltInCommand(name: string): boolean {
+    return ClaudeCodeAdapter.BUILT_IN_COMMANDS.has(name);
+  }
+
+  /**
+   * Warm up by querying the SDK for available commands (including user-installed
+   * skills). Uses the SDK Query's supportedCommands() API which returns
+   * SlashCommand[] with full name + description + argumentHint.
+   *
+   * Creates a lightweight sdkQuery session, extracts commands, and closes it.
+   */
+  private async warmupV2Session(sessionId: string, directory: string): Promise<void> {
+    // Skip if commands are already populated (e.g. another session already warmed up)
+    if (this.availableCommands.length > 0) return;
+
+    const cwd = directory.replaceAll("/", process.platform === "win32" ? "\\" : "/");
+    const env: Record<string, string | undefined> = {
+      ...process.env,
+      ...this.options?.env,
+    };
+    delete env.ANTHROPIC_MODEL;
+    delete env.ELECTRON_RUN_AS_NODE;
+
+    const q = sdkQuery({
+      prompt: "",
+      options: {
+        model: "claude-sonnet-4-20250514",
+        env,
+        cwd,
+        abortController: new AbortController(),
+        pathToClaudeCodeExecutable: this.resolveCliPath(),
+      } as any,
+    });
+
+    try {
+      const commands = await q.supportedCommands();
+      this.availableCommands = commands.map((cmd: { name: string; description: string; argumentHint: string }) => ({
+        name: cmd.name,
+        description: cmd.description || "",
+        argumentHint: cmd.argumentHint || undefined,
+      }));
+
+      // Cache skill names (non-built-in commands) for system prompt injection
+      this.cachedSkillNames = commands
+        .filter((cmd: { name: string }) => !this.isBuiltInCommand(cmd.name))
+        .map((cmd: { name: string }) => cmd.name);
+
+      this.emit("commands.changed", {
+        engineType: this.engineType,
+        commands: this.availableCommands,
+      });
+
+      claudeLog.info(
+        `[Claude][${sessionId}] Warmup complete via supportedCommands(): ${this.availableCommands.length} commands (${this.cachedSkillNames.length} user skills: ${this.cachedSkillNames.join(", ")})`,
+      );
+    } catch (err) {
+      claudeLog.warn(`[Claude][${sessionId}] supportedCommands() failed, using fallback:`, err);
+      // Minimal fallback
+      this.availableCommands = [
+        { name: "compact", description: "Compact conversation context" },
+        { name: "context", description: "Show current context window usage" },
+        { name: "cost", description: "Show token usage and cost" },
+      ];
+      this.emit("commands.changed", {
+        engineType: this.engineType,
+        commands: this.availableCommands,
+      });
+    } finally {
+      try {
+        q.close();
+      } catch {
+        // Ignore errors during cleanup
+      }
+    }
   }
 
   // ==========================================================================
@@ -1760,46 +1860,13 @@ export class ClaudeCodeAdapter extends EngineAdapter {
       }
 
       claudeLog.info(
-        `[Claude][${sessionId}] System init: session=${ccSessionId}, model=${msg.model}, slash_commands=${JSON.stringify(msg.slash_commands)?.slice(0, 200)}, skills=${JSON.stringify(msg.skills)?.slice(0, 200)}`,
+        `[Claude][${sessionId}] System init: session=${ccSessionId}, model=${msg.model}`,
       );
 
-      // Extract slash command names from init message (string[] only — no descriptions).
-      // Enrich with descriptions from the well-known commands list.
-      if (Array.isArray(msg.slash_commands)) {
-        const wellKnown = this.getWellKnownCommands();
-        const wellKnownMap = new Map(wellKnown.map(c => [c.name, c]));
-        this.availableCommands = msg.slash_commands.map((name: string) => {
-          const known = wellKnownMap.get(name);
-          return {
-            name,
-            description: known?.description ?? "",
-            argumentHint: known?.argumentHint,
-          };
-        });
-
-        // Also extract user-installed skills (separate array in init message).
-        // Skills are custom extensions loaded from project/personal directories.
-        if (Array.isArray(msg.skills)) {
-          for (const skillName of msg.skills) {
-            // Avoid duplicates (in case a skill name matches a built-in command)
-            if (!this.availableCommands.some(c => c.name === skillName)) {
-              this.availableCommands.push({
-                name: skillName,
-                description: "",
-                source: "skill",
-              });
-            }
-          }
-        }
-
-        this.emit("commands.changed", {
-          engineType: this.engineType,
-          commands: this.availableCommands,
-        });
-        claudeLog.info(
-          `[Claude][${sessionId}] Commands updated: ${this.availableCommands.length} total (${this.availableCommands.filter(c => c.source === "skill").length} skills)`,
-        );
-      }
+      // Note: Command/skill discovery is handled by warmupV2Session() via
+      // supportedCommands() API. The init message's slash_commands/skills
+      // arrays are ignored here to avoid overwriting the richer data from
+      // the API (which includes descriptions and argumentHints).
     } else if (msg.subtype === "local_command_output") {
       // Slash command output (e.g., /help, /cost, /compact).
       const output = msg.content ?? "";

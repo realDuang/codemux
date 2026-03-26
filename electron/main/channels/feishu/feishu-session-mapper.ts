@@ -10,7 +10,7 @@ import path from "path";
 import { app } from "electron";
 import type { EngineType } from "../../../../src/types/unified";
 import type { GroupBinding, P2PChatState, PendingQuestion, PendingSelection, StreamingSession, TempSession } from "./feishu-types";
-import { feishuLog } from "../../services/logger";
+import { feishuLog, type ScopedLogger } from "../../services/logger";
 
 // --- Persistence helpers ---
 
@@ -33,6 +33,16 @@ function getBindingsFilePath(): string {
 }
 
 export class FeishuSessionMapper {
+  private log: ScopedLogger;
+
+  constructor(log: ScopedLogger = feishuLog) {
+    this.log = log;
+  }
+
+  setLogger(log: ScopedLogger): void {
+    this.log = log;
+  }
+
   // --- Group Bindings (One Group = One Session) ---
 
   /** groupChatId → GroupBinding */
@@ -97,9 +107,9 @@ export class FeishuSessionMapper {
         this.groupBindings.set(binding.chatId, binding);
         this.conversationToGroupIndex.set(binding.conversationId, binding.chatId);
       }
-      feishuLog.info(`Loaded ${items.length} persisted group bindings`);
+      this.log.info(`Loaded ${items.length} persisted group bindings`);
     } catch (err) {
-      feishuLog.error("Failed to load group bindings:", err);
+      this.log.error("Failed to load group bindings:", err);
     }
   }
 
@@ -129,7 +139,7 @@ export class FeishuSessionMapper {
       fs.writeFileSync(tmpPath, JSON.stringify(items, null, 2));
       fs.renameSync(tmpPath, filePath);
     } catch (err) {
-      feishuLog.error("Failed to save group bindings:", err);
+      this.log.error("Failed to save group bindings:", err);
     }
   }
 
@@ -142,7 +152,7 @@ export class FeishuSessionMapper {
     this.groupBindings.set(binding.chatId, binding);
     this.conversationToGroupIndex.set(binding.conversationId, binding.chatId);
     this.saveBindings();
-    feishuLog.info(
+    this.log.info(
       `Created group binding: chat=${binding.chatId} → conversation=${binding.conversationId} (${binding.engineType}:${binding.projectId})`,
     );
   }
@@ -194,7 +204,7 @@ export class FeishuSessionMapper {
     this.groupBindings.delete(groupChatId);
     this.saveBindings();
 
-    feishuLog.info(
+    this.log.info(
       `Removed group binding: chat=${groupChatId} (conversation=${binding.conversationId})`,
     );
     return binding;
@@ -210,7 +220,7 @@ export class FeishuSessionMapper {
    */
   markCreating(conversationId: string): boolean {
     if (this.creatingGroups.has(conversationId)) {
-      feishuLog.warn(`Conversation ${conversationId} is already being created, skipping`);
+      this.log.warn(`Conversation ${conversationId} is already being created, skipping`);
       return false;
     }
     this.creatingGroups.add(conversationId);
@@ -232,7 +242,7 @@ export class FeishuSessionMapper {
     if (!state) {
       state = { chatId, openId };
       this.p2pChats.set(chatId, state);
-      feishuLog.info(`Created P2P chat state: chat=${chatId} openId=${openId}`);
+      this.log.info(`Created P2P chat state: chat=${chatId} openId=${openId}`);
     }
     return state;
   }
@@ -250,7 +260,7 @@ export class FeishuSessionMapper {
     const state = this.p2pChats.get(chatId);
     if (state) {
       state.lastSelectedProject = project;
-      feishuLog.info(
+      this.log.info(
         `P2P chat ${chatId} last project: ${project.projectId} (${project.engineType})`,
       );
     }
@@ -328,7 +338,7 @@ export class FeishuSessionMapper {
     if (binding) {
       binding.streamingSessions.set(messageId, session);
     } else {
-      feishuLog.warn(
+      this.log.warn(
         `Cannot register streaming session: group ${groupChatId} not found`,
       );
     }
@@ -366,7 +376,7 @@ export class FeishuSessionMapper {
       }
       state.tempSession = tempSession;
       this.tempConversationToChat.set(tempSession.conversationId, chatId);
-      feishuLog.info(
+      this.log.info(
         `P2P chat ${chatId} temp session: ${tempSession.conversationId} (${tempSession.engineType})`,
       );
     }
@@ -387,7 +397,7 @@ export class FeishuSessionMapper {
       }
       this.tempConversationToChat.delete(state.tempSession.conversationId);
       state.tempSession = undefined;
-      feishuLog.info(`P2P chat ${chatId} temp session cleared`);
+      this.log.info(`P2P chat ${chatId} temp session cleared`);
     }
   }
 
@@ -403,7 +413,7 @@ export class FeishuSessionMapper {
   /** Set a pending question for a chat (group or P2P) */
   setPendingQuestion(chatId: string, question: PendingQuestion): void {
     this.pendingQuestions.set(chatId, question);
-    feishuLog.info(`Set pending question for chat ${chatId}: ${question.questionId}`);
+    this.log.info(`Set pending question for chat ${chatId}: ${question.questionId}`);
   }
 
   /** Get the pending question for a chat */

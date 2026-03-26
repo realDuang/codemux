@@ -96,6 +96,7 @@ export function ScheduledTaskSection(props: ScheduledTaskSectionProps) {
           class="w-10 h-10 rounded-lg flex items-center justify-center hover:bg-gray-100 dark:hover:bg-slate-800 transition-colors relative"
           onClick={props.onCreateTask}
           title={t().scheduledTask.title}
+          aria-label={t().scheduledTask.title}
         >
           <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-gray-500 dark:text-gray-400">
             <circle cx="12" cy="12" r="10" />
@@ -162,6 +163,7 @@ export function ScheduledTaskSection(props: ScheduledTaskSectionProps) {
             props.onCreateTask();
           }}
           title={t().scheduledTask.create}
+          aria-label={t().scheduledTask.create}
         >
           <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <path d="M5 12h14" />

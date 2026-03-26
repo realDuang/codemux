@@ -536,13 +536,13 @@ export default function Chat() {
           }
         },
         onFileChanged: handleFileChanged,
-        onScheduledTasksChanged: (tasks) => {
+        onScheduledTasksChanged: (tasks: ScheduledTask[]) => {
           setScheduledTaskStore("tasks", tasks);
         },
-        onScheduledTaskFired: (_taskId, _conversationId) => {
+        onScheduledTaskFired: (_taskId: string, _conversationId: string) => {
           notify(t().scheduledTask.taskFired, "info", 3000);
         },
-        onScheduledTaskFailed: (_taskId, error) => {
+        onScheduledTaskFailed: (_taskId: string, error: string) => {
           notify(formatMessage(t().scheduledTask.taskFailed, { error }), "warning", 5000);
         },
       };
@@ -982,9 +982,9 @@ export default function Chat() {
   const handleCreateOrUpdateTask = async (req: ScheduledTaskCreateRequest | ScheduledTaskUpdateRequest) => {
     try {
       if (editingTask()) {
-        await gateway.updateScheduledTask({ id: editingTask()!.id, ...req });
+        await gateway.updateScheduledTask({ id: editingTask()!.id, ...req } as ScheduledTaskUpdateRequest);
       } else {
-        await gateway.createScheduledTask(req);
+        await gateway.createScheduledTask(req as ScheduledTaskCreateRequest);
       }
       // tasks.changed notification will auto-update store
     } catch (err) {

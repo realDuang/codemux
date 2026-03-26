@@ -27,7 +27,7 @@ import { SessionSidebar } from "../components/SessionSidebar";
 import { HideProjectModal } from "../components/HideProjectModal";
 import { AddProjectModal } from "../components/AddProjectModal";
 import { ScheduledTaskModal } from "../components/ScheduledTaskModal";
-import type { UnifiedMessage, UnifiedPart, UnifiedPermission, UnifiedQuestion, UnifiedSession, UnifiedProject, AgentMode, EngineType, SessionActivityStatus, ScheduledTask } from "../types/unified";
+import type { UnifiedMessage, UnifiedPart, UnifiedPermission, UnifiedQuestion, UnifiedSession, UnifiedProject, AgentMode, EngineType, SessionActivityStatus, ScheduledTask, ScheduledTaskCreateRequest, ScheduledTaskUpdateRequest } from "../types/unified";
 import { useI18n, formatMessage } from "../lib/i18n";
 import { notify } from "../lib/notifications";
 import { isDefaultTitle } from "../lib/session-utils";
@@ -543,7 +543,7 @@ export default function Chat() {
           notify(t().scheduledTask.taskFired, "info", 3000);
         },
         onScheduledTaskFailed: (_taskId, error) => {
-          notify(t().scheduledTask.taskFailed + ": " + error, "warning", 5000);
+          notify(formatMessage(t().scheduledTask.taskFailed, { error }), "warning", 5000);
         },
       };
 
@@ -979,7 +979,7 @@ export default function Chat() {
 
   // --- Scheduled Task handlers ---
 
-  const handleCreateOrUpdateTask = async (req: any) => {
+  const handleCreateOrUpdateTask = async (req: ScheduledTaskCreateRequest | ScheduledTaskUpdateRequest) => {
     try {
       if (editingTask()) {
         await gateway.updateScheduledTask({ id: editingTask()!.id, ...req });

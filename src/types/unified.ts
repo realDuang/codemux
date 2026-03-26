@@ -693,7 +693,7 @@ export interface ScheduledTaskFrequency {
 
 export interface ScheduledTask {
   id: string;
-  /** Unique name (kebab-case) */
+  /** Task display name */
   name: string;
   description: string;
   /** The prompt text sent to the engine when the task fires */

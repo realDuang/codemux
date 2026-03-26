@@ -1,5 +1,5 @@
 import { createSignal, createEffect, Show, For } from "solid-js";
-import { useI18n } from "../lib/i18n";
+import { useI18n, formatMessage } from "../lib/i18n";
 import { isElectron } from "../lib/platform";
 import { systemAPI } from "../lib/electron-api";
 import type {
@@ -7,7 +7,9 @@ import type {
   ScheduledTaskCreateRequest,
   ScheduledTaskUpdateRequest,
   ScheduledTaskFrequencyType,
+  ScheduledTaskFrequency,
   DayOfWeek,
+  EngineType,
   UnifiedProject,
   EngineInfo,
 } from "../types/unified";
@@ -84,23 +86,23 @@ export function ScheduledTaskModal(props: ScheduledTaskModalProps) {
 
   const handleSave = async () => {
     if (!name().trim()) {
-      setError(t().scheduledTask.name + " is required");
+      setError(formatMessage(t().scheduledTask.fieldRequired, { field: t().scheduledTask.name }));
       return;
     }
     if (!prompt().trim()) {
-      setError(t().scheduledTask.prompt + " is required");
+      setError(formatMessage(t().scheduledTask.fieldRequired, { field: t().scheduledTask.prompt }));
       return;
     }
     if (!engineType()) {
-      setError(t().scheduledTask.engineType + " is required");
+      setError(formatMessage(t().scheduledTask.fieldRequired, { field: t().scheduledTask.engineType }));
       return;
     }
     if (!directory().trim()) {
-      setError(t().scheduledTask.directory + " is required");
+      setError(formatMessage(t().scheduledTask.fieldRequired, { field: t().scheduledTask.directory }));
       return;
     }
     if (frequencyType() === "weekly" && daysOfWeek().length === 0) {
-      setError(t().scheduledTask.dayOfWeek + " is required");
+      setError(t().scheduledTask.daysRequired);
       return;
     }
 
@@ -108,7 +110,7 @@ export function ScheduledTaskModal(props: ScheduledTaskModalProps) {
     setError(null);
 
     try {
-      const frequency: any = { type: frequencyType() };
+      const frequency: ScheduledTaskFrequency = { type: frequencyType() };
       if (showInterval()) {
         frequency.intervalMinutes = intervalMinutes();
       }
@@ -117,7 +119,7 @@ export function ScheduledTaskModal(props: ScheduledTaskModalProps) {
         frequency.minute = minute();
       }
       if (showDaysOfWeek()) {
-        frequency.daysOfWeek = [...daysOfWeek()].sort();
+        frequency.daysOfWeek = [...daysOfWeek()].sort() as DayOfWeek[];
       }
 
       if (isEdit()) {
@@ -126,7 +128,7 @@ export function ScheduledTaskModal(props: ScheduledTaskModalProps) {
           name: name().trim(),
           description: description().trim(),
           prompt: prompt().trim(),
-          engineType: engineType() as any,
+          engineType: engineType() as EngineType,
           directory: directory().trim(),
           frequency,
           enabled: enabled(),
@@ -137,7 +139,7 @@ export function ScheduledTaskModal(props: ScheduledTaskModalProps) {
           name: name().trim(),
           description: description().trim(),
           prompt: prompt().trim(),
-          engineType: engineType() as any,
+          engineType: engineType() as EngineType,
           directory: directory().trim(),
           frequency,
           enabled: enabled(),
@@ -299,7 +301,7 @@ export function ScheduledTaskModal(props: ScheduledTaskModalProps) {
                       type="text"
                       value={directory()}
                       onInput={(e) => setDirectory(e.currentTarget.value)}
-                      placeholder="/path/to/project"
+                      placeholder={t().scheduledTask.directoryPlaceholder}
                       class={`flex-1 ${inputClass}`}
                     />
                   }

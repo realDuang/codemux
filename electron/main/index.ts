@@ -1,6 +1,7 @@
 import { app, BrowserWindow } from "electron";
 import fixPath from "fix-path";
 import { mainLog } from "./services/logger";
+import { unwatchAll } from "./services/file-service";
 // dev restart trigger
 
 // Fix $PATH for packaged macOS/Linux apps launched from GUI.
@@ -248,6 +249,10 @@ if (!gotTheLock) {
 
     try {
       trayManager.destroy();
+
+      // Stop native file watchers early — @parcel/watcher uses NAPI threadsafe
+      // functions that must be torn down before Node.js module cleanup begins.
+      unwatchAll();
 
       // Flush conversation store before quit
       await conversationStore.flushAll();

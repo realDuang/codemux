@@ -506,7 +506,7 @@ export const zh: LocaleDict = {
     save: "保存",
     runNow: "立即运行",
     taskFired: "定时任务已启动",
-    taskFailed: "定时任务执行失败",
+    taskFailed: "定时任务执行失败：{error}",
     name: "名称",
     namePlaceholder: "my-task-name",
     description: "描述",
@@ -542,5 +542,9 @@ export const zh: LocaleDict = {
     manual: "手动",
     noTasks: "暂无定时任务",
     runHistory: "运行历史",
+    directoryPlaceholder: "/项目/路径",
+    lessThanOneMinute: "< 1分钟",
+    fieldRequired: "{field}为必填项",
+    daysRequired: "请至少选择一天",
   },
 };

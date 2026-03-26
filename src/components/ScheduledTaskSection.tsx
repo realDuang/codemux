@@ -41,9 +41,9 @@ export function ScheduledTaskSection(props: ScheduledTaskSectionProps) {
     const now = Date.now();
     const diff = task.nextRunAt - now;
 
-    if (diff < 0) return "< 1m";
+    if (diff < 0) return t().scheduledTask.lessThanOneMinute;
 
-    if (diff < 60_000) return "< 1m";
+    if (diff < 60_000) return t().scheduledTask.lessThanOneMinute;
     if (diff < 3_600_000) {
       const mins = Math.round(diff / 60_000);
       return `${mins}m`;
@@ -91,25 +91,23 @@ export function ScheduledTaskSection(props: ScheduledTaskSectionProps) {
   // Collapsed mode: just show a small clock icon
   if (props.collapsed) {
     return (
-      <Show when={props.tasks.length > 0}>
-        <div class="flex flex-col items-center gap-1 mb-2 pb-2 border-b border-gray-200 dark:border-slate-800">
-          <button
-            class="w-10 h-10 rounded-lg flex items-center justify-center hover:bg-gray-100 dark:hover:bg-slate-800 transition-colors relative"
-            onClick={props.onCreateTask}
-            title={t().scheduledTask.title}
-          >
-            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-gray-500 dark:text-gray-400">
-              <circle cx="12" cy="12" r="10" />
-              <polyline points="12 6 12 12 16 14" />
-            </svg>
-            <Show when={enabledCount() > 0}>
-              <span class="absolute -top-0.5 -right-0.5 w-4 h-4 bg-blue-500 text-white text-[9px] font-bold rounded-full flex items-center justify-center">
-                {enabledCount()}
-              </span>
-            </Show>
-          </button>
-        </div>
-      </Show>
+      <div class="flex flex-col items-center gap-1 mb-2 pb-2 border-b border-gray-200 dark:border-slate-800">
+        <button
+          class="w-10 h-10 rounded-lg flex items-center justify-center hover:bg-gray-100 dark:hover:bg-slate-800 transition-colors relative"
+          onClick={props.onCreateTask}
+          title={t().scheduledTask.title}
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-gray-500 dark:text-gray-400">
+            <circle cx="12" cy="12" r="10" />
+            <polyline points="12 6 12 12 16 14" />
+          </svg>
+          <Show when={enabledCount() > 0}>
+            <span class="absolute -top-0.5 -right-0.5 w-4 h-4 bg-blue-500 text-white text-[9px] font-bold rounded-full flex items-center justify-center">
+              {enabledCount()}
+            </span>
+          </Show>
+        </button>
+      </div>
     );
   }
 

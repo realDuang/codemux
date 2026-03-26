@@ -544,6 +544,10 @@ export interface LocaleDict {
     manual: string;
     noTasks: string;
     runHistory: string;
+    directoryPlaceholder: string;
+    lessThanOneMinute: string;
+    fieldRequired: string;
+    daysRequired: string;
   };
 }
 
@@ -1053,7 +1057,7 @@ export const en: LocaleDict = {
     save: "Save",
     runNow: "Run Now",
     taskFired: "Scheduled task started",
-    taskFailed: "Scheduled task failed",
+    taskFailed: "Scheduled task failed: {error}",
     name: "Name",
     namePlaceholder: "my-task-name",
     description: "Description",
@@ -1089,5 +1093,9 @@ export const en: LocaleDict = {
     manual: "Manual",
     noTasks: "No scheduled tasks",
     runHistory: "Run History",
+    directoryPlaceholder: "/path/to/project",
+    lessThanOneMinute: "< 1m",
+    fieldRequired: "{field} is required",
+    daysRequired: "Select at least one day",
   },
 };

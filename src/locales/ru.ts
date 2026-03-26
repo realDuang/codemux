@@ -509,7 +509,7 @@ export const ru: LocaleDict = {
     save: "Сохранить",
     runNow: "Запустить сейчас",
     taskFired: "Запланированная задача запущена",
-    taskFailed: "Ошибка запланированной задачи",
+    taskFailed: "Ошибка запланированной задачи: {error}",
     name: "Название",
     namePlaceholder: "my-task-name",
     description: "Описание",
@@ -545,5 +545,9 @@ export const ru: LocaleDict = {
     manual: "Вручную",
     noTasks: "Нет запланированных задач",
     runHistory: "История запусков",
+    directoryPlaceholder: "/путь/к/проекту",
+    lessThanOneMinute: "< 1 мин",
+    fieldRequired: "{field} — обязательное поле",
+    daysRequired: "Выберите хотя бы один день",
   },
 };

@@ -41,6 +41,7 @@ import { WeComAdapter } from "./channels/wecom/wecom-adapter";
 import { TeamsAdapter } from "./channels/teams/teams-adapter";
 import { updateManager } from "./services/update-manager";
 import { trayManager } from "./services/tray-manager";
+import { scheduledTaskService } from "./services/scheduled-task-service";
 import { ensureDefaultWorkspace } from "./services/default-workspace";
 import { GATEWAY_PORT, OPENCODE_PORT, WEBHOOK_PORT, WEB_PORT } from "../../shared/ports";
 
@@ -112,6 +113,9 @@ if (!gotTheLock) {
 
     // Rebuild engine routing tables from persisted ConversationStore data
     engineManager.initFromStore();
+
+    // Initialize scheduled task service (persistent desktop-level scheduled tasks)
+    scheduledTaskService.init(engineManager);
 
     // Register IPC handlers
     registerIpcHandlers();
@@ -241,6 +245,7 @@ if (!gotTheLock) {
     if (updateManager.isInstallingUpdate()) {
       trayManager.destroy();
       await conversationStore.flushAll();
+      await scheduledTaskService.shutdown();
       gatewayServer.stop();
       return;
     }
@@ -263,6 +268,7 @@ if (!gotTheLock) {
         webhookServer.stop(),
         engineManager.stopAll(),
         productionServer.stop(),
+        scheduledTaskService.shutdown(),
       ]);
 
       gatewayServer.stop();

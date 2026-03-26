@@ -541,6 +541,14 @@ export const GatewayRequestType = {
   FILE_GIT_DIFF: "file.gitDiff",
   FILE_WATCH: "file.watch",
   FILE_UNWATCH: "file.unwatch",
+
+  // Scheduled Tasks
+  SCHEDULED_TASK_LIST: "scheduledTask.list",
+  SCHEDULED_TASK_GET: "scheduledTask.get",
+  SCHEDULED_TASK_CREATE: "scheduledTask.create",
+  SCHEDULED_TASK_UPDATE: "scheduledTask.update",
+  SCHEDULED_TASK_DELETE: "scheduledTask.delete",
+  SCHEDULED_TASK_RUN_NOW: "scheduledTask.runNow",
 } as const;
 
 // --- Notification type constants ---
@@ -560,6 +568,11 @@ export const GatewayNotificationType = {
   MESSAGE_QUEUED_CONSUMED: "message.queued.consumed",
   SESSION_IMPORT_PROGRESS: "session.import.progress",
   FILE_CHANGED: "file.changed",
+
+  // Scheduled Tasks
+  SCHEDULED_TASK_FIRED: "scheduledTask.fired",
+  SCHEDULED_TASK_FAILED: "scheduledTask.failed",
+  SCHEDULED_TASKS_CHANGED: "scheduledTasks.changed",
 } as const;
 
 // --- Request / Response payload types ---
@@ -659,4 +672,67 @@ export interface SessionImportResult {
   imported: number;
   skipped: number;
   errors: string[];
+}
+
+// --- Scheduled Tasks ---
+
+export type ScheduledTaskFrequencyType = "manual" | "interval" | "daily" | "weekly";
+export type DayOfWeek = 0 | 1 | 2 | 3 | 4 | 5 | 6;
+
+export interface ScheduledTaskFrequency {
+  type: ScheduledTaskFrequencyType;
+  /** Interval in minutes, for interval type (e.g. 5, 10, 30, 60) */
+  intervalMinutes?: number;
+  /** Hour (0-23), for daily/weekly */
+  hour?: number;
+  /** Minute (0-59), for daily/weekly */
+  minute?: number;
+  /** Days of week (0=Sun), for weekly — supports multi-select */
+  daysOfWeek?: DayOfWeek[];
+}
+
+export interface ScheduledTask {
+  id: string;
+  /** Unique name (kebab-case) */
+  name: string;
+  description: string;
+  /** The prompt text sent to the engine when the task fires */
+  prompt: string;
+  engineType: EngineType;
+  directory: string;
+  frequency: ScheduledTaskFrequency;
+  enabled: boolean;
+  /** Deterministic jitter offset in ms (0–600000) */
+  jitterMs: number;
+  createdAt: number;
+  lastRunAt: number | null;
+  nextRunAt: number | null;
+  /** Conversation IDs from past runs (newest first, max 50) */
+  runHistory: string[];
+}
+
+export interface ScheduledTaskCreateRequest {
+  name: string;
+  description: string;
+  prompt: string;
+  engineType: EngineType;
+  directory: string;
+  frequency: ScheduledTaskFrequency;
+  enabled?: boolean;
+}
+
+export interface ScheduledTaskUpdateRequest {
+  id: string;
+  name?: string;
+  description?: string;
+  prompt?: string;
+  engineType?: EngineType;
+  directory?: string;
+  frequency?: ScheduledTaskFrequency;
+  enabled?: boolean;
+}
+
+export interface ScheduledTaskRunResult {
+  taskId: string;
+  conversationId: string;
 }

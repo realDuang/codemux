@@ -147,6 +147,7 @@ export const dingtalkLog = log.scope("dingtalk");
 export const telegramLog = log.scope("telegram");
 export const wecomLog = log.scope("wecom");
 export const teamsLog = log.scope("teams");
+export const scheduledTaskLog = log.scope("sched-task");
 
 // Re-export the root logger for ad-hoc usage and renderer log forwarding
 export default log;

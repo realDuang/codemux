@@ -16,6 +16,7 @@ import {
 import { gatewayLog } from "../services/logger";
 import log from "../services/logger";
 import { conversationStore } from "../services/conversation-store";
+import { scheduledTaskService } from "../services/scheduled-task-service";
 import {
   GatewayRequestType,
   GatewayNotificationType,
@@ -32,6 +33,8 @@ import {
   type ModeSetRequest,
   type SessionImportPreviewRequest,
   type SessionImportExecuteRequest,
+  type ScheduledTaskCreateRequest,
+  type ScheduledTaskUpdateRequest,
 } from "../../../src/types/unified";
 
 interface ClientConnection {
@@ -391,6 +394,26 @@ export class GatewayServer {
         return { success: true };
       }
 
+      // Scheduled Tasks
+      case GatewayRequestType.SCHEDULED_TASK_LIST:
+        return scheduledTaskService.list();
+
+      case GatewayRequestType.SCHEDULED_TASK_GET:
+        return scheduledTaskService.get(p.id);
+
+      case GatewayRequestType.SCHEDULED_TASK_CREATE:
+        return scheduledTaskService.create(p as ScheduledTaskCreateRequest);
+
+      case GatewayRequestType.SCHEDULED_TASK_UPDATE:
+        return scheduledTaskService.update(p as ScheduledTaskUpdateRequest);
+
+      case GatewayRequestType.SCHEDULED_TASK_DELETE:
+        scheduledTaskService.delete(p.id);
+        return { success: true };
+
+      case GatewayRequestType.SCHEDULED_TASK_RUN_NOW:
+        return scheduledTaskService.runNow(p.id);
+
       default:
         throw Object.assign(
           new Error(`Unknown request type: ${type}`),
@@ -484,6 +507,26 @@ export class GatewayServer {
     em.on("session.import.progress" as any, (data: any) => {
       this.broadcast({
         type: GatewayNotificationType.SESSION_IMPORT_PROGRESS,
+        payload: data,
+      });
+    });
+
+    // Scheduled Task events
+    scheduledTaskService.on("task.fired", (data) => {
+      this.broadcast({
+        type: GatewayNotificationType.SCHEDULED_TASK_FIRED,
+        payload: data,
+      });
+    });
+    scheduledTaskService.on("task.failed", (data) => {
+      this.broadcast({
+        type: GatewayNotificationType.SCHEDULED_TASK_FAILED,
+        payload: data,
+      });
+    });
+    scheduledTaskService.on("tasks.changed", (data) => {
+      this.broadcast({
+        type: GatewayNotificationType.SCHEDULED_TASKS_CHANGED,
         payload: data,
       });
     });

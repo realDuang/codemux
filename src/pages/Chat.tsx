@@ -26,7 +26,8 @@ import { PromptInput } from "../components/PromptInput";
 import { SessionSidebar } from "../components/SessionSidebar";
 import { HideProjectModal } from "../components/HideProjectModal";
 import { AddProjectModal } from "../components/AddProjectModal";
-import type { UnifiedMessage, UnifiedPart, UnifiedPermission, UnifiedQuestion, UnifiedSession, UnifiedProject, AgentMode, EngineType, SessionActivityStatus } from "../types/unified";
+import { ScheduledTaskModal } from "../components/ScheduledTaskModal";
+import type { UnifiedMessage, UnifiedPart, UnifiedPermission, UnifiedQuestion, UnifiedSession, UnifiedProject, AgentMode, EngineType, SessionActivityStatus, ScheduledTask } from "../types/unified";
 import { useI18n, formatMessage } from "../lib/i18n";
 import { notify } from "../lib/notifications";
 import { isDefaultTitle } from "../lib/session-utils";
@@ -46,6 +47,7 @@ import { fileStore, togglePanel, setPanelWidth, closePanel } from "../stores/fil
 import { handleFileChanged, refreshGitStatus } from "../stores/file";
 
 import { configStore, setConfigStore, getSelectedModelForEngine, restoreEngineModelSelections, isEngineEnabled, restoreEnabledEngines, getDefaultEngineType, restoreDefaultEngine } from "../stores/config";
+import { scheduledTaskStore, setScheduledTaskStore } from "../stores/scheduled-task";
 
 // Binary search helper (consistent with opencode desktop)
 function binarySearch<T>(
@@ -318,6 +320,8 @@ export default function Chat() {
   } | null>(null);
 
   const [showAddProjectModal, setShowAddProjectModal] = createSignal(false);
+  const [showTaskModal, setShowTaskModal] = createSignal(false);
+  const [editingTask, setEditingTask] = createSignal<ScheduledTask | undefined>();
 
   // WebSocket connection status
   const [wsConnected, setWsConnected] = createSignal(true);
@@ -532,6 +536,15 @@ export default function Chat() {
           }
         },
         onFileChanged: handleFileChanged,
+        onScheduledTasksChanged: (tasks) => {
+          setScheduledTaskStore("tasks", tasks);
+        },
+        onScheduledTaskFired: (_taskId, _conversationId) => {
+          notify(t().scheduledTask.taskFired, "info", 3000);
+        },
+        onScheduledTaskFailed: (_taskId, error) => {
+          notify(t().scheduledTask.taskFailed + ": " + error, "warning", 5000);
+        },
       };
 
       // If gateway is already initialized (remount after navigation),
@@ -612,6 +625,16 @@ export default function Chat() {
           });
 
           setSessionStore("list", sessionInfos);
+
+          // Load scheduled tasks
+          try {
+            const tasks = await gateway.listScheduledTasks();
+            if (gen === initGeneration && !disposed) {
+              setScheduledTaskStore("tasks", tasks);
+            }
+          } catch (err) {
+            logger.warn("[Init] Failed to load scheduled tasks:", err);
+          }
 
           // Restore last selected session from previous app launch
           const lastSessionId = getSetting<string>("lastSessionId");
@@ -951,6 +974,49 @@ export default function Chat() {
       await handleSelectSession(newSession.id);
     } catch (error) {
       logger.error("[AddProject] Failed to add project:", error);
+    }
+  };
+
+  // --- Scheduled Task handlers ---
+
+  const handleCreateOrUpdateTask = async (req: any) => {
+    try {
+      if (editingTask()) {
+        await gateway.updateScheduledTask({ id: editingTask()!.id, ...req });
+      } else {
+        await gateway.createScheduledTask(req);
+      }
+      // tasks.changed notification will auto-update store
+    } catch (err) {
+      logger.error("[ScheduledTask] Save failed:", err);
+      throw err;
+    }
+  };
+
+  const handleDeleteTask = async (taskId: string) => {
+    try {
+      await gateway.deleteScheduledTask(taskId);
+    } catch (err) {
+      logger.error("[ScheduledTask] Delete failed:", err);
+    }
+  };
+
+  const handleRunTaskNow = async (taskId: string) => {
+    try {
+      const result = await gateway.runScheduledTaskNow(taskId);
+      // Navigate to the newly created session
+      handleSelectSession(result.conversationId);
+    } catch (err) {
+      logger.error("[ScheduledTask] RunNow failed:", err);
+      notify(t().scheduledTask.taskFailed, "warning", 3000);
+    }
+  };
+
+  const handleToggleTaskEnabled = async (taskId: string, enabled: boolean) => {
+    try {
+      await gateway.updateScheduledTask({ id: taskId, enabled });
+    } catch (err) {
+      logger.error("[ScheduledTask] Toggle failed:", err);
     }
   };
 
@@ -1601,6 +1667,12 @@ export default function Chat() {
               refreshingSessions={refreshingSessions()}
               showAddProject={isLocalAccess()}
               collapsed={isSidebarCollapsed() && !isMobile()}
+              scheduledTasks={scheduledTaskStore.tasks}
+              onCreateTask={() => { setEditingTask(undefined); setShowTaskModal(true); }}
+              onEditTask={(task) => { setEditingTask(task); setShowTaskModal(true); }}
+              onDeleteTask={handleDeleteTask}
+              onRunTaskNow={handleRunTaskNow}
+              onToggleTaskEnabled={handleToggleTaskEnabled}
             />
           </Show>
           <Show when={refreshingSessions()}>
@@ -1893,6 +1965,15 @@ export default function Chat() {
         isOpen={showAddProjectModal()}
         onClose={() => setShowAddProjectModal(false)}
         onAdd={handleAddProject}
+      />
+
+      <ScheduledTaskModal
+        isOpen={showTaskModal()}
+        editingTask={editingTask()}
+        projects={sessionStore.projects}
+        engines={configStore.engines}
+        onClose={() => setShowTaskModal(false)}
+        onSave={handleCreateOrUpdateTask}
       />
     </div>
   );

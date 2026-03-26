@@ -189,6 +189,7 @@ export interface LocaleDict {
     searchPlaceholder: string;
     noSearchResults: string;
     defaultWorkspace: string;
+    projectsTitle: string;
   };
 
   // Project
@@ -496,6 +497,54 @@ export interface LocaleDict {
     matchCount: string;
     openInExplorer: string;
   };
+
+  // Scheduled Tasks
+  scheduledTask: {
+    title: string;
+    create: string;
+    edit: string;
+    delete: string;
+    deleteConfirm: string;
+    save: string;
+    runNow: string;
+    taskFired: string;
+    taskFailed: string;
+    name: string;
+    namePlaceholder: string;
+    description: string;
+    descriptionPlaceholder: string;
+    prompt: string;
+    promptPlaceholder: string;
+    engineType: string;
+    directory: string;
+    frequency: string;
+    frequencyManual: string;
+    frequencyInterval: string;
+    frequencyDaily: string;
+    frequencyWeekly: string;
+    intervalLabel: string;
+    interval5m: string;
+    interval10m: string;
+    interval30m: string;
+    interval1h: string;
+    interval2h: string;
+    interval6h: string;
+    interval12h: string;
+    time: string;
+    dayOfWeek: string;
+    days: string[];
+    daysShort: string[];
+    enabled: string;
+    disabled: string;
+    enable: string;
+    disable: string;
+    nextRun: string;
+    lastRun: string;
+    never: string;
+    manual: string;
+    noTasks: string;
+    runHistory: string;
+  };
 }
 
 export const en: LocaleDict = {
@@ -688,6 +737,7 @@ export const en: LocaleDict = {
     searchPlaceholder: "Search sessions...",
     noSearchResults: "No matching sessions",
     defaultWorkspace: "Default Workspace",
+    projectsTitle: "Projects",
   },
 
   // Project
@@ -992,5 +1042,52 @@ export const en: LocaleDict = {
     noResults: "No results",
     matchCount: "{current} of {total}",
     openInExplorer: "Open in file explorer",
+  },
+
+  scheduledTask: {
+    title: "Scheduled Tasks",
+    create: "Create Task",
+    edit: "Edit Task",
+    delete: "Delete",
+    deleteConfirm: "Delete this scheduled task?",
+    save: "Save",
+    runNow: "Run Now",
+    taskFired: "Scheduled task started",
+    taskFailed: "Scheduled task failed",
+    name: "Name",
+    namePlaceholder: "my-task-name",
+    description: "Description",
+    descriptionPlaceholder: "Brief description of what this task does",
+    prompt: "Prompt",
+    promptPlaceholder: "Review pull requests and provide feedback...",
+    engineType: "Engine",
+    directory: "Project",
+    frequency: "Frequency",
+    frequencyManual: "Manual",
+    frequencyInterval: "Interval",
+    frequencyDaily: "Daily",
+    frequencyWeekly: "Weekly",
+    intervalLabel: "Run every",
+    interval5m: "5 min",
+    interval10m: "10 min",
+    interval30m: "30 min",
+    interval1h: "1 hour",
+    interval2h: "2 hours",
+    interval6h: "6 hours",
+    interval12h: "12 hours",
+    time: "Time",
+    dayOfWeek: "Days",
+    days: ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"],
+    daysShort: ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"],
+    enabled: "Enabled",
+    disabled: "Disabled",
+    enable: "Enable",
+    disable: "Disable",
+    nextRun: "Next run",
+    lastRun: "Last run",
+    never: "Never",
+    manual: "Manual",
+    noTasks: "No scheduled tasks",
+    runHistory: "Run History",
   },
 };

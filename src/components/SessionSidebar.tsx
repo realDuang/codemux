@@ -2,9 +2,10 @@ import { For, Show, Switch, Match, createSignal, createMemo, createEffect } from
 import { SessionInfo, sessionStore, setSessionStore, getProjectName } from "../stores/session";
 import { useI18n, formatMessage } from "../lib/i18n";
 import { isDefaultTitle } from "../lib/session-utils";
-import type { UnifiedProject, EngineType, SessionActivityStatus } from "../types/unified";
+import type { UnifiedProject, EngineType, SessionActivityStatus, ScheduledTask } from "../types/unified";
 import { configStore, isEngineEnabled, getDefaultEngineType, setDefaultNewSessionEngine } from "../stores/config";
 import { getEngineBadge } from "./share/common";
+import { ScheduledTaskSection } from "./ScheduledTaskSection";
 
 import { isElectron } from "../lib/platform";
 import { systemAPI } from "../lib/electron-api";
@@ -24,6 +25,13 @@ interface SessionSidebarProps {
   refreshingSessions?: boolean;
   showAddProject?: boolean;
   collapsed?: boolean;
+  // Scheduled Tasks
+  scheduledTasks?: ScheduledTask[];
+  onCreateTask?: () => void;
+  onEditTask?: (task: ScheduledTask) => void;
+  onDeleteTask?: (taskId: string) => void;
+  onRunTaskNow?: (taskId: string) => void;
+  onToggleTaskEnabled?: (taskId: string, enabled: boolean) => void;
 }
 
 // Project grouping data structure
@@ -321,6 +329,20 @@ export function SessionSidebar(props: SessionSidebarProps) {
       </Show>
       {/* Session List */}
       <div class={`flex-1 overflow-y-auto ${props.collapsed ? "px-1" : "px-2"} py-2`}>
+        {/* Scheduled Tasks Section */}
+        <Show when={(props.scheduledTasks?.length ?? 0) > 0 || (props.onCreateTask && !props.collapsed)}>
+          <ScheduledTaskSection
+            tasks={props.scheduledTasks ?? []}
+            collapsed={props.collapsed}
+            onCreateTask={() => props.onCreateTask?.()}
+            onEditTask={(task) => props.onEditTask?.(task)}
+            onDeleteTask={(id) => props.onDeleteTask?.(id)}
+            onRunNow={(id) => props.onRunTaskNow?.(id)}
+            onToggleEnabled={(id, enabled) => props.onToggleTaskEnabled?.(id, enabled)}
+            onSelectTaskSession={(sessionId) => props.onSelectSession(sessionId)}
+          />
+        </Show>
+
         <Show
           when={projectGroups().length > 0}
           fallback={
@@ -385,6 +407,20 @@ export function SessionSidebar(props: SessionSidebarProps) {
 
           {/* Expanded mode: full session list */}
           <Show when={!props.collapsed}>
+          {/* Projects section title */}
+          <div class="flex items-center gap-2 px-2 py-1.5 mb-1">
+            <div class="w-5 h-5 rounded flex items-center justify-center bg-emerald-500 text-white flex-shrink-0">
+              <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z" />
+              </svg>
+            </div>
+            <span class="text-sm font-medium text-gray-700 dark:text-gray-300">
+              {t().sidebar.projectsTitle}
+            </span>
+            <span class="text-[10px] text-gray-400 dark:text-gray-500">
+              [{filteredProjectGroups().length}]
+            </span>
+          </div>
           <For each={filteredProjectGroups()}>
             {(project) => {
               const isHovered = () => hoveredProject() === project.projectID;
@@ -499,9 +535,10 @@ export function SessionSidebar(props: SessionSidebarProps) {
                     </div>
                   </div>
 
-                  {/* Session List (Collapsible) */}
-                  <Show when={isExpanded()}>
-                    <div class="ml-4 mt-1">
+                  {/* Session List (Collapsible with animation) */}
+                  <div class="collapsible-grid" data-expanded={isExpanded() ? "true" : "false"}>
+                    <div class="collapsible-content">
+                      <div class="ml-4 mt-1">
                       <For each={project.sessions}>
                         {(session) => {
                           const isActive = () =>
@@ -700,7 +737,8 @@ export function SessionSidebar(props: SessionSidebarProps) {
                         }}
                       </For>
                     </div>
-                  </Show>
+                    </div>
+                  </div>
                 </div>
               );
             }}

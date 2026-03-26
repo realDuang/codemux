@@ -1,6 +1,6 @@
 /**
  * NotificationToast — renders stacked toast notifications.
- * Positioned at the top-right of the viewport.
+ * Positioned at the bottom-right of the viewport.
  */
 
 import { For } from "solid-js";
@@ -22,7 +22,7 @@ const typeIcons: Record<NotificationType, string> = {
 export function NotificationToast() {
   const { t } = useI18n();
   return (
-    <div class="fixed top-4 right-4 z-[10000] flex flex-col gap-2 max-w-sm pointer-events-none">
+    <div class="fixed bottom-4 right-4 z-[10000] flex flex-col-reverse gap-2 max-w-sm pointer-events-none">
       <For each={notifications()}>
         {(n) => (
           <div
@@ -42,8 +42,8 @@ export function NotificationToast() {
       </For>
       <style>{`
         @keyframes toast-in {
-          from { opacity: 0; transform: translateX(100%); }
-          to { opacity: 1; transform: translateX(0); }
+          from { opacity: 0; transform: translateY(100%); }
+          to { opacity: 1; transform: translateY(0); }
         }
       `}</style>
     </div>

@@ -176,6 +176,38 @@ export class StreamingController {
   }
 
   // =========================================================================
+  // Intermediate Flush (for plan review, etc.)
+  // =========================================================================
+
+  /**
+   * Flush the current text buffer as a properly formatted update to the
+   * streaming message, WITHOUT marking the session as completed.
+   *
+   * Used when the engine pauses for user input (e.g. ExitPlanMode plan review)
+   * so the user can see the accumulated content before making a decision.
+   */
+  async flushAsIntermediateReply(session: StreamingSession): Promise<void> {
+    if (!session.textBuffer || session.completed || session.finalReplySent) return;
+
+    // Cancel any pending throttled update to avoid a stale overwrite
+    if (session.patchTimer) {
+      clearTimeout(session.patchTimer);
+      session.patchTimer = null;
+    }
+
+    // Update the existing streaming message with the full current text
+    if (this.capabilities.supportsMessageUpdate && session.platformMessageId) {
+      const rendered = this.renderer.renderStreamingUpdate(session.textBuffer);
+      const truncated = this.renderer.truncate(rendered);
+      try {
+        await this.transport.updateText(session.platformMessageId, truncated);
+      } catch (err: any) {
+        channelLog.error(`Failed to flush intermediate reply: ${err.message}`);
+      }
+    }
+  }
+
+  // =========================================================================
   // Finalization
   // =========================================================================
 

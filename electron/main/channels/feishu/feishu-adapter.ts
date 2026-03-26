@@ -1342,6 +1342,29 @@ export class FeishuAdapter extends ChannelAdapter {
     }
     if (!targetChatId) return;
 
+    // For plan review questions (ExitPlanMode), flush the streaming text so
+    // the user can see the full plan content before deciding to approve/reject.
+    if (question.questions?.[0]?.header === "Plan Review" && this.streamingController) {
+      const binding = this.sessionMapper.findGroupByConversationId(question.sessionId);
+      if (binding) {
+        for (const ss of binding.streamingSessions.values()) {
+          if (ss.conversationId === question.sessionId && !ss.completed && ss.textBuffer) {
+            void this.streamingController.flushAsIntermediateReply(ss);
+            break;
+          }
+        }
+      } else {
+        // Try P2P temp session
+        const p2pChatId = this.sessionMapper.findP2PChatByTempConversation(question.sessionId);
+        if (p2pChatId) {
+          const tempSession = this.sessionMapper.getTempSession(p2pChatId);
+          if (tempSession?.streamingSession && !tempSession.streamingSession.completed && tempSession.streamingSession.textBuffer) {
+            void this.streamingController.flushAsIntermediateReply(tempSession.streamingSession);
+          }
+        }
+      }
+    }
+
     // UnifiedQuestion has questions: QuestionInfo[], each with question text and options
     if (question.questions && question.questions.length > 0) {
       const q = question.questions[0]; // Handle first question
@@ -1372,6 +1395,12 @@ export class FeishuAdapter extends ChannelAdapter {
     const binding = this.sessionMapper.getGroupBinding(groupChatId);
     if (!binding) return;
 
+    // Skip group name update if the event carries no title (e.g. Claude engine
+    // emits session.updated solely to sync engineMeta/ccSessionId, without a
+    // title field — blindly falling back to "New Session" would overwrite any
+    // meaningful title that was already set).
+    if (!session.title) return;
+
     // Update streaming session titles for any active streams
     for (const ss of binding.streamingSessions.values()) {
       if (!ss.completed) {
@@ -1383,8 +1412,7 @@ export class FeishuAdapter extends ChannelAdapter {
     const projectName = binding.directory.split(/[\\/]/).pop() || binding.directory;
 
     // Build the expected group name
-    const newTitle = session.title || "New Session";
-    const expectedGroupName = `[${projectName}] ${newTitle}`;
+    const expectedGroupName = `[${projectName}] ${session.title}`;
 
     // Update the Feishu group chat name
     try {

@@ -66,6 +66,7 @@ import {
 interface WsStartupMonitor {
   readyPromise: Promise<void>;
   cancel: () => void;
+  markStartResolved: () => void;
   logger: {
     error: (...args: unknown[]) => void;
     warn: (...args: unknown[]) => void;
@@ -109,8 +110,20 @@ export class FeishuAdapter extends ChannelAdapter {
     maxMessageBytes: 28_000,
   };
 
+  // Verified against @larksuiteoapi/node-sdk@1.42.0. Re-check these markers after
+  // SDK upgrades because the SDK does not expose structured websocket lifecycle hooks.
+  private static readonly WS_READY_LOG = "ws client ready";
+  private static readonly WS_STARTUP_FAILURE_MARKERS = ["system busy", "PingInterval"] as const;
+  private static readonly WS_STARTUP_TIMEOUT_MS = 30_000;
+
   private get channelLog(): ScopedLogger {
     return getFeishuChannelLog(this.config.platform);
+  }
+
+  private omitUndefinedConfig(updates: Partial<FeishuConfig>): Partial<FeishuConfig> {
+    return Object.fromEntries(
+      Object.entries(updates).filter(([, value]) => value !== undefined),
+    ) as Partial<FeishuConfig>;
   }
 
   private mergeConfig(baseConfig: FeishuConfig, updates?: Partial<FeishuConfig>): FeishuConfig {
@@ -118,20 +131,14 @@ export class FeishuAdapter extends ChannelAdapter {
       return { ...baseConfig };
     }
 
+    const normalizedUpdates = this.omitUndefinedConfig(updates);
+
     return {
       ...baseConfig,
-      ...(updates.appId !== undefined ? { appId: updates.appId } : {}),
-      ...(updates.appSecret !== undefined ? { appSecret: updates.appSecret } : {}),
-      ...(updates.autoApprovePermissions !== undefined
-        ? { autoApprovePermissions: updates.autoApprovePermissions }
-        : {}),
-      ...(updates.streamingThrottleMs !== undefined
-        ? { streamingThrottleMs: updates.streamingThrottleMs }
-        : {}),
-      ...(updates.gatewayUrl !== undefined ? { gatewayUrl: updates.gatewayUrl } : {}),
+      ...normalizedUpdates,
       platform:
-        updates.platform !== undefined
-          ? normalizeFeishuPlatform(updates.platform)
+        normalizedUpdates.platform !== undefined
+          ? normalizeFeishuPlatform(normalizedUpdates.platform)
           : baseConfig.platform,
     };
   }
@@ -144,11 +151,12 @@ export class FeishuAdapter extends ChannelAdapter {
       return false;
     }
 
+    const nextConfig = this.mergeConfig(previousConfig, updates);
+
     return (
-      (updates.appId !== undefined && updates.appId !== previousConfig.appId) ||
-      (updates.appSecret !== undefined && updates.appSecret !== previousConfig.appSecret) ||
-      (updates.platform !== undefined &&
-        normalizeFeishuPlatform(updates.platform) !== previousConfig.platform)
+      nextConfig.appId !== previousConfig.appId ||
+      nextConfig.appSecret !== previousConfig.appSecret ||
+      nextConfig.platform !== previousConfig.platform
     );
   }
 
@@ -156,8 +164,13 @@ export class FeishuAdapter extends ChannelAdapter {
     return platform === "lark" ? "Lark" : "Feishu";
   }
 
+  private getChannelDisplayName(platform = this.config.platform): string {
+    return `${this.getPlatformName(platform)} Bot`;
+  }
+
   private createWsStartupMonitor(platform: "feishu" | "lark", platformConfigured: boolean): WsStartupMonitor {
     let isSettled = false;
+    let hasStartResolved = false;
     let resolveReady!: () => void;
     let rejectReady!: (error: Error) => void;
 
@@ -188,6 +201,10 @@ export class FeishuAdapter extends ChannelAdapter {
       resolveReady();
     };
 
+    const markStartResolved = () => {
+      hasStartResolved = true;
+    };
+
     const normalizeLogArgs = (args: unknown[]): unknown[] => (
       args.length === 1 && Array.isArray(args[0]) ? args[0] as unknown[] : args
     );
@@ -204,9 +221,13 @@ export class FeishuAdapter extends ChannelAdapter {
     const handleLog = (level: "error" | "warn" | "info" | "debug" | "trace", args: unknown[]) => {
       const normalizedArgs = normalizeLogArgs(args);
       const text = stringifyLogArgs(normalizedArgs);
-      const isReadyLog = text.includes("ws client ready");
+      const isReadyLog = text.includes(FeishuAdapter.WS_READY_LOG);
       const isStartupFailure =
-        this.status === "starting" && (text.includes("system busy") || text.includes("PingInterval"));
+        this.status === "starting" && FeishuAdapter.WS_STARTUP_FAILURE_MARKERS.some((marker) => text.includes(marker));
+
+      // The Lark SDK logger uses trace/debug/info/warn/error, while electron-log uses
+      // debug/verbose/info/warn/error. Keep the readiness signal at info, downgrade
+      // other SDK info chatter to verbose, and map SDK trace to debug so it is not lost.
 
       switch (level) {
         case "error":
@@ -218,10 +239,15 @@ export class FeishuAdapter extends ChannelAdapter {
         case "info":
           if (isReadyLog) {
             this.channelLog.info(...normalizedArgs);
+          } else {
+            this.channelLog.verbose(...normalizedArgs);
           }
           break;
         case "debug":
+          this.channelLog.debug(...normalizedArgs);
+          break;
         case "trace":
+          this.channelLog.debug(...normalizedArgs);
           break;
       }
 
@@ -237,14 +263,23 @@ export class FeishuAdapter extends ChannelAdapter {
 
     const platformName = platform === "lark" ? "Lark" : "Feishu";
     const timeoutId = setTimeout(() => {
+      if (hasStartResolved) {
+        this.channelLog.warn(
+          `${platformName} WSClient.start() resolved before the ready log was observed. Treating start() resolution as a weak success signal; re-check websocket log markers after upgrading @larksuiteoapi/node-sdk@1.42.0.`,
+        );
+        settleReady();
+        return;
+      }
+
       settleError(
         `Timed out waiting for ${platformName} websocket connection. Verify the app is self-built, long connection is enabled in the correct developer console, and the selected platform matches your tenant.`,
       );
-    }, 15000);
+    }, FeishuAdapter.WS_STARTUP_TIMEOUT_MS);
 
     return {
       readyPromise,
       cancel,
+      markStartResolved,
       logger: {
         error: (...args: unknown[]) => handleLog("error", args),
         warn: (...args: unknown[]) => handleLog("warn", args),
@@ -355,6 +390,7 @@ export class FeishuAdapter extends ChannelAdapter {
       });
 
       await this.wsClient.start({ eventDispatcher: dispatcher });
+      wsStartup.markStartResolved();
       await wsStartup.readyPromise;
       this.channelLog.info(`${this.getPlatformName()} WSClient connected to cloud`);
 
@@ -427,7 +463,7 @@ export class FeishuAdapter extends ChannelAdapter {
   getInfo(): ChannelInfo {
     return {
       type: this.channelType,
-      name: "Feishu / Lark Bot",
+      name: this.getChannelDisplayName(),
       status: this.status,
       error: this.error,
     };
@@ -450,7 +486,7 @@ export class FeishuAdapter extends ChannelAdapter {
       await this.stop();
       const fullConfig: ChannelConfig = {
         type: "feishu",
-        name: "Feishu / Lark Bot",
+        name: this.getChannelDisplayName(),
         enabled: true,
         options: this.config as unknown as Record<string, unknown>,
       };

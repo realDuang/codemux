@@ -193,6 +193,9 @@ export interface LocaleDict {
     noSearchResults: string;
     defaultWorkspace: string;
     projectsTitle: string;
+    activeSection: string;
+    pinSession: string;
+    unpinSession: string;
   };
 
   // Project
@@ -752,6 +755,9 @@ export const en: LocaleDict = {
     noSearchResults: "No matching sessions",
     defaultWorkspace: "Default Workspace",
     projectsTitle: "Projects",
+    activeSection: "Active",
+    pinSession: "Pin to Active",
+    unpinSession: "Unpin",
   },
 
   // Project

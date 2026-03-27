@@ -107,6 +107,10 @@ export default function Chat() {
   const [unreadSessions, setUnreadSessions] = createSignal<Set<string>>(new Set());
   // Track sessions whose error/cancelled status has been dismissed by viewing
   const [dismissedSessions, setDismissedSessions] = createSignal<Set<string>>(new Set());
+  // Active sessions: pin state + delayed removal for Active section
+  const [pinnedSessions, setPinnedSessions] = createSignal<Set<string>>(new Set());
+  const [delayingRemoval, setDelayingRemoval] = createSignal<Set<string>>(new Set());
+  const delayTimers = new Map<string, ReturnType<typeof setTimeout>>();
   let prevSendingMap: Record<string, boolean> = {};
   createEffect(() => {
     const currentMap = { ...sessionStore.sendingMap };
@@ -116,6 +120,30 @@ export default function Chat() {
         setUnreadSessions((prev) => {
           const next = new Set(prev);
           next.add(sessionId);
+          return next;
+        });
+      }
+    }
+    // Clear dismissed status when a session starts sending again,
+    // so new error/cancelled results will be shown.
+    for (const [sessionId, isSending] of Object.entries(currentMap)) {
+      if (isSending && !prevSendingMap[sessionId]) {
+        setDismissedSessions((prev) => {
+          if (!prev.has(sessionId)) return prev;
+          const next = new Set(prev);
+          next.delete(sessionId);
+          return next;
+        });
+        // Cancel delayed removal — session is active again
+        const timer = delayTimers.get(sessionId);
+        if (timer) {
+          clearTimeout(timer);
+          delayTimers.delete(sessionId);
+        }
+        setDelayingRemoval((prev) => {
+          if (!prev.has(sessionId)) return prev;
+          const next = new Set(prev);
+          next.delete(sessionId);
           return next;
         });
       }
@@ -140,13 +168,77 @@ export default function Chat() {
           break;
         }
       }
-      if (lastAssistant?.error) {
+      if (lastAssistant?.error && !dismissedSessions().has(sid)) {
         return lastAssistant.error === "Cancelled" ? "cancelled" : "error";
       }
     }
     if (unreadSessions().has(sid)) return "completed";
     return "idle";
   };
+
+  // Active sessions: computed list for Active section in sidebar
+  const activeSessions = createMemo((): SessionInfo[] => {
+    const pinned = pinnedSessions();
+    const delaying = delayingRemoval();
+    return sessionStore.list.filter((s) => {
+      if (pinned.has(s.id)) return true;
+      if (delaying.has(s.id)) return true;
+      return getSessionStatus(s.id) !== "idle";
+    });
+  });
+
+  const handlePinSession = (sid: string) => {
+    setPinnedSessions((prev) => {
+      const next = new Set(prev);
+      next.add(sid);
+      return next;
+    });
+  };
+
+  const handleUnpinSession = (sid: string) => {
+    setPinnedSessions((prev) => {
+      const next = new Set(prev);
+      next.delete(sid);
+      return next;
+    });
+    // Cancel any pending delayed removal
+    const timer = delayTimers.get(sid);
+    if (timer) {
+      clearTimeout(timer);
+      delayTimers.delete(sid);
+    }
+    setDelayingRemoval((prev) => {
+      if (!prev.has(sid)) return prev;
+      const next = new Set(prev);
+      next.delete(sid);
+      return next;
+    });
+  };
+
+  /** Start 5s delayed removal for a session leaving Active after being viewed. */
+  const startDelayedRemoval = (sid: string) => {
+    // Don't delay if pinned
+    if (pinnedSessions().has(sid)) return;
+    // Cancel existing timer if any
+    const existing = delayTimers.get(sid);
+    if (existing) clearTimeout(existing);
+    setDelayingRemoval((prev) => {
+      const next = new Set(prev);
+      next.add(sid);
+      return next;
+    });
+    const timer = setTimeout(() => {
+      delayTimers.delete(sid);
+      setDelayingRemoval((prev) => {
+        if (!prev.has(sid)) return prev;
+        const next = new Set(prev);
+        next.delete(sid);
+        return next;
+      });
+    }, 5000);
+    delayTimers.set(sid, timer);
+  };
+
   const [messagesRef, setMessagesRef] = createSignal<HTMLDivElement>();
   const [loadingMessages, setLoadingMessages] = createSignal(false);
   // Whether user has scrolled away from the bottom. When true, auto-scroll
@@ -314,6 +406,8 @@ export default function Chat() {
     sendErrorTimer = setTimeout(() => setSendError(null), 3000);
   };
   onCleanup(() => clearTimeout(sendErrorTimer));
+  // Clean up Active section delayed-removal timers
+  onCleanup(() => { for (const t of delayTimers.values()) clearTimeout(t); });
 
   const [deleteProjectInfo, setDeleteProjectInfo] = createSignal<{
     projectID: string;
@@ -719,6 +813,22 @@ export default function Chat() {
       next.delete(sessionId);
       return next;
     });
+
+    // Dismiss error/cancelled indicator when user views this session
+    const status = getSessionStatus(sessionId);
+    if (status === "error" || status === "cancelled") {
+      setDismissedSessions((prev) => {
+        if (prev.has(sessionId)) return prev;
+        const next = new Set(prev);
+        next.add(sessionId);
+        return next;
+      });
+    }
+
+    // Start 5s delayed removal from Active section for viewed completed/error/cancelled sessions
+    if (status === "completed" || status === "error" || status === "cancelled") {
+      startDelayedRemoval(sessionId);
+    }
 
     // Update currentEngineType for model selector
     const session = sessionStore.list.find(s => s.id === sessionId);
@@ -1708,6 +1818,10 @@ export default function Chat() {
               onDeleteTask={scheduledTaskStore.enabled ? handleDeleteTask : undefined}
               onRunTaskNow={scheduledTaskStore.enabled ? handleRunTaskNow : undefined}
               onToggleTaskEnabled={scheduledTaskStore.enabled ? handleToggleTaskEnabled : undefined}
+              activeSessions={activeSessions()}
+              pinnedSessionIds={pinnedSessions()}
+              onPinSession={handlePinSession}
+              onUnpinSession={handleUnpinSession}
             />
           </Show>
           <Show when={refreshingSessions()}>

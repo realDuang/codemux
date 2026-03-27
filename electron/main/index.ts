@@ -189,12 +189,7 @@ if (!gotTheLock) {
 
     // Mark startup as ready once all engines have settled (success or failure)
     Promise.allSettled(enginePromises).then(async () => {
-      startupReady = true;
-      mainLog.info("All engines settled, startup ready");
-      const win = getMainWindow();
-      if (win && !win.isDestroyed()) {
-        win.webContents.send("startup:ready");
-      }
+      mainLog.info("All engines settled");
 
       // Initialize channels (after engines are ready and gateway is running)
       try {
@@ -212,6 +207,15 @@ if (!gotTheLock) {
         await channelManager.initFromConfig({ gatewayUrl });
       } catch (err) {
         mainLog.error("Failed to initialize channels:", err);
+      }
+
+      // Mark startup ready AFTER channels are initialized so the renderer
+      // sees final channel statuses when it (re-)polls on startup:ready.
+      startupReady = true;
+      mainLog.info("All engines and channels settled, startup ready");
+      const win = getMainWindow();
+      if (win && !win.isDestroyed()) {
+        win.webContents.send("startup:ready");
       }
     });
 

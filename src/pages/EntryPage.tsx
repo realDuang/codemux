@@ -176,6 +176,19 @@ export default function EntryPage() {
   });
   onCleanup(() => unsubTunnel?.());
 
+  // Re-poll channel statuses after startup:ready so we pick up channels
+  // that were auto-started by initFromConfig after the initial mount poll.
+  const api = isElectron() ? window.electronAPI : null;
+  if (api?.startup) {
+    api.startup.onReady(() => {
+      loadFeishuStatus();
+      loadDingtalkStatus();
+      loadTelegramStatus();
+      loadWecomStatus();
+      loadTeamsStatus();
+    });
+  }
+
   const loadLocalModeData = async () => {
     // Get system info - different sources for Electron vs Browser
     try {

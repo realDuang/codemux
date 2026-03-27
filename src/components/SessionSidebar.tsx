@@ -2,6 +2,7 @@ import { For, Show, Switch, Match, createSignal, createMemo, createEffect } from
 import { SessionInfo, sessionStore, setSessionStore, getProjectName } from "../stores/session";
 import { useI18n, formatMessage } from "../lib/i18n";
 import { isDefaultTitle } from "../lib/session-utils";
+import { filterSessionsBySearch } from "../lib/active-sessions";
 import type { UnifiedProject, EngineType, SessionActivityStatus, ScheduledTask } from "../types/unified";
 import { configStore, isEngineEnabled, getDefaultEngineType, setDefaultNewSessionEngine } from "../stores/config";
 import { getEngineBadge } from "./share/common";
@@ -220,9 +221,7 @@ export function SessionSidebar(props: SessionSidebarProps) {
   const filteredActiveSessions = createMemo((): SessionInfo[] => {
     const sessions = props.activeSessions ?? [];
     if (sessions.length === 0) return [];
-    const query = searchQuery().trim().toLowerCase();
-    if (!query) return sessions;
-    return sessions.filter((s) => (s.title || "").toLowerCase().includes(query));
+    return filterSessionsBySearch(sessions, searchQuery());
   });
 
   // Helper to find the project name for an active session
@@ -367,13 +366,17 @@ export function SessionSidebar(props: SessionSidebarProps) {
         <Show when={!props.collapsed && filteredActiveSessions().length > 0}>
           {(() => {
             // Active section defaults to expanded (opposite of projects which default collapsed)
-            const isExpanded = () => isSearching() || sessionStore.projectExpanded["__active__"] !== false;
+            const getActiveExpanded = () => sessionStore.projectExpanded["__active__"] !== false;
+            const isExpanded = () => isSearching() || getActiveExpanded();
+            const toggleActiveExpanded = () => {
+              setSessionStore("projectExpanded", "__active__", !getActiveExpanded());
+            };
             return (
               <div class="mb-2">
                 {/* Active Section Header */}
                 <div
                   class="group flex items-center justify-between px-2 py-1.5 rounded-md cursor-pointer hover:bg-gray-100 dark:hover:bg-slate-900 transition-colors"
-                  onClick={() => toggleProjectExpanded("__active__")}
+                  onClick={toggleActiveExpanded}
                 >
                   <div class="flex items-center gap-2 min-w-0 flex-1">
                     <svg

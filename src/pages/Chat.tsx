@@ -48,6 +48,7 @@ import { handleFileChanged, refreshGitStatus } from "../stores/file";
 
 import { configStore, setConfigStore, getSelectedModelForEngine, restoreEngineModelSelections, isEngineEnabled, restoreEnabledEngines, getDefaultEngineType, restoreDefaultEngine } from "../stores/config";
 import { scheduledTaskStore, setScheduledTaskStore } from "../stores/scheduled-task";
+import { computeActiveSessions } from "../lib/active-sessions";
 
 // Binary search helper (consistent with opencode desktop)
 function binarySearch<T>(
@@ -177,15 +178,15 @@ export default function Chat() {
   };
 
   // Active sessions: computed list for Active section in sidebar
-  const activeSessions = createMemo((): SessionInfo[] => {
-    const pinned = pinnedSessions();
-    const delaying = delayingRemoval();
-    return sessionStore.list.filter((s) => {
-      if (pinned.has(s.id)) return true;
-      if (delaying.has(s.id)) return true;
-      return getSessionStatus(s.id) !== "idle";
-    });
-  });
+  const activeSessions = createMemo((): SessionInfo[] =>
+    computeActiveSessions(
+      sessionStore.list,
+      pinnedSessions(),
+      delayingRemoval(),
+      getSessionStatus,
+      (s) => isEngineEnabled(s.engineType),
+    ),
+  );
 
   const handlePinSession = (sid: string) => {
     setPinnedSessions((prev) => {
@@ -806,6 +807,10 @@ export default function Chat() {
     setSessionStore("current", sessionId);
     setSessionStore("initError", null);
 
+    // Capture status BEFORE clearing unread/dismissed — otherwise
+    // getSessionStatus() would return "idle" instead of "completed".
+    const status = getSessionStatus(sessionId);
+
     // Clear unread status when user switches to this session
     setUnreadSessions((prev) => {
       if (!prev.has(sessionId)) return prev;
@@ -815,7 +820,6 @@ export default function Chat() {
     });
 
     // Dismiss error/cancelled indicator when user views this session
-    const status = getSessionStatus(sessionId);
     if (status === "error" || status === "cancelled") {
       setDismissedSessions((prev) => {
         if (prev.has(sessionId)) return prev;

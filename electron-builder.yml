@@ -48,11 +48,17 @@ linux:
     - target: deb
       arch:
         - x64
+  extraResources:
+    - from: resources/cloudflared/linux-${arch}
+      to: cloudflared/linux-${arch}
+      filter:
+        - "**/*"
   desktop:
-    Name: CodeMux
-    Comment: Multi-engine AI coding assistant client
-    Categories: Development;IDE;
-    StartupWMClass: codemux
+    entry:
+      Name: CodeMux
+      Comment: Multi-engine AI coding assistant client
+      Categories: Development;IDE;
+      StartupWMClass: codemux
 nsis:
   oneClick: false
   perMachine: false

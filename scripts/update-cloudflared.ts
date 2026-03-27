@@ -40,6 +40,12 @@ const ALL_PLATFORMS: Platform[] = [
     url: "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe",
     binaryName: "cloudflared.exe",
   },
+  {
+    name: "linux",
+    arch: "x64",
+    url: "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64",
+    binaryName: "cloudflared",
+  },
 ];
 
 /**

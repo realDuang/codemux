@@ -43,6 +43,10 @@ import {
   type CronCreateResult,
   type CronJobInfo,
   type CronNotification,
+  type ScheduledTask,
+  type ScheduledTaskCreateRequest,
+  type ScheduledTaskUpdateRequest,
+  type ScheduledTaskRunResult,
 } from "../types/unified";
 
 // --- Event types emitted by GatewayClient ---
@@ -74,6 +78,11 @@ export interface GatewayClientEvents {
   "cron.completed": (data: CronNotification) => void;
   "cron.expired": (data: CronNotification) => void;
   "cron.changed": (data: { jobs: CronJobInfo[] }) => void;
+
+  /** Scheduled task push notifications */
+  "scheduledTask.fired": (data: { taskId: string; conversationId: string }) => void;
+  "scheduledTask.failed": (data: { taskId: string; error: string }) => void;
+  "scheduledTasks.changed": (data: { tasks: ScheduledTask[] }) => void;
 }
 
 // --- Pending request tracking ---
@@ -562,6 +571,32 @@ export class GatewayClient {
 
   unwatchDirectory(directory: string): Promise<void> {
     return this.request(GatewayRequestType.FILE_UNWATCH, { directory });
+  }
+
+  // --- Scheduled Tasks API ---
+
+  listScheduledTasks(): Promise<ScheduledTask[]> {
+    return this.request(GatewayRequestType.SCHEDULED_TASK_LIST);
+  }
+
+  getScheduledTask(id: string): Promise<ScheduledTask | null> {
+    return this.request(GatewayRequestType.SCHEDULED_TASK_GET, { id });
+  }
+
+  createScheduledTask(req: ScheduledTaskCreateRequest): Promise<ScheduledTask> {
+    return this.request(GatewayRequestType.SCHEDULED_TASK_CREATE, req);
+  }
+
+  updateScheduledTask(req: ScheduledTaskUpdateRequest): Promise<ScheduledTask> {
+    return this.request(GatewayRequestType.SCHEDULED_TASK_UPDATE, req);
+  }
+
+  deleteScheduledTask(id: string): Promise<{ success: boolean }> {
+    return this.request(GatewayRequestType.SCHEDULED_TASK_DELETE, { id });
+  }
+
+  runScheduledTaskNow(id: string): Promise<ScheduledTaskRunResult> {
+    return this.request(GatewayRequestType.SCHEDULED_TASK_RUN_NOW, { id });
   }
 
   // --- Log forwarding (fire-and-forget, no response expected) ---

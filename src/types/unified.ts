@@ -553,6 +553,14 @@ export const GatewayRequestType = {
   CRON_CREATE: "cron.create",
   CRON_DELETE: "cron.delete",
   CRON_LIST: "cron.list",
+
+  // Scheduled Tasks
+  SCHEDULED_TASK_LIST: "scheduledTask.list",
+  SCHEDULED_TASK_GET: "scheduledTask.get",
+  SCHEDULED_TASK_CREATE: "scheduledTask.create",
+  SCHEDULED_TASK_UPDATE: "scheduledTask.update",
+  SCHEDULED_TASK_DELETE: "scheduledTask.delete",
+  SCHEDULED_TASK_RUN_NOW: "scheduledTask.runNow",
 } as const;
 
 // --- Notification type constants ---
@@ -577,6 +585,11 @@ export const GatewayNotificationType = {
   CRON_COMPLETED: "cron.completed",
   CRON_EXPIRED: "cron.expired",
   CRON_CHANGED: "cron.changed",
+
+  // Scheduled Tasks
+  SCHEDULED_TASK_FIRED: "scheduledTask.fired",
+  SCHEDULED_TASK_FAILED: "scheduledTask.failed",
+  SCHEDULED_TASKS_CHANGED: "scheduledTasks.changed",
 } as const;
 
 // --- Request / Response payload types ---
@@ -765,4 +778,67 @@ export interface CronNotification {
   sessionId: string;
   /** For "fired" events on recurring jobs: next fire time */
   nextFireAt?: number;
+}
+
+// --- Scheduled Tasks ---
+
+export type ScheduledTaskFrequencyType = "manual" | "interval" | "daily" | "weekly";
+export type DayOfWeek = 0 | 1 | 2 | 3 | 4 | 5 | 6;
+
+export interface ScheduledTaskFrequency {
+  type: ScheduledTaskFrequencyType;
+  /** Interval in minutes, for interval type (e.g. 5, 10, 30, 60) */
+  intervalMinutes?: number;
+  /** Hour (0-23), for daily/weekly */
+  hour?: number;
+  /** Minute (0-59), for daily/weekly */
+  minute?: number;
+  /** Days of week (0=Sun), for weekly — supports multi-select */
+  daysOfWeek?: DayOfWeek[];
+}
+
+export interface ScheduledTask {
+  id: string;
+  /** Task display name */
+  name: string;
+  description: string;
+  /** The prompt text sent to the engine when the task fires */
+  prompt: string;
+  engineType: EngineType;
+  directory: string;
+  frequency: ScheduledTaskFrequency;
+  enabled: boolean;
+  /** Deterministic jitter offset in ms (0–600000) */
+  jitterMs: number;
+  createdAt: number;
+  lastRunAt: number | null;
+  nextRunAt: number | null;
+  /** Conversation IDs from past runs (newest first, max 50) */
+  runHistory: string[];
+}
+
+export interface ScheduledTaskCreateRequest {
+  name: string;
+  description: string;
+  prompt: string;
+  engineType: EngineType;
+  directory: string;
+  frequency: ScheduledTaskFrequency;
+  enabled?: boolean;
+}
+
+export interface ScheduledTaskUpdateRequest {
+  id: string;
+  name?: string;
+  description?: string;
+  prompt?: string;
+  engineType?: EngineType;
+  directory?: string;
+  frequency?: ScheduledTaskFrequency;
+  enabled?: boolean;
+}
+
+export interface ScheduledTaskRunResult {
+  taskId: string;
+  conversationId: string;
 }

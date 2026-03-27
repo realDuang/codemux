@@ -277,6 +277,22 @@ body {
   bottom: 3px;
 }
 
+/* ── Collapsible section animation ── */
+/* Uses CSS grid trick: grid-template-rows transitions from 0fr to 1fr */
+.collapsible-grid {
+  display: grid;
+  transition: grid-template-rows 200ms ease-out;
+}
+.collapsible-grid[data-expanded="true"] {
+  grid-template-rows: 1fr;
+}
+.collapsible-grid[data-expanded="false"] {
+  grid-template-rows: 0fr;
+}
+.collapsible-grid > .collapsible-content {
+  overflow: hidden;
+}
+
 /* File search highlighting */
 .file-search-highlight {
   background-color: rgba(255, 213, 79, 0.4);

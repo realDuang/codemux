@@ -117,6 +117,9 @@ export interface LocaleDict {
     importSkipped: string;
     showDefaultWorkspace: string;
     showDefaultWorkspaceDesc: string;
+    features: string;
+    scheduledTasksEnabled: string;
+    scheduledTasksEnabledDesc: string;
   };
 
   // Remote Access page
@@ -189,6 +192,7 @@ export interface LocaleDict {
     searchPlaceholder: string;
     noSearchResults: string;
     defaultWorkspace: string;
+    projectsTitle: string;
   };
 
   // Project
@@ -357,6 +361,10 @@ export interface LocaleDict {
     channels: string;
     feishuBot: string;
     feishuBotDesc: string;
+    platform: string;
+    platformDesc: string;
+    platformFeishu: string;
+    platformLark: string;
     dingtalkBot: string;
     dingtalkBotDesc: string;
     telegramBot: string;
@@ -498,6 +506,58 @@ export interface LocaleDict {
     matchCount: string;
     openInExplorer: string;
   };
+
+  // Scheduled Tasks
+  scheduledTask: {
+    title: string;
+    create: string;
+    edit: string;
+    delete: string;
+    deleteConfirm: string;
+    save: string;
+    runNow: string;
+    taskFired: string;
+    taskFailed: string;
+    name: string;
+    namePlaceholder: string;
+    description: string;
+    descriptionPlaceholder: string;
+    prompt: string;
+    promptPlaceholder: string;
+    engineType: string;
+    directory: string;
+    frequency: string;
+    frequencyManual: string;
+    frequencyInterval: string;
+    frequencyDaily: string;
+    frequencyWeekly: string;
+    intervalLabel: string;
+    interval5m: string;
+    interval10m: string;
+    interval30m: string;
+    interval1h: string;
+    interval2h: string;
+    interval6h: string;
+    interval12h: string;
+    time: string;
+    dayOfWeek: string;
+    days: string[];
+    daysShort: string[];
+    enabled: string;
+    disabled: string;
+    enable: string;
+    disable: string;
+    nextRun: string;
+    lastRun: string;
+    never: string;
+    manual: string;
+    noTasks: string;
+    runHistory: string;
+    directoryPlaceholder: string;
+    lessThanOneMinute: string;
+    fieldRequired: string;
+    daysRequired: string;
+  };
 }
 
 export const en: LocaleDict = {
@@ -618,6 +678,9 @@ export const en: LocaleDict = {
     importSkipped: "Skipped (already imported)",
     showDefaultWorkspace: "Show default workspace in sidebar",
     showDefaultWorkspaceDesc: "Display the default workspace project group in the sidebar",
+    features: "Features",
+    scheduledTasksEnabled: "Scheduled Tasks",
+    scheduledTasksEnabledDesc: "Enable the scheduled tasks feature to automatically run tasks on a schedule",
   },
 
   // Remote Access page
@@ -690,6 +753,7 @@ export const en: LocaleDict = {
     searchPlaceholder: "Search sessions...",
     noSearchResults: "No matching sessions",
     defaultWorkspace: "Default Workspace",
+    projectsTitle: "Projects",
   },
 
   // Project
@@ -851,8 +915,12 @@ export const en: LocaleDict = {
   },
   channel: {
     channels: "Channels",
-    feishuBot: "Feishu Bot",
-    feishuBotDesc: "Connect to Feishu (Lark) to use CodeMux via bot messages",
+    feishuBot: "Feishu / Lark Bot",
+    feishuBotDesc: "Connect to Feishu or Lark to use CodeMux via bot messages",
+    platform: "Platform",
+    platformDesc: "Choose the developer console that matches your bot app",
+    platformFeishu: "Feishu (open.feishu.cn)",
+    platformLark: "Lark (open.larksuite.com)",
     dingtalkBot: "DingTalk Bot",
     dingtalkBotDesc: "Connect to DingTalk to use CodeMux via robot messages",
     telegramBot: "Telegram Bot",
@@ -862,9 +930,9 @@ export const en: LocaleDict = {
     teamsBot: "Teams Bot",
     teamsBotDesc: "Connect to Microsoft Teams to use CodeMux via bot messages",
     appId: "App ID",
-    appIdPlaceholder: "Enter Feishu App ID",
+    appIdPlaceholder: "Enter Feishu / Lark App ID",
     appSecret: "App Secret",
-    appSecretPlaceholder: "Enter Feishu App Secret",
+    appSecretPlaceholder: "Enter Feishu / Lark App Secret",
     appKey: "App Key",
     appKeyPlaceholder: "Enter DingTalk App Key",
     robotCode: "Robot Code",
@@ -900,7 +968,7 @@ export const en: LocaleDict = {
     autoApproveDesc: "Automatically approve engine permission requests",
     advanced: "Advanced Settings",
     streamingThrottle: "Streaming Throttle",
-    streamingThrottleDesc: "Minimum interval between Feishu message updates",
+    streamingThrottleDesc: "Minimum interval between Feishu / Lark message updates",
     ms: "ms",
     configure: "Configure",
     configRequired: "App ID and App Secret are required to enable the bot",
@@ -993,5 +1061,56 @@ export const en: LocaleDict = {
     noResults: "No results",
     matchCount: "{current} of {total}",
     openInExplorer: "Open in file explorer",
+  },
+
+  scheduledTask: {
+    title: "Scheduled Tasks",
+    create: "Create Task",
+    edit: "Edit Task",
+    delete: "Delete",
+    deleteConfirm: "Delete this scheduled task?",
+    save: "Save",
+    runNow: "Run Now",
+    taskFired: "Scheduled task started",
+    taskFailed: "Scheduled task failed: {error}",
+    name: "Name",
+    namePlaceholder: "my-task-name",
+    description: "Description",
+    descriptionPlaceholder: "Brief description of what this task does",
+    prompt: "Prompt",
+    promptPlaceholder: "Review pull requests and provide feedback...",
+    engineType: "Engine",
+    directory: "Project",
+    frequency: "Frequency",
+    frequencyManual: "Manual",
+    frequencyInterval: "Interval",
+    frequencyDaily: "Daily",
+    frequencyWeekly: "Weekly",
+    intervalLabel: "Run every",
+    interval5m: "5 min",
+    interval10m: "10 min",
+    interval30m: "30 min",
+    interval1h: "1 hour",
+    interval2h: "2 hours",
+    interval6h: "6 hours",
+    interval12h: "12 hours",
+    time: "Time",
+    dayOfWeek: "Days",
+    days: ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"],
+    daysShort: ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"],
+    enabled: "Enabled",
+    disabled: "Disabled",
+    enable: "Enable",
+    disable: "Disable",
+    nextRun: "Next run",
+    lastRun: "Last run",
+    never: "Never",
+    manual: "Manual",
+    noTasks: "No scheduled tasks",
+    runHistory: "Run History",
+    directoryPlaceholder: "/path/to/project",
+    lessThanOneMinute: "< 1m",
+    fieldRequired: "{field} is required",
+    daysRequired: "Select at least one day",
   },
 };

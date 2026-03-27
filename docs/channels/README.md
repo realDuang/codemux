@@ -6,7 +6,7 @@ Connect CodeMux to your favorite messaging platforms to interact with AI coding 
 
 | Platform | Connection | Streaming | Group Creation | Rich Content | Guide |
 |----------|-----------|-----------|----------------|--------------|-------|
-| [Feishu (飞书)](feishu/README.md) | WebSocket SDK | ✅ Edit-in-place | ✅ Auto-create | Interactive Cards | [→ Setup](feishu/README.md) |
+| [Feishu / Lark](feishu/README.md) | WebSocket SDK | ✅ Edit-in-place | ✅ Auto-create | Interactive Cards | [→ Setup](feishu/README.md) |
 | [DingTalk (钉钉)](dingtalk/README.md) | Stream mode (WS) | ✅ AI Card | ✅ Scene groups | ActionCard / Markdown | [→ Setup](dingtalk/README.md) |
 | [Telegram](telegram/README.md) | Webhook / Long Polling | ✅ Draft / Edit | ❌ P2P only | MarkdownV2 + Buttons | [→ Setup](telegram/README.md) |
 | [WeCom (企业微信)](wecom/README.md) | HTTP Callback (AES XML) | ❌ Batch mode | ✅ App group chat | Markdown | [→ Setup](wecom/README.md) |
@@ -16,14 +16,14 @@ Connect CodeMux to your favorite messaging platforms to interact with AI coding 
 
 | Type | Platforms | Tunnel Required | How It Works |
 |------|-----------|----------------|--------------|
-| **Direct Connect** | Feishu, DingTalk, Telegram (polling) | No | Platform SDK maintains persistent connection from CodeMux to the platform's servers |
+| **Direct Connect** | Feishu / Lark, DingTalk, Telegram (polling) | No | Platform SDK maintains persistent connection from CodeMux to the platform's servers |
 | **Webhook** | WeCom, Teams, Telegram (webhook) | Yes | Platform sends HTTP requests to your CodeMux instance via [Cloudflare Tunnel](../../README.md) |
 
 ## Session Models
 
 | Model | Platforms | Flow |
 |-------|-----------|------|
-| **One Group = One Session** | Feishu, DingTalk, WeCom | P2P chat → select project → group auto-created → all messages in that group go to one CodeMux session |
+| **One Group = One Session** | Feishu / Lark, DingTalk, WeCom | P2P chat → select project → group auto-created → all messages in that group go to one CodeMux session |
 | **P2P Direct** | Telegram, Teams | Interact directly in private chat with temporary sessions. In group chats, @mention the bot |
 
 ## Common Features
@@ -56,7 +56,7 @@ All channels support:
 ## Architecture
 
 ```
-IM Platform (Feishu/DingTalk/Telegram/WeCom/Teams)
+IM Platform (Feishu/Lark/DingTalk/Telegram/WeCom/Teams)
   ↕ Messages (SDK WebSocket or HTTP Webhook)
 Channel Adapter (in CodeMux)
   ↕ WebSocket (internal)

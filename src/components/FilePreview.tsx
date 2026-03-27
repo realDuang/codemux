@@ -221,7 +221,7 @@ export function FilePreview() {
       (newPath) => {
         // Close search bar when file changes
         setShowSearch(false);
-        
+
         // Determine view mode: diff for changed files opened from Changes tab
         if (newPath && fileStore.activeTab === "changes" && getFileGitStatus(newPath)) {
           setViewMode("diff");

@@ -26,6 +26,10 @@ import type {
   GitFileStatus,
   EngineCommand,
   CommandInvokeResult,
+  ScheduledTask,
+  ScheduledTaskCreateRequest,
+  ScheduledTaskUpdateRequest,
+  ScheduledTaskRunResult,
 } from "../types/unified";
 
 // --- Notification callback types ---
@@ -45,6 +49,9 @@ export interface GatewayNotificationHandlers {
   onMessageQueuedConsumed?: (sessionId: string, messageId: string) => void;
   onFileChanged?: (event: { type: string; path: string; directory: string }) => void;
   onCommandsChanged?: (engineType: EngineType, commands: EngineCommand[]) => void;
+  onScheduledTaskFired?: (taskId: string, conversationId: string) => void;
+  onScheduledTaskFailed?: (taskId: string, error: string) => void;
+  onScheduledTasksChanged?: (tasks: ScheduledTask[]) => void;
   onConnected?: () => void;
   onDisconnected?: (reason: string) => void;
 }
@@ -186,6 +193,18 @@ class GatewayAPI {
 
     this.bind("commands.changed", (data) => {
       this.handlers.onCommandsChanged?.(data.engineType, data.commands);
+    });
+
+    this.bind("scheduledTask.fired", (data) => {
+      this.handlers.onScheduledTaskFired?.(data.taskId, data.conversationId);
+    });
+
+    this.bind("scheduledTask.failed", (data) => {
+      this.handlers.onScheduledTaskFailed?.(data.taskId, data.error);
+    });
+
+    this.bind("scheduledTasks.changed", (data) => {
+      this.handlers.onScheduledTasksChanged?.(data.tasks);
     });
   }
 
@@ -380,6 +399,32 @@ class GatewayAPI {
 
   unwatchDirectory(directory: string): Promise<void> {
     return gatewayClient.unwatchDirectory(directory);
+  }
+
+  // --- Scheduled Tasks ---
+
+  listScheduledTasks(): Promise<ScheduledTask[]> {
+    return gatewayClient.listScheduledTasks();
+  }
+
+  getScheduledTask(id: string): Promise<ScheduledTask | null> {
+    return gatewayClient.getScheduledTask(id);
+  }
+
+  createScheduledTask(req: ScheduledTaskCreateRequest): Promise<ScheduledTask> {
+    return gatewayClient.createScheduledTask(req);
+  }
+
+  updateScheduledTask(req: ScheduledTaskUpdateRequest): Promise<ScheduledTask> {
+    return gatewayClient.updateScheduledTask(req);
+  }
+
+  deleteScheduledTask(id: string): Promise<{ success: boolean }> {
+    return gatewayClient.deleteScheduledTask(id);
+  }
+
+  runScheduledTaskNow(id: string): Promise<ScheduledTaskRunResult> {
+    return gatewayClient.runScheduledTaskNow(id);
   }
 }
 

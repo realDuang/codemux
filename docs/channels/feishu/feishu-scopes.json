@@ -1,5 +1,5 @@
 {
-  "_comment": "Feishu (Lark) permission scopes required by CodeMux bot. Import these scopes in the Feishu Open Platform developer console under Permissions & Scopes.",
+  "_comment": "Feishu permission helper for CodeMux bot. Paste this richer payload into the Feishu Open Platform Batch Enable dialog.",
   "scopes": [
     {
       "scope": "im:message",

@@ -1,6 +1,7 @@
 import { app, BrowserWindow } from "electron";
 import fixPath from "fix-path";
 import { mainLog } from "./services/logger";
+import { unwatchAll } from "./services/file-service";
 // dev restart trigger
 
 // Fix $PATH for packaged macOS/Linux apps launched from GUI.
@@ -40,6 +41,7 @@ import { WeComAdapter } from "./channels/wecom/wecom-adapter";
 import { TeamsAdapter } from "./channels/teams/teams-adapter";
 import { updateManager } from "./services/update-manager";
 import { trayManager } from "./services/tray-manager";
+import { scheduledTaskService } from "./services/scheduled-task-service";
 import { ensureDefaultWorkspace } from "./services/default-workspace";
 import { GATEWAY_PORT, OPENCODE_PORT, WEBHOOK_PORT, WEB_PORT } from "../../shared/ports";
 
@@ -111,6 +113,9 @@ if (!gotTheLock) {
 
     // Rebuild engine routing tables from persisted ConversationStore data
     engineManager.initFromStore();
+
+    // Initialize scheduled task service (persistent desktop-level scheduled tasks)
+    scheduledTaskService.init(engineManager);
 
     // Register IPC handlers
     registerIpcHandlers();
@@ -240,6 +245,7 @@ if (!gotTheLock) {
     if (updateManager.isInstallingUpdate()) {
       trayManager.destroy();
       await conversationStore.flushAll();
+      await scheduledTaskService.shutdown();
       gatewayServer.stop();
       return;
     }
@@ -248,6 +254,10 @@ if (!gotTheLock) {
 
     try {
       trayManager.destroy();
+
+      // Stop native file watchers early — @parcel/watcher uses NAPI threadsafe
+      // functions that must be torn down before Node.js module cleanup begins.
+      unwatchAll();
 
       // Flush conversation store before quit
       await conversationStore.flushAll();
@@ -258,6 +268,7 @@ if (!gotTheLock) {
         webhookServer.stop(),
         engineManager.stopAll(),
         productionServer.stop(),
+        scheduledTaskService.shutdown(),
       ]);
 
       gatewayServer.stop();

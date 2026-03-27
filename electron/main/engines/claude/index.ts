@@ -330,14 +330,47 @@ export class ClaudeCodeAdapter extends EngineAdapter {
       await Promise.race([Promise.allSettled(interruptPromises), hardTimeout]);
     }
 
-    // Now close all V2 sessions cleanly
+    // Now close all V2 sessions.
+    //
+    // session.close() internally schedules abort after 5s via setTimeout().unref(),
+    // and transport.close() then schedules SIGTERM after another 2s (also .unref()).
+    // Since .unref() timers don't prevent the event loop from exiting, app.exit(0)
+    // tears down the NAPI modules while the CLI subprocess is still alive and
+    // sending callbacks through its NAPI threadsafe function — causing the fatal
+    // "napi_ref_threadsafe_function" crash during node::FreeEnvironment.
+    //
+    // Fix: directly kill the subprocess BEFORE calling session.close(), then wait
+    // for it to actually exit. This guarantees no NAPI callbacks are in flight
+    // when app.exit(0) destroys the native module.
+    const exitPromises: Promise<void>[] = [];
     for (const [sessionId, info] of this.v2Sessions) {
       try {
+        const transport = (info.session as any)?.query?.transport;
+        const proc = transport?.process as import("child_process").ChildProcess | undefined;
+        if (proc && proc.exitCode === null && !proc.killed) {
+          const exitPromise = new Promise<void>((resolve) => {
+            proc.once("exit", () => resolve());
+            // Safety: resolve anyway after 3s if the process doesn't exit
+            setTimeout(resolve, 3000).unref();
+          });
+          proc.kill("SIGTERM");
+          exitPromises.push(exitPromise);
+          claudeLog.info(`[Claude][${sessionId}] Sent SIGTERM to CLI subprocess (pid=${proc.pid})`);
+        }
         info.session.close();
       } catch (e) {
         claudeLog.warn(`Error closing Claude session ${sessionId}:`, e);
       }
     }
+
+    // Wait for all CLI subprocesses to actually exit before returning.
+    // This ensures no NAPI threadsafe function callbacks are pending when
+    // app.exit(0) destroys the native module environment.
+    if (exitPromises.length > 0) {
+      await Promise.all(exitPromises);
+      claudeLog.info("All CLI subprocesses exited");
+    }
+
     this.v2Sessions.clear();
 
     // Abort any remaining active requests (sessions without V2 info)
@@ -1195,9 +1228,15 @@ export class ClaudeCodeAdapter extends EngineAdapter {
     return new Promise<PermissionResult>((resolve) => {
       this.pendingQuestions.set(questionId, {
         resolve: (answer: string) => {
+          const trimmed = answer.trim();
+          const lower = trimmed.toLowerCase();
           const approved =
-            answer.toLowerCase().includes("approve") ||
-            answer === "0"; // first option index
+            lower.includes("approve") ||
+            trimmed.includes("同意") ||
+            trimmed.includes("批准") ||
+            trimmed.includes("确认") ||
+            trimmed === "1" || // 1-based: first option = Approve (Feishu/DingTalk display)
+            trimmed === "0"; // 0-based: backward compat with frontend UI
           if (approved) {
             resolve({ behavior: "allow", updatedInput: input });
           } else {

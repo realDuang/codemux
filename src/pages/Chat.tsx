@@ -27,7 +27,8 @@ import { PromptInput } from "../components/PromptInput";
 import { SessionSidebar } from "../components/SessionSidebar";
 import { HideProjectModal } from "../components/HideProjectModal";
 import { AddProjectModal } from "../components/AddProjectModal";
-import type { UnifiedMessage, UnifiedPart, UnifiedPermission, UnifiedQuestion, UnifiedSession, UnifiedProject, AgentMode, EngineType, SessionActivityStatus, EngineCommand } from "../types/unified";
+import { ScheduledTaskModal } from "../components/ScheduledTaskModal";
+import type { UnifiedMessage, UnifiedPart, UnifiedPermission, UnifiedQuestion, UnifiedSession, UnifiedProject, AgentMode, EngineType, SessionActivityStatus, EngineCommand, ScheduledTask, ScheduledTaskCreateRequest, ScheduledTaskUpdateRequest } from "../types/unified";
 import { useI18n, formatMessage } from "../lib/i18n";
 import { notify } from "../lib/notifications";
 import { isDefaultTitle } from "../lib/session-utils";
@@ -47,6 +48,7 @@ import { fileStore, togglePanel, setPanelWidth, closePanel } from "../stores/fil
 import { handleFileChanged, refreshGitStatus } from "../stores/file";
 
 import { configStore, setConfigStore, getSelectedModelForEngine, restoreEngineModelSelections, isEngineEnabled, restoreEnabledEngines, getDefaultEngineType, restoreDefaultEngine } from "../stores/config";
+import { scheduledTaskStore, setScheduledTaskStore } from "../stores/scheduled-task";
 
 // Binary search helper (consistent with opencode desktop)
 function binarySearch<T>(
@@ -104,6 +106,8 @@ export default function Chat() {
 
   // Track sessions that completed while user was viewing another session
   const [unreadSessions, setUnreadSessions] = createSignal<Set<string>>(new Set());
+  // Track sessions whose error/cancelled status has been dismissed by viewing
+  const [dismissedSessions, setDismissedSessions] = createSignal<Set<string>>(new Set());
   let prevSendingMap: Record<string, boolean> = {};
   createEffect(() => {
     const currentMap = { ...sessionStore.sendingMap };
@@ -354,6 +358,8 @@ export default function Chat() {
   } | null>(null);
 
   const [showAddProjectModal, setShowAddProjectModal] = createSignal(false);
+  const [showTaskModal, setShowTaskModal] = createSignal(false);
+  const [editingTask, setEditingTask] = createSignal<ScheduledTask | undefined>();
 
   // WebSocket connection status
   const [wsConnected, setWsConnected] = createSignal(true);
@@ -457,11 +463,17 @@ export default function Chat() {
     onCleanup(() => window.removeEventListener('resize', handleResize));
   });
 
-  // Load messages for specific session
+  // Load messages for specific session from disk.
+  // When the store already has streaming data (e.g., scheduled tasks created
+  // assistant placeholders), merges disk data with existing store data:
+  //  - Messages: disk is base, store-only messages (not yet flushed) are preserved.
+  //  - Parts: disk parts overwrite if non-empty; existing streaming parts are
+  //    preserved when disk parts are empty (placeholder messages during streaming).
   const loadSessionMessages = async (sessionId: string) => {
     const t0 = performance.now();
     logger.debug("[LoadMessages] Loading messages for session:", sessionId);
-    setLoadingMessages(true);
+    const hadExisting = !!messageStore.message[sessionId]?.length;
+    if (!hadExisting) setLoadingMessages(true);
 
     try {
       const messages = await gateway.listMessages(sessionId);
@@ -472,18 +484,37 @@ export default function Chat() {
       // but don't flip loadingMessages — the new session's load owns that.
       const isStale = sessionStore.current !== sessionId;
 
-      // Store parts separately, sorted by id (in-place — API returns fresh arrays)
+      // Store parts — preserve existing streaming parts when disk parts are empty.
+      // Disk is authoritative for completed messages; streaming parts are more
+      // current for in-progress assistant messages (placeholder empty on disk).
       for (const msg of messages) {
-        const parts = msg.parts || [];
-        parts.sort((a, b) => a.id.localeCompare(b.id));
-        setMessageStore("part", msg.id, parts);
+        const diskParts = msg.parts || [];
+        diskParts.sort((a, b) => a.id.localeCompare(b.id));
+        const existingParts = messageStore.part[msg.id];
+        if (diskParts.length > 0 || !existingParts || existingParts.length === 0) {
+          setMessageStore("part", msg.id, diskParts);
+        }
       }
 
-      // Store all messages, sorted by creation time (ascending).
-      // Engine message IDs use different formats (UUID for OpenCode, timeId for others),
-      // so lexicographic ID sort would break chronological ordering.
+      // Merge messages: disk is the base for ordering and completeness.
+      // Keep any store-only messages (streaming placeholders not yet flushed
+      // to disk) so they aren't lost during active streaming.
       messages.sort((a, b) => a.time.created - b.time.created);
-      setMessageStore("message", sessionId, messages);
+      const existing = messageStore.message[sessionId] || [];
+      if (existing.length > 0) {
+        const diskIds = new Set(messages.map(m => m.id));
+        const storeOnly = existing.filter(m => !diskIds.has(m.id));
+        if (storeOnly.length > 0) {
+          const merged = [...messages, ...storeOnly];
+          merged.sort((a, b) => a.time.created - b.time.created);
+          setMessageStore("message", sessionId, merged);
+        } else {
+          setMessageStore("message", sessionId, messages);
+        }
+      } else {
+        setMessageStore("message", sessionId, messages);
+      }
+
       const t2 = performance.now();
       logger.debug(`[LoadMessages] Store update took ${(t2 - t1).toFixed(0)}ms, total ${(t2 - t0).toFixed(0)}ms`);
     } catch (error) {
@@ -491,7 +522,7 @@ export default function Chat() {
         logger.error("[LoadMessages] Failed to load messages:", error);
       }
     } finally {
-      setLoadingMessages(false);
+      if (!hadExisting) setLoadingMessages(false);
       setTimeout(() => scrollToBottomStable(), 100);
     }
     };
@@ -574,6 +605,15 @@ export default function Chat() {
             setAvailableCommands(commands);
           }
         },
+        onScheduledTasksChanged: (tasks: ScheduledTask[]) => {
+          setScheduledTaskStore("tasks", tasks);
+        },
+        onScheduledTaskFired: (_taskId: string, _conversationId: string) => {
+          notify(t().scheduledTask.taskFired, "info", 3000);
+        },
+        onScheduledTaskFailed: (_taskId: string, error: string) => {
+          notify(formatMessage(t().scheduledTask.taskFailed, { error }), "warning", 5000);
+        },
       };
 
       // If gateway is already initialized (remount after navigation),
@@ -589,6 +629,7 @@ export default function Chat() {
         loading: true,
         showDefaultWorkspace: getSetting<boolean>("showDefaultWorkspace") ?? false,
       });
+      setScheduledTaskStore("enabled", getSetting<boolean>("scheduledTasksEnabled") ?? true);
 
       // First-time initialization: connect gateway and load data
       await gateway.init(handlers);
@@ -654,6 +695,18 @@ export default function Chat() {
           });
 
           setSessionStore("list", sessionInfos);
+
+          // Load scheduled tasks (only if feature is enabled)
+          if (scheduledTaskStore.enabled) {
+            try {
+              const tasks = await gateway.listScheduledTasks();
+              if (gen === initGeneration && !disposed) {
+                setScheduledTaskStore("tasks", tasks);
+              }
+            } catch (err) {
+              logger.warn("[Init] Failed to load scheduled tasks:", err);
+            }
+          }
 
           // Restore last selected session from previous app launch
           const lastSessionId = getSetting<string>("lastSessionId");
@@ -729,7 +782,12 @@ export default function Chat() {
       setIsSidebarOpen(false);
     }
 
-    if (!messageStore.message[sessionId]) {
+    // Load from disk if the store is empty or incomplete (e.g., scheduled tasks
+    // only have assistant placeholders from streaming — no user message).
+    // For normal UI sessions the store already has user messages (from temp
+    // message or engine events), so we skip the RPC for instant switching.
+    const existing = messageStore.message[sessionId];
+    if (!existing || !existing.some(m => m.role === "user")) {
       await loadSessionMessages(sessionId);
     } else {
       setTimeout(() => scrollToBottomStable(), 100);
@@ -993,6 +1051,49 @@ export default function Chat() {
       await handleSelectSession(newSession.id);
     } catch (error) {
       logger.error("[AddProject] Failed to add project:", error);
+    }
+  };
+
+  // --- Scheduled Task handlers ---
+
+  const handleCreateOrUpdateTask = async (req: ScheduledTaskCreateRequest | ScheduledTaskUpdateRequest) => {
+    try {
+      if (editingTask()) {
+        await gateway.updateScheduledTask({ id: editingTask()!.id, ...req } as ScheduledTaskUpdateRequest);
+      } else {
+        await gateway.createScheduledTask(req as ScheduledTaskCreateRequest);
+      }
+      // tasks.changed notification will auto-update store
+    } catch (err) {
+      logger.error("[ScheduledTask] Save failed:", err);
+      throw err;
+    }
+  };
+
+  const handleDeleteTask = async (taskId: string) => {
+    try {
+      await gateway.deleteScheduledTask(taskId);
+    } catch (err) {
+      logger.error("[ScheduledTask] Delete failed:", err);
+    }
+  };
+
+  const handleRunTaskNow = async (taskId: string) => {
+    try {
+      const result = await gateway.runScheduledTaskNow(taskId);
+      // Navigate to the newly created session
+      handleSelectSession(result.conversationId);
+    } catch (err) {
+      logger.error("[ScheduledTask] RunNow failed:", err);
+      notify(t().scheduledTask.taskFailed, "warning", 3000);
+    }
+  };
+
+  const handleToggleTaskEnabled = async (taskId: string, enabled: boolean) => {
+    try {
+      await gateway.updateScheduledTask({ id: taskId, enabled });
+    } catch (err) {
+      logger.error("[ScheduledTask] Toggle failed:", err);
     }
   };
 
@@ -1716,6 +1817,12 @@ export default function Chat() {
               refreshingSessions={refreshingSessions()}
               showAddProject={isLocalAccess()}
               collapsed={isSidebarCollapsed() && !isMobile()}
+              scheduledTasks={scheduledTaskStore.enabled ? scheduledTaskStore.tasks : []}
+              onCreateTask={scheduledTaskStore.enabled ? () => { setEditingTask(undefined); setShowTaskModal(true); } : undefined}
+              onEditTask={scheduledTaskStore.enabled ? (task) => { setEditingTask(task); setShowTaskModal(true); } : undefined}
+              onDeleteTask={scheduledTaskStore.enabled ? handleDeleteTask : undefined}
+              onRunTaskNow={scheduledTaskStore.enabled ? handleRunTaskNow : undefined}
+              onToggleTaskEnabled={scheduledTaskStore.enabled ? handleToggleTaskEnabled : undefined}
             />
           </Show>
           <Show when={refreshingSessions()}>
@@ -2010,6 +2117,15 @@ export default function Chat() {
         isOpen={showAddProjectModal()}
         onClose={() => setShowAddProjectModal(false)}
         onAdd={handleAddProject}
+      />
+
+      <ScheduledTaskModal
+        isOpen={showTaskModal()}
+        editingTask={editingTask()}
+        projects={sessionStore.projects}
+        engines={configStore.engines}
+        onClose={() => setShowTaskModal(false)}
+        onSave={handleCreateOrUpdateTask}
       />
     </div>
   );

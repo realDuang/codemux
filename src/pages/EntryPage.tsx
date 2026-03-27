@@ -55,6 +55,7 @@ export default function EntryPage() {
   // Feishu channel states
   const [feishuStatus, setFeishuStatus] = createSignal<ChannelInfo | null>(null);
   const [feishuConfig, setFeishuConfig] = createSignal({
+    platform: "feishu" as "feishu" | "lark",
     appId: "",
     appSecret: "",
     autoApprovePermissions: true,
@@ -425,6 +426,7 @@ export default function EntryPage() {
       const config = await channelAPI.getConfig("feishu");
       if (config?.options) {
         setFeishuConfig({
+          platform: config.options.platform === "lark" ? "lark" : "feishu",
           appId: (config.options.appId as string) || "",
           appSecret: (config.options.appSecret as string) || "",
           autoApprovePermissions: config.options.autoApprovePermissions !== false,
@@ -469,6 +471,7 @@ export default function EntryPage() {
   };
 
   const handleFeishuConfigSave = async (config: {
+    platform: "feishu" | "lark";
     appId: string;
     appSecret: string;
     autoApprovePermissions: boolean;

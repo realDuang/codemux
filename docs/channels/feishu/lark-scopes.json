@@ -1,0 +1,22 @@
+{
+  "_comment": "Lark permission helper for CodeMux bot. This follows the default Lark permission template shape. CodeMux currently needs tenant scopes only, so user scopes remain empty. If your tenant does not expose JSON import, enable the same scopes manually from README.md.",
+  "scopes": {
+    "tenant": [
+      "im:message",
+      "im:message:send_as_bot",
+      "im:message:send",
+      "im:message:update",
+      "im:message:recall",
+      "im:chat",
+      "im:chat:create",
+      "im:chat:update",
+      "im:message.p2p_msg:readonly",
+      "im:message.group_msg:readonly",
+      "im:chat:readonly",
+      "im:chat:operate_as_owner",
+      "im:chat.members:bot_access",
+      "im:resource"
+    ],
+    "user": []
+  }
+}

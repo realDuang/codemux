@@ -31,7 +31,16 @@ vi.mock('fs');
 
 import log from 'electron-log/main';
 import fs from 'fs';
-import { loadSettings, saveSettings, getFileLogLevel, setFileLogLevel, getLogFilePath } from '../../../../electron/main/services/logger';
+import {
+  feishuLog,
+  getFeishuChannelLog,
+  getFileLogLevel,
+  getLogFilePath,
+  larkLog,
+  loadSettings,
+  saveSettings,
+  setFileLogLevel,
+} from '../../../../electron/main/services/logger';
 
 describe('logger.ts', () => {
   beforeEach(() => {
@@ -96,6 +105,13 @@ describe('logger.ts', () => {
       expect(getFileLogLevel()).toBe('info');
       
       expect(getLogFilePath()).toBe('/tmp/test.log');
+    });
+  });
+
+  describe('getFeishuChannelLog', () => {
+    it('returns the scoped logger matching the selected platform', () => {
+      expect(getFeishuChannelLog('feishu')).toBe(feishuLog);
+      expect(getFeishuChannelLog('lark')).toBe(larkLog);
     });
   });
 });

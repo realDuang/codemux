@@ -1,5 +1,5 @@
 // ============================================================================
-// Feishu Channel Adapter
+// Feishu / Lark Channel Adapter
 // Connects Feishu (Lark) bot to CodeMux via Gateway WebSocket.
 // Architecture: One Group = One Session
 // P2P chat = entry point (project selection), Group chat = session interaction.
@@ -45,6 +45,11 @@ import {
   type FeishuBotRemovedEvent,
   type FeishuUserRemovedEvent,
 } from "./feishu-types";
+import {
+  formatFeishuStartupError,
+  getLarkDomain,
+  normalizeFeishuPlatform,
+} from "./feishu-platform";
 import type {
   EngineType,
   UnifiedPart,
@@ -52,7 +57,24 @@ import type {
   UnifiedPermission,
   UnifiedQuestion,
 } from "../../../../src/types/unified";
-import { feishuLog, getDefaultEngineFromSettings } from "../../services/logger";
+import {
+  getDefaultEngineFromSettings,
+  getFeishuChannelLog,
+  type ScopedLogger,
+} from "../../services/logger";
+
+interface WsStartupMonitor {
+  readyPromise: Promise<void>;
+  cancel: () => void;
+  markStartResolved: () => void;
+  logger: {
+    error: (...args: unknown[]) => void;
+    warn: (...args: unknown[]) => void;
+    info: (...args: unknown[]) => void;
+    debug: (...args: unknown[]) => void;
+    trace: (...args: unknown[]) => void;
+  };
+}
 
 // ============================================================================
 // Feishu Adapter
@@ -88,11 +110,191 @@ export class FeishuAdapter extends ChannelAdapter {
     maxMessageBytes: 28_000,
   };
 
+  // Verified against @larksuiteoapi/node-sdk@1.42.0. Re-check these markers after
+  // SDK upgrades because the SDK does not expose structured websocket lifecycle hooks.
+  private static readonly WS_READY_LOG = "ws client ready";
+  private static readonly WS_STARTUP_FAILURE_MARKERS = ["system busy", "PingInterval"] as const;
+  private static readonly WS_STARTUP_TIMEOUT_MS = 30_000;
+
+  private get channelLog(): ScopedLogger {
+    return getFeishuChannelLog(this.config.platform);
+  }
+
+  private omitUndefinedConfig(updates: Partial<FeishuConfig>): Partial<FeishuConfig> {
+    return Object.fromEntries(
+      Object.entries(updates).filter(([, value]) => value !== undefined),
+    ) as Partial<FeishuConfig>;
+  }
+
+  private mergeConfig(baseConfig: FeishuConfig, updates?: Partial<FeishuConfig>): FeishuConfig {
+    if (!updates) {
+      return { ...baseConfig };
+    }
+
+    const normalizedUpdates = this.omitUndefinedConfig(updates);
+
+    return {
+      ...baseConfig,
+      ...normalizedUpdates,
+      platform:
+        normalizedUpdates.platform !== undefined
+          ? normalizeFeishuPlatform(normalizedUpdates.platform)
+          : baseConfig.platform,
+    };
+  }
+
+  private shouldRestartAfterConfigUpdate(
+    previousConfig: FeishuConfig,
+    updates?: Partial<FeishuConfig>,
+  ): boolean {
+    if (!updates) {
+      return false;
+    }
+
+    const nextConfig = this.mergeConfig(previousConfig, updates);
+
+    return (
+      nextConfig.appId !== previousConfig.appId ||
+      nextConfig.appSecret !== previousConfig.appSecret ||
+      nextConfig.platform !== previousConfig.platform
+    );
+  }
+
+  private getPlatformName(platform = this.config.platform): "Feishu" | "Lark" {
+    return platform === "lark" ? "Lark" : "Feishu";
+  }
+
+  private getChannelDisplayName(platform = this.config.platform): string {
+    return `${this.getPlatformName(platform)} Bot`;
+  }
+
+  private createWsStartupMonitor(platform: "feishu" | "lark", platformConfigured: boolean): WsStartupMonitor {
+    let isSettled = false;
+    let hasStartResolved = false;
+    let resolveReady!: () => void;
+    let rejectReady!: (error: Error) => void;
+
+    const readyPromise = new Promise<void>((resolve, reject) => {
+      resolveReady = resolve;
+      rejectReady = reject;
+    });
+    readyPromise.catch(() => undefined);
+
+    const settleReady = () => {
+      if (isSettled) return;
+      isSettled = true;
+      clearTimeout(timeoutId);
+      resolveReady();
+    };
+
+    const settleError = (message: string) => {
+      if (isSettled) return;
+      isSettled = true;
+      clearTimeout(timeoutId);
+      rejectReady(new Error(message));
+    };
+
+    const cancel = () => {
+      if (isSettled) return;
+      isSettled = true;
+      clearTimeout(timeoutId);
+      resolveReady();
+    };
+
+    const markStartResolved = () => {
+      hasStartResolved = true;
+    };
+
+    const normalizeLogArgs = (args: unknown[]): unknown[] => (
+      args.length === 1 && Array.isArray(args[0]) ? args[0] as unknown[] : args
+    );
+
+    const stringifyLogArgs = (args: unknown[]): string => args
+      .map((arg) => {
+        if (typeof arg === "string") return arg;
+        if (arg instanceof Error) return arg.message;
+        if (Array.isArray(arg)) return arg.join(" ");
+        return String(arg);
+      })
+      .join(" ");
+
+    const handleLog = (level: "error" | "warn" | "info" | "debug" | "trace", args: unknown[]) => {
+      const normalizedArgs = normalizeLogArgs(args);
+      const text = stringifyLogArgs(normalizedArgs);
+      const isReadyLog = text.includes(FeishuAdapter.WS_READY_LOG);
+      const isStartupFailure =
+        this.status === "starting" && FeishuAdapter.WS_STARTUP_FAILURE_MARKERS.some((marker) => text.includes(marker));
+
+      // The Lark SDK logger uses trace/debug/info/warn/error, while electron-log uses
+      // debug/verbose/info/warn/error. Keep the readiness signal at info, downgrade
+      // other SDK info chatter to verbose, and map SDK trace to debug so it is not lost.
+
+      switch (level) {
+        case "error":
+          this.channelLog.error(...normalizedArgs);
+          break;
+        case "warn":
+          this.channelLog.warn(...normalizedArgs);
+          break;
+        case "info":
+          if (isReadyLog) {
+            this.channelLog.info(...normalizedArgs);
+          } else {
+            this.channelLog.verbose(...normalizedArgs);
+          }
+          break;
+        case "debug":
+          this.channelLog.debug(...normalizedArgs);
+          break;
+        case "trace":
+          this.channelLog.debug(...normalizedArgs);
+          break;
+      }
+
+      if (isReadyLog) {
+        settleReady();
+        return;
+      }
+
+      if (isStartupFailure) {
+        settleError(formatFeishuStartupError(text, platform, platformConfigured));
+      }
+    };
+
+    const platformName = platform === "lark" ? "Lark" : "Feishu";
+    const timeoutId = setTimeout(() => {
+      if (hasStartResolved) {
+        this.channelLog.warn(
+          `${platformName} WSClient.start() resolved before the ready log was observed. Treating start() resolution as a weak success signal; re-check websocket log markers after upgrading @larksuiteoapi/node-sdk@1.42.0.`,
+        );
+        settleReady();
+        return;
+      }
+
+      settleError(
+        `Timed out waiting for ${platformName} websocket connection. Verify the app is self-built, long connection is enabled in the correct developer console, and the selected platform matches your tenant.`,
+      );
+    }, FeishuAdapter.WS_STARTUP_TIMEOUT_MS);
+
+    return {
+      readyPromise,
+      cancel,
+      markStartResolved,
+      logger: {
+        error: (...args: unknown[]) => handleLog("error", args),
+        warn: (...args: unknown[]) => handleLog("warn", args),
+        info: (...args: unknown[]) => handleLog("info", args),
+        debug: (...args: unknown[]) => handleLog("debug", args),
+        trace: (...args: unknown[]) => handleLog("trace", args),
+      },
+    };
+  }
+
   // --- Lifecycle ---
 
   async start(config: ChannelConfig): Promise<void> {
     if (this.status === "running") {
-      feishuLog.warn("Feishu adapter already running, stopping first");
+      this.channelLog.warn(`${this.getPlatformName()} adapter already running, stopping first`);
       await this.stop();
     }
 
@@ -101,28 +303,33 @@ export class FeishuAdapter extends ChannelAdapter {
     this.emit("status.changed", this.status);
 
     // Merge config
-    this.config = {
-      ...DEFAULT_FEISHU_CONFIG,
-      ...(config.options as unknown as Partial<FeishuConfig>),
-    };
+    const options = (config.options as Partial<FeishuConfig> | undefined) ?? {};
+    const platformConfigured = options.platform === "feishu" || options.platform === "lark";
+    this.config = this.mergeConfig(DEFAULT_FEISHU_CONFIG, options);
 
     if (!this.config.appId || !this.config.appSecret) {
       this.status = "error";
       this.error = "Missing appId or appSecret";
       this.emit("status.changed", this.status);
-      throw new Error("Feishu appId and appSecret are required");
+      throw new Error(`${this.getPlatformName()} appId and appSecret are required`);
     }
 
+    let wsStartup: WsStartupMonitor | null = null;
+
     try {
+      const domain = getLarkDomain(this.config.platform);
+      wsStartup = this.createWsStartupMonitor(this.config.platform, platformConfigured);
+
       // 1. Create Lark REST client
       this.larkClient = new lark.Client({
         appId: this.config.appId,
         appSecret: this.config.appSecret,
+        domain,
         disableTokenCache: false,
       });
 
       // 1b. Create transport and streaming controller
-      this.transport = new FeishuTransport(this.larkClient, this.rateLimiter);
+      this.transport = new FeishuTransport(this.larkClient, this.rateLimiter, this.channelLog);
       this.streamingController = new StreamingController(
         this.transport,
         this.renderer,
@@ -137,35 +344,35 @@ export class FeishuAdapter extends ChannelAdapter {
           try {
             await this.handleFeishuMessage(data as FeishuMessageEvent);
           } catch (err) {
-            feishuLog.error("Error handling Feishu message:", err);
+            this.channelLog.error(`Error handling ${this.getPlatformName()} message:`, err);
           }
         },
         "application.bot.menu_v6": async (data: unknown) => {
           try {
             await this.handleBotMenuEvent(data as FeishuBotMenuEvent);
           } catch (err) {
-            feishuLog.error("Error handling bot menu event:", err);
+            this.channelLog.error("Error handling bot menu event:", err);
           }
         },
         "im.chat.disbanded_v1": async (data: unknown) => {
           try {
             await this.handleGroupDisbanded(data as FeishuChatDisbandedEvent);
           } catch (err) {
-            feishuLog.error("Error handling group disbanded event:", err);
+            this.channelLog.error("Error handling group disbanded event:", err);
           }
         },
         "im.chat.member.bot.deleted_v1": async (data: unknown) => {
           try {
             await this.handleBotRemovedFromGroup(data as FeishuBotRemovedEvent);
           } catch (err) {
-            feishuLog.error("Error handling bot removed event:", err);
+            this.channelLog.error("Error handling bot removed event:", err);
           }
         },
         "im.chat.member.user.deleted_v1": async (data: unknown) => {
           try {
             await this.handleUserRemovedFromGroup(data as FeishuUserRemovedEvent);
           } catch (err) {
-            feishuLog.error("Error handling user removed event:", err);
+            this.channelLog.error("Error handling user removed event:", err);
           }
         },
         // Suppress warnings for events we don't handle
@@ -177,18 +384,23 @@ export class FeishuAdapter extends ChannelAdapter {
       this.wsClient = new lark.WSClient({
         appId: this.config.appId,
         appSecret: this.config.appSecret,
-        loggerLevel: lark.LoggerLevel.warn,
+        domain,
+        loggerLevel: lark.LoggerLevel.info,
+        logger: wsStartup.logger,
       });
 
       await this.wsClient.start({ eventDispatcher: dispatcher });
-      feishuLog.info("Feishu WSClient connected to cloud");
+      wsStartup.markStartResolved();
+      await wsStartup.readyPromise;
+      this.channelLog.info(`${this.getPlatformName()} WSClient connected to cloud`);
 
       // 4. Connect to local Gateway
       this.gatewayClient = new GatewayWsClient(this.config.gatewayUrl);
       await this.gatewayClient.connect();
-      feishuLog.info("Gateway WS client connected");
+      this.channelLog.info("Gateway WS client connected");
 
       // 5. Restore persisted group bindings from disk
+      this.sessionMapper.setLogger(this.channelLog);
       this.sessionMapper.loadBindings();
 
       // 6. Subscribe to Gateway notifications
@@ -197,12 +409,14 @@ export class FeishuAdapter extends ChannelAdapter {
       this.status = "running";
       this.emit("status.changed", this.status);
       this.emit("connected");
-      feishuLog.info("Feishu adapter started successfully");
+      this.channelLog.info(`${this.getPlatformName()} adapter started successfully`);
     } catch (err) {
+      wsStartup?.cancel();
+      const normalizedMessage = formatFeishuStartupError(err, this.config.platform, platformConfigured);
       this.status = "error";
-      this.error = err instanceof Error ? err.message : String(err);
+      this.error = normalizedMessage;
       this.emit("status.changed", this.status);
-      feishuLog.error("Failed to start Feishu adapter:", err);
+      this.channelLog.error(`Failed to start ${this.getPlatformName()} adapter:`, err);
       // Clean up partial init (preserve error state)
       const savedStatus = this.status;
       const savedError = this.error;
@@ -215,7 +429,7 @@ export class FeishuAdapter extends ChannelAdapter {
   }
 
   async stop(): Promise<void> {
-    feishuLog.info("Stopping Feishu adapter...");
+    this.channelLog.info(`Stopping ${this.getPlatformName()} adapter...`);
 
     // Clean up streaming timers
     this.sessionMapper.cleanup();
@@ -226,10 +440,15 @@ export class FeishuAdapter extends ChannelAdapter {
       this.gatewayClient = null;
     }
 
-    // Disconnect Feishu WSClient
-    // Note: lark.WSClient doesn't have a clean stop/close API in all versions.
-    // Setting to null allows GC.
-    this.wsClient = null;
+    // Disconnect Feishu WSClient and stop its reconnect loop.
+    if (this.wsClient) {
+      try {
+        this.wsClient.close({ force: true });
+      } catch (err) {
+        this.channelLog.warn(`Failed to close ${this.getPlatformName()} WSClient cleanly:`, err);
+      }
+      this.wsClient = null;
+    }
     this.larkClient = null;
     this.transport = null;
     this.streamingController = null;
@@ -238,13 +457,13 @@ export class FeishuAdapter extends ChannelAdapter {
     this.error = undefined;
     this.emit("status.changed", this.status);
     this.emit("disconnected", "stopped");
-    feishuLog.info("Feishu adapter stopped");
+    this.channelLog.info(`${this.getPlatformName()} adapter stopped`);
   }
 
   getInfo(): ChannelInfo {
     return {
       type: this.channelType,
-      name: "Feishu Bot",
+      name: this.getChannelDisplayName(),
       status: this.status,
       error: this.error,
     };
@@ -253,18 +472,21 @@ export class FeishuAdapter extends ChannelAdapter {
   async updateConfig(config: Partial<ChannelConfig>): Promise<void> {
     const wasRunning = this.status === "running";
     const newOptions = config.options as Partial<FeishuConfig> | undefined;
+    const previousConfig = { ...this.config };
 
     if (newOptions) {
-      this.config = { ...this.config, ...newOptions };
+      this.config = this.mergeConfig(this.config, newOptions);
     }
 
-    // If credentials changed while running, restart
-    if (wasRunning && newOptions && (newOptions.appId || newOptions.appSecret)) {
-      feishuLog.info("Credentials changed, restarting Feishu adapter");
+    const shouldRestart = wasRunning && this.shouldRestartAfterConfigUpdate(previousConfig, newOptions);
+
+    // If credentials or platform changed while running, restart
+    if (shouldRestart) {
+      this.channelLog.info(`Credentials or platform changed, restarting ${this.getPlatformName()} adapter`);
       await this.stop();
       const fullConfig: ChannelConfig = {
         type: "feishu",
-        name: "Feishu Bot",
+        name: this.getChannelDisplayName(),
         enabled: true,
         options: this.config as unknown as Record<string, unknown>,
       };
@@ -315,13 +537,13 @@ export class FeishuAdapter extends ChannelAdapter {
 
     // Skip non-text messages
     if (message_type !== "text") {
-      feishuLog.verbose(`Ignoring non-text message type: ${message_type}`);
+      this.channelLog.verbose(`Ignoring non-text message type: ${message_type}`);
       return;
     }
 
     // Deduplication
     if (this.sessionMapper.isDuplicate(message_id)) {
-      feishuLog.verbose(`Skipping duplicate message: ${message_id}`);
+      this.channelLog.verbose(`Skipping duplicate message: ${message_id}`);
       return;
     }
 
@@ -338,7 +560,7 @@ export class FeishuAdapter extends ChannelAdapter {
     text = text.replace(/@_user_\d+/g, "").trim();
     if (!text) return;
 
-    feishuLog.info(`Message from ${chat_type} chat ${chat_id}: ${text.slice(0, 100)}`);
+    this.channelLog.info(`Message from ${chat_type} chat ${chat_id}: ${text.slice(0, 100)}`);
 
     if (chat_type === "p2p") {
       // Record open_id → chat_id mapping for bot menu events
@@ -350,7 +572,7 @@ export class FeishuAdapter extends ChannelAdapter {
         const pendingByOpenId = this.sessionMapper.takePendingSelectionByOpenId(sender.sender_id.open_id);
         if (pendingByOpenId) {
           this.sessionMapper.setPendingSelection(chat_id, pendingByOpenId);
-          feishuLog.info(`Transferred pending selection from openId=${sender.sender_id.open_id} to chat=${chat_id}`);
+          this.channelLog.info(`Transferred pending selection from openId=${sender.sender_id.open_id} to chat=${chat_id}`);
         }
       }
       await this.handleP2PMessage(chat_id, text);
@@ -381,7 +603,7 @@ export class FeishuAdapter extends ChannelAdapter {
         questionId: pendingQ.questionId,
         answers: [[text]],
       });
-      feishuLog.info(`Replied to question ${pendingQ.questionId} with freeform answer`);
+      this.channelLog.info(`Replied to question ${pendingQ.questionId} with freeform answer`);
       return;
     }
 
@@ -644,7 +866,7 @@ export class FeishuAdapter extends ChannelAdapter {
   ): Promise<void> {
     if (!this.gatewayClient || !this.transport || !this.streamingController) {
       tempSession.processing = false;
-      feishuLog.error("Gateway client not connected, cannot send P2P message");
+      this.channelLog.error("Gateway client not connected, cannot send P2P message");
       return;
     }
 
@@ -653,7 +875,7 @@ export class FeishuAdapter extends ChannelAdapter {
     if (!this.streamingController.isBatchMode) {
       platformMsgId = await this.transport.sendText(chatId, "🤔 思考中...");
       if (!platformMsgId) {
-        feishuLog.error("Failed to send P2P thinking message");
+        this.channelLog.error("Failed to send P2P thinking message");
         await this.processP2PQueue(chatId);
         return;
       }
@@ -675,7 +897,7 @@ export class FeishuAdapter extends ChannelAdapter {
         streaming.messageId = msg.id;
       })
       .catch(async (err) => {
-        feishuLog.error("P2P sendMessage failed:", err);
+        this.channelLog.error("P2P sendMessage failed:", err);
         tempSession.streamingSession = undefined;
         if (platformMsgId) {
           this.transport!.updateText(
@@ -706,7 +928,7 @@ export class FeishuAdapter extends ChannelAdapter {
     }
     try {
       await this.gatewayClient?.deleteSession(temp.conversationId);
-      feishuLog.info(`Deleted expired temp session: ${temp.conversationId}`);
+      this.channelLog.info(`Deleted expired temp session: ${temp.conversationId}`);
     } catch {
       // Ignore deletion failures for temp sessions
     }
@@ -842,7 +1064,7 @@ export class FeishuAdapter extends ChannelAdapter {
         questionId: pendingQ.questionId,
         answers: [[text]],
       });
-      feishuLog.info(`Replied to question ${pendingQ.questionId} with freeform answer`);
+      this.channelLog.info(`Replied to question ${pendingQ.questionId} with freeform answer`);
       return;
     }
 
@@ -960,13 +1182,13 @@ export class FeishuAdapter extends ChannelAdapter {
           `Session already has a group chat. Check your Feishu groups.`,
         );
       }
-      feishuLog.warn(`Conversation ${conversationId} already has group ${existingChatId}`);
+      this.channelLog.warn(`Conversation ${conversationId} already has group ${existingChatId}`);
       return;
     }
 
     // Concurrency guard — prevent duplicate group creation from rapid clicks
     if (!this.sessionMapper.markCreating(conversationId)) {
-      feishuLog.warn(`Conversation ${conversationId} group creation already in progress`);
+      this.channelLog.warn(`Conversation ${conversationId} group creation already in progress`);
       return;
     }
 
@@ -994,14 +1216,14 @@ export class FeishuAdapter extends ChannelAdapter {
 
       const newChatId = (createRes as any)?.data?.chat_id;
       if (!newChatId) {
-        feishuLog.error("Failed to create group chat: no chat_id returned");
+        this.channelLog.error("Failed to create group chat: no chat_id returned");
         if (p2pChatId) {
           await this.transport.sendText(p2pChatId, "Failed to create group chat. Please try again.");
         }
         return;
       }
 
-      feishuLog.info(`Created group chat: ${newChatId} for conversation ${conversationId}`);
+      this.channelLog.info(`Created group chat: ${newChatId} for conversation ${conversationId}`);
 
       // Register group binding
       this.sessionMapper.createGroupBinding({
@@ -1027,7 +1249,7 @@ export class FeishuAdapter extends ChannelAdapter {
         );
       }
     } catch (err) {
-      feishuLog.error("Failed to create group for session:", err);
+      this.channelLog.error("Failed to create group for session:", err);
       if (p2pChatId) {
         await this.transport.sendText(
           p2pChatId,
@@ -1047,7 +1269,7 @@ export class FeishuAdapter extends ChannelAdapter {
     const eventKey = event.event_key;
     const openId = event.operator?.operator_id?.open_id;
 
-    feishuLog.info(`Bot menu event: key=${eventKey}, operator=${openId}, raw=${JSON.stringify(event).slice(0, 200)}`);
+    this.channelLog.info(`Bot menu event: key=${eventKey}, operator=${openId}, raw=${JSON.stringify(event).slice(0, 200)}`);
 
     if (!eventKey || !openId) return;
 
@@ -1103,7 +1325,7 @@ export class FeishuAdapter extends ChannelAdapter {
       }
 
       default:
-        feishuLog.warn(`Unknown bot menu event_key: ${eventKey}`);
+        this.channelLog.warn(`Unknown bot menu event_key: ${eventKey}`);
     }
   }
 
@@ -1136,14 +1358,14 @@ export class FeishuAdapter extends ChannelAdapter {
   private async cleanupGroupResources(chatId: string | undefined, reason: string): Promise<void> {
     if (!chatId) return;
 
-    feishuLog.info(`${reason}: ${chatId}`);
+    this.channelLog.info(`${reason}: ${chatId}`);
     const binding = this.sessionMapper.removeGroupBinding(chatId);
     if (binding && this.gatewayClient) {
       try {
         await this.gatewayClient.deleteSession(binding.conversationId);
-        feishuLog.info(`Deleted session ${binding.conversationId} after ${reason}`);
+        this.channelLog.info(`Deleted session ${binding.conversationId} after ${reason}`);
       } catch (err) {
-        feishuLog.error(`Failed to delete session ${binding.conversationId}:`, err);
+        this.channelLog.error(`Failed to delete session ${binding.conversationId}:`, err);
       }
     }
   }
@@ -1164,7 +1386,7 @@ export class FeishuAdapter extends ChannelAdapter {
     if (!this.streamingController.isBatchMode) {
       platformMsgId = await this.transport.sendText(groupChatId, "🤔 思考中...");
       if (!platformMsgId) {
-        feishuLog.error("Failed to send initial thinking message");
+        this.channelLog.error("Failed to send initial thinking message");
         return;
       }
     }
@@ -1189,7 +1411,7 @@ export class FeishuAdapter extends ChannelAdapter {
         this.sessionMapper.registerStreamingSession(groupChatId, msg.id, streamingSession);
       })
       .catch((err) => {
-        feishuLog.error("sendMessage failed:", err);
+        this.channelLog.error("sendMessage failed:", err);
         binding.streamingSessions.delete(placeholderKey);
         if (platformMsgId) {
           this.transport!.updateText(
@@ -1324,7 +1546,7 @@ export class FeishuAdapter extends ChannelAdapter {
     );
 
     if (acceptOption) {
-      feishuLog.info(`Auto-approving permission: ${permission.id}`);
+      this.channelLog.info(`Auto-approving permission: ${permission.id}`);
       this.gatewayClient.replyPermission({
         permissionId: permission.id,
         optionId: acceptOption.id,
@@ -1421,9 +1643,9 @@ export class FeishuAdapter extends ChannelAdapter {
         path: { chat_id: groupChatId },
         data: { name: expectedGroupName },
       });
-      feishuLog.info(`Updated group chat name: ${groupChatId} → "${expectedGroupName}"`);
+      this.channelLog.info(`Updated group chat name: ${groupChatId} → "${expectedGroupName}"`);
     } catch (err) {
-      feishuLog.error(`Failed to update group chat name for ${groupChatId}:`, err);
+      this.channelLog.error(`Failed to update group chat name for ${groupChatId}:`, err);
     }
   }
 }

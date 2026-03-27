@@ -1,6 +1,6 @@
-# Feishu (飞书 / Lark) Channel Setup
+# Feishu / Lark Channel Setup
 
-Connect CodeMux to Feishu using the official WebSocket SDK — no public URL or Cloudflare Tunnel required.
+Connect CodeMux to Feishu or Lark using the official WebSocket SDK — no public URL or Cloudflare Tunnel required.
 
 ## Overview
 
@@ -15,12 +15,16 @@ Connect CodeMux to Feishu using the official WebSocket SDK — no public URL or 
 
 ## Prerequisites
 
-- A Feishu organization account (企业版 or team edition)
-- Admin access to the [Feishu Open Platform](https://open.feishu.cn/)
+- A Feishu or Lark organization account with a self-built/private app
+- Admin access to the matching developer console:
+  - Feishu: [open.feishu.cn](https://open.feishu.cn/)
+  - Lark: [open.larksuite.com](https://open.larksuite.com/)
 
-## Step 1: Create a Feishu App
+## Step 1: Create a Feishu or Lark App
 
-1. Go to [Feishu Open Platform](https://open.feishu.cn/app) and log in
+1. Go to the matching developer console and log in:
+   - Feishu: [open.feishu.cn/app](https://open.feishu.cn/app)
+   - Lark: [open.larksuite.com/app](https://open.larksuite.com/app)
 2. Click **Create Custom App** (创建企业自建应用)
 3. Fill in:
    - **App Name**: e.g., "CodeMux"
@@ -39,7 +43,7 @@ Connect CodeMux to Feishu using the official WebSocket SDK — no public URL or 
 
 1. Go to **Event Configuration** (事件配置)
 2. **Important**: Select **Use Long Connection** (使用长连接接收事件)
-   > CodeMux uses Feishu's WebSocket SDK to receive events. Do **not** use HTTP callback mode.
+   > CodeMux uses the Feishu / Lark WebSocket SDK to receive events. Do **not** use HTTP callback mode.
 3. Subscribe to these events:
 
 | Event | Name | Required | Purpose |
@@ -57,11 +61,13 @@ Connect CodeMux to Feishu using the official WebSocket SDK — no public URL or 
 
 Go to **Permissions & Scopes** (权限管理) and request the following scopes.
 
-> **Tip**: You can import all scopes at once using the JSON file at [`feishu-scopes.json`](feishu-scopes.json). In the Feishu developer console, go to **Permissions & Scopes** → **Batch Enable** (批量开通), and paste the scope list from the JSON file.
+> **Tip**:
+> - **Feishu**: use [`feishu-scopes.json`](feishu-scopes.json). In the Feishu developer console, go to **Permissions & Scopes** → **Batch Enable** (批量开通), and paste the JSON payload there.
+> - **Lark**: use [`lark-scopes.json`](lark-scopes.json) if your Lark tenant exposes a bulk paste/import field. Lark uses the default template shape `{"scopes":{"tenant":[...],"user":[...]}}`, not the Feishu batch-enable helper format. CodeMux currently needs only **tenant** scopes, so the `user` array stays empty. If your Lark console only shows checkboxes, enable the same scopes manually from the tables below.
 
 ### API Call Permissions
 
-These scopes are required for the bot to call Feishu APIs (send messages, manage groups, etc.):
+These scopes are required for the bot to call Feishu / Lark APIs (send messages, manage groups, etc.):
 
 | Scope | Description | Purpose | Required |
 |-------|-------------|---------|----------|
@@ -93,6 +99,11 @@ These scopes control **which events** the bot can receive. They are separate fro
 
 After adding all permissions, click **Submit for Approval** (提交审核). For enterprise internal apps, approval is usually instant.
 
+The Feishu and Lark helper files contain the same effective permissions, but the wrapper format is different:
+
+- `feishu-scopes.json`: richer helper object for the Feishu batch-enable dialog
+- `lark-scopes.json`: Lark default template with `scopes.tenant` and `scopes.user`
+
 ## Step 5: Configure Bot Custom Menu
 
 The bot custom menu provides clickable quick-action buttons in the chat input area. This is the primary way for users to navigate projects and sessions from their mobile devices.
@@ -121,13 +132,14 @@ When a user clicks a menu item, Feishu sends an `application.bot.menu_v6` event 
 2. Click **Create Version** (创建版本)
 3. Set the **Availability Scope** (可用范围) — choose which departments/users can use the bot
 4. Submit for review
-   > Internal apps (企业自建应用) are typically auto-approved
+   > Internal or private self-built apps are typically auto-approved more quickly than store apps
 
 ## Step 7: Configure in CodeMux
 
 1. Open CodeMux → go to the remote access page → **Channels** tab
-2. Click **Configure** on the Feishu card
+2. Click **Configure** on the Feishu / Lark card
 3. Enter:
+   - **Platform**: Select **Feishu** for `open.feishu.cn` apps or **Lark** for `open.larksuite.com` apps
    - **App ID**: From Step 1
    - **App Secret**: From Step 1
 4. Click **Save** — the channel will start automatically
@@ -136,7 +148,7 @@ When a user clicks a menu item, Feishu sends an `application.bot.menu_v6` event 
 
 ### Getting Started
 
-1. Open Feishu and search for your bot name in the contact list
+1. Open Feishu or Lark and search for your bot name in the contact list
 2. Send any message to the bot in a **P2P chat** (private conversation)
 3. The bot will show a list of available projects — select one
 4. Choose to create a **new session** or use an existing one
@@ -186,13 +198,14 @@ Update throttle is 1.5 seconds by default to stay within Feishu's API rate limit
 | Bot menu clicks not working | Event not subscribed | Ensure `application.bot.menu_v6` event is subscribed in Event Configuration |
 | Bot doesn't appear in contacts | App not published | Go to Version Management → create and publish a version |
 | Messages truncated | Content exceeds 25KB | Normal behavior — long responses are truncated with a notice |
-| Permission errors on startup | App not approved | Check version approval status in Feishu Open Platform |
+| Permission errors on startup | App not approved | Check version approval status in the matching Feishu or Lark developer console |
+| `system busy` / `PingInterval` on startup | Platform mismatch or incomplete WS config response | Verify the CodeMux platform selector matches your tenant (`open.feishu.cn` vs `open.larksuite.com`) and **Use Long Connection** is enabled |
 | Duplicate messages | Normal deduplication | Bot uses message ID deduplication (LRU, max 1000 IDs) — safe to ignore |
 
 ## Technical Details
 
 - **SDK**: `@larksuiteoapi/node-sdk` (official Lark Node.js SDK)
-- **Connection**: WebSocket (WSClient) — persistent connection from CodeMux to Feishu cloud
+- **Connection**: WebSocket (WSClient) — persistent connection from CodeMux to Feishu or Lark cloud
 - **Message Format**: Interactive Cards with Markdown content
 - **Persistence**: Group-session bindings saved to `~/.channels/feishu-bindings.json`
 - **Rate Limiting**: TokenBucket — 5 burst capacity, 5 tokens/sec refill

@@ -7,12 +7,13 @@
 import type * as lark from "@larksuiteoapi/node-sdk";
 import type { MessageTransport } from "../streaming/message-transport";
 import type { TokenBucket } from "../streaming/rate-limiter";
-import { feishuLog } from "../../services/logger";
+import { feishuLog, type ScopedLogger } from "../../services/logger";
 
 export class FeishuTransport implements MessageTransport {
   constructor(
     private larkClient: lark.Client,
     private rateLimiter: TokenBucket,
+    private log: ScopedLogger = feishuLog,
   ) {}
 
   async sendText(chatId: string, text: string): Promise<string> {
@@ -28,7 +29,7 @@ export class FeishuTransport implements MessageTransport {
       });
       return (res as any)?.data?.message_id ?? "";
     } catch (err) {
-      feishuLog.error("Failed to send text message:", err);
+      this.log.error("Failed to send text message:", err);
       return "";
     }
   }
@@ -46,7 +47,7 @@ export class FeishuTransport implements MessageTransport {
         },
       });
     } catch (err) {
-      feishuLog.error(`Failed to update message ${messageId}:`, err);
+      this.log.error(`Failed to update message ${messageId}:`, err);
     }
   }
 
@@ -72,7 +73,7 @@ export class FeishuTransport implements MessageTransport {
       });
       return (res as any)?.data?.message_id ?? "";
     } catch (err) {
-      feishuLog.error("Failed to send card message:", err);
+      this.log.error("Failed to send card message:", err);
       return "";
     }
   }
@@ -99,7 +100,7 @@ export class FeishuTransport implements MessageTransport {
       });
       return (res as any)?.data?.message_id ?? "";
     } catch (err) {
-      feishuLog.error(`Failed to send message (${receiveIdType}=${receiveId}):`, err);
+      this.log.error(`Failed to send message (${receiveIdType}=${receiveId}):`, err);
       return "";
     }
   }

@@ -41,6 +41,7 @@ win:
 linux:
   icon: public/assets/icon.png
   category: Development
+  maintainer: realDuang <250407778@qq.com>
   target:
     - target: AppImage
       arch:

@@ -47,6 +47,8 @@ export interface EngineCapabilities {
   customModelInput: boolean;
   /** Whether the engine supports enqueuing messages while another is being processed */
   messageEnqueue: boolean;
+  /** Whether the engine supports slash commands / skills */
+  slashCommands: boolean;
   /** Available agent modes */
   availableModes: AgentMode[];
 }
@@ -324,6 +326,7 @@ export type NormalizedToolName =
   | "task"
   | "todo"
   | "sql"
+  | "cron"
   | "unknown";
 
 export interface ToolPart extends PartBase {
@@ -542,6 +545,15 @@ export const GatewayRequestType = {
   FILE_WATCH: "file.watch",
   FILE_UNWATCH: "file.unwatch",
 
+  // Slash Commands
+  COMMAND_LIST: "command.list",
+  COMMAND_INVOKE: "command.invoke",
+
+  // Cron / Scheduled Tasks
+  CRON_CREATE: "cron.create",
+  CRON_DELETE: "cron.delete",
+  CRON_LIST: "cron.list",
+
   // Scheduled Tasks
   SCHEDULED_TASK_LIST: "scheduledTask.list",
   SCHEDULED_TASK_GET: "scheduledTask.get",
@@ -568,6 +580,11 @@ export const GatewayNotificationType = {
   MESSAGE_QUEUED_CONSUMED: "message.queued.consumed",
   SESSION_IMPORT_PROGRESS: "session.import.progress",
   FILE_CHANGED: "file.changed",
+  COMMANDS_CHANGED: "commands.changed",
+  CRON_FIRED: "cron.fired",
+  CRON_COMPLETED: "cron.completed",
+  CRON_EXPIRED: "cron.expired",
+  CRON_CHANGED: "cron.changed",
 
   // Scheduled Tasks
   SCHEDULED_TASK_FIRED: "scheduledTask.fired",
@@ -672,6 +689,95 @@ export interface SessionImportResult {
   imported: number;
   skipped: number;
   errors: string[];
+}
+
+// --- Slash Command / Skill types ---
+
+/** A slash command or skill exposed by an engine */
+export interface EngineCommand {
+  /** Command name (without leading slash) */
+  name: string;
+  /** Human-readable description */
+  description: string;
+  /** Hint for arguments (e.g., "<file>", "[query]") */
+  argumentHint?: string;
+  /** Source/category (Copilot-specific: "project" | "personal" | "plugin") */
+  source?: string;
+  /** Whether the user can directly invoke this command (Copilot-specific) */
+  userInvocable?: boolean;
+}
+
+/** Request payload for listing available commands */
+export interface CommandListRequest {
+  engineType: EngineType;
+  /** Optional: list commands for a specific session (some engines scope commands per-session) */
+  sessionId?: string;
+}
+
+/** Request payload for invoking a slash command */
+export interface CommandInvokeRequest {
+  sessionId: string;
+  /** Command name (without leading slash) */
+  commandName: string;
+  /** Arguments string (everything after the command name) */
+  args: string;
+  mode?: string;
+  modelId?: string;
+}
+
+/** Result of a slash command invocation */
+export interface CommandInvokeResult {
+  /** true = engine handled it via native command API; false = fell back to sendMessage */
+  handledAsCommand: boolean;
+  /** The resulting message, if any */
+  message?: UnifiedMessage;
+}
+
+// --- Cron / Scheduled Task types ---
+
+export interface CronCreateRequest {
+  sessionId: string;
+  /** 5-field cron expression (M H DoM Mon DoW) */
+  cron: string;
+  /** The prompt to enqueue when the job fires */
+  prompt: string;
+  /** true (default) = recurring; false = one-shot (fire once then auto-delete) */
+  recurring?: boolean;
+}
+
+export interface CronCreateResult {
+  /** Unique job ID */
+  id: string;
+  /** Pre-computed next fire time (ms since epoch) */
+  nextFireAt: number;
+}
+
+export interface CronDeleteRequest {
+  jobId: string;
+}
+
+export interface CronListRequest {
+  /** Optional: filter by session */
+  sessionId?: string;
+}
+
+export interface CronJobInfo {
+  id: string;
+  sessionId: string;
+  cron: string;
+  prompt: string;
+  recurring: boolean;
+  createdAt: number;
+  lastFiredAt?: number;
+  nextFireAt: number;
+  expiresAt?: number;
+}
+
+export interface CronNotification {
+  jobId: string;
+  sessionId: string;
+  /** For "fired" events on recurring jobs: next fire time */
+  nextFireAt?: number;
 }
 
 // --- Scheduled Tasks ---

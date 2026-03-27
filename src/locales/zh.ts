@@ -235,6 +235,7 @@ export const zh: LocaleDict = {
     imageUnsupportedType: "不支持的图片格式",
     imageLimitReached: "每条消息最多 4 张图片",
     removeImage: "移除图片",
+    noCommandsFound: "未找到匹配的命令",
   },
 
   // Message Parts

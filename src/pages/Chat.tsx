@@ -9,6 +9,7 @@ import {
   batch,
   lazy,
   Suspense,
+  untrack,
 } from "solid-js";
 import { Auth } from "../lib/auth";
 import { useNavigate } from "@solidjs/router";
@@ -27,7 +28,7 @@ import { SessionSidebar } from "../components/SessionSidebar";
 import { HideProjectModal } from "../components/HideProjectModal";
 import { AddProjectModal } from "../components/AddProjectModal";
 import { ScheduledTaskModal } from "../components/ScheduledTaskModal";
-import type { UnifiedMessage, UnifiedPart, UnifiedPermission, UnifiedQuestion, UnifiedSession, UnifiedProject, AgentMode, EngineType, SessionActivityStatus, ScheduledTask, ScheduledTaskCreateRequest, ScheduledTaskUpdateRequest } from "../types/unified";
+import type { UnifiedMessage, UnifiedPart, UnifiedPermission, UnifiedQuestion, UnifiedSession, UnifiedProject, AgentMode, EngineType, SessionActivityStatus, EngineCommand, ScheduledTask, ScheduledTaskCreateRequest, ScheduledTaskUpdateRequest } from "../types/unified";
 import { useI18n, formatMessage } from "../lib/i18n";
 import { notify } from "../lib/notifications";
 import { isDefaultTitle } from "../lib/session-utils";
@@ -320,6 +321,9 @@ export default function Chat() {
   // Agent mode state - default to "build" matching OpenCode's default
   const [currentAgent, setCurrentAgent] = createSignal<AgentMode>({ id: "build", label: "Build" });
 
+  // Slash command state — available commands for the current engine
+  const [availableCommands, setAvailableCommands] = createSignal<EngineCommand[]>([]);
+
   // Track whether the component has been disposed (cleaned up) to suppress
   // errors from async operations that complete after gateway.destroy().
   let disposed = false;
@@ -389,6 +393,38 @@ export default function Chat() {
         setCurrentAgent(availableModes[0]);
       }
     }
+  });
+
+  // Fetch available slash commands when the engine type changes.
+  // Commands are adapter-level (shared across all sessions of the same engine),
+  // so we only need to fetch once per engine switch. Subsequent updates arrive
+  // via the commands.changed push notification.
+  createEffect(() => {
+    const engineType = currentEngineType();
+    const engineInfo = configStore.engines.find(e => e.type === engineType);
+    const supportsCommands = engineInfo?.capabilities?.slashCommands ?? false;
+    if (!supportsCommands) {
+      setAvailableCommands([]);
+      return;
+    }
+    // Pass the current sessionId so the adapter can resolve the working
+    // directory (needed for the first-time warmup / skill fetch).
+    // Use untrack so session switches don't re-trigger this effect.
+    const sid = untrack(() => sessionStore.current);
+    gateway.listCommands(engineType, sid ?? undefined).then(
+      (cmds) => {
+        // Guard against stale responses if engine type changed while fetching
+        if (currentEngineType() === engineType) {
+          setAvailableCommands(cmds);
+        }
+      },
+      (err) => {
+        if (!disposed) {
+          logger.warn("[Commands] Failed to list commands:", err);
+        }
+        setAvailableCommands([]);
+      },
+    );
   });
 
   // Mobile Sidebar State
@@ -658,6 +694,12 @@ export default function Chat() {
           }
         },
         onFileChanged: handleFileChanged,
+        onCommandsChanged: (engineType: EngineType, commands: EngineCommand[]) => {
+          // Update available commands if the changed engine is the currently active one
+          if (engineType === currentEngineType()) {
+            setAvailableCommands(commands);
+          }
+        },
         onScheduledTasksChanged: (tasks: ScheduledTask[]) => {
           setScheduledTaskStore("tasks", tasks);
         },
@@ -1538,6 +1580,79 @@ export default function Chat() {
     handleSendMessage("Continue where you left off.", currentAgent());
   };
 
+  /**
+   * Handle a slash command invocation from PromptInput.
+   * Creates an optimistic user message showing the command, then calls the
+   * gateway's invokeCommand API. If the engine doesn't handle it natively,
+   * the gateway falls back to sending it as a regular text message.
+   */
+  const handleCommandInvoke = async (commandName: string, args: string, agent: AgentMode) => {
+    const sessionId = sessionStore.current;
+    if (!sessionId) return;
+
+    const isBusy = sending();
+    if (isBusy && !canEnqueue()) return;
+
+    const modelId = getSelectedModelForEngine(currentEngineType());
+    if (!modelId) {
+      showSendError(t().chat.noModelError);
+      return;
+    }
+
+    setSendingFor(sessionId, true);
+
+    const commandText = args ? `/${commandName} ${args}` : `/${commandName}`;
+    const tempMessageId = `msg-temp-${Date.now()}`;
+    const tempPartId = `part-temp-${Date.now()}`;
+
+    // Create optimistic user message bubble
+    const tempMessageInfo: UnifiedMessage = {
+      id: tempMessageId,
+      sessionId,
+      role: "user",
+      time: { created: Date.now() },
+      parts: [],
+    };
+    const tempPart: UnifiedPart = {
+      id: tempPartId,
+      messageId: tempMessageId,
+      sessionId,
+      type: "text",
+      text: commandText,
+    } as UnifiedPart;
+
+    const messages = messageStore.message[sessionId] || [];
+    const tempExists = messages.some(m => m.id === tempMessageId);
+    if (!tempExists) {
+      setMessageStore("message", sessionId, (draft) => [...draft, tempMessageInfo]);
+    }
+    setMessageStore("part", tempMessageId, [tempPart]);
+    setUserScrolledUp(false);
+    setTimeout(() => scrollToBottom(), 0);
+
+    try {
+      await gateway.invokeCommand(sessionId, commandName, args, {
+        mode: agent.id,
+        modelId,
+      });
+      // Check if assistant message is finalized
+      const msgs = messageStore.message[sessionId] || [];
+      const lastAssistant = [...msgs].reverse().find((m) => m.role === "assistant");
+      if (!lastAssistant || lastAssistant.time.completed || lastAssistant.error) {
+        setSendingFor(sessionId, false);
+      }
+    } catch (error) {
+      logger.error("[CommandInvoke] Failed:", error);
+      notify(t().notification.messageSendFailed);
+      // Remove the optimistic temp message on failure
+      setMessageStore("message", sessionId, (draft) =>
+        draft.filter((m) => m.id !== tempMessageId),
+      );
+      setMessageStore("part", tempMessageId, undefined as any);
+      setSendingFor(sessionId, false);
+    }
+  };
+
   const handleSendMessage = async (text: string, agent: AgentMode, images?: import("../types/unified").ImageAttachment[]) => {
     const sessionId = sessionStore.current;
     if (!sessionId) return;
@@ -2043,6 +2158,8 @@ export default function Chat() {
                       availableModes={configStore.engines.find(e => e.type === currentEngineType())?.capabilities?.availableModes}
                       disabled={!sessionStore.current}
                       imageAttachmentEnabled={configStore.engines.find(e => e.type === currentEngineType())?.capabilities?.imageAttachment ?? false}
+                      availableCommands={availableCommands()}
+                      onCommandInvoke={handleCommandInvoke}
                     />
                   </Show>
                   <div class="mt-2 text-center">

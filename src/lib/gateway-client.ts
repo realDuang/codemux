@@ -36,6 +36,13 @@ import {
   type FileExplorerNode,
   type FileExplorerContent,
   type GitFileStatus,
+  type EngineCommand,
+  type CommandInvokeResult,
+  type CommandInvokeRequest,
+  type CronCreateRequest,
+  type CronCreateResult,
+  type CronJobInfo,
+  type CronNotification,
   type ScheduledTask,
   type ScheduledTaskCreateRequest,
   type ScheduledTaskUpdateRequest,
@@ -65,6 +72,12 @@ export interface GatewayClientEvents {
   "message.queued.consumed": (data: { sessionId: string; messageId: string }) => void;
   "session.import.progress": (data: SessionImportProgress) => void;
   "file.changed": (event: { type: string; path: string; directory: string }) => void;
+  "commands.changed": (data: { engineType: EngineType; commands: EngineCommand[] }) => void;
+  /** Cron scheduler notifications */
+  "cron.fired": (data: CronNotification) => void;
+  "cron.completed": (data: CronNotification) => void;
+  "cron.expired": (data: CronNotification) => void;
+  "cron.changed": (data: { jobs: CronJobInfo[] }) => void;
 
   /** Scheduled task push notifications */
   "scheduledTask.fired": (data: { taskId: string; conversationId: string }) => void;
@@ -149,7 +162,7 @@ export class GatewayClient {
       if (isElectron()) {
         // In Electron: get full WS URL from main process via IPC
         // Dev mode: ws://127.0.0.1:4200
-        // Packaged mode: ws://127.0.0.1:5173/ws (attached to production server)
+        // Packaged mode: ws://127.0.0.1:${WEB_PORT}/ws (attached to production server)
         this.wsUrl = await gatewayAPI.getWsUrl();
       } else {
         // In remote browser: derive WS URL from current page location
@@ -508,6 +521,30 @@ export class GatewayClient {
   importExecute(req: SessionImportExecuteRequest): Promise<SessionImportResult> {
     // No timeout — importing many sessions with full messages can take minutes
     return this.request(GatewayRequestType.SESSION_IMPORT_EXECUTE, req, 0);
+  }
+
+  // --- Slash Command API ---
+
+  listCommands(req: { engineType: EngineType; sessionId?: string }): Promise<EngineCommand[]> {
+    return this.request(GatewayRequestType.COMMAND_LIST, req);
+  }
+
+  invokeCommand(req: CommandInvokeRequest): Promise<CommandInvokeResult> {
+    return this.request(GatewayRequestType.COMMAND_INVOKE, req, 0); // No timeout, same as sendMessage
+  }
+
+  // --- Cron / Scheduled Tasks API ---
+
+  createCronJob(req: CronCreateRequest): Promise<CronCreateResult> {
+    return this.request(GatewayRequestType.CRON_CREATE, req);
+  }
+
+  deleteCronJob(jobId: string): Promise<boolean> {
+    return this.request(GatewayRequestType.CRON_DELETE, { jobId });
+  }
+
+  listCronJobs(sessionId?: string): Promise<CronJobInfo[]> {
+    return this.request(GatewayRequestType.CRON_LIST, { sessionId });
   }
 
   // --- File Explorer API ---

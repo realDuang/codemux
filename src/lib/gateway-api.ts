@@ -24,6 +24,8 @@ import type {
   FileExplorerNode,
   FileExplorerContent,
   GitFileStatus,
+  EngineCommand,
+  CommandInvokeResult,
   ScheduledTask,
   ScheduledTaskCreateRequest,
   ScheduledTaskUpdateRequest,
@@ -46,6 +48,7 @@ export interface GatewayNotificationHandlers {
   onMessageQueued?: (sessionId: string, messageId: string, queuePosition: number) => void;
   onMessageQueuedConsumed?: (sessionId: string, messageId: string) => void;
   onFileChanged?: (event: { type: string; path: string; directory: string }) => void;
+  onCommandsChanged?: (engineType: EngineType, commands: EngineCommand[]) => void;
   onScheduledTaskFired?: (taskId: string, conversationId: string) => void;
   onScheduledTaskFailed?: (taskId: string, error: string) => void;
   onScheduledTasksChanged?: (tasks: ScheduledTask[]) => void;
@@ -186,6 +189,10 @@ class GatewayAPI {
 
     this.bind("file.changed", (event) => {
       this.handlers.onFileChanged?.(event);
+    });
+
+    this.bind("commands.changed", (data) => {
+      this.handlers.onCommandsChanged?.(data.engineType, data.commands);
     });
 
     this.bind("scheduledTask.fired", (data) => {
@@ -353,6 +360,21 @@ class GatewayAPI {
       }
     });
   }
+  // --- Slash Commands ---
+
+  listCommands(engineType: EngineType, sessionId?: string): Promise<EngineCommand[]> {
+    return gatewayClient.listCommands({ engineType, sessionId });
+  }
+
+  invokeCommand(
+    sessionId: string,
+    commandName: string,
+    args: string,
+    options?: { mode?: string; modelId?: string },
+  ): Promise<CommandInvokeResult> {
+    return gatewayClient.invokeCommand({ sessionId, commandName, args, ...options });
+  }
+
   // --- File Explorer ---
 
   listFiles(directory: string, rootDirectory: string): Promise<FileExplorerNode[]> {

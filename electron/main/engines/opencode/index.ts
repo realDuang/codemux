@@ -47,6 +47,8 @@ import type {
   PermissionReply,
   PermissionOption,
   QuestionInfo,
+  EngineCommand,
+  CommandInvokeResult,
 } from "../../../../src/types/unified";
 import { OPENCODE_PORT } from "../../../../shared/ports";
 
@@ -71,6 +73,7 @@ export class OpenCodeAdapter extends EngineAdapter {
   // Cached state
   private sessions = new Map<string, UnifiedSession>();
   private currentDirectory: string | null = null;
+  private cachedCommands: EngineCommand[] = [];
 
   // Message completion tracking: sessionId → array of pending entries.
   // The first entry is the "primary" (normal send), subsequent entries are
@@ -693,6 +696,11 @@ export class OpenCodeAdapter extends EngineAdapter {
 
     this.status = "running";
     this.emit("status.changed", { engineType: this.engineType, status: "running" });
+
+    // Fetch initial commands for slash command support
+    this.fetchCommands().catch(err => {
+      openCodeLog.warn("Failed to fetch initial commands:", err);
+    });
   }
 
   async stop(): Promise<void> {
@@ -766,6 +774,7 @@ export class OpenCodeAdapter extends EngineAdapter {
       modelSwitchable: true,
       customModelInput: false,
       messageEnqueue: true,
+      slashCommands: true,
       availableModes: this.getModes(),
     };
   }
@@ -1249,6 +1258,83 @@ export class OpenCodeAdapter extends EngineAdapter {
       }));
     } catch {
       return [];
+    }
+  }
+
+  // --- Slash Commands ---
+
+  private async fetchCommands(): Promise<void> {
+    try {
+      const client = this.ensureClient();
+      const result = await client.command.list({
+        directory: this.currentDirectory ?? undefined,
+      });
+      const commands = result.data ?? [];
+      if (Array.isArray(commands)) {
+        this.cachedCommands = commands.map((cmd) => ({
+          name: cmd.name,
+          description: cmd.description ?? "",
+          argumentHint: cmd.template ? `<${cmd.template}>` : undefined,
+        }));
+        this.emit("commands.changed", {
+          engineType: this.engineType,
+          commands: this.cachedCommands,
+        });
+      }
+    } catch (err) {
+      openCodeLog.warn("Failed to list commands:", err);
+    }
+  }
+
+  override async listCommands(_sessionId?: string): Promise<EngineCommand[]> {
+    return this.cachedCommands;
+  }
+
+  override async invokeCommand(
+    sessionId: string,
+    commandName: string,
+    args: string,
+    options?: { mode?: string; modelId?: string; directory?: string },
+  ): Promise<CommandInvokeResult> {
+    const session = this.sessions.get(sessionId);
+    const dir = session?.directory ?? options?.directory ?? this.currentDirectory ?? undefined;
+    const client = dir ? this.createClient(dir) : this.ensureClient();
+
+    // Build model spec if provided
+    let model: { providerID: string; modelID: string } | undefined;
+    if (options?.modelId) {
+      const slashIdx = options.modelId.indexOf("/");
+      if (slashIdx > 0) {
+        model = {
+          providerID: options.modelId.slice(0, slashIdx),
+          modelID: options.modelId.slice(slashIdx + 1),
+        };
+      }
+    }
+
+    try {
+      const result = await client.session.command({
+        sessionID: sessionId,
+        directory: dir,
+        command: commandName,
+        arguments: args,
+        agent: options?.mode,
+        model: model ? `${model.providerID}/${model.modelID}` : undefined,
+      });
+
+      if (result.error) {
+        throw new Error(`Command failed: ${JSON.stringify(result.error)}`);
+      }
+
+      // OpenCode command responses flow through SSE events (message.part.updated, etc.)
+      // just like regular promptAsync responses. We need to wait for the session to
+      // become idle, similar to sendMessage().
+      // For now, fall back to sendMessage with the command as text, since the SSE
+      // event handling is already wired up for that flow.
+      return { handledAsCommand: true };
+    } catch (err) {
+      openCodeLog.warn(`Command /${commandName} failed, falling back to sendMessage:`, err);
+      return { handledAsCommand: false };
     }
   }
 }

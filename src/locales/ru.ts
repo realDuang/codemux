@@ -119,6 +119,9 @@ export const ru: LocaleDict = {
     importSkipped: "Пропущено (уже импортировано)",
     showDefaultWorkspace: "Показывать рабочую область по умолчанию на боковой панели",
     showDefaultWorkspaceDesc: "Отображать группу проекта рабочей области по умолчанию на боковой панели",
+    features: "Функции",
+    scheduledTasksEnabled: "Запланированные задачи",
+    scheduledTasksEnabledDesc: "Включить функцию запланированных задач для автоматического выполнения задач по расписанию",
   },
 
   // Remote Access page

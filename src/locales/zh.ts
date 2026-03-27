@@ -118,6 +118,9 @@ export const zh: LocaleDict = {
     importSkipped: "已跳过（已导入）",
     showDefaultWorkspace: "在侧边栏显示默认工作区",
     showDefaultWorkspaceDesc: "在侧边栏中显示默认工作区项目分组",
+    features: "功能",
+    scheduledTasksEnabled: "定时任务",
+    scheduledTasksEnabledDesc: "启用定时任务功能，按计划自动执行任务",
   },
 
   // Remote Access page

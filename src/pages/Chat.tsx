@@ -679,7 +679,7 @@ export default function Chat() {
 
       setSessionStore({
         loading: true,
-        showDefaultWorkspace: getSetting<boolean>("showDefaultWorkspace") ?? false,
+        showDefaultWorkspace: getSetting<boolean>("showDefaultWorkspace") ?? true,
       });
       setScheduledTaskStore("enabled", getSetting<boolean>("scheduledTasksEnabled") ?? true);
 

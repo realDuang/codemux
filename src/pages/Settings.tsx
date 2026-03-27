@@ -37,7 +37,7 @@ export default function Settings() {
 
   // Default workspace visibility
   const [showDefaultWorkspace, setShowDefaultWorkspace] = createSignal(
-    getSetting<boolean>("showDefaultWorkspace") ?? false,
+    getSetting<boolean>("showDefaultWorkspace") ?? true,
   );
 
   const handleShowDefaultWorkspaceToggle = () => {

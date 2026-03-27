@@ -34,7 +34,7 @@ export const [sessionStore, setSessionStore] = createStore<{
   projects: [],
   projectExpanded: {},
   sendingMap: {},
-  showDefaultWorkspace: false,
+  showDefaultWorkspace: true,
 });
 
 /** Set the sending (streaming) state for a session. */

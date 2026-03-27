@@ -195,6 +195,9 @@ export const ru: LocaleDict = {
     noSearchResults: "Сессий не найдено",
     defaultWorkspace: "Рабочая область по умолчанию",
     projectsTitle: "Проекты",
+    activeSection: "Активные",
+    pinSession: "Закрепить",
+    unpinSession: "Открепить",
   },
 
   // Project

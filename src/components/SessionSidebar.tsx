@@ -32,6 +32,11 @@ interface SessionSidebarProps {
   onDeleteTask?: (taskId: string) => void;
   onRunTaskNow?: (taskId: string) => void;
   onToggleTaskEnabled?: (taskId: string, enabled: boolean) => void;
+  // Active Sessions
+  activeSessions?: SessionInfo[];
+  pinnedSessionIds?: Set<string>;
+  onPinSession?: (sessionId: string) => void;
+  onUnpinSession?: (sessionId: string) => void;
 }
 
 // Project grouping data structure
@@ -211,6 +216,23 @@ export function SessionSidebar(props: SessionSidebarProps) {
 
   const isSearching = () => searchQuery().trim().length > 0;
 
+  // Filtered active sessions (respects search query)
+  const filteredActiveSessions = createMemo((): SessionInfo[] => {
+    const sessions = props.activeSessions ?? [];
+    if (sessions.length === 0) return [];
+    const query = searchQuery().trim().toLowerCase();
+    if (!query) return sessions;
+    return sessions.filter((s) => (s.title || "").toLowerCase().includes(query));
+  });
+
+  // Helper to find the project name for an active session
+  const getProjectNameForSession = (session: SessionInfo): string | null => {
+    if (!session.projectID) return null;
+    const project = props.projects.find((p) => p.id === session.projectID);
+    if (!project) return null;
+    return getProjectName(project);
+  };
+
   // Running + enabled engines for default engine selector
   const runningEngines = createMemo(() =>
     configStore.engines.filter(e => e.status === "running" && isEngineEnabled(e.type))
@@ -341,6 +363,198 @@ export function SessionSidebar(props: SessionSidebarProps) {
           />
         </Show>
 
+        {/* Active Sessions Section */}
+        <Show when={!props.collapsed && filteredActiveSessions().length > 0}>
+          <div class="mb-2">
+            <div class="flex items-center gap-2 px-2 py-1.5">
+              <div class="w-5 h-5 rounded flex items-center justify-center bg-blue-500 text-white flex-shrink-0">
+                <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
+                  <path d="M21 12a9 9 0 1 1-6.219-8.56" />
+                </svg>
+              </div>
+              <span class="text-sm font-medium text-gray-700 dark:text-gray-300">
+                {t().sidebar.activeSection}
+              </span>
+              <span class="text-[10px] text-gray-400 dark:text-gray-500">
+                [{filteredActiveSessions().length}]
+              </span>
+            </div>
+            <div class="ml-4 mt-1">
+              <For each={filteredActiveSessions()}>
+                {(session) => {
+                  const isActive = () => session.id === props.currentSessionId;
+                  const sessionStatus = () => props.getSessionStatus(session.id);
+                  const isPinned = () => props.pinnedSessionIds?.has(session.id) ?? false;
+                  const projectName = () => getProjectNameForSession(session);
+                  const isEditing = () => editingSessionId() === session.id;
+
+                  const startEditing = (e: MouseEvent) => {
+                    e.stopPropagation();
+                    setEditingSessionId(session.id);
+                    setEditingTitle(session.title || "");
+                  };
+
+                  const saveTitle = () => {
+                    const newTitle = editingTitle().trim();
+                    if (newTitle && newTitle !== session.title) {
+                      props.onRenameSession(session.id, newTitle);
+                    }
+                    setEditingSessionId(null);
+                  };
+
+                  const cancelEditing = () => setEditingSessionId(null);
+
+                  const handleKeyDown = (e: KeyboardEvent) => {
+                    if (e.key === "Enter") saveTitle();
+                    else if (e.key === "Escape") cancelEditing();
+                  };
+
+                  return (
+                    <div
+                      class={`group relative px-3 py-2 mb-0.5 rounded-md cursor-pointer transition-all duration-150 ${
+                        isActive()
+                          ? "bg-white dark:bg-slate-800 shadow-xs"
+                          : "hover:bg-gray-100 dark:hover:bg-slate-900"
+                      }`}
+                      onClick={() => !isEditing() && props.onSelectSession(session.id)}
+                    >
+                      {/* Line 1: Status + Pin + Title */}
+                      <div class="flex items-center gap-1.5 min-w-0">
+                        <Show when={sessionStatus() !== "idle"}>
+                          <StatusIndicator status={sessionStatus()} />
+                        </Show>
+                        <Show when={isPinned()}>
+                          <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24"
+                            fill="currentColor" stroke="none"
+                            class="text-blue-500 dark:text-blue-400 flex-shrink-0">
+                            <path d="M12 2C7.2 2 4 5.2 4 8.5c0 5.5 7 12.5 8 13.5 1-1 8-8 8-13.5C20 5.2 16.8 2 12 2zm0 9.5c-1.4 0-2.5-1.1-2.5-2.5S10.6 6.5 12 6.5s2.5 1.1 2.5 2.5S13.4 11.5 12 11.5z" />
+                          </svg>
+                        </Show>
+                        <Show
+                          when={isEditing()}
+                          fallback={
+                            <div
+                              class={`text-sm truncate ${
+                                isActive() || sessionStatus() === "completed" || sessionStatus() === "cancelled" || sessionStatus() === "error"
+                                  ? "text-gray-900 dark:text-gray-100 font-medium"
+                                  : "text-gray-600 dark:text-gray-400"
+                              }`}
+                              onDblClick={startEditing}
+                              title={session.id}
+                            >
+                              {getDisplayTitle(session.title)}
+                            </div>
+                          }
+                        >
+                          <input
+                            type="text"
+                            value={editingTitle()}
+                            onInput={(e) => setEditingTitle(e.currentTarget.value)}
+                            onKeyDown={handleKeyDown}
+                            onBlur={saveTitle}
+                            autofocus
+                            class="text-sm w-full px-1 py-0.5 bg-white dark:bg-slate-700 border border-blue-500 rounded outline-none text-gray-900 dark:text-gray-100"
+                            onClick={(e) => e.stopPropagation()}
+                          />
+                        </Show>
+                      </div>
+                      {/* Line 2: Project badge + Engine badge + Time */}
+                      <Show when={!isEditing()}>
+                        <div class="flex items-center gap-1.5 mt-0.5">
+                          <Show when={projectName()}>
+                            <span class="text-[9px] font-medium px-1 py-0.5 rounded leading-none flex-shrink-0 bg-gray-200 text-gray-600 dark:bg-slate-700 dark:text-gray-400">
+                              {projectName()}
+                            </span>
+                          </Show>
+                          <Show when={getEngineBadge(session.engineType)}>
+                            {(badge) => (
+                              <span class={`text-[9px] font-medium px-1 py-0.5 rounded leading-none flex-shrink-0 ${badge().class}`}>
+                                {badge().label}
+                              </span>
+                            )}
+                          </Show>
+                          <span class="text-[10px] text-gray-400 dark:text-gray-500">
+                            {formatDate(session.updatedAt)}
+                          </span>
+                        </div>
+                      </Show>
+                      {/* Hover actions */}
+                      <Show when={!isEditing()}>
+                        <Show
+                          when={pendingDeleteId() !== session.id}
+                          fallback={
+                            <div class="absolute right-1 top-1/2 -translate-y-1/2 flex items-center gap-1 bg-white dark:bg-slate-800 rounded-md shadow-sm px-1 py-0.5">
+                              <button
+                                onClick={(e) => { e.stopPropagation(); props.onDeleteSession(session.id); setPendingDeleteId(null); }}
+                                class="px-2 py-1 text-[10px] font-medium text-white bg-red-500 hover:bg-red-600 rounded transition-colors"
+                              >{t().common.confirm}</button>
+                              <button
+                                onClick={(e) => { e.stopPropagation(); setPendingDeleteId(null); }}
+                                class="px-2 py-1 text-[10px] font-medium text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-slate-700 rounded transition-colors"
+                              >{t().common.cancel}</button>
+                            </div>
+                          }
+                        >
+                        <div class="absolute right-1 top-1/2 -translate-y-1/2 hidden group-hover:flex items-center gap-0.5 bg-white/90 dark:bg-slate-800/90 backdrop-blur-xs rounded-md shadow-sm px-0.5 py-0.5">
+                          <button
+                            onClick={(e) => { e.stopPropagation(); navigator.clipboard.writeText(session.id).catch(() => {}); }}
+                            class="p-1.5 text-gray-400 hover:text-green-500 hover:bg-green-50 dark:hover:bg-green-900/20 rounded transition-all"
+                            title={`${t().sidebar.copySessionId}: ${session.id}`}
+                          >
+                            <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                              <rect width="14" height="14" x="8" y="8" rx="2" ry="2" /><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" />
+                            </svg>
+                          </button>
+                          <button
+                            onClick={startEditing}
+                            class="p-1.5 text-gray-400 hover:text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded transition-all"
+                            title={t().sidebar.renameSession}
+                          >
+                            <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                              <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" /><path d="m15 5 4 4" />
+                            </svg>
+                          </button>
+                          {/* Pin/Unpin button */}
+                          <Show when={props.onPinSession && props.onUnpinSession}>
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                if (isPinned()) props.onUnpinSession!(session.id);
+                                else props.onPinSession!(session.id);
+                              }}
+                              class={`p-1.5 rounded transition-all ${
+                                isPinned()
+                                  ? "text-blue-500 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/20"
+                                  : "text-gray-400 hover:text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/20"
+                              }`}
+                              title={isPinned() ? t().sidebar.unpinSession : t().sidebar.pinSession}
+                            >
+                              <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill={isPinned() ? "currentColor" : "none"} stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <path d="M12 17v5" />
+                                <path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z" />
+                              </svg>
+                            </button>
+                          </Show>
+                          <button
+                            onClick={(e) => { e.stopPropagation(); e.preventDefault(); setPendingDeleteId(session.id); }}
+                            class="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded transition-all"
+                            title={t().sidebar.deleteSession}
+                          >
+                            <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                              <path d="M3 6h18" /><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" /><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" />
+                            </svg>
+                          </button>
+                        </div>
+                        </Show>
+                      </Show>
+                    </div>
+                  );
+                }}
+              </For>
+            </div>
+          </div>
+        </Show>
+
         <Show
           when={projectGroups().length > 0 || filteredDefaultWorkspaceGroup() !== null}
           fallback={
@@ -369,6 +583,22 @@ export function SessionSidebar(props: SessionSidebarProps) {
           {/* Collapsed mode: show only project icons */}
           <Show when={props.collapsed}>
             <div class="flex flex-col items-center gap-1">
+              {/* Active sessions indicator (collapsed) */}
+              <Show when={filteredActiveSessions().length > 0}>
+                <div
+                  class="w-10 h-10 rounded-lg flex items-center justify-center relative hover:bg-gray-100 dark:hover:bg-slate-800 transition-all"
+                  title={`${t().sidebar.activeSection} (${filteredActiveSessions().length})`}
+                >
+                  <div class="w-7 h-7 rounded flex items-center justify-center bg-blue-500 text-white">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
+                      <path d="M21 12a9 9 0 1 1-6.219-8.56" />
+                    </svg>
+                  </div>
+                  <span class="absolute -top-0.5 -right-0.5 w-4 h-4 rounded-full bg-blue-500 text-white text-[8px] font-bold flex items-center justify-center">
+                    {filteredActiveSessions().length}
+                  </span>
+                </div>
+              </Show>
               {/* Default workspace icon (collapsed) */}
               <Show when={filteredDefaultWorkspaceGroup()}>
                 {(dwg) => {
@@ -514,6 +744,7 @@ export function SessionSidebar(props: SessionSidebarProps) {
                           {(session) => {
                             const isActive = () => session.id === props.currentSessionId;
                             const sessionStatus = () => props.getSessionStatus(session.id);
+                            const isPinned = () => props.pinnedSessionIds?.has(session.id) ?? false;
                             const isEditing = () => editingSessionId() === session.id;
 
                             const startEditing = (e: MouseEvent) => {
@@ -549,6 +780,14 @@ export function SessionSidebar(props: SessionSidebarProps) {
                                 <div class="flex items-center gap-1.5 min-w-0">
                                   <Show when={sessionStatus() !== "idle"}>
                                     <StatusIndicator status={sessionStatus()} />
+                                  </Show>
+                                  <Show when={isPinned()}>
+                                    <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24"
+                                      fill="currentColor" stroke="currentColor" stroke-width="1"
+                                      class="text-blue-400 dark:text-blue-500 flex-shrink-0">
+                                      <path d="M12 17v5" />
+                                      <path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z" />
+                                    </svg>
                                   </Show>
                                   <Show
                                     when={isEditing()}
@@ -627,6 +866,27 @@ export function SessionSidebar(props: SessionSidebarProps) {
                                         <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" /><path d="m15 5 4 4" />
                                       </svg>
                                     </button>
+                                    {/* Pin/Unpin button */}
+                                    <Show when={props.onPinSession && props.onUnpinSession}>
+                                      <button
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          if (isPinned()) props.onUnpinSession!(session.id);
+                                          else props.onPinSession!(session.id);
+                                        }}
+                                        class={`p-1.5 rounded transition-all ${
+                                          isPinned()
+                                            ? "text-blue-500 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/20"
+                                            : "text-gray-400 hover:text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/20"
+                                        }`}
+                                        title={isPinned() ? t().sidebar.unpinSession : t().sidebar.pinSession}
+                                      >
+                                        <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill={isPinned() ? "currentColor" : "none"} stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                          <path d="M12 17v5" />
+                                          <path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z" />
+                                        </svg>
+                                      </button>
+                                    </Show>
                                     <button
                                       onClick={(e) => { e.stopPropagation(); e.preventDefault(); setPendingDeleteId(session.id); }}
                                       class="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded transition-all"
@@ -817,6 +1077,7 @@ export function SessionSidebar(props: SessionSidebarProps) {
                           const isActive = () =>
                             session.id === props.currentSessionId;
                           const isEditing = () => editingSessionId() === session.id;
+                          const isPinned = () => props.pinnedSessionIds?.has(session.id) ?? false;
                           const sessionStatus = () =>
                             props.getSessionStatus(session.id);
 
@@ -859,6 +1120,14 @@ export function SessionSidebar(props: SessionSidebarProps) {
                               <div class="flex items-center gap-1.5 min-w-0">
                                 <Show when={sessionStatus() !== "idle"}>
                                   <StatusIndicator status={sessionStatus()} />
+                                </Show>
+                                <Show when={isPinned()}>
+                                  <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24"
+                                    fill="currentColor" stroke="currentColor" stroke-width="1"
+                                    class="text-blue-400 dark:text-blue-500 flex-shrink-0">
+                                    <path d="M12 17v5" />
+                                    <path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z" />
+                                  </svg>
                                 </Show>
                                 <Show
                                   when={isEditing()}
@@ -977,6 +1246,27 @@ export function SessionSidebar(props: SessionSidebarProps) {
                                       <path d="m15 5 4 4" />
                                     </svg>
                                   </button>
+                                  {/* Pin/Unpin button */}
+                                  <Show when={props.onPinSession && props.onUnpinSession}>
+                                    <button
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        if (isPinned()) props.onUnpinSession!(session.id);
+                                        else props.onPinSession!(session.id);
+                                      }}
+                                      class={`p-1.5 rounded transition-all ${
+                                        isPinned()
+                                          ? "text-blue-500 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/20"
+                                          : "text-gray-400 hover:text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/20"
+                                      }`}
+                                      title={isPinned() ? t().sidebar.unpinSession : t().sidebar.pinSession}
+                                    >
+                                      <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill={isPinned() ? "currentColor" : "none"} stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                        <path d="M12 17v5" />
+                                        <path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z" />
+                                      </svg>
+                                    </button>
+                                  </Show>
                                   <button
                                     onClick={(e) => {
                                       e.stopPropagation();

@@ -194,6 +194,9 @@ export const zh: LocaleDict = {
     noSearchResults: "没有匹配的会话",
     defaultWorkspace: "默认工作区",
     projectsTitle: "项目",
+    activeSection: "活跃",
+    pinSession: "固定到活跃",
+    unpinSession: "取消固定",
   },
 
   // Project

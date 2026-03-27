@@ -1,5 +1,5 @@
 import { existsSync, readFileSync } from "fs";
-import { join, dirname } from "path";
+import { join, dirname, sep } from "path";
 import { fileURLToPath } from "url";
 import { app } from "electron";
 import type { AgentMode } from "../../../../src/types/unified";
@@ -43,8 +43,15 @@ export function resolvePlatformCli(): string | undefined {
   const binaryName = process.platform === "win32" ? "copilot.exe" : "copilot";
 
   // Strategy 1: import.meta.resolve
+  // In packaged builds, import.meta.resolve returns paths inside app.asar.
+  // Electron's patched fs.existsSync sees those files, but the OS cannot
+  // execute a binary from inside an asar archive.  Convert the path to the
+  // unpacked location (electron-builder extracts copilot-* via asarUnpack).
   try {
-    const resolved = fileURLToPath((import.meta as any).resolve(pkgName));
+    let resolved = fileURLToPath((import.meta as any).resolve(pkgName));
+    if (resolved.includes(`app.asar${sep}`) && !resolved.includes("app.asar.unpacked")) {
+      resolved = resolved.replace(`app.asar${sep}`, `app.asar.unpacked${sep}`);
+    }
     if (existsSync(resolved)) return resolved;
   } catch {
     // Not resolvable

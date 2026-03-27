@@ -110,13 +110,31 @@ export function SessionSidebar(props: SessionSidebarProps) {
     return title;
   };
 
+  // Default workspace — displayed above the projects divider
+  const defaultWorkspaceGroup = createMemo((): ProjectGroup | null => {
+    if (!sessionStore.showDefaultWorkspace) return null;
+    const defaultProject = props.projects.find((p) => p.isDefault);
+    if (!defaultProject) return null;
+
+    const sessions = props.sessions.filter(
+      (s) => isEngineEnabled(s.engineType) && s.projectID === defaultProject.id,
+    );
+
+    return {
+      projectID: defaultProject.id,
+      project: defaultProject,
+      name: t().sidebar.defaultWorkspace,
+      sessions,
+    };
+  });
+
+  // Regular project groups (excludes default workspace)
   const projectGroups = createMemo((): ProjectGroup[] => {
     const groups: Map<string, SessionInfo[]> = new Map();
 
-    const showDefaultWs = sessionStore.showDefaultWorkspace;
     const filteredProjects = props.projects.filter((p) => {
       if (p.directory === "/") return false;
-      if (p.isDefault && !showDefaultWs) return false;
+      if (p.isDefault) return false; // handled separately above
       return true;
     });
 
@@ -135,31 +153,20 @@ export function SessionSidebar(props: SessionSidebarProps) {
     }
 
     const result: ProjectGroup[] = [];
-    const defaultGroups: ProjectGroup[] = [];
     for (const [projectID, sessions] of groups) {
-      if (sessions.length === 0) continue; // Only show projects that have sessions
+      if (sessions.length === 0) continue;
       const project = filteredProjects.find((p) => p.id === projectID) || null;
       if (!project) continue;
 
-      // Use i18n name for default workspace
-      const name = project.isDefault ? t().sidebar.defaultWorkspace : getProjectName(project);
-
-      const group: ProjectGroup = {
+      result.push({
         projectID,
         project,
-        name,
+        name: getProjectName(project),
         sessions,
-      };
-
-      // Sort default workspace last
-      if (project.isDefault) {
-        defaultGroups.push(group);
-      } else {
-        result.push(group);
-      }
+      });
     }
 
-    return [...result, ...defaultGroups];
+    return result;
   });
 
   // Filter project groups by search query (matches session title or project name)
@@ -183,6 +190,23 @@ export function SessionSidebar(props: SessionSidebarProps) {
       }
     }
     return filtered;
+  });
+
+  // Filtered default workspace group (respects search query)
+  const filteredDefaultWorkspaceGroup = createMemo((): ProjectGroup | null => {
+    const dwg = defaultWorkspaceGroup();
+    if (!dwg) return null;
+    const query = searchQuery().trim().toLowerCase();
+    if (!query) return dwg;
+    // Filter sessions by search query
+    if (dwg.name.toLowerCase().includes(query)) return dwg;
+    const matchingSessions = dwg.sessions.filter(
+      (s) => (s.title || "").toLowerCase().includes(query),
+    );
+    if (matchingSessions.length > 0) {
+      return { ...dwg, sessions: matchingSessions };
+    }
+    return null; // hide during search if no matches
   });
 
   const isSearching = () => searchQuery().trim().length > 0;
@@ -260,8 +284,8 @@ export function SessionSidebar(props: SessionSidebarProps) {
 
   return (
     <div class="w-full bg-gray-50 dark:bg-slate-950 border-r border-gray-200 dark:border-slate-800 flex flex-col h-full overflow-hidden">
-      {/* Search Box + Add Project Button */}
-      <Show when={!props.collapsed && projectGroups().length > 0}>
+      {/* Search Box */}
+      <Show when={!props.collapsed && (projectGroups().length > 0 || filteredDefaultWorkspaceGroup() !== null)}>
         <div class="flex items-center gap-1.5 px-2 pt-2">
           <div class="relative flex-1 min-w-0">
             <svg
@@ -298,33 +322,7 @@ export function SessionSidebar(props: SessionSidebarProps) {
               </button>
             </Show>
           </div>
-          <Show when={props.showAddProject !== false}>
-            <button
-              onClick={props.onAddProject}
-              class="flex-shrink-0 p-1.5 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-slate-800 rounded-md transition-colors"
-              title={t().project.add}
-            >
-              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z" />
-                <path d="M12 10v6" /><path d="M9 13h6" />
-              </svg>
-            </button>
-          </Show>
-          <Show when={props.onRefreshSessions}>
-            <button
-              onClick={props.onRefreshSessions}
-              disabled={props.refreshingSessions}
-              class="flex-shrink-0 p-1.5 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-slate-800 rounded-md transition-colors disabled:opacity-50"
-              title={t().sidebar.refreshSessions}
-            >
-              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class={props.refreshingSessions ? "animate-spin" : ""}>
-                <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8" />
-                <path d="M21 3v5h-5" />
-                <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16" />
-                <path d="M8 16H3v5" />
-              </svg>
-            </button>
-          </Show>
+
         </div>
       </Show>
       {/* Session List */}
@@ -344,7 +342,7 @@ export function SessionSidebar(props: SessionSidebarProps) {
         </Show>
 
         <Show
-          when={projectGroups().length > 0}
+          when={projectGroups().length > 0 || filteredDefaultWorkspaceGroup() !== null}
           fallback={
             <Show when={!props.collapsed}>
                 <div class="p-8 text-center">
@@ -371,6 +369,41 @@ export function SessionSidebar(props: SessionSidebarProps) {
           {/* Collapsed mode: show only project icons */}
           <Show when={props.collapsed}>
             <div class="flex flex-col items-center gap-1">
+              {/* Default workspace icon (collapsed) */}
+              <Show when={filteredDefaultWorkspaceGroup()}>
+                {(dwg) => {
+                  const hasActiveSession = () =>
+                    dwg().sessions.some(s => s.id === props.currentSessionId);
+                  return (
+                    <button
+                      class={`w-10 h-10 rounded-lg flex items-center justify-center transition-all ${
+                        hasActiveSession()
+                          ? "ring-2 ring-blue-500 ring-offset-1 dark:ring-offset-slate-950"
+                          : "hover:bg-gray-100 dark:hover:bg-slate-800"
+                      }`}
+                      onClick={() => {
+                        if (hasActiveSession() && props.currentSessionId) {
+                          props.onSelectSession(props.currentSessionId);
+                          return;
+                        }
+                        const firstSession = dwg().sessions[0];
+                        if (firstSession) props.onSelectSession(firstSession.id);
+                        else props.onNewSession(dwg().project?.directory);
+                      }}
+                      title={dwg().name}
+                      aria-label={dwg().name}
+                    >
+                      <div class="w-7 h-7 rounded flex items-center justify-center bg-slate-500 text-white">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                          <rect width="18" height="18" x="3" y="3" rx="2" />
+                          <path d="M3 9h18" />
+                          <path d="M9 21V9" />
+                        </svg>
+                      </div>
+                    </button>
+                  );
+                }}
+              </Show>
               <For each={projectGroups()}>
                 {(project) => {
                   const hasActiveSession = () =>
@@ -407,7 +440,219 @@ export function SessionSidebar(props: SessionSidebarProps) {
 
           {/* Expanded mode: full session list */}
           <Show when={!props.collapsed}>
+          {/* Default Workspace Section — above Projects divider */}
+          <Show when={filteredDefaultWorkspaceGroup()}>
+            {(dwg) => {
+              const isExpanded = () => isSearching() || isProjectExpanded(dwg().projectID);
+              return (
+                <div class="mb-2">
+                  {/* Default Workspace Header */}
+                  <div
+                    class="group flex items-center justify-between px-2 py-1.5 rounded-md cursor-pointer hover:bg-gray-100 dark:hover:bg-slate-900 transition-colors"
+                    onMouseEnter={() => setHoveredProject(dwg().projectID)}
+                    onMouseLeave={() => setHoveredProject(null)}
+                    onClick={() => toggleProjectExpanded(dwg().projectID)}
+                    title={dwg().project?.directory || ""}
+                  >
+                    <div class="flex items-center gap-2 min-w-0 flex-1">
+                      <svg
+                        xmlns="http://www.w3.org/2000/svg"
+                        width="12"
+                        height="12"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                        class={`text-gray-400 transition-transform flex-shrink-0 ${
+                          isExpanded() ? "rotate-90" : ""
+                        }`}
+                      >
+                        <path d="m9 18 6-6-6-6" />
+                      </svg>
+                      <div class="w-5 h-5 rounded flex items-center justify-center bg-slate-500 text-white flex-shrink-0">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                          <rect width="18" height="18" x="3" y="3" rx="2" />
+                          <path d="M3 9h18" />
+                          <path d="M9 21V9" />
+                        </svg>
+                      </div>
+                      <div class="min-w-0 flex-1">
+                        <span class="text-sm font-medium text-gray-700 dark:text-gray-300 truncate">
+                          {dwg().name}
+                        </span>
+                      </div>
+                    </div>
+                    <div class={`flex items-center gap-0.5 ${hoveredProject() === dwg().projectID ? "opacity-100" : "opacity-0"}`}>
+                      <button
+                        class="p-1 text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 rounded transition-all"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          props.onNewSession(dwg().project ? getProjectDirectory(dwg().project!) : undefined);
+                        }}
+                        title={t().sidebar.newSession}
+                      >
+                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                          <path d="M5 12h14" />
+                          <path d="M12 5v14" />
+                        </svg>
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Default Workspace Sessions */}
+                  <div class="collapsible-grid" data-expanded={isExpanded() ? "true" : "false"}>
+                    <div class="collapsible-content">
+                      <div class="ml-4 mt-1">
+                        <Show when={dwg().sessions.length === 0}>
+                          <div class="px-3 py-2 text-xs text-gray-400 dark:text-gray-500 italic">
+                            {t().sidebar.noSessions}
+                          </div>
+                        </Show>
+                        <For each={dwg().sessions}>
+                          {(session) => {
+                            const isActive = () => session.id === props.currentSessionId;
+                            const sessionStatus = () => props.getSessionStatus(session.id);
+                            const isEditing = () => editingSessionId() === session.id;
+
+                            const startEditing = (e: MouseEvent) => {
+                              e.stopPropagation();
+                              setEditingSessionId(session.id);
+                              setEditingTitle(session.title || "");
+                            };
+
+                            const saveTitle = () => {
+                              const newTitle = editingTitle().trim();
+                              if (newTitle && newTitle !== session.title) {
+                                props.onRenameSession(session.id, newTitle);
+                              }
+                              setEditingSessionId(null);
+                            };
+
+                            const cancelEditing = () => setEditingSessionId(null);
+
+                            const handleKeyDown = (e: KeyboardEvent) => {
+                              if (e.key === "Enter") saveTitle();
+                              else if (e.key === "Escape") cancelEditing();
+                            };
+
+                            return (
+                              <div
+                                class={`group relative px-3 py-2 mb-0.5 rounded-md cursor-pointer transition-all duration-150 ${
+                                  isActive()
+                                    ? "bg-white dark:bg-slate-800 shadow-xs"
+                                    : "hover:bg-gray-100 dark:hover:bg-slate-900"
+                                }`}
+                                onClick={() => !isEditing() && props.onSelectSession(session.id)}
+                              >
+                                <div class="flex items-center gap-1.5 min-w-0">
+                                  <Show when={sessionStatus() !== "idle"}>
+                                    <StatusIndicator status={sessionStatus()} />
+                                  </Show>
+                                  <Show
+                                    when={isEditing()}
+                                    fallback={
+                                      <div
+                                        class={`text-sm truncate ${
+                                          isActive() || sessionStatus() === "completed" || sessionStatus() === "cancelled" || sessionStatus() === "error"
+                                            ? "text-gray-900 dark:text-gray-100 font-medium"
+                                            : "text-gray-600 dark:text-gray-400"
+                                        }`}
+                                        onDblClick={startEditing}
+                                        title={session.id}
+                                      >
+                                        {getDisplayTitle(session.title)}
+                                      </div>
+                                    }
+                                  >
+                                    <input
+                                      type="text"
+                                      value={editingTitle()}
+                                      onInput={(e) => setEditingTitle(e.currentTarget.value)}
+                                      onKeyDown={handleKeyDown}
+                                      onBlur={saveTitle}
+                                      autofocus
+                                      class="text-sm w-full px-1 py-0.5 bg-white dark:bg-slate-700 border border-blue-500 rounded outline-none text-gray-900 dark:text-gray-100"
+                                      onClick={(e) => e.stopPropagation()}
+                                    />
+                                  </Show>
+                                </div>
+                                <Show when={!isEditing()}>
+                                  <div class="flex items-center gap-1.5 mt-0.5">
+                                    <Show when={getEngineBadge(session.engineType)}>
+                                      {(badge) => (
+                                        <span class={`text-[9px] font-medium px-1 py-0.5 rounded leading-none flex-shrink-0 ${badge().class}`}>
+                                          {badge().label}
+                                        </span>
+                                      )}
+                                    </Show>
+                                    <span class="text-[10px] text-gray-400 dark:text-gray-500">
+                                      {formatDate(session.updatedAt)}
+                                    </span>
+                                  </div>
+                                </Show>
+                                <Show when={!isEditing()}>
+                                  <Show
+                                    when={pendingDeleteId() !== session.id}
+                                    fallback={
+                                      <div class="absolute right-1 top-1/2 -translate-y-1/2 flex items-center gap-1 bg-white dark:bg-slate-800 rounded-md shadow-sm px-1 py-0.5">
+                                        <button
+                                          onClick={(e) => { e.stopPropagation(); props.onDeleteSession(session.id); setPendingDeleteId(null); }}
+                                          class="px-2 py-1 text-[10px] font-medium text-white bg-red-500 hover:bg-red-600 rounded transition-colors"
+                                        >{t().common.confirm}</button>
+                                        <button
+                                          onClick={(e) => { e.stopPropagation(); setPendingDeleteId(null); }}
+                                          class="px-2 py-1 text-[10px] font-medium text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-slate-700 rounded transition-colors"
+                                        >{t().common.cancel}</button>
+                                      </div>
+                                    }
+                                  >
+                                  <div class="absolute right-1 top-1/2 -translate-y-1/2 hidden group-hover:flex items-center gap-0.5 bg-white/90 dark:bg-slate-800/90 backdrop-blur-xs rounded-md shadow-sm px-0.5 py-0.5">
+                                    <button
+                                      onClick={(e) => { e.stopPropagation(); navigator.clipboard.writeText(session.id).catch(() => {}); }}
+                                      class="p-1.5 text-gray-400 hover:text-green-500 hover:bg-green-50 dark:hover:bg-green-900/20 rounded transition-all"
+                                      title={`${t().sidebar.copySessionId}: ${session.id}`}
+                                    >
+                                      <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                        <rect width="14" height="14" x="8" y="8" rx="2" ry="2" /><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" />
+                                      </svg>
+                                    </button>
+                                    <button
+                                      onClick={startEditing}
+                                      class="p-1.5 text-gray-400 hover:text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded transition-all"
+                                      title={t().sidebar.renameSession}
+                                    >
+                                      <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                        <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" /><path d="m15 5 4 4" />
+                                      </svg>
+                                    </button>
+                                    <button
+                                      onClick={(e) => { e.stopPropagation(); e.preventDefault(); setPendingDeleteId(session.id); }}
+                                      class="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded transition-all"
+                                      title={t().sidebar.deleteSession}
+                                    >
+                                      <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                        <path d="M3 6h18" /><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" /><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" />
+                                      </svg>
+                                    </button>
+                                  </div>
+                                  </Show>
+                                </Show>
+                              </div>
+                            );
+                          }}
+                        </For>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              );
+            }}
+          </Show>
+
           {/* Projects section title */}
+          <Show when={filteredProjectGroups().length > 0}>
           <div class="flex items-center gap-2 px-2 py-1.5 mb-1">
             <div class="w-5 h-5 rounded flex items-center justify-center bg-emerald-500 text-white flex-shrink-0">
               <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -420,6 +665,34 @@ export function SessionSidebar(props: SessionSidebarProps) {
             <span class="text-[10px] text-gray-400 dark:text-gray-500">
               [{filteredProjectGroups().length}]
             </span>
+            <div class="flex-1" />
+            <Show when={props.showAddProject !== false}>
+              <button
+                onClick={(e) => { e.stopPropagation(); props.onAddProject(); }}
+                class="flex-shrink-0 p-1 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-slate-800 rounded transition-colors"
+                title={t().project.add}
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z" />
+                  <path d="M12 10v6" /><path d="M9 13h6" />
+                </svg>
+              </button>
+            </Show>
+            <Show when={props.onRefreshSessions}>
+              <button
+                onClick={(e) => { e.stopPropagation(); props.onRefreshSessions?.(); }}
+                disabled={props.refreshingSessions}
+                class="flex-shrink-0 p-1 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-slate-800 rounded transition-colors disabled:opacity-50"
+                title={t().sidebar.refreshSessions}
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class={props.refreshingSessions ? "animate-spin" : ""}>
+                  <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8" />
+                  <path d="M21 3v5h-5" />
+                  <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16" />
+                  <path d="M8 16H3v5" />
+                </svg>
+              </button>
+            </Show>
           </div>
           <For each={filteredProjectGroups()}>
             {(project) => {
@@ -743,11 +1016,12 @@ export function SessionSidebar(props: SessionSidebarProps) {
               );
             }}
           </For>
-          <Show when={isSearching() && filteredProjectGroups().length === 0}>
+          <Show when={isSearching() && filteredProjectGroups().length === 0 && !filteredDefaultWorkspaceGroup()}>
             <div class="p-6 text-center">
               <p class="text-sm text-gray-400 dark:text-gray-500">{t().sidebar.noSearchResults}</p>
             </div>
           </Show>
+          </Show> {/* end filteredProjectGroups > 0 */}
           </Show>
         </Show>
       </div>

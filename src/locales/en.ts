@@ -117,6 +117,9 @@ export interface LocaleDict {
     importSkipped: string;
     showDefaultWorkspace: string;
     showDefaultWorkspaceDesc: string;
+    features: string;
+    scheduledTasksEnabled: string;
+    scheduledTasksEnabledDesc: string;
   };
 
   // Remote Access page
@@ -669,6 +672,9 @@ export const en: LocaleDict = {
     importSkipped: "Skipped (already imported)",
     showDefaultWorkspace: "Show default workspace in sidebar",
     showDefaultWorkspaceDesc: "Display the default workspace project group in the sidebar",
+    features: "Features",
+    scheduledTasksEnabled: "Scheduled Tasks",
+    scheduledTasksEnabledDesc: "Enable the scheduled tasks feature to automatically run tasks on a schedule",
   },
 
   // Remote Access page

@@ -105,6 +105,8 @@ export default function Chat() {
 
   // Track sessions that completed while user was viewing another session
   const [unreadSessions, setUnreadSessions] = createSignal<Set<string>>(new Set());
+  // Track sessions whose error/cancelled status has been dismissed by viewing
+  const [dismissedSessions, setDismissedSessions] = createSignal<Set<string>>(new Set());
   let prevSendingMap: Record<string, boolean> = {};
   createEffect(() => {
     const currentMap = { ...sessionStore.sendingMap };
@@ -425,11 +427,17 @@ export default function Chat() {
     onCleanup(() => window.removeEventListener('resize', handleResize));
   });
 
-  // Load messages for specific session
+  // Load messages for specific session from disk.
+  // When the store already has streaming data (e.g., scheduled tasks created
+  // assistant placeholders), merges disk data with existing store data:
+  //  - Messages: disk is base, store-only messages (not yet flushed) are preserved.
+  //  - Parts: disk parts overwrite if non-empty; existing streaming parts are
+  //    preserved when disk parts are empty (placeholder messages during streaming).
   const loadSessionMessages = async (sessionId: string) => {
     const t0 = performance.now();
     logger.debug("[LoadMessages] Loading messages for session:", sessionId);
-    setLoadingMessages(true);
+    const hadExisting = !!messageStore.message[sessionId]?.length;
+    if (!hadExisting) setLoadingMessages(true);
 
     try {
       const messages = await gateway.listMessages(sessionId);
@@ -440,18 +448,37 @@ export default function Chat() {
       // but don't flip loadingMessages — the new session's load owns that.
       const isStale = sessionStore.current !== sessionId;
 
-      // Store parts separately, sorted by id (in-place — API returns fresh arrays)
+      // Store parts — preserve existing streaming parts when disk parts are empty.
+      // Disk is authoritative for completed messages; streaming parts are more
+      // current for in-progress assistant messages (placeholder empty on disk).
       for (const msg of messages) {
-        const parts = msg.parts || [];
-        parts.sort((a, b) => a.id.localeCompare(b.id));
-        setMessageStore("part", msg.id, parts);
+        const diskParts = msg.parts || [];
+        diskParts.sort((a, b) => a.id.localeCompare(b.id));
+        const existingParts = messageStore.part[msg.id];
+        if (diskParts.length > 0 || !existingParts || existingParts.length === 0) {
+          setMessageStore("part", msg.id, diskParts);
+        }
       }
 
-      // Store all messages, sorted by creation time (ascending).
-      // Engine message IDs use different formats (UUID for OpenCode, timeId for others),
-      // so lexicographic ID sort would break chronological ordering.
+      // Merge messages: disk is the base for ordering and completeness.
+      // Keep any store-only messages (streaming placeholders not yet flushed
+      // to disk) so they aren't lost during active streaming.
       messages.sort((a, b) => a.time.created - b.time.created);
-      setMessageStore("message", sessionId, messages);
+      const existing = messageStore.message[sessionId] || [];
+      if (existing.length > 0) {
+        const diskIds = new Set(messages.map(m => m.id));
+        const storeOnly = existing.filter(m => !diskIds.has(m.id));
+        if (storeOnly.length > 0) {
+          const merged = [...messages, ...storeOnly];
+          merged.sort((a, b) => a.time.created - b.time.created);
+          setMessageStore("message", sessionId, merged);
+        } else {
+          setMessageStore("message", sessionId, messages);
+        }
+      } else {
+        setMessageStore("message", sessionId, messages);
+      }
+
       const t2 = performance.now();
       logger.debug(`[LoadMessages] Store update took ${(t2 - t1).toFixed(0)}ms, total ${(t2 - t0).toFixed(0)}ms`);
     } catch (error) {
@@ -459,7 +486,7 @@ export default function Chat() {
         logger.error("[LoadMessages] Failed to load messages:", error);
       }
     } finally {
-      setLoadingMessages(false);
+      if (!hadExisting) setLoadingMessages(false);
       setTimeout(() => scrollToBottomStable(), 100);
     }
     };
@@ -560,6 +587,7 @@ export default function Chat() {
         loading: true,
         showDefaultWorkspace: getSetting<boolean>("showDefaultWorkspace") ?? false,
       });
+      setScheduledTaskStore("enabled", getSetting<boolean>("scheduledTasksEnabled") ?? true);
 
       // First-time initialization: connect gateway and load data
       await gateway.init(handlers);
@@ -626,14 +654,16 @@ export default function Chat() {
 
           setSessionStore("list", sessionInfos);
 
-          // Load scheduled tasks
-          try {
-            const tasks = await gateway.listScheduledTasks();
-            if (gen === initGeneration && !disposed) {
-              setScheduledTaskStore("tasks", tasks);
+          // Load scheduled tasks (only if feature is enabled)
+          if (scheduledTaskStore.enabled) {
+            try {
+              const tasks = await gateway.listScheduledTasks();
+              if (gen === initGeneration && !disposed) {
+                setScheduledTaskStore("tasks", tasks);
+              }
+            } catch (err) {
+              logger.warn("[Init] Failed to load scheduled tasks:", err);
             }
-          } catch (err) {
-            logger.warn("[Init] Failed to load scheduled tasks:", err);
           }
 
           // Restore last selected session from previous app launch
@@ -710,7 +740,12 @@ export default function Chat() {
       setIsSidebarOpen(false);
     }
 
-    if (!messageStore.message[sessionId]) {
+    // Load from disk if the store is empty or incomplete (e.g., scheduled tasks
+    // only have assistant placeholders from streaming — no user message).
+    // For normal UI sessions the store already has user messages (from temp
+    // message or engine events), so we skip the RPC for instant switching.
+    const existing = messageStore.message[sessionId];
+    if (!existing || !existing.some(m => m.role === "user")) {
       await loadSessionMessages(sessionId);
     } else {
       setTimeout(() => scrollToBottomStable(), 100);
@@ -1667,12 +1702,12 @@ export default function Chat() {
               refreshingSessions={refreshingSessions()}
               showAddProject={isLocalAccess()}
               collapsed={isSidebarCollapsed() && !isMobile()}
-              scheduledTasks={scheduledTaskStore.tasks}
-              onCreateTask={() => { setEditingTask(undefined); setShowTaskModal(true); }}
-              onEditTask={(task) => { setEditingTask(task); setShowTaskModal(true); }}
-              onDeleteTask={handleDeleteTask}
-              onRunTaskNow={handleRunTaskNow}
-              onToggleTaskEnabled={handleToggleTaskEnabled}
+              scheduledTasks={scheduledTaskStore.enabled ? scheduledTaskStore.tasks : []}
+              onCreateTask={scheduledTaskStore.enabled ? () => { setEditingTask(undefined); setShowTaskModal(true); } : undefined}
+              onEditTask={scheduledTaskStore.enabled ? (task) => { setEditingTask(task); setShowTaskModal(true); } : undefined}
+              onDeleteTask={scheduledTaskStore.enabled ? handleDeleteTask : undefined}
+              onRunTaskNow={scheduledTaskStore.enabled ? handleRunTaskNow : undefined}
+              onToggleTaskEnabled={scheduledTaskStore.enabled ? handleToggleTaskEnabled : undefined}
             />
           </Show>
           <Show when={refreshingSessions()}>

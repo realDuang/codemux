@@ -9,6 +9,7 @@ import { isElectron } from "../lib/platform";
 import { Auth } from "../lib/auth";
 import { configStore, saveEngineModelSelection, isEngineEnabled, setEngineEnabled } from "../stores/config";
 import { sessionStore, setSessionStore } from "../stores/session";
+import { setScheduledTaskStore } from "../stores/scheduled-task";
 import { gateway } from "../lib/gateway-api";
 import { systemAPI, updateAPI, autostartAPI } from "../lib/electron-api";
 import { getSetting, saveSetting } from "../lib/settings";
@@ -44,6 +45,18 @@ export default function Settings() {
     setShowDefaultWorkspace(newValue);
     saveSetting("showDefaultWorkspace", newValue);
     setSessionStore("showDefaultWorkspace", newValue);
+  };
+
+  // Scheduled tasks toggle
+  const [scheduledTasksEnabled, setScheduledTasksEnabled] = createSignal(
+    getSetting<boolean>("scheduledTasksEnabled") ?? true,
+  );
+
+  const handleScheduledTasksToggle = () => {
+    const newValue = !scheduledTasksEnabled();
+    setScheduledTasksEnabled(newValue);
+    saveSetting("scheduledTasksEnabled", newValue);
+    setScheduledTaskStore("enabled", newValue);
   };
 
   const logLevels = ["error", "warn", "info", "verbose", "debug", "silly"];
@@ -560,7 +573,7 @@ export default function Settings() {
                     </div>
                   </Show>
                   {/* Log level */}
-                  <div class="p-4 sm:p-6 flex items-center justify-between gap-4 border-b border-gray-200 dark:border-slate-700">
+                  <div class="p-4 sm:p-6 flex items-center justify-between gap-4">
                     <div>
                       <h3 class="text-base font-medium text-gray-900 dark:text-white">
                         {t().settings.logLevel}
@@ -583,37 +596,74 @@ export default function Settings() {
                       </select>
                     </div>
                   </div>
-                  {/* Show Default Workspace toggle */}
-                  <div class="p-4 sm:p-6 flex items-center justify-between gap-4">
-                    <div>
-                      <h3 class="text-base font-medium text-gray-900 dark:text-white">
-                        {t().settings.showDefaultWorkspace}
-                      </h3>
-                      <p class="text-sm text-gray-500 dark:text-gray-400 mt-1">
-                        {t().settings.showDefaultWorkspaceDesc}
-                      </p>
-                    </div>
-                    <div class="flex-shrink-0">
-                      <button
-                        onClick={handleShowDefaultWorkspaceToggle}
-                        class={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
-                          showDefaultWorkspace() ? "bg-blue-600" : "bg-gray-300 dark:bg-slate-600"
-                        }`}
-                        role="switch"
-                        aria-checked={showDefaultWorkspace()}
-                        aria-label={t().settings.showDefaultWorkspace}
-                      >
-                        <span
-                          class={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
-                            showDefaultWorkspace() ? "translate-x-6" : "translate-x-1"
-                          }`}
-                        />
-                      </button>
-                    </div>
-                  </div>
                 </div>
               </section>
             </Show>
+
+            {/* Features Section */}
+            <section>
+              <h2 class="text-sm font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-4 px-1">
+                {t().settings.features}
+              </h2>
+              <div class="bg-white dark:bg-slate-800 rounded-xl shadow-xs border border-gray-200 dark:border-slate-700 overflow-visible">
+                {/* Show Default Workspace toggle */}
+                <div class="p-4 sm:p-6 flex items-center justify-between gap-4 border-b border-gray-200 dark:border-slate-700">
+                  <div>
+                    <h3 class="text-base font-medium text-gray-900 dark:text-white">
+                      {t().settings.showDefaultWorkspace}
+                    </h3>
+                    <p class="text-sm text-gray-500 dark:text-gray-400 mt-1">
+                      {t().settings.showDefaultWorkspaceDesc}
+                    </p>
+                  </div>
+                  <div class="flex-shrink-0">
+                    <button
+                      onClick={handleShowDefaultWorkspaceToggle}
+                      class={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                        showDefaultWorkspace() ? "bg-blue-600" : "bg-gray-300 dark:bg-slate-600"
+                      }`}
+                      role="switch"
+                      aria-checked={showDefaultWorkspace()}
+                      aria-label={t().settings.showDefaultWorkspace}
+                    >
+                      <span
+                        class={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                          showDefaultWorkspace() ? "translate-x-6" : "translate-x-1"
+                        }`}
+                      />
+                    </button>
+                  </div>
+                </div>
+                {/* Scheduled Tasks toggle */}
+                <div class="p-4 sm:p-6 flex items-center justify-between gap-4">
+                  <div>
+                    <h3 class="text-base font-medium text-gray-900 dark:text-white">
+                      {t().settings.scheduledTasksEnabled}
+                    </h3>
+                    <p class="text-sm text-gray-500 dark:text-gray-400 mt-1">
+                      {t().settings.scheduledTasksEnabledDesc}
+                    </p>
+                  </div>
+                  <div class="flex-shrink-0">
+                    <button
+                      onClick={handleScheduledTasksToggle}
+                      class={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                        scheduledTasksEnabled() ? "bg-blue-600" : "bg-gray-300 dark:bg-slate-600"
+                      }`}
+                      role="switch"
+                      aria-checked={scheduledTasksEnabled()}
+                      aria-label={t().settings.scheduledTasksEnabled}
+                    >
+                      <span
+                        class={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                          scheduledTasksEnabled() ? "translate-x-6" : "translate-x-1"
+                        }`}
+                      />
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </section>
 
             {/* Update Section (Electron only) */}
             <Show when={isElectron()}>

@@ -365,23 +365,53 @@ export function SessionSidebar(props: SessionSidebarProps) {
 
         {/* Active Sessions Section */}
         <Show when={!props.collapsed && filteredActiveSessions().length > 0}>
-          <div class="mb-2">
-            <div class="flex items-center gap-2 px-2 py-1.5">
-              <div class="w-5 h-5 rounded flex items-center justify-center bg-blue-500 text-white flex-shrink-0">
-                <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
-                  <path d="M21 12a9 9 0 1 1-6.219-8.56" />
-                </svg>
-              </div>
-              <span class="text-sm font-medium text-gray-700 dark:text-gray-300">
-                {t().sidebar.activeSection}
-              </span>
-              <span class="text-[10px] text-gray-400 dark:text-gray-500">
-                [{filteredActiveSessions().length}]
-              </span>
-            </div>
-            <div class="ml-4 mt-1">
-              <For each={filteredActiveSessions()}>
-                {(session) => {
+          {(() => {
+            // Active section defaults to expanded (opposite of projects which default collapsed)
+            const isExpanded = () => isSearching() || sessionStore.projectExpanded["__active__"] !== false;
+            return (
+              <div class="mb-2">
+                {/* Active Section Header */}
+                <div
+                  class="group flex items-center justify-between px-2 py-1.5 rounded-md cursor-pointer hover:bg-gray-100 dark:hover:bg-slate-900 transition-colors"
+                  onClick={() => toggleProjectExpanded("__active__")}
+                >
+                  <div class="flex items-center gap-2 min-w-0 flex-1">
+                    <svg
+                      xmlns="http://www.w3.org/2000/svg"
+                      width="12"
+                      height="12"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="2"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      class={`text-gray-400 transition-transform flex-shrink-0 ${
+                        isExpanded() ? "rotate-90" : ""
+                      }`}
+                    >
+                      <path d="m9 18 6-6-6-6" />
+                    </svg>
+                    <div class="w-5 h-5 rounded flex items-center justify-center bg-blue-500 text-white flex-shrink-0">
+                      <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
+                        <path d="M21 12a9 9 0 1 1-6.219-8.56" />
+                      </svg>
+                    </div>
+                    <span class="text-sm font-medium text-gray-700 dark:text-gray-300">
+                      {t().sidebar.activeSection}
+                    </span>
+                    <span class="text-[10px] text-gray-400 dark:text-gray-500">
+                      [{filteredActiveSessions().length}]
+                    </span>
+                  </div>
+                </div>
+
+                {/* Active Sessions List (Collapsible) */}
+                <div class="collapsible-grid" data-expanded={isExpanded() ? "true" : "false"}>
+                  <div class="collapsible-content">
+                    <div class="ml-4 mt-1">
+                      <For each={filteredActiveSessions()}>
+                        {(session) => {
                   const isActive = () => session.id === props.currentSessionId;
                   const sessionStatus = () => props.getSessionStatus(session.id);
                   const isPinned = () => props.pinnedSessionIds?.has(session.id) ?? false;
@@ -551,8 +581,14 @@ export function SessionSidebar(props: SessionSidebarProps) {
                   );
                 }}
               </For>
-            </div>
-          </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
+          {/* Divider after Active section */}
+          <hr class="border-gray-200 dark:border-slate-800 my-2 mx-2" />
         </Show>
 
         <Show
@@ -909,6 +945,11 @@ export function SessionSidebar(props: SessionSidebarProps) {
                 </div>
               );
             }}
+          </Show>
+
+          {/* Divider between Default Workspace and Projects */}
+          <Show when={filteredDefaultWorkspaceGroup() && filteredProjectGroups().length > 0}>
+            <hr class="border-gray-200 dark:border-slate-800 my-2 mx-2" />
           </Show>
 
           {/* Projects section title */}

@@ -28,6 +28,7 @@ import { StreamingController } from "../streaming/streaming-controller";
 import { TokenManager } from "../streaming/token-manager";
 import { TokenBucket } from "../streaming/rate-limiter";
 import { BaseSessionMapper, type PersistedBinding } from "../base-session-mapper";
+import { resolveProjectRef } from "../project-ref-utils";
 import { createStreamingSession, type StreamingSession } from "../streaming/streaming-types";
 import { didConfigValuesChange, mergeDefinedConfig } from "../config-utils";
 import { DingTalkTransport } from "./dingtalk-transport";
@@ -442,7 +443,9 @@ export class DingTalkAdapter extends ChannelAdapter {
       if (tempSession) {
         await this.cleanupExpiredTempSession(chatId);
       }
-      await this.createTempSessionAndSend(chatId, p2pState.lastSelectedProject, text);
+      const projectRef = resolveProjectRef(p2pState.lastSelectedProject);
+      this.sessionMapper.setP2PLastProject(chatId, projectRef);
+      await this.createTempSessionAndSend(chatId, projectRef, text);
       return;
     }
 
@@ -710,11 +713,11 @@ export class DingTalkAdapter extends ChannelAdapter {
     const project = pending.projects[num - 1];
     const projectName = project.name || project.directory.split(/[\\/]/).pop() || project.directory;
 
-    const projectRef = {
+    const projectRef = resolveProjectRef({
       directory: project.directory,
       engineType: project.engineType,
       projectId: project.id,
-    };
+    });
     this.sessionMapper.setP2PLastProject(chatId, projectRef);
 
     await this.showSessionListForProject(chatId, projectRef, projectName);

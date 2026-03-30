@@ -16,6 +16,11 @@ interface SystemInfo {
   isPackaged: boolean;
 }
 
+export interface HostCapabilities {
+  serverMode: boolean;
+  canAddProject: boolean;
+}
+
 export interface TunnelInfo {
   url: string;
   status: "starting" | "running" | "stopped" | "error";
@@ -74,11 +79,69 @@ export function getElectronAPI() {
   return null;
 }
 
+const DEVICE_TOKEN_KEY = "opencode_device_token";
+
+function getBrowserAuthHeaders(extraHeaders: Record<string, string> = {}): Record<string, string> {
+  const headers: Record<string, string> = { ...extraHeaders };
+  try {
+    const token = localStorage.getItem(DEVICE_TOKEN_KEY);
+    if (token) {
+      headers.Authorization = `Bearer ${token}`;
+    }
+  } catch {
+    // localStorage unavailable
+  }
+  return headers;
+}
+
+async function browserAuthedRequest<T>(input: string, init?: RequestInit): Promise<T> {
+  const response = await fetch(input, {
+    ...init,
+    headers: getBrowserAuthHeaders((init?.headers as Record<string, string>) ?? {}),
+  });
+
+  if (!response.ok) {
+    let message = `Request failed (${response.status})`;
+    try {
+      const data = await response.json() as { error?: string };
+      if (data?.error) {
+        message = data.error;
+      }
+    } catch {
+      // Response is not JSON
+    }
+    throw new Error(message);
+  }
+
+  return response.json() as Promise<T>;
+}
+
 // System API
 export const systemAPI = {
   async getInfo(): Promise<SystemInfo | null> {
     const api = getElectronAPI();
     return api ? api.system.getInfo() : null;
+  },
+
+  async getCapabilities(): Promise<HostCapabilities> {
+    const api = getElectronAPI();
+    if (api) {
+      return { serverMode: false, canAddProject: true };
+    }
+
+    try {
+      const response = await fetch("/api/system/capabilities");
+      if (!response.ok) {
+        throw new Error(`Request failed (${response.status})`);
+      }
+      const data = await response.json() as Partial<HostCapabilities>;
+      return {
+        serverMode: data.serverMode === true,
+        canAddProject: data.canAddProject === true,
+      };
+    } catch {
+      return { serverMode: false, canAddProject: false };
+    }
   },
 
   async getLocalIp(): Promise<string> {
@@ -269,38 +332,89 @@ export interface ChannelInfo {
 export const channelAPI = {
   async list(): Promise<ChannelInfo[]> {
     const api = getElectronAPI();
-    return api?.channel ? api.channel.list() : [];
+    if (api?.channel) {
+      return api.channel.list();
+    }
+    return browserAuthedRequest<ChannelInfo[]>("/api/channels");
   },
 
   async getConfig(type: string): Promise<ChannelConfig | null> {
     const api = getElectronAPI();
-    return api?.channel ? api.channel.getConfig(type) : null;
+    if (api?.channel) {
+      return api.channel.getConfig(type);
+    }
+    return browserAuthedRequest<ChannelConfig | null>(`/api/channels/${type}`);
   },
 
   async updateConfig(type: string, updates: Partial<ChannelConfig>): Promise<void> {
     const api = getElectronAPI();
     if (api?.channel) {
       await api.channel.updateConfig(type, updates);
+      return;
     }
+    await browserAuthedRequest<{ success: boolean }>(`/api/channels/${type}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(updates),
+    });
   },
 
   async start(type: string): Promise<void> {
     const api = getElectronAPI();
     if (api?.channel) {
       await api.channel.start(type);
+      return;
     }
+    await browserAuthedRequest<{ success: boolean }>(`/api/channels/${type}/start`, {
+      method: "POST",
+    });
   },
 
   async stop(type: string): Promise<void> {
     const api = getElectronAPI();
     if (api?.channel) {
       await api.channel.stop(type);
+      return;
     }
+    await browserAuthedRequest<{ success: boolean }>(`/api/channels/${type}/stop`, {
+      method: "POST",
+    });
   },
 
   async getStatus(type: string): Promise<ChannelInfo | null> {
     const api = getElectronAPI();
-    return api?.channel ? api.channel.getStatus(type) : null;
+    if (api?.channel) {
+      return api.channel.getStatus(type);
+    }
+    return browserAuthedRequest<ChannelInfo | null>(`/api/channels/${type}/status`);
+  },
+};
+
+export const settingsAPI = {
+  async getDefaultEngine(): Promise<string | undefined> {
+    const api = getSettingsAPI();
+    if (api) {
+      const settings = await api.load();
+      const defaultEngine = settings?.defaultEngine;
+      return typeof defaultEngine === "string" ? defaultEngine : undefined;
+    }
+
+    const response = await browserAuthedRequest<{ defaultEngine?: string }>("/api/settings/default-engine");
+    return typeof response.defaultEngine === "string" ? response.defaultEngine : undefined;
+  },
+
+  async setDefaultEngine(defaultEngine: string): Promise<void> {
+    const api = getSettingsAPI();
+    if (api) {
+      await api.save({ defaultEngine });
+      return;
+    }
+
+    await browserAuthedRequest<{ success: boolean }>("/api/settings/default-engine", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ defaultEngine }),
+    });
   },
 };
 
@@ -331,6 +445,11 @@ function getUpdateAPI(): any {
 function getAutostartAPI(): any {
   const api = getElectronAPI();
   return (api as any)?.autostart ?? null;
+}
+
+function getSettingsAPI(): any {
+  const api = getElectronAPI();
+  return (api as any)?.settings ?? null;
 }
 
 export const updateAPI = {

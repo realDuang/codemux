@@ -20,6 +20,7 @@ import { createStreamingSession, type StreamingSession } from "../streaming/stre
 import { FeishuTransport } from "./feishu-transport";
 import { FeishuRenderer } from "./feishu-renderer";
 import { FeishuSessionMapper } from "./feishu-session-mapper";
+import { resolveProjectRef } from "../project-ref-utils";
 import {
   parseCommand,
   buildHelpText,
@@ -660,7 +661,9 @@ export class FeishuAdapter extends ChannelAdapter {
       if (tempSession) {
         await this.cleanupExpiredTempSession(chatId);
       }
-      await this.createTempSessionAndSend(chatId, p2pState.lastSelectedProject, text);
+      const projectRef = resolveProjectRef(p2pState.lastSelectedProject);
+      this.sessionMapper.setP2PLastProject(chatId, projectRef);
+      await this.createTempSessionAndSend(chatId, projectRef, text);
       return;
     }
 
@@ -669,11 +672,11 @@ export class FeishuAdapter extends ChannelAdapter {
       const allProjects = await this.gatewayClient.listAllProjects();
       const defaultProject = allProjects.find(p => p.isDefault);
       if (defaultProject) {
-        const defaultRef = {
+        const defaultRef = resolveProjectRef({
           directory: defaultProject.directory,
           engineType: defaultProject.engineType,
           projectId: defaultProject.id,
-        };
+        });
         this.sessionMapper.setP2PLastProject(chatId, defaultRef);
         await this.createTempSessionAndSend(chatId, defaultRef, text);
         return;
@@ -732,11 +735,11 @@ export class FeishuAdapter extends ChannelAdapter {
       // No real projects — auto-use default workspace without showing empty list
       const defaultProject = allProjects.find(p => p.isDefault);
       if (defaultProject) {
-        const defaultRef = {
+        const defaultRef = resolveProjectRef({
           directory: defaultProject.directory,
           engineType: defaultProject.engineType,
           projectId: defaultProject.id,
-        };
+        });
         this.sessionMapper.setP2PLastProject(chatId, defaultRef);
       } else {
         // No projects at all — show empty project list message
@@ -1004,11 +1007,11 @@ export class FeishuAdapter extends ChannelAdapter {
     const projectName = project.name || project.directory.split(/[\\/]/).pop() || project.directory;
 
     // Save last selected project
-    const projectRef = {
+    const projectRef = resolveProjectRef({
       directory: project.directory,
       engineType: project.engineType,
       projectId: project.id,
-    };
+    });
     this.sessionMapper.setP2PLastProject(chatId, projectRef);
 
     await this.showSessionListForProject(chatId, projectRef, projectName);
@@ -1321,9 +1324,11 @@ export class FeishuAdapter extends ChannelAdapter {
           const p2pState = this.sessionMapper.getP2PChat(chatId);
           const lastProject = p2pState?.lastSelectedProject;
           if (lastProject && this.gatewayClient) {
+            const projectRef = resolveProjectRef(lastProject);
+            this.sessionMapper.setP2PLastProject(chatId, projectRef);
             const projectName =
-              lastProject.directory.split(/[\\/]/).pop() || lastProject.directory;
-            await this.createNewSessionForProject(chatId, openId, lastProject, projectName);
+              projectRef.directory.split(/[\\/]/).pop() || projectRef.directory;
+            await this.createNewSessionForProject(chatId, openId, projectRef, projectName);
             return;
           }
         }
@@ -1336,9 +1341,11 @@ export class FeishuAdapter extends ChannelAdapter {
           const p2pState = this.sessionMapper.getP2PChat(chatId);
           const lastProject = p2pState?.lastSelectedProject;
           if (lastProject && this.gatewayClient) {
+            const projectRef = resolveProjectRef(lastProject);
+            this.sessionMapper.setP2PLastProject(chatId, projectRef);
             const projectName =
-              lastProject.directory.split(/[\\/]/).pop() || lastProject.directory;
-            await this.showSessionListForProject(chatId, lastProject, projectName);
+              projectRef.directory.split(/[\\/]/).pop() || projectRef.directory;
+            await this.showSessionListForProject(chatId, projectRef, projectName);
             return;
           }
         }

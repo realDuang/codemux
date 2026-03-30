@@ -5,6 +5,7 @@ import { Spinner } from "../components/Spinner";
 import { ThemeSwitcher } from "../components/ThemeSwitcher";
 import ImportHistoryModal from "../components/ImportHistoryModal";
 import { ensureGatewayInitialized, refreshEngineConfigState } from "../lib/engine-bootstrap";
+import { ChannelManagementSettings } from "../components/ChannelManagementSettings";
 import { useI18n } from "../lib/i18n";
 import { logger } from "../lib/logger";
 import { useAuthGuard } from "../lib/useAuthGuard";
@@ -28,6 +29,7 @@ export default function Settings() {
   const [logPath, setLogPath] = createSignal("");
   const [logLevel, setLogLevel] = createSignal("warn");
   const [showLogSection, setShowLogSection] = createSignal(isElectron());
+  const [showWebChannelSection, setShowWebChannelSection] = createSignal(false);
   const [conversationsPath, setConversationsPath] = createSignal("");
 
   // Update section state
@@ -117,8 +119,12 @@ export default function Settings() {
         setLogLevel(level);
       }
     } else {
-      // Web mode: check if localhost, then fetch log info via REST
-      const localAccess = await Auth.isLocalAccess();
+      // Web mode: check host capabilities and localhost-only sections
+      const [localAccess, capabilities] = await Promise.all([
+        Auth.isLocalAccess(),
+        systemAPI.getCapabilities(),
+      ]);
+      setShowWebChannelSection(capabilities.serverMode);
       if (localAccess) {
         setShowLogSection(true);
         try {
@@ -606,6 +612,11 @@ export default function Settings() {
               </Show>
             </section>
 
+            <Show when={!isElectron() && showWebChannelSection()}>
+              <ChannelManagementSettings />
+            </Show>
+
+            {/* Logging Section */}
             <Show when={showLogSection()}>
               <section id="section-logging">
                 <h2 class="text-sm font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-4 px-1">

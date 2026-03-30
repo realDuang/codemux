@@ -184,8 +184,41 @@ bun run update:cloudflared
 bun run dev
 ```
 
+### Linux Server / Headless Dev
+
+On headless Linux hosts, `bun run dev` may exit early because Electron needs a virtual display, a DBus session, and a correctly configured `chrome-sandbox` helper. This repo includes Linux server helpers for that workflow:
+
+```bash
+# First-time bootstrap on a Linux server (installs Bun if needed)
+./scripts/server-init.sh
+
+# Run the full Electron dev stack in the foreground with Xvfb + DBus
+bun run server:dev
+
+# Run the same headless dev stack in the background
+bun run server:up
+bun run server:status
+bun run server:down
+
+# Run the headless dev stack and start a Cloudflare quick tunnel
+bun run server:tunnel
+
+# Show the 6-digit access code from the terminal
+bun run server:access-code
+
+# Review or approve pending device requests from the terminal
+bun run server:access-requests
+```
+
+`bun run start` is still the lightest option for a web-only standalone server. The desktop app's "Public Access" toggle manages Cloudflare inside the packaged app; on a headless dev server, `bun run server:tunnel` provides the equivalent quick-tunnel workflow from the shell.
+
+
+`bun run server:tunnel` now prints the access code after startup. When a remote browser submits that code, you can stay entirely in SSH and run `bun run server:access-requests` to review and interactively approve or deny pending requests. If you started CodeMux with `bun run server:dev`, open a second SSH session and run `bun run server:access-code` / `bun run server:access-requests`.
+
+After a browser has been approved, it can open **Settings → Channels** in the web UI to configure or toggle IM channels directly from server mode; you no longer need the Electron-only host page for that workflow.
+
 > **Engine Prerequisites**: All engines are external dependencies that must be installed and available in your PATH:
-> - **OpenCode**: Install from [opencode.ai](https://opencode.ai) — `curl -fsSL https://opencode.ai/install.sh | bash` (Unix) or `irm https://opencode.ai/install.ps1 | iex` (Windows)
+> - **OpenCode**: Install from [opencode.ai](https://opencode.ai) — `curl -fsSL https://opencode.ai/install | bash` (Unix) or `irm https://opencode.ai/install.ps1 | iex` (Windows)
 > - **Copilot CLI**: Install [GitHub Copilot CLI](https://docs.github.com/en/copilot/using-github-copilot/using-github-copilot-coding-agent-in-cli) separately
 > - **Claude Code**: Install via `npm install -g @anthropic-ai/claude-code` and set your `ANTHROPIC_API_KEY`
 >
@@ -201,7 +234,7 @@ bun run dev
 |--------|-------|----------|
 | **LAN Browser** | Open `http://<your-ip>:8233`, enter 6-digit code or scan QR | Quick access from another device on the same network |
 | **Public Internet** | Toggle "Public Access" → share `*.trycloudflare.com` URL | Access from anywhere, no port forwarding needed |
-| **IM Bot** | Configure bot credentials in Settings → Channels | Interact from Feishu, DingTalk, Telegram, WeCom, or Teams |
+| **IM Bot** | Configure bot credentials in Settings → Channels (desktop or approved web UI) | Interact from Feishu, DingTalk, Telegram, WeCom, or Teams |
 
 ### Security & Device Management
 
@@ -259,13 +292,21 @@ All access methods — desktop app, remote browser, and IM bots — connect thro
 ### Commands
 
 ```bash
-bun run dev              # Electron + Vite HMR
-bun run build            # Production build
-bun run dist:mac:arm64   # macOS Apple Silicon
-bun run dist:mac:x64     # macOS Intel
-bun run dist:win         # Windows NSIS installer
-bun run typecheck        # Type checking
-bun run update:cloudflared  # Update Cloudflare Tunnel binary
+./scripts/server-init.sh  # Bootstrap a Linux server before Bun is installed
+bun run dev                # Electron + Vite HMR
+bun run server:dev         # Foreground headless Electron dev
+bun run server:up          # Background headless Electron dev
+bun run server:tunnel      # Background headless Electron dev + quick tunnel
+bun run server:access-code # Print the current 6-digit access code
+bun run server:access-requests # Interactively review pending remote access requests
+bun run server:down        # Stop background headless Electron dev
+bun run server:status      # Show background headless Electron dev status
+bun run build              # Production build
+bun run dist:mac:arm64     # macOS Apple Silicon
+bun run dist:mac:x64       # macOS Intel
+bun run dist:win           # Windows NSIS installer
+bun run typecheck          # Type checking
+bun run update:cloudflared # Update Cloudflare Tunnel binary
 ```
 
 ### Project Structure

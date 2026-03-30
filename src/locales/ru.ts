@@ -212,6 +212,7 @@ export const ru: LocaleDict = {
     browseNotSupported: "Выбор папок не поддерживается в этом браузере",
     adding: "Добавление проекта...",
     addFailed: "Не удалось добавить проект",
+    addNotAvailable: "Добавление проекта доступно только в настольном приложении или серверном режиме",
     hideTitle: "Удалить сессии проекта",
     hideConfirm: "Удалить все сессии проекта «{name}»?",
     sessionCount: "Это удалит {count} сессий.",
@@ -486,6 +487,7 @@ export const ru: LocaleDict = {
     gatewayDisconnected: "Соединение прервано, переподключение...",
     gatewayReconnected: "Соединение восстановлено.",
     engineError: "Ошибка движка: {message}",
+    defaultEngineSaveFailed: "Не удалось сохранить движок по умолчанию.",
   },
 
   // File Explorer

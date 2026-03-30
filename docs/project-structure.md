@@ -68,6 +68,7 @@
 │   │   ├── AddProjectModal.tsx   # Add project dialog
 │   │   ├── HideProjectModal.tsx  # Hide project dialog
 │   │   ├── FeishuConfigModal.tsx # Feishu channel config dialog
+│   │   ├── ChannelManagementSettings.tsx # Browser-accessible channel management section
 │   │   ├── ContextGroup.tsx     # Context group display
 │   │   ├── InputAreaPermission.tsx  # Permission request in input area
 │   │   ├── InputAreaQuestion.tsx    # Question prompt in input area
@@ -113,7 +114,10 @@
 │       ├── unified.ts            # All shared types + gateway protocol
 │       ├── tool-mapping.ts       # Engine-specific → normalized tool names
 │       └── electron.d.ts         # ElectronAPI type declarations
-├── scripts/                      # Bun scripts (setup, start, update binaries)
+├── scripts/                      # Bun scripts + Linux server helpers
+│   ├── server-init.sh            # Linux server bootstrap + dependency helper
+│   ├── server-dev.sh             # Headless Electron dev/tunnel wrapper
+│   └── server-auth.ts            # Terminal access-code and access-request helper
 ├── tests/                        # Unit + E2E tests (Vitest + Playwright)
 │   └── unit/                     # Unit tests mirroring source structure
 │       ├── electron/                 # Tests for electron/ sources

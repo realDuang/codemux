@@ -123,8 +123,8 @@ export function createAuthProxyPlugin(options: AuthProxyPluginOptions = {}): Plu
     name: "auth-api-proxy",
     configureServer(server: ViteDevServer) {
       // ====================================================================
-      // Proxy all /api/auth/* and /api/admin/* and /api/devices/* requests
-      // to Electron's internal Auth API server
+      // Proxy auth, admin, device, and channel API requests to Electron's
+      // internal Auth API server
       // ====================================================================
       server.middlewares.use((req, res, next) => {
         const url = req.url || "";
@@ -135,6 +135,7 @@ export function createAuthProxyPlugin(options: AuthProxyPluginOptions = {}): Plu
           "/api/admin/",
           "/api/devices",
           "/api/settings/",
+          "/api/channels",
           "/api/system/log",
         ];
 
@@ -161,6 +162,23 @@ export function createAuthProxyPlugin(options: AuthProxyPluginOptions = {}): Plu
         sendJson(res, {
           localIp: getLocalIp(),
           port: defaultPort,
+        });
+      });
+
+      // ====================================================================
+      // System: Host capabilities
+      // GET /api/system/capabilities
+      // ====================================================================
+      server.middlewares.use((req, res, next) => {
+        if (req.url !== "/api/system/capabilities" || req.method !== "GET") {
+          next();
+          return;
+        }
+
+        const serverMode = process.env.CODEMUX_SERVER_MODE === "1";
+        sendJson(res, {
+          serverMode,
+          canAddProject: serverMode,
         });
       });
 

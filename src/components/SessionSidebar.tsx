@@ -9,6 +9,7 @@ import { getEngineBadge } from "./share/common";
 import { ScheduledTaskSection } from "./ScheduledTaskSection";
 import { getSetting } from "../lib/settings";
 import { gateway } from "../lib/gateway-api";
+import { notify } from "../lib/notifications";
 
 import { isElectron } from "../lib/platform";
 import { systemAPI } from "../lib/electron-api";
@@ -114,6 +115,21 @@ export function SessionSidebar(props: SessionSidebarProps) {
   if (isElectron()) {
     systemAPI.getInfo();
   }
+
+  const handleDefaultEngineChange = async (event: Event) => {
+    const select = event.currentTarget as HTMLSelectElement;
+    const previousEngine = getDefaultEngineType();
+    const nextEngine = select.value as EngineType;
+    if (nextEngine === previousEngine) return;
+
+    try {
+      await setDefaultNewSessionEngine(nextEngine);
+    } catch (error) {
+      select.value = previousEngine;
+      notify(t().notification.defaultEngineSaveFailed, "warning", 5000);
+      console.error("[SessionSidebar] Failed to save default engine:", error);
+    }
+  };
 
   const getDisplayTitle = (title: string): string => {
     if (!title || isDefaultTitle(title)) {
@@ -1629,7 +1645,7 @@ export function SessionSidebar(props: SessionSidebarProps) {
                 });
               }}
               value={getDefaultEngineType()}
-              onChange={(e) => setDefaultNewSessionEngine(e.target.value)}
+              onChange={(e) => { void handleDefaultEngineChange(e); }}
               class="flex-1 min-w-0 text-xs px-2 py-1 bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-md text-gray-700 dark:text-gray-300 focus:outline-none focus:ring-1 focus:ring-blue-500"
             >
               <For each={runningEngines()}>

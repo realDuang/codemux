@@ -272,6 +272,7 @@ export abstract class DeviceStoreBase {
   }
 
   approveRequest(requestId: string): PendingRequest | undefined {
+    // Reload from disk so we see changes made by other processes (e.g. server-auth.ts).
     this.beforeRead();
     const data = this.getData();
     const request = data.pendingRequests[requestId];
@@ -295,21 +296,28 @@ export abstract class DeviceStoreBase {
       ip: request.ip,
     };
 
-    // Add device directly to data (avoid reload from beforeRead causing data loss)
-    data.devices[deviceInfo.id] = deviceInfo;
+    // Reload again right before writing to minimise the race window with
+    // concurrent processes (e.g. Electron main + server-auth CLI).
+    this.beforeRead();
+    const freshData = this.getData();
 
-    // Update request status
-    request.status = "approved";
-    request.resolvedAt = Date.now();
-    request.deviceId = deviceId;
-    request.token = token;
+    // Re-verify the request is still pending after the second reload.
+    const freshRequest = freshData.pendingRequests[requestId];
+    if (!freshRequest || freshRequest.status !== "pending") return undefined;
 
-    // Save all changes at once
+    freshData.devices[deviceInfo.id] = deviceInfo;
+
+    freshRequest.status = "approved";
+    freshRequest.resolvedAt = Date.now();
+    freshRequest.deviceId = deviceId;
+    freshRequest.token = token;
+
     this.save();
-    return request;
+    return freshRequest;
   }
 
   denyRequest(requestId: string): PendingRequest | undefined {
+    // Reload again right before writing to minimise the race window.
     this.beforeRead();
     const data = this.getData();
     const request = data.pendingRequests[requestId];
@@ -318,8 +326,20 @@ export abstract class DeviceStoreBase {
     request.status = "denied";
     request.resolvedAt = Date.now();
 
+    // Second reload + merge to reduce chance of overwriting concurrent changes.
+    this.beforeRead();
+    const freshData = this.getData();
+    const freshRequest = freshData.pendingRequests[requestId];
+    if (!freshRequest || freshRequest.status !== "pending") {
+      // Another process already handled this request.
+      return freshRequest ?? undefined;
+    }
+
+    freshRequest.status = "denied";
+    freshRequest.resolvedAt = Date.now();
+
     this.save();
-    return request;
+    return freshRequest;
   }
 
   // ---------------------------------------------------------------------------
@@ -330,6 +350,7 @@ export abstract class DeviceStoreBase {
    * Generate a stable 6-digit access code derived from the JWT secret.
    */
   getAccessCode(): string {
+    this.beforeRead();
     const data = this.getData();
     const hash = crypto
       .createHash("sha256")

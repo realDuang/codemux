@@ -144,6 +144,23 @@ export default defineConfig({
         });
 
         // ====================================================================
+        // System: Host capabilities
+        // GET /api/system/capabilities
+        // ====================================================================
+        server.middlewares.use((req, res, next) => {
+          if (req.url !== "/api/system/capabilities" || req.method !== "GET") {
+            next();
+            return;
+          }
+
+          const serverMode = process.env.CODEMUX_SERVER_MODE === "1";
+          sendJson(res, {
+            serverMode,
+            canAddProject: serverMode,
+          });
+        });
+
+        // ====================================================================
         // System: Check if request is from localhost
         // GET /api/system/is-local
         // ====================================================================

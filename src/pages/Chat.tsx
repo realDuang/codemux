@@ -471,6 +471,7 @@ export default function Chat() {
 
   // Track if this is a local access (Electron or localhost web)
   const [isLocalAccess, setIsLocalAccess] = createSignal(isElectron());
+  const [canAddProject, setCanAddProject] = createSignal(isElectron());
 
   const handleLogout = () => {
     Auth.logout();
@@ -643,8 +644,12 @@ export default function Chat() {
 
     try {
       if (!isElectron()) {
-        const localAccess = await Auth.isLocalAccess();
+        const [localAccess, capabilities] = await Promise.all([
+          Auth.isLocalAccess(),
+          systemAPI.getCapabilities(),
+        ]);
         setIsLocalAccess(localAccess);
+        setCanAddProject(capabilities.canAddProject);
       }
 
       const isValidToken = await Auth.checkDeviceToken();
@@ -762,7 +767,6 @@ export default function Chat() {
         showDefaultWorkspace: getSetting<boolean>("showDefaultWorkspace") ?? true,
       });
       setScheduledTaskStore("enabled", getSetting<boolean>("scheduledTasksEnabled") ?? true);
-
 
       // Engine + model loading complete — unblock UI immediately.
       // Sidebar will render (possibly empty) while projects/sessions load in background.
@@ -1127,6 +1131,10 @@ export default function Chat() {
   };
 
   const handleAddProject = async (directory: string) => {
+    if (!canAddProject()) {
+      throw new Error(t().project.addNotAvailable);
+    }
+
     const resolvedEngineType = getDefaultEngineType() as EngineType;
     logger.debug("[AddProject] Initializing project for directory:", directory);
 
@@ -1945,10 +1953,13 @@ export default function Chat() {
               onDeleteProjectSessions={(projectID, projectName, sessionCount) =>
                 setDeleteProjectInfo({ projectID, projectName, sessionCount })
               }
-              onAddProject={() => setShowAddProjectModal(true)}
+              onAddProject={() => {
+                if (!canAddProject()) return;
+                setShowAddProjectModal(true);
+              }}
               onRefreshSessions={handleRefreshSessions}
               refreshingSessions={refreshingSessions()}
-              showAddProject={isLocalAccess()}
+              showAddProject={canAddProject()}
               collapsed={isSidebarCollapsed() && !isMobile()}
               scheduledTasks={scheduledTaskStore.enabled ? scheduledTaskStore.tasks : []}
               onCreateTask={scheduledTaskStore.enabled ? () => { setEditingTask(undefined); setShowTaskModal(true); } : undefined}

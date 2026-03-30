@@ -6,6 +6,7 @@ import { deviceStore } from "./device-store";
 import { prodServerLog, getLogFilePath, getFileLogLevel, setFileLogLevel, loadSettings, saveSettings } from "./logger";
 import { sendJson, getClientIp, isLocalhost, getLocalIp } from "../../../shared/http-utils";
 import { handleAuthRoutes, handleLogRoutes, handleSettingsRoutes } from "../../../shared/auth-route-handlers";
+import { handleChannelRoutes } from "../../../shared/channel-route-handlers";
 import { WEB_PORT, OPENCODE_PORT, WEBHOOK_PORT } from "../../../shared/ports";
 
 // ============================================================================
@@ -149,6 +150,11 @@ class ProductionServer {
   private server: http.Server | null = null;
   private port: number = WEB_PORT;
   private staticRoot: string = "";
+  private channelManager: Parameters<typeof handleChannelRoutes>[4] | null = null;
+
+  setChannelManager(channelManager: Parameters<typeof handleChannelRoutes>[4]): void {
+    this.channelManager = channelManager;
+  }
 
   getPort(): number {
     return this.port;
@@ -253,6 +259,27 @@ class ProductionServer {
       return;
     }
 
+    if (pathname === "/api/channels" || pathname.startsWith("/api/channels/")) {
+      if (!this.channelManager) {
+        sendJson(res, { error: "Channel manager unavailable" }, 503);
+        return;
+      }
+      const handled = await handleChannelRoutes(req, res, pathname, deviceStore, this.channelManager);
+      if (handled) return;
+      sendJson(res, { error: "Not found" }, 404);
+      return;
+    }
+
+    if (pathname === "/api/settings/default-engine") {
+      const handled = await handleSettingsRoutes(req, res, pathname, deviceStore, {
+        getDefaultEngine: () => getDefaultEngineFromSettings(),
+        saveDefaultEngine: (defaultEngine) => saveSettings({ defaultEngine }),
+      });
+      if (handled) return;
+      sendJson(res, { error: "Not found" }, 404);
+      return;
+    }
+
     // ========================================================================
     // Settings API Routes (auth-required)
     // ========================================================================
@@ -273,6 +300,15 @@ class ProductionServer {
       const os = await import("os");
       const localIp = getLocalIp(os);
       sendJson(res, { localIp, port: this.port });
+      return;
+    }
+
+    if (pathname === "/api/system/capabilities" && req.method === "GET") {
+      const serverMode = process.env.CODEMUX_SERVER_MODE === "1";
+      sendJson(res, {
+        serverMode,
+        canAddProject: serverMode,
+      });
       return;
     }
 

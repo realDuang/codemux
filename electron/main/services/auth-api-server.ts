@@ -3,6 +3,7 @@ import { deviceStore } from "./device-store";
 import { authLog, getLogFilePath, getFileLogLevel, setFileLogLevel, loadSettings, saveSettings } from "./logger";
 import { sendJson } from "../../../shared/http-utils";
 import { handleAuthRoutes, handleLogRoutes, handleSettingsRoutes } from "../../../shared/auth-route-handlers";
+import { handleChannelRoutes } from "../../../shared/channel-route-handlers";
 import { AUTH_API_PORT } from "../../../shared/ports";
 
 // ============================================================================
@@ -14,6 +15,11 @@ import { AUTH_API_PORT } from "../../../shared/ports";
 
 class AuthApiServer {
   private server: http.Server | null = null;
+  private channelManager: Parameters<typeof handleChannelRoutes>[4] | null = null;
+
+  setChannelManager(channelManager: Parameters<typeof handleChannelRoutes>[4]): void {
+    this.channelManager = channelManager;
+  }
 
   start(): Promise<void> {
     return new Promise((resolve, reject) => {
@@ -74,6 +80,17 @@ class AuthApiServer {
       includeDeviceInResponse: false,
     });
     if (handled) return;
+
+    if (this.channelManager) {
+      const channelHandled = await handleChannelRoutes(req, res, pathname, deviceStore, this.channelManager);
+      if (channelHandled) return;
+    }
+
+    const settingsHandled = await handleSettingsRoutes(req, res, pathname, deviceStore, {
+      getDefaultEngine: () => getDefaultEngineFromSettings(),
+      saveDefaultEngine: (defaultEngine) => saveSettings({ defaultEngine }),
+    });
+    if (settingsHandled) return;
 
     // Log API routes (localhost only)
     const logHandled = await handleLogRoutes(req, res, pathname, {

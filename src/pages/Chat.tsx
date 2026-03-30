@@ -875,15 +875,15 @@ export default function Chat() {
   };
 
   // New session
-  const handleNewSession = async (directory?: string, explicitEngineType?: EngineType) => {
-    logger.debug("[NewSession] Creating new session in directory:", directory, "engineType:", explicitEngineType);
+  const handleNewSession = async (directory?: string, explicitEngineType?: EngineType, worktreeId?: string) => {
+    logger.debug("[NewSession] Creating new session in directory:", directory, "engineType:", explicitEngineType, "worktreeId:", worktreeId);
 
     try {
       const defaultProject = sessionStore.projects.find(p => p.isDefault);
       const dir = directory || defaultProject?.directory || sessionStore.projects[0]?.directory || ".";
       // Use explicitly-passed engineType when available, otherwise use global default engine.
       const engineType = explicitEngineType || getDefaultEngineType();
-      const newSession = await gateway.createSession(engineType, dir);
+      const newSession = await gateway.createSession(engineType, dir, worktreeId);
       logger.debug("[NewSession] Created:", newSession);
 
       // Match project by directory (projects are engine-agnostic now).

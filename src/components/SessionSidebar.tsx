@@ -1,4 +1,4 @@
-import { For, Show, Switch, Match, createSignal, createMemo, createEffect } from "solid-js";
+import { For, Show, Switch, Match, createSignal, createMemo, createEffect, lazy, Suspense } from "solid-js";
 import { SessionInfo, sessionStore, setSessionStore, getProjectName } from "../stores/session";
 import { useI18n, formatMessage } from "../lib/i18n";
 import { isDefaultTitle } from "../lib/session-utils";
@@ -8,6 +8,8 @@ import { configStore, isEngineEnabled, getDefaultEngineType, setDefaultNewSessio
 import { getEngineBadge } from "./share/common";
 import { ScheduledTaskSection } from "./ScheduledTaskSection";
 import { getSetting } from "../lib/settings";
+import WorktreeModal from "./WorktreeModal";
+import { gateway } from "../lib/gateway-api";
 
 import { isElectron } from "../lib/platform";
 import { systemAPI } from "../lib/electron-api";
@@ -56,6 +58,7 @@ export function SessionSidebar(props: SessionSidebarProps) {
   const [editingTitle, setEditingTitle] = createSignal("");
   const [pendingDeleteId, setPendingDeleteId] = createSignal<string | null>(null);
   const [searchQuery, setSearchQuery] = createSignal("");
+  const [worktreeModalDir, setWorktreeModalDir] = createSignal<string | null>(null);
 
   const StatusIndicator = (p: { status: SessionActivityStatus }) => {
     return (
@@ -257,6 +260,20 @@ export function SessionSidebar(props: SessionSidebarProps) {
     return { local, worktreeGroups: wtGroups };
   };
 
+  // Load worktrees for all projects when feature is enabled
+  createEffect(() => {
+    if (!worktreeEnabled()) return;
+    for (const group of projectGroups()) {
+      const dir = group.project?.directory;
+      if (!dir || sessionStore.worktrees[dir]) continue;
+      gateway.listWorktrees(dir).then((wts) => {
+        if (wts.length > 0) {
+          setSessionStore("worktrees", dir, wts);
+        }
+      }).catch(() => {/* ignore — project may not be a git repo */});
+    }
+  });
+
   // Filtered active sessions (respects search query)
   const filteredActiveSessions = createMemo((): SessionInfo[] => {
     const sessions = props.activeSessions ?? [];
@@ -344,6 +361,7 @@ export function SessionSidebar(props: SessionSidebarProps) {
   };
 
   return (
+    <>
     <div class="w-full bg-gray-50 dark:bg-slate-950 border-r border-gray-200 dark:border-slate-800 flex flex-col h-full overflow-hidden">
       {/* Search Box */}
       <Show when={!props.collapsed && (projectGroups().length > 0 || filteredDefaultWorkspaceGroup() !== null)}>
@@ -1124,6 +1142,24 @@ export function SessionSidebar(props: SessionSidebarProps) {
                           <path d="M12 5v14" />
                         </svg>
                       </button>
+                      {/* Manage worktrees (only when feature enabled) */}
+                      <Show when={worktreeEnabled() && project.project?.directory}>
+                        <button
+                          class="p-1 text-gray-400 hover:text-emerald-600 dark:hover:text-emerald-400 rounded transition-all"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setWorktreeModalDir(getProjectDirectory(project.project!) || null);
+                          }}
+                          title={t().worktree.title}
+                        >
+                          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M6 3v12" />
+                            <path d="M18 9a3 3 0 0 0-3-3h-4a3 3 0 0 0-3 3" />
+                            <circle cx="18" cy="18" r="3" />
+                            <path d="M6 21v-6" />
+                          </svg>
+                        </button>
+                      </Show>
                       {/* Hide project */}
                       <button
                         class="p-1 text-gray-400 hover:text-red-500 dark:hover:text-red-400 rounded transition-all"
@@ -1536,5 +1572,21 @@ export function SessionSidebar(props: SessionSidebarProps) {
         </div>
       </Show>
     </div>
+
+    {/* Worktree management modal */}
+    <Show when={worktreeModalDir()}>
+      {(dir) => (
+        <WorktreeModal
+          projectDirectory={dir()}
+          onClose={() => setWorktreeModalDir(null)}
+          onWorktreeCreated={(wt) => {
+            // Refresh worktrees in store
+            const existing = sessionStore.worktrees[dir()] || [];
+            setSessionStore("worktrees", dir(), [...existing, wt]);
+          }}
+        />
+      )}
+    </Show>
+    </>
   );
 }

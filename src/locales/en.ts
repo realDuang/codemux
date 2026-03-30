@@ -578,7 +578,19 @@ export interface LocaleDict {
     enabled: string;
     enabledDesc: string;
     creating: string;
+    merging: string;
     namePlaceholder: string;
+    mergeMode: string;
+    modeMergeDesc: string;
+    modeSquashDesc: string;
+    modeRebaseDesc: string;
+    mergeMessage: string;
+    deleteConfirmTitle: string;
+    deleteWarningTitle: string;
+    deleteImpactFiles: string;
+    deleteImpactBranch: string;
+    deleteImpactSessions: string;
+    deleteIrreversible: string;
   };
 }
 
@@ -1158,6 +1170,18 @@ export const en: LocaleDict = {
     enabled: "Enable Worktree",
     enabledDesc: "Allow creating isolated git worktrees per project for parallel development",
     creating: "Creating worktree...",
+    merging: "Merging...",
     namePlaceholder: "Optional name (auto-generated if empty)",
+    mergeMode: "Merge Mode",
+    modeMergeDesc: "Create a merge commit preserving full history",
+    modeSquashDesc: "Combine all commits into one on the target branch",
+    modeRebaseDesc: "Replay commits on top of the target branch",
+    mergeMessage: "Commit Message",
+    deleteConfirmTitle: "Delete worktree \"{name}\"?",
+    deleteWarningTitle: "This action will:",
+    deleteImpactFiles: "Delete the worktree working directory and all local files",
+    deleteImpactBranch: "Delete the associated git branch",
+    deleteImpactSessions: "Remove {count} session(s) linked to this worktree",
+    deleteIrreversible: "This action cannot be undone. Uncommitted changes will be lost.",
   },
 };

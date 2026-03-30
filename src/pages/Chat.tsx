@@ -28,6 +28,8 @@ import { HideProjectModal } from "../components/HideProjectModal";
 import { AddProjectModal } from "../components/AddProjectModal";
 import { ScheduledTaskModal } from "../components/ScheduledTaskModal";
 import WorktreeModal from "../components/WorktreeModal";
+import MergeWorktreeModal from "../components/MergeWorktreeModal";
+import { DeleteWorktreeModal } from "../components/DeleteWorktreeModal";
 import type { UnifiedMessage, UnifiedPart, UnifiedPermission, UnifiedQuestion, UnifiedSession, UnifiedProject, AgentMode, EngineType, SessionActivityStatus, ScheduledTask, ScheduledTaskCreateRequest, ScheduledTaskUpdateRequest } from "../types/unified";
 import { useI18n, formatMessage } from "../lib/i18n";
 import { notify } from "../lib/notifications";
@@ -422,6 +424,8 @@ export default function Chat() {
   const [showTaskModal, setShowTaskModal] = createSignal(false);
   const [editingTask, setEditingTask] = createSignal<ScheduledTask | undefined>();
   const [worktreeModalDir, setWorktreeModalDir] = createSignal<string | null>(null);
+  const [mergeWorktreeInfo, setMergeWorktreeInfo] = createSignal<{ dir: string; name: string; branch: string } | null>(null);
+  const [deleteWorktreeInfo, setDeleteWorktreeInfo] = createSignal<{ dir: string; name: string; branch: string; sessionCount: number } | null>(null);
 
   // WebSocket connection status
   const [wsConnected, setWsConnected] = createSignal(true);
@@ -737,11 +741,11 @@ export default function Chat() {
 
           setSessionStore("projects", allProjects);
 
-          // Filter sessions to valid directories only
+          // Filter sessions to valid directories only (worktree sessions pass through via worktreeId)
           const validDirectories = new Set(allProjects.map(p => p.directory));
           const normDir = (d: string) => d.replaceAll("\\", "/");
           const filteredSessions = allSessions.filter(s =>
-            s.directory && validDirectories.has(normDir(s.directory))
+            s.directory && (validDirectories.has(normDir(s.directory)) || s.worktreeId)
           );
 
           const sessionInfos = filteredSessions.map(s => {
@@ -1007,7 +1011,7 @@ export default function Chat() {
       const validDirectories = new Set(allProjects.map(p => p.directory));
       const normDir = (d: string) => d.replaceAll("\\", "/");
       const filteredSessions = allSessions.filter(s =>
-        s.directory && validDirectories.has(normDir(s.directory))
+        s.directory && (validDirectories.has(normDir(s.directory)) || s.worktreeId)
       );
       // Build index for O(1) project lookup by directory
       const projectIndex = new Map<string, UnifiedProject>();
@@ -1019,6 +1023,8 @@ export default function Chat() {
         return toSessionInfo(s, project?.id);
       });
       setSessionStore("list", sessionInfos);
+      // Clear worktree cache so sidebar effect re-fetches
+      setSessionStore("worktrees", {});
     } catch (error) {
       logger.error("[RefreshSessions] Failed:", error);
     } finally {
@@ -1833,6 +1839,13 @@ export default function Chat() {
               onPinSession={handlePinSession}
               onUnpinSession={handleUnpinSession}
               onManageWorktrees={(dir) => setWorktreeModalDir(dir)}
+              onRemoveWorktree={(dir, name, branch) => {
+                const sessionCount = sessionStore.list.filter((s) => s.worktreeId === name).length;
+                setDeleteWorktreeInfo({ dir, name, branch, sessionCount });
+              }}
+              onMergeWorktree={(dir, name, branch) => {
+                setMergeWorktreeInfo({ dir, name, branch });
+              }}
             />
           </Show>
           <Show when={refreshingSessions()}>
@@ -2141,13 +2154,57 @@ export default function Chat() {
           <WorktreeModal
             projectDirectory={dir()}
             onClose={() => setWorktreeModalDir(null)}
-            onWorktreeCreated={(wt) => {
-              const existing = sessionStore.worktrees[dir()] || [];
-              setSessionStore("worktrees", dir(), [...existing, wt]);
+            onWorktreeCreated={async (wt) => {
+              // Capture dir value before modal closes and accessor dies
+              const projectDir = dir();
+              // Reload worktrees from backend (single source of truth)
+              try {
+                const wts = await gateway.listWorktrees(projectDir);
+                setSessionStore("worktrees", projectDir, wts);
+              } catch {
+                // Fallback: append the created worktree directly
+                const existing = sessionStore.worktrees[projectDir] || [];
+                setSessionStore("worktrees", projectDir, [...existing, wt]);
+              }
             }}
           />
         )}
       </Show>
+
+      <Show when={mergeWorktreeInfo()}>
+        {(info) => (
+          <MergeWorktreeModal
+            projectDirectory={info().dir}
+            worktreeName={info().name}
+            worktreeBranch={info().branch}
+            onClose={() => setMergeWorktreeInfo(null)}
+          />
+        )}
+      </Show>
+
+      <DeleteWorktreeModal
+        isOpen={deleteWorktreeInfo() !== null}
+        worktreeName={deleteWorktreeInfo()?.name || ""}
+        worktreeBranch={deleteWorktreeInfo()?.branch || ""}
+        sessionCount={deleteWorktreeInfo()?.sessionCount || 0}
+        onClose={() => setDeleteWorktreeInfo(null)}
+        onConfirm={async () => {
+          const info = deleteWorktreeInfo();
+          if (!info) return;
+          await gateway.removeWorktree(info.dir, info.name);
+          const removedIds = new Set(
+            sessionStore.list.filter((s) => s.worktreeId === info.name).map((s) => s.id),
+          );
+          if (removedIds.size > 0) {
+            setSessionStore("list", (list) => list.filter((s) => !removedIds.has(s.id)));
+            if (sessionStore.current && removedIds.has(sessionStore.current)) {
+              setSessionStore("current", null);
+            }
+          }
+          const wts = await gateway.listWorktrees(info.dir);
+          setSessionStore("worktrees", info.dir, wts);
+        }}
+      />
     </div>
   );
 }

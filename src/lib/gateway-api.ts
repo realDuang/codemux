@@ -28,6 +28,8 @@ import type {
   ScheduledTaskCreateRequest,
   ScheduledTaskUpdateRequest,
   ScheduledTaskRunResult,
+  UnifiedWorktree,
+  WorktreeMergeResult,
 } from "../types/unified";
 
 // --- Notification callback types ---
@@ -217,8 +219,12 @@ class GatewayAPI {
     return gatewayClient.listSessions(engineType);
   }
 
-  createSession(engineType: EngineType, directory: string): Promise<UnifiedSession> {
-    return gatewayClient.createSession({ engineType, directory });
+  createSession(
+    engineType: EngineType,
+    directory: string,
+    worktreeId?: string,
+  ): Promise<UnifiedSession> {
+    return gatewayClient.createSession({ engineType, directory, worktreeId });
   }
 
   getSession(sessionId: string): Promise<UnifiedSession> {
@@ -403,6 +409,43 @@ class GatewayAPI {
 
   runScheduledTaskNow(id: string): Promise<ScheduledTaskRunResult> {
     return gatewayClient.runScheduledTaskNow(id);
+  }
+
+  // --- Worktree ---
+
+  createWorktree(
+    directory: string,
+    options?: { name?: string; baseBranch?: string },
+  ): Promise<UnifiedWorktree> {
+    return gatewayClient.request("worktree.create", {
+      directory,
+      name: options?.name,
+      baseBranch: options?.baseBranch,
+    });
+  }
+
+  listWorktrees(directory: string): Promise<UnifiedWorktree[]> {
+    return gatewayClient.request("worktree.list", { directory });
+  }
+
+  removeWorktree(directory: string, worktreeName: string): Promise<boolean> {
+    return gatewayClient.request("worktree.remove", { directory, worktreeName });
+  }
+
+  mergeWorktree(
+    directory: string,
+    worktreeName: string,
+    targetBranch?: string,
+  ): Promise<WorktreeMergeResult> {
+    return gatewayClient.request("worktree.merge", {
+      directory,
+      worktreeName,
+      targetBranch,
+    });
+  }
+
+  listBranches(directory: string): Promise<string[]> {
+    return gatewayClient.request("worktree.listBranches", { directory });
   }
 }
 

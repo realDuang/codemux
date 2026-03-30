@@ -27,6 +27,7 @@ import { SessionSidebar } from "../components/SessionSidebar";
 import { HideProjectModal } from "../components/HideProjectModal";
 import { AddProjectModal } from "../components/AddProjectModal";
 import { ScheduledTaskModal } from "../components/ScheduledTaskModal";
+import WorktreeModal from "../components/WorktreeModal";
 import type { UnifiedMessage, UnifiedPart, UnifiedPermission, UnifiedQuestion, UnifiedSession, UnifiedProject, AgentMode, EngineType, SessionActivityStatus, ScheduledTask, ScheduledTaskCreateRequest, ScheduledTaskUpdateRequest } from "../types/unified";
 import { useI18n, formatMessage } from "../lib/i18n";
 import { notify } from "../lib/notifications";
@@ -82,6 +83,7 @@ function toSessionInfo(s: UnifiedSession, projectID?: string): SessionInfo {
     title: s.title || "",
     directory: s.directory || "",
     projectID: projectID ?? s.projectId ?? undefined,
+    worktreeId: s.worktreeId,
     createdAt: new Date(s.time.created).toISOString(),
     updatedAt: new Date(s.time.updated).toISOString(),
   };
@@ -419,6 +421,7 @@ export default function Chat() {
   const [showAddProjectModal, setShowAddProjectModal] = createSignal(false);
   const [showTaskModal, setShowTaskModal] = createSignal(false);
   const [editingTask, setEditingTask] = createSignal<ScheduledTask | undefined>();
+  const [worktreeModalDir, setWorktreeModalDir] = createSignal<string | null>(null);
 
   // WebSocket connection status
   const [wsConnected, setWsConnected] = createSignal(true);
@@ -874,15 +877,15 @@ export default function Chat() {
   };
 
   // New session
-  const handleNewSession = async (directory?: string, explicitEngineType?: EngineType) => {
-    logger.debug("[NewSession] Creating new session in directory:", directory, "engineType:", explicitEngineType);
+  const handleNewSession = async (directory?: string, explicitEngineType?: EngineType, worktreeId?: string) => {
+    logger.debug("[NewSession] Creating new session in directory:", directory, "engineType:", explicitEngineType, "worktreeId:", worktreeId);
 
     try {
       const defaultProject = sessionStore.projects.find(p => p.isDefault);
       const dir = directory || defaultProject?.directory || sessionStore.projects[0]?.directory || ".";
       // Use explicitly-passed engineType when available, otherwise use global default engine.
       const engineType = explicitEngineType || getDefaultEngineType();
-      const newSession = await gateway.createSession(engineType, dir);
+      const newSession = await gateway.createSession(engineType, dir, worktreeId);
       logger.debug("[NewSession] Created:", newSession);
 
       // Match project by directory (projects are engine-agnostic now).
@@ -1700,11 +1703,14 @@ export default function Chat() {
         class="w-full flex-shrink-0 flex items-center px-2 border-b border-gray-200 dark:border-slate-800 bg-gray-50 dark:bg-slate-950 electron-drag-region electron-titlebar-pad-left electron-titlebar-pad-right"
         style={{ height: "var(--electron-title-bar-height, 40px)", "min-height": "var(--electron-title-bar-height, 40px)" }}
       >
-        {/* Left: Logo + Sidebar toggle */}
-        <div class="flex items-center gap-1.5 electron-no-drag flex-shrink-0">
+        {/* Brand: Logo + App name (moves to right on macOS to avoid traffic lights) */}
+        <div class="flex items-center gap-1.5 electron-no-drag flex-shrink-0 titlebar-brand">
           <img src={`${import.meta.env.BASE_URL}assets/logo.png`} alt="CodeMux" class="w-5 h-5 rounded" />
           <span class="text-[13px] font-semibold text-gray-700 dark:text-gray-300 hidden sm:inline mr-0.5">CodeMux</span>
+        </div>
 
+        {/* Left: Sidebar toggles */}
+        <div class="flex items-center gap-1 electron-no-drag flex-shrink-0">
           {/* Mobile sidebar toggle */}
           <button
             onClick={toggleSidebar}
@@ -1826,6 +1832,7 @@ export default function Chat() {
               pinnedSessionIds={pinnedSessions()}
               onPinSession={handlePinSession}
               onUnpinSession={handleUnpinSession}
+              onManageWorktrees={(dir) => setWorktreeModalDir(dir)}
             />
           </Show>
           <Show when={refreshingSessions()}>
@@ -2128,6 +2135,19 @@ export default function Chat() {
         onClose={() => setShowTaskModal(false)}
         onSave={handleCreateOrUpdateTask}
       />
+
+      <Show when={worktreeModalDir()}>
+        {(dir) => (
+          <WorktreeModal
+            projectDirectory={dir()}
+            onClose={() => setWorktreeModalDir(null)}
+            onWorktreeCreated={(wt) => {
+              const existing = sessionStore.worktrees[dir()] || [];
+              setSessionStore("worktrees", dir(), [...existing, wt]);
+            }}
+          />
+        )}
+      </Show>
     </div>
   );
 }

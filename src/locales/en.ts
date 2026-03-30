@@ -559,6 +559,27 @@ export interface LocaleDict {
     fieldRequired: string;
     daysRequired: string;
   };
+  worktree: {
+    title: string;
+    local: string;
+    sandbox: string;
+    create: string;
+    remove: string;
+    merge: string;
+    noSessions: string;
+    confirmDelete: string;
+    mergeSuccess: string;
+    mergeConflict: string;
+    mergeFailed: string;
+    baseBranch: string;
+    targetBranch: string;
+    name: string;
+    branch: string;
+    enabled: string;
+    enabledDesc: string;
+    creating: string;
+    namePlaceholder: string;
+  };
 }
 
 export const en: LocaleDict = {
@@ -1117,5 +1138,26 @@ export const en: LocaleDict = {
     lessThanOneMinute: "< 1m",
     fieldRequired: "{field} is required",
     daysRequired: "Select at least one day",
+  },
+  worktree: {
+    title: "Worktree",
+    local: "Local",
+    sandbox: "Sandbox",
+    create: "Create Worktree",
+    remove: "Remove Worktree",
+    merge: "Merge Worktree",
+    noSessions: "No sessions",
+    confirmDelete: "Are you sure you want to remove worktree \"{name}\"? This will delete the working directory and branch.",
+    mergeSuccess: "Successfully merged {branch} into {target}",
+    mergeConflict: "Merge conflict in {count} file(s)",
+    mergeFailed: "Merge failed: {message}",
+    baseBranch: "Base Branch",
+    targetBranch: "Target Branch",
+    name: "Name",
+    branch: "Branch",
+    enabled: "Enable Worktree",
+    enabledDesc: "Allow creating isolated git worktrees per project for parallel development",
+    creating: "Creating worktree...",
+    namePlaceholder: "Optional name (auto-generated if empty)",
   },
 };

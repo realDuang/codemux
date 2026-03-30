@@ -120,6 +120,8 @@ export interface ConversationMeta {
   engineMeta?: Record<string, unknown>;
   /** True if this conversation was imported from engine history (don't delete engine data) */
   imported?: boolean;
+  /** Worktree name if this session belongs to a worktree */
+  worktreeId?: string;
 }
 
 export interface ConversationMessage {
@@ -170,6 +172,8 @@ export interface UnifiedSession {
   parentId?: string;
   /** Resolved project ID — populated by ConversationStore/EngineManager from directory */
   projectId?: string;
+  /** Worktree name if this session belongs to a worktree */
+  worktreeId?: string;
   time: {
     created: number;
     updated: number;
@@ -442,6 +446,24 @@ export interface UnifiedProject {
   isDefault?: boolean;
 }
 
+// --- Worktree ---
+
+export interface UnifiedWorktree {
+  name: string;
+  branch: string;
+  directory: string;
+  baseBranch: string;
+  projectId: string;
+  createdAt: number;
+  status: "pending" | "ready" | "error";
+}
+
+export interface WorktreeMergeResult {
+  success: boolean;
+  conflicts?: string[];
+  message: string;
+}
+
 // ============================================================================
 // WebSocket Gateway Protocol Types
 // ============================================================================
@@ -549,6 +571,13 @@ export const GatewayRequestType = {
   SCHEDULED_TASK_UPDATE: "scheduledTask.update",
   SCHEDULED_TASK_DELETE: "scheduledTask.delete",
   SCHEDULED_TASK_RUN_NOW: "scheduledTask.runNow",
+
+  // Worktree
+  WORKTREE_CREATE: "worktree.create",
+  WORKTREE_LIST: "worktree.list",
+  WORKTREE_REMOVE: "worktree.remove",
+  WORKTREE_MERGE: "worktree.merge",
+  WORKTREE_LIST_BRANCHES: "worktree.listBranches",
 } as const;
 
 // --- Notification type constants ---
@@ -573,6 +602,11 @@ export const GatewayNotificationType = {
   SCHEDULED_TASK_FIRED: "scheduledTask.fired",
   SCHEDULED_TASK_FAILED: "scheduledTask.failed",
   SCHEDULED_TASKS_CHANGED: "scheduledTasks.changed",
+
+  // Worktree
+  WORKTREE_CREATED: "worktree.created",
+  WORKTREE_REMOVED: "worktree.removed",
+  WORKTREE_MERGE_RESULT: "worktree.mergeResult",
 } as const;
 
 // --- Request / Response payload types ---
@@ -580,6 +614,7 @@ export const GatewayNotificationType = {
 export interface SessionCreateRequest {
   engineType: EngineType;
   directory: string;
+  worktreeId?: string;
 }
 
 export interface MessageSendRequest {
@@ -630,6 +665,33 @@ export interface ModelSetRequest {
 export interface ModeSetRequest {
   sessionId: string;
   modeId: string;
+}
+
+// --- Worktree Request types ---
+
+export interface WorktreeCreateRequest {
+  directory: string;
+  name?: string;
+  baseBranch?: string;
+}
+
+export interface WorktreeListRequest {
+  directory: string;
+}
+
+export interface WorktreeRemoveRequest {
+  directory: string;
+  worktreeName: string;
+}
+
+export interface WorktreeMergeRequest {
+  directory: string;
+  worktreeName: string;
+  targetBranch?: string;
+}
+
+export interface WorktreeListBranchesRequest {
+  directory: string;
 }
 
 // --- Session Import types ---

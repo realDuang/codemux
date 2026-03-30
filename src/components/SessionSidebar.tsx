@@ -3,10 +3,12 @@ import { SessionInfo, sessionStore, setSessionStore, getProjectName } from "../s
 import { useI18n, formatMessage } from "../lib/i18n";
 import { isDefaultTitle } from "../lib/session-utils";
 import { filterSessionsBySearch } from "../lib/active-sessions";
-import type { UnifiedProject, EngineType, SessionActivityStatus, ScheduledTask } from "../types/unified";
+import type { UnifiedProject, UnifiedWorktree, EngineType, SessionActivityStatus, ScheduledTask } from "../types/unified";
 import { configStore, isEngineEnabled, getDefaultEngineType, setDefaultNewSessionEngine } from "../stores/config";
 import { getEngineBadge } from "./share/common";
 import { ScheduledTaskSection } from "./ScheduledTaskSection";
+import { getSetting } from "../lib/settings";
+import { gateway } from "../lib/gateway-api";
 
 import { isElectron } from "../lib/platform";
 import { systemAPI } from "../lib/electron-api";
@@ -17,7 +19,7 @@ interface SessionSidebarProps {
   projects: UnifiedProject[];
   getSessionStatus: (sessionId: string) => SessionActivityStatus;
   onSelectSession: (sessionId: string) => void;
-  onNewSession: (directory?: string, engineType?: EngineType) => void;
+  onNewSession: (directory?: string, engineType?: EngineType, worktreeId?: string) => void;
   onDeleteSession: (sessionId: string) => void;
   onRenameSession: (sessionId: string, newTitle: string) => void;
   onDeleteProjectSessions: (projectID: string, projectName: string, sessionCount: number) => void;
@@ -38,6 +40,8 @@ interface SessionSidebarProps {
   pinnedSessionIds?: Set<string>;
   onPinSession?: (sessionId: string) => void;
   onUnpinSession?: (sessionId: string) => void;
+  // Worktree
+  onManageWorktrees?: (projectDirectory: string) => void;
 }
 
 // Project grouping data structure
@@ -216,6 +220,59 @@ export function SessionSidebar(props: SessionSidebarProps) {
   });
 
   const isSearching = () => searchQuery().trim().length > 0;
+
+  const worktreeEnabled = createMemo(() => getSetting<boolean>("worktreeEnabled") ?? false);
+
+  const getProjectWorktrees = (projectDir: string): UnifiedWorktree[] => {
+    if (!worktreeEnabled()) return [];
+    return sessionStore.worktrees[projectDir] || [];
+  };
+
+  const isWorktreeExpanded = (key: string): boolean => {
+    return sessionStore.worktreeExpanded[key] === true;
+  };
+
+  const toggleWorktreeExpanded = (key: string) => {
+    setSessionStore("worktreeExpanded", key, !isWorktreeExpanded(key));
+  };
+
+  /** Split sessions by worktree for a project group */
+  const getWorktreeSessionGroups = (
+    projectDir: string,
+    sessions: SessionInfo[],
+  ): { local: SessionInfo[]; worktreeGroups: { worktree: UnifiedWorktree; sessions: SessionInfo[] }[] } => {
+    const worktrees = getProjectWorktrees(projectDir);
+    if (worktrees.length === 0) {
+      return { local: sessions, worktreeGroups: [] };
+    }
+
+    // Filter out worktree sessions when feature is disabled
+    if (!worktreeEnabled()) {
+      return { local: sessions.filter((s) => !s.worktreeId), worktreeGroups: [] };
+    }
+
+    const local = sessions.filter((s) => !s.worktreeId);
+    const wtGroups = worktrees.map((wt) => ({
+      worktree: wt,
+      sessions: sessions.filter((s) => s.worktreeId === wt.name),
+    }));
+
+    return { local, worktreeGroups: wtGroups };
+  };
+
+  // Load worktrees for all projects when feature is enabled
+  createEffect(() => {
+    if (!worktreeEnabled()) return;
+    for (const group of projectGroups()) {
+      const dir = group.project?.directory;
+      if (!dir || sessionStore.worktrees[dir]) continue;
+      gateway.listWorktrees(dir).then((wts) => {
+        if (wts.length > 0) {
+          setSessionStore("worktrees", dir, wts);
+        }
+      }).catch(() => {/* ignore — project may not be a git repo */});
+    }
+  });
 
   // Filtered active sessions (respects search query)
   const filteredActiveSessions = createMemo((): SessionInfo[] => {
@@ -1084,6 +1141,25 @@ export function SessionSidebar(props: SessionSidebarProps) {
                           <path d="M12 5v14" />
                         </svg>
                       </button>
+                      {/* Manage worktrees (only when feature enabled) */}
+                      <Show when={worktreeEnabled() && project.project?.directory}>
+                        <button
+                          class="p-1 text-gray-400 hover:text-emerald-600 dark:hover:text-emerald-400 rounded transition-all"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            const dir = getProjectDirectory(project.project!);
+                            if (dir) props.onManageWorktrees?.(dir);
+                          }}
+                          title={t().worktree.title}
+                        >
+                          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M6 3v12" />
+                            <path d="M18 9a3 3 0 0 0-3-3h-4a3 3 0 0 0-3 3" />
+                            <circle cx="18" cy="18" r="3" />
+                            <path d="M6 21v-6" />
+                          </svg>
+                        </button>
+                      </Show>
                       {/* Hide project */}
                       <button
                         class="p-1 text-gray-400 hover:text-red-500 dark:hover:text-red-400 rounded transition-all"
@@ -1116,7 +1192,13 @@ export function SessionSidebar(props: SessionSidebarProps) {
                   <div class="collapsible-grid" data-expanded={isExpanded() ? "true" : "false"}>
                     <div class="collapsible-content">
                       <div class="ml-4 mt-1">
-                      <For each={project.sessions}>
+                      {(() => {
+                        const dir = project.project?.directory || "";
+                        const { local, worktreeGroups } = getWorktreeSessionGroups(dir, project.sessions);
+                        const hasWorktrees = worktreeGroups.length > 0;
+
+                        const renderSessionList = (sessions: SessionInfo[]) => (
+                          <For each={sessions}>
                         {(session) => {
                           const isActive = () =>
                             session.id === props.currentSessionId;
@@ -1343,6 +1425,108 @@ export function SessionSidebar(props: SessionSidebarProps) {
                           );
                         }}
                       </For>
+                        );
+
+                        // No worktrees → flat session list
+                        if (!hasWorktrees) {
+                          return renderSessionList(project.sessions);
+                        }
+
+                        // Has worktrees → grouped rendering
+                        return (
+                          <>
+                            {/* Local sessions */}
+                            <Show when={local.length > 0}>
+                              <div class="mb-1.5">
+                                <div
+                                  class="flex items-center gap-1.5 px-2 py-1 cursor-pointer hover:bg-gray-100 dark:hover:bg-slate-900 rounded-md transition-colors"
+                                  onClick={() => toggleWorktreeExpanded(`${dir}::local`)}
+                                >
+                                  <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24"
+                                    fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                                    class={`text-gray-400 transition-transform duration-200 ${isWorktreeExpanded(`${dir}::local`) || isSearching() ? "rotate-90" : ""}`}
+                                  >
+                                    <path d="m9 18 6-6-6-6" />
+                                  </svg>
+                                  <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24"
+                                    fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                                    class="text-gray-400 dark:text-gray-500"
+                                  >
+                                    <circle cx="12" cy="12" r="10" />
+                                    <line x1="2" x2="22" y1="12" y2="12" />
+                                    <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
+                                  </svg>
+                                  <span class="text-xs font-medium text-gray-500 dark:text-gray-400">
+                                    {t().worktree?.local || "Local"}
+                                  </span>
+                                  <span class="text-[10px] text-gray-400 dark:text-gray-500 ml-auto">{local.length}</span>
+                                </div>
+                                <Show when={isWorktreeExpanded(`${dir}::local`) || isSearching()}>
+                                  <div class="ml-2">{renderSessionList(local)}</div>
+                                </Show>
+                              </div>
+                            </Show>
+                            {/* Worktree sessions */}
+                            <For each={worktreeGroups}>
+                              {(wtGroup) => (
+                                <div class="mb-1.5">
+                                  <div
+                                    class="group flex items-center gap-1.5 px-2 py-1 cursor-pointer hover:bg-gray-100 dark:hover:bg-slate-900 rounded-md transition-colors"
+                                    onClick={() => toggleWorktreeExpanded(`${dir}::${wtGroup.worktree.name}`)}
+                                  >
+                                    <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24"
+                                      fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                                      class={`text-gray-400 transition-transform duration-200 ${isWorktreeExpanded(`${dir}::${wtGroup.worktree.name}`) || isSearching() ? "rotate-90" : ""}`}
+                                    >
+                                      <path d="m9 18 6-6-6-6" />
+                                    </svg>
+                                    <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24"
+                                      fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                                      class="text-emerald-500 dark:text-emerald-400"
+                                    >
+                                      <path d="M6 3v12" />
+                                      <path d="M18 9a3 3 0 0 0-3-3h-4a3 3 0 0 0-3 3" />
+                                      <circle cx="18" cy="18" r="3" />
+                                      <path d="M6 21v-6" />
+                                    </svg>
+                                    <span class="text-xs font-medium text-gray-600 dark:text-gray-300 truncate" title={wtGroup.worktree.branch}>
+                                      {wtGroup.worktree.name}
+                                    </span>
+                                    <span class="text-[10px] text-gray-400 dark:text-gray-500 ml-auto flex items-center gap-1">
+                                      {wtGroup.sessions.length}
+                                      {/* New session button on hover */}
+                                      <button
+                                        class="opacity-0 group-hover:opacity-100 p-0.5 text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 rounded transition-all"
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          props.onNewSession(dir, undefined, wtGroup.worktree.name);
+                                        }}
+                                        title={t().sidebar?.newSession || "New session"}
+                                      >
+                                        <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24"
+                                          fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                          <path d="M5 12h14" /><path d="M12 5v14" />
+                                        </svg>
+                                      </button>
+                                    </span>
+                                  </div>
+                                  <Show when={isWorktreeExpanded(`${dir}::${wtGroup.worktree.name}`) || isSearching()}>
+                                    <div class="ml-2">
+                                      <Show when={wtGroup.sessions.length > 0} fallback={
+                                        <div class="px-3 py-2 text-xs text-gray-400 dark:text-gray-500 italic">
+                                          {t().worktree?.noSessions || "No sessions"}
+                                        </div>
+                                      }>
+                                        {renderSessionList(wtGroup.sessions)}
+                                      </Show>
+                                    </div>
+                                  </Show>
+                                </div>
+                              )}
+                            </For>
+                          </>
+                        );
+                      })()}
                     </div>
                     </div>
                   </div>

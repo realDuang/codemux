@@ -176,9 +176,11 @@ export function createAuthProxyPlugin(options: AuthProxyPluginOptions = {}): Plu
         }
 
         const serverMode = process.env.CODEMUX_SERVER_MODE === "1";
+        const clientIp = getClientIp(req);
+        const isLocal = isLocalhost(clientIp);
         sendJson(res, {
           serverMode,
-          canAddProject: serverMode,
+          canAddProject: serverMode || isLocal,
         });
       });
 

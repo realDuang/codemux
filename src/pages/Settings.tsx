@@ -59,6 +59,17 @@ export default function Settings() {
     setScheduledTaskStore("enabled", newValue);
   };
 
+  // Worktree toggle
+  const [worktreeEnabled, setWorktreeEnabledSignal] = createSignal(
+    getSetting<boolean>("worktreeEnabled") ?? false,
+  );
+
+  const handleWorktreeToggle = () => {
+    const newValue = !worktreeEnabled();
+    setWorktreeEnabledSignal(newValue);
+    saveSetting("worktreeEnabled", newValue);
+  };
+
   const logLevels = ["error", "warn", "info", "verbose", "debug", "silly"];
 
   onMount(async () => {
@@ -212,10 +223,11 @@ export default function Settings() {
         class="w-full flex-shrink-0 flex items-center px-2 border-b border-gray-200 dark:border-slate-800 bg-gray-50 dark:bg-slate-950 electron-drag-region electron-titlebar-pad-left electron-titlebar-pad-right"
         style={{ height: "var(--electron-title-bar-height, 40px)", "min-height": "var(--electron-title-bar-height, 40px)" }}
       >
-        <div class="flex items-center gap-2 electron-no-drag flex-shrink-0">
+        <div class="flex items-center gap-2 electron-no-drag flex-shrink-0 titlebar-brand">
           <img src={`${import.meta.env.BASE_URL}assets/logo.png`} alt="CodeMux" class="w-5 h-5 rounded" />
           <span class="text-[13px] font-semibold text-gray-700 dark:text-gray-300 hidden sm:inline">CodeMux</span>
-          <span class="text-gray-300 dark:text-gray-600 hidden sm:inline">|</span>
+        </div>
+        <div class="flex items-center gap-2 electron-no-drag flex-shrink-0">
           <button
             onClick={() => navigate("/chat")}
             class="p-1 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-200 dark:hover:bg-slate-700 rounded transition-colors"
@@ -635,7 +647,7 @@ export default function Settings() {
                   </div>
                 </div>
                 {/* Scheduled Tasks toggle */}
-                <div class="p-4 sm:p-6 flex items-center justify-between gap-4">
+                <div class="p-4 sm:p-6 flex items-center justify-between gap-4 border-b border-gray-200 dark:border-slate-700">
                   <div>
                     <h3 class="text-base font-medium text-gray-900 dark:text-white">
                       {t().settings.scheduledTasksEnabled}
@@ -657,6 +669,34 @@ export default function Settings() {
                       <span
                         class={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
                           scheduledTasksEnabled() ? "translate-x-6" : "translate-x-1"
+                        }`}
+                      />
+                    </button>
+                  </div>
+                </div>
+                {/* Worktree toggle */}
+                <div class="p-4 sm:p-6 flex items-center justify-between gap-4">
+                  <div>
+                    <h3 class="text-base font-medium text-gray-900 dark:text-white">
+                      {t().worktree.enabled}
+                    </h3>
+                    <p class="text-sm text-gray-500 dark:text-gray-400 mt-1">
+                      {t().worktree.enabledDesc}
+                    </p>
+                  </div>
+                  <div class="flex-shrink-0">
+                    <button
+                      onClick={handleWorktreeToggle}
+                      class={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                        worktreeEnabled() ? "bg-blue-600" : "bg-gray-300 dark:bg-slate-600"
+                      }`}
+                      role="switch"
+                      aria-checked={worktreeEnabled()}
+                      aria-label={t().worktree.enabled}
+                    >
+                      <span
+                        class={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                          worktreeEnabled() ? "translate-x-6" : "translate-x-1"
                         }`}
                       />
                     </button>
@@ -793,6 +833,7 @@ export default function Settings() {
                   title: s.title || "",
                   directory: s.directory || "",
                   projectID: s.projectId ?? projectIndex.get(normDir(s.directory))?.id,
+                  worktreeId: s.worktreeId,
                   createdAt: new Date(s.time.created).toISOString(),
                   updatedAt: new Date(s.time.updated).toISOString(),
                 }));

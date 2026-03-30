@@ -82,6 +82,7 @@ function toSessionInfo(s: UnifiedSession, projectID?: string): SessionInfo {
     title: s.title || "",
     directory: s.directory || "",
     projectID: projectID ?? s.projectId ?? undefined,
+    worktreeId: s.worktreeId,
     createdAt: new Date(s.time.created).toISOString(),
     updatedAt: new Date(s.time.updated).toISOString(),
   };
@@ -1700,11 +1701,14 @@ export default function Chat() {
         class="w-full flex-shrink-0 flex items-center px-2 border-b border-gray-200 dark:border-slate-800 bg-gray-50 dark:bg-slate-950 electron-drag-region electron-titlebar-pad-left electron-titlebar-pad-right"
         style={{ height: "var(--electron-title-bar-height, 40px)", "min-height": "var(--electron-title-bar-height, 40px)" }}
       >
-        {/* Left: Logo + Sidebar toggle */}
-        <div class="flex items-center gap-1.5 electron-no-drag flex-shrink-0">
+        {/* Brand: Logo + App name (moves to right on macOS to avoid traffic lights) */}
+        <div class="flex items-center gap-1.5 electron-no-drag flex-shrink-0 titlebar-brand">
           <img src={`${import.meta.env.BASE_URL}assets/logo.png`} alt="CodeMux" class="w-5 h-5 rounded" />
           <span class="text-[13px] font-semibold text-gray-700 dark:text-gray-300 hidden sm:inline mr-0.5">CodeMux</span>
+        </div>
 
+        {/* Left: Sidebar toggles */}
+        <div class="flex items-center gap-1 electron-no-drag flex-shrink-0">
           {/* Mobile sidebar toggle */}
           <button
             onClick={toggleSidebar}

@@ -42,6 +42,7 @@ function convToSession(conv: ConversationMeta): UnifiedSession {
     engineType: conv.engineType,
     directory: normalizeDir(conv.directory),
     title: conv.title,
+    worktreeId: conv.worktreeId,
     time: {
       created: conv.createdAt,
       updated: conv.updatedAt,
@@ -673,9 +674,26 @@ export class EngineManager extends EventEmitter {
   async createSession(
     engineType: EngineType,
     directory: string,
+    worktreeId?: string,
   ): Promise<UnifiedSession> {
     this.getAdapterOrThrow(engineType); // Validate engine exists
-    const conv = conversationStore.create({ engineType, directory });
+
+    // If worktreeId is specified, resolve worktree directory
+    let sessionDir = directory;
+    if (worktreeId) {
+      const { worktreeManager } = await import("../services/worktree-manager");
+      const projectId = await worktreeManager.resolveProjectId(directory);
+      const wt = worktreeManager.getWorktreeByName(projectId, worktreeId);
+      if (wt) {
+        sessionDir = wt.directory;
+      }
+    }
+
+    const conv = conversationStore.create({
+      engineType,
+      directory: sessionDir,
+      worktreeId,
+    });
     this.sessionEngineMap.set(conv.id, engineType);
     const session = convToSession(conv);
     // Broadcast to all connected clients (e.g., UI) so session lists update in real-time

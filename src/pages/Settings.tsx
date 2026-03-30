@@ -826,7 +826,7 @@ export default function Settings() {
               const normDir = (d: string) => d.replaceAll("\\", "/");
               const projectIndex = new Map(allProjects.map(p => [p.directory, p]));
               const infos = allSessions
-                .filter(s => s.directory && validDirs.has(normDir(s.directory)))
+                .filter(s => s.directory && (validDirs.has(normDir(s.directory)) || s.worktreeId))
                 .map((s: UnifiedSession) => ({
                   id: s.id,
                   engineType: s.engineType,

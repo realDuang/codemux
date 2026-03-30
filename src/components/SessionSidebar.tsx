@@ -42,6 +42,8 @@ interface SessionSidebarProps {
   onUnpinSession?: (sessionId: string) => void;
   // Worktree
   onManageWorktrees?: (projectDirectory: string) => void;
+  onRemoveWorktree?: (projectDirectory: string, worktreeName: string, worktreeBranch: string) => void;
+  onMergeWorktree?: (projectDirectory: string, worktreeName: string, worktreeBranch: string) => void;
 }
 
 // Project grouping data structure
@@ -127,7 +129,8 @@ export function SessionSidebar(props: SessionSidebarProps) {
     if (!defaultProject) return null;
 
     const sessions = props.sessions.filter(
-      (s) => isEngineEnabled(s.engineType) && s.projectID === defaultProject.id,
+      (s) => isEngineEnabled(s.engineType) && s.projectID === defaultProject.id
+        && (!s.worktreeId || worktreeEnabled()),
     );
 
     return {
@@ -152,7 +155,9 @@ export function SessionSidebar(props: SessionSidebarProps) {
       groups.set(project.id, []);
     }
 
-    const rootSessions = props.sessions.filter(s => isEngineEnabled(s.engineType));
+    const rootSessions = props.sessions.filter(s =>
+      isEngineEnabled(s.engineType) && (!s.worktreeId || worktreeEnabled()),
+    );
 
     for (const session of rootSessions) {
       const projectID = session.projectID || "";
@@ -261,17 +266,25 @@ export function SessionSidebar(props: SessionSidebarProps) {
   };
 
   // Load worktrees for all projects when feature is enabled
-  createEffect(() => {
+  const refreshWorktrees = async () => {
     if (!worktreeEnabled()) return;
     for (const group of projectGroups()) {
       const dir = group.project?.directory;
-      if (!dir || sessionStore.worktrees[dir]) continue;
-      gateway.listWorktrees(dir).then((wts) => {
-        if (wts.length > 0) {
-          setSessionStore("worktrees", dir, wts);
-        }
-      }).catch(() => {/* ignore — project may not be a git repo */});
+      if (!dir) continue;
+      try {
+        const wts = await gateway.listWorktrees(dir);
+        setSessionStore("worktrees", dir, wts);
+      } catch {/* ignore — project may not be a git repo */}
     }
+  };
+
+  // Initial load + re-load when projects change
+  createEffect(() => {
+    if (!worktreeEnabled()) return;
+    // Track projectGroups to re-run when projects change
+    const groups = projectGroups();
+    if (groups.length === 0) return;
+    refreshWorktrees();
   });
 
   // Filtered active sessions (respects search query)
@@ -1064,9 +1077,7 @@ export function SessionSidebar(props: SessionSidebarProps) {
                 <div class="mb-2">
                   {/* Project Header */}
                   <div
-                    class="group flex items-center justify-between px-2 py-1.5 rounded-md cursor-pointer hover:bg-gray-100 dark:hover:bg-slate-900 transition-colors"
-                    onMouseEnter={() => setHoveredProject(project.projectID)}
-                    onMouseLeave={() => setHoveredProject(null)}
+                    class="group relative flex items-center px-2 py-1.5 rounded-md cursor-pointer hover:bg-gray-100 dark:hover:bg-slate-900 transition-colors"
                     onClick={() => toggleProjectExpanded(project.projectID)}
                     title={project.project?.directory || project.sessions[0]?.directory || ""}
                   >
@@ -1102,6 +1113,9 @@ export function SessionSidebar(props: SessionSidebarProps) {
                           <span class="text-sm font-medium text-gray-700 dark:text-gray-300 truncate">
                             {project.name}
                           </span>
+                          <span class="text-[10px] text-gray-400 dark:text-gray-500 flex-shrink-0">
+                            {project.sessions.length}
+                          </span>
                         </div>
                         <span class="text-[10px] text-gray-400 dark:text-gray-500 truncate block">
                           {project.project?.directory || project.sessions[0]?.directory || ""}
@@ -1109,12 +1123,12 @@ export function SessionSidebar(props: SessionSidebarProps) {
                       </div>
                     </div>
 
-                    {/* Action buttons on hover */}
-                    <div class={`flex items-center gap-0.5 ${isHovered() ? "opacity-100" : "opacity-0"}`}>
+                    {/* Action buttons — absolute overlay on hover */}
+                    <div class="absolute right-1 top-1/2 -translate-y-1/2 hidden group-hover:flex items-center gap-0.5 bg-gray-50/90 dark:bg-slate-950/90 backdrop-blur-xs rounded-md shadow-sm px-0.5 py-0.5">
                       {/* Open in file explorer (Electron only) — first */}
                       <Show when={isElectron() && project.project}>
                         <button
-                          class="p-1 text-gray-400 hover:text-amber-600 dark:hover:text-amber-400 rounded transition-all"
+                          class="p-1 text-gray-400 hover:text-amber-600 dark:hover:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-900/20 rounded transition-all"
                           onClick={(e) => {
                             e.stopPropagation();
                             const dir = getProjectDirectory(project.project!);
@@ -1129,7 +1143,7 @@ export function SessionSidebar(props: SessionSidebarProps) {
                       </Show>
                       {/* New session */}
                       <button
-                        class="p-1 text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 rounded transition-all"
+                        class="p-1 text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded transition-all"
                         onClick={(e) => {
                           e.stopPropagation();
                           props.onNewSession(project.project ? getProjectDirectory(project.project) : undefined);
@@ -1144,7 +1158,7 @@ export function SessionSidebar(props: SessionSidebarProps) {
                       {/* Manage worktrees (only when feature enabled) */}
                       <Show when={worktreeEnabled() && project.project?.directory}>
                         <button
-                          class="p-1 text-gray-400 hover:text-emerald-600 dark:hover:text-emerald-400 rounded transition-all"
+                          class="p-1 text-gray-400 hover:text-emerald-600 dark:hover:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-900/20 rounded transition-all"
                           onClick={(e) => {
                             e.stopPropagation();
                             const dir = getProjectDirectory(project.project!);
@@ -1162,7 +1176,7 @@ export function SessionSidebar(props: SessionSidebarProps) {
                       </Show>
                       {/* Hide project */}
                       <button
-                        class="p-1 text-gray-400 hover:text-red-500 dark:hover:text-red-400 rounded transition-all"
+                        class="p-1 text-gray-400 hover:text-red-500 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 rounded transition-all"
                         onClick={(e) => {
                           e.stopPropagation();
                           props.onDeleteProjectSessions(project.projectID, project.name, project.sessions.length);
@@ -1457,7 +1471,7 @@ export function SessionSidebar(props: SessionSidebarProps) {
                                     <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
                                   </svg>
                                   <span class="text-xs font-medium text-gray-500 dark:text-gray-400">
-                                    {t().worktree?.local || "Local"}
+                                    {t().worktree.local}
                                   </span>
                                   <span class="text-[10px] text-gray-400 dark:text-gray-500 ml-auto">{local.length}</span>
                                 </div>
@@ -1471,50 +1485,99 @@ export function SessionSidebar(props: SessionSidebarProps) {
                               {(wtGroup) => (
                                 <div class="mb-1.5">
                                   <div
-                                    class="group flex items-center gap-1.5 px-2 py-1 cursor-pointer hover:bg-gray-100 dark:hover:bg-slate-900 rounded-md transition-colors"
+                                    class="group relative flex items-center gap-1.5 px-2 py-1 cursor-pointer hover:bg-gray-100 dark:hover:bg-slate-900 rounded-md transition-colors"
                                     onClick={() => toggleWorktreeExpanded(`${dir}::${wtGroup.worktree.name}`)}
                                   >
                                     <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24"
                                       fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
-                                      class={`text-gray-400 transition-transform duration-200 ${isWorktreeExpanded(`${dir}::${wtGroup.worktree.name}`) || isSearching() ? "rotate-90" : ""}`}
+                                      class={`flex-shrink-0 text-gray-400 transition-transform duration-200 ${isWorktreeExpanded(`${dir}::${wtGroup.worktree.name}`) || isSearching() ? "rotate-90" : ""}`}
                                     >
                                       <path d="m9 18 6-6-6-6" />
                                     </svg>
                                     <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24"
                                       fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
-                                      class="text-emerald-500 dark:text-emerald-400"
+                                      class="flex-shrink-0 text-emerald-500 dark:text-emerald-400"
                                     >
                                       <path d="M6 3v12" />
                                       <path d="M18 9a3 3 0 0 0-3-3h-4a3 3 0 0 0-3 3" />
                                       <circle cx="18" cy="18" r="3" />
                                       <path d="M6 21v-6" />
                                     </svg>
-                                    <span class="text-xs font-medium text-gray-600 dark:text-gray-300 truncate" title={wtGroup.worktree.branch}>
+                                    <span class="text-xs font-medium text-gray-600 dark:text-gray-300 truncate flex-1 min-w-0" title={wtGroup.worktree.branch}>
                                       {wtGroup.worktree.name}
                                     </span>
-                                    <span class="text-[10px] text-gray-400 dark:text-gray-500 ml-auto flex items-center gap-1">
+                                    <span class="text-[10px] text-gray-400 dark:text-gray-500 flex-shrink-0">
                                       {wtGroup.sessions.length}
-                                      {/* New session button on hover */}
+                                    </span>
+                                    {/* Action buttons — absolute overlay */}
+                                    <div class="absolute right-1 top-1/2 -translate-y-1/2 hidden group-hover:flex items-center gap-0.5 bg-gray-50/90 dark:bg-slate-950/90 backdrop-blur-xs rounded-md shadow-sm px-0.5 py-0.5">
+                                      {/* New session */}
                                       <button
-                                        class="opacity-0 group-hover:opacity-100 p-0.5 text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 rounded transition-all"
+                                        class="p-1 text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded transition-all"
                                         onClick={(e) => {
                                           e.stopPropagation();
                                           props.onNewSession(dir, undefined, wtGroup.worktree.name);
                                         }}
-                                        title={t().sidebar?.newSession || "New session"}
+                                        title={t().sidebar.newSession}
                                       >
                                         <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24"
                                           fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                                           <path d="M5 12h14" /><path d="M12 5v14" />
                                         </svg>
                                       </button>
-                                    </span>
+                                      {/* Open in file explorer */}
+                                      <Show when={isElectron()}>
+                                        <button
+                                          class="p-1 text-gray-400 hover:text-amber-600 dark:hover:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-900/20 rounded transition-all"
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            systemAPI.openPath(wtGroup.worktree.directory);
+                                          }}
+                                          title={t().sidebar.openInFileExplorer}
+                                        >
+                                          <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24"
+                                            fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                            <path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/>
+                                          </svg>
+                                        </button>
+                                      </Show>
+                                      {/* Merge */}
+                                      <button
+                                        class="p-1 text-gray-400 hover:text-emerald-600 dark:hover:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-900/20 rounded transition-all"
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          props.onMergeWorktree?.(dir, wtGroup.worktree.name, wtGroup.worktree.branch);
+                                        }}
+                                        title={t().worktree.merge}
+                                      >
+                                        <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24"
+                                          fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                          <path d="M18 21V8a2 2 0 0 0-2-2H8" />
+                                          <path d="m6 9 3-3-3-3" />
+                                        </svg>
+                                      </button>
+                                      {/* Delete */}
+                                      <button
+                                        class="p-1 text-gray-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded transition-all"
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          props.onRemoveWorktree?.(dir, wtGroup.worktree.name, wtGroup.worktree.branch);
+                                        }}
+                                        title={t().worktree.remove}
+                                      >
+                                        <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24"
+                                          fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                          <path d="M3 6h18" /><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" />
+                                          <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" />
+                                        </svg>
+                                      </button>
+                                    </div>
                                   </div>
                                   <Show when={isWorktreeExpanded(`${dir}::${wtGroup.worktree.name}`) || isSearching()}>
                                     <div class="ml-2">
                                       <Show when={wtGroup.sessions.length > 0} fallback={
                                         <div class="px-3 py-2 text-xs text-gray-400 dark:text-gray-500 italic">
-                                          {t().worktree?.noSessions || "No sessions"}
+                                          {t().worktree.noSessions}
                                         </div>
                                       }>
                                         {renderSessionList(wtGroup.sessions)}

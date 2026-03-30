@@ -1,4 +1,4 @@
-import { For, Show, Switch, Match, createSignal, createMemo, createEffect, lazy, Suspense } from "solid-js";
+import { For, Show, Switch, Match, createSignal, createMemo, createEffect } from "solid-js";
 import { SessionInfo, sessionStore, setSessionStore, getProjectName } from "../stores/session";
 import { useI18n, formatMessage } from "../lib/i18n";
 import { isDefaultTitle } from "../lib/session-utils";
@@ -8,7 +8,6 @@ import { configStore, isEngineEnabled, getDefaultEngineType, setDefaultNewSessio
 import { getEngineBadge } from "./share/common";
 import { ScheduledTaskSection } from "./ScheduledTaskSection";
 import { getSetting } from "../lib/settings";
-import WorktreeModal from "./WorktreeModal";
 import { gateway } from "../lib/gateway-api";
 
 import { isElectron } from "../lib/platform";
@@ -41,6 +40,8 @@ interface SessionSidebarProps {
   pinnedSessionIds?: Set<string>;
   onPinSession?: (sessionId: string) => void;
   onUnpinSession?: (sessionId: string) => void;
+  // Worktree
+  onManageWorktrees?: (projectDirectory: string) => void;
 }
 
 // Project grouping data structure
@@ -58,7 +59,6 @@ export function SessionSidebar(props: SessionSidebarProps) {
   const [editingTitle, setEditingTitle] = createSignal("");
   const [pendingDeleteId, setPendingDeleteId] = createSignal<string | null>(null);
   const [searchQuery, setSearchQuery] = createSignal("");
-  const [worktreeModalDir, setWorktreeModalDir] = createSignal<string | null>(null);
 
   const StatusIndicator = (p: { status: SessionActivityStatus }) => {
     return (
@@ -361,7 +361,6 @@ export function SessionSidebar(props: SessionSidebarProps) {
   };
 
   return (
-    <>
     <div class="w-full bg-gray-50 dark:bg-slate-950 border-r border-gray-200 dark:border-slate-800 flex flex-col h-full overflow-hidden">
       {/* Search Box */}
       <Show when={!props.collapsed && (projectGroups().length > 0 || filteredDefaultWorkspaceGroup() !== null)}>
@@ -1148,7 +1147,8 @@ export function SessionSidebar(props: SessionSidebarProps) {
                           class="p-1 text-gray-400 hover:text-emerald-600 dark:hover:text-emerald-400 rounded transition-all"
                           onClick={(e) => {
                             e.stopPropagation();
-                            setWorktreeModalDir(getProjectDirectory(project.project!) || null);
+                            const dir = getProjectDirectory(project.project!);
+                            if (dir) props.onManageWorktrees?.(dir);
                           }}
                           title={t().worktree.title}
                         >
@@ -1572,21 +1572,5 @@ export function SessionSidebar(props: SessionSidebarProps) {
         </div>
       </Show>
     </div>
-
-    {/* Worktree management modal */}
-    <Show when={worktreeModalDir()}>
-      {(dir) => (
-        <WorktreeModal
-          projectDirectory={dir()}
-          onClose={() => setWorktreeModalDir(null)}
-          onWorktreeCreated={(wt) => {
-            // Refresh worktrees in store
-            const existing = sessionStore.worktrees[dir()] || [];
-            setSessionStore("worktrees", dir(), [...existing, wt]);
-          }}
-        />
-      )}
-    </Show>
-    </>
   );
 }

@@ -27,6 +27,7 @@ import { SessionSidebar } from "../components/SessionSidebar";
 import { HideProjectModal } from "../components/HideProjectModal";
 import { AddProjectModal } from "../components/AddProjectModal";
 import { ScheduledTaskModal } from "../components/ScheduledTaskModal";
+import WorktreeModal from "../components/WorktreeModal";
 import type { UnifiedMessage, UnifiedPart, UnifiedPermission, UnifiedQuestion, UnifiedSession, UnifiedProject, AgentMode, EngineType, SessionActivityStatus, ScheduledTask, ScheduledTaskCreateRequest, ScheduledTaskUpdateRequest } from "../types/unified";
 import { useI18n, formatMessage } from "../lib/i18n";
 import { notify } from "../lib/notifications";
@@ -420,6 +421,7 @@ export default function Chat() {
   const [showAddProjectModal, setShowAddProjectModal] = createSignal(false);
   const [showTaskModal, setShowTaskModal] = createSignal(false);
   const [editingTask, setEditingTask] = createSignal<ScheduledTask | undefined>();
+  const [worktreeModalDir, setWorktreeModalDir] = createSignal<string | null>(null);
 
   // WebSocket connection status
   const [wsConnected, setWsConnected] = createSignal(true);
@@ -1830,6 +1832,7 @@ export default function Chat() {
               pinnedSessionIds={pinnedSessions()}
               onPinSession={handlePinSession}
               onUnpinSession={handleUnpinSession}
+              onManageWorktrees={(dir) => setWorktreeModalDir(dir)}
             />
           </Show>
           <Show when={refreshingSessions()}>
@@ -2132,6 +2135,19 @@ export default function Chat() {
         onClose={() => setShowTaskModal(false)}
         onSave={handleCreateOrUpdateTask}
       />
+
+      <Show when={worktreeModalDir()}>
+        {(dir) => (
+          <WorktreeModal
+            projectDirectory={dir()}
+            onClose={() => setWorktreeModalDir(null)}
+            onWorktreeCreated={(wt) => {
+              const existing = sessionStore.worktrees[dir()] || [];
+              setSessionStore("worktrees", dir(), [...existing, wt]);
+            }}
+          />
+        )}
+      </Show>
     </div>
   );
 }

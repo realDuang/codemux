@@ -56,18 +56,26 @@ export interface CreateWorktreeOptions {
 }
 
 class WorktreeManager {
-  private worktreeBase!: string;
+  private worktreeBase: string | null = null;
+  private initialized = false;
 
-  init(): void {
+  private ensureInit(): void {
+    if (this.initialized) return;
     this.worktreeBase = path.join(app.getPath("userData"), "worktrees");
     if (!fs.existsSync(this.worktreeBase)) {
       fs.mkdirSync(this.worktreeBase, { recursive: true });
     }
     worktreeStore.init();
+    this.initialized = true;
     wtLog.info(`Initialized worktree base at ${this.worktreeBase}`);
   }
 
+  init(): void {
+    this.ensureInit();
+  }
+
   async resolveProjectId(repoDir: string): Promise<string> {
+    this.ensureInit();
     const cacheFile = path.join(repoDir, ".git", "codemux-project-id");
 
     // Try cached value first
@@ -118,6 +126,7 @@ class WorktreeManager {
   }
 
   async detectMainBranch(repoDir: string): Promise<string> {
+    this.ensureInit();
     // Try symbolic-ref first
     const symRef = await git(["symbolic-ref", "refs/remotes/origin/HEAD"], repoDir);
     if (symRef.code === 0 && symRef.stdout) {
@@ -137,6 +146,7 @@ class WorktreeManager {
   }
 
   async listBranches(repoDir: string): Promise<string[]> {
+    this.ensureInit();
     const result = await git(["branch", "--format=%(refname:short)"], repoDir);
     if (result.code !== 0) return [];
     return result.stdout.split("\n").filter(Boolean);
@@ -147,7 +157,7 @@ class WorktreeManager {
     repoDir: string,
     baseName?: string,
   ): Promise<{ name: string; branch: string; directory: string }> {
-    const root = path.join(this.worktreeBase, projectId);
+    const root = path.join(this.worktreeBase!, projectId);
 
     for (let attempt = 0; attempt < MAX_NAME_ATTEMPTS; attempt++) {
       const name = baseName
@@ -176,6 +186,7 @@ class WorktreeManager {
   }
 
   async create(repoDir: string, options?: CreateWorktreeOptions): Promise<WorktreeInfo> {
+    this.ensureInit();
     const projectId = await this.resolveProjectId(repoDir);
     const baseBranch = options?.baseBranch || (await this.detectMainBranch(repoDir));
     const candidate = await this.findCandidate(projectId, repoDir, options?.name);
@@ -224,11 +235,13 @@ class WorktreeManager {
   }
 
   async list(repoDir: string): Promise<WorktreeInfo[]> {
+    this.ensureInit();
     const projectId = await this.resolveProjectId(repoDir);
     return worktreeStore.list(projectId);
   }
 
   async remove(repoDir: string, worktreeName: string): Promise<boolean> {
+    this.ensureInit();
     const projectId = await this.resolveProjectId(repoDir);
     const info = worktreeStore.get(projectId, worktreeName);
     if (!info) {
@@ -270,6 +283,7 @@ class WorktreeManager {
     worktreeName: string,
     targetBranch?: string,
   ): Promise<MergeResult> {
+    this.ensureInit();
     const projectId = await this.resolveProjectId(repoDir);
     const info = worktreeStore.get(projectId, worktreeName);
     if (!info) {

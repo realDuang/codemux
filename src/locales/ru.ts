@@ -194,6 +194,7 @@ export const ru: LocaleDict = {
     defaultEngine: "Движок по умолчанию",
     searchPlaceholder: "Поиск сессий...",
     noSearchResults: "Сессий не найдено",
+    noProjects: "Проектов пока нет",
     defaultWorkspace: "Рабочая область по умолчанию",
     projectsTitle: "Проекты",
     activeSection: "Активные",

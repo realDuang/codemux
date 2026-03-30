@@ -192,6 +192,7 @@ export interface LocaleDict {
     defaultEngine: string;
     searchPlaceholder: string;
     noSearchResults: string;
+    noProjects: string;
     defaultWorkspace: string;
     projectsTitle: string;
     activeSection: string;
@@ -788,6 +789,7 @@ export const en: LocaleDict = {
     defaultEngine: "Default Engine",
     searchPlaceholder: "Search sessions...",
     noSearchResults: "No matching sessions",
+    noProjects: "No projects yet",
     defaultWorkspace: "Default Workspace",
     projectsTitle: "Projects",
     activeSection: "Active",

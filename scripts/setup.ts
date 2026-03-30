@@ -114,7 +114,7 @@ async function installOpenCode(): Promise<boolean> {
     return runInstallCommand(
       "OpenCode CLI installation",
       "bash",
-      ["-c", "curl -fsSL https://opencode.ai/install.sh | bash"],
+      ["-c", "curl -fsSL https://opencode.ai/install | bash"],
       { shell: false }
     );
   }
@@ -370,7 +370,7 @@ async function main() {
         if (isWindows) {
           log("  irm https://opencode.ai/install.ps1 | iex", colors.cyan);
         } else {
-          log("  curl -fsSL https://opencode.ai/install.sh | bash", colors.cyan);
+          log("  curl -fsSL https://opencode.ai/install | bash", colors.cyan);
         }
       }
     } else {

@@ -38,7 +38,7 @@ async function installOpenCode(): Promise<boolean> {
   } else {
     return runInstallCommand("bash", [
       "-c",
-      "curl -fsSL https://opencode.ai/install.sh | bash",
+      "curl -fsSL https://opencode.ai/install | bash",
     ]);
   }
 }
@@ -67,7 +67,7 @@ async function checkDependencies(): Promise<boolean> {
         if (isWindows) {
           console.log(`${colors.cyan}  irm https://opencode.ai/install.ps1 | iex${colors.reset}`);
         } else {
-          console.log(`${colors.cyan}  curl -fsSL https://opencode.ai/install.sh | bash${colors.reset}`);
+          console.log(`${colors.cyan}  curl -fsSL https://opencode.ai/install | bash${colors.reset}`);
         }
         return false;
       }

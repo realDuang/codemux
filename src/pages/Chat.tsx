@@ -595,6 +595,7 @@ export default function Chat() {
 
   // Generation counter to discard stale background loads when initializeSession
   let initGeneration = 0;
+  let engineRefreshTimer: ReturnType<typeof setTimeout> | undefined;
 
   const initializeSession = async () => {
     const gen = ++initGeneration;
@@ -653,6 +654,18 @@ export default function Chat() {
           if (status === "error" && error) {
             notify(formatMessage(t().notification.engineError, { message: error }));
           }
+          // Debounce engine list refresh to avoid stale data from out-of-order responses
+          // during rapid status transitions (e.g. "starting" → "running").
+          clearTimeout(engineRefreshTimer);
+          engineRefreshTimer = setTimeout(() => {
+            void gateway.listEngines()
+              .then((engines) => {
+                setConfigStore("engines", engines);
+              })
+              .catch((err) => {
+                logger.debug("[Gateway] Failed to refresh engine info after status change:", err);
+              });
+          }, 300);
         },
         onMessageQueued: (sessionId: string, _messageId: string, _queuePosition: number) => {
           logger.debug("[WS] message.queued for session:", sessionId);
@@ -1132,6 +1145,8 @@ export default function Chat() {
       await handleSelectSession(newSession.id);
     } catch (error) {
       logger.error("[AddProject] Failed to add project:", error);
+      if (error instanceof Error) throw error;
+      throw new Error(t().project.addFailed, { cause: error });
     }
   };
 

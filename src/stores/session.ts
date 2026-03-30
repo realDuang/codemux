@@ -1,5 +1,5 @@
 import { createStore } from "solid-js/store";
-import type { EngineType, UnifiedProject } from "../types/unified";
+import type { EngineType, UnifiedProject, UnifiedWorktree } from "../types/unified";
 
 export interface SessionInfo {
   id: string;
@@ -7,12 +7,17 @@ export interface SessionInfo {
   title: string;
   directory: string;
   projectID?: string;
+  worktreeId?: string;
   createdAt: string;
   updatedAt: string;
 }
 
 export interface ProjectExpandState {
   [projectID: string]: boolean;
+}
+
+export interface WorktreeExpandState {
+  [key: string]: boolean;
 }
 
 export const [sessionStore, setSessionStore] = createStore<{
@@ -26,6 +31,10 @@ export const [sessionStore, setSessionStore] = createStore<{
   sendingMap: Record<string, boolean>;
   /** Whether to show default workspace in sidebar (reactive mirror of setting). */
   showDefaultWorkspace: boolean;
+  /** Worktrees grouped by project directory */
+  worktrees: Record<string, UnifiedWorktree[]>;
+  /** Worktree expand/collapse state */
+  worktreeExpanded: WorktreeExpandState;
 }>({
   list: [],
   current: null,
@@ -35,6 +44,8 @@ export const [sessionStore, setSessionStore] = createStore<{
   projectExpanded: {},
   sendingMap: {},
   showDefaultWorkspace: true,
+  worktrees: {},
+  worktreeExpanded: {},
 });
 
 /** Set the sending (streaming) state for a session. */

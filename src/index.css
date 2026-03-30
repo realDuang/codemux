@@ -132,6 +132,11 @@ body {
   padding-left: 72px;
 }
 
+/* macOS titlebar: move brand (logo + app name) to the right to avoid traffic light overlap */
+.electron-macos .titlebar-brand {
+  order: 99;
+}
+
 /* Windows titlebar overlay: reserve space for native window controls (≈138px) */
 .electron-windows .electron-titlebar-pad-right {
   padding-right: 140px;

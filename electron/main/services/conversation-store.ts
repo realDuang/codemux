@@ -133,6 +133,7 @@ class ConversationStore {
     engineType: EngineType;
     directory: string;
     title?: string;
+    worktreeId?: string;
   }): ConversationMeta {
     this.ensureInitialized();
 
@@ -145,6 +146,7 @@ class ConversationStore {
       createdAt: now,
       updatedAt: now,
       messageCount: 0,
+      worktreeId: params.worktreeId,
     };
 
     this.index.set(conv.id, conv);

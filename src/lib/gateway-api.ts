@@ -435,12 +435,14 @@ class GatewayAPI {
   mergeWorktree(
     directory: string,
     worktreeName: string,
-    targetBranch?: string,
+    options?: { targetBranch?: string; mode?: "merge" | "squash" | "rebase"; message?: string },
   ): Promise<WorktreeMergeResult> {
     return gatewayClient.request("worktree.merge", {
       directory,
       worktreeName,
-      targetBranch,
+      targetBranch: options?.targetBranch,
+      mode: options?.mode,
+      message: options?.message,
     });
   }
 

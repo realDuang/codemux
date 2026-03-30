@@ -55,6 +55,12 @@ export interface CreateWorktreeOptions {
   baseBranch?: string;
 }
 
+export interface MergeWorktreeOptions {
+  targetBranch?: string;
+  mode?: "merge" | "squash" | "rebase";
+  message?: string;
+}
+
 class WorktreeManager {
   private worktreeBase: string | null = null;
   private initialized = false;
@@ -76,53 +82,14 @@ class WorktreeManager {
 
   async resolveProjectId(repoDir: string): Promise<string> {
     this.ensureInit();
-    const cacheFile = path.join(repoDir, ".git", "codemux-project-id");
-
-    // Try cached value first
-    try {
-      const cached = fs.readFileSync(cacheFile, "utf-8").trim();
-      if (cached) return cached;
-    } catch {
-      /* not cached */
+    // Use the last segment of the repo directory as the project identifier
+    // e.g. "/Users/user/workspace/codemux" → "codemux"
+    const normalized = repoDir.replace(/\\/g, "/").replace(/\/+$/, "");
+    const name = normalized.split("/").filter(Boolean).pop();
+    if (!name) {
+      throw new Error(`Cannot determine project name for ${repoDir}`);
     }
-
-    // Resolve .git directory (could be a worktree link file)
-    const dotGitPath = path.join(repoDir, ".git");
-    let gitDir = repoDir;
-    try {
-      const stat = fs.statSync(dotGitPath);
-      if (stat.isFile()) {
-        // .git is a file (worktree link) — follow it to find the real git dir
-        const content = fs.readFileSync(dotGitPath, "utf-8").trim();
-        const match = content.match(/^gitdir:\s*(.+)$/);
-        if (match) {
-          const linked = path.resolve(repoDir, match[1]);
-          const commonDir = await git(["rev-parse", "--git-common-dir"], linked);
-          if (commonDir.code === 0) {
-            gitDir = path.resolve(linked, commonDir.stdout);
-          }
-        }
-      }
-    } catch {
-      /* use repoDir */
-    }
-
-    // Get first commit hash as project ID
-    const result = await git(["rev-list", "--max-parents=0", "HEAD"], gitDir);
-    if (result.code !== 0 || !result.stdout) {
-      throw new Error(`Cannot determine project ID for ${repoDir}: ${result.stderr}`);
-    }
-
-    const projectId = result.stdout.split("\n")[0].substring(0, 12);
-
-    // Cache it
-    try {
-      fs.writeFileSync(cacheFile, projectId, "utf-8");
-    } catch {
-      wtLog.warn(`Could not cache project ID to ${cacheFile}`);
-    }
-
-    return projectId;
+    return name;
   }
 
   async detectMainBranch(repoDir: string): Promise<string> {
@@ -278,10 +245,39 @@ class WorktreeManager {
     return true;
   }
 
+  /**
+   * Update target branch to point at worktree branch.
+   * If target is the currently checked-out branch in repoDir, use `git merge`.
+   * Otherwise use `git fetch .` for a safe fast-forward without checkout.
+   */
+  private async updateTargetBranch(
+    repoDir: string,
+    sourceBranch: string,
+    targetBranch: string,
+    mergeMessage: string,
+  ): Promise<{ ok: boolean; stderr: string }> {
+    // Check if target is the current branch in the main repo
+    const head = await git(["rev-parse", "--abbrev-ref", "HEAD"], repoDir);
+    const currentBranch = head.code === 0 ? head.stdout : "";
+
+    if (currentBranch === targetBranch) {
+      // Target is checked out — merge directly in the main repo
+      const result = await git(["merge", "--ff-only", sourceBranch], repoDir);
+      if (result.code === 0) return { ok: true, stderr: "" };
+      // ff-only failed, try with merge commit
+      const result2 = await git(["merge", "--no-ff", "-m", mergeMessage, sourceBranch], repoDir);
+      return { ok: result2.code === 0, stderr: result2.stderr };
+    }
+
+    // Target is NOT checked out — safe to use fetch
+    const ff = await git(["fetch", ".", `${sourceBranch}:${targetBranch}`], repoDir);
+    return { ok: ff.code === 0, stderr: ff.stderr };
+  }
+
   async merge(
     repoDir: string,
     worktreeName: string,
-    targetBranch?: string,
+    options?: MergeWorktreeOptions,
   ): Promise<MergeResult> {
     this.ensureInit();
     const projectId = await this.resolveProjectId(repoDir);
@@ -290,41 +286,69 @@ class WorktreeManager {
       return { success: false, message: `Worktree not found: ${worktreeName}` };
     }
 
-    const target = targetBranch || (await this.detectMainBranch(repoDir));
+    const target = options?.targetBranch || (await this.detectMainBranch(repoDir));
+    const mode = options?.mode || "merge";
+    const message = options?.message || `Merge ${info.branch} into ${target}`;
 
-    wtLog.info(`Merging ${info.branch} into ${target}`);
+    wtLog.info(`Merging ${info.branch} into ${target} (mode: ${mode})`);
 
-    // Switch to target branch
-    const checkout = await git(["checkout", target], repoDir);
-    if (checkout.code !== 0) {
-      return { success: false, message: `Failed to checkout ${target}: ${checkout.stderr}` };
-    }
-
-    // Merge
-    const mergeResult = await git(["merge", "--no-ff", info.branch], repoDir);
-
-    if (mergeResult.code !== 0) {
-      // Check for merge conflicts
-      const status = await git(["diff", "--name-only", "--diff-filter=U"], repoDir);
-      const conflicts = status.stdout.split("\n").filter(Boolean);
-
-      if (conflicts.length > 0) {
-        // Abort the merge to leave repo in clean state
-        await git(["merge", "--abort"], repoDir);
-        return {
-          success: false,
-          conflicts,
-          message: `Merge conflict in ${conflicts.length} file(s)`,
-        };
+    if (mode === "rebase") {
+      const rebase = await git(["rebase", target], info.directory);
+      if (rebase.code !== 0) {
+        await git(["rebase", "--abort"], info.directory);
+        return { success: false, message: `Rebase failed: ${rebase.stderr}` };
       }
-
-      return { success: false, message: `Merge failed: ${mergeResult.stderr}` };
+      const upd = await this.updateTargetBranch(repoDir, info.branch, target, message);
+      if (upd.ok) {
+        return { success: true, message: `Successfully rebased ${info.branch} onto ${target}` };
+      }
+      return { success: false, message: `Fast-forward after rebase failed: ${upd.stderr}` };
     }
 
-    return {
-      success: true,
-      message: `Successfully merged ${info.branch} into ${target}`,
-    };
+    if (mode === "squash") {
+      const squashMerge = await git(["merge", "--squash", target], info.directory);
+      if (squashMerge.code !== 0) {
+        const status = await git(["diff", "--name-only", "--diff-filter=U"], info.directory);
+        const conflicts = status.stdout.split("\n").filter(Boolean);
+        if (conflicts.length > 0) {
+          await git(["reset", "--merge"], info.directory);
+          return { success: false, conflicts, message: `Squash merge conflict in ${conflicts.length} file(s)` };
+        }
+        return { success: false, message: `Squash merge failed: ${squashMerge.stderr}` };
+      }
+      await git(["commit", "-m", message], info.directory);
+      const upd = await this.updateTargetBranch(repoDir, info.branch, target, message);
+      if (upd.ok) {
+        return { success: true, message: `Successfully squash-merged ${info.branch} into ${target}` };
+      }
+      return { success: false, message: `Update target after squash failed: ${upd.stderr}` };
+    }
+
+    // Default: regular merge
+    // Try fast-forward first
+    const upd = await this.updateTargetBranch(repoDir, info.branch, target, message);
+    if (upd.ok) {
+      return { success: true, message: `Successfully merged ${info.branch} into ${target}` };
+    }
+
+    // Fast-forward failed — merge target INTO worktree, then update target
+    const wtMerge = await git(["merge", "--no-ff", "-m", message, target], info.directory);
+    if (wtMerge.code === 0) {
+      const retry = await this.updateTargetBranch(repoDir, info.branch, target, message);
+      if (retry.ok) {
+        return { success: true, message: `Successfully merged ${info.branch} into ${target}` };
+      }
+    }
+
+    // Check for merge conflicts
+    const status = await git(["diff", "--name-only", "--diff-filter=U"], info.directory);
+    const conflicts = status.stdout.split("\n").filter(Boolean);
+    if (conflicts.length > 0) {
+      await git(["merge", "--abort"], info.directory);
+      return { success: false, conflicts, message: `Merge conflict in ${conflicts.length} file(s)` };
+    }
+
+    return { success: false, message: `Merge failed: ${upd.stderr || wtMerge.stderr}` };
   }
 
   getWorktreeByName(projectId: string, name: string): WorktreeInfo | undefined {

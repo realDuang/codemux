@@ -134,6 +134,7 @@ class ConversationStore {
     directory: string;
     title?: string;
     worktreeId?: string;
+    parentDirectory?: string;
   }): ConversationMeta {
     this.ensureInitialized();
 
@@ -147,6 +148,7 @@ class ConversationStore {
       updatedAt: now,
       messageCount: 0,
       worktreeId: params.worktreeId,
+      parentDirectory: params.parentDirectory,
     };
 
     this.index.set(conv.id, conv);
@@ -378,6 +380,8 @@ class ConversationStore {
 
     for (const conv of this.index.values()) {
       if (!conv.directory || conv.directory === "/") continue;
+      // Worktree sessions belong to their parent project, not a separate one
+      if (conv.worktreeId) continue;
       const key = this.normalizeDir(conv.directory);
       if (!dirMap.has(key)) {
         // Always store the normalized (forward-slash) form as the canonical directory

@@ -455,13 +455,26 @@ export class GatewayServer {
       case GatewayRequestType.WORKTREE_REMOVE: {
         const req = p as WorktreeRemoveRequest;
         const { worktreeManager } = await import("../services/worktree-manager");
+
+        // Delete all sessions belonging to this worktree (same pattern as project delete)
+        const allConvs = conversationStore.list();
+        const worktreeConvs = allConvs.filter((conv) => conv.worktreeId === req.worktreeName);
+        for (const conv of worktreeConvs) {
+          await this.engineManager.deleteSession(conv.id);
+        }
+
+        // Then remove the git worktree, branch, and directory
         return worktreeManager.remove(req.directory, req.worktreeName);
       }
 
       case GatewayRequestType.WORKTREE_MERGE: {
         const req = p as WorktreeMergeRequest;
         const { worktreeManager } = await import("../services/worktree-manager");
-        return worktreeManager.merge(req.directory, req.worktreeName, req.targetBranch);
+        return worktreeManager.merge(req.directory, req.worktreeName, {
+          targetBranch: req.targetBranch,
+          mode: req.mode,
+          message: req.message,
+        });
       }
 
       case GatewayRequestType.WORKTREE_LIST_BRANCHES: {

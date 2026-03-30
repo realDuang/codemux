@@ -1137,7 +1137,7 @@ export default function Chat() {
     } catch (error) {
       logger.error("[AddProject] Failed to add project:", error);
       if (error instanceof Error) throw error;
-      throw new Error(t().project.addFailed);
+      throw new Error(t().project.addFailed, { cause: error });
     }
   };
 

@@ -262,15 +262,23 @@ codemux/
 │   │   ├── engines/          # エンジンアダプター (OpenCode, Copilot, Claude Code)
 │   │   ├── gateway/          # WebSocket サーバー + エンジンルーティング
 │   │   ├── channels/         # IM ボットチャネル（Feishu、DingTalk、Telegram、WeCom、Teams）
-│   │   └── services/         # 認証、デバイスストア、トンネル、セッション
+│   │   │   └── streaming/    # クロスチャネルストリーミング基盤
+│   │   ├── services/         # 認証、デバイスストア、トンネル、セッション、ファイルサービス、トレイなど
+│   │   └── utils/            # 共有ユーティリティ（ID生成など）
 │   └── preload/
 ├── src/                      # SolidJS レンダラー
 │   ├── pages/                # Chat, Settings, Devices, Entry
 │   ├── components/           # UIコンポーネント + コンテンツレンダラー
 │   ├── stores/               # リアクティブステート (session, message, config)
 │   ├── lib/                  # Gateway クライアント、認証、i18n、テーマ
+│   ├── locales/              # i18n翻訳ファイル (en, zh, ru)
 │   └── types/                # 統一型システム + ツールマッピング
-├── scripts/                  # セットアップ、バイナリアップデーター
+├── shared/                   # 共有バックエンドモジュール（認証、JWT、デバイスストアベース）
+├── tests/                    # ユニットテスト、E2Eテスト（Playwright）、ベンチマーク
+├── docs/                     # チャネル設定ガイド + 設計ドキュメント
+├── website/                  # プロジェクトウェブサイト（SolidJS + Vite）
+├── scripts/                  # セットアップ、バイナリアップデーター、CIヘルパー
+├── homebrew/                 # macOS Homebrew 配布用フォーミュラ
 ├── electron.vite.config.ts
 └── electron-builder.yml
 ```
@@ -279,7 +287,7 @@ codemux/
 
 ## コントリビューション
 
-コントリビューションを歓迎します！以下の規約に従ってください：
+コントリビューションを歓迎します！詳細なガイドラインは [CONTRIBUTING.md](CONTRIBUTING.md) をご覧ください。
 
 **コードスタイル**: TypeScript strict モード、SolidJS リアクティブパターン、Tailwind によるスタイリング
 

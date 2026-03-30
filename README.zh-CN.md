@@ -264,15 +264,23 @@ codemux/
 │   │   ├── engines/          # 引擎适配器（OpenCode、Copilot、Claude Code）
 │   │   ├── gateway/          # WebSocket 服务器 + 引擎路由
 │   │   ├── channels/         # IM 机器人渠道（飞书、钉钉、Telegram、企业微信、Teams）
-│   │   └── services/         # 认证、设备存储、隧道、会话
+│   │   │   └── streaming/    # 跨渠道流式传输基础设施
+│   │   ├── services/         # 认证、设备存储、隧道、会话、文件服务、托盘等
+│   │   └── utils/            # 共享工具函数（ID 生成等）
 │   └── preload/
 ├── src/                      # SolidJS 渲染层
 │   ├── pages/                # Chat、Settings、Devices、Entry
 │   ├── components/           # UI 组件 + 内容渲染器
 │   ├── stores/               # 响应式状态（session、message、config）
 │   ├── lib/                  # 网关客户端、认证、国际化、主题
+│   ├── locales/              # 国际化翻译文件（en、zh、ru）
 │   └── types/                # 统一类型系统 + 工具映射
-├── scripts/                  # 安装脚本、二进制文件更新器
+├── shared/                   # 共享后端模块（认证、JWT、设备存储基类）
+├── tests/                    # 单元测试、端到端测试（Playwright）、性能基准
+├── docs/                     # 渠道配置指南 + 设计文档
+├── website/                  # 项目网站（SolidJS + Vite）
+├── scripts/                  # 安装脚本、二进制文件更新器、CI 辅助工具
+├── homebrew/                 # macOS Homebrew 分发配方
 ├── electron.vite.config.ts
 └── electron-builder.yml
 ```
@@ -281,7 +289,7 @@ codemux/
 
 ## 贡献
 
-欢迎贡献！请遵循以下规范：
+欢迎贡献！详细指南请参阅 [CONTRIBUTING.md](CONTRIBUTING.md)。
 
 **代码风格**：TypeScript 严格模式，SolidJS 响应式模式，使用 Tailwind 进行样式编写
 

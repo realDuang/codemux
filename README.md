@@ -264,15 +264,23 @@ codemux/
 │   │   ├── engines/          # Engine adapters (OpenCode, Copilot, Claude Code)
 │   │   ├── gateway/          # WebSocket server + engine routing
 │   │   ├── channels/         # IM bot channels (Feishu, DingTalk, Telegram, WeCom, Teams)
-│   │   └── services/         # Auth, device store, tunnel, sessions
+│   │   │   └── streaming/    # Cross-channel streaming infrastructure
+│   │   ├── services/         # Auth, device store, tunnel, sessions, file service, tray, etc.
+│   │   └── utils/            # Shared utilities (ID generation, etc.)
 │   └── preload/
 ├── src/                      # SolidJS renderer
 │   ├── pages/                # Chat, Settings, Devices, Entry
 │   ├── components/           # UI components + content renderers
 │   ├── stores/               # Reactive state (session, message, config)
 │   ├── lib/                  # Gateway client, auth, i18n, theme
+│   ├── locales/              # i18n translation files (en, zh, ru)
 │   └── types/                # Unified type system + tool mapping
-├── scripts/                  # Setup, binary updaters
+├── shared/                   # Shared backend modules (auth, JWT, device store base)
+├── tests/                    # Unit tests, e2e tests (Playwright), benchmarks
+├── docs/                     # Channel setup guides + design documents
+├── website/                  # Project website (SolidJS + Vite)
+├── scripts/                  # Setup, binary updaters, CI helpers
+├── homebrew/                 # Homebrew formula for macOS distribution
 ├── electron.vite.config.ts
 └── electron-builder.yml
 ```
@@ -281,7 +289,7 @@ codemux/
 
 ## Contributing
 
-Contributions are welcome! Please follow these conventions:
+Contributions are welcome! See [CONTRIBUTING.md](CONTRIBUTING.md) for detailed guidelines.
 
 **Code Style**: TypeScript strict mode, SolidJS reactive patterns, Tailwind for styling
 

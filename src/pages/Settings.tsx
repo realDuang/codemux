@@ -223,9 +223,9 @@ export default function Settings() {
         class="w-full flex-shrink-0 flex items-center px-2 border-b border-gray-200 dark:border-slate-800 bg-gray-50 dark:bg-slate-950 electron-drag-region electron-titlebar-pad-left electron-titlebar-pad-right"
         style={{ height: "var(--electron-title-bar-height, 40px)", "min-height": "var(--electron-title-bar-height, 40px)" }}
       >
-        <div class="flex items-center gap-2 electron-no-drag flex-shrink-0 titlebar-brand">
+        <div class="flex items-center gap-1.5 electron-no-drag flex-shrink-0 titlebar-brand">
           <img src={`${import.meta.env.BASE_URL}assets/logo.png`} alt="CodeMux" class="w-5 h-5 rounded" />
-          <span class="text-[13px] font-semibold text-gray-700 dark:text-gray-300 hidden sm:inline">CodeMux</span>
+          <span class="hidden sm:inline text-[11px] font-semibold tracking-wide text-gray-500 dark:text-gray-400 bg-gray-100 dark:bg-slate-800 px-2 py-0.5 rounded-md border border-gray-200 dark:border-slate-700 select-none">CodeMux</span>
         </div>
         <div class="flex items-center gap-2 electron-no-drag flex-shrink-0">
           <button
@@ -241,13 +241,48 @@ export default function Settings() {
         <div class="flex-1" />
       </div>
 
-      <div class="flex-1 flex flex-col overflow-hidden max-w-4xl mx-auto w-full">
+      <div class="flex-1 flex overflow-hidden max-w-5xl mx-auto w-full">
+
+        {/* Left navigation tabs */}
+        <nav class="hidden md:flex flex-col w-44 flex-shrink-0 pt-6 pl-4 pr-2 overflow-y-auto">
+          <ul class="space-y-0.5 sticky top-0">
+            <li>
+              <a href="#section-general" class="block px-3 py-2 text-[13px] font-medium text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-slate-800 rounded-lg transition-colors">
+                {t().settings.general}
+              </a>
+            </li>
+            <li>
+              <a href="#section-engines" class="block px-3 py-2 text-[13px] font-medium text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-slate-800 rounded-lg transition-colors">
+                {t().engine.engines}
+              </a>
+            </li>
+            <Show when={showLogSection()}>
+              <li>
+                <a href="#section-logging" class="block px-3 py-2 text-[13px] font-medium text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-slate-800 rounded-lg transition-colors">
+                  {t().settings.logging}
+                </a>
+              </li>
+            </Show>
+            <li>
+              <a href="#section-experimental" class="block px-3 py-2 text-[13px] font-medium text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-slate-800 rounded-lg transition-colors">
+                {t().settings.experimental}
+              </a>
+            </li>
+            <Show when={isElectron()}>
+              <li>
+                <a href="#section-update" class="block px-3 py-2 text-[13px] font-medium text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-slate-800 rounded-lg transition-colors">
+                  {t().update.title}
+                </a>
+              </li>
+            </Show>
+          </ul>
+        </nav>
 
         {/* Main Content */}
-        <main class="flex-1 overflow-y-auto px-3 sm:px-6 pb-8 pt-6">
+        <main class="flex-1 overflow-y-auto px-3 sm:px-6 pb-8 pt-6 scroll-smooth">
           <div class="space-y-8">
             {/* General Settings Section */}
-            <section>
+            <section id="section-general">
               <h2 class="text-sm font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-4 px-1">
                 {t().settings.general}
               </h2>
@@ -284,7 +319,7 @@ export default function Settings() {
             </section>
 
             {/* Engines Section */}
-            <section>
+            <section id="section-engines">
               <h2 class="text-sm font-medium text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-4 px-1">
                 {t().engine.engines}
               </h2>
@@ -523,9 +558,8 @@ export default function Settings() {
               </Show>
             </section>
 
-            {/* Logging Section */}
             <Show when={showLogSection()}>
-              <section>
+              <section id="section-logging">
                 <h2 class="text-sm font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-4 px-1">
                   {t().settings.logging}
                 </h2>
@@ -612,10 +646,10 @@ export default function Settings() {
               </section>
             </Show>
 
-            {/* Features Section */}
-            <section>
+            {/* Experimental Section */}
+            <section id="section-experimental">
               <h2 class="text-sm font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-4 px-1">
-                {t().settings.features}
+                {t().settings.experimental}
               </h2>
               <div class="bg-white dark:bg-slate-800 rounded-xl shadow-xs border border-gray-200 dark:border-slate-700 overflow-visible">
                 {/* Show Default Workspace toggle */}
@@ -705,9 +739,8 @@ export default function Settings() {
               </div>
             </section>
 
-            {/* Update Section (Electron only) */}
             <Show when={isElectron()}>
-              <section>
+              <section id="section-update">
                 <h2 class="text-sm font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-4 px-1">
                   {t().update.title}
                 </h2>

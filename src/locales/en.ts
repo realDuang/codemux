@@ -118,6 +118,7 @@ export interface LocaleDict {
     showDefaultWorkspace: string;
     showDefaultWorkspaceDesc: string;
     features: string;
+    experimental: string;
     scheduledTasksEnabled: string;
     scheduledTasksEnabledDesc: string;
   };
@@ -713,6 +714,7 @@ export const en: LocaleDict = {
     showDefaultWorkspace: "Show default workspace in sidebar",
     showDefaultWorkspaceDesc: "Display the default workspace project group in the sidebar",
     features: "Features",
+    experimental: "Experimental",
     scheduledTasksEnabled: "Scheduled Tasks",
     scheduledTasksEnabledDesc: "Enable the scheduled tasks feature to automatically run tasks on a schedule",
   },

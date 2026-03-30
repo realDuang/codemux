@@ -120,6 +120,7 @@ export const ru: LocaleDict = {
     showDefaultWorkspace: "Показывать рабочую область по умолчанию на боковой панели",
     showDefaultWorkspaceDesc: "Отображать группу проекта рабочей области по умолчанию на боковой панели",
     features: "Функции",
+    experimental: "Экспериментальные",
     scheduledTasksEnabled: "Запланированные задачи",
     scheduledTasksEnabledDesc: "Включить функцию запланированных задач для автоматического выполнения задач по расписанию",
   },

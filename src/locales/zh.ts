@@ -119,6 +119,7 @@ export const zh: LocaleDict = {
     showDefaultWorkspace: "在侧边栏显示默认工作区",
     showDefaultWorkspaceDesc: "在侧边栏中显示默认工作区项目分组",
     features: "功能",
+    experimental: "实验性功能",
     scheduledTasksEnabled: "定时任务",
     scheduledTasksEnabledDesc: "启用定时任务功能，按计划自动执行任务",
   },

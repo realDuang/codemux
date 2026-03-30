@@ -127,14 +127,17 @@ body {
   -webkit-app-region: no-drag;
 }
 
-/* macOS titlebar: reserve space for traffic lights (close/minimize/maximize) on the left */
+/* macOS titlebar: reserve space for traffic lights (close/minimize/maximize) on the left
+   Traffic lights: x=13, 3 buttons × 12px + 2 gaps × 8px = 52px, total ~65px from left.
+   Add comfortable gap (~20px) between last button and first UI element. */
 .electron-macos .electron-titlebar-pad-left {
-  padding-left: 78px;
+  padding-left: 86px;
 }
 
-/* macOS titlebar: move brand (logo + app name) to the right to avoid traffic light overlap */
+/* macOS titlebar: move brand to the right, reverse order (text first, logo last) */
 .electron-macos .titlebar-brand {
   order: 99;
+  flex-direction: row-reverse;
 }
 
 /* Windows titlebar overlay: reserve space for native window controls (≈138px) */

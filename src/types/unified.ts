@@ -122,6 +122,8 @@ export interface ConversationMeta {
   imported?: boolean;
   /** Worktree name if this session belongs to a worktree */
   worktreeId?: string;
+  /** Original repo directory for worktree sessions (used for project grouping) */
+  parentDirectory?: string;
 }
 
 export interface ConversationMessage {
@@ -688,6 +690,8 @@ export interface WorktreeMergeRequest {
   directory: string;
   worktreeName: string;
   targetBranch?: string;
+  mode?: "merge" | "squash" | "rebase";
+  message?: string;
 }
 
 export interface WorktreeListBranchesRequest {

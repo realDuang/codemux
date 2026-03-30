@@ -224,6 +224,8 @@ export function SessionSidebar(props: SessionSidebarProps) {
     return filterSessionsBySearch(sessions, searchQuery());
   });
 
+  const showProjectsSection = createMemo(() => !props.collapsed);
+
   // Helper to find the project name for an active session
   const getProjectNameForSession = (session: SessionInfo): string | null => {
     if (!session.projectID) return null;
@@ -595,7 +597,7 @@ export function SessionSidebar(props: SessionSidebarProps) {
         </Show>
 
         <Show
-          when={projectGroups().length > 0 || filteredDefaultWorkspaceGroup() !== null}
+          when={props.collapsed ? (projectGroups().length > 0 || filteredDefaultWorkspaceGroup() !== null) : true}
           fallback={
             <Show when={!props.collapsed}>
                 <div class="p-8 text-center">
@@ -951,12 +953,12 @@ export function SessionSidebar(props: SessionSidebarProps) {
           </Show>
 
           {/* Divider between Default Workspace and Projects */}
-          <Show when={filteredDefaultWorkspaceGroup() && filteredProjectGroups().length > 0}>
+          <Show when={filteredDefaultWorkspaceGroup() && showProjectsSection()}>
             <hr class="border-gray-200 dark:border-slate-800 my-2 mx-2" />
           </Show>
 
           {/* Projects section title */}
-          <Show when={filteredProjectGroups().length > 0}>
+          <Show when={showProjectsSection()}>
           <div class="flex items-center gap-2 px-2 py-1.5 mb-1">
             <div class="w-5 h-5 rounded flex items-center justify-center bg-emerald-500 text-white flex-shrink-0">
               <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -1350,6 +1352,11 @@ export function SessionSidebar(props: SessionSidebarProps) {
               );
             }}
           </For>
+          <Show when={!isSearching() && filteredProjectGroups().length === 0}>
+            <div class="px-3 py-2 text-xs text-gray-400 dark:text-gray-500 italic">
+              {t().sidebar.noProjects}
+            </div>
+          </Show>
           <Show when={isSearching() && filteredProjectGroups().length === 0 && !filteredDefaultWorkspaceGroup()}>
             <div class="p-6 text-center">
               <p class="text-sm text-gray-400 dark:text-gray-500">{t().sidebar.noSearchResults}</p>

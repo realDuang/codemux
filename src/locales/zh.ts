@@ -192,6 +192,7 @@ export const zh: LocaleDict = {
     defaultEngine: "默认引擎",
     searchPlaceholder: "搜索会话...",
     noSearchResults: "没有匹配的会话",
+    noProjects: "暂无项目",
     defaultWorkspace: "默认工作区",
     projectsTitle: "项目",
     activeSection: "活跃",

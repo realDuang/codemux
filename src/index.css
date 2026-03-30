@@ -129,7 +129,7 @@ body {
 
 /* macOS titlebar: reserve space for traffic lights (close/minimize/maximize) on the left */
 .electron-macos .electron-titlebar-pad-left {
-  padding-left: 72px;
+  padding-left: 78px;
 }
 
 /* macOS titlebar: move brand (logo + app name) to the right to avoid traffic light overlap */

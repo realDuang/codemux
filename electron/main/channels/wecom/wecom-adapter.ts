@@ -25,6 +25,7 @@ import { TokenManager } from "../streaming/token-manager";
 import { TokenBucket } from "../streaming/rate-limiter";
 import { createStreamingSession, type StreamingSession } from "../streaming/streaming-types";
 import { BaseSessionMapper, type BaseGroupBinding, type BaseTempSession, type BasePendingSelection, type PersistedBinding } from "../base-session-mapper";
+import { didConfigValuesChange, mergeDefinedConfig } from "../config-utils";
 import type { WebhookServer, WebhookRequest, WebhookResponse } from "../webhook-server";
 import { WeComCrypto } from "./wecom-crypto";
 import { WeComTransport } from "./wecom-transport";
@@ -153,10 +154,10 @@ export class WeComAdapter extends ChannelAdapter {
     this.error = undefined;
     this.emit("status.changed", this.status);
 
-    this.config = {
-      ...DEFAULT_WECOM_CONFIG,
-      ...(config.options as unknown as Partial<WeComConfig>),
-    };
+    this.config = mergeDefinedConfig(
+      DEFAULT_WECOM_CONFIG,
+      config.options as Partial<WeComConfig> | undefined,
+    );
 
     // Trim whitespace from all string config values to prevent subtle mismatches
     if (this.config.corpId) this.config.corpId = this.config.corpId.trim();
@@ -295,14 +296,20 @@ export class WeComAdapter extends ChannelAdapter {
   async updateConfig(config: Partial<ChannelConfig>): Promise<void> {
     const wasRunning = this.status === "running";
     const newOptions = config.options as Partial<WeComConfig> | undefined;
+    const previousConfig = { ...this.config };
 
     if (newOptions) {
-      this.config = { ...this.config, ...newOptions };
+      this.config = mergeDefinedConfig(this.config, newOptions);
     }
 
-    // If credentials changed while running, restart
-    if (wasRunning && newOptions && (newOptions.corpId || newOptions.corpSecret)) {
-      channelLog.info("[WeCom] Credentials changed, restarting adapter");
+    const shouldRestart = wasRunning && didConfigValuesChange(
+      previousConfig,
+      this.config,
+      ["corpId", "corpSecret", "agentId", "callbackToken", "callbackEncodingAESKey"],
+    );
+
+    if (shouldRestart) {
+      channelLog.info("[WeCom] Connection settings changed, restarting adapter");
       await this.stop();
       const fullConfig: ChannelConfig = {
         type: "wecom",

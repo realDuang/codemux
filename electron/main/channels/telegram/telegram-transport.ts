@@ -16,6 +16,11 @@ import { channelLog } from "../../services/logger";
 
 const LOG_PREFIX = "[Telegram]";
 
+function isAbortError(error: unknown): boolean {
+  return typeof error === "object" && error !== null && "name" in error
+    && (error as { name?: unknown }).name === "AbortError";
+}
+
 export class TelegramTransport implements MessageTransport {
   constructor(
     private botToken: string,
@@ -283,15 +288,18 @@ export class TelegramTransport implements MessageTransport {
   /**
    * Get updates via long polling.
    */
-  async getUpdates(offset?: number, timeout = 30): Promise<any[]> {
+  async getUpdates(offset?: number, timeout = 30, signal?: AbortSignal): Promise<any[]> {
     try {
       const params: Record<string, unknown> = { timeout };
       if (offset !== undefined) {
         params.offset = offset;
       }
-      const result = await this.callApi("getUpdates", params);
+      const result = await this.callApi("getUpdates", params, signal);
       return result?.result || [];
     } catch (err) {
+      if (isAbortError(err)) {
+        throw err;
+      }
       channelLog.error(`${LOG_PREFIX} Failed to get updates:`, err);
       return [];
     }
@@ -320,11 +328,13 @@ export class TelegramTransport implements MessageTransport {
   private async callApi(
     method: string,
     params: Record<string, unknown>,
+    signal?: AbortSignal,
   ): Promise<any> {
     const res = await fetch(this.apiUrl(method), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(params),
+      signal,
     });
 
     if (!res.ok) {

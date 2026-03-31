@@ -30,6 +30,7 @@ import { BaseSessionMapper } from "../base-session-mapper";
 import { createStreamingSession, type StreamingSession } from "../streaming/streaming-types";
 import { TelegramTransport } from "./telegram-transport";
 import { TelegramRenderer } from "./telegram-renderer";
+import { didConfigValuesChange, mergeDefinedConfig } from "../config-utils";
 import {
   parseCommand,
   buildHelpText,
@@ -99,6 +100,9 @@ export class TelegramAdapter extends ChannelAdapter {
   private webhookServer: WebhookServer | null = null;
   private pollingActive = false;
   private pollingOffset = 0;
+  private pollingAbortController: AbortController | null = null;
+  private pollingLoopPromise: Promise<void> | null = null;
+  private pollingGeneration = 0;
   private botUsername = "";
 
   /**
@@ -114,6 +118,12 @@ export class TelegramAdapter extends ChannelAdapter {
     supportsRichContent: true,
     maxMessageBytes: 16_384,
   };
+  private static readonly POLLING_RETRY_DELAY_MS = 5_000;
+
+  private isAbortError(error: unknown): boolean {
+    return typeof error === "object" && error !== null && "name" in error
+      && (error as { name?: unknown }).name === "AbortError";
+  }
 
   // ============================================================================
   // Lifecycle
@@ -130,10 +140,11 @@ export class TelegramAdapter extends ChannelAdapter {
     this.emit("status.changed", this.status);
 
     // Merge config
-    this.config = {
-      ...DEFAULT_TELEGRAM_CONFIG,
-      ...(config.options as unknown as Partial<TelegramConfig>),
-    };
+    this.config = mergeDefinedConfig(
+      DEFAULT_TELEGRAM_CONFIG,
+      config.options as Partial<TelegramConfig> | undefined,
+    );
+    this.botUsername = "";
 
     if (!this.config.botToken) {
       this.status = "error";
@@ -201,7 +212,7 @@ export class TelegramAdapter extends ChannelAdapter {
     channelLog.info(`${LOG_PREFIX} Stopping adapter...`);
 
     // Stop polling
-    this.pollingActive = false;
+    await this.stopPolling();
 
     // Unregister webhook route (keep webhookServer ref for restart)
     if (this.webhookServer) {
@@ -225,6 +236,7 @@ export class TelegramAdapter extends ChannelAdapter {
     // Clean up instances
     this.transport = null;
     this.streamingController = null;
+    this.botUsername = "";
 
     this.status = "stopped";
     this.error = undefined;
@@ -249,14 +261,20 @@ export class TelegramAdapter extends ChannelAdapter {
   async updateConfig(config: Partial<ChannelConfig>): Promise<void> {
     const wasRunning = this.status === "running";
     const newOptions = config.options as Partial<TelegramConfig> | undefined;
+    const previousConfig = { ...this.config };
 
     if (newOptions) {
-      this.config = { ...this.config, ...newOptions };
+      this.config = mergeDefinedConfig(this.config, newOptions);
     }
 
-    // If botToken changed while running, restart
-    if (wasRunning && newOptions?.botToken) {
-      channelLog.info(`${LOG_PREFIX} Bot token changed, restarting adapter`);
+    const shouldRestart = wasRunning && didConfigValuesChange(
+      previousConfig,
+      this.config,
+      ["botToken", "webhookUrl", "webhookSecretToken"],
+    );
+
+    if (shouldRestart) {
+      channelLog.info(`${LOG_PREFIX} Bot connection settings changed, restarting adapter`);
       await this.stop();
       const fullConfig: ChannelConfig = {
         type: "telegram",
@@ -334,29 +352,77 @@ export class TelegramAdapter extends ChannelAdapter {
 
     this.pollingActive = true;
     this.pollingOffset = 0;
+    const generation = ++this.pollingGeneration;
+    const abortController = new AbortController();
+    this.pollingAbortController = abortController;
 
     channelLog.info(`${LOG_PREFIX} Starting long polling...`);
 
     // Start polling loop (non-blocking)
-    void this.pollingLoop();
+    const pollingLoopPromise = this.pollingLoop(generation, abortController.signal);
+    const trackedPollingLoopPromise = pollingLoopPromise.finally(() => {
+      if (this.pollingLoopPromise === trackedPollingLoopPromise) {
+        this.pollingLoopPromise = null;
+      }
+      if (this.pollingAbortController === abortController) {
+        this.pollingAbortController = null;
+      }
+    });
+    this.pollingLoopPromise = trackedPollingLoopPromise;
   }
 
-  private async pollingLoop(): Promise<void> {
-    while (this.pollingActive && this.transport) {
+  private async stopPolling(): Promise<void> {
+    this.pollingActive = false;
+    this.pollingGeneration += 1;
+    this.pollingAbortController?.abort();
+    this.pollingAbortController = null;
+
+    const pollingLoopPromise = this.pollingLoopPromise;
+    this.pollingLoopPromise = null;
+
+    if (!pollingLoopPromise) {
+      return;
+    }
+
+    try {
+      await pollingLoopPromise;
+    } catch (error) {
+      if (!this.isAbortError(error)) {
+        channelLog.warn(`${LOG_PREFIX} Polling loop exited with an unexpected error during shutdown:`, error);
+      }
+    }
+  }
+
+  private async pollingLoop(generation: number, signal: AbortSignal): Promise<void> {
+    while (this.pollingActive && this.transport && generation === this.pollingGeneration) {
       try {
         const updates = await this.transport.getUpdates(
           this.pollingOffset || undefined,
           30,
+          signal,
         );
 
+        if (!this.pollingActive || generation !== this.pollingGeneration) {
+          break;
+        }
+
         for (const update of updates) {
+          if (!this.pollingActive || generation !== this.pollingGeneration) {
+            break;
+          }
           void this.processUpdate(update as TelegramUpdate);
           this.pollingOffset = (update as TelegramUpdate).update_id + 1;
         }
       } catch (err) {
+        if (this.isAbortError(err) || !this.pollingActive || generation !== this.pollingGeneration) {
+          break;
+        }
         channelLog.error(`${LOG_PREFIX} Polling error:`, err);
         // Wait before retrying on error
-        await new Promise((resolve) => setTimeout(resolve, 5000));
+        await new Promise((resolve) => setTimeout(resolve, TelegramAdapter.POLLING_RETRY_DELAY_MS));
+        if (!this.pollingActive || generation !== this.pollingGeneration) {
+          break;
+        }
       }
     }
   }

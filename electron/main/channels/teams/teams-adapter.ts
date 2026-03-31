@@ -30,6 +30,7 @@ import { StreamingController } from "../streaming/streaming-controller";
 import { TokenBucket } from "../streaming/rate-limiter";
 import { BaseSessionMapper, type PersistedBinding } from "../base-session-mapper";
 import { createStreamingSession, type StreamingSession } from "../streaming/streaming-types";
+import { didConfigValuesChange, mergeDefinedConfig } from "../config-utils";
 import { TeamsTransport } from "./teams-transport";
 import { TeamsRenderer } from "./teams-renderer";
 import { ensureTeamsAppPackage } from "./teams-manifest";
@@ -155,10 +156,10 @@ export class TeamsAdapter extends ChannelAdapter {
     this.emit("status.changed", this.status);
 
     // Merge config
-    this.config = {
-      ...DEFAULT_TEAMS_CONFIG,
-      ...(config.options as unknown as Partial<TeamsConfig>),
-    };
+    this.config = mergeDefinedConfig(
+      DEFAULT_TEAMS_CONFIG,
+      config.options as Partial<TeamsConfig> | undefined,
+    );
 
     channelLog.info(
       `${LOG_PREFIX} Config: appId=${this.config.microsoftAppId}, tenantId=${this.config.tenantId || "(none)"}`,
@@ -276,17 +277,20 @@ export class TeamsAdapter extends ChannelAdapter {
   async updateConfig(config: Partial<ChannelConfig>): Promise<void> {
     const wasRunning = this.status === "running";
     const newOptions = config.options as Partial<TeamsConfig> | undefined;
+    const previousConfig = { ...this.config };
 
     if (newOptions) {
-      this.config = { ...this.config, ...newOptions };
+      this.config = mergeDefinedConfig(this.config, newOptions);
     }
 
-    // If credentials changed while running, restart
-    if (
-      wasRunning &&
-      (newOptions?.microsoftAppId || newOptions?.microsoftAppPassword)
-    ) {
-      channelLog.info(`${LOG_PREFIX} Credentials changed, restarting adapter`);
+    const shouldRestart = wasRunning && didConfigValuesChange(
+      previousConfig,
+      this.config,
+      ["microsoftAppId", "microsoftAppPassword", "tenantId"],
+    );
+
+    if (shouldRestart) {
+      channelLog.info(`${LOG_PREFIX} Credentials or tenant changed, restarting adapter`);
       await this.stop();
       const fullConfig: ChannelConfig = {
         type: "teams",

@@ -197,6 +197,23 @@ describe("ChannelManager", () => {
         }));
         expect(a2.start).not.toHaveBeenCalled();
     });
+
+    it("handles persisted configs with missing options without throwing", async () => {
+        if (!fs.existsSync(channelConfigDir)) fs.mkdirSync(channelConfigDir, { recursive: true });
+
+        fs.writeFileSync(path.join(channelConfigDir, "c1.json"), JSON.stringify({
+            type: "c1",
+            enabled: true,
+        }));
+
+        const a1 = new MockChannelAdapter("c1");
+        manager.registerAdapter(a1);
+
+        await expect(manager.initFromConfig({ gatewayUrl: "http://gateway" })).resolves.toBeUndefined();
+        expect(a1.start).toHaveBeenCalledWith(expect.objectContaining({
+            options: expect.objectContaining({ gatewayUrl: "http://gateway" }),
+        }));
+    });
   });
 
   describe("Runtime Options", () => {

@@ -126,7 +126,10 @@ export class ChannelManager {
         config = {
           ...diskConfig,
           ...existingConfig,
-          options: { ...diskConfig.options, ...existingConfig.options },
+          options: {
+            ...(diskConfig.options ?? {}),
+            ...(existingConfig.options ?? {}),
+          },
         };
       }
 
@@ -164,7 +167,10 @@ export class ChannelManager {
       };
     } else if (diskConfig) {
       // Merge: disk as base, in-memory overrides (preserves disk-only fields like tenantId)
-      config.options = { ...diskConfig.options, ...config.options };
+      config.options = {
+        ...(diskConfig.options ?? {}),
+        ...(config.options ?? {}),
+      };
     }
     this.applyRuntimeOptions(config);
     this.configs.set(type, config);
@@ -235,7 +241,10 @@ export class ChannelManager {
     if (updates.name !== undefined) config.name = updates.name;
     if (updates.enabled !== undefined) config.enabled = updates.enabled;
     if (updates.options !== undefined) {
-      config.options = { ...config.options, ...updates.options };
+      config.options = {
+        ...(config.options ?? {}),
+        ...updates.options,
+      };
     }
 
     this.applyRuntimeOptions(config);

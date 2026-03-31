@@ -280,7 +280,7 @@ export class GatewayClient {
 
   // --- RPC helper ---
 
-  private request<T>(type: string, payload: unknown = {}, timeout = DEFAULT_TIMEOUT): Promise<T> {
+  request<T>(type: string, payload: unknown = {}, timeout = DEFAULT_TIMEOUT): Promise<T> {
     return new Promise<T>((resolve, reject) => {
       if (!this.ws || !this._connected) {
         return reject(new Error("Not connected to gateway"));

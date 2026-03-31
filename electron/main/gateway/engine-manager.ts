@@ -39,11 +39,18 @@ function normalizeDir(dir: string): string {
 
 /** Convert ConversationMeta → UnifiedSession for wire compatibility */
 function convToSession(conv: ConversationMeta): UnifiedSession {
+  // For worktree sessions, resolve projectId from the parent repo directory
+  const projectDir = conv.worktreeId && conv.parentDirectory
+    ? normalizeDir(conv.parentDirectory)
+    : normalizeDir(conv.directory);
+
   return {
     id: conv.id,
     engineType: conv.engineType,
     directory: normalizeDir(conv.directory),
     title: conv.title,
+    worktreeId: conv.worktreeId,
+    projectId: `dir-${projectDir}`,
     time: {
       created: conv.createdAt,
       updated: conv.updatedAt,
@@ -679,9 +686,28 @@ export class EngineManager extends EventEmitter {
   async createSession(
     engineType: EngineType,
     directory: string,
+    worktreeId?: string,
   ): Promise<UnifiedSession> {
     const adapter = this.getAdapterOrThrow(engineType); // Validate engine exists
-    const conv = conversationStore.create({ engineType, directory });
+
+    // If worktreeId is specified, resolve worktree directory
+    let sessionDir = directory;
+    if (worktreeId) {
+      const { worktreeManager } = await import("../services/worktree-manager");
+      const projectId = await worktreeManager.resolveProjectId(directory);
+      const wt = worktreeManager.getWorktreeByName(projectId, worktreeId);
+      if (wt) {
+        sessionDir = wt.directory;
+      }
+    }
+
+    const conv = conversationStore.create({
+      engineType,
+      directory: sessionDir,
+      worktreeId,
+      // Remember the original repo directory so worktree sessions group under the right project
+      parentDirectory: worktreeId ? directory : undefined,
+    });
     this.sessionEngineMap.set(conv.id, engineType);
 
     // Create the engine session immediately (not lazily on first sendMessage).

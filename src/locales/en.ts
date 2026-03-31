@@ -118,6 +118,7 @@ export interface LocaleDict {
     showDefaultWorkspace: string;
     showDefaultWorkspaceDesc: string;
     features: string;
+    experimental: string;
     scheduledTasksEnabled: string;
     scheduledTasksEnabledDesc: string;
   };
@@ -191,8 +192,12 @@ export interface LocaleDict {
     defaultEngine: string;
     searchPlaceholder: string;
     noSearchResults: string;
+    noProjects: string;
     defaultWorkspace: string;
     projectsTitle: string;
+    activeSection: string;
+    pinSession: string;
+    unpinSession: string;
   };
 
   // Project
@@ -558,6 +563,39 @@ export interface LocaleDict {
     fieldRequired: string;
     daysRequired: string;
   };
+  worktree: {
+    title: string;
+    local: string;
+    sandbox: string;
+    create: string;
+    remove: string;
+    merge: string;
+    noSessions: string;
+    confirmDelete: string;
+    mergeSuccess: string;
+    mergeConflict: string;
+    mergeFailed: string;
+    baseBranch: string;
+    targetBranch: string;
+    name: string;
+    branch: string;
+    enabled: string;
+    enabledDesc: string;
+    creating: string;
+    merging: string;
+    namePlaceholder: string;
+    mergeMode: string;
+    modeMergeDesc: string;
+    modeSquashDesc: string;
+    modeRebaseDesc: string;
+    mergeMessage: string;
+    deleteConfirmTitle: string;
+    deleteWarningTitle: string;
+    deleteImpactFiles: string;
+    deleteImpactBranch: string;
+    deleteImpactSessions: string;
+    deleteIrreversible: string;
+  };
 }
 
 export const en: LocaleDict = {
@@ -679,6 +717,7 @@ export const en: LocaleDict = {
     showDefaultWorkspace: "Show default workspace in sidebar",
     showDefaultWorkspaceDesc: "Display the default workspace project group in the sidebar",
     features: "Features",
+    experimental: "Experimental",
     scheduledTasksEnabled: "Scheduled Tasks",
     scheduledTasksEnabledDesc: "Enable the scheduled tasks feature to automatically run tasks on a schedule",
   },
@@ -752,8 +791,12 @@ export const en: LocaleDict = {
     defaultEngine: "Default Engine",
     searchPlaceholder: "Search sessions...",
     noSearchResults: "No matching sessions",
+    noProjects: "No projects yet",
     defaultWorkspace: "Default Workspace",
     projectsTitle: "Projects",
+    activeSection: "Active",
+    pinSession: "Pin to Active",
+    unpinSession: "Unpin",
   },
 
   // Project
@@ -1112,5 +1155,38 @@ export const en: LocaleDict = {
     lessThanOneMinute: "< 1m",
     fieldRequired: "{field} is required",
     daysRequired: "Select at least one day",
+  },
+  worktree: {
+    title: "Worktree",
+    local: "Local",
+    sandbox: "Sandbox",
+    create: "Create Worktree",
+    remove: "Remove Worktree",
+    merge: "Merge Worktree",
+    noSessions: "No sessions",
+    confirmDelete: "Are you sure you want to remove worktree \"{name}\"? This will delete the working directory and branch.",
+    mergeSuccess: "Successfully merged {branch} into {target}",
+    mergeConflict: "Merge conflict in {count} file(s)",
+    mergeFailed: "Merge failed: {message}",
+    baseBranch: "Base Branch",
+    targetBranch: "Target Branch",
+    name: "Name",
+    branch: "Branch",
+    enabled: "Enable Worktree",
+    enabledDesc: "Allow creating isolated git worktrees per project for parallel development",
+    creating: "Creating worktree...",
+    merging: "Merging...",
+    namePlaceholder: "Optional name (auto-generated if empty)",
+    mergeMode: "Merge Mode",
+    modeMergeDesc: "Create a merge commit preserving full history",
+    modeSquashDesc: "Combine all commits into one on the target branch",
+    modeRebaseDesc: "Replay commits on top of the target branch",
+    mergeMessage: "Commit Message",
+    deleteConfirmTitle: "Delete worktree \"{name}\"?",
+    deleteWarningTitle: "This action will:",
+    deleteImpactFiles: "Delete the worktree working directory and all local files",
+    deleteImpactBranch: "Delete the associated git branch",
+    deleteImpactSessions: "Remove {count} session(s) linked to this worktree",
+    deleteIrreversible: "This action cannot be undone. Uncommitted changes will be lost.",
   },
 };

@@ -265,15 +265,23 @@ codemux/
 │   │   ├── engines/          # Адаптеры движков (OpenCode, Copilot, Claude Code)
 │   │   ├── gateway/          # WebSocket-сервер + маршрутизация движков
 │   │   ├── channels/         # Каналы IM-ботов (Feishu, DingTalk, Telegram, WeCom, Teams)
-│   │   └── services/         # Авторизация, хранилище устройств, туннель, сессии
+│   │   │   └── streaming/    # Кросс-канальная стриминговая инфраструктура
+│   │   ├── services/         # Авторизация, хранилище устройств, туннель, сессии, файловый сервис, трей и др.
+│   │   └── utils/            # Общие утилиты (генерация ID и др.)
 │   └── preload/
 ├── src/                      # SolidJS рендерер
 │   ├── pages/                # Chat, Settings, Devices, Entry
 │   ├── components/           # UI-компоненты + рендереры контента
 │   ├── stores/               # Реактивное состояние (session, message, config)
 │   ├── lib/                  # Gateway-клиент, авторизация, i18n, тема
+│   ├── locales/              # Файлы переводов i18n (en, zh, ru)
 │   └── types/                # Унифицированная система типов + маппинг инструментов
-├── scripts/                  # Настройка, обновление бинарников
+├── shared/                   # Общие модули бэкенда (авторизация, JWT, базовое хранилище устройств)
+├── tests/                    # Юнит-тесты, E2E-тесты (Playwright), бенчмарки
+├── docs/                     # Руководства по настройке каналов + проектная документация
+├── website/                  # Веб-сайт проекта (SolidJS + Vite)
+├── scripts/                  # Настройка, обновление бинарников, CI-хелперы
+├── homebrew/                 # Формула Homebrew для дистрибуции на macOS
 ├── electron.vite.config.ts
 └── electron-builder.yml
 ```
@@ -282,7 +290,7 @@ codemux/
 
 ## Участие в проекте
 
-Мы приветствуем вклад! Пожалуйста, следуйте этим соглашениям:
+Мы приветствуем вклад! Подробные рекомендации см. в [CONTRIBUTING.md](CONTRIBUTING.md).
 
 **Стиль кода**: TypeScript strict mode, реактивные паттерны SolidJS, Tailwind для стилизации
 

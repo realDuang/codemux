@@ -39,7 +39,7 @@ export function createWindow(hidden = false): BrowserWindow {
     ...(process.platform === "darwin"
       ? {
           titleBarStyle: "hiddenInset" as const,
-          trafficLightPosition: { x: 16, y: 16 },
+          trafficLightPosition: { x: 13, y: 14 },
         }
       : process.platform === "win32"
         ? {

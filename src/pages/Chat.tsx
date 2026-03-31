@@ -29,6 +29,9 @@ import { HideProjectModal } from "../components/HideProjectModal";
 import { AddProjectModal } from "../components/AddProjectModal";
 import { ScheduledTaskModal } from "../components/ScheduledTaskModal";
 import type { UnifiedMessage, UnifiedPart, UnifiedPermission, UnifiedQuestion, UnifiedSession, UnifiedProject, AgentMode, EngineType, SessionActivityStatus, EngineCommand, ScheduledTask, ScheduledTaskCreateRequest, ScheduledTaskUpdateRequest } from "../types/unified";
+import WorktreeModal from "../components/WorktreeModal";
+import MergeWorktreeModal from "../components/MergeWorktreeModal";
+import { DeleteWorktreeModal } from "../components/DeleteWorktreeModal";
 import { useI18n, formatMessage } from "../lib/i18n";
 import { notify } from "../lib/notifications";
 import { isDefaultTitle } from "../lib/session-utils";
@@ -49,6 +52,7 @@ import { handleFileChanged, refreshGitStatus } from "../stores/file";
 
 import { configStore, setConfigStore, getSelectedModelForEngine, restoreEngineModelSelections, isEngineEnabled, restoreEnabledEngines, getDefaultEngineType, restoreDefaultEngine } from "../stores/config";
 import { scheduledTaskStore, setScheduledTaskStore } from "../stores/scheduled-task";
+import { computeActiveSessions } from "../lib/active-sessions";
 
 // Binary search helper (consistent with opencode desktop)
 function binarySearch<T>(
@@ -82,6 +86,7 @@ function toSessionInfo(s: UnifiedSession, projectID?: string): SessionInfo {
     title: s.title || "",
     directory: s.directory || "",
     projectID: projectID ?? s.projectId ?? undefined,
+    worktreeId: s.worktreeId,
     createdAt: new Date(s.time.created).toISOString(),
     updatedAt: new Date(s.time.updated).toISOString(),
   };
@@ -108,6 +113,10 @@ export default function Chat() {
   const [unreadSessions, setUnreadSessions] = createSignal<Set<string>>(new Set());
   // Track sessions whose error/cancelled status has been dismissed by viewing
   const [dismissedSessions, setDismissedSessions] = createSignal<Set<string>>(new Set());
+  // Active sessions: pin state + delayed removal for Active section
+  const [pinnedSessions, setPinnedSessions] = createSignal<Set<string>>(new Set());
+  const [delayingRemoval, setDelayingRemoval] = createSignal<Set<string>>(new Set());
+  const delayTimers = new Map<string, ReturnType<typeof setTimeout>>();
   let prevSendingMap: Record<string, boolean> = {};
   createEffect(() => {
     const currentMap = { ...sessionStore.sendingMap };
@@ -117,6 +126,30 @@ export default function Chat() {
         setUnreadSessions((prev) => {
           const next = new Set(prev);
           next.add(sessionId);
+          return next;
+        });
+      }
+    }
+    // Clear dismissed status when a session starts sending again,
+    // so new error/cancelled results will be shown.
+    for (const [sessionId, isSending] of Object.entries(currentMap)) {
+      if (isSending && !prevSendingMap[sessionId]) {
+        setDismissedSessions((prev) => {
+          if (!prev.has(sessionId)) return prev;
+          const next = new Set(prev);
+          next.delete(sessionId);
+          return next;
+        });
+        // Cancel delayed removal — session is active again
+        const timer = delayTimers.get(sessionId);
+        if (timer) {
+          clearTimeout(timer);
+          delayTimers.delete(sessionId);
+        }
+        setDelayingRemoval((prev) => {
+          if (!prev.has(sessionId)) return prev;
+          const next = new Set(prev);
+          next.delete(sessionId);
           return next;
         });
       }
@@ -141,13 +174,77 @@ export default function Chat() {
           break;
         }
       }
-      if (lastAssistant?.error) {
+      if (lastAssistant?.error && !dismissedSessions().has(sid)) {
         return lastAssistant.error === "Cancelled" ? "cancelled" : "error";
       }
     }
     if (unreadSessions().has(sid)) return "completed";
     return "idle";
   };
+
+  // Active sessions: computed list for Active section in sidebar
+  const activeSessions = createMemo((): SessionInfo[] =>
+    computeActiveSessions(
+      sessionStore.list,
+      pinnedSessions(),
+      delayingRemoval(),
+      getSessionStatus,
+      (s) => isEngineEnabled(s.engineType),
+    ),
+  );
+
+  const handlePinSession = (sid: string) => {
+    setPinnedSessions((prev) => {
+      const next = new Set(prev);
+      next.add(sid);
+      return next;
+    });
+  };
+
+  const handleUnpinSession = (sid: string) => {
+    setPinnedSessions((prev) => {
+      const next = new Set(prev);
+      next.delete(sid);
+      return next;
+    });
+    // Cancel any pending delayed removal
+    const timer = delayTimers.get(sid);
+    if (timer) {
+      clearTimeout(timer);
+      delayTimers.delete(sid);
+    }
+    setDelayingRemoval((prev) => {
+      if (!prev.has(sid)) return prev;
+      const next = new Set(prev);
+      next.delete(sid);
+      return next;
+    });
+  };
+
+  /** Start 5s delayed removal for a session leaving Active after being viewed. */
+  const startDelayedRemoval = (sid: string) => {
+    // Don't delay if pinned
+    if (pinnedSessions().has(sid)) return;
+    // Cancel existing timer if any
+    const existing = delayTimers.get(sid);
+    if (existing) clearTimeout(existing);
+    setDelayingRemoval((prev) => {
+      const next = new Set(prev);
+      next.add(sid);
+      return next;
+    });
+    const timer = setTimeout(() => {
+      delayTimers.delete(sid);
+      setDelayingRemoval((prev) => {
+        if (!prev.has(sid)) return prev;
+        const next = new Set(prev);
+        next.delete(sid);
+        return next;
+      });
+    }, 5000);
+    delayTimers.set(sid, timer);
+  };
+
   const [messagesRef, setMessagesRef] = createSignal<HTMLDivElement>();
   const [loadingMessages, setLoadingMessages] = createSignal(false);
   // Whether user has scrolled away from the bottom. When true, auto-scroll
@@ -350,6 +447,8 @@ export default function Chat() {
     sendErrorTimer = setTimeout(() => setSendError(null), 3000);
   };
   onCleanup(() => clearTimeout(sendErrorTimer));
+  // Clean up Active section delayed-removal timers
+  onCleanup(() => { for (const t of delayTimers.values()) clearTimeout(t); });
 
   const [deleteProjectInfo, setDeleteProjectInfo] = createSignal<{
     projectID: string;
@@ -360,6 +459,9 @@ export default function Chat() {
   const [showAddProjectModal, setShowAddProjectModal] = createSignal(false);
   const [showTaskModal, setShowTaskModal] = createSignal(false);
   const [editingTask, setEditingTask] = createSignal<ScheduledTask | undefined>();
+  const [worktreeModalDir, setWorktreeModalDir] = createSignal<string | null>(null);
+  const [mergeWorktreeInfo, setMergeWorktreeInfo] = createSignal<{ dir: string; name: string; branch: string } | null>(null);
+  const [deleteWorktreeInfo, setDeleteWorktreeInfo] = createSignal<{ dir: string; name: string; branch: string; sessionCount: number } | null>(null);
 
   // WebSocket connection status
   const [wsConnected, setWsConnected] = createSignal(true);
@@ -529,6 +631,7 @@ export default function Chat() {
 
   // Generation counter to discard stale background loads when initializeSession
   let initGeneration = 0;
+  let engineRefreshTimer: ReturnType<typeof setTimeout> | undefined;
 
   const initializeSession = async () => {
     const gen = ++initGeneration;
@@ -587,6 +690,18 @@ export default function Chat() {
           if (status === "error" && error) {
             notify(formatMessage(t().notification.engineError, { message: error }));
           }
+          // Debounce engine list refresh to avoid stale data from out-of-order responses
+          // during rapid status transitions (e.g. "starting" → "running").
+          clearTimeout(engineRefreshTimer);
+          engineRefreshTimer = setTimeout(() => {
+            void gateway.listEngines()
+              .then((engines) => {
+                setConfigStore("engines", engines);
+              })
+              .catch((err) => {
+                logger.debug("[Gateway] Failed to refresh engine info after status change:", err);
+              });
+          }, 300);
         },
         onMessageQueued: (sessionId: string, _messageId: string, _queuePosition: number) => {
           logger.debug("[WS] message.queued for session:", sessionId);
@@ -627,7 +742,7 @@ export default function Chat() {
 
       setSessionStore({
         loading: true,
-        showDefaultWorkspace: getSetting<boolean>("showDefaultWorkspace") ?? false,
+        showDefaultWorkspace: getSetting<boolean>("showDefaultWorkspace") ?? true,
       });
       setScheduledTaskStore("enabled", getSetting<boolean>("scheduledTasksEnabled") ?? true);
 
@@ -681,11 +796,11 @@ export default function Chat() {
 
           setSessionStore("projects", allProjects);
 
-          // Filter sessions to valid directories only
+          // Filter sessions to valid directories only (worktree sessions pass through via worktreeId)
           const validDirectories = new Set(allProjects.map(p => p.directory));
           const normDir = (d: string) => d.replaceAll("\\", "/");
           const filteredSessions = allSessions.filter(s =>
-            s.directory && validDirectories.has(normDir(s.directory))
+            s.directory && (validDirectories.has(normDir(s.directory)) || s.worktreeId)
           );
 
           const sessionInfos = filteredSessions.map(s => {
@@ -754,6 +869,10 @@ export default function Chat() {
     setSessionStore("current", sessionId);
     setSessionStore("initError", null);
 
+    // Capture status BEFORE clearing unread/dismissed — otherwise
+    // getSessionStatus() would return "idle" instead of "completed".
+    const status = getSessionStatus(sessionId);
+
     // Clear unread status when user switches to this session
     setUnreadSessions((prev) => {
       if (!prev.has(sessionId)) return prev;
@@ -761,6 +880,21 @@ export default function Chat() {
       next.delete(sessionId);
       return next;
     });
+
+    // Dismiss error/cancelled indicator when user views this session
+    if (status === "error" || status === "cancelled") {
+      setDismissedSessions((prev) => {
+        if (prev.has(sessionId)) return prev;
+        const next = new Set(prev);
+        next.add(sessionId);
+        return next;
+      });
+    }
+
+    // Start 5s delayed removal from Active section for viewed completed/error/cancelled sessions
+    if (status === "completed" || status === "error" || status === "cancelled") {
+      startDelayedRemoval(sessionId);
+    }
 
     // Update currentEngineType for model selector
     const session = sessionStore.list.find(s => s.id === sessionId);
@@ -802,15 +936,15 @@ export default function Chat() {
   };
 
   // New session
-  const handleNewSession = async (directory?: string, explicitEngineType?: EngineType) => {
-    logger.debug("[NewSession] Creating new session in directory:", directory, "engineType:", explicitEngineType);
+  const handleNewSession = async (directory?: string, explicitEngineType?: EngineType, worktreeId?: string) => {
+    logger.debug("[NewSession] Creating new session in directory:", directory, "engineType:", explicitEngineType, "worktreeId:", worktreeId);
 
     try {
       const defaultProject = sessionStore.projects.find(p => p.isDefault);
       const dir = directory || defaultProject?.directory || sessionStore.projects[0]?.directory || ".";
       // Use explicitly-passed engineType when available, otherwise use global default engine.
       const engineType = explicitEngineType || getDefaultEngineType();
-      const newSession = await gateway.createSession(engineType, dir);
+      const newSession = await gateway.createSession(engineType, dir, worktreeId);
       logger.debug("[NewSession] Created:", newSession);
 
       // Match project by directory (projects are engine-agnostic now).
@@ -932,7 +1066,7 @@ export default function Chat() {
       const validDirectories = new Set(allProjects.map(p => p.directory));
       const normDir = (d: string) => d.replaceAll("\\", "/");
       const filteredSessions = allSessions.filter(s =>
-        s.directory && validDirectories.has(normDir(s.directory))
+        s.directory && (validDirectories.has(normDir(s.directory)) || s.worktreeId)
       );
       // Build index for O(1) project lookup by directory
       const projectIndex = new Map<string, UnifiedProject>();
@@ -944,6 +1078,8 @@ export default function Chat() {
         return toSessionInfo(s, project?.id);
       });
       setSessionStore("list", sessionInfos);
+      // Clear worktree cache so sidebar effect re-fetches
+      setSessionStore("worktrees", {});
     } catch (error) {
       logger.error("[RefreshSessions] Failed:", error);
     } finally {
@@ -1051,6 +1187,8 @@ export default function Chat() {
       await handleSelectSession(newSession.id);
     } catch (error) {
       logger.error("[AddProject] Failed to add project:", error);
+      if (error instanceof Error) throw error;
+      throw new Error(t().project.addFailed, { cause: error });
     }
   };
 
@@ -1701,11 +1839,14 @@ export default function Chat() {
         class="w-full flex-shrink-0 flex items-center px-2 border-b border-gray-200 dark:border-slate-800 bg-gray-50 dark:bg-slate-950 electron-drag-region electron-titlebar-pad-left electron-titlebar-pad-right"
         style={{ height: "var(--electron-title-bar-height, 40px)", "min-height": "var(--electron-title-bar-height, 40px)" }}
       >
-        {/* Left: Logo + Sidebar toggle */}
-        <div class="flex items-center gap-1.5 electron-no-drag flex-shrink-0">
+        {/* Brand: Logo + App name (moves to right on macOS to avoid traffic lights) */}
+        <div class="flex items-center gap-1.5 electron-no-drag flex-shrink-0 titlebar-brand">
           <img src={`${import.meta.env.BASE_URL}assets/logo.png`} alt="CodeMux" class="w-5 h-5 rounded" />
-          <span class="text-[13px] font-semibold text-gray-700 dark:text-gray-300 hidden sm:inline mr-0.5">CodeMux</span>
+          <span class="hidden sm:inline text-[11px] font-semibold tracking-wide text-gray-500 dark:text-gray-400 bg-gray-100 dark:bg-slate-800 px-2 py-0.5 rounded-md border border-gray-200 dark:border-slate-700 select-none">CodeMux</span>
+        </div>
 
+        {/* Left: Sidebar toggles */}
+        <div class="flex items-center gap-1 electron-no-drag flex-shrink-0">
           {/* Mobile sidebar toggle */}
           <button
             onClick={toggleSidebar}
@@ -1823,6 +1964,18 @@ export default function Chat() {
               onDeleteTask={scheduledTaskStore.enabled ? handleDeleteTask : undefined}
               onRunTaskNow={scheduledTaskStore.enabled ? handleRunTaskNow : undefined}
               onToggleTaskEnabled={scheduledTaskStore.enabled ? handleToggleTaskEnabled : undefined}
+              activeSessions={activeSessions()}
+              pinnedSessionIds={pinnedSessions()}
+              onPinSession={handlePinSession}
+              onUnpinSession={handleUnpinSession}
+              onManageWorktrees={(dir) => setWorktreeModalDir(dir)}
+              onRemoveWorktree={(dir, name, branch) => {
+                const sessionCount = sessionStore.list.filter((s) => s.worktreeId === name).length;
+                setDeleteWorktreeInfo({ dir, name, branch, sessionCount });
+              }}
+              onMergeWorktree={(dir, name, branch) => {
+                setMergeWorktreeInfo({ dir, name, branch });
+              }}
             />
           </Show>
           <Show when={refreshingSessions()}>
@@ -2126,6 +2279,63 @@ export default function Chat() {
         engines={configStore.engines}
         onClose={() => setShowTaskModal(false)}
         onSave={handleCreateOrUpdateTask}
+      />
+
+      <Show when={worktreeModalDir()}>
+        {(dir) => (
+          <WorktreeModal
+            projectDirectory={dir()}
+            onClose={() => setWorktreeModalDir(null)}
+            onWorktreeCreated={async (wt) => {
+              // Capture dir value before modal closes and accessor dies
+              const projectDir = dir();
+              // Reload worktrees from backend (single source of truth)
+              try {
+                const wts = await gateway.listWorktrees(projectDir);
+                setSessionStore("worktrees", projectDir, wts);
+              } catch {
+                // Fallback: append the created worktree directly
+                const existing = sessionStore.worktrees[projectDir] || [];
+                setSessionStore("worktrees", projectDir, [...existing, wt]);
+              }
+            }}
+          />
+        )}
+      </Show>
+
+      <Show when={mergeWorktreeInfo()}>
+        {(info) => (
+          <MergeWorktreeModal
+            projectDirectory={info().dir}
+            worktreeName={info().name}
+            worktreeBranch={info().branch}
+            onClose={() => setMergeWorktreeInfo(null)}
+          />
+        )}
+      </Show>
+
+      <DeleteWorktreeModal
+        isOpen={deleteWorktreeInfo() !== null}
+        worktreeName={deleteWorktreeInfo()?.name || ""}
+        worktreeBranch={deleteWorktreeInfo()?.branch || ""}
+        sessionCount={deleteWorktreeInfo()?.sessionCount || 0}
+        onClose={() => setDeleteWorktreeInfo(null)}
+        onConfirm={async () => {
+          const info = deleteWorktreeInfo();
+          if (!info) return;
+          await gateway.removeWorktree(info.dir, info.name);
+          const removedIds = new Set(
+            sessionStore.list.filter((s) => s.worktreeId === info.name).map((s) => s.id),
+          );
+          if (removedIds.size > 0) {
+            setSessionStore("list", (list) => list.filter((s) => !removedIds.has(s.id)));
+            if (sessionStore.current && removedIds.has(sessionStore.current)) {
+              setSessionStore("current", null);
+            }
+          }
+          const wts = await gateway.listWorktrees(info.dir);
+          setSessionStore("worktrees", info.dir, wts);
+        }}
       />
     </div>
   );

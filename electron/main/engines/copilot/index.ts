@@ -143,12 +143,17 @@ export class CopilotSdkAdapter extends EngineAdapter {
       }
       copilotLog.info("Using Copilot CLI binary:", cliPath);
 
+      // Remove ELECTRON_RUN_AS_NODE which leaks from Electron in packaged builds
+      // and causes the Copilot CLI subprocess to malfunction (stream destroyed).
+      const env = { ...process.env, ...this.options?.env };
+      delete env.ELECTRON_RUN_AS_NODE;
+
       this.client = new CopilotClient({
         useStdio: true,
         autoRestart: true,
         autoStart: true,
         cliPath,
-        env: this.options?.env,
+        env,
       });
 
       await this.client.start();

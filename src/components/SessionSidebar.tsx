@@ -2,10 +2,13 @@ import { For, Show, Switch, Match, createSignal, createMemo, createEffect } from
 import { SessionInfo, sessionStore, setSessionStore, getProjectName } from "../stores/session";
 import { useI18n, formatMessage } from "../lib/i18n";
 import { isDefaultTitle } from "../lib/session-utils";
-import type { UnifiedProject, EngineType, SessionActivityStatus, ScheduledTask } from "../types/unified";
+import { filterSessionsBySearch } from "../lib/active-sessions";
+import type { UnifiedProject, UnifiedWorktree, EngineType, SessionActivityStatus, ScheduledTask } from "../types/unified";
 import { configStore, isEngineEnabled, getDefaultEngineType, setDefaultNewSessionEngine } from "../stores/config";
 import { getEngineBadge } from "./share/common";
 import { ScheduledTaskSection } from "./ScheduledTaskSection";
+import { getSetting } from "../lib/settings";
+import { gateway } from "../lib/gateway-api";
 
 import { isElectron } from "../lib/platform";
 import { systemAPI } from "../lib/electron-api";
@@ -16,7 +19,7 @@ interface SessionSidebarProps {
   projects: UnifiedProject[];
   getSessionStatus: (sessionId: string) => SessionActivityStatus;
   onSelectSession: (sessionId: string) => void;
-  onNewSession: (directory?: string, engineType?: EngineType) => void;
+  onNewSession: (directory?: string, engineType?: EngineType, worktreeId?: string) => void;
   onDeleteSession: (sessionId: string) => void;
   onRenameSession: (sessionId: string, newTitle: string) => void;
   onDeleteProjectSessions: (projectID: string, projectName: string, sessionCount: number) => void;
@@ -32,6 +35,15 @@ interface SessionSidebarProps {
   onDeleteTask?: (taskId: string) => void;
   onRunTaskNow?: (taskId: string) => void;
   onToggleTaskEnabled?: (taskId: string, enabled: boolean) => void;
+  // Active Sessions
+  activeSessions?: SessionInfo[];
+  pinnedSessionIds?: Set<string>;
+  onPinSession?: (sessionId: string) => void;
+  onUnpinSession?: (sessionId: string) => void;
+  // Worktree
+  onManageWorktrees?: (projectDirectory: string) => void;
+  onRemoveWorktree?: (projectDirectory: string, worktreeName: string, worktreeBranch: string) => void;
+  onMergeWorktree?: (projectDirectory: string, worktreeName: string, worktreeBranch: string) => void;
 }
 
 // Project grouping data structure
@@ -117,7 +129,8 @@ export function SessionSidebar(props: SessionSidebarProps) {
     if (!defaultProject) return null;
 
     const sessions = props.sessions.filter(
-      (s) => isEngineEnabled(s.engineType) && s.projectID === defaultProject.id,
+      (s) => isEngineEnabled(s.engineType) && s.projectID === defaultProject.id
+        && (!s.worktreeId || worktreeEnabled()),
     );
 
     return {
@@ -142,7 +155,9 @@ export function SessionSidebar(props: SessionSidebarProps) {
       groups.set(project.id, []);
     }
 
-    const rootSessions = props.sessions.filter(s => isEngineEnabled(s.engineType));
+    const rootSessions = props.sessions.filter(s =>
+      isEngineEnabled(s.engineType) && (!s.worktreeId || worktreeEnabled()),
+    );
 
     for (const session of rootSessions) {
       const projectID = session.projectID || "";
@@ -210,6 +225,84 @@ export function SessionSidebar(props: SessionSidebarProps) {
   });
 
   const isSearching = () => searchQuery().trim().length > 0;
+
+  const worktreeEnabled = createMemo(() => getSetting<boolean>("worktreeEnabled") ?? false);
+
+  const getProjectWorktrees = (projectDir: string): UnifiedWorktree[] => {
+    if (!worktreeEnabled()) return [];
+    return sessionStore.worktrees[projectDir] || [];
+  };
+
+  const isWorktreeExpanded = (key: string): boolean => {
+    return sessionStore.worktreeExpanded[key] === true;
+  };
+
+  const toggleWorktreeExpanded = (key: string) => {
+    setSessionStore("worktreeExpanded", key, !isWorktreeExpanded(key));
+  };
+
+  /** Split sessions by worktree for a project group */
+  const getWorktreeSessionGroups = (
+    projectDir: string,
+    sessions: SessionInfo[],
+  ): { local: SessionInfo[]; worktreeGroups: { worktree: UnifiedWorktree; sessions: SessionInfo[] }[] } => {
+    const worktrees = getProjectWorktrees(projectDir);
+    if (worktrees.length === 0) {
+      return { local: sessions, worktreeGroups: [] };
+    }
+
+    // Filter out worktree sessions when feature is disabled
+    if (!worktreeEnabled()) {
+      return { local: sessions.filter((s) => !s.worktreeId), worktreeGroups: [] };
+    }
+
+    const local = sessions.filter((s) => !s.worktreeId);
+    const wtGroups = worktrees.map((wt) => ({
+      worktree: wt,
+      sessions: sessions.filter((s) => s.worktreeId === wt.name),
+    }));
+
+    return { local, worktreeGroups: wtGroups };
+  };
+
+  // Load worktrees for all projects when feature is enabled
+  const refreshWorktrees = async () => {
+    if (!worktreeEnabled()) return;
+    for (const group of projectGroups()) {
+      const dir = group.project?.directory;
+      if (!dir) continue;
+      try {
+        const wts = await gateway.listWorktrees(dir);
+        setSessionStore("worktrees", dir, wts);
+      } catch {/* ignore — project may not be a git repo */}
+    }
+  };
+
+  // Initial load + re-load when projects change
+  createEffect(() => {
+    if (!worktreeEnabled()) return;
+    // Track projectGroups to re-run when projects change
+    const groups = projectGroups();
+    if (groups.length === 0) return;
+    refreshWorktrees();
+  });
+
+  // Filtered active sessions (respects search query)
+  const filteredActiveSessions = createMemo((): SessionInfo[] => {
+    const sessions = props.activeSessions ?? [];
+    if (sessions.length === 0) return [];
+    return filterSessionsBySearch(sessions, searchQuery());
+  });
+
+  const showProjectsSection = createMemo(() => !props.collapsed);
+
+  // Helper to find the project name for an active session
+  const getProjectNameForSession = (session: SessionInfo): string | null => {
+    if (!session.projectID) return null;
+    const project = props.projects.find((p) => p.id === session.projectID);
+    if (!project) return null;
+    return getProjectName(project);
+  };
 
   // Running + enabled engines for default engine selector
   const runningEngines = createMemo(() =>
@@ -341,8 +434,240 @@ export function SessionSidebar(props: SessionSidebarProps) {
           />
         </Show>
 
+        {/* Active Sessions Section */}
+        <Show when={!props.collapsed && filteredActiveSessions().length > 0}>
+          {(() => {
+            // Active section defaults to expanded (opposite of projects which default collapsed)
+            const getActiveExpanded = () => sessionStore.projectExpanded["__active__"] !== false;
+            const isExpanded = () => isSearching() || getActiveExpanded();
+            const toggleActiveExpanded = () => {
+              setSessionStore("projectExpanded", "__active__", !getActiveExpanded());
+            };
+            return (
+              <div class="mb-2">
+                {/* Active Section Header */}
+                <div
+                  class="group flex items-center justify-between px-2 py-1.5 rounded-md cursor-pointer hover:bg-gray-100 dark:hover:bg-slate-900 transition-colors"
+                  onClick={toggleActiveExpanded}
+                >
+                  <div class="flex items-center gap-2 min-w-0 flex-1">
+                    <svg
+                      xmlns="http://www.w3.org/2000/svg"
+                      width="12"
+                      height="12"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="2"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      class={`text-gray-400 transition-transform flex-shrink-0 ${
+                        isExpanded() ? "rotate-90" : ""
+                      }`}
+                    >
+                      <path d="m9 18 6-6-6-6" />
+                    </svg>
+                    <div class="w-5 h-5 rounded flex items-center justify-center bg-blue-500 text-white flex-shrink-0">
+                      <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
+                        <path d="M21 12a9 9 0 1 1-6.219-8.56" />
+                      </svg>
+                    </div>
+                    <span class="text-sm font-medium text-gray-700 dark:text-gray-300">
+                      {t().sidebar.activeSection}
+                    </span>
+                    <span class="text-[10px] text-gray-400 dark:text-gray-500">
+                      [{filteredActiveSessions().length}]
+                    </span>
+                  </div>
+                </div>
+
+                {/* Active Sessions List (Collapsible) */}
+                <div class="collapsible-grid" data-expanded={isExpanded() ? "true" : "false"}>
+                  <div class="collapsible-content">
+                    <div class="ml-4 mt-1">
+                      <For each={filteredActiveSessions()}>
+                        {(session) => {
+                  const isActive = () => session.id === props.currentSessionId;
+                  const sessionStatus = () => props.getSessionStatus(session.id);
+                  const isPinned = () => props.pinnedSessionIds?.has(session.id) ?? false;
+                  const projectName = () => getProjectNameForSession(session);
+                  const isEditing = () => editingSessionId() === session.id;
+
+                  const startEditing = (e: MouseEvent) => {
+                    e.stopPropagation();
+                    setEditingSessionId(session.id);
+                    setEditingTitle(session.title || "");
+                  };
+
+                  const saveTitle = () => {
+                    const newTitle = editingTitle().trim();
+                    if (newTitle && newTitle !== session.title) {
+                      props.onRenameSession(session.id, newTitle);
+                    }
+                    setEditingSessionId(null);
+                  };
+
+                  const cancelEditing = () => setEditingSessionId(null);
+
+                  const handleKeyDown = (e: KeyboardEvent) => {
+                    if (e.key === "Enter") saveTitle();
+                    else if (e.key === "Escape") cancelEditing();
+                  };
+
+                  return (
+                    <div
+                      class={`group relative px-3 py-2 mb-0.5 rounded-md cursor-pointer transition-all duration-150 ${
+                        isActive()
+                          ? "bg-white dark:bg-slate-800 shadow-xs"
+                          : "hover:bg-gray-100 dark:hover:bg-slate-900"
+                      }`}
+                      onClick={() => !isEditing() && props.onSelectSession(session.id)}
+                    >
+                      {/* Line 1: Status + Pin + Title */}
+                      <div class="flex items-center gap-1.5 min-w-0">
+                        <Show when={sessionStatus() !== "idle"}>
+                          <StatusIndicator status={sessionStatus()} />
+                        </Show>
+                        <Show when={isPinned()}>
+                          <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24"
+                            fill="currentColor" stroke="none"
+                            class="text-blue-500 dark:text-blue-400 flex-shrink-0">
+                            <path d="M12 2C7.2 2 4 5.2 4 8.5c0 5.5 7 12.5 8 13.5 1-1 8-8 8-13.5C20 5.2 16.8 2 12 2zm0 9.5c-1.4 0-2.5-1.1-2.5-2.5S10.6 6.5 12 6.5s2.5 1.1 2.5 2.5S13.4 11.5 12 11.5z" />
+                          </svg>
+                        </Show>
+                        <Show
+                          when={isEditing()}
+                          fallback={
+                            <div
+                              class={`text-sm truncate ${
+                                isActive() || sessionStatus() === "completed" || sessionStatus() === "cancelled" || sessionStatus() === "error"
+                                  ? "text-gray-900 dark:text-gray-100 font-medium"
+                                  : "text-gray-600 dark:text-gray-400"
+                              }`}
+                              onDblClick={startEditing}
+                              title={session.id}
+                            >
+                              {getDisplayTitle(session.title)}
+                            </div>
+                          }
+                        >
+                          <input
+                            type="text"
+                            value={editingTitle()}
+                            onInput={(e) => setEditingTitle(e.currentTarget.value)}
+                            onKeyDown={handleKeyDown}
+                            onBlur={saveTitle}
+                            autofocus
+                            class="text-sm w-full px-1 py-0.5 bg-white dark:bg-slate-700 border border-blue-500 rounded outline-none text-gray-900 dark:text-gray-100"
+                            onClick={(e) => e.stopPropagation()}
+                          />
+                        </Show>
+                      </div>
+                      {/* Line 2: Project badge + Engine badge + Time */}
+                      <Show when={!isEditing()}>
+                        <div class="flex items-center gap-1.5 mt-0.5">
+                          <Show when={projectName()}>
+                            <span class="text-[9px] font-medium px-1 py-0.5 rounded leading-none flex-shrink-0 bg-gray-200 text-gray-600 dark:bg-slate-700 dark:text-gray-400">
+                              {projectName()}
+                            </span>
+                          </Show>
+                          <Show when={getEngineBadge(session.engineType)}>
+                            {(badge) => (
+                              <span class={`text-[9px] font-medium px-1 py-0.5 rounded leading-none flex-shrink-0 ${badge().class}`}>
+                                {badge().label}
+                              </span>
+                            )}
+                          </Show>
+                          <span class="text-[10px] text-gray-400 dark:text-gray-500">
+                            {formatDate(session.updatedAt)}
+                          </span>
+                        </div>
+                      </Show>
+                      {/* Hover actions */}
+                      <Show when={!isEditing()}>
+                        <Show
+                          when={pendingDeleteId() !== session.id}
+                          fallback={
+                            <div class="absolute right-1 top-1/2 -translate-y-1/2 flex items-center gap-1 bg-white dark:bg-slate-800 rounded-md shadow-sm px-1 py-0.5">
+                              <button
+                                onClick={(e) => { e.stopPropagation(); props.onDeleteSession(session.id); setPendingDeleteId(null); }}
+                                class="px-2 py-1 text-[10px] font-medium text-white bg-red-500 hover:bg-red-600 rounded transition-colors"
+                              >{t().common.confirm}</button>
+                              <button
+                                onClick={(e) => { e.stopPropagation(); setPendingDeleteId(null); }}
+                                class="px-2 py-1 text-[10px] font-medium text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-slate-700 rounded transition-colors"
+                              >{t().common.cancel}</button>
+                            </div>
+                          }
+                        >
+                        <div class="absolute right-1 top-1/2 -translate-y-1/2 hidden group-hover:flex items-center gap-0.5 bg-white/90 dark:bg-slate-800/90 backdrop-blur-xs rounded-md shadow-sm px-0.5 py-0.5">
+                          <button
+                            onClick={(e) => { e.stopPropagation(); navigator.clipboard.writeText(session.id).catch(() => {}); }}
+                            class="p-1.5 text-gray-400 hover:text-green-500 hover:bg-green-50 dark:hover:bg-green-900/20 rounded transition-all"
+                            title={`${t().sidebar.copySessionId}: ${session.id}`}
+                          >
+                            <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                              <rect width="14" height="14" x="8" y="8" rx="2" ry="2" /><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" />
+                            </svg>
+                          </button>
+                          <button
+                            onClick={startEditing}
+                            class="p-1.5 text-gray-400 hover:text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded transition-all"
+                            title={t().sidebar.renameSession}
+                          >
+                            <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                              <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" /><path d="m15 5 4 4" />
+                            </svg>
+                          </button>
+                          {/* Pin/Unpin button */}
+                          <Show when={props.onPinSession && props.onUnpinSession}>
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                if (isPinned()) props.onUnpinSession!(session.id);
+                                else props.onPinSession!(session.id);
+                              }}
+                              class={`p-1.5 rounded transition-all ${
+                                isPinned()
+                                  ? "text-blue-500 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/20"
+                                  : "text-gray-400 hover:text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/20"
+                              }`}
+                              title={isPinned() ? t().sidebar.unpinSession : t().sidebar.pinSession}
+                            >
+                              <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill={isPinned() ? "currentColor" : "none"} stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <path d="M12 17v5" />
+                                <path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z" />
+                              </svg>
+                            </button>
+                          </Show>
+                          <button
+                            onClick={(e) => { e.stopPropagation(); e.preventDefault(); setPendingDeleteId(session.id); }}
+                            class="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded transition-all"
+                            title={t().sidebar.deleteSession}
+                          >
+                            <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                              <path d="M3 6h18" /><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" /><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" />
+                            </svg>
+                          </button>
+                        </div>
+                        </Show>
+                      </Show>
+                    </div>
+                  );
+                }}
+              </For>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
+          {/* Divider after Active section */}
+          <hr class="border-gray-200 dark:border-slate-800 my-2 mx-2" />
+        </Show>
+
         <Show
-          when={projectGroups().length > 0 || filteredDefaultWorkspaceGroup() !== null}
+          when={props.collapsed ? (projectGroups().length > 0 || filteredDefaultWorkspaceGroup() !== null) : true}
           fallback={
             <Show when={!props.collapsed}>
                 <div class="p-8 text-center">
@@ -369,6 +694,22 @@ export function SessionSidebar(props: SessionSidebarProps) {
           {/* Collapsed mode: show only project icons */}
           <Show when={props.collapsed}>
             <div class="flex flex-col items-center gap-1">
+              {/* Active sessions indicator (collapsed) */}
+              <Show when={filteredActiveSessions().length > 0}>
+                <div
+                  class="w-10 h-10 rounded-lg flex items-center justify-center relative hover:bg-gray-100 dark:hover:bg-slate-800 transition-all"
+                  title={`${t().sidebar.activeSection} (${filteredActiveSessions().length})`}
+                >
+                  <div class="w-7 h-7 rounded flex items-center justify-center bg-blue-500 text-white">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
+                      <path d="M21 12a9 9 0 1 1-6.219-8.56" />
+                    </svg>
+                  </div>
+                  <span class="absolute -top-0.5 -right-0.5 w-4 h-4 rounded-full bg-blue-500 text-white text-[8px] font-bold flex items-center justify-center">
+                    {filteredActiveSessions().length}
+                  </span>
+                </div>
+              </Show>
               {/* Default workspace icon (collapsed) */}
               <Show when={filteredDefaultWorkspaceGroup()}>
                 {(dwg) => {
@@ -514,6 +855,7 @@ export function SessionSidebar(props: SessionSidebarProps) {
                           {(session) => {
                             const isActive = () => session.id === props.currentSessionId;
                             const sessionStatus = () => props.getSessionStatus(session.id);
+                            const isPinned = () => props.pinnedSessionIds?.has(session.id) ?? false;
                             const isEditing = () => editingSessionId() === session.id;
 
                             const startEditing = (e: MouseEvent) => {
@@ -549,6 +891,14 @@ export function SessionSidebar(props: SessionSidebarProps) {
                                 <div class="flex items-center gap-1.5 min-w-0">
                                   <Show when={sessionStatus() !== "idle"}>
                                     <StatusIndicator status={sessionStatus()} />
+                                  </Show>
+                                  <Show when={isPinned()}>
+                                    <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24"
+                                      fill="currentColor" stroke="currentColor" stroke-width="1"
+                                      class="text-blue-400 dark:text-blue-500 flex-shrink-0">
+                                      <path d="M12 17v5" />
+                                      <path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z" />
+                                    </svg>
                                   </Show>
                                   <Show
                                     when={isEditing()}
@@ -627,6 +977,27 @@ export function SessionSidebar(props: SessionSidebarProps) {
                                         <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" /><path d="m15 5 4 4" />
                                       </svg>
                                     </button>
+                                    {/* Pin/Unpin button */}
+                                    <Show when={props.onPinSession && props.onUnpinSession}>
+                                      <button
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          if (isPinned()) props.onUnpinSession!(session.id);
+                                          else props.onPinSession!(session.id);
+                                        }}
+                                        class={`p-1.5 rounded transition-all ${
+                                          isPinned()
+                                            ? "text-blue-500 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/20"
+                                            : "text-gray-400 hover:text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/20"
+                                        }`}
+                                        title={isPinned() ? t().sidebar.unpinSession : t().sidebar.pinSession}
+                                      >
+                                        <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill={isPinned() ? "currentColor" : "none"} stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                          <path d="M12 17v5" />
+                                          <path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z" />
+                                        </svg>
+                                      </button>
+                                    </Show>
                                     <button
                                       onClick={(e) => { e.stopPropagation(); e.preventDefault(); setPendingDeleteId(session.id); }}
                                       class="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded transition-all"
@@ -651,8 +1022,13 @@ export function SessionSidebar(props: SessionSidebarProps) {
             }}
           </Show>
 
+          {/* Divider between Default Workspace and Projects */}
+          <Show when={filteredDefaultWorkspaceGroup() && showProjectsSection()}>
+            <hr class="border-gray-200 dark:border-slate-800 my-2 mx-2" />
+          </Show>
+
           {/* Projects section title */}
-          <Show when={filteredProjectGroups().length > 0}>
+          <Show when={showProjectsSection()}>
           <div class="flex items-center gap-2 px-2 py-1.5 mb-1">
             <div class="w-5 h-5 rounded flex items-center justify-center bg-emerald-500 text-white flex-shrink-0">
               <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -703,9 +1079,7 @@ export function SessionSidebar(props: SessionSidebarProps) {
                 <div class="mb-2">
                   {/* Project Header */}
                   <div
-                    class="group flex items-center justify-between px-2 py-1.5 rounded-md cursor-pointer hover:bg-gray-100 dark:hover:bg-slate-900 transition-colors"
-                    onMouseEnter={() => setHoveredProject(project.projectID)}
-                    onMouseLeave={() => setHoveredProject(null)}
+                    class="group relative flex items-center px-2 py-1.5 rounded-md cursor-pointer hover:bg-gray-100 dark:hover:bg-slate-900 transition-colors"
                     onClick={() => toggleProjectExpanded(project.projectID)}
                     title={project.project?.directory || project.sessions[0]?.directory || ""}
                   >
@@ -741,6 +1115,9 @@ export function SessionSidebar(props: SessionSidebarProps) {
                           <span class="text-sm font-medium text-gray-700 dark:text-gray-300 truncate">
                             {project.name}
                           </span>
+                          <span class="text-[10px] text-gray-400 dark:text-gray-500 flex-shrink-0">
+                            {project.sessions.length}
+                          </span>
                         </div>
                         <span class="text-[10px] text-gray-400 dark:text-gray-500 truncate block">
                           {project.project?.directory || project.sessions[0]?.directory || ""}
@@ -748,12 +1125,12 @@ export function SessionSidebar(props: SessionSidebarProps) {
                       </div>
                     </div>
 
-                    {/* Action buttons on hover */}
-                    <div class={`flex items-center gap-0.5 ${isHovered() ? "opacity-100" : "opacity-0"}`}>
+                    {/* Action buttons — absolute overlay on hover */}
+                    <div class="absolute right-1 top-1/2 -translate-y-1/2 hidden group-hover:flex items-center gap-0.5 bg-gray-50/90 dark:bg-slate-950/90 backdrop-blur-xs rounded-md shadow-sm px-0.5 py-0.5">
                       {/* Open in file explorer (Electron only) — first */}
                       <Show when={isElectron() && project.project}>
                         <button
-                          class="p-1 text-gray-400 hover:text-amber-600 dark:hover:text-amber-400 rounded transition-all"
+                          class="p-1 text-gray-400 hover:text-amber-600 dark:hover:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-900/20 rounded transition-all"
                           onClick={(e) => {
                             e.stopPropagation();
                             const dir = getProjectDirectory(project.project!);
@@ -768,7 +1145,7 @@ export function SessionSidebar(props: SessionSidebarProps) {
                       </Show>
                       {/* New session */}
                       <button
-                        class="p-1 text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 rounded transition-all"
+                        class="p-1 text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded transition-all"
                         onClick={(e) => {
                           e.stopPropagation();
                           props.onNewSession(project.project ? getProjectDirectory(project.project) : undefined);
@@ -780,9 +1157,28 @@ export function SessionSidebar(props: SessionSidebarProps) {
                           <path d="M12 5v14" />
                         </svg>
                       </button>
+                      {/* Manage worktrees (only when feature enabled) */}
+                      <Show when={worktreeEnabled() && project.project?.directory}>
+                        <button
+                          class="p-1 text-gray-400 hover:text-emerald-600 dark:hover:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-900/20 rounded transition-all"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            const dir = getProjectDirectory(project.project!);
+                            if (dir) props.onManageWorktrees?.(dir);
+                          }}
+                          title={t().worktree.title}
+                        >
+                          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M6 3v12" />
+                            <path d="M18 9a3 3 0 0 0-3-3h-4a3 3 0 0 0-3 3" />
+                            <circle cx="18" cy="18" r="3" />
+                            <path d="M6 21v-6" />
+                          </svg>
+                        </button>
+                      </Show>
                       {/* Hide project */}
                       <button
-                        class="p-1 text-gray-400 hover:text-red-500 dark:hover:text-red-400 rounded transition-all"
+                        class="p-1 text-gray-400 hover:text-red-500 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 rounded transition-all"
                         onClick={(e) => {
                           e.stopPropagation();
                           props.onDeleteProjectSessions(project.projectID, project.name, project.sessions.length);
@@ -812,11 +1208,18 @@ export function SessionSidebar(props: SessionSidebarProps) {
                   <div class="collapsible-grid" data-expanded={isExpanded() ? "true" : "false"}>
                     <div class="collapsible-content">
                       <div class="ml-4 mt-1">
-                      <For each={project.sessions}>
+                      {(() => {
+                        const dir = project.project?.directory || "";
+                        const { local, worktreeGroups } = getWorktreeSessionGroups(dir, project.sessions);
+                        const hasWorktrees = worktreeGroups.length > 0;
+
+                        const renderSessionList = (sessions: SessionInfo[]) => (
+                          <For each={sessions}>
                         {(session) => {
                           const isActive = () =>
                             session.id === props.currentSessionId;
                           const isEditing = () => editingSessionId() === session.id;
+                          const isPinned = () => props.pinnedSessionIds?.has(session.id) ?? false;
                           const sessionStatus = () =>
                             props.getSessionStatus(session.id);
 
@@ -859,6 +1262,14 @@ export function SessionSidebar(props: SessionSidebarProps) {
                               <div class="flex items-center gap-1.5 min-w-0">
                                 <Show when={sessionStatus() !== "idle"}>
                                   <StatusIndicator status={sessionStatus()} />
+                                </Show>
+                                <Show when={isPinned()}>
+                                  <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24"
+                                    fill="currentColor" stroke="currentColor" stroke-width="1"
+                                    class="text-blue-400 dark:text-blue-500 flex-shrink-0">
+                                    <path d="M12 17v5" />
+                                    <path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z" />
+                                  </svg>
                                 </Show>
                                 <Show
                                   when={isEditing()}
@@ -977,6 +1388,27 @@ export function SessionSidebar(props: SessionSidebarProps) {
                                       <path d="m15 5 4 4" />
                                     </svg>
                                   </button>
+                                  {/* Pin/Unpin button */}
+                                  <Show when={props.onPinSession && props.onUnpinSession}>
+                                    <button
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        if (isPinned()) props.onUnpinSession!(session.id);
+                                        else props.onPinSession!(session.id);
+                                      }}
+                                      class={`p-1.5 rounded transition-all ${
+                                        isPinned()
+                                          ? "text-blue-500 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/20"
+                                          : "text-gray-400 hover:text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/20"
+                                      }`}
+                                      title={isPinned() ? t().sidebar.unpinSession : t().sidebar.pinSession}
+                                    >
+                                      <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill={isPinned() ? "currentColor" : "none"} stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                        <path d="M12 17v5" />
+                                        <path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z" />
+                                      </svg>
+                                    </button>
+                                  </Show>
                                   <button
                                     onClick={(e) => {
                                       e.stopPropagation();
@@ -1009,6 +1441,157 @@ export function SessionSidebar(props: SessionSidebarProps) {
                           );
                         }}
                       </For>
+                        );
+
+                        // No worktrees → flat session list
+                        if (!hasWorktrees) {
+                          return renderSessionList(project.sessions);
+                        }
+
+                        // Has worktrees → grouped rendering
+                        return (
+                          <>
+                            {/* Local sessions */}
+                            <Show when={local.length > 0}>
+                              <div class="mb-1.5">
+                                <div
+                                  class="flex items-center gap-1.5 px-2 py-1 cursor-pointer hover:bg-gray-100 dark:hover:bg-slate-900 rounded-md transition-colors"
+                                  onClick={() => toggleWorktreeExpanded(`${dir}::local`)}
+                                >
+                                  <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24"
+                                    fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                                    class={`text-gray-400 transition-transform duration-200 ${isWorktreeExpanded(`${dir}::local`) || isSearching() ? "rotate-90" : ""}`}
+                                  >
+                                    <path d="m9 18 6-6-6-6" />
+                                  </svg>
+                                  <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24"
+                                    fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                                    class="text-gray-400 dark:text-gray-500"
+                                  >
+                                    <circle cx="12" cy="12" r="10" />
+                                    <line x1="2" x2="22" y1="12" y2="12" />
+                                    <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
+                                  </svg>
+                                  <span class="text-xs font-medium text-gray-500 dark:text-gray-400">
+                                    {t().worktree.local}
+                                  </span>
+                                  <span class="text-[10px] text-gray-400 dark:text-gray-500 ml-auto">{local.length}</span>
+                                </div>
+                                <Show when={isWorktreeExpanded(`${dir}::local`) || isSearching()}>
+                                  <div class="ml-2">{renderSessionList(local)}</div>
+                                </Show>
+                              </div>
+                            </Show>
+                            {/* Worktree sessions */}
+                            <For each={worktreeGroups}>
+                              {(wtGroup) => (
+                                <div class="mb-1.5">
+                                  <div
+                                    class="group relative flex items-center gap-1.5 px-2 py-1 cursor-pointer hover:bg-gray-100 dark:hover:bg-slate-900 rounded-md transition-colors"
+                                    onClick={() => toggleWorktreeExpanded(`${dir}::${wtGroup.worktree.name}`)}
+                                  >
+                                    <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24"
+                                      fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                                      class={`flex-shrink-0 text-gray-400 transition-transform duration-200 ${isWorktreeExpanded(`${dir}::${wtGroup.worktree.name}`) || isSearching() ? "rotate-90" : ""}`}
+                                    >
+                                      <path d="m9 18 6-6-6-6" />
+                                    </svg>
+                                    <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24"
+                                      fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                                      class="flex-shrink-0 text-emerald-500 dark:text-emerald-400"
+                                    >
+                                      <path d="M6 3v12" />
+                                      <path d="M18 9a3 3 0 0 0-3-3h-4a3 3 0 0 0-3 3" />
+                                      <circle cx="18" cy="18" r="3" />
+                                      <path d="M6 21v-6" />
+                                    </svg>
+                                    <span class="text-xs font-medium text-gray-600 dark:text-gray-300 truncate flex-1 min-w-0" title={wtGroup.worktree.branch}>
+                                      {wtGroup.worktree.name}
+                                    </span>
+                                    <span class="text-[10px] text-gray-400 dark:text-gray-500 flex-shrink-0">
+                                      {wtGroup.sessions.length}
+                                    </span>
+                                    {/* Action buttons — absolute overlay */}
+                                    <div class="absolute right-1 top-1/2 -translate-y-1/2 hidden group-hover:flex items-center gap-0.5 bg-gray-50/90 dark:bg-slate-950/90 backdrop-blur-xs rounded-md shadow-sm px-0.5 py-0.5">
+                                      {/* New session */}
+                                      <button
+                                        class="p-1 text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded transition-all"
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          props.onNewSession(dir, undefined, wtGroup.worktree.name);
+                                        }}
+                                        title={t().sidebar.newSession}
+                                      >
+                                        <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24"
+                                          fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                          <path d="M5 12h14" /><path d="M12 5v14" />
+                                        </svg>
+                                      </button>
+                                      {/* Open in file explorer */}
+                                      <Show when={isElectron()}>
+                                        <button
+                                          class="p-1 text-gray-400 hover:text-amber-600 dark:hover:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-900/20 rounded transition-all"
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            systemAPI.openPath(wtGroup.worktree.directory);
+                                          }}
+                                          title={t().sidebar.openInFileExplorer}
+                                        >
+                                          <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24"
+                                            fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                            <path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/>
+                                          </svg>
+                                        </button>
+                                      </Show>
+                                      {/* Merge */}
+                                      <button
+                                        class="p-1 text-gray-400 hover:text-emerald-600 dark:hover:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-900/20 rounded transition-all"
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          props.onMergeWorktree?.(dir, wtGroup.worktree.name, wtGroup.worktree.branch);
+                                        }}
+                                        title={t().worktree.merge}
+                                      >
+                                        <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24"
+                                          fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                          <path d="M18 21V8a2 2 0 0 0-2-2H8" />
+                                          <path d="m6 9 3-3-3-3" />
+                                        </svg>
+                                      </button>
+                                      {/* Delete */}
+                                      <button
+                                        class="p-1 text-gray-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded transition-all"
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          props.onRemoveWorktree?.(dir, wtGroup.worktree.name, wtGroup.worktree.branch);
+                                        }}
+                                        title={t().worktree.remove}
+                                      >
+                                        <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24"
+                                          fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                          <path d="M3 6h18" /><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" />
+                                          <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" />
+                                        </svg>
+                                      </button>
+                                    </div>
+                                  </div>
+                                  <Show when={isWorktreeExpanded(`${dir}::${wtGroup.worktree.name}`) || isSearching()}>
+                                    <div class="ml-2">
+                                      <Show when={wtGroup.sessions.length > 0} fallback={
+                                        <div class="px-3 py-2 text-xs text-gray-400 dark:text-gray-500 italic">
+                                          {t().worktree.noSessions}
+                                        </div>
+                                      }>
+                                        {renderSessionList(wtGroup.sessions)}
+                                      </Show>
+                                    </div>
+                                  </Show>
+                                </div>
+                              )}
+                            </For>
+                          </>
+                        );
+                      })()}
                     </div>
                     </div>
                   </div>
@@ -1016,6 +1599,11 @@ export function SessionSidebar(props: SessionSidebarProps) {
               );
             }}
           </For>
+          <Show when={!isSearching() && filteredProjectGroups().length === 0}>
+            <div class="px-3 py-2 text-xs text-gray-400 dark:text-gray-500 italic">
+              {t().sidebar.noProjects}
+            </div>
+          </Show>
           <Show when={isSearching() && filteredProjectGroups().length === 0 && !filteredDefaultWorkspaceGroup()}>
             <div class="p-6 text-center">
               <p class="text-sm text-gray-400 dark:text-gray-500">{t().sidebar.noSearchResults}</p>

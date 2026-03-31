@@ -104,6 +104,11 @@ interface ElectronAPI {
     stop: (type: string) => Promise<void>;
     getStatus: (type: string) => Promise<{ type: string; name: string; status: "stopped" | "starting" | "running" | "error"; error?: string } | null>;
   };
+
+  startup?: {
+    isReady: () => Promise<boolean>;
+    onReady: (callback: () => void) => void;
+  };
 }
 
 declare global {

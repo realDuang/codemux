@@ -35,6 +35,11 @@ import {
   type SessionImportExecuteRequest,
   type ScheduledTaskCreateRequest,
   type ScheduledTaskUpdateRequest,
+  type WorktreeCreateRequest,
+  type WorktreeListRequest,
+  type WorktreeRemoveRequest,
+  type WorktreeMergeRequest,
+  type WorktreeListBranchesRequest,
 } from "../../../src/types/unified";
 
 interface ClientConnection {
@@ -232,6 +237,20 @@ export class GatewayServer {
 
   // --- Request Routing ---
 
+  private isWorktreeEnabled(): boolean {
+    try {
+      const settingsPath = require("path").join(
+        require("electron").app.getPath("userData"),
+        "settings.json",
+      );
+      const raw = require("fs").readFileSync(settingsPath, "utf-8");
+      const settings = JSON.parse(raw);
+      return settings.worktreeEnabled === true;
+    } catch {
+      return false;
+    }
+  }
+
   private async routeRequest(request: GatewayRequest): Promise<unknown> {
     const { type, payload } = request;
     const p = payload as any;
@@ -252,7 +271,7 @@ export class GatewayServer {
 
       case GatewayRequestType.SESSION_CREATE: {
         const req = p as SessionCreateRequest;
-        return this.engineManager.createSession(req.engineType, req.directory);
+        return this.engineManager.createSession(req.engineType, req.directory, req.worktreeId);
       }
 
       case GatewayRequestType.SESSION_GET:
@@ -427,6 +446,56 @@ export class GatewayServer {
 
       case GatewayRequestType.SCHEDULED_TASK_RUN_NOW:
         return scheduledTaskService.runNow(p.id);
+
+      // Worktree
+      case GatewayRequestType.WORKTREE_CREATE: {
+        const req = p as WorktreeCreateRequest;
+        if (!this.isWorktreeEnabled()) {
+          throw Object.assign(new Error("Worktree feature is disabled"), { code: "WORKTREE_DISABLED" });
+        }
+        const { worktreeManager } = await import("../services/worktree-manager");
+        return worktreeManager.create(req.directory, {
+          name: req.name,
+          baseBranch: req.baseBranch,
+        });
+      }
+
+      case GatewayRequestType.WORKTREE_LIST: {
+        const req = p as WorktreeListRequest;
+        const { worktreeManager } = await import("../services/worktree-manager");
+        return worktreeManager.list(req.directory);
+      }
+
+      case GatewayRequestType.WORKTREE_REMOVE: {
+        const req = p as WorktreeRemoveRequest;
+        const { worktreeManager } = await import("../services/worktree-manager");
+
+        // Delete all sessions belonging to this worktree (same pattern as project delete)
+        const allConvs = conversationStore.list();
+        const worktreeConvs = allConvs.filter((conv) => conv.worktreeId === req.worktreeName);
+        for (const conv of worktreeConvs) {
+          await this.engineManager.deleteSession(conv.id);
+        }
+
+        // Then remove the git worktree, branch, and directory
+        return worktreeManager.remove(req.directory, req.worktreeName);
+      }
+
+      case GatewayRequestType.WORKTREE_MERGE: {
+        const req = p as WorktreeMergeRequest;
+        const { worktreeManager } = await import("../services/worktree-manager");
+        return worktreeManager.merge(req.directory, req.worktreeName, {
+          targetBranch: req.targetBranch,
+          mode: req.mode,
+          message: req.message,
+        });
+      }
+
+      case GatewayRequestType.WORKTREE_LIST_BRANCHES: {
+        const req = p as WorktreeListBranchesRequest;
+        const { worktreeManager } = await import("../services/worktree-manager");
+        return worktreeManager.listBranches(req.directory);
+      }
 
       default:
         throw Object.assign(

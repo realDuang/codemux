@@ -262,15 +262,23 @@ codemux/
 │   │   ├── engines/          # 엔진 어댑터 (OpenCode, Copilot, Claude Code)
 │   │   ├── gateway/          # WebSocket 서버 + 엔진 라우팅
 │   │   ├── channels/         # IM 봇 채널 (Feishu, DingTalk, Telegram, WeCom, Teams)
-│   │   └── services/         # 인증, 기기 저장소, 터널, 세션
+│   │   │   └── streaming/    # 크로스 채널 스트리밍 인프라
+│   │   ├── services/         # 인증, 기기 저장소, 터널, 세션, 파일 서비스, 트레이 등
+│   │   └── utils/            # 공유 유틸리티 (ID 생성 등)
 │   └── preload/
 ├── src/                      # SolidJS 렌더러
 │   ├── pages/                # Chat, Settings, Devices, Entry
 │   ├── components/           # UI 컴포넌트 + 콘텐츠 렌더러
 │   ├── stores/               # 반응형 상태 (session, message, config)
 │   ├── lib/                  # Gateway 클라이언트, 인증, i18n, 테마
+│   ├── locales/              # i18n 번역 파일 (en, zh, ru)
 │   └── types/                # 통합 타입 시스템 + 도구 매핑
-├── scripts/                  # 설정, 바이너리 업데이터
+├── shared/                   # 공유 백엔드 모듈 (인증, JWT, 기기 저장소 베이스)
+├── tests/                    # 단위 테스트, E2E 테스트 (Playwright), 벤치마크
+├── docs/                     # 채널 설정 가이드 + 설계 문서
+├── website/                  # 프로젝트 웹사이트 (SolidJS + Vite)
+├── scripts/                  # 설정, 바이너리 업데이터, CI 헬퍼
+├── homebrew/                 # macOS Homebrew 배포 포뮬러
 ├── electron.vite.config.ts
 └── electron-builder.yml
 ```
@@ -279,7 +287,7 @@ codemux/
 
 ## 기여하기
 
-기여를 환영합니다! 다음 컨벤션을 따라주세요:
+기여를 환영합니다! 자세한 가이드라인은 [CONTRIBUTING.md](CONTRIBUTING.md)를 참고하세요.
 
 **코드 스타일**: TypeScript strict 모드, SolidJS 반응형 패턴, Tailwind을 사용한 스타일링
 

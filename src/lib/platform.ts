@@ -27,9 +27,9 @@ export function isMacOS(): boolean {
 
 /**
  * macOS title bar height (when using hiddenInset style)
- * trafficLightPosition.y = 16, plus button height ~12px, plus some padding
+ * Traffic lights (12px) centered at y=14 within 40px bar
  */
-const MACOS_TITLE_BAR_HEIGHT = 38;
+const MACOS_TITLE_BAR_HEIGHT = 40;
 const WINDOWS_TITLE_BAR_HEIGHT = 40;
 
 /**

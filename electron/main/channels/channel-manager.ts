@@ -60,6 +60,28 @@ export class ChannelManager {
   private adapters = new Map<string, ChannelAdapter>();
   private configs = new Map<string, ChannelConfig>();
   private webhookServer: WebhookServer | null = null;
+  private runtimeOptions: { gatewayUrl?: string } = {};
+
+  setRuntimeOptions(runtimeOptions: { gatewayUrl?: string }): void {
+    this.runtimeOptions = {
+      ...this.runtimeOptions,
+      ...runtimeOptions,
+    };
+
+    for (const config of this.configs.values()) {
+      this.applyRuntimeOptions(config);
+    }
+  }
+
+  private applyRuntimeOptions(config: ChannelConfig): ChannelConfig {
+    config.options = { ...(config.options ?? {}) };
+
+    if (this.runtimeOptions.gatewayUrl) {
+      config.options.gatewayUrl = this.runtimeOptions.gatewayUrl;
+    }
+
+    return config;
+  }
 
   /** Set the shared WebhookServer instance for adapters that need HTTP endpoints */
   setWebhookServer(server: WebhookServer): void {
@@ -93,15 +115,25 @@ export class ChannelManager {
 
   /** Load persisted config and auto-start enabled channels */
   async initFromConfig(runtimeOptions?: { gatewayUrl?: string }): Promise<void> {
+    this.setRuntimeOptions(runtimeOptions ?? {});
+
     for (const [type, adapter] of this.adapters) {
-      const config = loadConfig(type);
+      const diskConfig = loadConfig(type);
+      const existingConfig = this.configs.get(type);
+      let config = existingConfig ?? diskConfig;
+
+      if (existingConfig && diskConfig) {
+        config = {
+          ...diskConfig,
+          ...existingConfig,
+          options: { ...diskConfig.options, ...existingConfig.options },
+        };
+      }
+
       if (config) {
-        // Inject runtime gateway URL into channel options (overrides persisted value)
-        if (runtimeOptions?.gatewayUrl && config.options) {
-          (config.options as Record<string, unknown>).gatewayUrl = runtimeOptions.gatewayUrl;
-        }
+        this.applyRuntimeOptions(config);
         this.configs.set(type, config);
-        if (config.enabled) {
+        if (config.enabled && adapter.getInfo().status === "stopped") {
           channelLog.info(`Auto-starting enabled channel: ${type}`);
           try {
             await adapter.start(config);
@@ -134,6 +166,7 @@ export class ChannelManager {
       // Merge: disk as base, in-memory overrides (preserves disk-only fields like tenantId)
       config.options = { ...diskConfig.options, ...config.options };
     }
+    this.applyRuntimeOptions(config);
     this.configs.set(type, config);
 
     channelLog.info(`Starting channel: ${type}`);
@@ -177,7 +210,8 @@ export class ChannelManager {
 
   /** Get config for a channel */
   getConfig(type: string): ChannelConfig | undefined {
-    return this.configs.get(type) ?? loadConfig(type) ?? undefined;
+    const config = this.configs.get(type) ?? loadConfig(type) ?? undefined;
+    return config ? this.applyRuntimeOptions(config) : undefined;
   }
 
   /** Update channel config and optionally restart */
@@ -204,6 +238,7 @@ export class ChannelManager {
       config.options = { ...config.options, ...updates.options };
     }
 
+    this.applyRuntimeOptions(config);
     this.configs.set(type, config);
     saveConfig(config);
 

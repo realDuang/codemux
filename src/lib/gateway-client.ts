@@ -534,17 +534,20 @@ export class GatewayClient {
   }
 
   // --- Cron / Scheduled Tasks API ---
+  // Note: Cron RPC methods are not yet implemented on the gateway server.
+  // These stubs are provided for future use; calling them will reject
+  // with a clear error until the backend handlers are added.
 
-  createCronJob(req: CronCreateRequest): Promise<CronCreateResult> {
-    return this.request(GatewayRequestType.CRON_CREATE, req);
+  createCronJob(_req: CronCreateRequest): Promise<CronCreateResult> {
+    return Promise.reject(new Error("Cron RPC is not implemented on the gateway server yet."));
   }
 
-  deleteCronJob(jobId: string): Promise<boolean> {
-    return this.request(GatewayRequestType.CRON_DELETE, { jobId });
+  deleteCronJob(_jobId: string): Promise<boolean> {
+    return Promise.reject(new Error("Cron RPC is not implemented on the gateway server yet."));
   }
 
-  listCronJobs(sessionId?: string): Promise<CronJobInfo[]> {
-    return this.request(GatewayRequestType.CRON_LIST, { sessionId });
+  listCronJobs(_sessionId?: string): Promise<CronJobInfo[]> {
+    return Promise.reject(new Error("Cron RPC is not implemented on the gateway server yet."));
   }
 
   // --- File Explorer API ---

@@ -1331,7 +1331,7 @@ export class OpenCodeAdapter extends EngineAdapter {
       // become idle, similar to sendMessage().
       // For now, fall back to sendMessage with the command as text, since the SSE
       // event handling is already wired up for that flow.
-      return { handledAsCommand: true };
+      return { handledAsCommand: false };
     } catch (err) {
       openCodeLog.warn(`Command /${commandName} failed, falling back to sendMessage:`, err);
       return { handledAsCommand: false };

@@ -345,12 +345,12 @@ export function PromptInput(props: PromptInputProps) {
       const cmds = filteredCommands();
       if (e.key === "ArrowDown") {
         e.preventDefault();
-        setCommandSelectedIndex((i) => (i + 1) % cmds.length);
+        if (cmds.length > 0) setCommandSelectedIndex((i) => (i + 1) % cmds.length);
         return;
       }
       if (e.key === "ArrowUp") {
         e.preventDefault();
-        setCommandSelectedIndex((i) => (i - 1 + cmds.length) % cmds.length);
+        if (cmds.length > 0) setCommandSelectedIndex((i) => (i - 1 + cmds.length) % cmds.length);
         return;
       }
       if (e.key === "Tab") {

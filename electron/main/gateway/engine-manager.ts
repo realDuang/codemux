@@ -714,9 +714,16 @@ export class EngineManager extends EventEmitter {
     // This ensures that engine-specific initialization (like fetching Copilot skills
     // or Claude V2 session init) happens at session creation time, so features
     // like slash command autocomplete work before the user sends a message.
-    const engineSession = await adapter.createSession(conv.directory, conv.engineMeta);
-    conversationStore.setEngineSession(conv.id, engineSession.id, engineSession.engineMeta);
-    this.engineToConvMap.set(engineSession.id, conv.id);
+    try {
+      const engineSession = await adapter.createSession(conv.directory, conv.engineMeta);
+      conversationStore.setEngineSession(conv.id, engineSession.id, engineSession.engineMeta);
+      this.engineToConvMap.set(engineSession.id, conv.id);
+    } catch (err) {
+      // Clean up the orphaned conversation if engine session creation fails
+      this.sessionEngineMap.delete(conv.id);
+      conversationStore.delete(conv.id);
+      throw err;
+    }
 
     const session = convToSession(conv);
     // Broadcast to all connected clients (e.g., UI) so session lists update in real-time

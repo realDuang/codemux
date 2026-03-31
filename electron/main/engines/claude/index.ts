@@ -1811,10 +1811,8 @@ export class ClaudeCodeAdapter extends EngineAdapter {
     buffer: MessageBuffer,
     streamingBlocks: Map<number, StreamingBlock>,
   ): void {
-    // DEBUG: Log every SDK message type/subtype to trace slash command handling
-    const msgAny = msg as any;
-    claudeLog.info(
-      `[Claude][${sessionId}] handleSdkMessage: type=${msgAny.type}, subtype=${msgAny.subtype ?? "N/A"}, keys=[${Object.keys(msgAny).join(",")}]`,
+    claudeLog.debug(
+      `[Claude][${sessionId}] handleSdkMessage: type=${(msg as any).type}, subtype=${(msg as any).subtype ?? "N/A"}`,
     );
 
     switch (msg.type) {
@@ -1844,9 +1842,9 @@ export class ClaudeCodeAdapter extends EngineAdapter {
         break;
 
       default:
-        // Log full detail for debugging unhandled message types
-        claudeLog.info(
-          `[Claude][${sessionId}] Unhandled message: type=${(msg as any).type}, subtype=${(msg as any).subtype}, content=${JSON.stringify(msg).slice(0, 300)}`,
+        // Log type/subtype only — avoid serializing full message to prevent leaking user data
+        claudeLog.debug(
+          `[Claude][${sessionId}] Unhandled message: type=${(msg as any).type}, subtype=${(msg as any).subtype}`,
         );
         break;
     }
@@ -1860,8 +1858,8 @@ export class ClaudeCodeAdapter extends EngineAdapter {
     sessionId: string,
     buffer: MessageBuffer,
   ): void {
-    claudeLog.info(
-      `[Claude][${sessionId}] handleSystemMessage: subtype=${msg.subtype}, keys=[${Object.keys(msg).join(",")}]`,
+    claudeLog.debug(
+      `[Claude][${sessionId}] handleSystemMessage: subtype=${msg.subtype}`,
     );
     if (msg.subtype === "init") {
       const ccSessionId = msg.session_id;
@@ -1909,14 +1907,11 @@ export class ClaudeCodeAdapter extends EngineAdapter {
     } else if (msg.subtype === "local_command_output") {
       // Slash command output (e.g., /help, /cost, /compact).
       const output = msg.content ?? "";
-      claudeLog.info(
-        `[Claude][${sessionId}] >>> local_command_output RECEIVED! content_length=${output.length}, buffer_id=${buffer.messageId}, first_100_chars=${output.slice(0, 100)}`,
+      claudeLog.debug(
+        `[Claude][${sessionId}] local_command_output: content_length=${output.length}`,
       );
       if (output) {
         this.appendText(sessionId, buffer, output);
-        claudeLog.info(`[Claude][${sessionId}] >>> appendText called, buffer.parts.length=${buffer.parts.length}`);
-      } else {
-        claudeLog.warn(`[Claude][${sessionId}] >>> local_command_output content was EMPTY!`);
       }
     } else if (msg.subtype === "status") {
       // Handle status changes (e.g., compacting)

@@ -704,9 +704,9 @@ export class CopilotSdkAdapter extends EngineAdapter {
 
   private async fetchSkills(session: CopilotSession): Promise<void> {
     try {
-      copilotLog.info(`[Copilot] fetchSkills: calling session.rpc.skills.list()...`);
+      copilotLog.debug(`[Copilot] fetchSkills: calling session.rpc.skills.list()...`);
       const result = await session.rpc.skills.list();
-      copilotLog.info(`[Copilot] fetchSkills: raw result = ${JSON.stringify(result).slice(0, 500)}`);
+      copilotLog.debug(`[Copilot] fetchSkills: received ${Array.isArray((result as any)?.skills ?? result) ? ((result as any)?.skills ?? result).length : 0} skills`);
       const skills = (result as any)?.skills ?? (result as any) ?? [];
       if (Array.isArray(skills)) {
         this.cachedCommands = skills
@@ -969,10 +969,7 @@ export class CopilotSdkAdapter extends EngineAdapter {
 
   private handleSessionEvent(sessionId: string, event: SessionEvent): void {
     try {
-      // DEBUG: Log ALL session events (not just known ones) to trace slash command behavior
-      copilotLog.info(
-        `[Copilot][${sessionId}] SessionEvent: type=${event.type}, ephemeral=${(event as any).ephemeral ?? false}`,
-      );
+      copilotLog.debug(`[Copilot][${sessionId}] SessionEvent: type=${event.type}`);
       switch (event.type) {
         case "assistant.message_delta": this.handleMessageDelta(sessionId, event.data as any); break;
         case "assistant.reasoning_delta": this.handleReasoningDelta(sessionId, event.data as any); break;

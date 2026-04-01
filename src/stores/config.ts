@@ -2,6 +2,7 @@ import { createStore } from "solid-js/store";
 import { isReasoningEffort, type EngineInfo, type EngineType, type ReasoningEffort, type UnifiedModelInfo } from "../types/unified";
 import { getSetting, saveSetting, getNestedSetting, saveNestedSetting } from "../lib/settings";
 import { settingsAPI } from "../lib/electron-api";
+import { logger } from "../lib/logger";
 
 export interface EngineModelSelection {
   providerID: string;
@@ -150,7 +151,10 @@ export async function setDefaultNewSessionEngine(engineType: EngineType): Promis
 
 /** Restore the default engine setting from the active settings backend. */
 export async function restoreDefaultEngine(): Promise<void> {
-  const saved = await settingsAPI.getDefaultEngine().catch(() => getSetting<string>("defaultEngine"));
+  const saved = await settingsAPI.getDefaultEngine().catch((err) => {
+    logger.warn("[config] Failed to fetch default engine from server, falling back to local cache:", err);
+    return getSetting<string>("defaultEngine");
+  });
   if (saved) {
     setConfigStore("defaultNewSessionEngine", saved as EngineType);
     saveSetting("defaultEngine", saved);

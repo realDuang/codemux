@@ -1,40 +1,16 @@
 import type { IncomingMessage, ServerResponse } from "http";
-import { extractBearerToken, parseBody, sendJson } from "./http-utils";
-
-interface AuthStore {
-  verifyToken(token: string): { valid: boolean; deviceId?: string };
-}
+import { parseBody, sendJson, requireAuth } from "./http-utils";
 
 interface SettingsRouteStore {
   getDefaultEngine(): string;
   saveDefaultEngine(engineType: string): void;
 }
 
-function requireAuth(
-  req: IncomingMessage,
-  res: ServerResponse,
-  authStore: AuthStore,
-): boolean {
-  const token = extractBearerToken(req);
-  if (!token) {
-    sendJson(res, { error: "Unauthorized" }, 401);
-    return false;
-  }
-
-  const result = authStore.verifyToken(token);
-  if (!result.valid || !result.deviceId) {
-    sendJson(res, { error: "Invalid token" }, 401);
-    return false;
-  }
-
-  return true;
-}
-
 export async function handleSettingsRoutes(
   req: IncomingMessage,
   res: ServerResponse,
   pathname: string,
-  authStore: AuthStore,
+  authStore: Parameters<typeof requireAuth>[2],
   settingsStore: SettingsRouteStore,
 ): Promise<boolean> {
   if (pathname === "/api/settings/default-engine" && req.method === "GET") {

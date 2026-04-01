@@ -136,3 +136,33 @@ export function isLocalhost(ip: string): boolean {
   const normalized = ip.replace(/^::ffff:/, "");
   return normalized === "127.0.0.1" || normalized === "::1" || normalized === "localhost";
 }
+
+// ---------------------------------------------------------------------------
+// Auth guard — shared by channel, settings, and auth route handlers
+// ---------------------------------------------------------------------------
+
+interface TokenVerifier {
+  verifyToken(token: string): { valid: boolean; deviceId?: string };
+}
+
+/**
+ * Verify the Bearer token on an incoming request.
+ * Returns the authenticated deviceId, or null after sending a 401 response.
+ */
+export function requireAuth(
+  req: IncomingMessage,
+  res: ServerResponse,
+  store: TokenVerifier,
+): { deviceId: string } | null {
+  const token = extractBearerToken(req);
+  if (!token) {
+    sendJson(res, { error: "Unauthorized" }, 401);
+    return null;
+  }
+  const result = store.verifyToken(token);
+  if (!result.valid || !result.deviceId) {
+    sendJson(res, { error: "Invalid token" }, 401);
+    return null;
+  }
+  return { deviceId: result.deviceId };
+}

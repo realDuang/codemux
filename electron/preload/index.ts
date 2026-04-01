@@ -2,7 +2,9 @@ import { contextBridge, ipcRenderer } from "electron";
 
 // Pre-load settings synchronously so renderer can read them immediately at module init
 // (needed for theme/locale which must be applied before first paint)
-const _settingsCache: Record<string, unknown> = ipcRenderer.sendSync("settings:loadSync") ?? {};
+let _settingsCache: Record<string, unknown> = {
+  ...(ipcRenderer.sendSync("settings:loadSync") ?? {}),
+};
 
 const electronAPI = {
   // System API
@@ -87,6 +89,16 @@ const electronAPI = {
     /** Async save a partial settings patch to disk */
     save: (patch: Record<string, unknown>) => {
       return ipcRenderer.invoke("settings:save", patch) as Promise<{ success: boolean }>;
+    },
+    onChanged: (callback: (settings: Record<string, unknown>) => void) => {
+      const handler = (_event: unknown, settings: Record<string, unknown>) => {
+        _settingsCache = { ...settings };
+        callback({ ..._settingsCache });
+      };
+      ipcRenderer.on("settings:changed", handler);
+      return () => {
+        ipcRenderer.removeListener("settings:changed", handler);
+      };
     },
   },
 

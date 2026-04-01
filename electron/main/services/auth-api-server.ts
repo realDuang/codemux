@@ -2,8 +2,9 @@ import http from "http";
 import { deviceStore } from "./device-store";
 import { authLog, getLogFilePath, getFileLogLevel, setFileLogLevel } from "./logger";
 import { sendJson } from "../../../shared/http-utils";
-import { handleAuthRoutes, handleLogRoutes } from "../../../shared/auth-route-handlers";
+import { handleAuthRoutes, handleLogRoutes, handleSettingsRoutes } from "../../../shared/auth-route-handlers";
 import { AUTH_API_PORT } from "../../../shared/ports";
+import { loadSettings, saveSettings, replaceSettings } from "./logger";
 
 // ============================================================================
 // Internal Auth API Server
@@ -82,6 +83,13 @@ class AuthApiServer {
       setFileLogLevel,
     });
     if (logHandled) return;
+
+    const settingsHandled = await handleSettingsRoutes(req, res, pathname, deviceStore, {
+      loadSettings,
+      saveSettings,
+      replaceSettings,
+    });
+    if (settingsHandled) return;
 
     // Not found
     sendJson(res, { error: "Not found" }, 404);

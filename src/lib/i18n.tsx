@@ -52,10 +52,12 @@ interface LocaleContextType {
 
 // Create context
 const LocaleContext = createContext<LocaleContextType>();
+let externalSetLocaleSignal: ((locale: LocaleCode) => void) | null = null;
 
 // Provider component
 export function I18nProvider(props: ParentProps) {
   const [locale, setLocaleSignal] = createSignal<LocaleCode>(getSavedLocale());
+  externalSetLocaleSignal = setLocaleSignal;
 
   const setLocale = (newLocale: LocaleCode) => {
     setLocaleSignal(newLocale);
@@ -76,6 +78,11 @@ export function I18nProvider(props: ParentProps) {
       {props.children}
     </LocaleContext.Provider>
   );
+}
+
+export function refreshLocaleFromSettings(): void {
+  const nextLocale = getSavedLocale();
+  externalSetLocaleSignal?.(nextLocale);
 }
 
 // Hook to use i18n

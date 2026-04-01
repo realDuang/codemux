@@ -1,16 +1,17 @@
 import { Router, HashRouter, Route, useNavigate, Navigate } from "@solidjs/router";
-import { createEffect, createSignal, lazy, onMount, Show, Suspense, type ParentComponent } from "solid-js";
+import { createEffect, createSignal, lazy, onCleanup, onMount, Show, Suspense, type ParentComponent } from "solid-js";
 import { Auth } from "./lib/auth";
 import { I18nProvider, useI18n } from "./lib/i18n";
 import { logger } from "./lib/logger";
 import { initElectronTitleBar, isElectron } from "./lib/platform";
-import "./lib/theme";
+import { bootstrapSharedSettings, subscribeToSettingsChanges } from "./lib/settings";
 import { AccessRequestNotification } from "./components/AccessRequestNotification";
 import { UpdateNotification } from "./components/UpdateNotification";
 import { NotificationToast } from "./components/NotificationToast";
 import { Spinner } from "./components/Spinner";
 import EntryPage from "./pages/EntryPage";
 import Chat from "./pages/Chat";
+import { applyRendererSettingsState } from "./lib/renderer-settings";
 
 const PageFallback = () => (
   <div class="fixed inset-0 flex items-center justify-center bg-gray-50 dark:bg-slate-950">
@@ -206,6 +207,24 @@ function App() {
   // Initialize Electron title bar safe area on mount
   onMount(() => {
     initElectronTitleBar();
+
+    const initializeSharedSettings = async () => {
+      if (isElectron()) return;
+      if (!Auth.isAuthenticated()) return;
+      await bootstrapSharedSettings();
+      applyRendererSettingsState();
+    };
+
+    void initializeSharedSettings();
+
+    const unsubscribeSettingsChanged = subscribeToSettingsChanges(() => {
+      applyRendererSettingsState();
+    });
+    // Register cleanup immediately so the subscription is always torn down on
+    // unmount, even if the component unmounts during the async init above.
+    onCleanup(() => {
+      unsubscribeSettingsChanged?.();
+    });
 
     if (isElectron()) {
       const api = (window as any).electronAPI;

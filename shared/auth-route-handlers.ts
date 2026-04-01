@@ -1,6 +1,21 @@
 import type { IncomingMessage, ServerResponse } from "http";
-import { sendJson, parseBody, extractBearerToken, getClientIp, isLocalhost } from "./http-utils";
+import {
+  sendJson,
+  sendNoCacheJson,
+  parseBody,
+  extractBearerToken,
+  getClientIp,
+  isLocalhost,
+} from "./http-utils";
 import type { DeviceInfo, PendingRequest } from "./device-store-types";
+import {
+  SETTINGS_SYNC_ENABLED_KEY,
+  applySettingsMutation,
+  filterSharedSettings,
+  filterSharedSettingsPatch,
+  filterSharedSettingsRemoveKeys,
+  getSettingsSyncEnabled,
+} from "./settings-sync";
 
 // =============================================================================
 // Shared auth route handlers for auth-api-server and production-server.
@@ -157,6 +172,115 @@ export async function handleLogRoutes(
       sendJson(res, { success: true });
     } catch {
       sendJson(res, { error: "Bad request" }, 400);
+    }
+    return true;
+  }
+
+  return false;
+}
+
+export async function handleSettingsRoutes(
+  req: IncomingMessage,
+  res: ServerResponse,
+  pathname: string,
+  store: AuthDeviceStore,
+  settingsFns: {
+    loadSettings: () => Record<string, unknown>;
+    saveSettings: (patch: Record<string, unknown>) => void;
+    replaceSettings?: (settings: Record<string, unknown>) => void;
+  },
+): Promise<boolean> {
+  if (pathname === "/api/settings/bootstrap" && req.method === "GET") {
+    if (!requireAuth(req, res, store)) return true;
+    const settings = settingsFns.loadSettings();
+    sendNoCacheJson(res, {
+      syncEnabled: getSettingsSyncEnabled(settings),
+      sharedSettings: filterSharedSettings(settings),
+    }, 200, req);
+    return true;
+  }
+
+  if (pathname === "/api/settings/sync-enabled" && req.method === "GET") {
+    if (!requireAuth(req, res, store)) return true;
+    const settings = settingsFns.loadSettings();
+    sendNoCacheJson(res, {
+      enabled: getSettingsSyncEnabled(settings),
+    }, 200, req);
+    return true;
+  }
+
+  if (pathname === "/api/settings/sync-enabled" && req.method === "POST") {
+    if (!requireAuth(req, res, store)) return true;
+    try {
+      const body = await parseBody(req);
+      if (typeof body.enabled !== "boolean") {
+        sendNoCacheJson(res, { error: "enabled must be a boolean" }, 400, req);
+        return true;
+      }
+      settingsFns.saveSettings({ [SETTINGS_SYNC_ENABLED_KEY]: body.enabled });
+      sendNoCacheJson(res, { success: true, enabled: body.enabled }, 200, req);
+    } catch {
+      sendNoCacheJson(res, { error: "Bad request" }, 400, req);
+    }
+    return true;
+  }
+
+  if (pathname === "/api/settings/shared" && req.method === "GET") {
+    if (!requireAuth(req, res, store)) return true;
+    const settings = settingsFns.loadSettings();
+    sendNoCacheJson(res, {
+      settings: filterSharedSettings(settings),
+      syncEnabled: getSettingsSyncEnabled(settings),
+    }, 200, req);
+    return true;
+  }
+
+  if (pathname === "/api/settings/shared" && req.method === "POST") {
+    if (!requireAuth(req, res, store)) return true;
+    try {
+      const body = await parseBody(req);
+      const patchInput = body.patch;
+      const removeKeysInput = body.removeKeys;
+
+      if ((patchInput === undefined || patchInput === null || typeof patchInput !== "object" || Array.isArray(patchInput))
+          && removeKeysInput === undefined) {
+        sendNoCacheJson(res, { error: "patch or removeKeys is required" }, 400, req);
+        return true;
+      }
+
+      const patch = filterSharedSettingsPatch(
+        (patchInput && typeof patchInput === "object" && !Array.isArray(patchInput))
+          ? patchInput as Record<string, unknown>
+          : {},
+      );
+      const removeKeys = Array.isArray(removeKeysInput)
+        ? filterSharedSettingsRemoveKeys(removeKeysInput.filter((key): key is string => typeof key === "string"))
+        : [];
+
+      if (Object.keys(patch).length === 0 && removeKeys.length === 0) {
+        sendNoCacheJson(res, { error: "No allowed shared settings in request" }, 400, req);
+        return true;
+      }
+
+      if (settingsFns.replaceSettings) {
+        const current = settingsFns.loadSettings();
+        const next = applySettingsMutation(current, patch, removeKeys);
+        settingsFns.replaceSettings(next);
+      } else {
+        const patchWithDeletes: Record<string, unknown> = { ...patch };
+        for (const key of removeKeys) {
+          patchWithDeletes[key] = undefined;
+        }
+        settingsFns.saveSettings(patchWithDeletes);
+      }
+
+      const updated = settingsFns.loadSettings();
+      sendNoCacheJson(res, {
+        success: true,
+        settings: filterSharedSettings(updated),
+      }, 200, req);
+    } catch {
+      sendNoCacheJson(res, { error: "Bad request" }, 400, req);
     }
     return true;
   }

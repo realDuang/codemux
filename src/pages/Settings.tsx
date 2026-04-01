@@ -1,18 +1,33 @@
-import { For, Show, Switch, Match, createSignal, createMemo, onMount } from "solid-js";
+import { For, Show, Switch, Match, createSignal, createMemo, createEffect, onMount, onCleanup } from "solid-js";
 import { useNavigate } from "@solidjs/router";
 import { LanguageSwitcher } from "../components/LanguageSwitcher";
+import { Spinner } from "../components/Spinner";
 import { ThemeSwitcher } from "../components/ThemeSwitcher";
 import ImportHistoryModal from "../components/ImportHistoryModal";
+import { ensureGatewayInitialized, refreshEngineConfigState } from "../lib/engine-bootstrap";
 import { useI18n } from "../lib/i18n";
+import { applyRendererSettingsState } from "../lib/renderer-settings";
 import { useAuthGuard } from "../lib/useAuthGuard";
 import { isElectron } from "../lib/platform";
 import { Auth } from "../lib/auth";
-import { configStore, saveEngineModelSelection, isEngineEnabled, setEngineEnabled } from "../stores/config";
+import {
+  configStore,
+  saveEngineModelSelection,
+  isEngineEnabled,
+  setEngineEnabled,
+} from "../stores/config";
 import { sessionStore, setSessionStore } from "../stores/session";
 import { setScheduledTaskStore } from "../stores/scheduled-task";
 import { gateway } from "../lib/gateway-api";
 import { systemAPI, updateAPI, autostartAPI } from "../lib/electron-api";
-import { getSetting, saveSetting } from "../lib/settings";
+import {
+  getSetting,
+  saveSetting,
+  getSettingsSyncEnabledSync,
+  refreshSharedSettings,
+  setSharedSettingsSyncEnabled,
+  subscribeToSettingsChanges,
+} from "../lib/settings";
 import type { UnifiedModelInfo, EngineType, UnifiedSession } from "../types/unified";
 
 export default function Settings() {
@@ -36,43 +51,82 @@ export default function Settings() {
   const [importModalEngine, setImportModalEngine] = createSignal<EngineType | null>(null);
 
   // Default workspace visibility
-  const [showDefaultWorkspace, setShowDefaultWorkspace] = createSignal(
-    getSetting<boolean>("showDefaultWorkspace") ?? true,
+  const showDefaultWorkspace = createMemo(
+    () => getSetting<boolean>("showDefaultWorkspace") ?? true,
   );
 
   const handleShowDefaultWorkspaceToggle = () => {
     const newValue = !showDefaultWorkspace();
-    setShowDefaultWorkspace(newValue);
     saveSetting("showDefaultWorkspace", newValue);
     setSessionStore("showDefaultWorkspace", newValue);
   };
 
   // Scheduled tasks toggle
-  const [scheduledTasksEnabled, setScheduledTasksEnabled] = createSignal(
-    getSetting<boolean>("scheduledTasksEnabled") ?? true,
+  const scheduledTasksEnabled = createMemo(
+    () => getSetting<boolean>("scheduledTasksEnabled") ?? true,
   );
 
   const handleScheduledTasksToggle = () => {
     const newValue = !scheduledTasksEnabled();
-    setScheduledTasksEnabled(newValue);
     saveSetting("scheduledTasksEnabled", newValue);
     setScheduledTaskStore("enabled", newValue);
   };
 
   // Worktree toggle
-  const [worktreeEnabled, setWorktreeEnabledSignal] = createSignal(
-    getSetting<boolean>("worktreeEnabled") ?? false,
+  const worktreeEnabled = createMemo(
+    () => getSetting<boolean>("worktreeEnabled") ?? false,
   );
+  const settingsSyncEnabled = createMemo(
+    () => getSettingsSyncEnabledSync(),
+  );
+  const [enginesLoading, setEnginesLoading] = createSignal(true);
 
   const handleWorktreeToggle = () => {
     const newValue = !worktreeEnabled();
-    setWorktreeEnabledSignal(newValue);
     saveSetting("worktreeEnabled", newValue);
+  };
+
+  const refreshMirroredSettingsState = async () => {
+    if (!isElectron()) {
+      await refreshSharedSettings();
+    }
+    applyRendererSettingsState();
+  };
+
+  const initializeEngineState = async () => {
+    setEnginesLoading(true);
+    try {
+      await ensureGatewayInitialized();
+      await refreshEngineConfigState();
+    } catch {
+      // Keep the existing fallback UI when engine bootstrap fails.
+    } finally {
+      setEnginesLoading(false);
+    }
+  };
+
+  const handleSettingsSyncToggle = async () => {
+    const newValue = !settingsSyncEnabled();
+    const persisted = await setSharedSettingsSyncEnabled(newValue);
+    if (persisted !== newValue) {
+      await refreshMirroredSettingsState();
+      return;
+    }
+    await refreshMirroredSettingsState();
   };
 
   const logLevels = ["error", "warn", "info", "verbose", "debug", "silly"];
 
   onMount(async () => {
+    const unsubscribeSettingsChanged = subscribeToSettingsChanges(() => {
+      applyRendererSettingsState();
+    });
+
+    await Promise.all([
+      refreshMirroredSettingsState(),
+      initializeEngineState(),
+    ]);
+
     // Load app version and update settings
     if (isElectron()) {
       const info = await systemAPI.getInfo();
@@ -121,6 +175,10 @@ export default function Settings() {
         }
       }
     }
+
+    onCleanup(() => {
+      unsubscribeSettingsChanged?.();
+    });
   });
 
   const handleLogLevelChange = async (level: string) => {
@@ -327,7 +385,15 @@ export default function Settings() {
                 when={configStore.engines.length > 0}
                 fallback={
                   <div class="bg-white dark:bg-slate-800 rounded-xl shadow-xs border border-slate-200 dark:border-slate-700 p-6 text-center text-sm text-slate-400 dark:text-slate-500">
-                    {t().engine.noEngines}
+                    <Show
+                      when={enginesLoading()}
+                      fallback={t().engine.noEngines}
+                    >
+                      <div class="flex items-center justify-center gap-2">
+                        <Spinner size="small" class="text-slate-400 dark:text-slate-500" />
+                        <span>{t().common.loading}</span>
+                      </div>
+                    </Show>
                   </div>
                 }
               >
@@ -338,6 +404,7 @@ export default function Settings() {
                       const showModelSelector = createMemo(() =>
                         engine.status === "running"
                       );
+                      let modelSelectRef: HTMLSelectElement | undefined;
                       const selectedModelId = createMemo(() => {
                         const selection = configStore.engineModelSelections[engine.type];
                         if (selection?.modelID) {
@@ -347,6 +414,22 @@ export default function Settings() {
                           }
                         }
                         return models()[0]?.modelId || "";
+                      });
+
+                      createEffect(() => {
+                        const selectedId = selectedModelId();
+                        const modelCount = models().length;
+                        if (engine.capabilities?.customModelInput || !modelSelectRef) {
+                          return;
+                        }
+
+                        if (modelCount === 0) {
+                          return;
+                        }
+
+                        if (modelSelectRef.value !== selectedId) {
+                          modelSelectRef.value = selectedId;
+                        }
                       });
 
                       // Group models by provider for optgroup display
@@ -486,32 +569,33 @@ export default function Settings() {
                               <div class="flex-shrink-0 w-full sm:w-auto">
                                 <Show
                                   when={engine.capabilities?.customModelInput}
-                                  fallback={
-                                    <select
-                                      value={selectedModelId()}
-                                      onChange={(e) => handleModelSelect(e.currentTarget.value)}
-                                      disabled={engine.capabilities?.modelSwitchable === false}
-                                      class={`w-full sm:w-[260px] px-3 py-1.5 text-sm font-medium rounded-lg border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-gray-700 dark:text-gray-300 transition-colors ${engine.capabilities?.modelSwitchable === false ? "opacity-60 cursor-not-allowed" : "cursor-pointer hover:bg-gray-100 dark:hover:bg-slate-600"}`}
-                                    >
+                                   fallback={
+                                     <select
+                                       ref={modelSelectRef}
+                                       value={selectedModelId()}
+                                       onChange={(e) => handleModelSelect(e.currentTarget.value)}
+                                       disabled={engine.capabilities?.modelSwitchable === false}
+                                       class={`w-full sm:w-[260px] px-3 py-1.5 text-sm font-medium rounded-lg border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-gray-700 dark:text-gray-300 transition-colors ${engine.capabilities?.modelSwitchable === false ? "opacity-60 cursor-not-allowed" : "cursor-pointer hover:bg-gray-100 dark:hover:bg-slate-600"}`}
+                                     >
                                       <For each={providerGroups()}>
                                         {([pid, group]) => (
                                           <Show
                                             when={providerGroups().length > 1}
-                                            fallback={
-                                              <For each={group.models}>
-                                                {(model) => (
-                                                  <option value={model.modelId}>{model.name}</option>
-                                                )}
-                                              </For>
-                                            }
-                                          >
-                                            <optgroup label={group.name}>
-                                              <For each={group.models}>
-                                                {(model) => (
-                                                  <option value={model.modelId}>{model.name}</option>
-                                                )}
-                                              </For>
-                                            </optgroup>
+                                             fallback={
+                                               <For each={group.models}>
+                                                 {(model) => (
+                                                   <option value={model.modelId}>{model.name}</option>
+                                                 )}
+                                               </For>
+                                             }
+                                           >
+                                             <optgroup label={group.name}>
+                                               <For each={group.models}>
+                                                 {(model) => (
+                                                   <option value={model.modelId}>{model.name}</option>
+                                                 )}
+                                               </For>
+                                             </optgroup>
                                           </Show>
                                         )}
                                       </For>
@@ -652,6 +736,34 @@ export default function Settings() {
                 {t().settings.experimental}
               </h2>
               <div class="bg-white dark:bg-slate-800 rounded-xl shadow-xs border border-gray-200 dark:border-slate-700 overflow-visible">
+                {/* Cross-device settings sync toggle */}
+                <div class="p-4 sm:p-6 flex items-center justify-between gap-4 border-b border-gray-200 dark:border-slate-700">
+                  <div>
+                    <h3 class="text-base font-medium text-gray-900 dark:text-white">
+                      {t().settings.settingsSync}
+                    </h3>
+                    <p class="text-sm text-gray-500 dark:text-gray-400 mt-1">
+                      {t().settings.settingsSyncDesc}
+                    </p>
+                  </div>
+                  <div class="flex-shrink-0">
+                    <button
+                      onClick={() => void handleSettingsSyncToggle()}
+                      class={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                        settingsSyncEnabled() ? "bg-blue-600" : "bg-gray-300 dark:bg-slate-600"
+                      }`}
+                      role="switch"
+                      aria-checked={settingsSyncEnabled()}
+                      aria-label={t().settings.settingsSync}
+                    >
+                      <span
+                        class={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                          settingsSyncEnabled() ? "translate-x-6" : "translate-x-1"
+                        }`}
+                      />
+                    </button>
+                  </div>
+                </div>
                 {/* Show Default Workspace toggle */}
                 <div class="p-4 sm:p-6 flex items-center justify-between gap-4 border-b border-gray-200 dark:border-slate-700">
                   <div>

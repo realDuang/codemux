@@ -9,7 +9,9 @@ import { logger } from "../lib/logger";
 import { WEB_PORT, WEB_STANDALONE_PORT } from "../../shared/ports";
 import { isElectron } from "../lib/platform";
 import { systemAPI, tunnelAPI, channelAPI, type ChannelInfo, type TunnelInfo, type TunnelConfig } from "../lib/electron-api";
-import { getSetting, saveSetting } from "../lib/settings";
+import { bootstrapSharedSettings, getSetting, saveSetting } from "../lib/settings";
+import { refreshLocaleFromSettings } from "../lib/i18n";
+import { refreshThemeFromSettings } from "../lib/theme";
 
 export default function EntryPage() {
   const { t } = useI18n();
@@ -30,6 +32,13 @@ export default function EntryPage() {
   const [approvalStatus, setApprovalStatus] = createSignal<"pending" | "denied" | "expired" | null>(null);
   const [deviceInfo, setDeviceInfo] = createSignal<{ name: string; platform: string; browser: string } | null>(null);
   let statusPollTimer: ReturnType<typeof setInterval> | null = null;
+
+  const applySharedSettingsIfNeeded = async () => {
+    if (isElectron()) return;
+    await bootstrapSharedSettings();
+    refreshThemeFromSettings();
+    refreshLocaleFromSettings();
+  };
 
   // Local mode states (remote access config)
   const [tunnelEnabled, setTunnelEnabled] = createSignal(false);
@@ -313,6 +322,7 @@ export default function EntryPage() {
         if (result.status === "approved") {
           if (statusPollTimer) clearInterval(statusPollTimer);
           setApprovalStatus(null);
+          await applySharedSettingsIfNeeded();
           navigate("/chat", { replace: true });
         } else if (result.status === "denied") {
           if (statusPollTimer) clearInterval(statusPollTimer);
@@ -811,11 +821,13 @@ export default function EntryPage() {
     try {
       // Token should already be set from loadLocalModeData
       if (Auth.isAuthenticated()) {
+        await applySharedSettingsIfNeeded();
         navigate("/chat", { replace: true });
       } else {
         // Fallback: try to auth again
         const result = await Auth.localAuth();
         if (result.success) {
+          await applySharedSettingsIfNeeded();
           navigate("/chat", { replace: true });
         } else {
           logger.error("[EntryPage] Failed to enter chat:", result.error);

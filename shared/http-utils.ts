@@ -63,14 +63,42 @@ function getCorsOrigin(req: IncomingMessage): string {
  * Send a JSON response with optional status code and CORS headers.
  */
 export function sendJson(res: ServerResponse, data: unknown, status = 200, req?: IncomingMessage): void {
+  sendJsonInternal(res, data, status, req, false);
+}
+
+export function sendNoCacheJson(
+  res: ServerResponse,
+  data: unknown,
+  status = 200,
+  req?: IncomingMessage,
+): void {
+  sendJsonInternal(res, data, status, req, true);
+}
+
+function sendJsonInternal(
+  res: ServerResponse,
+  data: unknown,
+  status = 200,
+  req?: IncomingMessage,
+  noCache = false,
+): void {
   const body = JSON.stringify(data);
   const origin = req ? getCorsOrigin(req) : "*";
-  res.writeHead(status, {
+  const headers: Record<string, string> = {
     "Content-Type": "application/json",
+    "Vary": "Origin",
     "Access-Control-Allow-Origin": origin,
     "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS, PATCH",
     "Access-Control-Allow-Headers": "Content-Type, Authorization, x-opencode-directory",
-  });
+  };
+
+  if (noCache) {
+    headers["Cache-Control"] = "no-store, no-cache, must-revalidate";
+    headers["Pragma"] = "no-cache";
+    headers["Expires"] = "0";
+  }
+
+  res.writeHead(status, headers);
   res.end(body);
 }
 

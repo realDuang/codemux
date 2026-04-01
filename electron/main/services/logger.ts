@@ -3,6 +3,7 @@ import { app } from "electron";
 import path from "node:path";
 import fs from "node:fs";
 import type { LevelOption } from "electron-log";
+import { applySettingsMutation } from "../../../shared/settings-sync";
 
 // Configure electron-log for the main process.
 // All logs (main + renderer forwarded via WebSocket) go to a single file.
@@ -23,6 +24,7 @@ log.transports.file.maxSize = 5 * 1024 * 1024;
 // --- Persisted settings ---
 
 const VALID_LEVELS: LevelOption[] = ["error", "warn", "info", "verbose", "debug", "silly", false];
+const settingsChangeListeners = new Set<(settings: Record<string, unknown>) => void>();
 
 function getSettingsPath(): string {
   return path.join(app.getPath("userData"), "settings.json");
@@ -37,18 +39,24 @@ function loadSettings(): Record<string, unknown> {
   }
 }
 
+function cloneSettings(settings: Record<string, unknown>): Record<string, unknown> {
+  return JSON.parse(JSON.stringify(settings));
+}
+
+function emitSettingsChanged(settings: Record<string, unknown>): void {
+  const snapshot = cloneSettings(settings);
+  for (const listener of settingsChangeListeners) {
+    listener(snapshot);
+  }
+}
+
 function saveSettings(patch: Record<string, unknown>): void {
   const existing = loadSettings();
-  // Deep merge: for object-valued keys, merge nested properties instead of replacing
-  const settings = { ...existing };
-  for (const [key, value] of Object.entries(patch)) {
-    if (value && typeof value === "object" && !Array.isArray(value)
-        && existing[key] && typeof existing[key] === "object" && !Array.isArray(existing[key])) {
-      settings[key] = { ...(existing[key] as Record<string, unknown>), ...(value as Record<string, unknown>) };
-    } else {
-      settings[key] = value;
-    }
-  }
+  const settings = applySettingsMutation(existing, patch);
+  saveSettingsState(settings);
+}
+
+function saveSettingsState(settings: Record<string, unknown>): void {
   const filePath = getSettingsPath();
   const dir = path.dirname(filePath);
   if (!fs.existsSync(dir)) {
@@ -57,6 +65,20 @@ function saveSettings(patch: Record<string, unknown>): void {
   const tmpPath = `${filePath}.tmp`;
   fs.writeFileSync(tmpPath, JSON.stringify(settings, null, 2));
   fs.renameSync(tmpPath, filePath);
+  emitSettingsChanged(settings);
+}
+
+export function replaceSettings(settings: Record<string, unknown>): void {
+  saveSettingsState(settings);
+}
+
+export function onSettingsChanged(
+  listener: (settings: Record<string, unknown>) => void,
+): () => void {
+  settingsChangeListeners.add(listener);
+  return () => {
+    settingsChangeListeners.delete(listener);
+  };
 }
 
 // Restore persisted log level, fallback to "warn"

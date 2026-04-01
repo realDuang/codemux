@@ -631,6 +631,13 @@ export class GatewayServer {
     }
   }
 
+  broadcastSettingsChanged(settings: Record<string, unknown>): void {
+    this.broadcast({
+      type: GatewayNotificationType.SETTINGS_CHANGED,
+      payload: { settings },
+    });
+  }
+
   private sendToClient(
     client: ClientConnection,
     response: GatewayResponse,

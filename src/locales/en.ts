@@ -119,6 +119,8 @@ export interface LocaleDict {
     showDefaultWorkspaceDesc: string;
     features: string;
     experimental: string;
+    settingsSync: string;
+    settingsSyncDesc: string;
     scheduledTasksEnabled: string;
     scheduledTasksEnabledDesc: string;
   };
@@ -718,6 +720,8 @@ export const en: LocaleDict = {
     showDefaultWorkspaceDesc: "Display the default workspace project group in the sidebar",
     features: "Features",
     experimental: "Experimental",
+    settingsSync: "Sync settings across devices",
+    settingsSyncDesc: "Use the host's shared settings for web and desktop clients. Device-local data like auth and browser panel state stay local.",
     scheduledTasksEnabled: "Scheduled Tasks",
     scheduledTasksEnabledDesc: "Enable the scheduled tasks feature to automatically run tasks on a schedule",
   },

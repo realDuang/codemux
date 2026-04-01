@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { handleAuthRoutes, handleLogRoutes } from '../../../shared/auth-route-handlers';
+import { handleAuthRoutes, handleLogRoutes, handleSettingsRoutes } from '../../../shared/auth-route-handlers';
 import type { IncomingMessage, ServerResponse } from 'http';
 import { EventEmitter } from 'events';
 
@@ -7,6 +7,7 @@ describe('auth-route-handlers', () => {
   let mockRes: ServerResponse;
   let mockStore: any;
   let mockLogFns: any;
+  let mockSettingsFns: any;
   const mockOptions = {
     defaultDeviceName: 'Test Device',
     defaultPlatform: 'test',
@@ -43,6 +44,17 @@ describe('auth-route-handlers', () => {
       getLogFilePath: vi.fn(),
       getFileLogLevel: vi.fn(),
       setFileLogLevel: vi.fn(),
+    };
+
+    mockSettingsFns = {
+      loadSettings: vi.fn(() => ({
+        settingsSyncEnabled: true,
+        theme: 'dark',
+        locale: 'zh',
+        lastSessionId: 'local-only',
+      })),
+      saveSettings: vi.fn(),
+      replaceSettings: vi.fn(),
     };
   });
 
@@ -307,6 +319,172 @@ describe('auth-route-handlers', () => {
 
     it('returns false for unmatched routes', async () => {
       expect(await handleLogRoutes(createMockReq('/api/other'), mockRes, '/api/other', mockLogFns)).toBe(false);
+    });
+  });
+
+  describe('handleSettingsRoutes', () => {
+    beforeEach(() => {
+      mockStore.verifyToken.mockReturnValue({ valid: true, deviceId: 'd1' });
+    });
+
+    it('returns shared bootstrap settings without local-only keys', async () => {
+      const pathname = '/api/settings/bootstrap';
+      const req = createMockReq(pathname);
+      req.headers.authorization = 'Bearer t1';
+
+      expect(await handleSettingsRoutes(req, mockRes, pathname, mockStore, mockSettingsFns)).toBe(true);
+      expect(mockRes.writeHead).toHaveBeenCalledWith(200, expect.objectContaining({
+        'Cache-Control': 'no-store, no-cache, must-revalidate',
+      }));
+      expect(mockRes.end).toHaveBeenCalledWith(expect.stringContaining('"syncEnabled":true'));
+      expect(mockRes.end).toHaveBeenCalledWith(expect.stringContaining('"theme":"dark"'));
+      expect(mockRes.end).not.toHaveBeenCalledWith(expect.stringContaining('lastSessionId'));
+    });
+
+    it('updates the sync enabled flag', async () => {
+      const pathname = '/api/settings/sync-enabled';
+      const req = createMockReq(pathname, 'POST', { enabled: false });
+      req.headers.authorization = 'Bearer t1';
+
+      expect(await handleSettingsRoutes(req, mockRes, pathname, mockStore, mockSettingsFns)).toBe(true);
+      expect(mockSettingsFns.saveSettings).toHaveBeenCalledWith({ settingsSyncEnabled: false });
+    });
+
+    it('persists only shared settings in shared settings updates', async () => {
+      const pathname = '/api/settings/shared';
+      const req = createMockReq(pathname, 'POST', {
+        patch: {
+          theme: 'light',
+          lastSessionId: 'ignore-me',
+        },
+        removeKeys: ['locale', 'lastSessionId'],
+      });
+      req.headers.authorization = 'Bearer t1';
+
+      expect(await handleSettingsRoutes(req, mockRes, pathname, mockStore, mockSettingsFns)).toBe(true);
+      expect(mockSettingsFns.replaceSettings).toHaveBeenCalledWith(expect.objectContaining({
+        settingsSyncEnabled: true,
+        theme: 'light',
+      }));
+      expect(mockSettingsFns.replaceSettings).toHaveBeenCalledWith(expect.not.objectContaining({
+        lastSessionId: expect.anything(),
+        locale: expect.anything(),
+      }));
+    });
+
+    it('merges shared object patches instead of replacing sibling settings', async () => {
+      mockSettingsFns.loadSettings.mockReturnValue({
+        settingsSyncEnabled: true,
+        engineModels: {
+          opencode: { modelID: 'gpt-4o', enabled: true },
+          claude: { modelID: 'claude-old' },
+        },
+      });
+
+      const pathname = '/api/settings/shared';
+      const req = createMockReq(pathname, 'POST', {
+        patch: {
+          engineModels: {
+            claude: { modelID: 'claude-new' },
+          },
+        },
+      });
+      req.headers.authorization = 'Bearer t1';
+
+      expect(await handleSettingsRoutes(req, mockRes, pathname, mockStore, mockSettingsFns)).toBe(true);
+      expect(mockSettingsFns.replaceSettings).toHaveBeenCalledWith({
+        settingsSyncEnabled: true,
+        engineModels: {
+          opencode: { modelID: 'gpt-4o', enabled: true },
+          claude: { modelID: 'claude-new' },
+        },
+      });
+    });
+
+    it('rejects unauthenticated shared settings requests', async () => {
+      mockStore.verifyToken.mockReturnValue({ valid: false });
+      const pathname = '/api/settings/shared';
+      const req = createMockReq(pathname);
+      req.headers.authorization = 'Bearer invalid';
+
+      expect(await handleSettingsRoutes(req, mockRes, pathname, mockStore, mockSettingsFns)).toBe(true);
+      expect(mockRes.writeHead).toHaveBeenCalledWith(401, expect.any(Object));
+    });
+
+    it('rejects invalid value types for shared settings', async () => {
+      mockSettingsFns.loadSettings.mockReturnValue({ settingsSyncEnabled: true });
+      const pathname = '/api/settings/shared';
+      const req = createMockReq(pathname, 'POST', {
+        patch: {
+          locale: 12345,        // should be string
+          theme: { bad: true }, // should be string
+        },
+      });
+      req.headers.authorization = 'Bearer t1';
+
+      expect(await handleSettingsRoutes(req, mockRes, pathname, mockStore, mockSettingsFns)).toBe(true);
+      // Both keys have invalid values, so the filtered patch is empty → 400
+      expect(mockRes.writeHead).toHaveBeenCalledWith(400, expect.any(Object));
+    });
+
+    it('rejects locale values not in the allowed set', async () => {
+      mockSettingsFns.loadSettings.mockReturnValue({ settingsSyncEnabled: true });
+      const pathname = '/api/settings/shared';
+      const req = createMockReq(pathname, 'POST', {
+        patch: { locale: "fr" }, // not in [en, zh, ru]
+      });
+      req.headers.authorization = 'Bearer t1';
+
+      expect(await handleSettingsRoutes(req, mockRes, pathname, mockStore, mockSettingsFns)).toBe(true);
+      expect(mockRes.writeHead).toHaveBeenCalledWith(400, expect.any(Object));
+    });
+
+    it('accepts engineModels patches with enabled/provider/model fields', async () => {
+      mockSettingsFns.loadSettings.mockReturnValue({ settingsSyncEnabled: true });
+      const pathname = '/api/settings/shared';
+      const req = createMockReq(pathname, 'POST', {
+        patch: {
+          engineModels: {
+            claude: {
+              providerID: 'anthropic',
+              modelID: 'claude-sonnet',
+              enabled: false,
+            },
+          },
+        },
+      });
+      req.headers.authorization = 'Bearer t1';
+
+      expect(await handleSettingsRoutes(req, mockRes, pathname, mockStore, mockSettingsFns)).toBe(true);
+      expect(mockSettingsFns.replaceSettings).toHaveBeenCalledWith(expect.objectContaining({
+        settingsSyncEnabled: true,
+        engineModels: {
+          claude: {
+            providerID: 'anthropic',
+            modelID: 'claude-sonnet',
+            enabled: false,
+          },
+        },
+      }));
+    });
+
+    it('rejects oversized or nested engineModels payloads', async () => {
+      mockSettingsFns.loadSettings.mockReturnValue({ settingsSyncEnabled: true });
+      const pathname = '/api/settings/shared';
+      const req = createMockReq(pathname, 'POST', {
+        patch: {
+          engineModels: {
+            claude: {
+              modelID: 'x'.repeat(300),
+              nested: { bad: true },
+            },
+          },
+        },
+      });
+      req.headers.authorization = 'Bearer t1';
+
+      expect(await handleSettingsRoutes(req, mockRes, pathname, mockStore, mockSettingsFns)).toBe(true);
+      expect(mockRes.writeHead).toHaveBeenCalledWith(400, expect.any(Object));
     });
   });
 });

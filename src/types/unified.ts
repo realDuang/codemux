@@ -601,6 +601,7 @@ export const GatewayNotificationType = {
   MESSAGE_UPDATED: "message.updated",
   SESSION_UPDATED: "session.updated",
   SESSION_CREATED: "session.created",
+  SETTINGS_CHANGED: "settings.changed",
   PERMISSION_ASKED: "permission.asked",
   PERMISSION_REPLIED: "permission.replied",
   QUESTION_ASKED: "question.asked",

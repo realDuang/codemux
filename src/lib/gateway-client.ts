@@ -63,6 +63,7 @@ export interface GatewayClientEvents {
   "message.updated": (data: { sessionId: string; message: UnifiedMessage }) => void;
   "session.updated": (data: { session: UnifiedSession }) => void;
   "session.created": (data: { session: UnifiedSession }) => void;
+  "settings.changed": (data: { settings: Record<string, unknown> }) => void;
   "permission.asked": (data: { permission: UnifiedPermission }) => void;
   "permission.replied": (data: { permissionId: string; optionId: string }) => void;
   "question.asked": (data: { question: UnifiedQuestion }) => void;

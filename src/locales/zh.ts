@@ -120,6 +120,8 @@ export const zh: LocaleDict = {
     showDefaultWorkspaceDesc: "在侧边栏中显示默认工作区项目分组",
     features: "功能",
     experimental: "实验性功能",
+    settingsSync: "多端同步设置",
+    settingsSyncDesc: "让网页端和桌面端共用主机侧设置。认证信息和浏览器面板状态等设备本地数据不会同步。",
     scheduledTasksEnabled: "定时任务",
     scheduledTasksEnabledDesc: "启用定时任务功能，按计划自动执行任务",
   },

@@ -5,6 +5,7 @@ import {
   getClientIp, 
   getLocalIp, 
   sendJson, 
+  sendNoCacheJson,
   parseBody
 } from '../../../shared/http-utils';
 import type { IncomingMessage, ServerResponse } from 'http';
@@ -96,13 +97,27 @@ describe('http-utils', () => {
       // Explicit status 201
       sendJson(res, data, 201);
       expect(res.writeHead).toHaveBeenCalledWith(201, expect.objectContaining({
-        'Content-Type': 'application/json'
+        'Content-Type': 'application/json',
       }));
       expect(res.end).toHaveBeenCalledWith(JSON.stringify(data));
 
       // Default status 200
       sendJson(res, {});
       expect(res.writeHead).toHaveBeenCalledWith(200, expect.any(Object));
+    });
+
+    it('sends no-cache headers for opt-in JSON responses', () => {
+      const res = { writeHead: vi.fn(), end: vi.fn() } as unknown as ServerResponse;
+      const data = { success: true };
+
+      sendNoCacheJson(res, data, 200);
+      expect(res.writeHead).toHaveBeenCalledWith(200, expect.objectContaining({
+        'Content-Type': 'application/json',
+        'Cache-Control': 'no-store, no-cache, must-revalidate',
+        'Pragma': 'no-cache',
+        'Expires': '0',
+      }));
+      expect(res.end).toHaveBeenCalledWith(JSON.stringify(data));
     });
   });
 

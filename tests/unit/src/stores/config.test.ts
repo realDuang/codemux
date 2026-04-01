@@ -69,6 +69,7 @@ describe('config store', () => {
       engineModels: {},
       engineModelSelections: {},
       enabledEngines: {},
+      defaultNewSessionEngine: null,
     });
   });
 
@@ -167,6 +168,10 @@ describe('config store', () => {
     it('returns saved selection when valid, null otherwise', () => {
       vi.mocked(settings.getNestedSetting).mockReturnValue({ providerID: 'p1', modelID: 'gpt-4o' });
       expect(loadEngineModelSelection('opencode')).toEqual({ providerID: 'p1', modelID: 'gpt-4o' });
+
+      // Missing providerID is normalized for non-provider engines / legacy settings
+      vi.mocked(settings.getNestedSetting).mockReturnValue({ modelID: 'gpt-4o' });
+      expect(loadEngineModelSelection('copilot')).toEqual({ providerID: '', modelID: 'gpt-4o', enabled: undefined });
 
       // Missing modelID
       vi.mocked(settings.getNestedSetting).mockReturnValue({ providerID: 'p1' });

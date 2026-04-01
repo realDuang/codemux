@@ -6,8 +6,9 @@ import { tunnelManager } from "./services/tunnel-manager";
 import { productionServer } from "./services/production-server";
 import { updateManager } from "./services/update-manager";
 import { trayManager } from "./services/tray-manager";
-import { getLogFilePath, getFileLogLevel, setFileLogLevel, loadSettings, saveSettings } from "./services/logger";
-import { isStartupReady } from "./index";
+import { getLogFilePath, getFileLogLevel, setFileLogLevel, loadSettings, saveSettings, onSettingsChanged } from "./services/logger";
+import { filterSharedSettings, getSettingsSyncEnabled, SETTINGS_SYNC_ENABLED_KEY } from "../../shared/settings-sync";
+import { gatewayServer, isStartupReady } from "./index";
 import { channelManager } from "./index";
 import { GATEWAY_PORT } from "../../shared/ports";
 
@@ -269,6 +270,21 @@ export function registerIpcHandlers(): void {
   ipcMain.handle("settings:save", async (_event, patch: Record<string, unknown>) => {
     saveSettings(patch);
     return { success: true };
+  });
+
+  onSettingsChanged((settings) => {
+    for (const win of BrowserWindow.getAllWindows()) {
+      if (!win.isDestroyed()) {
+        win.webContents.send("settings:changed", settings);
+      }
+    }
+    // Include settingsSyncEnabled so web clients learn immediately when the
+    // host toggles sync on or off (filterSharedSettings omits this key).
+    const broadcastPayload: Record<string, unknown> = {
+      [SETTINGS_SYNC_ENABLED_KEY]: getSettingsSyncEnabled(settings),
+      ...filterSharedSettings(settings),
+    };
+    gatewayServer.broadcastSettingsChanged(broadcastPayload);
   });
 
   // ===========================================================================

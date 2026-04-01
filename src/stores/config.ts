@@ -41,8 +41,14 @@ export const [configStore, setConfigStore] = createStore<ConfigState>({
 
 export function loadEngineModelSelection(engineType: string): EngineModelSelection | null {
   try {
-    const saved = getNestedSetting<EngineModelSelection>(`engineModels.${engineType}`);
-    if (saved && saved.providerID !== undefined && saved.modelID) return saved;
+    const saved = getNestedSetting<Partial<EngineModelSelection>>(`engineModels.${engineType}`);
+    if (saved && typeof saved.modelID === "string" && saved.modelID.length > 0) {
+      return {
+        providerID: typeof saved.providerID === "string" ? saved.providerID : "",
+        modelID: saved.modelID,
+        enabled: typeof saved.enabled === "boolean" ? saved.enabled : undefined,
+      };
+    }
     return null;
   } catch {
     return null;

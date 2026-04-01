@@ -38,6 +38,7 @@ import {
   getLogFilePath,
   larkLog,
   loadSettings,
+  onSettingsChanged,
   saveSettings,
   setFileLogLevel,
 } from '../../../../electron/main/services/logger';
@@ -84,6 +85,24 @@ describe('logger.ts', () => {
       vi.mocked(fs.existsSync).mockReturnValue(false);
       saveSettings({ x: 1 });
       expect(fs.mkdirSync).toHaveBeenCalledWith(expect.any(String), { recursive: true });
+    });
+
+    it('notifies listeners after persisting settings', () => {
+      vi.mocked(fs.readFileSync).mockReturnValue('{"theme": "light"}');
+      vi.mocked(fs.existsSync).mockReturnValue(true);
+      const listener = vi.fn();
+      const unsubscribe = onSettingsChanged(listener);
+
+      saveSettings({ theme: 'dark', defaultEngine: 'claude' });
+
+      expect(listener).toHaveBeenCalledWith({
+        theme: 'dark',
+        defaultEngine: 'claude',
+      });
+
+      unsubscribe();
+      saveSettings({ theme: 'system' });
+      expect(listener).toHaveBeenCalledTimes(1);
     });
   });
 

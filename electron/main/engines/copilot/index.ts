@@ -627,9 +627,6 @@ export class CopilotSdkAdapter extends EngineAdapter {
       this.cachedModels = sdkModels.map((m: any) => sdkModelToUnified(this.engineType, m));
     } catch (err) {}
 
-    const configModel = readConfigModel();
-    if (configModel) this.currentModelId = configModel;
-
     return {
       models: this.cachedModels,
       currentModelId: this.currentModelId ?? undefined,

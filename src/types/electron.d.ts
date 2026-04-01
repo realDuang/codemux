@@ -61,6 +61,13 @@ interface ElectronAPI {
     revokeOthers: (currentDeviceId: string) => Promise<{ success: boolean; revokedCount?: number }>;
   };
 
+  settings: {
+    cache: Record<string, unknown>;
+    load: () => Promise<Record<string, unknown>>;
+    save: (patch: Record<string, unknown>) => Promise<{ success: boolean }>;
+    onChanged: (callback: (settings: Record<string, unknown>) => void) => () => void;
+  };
+
   tunnel: {
     start: (port: number) => Promise<{
       url: string;

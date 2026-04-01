@@ -6,9 +6,10 @@ import os from "os";
 import type { IncomingMessage } from "http";
 import { tunnelManager } from "./scripts/tunnel-manager";
 import { deviceStore } from "./scripts/device-store";
+import { loadStandaloneSettings, replaceStandaloneSettings, saveStandaloneSettings } from "./scripts/settings-store";
 import type { DeviceInfo } from "./shared/device-store-types";
 import { sendJson, parseBody, extractBearerToken, getClientIp, isLocalhost, getLocalIp } from "./shared/http-utils";
-import { handleAuthRoutes } from "./shared/auth-route-handlers";
+import { handleAuthRoutes, handleSettingsRoutes } from "./shared/auth-route-handlers";
 
 // ============================================================================
 // Helper Functions
@@ -102,7 +103,15 @@ export default defineConfig({
           );
 
           if (!handled) {
-            next();
+            const settingsHandled = await handleSettingsRoutes(req, res, pathname, deviceStore, {
+              loadSettings: loadStandaloneSettings,
+              saveSettings: saveStandaloneSettings,
+              replaceSettings: replaceStandaloneSettings,
+            });
+
+            if (!settingsHandled) {
+              next();
+            }
           }
         });
 

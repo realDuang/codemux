@@ -197,6 +197,87 @@ describe("ChannelManager", () => {
         }));
         expect(a2.start).not.toHaveBeenCalled();
     });
+
+    it("handles persisted configs with missing options without throwing", async () => {
+        if (!fs.existsSync(channelConfigDir)) fs.mkdirSync(channelConfigDir, { recursive: true });
+
+        fs.writeFileSync(path.join(channelConfigDir, "c1.json"), JSON.stringify({
+            type: "c1",
+            enabled: true,
+        }));
+
+        const a1 = new MockChannelAdapter("c1");
+        manager.registerAdapter(a1);
+
+        await expect(manager.initFromConfig({ gatewayUrl: "http://gateway" })).resolves.toBeUndefined();
+        expect(a1.start).toHaveBeenCalledWith(expect.objectContaining({
+            options: expect.objectContaining({ gatewayUrl: "http://gateway" }),
+        }));
+    });
+  });
+
+  describe("Runtime Options", () => {
+    it("applies runtime gatewayUrl to newly created configs after startup", async () => {
+      manager.registerAdapter(mockAdapter);
+
+      manager.setRuntimeOptions({ gatewayUrl: "http://gateway" });
+      await manager.startChannel("test-channel");
+
+      expect(mockAdapter.start).toHaveBeenCalledWith(expect.objectContaining({
+        options: expect.objectContaining({ gatewayUrl: "http://gateway" }),
+      }));
+      expect(manager.getConfig("test-channel")?.options.gatewayUrl).toBe("http://gateway");
+    });
+
+    it("keeps runtime gatewayUrl when updating a new config created after init", async () => {
+      manager.registerAdapter(mockAdapter);
+
+      await manager.initFromConfig({ gatewayUrl: "http://gateway" });
+      await manager.updateConfig("test-channel", {
+        options: { apiKey: "secret" },
+      });
+
+      expect(mockAdapter.updateConfig).toHaveBeenCalledWith(expect.objectContaining({
+        options: expect.objectContaining({
+          apiKey: "secret",
+          gatewayUrl: "http://gateway",
+        }),
+      }));
+
+      const configPath = path.join(channelConfigDir, "test-channel.json");
+      const saved = JSON.parse(fs.readFileSync(configPath, "utf-8"));
+      expect(saved.options.apiKey).toBe("secret");
+      expect(saved.options.gatewayUrl).toBeUndefined();
+    });
+
+    it("does not overwrite or auto-start again when a channel starts before init completes", async () => {
+      if (!fs.existsSync(channelConfigDir)) fs.mkdirSync(channelConfigDir, { recursive: true });
+
+      fs.writeFileSync(path.join(channelConfigDir, "test-channel.json"), JSON.stringify({
+        type: "test-channel",
+        name: "Persisted Name",
+        enabled: true,
+        options: { apiKey: "from-disk" },
+      }));
+
+      manager.registerAdapter(mockAdapter);
+      manager.setRuntimeOptions({ gatewayUrl: "http://gateway" });
+
+      await manager.startChannel("test-channel");
+      expect(mockAdapter.start).toHaveBeenCalledTimes(1);
+
+      await manager.initFromConfig({ gatewayUrl: "http://gateway" });
+
+      expect(mockAdapter.start).toHaveBeenCalledTimes(1);
+      expect(manager.getConfig("test-channel")).toEqual(expect.objectContaining({
+        name: "Persisted Name",
+        enabled: true,
+        options: expect.objectContaining({
+          apiKey: "from-disk",
+          gatewayUrl: "http://gateway",
+        }),
+      }));
+    });
   });
 
   describe("Configuration Filtering and Status", () => {

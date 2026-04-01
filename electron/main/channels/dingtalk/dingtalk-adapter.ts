@@ -29,6 +29,7 @@ import { TokenManager } from "../streaming/token-manager";
 import { TokenBucket } from "../streaming/rate-limiter";
 import { BaseSessionMapper, type PersistedBinding } from "../base-session-mapper";
 import { createStreamingSession, type StreamingSession } from "../streaming/streaming-types";
+import { didConfigValuesChange, mergeDefinedConfig } from "../config-utils";
 import { DingTalkTransport } from "./dingtalk-transport";
 import { DingTalkRenderer } from "./dingtalk-renderer";
 import {
@@ -138,10 +139,10 @@ export class DingTalkAdapter extends ChannelAdapter {
     this.emit("status.changed", this.status);
 
     // Merge config
-    this.config = {
-      ...DEFAULT_DINGTALK_CONFIG,
-      ...(config.options as unknown as Partial<DingTalkConfig>),
-    };
+    this.config = mergeDefinedConfig(
+      DEFAULT_DINGTALK_CONFIG,
+      config.options as Partial<DingTalkConfig> | undefined,
+    );
 
     if (!this.config.appKey || !this.config.appSecret) {
       this.status = "error";
@@ -266,14 +267,20 @@ export class DingTalkAdapter extends ChannelAdapter {
   async updateConfig(config: Partial<ChannelConfig>): Promise<void> {
     const wasRunning = this.status === "running";
     const newOptions = config.options as Partial<DingTalkConfig> | undefined;
+    const previousConfig = { ...this.config };
 
     if (newOptions) {
-      this.config = { ...this.config, ...newOptions };
+      this.config = mergeDefinedConfig(this.config, newOptions);
     }
 
-    // If credentials changed while running, restart
-    if (wasRunning && newOptions && (newOptions.appKey || newOptions.appSecret || newOptions.robotCode)) {
-      dingtalkLog.info("Credentials changed, restarting DingTalk adapter");
+    const shouldRestart = wasRunning && didConfigValuesChange(
+      previousConfig,
+      this.config,
+      ["appKey", "appSecret", "robotCode", "useStreamMode"],
+    );
+
+    if (shouldRestart) {
+      dingtalkLog.info("Connection settings changed, restarting DingTalk adapter");
       await this.stop();
       const fullConfig: ChannelConfig = {
         type: "dingtalk",

@@ -68,6 +68,68 @@ describe("FeishuAdapter", () => {
     });
   });
 
+  describe("updateConfig", () => {
+    it("retries once after a transient busy error when restarting with new credentials", async () => {
+      vi.useFakeTimers();
+      const adapter = new FeishuAdapter() as any;
+      adapter.status = "running";
+      adapter.config = {
+        ...DEFAULT_FEISHU_CONFIG,
+        platform: "lark",
+        appId: "old-app",
+        appSecret: "old-secret",
+      };
+      adapter.stop = vi.fn().mockResolvedValue(undefined);
+      adapter.start = vi.fn()
+        .mockRejectedValueOnce(new Error("Failed to connect to Lark long connection. Original error: [ws] code: 1000040345, system busy"))
+        .mockResolvedValueOnce(undefined);
+
+      const updatePromise = adapter.updateConfig({
+        options: {
+          appId: "new-app",
+          appSecret: "new-secret",
+        },
+      });
+
+      await vi.runAllTimersAsync();
+
+      await expect(updatePromise).resolves.toBeUndefined();
+      expect(adapter.stop).toHaveBeenCalledTimes(1);
+      expect(adapter.start).toHaveBeenCalledTimes(2);
+      expect(mockScopedLogger.warn).toHaveBeenCalledWith(
+        expect.stringContaining("retrying once"),
+      );
+    });
+
+    it("does not retry non-transient restart failures", async () => {
+      vi.useFakeTimers();
+      const adapter = new FeishuAdapter() as any;
+      adapter.status = "running";
+      adapter.config = {
+        ...DEFAULT_FEISHU_CONFIG,
+        platform: "lark",
+        appId: "old-app",
+        appSecret: "old-secret",
+      };
+      adapter.stop = vi.fn().mockResolvedValue(undefined);
+      adapter.start = vi.fn().mockRejectedValueOnce(new Error("invalid app credentials"));
+
+      const updatePromise = adapter.updateConfig({
+        options: {
+          appId: "new-app",
+          appSecret: "new-secret",
+        },
+      });
+      const rejection = expect(updatePromise).rejects.toThrow("invalid app credentials");
+
+      await vi.runAllTimersAsync();
+
+      await rejection;
+      expect(adapter.stop).toHaveBeenCalledTimes(1);
+      expect(adapter.start).toHaveBeenCalledTimes(1);
+    });
+  });
+
   describe("createWsStartupMonitor", () => {
     it("maps SDK trace/info logs onto electron-log levels without dropping them", () => {
       const adapter = new FeishuAdapter() as any;

@@ -115,6 +115,8 @@ export class FeishuAdapter extends ChannelAdapter {
   private static readonly WS_READY_LOG = "ws client ready";
   private static readonly WS_STARTUP_FAILURE_MARKERS = ["system busy", "PingInterval"] as const;
   private static readonly WS_STARTUP_TIMEOUT_MS = 30_000;
+  private static readonly CONFIG_RESTART_COOLDOWN_MS = 1_000;
+  private static readonly CONFIG_RESTART_RETRY_DELAY_MS = 2_000;
 
   private get channelLog(): ScopedLogger {
     return getFeishuChannelLog(this.config.platform);
@@ -166,6 +168,38 @@ export class FeishuAdapter extends ChannelAdapter {
 
   private getChannelDisplayName(platform = this.config.platform): string {
     return `${this.getPlatformName(platform)} Bot`;
+  }
+
+  private async delay(ms: number): Promise<void> {
+    await new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  private isTransientConfigRestartError(error: unknown): boolean {
+    const message = error instanceof Error ? error.message : String(error);
+    return message.includes("system busy");
+  }
+
+  private async restartAfterConfigUpdate(config: ChannelConfig): Promise<void> {
+    await this.stop();
+
+    // Give the previous long connection a brief cooldown before reconnecting
+    // with the replacement bot credentials.
+    await this.delay(FeishuAdapter.CONFIG_RESTART_COOLDOWN_MS);
+
+    try {
+      await this.start(config);
+    } catch (error) {
+      if (!this.isTransientConfigRestartError(error)) {
+        throw error;
+      }
+
+      const message = error instanceof Error ? error.message : String(error);
+      this.channelLog.warn(
+        `Config update restart hit a transient long-connection busy error. Waiting ${FeishuAdapter.CONFIG_RESTART_RETRY_DELAY_MS}ms and retrying once. Original error: ${message}`,
+      );
+      await this.delay(FeishuAdapter.CONFIG_RESTART_RETRY_DELAY_MS);
+      await this.start(config);
+    }
   }
 
   private createWsStartupMonitor(platform: "feishu" | "lark", platformConfigured: boolean): WsStartupMonitor {
@@ -483,14 +517,13 @@ export class FeishuAdapter extends ChannelAdapter {
     // If credentials or platform changed while running, restart
     if (shouldRestart) {
       this.channelLog.info(`Credentials or platform changed, restarting ${this.getPlatformName()} adapter`);
-      await this.stop();
       const fullConfig: ChannelConfig = {
         type: "feishu",
         name: this.getChannelDisplayName(),
         enabled: true,
         options: this.config as unknown as Record<string, unknown>,
       };
-      await this.start(fullConfig);
+      await this.restartAfterConfigUpdate(fullConfig);
     }
   }
 

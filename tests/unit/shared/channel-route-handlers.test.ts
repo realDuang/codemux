@@ -97,6 +97,31 @@ describe("channel-route-handlers", () => {
     expect(mockRes.end).toHaveBeenCalledWith(expect.stringContaining("running"));
   });
 
+  it("masks secret fields in GET config response", async () => {
+    const req = createMockReq("/api/channels/feishu");
+    req.headers = { authorization: "Bearer token" };
+    mockAuthStore.verifyToken.mockReturnValue({ valid: true, deviceId: "device-1" });
+    mockChannelManager.getConfig.mockReturnValue({
+      type: "feishu",
+      options: {
+        appId: "cli_visible",
+        appSecret: "supersecretvalue",
+        botToken: "tk",
+        callbackEncodingAESKey: "longaeskey1234",
+        normalField: "visible",
+      },
+    });
+
+    await handleChannelRoutes(req, mockRes, "/api/channels/feishu", mockAuthStore, mockChannelManager);
+    const body = JSON.parse((mockRes.end as ReturnType<typeof vi.fn>).mock.calls.at(-1)?.[0] ?? "{}");
+
+    expect(body.options.appId).toBe("cli_visible");
+    expect(body.options.appSecret).toBe("****alue");
+    expect(body.options.botToken).toBe("****");
+    expect(body.options.callbackEncodingAESKey).toBe("****1234");
+    expect(body.options.normalField).toBe("visible");
+  });
+
   it("updates channel config via PUT", async () => {
     const req = createMockReq("/api/channels/teams", "PUT", {
       options: { microsoftAppId: "app-id" },

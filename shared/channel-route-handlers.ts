@@ -10,6 +10,24 @@ interface ChannelManagerRoutes {
   getStatus(type: string): unknown | undefined;
 }
 
+/** Keys whose values should be masked in GET responses. */
+const SECRET_KEY_PATTERN = /secret|password|token|aeskey/i;
+
+function maskSecrets(obj: unknown): unknown {
+  if (!obj || typeof obj !== "object" || Array.isArray(obj)) return obj;
+  const result: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(obj as Record<string, unknown>)) {
+    if (SECRET_KEY_PATTERN.test(key) && typeof value === "string" && value.length > 0) {
+      result[key] = value.length <= 4 ? "****" : "****" + value.slice(-4);
+    } else if (value && typeof value === "object" && !Array.isArray(value)) {
+      result[key] = maskSecrets(value);
+    } else {
+      result[key] = value;
+    }
+  }
+  return result;
+}
+
 function getChannelType(pathname: string, suffix = ""): string | null {
   const escapedSuffix = suffix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const regex = new RegExp(`^/api/channels/([a-z0-9-]+)${escapedSuffix}$`);
@@ -39,7 +57,8 @@ export async function handleChannelRoutes(
   const configType = getChannelType(pathname);
   if (configType && req.method === "GET") {
     if (!requireAuth(req, res, authStore)) return true;
-    sendJson(res, channelManager.getConfig(configType) ?? null);
+    const config = channelManager.getConfig(configType);
+    sendJson(res, config ? maskSecrets(config) : null);
     return true;
   }
 

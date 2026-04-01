@@ -26,8 +26,6 @@ export function ensureUserBinPaths() {
   }
 }
 
-ensureUserBinPaths();
-
 // ANSI colors for terminal output
 export const colors = {
   reset: "\x1b[0m",

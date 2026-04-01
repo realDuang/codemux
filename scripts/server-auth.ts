@@ -1,7 +1,9 @@
 import readline from "readline";
 import type { PendingRequest } from "../shared/device-store-types";
 import { deviceStore } from "./device-store";
-import { colors } from "./utils";
+import { colors, ensureUserBinPaths } from "./utils";
+
+ensureUserBinPaths();
 
 type Command = "help" | "access-code" | "access-requests" | "status";
 

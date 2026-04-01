@@ -76,7 +76,7 @@ function isValidSharedSettingValue(key: SharedSettingsKey, value: unknown): bool
     case "scheduledTasksEnabled":
     case "worktreeEnabled":
       return typeof value === "boolean";
-    case "engineModels":
+    case "engineModels": {
       if (!isPlainObjectValue(value)) return false;
       const entries = Object.entries(value);
       if (entries.length > MAX_ENGINE_MODELS) return false;
@@ -101,6 +101,7 @@ function isValidSharedSettingValue(key: SharedSettingsKey, value: unknown): bool
         }
       }
       return true;
+    }
     default:
       return false;
   }

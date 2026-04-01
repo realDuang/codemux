@@ -1546,22 +1546,51 @@ export class ClaudeCodeAdapter extends EngineAdapter {
       pathToClaudeCodeExecutable: this.resolveCliPath(),
     };
 
-    // Set working directory (natively supported since SDK v0.2.81)
-    if (directory) {
-      sdkOptions.cwd = directory.replaceAll("/", process.platform === "win32" ? "\\" : "/");
+    // Set working directory.
+    // Note: sdkOptions.cwd is currently ignored by the SDK's V2 session API
+    // (rQ constructor doesn't forward it to ProcessTransport), so we also
+    // temporarily chdir to the target directory before creating the session.
+    // The rQ → y4 → spawn() chain is fully synchronous, so this is safe in
+    // single-threaded Node.js.
+    const nativeCwd = directory
+      ? directory.replaceAll("/", process.platform === "win32" ? "\\" : "/")
+      : undefined;
+    if (nativeCwd) {
+      sdkOptions.cwd = nativeCwd;
     }
 
     let v2Session: SDKSession;
 
-    if (ccSessionId) {
-      // Resume existing session
-      claudeLog.info(
-        `[Claude][${sessionId}] Resuming CC session: ${ccSessionId}`,
-      );
-      v2Session = unstable_v2_resumeSession(ccSessionId, sdkOptions);
-    } else {
-      // Create new session
-      v2Session = unstable_v2_createSession(sdkOptions);
+    const origCwd = nativeCwd ? process.cwd() : undefined;
+    if (nativeCwd) {
+      try {
+        process.chdir(nativeCwd);
+      } catch (e) {
+        claudeLog.warn(
+          `[Claude][${sessionId}] Failed to chdir to ${nativeCwd}: ${e}`,
+        );
+      }
+    }
+
+    try {
+      if (ccSessionId) {
+        // Resume existing session
+        claudeLog.info(
+          `[Claude][${sessionId}] Resuming CC session: ${ccSessionId}`,
+        );
+        v2Session = unstable_v2_resumeSession(ccSessionId, sdkOptions);
+      } else {
+        // Create new session
+        v2Session = unstable_v2_createSession(sdkOptions);
+      }
+    } finally {
+      if (origCwd) {
+        try {
+          process.chdir(origCwd);
+        } catch {
+          // ignore — original cwd may have been removed
+        }
+      }
     }
 
     claudeLog.info(

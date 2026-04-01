@@ -38,6 +38,8 @@ import type {
   ToolPart,
   TextPart,
   PermissionOption,
+  EngineCommand,
+  CommandInvokeResult,
 } from "../../../../src/types/unified";
 
 import {
@@ -106,6 +108,7 @@ export class CopilotSdkAdapter extends EngineAdapter {
 
   private sessionTodos = new Map<string, Map<string, { id: string; title: string; status: string }>>();
   private allowedAlwaysKinds = new Set<string>();
+  private cachedCommands: EngineCommand[] = [];
 
   private messageBuffers = new Map<string, MessageBuffer>();
   private messageHistory = new Map<string, UnifiedMessage[]>();
@@ -251,6 +254,7 @@ export class CopilotSdkAdapter extends EngineAdapter {
       modelSwitchable: true,
       customModelInput: false,
       messageEnqueue: true,
+      slashCommands: true,
       availableModes: this.getModes(),
     };
   }
@@ -308,6 +312,16 @@ export class CopilotSdkAdapter extends EngineAdapter {
     };
 
     this.emit("session.created", { session });
+
+    // Fetch initial skills/commands for slash command support.
+    // Await the fetch to ensure cachedCommands is populated before
+    // the frontend calls listCommands() shortly after session creation.
+    try {
+      await this.fetchSkills(sdkSession);
+    } catch (err) {
+      copilotLog.warn(`Failed to fetch initial skills for session ${sessionId}:`, err);
+    }
+
     return session;
   }
 
@@ -686,6 +700,174 @@ export class CopilotSdkAdapter extends EngineAdapter {
 
   async listProjects(): Promise<UnifiedProject[]> { return []; }
 
+  // --- Slash Commands / Skills ---
+
+  private async fetchSkills(session: CopilotSession): Promise<void> {
+    try {
+      copilotLog.debug(`[Copilot] fetchSkills: calling session.rpc.skills.list()...`);
+      const result = await session.rpc.skills.list();
+      copilotLog.debug(`[Copilot] fetchSkills: received ${Array.isArray((result as any)?.skills ?? result) ? ((result as any)?.skills ?? result).length : 0} skills`);
+      const skills = (result as any)?.skills ?? (result as any) ?? [];
+      if (Array.isArray(skills)) {
+        this.cachedCommands = skills
+          .filter((s: any) => s.userInvocable !== false)
+          .map((s: any) => ({
+            name: s.name,
+            description: s.description ?? "",
+            source: s.source,
+            userInvocable: s.userInvocable,
+          }));
+        copilotLog.info(`[Copilot] fetchSkills: cached ${this.cachedCommands.length} commands: ${this.cachedCommands.map(c => c.name).join(", ")}`);
+        this.emit("commands.changed", {
+          engineType: this.engineType,
+          commands: this.cachedCommands,
+        });
+      } else {
+        copilotLog.warn(`[Copilot] fetchSkills: skills is not an array: ${typeof skills}`);
+      }
+    } catch (err) {
+      copilotLog.warn(`[Copilot] fetchSkills FAILED:`, err);
+    }
+  }
+
+  override async listCommands(sessionId?: string, directory?: string): Promise<EngineCommand[]> {
+    // If cached commands are available, return them immediately.
+    if (this.cachedCommands.length > 0) return this.cachedCommands;
+
+    copilotLog.info(`[Copilot] listCommands: cache empty, sessionId=${sessionId ?? "none"}, activeSessions=${this.activeSessions.size}`);
+
+    // Cache is empty — try to fetch from the active session.
+    // This handles the case where the initial fetch was skipped or failed.
+    if (sessionId) {
+      let session = this.activeSessions.get(sessionId);
+      if (!session) {
+        // Session not active yet — try to activate it so we can fetch skills.
+        // Use the directory passed from engine-manager (from conversationStore),
+        // falling back to the in-memory sessionDirectories map.
+        const dir = directory || this.sessionDirectories.get(sessionId);
+        if (dir) {
+          try {
+            copilotLog.info(`[Copilot] listCommands: activating session ${sessionId} to fetch skills`);
+            session = await this.ensureActiveSession(sessionId, dir);
+          } catch (err) {
+            copilotLog.warn(`[Copilot] listCommands: failed to activate session:`, err);
+          }
+        }
+      }
+      if (session) {
+        try {
+          await this.fetchSkills(session);
+        } catch (err) {
+          copilotLog.warn(`[Copilot] Failed to fetch skills on listCommands:`, err);
+        }
+      }
+    } else {
+      // No sessionId provided — try the first active session
+      const firstSession = this.activeSessions.values().next().value;
+      if (firstSession) {
+        try {
+          await this.fetchSkills(firstSession);
+        } catch (err) {
+          copilotLog.warn(`[Copilot] Failed to fetch skills on listCommands (fallback):`, err);
+        }
+      }
+    }
+
+    return this.cachedCommands;
+  }
+
+  override async invokeCommand(
+    sessionId: string,
+    commandName: string,
+    args: string,
+    options?: { mode?: string; modelId?: string; directory?: string },
+  ): Promise<CommandInvokeResult> {
+    // Send the command as text — Copilot CLI intercepts /command prefix.
+    // The CLI emits a command.execute event which we acknowledge via
+    // handlePendingCommand() in handleCommandExecute().
+    const commandText = `/${commandName}${args ? ` ${args}` : ""}`;
+    const message = await this.sendMessage(
+      sessionId,
+      [{ type: "text", text: commandText }],
+      options,
+    );
+    return { handledAsCommand: true, message };
+  }
+
+  /**
+   * Handle command.execute event from Copilot CLI.
+   * The CLI dispatches this when it intercepts a /command in user input.
+   * We must acknowledge it via handlePendingCommand() so the CLI can proceed.
+   */
+  private async handleCommandExecute(
+    sessionId: string,
+    data: { requestId: string; command: string; commandName: string; args: string },
+  ): Promise<void> {
+    copilotLog.info(
+      `[Copilot][${sessionId}] command.execute: /${data.commandName} ${data.args} (requestId=${data.requestId})`,
+    );
+    try {
+      const session = this.activeSessions.get(sessionId);
+      if (session) {
+        await session.rpc.commands.handlePendingCommand({
+          requestId: data.requestId,
+        });
+      }
+    } catch (err) {
+      copilotLog.warn(`[Copilot][${sessionId}] Failed to acknowledge command:`, err);
+    }
+  }
+
+  /**
+   * Handle commands.changed event — refresh the cached command list.
+   */
+  private handleCommandsChanged(
+    sessionId: string,
+    data: { commands: Array<{ name: string; description?: string }> },
+  ): void {
+    if (Array.isArray(data?.commands)) {
+      this.cachedCommands = data.commands.map(cmd => ({
+        name: cmd.name,
+        description: cmd.description ?? "",
+      }));
+      this.emit("commands.changed", {
+        engineType: this.engineType,
+        commands: this.cachedCommands,
+      });
+      copilotLog.info(
+        `[Copilot][${sessionId}] Commands updated: ${this.cachedCommands.length} commands`,
+      );
+    }
+  }
+
+  /**
+   * Handle session.skills_loaded event — the Copilot CLI emits this when
+   * skills are loaded or reloaded from disk. Update cached commands from
+   * the skills data.
+   */
+  private handleSkillsLoaded(
+    sessionId: string,
+    data: { skills: Array<{ name: string; description?: string; userInvocable?: boolean; source?: string }> },
+  ): void {
+    if (Array.isArray(data?.skills)) {
+      this.cachedCommands = data.skills
+        .filter((s) => s.userInvocable !== false)
+        .map((s) => ({
+          name: s.name,
+          description: s.description ?? "",
+          source: s.source,
+          userInvocable: s.userInvocable,
+        }));
+      this.emit("commands.changed", {
+        engineType: this.engineType,
+        commands: this.cachedCommands,
+      });
+      copilotLog.info(
+        `[Copilot][${sessionId}] Skills loaded: ${this.cachedCommands.length} skills`,
+      );
+    }
+  }
+
   private setStatus(status: EngineStatus, error?: string): void {
     this.status = status;
     this.lastError = error;
@@ -787,6 +969,7 @@ export class CopilotSdkAdapter extends EngineAdapter {
 
   private handleSessionEvent(sessionId: string, event: SessionEvent): void {
     try {
+      copilotLog.debug(`[Copilot][${sessionId}] SessionEvent: type=${event.type}`);
       switch (event.type) {
         case "assistant.message_delta": this.handleMessageDelta(sessionId, event.data as any); break;
         case "assistant.reasoning_delta": this.handleReasoningDelta(sessionId, event.data as any); break;
@@ -805,6 +988,22 @@ export class CopilotSdkAdapter extends EngineAdapter {
         case "abort": this.handleAbort(sessionId, event.data as any); break;
         case "subagent.started": this.handleSubagentStarted(sessionId, event.data as any); break;
         case "subagent.completed": this.handleSubagentCompleted(sessionId, event.data as any); break;
+
+        // --- Slash Command events ---
+        case "command.execute":
+          this.handleCommandExecute(sessionId, event.data as any);
+          break;
+        case "command.completed":
+          // Command completed — no action needed on our side
+          copilotLog.info(`[Copilot][${sessionId}] Command completed: requestId=${(event.data as any)?.requestId}`);
+          break;
+        case "commands.changed":
+          this.handleCommandsChanged(sessionId, event.data as any);
+          break;
+        case "session.skills_loaded":
+          // Skills loaded/reloaded — refresh command list from the event data
+          this.handleSkillsLoaded(sessionId, event.data as any);
+          break;
       }
     } catch (err) {
       copilotLog.warn(`Error handling session event for session ${sessionId}:`, err);

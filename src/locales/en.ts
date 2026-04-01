@@ -236,6 +236,8 @@ export interface LocaleDict {
     imageUnsupportedType: string;
     imageLimitReached: string;
     removeImage: string;
+    /** Slash command autocomplete: no matching commands */
+    noCommandsFound: string;
   };
 
   // Message Parts
@@ -833,9 +835,8 @@ export const en: LocaleDict = {
     imageUnsupportedType: "Unsupported image type",
     imageLimitReached: "Maximum 4 images per message",
     removeImage: "Remove image",
+    noCommandsFound: "No commands found",
   },
-
-  // Message Parts
   parts: {
     linkToMessage: "Link to this message",
     thinking: "Thinking",

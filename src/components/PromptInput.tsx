@@ -1,8 +1,8 @@
-import { createSignal, createEffect, createMemo, For, Show } from "solid-js";
+import { createSignal, createEffect, createMemo, For, Show, onCleanup } from "solid-js";
 import { IconArrowUp } from "./icons";
 import { useI18n } from "../lib/i18n";
 import { notify } from "../lib/notifications";
-import type { AgentMode, ImageAttachment } from "../types/unified";
+import type { AgentMode, ImageAttachment, EngineCommand } from "../types/unified";
 
 const ACCEPTED_IMAGE_TYPES = ["image/jpeg", "image/png", "image/gif", "image/webp"];
 const MAX_IMAGE_SIZE = 3 * 1024 * 1024; // 3MB per image — stays within WS payload limits after base64/JSON overhead
@@ -130,6 +130,10 @@ interface PromptInputProps {
   disabled?: boolean;
   /** Whether the current engine supports image attachments */
   imageAttachmentEnabled?: boolean;
+  /** Available slash commands from the current engine */
+  availableCommands?: EngineCommand[];
+  /** Called when user invokes a slash command (instead of onSend) */
+  onCommandInvoke?: (commandName: string, args: string, agent: AgentMode) => void;
 }
 
 export function PromptInput(props: PromptInputProps) {
@@ -140,6 +144,91 @@ export function PromptInput(props: PromptInputProps) {
   const [dragOver, setDragOver] = createSignal(false);
   let fileInputRef: HTMLInputElement | undefined;
   let pasteCounter = 0;
+
+  // --- Slash command autocomplete state ---
+  const [showCommandMenu, setShowCommandMenu] = createSignal(false);
+  const [commandSelectedIndex, setCommandSelectedIndex] = createSignal(0);
+  let commandMenuRef: HTMLDivElement | undefined;
+
+  /** Parse the current text: detect `/command args` prefix */
+  const commandQuery = createMemo(() => {
+    const val = text();
+    if (!val.startsWith("/")) return null;
+    // Only trigger for single-line prefix (no newlines before command)
+    const firstNewline = val.indexOf("\n");
+    const commandLine = firstNewline === -1 ? val : val.slice(0, firstNewline);
+    const spaceIdx = commandLine.indexOf(" ");
+    const name = spaceIdx === -1
+      ? commandLine.slice(1) // everything after /
+      : commandLine.slice(1, spaceIdx); // from / to first space
+    const args = spaceIdx === -1 ? "" : commandLine.slice(spaceIdx + 1);
+    return { name, args, full: commandLine };
+  });
+
+  /** Filter available commands by the typed query */
+  const filteredCommands = createMemo(() => {
+    const commands = props.availableCommands;
+    if (!commands || commands.length === 0) return [];
+    const q = commandQuery();
+    if (!q) return [];
+    const search = q.name.toLowerCase();
+    // If user has typed a space (selecting/entering args), hide the dropdown
+    if (q.args !== "") return [];
+    // Filter by name or description prefix match
+    return commands.filter(
+      (cmd) =>
+        cmd.name.toLowerCase().includes(search) ||
+        cmd.description.toLowerCase().includes(search)
+    );
+  });
+
+  // Show/hide the command menu reactively
+  createEffect(() => {
+    const q = commandQuery();
+    const cmds = filteredCommands();
+    if (q && cmds.length > 0) {
+      setShowCommandMenu(true);
+      // Reset selection when filter changes
+      setCommandSelectedIndex(0);
+    } else {
+      setShowCommandMenu(false);
+    }
+  });
+
+  /** Select a command from the autocomplete menu */
+  const selectCommand = (cmd: EngineCommand) => {
+    setText(`/${cmd.name} `);
+    setShowCommandMenu(false);
+    textarea()?.focus();
+  };
+
+  // Scroll selected command item into view
+  createEffect(() => {
+    if (!showCommandMenu()) return;
+    const idx = commandSelectedIndex();
+    const container = commandMenuRef;
+    if (!container) return;
+    const items = container.querySelectorAll("[data-command-item]");
+    const item = items[idx] as HTMLElement | undefined;
+    if (item) {
+      item.scrollIntoView({ block: "nearest" });
+    }
+  });
+
+  // Close command menu on click outside
+  const handleClickOutside = (e: MouseEvent) => {
+    if (commandMenuRef && !commandMenuRef.contains(e.target as Node)) {
+      setShowCommandMenu(false);
+    }
+  };
+  createEffect(() => {
+    if (showCommandMenu()) {
+      document.addEventListener("mousedown", handleClickOutside);
+    } else {
+      document.removeEventListener("mousedown", handleClickOutside);
+    }
+  });
+  onCleanup(() => document.removeEventListener("mousedown", handleClickOutside));
 
   const addImageFromFile = (file: File) => {
     if (!ACCEPTED_IMAGE_TYPES.includes(file.type)) {
@@ -251,17 +340,69 @@ export function PromptInput(props: PromptInputProps) {
   };
 
   const handleKeyDown = (e: KeyboardEvent) => {
+    // Slash command menu keyboard navigation
+    if (showCommandMenu()) {
+      const cmds = filteredCommands();
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        if (cmds.length > 0) setCommandSelectedIndex((i) => (i + 1) % cmds.length);
+        return;
+      }
+      if (e.key === "ArrowUp") {
+        e.preventDefault();
+        if (cmds.length > 0) setCommandSelectedIndex((i) => (i - 1 + cmds.length) % cmds.length);
+        return;
+      }
+      if (e.key === "Tab") {
+        e.preventDefault();
+        const selected = cmds[commandSelectedIndex()];
+        if (selected) selectCommand(selected);
+        return;
+      }
+      if (e.key === "Escape") {
+        e.preventDefault();
+        setShowCommandMenu(false);
+        return;
+      }
+      // Enter while command menu is open: select the highlighted command
+      if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
+        e.preventDefault();
+        const selected = cmds[commandSelectedIndex()];
+        if (selected) selectCommand(selected);
+        return;
+      }
+    }
+
     if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
       e.preventDefault();
       const canSend = !props.isGenerating || props.canEnqueue;
       const hasContent = text().trim() || images().length > 0;
       if (hasContent && canSend && !props.disabled) {
-        const imgs = images().length > 0 ? [...images()] : undefined;
-        props.onSend(text(), agent(), imgs);
-        setText("");
-        setImages([]);
+        doSend();
       }
     }
+  };
+
+  /** Shared send logic — detects slash command or falls through to normal send */
+  const doSend = () => {
+    const trimmed = text().trim();
+    // Detect slash command: text starts with / and onCommandInvoke is provided
+    if (trimmed.startsWith("/") && props.onCommandInvoke) {
+      const spaceIdx = trimmed.indexOf(" ");
+      const commandName = spaceIdx === -1 ? trimmed.slice(1) : trimmed.slice(1, spaceIdx);
+      const args = spaceIdx === -1 ? "" : trimmed.slice(spaceIdx + 1).trim();
+      if (commandName) {
+        props.onCommandInvoke(commandName, args, agent());
+        setText("");
+        setImages([]);
+        return;
+      }
+    }
+    // Normal send
+    const imgs = images().length > 0 ? [...images()] : undefined;
+    props.onSend(text(), agent(), imgs);
+    setText("");
+    setImages([]);
   };
 
   const handleSend = () => {
@@ -270,10 +411,7 @@ export function PromptInput(props: PromptInputProps) {
 
     const hasContent = text().trim() || images().length > 0;
     if (hasContent) {
-      const imgs = images().length > 0 ? [...images()] : undefined;
-      props.onSend(text(), agent(), imgs);
-      setText("");
-      setImages([]);
+      doSend();
     }
   };
 
@@ -336,6 +474,34 @@ export function PromptInput(props: PromptInputProps) {
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
       >
+        {/* Slash command autocomplete dropdown */}
+        <Show when={showCommandMenu() && filteredCommands().length > 0}>
+          <div
+            ref={(el) => { commandMenuRef = el; }}
+            class="absolute bottom-full left-0 right-0 mb-1 bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-xl shadow-xl shadow-black/10 dark:shadow-black/30 max-h-48 overflow-y-auto z-50"
+          >
+            <For each={filteredCommands()}>
+              {(cmd, index) => (
+                <button
+                  data-command-item
+                  onClick={() => selectCommand(cmd)}
+                  onMouseEnter={() => setCommandSelectedIndex(index())}
+                  class={`w-full text-left px-3 py-2 flex items-center gap-3 text-sm transition-colors ${
+                    commandSelectedIndex() === index()
+                      ? "bg-indigo-50 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300"
+                      : "text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-slate-700/50"
+                  }`}
+                >
+                  <span class="font-mono font-semibold text-xs shrink-0 text-indigo-600 dark:text-indigo-400">/{cmd.name}</span>
+                  <span class="text-xs text-gray-500 dark:text-gray-400 truncate flex-1">{cmd.description}</span>
+                  <Show when={cmd.argumentHint}>
+                    <span class="text-[10px] text-gray-400 dark:text-gray-500 shrink-0 font-mono">{cmd.argumentHint}</span>
+                  </Show>
+                </button>
+              )}
+            </For>
+          </div>
+        </Show>
         {/* Image preview area */}
         <Show when={images().length > 0}>
           <div class="flex gap-2 px-3 pt-3 pb-1 overflow-x-auto">

@@ -70,6 +70,18 @@ Paste a screenshot, drag in a design mockup, or upload an error image — all th
 
 > This works across all access methods — desktop, remote browser, and IM bots — wherever CodeMux runs, image input follows.
 
+### 5. Developer Workflow Tools
+
+CodeMux goes beyond chat — it provides integrated tools to manage your development workflow directly from the interface.
+
+- **Scheduled Tasks**: Automate recurring agent tasks — run code reviews every morning, generate reports on an interval, or batch-process issues weekly. Supports manual trigger, interval (5 min – 12 hours), daily, and weekly scheduling with missed-run catch-up when the app restarts.
+
+- **Git Worktree Parallel Sessions**: Work on multiple branches simultaneously without `git stash`. Create isolated worktrees from the sidebar, each with its own directory, branch, and AI sessions. Merge back with your choice of merge, squash, or rebase — all without leaving the UI.
+
+- **File Explorer & Git Monitoring**: Browse project files with a collapsible tree, preview code with syntax highlighting, and track git changes in real time. A "Changes" tab shows modified files with line-level add/remove counts, and an inline diff viewer lets you inspect every change without leaving CodeMux.
+
+- **Slash Commands & Engine Skills**: Type `/` in the input to invoke engine-native commands and skills with autocomplete — `/cancel`, `/status`, `/mode`, `/model`, and more. Each engine exposes its own commands; Copilot surfaces project-level and personal skills, Claude Code surfaces user-installed skills, and OpenCode passes through its SDK commands — all through a unified autocomplete UI.
+
 ### And More
 
 - **Agent mode switching**: Toggle between Build / Plan / Autopilot modes per engine — each with its own behavior and prompt style
@@ -77,6 +89,7 @@ Paste a screenshot, drag in a design mockup, or upload an error image — all th
 - **Permission approvals**: Approve or deny sensitive operations (shell, file edits) inline — with "always allow" for trusted patterns
 - **Interactive questions**: Engines can ask single/multi-select questions with descriptions and custom input
 - **Per-engine model selection**: Pick different models for each engine independently; Copilot and Claude Code support custom model ID input
+- **Token usage tracking**: Monitor input, output, and cache token consumption with per-engine cost breakdowns
 
 #### Browser Remote Access
 

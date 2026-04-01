@@ -413,6 +413,20 @@ export class GatewayServer {
         return { success: true };
       }
 
+      // Slash Commands
+      case GatewayRequestType.COMMAND_LIST: {
+        const req = p as any;
+        return this.engineManager.listCommands(req.engineType, req.sessionId);
+      }
+
+      case GatewayRequestType.COMMAND_INVOKE: {
+        const req = p as any;
+        return this.engineManager.invokeCommand(req.sessionId, req.commandName, req.args, {
+          mode: req.mode,
+          modelId: req.modelId,
+        });
+      }
+
       // Scheduled Tasks
       case GatewayRequestType.SCHEDULED_TASK_LIST:
         return scheduledTaskService.list();
@@ -576,6 +590,13 @@ export class GatewayServer {
     em.on("session.import.progress" as any, (data: any) => {
       this.broadcast({
         type: GatewayNotificationType.SESSION_IMPORT_PROGRESS,
+        payload: data,
+      });
+    });
+
+    em.on("commands.changed", (data) => {
+      this.broadcast({
+        type: GatewayNotificationType.COMMANDS_CHANGED,
         payload: data,
       });
     });

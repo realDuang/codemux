@@ -57,7 +57,7 @@ import type {
 import { sdkSessionToUnified, convertSdkMessages } from "./converters";
 import { deleteCCSessionFile, readJsonlTimestamps } from "./cc-session-files";
 import { createRequire } from "node:module";
-import { sep } from "node:path";
+import { sep, dirname, join } from "node:path";
 
 // ============================================================================
 // V2 Session Info — Tracks a persistent SDK session
@@ -122,6 +122,11 @@ const SESSION_IDLE_TIMEOUT_MS = 30 * 60 * 1000;
 
 export class ClaudeCodeAdapter extends EngineAdapter {
   readonly engineType: EngineType = "claude";
+
+  /** Reusable stderr callback for SDK-spawned CLI subprocesses. */
+  private stderrCallback = (data: string) => {
+    claudeLog.warn("[Claude][CLI stderr]", data.trimEnd());
+  };
 
   // --- V2 Sessions (persistent, process reuse) ---
   private v2Sessions = new Map<string, V2SessionInfo>();
@@ -254,6 +259,7 @@ export class ClaudeCodeAdapter extends EngineAdapter {
           env: sdkEnv,
           abortController: new AbortController(),
           pathToClaudeCodeExecutable: this.resolveCliPath(),
+          stderr: this.stderrCallback,
         } as any,
       });
 
@@ -1024,6 +1030,7 @@ export class ClaudeCodeAdapter extends EngineAdapter {
           env: sdkEnv,
           abortController: new AbortController(),
           pathToClaudeCodeExecutable: this.resolveCliPath(),
+          stderr: this.stderrCallback,
         } as any,
       });
 
@@ -1455,14 +1462,22 @@ export class ClaudeCodeAdapter extends EngineAdapter {
   private resolveCliPath(): string | undefined {
     try {
       const _require = createRequire(import.meta.url);
-      const cliPath = _require.resolve("@anthropic-ai/claude-agent-sdk/cli.js");
+      // Resolve the SDK's main entry point (listed in package.json "exports"),
+      // then derive cli.js from the same directory. We can't require.resolve
+      // cli.js directly because the SDK's "exports" field doesn't list it.
+      const sdkMain = _require.resolve("@anthropic-ai/claude-agent-sdk");
+      const cliPath = join(dirname(sdkMain), "cli.js");
+      claudeLog.debug(`[Claude] resolveCliPath: raw=${cliPath}`);
       const asarMarker = `app.asar${sep}`;
       if (cliPath.includes(asarMarker)) {
-        return cliPath.replace(asarMarker, `app.asar.unpacked${sep}`);
+        const unpacked = cliPath.replace(asarMarker, `app.asar.unpacked${sep}`);
+        claudeLog.info(`[Claude] resolveCliPath: ASAR rewrite → ${unpacked}`);
+        return unpacked;
       }
       return cliPath;
-    } catch {
-      return undefined; // Let SDK resolve it with default logic
+    } catch (err) {
+      claudeLog.warn("[Claude] resolveCliPath: resolve failed:", err);
+      return undefined;
     }
   }
 
@@ -1544,6 +1559,7 @@ export class ClaudeCodeAdapter extends EngineAdapter {
       canUseTool: this.createCanUseTool(sessionId),
       systemPrompt: { type: "preset" as const, preset: "claude_code" as const, append: promptAppend },
       pathToClaudeCodeExecutable: this.resolveCliPath(),
+      stderr: this.stderrCallback,
     };
 
     // Set working directory.
@@ -1676,6 +1692,7 @@ export class ClaudeCodeAdapter extends EngineAdapter {
         cwd,
         abortController: new AbortController(),
         pathToClaudeCodeExecutable: this.resolveCliPath(),
+        stderr: this.stderrCallback,
       } as any,
     });
 

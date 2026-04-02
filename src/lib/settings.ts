@@ -579,6 +579,8 @@ export async function setSharedSettingsSyncEnabled(enabled: boolean): Promise<bo
   setSettingsVersion((version) => version + 1);
   if (enabled) {
     await bootstrapSharedSettings();
+  } else {
+    pendingSharedSettingOverrides.clear();
   }
   return data.enabled === true;
 }
@@ -669,7 +671,7 @@ export function getSetting<T = unknown>(key: string): T | undefined {
       return cache[key] as T | undefined;
     }
   }
-  if (isSharedSettingsKey(key) && hasPendingSharedSettingOverride(key)) {
+  if (isSharedSettingsKey(key) && hasPendingSharedSettingOverride(key) && isSettingsSyncEnabled()) {
     return getPendingSharedSettingOverride<T>(key);
   }
   if (isLocalOnlySettingsKey(key)) {

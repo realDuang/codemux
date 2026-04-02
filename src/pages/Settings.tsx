@@ -122,6 +122,10 @@ export default function Settings() {
       applyRendererSettingsState();
     });
 
+    onCleanup(() => {
+      unsubscribeSettingsChanged?.();
+    });
+
     await Promise.all([
       refreshMirroredSettingsState(),
       initializeEngineState(),
@@ -175,10 +179,6 @@ export default function Settings() {
         }
       }
     }
-
-    onCleanup(() => {
-      unsubscribeSettingsChanged?.();
-    });
   });
 
   const handleLogLevelChange = async (level: string) => {

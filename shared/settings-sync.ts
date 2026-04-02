@@ -82,6 +82,7 @@ function isValidSharedSettingValue(key: SharedSettingsKey, value: unknown): bool
       if (entries.length > MAX_ENGINE_MODELS) return false;
       for (const [engineKey, v] of entries) {
         if (engineKey.length === 0 || engineKey.length > MAX_ENGINE_KEY_LENGTH) return false;
+        if (engineKey === "__proto__" || engineKey === "constructor" || engineKey === "prototype") return false;
         if (!isPlainObjectValue(v)) return false;
         const entry = v as Record<string, unknown>;
         for (const key of Object.keys(entry)) {

@@ -31,6 +31,7 @@ import {
   type ProjectSetEngineRequest,
   type ModelSetRequest,
   type ModeSetRequest,
+  type ReasoningEffortSetRequest,
   type SessionImportPreviewRequest,
   type SessionImportExecuteRequest,
   type ScheduledTaskCreateRequest,
@@ -318,6 +319,12 @@ export class GatewayServer {
       case GatewayRequestType.MODE_SET: {
         const req = p as ModeSetRequest;
         return this.engineManager.setMode(req.sessionId, req.modeId);
+      }
+
+      // Reasoning level
+      case GatewayRequestType.REASONING_EFFORT_SET: {
+        const req = p as ReasoningEffortSetRequest;
+        return this.engineManager.setReasoningEffort(req.sessionId, req.effort);
       }
 
       // Permission

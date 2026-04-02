@@ -295,6 +295,12 @@ class GatewayAPI {
     return gatewayClient.setMode({ sessionId, modeId });
   }
 
+  // --- Reasoning Effort ---
+
+  setReasoningEffort(sessionId: string, effort: import("../types/unified").ReasoningEffort | null): Promise<void> {
+    return gatewayClient.setReasoningEffort({ sessionId, effort });
+  }
+
   // --- Permission ---
 
   replyPermission(permissionId: string, optionId: string): Promise<void> {

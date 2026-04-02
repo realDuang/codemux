@@ -238,6 +238,10 @@ export const zh: LocaleDict = {
     imageLimitReached: "每条消息最多 4 张图片",
     removeImage: "移除图片",
     noCommandsFound: "未找到匹配的命令",
+    reasoningEffortLow: "低",
+    reasoningEffortMedium: "中",
+    reasoningEffortHigh: "高",
+    reasoningEffortMax: "最大",
   },
 
   // Message Parts
@@ -354,6 +358,8 @@ export const zh: LocaleDict = {
     noEngines: "没有可用的引擎",
     defaultModel: "模型",
     defaultModelDesc: "会话使用的模型",
+    reasoningEffort: "推理级别",
+    reasoningEffortDesc: "控制模型在推理上投入的精力",
     noModelsAvailable: "暂无可用模型",
     modelInputPlaceholder: "输入模型 ID（如 claude-sonnet-4-20250514）",
     enabled: "已启用",
@@ -472,6 +478,7 @@ export const zh: LocaleDict = {
   // Notifications
   notification: {
     messageSendFailed: "消息发送失败，请重试。",
+    reasoningEffortSyncFailed: "推理强度未能成功应用。本条消息仍已发送，可能继续使用之前的设置。",
     sessionCreateFailed: "会话创建失败。",
     sessionDeleteFailed: "会话删除失败。",
     gatewayDisconnected: "连接已断开，正在重连...",

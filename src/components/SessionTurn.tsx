@@ -10,6 +10,8 @@ import {
   onMount,
 } from "solid-js";
 import { messageStore, setMessageStore, isExpanded, setExpanded, toggleExpanded } from "../stores/message";
+import { sessionStore } from "../stores/session";
+import { getEffectiveReasoningEffortForEngine } from "../stores/config";
 import { Part, PartProps, ProviderIcon, PermissionPrompt, QuestionPrompt } from "./share/part";
 import { ContextGroup, CONTEXT_TOOLS, type ContextGroupItem } from "./ContextGroup";
 import { ContentError } from "./share/content-error";
@@ -596,13 +598,19 @@ export function SessionTurn(props: SessionTurnProps) {
     return formatDuration(startTime, Date.now());
   });
 
-  // Get model info from the first assistant message
+  // Get model info from the first assistant message.
+  // NOTE: reasoningEffort reflects the *current* engine setting, not the level
+  // used when the message was generated (which isn't stored per-message).
   const modelInfo = createMemo(() => {
     const firstAssistant = props.assistantMessages[0];
     if (firstAssistant) {
+      const session = sessionStore.list.find(s => s.id === props.sessionID);
+      const engineType = session?.engineType;
+      const reasoningEffort = engineType ? getEffectiveReasoningEffortForEngine(engineType) : undefined;
       return {
         providerID: firstAssistant.providerId,
         modelID: firstAssistant.modelId,
+        reasoningEffort,
       };
     }
     return undefined;
@@ -828,7 +836,7 @@ export function SessionTurn(props: SessionTurnProps) {
                     data-visible={!props.isWorking ? "true" : "false"}
                   >
                     <Show when={modelInfo()?.modelID}>
-                      <span class={styles.modelIcon} title={`${modelInfo()?.providerID} / ${modelInfo()?.modelID}`}>
+                      <span class={styles.modelIcon} title={`${modelInfo()?.providerID} / ${modelInfo()?.modelID}${modelInfo()?.reasoningEffort ? ` (${modelInfo()!.reasoningEffort})` : ""}`}>
                         <ProviderIcon model={modelInfo()?.modelID || ""} size={14} />
                       </span>
                     </Show>
@@ -996,7 +1004,7 @@ export function SessionTurn(props: SessionTurnProps) {
 
           {/* Per-turn token usage (collapsed by default) */}
           <Show when={!props.isWorking && props.assistantMessages.length > 0}>
-            <TokenUsage messages={props.assistantMessages} />
+            <TokenUsage messages={props.assistantMessages} sessionID={props.sessionID} />
           </Show>
 
           {/* Error/Cancelled Banner */}

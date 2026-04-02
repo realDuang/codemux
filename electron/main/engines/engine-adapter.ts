@@ -20,6 +20,7 @@ import type {
   AgentMode,
   MessagePromptContent,
   PermissionReply,
+  ReasoningEffort,
   ImportableSession,
   EngineCommand,
   CommandInvokeResult,
@@ -254,6 +255,16 @@ export abstract class EngineAdapter extends EventEmitter {
 
   /** Set the active mode for a session */
   abstract setMode(sessionId: string, modeId: string): Promise<void>;
+
+  // --- Reasoning Effort ---
+
+  /** Set the reasoning effort level for a session (no-op by default) */
+  async setReasoningEffort(_sessionId: string, _effort: ReasoningEffort | null): Promise<void> {}
+
+  /** Get the current reasoning effort level for a session */
+  getReasoningEffort(_sessionId: string): ReasoningEffort | null {
+    return null;
+  }
 
   // --- Permissions ---
 

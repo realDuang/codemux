@@ -34,6 +34,7 @@ import MergeWorktreeModal from "../components/MergeWorktreeModal";
 import { DeleteWorktreeModal } from "../components/DeleteWorktreeModal";
 import { useI18n, formatMessage } from "../lib/i18n";
 import { notify } from "../lib/notifications";
+import { syncReasoningEffortForSend } from "../lib/reasoning-effort-sync";
 import { isDefaultTitle } from "../lib/session-utils";
 import { formatTokenCount, formatCostWithUnit, getEngineBadge } from "../components/share/common";
 import { getSetting, saveSetting } from "../lib/settings";
@@ -50,7 +51,7 @@ import { ResizeHandle } from "../components/ResizeHandle";
 import { fileStore, togglePanel, setPanelWidth, closePanel } from "../stores/file";
 import { handleFileChanged, refreshGitStatus } from "../stores/file";
 
-import { configStore, setConfigStore, getSelectedModelForEngine, restoreEngineModelSelections, isEngineEnabled, restoreEnabledEngines, getDefaultEngineType, restoreDefaultEngine } from "../stores/config";
+import { configStore, setConfigStore, getSelectedModelForEngine, restoreEngineModelSelections, isEngineEnabled, restoreEnabledEngines, getDefaultEngineType, restoreDefaultEngine, restoreReasoningEfforts } from "../stores/config";
 import { scheduledTaskStore, setScheduledTaskStore } from "../stores/scheduled-task";
 import { computeActiveSessions } from "../lib/active-sessions";
 
@@ -773,6 +774,7 @@ export default function Chat() {
           }
         }));
         restoreEngineModelSelections();
+        restoreReasoningEfforts();
       } catch (err) {
         logger.warn("[Init] Failed to load engines:", err);
       }
@@ -1697,6 +1699,14 @@ export default function Chat() {
     }
 
     setSendingFor(sessionId, true);
+
+    // Sync the effective reasoning effort to backend before sending.
+    // Await this so adapter state is updated before the session is resumed/used.
+    await syncReasoningEffortForSend(
+      sessionId,
+      currentEngineType(),
+      t().notification.reasoningEffortSyncFailed,
+    );
 
     const tempMessageId = `msg-temp-${Date.now()}`;
     const tempPartId = `part-temp-${Date.now()}`;

@@ -28,6 +28,7 @@ import {
   type ProjectSetEngineRequest,
   type ModelSetRequest,
   type ModeSetRequest,
+  type ReasoningEffortSetRequest,
   type ImportableSession,
   type SessionImportPreviewRequest,
   type SessionImportExecuteRequest,
@@ -464,6 +465,12 @@ export class GatewayClient {
 
   setMode(req: ModeSetRequest): Promise<void> {
     return this.request(GatewayRequestType.MODE_SET, req);
+  }
+
+  // --- Reasoning Effort API ---
+
+  setReasoningEffort(req: ReasoningEffortSetRequest): Promise<void> {
+    return this.request(GatewayRequestType.REASONING_EFFORT_SET, req);
   }
 
   // --- Permission API ---

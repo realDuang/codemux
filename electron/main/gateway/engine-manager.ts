@@ -21,6 +21,7 @@ import type {
   AgentMode,
   MessagePromptContent,
   PermissionReply,
+  ReasoningEffort,
   ConversationMeta,
   ConversationMessage,
   ImportableSession,
@@ -1054,6 +1055,17 @@ export class EngineManager extends EventEmitter {
     }
     const adapter = this.getAdapterForSession(sessionId);
     return adapter.setMode(conv.engineSessionId, modeId);
+  }
+
+  // --- Reasoning Effort ---
+
+  async setReasoningEffort(sessionId: string, effort: ReasoningEffort | null): Promise<void> {
+    const conv = conversationStore.get(sessionId);
+    if (!conv?.engineSessionId) {
+      throw new Error(`No engine session for conversation: ${sessionId}`);
+    }
+    const adapter = this.getAdapterForSession(sessionId);
+    return adapter.setReasoningEffort(conv.engineSessionId, effort);
   }
 
   // --- Permissions ---

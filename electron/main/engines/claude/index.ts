@@ -52,6 +52,7 @@ import type {
   QuestionInfo,
   EngineCommand,
   CommandInvokeResult,
+  ReasoningEffort,
 } from "../../../../src/types/unified";
 
 import { sdkSessionToUnified, convertSdkMessages } from "./converters";
@@ -142,6 +143,7 @@ export class ClaudeCodeAdapter extends EngineAdapter {
   private currentModelId: string | null = null;
   private cachedModels: UnifiedModelInfo[] = [];
   private sessionModes = new Map<string, string>();
+  private sessionReasoningEfforts = new Map<string, ReasoningEffort>();
 
   // --- Session directory cache (used instead of external store lookups) ---
   private sessionDirectories = new Map<string, string>();
@@ -1031,11 +1033,16 @@ export class ClaudeCodeAdapter extends EngineAdapter {
         const models = await q.supportedModels();
 
         if (models && models.length > 0) {
-          this.cachedModels = models.map((m) => ({
+          this.cachedModels = models.map((m: any) => ({
             modelId: m.value,
             name: m.displayName || m.value,
             description: m.description || "",
             engineType: "claude" as EngineType,
+            capabilities: {
+              reasoning: m.supportsEffort === true,
+              supportedReasoningEfforts: m.supportedEffortLevels ?? (m.supportsEffort ? ["low", "medium", "high", "max"] : undefined),
+              defaultReasoningEffort: m.supportsEffort ? "medium" : undefined,
+            },
           }));
           claudeLog.info(`[Claude] Loaded ${this.cachedModels.length} models via SDK`);
         } else {
@@ -1107,6 +1114,38 @@ export class ClaudeCodeAdapter extends EngineAdapter {
         claudeLog.warn(`[Claude][${sessionId}] Failed to set permission mode:`, err);
       }
     }
+  }
+
+  // ==========================================================================
+  // Reasoning Effort
+  // ==========================================================================
+
+  override async setReasoningEffort(sessionId: string, effort: ReasoningEffort | null): Promise<void> {
+    if (effort) {
+      this.sessionReasoningEfforts.set(sessionId, effort);
+      claudeLog.info(`[Claude][${sessionId}] Reasoning effort set to: ${effort}`);
+    } else {
+      this.sessionReasoningEfforts.delete(sessionId);
+      claudeLog.info(`[Claude][${sessionId}] Reasoning effort cleared`);
+    }
+
+    // Close existing session so it will be recreated with the new effort setting
+    const v2Info = this.v2Sessions.get(sessionId);
+    if (v2Info) {
+      if (v2Info.capturedSessionId) {
+        this.sessionCcIds.set(sessionId, v2Info.capturedSessionId);
+      }
+      try {
+        v2Info.session.close();
+      } catch {
+        // Ignore
+      }
+      this.v2Sessions.delete(sessionId);
+    }
+  }
+
+  override getReasoningEffort(sessionId: string): ReasoningEffort | null {
+    return this.sessionReasoningEfforts.get(sessionId) ?? null;
   }
 
   // ==========================================================================
@@ -1545,6 +1584,12 @@ export class ClaudeCodeAdapter extends EngineAdapter {
       systemPrompt: { type: "preset" as const, preset: "claude_code" as const, append: promptAppend },
       pathToClaudeCodeExecutable: this.resolveCliPath(),
     };
+
+    // Apply reasoning effort level if set for this session
+    const reasoningEffort = this.sessionReasoningEfforts.get(sessionId);
+    if (reasoningEffort) {
+      sdkOptions.effort = reasoningEffort;
+    }
 
     // Set working directory.
     // Note: sdkOptions.cwd is currently ignored by the SDK's V2 session API

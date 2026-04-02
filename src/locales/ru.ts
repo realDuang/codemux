@@ -239,6 +239,10 @@ export const ru: LocaleDict = {
     imageLimitReached: "Максимум 4 изображения на сообщение",
     removeImage: "Удалить изображение",
     noCommandsFound: "Команды не найдены",
+    reasoningEffortLow: "Низкий",
+    reasoningEffortMedium: "Средний",
+    reasoningEffortHigh: "Высокий",
+    reasoningEffortMax: "Макс",
   },
 
   // Message Parts
@@ -355,6 +359,8 @@ export const ru: LocaleDict = {
     noEngines: "Нет доступных движков",
     defaultModel: "Модель",
     defaultModelDesc: "Модель, используемая в сессиях",
+    reasoningEffort: "Уровень рассуждения",
+    reasoningEffortDesc: "Управляет усилиями модели при рассуждении",
     noModelsAvailable: "Нет доступных моделей",
     modelInputPlaceholder: "Введите ID модели (например, claude-sonnet-4-20250514)",
     enabled: "Включён",
@@ -475,6 +481,7 @@ export const ru: LocaleDict = {
   // Notifications
   notification: {
     messageSendFailed: "Не удалось отправить сообщение. Повторите попытку.",
+    reasoningEffortSyncFailed: "Не удалось применить интенсивность рассуждений. Сообщение все равно отправлено и может использовать предыдущую настройку.",
     sessionCreateFailed: "Не удалось создать сессию.",
     sessionDeleteFailed: "Не удалось удалить сессию.",
     gatewayDisconnected: "Соединение прервано, переподключение...",

@@ -96,8 +96,13 @@ export interface UnifiedModelInfo {
     reasoning?: boolean;
     attachment?: boolean;
     toolcall?: boolean;
+    supportedReasoningEfforts?: ReasoningEffort[];
+    defaultReasoningEffort?: ReasoningEffort;
   };
 }
+
+/** Unified reasoning effort level across engines */
+export type ReasoningEffort = "low" | "medium" | "high" | "max";
 
 /** Result of listing models — includes which model is currently active */
 export interface ModelListResult {
@@ -535,6 +540,9 @@ export const GatewayRequestType = {
   MODE_GET: "mode.get",
   MODE_SET: "mode.set",
 
+  // Reasoning level
+  REASONING_EFFORT_SET: "reasoning.set",
+
   // Permission
   PERMISSION_REPLY: "permission.reply",
 
@@ -684,6 +692,11 @@ export interface ModelSetRequest {
 export interface ModeSetRequest {
   sessionId: string;
   modeId: string;
+}
+
+export interface ReasoningEffortSetRequest {
+  sessionId: string;
+  effort: ReasoningEffort | null;
 }
 
 // --- Worktree Request types ---

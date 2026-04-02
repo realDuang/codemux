@@ -11,6 +11,7 @@ import type {
   UnifiedMessage,
   UnifiedPart,
   UnifiedModelInfo,
+  ReasoningEffort,
   NormalizedToolName,
   ToolPart,
   TextPart,
@@ -419,6 +420,14 @@ export function upsertPart(parts: UnifiedPart[], part: UnifiedPart): void {
 }
 
 export function sdkModelToUnified(engineType: EngineType, model: ModelInfo): UnifiedModelInfo {
+  const reasoningEffortMap: Record<string, ReasoningEffort> = { xhigh: "max", low: "low", medium: "medium", high: "high" };
+  const supportedLevels = model.supportedReasoningEfforts?.map(
+    (l) => reasoningEffortMap[l] ?? (l as ReasoningEffort),
+  );
+  const defaultLevel = model.defaultReasoningEffort
+    ? (reasoningEffortMap[model.defaultReasoningEffort] ?? (model.defaultReasoningEffort as unknown as ReasoningEffort))
+    : undefined;
+
   return {
     modelId: model.id,
     name: model.name,
@@ -426,6 +435,8 @@ export function sdkModelToUnified(engineType: EngineType, model: ModelInfo): Uni
     capabilities: {
       attachment: model.capabilities?.supports?.vision ?? false,
       reasoning: model.capabilities?.supports?.reasoningEffort != null,
+      supportedReasoningEfforts: supportedLevels,
+      defaultReasoningEffort: defaultLevel,
     },
     meta: {
       maxContextTokens: model.capabilities?.limits?.max_context_window_tokens,

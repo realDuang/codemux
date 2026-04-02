@@ -51,6 +51,10 @@ import {
   isEngineEnabled,
   loadEngineModelSelection,
   restoreEngineModelSelections,
+  saveReasoningEffort,
+  loadReasoningEffort,
+  getEffectiveReasoningEffortForEngine,
+  restoreReasoningEfforts,
   configStore,
   setConfigStore,
 } from '../../../../src/stores/config';
@@ -69,6 +73,7 @@ describe('config store', () => {
       engineModels: {},
       engineModelSelections: {},
       enabledEngines: {},
+      engineReasoningEfforts: {},
     });
   });
 
@@ -198,6 +203,86 @@ describe('config store', () => {
       restoreEngineModelSelections();
       // stale model NOT in list -> not restored, stays undefined
       expect(configStore.engineModelSelections['opencode']).toBeUndefined();
+    });
+  });
+
+  describe('reasoning effort persistence', () => {
+    it('saveReasoningEffort updates store and persists', () => {
+      saveReasoningEffort('copilot', 'high');
+      expect(configStore.engineReasoningEfforts['copilot']).toBe('high');
+      expect(settings.saveNestedSetting).toHaveBeenCalledWith('engineReasoningEfforts.copilot', 'high');
+    });
+
+    it('loadReasoningEffort returns persisted value', () => {
+      vi.mocked(settings.getNestedSetting).mockReturnValue('medium');
+      expect(loadReasoningEffort('claude')).toBe('medium');
+      expect(settings.getNestedSetting).toHaveBeenCalledWith('engineReasoningEfforts.claude');
+    });
+
+    it('loadReasoningEffort returns null when nothing persisted', () => {
+      vi.mocked(settings.getNestedSetting).mockReturnValue(undefined);
+      expect(loadReasoningEffort('opencode')).toBeNull();
+    });
+
+    it('restoreReasoningEfforts loads persisted levels for all engines', () => {
+      setConfigStore('engines', [
+        { type: 'copilot', name: 'Copilot' } as any,
+        { type: 'claude', name: 'Claude' } as any,
+      ]);
+      vi.mocked(settings.getNestedSetting).mockImplementation((key: string) => {
+        if (key === 'engineReasoningEfforts.copilot') return 'max';
+        if (key === 'engineReasoningEfforts.claude') return 'low';
+        return undefined;
+      });
+      restoreReasoningEfforts();
+      expect(configStore.engineReasoningEfforts['copilot']).toBe('max');
+      expect(configStore.engineReasoningEfforts['claude']).toBe('low');
+    });
+
+    it('getEffectiveReasoningEffortForEngine returns saved effort when supported by selected model', () => {
+      setConfigStore('engineModels', 'copilot', [
+        {
+          modelId: 'gpt-5.4',
+          capabilities: {
+            supportedReasoningEfforts: ['low', 'medium', 'high', 'max'],
+            defaultReasoningEffort: 'medium',
+          },
+        },
+      ]);
+      setConfigStore('engineModelSelections', 'copilot', { providerID: 'openai', modelID: 'gpt-5.4' });
+      setConfigStore('engineReasoningEfforts', 'copilot', 'high');
+
+      expect(getEffectiveReasoningEffortForEngine('copilot')).toBe('high');
+    });
+
+    it('getEffectiveReasoningEffortForEngine falls back to model default when saved effort is unsupported', () => {
+      setConfigStore('engineModels', 'copilot', [
+        {
+          modelId: 'gpt-5.4',
+          capabilities: {
+            supportedReasoningEfforts: ['low', 'medium'],
+            defaultReasoningEffort: 'medium',
+          },
+        },
+      ]);
+      setConfigStore('engineModelSelections', 'copilot', { providerID: 'openai', modelID: 'gpt-5.4' });
+      setConfigStore('engineReasoningEfforts', 'copilot', 'high');
+
+      expect(getEffectiveReasoningEffortForEngine('copilot')).toBe('medium');
+    });
+
+    it('getEffectiveReasoningEffortForEngine returns null for invalid persisted effort', () => {
+      setConfigStore('engineModels', 'copilot', [
+        {
+          modelId: 'gpt-5.4',
+          capabilities: {},
+        },
+      ]);
+      setConfigStore('engineModelSelections', 'copilot', { providerID: 'openai', modelID: 'gpt-5.4' });
+      vi.mocked(settings.getNestedSetting).mockReturnValue('bogus');
+
+      expect(loadReasoningEffort('copilot')).toBeNull();
+      expect(getEffectiveReasoningEffortForEngine('copilot')).toBeNull();
     });
   });
 });

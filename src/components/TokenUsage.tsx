@@ -1,5 +1,7 @@
-import { Show } from "solid-js";
+import { Show, createMemo } from "solid-js";
 import { isExpanded, toggleExpanded } from "../stores/message";
+import { sessionStore } from "../stores/session";
+import { getEffectiveReasoningEffortForEngine } from "../stores/config";
 import { formatTokenCount, formatCostWithUnit } from "./share/common";
 import { useI18n, formatMessage } from "../lib/i18n";
 import type { UnifiedMessage } from "../types/unified";
@@ -8,10 +10,21 @@ import styles from "./TokenUsage.module.css";
 interface TokenUsageProps {
   /** All assistant messages in this turn — tokens are aggregated */
   messages: UnifiedMessage[];
+  sessionID?: string;
 }
 
 export function TokenUsage(props: TokenUsageProps) {
   const { t } = useI18n();
+
+  // NOTE: reflects the *current* engine reasoning effort setting,
+  // not the effort used when the message was generated.
+  const reasoningEffortSuffix = createMemo(() => {
+    if (!props.sessionID) return "";
+    const session = sessionStore.list.find(s => s.id === props.sessionID);
+    const effort = session?.engineType ? getEffectiveReasoningEffortForEngine(session.engineType) : undefined;
+    return effort ? ` (${effort})` : "";
+  });
+
   const usage = () => {
     let input = 0, output = 0, cacheRead = 0, cacheWrite = 0, cost = 0;
     let hasTokens = false, hasCost = false, hasCache = false;
@@ -55,7 +68,7 @@ export function TokenUsage(props: TokenUsageProps) {
             </Show>
             <Show when={u().modelId}>
               <span class={styles.sep}>·</span>
-              <span class={styles.model}>{u().modelId}</span>
+              <span class={styles.model}>{u().modelId}{reasoningEffortSuffix()}</span>
             </Show>
             <span class={styles.chevron} data-expanded={expanded() ? "" : undefined}>
               <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24"

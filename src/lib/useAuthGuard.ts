@@ -1,4 +1,4 @@
-import { onMount } from "solid-js";
+import { onMount, onCleanup } from "solid-js";
 import { useNavigate } from "@solidjs/router";
 import { Auth } from "./auth";
 import { logger } from "./logger";
@@ -11,9 +11,15 @@ import { logger } from "./logger";
  */
 export function useAuthGuard(pageName: string): void {
   const navigate = useNavigate();
+  let disposed = false;
+  onCleanup(() => { disposed = true; });
 
   onMount(async () => {
     const isValidToken = await Auth.checkDeviceToken();
+    if (disposed) {
+      logger.debug(`[${pageName}] Component disposed during token check, skipping redirect`);
+      return;
+    }
     if (!isValidToken) {
       logger.debug(`[${pageName}] Device token invalid, redirecting to entry`);
       Auth.clearAuth();

@@ -87,6 +87,7 @@ export interface LocaleDict {
     themeDesc: string;
     themeLight: string;
     themeDark: string;
+    themeDarkModern: string;
     themeSystem: string;
     security: string;
     devicesDesc: string;
@@ -512,6 +513,11 @@ export interface LocaleDict {
     openInExplorer: string;
   };
 
+  // Terminal
+  terminal: {
+    togglePanel: string;
+  };
+
   // Scheduled Tasks
   scheduledTask: {
     title: string;
@@ -686,6 +692,7 @@ export const en: LocaleDict = {
     themeDesc: "Choose your preferred color theme",
     themeLight: "Light",
     themeDark: "Dark",
+    themeDarkModern: "Dark Modern",
     themeSystem: "System",
     security: "Security",
     devicesDesc: "Manage devices that can access this server",
@@ -1104,6 +1111,10 @@ export const en: LocaleDict = {
     noResults: "No results",
     matchCount: "{current} of {total}",
     openInExplorer: "Open in file explorer",
+  },
+
+  terminal: {
+    togglePanel: "Toggle terminal",
   },
 
   scheduledTask: {

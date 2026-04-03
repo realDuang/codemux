@@ -7,7 +7,7 @@ export function ThemeSwitcher() {
   const [isOpen, setIsOpen] = createSignal(false);
   const themeMode = getThemeMode();
 
-  const themes: ThemeMode[] = ["light", "dark", "system"];
+  const themes: ThemeMode[] = ["light", "dark", "dark-modern", "system"];
 
   const getThemeLabel = (mode: ThemeMode): string => {
     switch (mode) {
@@ -15,6 +15,8 @@ export function ThemeSwitcher() {
         return t().settings.themeLight;
       case "dark":
         return t().settings.themeDark;
+      case "dark-modern":
+        return t().settings.themeDarkModern;
       case "system":
         return t().settings.themeSystem;
     }
@@ -62,6 +64,24 @@ export function ThemeSwitcher() {
             <path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z" />
           </svg>
         );
+      case "dark-modern":
+        return (
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            width="16"
+            height="16"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z" />
+            <path d="M19 3v4" />
+            <path d="M21 5h-4" />
+          </svg>
+        );
       case "system":
         return (
           <svg
@@ -89,7 +109,7 @@ export function ThemeSwitcher() {
         onClick={() => setIsOpen(!isOpen())}
         class="flex items-center gap-2 px-3 py-2 text-sm text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-slate-800 rounded-lg transition-colors"
       >
-        {getThemeIcon(themeMode())}
+        <span class="shrink-0">{getThemeIcon(themeMode())}</span>
         <span>{getThemeLabel(themeMode())}</span>
         <svg
           xmlns="http://www.w3.org/2000/svg"
@@ -122,7 +142,7 @@ export function ThemeSwitcher() {
                 }`}
               >
                 <span class="flex items-center gap-2">
-                  {getThemeIcon(mode)}
+                  <span class="shrink-0">{getThemeIcon(mode)}</span>
                   {getThemeLabel(mode)}
                 </span>
                 <Show when={themeMode() === mode}>

@@ -2,11 +2,11 @@ import { createSignal, Accessor } from "solid-js";
 import { logger } from "./logger";
 import { getSetting, saveSetting } from "./settings";
 
-export type ThemeMode = "light" | "dark" | "system";
+export type ThemeMode = "light" | "dark" | "dark-modern" | "system";
 
 function getSavedTheme(): ThemeMode {
   const saved = getSetting<string>("theme");
-  if (saved && ["light", "dark", "system"].includes(saved)) {
+  if (saved && ["light", "dark", "dark-modern", "system"].includes(saved)) {
     return saved as ThemeMode;
   }
   return "system";
@@ -25,7 +25,7 @@ function getSystemTheme(): "light" | "dark" {
   return "light";
 }
 
-function syncTitleBarOverlay(theme: "light" | "dark"): void {
+function syncTitleBarOverlay(theme: "light" | "dark" | "dark-modern"): void {
   if (typeof window === "undefined") return;
 
   const doSync = () => {
@@ -33,10 +33,12 @@ function syncTitleBarOverlay(theme: "light" | "dark"): void {
     const updateFn = electronAPI?.system?.updateTitleBarOverlay;
     if (!updateFn) return false;
 
-    if (theme === "dark") {
-      updateFn({ color: "#020617", symbolColor: "#94a3b8" }); // slate-950
+    if (theme === "dark-modern") {
+      updateFn({ color: "#1f1f1f", symbolColor: "#cccccc" });
+    } else if (theme === "dark") {
+      updateFn({ color: "#020617", symbolColor: "#94a3b8" });
     } else {
-      updateFn({ color: "#f8fafc", symbolColor: "#475569" }); // slate-50
+      updateFn({ color: "#f8fafc", symbolColor: "#475569" });
     }
     return true;
   };
@@ -50,10 +52,14 @@ function applyTheme(theme: ThemeMode): void {
   const root = document.documentElement;
   const effectiveTheme = theme === "system" ? getSystemTheme() : theme;
 
-  if (effectiveTheme === "dark") {
-    root.classList.add("dark");
-  } else {
-    root.classList.remove("dark");
+  // Remove all theme classes first
+  root.classList.remove("dark", "dark-modern");
+
+  if (effectiveTheme === "dark" || effectiveTheme === "dark-modern") {
+    root.classList.add("dark"); // Tailwind dark: variant
+  }
+  if (effectiveTheme === "dark-modern") {
+    root.classList.add("dark-modern"); // CSS variable overrides
   }
 
   syncTitleBarOverlay(effectiveTheme);
@@ -83,7 +89,8 @@ export function getThemeMode(): Accessor<ThemeMode> {
   return themeMode;
 }
 
-export function getEffectiveTheme(): "light" | "dark" {
+export function getEffectiveTheme(): "light" | "dark" | "dark-modern" {
   const mode = themeMode();
+  if (mode === "dark-modern") return "dark-modern";
   return mode === "system" ? getSystemTheme() : mode;
 }

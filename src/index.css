@@ -92,6 +92,63 @@
   --sl-color-orange-high: #fdba74;
 }
 
+/* ── Dark Modern theme — neutral grays like VS Code Dark Modern ── */
+:root.dark-modern {
+  /* App-level color overrides */
+  --color-background: #1e1e1e;
+  --color-background-weak: #181818;
+  --color-background-strong: #e0e0e0;
+  --color-text: #b0b0b0;
+  --color-text-weak: #707070;
+  --color-text-strong: #e0e0e0;
+  --color-border: #333333;
+  --color-icon: #8b8b8b;
+
+  /* OpenCode share component colors */
+  --sl-color-text: #e0e0e0;
+  --sl-color-text-secondary: #a0a0a0;
+  --sl-color-text-dimmed: #707070;
+  --sl-color-text-invert: #1e1e1e;
+  --sl-color-divider: rgba(255, 255, 255, 0.08);
+  --sl-color-border: rgba(255, 255, 255, 0.08);
+  --sl-color-hairline: #252526;
+  --sl-color-bg-surface: #1e1e1e;
+  --sl-color-bg-alt: #181818;
+  --sl-color-bg-hover: rgba(255, 255, 255, 0.06);
+
+  /* Tailwind slate palette → neutral gray */
+  --color-slate-50: #f0f0f0;
+  --color-slate-100: #e0e0e0;
+  --color-slate-200: #cccccc;
+  --color-slate-300: #a0a0a0;
+  --color-slate-400: #8b8b8b;
+  --color-slate-500: #6b6b6b;
+  --color-slate-600: #505050;
+  --color-slate-700: #3e3e3e;
+  --color-slate-800: #2d2d2d;
+  --color-slate-900: #1f1f1f;
+  --color-slate-950: #181818;
+
+  /* Tailwind gray palette → neutral gray */
+  --color-gray-50: #f0f0f0;
+  --color-gray-100: #e0e0e0;
+  --color-gray-200: #cccccc;
+  --color-gray-300: #a0a0a0;
+  --color-gray-400: #8b8b8b;
+  --color-gray-500: #6b6b6b;
+  --color-gray-600: #505050;
+  --color-gray-700: #3e3e3e;
+  --color-gray-800: #2d2d2d;
+  --color-gray-900: #1f1f1f;
+  --color-gray-950: #181818;
+
+  /* Semantic colors — slightly warmer for gray backgrounds */
+  --sl-color-red-low: #3b1111;
+  --sl-color-green-low: #0f2918;
+  --sl-color-blue-low: #111a33;
+  --sl-color-orange-low: #331a08;
+}
+
 body {
   margin: 0;
   font-family: var(--font-sans);

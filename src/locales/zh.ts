@@ -88,6 +88,7 @@ export const zh: LocaleDict = {
     themeDesc: "选择您偏好的颜色主题",
     themeLight: "浅色",
     themeDark: "深色",
+    themeDarkModern: "深色现代",
     themeSystem: "跟随系统",
     security: "安全",
     devicesDesc: "管理可以访问此服务器的设备",
@@ -508,6 +509,10 @@ export const zh: LocaleDict = {
     noResults: "无结果",
     matchCount: "第 {current} 个，共 {total} 个",
     openInExplorer: "在文件管理器中打开",
+  },
+
+  terminal: {
+    togglePanel: "切换终端",
   },
 
   scheduledTask: {

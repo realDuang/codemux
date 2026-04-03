@@ -89,6 +89,7 @@ export const ru: LocaleDict = {
     themeDesc: "Выберите предпочтительную цветовую тему",
     themeLight: "Светлая",
     themeDark: "Тёмная",
+    themeDarkModern: "Тёмная современная",
     themeSystem: "Системная",
     security: "Безопасность",
     devicesDesc: "Управление устройствами, имеющими доступ к этому серверу",
@@ -511,6 +512,10 @@ export const ru: LocaleDict = {
     noResults: "Ничего не найдено",
     matchCount: "{current} из {total}",
     openInExplorer: "Открыть в проводнике",
+  },
+
+  terminal: {
+    togglePanel: "Переключить терминал",
   },
 
   scheduledTask: {

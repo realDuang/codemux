@@ -22,6 +22,7 @@ import type {
   CanUseTool,
   PermissionResult,
   PermissionUpdate,
+  ModelInfo as ClaudeModelInfo,
 } from "@anthropic-ai/claude-agent-sdk";
 
 import { EngineAdapter, MessageBuffer } from "../engine-adapter";
@@ -54,6 +55,7 @@ import type {
   CommandInvokeResult,
   ReasoningEffort,
 } from "../../../../src/types/unified";
+import { REASONING_EFFORT_VALUES, normalizeReasoningEfforts } from "../../../../src/types/unified";
 
 import { sdkSessionToUnified, convertSdkMessages } from "./converters";
 import { deleteCCSessionFile, readJsonlTimestamps } from "./cc-session-files";
@@ -110,6 +112,30 @@ const DEFAULT_MODES: AgentMode[] = [
   { id: "acceptEdits", label: "Auto-Accept", description: "Auto-accept file edit operations" },
   { id: "plan", label: "Plan", description: "Planning mode, no actual tool execution" },
 ];
+
+function getDefaultClaudeReasoningEffort(
+  supportedReasoningEfforts: ReasoningEffort[] | undefined,
+): ReasoningEffort | undefined {
+  if (!supportedReasoningEfforts || supportedReasoningEfforts.length === 0) return undefined;
+  return supportedReasoningEfforts.includes("medium")
+    ? "medium"
+    : supportedReasoningEfforts[0];
+}
+
+export function getClaudeReasoningCapabilities(
+  model: Pick<ClaudeModelInfo, "supportsEffort" | "supportedEffortLevels">,
+): NonNullable<UnifiedModelInfo["capabilities"]> {
+  const reasoning = model.supportsEffort === true;
+  const supportedReasoningEfforts = reasoning
+    ? normalizeReasoningEfforts(model.supportedEffortLevels) ?? [...REASONING_EFFORT_VALUES]
+    : undefined;
+
+  return {
+    reasoning,
+    supportedReasoningEfforts,
+    defaultReasoningEffort: getDefaultClaudeReasoningEffort(supportedReasoningEfforts),
+  };
+}
 
 // ============================================================================
 // Session idle timeout (30 min)
@@ -1033,16 +1059,12 @@ export class ClaudeCodeAdapter extends EngineAdapter {
         const models = await q.supportedModels();
 
         if (models && models.length > 0) {
-          this.cachedModels = models.map((m: any) => ({
+          this.cachedModels = models.map((m: ClaudeModelInfo) => ({
             modelId: m.value,
             name: m.displayName || m.value,
             description: m.description || "",
             engineType: "claude" as EngineType,
-            capabilities: {
-              reasoning: m.supportsEffort === true,
-              supportedReasoningEfforts: m.supportedEffortLevels ?? (m.supportsEffort ? ["low", "medium", "high", "max"] : undefined),
-              defaultReasoningEffort: m.supportsEffort ? "medium" : undefined,
-            },
+            capabilities: getClaudeReasoningCapabilities(m),
           }));
           claudeLog.info(`[Claude] Loaded ${this.cachedModels.length} models via SDK`);
         } else {

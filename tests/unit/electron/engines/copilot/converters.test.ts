@@ -232,7 +232,7 @@ describe('copilot-converters', () => {
         capabilities: {
           supports: {
             vision: true,
-            reasoningEffort: 'high',
+            reasoningEffort: true,
           } as any,
           limits: {
             max_context_window_tokens: 128000,
@@ -287,6 +287,35 @@ describe('copilot-converters', () => {
       const unified = sdkModelToUnified('copilot', sdkModel);
       expect(unified.capabilities?.reasoning).toBe(false);
       expect(unified.capabilities?.supportedReasoningEfforts).toBeUndefined();
+      expect(unified.capabilities?.defaultReasoningEffort).toBeUndefined();
+    });
+
+    it('does not expose reasoning support when the SDK reports reasoningEffort: false', () => {
+      const sdkModel: ModelInfo = {
+        id: 'gpt-4o',
+        name: 'GPT-4o',
+        capabilities: { supports: { vision: true, reasoningEffort: false }, limits: { max_context_window_tokens: 128000 } },
+        supportedReasoningEfforts: ['low', 'medium'] as any,
+        defaultReasoningEffort: 'medium' as any,
+      } as any;
+
+      const unified = sdkModelToUnified('copilot', sdkModel);
+      expect(unified.capabilities?.reasoning).toBe(false);
+      expect(unified.capabilities?.supportedReasoningEfforts).toBeUndefined();
+      expect(unified.capabilities?.defaultReasoningEffort).toBeUndefined();
+    });
+
+    it('filters invalid reasoning effort values from Copilot model metadata', () => {
+      const sdkModel: ModelInfo = {
+        id: 'o3-filtered',
+        name: 'O3 Filtered',
+        capabilities: { supports: { vision: false, reasoningEffort: true } as any, limits: { max_context_window_tokens: 200000 } },
+        supportedReasoningEfforts: ['low', 'turbo', 'xhigh'] as any,
+        defaultReasoningEffort: 'turbo' as any,
+      } as any;
+
+      const unified = sdkModelToUnified('copilot', sdkModel);
+      expect(unified.capabilities?.supportedReasoningEfforts).toEqual(['low', 'max']);
       expect(unified.capabilities?.defaultReasoningEffort).toBeUndefined();
     });
   });

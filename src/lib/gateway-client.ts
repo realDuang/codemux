@@ -97,6 +97,7 @@ interface PendingRequest {
 // --- Client ---
 
 const DEFAULT_TIMEOUT = 120_000; // 2 min for long-running requests like message.send
+const REASONING_EFFORT_TIMEOUT = 3_000;
 const RECONNECT_DELAYS = [500, 1000, 2000, 5000]; // Backoff sequence
 
 type EventHandler = (...args: any[]) => void;
@@ -470,7 +471,7 @@ export class GatewayClient {
   // --- Reasoning Effort API ---
 
   setReasoningEffort(req: ReasoningEffortSetRequest): Promise<void> {
-    return this.request(GatewayRequestType.REASONING_EFFORT_SET, req);
+    return this.request(GatewayRequestType.REASONING_EFFORT_SET, req, REASONING_EFFORT_TIMEOUT);
   }
 
   // --- Permission API ---

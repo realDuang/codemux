@@ -5,19 +5,40 @@ import type {
   ModelInfo,
 } from "@github/copilot-sdk";
 import { inferToolKind, normalizeToolName } from "../../../../src/types/tool-mapping";
-import type {
-  EngineType,
-  UnifiedSession,
-  UnifiedMessage,
-  UnifiedPart,
-  UnifiedModelInfo,
-  ReasoningEffort,
-  NormalizedToolName,
-  ToolPart,
-  TextPart,
-  ReasoningPart,
+import {
+  normalizeReasoningEffort,
+  type EngineType,
+  type UnifiedSession,
+  type UnifiedMessage,
+  type UnifiedPart,
+  type UnifiedModelInfo,
+  type ReasoningEffort,
+  type NormalizedToolName,
+  type ToolPart,
+  type TextPart,
+  type ReasoningPart,
 } from "../../../../src/types/unified";
 import { homedir } from "os";
+
+const COPILOT_REASONING_EFFORT_MAP: Record<string, ReasoningEffort> = {
+  xhigh: "max",
+  low: "low",
+  medium: "medium",
+  high: "high",
+};
+
+function normalizeCopilotReasoningEffort(value: unknown): ReasoningEffort | undefined {
+  if (typeof value !== "string") return undefined;
+  return normalizeReasoningEffort(COPILOT_REASONING_EFFORT_MAP[value] ?? value);
+}
+
+function normalizeCopilotReasoningEfforts(values: readonly unknown[] | undefined): ReasoningEffort[] | undefined {
+  if (!values) return undefined;
+  const normalized = values
+    .map((value) => normalizeCopilotReasoningEffort(value))
+    .filter((value): value is ReasoningEffort => value != null);
+  return normalized.length > 0 ? normalized : undefined;
+}
 
 /**
  * Convert an array of SDK session events into UnifiedMessage[].
@@ -420,12 +441,12 @@ export function upsertPart(parts: UnifiedPart[], part: UnifiedPart): void {
 }
 
 export function sdkModelToUnified(engineType: EngineType, model: ModelInfo): UnifiedModelInfo {
-  const reasoningEffortMap: Record<string, ReasoningEffort> = { xhigh: "max", low: "low", medium: "medium", high: "high" };
-  const supportedLevels = model.supportedReasoningEfforts?.map(
-    (l) => reasoningEffortMap[l] ?? (l as ReasoningEffort),
-  );
-  const defaultLevel = model.defaultReasoningEffort
-    ? (reasoningEffortMap[model.defaultReasoningEffort] ?? (model.defaultReasoningEffort as unknown as ReasoningEffort))
+  const reasoningSupported = model.capabilities?.supports?.reasoningEffort === true;
+  const supportedLevels = reasoningSupported
+    ? normalizeCopilotReasoningEfforts(model.supportedReasoningEfforts)
+    : undefined;
+  const defaultLevel = reasoningSupported
+    ? normalizeCopilotReasoningEffort(model.defaultReasoningEffort)
     : undefined;
 
   return {
@@ -434,7 +455,7 @@ export function sdkModelToUnified(engineType: EngineType, model: ModelInfo): Uni
     engineType,
     capabilities: {
       attachment: model.capabilities?.supports?.vision ?? false,
-      reasoning: model.capabilities?.supports?.reasoningEffort != null,
+      reasoning: reasoningSupported,
       supportedReasoningEfforts: supportedLevels,
       defaultReasoningEffort: defaultLevel,
     },

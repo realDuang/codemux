@@ -575,13 +575,19 @@ export default function Settings() {
                                       {t().engine.reasoningEffortDesc}
                                     </p>
                                   </div>
-                                  <div class="flex rounded-lg overflow-hidden border border-gray-300 dark:border-slate-600 flex-shrink-0">
+                                  <div
+                                    class="flex rounded-lg overflow-hidden border border-gray-300 dark:border-slate-600 flex-shrink-0"
+                                    role="group"
+                                    aria-label={t().engine.reasoningEffort}
+                                  >
                                     <For each={supportedEfforts()}>
                                       {(effort) => {
                                         const isActive = () => currentEffort() === effort;
                                         return (
                                           <button
+                                            type="button"
                                             onClick={() => handleEffortSelect(effort)}
+                                            aria-pressed={isActive()}
                                             class={`px-3 py-1.5 text-sm font-medium transition-colors ${
                                               isActive()
                                                 ? "bg-amber-500 text-white"

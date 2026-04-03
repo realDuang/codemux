@@ -104,6 +104,22 @@ export interface UnifiedModelInfo {
 /** Unified reasoning effort level across engines */
 export type ReasoningEffort = "low" | "medium" | "high" | "max";
 
+export const REASONING_EFFORT_VALUES = ["low", "medium", "high", "max"] as const;
+
+export function isReasoningEffort(value: unknown): value is ReasoningEffort {
+  return typeof value === "string" && (REASONING_EFFORT_VALUES as readonly string[]).includes(value);
+}
+
+export function normalizeReasoningEffort(value: unknown): ReasoningEffort | undefined {
+  return isReasoningEffort(value) ? value : undefined;
+}
+
+export function normalizeReasoningEfforts(values: readonly unknown[] | null | undefined): ReasoningEffort[] | undefined {
+  if (!values) return undefined;
+  const normalized = values.filter(isReasoningEffort);
+  return normalized.length > 0 ? normalized : undefined;
+}
+
 /** Result of listing models — includes which model is currently active */
 export interface ModelListResult {
   models: UnifiedModelInfo[];

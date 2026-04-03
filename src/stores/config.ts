@@ -1,5 +1,5 @@
 import { createStore } from "solid-js/store";
-import type { EngineInfo, EngineType, ReasoningEffort, UnifiedModelInfo } from "../types/unified";
+import { isReasoningEffort, type EngineInfo, type EngineType, type ReasoningEffort, type UnifiedModelInfo } from "../types/unified";
 import { getSetting, saveSetting, getNestedSetting, saveNestedSetting } from "../lib/settings";
 
 export interface EngineModelSelection {
@@ -185,8 +185,6 @@ export function restoreEnabledEngines(): void {
 // Reasoning effort per engine
 // ---------------------------------------------------------------------------
 
-const VALID_REASONING_EFFORTS: readonly string[] = ["low", "medium", "high", "max"];
-
 /** Save reasoning effort for an engine and persist to settings.json. */
 export function saveReasoningEffort(engineType: string, effort: ReasoningEffort): void {
   setConfigStore("engineReasoningEfforts", engineType, effort);
@@ -196,7 +194,7 @@ export function saveReasoningEffort(engineType: string, effort: ReasoningEffort)
 /** Load persisted reasoning effort for an engine. */
 export function loadReasoningEffort(engineType: string): ReasoningEffort | null {
   const saved = getNestedSetting<string>(`engineReasoningEfforts.${engineType}`);
-  if (saved && VALID_REASONING_EFFORTS.includes(saved)) return saved as ReasoningEffort;
+  if (isReasoningEffort(saved)) return saved;
   return null;
 }
 

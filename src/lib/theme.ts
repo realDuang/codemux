@@ -79,6 +79,12 @@ export function setThemeMode(theme: ThemeMode): void {
   applyTheme(theme);
 }
 
+export function refreshThemeFromSettings(): void {
+  const theme = getSavedTheme();
+  setThemeModeSignal(theme);
+  applyTheme(theme);
+}
+
 export function getThemeMode(): Accessor<ThemeMode> {
   return themeMode;
 }

@@ -3,9 +3,9 @@ import fs from "fs";
 import path from "path";
 import { app } from "electron";
 import { deviceStore } from "./device-store";
-import { prodServerLog, getLogFilePath, getFileLogLevel, setFileLogLevel } from "./logger";
+import { prodServerLog, getLogFilePath, getFileLogLevel, setFileLogLevel, loadSettings } from "./logger";
 import { sendJson, getClientIp, isLocalhost, getLocalIp } from "../../../shared/http-utils";
-import { handleAuthRoutes, handleLogRoutes } from "../../../shared/auth-route-handlers";
+import { handleAuthRoutes, handleLogRoutes, handleSettingsRoutes } from "../../../shared/auth-route-handlers";
 import { WEB_PORT, OPENCODE_PORT, WEBHOOK_PORT } from "../../../shared/ports";
 
 // ============================================================================
@@ -249,6 +249,18 @@ class ProductionServer {
       });
       if (handled) return;
       // Fall through to 404 if no auth route matched
+      sendJson(res, { error: "Not found" }, 404);
+      return;
+    }
+
+    // ========================================================================
+    // Settings API Routes (auth-required)
+    // ========================================================================
+    if (pathname.startsWith("/api/settings/")) {
+      const handled = await handleSettingsRoutes(req, res, pathname, deviceStore, {
+        loadSettings,
+      });
+      if (handled) return;
       sendJson(res, { error: "Not found" }, 404);
       return;
     }

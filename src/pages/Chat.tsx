@@ -36,7 +36,9 @@ import { useI18n, formatMessage } from "../lib/i18n";
 import { notify } from "../lib/notifications";
 import { isDefaultTitle } from "../lib/session-utils";
 import { formatTokenCount, formatCostWithUnit, getEngineBadge } from "../components/share/common";
-import { getSetting, saveSetting } from "../lib/settings";
+import { getSetting, saveSetting, bootstrapHostSettings } from "../lib/settings";
+import { refreshThemeFromSettings } from "../lib/theme";
+import { refreshLocaleFromSettings } from "../lib/i18n";
 
 import { InputAreaQuestion } from "../components/InputAreaQuestion";
 import { InputAreaPermission } from "../components/InputAreaPermission";
@@ -650,6 +652,13 @@ export default function Chat() {
         Auth.clearAuth();
         navigate("/", { replace: true });
         return;
+      }
+
+      // Bootstrap host settings on page refresh (no-op if already done)
+      const applied = await bootstrapHostSettings();
+      if (applied) {
+        refreshThemeFromSettings();
+        refreshLocaleFromSettings();
       }
 
       // Build notification handlers for this mount's closures

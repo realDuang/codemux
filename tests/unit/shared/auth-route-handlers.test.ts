@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { handleAuthRoutes, handleLogRoutes } from '../../../shared/auth-route-handlers';
+import { handleAuthRoutes, handleLogRoutes, handleSettingsRoutes } from '../../../shared/auth-route-handlers';
 import type { IncomingMessage, ServerResponse } from 'http';
 import { EventEmitter } from 'events';
 
@@ -307,6 +307,77 @@ describe('auth-route-handlers', () => {
 
     it('returns false for unmatched routes', async () => {
       expect(await handleLogRoutes(createMockReq('/api/other'), mockRes, '/api/other', mockLogFns)).toBe(false);
+    });
+  });
+
+  describe('handleSettingsRoutes', () => {
+    let mockSettingsFns: { loadSettings: ReturnType<typeof vi.fn> };
+
+    beforeEach(() => {
+      mockSettingsFns = {
+        loadSettings: vi.fn(),
+      };
+    });
+
+    it('returns false for unmatched routes', async () => {
+      const req = createMockReq('/api/other');
+      expect(await handleSettingsRoutes(req, mockRes, '/api/other', mockStore, mockSettingsFns)).toBe(false);
+    });
+
+    it('requires auth for GET /api/settings/shared', async () => {
+      const pathname = '/api/settings/shared';
+      const req = createMockReq(pathname);
+      // No auth header
+
+      expect(await handleSettingsRoutes(req, mockRes, pathname, mockStore, mockSettingsFns)).toBe(true);
+      expect(mockRes.writeHead).toHaveBeenCalledWith(401, expect.any(Object));
+    });
+
+    it('returns filtered settings for authenticated requests', async () => {
+      const pathname = '/api/settings/shared';
+      const req = createMockReq(pathname);
+      req.headers.authorization = 'Bearer valid-token';
+      mockStore.verifyToken.mockReturnValue({ valid: true, deviceId: 'dev1' });
+      mockSettingsFns.loadSettings.mockReturnValue({
+        theme: 'dark',
+        locale: 'zh',
+        logLevel: 'debug',
+        engineModels: { claude: { providerID: 'anthropic', modelID: 'sonnet' } },
+        lastSessionId: 'sess-123',
+        someInternalKey: 'secret',
+      });
+
+      expect(await handleSettingsRoutes(req, mockRes, pathname, mockStore, mockSettingsFns)).toBe(true);
+      expect(mockRes.writeHead).toHaveBeenCalledWith(200, expect.any(Object));
+
+      const responseBody = JSON.parse((mockRes.end as any).mock.calls[0][0]);
+      expect(responseBody.settings).toEqual({
+        theme: 'dark',
+        locale: 'zh',
+        engineModels: { claude: { providerID: 'anthropic', modelID: 'sonnet' } },
+      });
+      // Sensitive keys must not leak
+      expect(responseBody.settings.logLevel).toBeUndefined();
+      expect(responseBody.settings.lastSessionId).toBeUndefined();
+      expect(responseBody.settings.someInternalKey).toBeUndefined();
+    });
+
+    it('returns empty settings object when no shared keys exist', async () => {
+      const pathname = '/api/settings/shared';
+      const req = createMockReq(pathname);
+      req.headers.authorization = 'Bearer valid-token';
+      mockStore.verifyToken.mockReturnValue({ valid: true, deviceId: 'dev1' });
+      mockSettingsFns.loadSettings.mockReturnValue({ logLevel: 'warn' });
+
+      expect(await handleSettingsRoutes(req, mockRes, pathname, mockStore, mockSettingsFns)).toBe(true);
+      const responseBody = JSON.parse((mockRes.end as any).mock.calls[0][0]);
+      expect(responseBody.settings).toEqual({});
+    });
+
+    it('does not match POST method', async () => {
+      const pathname = '/api/settings/shared';
+      const req = createMockReq(pathname, 'POST', { theme: 'light' });
+      expect(await handleSettingsRoutes(req, mockRes, pathname, mockStore, mockSettingsFns)).toBe(false);
     });
   });
 });

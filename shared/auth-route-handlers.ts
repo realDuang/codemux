@@ -165,6 +165,51 @@ export async function handleLogRoutes(
 }
 
 // -----------------------------------------------------------------------------
+// Settings route dispatcher (auth-required, read-only).
+// Returns filtered host settings so web clients can bootstrap on page load.
+// -----------------------------------------------------------------------------
+
+/** Settings keys safe to expose to authenticated web clients. */
+const SHARED_SETTINGS_KEYS = [
+  "theme",
+  "locale",
+  "engineModels",
+  "defaultEngine",
+  "showDefaultWorkspace",
+  "scheduledTasksEnabled",
+  "worktreeEnabled",
+] as const;
+
+function filterSharedSettings(settings: Record<string, unknown>): Record<string, unknown> {
+  const filtered: Record<string, unknown> = {};
+  for (const key of SHARED_SETTINGS_KEYS) {
+    if (Object.prototype.hasOwnProperty.call(settings, key)) {
+      filtered[key] = settings[key];
+    }
+  }
+  return filtered;
+}
+
+export async function handleSettingsRoutes(
+  req: IncomingMessage,
+  res: ServerResponse,
+  pathname: string,
+  store: AuthDeviceStore,
+  settingsFns: {
+    loadSettings: () => Record<string, unknown>;
+  },
+): Promise<boolean> {
+  if (pathname === "/api/settings/shared" && req.method === "GET") {
+    if (!requireAuth(req, res, store)) return true;
+    const settings = settingsFns.loadSettings();
+    sendJson(res, { settings: filterSharedSettings(settings) });
+    return true;
+  }
+
+  return false;
+}
+
+// -----------------------------------------------------------------------------
 // Helper: enforce localhost access, send 403 if not local.
 // Returns true if the request IS from localhost, false if blocked.
 // -----------------------------------------------------------------------------

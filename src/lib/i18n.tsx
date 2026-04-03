@@ -56,6 +56,7 @@ const LocaleContext = createContext<LocaleContextType>();
 // Provider component
 export function I18nProvider(props: ParentProps) {
   const [locale, setLocaleSignal] = createSignal<LocaleCode>(getSavedLocale());
+  _externalSetLocale = setLocaleSignal;
 
   const setLocale = (newLocale: LocaleCode) => {
     setLocaleSignal(newLocale);
@@ -76,6 +77,17 @@ export function I18nProvider(props: ParentProps) {
       {props.children}
     </LocaleContext.Provider>
   );
+}
+
+/**
+ * Re-read locale from settings and update the signal.
+ * Called after host settings bootstrap to apply the host's locale preference.
+ */
+let _externalSetLocale: ((locale: LocaleCode) => void) | null = null;
+
+export function refreshLocaleFromSettings(): void {
+  const nextLocale = getSavedLocale();
+  _externalSetLocale?.(nextLocale);
 }
 
 // Hook to use i18n

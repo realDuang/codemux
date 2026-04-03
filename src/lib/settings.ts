@@ -128,3 +128,57 @@ export function saveNestedSetting(path: string, value: unknown): void {
   target[parts[parts.length - 1]] = value;
   saveSetting(parts[0], root);
 }
+
+// ---------------------------------------------------------------------------
+// Host settings bootstrap (web clients only)
+// ---------------------------------------------------------------------------
+// Fetches shared settings from the host's settings.json via the API and
+// writes them into localStorage so that getSetting() returns host values.
+// Called once on page load after authentication.
+
+import { Auth } from "./auth";
+
+let _bootstrapDone = false;
+
+/**
+ * Fetch host settings and write them to localStorage.
+ * No-op in Electron (settings already come from preload cache).
+ * No-op if already bootstrapped in this page session.
+ * Returns true if settings were applied, false otherwise.
+ */
+export async function bootstrapHostSettings(): Promise<boolean> {
+  if (isElectron()) return false;
+  if (_bootstrapDone) return false;
+  if (!Auth.isAuthenticated()) return false;
+
+  try {
+    const res = await fetch("/api/settings/shared", {
+      headers: Auth.getAuthHeaders(),
+    });
+    if (!res.ok) return false;
+
+    const data = await res.json();
+    const settings = data.settings as Record<string, unknown> | undefined;
+    if (!settings || typeof settings !== "object") return false;
+
+    for (const [key, value] of Object.entries(settings)) {
+      if (value !== undefined) {
+        try {
+          localStorage.setItem(`settings:${key}`, JSON.stringify(value));
+        } catch {
+          // localStorage full or unavailable
+        }
+      }
+    }
+
+    _bootstrapDone = true;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Reset bootstrap state (for testing). */
+export function _resetBootstrapState(): void {
+  _bootstrapDone = false;
+}

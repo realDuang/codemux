@@ -367,7 +367,7 @@ export class CopilotSdkAdapter extends EngineAdapter {
   async sendMessage(
     sessionId: string,
     content: MessagePromptContent[],
-    options?: { mode?: string; modelId?: string; directory?: string },
+    options?: { mode?: string; modelId?: string; reasoningEffort?: ReasoningEffort | null; directory?: string },
   ): Promise<UnifiedMessage> {
     const session = await this.ensureActiveSession(sessionId, options?.directory);
     const now = Date.now();
@@ -377,6 +377,23 @@ export class CopilotSdkAdapter extends EngineAdapter {
       try {
         await session.rpc.model.switchTo(this.buildModelSwitchConfig(sessionId, options.modelId));
       } catch (err) {}
+    }
+
+    // Apply reasoning effort if it changed (same pattern as modelId)
+    if (options?.reasoningEffort !== undefined) {
+      const current = this.sessionReasoningEfforts.get(sessionId) ?? null;
+      if (options.reasoningEffort !== current) {
+        if (options.reasoningEffort) {
+          this.sessionReasoningEfforts.set(sessionId, options.reasoningEffort);
+        } else {
+          this.sessionReasoningEfforts.delete(sessionId);
+        }
+        if (this.currentModelId) {
+          try {
+            await session.rpc.model.switchTo(this.buildModelSwitchConfig(sessionId, this.currentModelId));
+          } catch (err) {}
+        }
+      }
     }
 
     if (options?.mode) {
@@ -499,6 +516,7 @@ export class CopilotSdkAdapter extends EngineAdapter {
       reasoningPartId: null,
       startTime: Date.now(),
       modelId: this.currentModelId ?? undefined,
+      reasoningEffort: this.sessionReasoningEfforts.get(sessionId),
     };
     this.messageBuffers.set(sessionId, buffer);
 
@@ -1342,7 +1360,7 @@ export class CopilotSdkAdapter extends EngineAdapter {
   }
 
   private bufferToMessage(buffer: MessageBuffer, completed: boolean): UnifiedMessage {
-    return { id: buffer.messageId, sessionId: buffer.sessionId, role: "assistant", time: { created: buffer.startTime, completed: completed ? Date.now() : undefined }, parts: [...buffer.parts], tokens: buffer.tokens, cost: buffer.cost, costUnit: buffer.costUnit, modelId: buffer.modelId || this.currentModelId || undefined, error: buffer.error, workingDirectory: this.sessionDirectories.get(buffer.sessionId) };
+    return { id: buffer.messageId, sessionId: buffer.sessionId, role: "assistant", time: { created: buffer.startTime, completed: completed ? Date.now() : undefined }, parts: [...buffer.parts], tokens: buffer.tokens, cost: buffer.cost, costUnit: buffer.costUnit, modelId: buffer.modelId || this.currentModelId || undefined, reasoningEffort: buffer.reasoningEffort, error: buffer.error, workingDirectory: this.sessionDirectories.get(buffer.sessionId) };
   }
 
   private appendMessageToHistory(sessionId: string, message: UnifiedMessage): void {

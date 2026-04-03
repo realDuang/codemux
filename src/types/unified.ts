@@ -165,6 +165,7 @@ export interface ConversationMessage {
   /** Unit for the cost field: "usd" (default) or "premium_requests" */
   costUnit?: "usd" | "premium_requests";
   modelId?: string;
+  reasoningEffort?: ReasoningEffort;
   error?: string;
 }
 
@@ -232,6 +233,7 @@ export interface UnifiedMessage {
   /** Unit for the cost field: "usd" (default) or "premium_requests" */
   costUnit?: "usd" | "premium_requests";
   modelId?: string;
+  reasoningEffort?: ReasoningEffort;
   providerId?: string;
   mode?: string;
   error?: string;
@@ -556,9 +558,6 @@ export const GatewayRequestType = {
   MODE_GET: "mode.get",
   MODE_SET: "mode.set",
 
-  // Reasoning level
-  REASONING_EFFORT_SET: "reasoning.set",
-
   // Permission
   PERMISSION_REPLY: "permission.reply",
 
@@ -665,6 +664,7 @@ export interface MessageSendRequest {
   content: MessagePromptContent[];
   mode?: string;
   modelId?: string;
+  reasoningEffort?: ReasoningEffort | null;
 }
 
 export interface MessagePromptContent {
@@ -708,11 +708,6 @@ export interface ModelSetRequest {
 export interface ModeSetRequest {
   sessionId: string;
   modeId: string;
-}
-
-export interface ReasoningEffortSetRequest {
-  sessionId: string;
-  effort: ReasoningEffort | null;
 }
 
 // --- Worktree Request types ---
@@ -818,6 +813,7 @@ export interface CommandInvokeRequest {
   args: string;
   mode?: string;
   modelId?: string;
+  reasoningEffort?: ReasoningEffort | null;
 }
 
 /** Result of a slash command invocation */

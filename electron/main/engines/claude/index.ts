@@ -591,7 +591,7 @@ export class ClaudeCodeAdapter extends EngineAdapter {
   async sendMessage(
     sessionId: string,
     content: MessagePromptContent[],
-    options?: { mode?: string; modelId?: string },
+    options?: { mode?: string; modelId?: string; reasoningEffort?: ReasoningEffort | null },
   ): Promise<UnifiedMessage> {
     const directory =
       this.v2Sessions.get(sessionId)?.directory ??
@@ -712,6 +712,7 @@ export class ClaudeCodeAdapter extends EngineAdapter {
       reasoningAccumulator: "",
       reasoningPartId: null,
       startTime: Date.now(),
+      reasoningEffort: this.sessionReasoningEfforts.get(sessionId),
     };
     this.messageBuffers.set(sessionId, buffer);
 
@@ -729,6 +730,27 @@ export class ClaudeCodeAdapter extends EngineAdapter {
     // Determine permission mode from mode option
     const mode = options?.mode ?? this.sessionModes.get(sessionId) ?? "default";
     const permissionMode = mode as "default" | "plan" | "acceptEdits" | "dontAsk";
+
+    // Apply reasoning effort if it changed (triggers session rebuild via getOrCreateV2Session)
+    if (options?.reasoningEffort !== undefined) {
+      const current = this.sessionReasoningEfforts.get(sessionId) ?? null;
+      if (options.reasoningEffort !== current) {
+        if (options.reasoningEffort) {
+          this.sessionReasoningEfforts.set(sessionId, options.reasoningEffort);
+        } else {
+          this.sessionReasoningEfforts.delete(sessionId);
+        }
+        // Invalidate existing session so getOrCreateV2Session rebuilds with new effort
+        const v2Info = this.v2Sessions.get(sessionId);
+        if (v2Info) {
+          if (v2Info.capturedSessionId) {
+            this.sessionCcIds.set(sessionId, v2Info.capturedSessionId);
+          }
+          try { v2Info.session.close(); } catch { /* ignore */ }
+          this.v2Sessions.delete(sessionId);
+        }
+      }
+    }
 
     // Get or create V2 session
     const v2Session = await this.getOrCreateV2Session(
@@ -1143,6 +1165,9 @@ export class ClaudeCodeAdapter extends EngineAdapter {
   // ==========================================================================
 
   override async setReasoningEffort(sessionId: string, effort: ReasoningEffort | null): Promise<void> {
+    const current = this.sessionReasoningEfforts.get(sessionId) ?? null;
+    if (current === effort) return; // No change, skip session rebuild
+
     if (effort) {
       this.sessionReasoningEfforts.set(sessionId, effort);
       claudeLog.info(`[Claude][${sessionId}] Reasoning effort set to: ${effort}`);
@@ -1863,6 +1888,7 @@ export class ClaudeCodeAdapter extends EngineAdapter {
           reasoningPartId: null,
           startTime: Date.now(),
           modelId: buffer.modelId,
+          reasoningEffort: buffer.reasoningEffort,
         };
         this.messageBuffers.set(sessionId, buffer);
         streamingBlocks.clear();
@@ -2514,6 +2540,7 @@ export class ClaudeCodeAdapter extends EngineAdapter {
         : undefined,
       cost: buffer.cost,
       modelId: buffer.modelId,
+      reasoningEffort: buffer.reasoningEffort,
       error: buffer.error,
       workingDirectory: this.sessionDirectories.get(sessionId),
     };
@@ -2574,6 +2601,7 @@ export class ClaudeCodeAdapter extends EngineAdapter {
         : undefined,
       cost: buffer.cost,
       modelId: buffer.modelId,
+      reasoningEffort: buffer.reasoningEffort,
       error: buffer.error,
       workingDirectory: this.sessionDirectories.get(sessionId),
     };

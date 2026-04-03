@@ -34,7 +34,6 @@ import MergeWorktreeModal from "../components/MergeWorktreeModal";
 import { DeleteWorktreeModal } from "../components/DeleteWorktreeModal";
 import { useI18n, formatMessage } from "../lib/i18n";
 import { notify } from "../lib/notifications";
-import { syncReasoningEffortForSend } from "../lib/reasoning-effort-sync";
 import { isDefaultTitle } from "../lib/session-utils";
 import { formatTokenCount, formatCostWithUnit, getEngineBadge } from "../components/share/common";
 import { getSetting, saveSetting } from "../lib/settings";
@@ -51,7 +50,7 @@ import { ResizeHandle } from "../components/ResizeHandle";
 import { fileStore, togglePanel, setPanelWidth, closePanel } from "../stores/file";
 import { handleFileChanged, refreshGitStatus } from "../stores/file";
 
-import { configStore, setConfigStore, getSelectedModelForEngine, restoreEngineModelSelections, isEngineEnabled, restoreEnabledEngines, getDefaultEngineType, restoreDefaultEngine, restoreReasoningEfforts } from "../stores/config";
+import { configStore, setConfigStore, getSelectedModelForEngine, restoreEngineModelSelections, isEngineEnabled, restoreEnabledEngines, getDefaultEngineType, restoreDefaultEngine, restoreReasoningEfforts, getEffectiveReasoningEffortForEngine } from "../stores/config";
 import { scheduledTaskStore, setScheduledTaskStore } from "../stores/scheduled-task";
 import { computeActiveSessions } from "../lib/active-sessions";
 
@@ -1627,6 +1626,7 @@ export default function Chat() {
 
     setSendingFor(sessionId, true);
 
+    const reasoningEffort = getEffectiveReasoningEffortForEngine(currentEngineType());
     const commandText = args ? `/${commandName} ${args}` : `/${commandName}`;
     const tempMessageId = `msg-temp-${Date.now()}`;
     const tempPartId = `part-temp-${Date.now()}`;
@@ -1660,6 +1660,7 @@ export default function Chat() {
       await gateway.invokeCommand(sessionId, commandName, args, {
         mode: agent.id,
         modelId,
+        reasoningEffort,
       });
       // Check if assistant message is finalized
       const msgs = messageStore.message[sessionId] || [];
@@ -1700,14 +1701,7 @@ export default function Chat() {
 
     setSendingFor(sessionId, true);
 
-    // Sync the effective reasoning effort to backend before sending.
-    // Await this so adapter state is updated before the session is resumed/used.
-    await syncReasoningEffortForSend(
-      sessionId,
-      currentEngineType(),
-      t().notification.reasoningEffortSyncFailed,
-    );
-
+    const reasoningEffort = getEffectiveReasoningEffortForEngine(currentEngineType());
     const tempMessageId = `msg-temp-${Date.now()}`;
     const tempPartId = `part-temp-${Date.now()}`;
 
@@ -1737,6 +1731,7 @@ export default function Chat() {
         mode: agent.id,
         modelId,
         images,
+        reasoningEffort,
       }).catch((error) => {
         logger.error("[SendMessage] Failed to enqueue message:", error);
         notify(t().notification.messageSendFailed);
@@ -1787,6 +1782,7 @@ export default function Chat() {
         mode: agent.id,
         modelId,
         images,
+        reasoningEffort,
       });
       // sendMessage RPC resolved — the engine considers the prompt handled.
       // However, in multi-step agent loops (e.g. OpenCode), the RPC may resolve

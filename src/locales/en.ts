@@ -480,7 +480,6 @@ export interface LocaleDict {
   // Notifications
   notification: {
     messageSendFailed: string;
-    reasoningEffortSyncFailed: string;
     sessionCreateFailed: string;
     sessionDeleteFailed: string;
     gatewayDisconnected: string;
@@ -1081,7 +1080,6 @@ export const en: LocaleDict = {
   // Notifications
   notification: {
     messageSendFailed: "Failed to send message. Please try again.",
-    reasoningEffortSyncFailed: "Failed to apply reasoning effort. This message was sent anyway and may use the previous setting.",
     sessionCreateFailed: "Failed to create session.",
     sessionDeleteFailed: "Failed to delete session.",
     gatewayDisconnected: "Connection lost. Reconnecting...",

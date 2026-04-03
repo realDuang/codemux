@@ -8,13 +8,14 @@ import { logger } from "../lib/logger";
 import { useAuthGuard } from "../lib/useAuthGuard";
 import { isElectron } from "../lib/platform";
 import { Auth } from "../lib/auth";
-import { configStore, saveEngineModelSelection, isEngineEnabled, setEngineEnabled, saveReasoningEffort, getEffectiveReasoningEffortForEngine } from "../stores/config";
+import { configStore, saveEngineModelSelection, isEngineEnabled, setEngineEnabled } from "../stores/config";
+import { ReasoningEffortSelector } from "../components/ReasoningEffortSelector";
 import { sessionStore, setSessionStore } from "../stores/session";
 import { setScheduledTaskStore } from "../stores/scheduled-task";
 import { gateway } from "../lib/gateway-api";
 import { systemAPI, updateAPI, autostartAPI } from "../lib/electron-api";
 import { getSetting, saveSetting } from "../lib/settings";
-import type { UnifiedModelInfo, EngineType, UnifiedSession, ReasoningEffort } from "../types/unified";
+import type { UnifiedModelInfo, EngineType, UnifiedSession } from "../types/unified";
 
 export default function Settings() {
   const { t } = useI18n();
@@ -540,69 +541,13 @@ export default function Settings() {
                             </div>
                           </Show>
 
-                          {/* Reasoning level selector - only for running + enabled engines when selected model supports it */}
-                          <Show when={showModelSelector() && isEngineEnabled(engine.type) && (() => {
-                            const model = models().find(m => m.modelId === selectedModelId());
-                            return (model?.capabilities?.supportedReasoningEfforts?.length ?? 0) > 0;
-                          })()}>
-                            {(() => {
-                              const selectedModel = createMemo(() => models().find(m => m.modelId === selectedModelId()));
-                              const supportedEfforts = createMemo(() => selectedModel()?.capabilities?.supportedReasoningEfforts ?? []);
-                              const currentEffort = createMemo(() => getEffectiveReasoningEffortForEngine(engine.type));
-                              const handleEffortSelect = (effort: ReasoningEffort) => {
-                                saveReasoningEffort(engine.type, effort);
-                                const currentSession = sessionStore.list.find((s) => s.id === sessionStore.current);
-                                if (currentSession?.engineType === engine.type) {
-                                  gateway.setReasoningEffort(currentSession.id, effort).catch((error) => {
-                                    logger.warn("[Settings] Failed to sync reasoning effort after effort change:", error);
-                                  });
-                                }
-                              };
-                              const levelLabels: Record<string, () => string> = {
-                                low: () => t().prompt.reasoningEffortLow,
-                                medium: () => t().prompt.reasoningEffortMedium,
-                                high: () => t().prompt.reasoningEffortHigh,
-                                max: () => t().prompt.reasoningEffortMax,
-                              };
-
-                              return (
-                                <div class="px-4 sm:px-6 pb-4 sm:pb-6 pt-0 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 sm:gap-4 -mt-2">
-                                  <div>
-                                    <h4 class="text-sm font-medium text-gray-700 dark:text-gray-300">
-                                      {t().engine.reasoningEffort}
-                                    </h4>
-                                    <p class="text-xs text-gray-400 dark:text-gray-500 mt-0.5">
-                                      {t().engine.reasoningEffortDesc}
-                                    </p>
-                                  </div>
-                                  <div
-                                    class="flex rounded-lg overflow-hidden border border-gray-300 dark:border-slate-600 flex-shrink-0"
-                                    role="group"
-                                    aria-label={t().engine.reasoningEffort}
-                                  >
-                                    <For each={supportedEfforts()}>
-                                      {(effort) => {
-                                        const isActive = () => currentEffort() === effort;
-                                        return (
-                                          <button
-                                            type="button"
-                                            onClick={() => handleEffortSelect(effort)}
-                                            aria-pressed={isActive()}
-                                            class={`px-3 py-1.5 text-sm font-medium transition-colors ${
-                                              isActive()
-                                                ? "bg-amber-500 text-white"
-                                                : "bg-white dark:bg-slate-700 text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-slate-600"
-                                            }`}
-                                          >
-                                            {levelLabels[effort]?.() ?? effort}
-                                          </button>
-                                        );
-                                      }}
-                                    </For>
-                                  </div>
-                                </div>
-                              );
-                            })()}
+                          {/* Reasoning effort selector - only for running + enabled engines */}
+                          <Show when={showModelSelector() && isEngineEnabled(engine.type)}>
+                            <ReasoningEffortSelector
+                              engineType={engine.type}
+                              models={models}
+                              selectedModelId={selectedModelId}
+                            />
                           </Show>
 
                           {/* Import History button - only for running + enabled engines */}

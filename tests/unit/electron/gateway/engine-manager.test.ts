@@ -335,9 +335,6 @@ describe("EngineManager", () => {
 
       await engineManager.setMode("conv1", "fast");
       expect(adapterA.setMode).toHaveBeenCalledWith("s1", "fast");
-
-      await engineManager.setReasoningEffort("conv1", null);
-      expect(adapterA.setReasoningEffort).toHaveBeenCalledWith("s1", null);
     });
   });
 

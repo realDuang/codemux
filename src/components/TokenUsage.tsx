@@ -1,7 +1,5 @@
 import { Show, createMemo } from "solid-js";
 import { isExpanded, toggleExpanded } from "../stores/message";
-import { sessionStore } from "../stores/session";
-import { getEffectiveReasoningEffortForEngine } from "../stores/config";
 import { formatTokenCount, formatCostWithUnit } from "./share/common";
 import { useI18n, formatMessage } from "../lib/i18n";
 import type { UnifiedMessage } from "../types/unified";
@@ -10,19 +8,14 @@ import styles from "./TokenUsage.module.css";
 interface TokenUsageProps {
   /** All assistant messages in this turn — tokens are aggregated */
   messages: UnifiedMessage[];
-  sessionID?: string;
 }
 
 export function TokenUsage(props: TokenUsageProps) {
   const { t } = useI18n();
 
-  // NOTE: reflects the *current* engine reasoning effort setting,
-  // not the effort used when the message was generated.
   const reasoningEffortSuffix = createMemo(() => {
-    if (!props.sessionID) return "";
-    const session = sessionStore.list.find(s => s.id === props.sessionID);
-    const effort = session?.engineType ? getEffectiveReasoningEffortForEngine(session.engineType) : undefined;
-    return effort ? ` (${effort})` : "";
+    const firstMsg = props.messages[0];
+    return firstMsg?.reasoningEffort ? ` (${firstMsg.reasoningEffort})` : "";
   });
 
   const usage = () => {

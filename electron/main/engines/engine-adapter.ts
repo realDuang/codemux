@@ -47,6 +47,7 @@ export interface MessageBuffer {
   cost?: number;
   costUnit?: "usd" | "premium_requests";
   modelId?: string;
+  reasoningEffort?: ReasoningEffort;
   error?: string;
   /** Set to true once leading whitespace has been trimmed from textAccumulator */
   leadingTrimmed?: boolean;
@@ -202,6 +203,7 @@ export abstract class EngineAdapter extends EventEmitter {
     options?: {
       mode?: string;
       modelId?: string;
+      reasoningEffort?: ReasoningEffort | null;
       directory?: string;
     },
   ): Promise<UnifiedMessage>;

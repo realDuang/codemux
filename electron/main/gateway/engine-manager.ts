@@ -430,6 +430,7 @@ export class EngineManager extends EventEmitter {
         cost: message.cost,
         costUnit: message.costUnit,
         modelId: message.modelId,
+        reasoningEffort: message.reasoningEffort,
         error: message.error,
       };
 
@@ -825,7 +826,7 @@ export class EngineManager extends EventEmitter {
   async sendMessage(
     sessionId: string,
     content: MessagePromptContent[],
-    options?: { mode?: string; modelId?: string },
+    options?: { mode?: string; modelId?: string; reasoningEffort?: ReasoningEffort | null },
   ): Promise<UnifiedMessage> {
     this.activeSessions.add(sessionId);
     try {
@@ -957,6 +958,7 @@ export class EngineManager extends EventEmitter {
         cost: msg.cost,
         costUnit,
         modelId: msg.modelId,
+        reasoningEffort: msg.reasoningEffort,
         error: msg.error,
       };
     });
@@ -984,7 +986,7 @@ export class EngineManager extends EventEmitter {
     sessionId: string,
     commandName: string,
     args: string,
-    options?: { mode?: string; modelId?: string },
+    options?: { mode?: string; modelId?: string; reasoningEffort?: ReasoningEffort | null },
   ): Promise<CommandInvokeResult> {
     const conv = conversationStore.get(sessionId);
     if (!conv) throw new Error(`Conversation not found: ${sessionId}`);
@@ -1055,17 +1057,6 @@ export class EngineManager extends EventEmitter {
     }
     const adapter = this.getAdapterForSession(sessionId);
     return adapter.setMode(conv.engineSessionId, modeId);
-  }
-
-  // --- Reasoning Effort ---
-
-  async setReasoningEffort(sessionId: string, effort: ReasoningEffort | null): Promise<void> {
-    const conv = conversationStore.get(sessionId);
-    if (!conv?.engineSessionId) {
-      throw new Error(`No engine session for conversation: ${sessionId}`);
-    }
-    const adapter = this.getAdapterForSession(sessionId);
-    return adapter.setReasoningEffort(conv.engineSessionId, effort);
   }
 
   // --- Permissions ---
@@ -1280,6 +1271,7 @@ export class EngineManager extends EventEmitter {
             cost: msg.cost,
             costUnit: msg.costUnit,
             modelId: msg.modelId,
+            reasoningEffort: msg.reasoningEffort,
             error: msg.error,
           });
 

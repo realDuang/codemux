@@ -478,7 +478,6 @@ export const zh: LocaleDict = {
   // Notifications
   notification: {
     messageSendFailed: "消息发送失败，请重试。",
-    reasoningEffortSyncFailed: "推理强度未能成功应用。本条消息仍已发送，可能继续使用之前的设置。",
     sessionCreateFailed: "会话创建失败。",
     sessionDeleteFailed: "会话删除失败。",
     gatewayDisconnected: "连接已断开，正在重连...",

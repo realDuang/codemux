@@ -207,7 +207,7 @@ export function loadReasoningEffort(engineType: string): ReasoningEffort | null 
  * applicable.
  */
 export function getEffectiveReasoningEffortForEngine(engineType: string): ReasoningEffort | null {
-  const saved = configStore.engineReasoningEfforts[engineType] ?? loadReasoningEffort(engineType);
+  const saved = configStore.engineReasoningEfforts[engineType] ?? null;
   const modelId = getSelectedModelForEngine(engineType);
   const models = configStore.engineModels[engineType] || configStore.models;
   const model = modelId ? models.find((m) => m.modelId === modelId) : undefined;

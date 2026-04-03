@@ -481,7 +481,6 @@ export const ru: LocaleDict = {
   // Notifications
   notification: {
     messageSendFailed: "Не удалось отправить сообщение. Повторите попытку.",
-    reasoningEffortSyncFailed: "Не удалось применить интенсивность рассуждений. Сообщение все равно отправлено и может использовать предыдущую настройку.",
     sessionCreateFailed: "Не удалось создать сессию.",
     sessionDeleteFailed: "Не удалось удалить сессию.",
     gatewayDisconnected: "Соединение прервано, переподключение...",

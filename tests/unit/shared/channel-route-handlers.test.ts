@@ -97,7 +97,7 @@ describe("channel-route-handlers", () => {
     expect(mockRes.end).toHaveBeenCalledWith(expect.stringContaining("running"));
   });
 
-  it("masks secret fields in GET config response", async () => {
+  it("redacts secret fields in GET config response and reports secretsConfigured", async () => {
     const req = createMockReq("/api/channels/feishu");
     req.headers = { authorization: "Bearer token" };
     mockAuthStore.verifyToken.mockReturnValue({ valid: true, deviceId: "device-1" });
@@ -116,10 +116,33 @@ describe("channel-route-handlers", () => {
     const body = JSON.parse((mockRes.end as ReturnType<typeof vi.fn>).mock.calls.at(-1)?.[0] ?? "{}");
 
     expect(body.options.appId).toBe("cli_visible");
-    expect(body.options.appSecret).toBe("****alue");
-    expect(body.options.botToken).toBe("****");
-    expect(body.options.callbackEncodingAESKey).toBe("****1234");
+    expect(body.options.appSecret).toBe("");
+    expect(body.options.botToken).toBe("");
+    expect(body.options.callbackEncodingAESKey).toBe("");
     expect(body.options.normalField).toBe("visible");
+    expect(body.options.secretsConfigured).toEqual(
+      expect.arrayContaining(["appSecret", "botToken", "callbackEncodingAESKey"])
+    );
+  });
+
+  it("strips empty secret fields on PUT to prevent overwriting existing values", async () => {
+    const req = createMockReq("/api/channels/feishu", "PUT", {
+      options: {
+        appId: "new-app-id",
+        appSecret: "",
+        robotCode: "new-code",
+      },
+    });
+    req.headers.authorization = "Bearer token";
+    mockAuthStore.verifyToken.mockReturnValue({ valid: true, deviceId: "device-1" });
+
+    await handleChannelRoutes(req, mockRes, "/api/channels/feishu", mockAuthStore, mockChannelManager);
+
+    const updateCall = mockChannelManager.updateConfig.mock.calls[0];
+    expect(updateCall[0]).toBe("feishu");
+    expect(updateCall[1].options.appId).toBe("new-app-id");
+    expect(updateCall[1].options.robotCode).toBe("new-code");
+    expect(updateCall[1].options).not.toHaveProperty("appSecret");
   });
 
   it("updates channel config via PUT", async () => {

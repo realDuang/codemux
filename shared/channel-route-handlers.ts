@@ -10,17 +10,51 @@ interface ChannelManagerRoutes {
   getStatus(type: string): unknown | undefined;
 }
 
-/** Keys whose values should be masked in GET responses. */
+/** Keys whose values are treated as secrets and redacted in GET responses. */
 const SECRET_KEY_PATTERN = /secret|password|token|aeskey/i;
 
-function maskSecrets(obj: unknown): unknown {
+/**
+ * Redact secret fields: replace non-empty string values with "" and collect
+ * their names into a `secretsConfigured` array so the frontend knows which
+ * secrets are already set.
+ */
+function redactSecrets(obj: unknown): unknown {
   if (!obj || typeof obj !== "object" || Array.isArray(obj)) return obj;
   const result: Record<string, unknown> = {};
+  const configured: string[] = [];
+
   for (const [key, value] of Object.entries(obj as Record<string, unknown>)) {
-    if (SECRET_KEY_PATTERN.test(key) && typeof value === "string" && value.length > 0) {
-      result[key] = value.length <= 4 ? "****" : "****" + value.slice(-4);
+    if (SECRET_KEY_PATTERN.test(key) && typeof value === "string") {
+      result[key] = "";
+      if (value.length > 0) configured.push(key);
     } else if (value && typeof value === "object" && !Array.isArray(value)) {
-      result[key] = maskSecrets(value);
+      result[key] = redactSecrets(value);
+    } else {
+      result[key] = value;
+    }
+  }
+
+  if (configured.length > 0) {
+    result.secretsConfigured = configured;
+  }
+  return result;
+}
+
+/**
+ * Strip empty-string secret fields from an update payload so they don't
+ * overwrite existing values. Non-secret empty strings are kept as-is.
+ */
+function stripEmptySecrets(obj: Record<string, unknown>): Record<string, unknown> {
+  const result: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(obj)) {
+    if (SECRET_KEY_PATTERN.test(key) && value === "") {
+      continue; // empty secret = "keep existing"
+    }
+    if (key === "secretsConfigured") {
+      continue; // strip metadata field that the frontend may echo back
+    }
+    if (value && typeof value === "object" && !Array.isArray(value)) {
+      result[key] = stripEmptySecrets(value as Record<string, unknown>);
     } else {
       result[key] = value;
     }
@@ -58,7 +92,7 @@ export async function handleChannelRoutes(
   if (configType && req.method === "GET") {
     if (!requireAuth(req, res, authStore)) return true;
     const config = channelManager.getConfig(configType);
-    sendJson(res, config ? maskSecrets(config) : null);
+    sendJson(res, config ? redactSecrets(config) : null);
     return true;
   }
 
@@ -70,7 +104,8 @@ export async function handleChannelRoutes(
         sendJson(res, { error: "Invalid request body" }, 400);
         return true;
       }
-      await channelManager.updateConfig(configType, updates as Record<string, unknown>);
+      const cleaned = stripEmptySecrets(updates as Record<string, unknown>);
+      await channelManager.updateConfig(configType, cleaned);
       sendJson(res, { success: true });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Bad request";

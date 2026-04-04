@@ -426,6 +426,7 @@ export const zh: LocaleDict = {
     ms: "毫秒",
     configure: "配置",
     configRequired: "需要填写 App ID 和 App Secret 才能启用机器人",
+    secretConfiguredHint: "已配置 — 留空保持不变",
     save: "保存",
     saving: "保存中...",
     directConnect: "直连",

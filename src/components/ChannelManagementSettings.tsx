@@ -112,6 +112,7 @@ interface ChannelState {
   config: Accessor<Record<string, unknown>>;
   configOpen: Accessor<boolean>;
   loading: Accessor<boolean>;
+  secretsConfigured: Accessor<string[]>;
   setConfigOpen: (v: boolean) => void;
   load: () => Promise<void>;
   toggle: () => Promise<void>;
@@ -125,6 +126,7 @@ function createChannelState(def: ChannelDef): ChannelState {
   const [config, setConfig] = createSignal<Record<string, unknown>>({ ...def.defaultConfig });
   const [configOpen, setConfigOpen] = createSignal(false);
   const [loading, setLoading] = createSignal(false);
+  const [secretsConfigured, setSecretsConfigured] = createSignal<string[]>([]);
 
   const refreshStatus = async () => {
     const s = await channelAPI.getStatus(def.type);
@@ -137,13 +139,18 @@ function createChannelState(def: ChannelDef): ChannelState {
       const remote = await channelAPI.getConfig(def.type);
       if (remote?.options) {
         const merged = { ...def.defaultConfig };
+        const configured = Array.isArray(remote.options.secretsConfigured)
+          ? (remote.options.secretsConfigured as string[])
+          : [];
         for (const key of Object.keys(merged)) {
           const val = remote.options[key];
           if (val !== undefined && val !== null) {
             merged[key] = val;
           }
         }
+        delete merged.secretsConfigured;
         setConfig(merged);
+        setSecretsConfigured(configured);
       }
     } catch (error) {
       logger.error(`[ChannelManagement] Failed to load ${def.type}:`, error);
@@ -190,7 +197,7 @@ function createChannelState(def: ChannelDef): ChannelState {
     }
   };
 
-  return { status, config, configOpen, loading, setConfigOpen, load, toggle, save };
+  return { status, config, configOpen, loading, secretsConfigured, setConfigOpen, load, toggle, save };
 }
 
 // ---------------------------------------------------------------------------
@@ -430,6 +437,7 @@ export function ChannelManagementSettings() {
             title={(t().channel as Record<string, string>)[c.def.titleKey] ?? c.def.type}
             fields={c.def.fields!(t)}
             initialConfig={c.state.config()}
+            secretsConfigured={c.state.secretsConfigured()}
             onSave={c.state.save}
           />
         )}

@@ -428,6 +428,7 @@ export interface LocaleDict {
     ms: string;
     configure: string;
     configRequired: string;
+    secretConfiguredHint: string;
     save: string;
     saving: string;
     directConnect: string;
@@ -1030,6 +1031,7 @@ export const en: LocaleDict = {
     ms: "ms",
     configure: "Configure",
     configRequired: "App ID and App Secret are required to enable the bot",
+    secretConfiguredHint: "Configured — leave empty to keep current",
     save: "Save",
     saving: "Saving...",
     directConnect: "Direct",

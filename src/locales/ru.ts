@@ -429,6 +429,7 @@ export const ru: LocaleDict = {
     ms: "мс",
     configure: "Настроить",
     configRequired: "Для включения бота необходимо указать App ID и App Secret Feishu / Lark",
+    secretConfiguredHint: "Настроено — оставьте пустым, чтобы сохранить текущее значение",
     save: "Сохранить",
     saving: "Сохранение...",
     directConnect: "Прямое подключение",

@@ -204,6 +204,15 @@ describe("EngineManager", () => {
       await expect(engineManager.createSession("unknown" as any, "/dir")).rejects.toThrow();
     });
 
+    it("resolves undefined engineType via getDefaultEngineType()", async () => {
+      const mockConv = { id: "conv2", engineType: adapterA.engineType, directory: "/dir", title: "Chat" };
+      (conversationStore.create as any).mockReturnValue(mockConv);
+      // adapterA is running, so getDefaultEngineType() should resolve to it
+      const session = await engineManager.createSession(undefined, "/dir");
+      expect(conversationStore.create).toHaveBeenCalledWith({ engineType: adapterA.engineType, directory: "/dir" });
+      expect(session.id).toBe("conv2");
+    });
+
     it("retrieves and deletes sessions from store and engine", async () => {
       // gets session from store
       (conversationStore.get as any).mockReturnValue({ id: "conv1", engineType: adapterA.engineType });

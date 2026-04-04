@@ -62,7 +62,7 @@ import type {
   UnifiedPermission,
   UnifiedQuestion,
 } from "../../../../src/types/unified";
-import { channelLog, getDefaultEngineFromSettings } from "../../services/logger";
+import { channelLog } from "../../services/logger";
 import type { WebhookServer, WebhookRequest, WebhookResponse } from "../webhook-server";
 
 const LOG_PREFIX = "[Teams]";
@@ -682,7 +682,7 @@ export class TeamsAdapter extends ChannelAdapter {
     chatId: string,
     project: {
       directory: string;
-      engineType: EngineType;
+      engineType?: EngineType;
       projectId: string;
     },
     projectName: string,
@@ -708,7 +708,7 @@ export class TeamsAdapter extends ChannelAdapter {
     chatId: string,
     project: {
       directory: string;
-      engineType: EngineType;
+      engineType?: EngineType;
       projectId: string;
     },
     projectName: string,
@@ -722,7 +722,7 @@ export class TeamsAdapter extends ChannelAdapter {
 
       const tempSession: TeamsTempSession = {
         conversationId: session.id,
-        engineType: project.engineType,
+        engineType: session.engineType,
         directory: project.directory,
         projectId: project.projectId,
         lastActiveAt: Date.now(),
@@ -758,7 +758,7 @@ export class TeamsAdapter extends ChannelAdapter {
     chatId: string,
     project: {
       directory: string;
-      engineType: EngineType;
+      engineType?: EngineType;
       projectId: string;
     },
     text: string,
@@ -773,7 +773,7 @@ export class TeamsAdapter extends ChannelAdapter {
 
       const tempSession: TeamsTempSession = {
         conversationId: session.id,
-        engineType: project.engineType,
+        engineType: session.engineType,
         directory: project.directory,
         projectId: project.projectId,
         lastActiveAt: Date.now(),
@@ -938,7 +938,7 @@ export class TeamsAdapter extends ChannelAdapter {
 
     const projectRef = {
       directory: project.directory,
-      engineType: project.engineType || getDefaultEngineFromSettings(),
+      engineType: project.engineType,
       projectId: project.id,
     };
     this.sessionMapper.setP2PLastProject(chatId, projectRef);
@@ -954,7 +954,7 @@ export class TeamsAdapter extends ChannelAdapter {
     pending: TeamsPendingSelection,
   ): Promise<boolean> {
     const trimmed = text.trim().toLowerCase();
-    if (!pending.engineType || !pending.directory || !pending.projectId) {
+    if (!pending.directory || !pending.projectId) {
       return false;
     }
 
@@ -1147,7 +1147,7 @@ export class TeamsAdapter extends ChannelAdapter {
     this.sessionMapper.setPendingSelection(groupChatId, {
       type: "session",
       sessions: filtered,
-      engineType: project.engineType || getDefaultEngineFromSettings(),
+      engineType: project.engineType,
       directory: project.directory,
       projectId: project.id,
       projectName,
@@ -1162,7 +1162,7 @@ export class TeamsAdapter extends ChannelAdapter {
     pending: TeamsPendingSelection,
     serviceUrl: string,
   ): Promise<boolean> {
-    if (!pending.engineType || !pending.directory || !pending.projectId) {
+    if (!pending.directory || !pending.projectId) {
       return false;
     }
     if (!this.gatewayClient) return false;

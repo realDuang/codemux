@@ -684,11 +684,12 @@ export class EngineManager extends EventEmitter {
   }
 
   async createSession(
-    engineType: EngineType,
+    engineType: EngineType | undefined,
     directory: string,
     worktreeId?: string,
   ): Promise<UnifiedSession> {
-    const adapter = this.getAdapterOrThrow(engineType); // Validate engine exists
+    const resolvedType = engineType || this.getDefaultEngineType();
+    const adapter = this.getAdapterOrThrow(resolvedType); // Validate engine exists
 
     // If worktreeId is specified, resolve worktree directory
     let sessionDir = directory;
@@ -702,13 +703,13 @@ export class EngineManager extends EventEmitter {
     }
 
     const conv = conversationStore.create({
-      engineType,
+      engineType: resolvedType,
       directory: sessionDir,
       worktreeId,
       // Remember the original repo directory so worktree sessions group under the right project
       parentDirectory: worktreeId ? directory : undefined,
     });
-    this.sessionEngineMap.set(conv.id, engineType);
+    this.sessionEngineMap.set(conv.id, resolvedType);
 
     // Create the engine session immediately (not lazily on first sendMessage).
     // This ensures that engine-specific initialization (like fetching Copilot skills

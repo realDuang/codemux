@@ -80,7 +80,7 @@ export interface P2PChatState {
   /** Last selected project (for UX continuity) */
   lastSelectedProject?: {
     directory: string;
-    engineType: EngineType;
+    engineType?: EngineType;
     projectId: string;
   };
   /** Pending selection state for text-based command interaction */

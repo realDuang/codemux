@@ -58,7 +58,6 @@ import type {
   UnifiedQuestion,
 } from "../../../../src/types/unified";
 import {
-  getDefaultEngineFromSettings,
   getFeishuChannelLog,
   type ScopedLogger,
 } from "../../services/logger";
@@ -672,7 +671,7 @@ export class FeishuAdapter extends ChannelAdapter {
       if (defaultProject) {
         const defaultRef = {
           directory: defaultProject.directory,
-          engineType: defaultProject.engineType || getDefaultEngineFromSettings(),
+          engineType: defaultProject.engineType,
           projectId: defaultProject.id,
         };
         this.sessionMapper.setP2PLastProject(chatId, defaultRef);
@@ -735,7 +734,7 @@ export class FeishuAdapter extends ChannelAdapter {
       if (defaultProject) {
         const defaultRef = {
           directory: defaultProject.directory,
-          engineType: defaultProject.engineType || getDefaultEngineFromSettings(),
+          engineType: defaultProject.engineType,
           projectId: defaultProject.id,
         };
         this.sessionMapper.setP2PLastProject(chatId, defaultRef);
@@ -750,7 +749,7 @@ export class FeishuAdapter extends ChannelAdapter {
   /** Show session list for a specific project and enter session selection mode */
   private async showSessionListForProject(
     chatId: string,
-    project: { directory: string; engineType: EngineType; projectId: string },
+    project: { directory: string; engineType?: EngineType; projectId: string },
     projectName: string,
   ): Promise<void> {
     if (!this.gatewayClient) return;
@@ -773,7 +772,7 @@ export class FeishuAdapter extends ChannelAdapter {
   private async createNewSessionForProject(
     chatId: string,
     userOpenId: string,
-    project: { directory: string; engineType: EngineType; projectId: string },
+    project: { directory: string; engineType?: EngineType; projectId: string },
     projectName: string,
   ): Promise<void> {
     if (!this.gatewayClient) return;
@@ -785,7 +784,7 @@ export class FeishuAdapter extends ChannelAdapter {
       await this.createGroupForSession(
         userOpenId,
         session.id,
-        project.engineType,
+        session.engineType,
         project.directory,
         project.projectId,
         projectName,
@@ -836,7 +835,7 @@ export class FeishuAdapter extends ChannelAdapter {
   /** Create a temp session for the given project and send the first message */
   private async createTempSessionAndSend(
     chatId: string,
-    project: { directory: string; engineType: EngineType; projectId: string },
+    project: { directory: string; engineType?: EngineType; projectId: string },
     text: string,
   ): Promise<void> {
     if (!this.gatewayClient) return;
@@ -849,7 +848,7 @@ export class FeishuAdapter extends ChannelAdapter {
 
       const tempSession: TempSession = {
         conversationId: session.id,
-        engineType: project.engineType,
+        engineType: session.engineType,
         directory: project.directory,
         projectId: project.projectId,
         lastActiveAt: Date.now(),
@@ -1007,7 +1006,7 @@ export class FeishuAdapter extends ChannelAdapter {
     // Save last selected project
     const projectRef = {
       directory: project.directory,
-      engineType: project.engineType || getDefaultEngineFromSettings(),
+      engineType: project.engineType,
       projectId: project.id,
     };
     this.sessionMapper.setP2PLastProject(chatId, projectRef);
@@ -1026,7 +1025,7 @@ export class FeishuAdapter extends ChannelAdapter {
     const trimmed = text.trim().toLowerCase();
     const p2pState = this.sessionMapper.getP2PChat(chatId);
     const userOpenId = p2pState?.openId;
-    if (!userOpenId || !pending.engineType || !pending.directory || !pending.projectId) {
+    if (!userOpenId || !pending.directory || !pending.projectId) {
       return false;
     }
 

@@ -255,7 +255,7 @@ export class FeishuSessionMapper {
   /** Update the last selected project for a P2P chat */
   setP2PLastProject(
     chatId: string,
-    project: { directory: string; engineType: EngineType; projectId: string },
+    project: { directory: string; engineType?: EngineType; projectId: string },
   ): void {
     const state = this.p2pChats.get(chatId);
     if (state) {

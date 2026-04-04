@@ -631,7 +631,7 @@ export const GatewayNotificationType = {
 // --- Request / Response payload types ---
 
 export interface SessionCreateRequest {
-  engineType: EngineType;
+  engineType?: EngineType;
   directory: string;
   worktreeId?: string;
 }

@@ -39,7 +39,7 @@ export interface BaseP2PChatState {
   /** Last selected project (for UX continuity) */
   lastSelectedProject?: {
     directory: string;
-    engineType: EngineType;
+    engineType?: EngineType;
     projectId: string;
   };
   /** Pending selection state */
@@ -289,7 +289,7 @@ export class BaseSessionMapper<
 
   setP2PLastProject(
     chatId: string,
-    project: { directory: string; engineType: EngineType; projectId: string },
+    project: { directory: string; engineType?: EngineType; projectId: string },
   ): void {
     const state = this.p2pChats.get(chatId);
     if (state) {

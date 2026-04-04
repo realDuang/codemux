@@ -53,6 +53,20 @@ interface LocaleContextType {
 // Create context
 const LocaleContext = createContext<LocaleContextType>();
 
+/**
+ * Re-read locale from settings and update the signal.
+ * Called after host settings bootstrap to apply the host's locale preference.
+ *
+ * SAFETY: _externalSetLocale is only valid because I18nProvider is mounted
+ * once at app root and never unmounted during the app lifecycle.
+ */
+let _externalSetLocale: ((locale: LocaleCode) => void) | null = null;
+
+export function refreshLocaleFromSettings(): void {
+  const nextLocale = getSavedLocale();
+  _externalSetLocale?.(nextLocale);
+}
+
 // Provider component
 export function I18nProvider(props: ParentProps) {
   const [locale, setLocaleSignal] = createSignal<LocaleCode>(getSavedLocale());
@@ -77,20 +91,6 @@ export function I18nProvider(props: ParentProps) {
       {props.children}
     </LocaleContext.Provider>
   );
-}
-
-/**
- * Re-read locale from settings and update the signal.
- * Called after host settings bootstrap to apply the host's locale preference.
- *
- * SAFETY: _externalSetLocale is only valid because I18nProvider is mounted
- * once at app root and never unmounted during the app lifecycle.
- */
-let _externalSetLocale: ((locale: LocaleCode) => void) | null = null;
-
-export function refreshLocaleFromSettings(): void {
-  const nextLocale = getSavedLocale();
-  _externalSetLocale?.(nextLocale);
 }
 
 // Hook to use i18n

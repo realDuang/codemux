@@ -58,3 +58,4 @@ coverage/
 .channels/
 
 continuous-analysis/
+.settings.json

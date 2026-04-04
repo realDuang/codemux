@@ -5,7 +5,6 @@ const SETTINGS_FILE = path.join(process.cwd(), ".settings.json");
 
 function loadSettings(): Record<string, unknown> {
   try {
-    if (!fs.existsSync(SETTINGS_FILE)) return {};
     return JSON.parse(fs.readFileSync(SETTINGS_FILE, "utf-8"));
   } catch {
     return {};

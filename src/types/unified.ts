@@ -96,7 +96,28 @@ export interface UnifiedModelInfo {
     reasoning?: boolean;
     attachment?: boolean;
     toolcall?: boolean;
+    supportedReasoningEfforts?: ReasoningEffort[];
+    defaultReasoningEffort?: ReasoningEffort;
   };
+}
+
+/** Unified reasoning effort level across engines */
+export type ReasoningEffort = "low" | "medium" | "high" | "max";
+
+export const REASONING_EFFORT_VALUES = ["low", "medium", "high", "max"] as const;
+
+export function isReasoningEffort(value: unknown): value is ReasoningEffort {
+  return typeof value === "string" && (REASONING_EFFORT_VALUES as readonly string[]).includes(value);
+}
+
+export function normalizeReasoningEffort(value: unknown): ReasoningEffort | undefined {
+  return isReasoningEffort(value) ? value : undefined;
+}
+
+export function normalizeReasoningEfforts(values: readonly unknown[] | null | undefined): ReasoningEffort[] | undefined {
+  if (!values) return undefined;
+  const normalized = values.filter(isReasoningEffort);
+  return normalized.length > 0 ? normalized : undefined;
 }
 
 /** Result of listing models — includes which model is currently active */
@@ -144,6 +165,7 @@ export interface ConversationMessage {
   /** Unit for the cost field: "usd" (default) or "premium_requests" */
   costUnit?: "usd" | "premium_requests";
   modelId?: string;
+  reasoningEffort?: ReasoningEffort;
   error?: string;
 }
 
@@ -211,6 +233,7 @@ export interface UnifiedMessage {
   /** Unit for the cost field: "usd" (default) or "premium_requests" */
   costUnit?: "usd" | "premium_requests";
   modelId?: string;
+  reasoningEffort?: ReasoningEffort;
   providerId?: string;
   mode?: string;
   error?: string;
@@ -641,6 +664,7 @@ export interface MessageSendRequest {
   content: MessagePromptContent[];
   mode?: string;
   modelId?: string;
+  reasoningEffort?: ReasoningEffort | null;
 }
 
 export interface MessagePromptContent {
@@ -789,6 +813,7 @@ export interface CommandInvokeRequest {
   args: string;
   mode?: string;
   modelId?: string;
+  reasoningEffort?: ReasoningEffort | null;
 }
 
 /** Result of a slash command invocation */

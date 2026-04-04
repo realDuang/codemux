@@ -238,6 +238,10 @@ export interface LocaleDict {
     removeImage: string;
     /** Slash command autocomplete: no matching commands */
     noCommandsFound: string;
+    reasoningEffortLow: string;
+    reasoningEffortMedium: string;
+    reasoningEffortHigh: string;
+    reasoningEffortMax: string;
   };
 
   // Message Parts
@@ -354,6 +358,8 @@ export interface LocaleDict {
     noEngines: string;
     defaultModel: string;
     defaultModelDesc: string;
+    reasoningEffort: string;
+    reasoningEffortDesc: string;
     noModelsAvailable: string;
     modelInputPlaceholder: string;
     enabled: string;
@@ -836,6 +842,10 @@ export const en: LocaleDict = {
     imageLimitReached: "Maximum 4 images per message",
     removeImage: "Remove image",
     noCommandsFound: "No commands found",
+    reasoningEffortLow: "Low",
+    reasoningEffortMedium: "Medium",
+    reasoningEffortHigh: "High",
+    reasoningEffortMax: "Max",
   },
   parts: {
     linkToMessage: "Link to this message",
@@ -950,6 +960,8 @@ export const en: LocaleDict = {
     noEngines: "No engines available",
     defaultModel: "Model",
     defaultModelDesc: "Model used for conversations",
+    reasoningEffort: "Reasoning Effort",
+    reasoningEffortDesc: "Controls how much effort the model puts into reasoning",
     noModelsAvailable: "No models available",
     modelInputPlaceholder: "Enter model ID (e.g. claude-sonnet-4-20250514)",
     enabled: "Enabled",

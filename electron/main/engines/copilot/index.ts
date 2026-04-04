@@ -35,6 +35,7 @@ import type {
   AgentMode,
   MessagePromptContent,
   PermissionReply,
+  ReasoningEffort,
   ToolPart,
   TextPart,
   PermissionOption,
@@ -89,6 +90,7 @@ interface PendingQuestion {
   question: UnifiedQuestion;
 }
 
+type CopilotReasoningEffort = NonNullable<SessionConfig["reasoningEffort"]>;
 export class CopilotSdkAdapter extends EngineAdapter {
   readonly engineType: EngineType = "copilot";
 
@@ -104,6 +106,7 @@ export class CopilotSdkAdapter extends EngineAdapter {
   private currentModelId: string | null = null;
   private cachedModels: UnifiedModelInfo[] = [];
   private sessionModes = new Map<string, string>();
+  private sessionReasoningEfforts = new Map<string, ReasoningEffort>();
   private sessionDirectories = new Map<string, string>();
 
   private sessionTodos = new Map<string, Map<string, { id: string; title: string; status: string }>>();
@@ -364,7 +367,7 @@ export class CopilotSdkAdapter extends EngineAdapter {
   async sendMessage(
     sessionId: string,
     content: MessagePromptContent[],
-    options?: { mode?: string; modelId?: string; directory?: string },
+    options?: { mode?: string; modelId?: string; reasoningEffort?: ReasoningEffort | null; directory?: string },
   ): Promise<UnifiedMessage> {
     const session = await this.ensureActiveSession(sessionId, options?.directory);
     const now = Date.now();
@@ -372,8 +375,25 @@ export class CopilotSdkAdapter extends EngineAdapter {
     if (options?.modelId && options.modelId !== this.currentModelId) {
       this.currentModelId = options.modelId;
       try {
-        await session.rpc.model.switchTo({ modelId: options.modelId });
+        await session.rpc.model.switchTo(this.buildModelSwitchConfig(sessionId, options.modelId));
       } catch (err) {}
+    }
+
+    // Apply reasoning effort if it changed (same pattern as modelId)
+    if (options?.reasoningEffort !== undefined) {
+      const current = this.sessionReasoningEfforts.get(sessionId) ?? null;
+      if (options.reasoningEffort !== current) {
+        if (options.reasoningEffort) {
+          this.sessionReasoningEfforts.set(sessionId, options.reasoningEffort);
+        } else {
+          this.sessionReasoningEfforts.delete(sessionId);
+        }
+        if (this.currentModelId) {
+          try {
+            await session.rpc.model.switchTo(this.buildModelSwitchConfig(sessionId, this.currentModelId));
+          } catch (err) {}
+        }
+      }
     }
 
     if (options?.mode) {
@@ -496,6 +516,7 @@ export class CopilotSdkAdapter extends EngineAdapter {
       reasoningPartId: null,
       startTime: Date.now(),
       modelId: this.currentModelId ?? undefined,
+      reasoningEffort: this.sessionReasoningEfforts.get(sessionId),
     };
     this.messageBuffers.set(sessionId, buffer);
 
@@ -641,7 +662,7 @@ export class CopilotSdkAdapter extends EngineAdapter {
     const session = this.activeSessions.get(sessionId);
     if (session) {
       try {
-        await session.rpc.model.switchTo({ modelId });
+        await session.rpc.model.switchTo(this.buildModelSwitchConfig(sessionId, modelId));
       } catch (err) {}
     }
   }
@@ -657,6 +678,44 @@ export class CopilotSdkAdapter extends EngineAdapter {
         await session.rpc.mode.set({ mode: sdkMode });
       } catch (err) {}
     }
+  }
+
+  // --- Reasoning Effort ---
+
+  override async setReasoningEffort(sessionId: string, effort: ReasoningEffort | null): Promise<void> {
+    if (effort) {
+      this.sessionReasoningEfforts.set(sessionId, effort);
+    } else {
+      this.sessionReasoningEfforts.delete(sessionId);
+    }
+    const session = this.activeSessions.get(sessionId);
+    if (session && this.currentModelId) {
+      try {
+        await session.rpc.model.switchTo(this.buildModelSwitchConfig(sessionId, this.currentModelId));
+      } catch (err) {}
+    }
+  }
+
+  override getReasoningEffort(sessionId: string): ReasoningEffort | null {
+    return this.sessionReasoningEfforts.get(sessionId) ?? null;
+  }
+
+  private buildModelSwitchConfig(sessionId: string, modelId: string): {
+    modelId: string;
+    reasoningEffort?: CopilotReasoningEffort;
+  } {
+    const sdkEffort = this.getSdkReasoningEffort(sessionId);
+    return sdkEffort ? { modelId, reasoningEffort: sdkEffort } : { modelId };
+  }
+
+  /** Map unified reasoning effort to Copilot SDK's ReasoningEffort */
+  private toSdkReasoningEffort(effort: ReasoningEffort): CopilotReasoningEffort {
+    return effort === "max" ? "xhigh" : effort;
+  }
+
+  private getSdkReasoningEffort(sessionId: string): CopilotReasoningEffort | undefined {
+    const effort = this.sessionReasoningEfforts.get(sessionId);
+    return effort ? this.toSdkReasoningEffort(effort) : undefined;
   }
 
   async replyPermission(permissionId: string, reply: PermissionReply, _sessionId?: string): Promise<void> {
@@ -920,10 +979,12 @@ export class CopilotSdkAdapter extends EngineAdapter {
     this.ensureClient();
 
     const workingDirectory = directory || this.sessionDirectories.get(sessionId);
+    const sdkReasoningEffort = this.getSdkReasoningEffort(sessionId);
     const config: ResumeSessionConfig = {
       streaming: true,
       workingDirectory,
       model: this.currentModelId ?? undefined,
+      ...(sdkReasoningEffort ? { reasoningEffort: sdkReasoningEffort } : {}),
       systemMessage: { mode: "append" as const, content: CODEMUX_IDENTITY_PROMPT },
       onPermissionRequest: (req, ctx) => this.handlePermissionRequest(req as any, ctx),
       onUserInputRequest: (req, ctx) => this.handleUserInputRequest(req as any, ctx),
@@ -945,6 +1006,7 @@ export class CopilotSdkAdapter extends EngineAdapter {
           streaming: true,
           workingDirectory,
           model: this.currentModelId ?? undefined,
+          ...(sdkReasoningEffort ? { reasoningEffort: sdkReasoningEffort } : {}),
           systemMessage: { mode: "append" as const, content: CODEMUX_IDENTITY_PROMPT },
           onPermissionRequest: (req, ctx) => this.handlePermissionRequest(req as any, ctx),
           onUserInputRequest: (req, ctx) => this.handleUserInputRequest(req as any, ctx),
@@ -1298,7 +1360,7 @@ export class CopilotSdkAdapter extends EngineAdapter {
   }
 
   private bufferToMessage(buffer: MessageBuffer, completed: boolean): UnifiedMessage {
-    return { id: buffer.messageId, sessionId: buffer.sessionId, role: "assistant", time: { created: buffer.startTime, completed: completed ? Date.now() : undefined }, parts: [...buffer.parts], tokens: buffer.tokens, cost: buffer.cost, costUnit: buffer.costUnit, modelId: buffer.modelId || this.currentModelId || undefined, error: buffer.error, workingDirectory: this.sessionDirectories.get(buffer.sessionId) };
+    return { id: buffer.messageId, sessionId: buffer.sessionId, role: "assistant", time: { created: buffer.startTime, completed: completed ? Date.now() : undefined }, parts: [...buffer.parts], tokens: buffer.tokens, cost: buffer.cost, costUnit: buffer.costUnit, modelId: buffer.modelId || this.currentModelId || undefined, reasoningEffort: buffer.reasoningEffort, error: buffer.error, workingDirectory: this.sessionDirectories.get(buffer.sessionId) };
   }
 
   private appendMessageToHistory(sessionId: string, message: UnifiedMessage): void {

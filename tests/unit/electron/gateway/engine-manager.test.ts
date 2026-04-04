@@ -84,6 +84,8 @@ class MockEngineAdapter extends EngineAdapter {
   setModel = vi.fn(async () => {});
   getModes = vi.fn(() => []);
   setMode = vi.fn(async () => {});
+  setReasoningEffort = vi.fn(async () => {});
+  getReasoningEffort = vi.fn(() => null);
   replyPermission = vi.fn(async () => {});
   replyQuestion = vi.fn(async () => {});
   rejectQuestion = vi.fn(async () => {});
@@ -330,7 +332,7 @@ describe("EngineManager", () => {
       (conversationStore.get as any).mockReturnValue({ id: "conv1", engineType: adapterA.engineType, engineSessionId: "s1" });
     });
 
-    it("delegates model and mode operations to the adapter", async () => {
+    it("delegates model, mode, and reasoning effort operations to the adapter", async () => {
       await engineManager.listModels(adapterA.engineType);
       expect(adapterA.listModels).toHaveBeenCalled();
 

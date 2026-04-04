@@ -1,5 +1,5 @@
 import { createStore } from "solid-js/store";
-import type { EngineInfo, EngineType, UnifiedModelInfo } from "../types/unified";
+import { isReasoningEffort, type EngineInfo, type EngineType, type ReasoningEffort, type UnifiedModelInfo } from "../types/unified";
 import { getSetting, saveSetting, getNestedSetting, saveNestedSetting } from "../lib/settings";
 
 export interface EngineModelSelection {
@@ -24,6 +24,8 @@ interface ConfigState {
   enabledEngines: Record<string, boolean>;
   /** User-chosen default engine for new sessions, persisted to settings.json */
   defaultNewSessionEngine: EngineType | null;
+  /** User-selected reasoning effort per engine type, persisted to settings.json */
+  engineReasoningEfforts: Record<string, ReasoningEffort>;
 }
 
 export const [configStore, setConfigStore] = createStore<ConfigState>({
@@ -37,6 +39,7 @@ export const [configStore, setConfigStore] = createStore<ConfigState>({
   engineModelSelections: {},
   enabledEngines: {},
   defaultNewSessionEngine: null,
+  engineReasoningEfforts: {},
 });
 
 export function loadEngineModelSelection(engineType: string): EngineModelSelection | null {
@@ -175,5 +178,58 @@ export function restoreEnabledEngines(): void {
     // Only set explicit false; missing/true both mean enabled
     const enabled = saved?.enabled !== false;
     setConfigStore("enabledEngines", engine.type, enabled);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Reasoning effort per engine
+// ---------------------------------------------------------------------------
+
+/** Save reasoning effort for an engine and persist to settings.json. */
+export function saveReasoningEffort(engineType: string, effort: ReasoningEffort): void {
+  setConfigStore("engineReasoningEfforts", engineType, effort);
+  saveNestedSetting(`engineReasoningEfforts.${engineType}`, effort);
+}
+
+/** Load persisted reasoning effort for an engine. */
+export function loadReasoningEffort(engineType: string): ReasoningEffort | null {
+  const saved = getNestedSetting<string>(`engineReasoningEfforts.${engineType}`);
+  if (isReasoningEffort(saved)) return saved;
+  return null;
+}
+
+/**
+ * Get the reasoning effort that is actually effective for the currently selected
+ * model of an engine.
+ *
+ * This validates the saved effort against the selected model's supported effort
+ * list and falls back to the model default when the saved value is no longer
+ * applicable.
+ */
+export function getEffectiveReasoningEffortForEngine(engineType: string): ReasoningEffort | null {
+  const saved = configStore.engineReasoningEfforts[engineType] ?? null;
+  const modelId = getSelectedModelForEngine(engineType);
+  const models = configStore.engineModels[engineType] || configStore.models;
+  const model = modelId ? models.find((m) => m.modelId === modelId) : undefined;
+
+  if (!model) {
+    return saved ?? null;
+  }
+
+  const supported = model.capabilities?.supportedReasoningEfforts;
+  if (saved && supported?.includes(saved)) {
+    return saved;
+  }
+
+  return model.capabilities?.defaultReasoningEffort ?? null;
+}
+
+/** Restore persisted reasoning efforts for all known engines into the store. */
+export function restoreReasoningEfforts(): void {
+  for (const engine of configStore.engines) {
+    const saved = loadReasoningEffort(engine.type);
+    if (saved) {
+      setConfigStore("engineReasoningEfforts", engine.type, saved);
+    }
   }
 }

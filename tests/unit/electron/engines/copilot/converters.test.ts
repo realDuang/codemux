@@ -232,7 +232,7 @@ describe('copilot-converters', () => {
         capabilities: {
           supports: {
             vision: true,
-            reasoningEffort: 'high',
+            reasoningEffort: true,
           } as any,
           limits: {
             max_context_window_tokens: 128000,
@@ -247,6 +247,76 @@ describe('copilot-converters', () => {
       expect(unified.capabilities?.attachment).toBe(true);
       expect(unified.capabilities?.reasoning).toBe(true);
       expect(unified.meta?.maxContextTokens).toBe(128000);
+    });
+
+    it('maps supportedReasoningEfforts with xhigh → max', () => {
+      const sdkModel: ModelInfo = {
+        id: 'o3',
+        name: 'O3',
+        capabilities: { supports: { vision: false, reasoningEffort: true } as any, limits: { max_context_window_tokens: 200000 } },
+        supportedReasoningEfforts: ['low', 'medium', 'high', 'xhigh'] as any,
+        defaultReasoningEffort: 'high' as any,
+      } as any;
+
+      const unified = sdkModelToUnified('copilot', sdkModel);
+      expect(unified.capabilities?.supportedReasoningEfforts).toEqual(['low', 'medium', 'high', 'max']);
+      expect(unified.capabilities?.defaultReasoningEffort).toBe('high');
+    });
+
+    it('maps defaultReasoningEffort xhigh → max', () => {
+      const sdkModel: ModelInfo = {
+        id: 'o3-max',
+        name: 'O3 Max',
+        capabilities: { supports: { vision: false, reasoningEffort: true } as any, limits: { max_context_window_tokens: 200000 } },
+        supportedReasoningEfforts: ['high', 'xhigh'] as any,
+        defaultReasoningEffort: 'xhigh' as any,
+      } as any;
+
+      const unified = sdkModelToUnified('copilot', sdkModel);
+      expect(unified.capabilities?.supportedReasoningEfforts).toEqual(['high', 'max']);
+      expect(unified.capabilities?.defaultReasoningEffort).toBe('max');
+    });
+
+    it('returns undefined reasoning efforts when model has no reasoning support', () => {
+      const sdkModel: ModelInfo = {
+        id: 'gpt-4o-mini',
+        name: 'GPT-4o Mini',
+        capabilities: { supports: { vision: true } as any, limits: { max_context_window_tokens: 128000 } },
+      } as any;
+
+      const unified = sdkModelToUnified('copilot', sdkModel);
+      expect(unified.capabilities?.reasoning).toBe(false);
+      expect(unified.capabilities?.supportedReasoningEfforts).toBeUndefined();
+      expect(unified.capabilities?.defaultReasoningEffort).toBeUndefined();
+    });
+
+    it('does not expose reasoning support when the SDK reports reasoningEffort: false', () => {
+      const sdkModel: ModelInfo = {
+        id: 'gpt-4o',
+        name: 'GPT-4o',
+        capabilities: { supports: { vision: true, reasoningEffort: false }, limits: { max_context_window_tokens: 128000 } },
+        supportedReasoningEfforts: ['low', 'medium'] as any,
+        defaultReasoningEffort: 'medium' as any,
+      } as any;
+
+      const unified = sdkModelToUnified('copilot', sdkModel);
+      expect(unified.capabilities?.reasoning).toBe(false);
+      expect(unified.capabilities?.supportedReasoningEfforts).toBeUndefined();
+      expect(unified.capabilities?.defaultReasoningEffort).toBeUndefined();
+    });
+
+    it('filters invalid reasoning effort values from Copilot model metadata', () => {
+      const sdkModel: ModelInfo = {
+        id: 'o3-filtered',
+        name: 'O3 Filtered',
+        capabilities: { supports: { vision: false, reasoningEffort: true } as any, limits: { max_context_window_tokens: 200000 } },
+        supportedReasoningEfforts: ['low', 'turbo', 'xhigh'] as any,
+        defaultReasoningEffort: 'turbo' as any,
+      } as any;
+
+      const unified = sdkModelToUnified('copilot', sdkModel);
+      expect(unified.capabilities?.supportedReasoningEfforts).toEqual(['low', 'max']);
+      expect(unified.capabilities?.defaultReasoningEffort).toBeUndefined();
     });
   });
 

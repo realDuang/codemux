@@ -596,13 +596,14 @@ export function SessionTurn(props: SessionTurnProps) {
     return formatDuration(startTime, Date.now());
   });
 
-  // Get model info from the first assistant message
+  // Get model info from the first assistant message.
   const modelInfo = createMemo(() => {
     const firstAssistant = props.assistantMessages[0];
     if (firstAssistant) {
       return {
         providerID: firstAssistant.providerId,
         modelID: firstAssistant.modelId,
+        reasoningEffort: firstAssistant.reasoningEffort,
       };
     }
     return undefined;
@@ -828,7 +829,7 @@ export function SessionTurn(props: SessionTurnProps) {
                     data-visible={!props.isWorking ? "true" : "false"}
                   >
                     <Show when={modelInfo()?.modelID}>
-                      <span class={styles.modelIcon} title={`${modelInfo()?.providerID} / ${modelInfo()?.modelID}`}>
+                      <span class={styles.modelIcon} title={`${modelInfo()?.providerID} / ${modelInfo()?.modelID}${modelInfo()?.reasoningEffort ? ` (${modelInfo()!.reasoningEffort})` : ""}`}>
                         <ProviderIcon model={modelInfo()?.modelID || ""} size={14} />
                       </span>
                     </Show>

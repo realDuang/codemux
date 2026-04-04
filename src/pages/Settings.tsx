@@ -4,10 +4,12 @@ import { LanguageSwitcher } from "../components/LanguageSwitcher";
 import { ThemeSwitcher } from "../components/ThemeSwitcher";
 import ImportHistoryModal from "../components/ImportHistoryModal";
 import { useI18n } from "../lib/i18n";
+import { logger } from "../lib/logger";
 import { useAuthGuard } from "../lib/useAuthGuard";
 import { isElectron } from "../lib/platform";
 import { Auth } from "../lib/auth";
 import { configStore, saveEngineModelSelection, isEngineEnabled, setEngineEnabled } from "../stores/config";
+import { ReasoningEffortSelector } from "../components/ReasoningEffortSelector";
 import { sessionStore, setSessionStore } from "../stores/session";
 import { setScheduledTaskStore } from "../stores/scheduled-task";
 import { gateway } from "../lib/gateway-api";
@@ -537,6 +539,15 @@ export default function Settings() {
                                 </Show>
                               </div>
                             </div>
+                          </Show>
+
+                          {/* Reasoning effort selector - only for running + enabled engines */}
+                          <Show when={showModelSelector() && isEngineEnabled(engine.type)}>
+                            <ReasoningEffortSelector
+                              engineType={engine.type}
+                              models={models}
+                              selectedModelId={selectedModelId}
+                            />
                           </Show>
 
                           {/* Import History button - only for running + enabled engines */}

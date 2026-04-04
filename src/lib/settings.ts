@@ -19,17 +19,7 @@
 
 import { isElectron } from "./platform";
 import { Auth } from "./auth";
-
-/** Keys that are synchronized between web clients and the host. */
-const SHARED_SETTINGS_KEYS: ReadonlySet<string> = new Set([
-  "theme",
-  "locale",
-  "engineModels",
-  "defaultEngine",
-  "showDefaultWorkspace",
-  "scheduledTasksEnabled",
-  "worktreeEnabled",
-]);
+import { isSharedSettingsKey } from "../../shared/settings-keys";
 
 // ---------------------------------------------------------------------------
 // Renderer-side settings cache
@@ -104,19 +94,16 @@ export function saveSetting(key: string, value: unknown): void {
   }
 
   // In web mode, also write back to host so the setting persists across refreshes
-  if (!isElectron() && SHARED_SETTINGS_KEYS.has(key) && Auth.isAuthenticated() && typeof fetch === "function") {
+  if (!isElectron() && isSharedSettingsKey(key) && Auth.isAuthenticated() && typeof fetch === "function") {
     try {
-      const p = fetch("/api/settings/shared", {
+      fetch("/api/settings/shared", {
         method: "PATCH",
         headers: {
           "Content-Type": "application/json",
           ...Auth.getAuthHeaders(),
         },
         body: JSON.stringify({ [key]: value }),
-      });
-      if (p && typeof p.catch === "function") {
-        p.catch(() => {});
-      }
+      }).catch(() => {});
     } catch {
       // Best-effort — swallow errors
     }
@@ -184,7 +171,10 @@ export async function bootstrapHostSettings(): Promise<boolean> {
     const res = await fetch("/api/settings/shared", {
       headers: Auth.getAuthHeaders(),
     });
-    if (!res.ok) return false;
+    if (!res.ok) {
+      console.debug("[Settings] Host settings bootstrap failed:", res.status);
+      return false;
+    }
 
     const data = await res.json();
     const settings = data.settings as Record<string, unknown> | undefined;
@@ -202,7 +192,8 @@ export async function bootstrapHostSettings(): Promise<boolean> {
 
     _bootstrapDone = true;
     return true;
-  } catch {
+  } catch (err) {
+    console.debug("[Settings] Host settings bootstrap error:", err);
     return false;
   }
 }

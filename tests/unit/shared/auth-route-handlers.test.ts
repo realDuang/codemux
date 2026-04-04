@@ -434,5 +434,69 @@ describe('auth-route-handlers', () => {
       expect(await handleSettingsRoutes(req, mockRes, pathname, mockStore, readOnlyFns)).toBe(true);
       expect(mockRes.writeHead).toHaveBeenCalledWith(501, expect.any(Object));
     });
+
+    it('PATCH rejects invalid theme value', async () => {
+      const pathname = '/api/settings/shared';
+      const req = createMockReq(pathname, 'PATCH', { theme: 'invalid-theme' });
+      req.headers.authorization = 'Bearer valid-token';
+      mockStore.verifyToken.mockReturnValue({ valid: true, deviceId: 'dev1' });
+
+      expect(await handleSettingsRoutes(req, mockRes, pathname, mockStore, mockSettingsFns)).toBe(true);
+      expect(mockRes.writeHead).toHaveBeenCalledWith(400, expect.any(Object));
+      expect(mockSettingsFns.saveSettings).not.toHaveBeenCalled();
+    });
+
+    it('PATCH rejects non-boolean for boolean settings', async () => {
+      const pathname = '/api/settings/shared';
+      const req = createMockReq(pathname, 'PATCH', { worktreeEnabled: 'yes' });
+      req.headers.authorization = 'Bearer valid-token';
+      mockStore.verifyToken.mockReturnValue({ valid: true, deviceId: 'dev1' });
+
+      expect(await handleSettingsRoutes(req, mockRes, pathname, mockStore, mockSettingsFns)).toBe(true);
+      expect(mockRes.writeHead).toHaveBeenCalledWith(400, expect.any(Object));
+      expect(mockSettingsFns.saveSettings).not.toHaveBeenCalled();
+    });
+
+    it('PATCH rejects engineModels with prototype-pollution keys', async () => {
+      const pathname = '/api/settings/shared';
+      // Simulate a body that bypasses JSON.parse __proto__ stripping by using
+      // "constructor" or "prototype" as engine keys
+      const req = createMockReq(pathname, 'PATCH', {
+        engineModels: { constructor: { modelID: 'evil' } },
+      });
+      req.headers.authorization = 'Bearer valid-token';
+      mockStore.verifyToken.mockReturnValue({ valid: true, deviceId: 'dev1' });
+
+      expect(await handleSettingsRoutes(req, mockRes, pathname, mockStore, mockSettingsFns)).toBe(true);
+      expect(mockRes.writeHead).toHaveBeenCalledWith(400, expect.any(Object));
+      expect(mockSettingsFns.saveSettings).not.toHaveBeenCalled();
+    });
+
+    it('PATCH accepts valid engineModels', async () => {
+      const pathname = '/api/settings/shared';
+      const req = createMockReq(pathname, 'PATCH', {
+        engineModels: { claude: { providerID: 'anthropic', modelID: 'sonnet', enabled: true } },
+      });
+      req.headers.authorization = 'Bearer valid-token';
+      mockStore.verifyToken.mockReturnValue({ valid: true, deviceId: 'dev1' });
+
+      expect(await handleSettingsRoutes(req, mockRes, pathname, mockStore, mockSettingsFns)).toBe(true);
+      expect(mockSettingsFns.saveSettings).toHaveBeenCalledWith({
+        engineModels: { claude: { providerID: 'anthropic', modelID: 'sonnet', enabled: true } },
+      });
+    });
+
+    it('PATCH rejects engineModels with non-object engine values', async () => {
+      const pathname = '/api/settings/shared';
+      const req = createMockReq(pathname, 'PATCH', {
+        engineModels: { claude: 'not-an-object' },
+      });
+      req.headers.authorization = 'Bearer valid-token';
+      mockStore.verifyToken.mockReturnValue({ valid: true, deviceId: 'dev1' });
+
+      expect(await handleSettingsRoutes(req, mockRes, pathname, mockStore, mockSettingsFns)).toBe(true);
+      expect(mockRes.writeHead).toHaveBeenCalledWith(400, expect.any(Object));
+      expect(mockSettingsFns.saveSettings).not.toHaveBeenCalled();
+    });
   });
 });

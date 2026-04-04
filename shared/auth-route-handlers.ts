@@ -1,6 +1,7 @@
 import type { IncomingMessage, ServerResponse } from "http";
 import { sendJson, parseBody, extractBearerToken, getClientIp, isLocalhost } from "./http-utils";
 import type { DeviceInfo, PendingRequest } from "./device-store-types";
+import { SHARED_SETTINGS_KEYS, isSharedSettingsKey, isValidSharedSettingValue } from "./settings-keys";
 
 // =============================================================================
 // Shared auth route handlers for auth-api-server and production-server.
@@ -165,20 +166,10 @@ export async function handleLogRoutes(
 }
 
 // -----------------------------------------------------------------------------
-// Settings route dispatcher (auth-required, read-only).
+// Settings route dispatcher (auth-required).
 // Returns filtered host settings so web clients can bootstrap on page load.
+// Accepts PATCH to write shared settings back to the host.
 // -----------------------------------------------------------------------------
-
-/** Settings keys safe to expose to authenticated web clients. */
-const SHARED_SETTINGS_KEYS = [
-  "theme",
-  "locale",
-  "engineModels",
-  "defaultEngine",
-  "showDefaultWorkspace",
-  "scheduledTasksEnabled",
-  "worktreeEnabled",
-] as const;
 
 function filterSharedSettings(settings: Record<string, unknown>): Record<string, unknown> {
   const filtered: Record<string, unknown> = {};
@@ -220,11 +211,14 @@ export async function handleSettingsRoutes(
       sendJson(res, { error: "Invalid body" }, 400);
       return true;
     }
-    // Validate: only shared keys are accepted
     const patch: Record<string, unknown> = {};
     for (const [key, value] of Object.entries(body as Record<string, unknown>)) {
-      if (!(SHARED_SETTINGS_KEYS as readonly string[]).includes(key)) {
+      if (!isSharedSettingsKey(key)) {
         sendJson(res, { error: `Key "${key}" is not a shared setting` }, 400);
+        return true;
+      }
+      if (!isValidSharedSettingValue(key, value)) {
+        sendJson(res, { error: `Invalid value for "${key}"` }, 400);
         return true;
       }
       patch[key] = value;

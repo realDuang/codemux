@@ -82,6 +82,9 @@ export function I18nProvider(props: ParentProps) {
 /**
  * Re-read locale from settings and update the signal.
  * Called after host settings bootstrap to apply the host's locale preference.
+ *
+ * SAFETY: _externalSetLocale is only valid because I18nProvider is mounted
+ * once at app root and never unmounted during the app lifecycle.
  */
 let _externalSetLocale: ((locale: LocaleCode) => void) | null = null;
 

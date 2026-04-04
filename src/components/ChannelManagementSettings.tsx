@@ -425,6 +425,7 @@ export function ChannelManagementSettings() {
         isOpen={channelMap.feishu.configOpen()}
         onClose={() => channelMap.feishu.setConfigOpen(false)}
         initialConfig={channelMap.feishu.config() as Record<string, unknown> & { platform: "feishu" | "lark"; appId: string; appSecret: string; autoApprovePermissions: boolean; streamingThrottleMs: number }}
+        secretsConfigured={channelMap.feishu.secretsConfigured()}
         onSave={(cfg) => channelMap.feishu.save(cfg as unknown as Record<string, unknown>)}
       />
 

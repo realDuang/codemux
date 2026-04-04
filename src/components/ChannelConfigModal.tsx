@@ -36,6 +36,8 @@ export function ChannelConfigModal(props: ChannelConfigModalProps) {
   const hasRequiredFields = createMemo(() => {
     return props.fields.every((field) => {
       if (!field.required) return true;
+      // Secret already configured on server — empty means "keep existing"
+      if (field.type === "password" && props.secretsConfigured?.includes(field.key)) return true;
       const val = config()[field.key];
       if (typeof val === "string") return val.trim() !== "";
       if (typeof val === "number") return Number.isFinite(val);

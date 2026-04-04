@@ -13,6 +13,8 @@ interface FeishuConfigModalProps {
   isOpen: boolean;
   onClose: () => void;
   initialConfig: FeishuConfig;
+  /** Secret field keys that are already configured on the server. */
+  secretsConfigured?: string[];
   onSave: (config: FeishuConfig) => Promise<void>;
 }
 
@@ -20,6 +22,12 @@ export function FeishuConfigModal(props: FeishuConfigModalProps) {
   const { t } = useI18n();
   const [config, setConfig] = createSignal<FeishuConfig>({ ...props.initialConfig });
   const [saving, setSaving] = createSignal(false);
+
+  const isSecretSatisfied = (key: string) => {
+    const val = config()[key as keyof FeishuConfig];
+    if (typeof val === "string" && val.trim() !== "") return true;
+    return props.secretsConfigured?.includes(key) ?? false;
+  };
 
   // Sync local state when modal opens with new initialConfig
   createEffect(() => {
@@ -129,7 +137,7 @@ export function FeishuConfigModal(props: FeishuConfigModalProps) {
                 type="password"
                 value={config().appSecret}
                 onInput={(e) => setConfig((prev) => ({ ...prev, appSecret: e.currentTarget.value }))}
-                placeholder={t().channel.appSecretPlaceholder}
+                placeholder={props.secretsConfigured?.includes("appSecret") ? t().channel.secretConfiguredHint : t().channel.appSecretPlaceholder}
                 class="w-full px-3 py-2 text-sm rounded-lg border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
               />
             </div>
@@ -153,7 +161,7 @@ export function FeishuConfigModal(props: FeishuConfigModalProps) {
             </div>
 
             {/* Config required hint */}
-            <Show when={!config().appId || !config().appSecret}>
+            <Show when={!config().appId || !isSecretSatisfied("appSecret")}>
               <p class="text-xs text-gray-400 dark:text-gray-500">
                 {t().channel.configRequired}
               </p>
@@ -170,7 +178,7 @@ export function FeishuConfigModal(props: FeishuConfigModalProps) {
             </button>
             <button
               onClick={handleSave}
-              disabled={saving() || !config().appId || !config().appSecret}
+              disabled={saving() || !config().appId || !isSecretSatisfied("appSecret")}
               class="px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg transition-colors"
             >
               {saving() ? t().channel.saving : t().common.save}

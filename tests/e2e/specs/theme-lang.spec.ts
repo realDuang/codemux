@@ -17,12 +17,12 @@ test.describe("Theme & Language", () => {
     expect(htmlBefore).not.toContain("dark");
 
     // Open the theme dropdown — ThemeSwitcher button shows current theme label
-    const themeToggle = page.getByRole("button", { name: /Light|Dark|System|亮色|暗色|跟随系统/i });
+    const themeToggle = page.getByRole("button", { name: /Light|Dark|System|亮色|暗色|跟随系统/i }).first();
     await themeToggle.click();
     await page.waitForTimeout(300);
 
     // Click the "Dark" option in the dropdown
-    const darkOption = page.getByRole("button", { name: /Dark|暗色/i });
+    const darkOption = page.getByRole("button", { name: /^Dark$|^暗色$/ });
     await darkOption.click();
     await page.waitForTimeout(300);
 

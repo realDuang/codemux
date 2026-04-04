@@ -53,7 +53,7 @@ import type {
   UnifiedPermission,
   UnifiedQuestion,
 } from "../../../../src/types/unified";
-import { channelLog, getDefaultEngineFromSettings } from "../../services/logger";
+import { channelLog } from "../../services/logger";
 
 // ============================================================================
 // XML Parsing Helper
@@ -594,7 +594,7 @@ export class WeComAdapter extends ChannelAdapter {
 
   private async showSessionListForProject(
     chatId: string,
-    project: { directory: string; engineType: EngineType; projectId: string },
+    project: { directory: string; engineType?: EngineType; projectId: string },
     projectName: string,
   ): Promise<void> {
     if (!this.gatewayClient || !this.transport) return;
@@ -616,7 +616,7 @@ export class WeComAdapter extends ChannelAdapter {
   private async createNewSessionForProject(
     chatId: string,
     userId: string,
-    project: { directory: string; engineType: EngineType; projectId: string },
+    project: { directory: string; engineType?: EngineType; projectId: string },
     projectName: string,
   ): Promise<void> {
     if (!this.gatewayClient || !this.transport) return;
@@ -631,7 +631,7 @@ export class WeComAdapter extends ChannelAdapter {
       // mode: messages are exchanged directly in the user↔bot chat.
       const tempSession: BaseTempSession = {
         conversationId: session.id,
-        engineType: project.engineType,
+        engineType: session.engineType,
         directory: project.directory,
         projectId: project.projectId,
         lastActiveAt: Date.now(),
@@ -682,7 +682,7 @@ export class WeComAdapter extends ChannelAdapter {
 
     const projectRef = {
       directory: project.directory,
-      engineType: project.engineType || getDefaultEngineFromSettings(),
+      engineType: project.engineType,
       projectId: project.id,
     };
     this.sessionMapper.setP2PLastProject(chatId, projectRef);
@@ -698,7 +698,7 @@ export class WeComAdapter extends ChannelAdapter {
     pending: BasePendingSelection,
   ): Promise<boolean> {
     const trimmed = text.trim().toLowerCase();
-    if (!pending.engineType || !pending.directory || !pending.projectId) {
+    if (!pending.directory || !pending.projectId) {
       return false;
     }
 
@@ -759,7 +759,7 @@ export class WeComAdapter extends ChannelAdapter {
 
   private async createTempSessionAndSend(
     chatId: string,
-    project: { directory: string; engineType: EngineType; projectId: string },
+    project: { directory: string; engineType?: EngineType; projectId: string },
     text: string,
   ): Promise<void> {
     if (!this.gatewayClient) return;
@@ -772,7 +772,7 @@ export class WeComAdapter extends ChannelAdapter {
 
       const tempSession: BaseTempSession = {
         conversationId: session.id,
-        engineType: project.engineType,
+        engineType: session.engineType,
         directory: project.directory,
         projectId: project.projectId,
         lastActiveAt: Date.now(),

@@ -26,7 +26,7 @@
 .sep { color: #d1d5db; }
 :global(.dark) .sep { color: #52525b; }
 .cost { /* inherits */ }
-.model { max-width: 10rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.model { max-width: 16rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .chevron {
   display: inline-flex;

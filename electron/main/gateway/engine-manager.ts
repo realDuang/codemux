@@ -21,6 +21,7 @@ import type {
   AgentMode,
   MessagePromptContent,
   PermissionReply,
+  ReasoningEffort,
   ConversationMeta,
   ConversationMessage,
   ImportableSession,
@@ -429,6 +430,7 @@ export class EngineManager extends EventEmitter {
         cost: message.cost,
         costUnit: message.costUnit,
         modelId: message.modelId,
+        reasoningEffort: message.reasoningEffort,
         error: message.error,
       };
 
@@ -684,11 +686,12 @@ export class EngineManager extends EventEmitter {
   }
 
   async createSession(
-    engineType: EngineType,
+    engineType: EngineType | undefined,
     directory: string,
     worktreeId?: string,
   ): Promise<UnifiedSession> {
-    const adapter = this.getAdapterOrThrow(engineType); // Validate engine exists
+    const resolvedType = engineType || this.getDefaultEngineType();
+    const adapter = this.getAdapterOrThrow(resolvedType); // Validate engine exists
 
     // If worktreeId is specified, resolve worktree directory
     let sessionDir = directory;
@@ -702,13 +705,13 @@ export class EngineManager extends EventEmitter {
     }
 
     const conv = conversationStore.create({
-      engineType,
+      engineType: resolvedType,
       directory: sessionDir,
       worktreeId,
       // Remember the original repo directory so worktree sessions group under the right project
       parentDirectory: worktreeId ? directory : undefined,
     });
-    this.sessionEngineMap.set(conv.id, engineType);
+    this.sessionEngineMap.set(conv.id, resolvedType);
 
     // Create the engine session immediately (not lazily on first sendMessage).
     // This ensures that engine-specific initialization (like fetching Copilot skills
@@ -824,7 +827,7 @@ export class EngineManager extends EventEmitter {
   async sendMessage(
     sessionId: string,
     content: MessagePromptContent[],
-    options?: { mode?: string; modelId?: string },
+    options?: { mode?: string; modelId?: string; reasoningEffort?: ReasoningEffort | null },
   ): Promise<UnifiedMessage> {
     this.activeSessions.add(sessionId);
     try {
@@ -956,6 +959,7 @@ export class EngineManager extends EventEmitter {
         cost: msg.cost,
         costUnit,
         modelId: msg.modelId,
+        reasoningEffort: msg.reasoningEffort,
         error: msg.error,
       };
     });
@@ -983,7 +987,7 @@ export class EngineManager extends EventEmitter {
     sessionId: string,
     commandName: string,
     args: string,
-    options?: { mode?: string; modelId?: string },
+    options?: { mode?: string; modelId?: string; reasoningEffort?: ReasoningEffort | null },
   ): Promise<CommandInvokeResult> {
     const conv = conversationStore.get(sessionId);
     if (!conv) throw new Error(`Conversation not found: ${sessionId}`);
@@ -1268,6 +1272,7 @@ export class EngineManager extends EventEmitter {
             cost: msg.cost,
             costUnit: msg.costUnit,
             modelId: msg.modelId,
+            reasoningEffort: msg.reasoningEffort,
             error: msg.error,
           });
 

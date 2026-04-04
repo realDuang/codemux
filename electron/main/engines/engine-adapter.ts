@@ -20,6 +20,7 @@ import type {
   AgentMode,
   MessagePromptContent,
   PermissionReply,
+  ReasoningEffort,
   ImportableSession,
   EngineCommand,
   CommandInvokeResult,
@@ -46,6 +47,7 @@ export interface MessageBuffer {
   cost?: number;
   costUnit?: "usd" | "premium_requests";
   modelId?: string;
+  reasoningEffort?: ReasoningEffort;
   error?: string;
   /** Set to true once leading whitespace has been trimmed from textAccumulator */
   leadingTrimmed?: boolean;
@@ -201,6 +203,7 @@ export abstract class EngineAdapter extends EventEmitter {
     options?: {
       mode?: string;
       modelId?: string;
+      reasoningEffort?: ReasoningEffort | null;
       directory?: string;
     },
   ): Promise<UnifiedMessage>;
@@ -254,6 +257,16 @@ export abstract class EngineAdapter extends EventEmitter {
 
   /** Set the active mode for a session */
   abstract setMode(sessionId: string, modeId: string): Promise<void>;
+
+  // --- Reasoning Effort ---
+
+  /** Set the reasoning effort level for a session (no-op by default) */
+  async setReasoningEffort(_sessionId: string, _effort: ReasoningEffort | null): Promise<void> {}
+
+  /** Get the current reasoning effort level for a session */
+  getReasoningEffort(_sessionId: string): ReasoningEffort | null {
+    return null;
+  }
 
   // --- Permissions ---
 

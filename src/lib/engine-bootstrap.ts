@@ -5,6 +5,7 @@ import {
   restoreDefaultEngine,
   restoreEnabledEngines,
   restoreEngineModelSelections,
+  restoreReasoningEfforts,
   setConfigStore,
 } from "../stores/config";
 import type { EngineInfo } from "../types/unified";
@@ -58,5 +59,6 @@ export async function refreshEngineConfigState(): Promise<EngineInfo[]> {
   );
 
   restoreEngineModelSelections();
+  restoreReasoningEfforts();
   return engines;
 }

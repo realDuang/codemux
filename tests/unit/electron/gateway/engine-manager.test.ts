@@ -84,6 +84,8 @@ class MockEngineAdapter extends EngineAdapter {
   setModel = vi.fn(async () => {});
   getModes = vi.fn(() => []);
   setMode = vi.fn(async () => {});
+  setReasoningEffort = vi.fn(async () => {});
+  getReasoningEffort = vi.fn(() => null);
   replyPermission = vi.fn(async () => {});
   replyQuestion = vi.fn(async () => {});
   rejectQuestion = vi.fn(async () => {});
@@ -204,6 +206,15 @@ describe("EngineManager", () => {
       await expect(engineManager.createSession("unknown" as any, "/dir")).rejects.toThrow();
     });
 
+    it("resolves undefined engineType via getDefaultEngineType()", async () => {
+      const mockConv = { id: "conv2", engineType: adapterA.engineType, directory: "/dir", title: "Chat" };
+      (conversationStore.create as any).mockReturnValue(mockConv);
+      // adapterA is running, so getDefaultEngineType() should resolve to it
+      const session = await engineManager.createSession(undefined, "/dir");
+      expect(conversationStore.create).toHaveBeenCalledWith({ engineType: adapterA.engineType, directory: "/dir" });
+      expect(session.id).toBe("conv2");
+    });
+
     it("retrieves and deletes sessions from store and engine", async () => {
       // gets session from store
       (conversationStore.get as any).mockReturnValue({ id: "conv1", engineType: adapterA.engineType });
@@ -321,7 +332,7 @@ describe("EngineManager", () => {
       (conversationStore.get as any).mockReturnValue({ id: "conv1", engineType: adapterA.engineType, engineSessionId: "s1" });
     });
 
-    it("delegates model and mode operations to the adapter", async () => {
+    it("delegates model, mode, and reasoning effort operations to the adapter", async () => {
       await engineManager.listModels(adapterA.engineType);
       expect(adapterA.listModels).toHaveBeenCalled();
 

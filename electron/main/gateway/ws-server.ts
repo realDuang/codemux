@@ -290,6 +290,7 @@ export class GatewayServer {
         return this.engineManager.sendMessage(req.sessionId, req.content, {
           mode: req.mode,
           modelId: req.modelId,
+          reasoningEffort: req.reasoningEffort,
         });
       }
 
@@ -424,6 +425,7 @@ export class GatewayServer {
         return this.engineManager.invokeCommand(req.sessionId, req.commandName, req.args, {
           mode: req.mode,
           modelId: req.modelId,
+          reasoningEffort: req.reasoningEffort,
         });
       }
 

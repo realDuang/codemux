@@ -122,6 +122,8 @@ export function SessionSidebar(props: SessionSidebarProps) {
     return title;
   };
 
+  const worktreeEnabled = createMemo(() => getSetting<boolean>("worktreeEnabled") ?? false);
+
   // Default workspace — displayed above the projects divider
   const defaultWorkspaceGroup = createMemo((): ProjectGroup | null => {
     if (!sessionStore.showDefaultWorkspace) return null;
@@ -225,8 +227,6 @@ export function SessionSidebar(props: SessionSidebarProps) {
   });
 
   const isSearching = () => searchQuery().trim().length > 0;
-
-  const worktreeEnabled = createMemo(() => getSetting<boolean>("worktreeEnabled") ?? false);
 
   const getProjectWorktrees = (projectDir: string): UnifiedWorktree[] => {
     if (!worktreeEnabled()) return [];

@@ -6,10 +6,12 @@ import { ThemeSwitcher } from "../components/ThemeSwitcher";
 import ImportHistoryModal from "../components/ImportHistoryModal";
 import { ensureGatewayInitialized, refreshEngineConfigState } from "../lib/engine-bootstrap";
 import { useI18n } from "../lib/i18n";
+import { logger } from "../lib/logger";
 import { useAuthGuard } from "../lib/useAuthGuard";
 import { isElectron } from "../lib/platform";
 import { Auth } from "../lib/auth";
 import { configStore, saveEngineModelSelection, isEngineEnabled, setEngineEnabled } from "../stores/config";
+import { ReasoningEffortSelector } from "../components/ReasoningEffortSelector";
 import { sessionStore, setSessionStore } from "../stores/session";
 import { setScheduledTaskStore } from "../stores/scheduled-task";
 import { gateway } from "../lib/gateway-api";
@@ -263,32 +265,32 @@ export default function Settings() {
         <nav class="hidden md:flex flex-col w-44 flex-shrink-0 pt-6 pl-4 pr-2 overflow-y-auto">
           <ul class="space-y-0.5 sticky top-0">
             <li>
-              <a href="#section-general" class="block px-3 py-2 text-[13px] font-medium text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-slate-800 rounded-lg transition-colors">
+              <button onClick={() => document.getElementById("section-general")?.scrollIntoView({ behavior: "smooth" })} class="w-full text-left block px-3 py-2 text-[13px] font-medium text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-slate-800 rounded-lg transition-colors">
                 {t().settings.general}
-              </a>
+              </button>
             </li>
             <li>
-              <a href="#section-engines" class="block px-3 py-2 text-[13px] font-medium text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-slate-800 rounded-lg transition-colors">
+              <button onClick={() => document.getElementById("section-engines")?.scrollIntoView({ behavior: "smooth" })} class="w-full text-left block px-3 py-2 text-[13px] font-medium text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-slate-800 rounded-lg transition-colors">
                 {t().engine.engines}
-              </a>
+              </button>
             </li>
             <Show when={showLogSection()}>
               <li>
-                <a href="#section-logging" class="block px-3 py-2 text-[13px] font-medium text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-slate-800 rounded-lg transition-colors">
+                <button onClick={() => document.getElementById("section-logging")?.scrollIntoView({ behavior: "smooth" })} class="w-full text-left block px-3 py-2 text-[13px] font-medium text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-slate-800 rounded-lg transition-colors">
                   {t().settings.logging}
-                </a>
+                </button>
               </li>
             </Show>
             <li>
-              <a href="#section-experimental" class="block px-3 py-2 text-[13px] font-medium text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-slate-800 rounded-lg transition-colors">
+              <button onClick={() => document.getElementById("section-experimental")?.scrollIntoView({ behavior: "smooth" })} class="w-full text-left block px-3 py-2 text-[13px] font-medium text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-slate-800 rounded-lg transition-colors">
                 {t().settings.experimental}
-              </a>
+              </button>
             </li>
             <Show when={isElectron()}>
               <li>
-                <a href="#section-update" class="block px-3 py-2 text-[13px] font-medium text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-slate-800 rounded-lg transition-colors">
+                <button onClick={() => document.getElementById("section-update")?.scrollIntoView({ behavior: "smooth" })} class="w-full text-left block px-3 py-2 text-[13px] font-medium text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-slate-800 rounded-lg transition-colors">
                   {t().update.title}
-                </a>
+                </button>
               </li>
             </Show>
           </ul>
@@ -574,6 +576,15 @@ export default function Settings() {
                                 </Show>
                               </div>
                             </div>
+                          </Show>
+
+                          {/* Reasoning effort selector - only for running + enabled engines */}
+                          <Show when={showModelSelector() && isEngineEnabled(engine.type)}>
+                            <ReasoningEffortSelector
+                              engineType={engine.type}
+                              models={models}
+                              selectedModelId={selectedModelId}
+                            />
                           </Show>
 
                           {/* Import History button - only for running + enabled engines */}

@@ -18,6 +18,8 @@
  */
 
 import { isElectron } from "./platform";
+import { Auth } from "./auth";
+import { isSharedSettingsKey } from "../../shared/settings-keys";
 
 // ---------------------------------------------------------------------------
 // Renderer-side settings cache
@@ -90,6 +92,22 @@ export function saveSetting(key: string, value: unknown): void {
     // storage full or unavailable
     console.warn("[Settings] Failed to save to localStorage:", err);
   }
+
+  // In web mode, also write back to host so the setting persists across refreshes
+  if (!isElectron() && isSharedSettingsKey(key) && Auth.isAuthenticated() && typeof fetch === "function") {
+    try {
+      fetch("/api/settings/shared", {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          ...Auth.getAuthHeaders(),
+        },
+        body: JSON.stringify({ [key]: value }),
+      }).catch(() => {});
+    } catch {
+      // Best-effort — swallow errors
+    }
+  }
 }
 
 /** Read a nested setting (e.g. "engineModels.claude") */
@@ -127,4 +145,60 @@ export function saveNestedSetting(path: string, value: unknown): void {
   }
   target[parts[parts.length - 1]] = value;
   saveSetting(parts[0], root);
+}
+
+// ---------------------------------------------------------------------------
+// Host settings bootstrap (web clients only)
+// ---------------------------------------------------------------------------
+// Fetches shared settings from the host's settings.json via the API and
+// writes them into localStorage so that getSetting() returns host values.
+// Called once on page load after authentication.
+
+let _bootstrapDone = false;
+
+/**
+ * Fetch host settings and write them to localStorage.
+ * No-op in Electron (settings already come from preload cache).
+ * No-op if already bootstrapped in this page session.
+ * Returns true if settings were applied, false otherwise.
+ */
+export async function bootstrapHostSettings(): Promise<boolean> {
+  if (isElectron()) return false;
+  if (_bootstrapDone) return false;
+  if (!Auth.isAuthenticated()) return false;
+
+  try {
+    const res = await fetch("/api/settings/shared", {
+      headers: Auth.getAuthHeaders(),
+    });
+    if (!res.ok) {
+      console.debug("[Settings] Host settings bootstrap failed:", res.status);
+      return false;
+    }
+
+    const data = await res.json();
+    const settings = data.settings as Record<string, unknown> | undefined;
+    if (!settings || typeof settings !== "object") return false;
+
+    for (const [key, value] of Object.entries(settings)) {
+      if (value !== undefined) {
+        try {
+          localStorage.setItem(`settings:${key}`, JSON.stringify(value));
+        } catch {
+          // localStorage full or unavailable
+        }
+      }
+    }
+
+    _bootstrapDone = true;
+    return true;
+  } catch (err) {
+    console.debug("[Settings] Host settings bootstrap error:", err);
+    return false;
+  }
+}
+
+/** Reset bootstrap state (for testing). */
+export function _resetBootstrapState(): void {
+  _bootstrapDone = false;
 }

@@ -1,6 +1,7 @@
 import type { IncomingMessage, ServerResponse } from "http";
 import { sendJson, parseBody, extractBearerToken, getClientIp, isLocalhost } from "./http-utils";
 import type { DeviceInfo, PendingRequest } from "./device-store-types";
+import { SHARED_SETTINGS_KEYS, isSharedSettingsKey, isValidSharedSettingValue } from "./settings-keys";
 
 // =============================================================================
 // Shared auth route handlers for auth-api-server and production-server.
@@ -158,6 +159,76 @@ export async function handleLogRoutes(
     } catch {
       sendJson(res, { error: "Bad request" }, 400);
     }
+    return true;
+  }
+
+  return false;
+}
+
+// -----------------------------------------------------------------------------
+// Settings route dispatcher (auth-required).
+// Returns filtered host settings so web clients can bootstrap on page load.
+// Accepts PATCH to write shared settings back to the host.
+// -----------------------------------------------------------------------------
+
+function filterSharedSettings(settings: Record<string, unknown>): Record<string, unknown> {
+  const filtered: Record<string, unknown> = {};
+  for (const key of SHARED_SETTINGS_KEYS) {
+    if (Object.prototype.hasOwnProperty.call(settings, key)) {
+      filtered[key] = settings[key];
+    }
+  }
+  return filtered;
+}
+
+export async function handleSettingsRoutes(
+  req: IncomingMessage,
+  res: ServerResponse,
+  pathname: string,
+  store: AuthDeviceStore,
+  settingsFns: {
+    loadSettings: () => Record<string, unknown>;
+    saveSettings?: (patch: Record<string, unknown>) => void;
+  },
+): Promise<boolean> {
+  if (pathname !== "/api/settings/shared") return false;
+
+  if (req.method === "GET") {
+    if (!requireAuth(req, res, store)) return true;
+    const settings = settingsFns.loadSettings();
+    sendJson(res, { settings: filterSharedSettings(settings) });
+    return true;
+  }
+
+  if (req.method === "PATCH") {
+    if (!requireAuth(req, res, store)) return true;
+    if (!settingsFns.saveSettings) {
+      sendJson(res, { error: "Write not supported" }, 501);
+      return true;
+    }
+    const body = await parseBody(req);
+    if (!body || typeof body !== "object") {
+      sendJson(res, { error: "Invalid body" }, 400);
+      return true;
+    }
+    const patch: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(body as Record<string, unknown>)) {
+      if (!isSharedSettingsKey(key)) {
+        sendJson(res, { error: `Key "${key}" is not a shared setting` }, 400);
+        return true;
+      }
+      if (!isValidSharedSettingValue(key, value)) {
+        sendJson(res, { error: `Invalid value for "${key}"` }, 400);
+        return true;
+      }
+      patch[key] = value;
+    }
+    if (Object.keys(patch).length === 0) {
+      sendJson(res, { error: "Empty patch" }, 400);
+      return true;
+    }
+    settingsFns.saveSettings(patch);
+    sendJson(res, { success: true });
     return true;
   }
 

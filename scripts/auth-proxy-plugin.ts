@@ -134,6 +134,7 @@ export function createAuthProxyPlugin(options: AuthProxyPluginOptions = {}): Plu
           "/api/auth/",
           "/api/admin/",
           "/api/devices",
+          "/api/settings/",
           "/api/system/log",
         ];
 

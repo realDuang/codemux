@@ -8,7 +8,8 @@ import { tunnelManager } from "./scripts/tunnel-manager";
 import { deviceStore } from "./scripts/device-store";
 import type { DeviceInfo } from "./shared/device-store-types";
 import { sendJson, parseBody, extractBearerToken, getClientIp, isLocalhost, getLocalIp } from "./shared/http-utils";
-import { handleAuthRoutes } from "./shared/auth-route-handlers";
+import { handleAuthRoutes, handleSettingsRoutes } from "./shared/auth-route-handlers";
+import { loadSettings as loadStandaloneSettings, saveSettings as saveStandaloneSettings } from "./scripts/settings-store";
 
 // ============================================================================
 // Helper Functions
@@ -101,6 +102,26 @@ export default defineConfig({
             localAuthOptions
           );
 
+          if (!handled) {
+            next();
+          }
+        });
+
+        // ====================================================================
+        // Settings API
+        // GET/PATCH /api/settings/shared
+        // ====================================================================
+        server.middlewares.use(async (req, res, next) => {
+          const reqUrl = new URL(req.url || "", `http://localhost:8234`);
+          const pathname = reqUrl.pathname;
+          if (!pathname.startsWith("/api/settings/")) {
+            next();
+            return;
+          }
+          const handled = await handleSettingsRoutes(req, res, pathname, deviceStore, {
+            loadSettings: loadStandaloneSettings,
+            saveSettings: saveStandaloneSettings,
+          });
           if (!handled) {
             next();
           }

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { handleAuthRoutes, handleLogRoutes } from '../../../shared/auth-route-handlers';
+import { handleAuthRoutes, handleLogRoutes, handleSettingsRoutes } from '../../../shared/auth-route-handlers';
 import type { IncomingMessage, ServerResponse } from 'http';
 import { EventEmitter } from 'events';
 
@@ -307,6 +307,196 @@ describe('auth-route-handlers', () => {
 
     it('returns false for unmatched routes', async () => {
       expect(await handleLogRoutes(createMockReq('/api/other'), mockRes, '/api/other', mockLogFns)).toBe(false);
+    });
+  });
+
+  describe('handleSettingsRoutes', () => {
+    let mockSettingsFns: { loadSettings: ReturnType<typeof vi.fn>; saveSettings: ReturnType<typeof vi.fn> };
+
+    beforeEach(() => {
+      mockSettingsFns = {
+        loadSettings: vi.fn(),
+        saveSettings: vi.fn(),
+      };
+    });
+
+    it('returns false for unmatched routes', async () => {
+      const req = createMockReq('/api/other');
+      expect(await handleSettingsRoutes(req, mockRes, '/api/other', mockStore, mockSettingsFns)).toBe(false);
+    });
+
+    it('requires auth for GET /api/settings/shared', async () => {
+      const pathname = '/api/settings/shared';
+      const req = createMockReq(pathname);
+      // No auth header
+
+      expect(await handleSettingsRoutes(req, mockRes, pathname, mockStore, mockSettingsFns)).toBe(true);
+      expect(mockRes.writeHead).toHaveBeenCalledWith(401, expect.any(Object));
+    });
+
+    it('returns filtered settings for authenticated requests', async () => {
+      const pathname = '/api/settings/shared';
+      const req = createMockReq(pathname);
+      req.headers.authorization = 'Bearer valid-token';
+      mockStore.verifyToken.mockReturnValue({ valid: true, deviceId: 'dev1' });
+      mockSettingsFns.loadSettings.mockReturnValue({
+        theme: 'dark',
+        locale: 'zh',
+        logLevel: 'debug',
+        engineModels: { claude: { providerID: 'anthropic', modelID: 'sonnet' } },
+        lastSessionId: 'sess-123',
+        someInternalKey: 'secret',
+      });
+
+      expect(await handleSettingsRoutes(req, mockRes, pathname, mockStore, mockSettingsFns)).toBe(true);
+      expect(mockRes.writeHead).toHaveBeenCalledWith(200, expect.any(Object));
+
+      const responseBody = JSON.parse((mockRes.end as any).mock.calls[0][0]);
+      expect(responseBody.settings).toEqual({
+        theme: 'dark',
+        locale: 'zh',
+        engineModels: { claude: { providerID: 'anthropic', modelID: 'sonnet' } },
+      });
+      // Sensitive keys must not leak
+      expect(responseBody.settings.logLevel).toBeUndefined();
+      expect(responseBody.settings.lastSessionId).toBeUndefined();
+      expect(responseBody.settings.someInternalKey).toBeUndefined();
+    });
+
+    it('returns empty settings object when no shared keys exist', async () => {
+      const pathname = '/api/settings/shared';
+      const req = createMockReq(pathname);
+      req.headers.authorization = 'Bearer valid-token';
+      mockStore.verifyToken.mockReturnValue({ valid: true, deviceId: 'dev1' });
+      mockSettingsFns.loadSettings.mockReturnValue({ logLevel: 'warn' });
+
+      expect(await handleSettingsRoutes(req, mockRes, pathname, mockStore, mockSettingsFns)).toBe(true);
+      const responseBody = JSON.parse((mockRes.end as any).mock.calls[0][0]);
+      expect(responseBody.settings).toEqual({});
+    });
+
+    it('does not match POST method', async () => {
+      const pathname = '/api/settings/shared';
+      const req = createMockReq(pathname, 'POST', { theme: 'light' });
+      expect(await handleSettingsRoutes(req, mockRes, pathname, mockStore, mockSettingsFns)).toBe(false);
+    });
+
+    it('PATCH requires auth', async () => {
+      const pathname = '/api/settings/shared';
+      const req = createMockReq(pathname, 'PATCH', { theme: 'light' });
+      // No auth header
+
+      expect(await handleSettingsRoutes(req, mockRes, pathname, mockStore, mockSettingsFns)).toBe(true);
+      expect(mockRes.writeHead).toHaveBeenCalledWith(401, expect.any(Object));
+      expect(mockSettingsFns.saveSettings).not.toHaveBeenCalled();
+    });
+
+    it('PATCH saves valid shared settings', async () => {
+      const pathname = '/api/settings/shared';
+      const req = createMockReq(pathname, 'PATCH', { theme: 'light', locale: 'en' });
+      req.headers.authorization = 'Bearer valid-token';
+      mockStore.verifyToken.mockReturnValue({ valid: true, deviceId: 'dev1' });
+
+      expect(await handleSettingsRoutes(req, mockRes, pathname, mockStore, mockSettingsFns)).toBe(true);
+      expect(mockSettingsFns.saveSettings).toHaveBeenCalledWith({ theme: 'light', locale: 'en' });
+      const responseBody = JSON.parse((mockRes.end as any).mock.calls[0][0]);
+      expect(responseBody.success).toBe(true);
+    });
+
+    it('PATCH rejects non-shared keys with 400', async () => {
+      const pathname = '/api/settings/shared';
+      const req = createMockReq(pathname, 'PATCH', { logLevel: 'debug' });
+      req.headers.authorization = 'Bearer valid-token';
+      mockStore.verifyToken.mockReturnValue({ valid: true, deviceId: 'dev1' });
+
+      expect(await handleSettingsRoutes(req, mockRes, pathname, mockStore, mockSettingsFns)).toBe(true);
+      expect(mockRes.writeHead).toHaveBeenCalledWith(400, expect.any(Object));
+      expect(mockSettingsFns.saveSettings).not.toHaveBeenCalled();
+    });
+
+    it('PATCH rejects empty body with 400', async () => {
+      const pathname = '/api/settings/shared';
+      const req = createMockReq(pathname, 'PATCH', {});
+      req.headers.authorization = 'Bearer valid-token';
+      mockStore.verifyToken.mockReturnValue({ valid: true, deviceId: 'dev1' });
+
+      expect(await handleSettingsRoutes(req, mockRes, pathname, mockStore, mockSettingsFns)).toBe(true);
+      expect(mockRes.writeHead).toHaveBeenCalledWith(400, expect.any(Object));
+    });
+
+    it('PATCH returns 501 when saveSettings is not provided', async () => {
+      const pathname = '/api/settings/shared';
+      const req = createMockReq(pathname, 'PATCH', { theme: 'dark' });
+      req.headers.authorization = 'Bearer valid-token';
+      mockStore.verifyToken.mockReturnValue({ valid: true, deviceId: 'dev1' });
+
+      const readOnlyFns = { loadSettings: vi.fn() };
+      expect(await handleSettingsRoutes(req, mockRes, pathname, mockStore, readOnlyFns)).toBe(true);
+      expect(mockRes.writeHead).toHaveBeenCalledWith(501, expect.any(Object));
+    });
+
+    it('PATCH rejects invalid theme value', async () => {
+      const pathname = '/api/settings/shared';
+      const req = createMockReq(pathname, 'PATCH', { theme: 'invalid-theme' });
+      req.headers.authorization = 'Bearer valid-token';
+      mockStore.verifyToken.mockReturnValue({ valid: true, deviceId: 'dev1' });
+
+      expect(await handleSettingsRoutes(req, mockRes, pathname, mockStore, mockSettingsFns)).toBe(true);
+      expect(mockRes.writeHead).toHaveBeenCalledWith(400, expect.any(Object));
+      expect(mockSettingsFns.saveSettings).not.toHaveBeenCalled();
+    });
+
+    it('PATCH rejects non-boolean for boolean settings', async () => {
+      const pathname = '/api/settings/shared';
+      const req = createMockReq(pathname, 'PATCH', { worktreeEnabled: 'yes' });
+      req.headers.authorization = 'Bearer valid-token';
+      mockStore.verifyToken.mockReturnValue({ valid: true, deviceId: 'dev1' });
+
+      expect(await handleSettingsRoutes(req, mockRes, pathname, mockStore, mockSettingsFns)).toBe(true);
+      expect(mockRes.writeHead).toHaveBeenCalledWith(400, expect.any(Object));
+      expect(mockSettingsFns.saveSettings).not.toHaveBeenCalled();
+    });
+
+    it('PATCH rejects engineModels with prototype-pollution keys', async () => {
+      const pathname = '/api/settings/shared';
+      // Simulate a body that bypasses JSON.parse __proto__ stripping by using
+      // "constructor" or "prototype" as engine keys
+      const req = createMockReq(pathname, 'PATCH', {
+        engineModels: { constructor: { modelID: 'evil' } },
+      });
+      req.headers.authorization = 'Bearer valid-token';
+      mockStore.verifyToken.mockReturnValue({ valid: true, deviceId: 'dev1' });
+
+      expect(await handleSettingsRoutes(req, mockRes, pathname, mockStore, mockSettingsFns)).toBe(true);
+      expect(mockRes.writeHead).toHaveBeenCalledWith(400, expect.any(Object));
+      expect(mockSettingsFns.saveSettings).not.toHaveBeenCalled();
+    });
+
+    it('PATCH accepts valid engineModels', async () => {
+      const pathname = '/api/settings/shared';
+      const req = createMockReq(pathname, 'PATCH', {
+        engineModels: { claude: { providerID: 'anthropic', modelID: 'sonnet', enabled: true } },
+      });
+      req.headers.authorization = 'Bearer valid-token';
+      mockStore.verifyToken.mockReturnValue({ valid: true, deviceId: 'dev1' });
+
+      expect(await handleSettingsRoutes(req, mockRes, pathname, mockStore, mockSettingsFns)).toBe(true);
+      expect(mockSettingsFns.saveSettings).toHaveBeenCalledWith({
+        engineModels: { claude: { providerID: 'anthropic', modelID: 'sonnet', enabled: true } },
+      });
+    });
+
+    it('PATCH rejects engineModels with non-object engine values', async () => {
+      const pathname = '/api/settings/shared';
+      const req = createMockReq(pathname, 'PATCH', {
+        engineModels: { claude: 'not-an-object' },
+      });
+      req.headers.authorization = 'Bearer valid-token';
+      mockStore.verifyToken.mockReturnValue({ valid: true, deviceId: 'dev1' });
+
+      expect(await handleSettingsRoutes(req, mockRes, pathname, mockStore, mockSettingsFns)).toBe(true);
+      expect(mockRes.writeHead).toHaveBeenCalledWith(400, expect.any(Object));
+      expect(mockSettingsFns.saveSettings).not.toHaveBeenCalled();
     });
   });
 });

@@ -5,6 +5,13 @@ vi.mock('../../../../src/lib/platform', () => ({
   isElectron: vi.fn(() => false),
 }));
 
+vi.mock('../../../../src/lib/auth', () => ({
+  Auth: {
+    isAuthenticated: vi.fn(() => false),
+    getAuthHeaders: vi.fn(() => ({ Authorization: 'Bearer test-token' })),
+  },
+}));
+
 // Create an in-memory localStorage mock for Node environment
 function createLocalStorageMock() {
   const store = new Map<string, string>();
@@ -23,13 +30,16 @@ vi.stubGlobal('localStorage', createLocalStorageMock());
 vi.stubGlobal('window', globalThis);
 
 // Import AFTER globals are stubbed
-const { getSetting, saveSetting, getNestedSetting, saveNestedSetting } = await import('../../../../src/lib/settings');
+const { getSetting, saveSetting, getNestedSetting, saveNestedSetting, bootstrapHostSettings, _resetBootstrapState } = await import('../../../../src/lib/settings');
+const { Auth } = await import('../../../../src/lib/auth');
 
 describe('settings', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     localStorage.clear();
     vi.mocked(isElectron).mockReturnValue(false);
+    vi.mocked(Auth.isAuthenticated).mockReturnValue(false);
+    _resetBootstrapState();
     // Reset electron-related globals
     delete (window as any).electronAPI;
     // Reset the internal renderer cache by re-stubbing window without electronAPI
@@ -117,6 +127,127 @@ describe('settings', () => {
     it('delegates to saveSetting for single-level paths', () => {
       saveNestedSetting('theme', 'light');
       expect(localStorage.getItem('settings:theme')).toBe(JSON.stringify('light'));
+    });
+  });
+
+  describe('bootstrapHostSettings', () => {
+    beforeEach(() => {
+      vi.stubGlobal('fetch', vi.fn());
+    });
+
+    it('returns false in Electron mode', async () => {
+      vi.mocked(isElectron).mockReturnValue(true);
+      expect(await bootstrapHostSettings()).toBe(false);
+      expect(fetch).not.toHaveBeenCalled();
+    });
+
+    it('returns false when not authenticated', async () => {
+      vi.mocked(Auth.isAuthenticated).mockReturnValue(false);
+      expect(await bootstrapHostSettings()).toBe(false);
+      expect(fetch).not.toHaveBeenCalled();
+    });
+
+    it('fetches and applies host settings to localStorage', async () => {
+      vi.mocked(Auth.isAuthenticated).mockReturnValue(true);
+      vi.mocked(fetch as any).mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          settings: {
+            theme: 'dark',
+            locale: 'zh',
+            engineModels: { claude: { providerID: 'anthropic', modelID: 'sonnet' } },
+          },
+        }),
+      });
+
+      expect(await bootstrapHostSettings()).toBe(true);
+      expect(fetch).toHaveBeenCalledWith('/api/settings/shared', {
+        headers: { Authorization: 'Bearer test-token' },
+      });
+      expect(getSetting('theme')).toBe('dark');
+      expect(getSetting('locale')).toBe('zh');
+      expect(getNestedSetting('engineModels.claude.modelID')).toBe('sonnet');
+    });
+
+    it('does not overwrite existing localStorage on fetch failure', async () => {
+      vi.mocked(Auth.isAuthenticated).mockReturnValue(true);
+      saveSetting('theme', 'light');
+      vi.mocked(fetch as any).mockResolvedValueOnce({ ok: false, status: 500 });
+
+      expect(await bootstrapHostSettings()).toBe(false);
+      expect(getSetting('theme')).toBe('light');
+    });
+
+    it('skips bootstrap on second call (already done)', async () => {
+      vi.mocked(Auth.isAuthenticated).mockReturnValue(true);
+      vi.mocked(fetch as any).mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ settings: { theme: 'dark' } }),
+      });
+
+      expect(await bootstrapHostSettings()).toBe(true);
+      expect(await bootstrapHostSettings()).toBe(false);
+      expect(fetch).toHaveBeenCalledTimes(1);
+    });
+
+    it('handles network errors gracefully', async () => {
+      vi.mocked(Auth.isAuthenticated).mockReturnValue(true);
+      vi.mocked(fetch as any).mockRejectedValueOnce(new Error('Network error'));
+
+      expect(await bootstrapHostSettings()).toBe(false);
+    });
+  });
+
+  describe('saveSetting write-back', () => {
+    beforeEach(() => {
+      vi.stubGlobal('fetch', vi.fn(() => Promise.resolve({ ok: true })));
+    });
+
+    it('fires PATCH for shared keys in web mode when authenticated', () => {
+      vi.mocked(Auth.isAuthenticated).mockReturnValue(true);
+      saveSetting('theme', 'dark');
+
+      expect(fetch).toHaveBeenCalledWith('/api/settings/shared', {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: 'Bearer test-token',
+        },
+        body: JSON.stringify({ theme: 'dark' }),
+      });
+    });
+
+    it('does not fire PATCH for non-shared keys', () => {
+      vi.mocked(Auth.isAuthenticated).mockReturnValue(true);
+      saveSetting('logLevel', 'debug');
+
+      expect(fetch).not.toHaveBeenCalled();
+    });
+
+    it('does not fire PATCH when not authenticated', () => {
+      vi.mocked(Auth.isAuthenticated).mockReturnValue(false);
+      saveSetting('theme', 'dark');
+
+      expect(fetch).not.toHaveBeenCalled();
+    });
+
+    it('does not fire PATCH in Electron mode', () => {
+      vi.mocked(isElectron).mockReturnValue(true);
+      vi.mocked(Auth.isAuthenticated).mockReturnValue(true);
+      (window as any).electronAPI = {
+        settings: { cache: {}, save: vi.fn() },
+      };
+      saveSetting('theme', 'dark');
+
+      expect(fetch).not.toHaveBeenCalled();
+    });
+
+    it('swallows fetch errors silently', () => {
+      vi.mocked(Auth.isAuthenticated).mockReturnValue(true);
+      vi.mocked(fetch as any).mockImplementation(() => { throw new Error('Network error'); });
+
+      // Should not throw
+      expect(() => saveSetting('theme', 'dark')).not.toThrow();
     });
   });
 });

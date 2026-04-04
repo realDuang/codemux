@@ -33,6 +33,7 @@ import log from 'electron-log/main';
 import fs from 'fs';
 import {
   feishuLog,
+  getDefaultEngineFromSettings,
   getFeishuChannelLog,
   getFileLogLevel,
   getLogFilePath,
@@ -112,6 +113,23 @@ describe('logger.ts', () => {
     it('returns the scoped logger matching the selected platform', () => {
       expect(getFeishuChannelLog('feishu')).toBe(feishuLog);
       expect(getFeishuChannelLog('lark')).toBe(larkLog);
+    });
+  });
+
+  describe('getDefaultEngineFromSettings', () => {
+    it('returns defaultEngine when explicitly set', () => {
+      vi.mocked(fs.readFileSync).mockReturnValue(JSON.stringify({ defaultEngine: 'claude' }));
+      expect(getDefaultEngineFromSettings()).toBe('claude');
+    });
+
+    it('falls back to "opencode" when defaultEngine is missing', () => {
+      vi.mocked(fs.readFileSync).mockReturnValue(JSON.stringify({}));
+      expect(getDefaultEngineFromSettings()).toBe('opencode');
+    });
+
+    it('falls back to "opencode" when defaultEngine is empty', () => {
+      vi.mocked(fs.readFileSync).mockReturnValue(JSON.stringify({ defaultEngine: '' }));
+      expect(getDefaultEngineFromSettings()).toBe('opencode');
     });
   });
 });

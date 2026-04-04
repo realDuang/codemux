@@ -1,6 +1,6 @@
 import http from "http";
 import { deviceStore } from "./device-store";
-import { authLog, getLogFilePath, getFileLogLevel, setFileLogLevel, loadSettings } from "./logger";
+import { authLog, getLogFilePath, getFileLogLevel, setFileLogLevel, loadSettings, saveSettings } from "./logger";
 import { sendJson } from "../../../shared/http-utils";
 import { handleAuthRoutes, handleLogRoutes, handleSettingsRoutes } from "../../../shared/auth-route-handlers";
 import { AUTH_API_PORT } from "../../../shared/ports";
@@ -86,6 +86,7 @@ class AuthApiServer {
     // Settings routes (auth-required)
     const settingsHandled = await handleSettingsRoutes(req, res, pathname, deviceStore, {
       loadSettings,
+      saveSettings,
     });
     if (settingsHandled) return;
 

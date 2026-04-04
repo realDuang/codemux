@@ -311,11 +311,12 @@ describe('auth-route-handlers', () => {
   });
 
   describe('handleSettingsRoutes', () => {
-    let mockSettingsFns: { loadSettings: ReturnType<typeof vi.fn> };
+    let mockSettingsFns: { loadSettings: ReturnType<typeof vi.fn>; saveSettings: ReturnType<typeof vi.fn> };
 
     beforeEach(() => {
       mockSettingsFns = {
         loadSettings: vi.fn(),
+        saveSettings: vi.fn(),
       };
     });
 
@@ -378,6 +379,60 @@ describe('auth-route-handlers', () => {
       const pathname = '/api/settings/shared';
       const req = createMockReq(pathname, 'POST', { theme: 'light' });
       expect(await handleSettingsRoutes(req, mockRes, pathname, mockStore, mockSettingsFns)).toBe(false);
+    });
+
+    it('PATCH requires auth', async () => {
+      const pathname = '/api/settings/shared';
+      const req = createMockReq(pathname, 'PATCH', { theme: 'light' });
+      // No auth header
+
+      expect(await handleSettingsRoutes(req, mockRes, pathname, mockStore, mockSettingsFns)).toBe(true);
+      expect(mockRes.writeHead).toHaveBeenCalledWith(401, expect.any(Object));
+      expect(mockSettingsFns.saveSettings).not.toHaveBeenCalled();
+    });
+
+    it('PATCH saves valid shared settings', async () => {
+      const pathname = '/api/settings/shared';
+      const req = createMockReq(pathname, 'PATCH', { theme: 'light', locale: 'en' });
+      req.headers.authorization = 'Bearer valid-token';
+      mockStore.verifyToken.mockReturnValue({ valid: true, deviceId: 'dev1' });
+
+      expect(await handleSettingsRoutes(req, mockRes, pathname, mockStore, mockSettingsFns)).toBe(true);
+      expect(mockSettingsFns.saveSettings).toHaveBeenCalledWith({ theme: 'light', locale: 'en' });
+      const responseBody = JSON.parse((mockRes.end as any).mock.calls[0][0]);
+      expect(responseBody.success).toBe(true);
+    });
+
+    it('PATCH rejects non-shared keys with 400', async () => {
+      const pathname = '/api/settings/shared';
+      const req = createMockReq(pathname, 'PATCH', { logLevel: 'debug' });
+      req.headers.authorization = 'Bearer valid-token';
+      mockStore.verifyToken.mockReturnValue({ valid: true, deviceId: 'dev1' });
+
+      expect(await handleSettingsRoutes(req, mockRes, pathname, mockStore, mockSettingsFns)).toBe(true);
+      expect(mockRes.writeHead).toHaveBeenCalledWith(400, expect.any(Object));
+      expect(mockSettingsFns.saveSettings).not.toHaveBeenCalled();
+    });
+
+    it('PATCH rejects empty body with 400', async () => {
+      const pathname = '/api/settings/shared';
+      const req = createMockReq(pathname, 'PATCH', {});
+      req.headers.authorization = 'Bearer valid-token';
+      mockStore.verifyToken.mockReturnValue({ valid: true, deviceId: 'dev1' });
+
+      expect(await handleSettingsRoutes(req, mockRes, pathname, mockStore, mockSettingsFns)).toBe(true);
+      expect(mockRes.writeHead).toHaveBeenCalledWith(400, expect.any(Object));
+    });
+
+    it('PATCH returns 501 when saveSettings is not provided', async () => {
+      const pathname = '/api/settings/shared';
+      const req = createMockReq(pathname, 'PATCH', { theme: 'dark' });
+      req.headers.authorization = 'Bearer valid-token';
+      mockStore.verifyToken.mockReturnValue({ valid: true, deviceId: 'dev1' });
+
+      const readOnlyFns = { loadSettings: vi.fn() };
+      expect(await handleSettingsRoutes(req, mockRes, pathname, mockStore, readOnlyFns)).toBe(true);
+      expect(mockRes.writeHead).toHaveBeenCalledWith(501, expect.any(Object));
     });
   });
 });

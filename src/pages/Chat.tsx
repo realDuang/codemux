@@ -14,6 +14,7 @@ import {
 import { Auth } from "../lib/auth";
 import { useNavigate } from "@solidjs/router";
 import { gateway } from "../lib/gateway-api";
+import { ensureGatewayInitialized, refreshEngineConfigState } from "../lib/engine-bootstrap";
 import { logger } from "../lib/logger";
 import { isElectron } from "../lib/platform";
 import { sessionStore, setSessionStore, type SessionInfo, setSendingFor } from "../stores/session";
@@ -52,7 +53,7 @@ import { ResizeHandle } from "../components/ResizeHandle";
 import { fileStore, togglePanel, setPanelWidth, closePanel } from "../stores/file";
 import { handleFileChanged, refreshGitStatus } from "../stores/file";
 
-import { configStore, setConfigStore, getSelectedModelForEngine, restoreEngineModelSelections, isEngineEnabled, restoreEnabledEngines, getDefaultEngineType, restoreDefaultEngine } from "../stores/config";
+import { configStore, setConfigStore, getSelectedModelForEngine, isEngineEnabled, getDefaultEngineType } from "../stores/config";
 import { scheduledTaskStore, setScheduledTaskStore } from "../stores/scheduled-task";
 import { computeActiveSessions } from "../lib/active-sessions";
 
@@ -740,12 +741,19 @@ export default function Chat() {
         },
       };
 
-      // If gateway is already initialized (remount after navigation),
-      // just update handlers to point to this mount's closures — no need
-      // to reconnect or reload data.
-      if (gateway.isInitialized) {
-        gateway.setHandlers(handlers);
-        logger.debug("[Init] Gateway already initialized, handlers updated (remount)");
+      const needsSessionBootstrap =
+        sessionStore.list.length === 0 || sessionStore.projects.length === 0;
+
+      await ensureGatewayInitialized(handlers);
+
+      try {
+        await refreshEngineConfigState();
+      } catch (err) {
+        logger.warn("[Init] Failed to load engines:", err);
+      }
+
+      if (!needsSessionBootstrap) {
+        logger.debug("[Init] Gateway already initialized, handlers refreshed (remount)");
         return;
       }
 
@@ -755,40 +763,9 @@ export default function Chat() {
       });
       setScheduledTaskStore("enabled", getSetting<boolean>("scheduledTasksEnabled") ?? true);
 
-      // First-time initialization: connect gateway and load data
-      await gateway.init(handlers);
-
-      // Load available engines (blocking — needed for UI/Settings before we can proceed)
-      try {
-        const engines = await gateway.listEngines();
-        setConfigStore("engines", engines);
-        restoreEnabledEngines();
-        restoreDefaultEngine();
-        const runningEngine = engines.find(e => e.status === "running" && isEngineEnabled(e.type));
-        if (runningEngine) {
-          setConfigStore("currentEngineType", runningEngine.type);
-        }
-
-        // Load model lists for all running + enabled engines so Settings can show them
-        const runningEnginesForModels = engines.filter(e => e.status === "running" && isEngineEnabled(e.type));
-        await Promise.all(runningEnginesForModels.map(async (engine) => {
-          try {
-            const modelResult = await gateway.listModels(engine.type);
-            if (modelResult.models.length > 0) {
-              setConfigStore("engineModels", engine.type, modelResult.models);
-            }
-          } catch {
-            // Non-critical: some engines may not support model listing yet
-          }
-        }));
-        restoreEngineModelSelections();
-      } catch (err) {
-        logger.warn("[Init] Failed to load engines:", err);
-      }
-
       // Engine + model loading complete — unblock UI immediately.
       // Sidebar will render (possibly empty) while projects/sessions load in background.
-      setSessionStore({ loading: false, current: null });
+      setSessionStore({ loading: false, current: sessionStore.current });
 
       // --- Background: load projects & sessions without blocking the UI ---
 

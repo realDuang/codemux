@@ -166,7 +166,7 @@ describe('config store', () => {
   describe('loadEngineModelSelection', () => {
     it('returns saved selection when valid, null otherwise', () => {
       vi.mocked(settings.getNestedSetting).mockReturnValue({ providerID: 'p1', modelID: 'gpt-4o' });
-      expect(loadEngineModelSelection('opencode')).toEqual({ providerID: 'p1', modelID: 'gpt-4o' });
+      expect(loadEngineModelSelection('opencode')).toEqual({ providerID: 'p1', modelID: 'gpt-4o', enabled: undefined });
 
       // Missing modelID
       vi.mocked(settings.getNestedSetting).mockReturnValue({ providerID: 'p1' });
@@ -178,6 +178,23 @@ describe('config store', () => {
 
       // Error thrown
       vi.mocked(settings.getNestedSetting).mockImplementation(() => { throw new Error('fail'); });
+      expect(loadEngineModelSelection('opencode')).toBeNull();
+    });
+
+    it('handles missing providerID for non-provider engines like Copilot/Claude', () => {
+      vi.mocked(settings.getNestedSetting).mockReturnValue({ modelID: 'claude-sonnet' });
+      const result = loadEngineModelSelection('claude');
+      expect(result).toEqual({ providerID: '', modelID: 'claude-sonnet', enabled: undefined });
+    });
+
+    it('preserves enabled flag when present', () => {
+      vi.mocked(settings.getNestedSetting).mockReturnValue({ providerID: 'p1', modelID: 'gpt-4o', enabled: false });
+      const result = loadEngineModelSelection('opencode');
+      expect(result).toEqual({ providerID: 'p1', modelID: 'gpt-4o', enabled: false });
+    });
+
+    it('rejects empty modelID string', () => {
+      vi.mocked(settings.getNestedSetting).mockReturnValue({ providerID: 'p1', modelID: '' });
       expect(loadEngineModelSelection('opencode')).toBeNull();
     });
   });

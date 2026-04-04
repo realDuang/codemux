@@ -18,6 +18,18 @@
  */
 
 import { isElectron } from "./platform";
+import { Auth } from "./auth";
+
+/** Keys that are synchronized between web clients and the host. */
+const SHARED_SETTINGS_KEYS: ReadonlySet<string> = new Set([
+  "theme",
+  "locale",
+  "engineModels",
+  "defaultEngine",
+  "showDefaultWorkspace",
+  "scheduledTasksEnabled",
+  "worktreeEnabled",
+]);
 
 // ---------------------------------------------------------------------------
 // Renderer-side settings cache
@@ -90,6 +102,25 @@ export function saveSetting(key: string, value: unknown): void {
     // storage full or unavailable
     console.warn("[Settings] Failed to save to localStorage:", err);
   }
+
+  // In web mode, also write back to host so the setting persists across refreshes
+  if (!isElectron() && SHARED_SETTINGS_KEYS.has(key) && Auth.isAuthenticated() && typeof fetch === "function") {
+    try {
+      const p = fetch("/api/settings/shared", {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          ...Auth.getAuthHeaders(),
+        },
+        body: JSON.stringify({ [key]: value }),
+      });
+      if (p && typeof p.catch === "function") {
+        p.catch(() => {});
+      }
+    } catch {
+      // Best-effort — swallow errors
+    }
+  }
 }
 
 /** Read a nested setting (e.g. "engineModels.claude") */
@@ -135,8 +166,6 @@ export function saveNestedSetting(path: string, value: unknown): void {
 // Fetches shared settings from the host's settings.json via the API and
 // writes them into localStorage so that getSetting() returns host values.
 // Called once on page load after authentication.
-
-import { Auth } from "./auth";
 
 let _bootstrapDone = false;
 

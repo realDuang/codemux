@@ -1,8 +1,10 @@
-import { For, Show, Switch, Match, createSignal, createMemo, onMount } from "solid-js";
+import { For, Show, Switch, Match, createSignal, createMemo, createEffect, onMount } from "solid-js";
 import { useNavigate } from "@solidjs/router";
 import { LanguageSwitcher } from "../components/LanguageSwitcher";
+import { Spinner } from "../components/Spinner";
 import { ThemeSwitcher } from "../components/ThemeSwitcher";
 import ImportHistoryModal from "../components/ImportHistoryModal";
+import { ensureGatewayInitialized, refreshEngineConfigState } from "../lib/engine-bootstrap";
 import { useI18n } from "../lib/i18n";
 import { useAuthGuard } from "../lib/useAuthGuard";
 import { isElectron } from "../lib/platform";
@@ -70,9 +72,23 @@ export default function Settings() {
     saveSetting("worktreeEnabled", newValue);
   };
 
+  const [enginesLoading, setEnginesLoading] = createSignal(true);
+
   const logLevels = ["error", "warn", "info", "verbose", "debug", "silly"];
 
   onMount(async () => {
+    // Load engines independently so Settings works even without Chat
+    (async () => {
+      try {
+        await ensureGatewayInitialized();
+        await refreshEngineConfigState();
+      } catch {
+        // Keep existing fallback UI when engine bootstrap fails.
+      } finally {
+        setEnginesLoading(false);
+      }
+    })();
+
     // Load app version and update settings
     if (isElectron()) {
       const info = await systemAPI.getInfo();
@@ -327,7 +343,15 @@ export default function Settings() {
                 when={configStore.engines.length > 0}
                 fallback={
                   <div class="bg-white dark:bg-slate-800 rounded-xl shadow-xs border border-slate-200 dark:border-slate-700 p-6 text-center text-sm text-slate-400 dark:text-slate-500">
-                    {t().engine.noEngines}
+                    <Show
+                      when={enginesLoading()}
+                      fallback={t().engine.noEngines}
+                    >
+                      <div class="flex items-center justify-center gap-2">
+                        <Spinner size="small" class="text-slate-400 dark:text-slate-500" />
+                        <span>{t().common.loading}</span>
+                      </div>
+                    </Show>
                   </div>
                 }
               >
@@ -338,6 +362,7 @@ export default function Settings() {
                       const showModelSelector = createMemo(() =>
                         engine.status === "running"
                       );
+                      let modelSelectRef: HTMLSelectElement | undefined;
                       const selectedModelId = createMemo(() => {
                         const selection = configStore.engineModelSelections[engine.type];
                         if (selection?.modelID) {
@@ -347,6 +372,17 @@ export default function Settings() {
                           }
                         }
                         return models()[0]?.modelId || "";
+                      });
+
+                      // Sync native <select> value with reactive state — SolidJS
+                      // doesn't reliably update select.value when <For> re-renders options.
+                      createEffect(() => {
+                        const selectedId = selectedModelId();
+                        if (engine.capabilities?.customModelInput || !modelSelectRef) return;
+                        if (models().length === 0) return;
+                        if (modelSelectRef.value !== selectedId) {
+                          modelSelectRef.value = selectedId;
+                        }
                       });
 
                       // Group models by provider for optgroup display
@@ -488,6 +524,7 @@ export default function Settings() {
                                   when={engine.capabilities?.customModelInput}
                                   fallback={
                                     <select
+                                      ref={modelSelectRef}
                                       value={selectedModelId()}
                                       onChange={(e) => handleModelSelect(e.currentTarget.value)}
                                       disabled={engine.capabilities?.modelSwitchable === false}

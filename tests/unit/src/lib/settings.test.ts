@@ -197,4 +197,57 @@ describe('settings', () => {
       expect(await bootstrapHostSettings()).toBe(false);
     });
   });
+
+  describe('saveSetting write-back', () => {
+    beforeEach(() => {
+      vi.stubGlobal('fetch', vi.fn(() => Promise.resolve({ ok: true })));
+    });
+
+    it('fires PATCH for shared keys in web mode when authenticated', () => {
+      vi.mocked(Auth.isAuthenticated).mockReturnValue(true);
+      saveSetting('theme', 'dark');
+
+      expect(fetch).toHaveBeenCalledWith('/api/settings/shared', {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: 'Bearer test-token',
+        },
+        body: JSON.stringify({ theme: 'dark' }),
+      });
+    });
+
+    it('does not fire PATCH for non-shared keys', () => {
+      vi.mocked(Auth.isAuthenticated).mockReturnValue(true);
+      saveSetting('logLevel', 'debug');
+
+      expect(fetch).not.toHaveBeenCalled();
+    });
+
+    it('does not fire PATCH when not authenticated', () => {
+      vi.mocked(Auth.isAuthenticated).mockReturnValue(false);
+      saveSetting('theme', 'dark');
+
+      expect(fetch).not.toHaveBeenCalled();
+    });
+
+    it('does not fire PATCH in Electron mode', () => {
+      vi.mocked(isElectron).mockReturnValue(true);
+      vi.mocked(Auth.isAuthenticated).mockReturnValue(true);
+      (window as any).electronAPI = {
+        settings: { cache: {}, save: vi.fn() },
+      };
+      saveSetting('theme', 'dark');
+
+      expect(fetch).not.toHaveBeenCalled();
+    });
+
+    it('swallows fetch errors silently', () => {
+      vi.mocked(Auth.isAuthenticated).mockReturnValue(true);
+      vi.mocked(fetch as any).mockImplementation(() => { throw new Error('Network error'); });
+
+      // Should not throw
+      expect(() => saveSetting('theme', 'dark')).not.toThrow();
+    });
+  });
 });

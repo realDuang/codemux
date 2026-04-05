@@ -608,11 +608,6 @@ export async function startTestServer(
       return;
     }
 
-    if (pathname === "/api/system/capabilities" && req.method === "GET") {
-      sendJson(res, { serverMode: false, canAddProject: true });
-      return;
-    }
-
     if (pathname === "/api/system/is-local" && req.method === "GET") {
       sendJson(res, { isLocal: authStore.getIsLocal() });
       return;

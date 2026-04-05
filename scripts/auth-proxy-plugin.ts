@@ -166,25 +166,7 @@ export function createAuthProxyPlugin(options: AuthProxyPluginOptions = {}): Plu
       });
 
       // ====================================================================
-      // System: Host capabilities
-      // GET /api/system/capabilities
-      // ====================================================================
-      server.middlewares.use((req, res, next) => {
-        if (req.url !== "/api/system/capabilities" || req.method !== "GET") {
-          next();
-          return;
-        }
 
-        const serverMode = process.env.CODEMUX_SERVER_MODE === "1";
-        const clientIp = getClientIp(req);
-        const isLocal = isLocalhost(clientIp);
-        sendJson(res, {
-          serverMode,
-          canAddProject: serverMode || isLocal,
-        });
-      });
-
-      // ====================================================================
       // System: Check if request is from localhost
       // GET /api/system/is-local
       // ====================================================================

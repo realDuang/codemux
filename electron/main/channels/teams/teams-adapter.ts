@@ -29,7 +29,6 @@ import { GatewayWsClient } from "../gateway-ws-client";
 import { StreamingController } from "../streaming/streaming-controller";
 import { TokenBucket } from "../streaming/rate-limiter";
 import { BaseSessionMapper, type PersistedBinding } from "../base-session-mapper";
-import { resolveProjectRef } from "../project-ref-utils";
 import { createStreamingSession, type StreamingSession } from "../streaming/streaming-types";
 import { didConfigValuesChange, mergeDefinedConfig } from "../config-utils";
 import { TeamsTransport } from "./teams-transport";
@@ -622,11 +621,9 @@ export class TeamsAdapter extends ChannelAdapter {
       if (tempSession) {
         await this.cleanupExpiredTempSession(chatId);
       }
-      const projectRef = resolveProjectRef(p2pState.lastSelectedProject);
-      this.sessionMapper.setP2PLastProject(chatId, projectRef);
       await this.createTempSessionAndSend(
         chatId,
-        projectRef,
+        p2pState.lastSelectedProject,
         text,
       );
       return;
@@ -939,11 +936,11 @@ export class TeamsAdapter extends ChannelAdapter {
     const projectName =
       project.name || project.directory.split(/[\\/]/).pop() || project.directory;
 
-    const projectRef = resolveProjectRef({
+    const projectRef = {
       directory: project.directory,
       engineType: project.engineType,
       projectId: project.id,
-    });
+    };
     this.sessionMapper.setP2PLastProject(chatId, projectRef);
 
     await this.showSessionListForProject(chatId, projectRef, projectName);

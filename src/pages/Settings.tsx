@@ -120,11 +120,9 @@ export default function Settings() {
       }
     } else {
       // Web mode: check host capabilities and localhost-only sections
-      const [localAccess, capabilities] = await Promise.all([
-        Auth.isLocalAccess(),
-        systemAPI.getCapabilities(),
-      ]);
-      setShowWebChannelSection(capabilities.serverMode);
+      const localAccess = await Auth.isLocalAccess();
+      const serverMode = getSetting<boolean>("serverMode") === true;
+      setShowWebChannelSection(serverMode);
       if (localAccess) {
         setShowLogSection(true);
         try {

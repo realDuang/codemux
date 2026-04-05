@@ -644,12 +644,10 @@ export default function Chat() {
 
     try {
       if (!isElectron()) {
-        const [localAccess, capabilities] = await Promise.all([
-          Auth.isLocalAccess(),
-          systemAPI.getCapabilities(),
-        ]);
+        const localAccess = await Auth.isLocalAccess();
+        const serverMode = getSetting<boolean>("serverMode") === true;
         setIsLocalAccess(localAccess);
-        setCanAddProject(capabilities.canAddProject);
+        setCanAddProject(localAccess || serverMode);
       }
 
       const isValidToken = await Auth.checkDeviceToken();

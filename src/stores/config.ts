@@ -1,8 +1,6 @@
 import { createStore } from "solid-js/store";
 import { isReasoningEffort, type EngineInfo, type EngineType, type ReasoningEffort, type UnifiedModelInfo } from "../types/unified";
 import { getSetting, saveSetting, getNestedSetting, saveNestedSetting } from "../lib/settings";
-import { settingsAPI } from "../lib/electron-api";
-import { logger } from "../lib/logger";
 
 export interface EngineModelSelection {
   providerID: string;
@@ -142,22 +140,17 @@ export function getDefaultEngineType(): string {
   return fallback?.type || configStore.engines[0]?.type || "opencode";
 }
 
-/** Set the default engine for new sessions and persist it to the active settings backend. */
-export async function setDefaultNewSessionEngine(engineType: EngineType): Promise<void> {
-  await settingsAPI.setDefaultEngine(engineType);
+/** Set the default engine for new sessions and persist to settings. */
+export function setDefaultNewSessionEngine(engineType: EngineType): void {
   setConfigStore("defaultNewSessionEngine", engineType);
   saveSetting("defaultEngine", engineType);
 }
 
-/** Restore the default engine setting from the active settings backend. */
-export async function restoreDefaultEngine(): Promise<void> {
-  const saved = await settingsAPI.getDefaultEngine().catch((err) => {
-    logger.warn("[config] Failed to fetch default engine from server, falling back to local cache:", err);
-    return getSetting<string>("defaultEngine");
-  });
+/** Restore the default engine setting from settings. */
+export function restoreDefaultEngine(): void {
+  const saved = getSetting<string>("defaultEngine");
   if (saved) {
     setConfigStore("defaultNewSessionEngine", saved as EngineType);
-    saveSetting("defaultEngine", saved);
   }
 }
 

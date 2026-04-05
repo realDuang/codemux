@@ -150,11 +150,6 @@ class ProductionServer {
   private server: http.Server | null = null;
   private port: number = WEB_PORT;
   private staticRoot: string = "";
-  private channelManager: Parameters<typeof handleChannelRoutes>[4] | null = null;
-
-  setChannelManager(channelManager: Parameters<typeof handleChannelRoutes>[4]): void {
-    this.channelManager = channelManager;
-  }
 
   getPort(): number {
     return this.port;
@@ -259,27 +254,6 @@ class ProductionServer {
       return;
     }
 
-    if (pathname === "/api/channels" || pathname.startsWith("/api/channels/")) {
-      if (!this.channelManager) {
-        sendJson(res, { error: "Channel manager unavailable" }, 503);
-        return;
-      }
-      const handled = await handleChannelRoutes(req, res, pathname, deviceStore, this.channelManager);
-      if (handled) return;
-      sendJson(res, { error: "Not found" }, 404);
-      return;
-    }
-
-    if (pathname === "/api/settings/default-engine") {
-      const handled = await handleSettingsRoutes(req, res, pathname, deviceStore, {
-        getDefaultEngine: () => getDefaultEngineFromSettings(),
-        saveDefaultEngine: (defaultEngine) => saveSettings({ defaultEngine }),
-      });
-      if (handled) return;
-      sendJson(res, { error: "Not found" }, 404);
-      return;
-    }
-
     // ========================================================================
     // Settings API Routes (auth-required)
     // ========================================================================
@@ -303,16 +277,6 @@ class ProductionServer {
       return;
     }
 
-    if (pathname === "/api/system/capabilities" && req.method === "GET") {
-      const serverMode = process.env.CODEMUX_SERVER_MODE === "1";
-      const clientIp = getClientIp(req);
-      const isLocal = isLocalhost(clientIp);
-      sendJson(res, {
-        serverMode,
-        canAddProject: serverMode || isLocal,
-      });
-      return;
-    }
 
     if (pathname === "/api/system/is-local" && req.method === "GET") {
       const clientIp = getClientIp(req);

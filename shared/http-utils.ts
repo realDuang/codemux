@@ -166,3 +166,4 @@ export function requireAuth(
   }
   return { deviceId: result.deviceId };
 }
+

@@ -196,7 +196,10 @@ export async function handleSettingsRoutes(
   if (req.method === "GET") {
     if (!requireAuth(req, res, store)) return true;
     const settings = settingsFns.loadSettings();
-    sendJson(res, { settings: filterSharedSettings(settings) });
+    const shared = filterSharedSettings(settings);
+    // Expose serverMode as a read-only host capability (not in SHARED_SETTINGS_KEYS)
+    shared.serverMode = process.env.CODEMUX_SERVER_MODE === "1";
+    sendJson(res, { settings: shared });
     return true;
   }
 

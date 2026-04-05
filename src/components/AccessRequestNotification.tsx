@@ -2,7 +2,7 @@ import { createSignal, onMount, onCleanup, For, Show } from "solid-js";
 import { Auth, type PendingRequest } from "../lib/auth";
 import { useI18n } from "../lib/i18n";
 import { isElectron } from "../lib/platform";
-import { systemAPI } from "../lib/electron-api";
+import { getSetting } from "../lib/settings";
 import { logger } from "../lib/logger";
 
 export function AccessRequestNotification() {
@@ -19,11 +19,9 @@ export function AccessRequestNotification() {
     let hostMode = isElectron();
     
     if (!hostMode) {
-      const [localAccess, capabilities] = await Promise.all([
-        Auth.isLocalAccess(),
-        systemAPI.getCapabilities(),
-      ]);
-      hostMode = localAccess || capabilities.serverMode;
+      const localAccess = await Auth.isLocalAccess();
+      const serverMode = getSetting<boolean>("serverMode") === true;
+      hostMode = localAccess || serverMode;
     }
     
     setIsHost(hostMode);

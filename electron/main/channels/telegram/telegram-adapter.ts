@@ -27,7 +27,6 @@ import { GatewayWsClient } from "../gateway-ws-client";
 import { StreamingController } from "../streaming/streaming-controller";
 import { TokenBucket } from "../streaming/rate-limiter";
 import { BaseSessionMapper } from "../base-session-mapper";
-import { resolveProjectRef } from "../project-ref-utils";
 import { createStreamingSession, type StreamingSession } from "../streaming/streaming-types";
 import { TelegramTransport } from "./telegram-transport";
 import { TelegramRenderer } from "./telegram-renderer";
@@ -634,9 +633,7 @@ export class TelegramAdapter extends ChannelAdapter {
       if (tempSession) {
         await this.cleanupExpiredTempSession(chatId);
       }
-      const projectRef = resolveProjectRef(p2pState.lastSelectedProject);
-      this.sessionMapper.setP2PLastProject(chatId, projectRef);
-      await this.createTempSessionAndSend(chatId, projectRef, text);
+      await this.createTempSessionAndSend(chatId, p2pState.lastSelectedProject, text);
       return;
     }
 
@@ -918,11 +915,11 @@ export class TelegramAdapter extends ChannelAdapter {
     const project = pending.projects[num - 1];
     const projectName = project.name || project.directory.split(/[\\/]/).pop() || project.directory;
 
-    const projectRef = resolveProjectRef({
+    const projectRef = {
       directory: project.directory,
       engineType: project.engineType,
       projectId: project.id,
-    });
+    };
     this.sessionMapper.setP2PLastProject(chatId, projectRef);
 
     await this.showSessionListForProject(chatId, projectRef, projectName);

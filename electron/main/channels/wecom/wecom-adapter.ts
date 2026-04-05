@@ -26,7 +26,6 @@ import { TokenBucket } from "../streaming/rate-limiter";
 import { createStreamingSession, type StreamingSession } from "../streaming/streaming-types";
 import { BaseSessionMapper, type BaseGroupBinding, type BaseTempSession, type BasePendingSelection, type PersistedBinding } from "../base-session-mapper";
 import { didConfigValuesChange, mergeDefinedConfig } from "../config-utils";
-import { resolveProjectRef } from "../project-ref-utils";
 import type { WebhookServer, WebhookRequest, WebhookResponse } from "../webhook-server";
 import { WeComCrypto } from "./wecom-crypto";
 import { WeComTransport } from "./wecom-transport";
@@ -542,9 +541,7 @@ export class WeComAdapter extends ChannelAdapter {
       if (tempSession) {
         await this.cleanupExpiredTempSession(chatId);
       }
-      const projectRef = resolveProjectRef(p2pState.lastSelectedProject);
-      this.sessionMapper.setP2PLastProject(chatId, projectRef);
-      await this.createTempSessionAndSend(chatId, projectRef, text);
+      await this.createTempSessionAndSend(chatId, p2pState.lastSelectedProject, text);
       return;
     }
 
@@ -683,11 +680,11 @@ export class WeComAdapter extends ChannelAdapter {
     const project = pending.projects[num - 1];
     const projectName = project.name || project.directory.split(/[\\/]/).pop() || project.directory;
 
-    const projectRef = resolveProjectRef({
+    const projectRef = {
       directory: project.directory,
       engineType: project.engineType,
       projectId: project.id,
-    });
+    };
     this.sessionMapper.setP2PLastProject(chatId, projectRef);
     await this.showSessionListForProject(chatId, projectRef, projectName);
 

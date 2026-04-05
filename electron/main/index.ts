@@ -64,8 +64,6 @@ export { engineManager, gatewayServer };
 const channelManager = new ChannelManager();
 const webhookServer = new WebhookServer(WEBHOOK_PORT);
 channelManager.setWebhookServer(webhookServer);
-authApiServer.setChannelManager(channelManager);
-productionServer.setChannelManager(channelManager);
 
 // Register all channel adapters
 channelManager.registerAdapter(new FeishuAdapter());

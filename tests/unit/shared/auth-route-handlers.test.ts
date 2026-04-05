@@ -356,6 +356,7 @@ describe('auth-route-handlers', () => {
         theme: 'dark',
         locale: 'zh',
         engineModels: { claude: { providerID: 'anthropic', modelID: 'sonnet' } },
+        serverMode: process.env.CODEMUX_SERVER_MODE === "1",
       });
       // Sensitive keys must not leak
       expect(responseBody.settings.logLevel).toBeUndefined();
@@ -372,7 +373,7 @@ describe('auth-route-handlers', () => {
 
       expect(await handleSettingsRoutes(req, mockRes, pathname, mockStore, mockSettingsFns)).toBe(true);
       const responseBody = JSON.parse((mockRes.end as any).mock.calls[0][0]);
-      expect(responseBody.settings).toEqual({});
+      expect(responseBody.settings).toEqual({ serverMode: process.env.CODEMUX_SERVER_MODE === "1" });
     });
 
     it('does not match POST method', async () => {

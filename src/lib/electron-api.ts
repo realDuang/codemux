@@ -16,11 +16,6 @@ interface SystemInfo {
   isPackaged: boolean;
 }
 
-export interface HostCapabilities {
-  serverMode: boolean;
-  canAddProject: boolean;
-}
-
 export interface TunnelInfo {
   url: string;
   status: "starting" | "running" | "stopped" | "error";
@@ -121,27 +116,6 @@ export const systemAPI = {
   async getInfo(): Promise<SystemInfo | null> {
     const api = getElectronAPI();
     return api ? api.system.getInfo() : null;
-  },
-
-  async getCapabilities(): Promise<HostCapabilities> {
-    const api = getElectronAPI();
-    if (api) {
-      return { serverMode: false, canAddProject: true };
-    }
-
-    try {
-      const response = await fetch("/api/system/capabilities");
-      if (!response.ok) {
-        throw new Error(`Request failed (${response.status})`);
-      }
-      const data = await response.json() as Partial<HostCapabilities>;
-      return {
-        serverMode: data.serverMode === true,
-        canAddProject: data.canAddProject === true,
-      };
-    } catch {
-      return { serverMode: false, canAddProject: false };
-    }
   },
 
   async getLocalIp(): Promise<string> {
@@ -390,34 +364,6 @@ export const channelAPI = {
   },
 };
 
-export const settingsAPI = {
-  async getDefaultEngine(): Promise<string | undefined> {
-    const api = getSettingsAPI();
-    if (api) {
-      const settings = await api.load();
-      const defaultEngine = settings?.defaultEngine;
-      return typeof defaultEngine === "string" ? defaultEngine : undefined;
-    }
-
-    const response = await browserAuthedRequest<{ defaultEngine?: string }>("/api/settings/default-engine");
-    return typeof response.defaultEngine === "string" ? response.defaultEngine : undefined;
-  },
-
-  async setDefaultEngine(defaultEngine: string): Promise<void> {
-    const api = getSettingsAPI();
-    if (api) {
-      await api.save({ defaultEngine });
-      return;
-    }
-
-    await browserAuthedRequest<{ success: boolean }>("/api/settings/default-engine", {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ defaultEngine }),
-    });
-  },
-};
-
 // Auto Update types
 export interface UpdateStateInfo {
   status: "idle" | "checking" | "available" | "not-available" | "downloading" | "downloaded" | "error";
@@ -445,11 +391,6 @@ function getUpdateAPI(): any {
 function getAutostartAPI(): any {
   const api = getElectronAPI();
   return (api as any)?.autostart ?? null;
-}
-
-function getSettingsAPI(): any {
-  const api = getElectronAPI();
-  return (api as any)?.settings ?? null;
 }
 
 export const updateAPI = {

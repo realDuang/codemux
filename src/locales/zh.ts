@@ -211,6 +211,7 @@ export const zh: LocaleDict = {
     browseNotSupported: "当前浏览器不支持文件夹选择",
     adding: "正在添加项目...",
     addFailed: "添加项目失败",
+    addNotAvailable: "添加项目仅在桌面应用或服务器模式下可用",
     hideTitle: "删除项目会话",
     hideConfirm: "删除项目「{name}」的所有会话？",
     sessionCount: "这将删除 {count} 个会话。",
@@ -425,6 +426,7 @@ export const zh: LocaleDict = {
     ms: "毫秒",
     configure: "配置",
     configRequired: "需要填写 App ID 和 App Secret 才能启用机器人",
+    secretConfiguredHint: "已配置 — 留空保持不变",
     save: "保存",
     saving: "保存中...",
     directConnect: "直连",
@@ -483,6 +485,7 @@ export const zh: LocaleDict = {
     gatewayDisconnected: "连接已断开，正在重连...",
     gatewayReconnected: "连接已恢复。",
     engineError: "引擎错误：{message}",
+    defaultEngineSaveFailed: "默认引擎保存失败。",
   },
 
   // File Explorer

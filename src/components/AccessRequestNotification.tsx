@@ -2,6 +2,7 @@ import { createSignal, onMount, onCleanup, For, Show } from "solid-js";
 import { Auth, type PendingRequest } from "../lib/auth";
 import { useI18n } from "../lib/i18n";
 import { isElectron } from "../lib/platform";
+import { getSetting } from "../lib/settings";
 import { logger } from "../lib/logger";
 
 export function AccessRequestNotification() {
@@ -14,12 +15,13 @@ export function AccessRequestNotification() {
   let pollInterval: Timer | null = null;
 
   onMount(async () => {
-    // Host mode: Electron OR localhost web access can see and handle approval notifications
+    // Host mode: Electron, localhost web, or authenticated device in server mode
     let hostMode = isElectron();
     
     if (!hostMode) {
-      // Check if this is localhost web access
-      hostMode = await Auth.isLocalAccess();
+      const localAccess = await Auth.isLocalAccess();
+      const serverMode = getSetting<boolean>("serverMode") === true;
+      hostMode = localAccess || serverMode;
     }
     
     setIsHost(hostMode);

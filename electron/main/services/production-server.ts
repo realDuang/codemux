@@ -6,6 +6,7 @@ import { deviceStore } from "./device-store";
 import { prodServerLog, getLogFilePath, getFileLogLevel, setFileLogLevel, loadSettings, saveSettings } from "./logger";
 import { sendJson, getClientIp, isLocalhost, getLocalIp } from "../../../shared/http-utils";
 import { handleAuthRoutes, handleLogRoutes, handleSettingsRoutes } from "../../../shared/auth-route-handlers";
+import { handleChannelRoutes } from "../../../shared/channel-route-handlers";
 import { WEB_PORT, OPENCODE_PORT, WEBHOOK_PORT } from "../../../shared/ports";
 
 // ============================================================================
@@ -275,6 +276,7 @@ class ProductionServer {
       sendJson(res, { localIp, port: this.port });
       return;
     }
+
 
     if (pathname === "/api/system/is-local" && req.method === "GET") {
       const clientIp = getClientIp(req);

@@ -115,6 +115,12 @@ export function SessionSidebar(props: SessionSidebarProps) {
     systemAPI.getInfo();
   }
 
+  const handleDefaultEngineChange = (event: Event) => {
+    const select = event.currentTarget as HTMLSelectElement;
+    const nextEngine = select.value as EngineType;
+    setDefaultNewSessionEngine(nextEngine);
+  };
+
   const getDisplayTitle = (title: string): string => {
     if (!title || isDefaultTitle(title)) {
       return t().sidebar.newSession;
@@ -1629,7 +1635,7 @@ export function SessionSidebar(props: SessionSidebarProps) {
                 });
               }}
               value={getDefaultEngineType()}
-              onChange={(e) => setDefaultNewSessionEngine(e.target.value)}
+              onChange={(e) => { void handleDefaultEngineChange(e); }}
               class="flex-1 min-w-0 text-xs px-2 py-1 bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-md text-gray-700 dark:text-gray-300 focus:outline-none focus:ring-1 focus:ring-blue-500"
             >
               <For each={runningEngines()}>

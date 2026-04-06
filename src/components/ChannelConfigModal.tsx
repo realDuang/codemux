@@ -17,6 +17,8 @@ interface ChannelConfigModalProps {
   title: string;
   fields: ConfigField[];
   initialConfig: Record<string, unknown>;
+  /** Secret field keys that are already configured on the server. */
+  secretsConfigured?: string[];
   onSave: (config: Record<string, unknown>) => Promise<void>;
 }
 
@@ -34,6 +36,8 @@ export function ChannelConfigModal(props: ChannelConfigModalProps) {
   const hasRequiredFields = createMemo(() => {
     return props.fields.every((field) => {
       if (!field.required) return true;
+      // Secret already configured on server — empty means "keep existing"
+      if (field.type === "password" && props.secretsConfigured?.includes(field.key)) return true;
       const val = config()[field.key];
       if (typeof val === "string") return val.trim() !== "";
       if (typeof val === "number") return Number.isFinite(val);
@@ -151,7 +155,11 @@ export function ChannelConfigModal(props: ChannelConfigModalProps) {
                           : raw;
                         updateField(field.key, val);
                       }}
-                      placeholder={field.placeholder}
+                      placeholder={
+                        field.type === "password" && props.secretsConfigured?.includes(field.key)
+                          ? t().channel.secretConfiguredHint
+                          : field.placeholder
+                      }
                       class="w-full px-3 py-2 text-sm rounded-lg border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                     />
                   </div>

@@ -210,6 +210,7 @@ export interface LocaleDict {
     browseNotSupported: string;
     adding: string;
     addFailed: string;
+    addNotAvailable: string;
     hideTitle: string;
     hideConfirm: string;
     sessionCount: string;
@@ -427,6 +428,7 @@ export interface LocaleDict {
     ms: string;
     configure: string;
     configRequired: string;
+    secretConfiguredHint: string;
     save: string;
     saving: string;
     directConnect: string;
@@ -485,6 +487,7 @@ export interface LocaleDict {
     gatewayDisconnected: string;
     gatewayReconnected: string;
     engineError: string;
+    defaultEngineSaveFailed: string;
   };
 
   // File Explorer
@@ -815,6 +818,7 @@ export const en: LocaleDict = {
     browseNotSupported: "Folder selection not supported in this browser",
     adding: "Adding project...",
     addFailed: "Failed to add project",
+    addNotAvailable: "Add Project is only available in desktop app or server mode",
     hideTitle: "Delete Project Sessions",
     hideConfirm: "Delete all sessions for project \"{name}\"?",
     sessionCount: "This will delete {count} session(s).",
@@ -1027,6 +1031,7 @@ export const en: LocaleDict = {
     ms: "ms",
     configure: "Configure",
     configRequired: "App ID and App Secret are required to enable the bot",
+    secretConfiguredHint: "Configured — leave empty to keep current",
     save: "Save",
     saving: "Saving...",
     directConnect: "Direct",
@@ -1085,6 +1090,7 @@ export const en: LocaleDict = {
     gatewayDisconnected: "Connection lost. Reconnecting...",
     gatewayReconnected: "Connection restored.",
     engineError: "Engine error: {message}",
+    defaultEngineSaveFailed: "Failed to save the default engine.",
   },
 
   // File Explorer

@@ -1,7 +1,30 @@
+import fs from "fs";
+import os from "os";
+import path from "path";
 import { spawnSync } from "child_process";
 import * as readline from "readline";
 
 const isWindows = process.platform === "win32";
+
+// Add common user-level CLI install locations so setup/start scripts work in
+// non-login shells (for example on headless Linux servers over SSH).
+export function ensureUserBinPaths() {
+  if (isWindows) return;
+
+  const candidates = [
+    path.join(os.homedir(), ".bun", "bin"),
+    path.join(os.homedir(), ".opencode", "bin"),
+    path.join(os.homedir(), ".local", "bin"),
+  ].filter((candidate) => fs.existsSync(candidate));
+
+  const current = (process.env.PATH ?? "").split(path.delimiter).filter(Boolean);
+  const seen = new Set(current);
+  const missing = candidates.filter((candidate) => !seen.has(candidate));
+
+  if (missing.length > 0) {
+    process.env.PATH = [...missing, ...current].join(path.delimiter);
+  }
+}
 
 // ANSI colors for terminal output
 export const colors = {

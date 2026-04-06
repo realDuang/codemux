@@ -32,6 +32,17 @@ class ElectronDeviceStore extends DeviceStoreBase {
   }
 
   /**
+   * In development, the renderer auth proxy and the server-side shell helpers
+   * both share .devices.json with the Electron main process.
+   * Reload before reads so approvals made from another process are visible
+   * immediately to the running auth API server.
+   */
+  protected override beforeRead(): void {
+    if (!this.initialized || app.isPackaged) return;
+    this.loadData();
+  }
+
+  /**
    * Reload data from disk.
    * Used to sync with Web side in dev mode.
    */

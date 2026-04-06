@@ -1,5 +1,5 @@
 import type { IncomingMessage, ServerResponse } from "http";
-import { sendJson, parseBody, extractBearerToken, getClientIp, isLocalhost } from "./http-utils";
+import { sendJson, parseBody, extractBearerToken, getClientIp, isLocalhost, requireAuth } from "./http-utils";
 import type { DeviceInfo, PendingRequest } from "./device-store-types";
 import { SHARED_SETTINGS_KEYS, isSharedSettingsKey, isValidSharedSettingValue } from "./settings-keys";
 
@@ -196,7 +196,10 @@ export async function handleSettingsRoutes(
   if (req.method === "GET") {
     if (!requireAuth(req, res, store)) return true;
     const settings = settingsFns.loadSettings();
-    sendJson(res, { settings: filterSharedSettings(settings) });
+    const shared = filterSharedSettings(settings);
+    // Expose serverMode as a read-only host capability (not in SHARED_SETTINGS_KEYS)
+    shared.serverMode = process.env.CODEMUX_SERVER_MODE === "1";
+    sendJson(res, { settings: shared });
     return true;
   }
 
@@ -247,29 +250,6 @@ function requireLocalhost(req: IncomingMessage, res: ServerResponse): boolean {
     return false;
   }
   return true;
-}
-
-// -----------------------------------------------------------------------------
-// Helper: extract and verify bearer token, send 401 if invalid.
-// Returns { deviceId } on success, null on failure (response already sent).
-// -----------------------------------------------------------------------------
-
-function requireAuth(
-  req: IncomingMessage,
-  res: ServerResponse,
-  store: AuthDeviceStore,
-): { deviceId: string } | null {
-  const token = extractBearerToken(req);
-  if (!token) {
-    sendJson(res, { error: "Unauthorized" }, 401);
-    return null;
-  }
-  const result = store.verifyToken(token);
-  if (!result.valid || !result.deviceId) {
-    sendJson(res, { error: "Invalid token" }, 401);
-    return null;
-  }
-  return { deviceId: result.deviceId };
 }
 
 // -----------------------------------------------------------------------------

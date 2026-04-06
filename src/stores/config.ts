@@ -146,7 +146,7 @@ export function setDefaultNewSessionEngine(engineType: EngineType): void {
   saveSetting("defaultEngine", engineType);
 }
 
-/** Restore the default engine setting from settings.json. */
+/** Restore the default engine setting from settings. */
 export function restoreDefaultEngine(): void {
   const saved = getSetting<string>("defaultEngine");
   if (saved) {

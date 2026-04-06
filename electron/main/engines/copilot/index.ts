@@ -91,6 +91,22 @@ interface PendingQuestion {
 }
 
 type CopilotReasoningEffort = NonNullable<SessionConfig["reasoningEffort"]>;
+
+function buildCopilotSubprocessEnv(extraEnv?: Record<string, string>): NodeJS.ProcessEnv {
+  const env = { ...process.env, ...extraEnv };
+
+  // Electron leaks this in packaged builds and it breaks the Copilot CLI subprocess.
+  delete env.ELECTRON_RUN_AS_NODE;
+
+  // Headless Linux server mode runs under dbus-run-session. In that environment,
+  // the Copilot CLI may try Secret Service first, time out, and incorrectly
+  // report "Not authenticated" even though the existing CLI login is usable.
+  if (env.CODEMUX_DISABLE_COPILOT_DBUS === "1") {
+    delete env.DBUS_SESSION_BUS_ADDRESS;
+  }
+
+  return env;
+}
 export class CopilotSdkAdapter extends EngineAdapter {
   readonly engineType: EngineType = "copilot";
 
@@ -146,10 +162,7 @@ export class CopilotSdkAdapter extends EngineAdapter {
       }
       copilotLog.info("Using Copilot CLI binary:", cliPath);
 
-      // Remove ELECTRON_RUN_AS_NODE which leaks from Electron in packaged builds
-      // and causes the Copilot CLI subprocess to malfunction (stream destroyed).
-      const env = { ...process.env, ...this.options?.env };
-      delete env.ELECTRON_RUN_AS_NODE;
+      const env = buildCopilotSubprocessEnv(this.options?.env);
 
       this.client = new CopilotClient({
         useStdio: true,

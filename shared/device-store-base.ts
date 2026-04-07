@@ -184,6 +184,7 @@ export abstract class DeviceStoreBase {
 
   verifyToken(token: string): { valid: boolean; deviceId?: string } {
     this.beforeRead();
+    this.cleanupInactiveDevices();
 
     const data = this.getData();
     const result = verifyJWT(token, data.jwtSecret);
@@ -420,15 +421,34 @@ export abstract class DeviceStoreBase {
   /**
    * Remove non-host devices that have been inactive for longer than DEVICE_INACTIVE_MS.
    * Host devices (isHost: true) are never auto-removed.
+   *
+   * Re-reads the store before saving to reduce the lost-update window in dev mode,
+   * where the file may be shared with another process.
    */
   protected cleanupInactiveDevices(): void {
     const data = this.getData();
     const cutoff = Date.now() - DEVICE_INACTIVE_MS;
-    let changed = false;
 
+    const inactiveIds: string[] = [];
     for (const [id, device] of Object.entries(data.devices)) {
       if (!device.isHost && device.lastSeenAt < cutoff) {
-        delete data.devices[id];
+        inactiveIds.push(id);
+      }
+    }
+
+    if (inactiveIds.length === 0) {
+      return;
+    }
+
+    // Reload before saving to avoid overwriting concurrent changes in dev mode.
+    this.beforeRead();
+    const freshData = this.getData();
+    let changed = false;
+
+    for (const id of inactiveIds) {
+      const device = freshData.devices[id];
+      if (device && !device.isHost && device.lastSeenAt < cutoff) {
+        delete freshData.devices[id];
         changed = true;
       }
     }

@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { DeviceStoreBase } from '../../../shared/device-store-base';
 import fs from 'fs';
 
@@ -239,6 +239,10 @@ describe('DeviceStoreBase', () => {
   describe('Inactive Device Auto-Cleanup', () => {
     const FOURTEEN_DAYS = 14 * 24 * 60 * 60 * 1000;
 
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
     it('removes non-host devices inactive for more than 14 days', () => {
       vi.useFakeTimers();
       const now = Date.now();
@@ -250,7 +254,6 @@ describe('DeviceStoreBase', () => {
 
       expect(store.getDevice('d1')).toBeUndefined();
       expect(store.getDevice('d2')).toBeDefined();
-      vi.useRealTimers();
     });
 
     it('never removes host devices regardless of inactivity', () => {
@@ -264,7 +267,6 @@ describe('DeviceStoreBase', () => {
 
       expect(store.getDevice('host')).toBeDefined();
       expect(store.getDevice('remote')).toBeUndefined();
-      vi.useRealTimers();
     });
 
     it('triggers cleanup when listing devices', () => {
@@ -277,7 +279,6 @@ describe('DeviceStoreBase', () => {
       const devices = store.listDevices();
       expect(devices).toHaveLength(1);
       expect(devices[0].id).toBe('active');
-      vi.useRealTimers();
     });
 
     it('triggers cleanup via cleanupExpiredRequests', () => {
@@ -288,10 +289,9 @@ describe('DeviceStoreBase', () => {
       store.cleanupExpiredRequestsPublic();
 
       expect(store.getDevice('stale')).toBeUndefined();
-      vi.useRealTimers();
     });
 
-    it('invalidates tokens for cleaned-up devices', () => {
+    it('invalidates tokens for cleaned-up devices via verifyToken', () => {
       vi.useFakeTimers();
       const now = Date.now();
 
@@ -301,10 +301,8 @@ describe('DeviceStoreBase', () => {
 
       // Simulate 15 days of inactivity
       vi.advanceTimersByTime(FOURTEEN_DAYS + 1);
-      const devices = store.listDevices();
-      expect(devices).toHaveLength(0);
       expect(store.verifyToken(token).valid).toBe(false);
-      vi.useRealTimers();
+      expect(store.getDevice('d1')).toBeUndefined();
     });
   });
 

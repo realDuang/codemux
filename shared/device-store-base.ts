@@ -16,6 +16,9 @@ const REQUEST_EXPIRY_MS = 5 * 60 * 1000;
 /** Resolved requests are cleaned up after 24 hours */
 const RESOLVED_RETENTION_MS = 24 * 60 * 60 * 1000;
 
+/** Non-host devices inactive for 14 days are automatically removed */
+const DEVICE_INACTIVE_MS = 14 * 24 * 60 * 60 * 1000;
+
 // =============================================================================
 // DeviceStoreBase — abstract base class
 // =============================================================================
@@ -153,6 +156,7 @@ export abstract class DeviceStoreBase {
   /** Returns devices sorted by lastSeenAt descending (most recently active first). */
   listDevices(): DeviceInfo[] {
     this.beforeRead();
+    this.cleanupInactiveDevices();
     return Object.values(this.getData().devices).sort(
       (a, b) => b.lastSeenAt - a.lastSeenAt,
     );
@@ -379,7 +383,7 @@ export abstract class DeviceStoreBase {
     }
   }
 
-  private cleanupExpiredRequests(): void {
+  protected cleanupExpiredRequests(): void {
     const data = this.getData();
     let changed = false;
 
@@ -401,6 +405,30 @@ export abstract class DeviceStoreBase {
         request.resolvedAt < cutoff
       ) {
         delete data.pendingRequests[id];
+        changed = true;
+      }
+    }
+
+    if (changed) {
+      this.save();
+    }
+
+    // Also clean up inactive devices
+    this.cleanupInactiveDevices();
+  }
+
+  /**
+   * Remove non-host devices that have been inactive for longer than DEVICE_INACTIVE_MS.
+   * Host devices (isHost: true) are never auto-removed.
+   */
+  protected cleanupInactiveDevices(): void {
+    const data = this.getData();
+    const cutoff = Date.now() - DEVICE_INACTIVE_MS;
+    let changed = false;
+
+    for (const [id, device] of Object.entries(data.devices)) {
+      if (!device.isHost && device.lastSeenAt < cutoff) {
+        delete data.devices[id];
         changed = true;
       }
     }

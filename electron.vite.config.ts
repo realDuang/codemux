@@ -17,7 +17,7 @@ logger.error = (msg, options) => {
 
 export default defineConfig({
   main: {
-    plugins: [externalizeDepsPlugin({ exclude: ['ws', 'fix-path', 'shell-path', 'shell-env', 'electron-log'] })],
+    plugins: [externalizeDepsPlugin({ exclude: ['ws', 'shell-env', 'electron-log'] })],
     build: {
       lib: {
         entry: resolve(__dirname, 'electron/main/index.ts'),

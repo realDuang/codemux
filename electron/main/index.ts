@@ -1,12 +1,20 @@
 import { app, BrowserWindow } from "electron";
-import fixPath from "fix-path";
+import { shellEnvSync } from "shell-env";
 import { mainLog } from "./services/logger";
 import { unwatchAll } from "./services/file-service";
 // dev restart trigger
 
-// Fix $PATH for packaged macOS/Linux apps launched from GUI.
-// On Windows this is a no-op (Windows inherits PATH correctly from system env).
-fixPath();
+// Load the user's full login-shell environment for packaged macOS/Linux apps.
+// GUI-launched apps inherit a minimal environment from launchd, missing vars
+// defined in ~/.zshrc / ~/.bashrc (e.g. PATH, ANTHROPIC_API_KEY).
+// shell-env spawns a login shell to capture the complete env.
+// On Windows this is a no-op (returns process.env as-is).
+try {
+  Object.assign(process.env, shellEnvSync());
+} catch {
+  // Non-fatal: if shell-env fails (e.g. non-standard shell), continue with
+  // the existing environment. PATH and other vars may be incomplete.
+}
 
 // Catch uncaught exceptions from child process stdio (EPIPE, etc.)
 // Without this, Electron shows an error dialog and the app becomes unstable.

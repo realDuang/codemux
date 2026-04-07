@@ -117,10 +117,13 @@ function computeStatusFromPart(
     let detail: string | undefined;
 
     switch (tp.normalizedTool) {
-      case "task":
+      case "task": {
         base = t().steps.delegatingWork;
-        detail = extractDescription(input);
+        const currentTool = (input?._currentTool ?? input?._lastToolName) as string | undefined;
+        const desc = extractDescription(input);
+        detail = currentTool && desc ? `${desc} (${currentTool})` : (desc ?? currentTool);
         break;
+      }
       case "todo":
         return t().steps.planningNextSteps;
       case "read":

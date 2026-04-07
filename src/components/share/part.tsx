@@ -453,6 +453,17 @@ function RunningToolCard(props: { part: ToolPart }) {
     props.part.state.status === "pending" || props.part.state.status === "running";
   const elapsed = createElapsedTimer(startTime, isRunning);
 
+  const isTask = () => props.part.normalizedTool === "task";
+  const taskMeta = () => {
+    if (!isTask()) return undefined;
+    const inp = getToolInput(props.part.state);
+    if (!inp) return undefined;
+    const currentTool = (inp._currentTool ?? inp._lastToolName) as string | undefined;
+    const usage = inp._taskUsage as { toolUses?: number } | undefined;
+    if (!currentTool && !usage?.toolUses) return undefined;
+    return { currentTool, toolUses: usage?.toolUses };
+  };
+
   return (
     <div data-component="tool-running">
       <div data-component="tool-title" data-running>
@@ -469,6 +480,18 @@ function RunningToolCard(props: { part: ToolPart }) {
         </Show>
         <span data-slot="status">{formatDuration(elapsed())}</span>
       </div>
+      <Show when={taskMeta()}>
+        {(meta) => (
+          <div data-component="task-progress">
+            <Show when={meta().currentTool}>
+              <span data-slot="subtool">{meta().currentTool}</span>
+            </Show>
+            <Show when={meta().toolUses}>
+              <span data-slot="tool-count">{meta().toolUses} tool uses</span>
+            </Show>
+          </div>
+        )}
+      </Show>
     </div>
   );
 }

@@ -134,7 +134,7 @@ body {
   padding-left: 86px;
 }
 
-/* macOS titlebar: move brand to the right, reverse order (text first, logo last) */
+/* macOS titlebar: move brand to right side to avoid traffic light overlap */
 .electron-macos .titlebar-brand {
   order: 99;
   flex-direction: row-reverse;

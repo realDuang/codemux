@@ -212,6 +212,9 @@ export class ClaudeCodeAdapter extends EngineAdapter {
   // --- Tool call tracking ---
   private toolCallParts = new Map<string, ToolPart>();
 
+  /** Maps SDK task_id → tool_use_id for correlating task_progress/notification to ToolPart */
+  private taskToToolUseId = new Map<string, string>();
+
   // --- Active requests (for abort) ---
   private activeAbortControllers = new Map<string, AbortController>();
 
@@ -2014,6 +2017,14 @@ export class ClaudeCodeAdapter extends EngineAdapter {
         );
         break;
 
+      case "tool_progress":
+        this.handleToolProgress(msg as any, sessionId);
+        break;
+
+      case "tool_use_summary":
+        this.handleToolUseSummary(msg as any, sessionId);
+        break;
+
       default:
         // Log type/subtype only — avoid serializing full message to prevent leaking user data
         claudeLog.debug(
@@ -2093,7 +2104,112 @@ export class ClaudeCodeAdapter extends EngineAdapter {
           `[Claude][${sessionId}] Context compacting...`,
         );
       }
+    } else if (msg.subtype === "task_started") {
+      // Subagent task started — map task_id to tool_use_id and enrich ToolPart
+      const toolUseId = msg.tool_use_id;
+      const taskId = msg.task_id;
+      if (toolUseId && taskId) {
+        this.taskToToolUseId.set(taskId, toolUseId);
+        const toolPart = this.toolCallParts.get(toolUseId);
+        if (toolPart && (toolPart.state.status === "running" || toolPart.state.status === "pending")) {
+          const input = ((toolPart.state as any).input ?? {}) as Record<string, unknown>;
+          input._taskId = taskId;
+          input._taskDescription = msg.description;
+          if (msg.prompt) input._taskPrompt = msg.prompt;
+          (toolPart.state as any).input = input;
+          this.emit("message.part.updated", { sessionId, messageId: toolPart.messageId, part: toolPart });
+        }
+      }
+      claudeLog.debug(`[Claude][${sessionId}] task_started: task=${taskId}, tool_use=${toolUseId}`);
+    } else if (msg.subtype === "task_progress") {
+      // Subagent progress update — update ToolPart with latest activity info
+      const toolUseId = msg.tool_use_id || this.taskToToolUseId.get(msg.task_id);
+      if (toolUseId) {
+        const toolPart = this.toolCallParts.get(toolUseId);
+        if (toolPart && (toolPart.state.status === "running" || toolPart.state.status === "pending")) {
+          const input = ((toolPart.state as any).input ?? {}) as Record<string, unknown>;
+          if (msg.description) input._taskDescription = msg.description;
+          if (msg.last_tool_name) input._lastToolName = msg.last_tool_name;
+          if (msg.summary) input._summary = msg.summary;
+          if (msg.usage) {
+            input._taskUsage = {
+              totalTokens: msg.usage.total_tokens,
+              toolUses: msg.usage.tool_uses,
+              durationMs: msg.usage.duration_ms,
+            };
+          }
+          (toolPart.state as any).input = input;
+          this.emit("message.part.updated", { sessionId, messageId: toolPart.messageId, part: toolPart });
+        }
+      }
+      claudeLog.debug(`[Claude][${sessionId}] task_progress: task=${msg.task_id}, last_tool=${msg.last_tool_name}`);
+    } else if (msg.subtype === "task_notification") {
+      // Subagent finished — update ToolPart with final status/summary
+      const toolUseId = msg.tool_use_id || this.taskToToolUseId.get(msg.task_id);
+      if (toolUseId) {
+        const toolPart = this.toolCallParts.get(toolUseId);
+        if (toolPart && (toolPart.state.status === "running" || toolPart.state.status === "pending")) {
+          const input = ((toolPart.state as any).input ?? {}) as Record<string, unknown>;
+          input._taskStatus = msg.status;
+          if (msg.summary) input._summary = msg.summary;
+          if (msg.usage) {
+            input._taskUsage = {
+              totalTokens: msg.usage.total_tokens,
+              toolUses: msg.usage.tool_uses,
+              durationMs: msg.usage.duration_ms,
+            };
+          }
+          (toolPart.state as any).input = input;
+          this.emit("message.part.updated", { sessionId, messageId: toolPart.messageId, part: toolPart });
+        }
+        this.taskToToolUseId.delete(msg.task_id);
+      }
+      claudeLog.debug(`[Claude][${sessionId}] task_notification: task=${msg.task_id}, status=${msg.status}`);
     }
+  }
+
+  /**
+   * Handle tool_progress messages — update parent Task ToolPart with current subtool info.
+   */
+  private handleToolProgress(
+    msg: { tool_use_id: string; tool_name: string; parent_tool_use_id: string | null; elapsed_time_seconds: number; task_id?: string },
+    sessionId: string,
+  ): void {
+    // Only interested in tools running inside a subagent (parent_tool_use_id set)
+    const parentToolUseId = msg.parent_tool_use_id;
+    if (parentToolUseId) {
+      const toolPart = this.toolCallParts.get(parentToolUseId);
+      if (toolPart && (toolPart.state.status === "running" || toolPart.state.status === "pending")) {
+        const input = ((toolPart.state as any).input ?? {}) as Record<string, unknown>;
+        input._currentTool = msg.tool_name;
+        input._currentToolElapsed = msg.elapsed_time_seconds;
+        (toolPart.state as any).input = input;
+        this.emit("message.part.updated", { sessionId, messageId: toolPart.messageId, part: toolPart });
+      }
+    }
+  }
+
+  /**
+   * Handle tool_use_summary — enrich the most recent preceding ToolPart with the summary.
+   */
+  private handleToolUseSummary(
+    msg: { summary: string; preceding_tool_use_ids: string[] },
+    sessionId: string,
+  ): void {
+    // Find the last preceding tool_use that is a Task part and attach the summary
+    for (let i = msg.preceding_tool_use_ids.length - 1; i >= 0; i--) {
+      const toolPart = this.toolCallParts.get(msg.preceding_tool_use_ids[i]);
+      if (toolPart && toolPart.normalizedTool === "task") {
+        const input = ((toolPart.state as any).input ?? {}) as Record<string, unknown>;
+        if (!input._summary) {
+          input._summary = msg.summary;
+          (toolPart.state as any).input = input;
+          this.emit("message.part.updated", { sessionId, messageId: toolPart.messageId, part: toolPart });
+        }
+        break;
+      }
+    }
+    claudeLog.debug(`[Claude][${sessionId}] tool_use_summary: ids=${msg.preceding_tool_use_ids.length}`);
   }
 
   /**
@@ -2611,6 +2727,11 @@ export class ClaudeCodeAdapter extends EngineAdapter {
         this.toolCallParts.delete(key);
       }
     }
+    for (const [taskId, toolUseId] of this.taskToToolUseId) {
+      if (!this.toolCallParts.has(toolUseId)) {
+        this.taskToToolUseId.delete(taskId);
+      }
+    }
 
     // Resolve only the first (oldest) resolver — the one that owns this turn
     const resolvers = this.sendResolvers.get(sessionId);
@@ -2672,6 +2793,11 @@ export class ClaudeCodeAdapter extends EngineAdapter {
     for (const [key, part] of this.toolCallParts) {
       if (part.sessionId === sessionId) {
         this.toolCallParts.delete(key);
+      }
+    }
+    for (const [taskId, toolUseId] of this.taskToToolUseId) {
+      if (!this.toolCallParts.has(toolUseId)) {
+        this.taskToToolUseId.delete(taskId);
       }
     }
 

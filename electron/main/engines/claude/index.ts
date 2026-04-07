@@ -1859,8 +1859,21 @@ export class ClaudeCodeAdapter extends EngineAdapter {
 
       // Process stream events — loop to handle multiple turns from enqueued messages
       while (!abortController.signal.aborted) {
+        let firstMessageIsInit = false;
+        let isFirstMessage = true;
+
         for await (const sdkMessage of v2Session.stream()) {
           if (abortController.signal.aborted) break;
+
+          // Track whether the first message is system:init (normal turn start).
+          // Stale autonomous turns (from subagent completions after a previous
+          // turn's result) start with other types like task_notification.
+          if (isFirstMessage) {
+            isFirstMessage = false;
+            firstMessageIsInit =
+              (sdkMessage as any).type === "system" &&
+              (sdkMessage as any).subtype === "init";
+          }
 
           this.handleSdkMessage(
             sdkMessage,
@@ -1868,6 +1881,27 @@ export class ClaudeCodeAdapter extends EngineAdapter {
             buffer,
             streamingBlocks,
           );
+        }
+
+        // If the first message was NOT system:init, this is a stale autonomous
+        // turn produced by the CLI after the previous turn's result (e.g. from
+        // subagent task_notification). Discard and re-enter stream() to consume
+        // the real response for the current turn.
+        if (!firstMessageIsInit && !abortController.signal.aborted) {
+          claudeLog.info(
+            `[Claude][${sessionId}] Discarding stale autonomous turn (first msg was not system:init)`,
+          );
+          buffer.parts = [];
+          buffer.textAccumulator = "";
+          buffer.textPartId = null;
+          buffer.reasoningAccumulator = "";
+          buffer.reasoningPartId = null;
+          buffer.leadingTrimmed = undefined;
+          delete buffer.tokens;
+          delete buffer.cost;
+          delete buffer.error;
+          streamingBlocks.clear();
+          continue;
         }
 
         // stream() returned (hit a result message) — finalize the current turn

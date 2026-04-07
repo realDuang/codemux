@@ -458,6 +458,48 @@ export const autostartAPI = {
   },
 };
 
+// Terminal API
+function getTerminalAPI(): any {
+  const api = getElectronAPI();
+  return (api as any)?.terminal ?? null;
+}
+
+export const terminalAPI = {
+  isAvailable(): boolean {
+    return getTerminalAPI() !== null;
+  },
+
+  async create(cwd: string, cols: number, rows: number): Promise<string | null> {
+    const api = getTerminalAPI();
+    return api ? api.create(cwd, cols, rows) : null;
+  },
+
+  write(id: string, data: string): void {
+    const api = getTerminalAPI();
+    if (api) api.write(id, data);
+  },
+
+  resize(id: string, cols: number, rows: number): void {
+    const api = getTerminalAPI();
+    if (api) api.resize(id, cols, rows);
+  },
+
+  destroy(id: string): void {
+    const api = getTerminalAPI();
+    if (api) api.destroy(id);
+  },
+
+  onData(callback: (id: string, data: string) => void): (() => void) | null {
+    const api = getTerminalAPI();
+    return api ? api.onData(callback) : null;
+  },
+
+  onExit(callback: (id: string) => void): (() => void) | null {
+    const api = getTerminalAPI();
+    return api ? api.onExit(callback) : null;
+  },
+};
+
 /**
  * Get the OpenCode session storage folder path for a project.
  * OpenCode uses xdg-basedir: ~/.local/share/opencode/storage/session/{projectId}/

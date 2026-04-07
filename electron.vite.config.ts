@@ -23,7 +23,7 @@ export default defineConfig({
         entry: resolve(__dirname, 'electron/main/index.ts'),
       },
       rollupOptions: {
-        external: ['electron', 'bufferutil', 'utf-8-validate'],
+        external: ['electron', 'bufferutil', 'utf-8-validate', 'node-pty'],
         output: {
           format: 'es',
           entryFileNames: '[name].mjs',

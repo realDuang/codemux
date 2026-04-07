@@ -11,6 +11,7 @@ import {
   Suspense,
   untrack,
 } from "solid-js";
+import { createStore } from "solid-js/store";
 import { Auth } from "../lib/auth";
 import { useNavigate } from "@solidjs/router";
 import { gateway } from "../lib/gateway-api";
@@ -50,12 +51,14 @@ const FileExplorer = lazy(() =>
   })),
 );
 import { ResizeHandle } from "../components/ResizeHandle";
+import { TerminalPanel } from "../components/TerminalPanel";
 import { fileStore, togglePanel, setPanelWidth, closePanel } from "../stores/file";
 import { handleFileChanged, refreshGitStatus } from "../stores/file";
 
 import { configStore, setConfigStore, getSelectedModelForEngine, isEngineEnabled, getDefaultEngineType, getEffectiveReasoningEffortForEngine } from "../stores/config";
 import { scheduledTaskStore, setScheduledTaskStore } from "../stores/scheduled-task";
 import { computeActiveSessions } from "../lib/active-sessions";
+import { terminalAPI } from "../lib/electron-api";
 
 // Binary search helper (consistent with opencode desktop)
 function binarySearch<T>(
@@ -1819,6 +1822,38 @@ export default function Chat() {
     return session?.title || "";
   });
 
+  // Terminal panel state — per-session open/closed
+  const [terminalOpenBySession, setTerminalOpenBySession] = createStore<Record<string, boolean>>({});
+  const [terminalHeight, setTerminalHeight] = createSignal(250);
+
+  const currentSessionDir = createMemo(() => {
+    const sid = sessionStore.current;
+    if (!sid) return ".";
+    const session = sessionStore.list.find(s => s.id === sid);
+    return session?.directory || ".";
+  });
+
+  // Ref to TerminalPanel's addTab so we can trigger first-tab creation
+  let addTerminalTab: ((sessionId: string) => void) | undefined;
+
+  const terminalOpen = () => {
+    const sid = sessionStore.current;
+    return !!sid && !!terminalOpenBySession[sid];
+  };
+
+  const toggleTerminal = () => {
+    const sid = sessionStore.current;
+    if (!sid) return;
+    const willOpen = !terminalOpenBySession[sid];
+    setTerminalOpenBySession(sid, willOpen);
+    // Ensure first tab exists for this session when opening
+    if (willOpen && addTerminalTab) addTerminalTab(sid);
+  };
+  const closeTerminal = () => {
+    const sid = sessionStore.current;
+    if (sid) setTerminalOpenBySession(sid, false);
+  };
+
   createEffect(() => {
     initializeSession();
 
@@ -1891,8 +1926,24 @@ export default function Chat() {
           </Show>
         </div>
 
-        {/* Right: File explorer toggle + connection status */}
+        {/* Right: Terminal toggle + File explorer toggle + connection status */}
         <div class="flex items-center gap-1.5 electron-no-drag flex-shrink-0">
+          <Show when={sessionStore.current && terminalAPI.isAvailable()}>
+            <button
+              onClick={toggleTerminal}
+              class={`hidden md:inline-flex p-1.5 rounded-md transition-colors ${
+                terminalOpen()
+                  ? "bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400"
+                  : "text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-slate-800"
+              }`}
+              title={t().terminal.togglePanel}
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="4 17 10 11 4 5" />
+                <line x1="12" x2="20" y1="19" y2="19" />
+              </svg>
+            </button>
+          </Show>
           <Show when={sessionStore.current}>
             <button
               onClick={togglePanel}
@@ -1920,7 +1971,7 @@ export default function Chat() {
         </div>
       </div>
 
-      <div class="flex flex-1 overflow-hidden">
+      <div class="flex flex-1 min-h-0 overflow-hidden">
 
       {/* Mobile Sidebar Overlay */}
       <Show when={isMobile() && isSidebarOpen()}>
@@ -2028,8 +2079,11 @@ export default function Chat() {
         </div>
       </aside>
 
-      {/* Main Chat Area */}
-      <div class="flex-1 flex overflow-hidden min-w-0">
+      {/* Main content area: chat + file explorer + terminal (sidebar stays full height) */}
+      <div class="flex-1 flex flex-col overflow-hidden min-w-0">
+
+      {/* Chat + File Explorer row */}
+      <div class="flex-1 flex overflow-hidden min-w-0 min-h-0">
       <div class="flex-1 flex flex-col overflow-hidden min-w-0 bg-white dark:bg-slate-900">
 
 
@@ -2256,6 +2310,31 @@ export default function Chat() {
           );
         })()}
       </Show>
+      </div>
+
+      {/* Terminal Panel — always mounted to preserve PTY state across sessions */}
+      <div
+        class="relative flex-shrink-0 overflow-hidden"
+        style={{ height: terminalOpen() ? `${terminalHeight()}px` : "0px", display: terminalOpen() ? "block" : "none" }}
+      >
+        <ResizeHandle
+          direction="vertical"
+          edge="start"
+          size={terminalHeight()}
+          min={100}
+          max={Math.floor(window.innerHeight * 0.7)}
+          collapseThreshold={60}
+          onResize={setTerminalHeight}
+          onCollapse={closeTerminal}
+        />
+        <TerminalPanel
+          sessionId={sessionStore.current ?? ""}
+          cwd={currentSessionDir()}
+          visible={terminalOpen() && !!sessionStore.current}
+          onClose={closeTerminal}
+          onReady={(fn) => { addTerminalTab = fn; }}
+        />
+      </div>
       </div>
       </div>
 

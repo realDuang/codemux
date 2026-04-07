@@ -519,6 +519,10 @@ export const zh: LocaleDict = {
     openInExplorer: "在文件管理器中打开",
   },
 
+  terminal: {
+    togglePanel: "切换终端",
+  },
+
   scheduledTask: {
     title: "定时任务",
     create: "创建任务",

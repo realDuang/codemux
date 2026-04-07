@@ -10,6 +10,7 @@ import { getLogFilePath, getFileLogLevel, setFileLogLevel, loadSettings, saveSet
 import { isStartupReady } from "./index";
 import { channelManager } from "./index";
 import { GATEWAY_PORT } from "../../shared/ports";
+import { createTerminal, writeTerminal, resizeTerminal, destroyTerminal } from "./services/terminal-manager";
 
 export function registerIpcHandlers(): void {
   // ===========================================================================
@@ -334,6 +335,28 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle("startup:isReady", async () => {
     return isStartupReady();
+  });
+
+  // ===========================================================================
+  // Terminal
+  // ===========================================================================
+
+  ipcMain.handle("terminal:create", async (event, cwd: string, cols: number, rows: number) => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    if (!win) throw new Error("No window found");
+    return createTerminal(win, cwd, cols, rows);
+  });
+
+  ipcMain.handle("terminal:write", async (_, id: string, data: string) => {
+    writeTerminal(id, data);
+  });
+
+  ipcMain.handle("terminal:resize", async (_, id: string, cols: number, rows: number) => {
+    resizeTerminal(id, cols, rows);
+  });
+
+  ipcMain.handle("terminal:destroy", async (_, id: string) => {
+    destroyTerminal(id);
   });
 }
 

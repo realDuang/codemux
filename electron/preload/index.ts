@@ -137,6 +137,26 @@ const electronAPI = {
     isEnabled: () => ipcRenderer.invoke("autostart:isEnabled") as Promise<boolean>,
     setEnabled: (enabled: boolean) => ipcRenderer.invoke("autostart:setEnabled", enabled),
   },
+
+  // Terminal API
+  terminal: {
+    create: (cwd: string, cols: number, rows: number) =>
+      ipcRenderer.invoke("terminal:create", cwd, cols, rows) as Promise<string>,
+    write: (id: string, data: string) => ipcRenderer.invoke("terminal:write", id, data),
+    resize: (id: string, cols: number, rows: number) =>
+      ipcRenderer.invoke("terminal:resize", id, cols, rows),
+    destroy: (id: string) => ipcRenderer.invoke("terminal:destroy", id),
+    onData: (callback: (id: string, data: string) => void) => {
+      const handler = (_: any, id: string, data: string) => callback(id, data);
+      ipcRenderer.on("terminal:data", handler);
+      return () => { ipcRenderer.removeListener("terminal:data", handler); };
+    },
+    onExit: (callback: (id: string) => void) => {
+      const handler = (_: any, id: string) => callback(id);
+      ipcRenderer.on("terminal:exit", handler);
+      return () => { ipcRenderer.removeListener("terminal:exit", handler); };
+    },
+  },
 };
 
 contextBridge.exposeInMainWorld("electronAPI", electronAPI);

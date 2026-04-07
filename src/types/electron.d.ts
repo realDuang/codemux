@@ -113,6 +113,15 @@ interface ElectronAPI {
     isEnabled: () => Promise<boolean>;
     setEnabled: (enabled: boolean) => Promise<{ success: boolean }>;
   };
+
+  terminal: {
+    create: (cwd: string, cols: number, rows: number) => Promise<string>;
+    write: (id: string, data: string) => Promise<void>;
+    resize: (id: string, cols: number, rows: number) => Promise<void>;
+    destroy: (id: string) => Promise<void>;
+    onData: (callback: (id: string, data: string) => void) => () => void;
+    onExit: (callback: (id: string) => void) => () => void;
+  };
 }
 
 interface UpdateState {

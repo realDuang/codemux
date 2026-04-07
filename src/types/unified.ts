@@ -5,7 +5,7 @@
 
 // --- Engine ---
 
-export type EngineType = "opencode" | "copilot" | "claude" | (string & {});
+export type EngineType = "opencode" | "copilot" | "claude" | "codex" | (string & {});
 
 export type SessionActivityStatus = "idle" | "running" | "completed" | "waiting" | "error" | "cancelled";
 

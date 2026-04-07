@@ -148,6 +148,7 @@ export const dingtalkLog = log.scope("dingtalk");
 export const telegramLog = log.scope("telegram");
 export const wecomLog = log.scope("wecom");
 export const teamsLog = log.scope("teams");
+export const codexLog = log.scope("codex");
 export const scheduledTaskLog = log.scope("sched-task");
 
 export type ScopedLogger = Pick<

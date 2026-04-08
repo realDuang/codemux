@@ -114,7 +114,8 @@ export default function Chat() {
   // Track sessions whose error/cancelled status has been dismissed by viewing
   const [dismissedSessions, setDismissedSessions] = createSignal<Set<string>>(new Set());
   // Active sessions: pin state + delayed removal for Active section
-  const [pinnedSessions, setPinnedSessions] = createSignal<Set<string>>(new Set());
+  const savedPins = getSetting<string[]>("pinnedSessions") ?? [];
+  const [pinnedSessions, setPinnedSessions] = createSignal<Set<string>>(new Set(savedPins));
   const [delayingRemoval, setDelayingRemoval] = createSignal<Set<string>>(new Set());
   const delayTimers = new Map<string, ReturnType<typeof setTimeout>>();
   let prevSendingMap: Record<string, boolean> = {};
@@ -197,6 +198,7 @@ export default function Chat() {
     setPinnedSessions((prev) => {
       const next = new Set(prev);
       next.add(sid);
+      saveSetting("pinnedSessions", [...next]);
       return next;
     });
   };
@@ -205,6 +207,7 @@ export default function Chat() {
     setPinnedSessions((prev) => {
       const next = new Set(prev);
       next.delete(sid);
+      saveSetting("pinnedSessions", [...next]);
       return next;
     });
     // Cancel any pending delayed removal
@@ -811,7 +814,15 @@ export default function Chat() {
 
           setSessionStore("list", sessionInfos);
 
-          // Load scheduled tasks (only if feature is enabled)
+          // Prune pinned session IDs that no longer exist
+          const validIds = new Set(sessionInfos.map(s => s.id));
+          setPinnedSessions((prev) => {
+            const pruned = new Set([...prev].filter(id => validIds.has(id)));
+            if (pruned.size !== prev.size) {
+              saveSetting("pinnedSessions", [...pruned]);
+            }
+            return pruned;
+          });
           if (scheduledTaskStore.enabled) {
             try {
               const tasks = await gateway.listScheduledTasks();

@@ -291,7 +291,7 @@ describe('DeviceStoreBase', () => {
       expect(store.getDevice('stale')).toBeUndefined();
     });
 
-    it('invalidates tokens for cleaned-up devices via verifyToken', () => {
+    it('rejects tokens for inactive devices via verifyToken without deleting them', () => {
       vi.useFakeTimers();
       const now = Date.now();
 
@@ -302,7 +302,43 @@ describe('DeviceStoreBase', () => {
       // Simulate 15 days of inactivity
       vi.advanceTimersByTime(FOURTEEN_DAYS + 1);
       expect(store.verifyToken(token).valid).toBe(false);
-      expect(store.getDevice('d1')).toBeUndefined();
+      // Device is still in store — verifyToken does not delete, only rejects
+      expect(store.getDevice('d1')).toBeDefined();
+    });
+
+    it('triggers cleanup via updateLastSeen', () => {
+      vi.useFakeTimers();
+      const now = Date.now();
+
+      store.addDevice({ id: 'stale', lastSeenAt: now - FOURTEEN_DAYS - 1 } as any);
+      store.addDevice({ id: 'active', lastSeenAt: now } as any);
+
+      store.updateLastSeen('active', '1.2.3.4');
+
+      expect(store.getDevice('stale')).toBeUndefined();
+      expect(store.getDevice('active')).toBeDefined();
+    });
+
+    it('throttles cleanup in updateLastSeen to avoid redundant runs', () => {
+      vi.useFakeTimers();
+      const now = Date.now();
+
+      store.addDevice({ id: 'active', lastSeenAt: now } as any);
+
+      // First updateLastSeen triggers cleanup
+      store.updateLastSeen('active', '1.1.1.1');
+
+      // Add a stale device after cleanup already ran
+      store.addDevice({ id: 'stale', lastSeenAt: now - FOURTEEN_DAYS - 1 } as any);
+
+      // Second call within throttle window — cleanup is skipped
+      store.updateLastSeen('active', '2.2.2.2');
+      expect(store.getDevice('stale')).toBeDefined();
+
+      // Advance past throttle interval (1 hour)
+      vi.advanceTimersByTime(60 * 60 * 1000 + 1);
+      store.updateLastSeen('active', '3.3.3.3');
+      expect(store.getDevice('stale')).toBeUndefined();
     });
   });
 

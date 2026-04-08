@@ -300,6 +300,7 @@ export interface LocaleDict {
     revokeOthersSuccess: string;
     noOtherDevices: string;
     securityTip: string;
+    inactiveCleanupTip: string;
     justNow: string;
     minutesAgo: string;
     hoursAgo: string;
@@ -905,6 +906,7 @@ export const en: LocaleDict = {
     revokeOthersSuccess: "{count} device(s) revoked",
     noOtherDevices: "No other authorized devices",
     securityTip: "If you see an unfamiliar device, revoke its access immediately",
+    inactiveCleanupTip: "Devices inactive for more than 14 days are automatically removed and will need to re-authorize",
     justNow: "just now",
     minutesAgo: "{count} min ago",
     hoursAgo: "{count}h ago",

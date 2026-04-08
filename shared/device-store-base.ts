@@ -36,6 +36,12 @@ const DEVICE_INACTIVE_MS = 14 * 24 * 60 * 60 * 1000;
 export abstract class DeviceStoreBase {
   protected data: DeviceStoreData | null = null;
 
+  /** Timestamp of last inactive-device cleanup run (throttle guard). */
+  private lastCleanupAt = 0;
+
+  /** Minimum interval between inactive-device cleanup runs (1 hour). */
+  private static CLEANUP_THROTTLE_MS = 60 * 60 * 1000;
+
   /** Subclass provides the absolute path to the devices JSON file. */
   protected abstract getFilePath(): string;
 
@@ -149,6 +155,7 @@ export abstract class DeviceStoreBase {
     if (data.devices[deviceId]) {
       data.devices[deviceId].lastSeenAt = Date.now();
       data.devices[deviceId].ip = ip;
+      this.cleanupInactiveDevicesThrottled();
       this.save();
     }
   }
@@ -184,7 +191,6 @@ export abstract class DeviceStoreBase {
 
   verifyToken(token: string): { valid: boolean; deviceId?: string } {
     this.beforeRead();
-    this.cleanupInactiveDevices();
 
     const data = this.getData();
     const result = verifyJWT(token, data.jwtSecret);
@@ -194,6 +200,13 @@ export abstract class DeviceStoreBase {
 
     const device = data.devices[result.payload.deviceId];
     if (!device) {
+      return { valid: false };
+    }
+
+    // Reject inactive non-host devices without deleting them.
+    // Actual cleanup happens lazily via updateLastSeen / listDevices.
+    const cutoff = Date.now() - DEVICE_INACTIVE_MS;
+    if (!device.isHost && device.lastSeenAt < cutoff) {
       return { valid: false };
     }
 
@@ -415,6 +428,17 @@ export abstract class DeviceStoreBase {
     }
 
     // Also clean up inactive devices
+    this.cleanupInactiveDevices();
+  }
+
+  /**
+   * Throttled wrapper: only runs cleanupInactiveDevices if at least
+   * CLEANUP_THROTTLE_MS has elapsed since the last run.
+   */
+  private cleanupInactiveDevicesThrottled(): void {
+    const now = Date.now();
+    if (now - this.lastCleanupAt < DeviceStoreBase.CLEANUP_THROTTLE_MS) return;
+    this.lastCleanupAt = now;
     this.cleanupInactiveDevices();
   }
 

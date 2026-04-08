@@ -300,6 +300,7 @@ export const zh: LocaleDict = {
     revokeOthersSuccess: "已撤销 {count} 个设备",
     noOtherDevices: "没有其他已授权的设备",
     securityTip: "如果发现不认识的设备，请立即撤销其访问权限",
+    inactiveCleanupTip: "超过 14 天未活跃的设备将被自动移除，需要重新授权",
     justNow: "刚刚",
     minutesAgo: "{count}分钟前",
     hoursAgo: "{count}小时前",

@@ -261,6 +261,7 @@ export const ru: LocaleDict = {
     results: "{count} результатов",
     lines: "{count} строк",
     toolHint: "Подсказка",
+    toolUses: "{count} вызовов инструментов",
   },
 
   // Steps (SessionTurn)

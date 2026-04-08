@@ -260,6 +260,7 @@ export interface LocaleDict {
     results: string;
     lines: string;
     toolHint: string;
+    toolUses: string;
   };
 
   // Steps (SessionTurn)
@@ -870,6 +871,7 @@ export const en: LocaleDict = {
     results: "{count} results",
     lines: "{count} lines",
     toolHint: "Hint",
+    toolUses: "{count} tool uses",
   },
 
   // Steps (SessionTurn)

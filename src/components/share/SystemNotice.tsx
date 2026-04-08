@@ -2,7 +2,7 @@ import type { SystemNoticePart } from "../../types/unified";
 import { useI18n } from "../../lib/i18n";
 import styles from "./SystemNotice.module.css";
 
-/** i18n key → icon mapping */
+/** noticeType → icon mapping */
 const noticeIcons: Record<string, string> = {
   compact: "⚡",
   info: "ℹ️",

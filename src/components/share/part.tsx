@@ -454,6 +454,7 @@ function Footer(props: ParentProps<{ title: string }>) {
 
 /** Running tool card with live elapsed timer */
 function RunningToolCard(props: { part: ToolPart }) {
+  const { t } = useI18n();
   const startTime = () => getToolInput(props.part.state)?.time?.start ?? (props.part.state as any).time?.start ?? Date.now();
   const isRunning = () =>
     props.part.state.status === "pending" || props.part.state.status === "running";
@@ -493,7 +494,7 @@ function RunningToolCard(props: { part: ToolPart }) {
               <span data-slot="subtool">{meta().currentTool}</span>
             </Show>
             <Show when={meta().toolUses}>
-              <span data-slot="tool-count">{meta().toolUses} tool uses</span>
+              <span data-slot="tool-count">{t().parts.toolUses.replace("{count}", String(meta().toolUses))}</span>
             </Show>
           </div>
         )}

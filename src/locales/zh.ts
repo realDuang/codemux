@@ -260,6 +260,7 @@ export const zh: LocaleDict = {
     results: "{count} 结果",
     lines: "{count} 行",
     toolHint: "提示",
+    toolUses: "{count} 次工具调用",
   },
 
   // Steps (SessionTurn)

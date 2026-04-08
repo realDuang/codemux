@@ -63,6 +63,7 @@ import { deleteCCSessionFile, readJsonlTimestamps } from "./cc-session-files";
 import { createRequire } from "node:module";
 import { sep, dirname, join } from "node:path";
 import { readFileSync, readdirSync, statSync, existsSync } from "node:fs";
+import { readdir, stat, readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { createTwoFilesPatch } from "diff";
 
@@ -1314,7 +1315,7 @@ export class ClaudeCodeAdapter extends EngineAdapter {
    * Flow: canUseTool blocks → read plan file → emit plan text → emit question
    *       → user replies → resolve promise → SDK gets allow/deny
    */
-  private handleExitPlanMode(
+  private async handleExitPlanMode(
     sessionId: string,
     input: Record<string, unknown>,
     options: { signal: AbortSignal; toolUseID: string },
@@ -1329,7 +1330,7 @@ export class ClaudeCodeAdapter extends EngineAdapter {
     // so the user can review it before the confirmation dialog appears.
     const buffer = this.messageBuffers.get(sessionId);
     if (buffer) {
-      const planContent = this.readLatestPlanFile(sessionId);
+      const planContent = await this.readLatestPlanFile(sessionId);
       if (planContent) {
         this.appendText(sessionId, buffer, "\n\n" + planContent);
       }
@@ -1406,21 +1407,25 @@ export class ClaudeCodeAdapter extends EngineAdapter {
    * Read the most recently modified plan file from ~/.claude/plans/.
    * Returns the file content, or null if no plan file is found.
    */
-  private readLatestPlanFile(_sessionId: string): string | null {
+  private async readLatestPlanFile(_sessionId: string): Promise<string | null> {
     try {
       const plansDir = join(homedir(), ".claude", "plans");
-      const files = readdirSync(plansDir)
-        .filter((f) => f.endsWith(".md"))
-        .map((f) => {
-          const fullPath = join(plansDir, f);
-          return { path: fullPath, mtime: statSync(fullPath).mtimeMs };
-        })
-        .sort((a, b) => b.mtime - a.mtime);
+      const entries = await readdir(plansDir);
+      const files = await Promise.all(
+        entries
+          .filter((f) => f.endsWith(".md"))
+          .map(async (f) => {
+            const fullPath = join(plansDir, f);
+            const st = await stat(fullPath);
+            return { path: fullPath, mtime: st.mtimeMs };
+          }),
+      );
+      files.sort((a, b) => b.mtime - a.mtime);
 
       if (files.length === 0) return null;
 
       // The most recently modified plan file was just written by Claude
-      const content = readFileSync(files[0].path, "utf-8");
+      const content = await readFile(files[0].path, "utf-8");
       return content.trim() || null;
     } catch {
       return null;
@@ -1592,7 +1597,52 @@ export class ClaudeCodeAdapter extends EngineAdapter {
     args: string,
     options?: { mode?: string; modelId?: string; directory?: string },
   ): Promise<CommandInvokeResult> {
-    // Claude Code processes slash commands as inline text
+    // Built-in CC CLI commands (compact, help, cost, etc.) and built-in skills
+    // (simplify, update-config, etc.) — send as slash command text for CC CLI
+    // to process internally.
+    if (this.isBuiltInCommand(commandName)) {
+      const commandText = `/${commandName}${args ? ` ${args}` : ""}`;
+      const message = await this.sendMessage(
+        sessionId,
+        [{ type: "text", text: commandText }],
+        options,
+      );
+      return { handledAsCommand: true, message };
+    }
+
+    // User-defined skills from .claude/skills/ — CC CLI's SDK mode doesn't
+    // resolve these via slash commands, so we expand the skill content ourselves
+    // and send it as a regular message with skill metadata tags (mimicking
+    // CC CLI's interactive mode behavior).
+    const directory =
+      this.v2Sessions.get(sessionId)?.directory ??
+      this.sessionDirectories.get(sessionId);
+    if (directory) {
+      const skillBody = this.readSkillFileBody(commandName, directory);
+      if (skillBody) {
+        // Construct message mimicking CC CLI's skill invocation format:
+        // metadata tags tell the model this is a loaded skill, then the
+        // SKILL.md body provides the actual instructions.
+        const metaTags = [
+          `<command-name>/${commandName}</command-name>`,
+          `<command-message>${commandName}</command-message>`,
+          args ? `<command-args>${args}</command-args>` : null,
+        ].filter(Boolean).join("\n");
+
+        const messageText = `${metaTags}\n${skillBody}`;
+        claudeLog.info(
+          `[Claude][${sessionId}] Expanding user skill /${commandName} (${skillBody.length} chars)`,
+        );
+        const message = await this.sendMessage(
+          sessionId,
+          [{ type: "text", text: messageText }],
+          options,
+        );
+        return { handledAsCommand: true, message };
+      }
+    }
+
+    // Fallback: send as slash command text (may fail for unknown skills)
     const commandText = `/${commandName}${args ? ` ${args}` : ""}`;
     const message = await this.sendMessage(
       sessionId,
@@ -1600,6 +1650,30 @@ export class ClaudeCodeAdapter extends EngineAdapter {
       options,
     );
     return { handledAsCommand: true, message };
+  }
+
+  /**
+   * Read a skill's SKILL.md file body (content after YAML front matter).
+   * Searches project-local .claude/skills/ first, then global ~/.claude/skills/.
+   */
+  private readSkillFileBody(skillName: string, directory: string): string | null {
+    const dirs = [
+      join(directory, ".claude", "skills"),
+      join(homedir(), ".claude", "skills"),
+    ];
+    for (const dir of dirs) {
+      const skillFile = join(dir, skillName, "SKILL.md");
+      if (existsSync(skillFile)) {
+        try {
+          const content = readFileSync(skillFile, "utf-8");
+          // Strip YAML front matter, keep the body
+          return content.replace(/^---\s*\n[\s\S]*?\n---\s*\n?/, "").trim();
+        } catch {
+          continue;
+        }
+      }
+    }
+    return null;
   }
 
   // ==========================================================================
@@ -2092,8 +2166,10 @@ export class ClaudeCodeAdapter extends EngineAdapter {
         // or the subprocess has died. Break immediately to prevent tight-loop
         // spinning that starves the event loop (see #43203-discard-spin).
         if (messageCount === 0 && !abortController.signal.aborted) {
+          buffer.error = buffer.error ?? "error:interrupted";
+          endState.hadErrorDuringExecution = true;
           claudeLog.warn(
-            `[Claude][${sessionId}] stream() returned 0 messages — CLI may be idle or dead, breaking`,
+            `[Claude][${sessionId}] stream() returned 0 messages — classifying turn as interrupted before breaking`,
           );
           break;
         }
@@ -2333,14 +2409,40 @@ export class ClaudeCodeAdapter extends EngineAdapter {
         buffer.modelId = msg.model;
       }
 
+      // The init message carries slash_commands (user-invocable) and skills
+      // (model-invocable) arrays. Log them to verify CC CLI's discovery.
+      const initSlashCmds: string[] = msg.slash_commands ?? [];
+      const initSkills: string[] = msg.skills ?? [];
       claudeLog.info(
-        `[Claude][${sessionId}] System init: session=${ccSessionId}, model=${msg.model}`,
+        `[Claude][${sessionId}] System init: session=${ccSessionId}, model=${msg.model}, slash_commands=[${initSlashCmds.join(",")}], skills=[${initSkills.join(",")}]`,
       );
 
-      // Note: Command/skill discovery is handled by warmupV2Session() via
-      // supportedCommands() API. The init message's slash_commands/skills
-      // arrays are ignored here to avoid overwriting the richer data from
-      // the API (which includes descriptions and argumentHints).
+      // If CC CLI discovered user-defined skills and our warmup missed them,
+      // merge them into availableCommands so `/skill` works natively next time.
+      if (initSlashCmds.length > 0) {
+        const existingNames = new Set(this.availableCommands.map((c) => c.name));
+        let added = 0;
+        for (const name of initSlashCmds) {
+          if (!existingNames.has(name)) {
+            existingNames.add(name);
+            this.availableCommands.push({ name, description: "" });
+            added++;
+          }
+        }
+        if (added > 0) {
+          // Refresh cachedSkillNames — non-built-in commands are skills
+          this.cachedSkillNames = this.availableCommands
+            .filter((cmd) => !this.isBuiltInCommand(cmd.name))
+            .map((cmd) => cmd.name);
+          this.emit("commands.changed", {
+            engineType: this.engineType,
+            commands: this.availableCommands,
+          });
+          claudeLog.info(
+            `[Claude][${sessionId}] Merged ${added} new commands from init into availableCommands`,
+          );
+        }
+      }
     } else if (msg.subtype === "local_command_output") {
       // Slash command output (e.g., /help, /cost, /compact).
       const output = msg.content ?? "";

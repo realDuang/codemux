@@ -4,10 +4,12 @@ import { IconRobot } from "../../icons/custom";
 import { Collapsible } from "../../Collapsible";
 import { ContentMarkdown } from "../content-markdown";
 import { isExpanded, toggleExpanded } from "../../../stores/message";
+import { useI18n } from "../../../lib/i18n";
 import type { ToolProps } from "./tool-utils";
 import { ToolDuration } from "./tool-utils";
 
 export function TaskTool(props: ToolProps) {
+  const { t } = useI18n();
   const summary = () => props.state.input?._summary as string | undefined;
   const taskUsage = () => props.state.input?._taskUsage as { toolUses?: number } | undefined;
 
@@ -20,7 +22,7 @@ export function TaskTool(props: ToolProps) {
           <span data-slot="target">{props.state.input?.description}</span>
         </div>
         <Show when={taskUsage()?.toolUses}>
-          <span data-slot="summary" data-color="dimmed">{taskUsage()!.toolUses} tool uses</span>
+          <span data-slot="summary" data-color="dimmed">{t().parts.toolUses.replace("{count}", String(taskUsage()!.toolUses))}</span>
         </Show>
         <ToolDuration
           time={DateTime.fromMillis(props.state.time.end)

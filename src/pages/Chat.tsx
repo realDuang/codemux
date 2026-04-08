@@ -114,7 +114,10 @@ export default function Chat() {
   // Track sessions whose error/cancelled status has been dismissed by viewing
   const [dismissedSessions, setDismissedSessions] = createSignal<Set<string>>(new Set());
   // Active sessions: pin state + delayed removal for Active section
-  const savedPins = getSetting<string[]>("pinnedSessions") ?? [];
+  const savedPinsSetting = getSetting<unknown>("pinnedSessions");
+  const savedPins = Array.isArray(savedPinsSetting)
+    ? savedPinsSetting.filter((pin): pin is string => typeof pin === "string")
+    : [];
   const [pinnedSessions, setPinnedSessions] = createSignal<Set<string>>(new Set(savedPins));
   const [delayingRemoval, setDelayingRemoval] = createSignal<Set<string>>(new Set());
   const delayTimers = new Map<string, ReturnType<typeof setTimeout>>();

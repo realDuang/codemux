@@ -51,10 +51,11 @@ import {
   EditTool,
   BashTool,
 } from "./tools";
-import type { UnifiedMessage, UnifiedPart, UnifiedPermission, UnifiedQuestion, ToolPart } from "../../types/unified";
+import type { UnifiedMessage, UnifiedPart, UnifiedPermission, UnifiedQuestion, ToolPart, SystemNoticePart } from "../../types/unified";
 import { useI18n } from "../../lib/i18n";
 import { logger } from "../../lib/logger";
 import { isExpanded, toggleExpanded } from "../../stores/message";
+import { SystemNotice } from "./SystemNotice";
 
 import styles from "./part.module.css";
 
@@ -84,6 +85,11 @@ export function Part(props: PartProps) {
   const { t } = useI18n();
   const [copied, setCopied] = createSignal(false);
   const id = createMemo(() => props.message.id + "-" + props.index);
+
+  // System notices render as centered banners, not the standard part layout
+  if (props.part.type === "system-notice") {
+    return <SystemNotice part={props.part as SystemNoticePart} />;
+  }
 
   return (
     <div

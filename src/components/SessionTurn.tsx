@@ -1007,19 +1007,31 @@ export function SessionTurn(props: SessionTurnProps) {
           <Show when={!props.isWorking && lastMessageError()}>
             {(_) => {
               const isCancelled = () => lastMessageError() === "Cancelled";
-              const variant = () => isCancelled() ? "cancelled" : "error";
+              /** Resolve error:* keys to i18n, pass through unknown strings as-is. */
+              const errorKeyMap: Record<string, () => string> = {
+                "error:stopped_by_user": () => t().steps.stoppedByUser,
+                "error:interrupted": () => t().steps.interrupted,
+                "error:empty_response": () => t().steps.emptyResponse,
+              };
+              const resolvedError = () => {
+                const raw = lastMessageError() ?? "";
+                return errorKeyMap[raw]?.() ?? raw;
+              };
+              const isKnownSoftError = () =>
+                lastMessageError() === "error:stopped_by_user" || isCancelled();
+              const variant = () => isKnownSoftError() ? "cancelled" : "error";
               return (
                 <div class={styles.errorBanner} data-variant={variant()}>
                   <div class={styles.errorBannerHeader}>
                     <span class={styles.errorBannerIcon}>
-                      <Show when={isCancelled()} fallback={
+                      <Show when={isKnownSoftError()} fallback={
                         <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                           <circle cx="12" cy="12" r="10" />
                           <path d="m15 9-6 6" />
                           <path d="m9 9 6 6" />
                         </svg>
                       }>
-                        {/* Triangle warning icon for cancelled */}
+                        {/* Triangle warning icon for cancelled/stopped */}
                         <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                           <path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3" />
                           <path d="M12 9v4" />
@@ -1028,10 +1040,10 @@ export function SessionTurn(props: SessionTurnProps) {
                       </Show>
                     </span>
                     <h3 class={styles.errorBannerTitle}>
-                      {isCancelled() ? t().steps.cancelled : t().steps.errorOccurred}
+                      {isKnownSoftError() ? t().steps.cancelled : t().steps.errorOccurred}
                     </h3>
-                    {/* Continue button for cancelled state */}
-                    <Show when={isCancelled() && props.isLastTurn && props.onContinue}>
+                    {/* Continue button for cancelled/stopped state */}
+                    <Show when={isKnownSoftError() && props.isLastTurn && props.onContinue}>
                       <button
                         type="button"
                         class={styles.continueButton}
@@ -1044,9 +1056,9 @@ export function SessionTurn(props: SessionTurnProps) {
                       </button>
                     </Show>
                   </div>
-                  <Show when={!isCancelled()}>
+                  <Show when={!isKnownSoftError()}>
                     <div class={styles.errorBannerContent}>
-                      <ContentError>{lastMessageError()}</ContentError>
+                      <ContentError>{resolvedError()}</ContentError>
                     </div>
                   </Show>
                 </div>

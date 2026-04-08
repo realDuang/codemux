@@ -95,6 +95,10 @@ function toSessionInfo(s: UnifiedSession, projectID?: string): SessionInfo {
   };
 }
 
+// Module-level scroll position cache — persists across mount/unmount cycles
+// so navigating away (e.g. Settings) and back restores the scroll position.
+const savedScrollPositions = new Map<string, number>();
+
 export default function Chat() {
   const { t } = useI18n();
   const navigate = useNavigate();
@@ -547,6 +551,12 @@ export default function Chat() {
     scrollRafId2 = requestAnimationFrame(() => {
       scrollRafPending = false;
       setUserScrolledUp(!isNearBottom());
+      // Persist scroll position so it survives navigation and session switches
+      const sid = sessionStore.current;
+      const el = messagesRef();
+      if (sid && el) {
+        savedScrollPositions.set(sid, el.scrollTop);
+      }
     });
   };
   onCleanup(() => {
@@ -757,6 +767,17 @@ export default function Chat() {
 
       if (!needsSessionBootstrap) {
         logger.debug("[Init] Gateway already initialized, handlers refreshed (remount)");
+        // Restore scroll position for the current session after route navigation
+        const sid = sessionStore.current;
+        if (sid) {
+          const savedPos = savedScrollPositions.get(sid);
+          if (savedPos !== undefined) {
+            setTimeout(() => {
+              const el = messagesRef();
+              if (el) el.scrollTop = savedPos;
+            }, 50);
+          }
+        }
         return;
       }
 
@@ -855,6 +876,14 @@ export default function Chat() {
   const handleSelectSession = async (sessionId: string) => {
     const gen = ++switchGeneration;
     logger.debug("[SelectSession] Switching to session:", sessionId);
+
+    // Save scroll position of the outgoing session before switching
+    const prevSid = sessionStore.current;
+    const prevEl = messagesRef();
+    if (prevSid && prevEl) {
+      savedScrollPositions.set(prevSid, prevEl.scrollTop);
+    }
+
     setSessionStore("current", sessionId);
     setSessionStore("initError", null);
 
@@ -913,7 +942,16 @@ export default function Chat() {
     if (!existing || !existing.some(m => m.role === "user")) {
       await loadSessionMessages(sessionId);
     } else {
-      setTimeout(() => scrollToBottomStable(), 100);
+      // Restore saved scroll position if available, otherwise scroll to bottom
+      const savedPos = savedScrollPositions.get(sessionId);
+      if (savedPos !== undefined) {
+        setTimeout(() => {
+          const el = messagesRef();
+          if (el) el.scrollTop = savedPos;
+        }, 100);
+      } else {
+        setTimeout(() => scrollToBottomStable(), 100);
+      }
     }
 
     // Stale check: if the user has already switched to another session

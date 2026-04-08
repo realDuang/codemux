@@ -40,6 +40,7 @@ import { formatTokenCount, formatCostWithUnit, getEngineBadge } from "../compone
 import { getSetting, saveSetting, bootstrapHostSettings } from "../lib/settings";
 import { refreshThemeFromSettings } from "../lib/theme";
 import { refreshLocaleFromSettings } from "../lib/i18n";
+import { saveScrollPosition, deleteScrollPosition, resolveRemountScroll, resolveSessionSwitchScroll } from "../lib/scroll-position";
 
 import { InputAreaQuestion } from "../components/InputAreaQuestion";
 import { InputAreaPermission } from "../components/InputAreaPermission";
@@ -94,10 +95,6 @@ function toSessionInfo(s: UnifiedSession, projectID?: string): SessionInfo {
     updatedAt: new Date(s.time.updated).toISOString(),
   };
 }
-
-// Module-level scroll position cache — persists across mount/unmount cycles
-// so navigating away (e.g. Settings) and back restores the scroll position.
-const savedScrollPositions = new Map<string, number>();
 
 export default function Chat() {
   const { t } = useI18n();
@@ -555,7 +552,7 @@ export default function Chat() {
       const sid = sessionStore.current;
       const el = messagesRef();
       if (sid && el) {
-        savedScrollPositions.set(sid, el.scrollTop);
+        saveScrollPosition(sid, el.scrollTop);
       }
     });
   };
@@ -768,15 +765,13 @@ export default function Chat() {
       if (!needsSessionBootstrap) {
         logger.debug("[Init] Gateway already initialized, handlers refreshed (remount)");
         // Restore scroll position for the current session after route navigation
-        const sid = sessionStore.current;
-        if (sid) {
-          const savedPos = savedScrollPositions.get(sid);
-          if (savedPos !== undefined) {
-            setTimeout(() => {
-              const el = messagesRef();
-              if (el) el.scrollTop = savedPos;
-            }, 50);
-          }
+        const scrollAction = resolveRemountScroll(sessionStore.current);
+        if (scrollAction.action === "restore") {
+          const pos = scrollAction.position;
+          setTimeout(() => {
+            const el = messagesRef();
+            if (el) el.scrollTop = pos;
+          }, 50);
         }
         return;
       }
@@ -881,7 +876,7 @@ export default function Chat() {
     const prevSid = sessionStore.current;
     const prevEl = messagesRef();
     if (prevSid && prevEl) {
-      savedScrollPositions.set(prevSid, prevEl.scrollTop);
+      saveScrollPosition(prevSid, prevEl.scrollTop);
     }
 
     setSessionStore("current", sessionId);
@@ -942,15 +937,19 @@ export default function Chat() {
     if (!existing || !existing.some(m => m.role === "user")) {
       await loadSessionMessages(sessionId);
     } else {
-      // Restore saved scroll position if available, otherwise scroll to bottom
-      const savedPos = savedScrollPositions.get(sessionId);
-      if (savedPos !== undefined) {
+      const scrollAction = resolveSessionSwitchScroll(sessionId, true);
+      if (scrollAction.action === "restore") {
+        const pos = scrollAction.position;
         setTimeout(() => {
+          if (gen !== switchGeneration || sessionStore.current !== sessionId) return;
           const el = messagesRef();
-          if (el) el.scrollTop = savedPos;
+          if (el) el.scrollTop = pos;
         }, 100);
       } else {
-        setTimeout(() => scrollToBottomStable(), 100);
+        setTimeout(() => {
+          if (gen !== switchGeneration || sessionStore.current !== sessionId) return;
+          scrollToBottomStable();
+        }, 100);
       }
     }
 
@@ -1052,6 +1051,8 @@ export default function Chat() {
         setTodoPartRef(null);
       }
 
+      deleteScrollPosition(sessionId);
+
       // Remove from list
       setSessionStore("list", (list) => list.filter((s) => s.id !== sessionId));
 
@@ -1150,6 +1151,7 @@ export default function Chat() {
         setMessageStore("permission", session.id, undefined as any);
         setMessageStore("question", session.id, undefined as any);
         setMessageStore("queued", session.id, undefined as any);
+        deleteScrollPosition(session.id);
       }
 
       setSessionStore("list", (list) =>

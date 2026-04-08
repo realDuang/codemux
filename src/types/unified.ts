@@ -378,6 +378,14 @@ export interface ToolPart extends PartBase {
   diff?: string;
 }
 
+export interface SystemNoticePart extends PartBase {
+  type: "system-notice";
+  /** Controls visual style: compact (context compressed), info (session resumed), warning */
+  noticeType: "compact" | "info" | "warning";
+  /** i18n key (e.g. "notice:context_compressed") or raw fallback text */
+  text: string;
+}
+
 export type UnifiedPart =
   | TextPart
   | ReasoningPart
@@ -386,7 +394,8 @@ export type UnifiedPart =
   | StepFinishPart
   | SnapshotPart
   | PatchPart
-  | ToolPart;
+  | ToolPart
+  | SystemNoticePart;
 
 // --- Permission ---
 

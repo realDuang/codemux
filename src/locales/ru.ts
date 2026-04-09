@@ -307,6 +307,7 @@ export const ru: LocaleDict = {
     revokeOthersSuccess: "Отозвано устройств: {count}",
     noOtherDevices: "Нет других авторизованных устройств",
     securityTip: "Если вы видите незнакомое устройство, немедленно отзовите его доступ",
+    inactiveCleanupTip: "Устройства, неактивные более 14 дней, автоматически удаляются и потребуют повторной авторизации",
     justNow: "Только что",
     minutesAgo: "{count} мин. назад",
     hoursAgo: "{count} ч. назад",

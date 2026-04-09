@@ -16,6 +16,9 @@ const REQUEST_EXPIRY_MS = 5 * 60 * 1000;
 /** Resolved requests are cleaned up after 24 hours */
 const RESOLVED_RETENTION_MS = 24 * 60 * 60 * 1000;
 
+/** Non-host devices inactive for 14 days are automatically removed */
+const DEVICE_INACTIVE_MS = 14 * 24 * 60 * 60 * 1000;
+
 // =============================================================================
 // DeviceStoreBase — abstract base class
 // =============================================================================
@@ -32,6 +35,12 @@ const RESOLVED_RETENTION_MS = 24 * 60 * 60 * 1000;
  */
 export abstract class DeviceStoreBase {
   protected data: DeviceStoreData | null = null;
+
+  /** Timestamp of last inactive-device cleanup run (throttle guard). */
+  private lastCleanupAt = 0;
+
+  /** Minimum interval between inactive-device cleanup runs (1 hour). */
+  private static CLEANUP_THROTTLE_MS = 60 * 60 * 1000;
 
   /** Subclass provides the absolute path to the devices JSON file. */
   protected abstract getFilePath(): string;
@@ -146,6 +155,7 @@ export abstract class DeviceStoreBase {
     if (data.devices[deviceId]) {
       data.devices[deviceId].lastSeenAt = Date.now();
       data.devices[deviceId].ip = ip;
+      this.cleanupInactiveDevicesThrottled();
       this.save();
     }
   }
@@ -153,6 +163,7 @@ export abstract class DeviceStoreBase {
   /** Returns devices sorted by lastSeenAt descending (most recently active first). */
   listDevices(): DeviceInfo[] {
     this.beforeRead();
+    this.cleanupInactiveDevices();
     return Object.values(this.getData().devices).sort(
       (a, b) => b.lastSeenAt - a.lastSeenAt,
     );
@@ -189,6 +200,13 @@ export abstract class DeviceStoreBase {
 
     const device = data.devices[result.payload.deviceId];
     if (!device) {
+      return { valid: false };
+    }
+
+    // Reject inactive non-host devices without deleting them.
+    // Actual cleanup happens lazily via updateLastSeen / listDevices.
+    const cutoff = Date.now() - DEVICE_INACTIVE_MS;
+    if (!device.isHost && device.lastSeenAt < cutoff) {
       return { valid: false };
     }
 
@@ -379,7 +397,7 @@ export abstract class DeviceStoreBase {
     }
   }
 
-  private cleanupExpiredRequests(): void {
+  protected cleanupExpiredRequests(): void {
     const data = this.getData();
     let changed = false;
 
@@ -401,6 +419,60 @@ export abstract class DeviceStoreBase {
         request.resolvedAt < cutoff
       ) {
         delete data.pendingRequests[id];
+        changed = true;
+      }
+    }
+
+    if (changed) {
+      this.save();
+    }
+
+    // Also clean up inactive devices
+    this.cleanupInactiveDevices();
+  }
+
+  /**
+   * Throttled wrapper: only runs cleanupInactiveDevices if at least
+   * CLEANUP_THROTTLE_MS has elapsed since the last run.
+   */
+  private cleanupInactiveDevicesThrottled(): void {
+    const now = Date.now();
+    if (now - this.lastCleanupAt < DeviceStoreBase.CLEANUP_THROTTLE_MS) return;
+    this.lastCleanupAt = now;
+    this.cleanupInactiveDevices();
+  }
+
+  /**
+   * Remove non-host devices that have been inactive for longer than DEVICE_INACTIVE_MS.
+   * Host devices (isHost: true) are never auto-removed.
+   *
+   * Re-reads the store before saving to reduce the lost-update window in dev mode,
+   * where the file may be shared with another process.
+   */
+  protected cleanupInactiveDevices(): void {
+    const data = this.getData();
+    const cutoff = Date.now() - DEVICE_INACTIVE_MS;
+
+    const inactiveIds: string[] = [];
+    for (const [id, device] of Object.entries(data.devices)) {
+      if (!device.isHost && device.lastSeenAt < cutoff) {
+        inactiveIds.push(id);
+      }
+    }
+
+    if (inactiveIds.length === 0) {
+      return;
+    }
+
+    // Reload before saving to avoid overwriting concurrent changes in dev mode.
+    this.beforeRead();
+    const freshData = this.getData();
+    let changed = false;
+
+    for (const id of inactiveIds) {
+      const device = freshData.devices[id];
+      if (device && !device.isHost && device.lastSeenAt < cutoff) {
+        delete freshData.devices[id];
         changed = true;
       }
     }

@@ -337,6 +337,18 @@ export default function Devices() {
                 {t().devices.securityTip}
               </p>
             </div>
+
+            {/* Inactive Cleanup Info */}
+            <div class="rounded-xl bg-blue-50 dark:bg-blue-900/10 border border-blue-100 dark:border-blue-900/30 p-4 flex gap-3">
+              <svg xmlns="http://www.w3.org/2000/svg" class="shrink-0 text-blue-600 dark:text-blue-400 mt-0.5" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="12" cy="12" r="10"/>
+                <path d="M12 16v-4"/>
+                <path d="M12 8h.01"/>
+              </svg>
+              <p class="text-sm text-blue-800 dark:text-blue-200">
+                {t().devices.inactiveCleanupTip}
+              </p>
+            </div>
           </Show>
         </div>
       </main>

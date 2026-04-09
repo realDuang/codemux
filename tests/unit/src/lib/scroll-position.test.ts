@@ -74,20 +74,13 @@ describe("session switch scroll restore", () => {
   it("restores saved position when switching back to a viewed session", () => {
     saveScrollPosition("session-a", 500);
 
-    const result = resolveSessionSwitchScroll("session-a", true);
+    const result = resolveSessionSwitchScroll("session-a");
     expect(result).toEqual({ action: "restore", position: 500 });
   });
 
   it("scrolls to bottom for a session with no saved position", () => {
-    const result = resolveSessionSwitchScroll("session-b", true);
+    const result = resolveSessionSwitchScroll("session-b");
     expect(result).toEqual({ action: "scrollToBottom" });
-  });
-
-  it("returns none when session has no existing messages", () => {
-    saveScrollPosition("session-a", 500);
-
-    const result = resolveSessionSwitchScroll("session-a", false);
-    expect(result).toEqual({ action: "none" });
   });
 
   it("each session maintains its own independent scroll position", () => {
@@ -95,18 +88,18 @@ describe("session switch scroll restore", () => {
     saveScrollPosition("session-b", 800);
     saveScrollPosition("session-c", 0);
 
-    expect(resolveSessionSwitchScroll("session-a", true))
+    expect(resolveSessionSwitchScroll("session-a"))
       .toEqual({ action: "restore", position: 100 });
-    expect(resolveSessionSwitchScroll("session-b", true))
+    expect(resolveSessionSwitchScroll("session-b"))
       .toEqual({ action: "restore", position: 800 });
-    expect(resolveSessionSwitchScroll("session-c", true))
+    expect(resolveSessionSwitchScroll("session-c"))
       .toEqual({ action: "restore", position: 0 });
   });
 
   it("saves outgoing session position before switch", () => {
     saveScrollPosition("session-a", 300);
 
-    const result = resolveSessionSwitchScroll("session-a", true);
+    const result = resolveSessionSwitchScroll("session-a");
     expect(result).toEqual({ action: "restore", position: 300 });
   });
 });
@@ -140,7 +133,7 @@ describe("scroll position cache persistence", () => {
     saveScrollPosition("session-1", 0);
 
     // scrollTop=0 means user is at the top — should restore to top, not scroll to bottom
-    const result = resolveSessionSwitchScroll("session-1", true);
+    const result = resolveSessionSwitchScroll("session-1");
     expect(result).toEqual({ action: "restore", position: 0 });
   });
 
@@ -150,6 +143,6 @@ describe("scroll position cache persistence", () => {
 
     deleteScrollPosition("session-1");
     expect(resolveRemountScroll("session-1")).toEqual({ action: "none" });
-    expect(resolveSessionSwitchScroll("session-1", true)).toEqual({ action: "scrollToBottom" });
+    expect(resolveSessionSwitchScroll("session-1")).toEqual({ action: "scrollToBottom" });
   });
 });

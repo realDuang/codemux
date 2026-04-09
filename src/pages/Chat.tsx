@@ -937,7 +937,7 @@ export default function Chat() {
     if (!existing || !existing.some(m => m.role === "user")) {
       await loadSessionMessages(sessionId);
     } else {
-      const scrollAction = resolveSessionSwitchScroll(sessionId, true);
+      const scrollAction = resolveSessionSwitchScroll(sessionId);
       if (scrollAction.action === "restore") {
         const pos = scrollAction.position;
         setTimeout(() => {

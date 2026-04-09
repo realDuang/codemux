@@ -36,19 +36,11 @@ export function resolveRemountScroll(currentSessionId: string | null): ScrollAct
 }
 
 /**
- * Decide scroll behavior when switching sessions.
- * - No existing messages → caller should load from disk (not handled here)
+ * Decide scroll behavior when switching to a session that already has messages.
  * - Has saved position → restore it
  * - No saved position → scroll to bottom
  */
-export function resolveSessionSwitchScroll(
-  sessionId: string,
-  hasExistingMessages: boolean,
-): ScrollAction {
-  if (!hasExistingMessages) {
-    // Caller should load from disk, which scrolls to bottom internally
-    return { action: "none" };
-  }
+export function resolveSessionSwitchScroll(sessionId: string): ScrollAction {
   const savedPos = savedScrollPositions.get(sessionId);
   if (savedPos !== undefined) {
     return { action: "restore", position: savedPos };

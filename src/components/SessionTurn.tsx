@@ -580,7 +580,7 @@ export function SessionTurn(props: SessionTurnProps) {
     // tasks, intermediate messages may carry completed timestamps prematurely.
     if (props.isWorking) return undefined;
     const lastAssistant = props.assistantMessages.at(-1);
-    return lastAssistant?.time?.completed;
+    return lastAssistant?.time?.completed ?? lastAssistant?.time?.created;
   });
 
   createEffect(() => {

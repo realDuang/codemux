@@ -106,19 +106,11 @@ export class CodexJsonRpcClient extends EventEmitter {
 
     codexLog.info(`Spawning Codex: ${cliPath} ${args.join(" ")}`);
 
-    // Platform-specific spawn
-    if (IS_WIN) {
-      this.proc = spawn(`${cliPath} ${args.join(" ")}`, [], {
-        shell: true,
-        env: childEnv,
-        stdio: ["pipe", "pipe", "pipe"],
-      });
-    } else {
-      this.proc = spawn(cliPath, args, {
-        env: childEnv,
-        stdio: ["pipe", "pipe", "pipe"],
-      });
-    }
+    this.proc = spawn(cliPath, args, {
+      shell: IS_WIN,
+      env: childEnv,
+      stdio: ["pipe", "pipe", "pipe"],
+    });
 
     // Attach EPIPE handlers to prevent uncaughtException
     this.proc.stdin?.on("error", (err: NodeJS.ErrnoException) => {
@@ -217,7 +209,14 @@ export class CodexJsonRpcClient extends EventEmitter {
       }, timeout);
 
       this.pendingRequests.set(id, { resolve, reject, timer });
-      this.writeMessage(msg);
+
+      try {
+        this.writeMessage(msg);
+      } catch (err) {
+        clearTimeout(timer);
+        this.pendingRequests.delete(id);
+        reject(err instanceof Error ? err : new Error(String(err)));
+      }
     });
   }
 
@@ -226,7 +225,11 @@ export class CodexJsonRpcClient extends EventEmitter {
    */
   notify(method: string, params?: unknown): void {
     const msg: JsonRpcNotification = { jsonrpc: "2.0", method, params };
-    this.writeMessage(msg);
+    try {
+      this.writeMessage(msg);
+    } catch (err) {
+      this.emit("error", err instanceof Error ? err : new Error(String(err)));
+    }
   }
 
   /**
@@ -234,7 +237,11 @@ export class CodexJsonRpcClient extends EventEmitter {
    */
   respond(id: number | string, result: unknown): void {
     const msg: JsonRpcResponse = { jsonrpc: "2.0", id, result };
-    this.writeMessage(msg);
+    try {
+      this.writeMessage(msg);
+    } catch (err) {
+      this.emit("error", err instanceof Error ? err : new Error(String(err)));
+    }
   }
 
   /**
@@ -242,15 +249,18 @@ export class CodexJsonRpcClient extends EventEmitter {
    */
   respondError(id: number | string, code: number, message: string, data?: unknown): void {
     const msg: JsonRpcResponse = { jsonrpc: "2.0", id, error: { code, message, data } };
-    this.writeMessage(msg);
+    try {
+      this.writeMessage(msg);
+    } catch (err) {
+      this.emit("error", err instanceof Error ? err : new Error(String(err)));
+    }
   }
 
   // --- Internal ---
 
   private writeMessage(msg: JsonRpcMessage): void {
     if (!this.proc?.stdin?.writable) {
-      codexLog.warn("Cannot write to Codex stdin: not writable");
-      return;
+      throw new Error("Cannot write to Codex stdin: not writable");
     }
     const json = JSON.stringify(msg);
     codexLog.debug(`[→ Codex] ${json}`);

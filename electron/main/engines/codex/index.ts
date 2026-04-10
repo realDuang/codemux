@@ -73,6 +73,7 @@ import {
 const SESSION_IDLE_TIMEOUT_MS = 30 * 60 * 1000;
 const START_TIMEOUT_MS = 120_000;
 const DEFAULT_MODE_ID = "default";
+const MAX_IMAGE_ATTACHMENT_BYTES = 3 * 1024 * 1024;
 
 type CodexTurnInput =
   | { type: "text"; text: string; text_elements: unknown[] }
@@ -210,18 +211,25 @@ export class CodexAdapter extends EngineAdapter {
   private async startInternal(): Promise<void> {
     this.setStatus("starting");
 
-    this.cliPath = resolveCodexCliPath();
-    if (!this.cliPath) {
-      throw this.failStart("Codex CLI not found. Install `codex` and ensure it is in PATH.");
+    try {
+      this.cliPath = resolveCodexCliPath();
+      if (!this.cliPath) {
+        throw new Error("Codex CLI not found. Install `codex` and ensure it is in PATH.");
+      }
+
+      this.version = resolveCodexCliVersion(this.cliPath);
+
+      await this.spawnAndInitialize();
+      await this.refreshRuntimeMetadata();
+
+      this.startSessionCleanup();
+      this.setStatus("running");
+    } catch (error) {
+      const message = error instanceof Error && error.message
+        ? error.message
+        : "Failed to start Codex adapter.";
+      throw this.failStart(message);
     }
-
-    this.version = resolveCodexCliVersion(this.cliPath);
-
-    await this.spawnAndInitialize();
-    await this.refreshRuntimeMetadata();
-
-    this.startSessionCleanup();
-    this.setStatus("running");
   }
 
   async stop(): Promise<void> {
@@ -787,21 +795,30 @@ export class CodexAdapter extends EngineAdapter {
       }
     });
 
-    await client.start();
-    await client.request("initialize", {
-      clientInfo: {
-        name: "codemux",
-        title: "CodeMux",
-        version: process.env.npm_package_version ?? "0.0.0",
-      },
-      capabilities: {
-        experimentalApi: true,
-        optOutNotificationMethods: null,
-      },
-    });
-    client.notify("initialized");
+    try {
+      await client.start();
+      await client.request("initialize", {
+        clientInfo: {
+          name: "codemux",
+          title: "CodeMux",
+          version: process.env.npm_package_version ?? "0.0.0",
+        },
+        capabilities: {
+          experimentalApi: true,
+          optOutNotificationMethods: null,
+        },
+      });
+      client.notify("initialized");
 
-    this.client = client;
+      this.client = client;
+    } catch (error) {
+      try {
+        await client.stop();
+      } catch (stopError) {
+        codexLog.warn("Failed to stop partially initialized Codex client:", stopError);
+      }
+      throw error;
+    }
   }
 
   private async refreshRuntimeMetadata(): Promise<void> {
@@ -1472,24 +1489,43 @@ export class CodexAdapter extends EngineAdapter {
     const input: CodexTurnInput[] = [];
     const tempDirs: string[] = [];
 
-    if (text) {
-      input.push({ type: "text", text, text_elements: [] });
-    }
+    try {
+      if (text) {
+        input.push({ type: "text", text, text_elements: [] });
+      }
 
-    for (const image of images) {
-      const tempDir = mkdtempSync(join(tmpdir(), "codemux-codex-img-"));
-      const extension = imageFileExtensionFromMimeType(image.mimeType);
-      const tempPath = join(tempDir, `image.${extension}`);
-      writeFileSync(tempPath, Buffer.from(image.data, "base64"));
-      tempDirs.push(tempDir);
-      input.push({ type: "localImage", path: tempPath });
-    }
+      for (const image of images) {
+        const decoded = Buffer.from(image.data, "base64");
+        if (decoded.byteLength > MAX_IMAGE_ATTACHMENT_BYTES) {
+          throw new Error(`Image attachment exceeds the maximum supported size of ${MAX_IMAGE_ATTACHMENT_BYTES} bytes`);
+        }
 
-    return {
-      input,
-      tempDirs,
-      displayText: text || "(image)",
-    };
+        let tempDir: string | null = null;
+        try {
+          tempDir = mkdtempSync(join(tmpdir(), "codemux-codex-img-"));
+          const extension = imageFileExtensionFromMimeType(image.mimeType);
+          const tempPath = join(tempDir, `image.${extension}`);
+          writeFileSync(tempPath, decoded);
+          tempDirs.push(tempDir);
+          input.push({ type: "localImage", path: tempPath });
+        } catch (error) {
+          if (tempDir) {
+            this.cleanupTempDirs([tempDir]);
+          }
+          const message = error instanceof Error && error.message ? error.message : String(error);
+          throw new Error(`Failed to prepare image attachment: ${message}`);
+        }
+      }
+
+      return {
+        input,
+        tempDirs,
+        displayText: text || "(image)",
+      };
+    } catch (error) {
+      this.cleanupTempDirs(tempDirs);
+      throw error;
+    }
   }
 
   private async startPreparedTurn(

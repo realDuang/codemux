@@ -203,6 +203,8 @@ describe("CodexJsonRpcClient", () => {
 
     await expect(pending).rejects.toThrow("Codex process exited (code=1, signal=SIGTERM)");
     expect(onExit).toHaveBeenCalledWith(1, "SIGTERM");
+    expect(rl.close).toHaveBeenCalledTimes(1);
+    expect((client as any).proc).toBeNull();
     expect(client.running).toBe(false);
   });
 
@@ -224,7 +226,28 @@ describe("CodexJsonRpcClient", () => {
 
     await expect(pending).rejects.toThrow("spawn failed");
     expect(onError).toHaveBeenCalledWith(error);
+    expect(rl.close).toHaveBeenCalledTimes(1);
+    expect((client as any).proc).toBeNull();
     expect(client.running).toBe(false);
+  });
+
+  it("cleans up stale process handles even when the client is no longer marked running", async () => {
+    const proc = createMockProcess();
+    const rl = createMockReadline();
+    spawnMock.mockReturnValue(proc);
+    createInterfaceMock.mockReturnValue(rl);
+
+    const client = new CodexJsonRpcClient({ cliPath: "codex", args: ["app-server"] });
+    await client.start();
+
+    (client as any)._running = false;
+    proc.exitCode = 0;
+
+    await client.stop();
+
+    expect(rl.close).toHaveBeenCalledTimes(1);
+    expect(proc.kill).not.toHaveBeenCalled();
+    expect((client as any).proc).toBeNull();
   });
 
   it("stops the process with SIGTERM, closes readline, and rejects active requests", async () => {

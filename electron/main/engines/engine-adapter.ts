@@ -38,17 +38,23 @@ export interface MessageBuffer {
   textPartId: string | null;
   reasoningAccumulator: string;
   reasoningPartId: string | null;
+  planAccumulator?: string;
+  planPartId?: string | null;
   startTime: number;
   tokens?: {
     input: number;
     output: number;
     cache?: { read: number; write: number };
+    reasoning?: number;
   };
   cost?: number;
   costUnit?: "usd" | "premium_requests";
   modelId?: string;
   reasoningEffort?: ReasoningEffort;
   error?: string;
+  workingDirectory?: string;
+  activeTurnId?: string;
+  engineMeta?: Record<string, unknown>;
   /** Set to true once leading whitespace has been trimmed from textAccumulator */
   leadingTrimmed?: boolean;
 }

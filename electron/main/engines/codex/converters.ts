@@ -1,56 +1,105 @@
-// ============================================================================
-// Codex Protocol → Unified Type Converters
-//
-// Maps Codex app-server JSON-RPC events to CodeMux unified types.
-// ============================================================================
-
 import { timeId } from "../../utils/id-gen";
 import { inferToolKind, normalizeToolName } from "../../../../src/types/tool-mapping";
 import type {
+  NormalizedToolName,
+  PermissionOption,
+  ReasoningEffort,
+  ReasoningPart,
+  StepFinishPart,
+  StepStartPart,
+  SystemNoticePart,
+  TextPart,
+  ToolPart,
   UnifiedMessage,
   UnifiedPart,
   UnifiedPermission,
   UnifiedQuestion,
-  PermissionOption,
-  TextPart,
-  ReasoningPart,
-  ToolPart,
-  StepStartPart,
-  StepFinishPart,
-  NormalizedToolName,
 } from "../../../../src/types/unified";
 import type { MessageBuffer } from "../engine-adapter";
 
-// ============================================================================
-// Message Buffer Helpers
-// ============================================================================
-
-/**
- * Insert or update a part in a parts array by ID.
- */
-export function upsertPart(parts: UnifiedPart[], part: UnifiedPart): void {
-  const idx = parts.findIndex((p) => p.id === part.id);
-  if (idx >= 0) {
-    parts[idx] = part;
-  } else {
-    parts.push(part);
-  }
+interface CodexUserInput {
+  type?: string;
+  text?: string;
+  url?: string;
+  path?: string;
+  name?: string;
 }
 
-/**
- * Append text delta to the message buffer, emitting TextPart updates.
- */
-export function appendTextDelta(
-  buffer: MessageBuffer,
-  delta: string,
-): TextPart {
+interface CodexThreadItem {
+  id?: string;
+  type?: string;
+  text?: string;
+  content?: unknown;
+  summary?: string[];
+  phase?: string | null;
+  command?: string;
+  cwd?: string;
+  processId?: string | null;
+  status?: string;
+  commandActions?: Array<Record<string, unknown>>;
+  aggregatedOutput?: string | null;
+  exitCode?: number | null;
+  durationMs?: number | null;
+  changes?: Array<Record<string, unknown>>;
+  server?: string;
+  tool?: string;
+  arguments?: unknown;
+  result?: unknown;
+  error?: unknown;
+  contentItems?: unknown[] | null;
+  success?: boolean | null;
+  prompt?: string | null;
+  model?: string | null;
+  reasoningEffort?: string | null;
+  receiverThreadIds?: string[];
+  senderThreadId?: string;
+  agentsStates?: Record<string, unknown>;
+  query?: string;
+  action?: unknown;
+  path?: string;
+  revisedPrompt?: string | null;
+  savedPath?: string;
+  review?: string;
+  fragments?: unknown[];
+}
+
+interface CodexThreadTurn {
+  id?: string;
+  items?: CodexThreadItem[];
+  status?: string;
+  error?: unknown;
+}
+
+interface CodexThreadReadResult {
+  thread?: {
+    id?: string;
+    cwd?: string;
+    createdAt?: string | number;
+    updatedAt?: string | number;
+    turns?: CodexThreadTurn[];
+  };
+}
+
+interface CodexPlanStep {
+  step?: string;
+  status?: string;
+}
+
+export function upsertPart(parts: UnifiedPart[], part: UnifiedPart): void {
+  const index = parts.findIndex((candidate) => candidate.id === part.id);
+  if (index >= 0) {
+    parts[index] = part;
+    return;
+  }
+  parts.push(part);
+}
+
+export function appendTextDelta(buffer: MessageBuffer, delta: string): TextPart {
   buffer.textAccumulator += delta;
 
-  // Trim leading whitespace (once)
   if (!buffer.leadingTrimmed) {
     const trimmed = buffer.textAccumulator.trimStart();
     if (!trimmed) {
-      // All whitespace so far — return a placeholder part but don't mark trimmed
       if (!buffer.textPartId) buffer.textPartId = timeId("part");
       return {
         id: buffer.textPartId,
@@ -60,6 +109,7 @@ export function appendTextDelta(
         text: "",
       };
     }
+
     buffer.textAccumulator = trimmed;
     buffer.leadingTrimmed = true;
   }
@@ -77,13 +127,7 @@ export function appendTextDelta(
   return textPart;
 }
 
-/**
- * Append reasoning delta to the message buffer.
- */
-export function appendReasoningDelta(
-  buffer: MessageBuffer,
-  delta: string,
-): ReasoningPart {
+export function appendReasoningDelta(buffer: MessageBuffer, delta: string): ReasoningPart {
   buffer.reasoningAccumulator += delta;
   if (!buffer.reasoningPartId) buffer.reasoningPartId = timeId("part");
 
@@ -98,64 +142,143 @@ export function appendReasoningDelta(
   return reasoningPart;
 }
 
-// ============================================================================
-// Tool Helpers
-// ============================================================================
+export function appendPlanDelta(buffer: MessageBuffer, delta: string): TextPart {
+  const prefix = "## Plan\n\n";
+  const current = buffer.planAccumulator ?? prefix;
+  buffer.planAccumulator = current + delta;
 
-/**
- * Build a human-readable title for a Codex tool call.
- */
+  if (!buffer.planPartId) buffer.planPartId = timeId("part");
+
+  const part: TextPart = {
+    id: buffer.planPartId,
+    messageId: buffer.messageId,
+    sessionId: buffer.sessionId,
+    type: "text",
+    text: buffer.planAccumulator,
+  };
+  upsertPart(buffer.parts, part);
+  return part;
+}
+
+export function replacePlanText(buffer: MessageBuffer, markdown: string): TextPart {
+  buffer.planAccumulator = markdown;
+  if (!buffer.planPartId) buffer.planPartId = timeId("part");
+
+  const part: TextPart = {
+    id: buffer.planPartId,
+    messageId: buffer.messageId,
+    sessionId: buffer.sessionId,
+    type: "text",
+    text: markdown,
+  };
+  upsertPart(buffer.parts, part);
+  return part;
+}
+
+export function createSystemNotice(
+  buffer: MessageBuffer,
+  noticeType: SystemNoticePart["noticeType"],
+  text: string,
+): SystemNoticePart {
+  const part: SystemNoticePart = {
+    id: timeId("part"),
+    messageId: buffer.messageId,
+    sessionId: buffer.sessionId,
+    type: "system-notice",
+    noticeType,
+    text,
+  };
+  buffer.parts.push(part);
+  return part;
+}
+
+export function formatTurnPlanMarkdown(
+  explanation: string | null | undefined,
+  plan: CodexPlanStep[],
+): string {
+  const lines: string[] = ["## Plan", ""];
+
+  if (explanation?.trim()) {
+    lines.push(explanation.trim(), "");
+  }
+
+  if (plan.length === 0) {
+    lines.push("- No steps provided");
+    return lines.join("\n");
+  }
+
+  for (const step of plan) {
+    const text = typeof step.step === "string" && step.step.trim() ? step.step.trim() : "Untitled step";
+    const marker = step.status === "completed"
+      ? "[x]"
+      : step.status === "inProgress"
+        ? "[-]"
+        : "[ ]";
+    lines.push(`- ${marker} ${text}`);
+  }
+
+  return lines.join("\n");
+}
+
 export function buildToolTitle(
   itemType: string,
   normalizedTool: NormalizedToolName,
-  params: unknown,
+  params: Record<string, unknown>,
 ): string {
-  const input = params && typeof params === "object" ? (params as Record<string, unknown>) : {};
-
   switch (normalizedTool) {
     case "shell": {
-      const cmd = (input.command as string) ?? (input.cmd as string) ?? "";
-      const short = cmd.length > 60 ? cmd.slice(0, 57) + "..." : cmd;
-      return short || "Running command";
+      const command = typeof params.command === "string" ? params.command : "";
+      return command ? `Running ${truncate(command, 72)}` : "Running command";
     }
     case "read": {
-      const filePath = (input.path as string) ?? (input.file_path as string) ?? "";
+      const filePath = extractFilePath(params);
       return filePath ? `Reading ${filePath}` : "Reading file";
     }
     case "edit": {
-      const filePath = (input.path as string) ?? (input.file_path as string) ?? "";
+      const filePath = extractFilePath(params);
       return filePath ? `Editing ${filePath}` : "Editing file";
     }
-    default:
+    case "web_fetch": {
+      const url = typeof params.url === "string" ? params.url : undefined;
+      const query = typeof params.query === "string" ? params.query : undefined;
+      return url ? `Fetching ${truncate(url, 72)}` : query ? `Searching ${truncate(query, 72)}` : "Searching the web";
+    }
+    case "task": {
+      const description = typeof params.description === "string" ? params.description : undefined;
+      const prompt = typeof params.prompt === "string" ? params.prompt : undefined;
+      return description ?? (prompt ? `Delegating ${truncate(prompt, 72)}` : "Delegating task");
+    }
+    default: {
+      if (typeof params.description === "string" && params.description) {
+        return params.description;
+      }
+      if (typeof params.tool === "string" && params.tool) {
+        return params.tool;
+      }
       return itemType;
+    }
   }
 }
 
-/**
- * Create a ToolPart for a Codex tool execution.
- */
 export function createToolPart(
   buffer: MessageBuffer,
   callId: string,
   itemType: string,
-  params: unknown,
+  params: Record<string, unknown>,
 ): { stepStart: StepStartPart; toolPart: ToolPart } {
   const normalizedTool = normalizeToolName("codex", itemType);
-  const kind = inferToolKind(undefined, normalizedTool);
-  const title = buildToolTitle(itemType, normalizedTool, params);
-
-  const stepStartId = timeId("part");
-  const toolPartId = timeId("part");
+  const input = normalizeToolInput(itemType, normalizedTool, params);
+  const title = buildToolTitle(itemType, normalizedTool, input);
 
   const stepStart: StepStartPart = {
-    id: stepStartId,
+    id: timeId("part"),
     messageId: buffer.messageId,
     sessionId: buffer.sessionId,
     type: "step-start",
   };
 
   const toolPart: ToolPart = {
-    id: toolPartId,
+    id: timeId("part"),
     messageId: buffer.messageId,
     sessionId: buffer.sessionId,
     type: "tool",
@@ -163,80 +286,82 @@ export function createToolPart(
     normalizedTool,
     originalTool: itemType,
     title,
-    kind,
+    kind: inferToolKind(undefined, normalizedTool),
     state: {
       status: "running",
-      input: (params ?? {}) as Record<string, unknown>,
+      input,
       time: { start: Date.now() },
     },
   };
 
-  buffer.parts.push(stepStart);
-  buffer.parts.push(toolPart);
+  const filePath = extractFilePath(input);
+  if (filePath) {
+    toolPart.locations = [{ path: filePath }];
+  }
 
+  const diff = extractDiffFromParams(input);
+  if (diff) toolPart.diff = diff;
+
+  buffer.parts.push(stepStart, toolPart);
   return { stepStart, toolPart };
 }
 
-/**
- * Mark a tool part as completed.
- * Populates `metadata` for frontend rendering:
- * - BashTool reads `metadata.output`
- * - EditTool reads `metadata.diff`
- */
 export function completeToolPart(
   toolPart: ToolPart,
   output: unknown,
   error?: string,
+  metadata?: Record<string, unknown>,
 ): void {
-  const startTime = toolPart.state.status === "running" ? toolPart.state.time.start : Date.now();
+  const startTime = toolPart.state.status === "running"
+    ? toolPart.state.time.start
+    : Date.now();
   const endTime = Date.now();
-  const input = toolPart.state.status !== "pending" ? toolPart.state.input : {};
+  const input = toolPart.state.status === "pending"
+    ? toolPart.state.input ?? {}
+    : toolPart.state.input;
 
-  // Build metadata for frontend tool components
-  const outputStr = typeof output === "string" ? output : output ? JSON.stringify(output) : "";
-  const metadata: Record<string, unknown> = {};
+  const outputText = stringifyOutput(output);
+  const nextMetadata: Record<string, unknown> = { ...(metadata ?? {}) };
 
-  if (error) {
-    metadata.error = true;
-    metadata.message = error;
-  }
-
-  // Shell tools: BashTool reads metadata.output / metadata.stdout
   if (toolPart.normalizedTool === "shell") {
-    // Include any accumulated streaming output from _output
-    const accumulatedOutput = (input as Record<string, unknown>)?._output;
-    metadata.output = outputStr || accumulatedOutput || "";
-    metadata.stdout = metadata.output;
+    const accumulatedOutput = getRunningToolOutput(input);
+    const shellOutput = outputText || accumulatedOutput || "";
+    nextMetadata.output = shellOutput;
+    nextMetadata.stdout = shellOutput;
   }
 
-  // Edit tools: EditTool reads metadata.diff
-  if (toolPart.normalizedTool === "edit" || toolPart.normalizedTool === "write") {
-    if (toolPart.diff) {
-      metadata.diff = toolPart.diff;
-    }
+  if ((toolPart.normalizedTool === "edit" || toolPart.normalizedTool === "write") && toolPart.diff) {
+    nextMetadata.diff = toolPart.diff;
   }
 
   if (error) {
     toolPart.state = {
       status: "error",
       input,
+      output: outputText || undefined,
       error,
-      time: { start: startTime, end: endTime, duration: endTime - startTime },
+      time: {
+        start: startTime,
+        end: endTime,
+        duration: endTime - startTime,
+      },
     };
-  } else {
-    toolPart.state = {
-      status: "completed",
-      input,
-      output: output ?? "",
-      time: { start: startTime, end: endTime, duration: endTime - startTime },
-      metadata: Object.keys(metadata).length > 0 ? metadata : undefined,
-    };
+    return;
   }
+
+  toolPart.state = {
+    status: "completed",
+    input,
+    output: outputText,
+    time: {
+      start: startTime,
+      end: endTime,
+      duration: endTime - startTime,
+    },
+    metadata: Object.keys(nextMetadata).length > 0 ? nextMetadata : undefined,
+  };
 }
 
-/**
- * Create a StepFinishPart.
- */
 export function createStepFinish(buffer: MessageBuffer): StepFinishPart {
   const part: StepFinishPart = {
     id: timeId("part"),
@@ -248,112 +373,240 @@ export function createStepFinish(buffer: MessageBuffer): StepFinishPart {
   return part;
 }
 
-// ============================================================================
-// Permission / Question Converters
-// ============================================================================
-
-/**
- * Convert a Codex ApprovalRequest (or FileApprovalRequest, ExecApprovalRequest, etc.)
- * to a UnifiedPermission.
- */
 export function convertApprovalToPermission(
   sessionId: string,
   requestId: number | string,
   method: string,
   params: unknown,
 ): UnifiedPermission {
-  const data = (params ?? {}) as Record<string, unknown>;
+  const data = asRecord(params);
+  const options = buildPermissionOptions(method, data.availableDecisions);
 
-  // Determine kind and title based on request type
-  let kind: "read" | "edit" | "other" = "other";
-  let title = "Codex needs approval";
-  let diff: string | undefined;
-  let toolCallId: string | undefined;
-
-  if (method === "FileApprovalRequest" || method === "codex/fileApprovalRequest") {
-    kind = "edit";
-    const path = (data.path as string) ?? (data.file as string) ?? "";
-    title = path ? `Edit file: ${path}` : "Edit file";
-    diff = data.diff as string | undefined;
-    toolCallId = data.toolCallId as string | undefined;
-  } else if (method === "ExecApprovalRequest" || method === "codex/execApprovalRequest") {
-    kind = "other";
-    const cmd = (data.command as string) ?? "";
-    title = cmd ? `Run command: ${cmd.length > 80 ? cmd.slice(0, 77) + "..." : cmd}` : "Run command";
-    toolCallId = data.toolCallId as string | undefined;
-  } else if (method === "McpApprovalRequest" || method === "codex/mcpApprovalRequest") {
-    kind = "other";
-    const tool = (data.tool as string) ?? (data.name as string) ?? "MCP tool";
-    title = `Use MCP tool: ${tool}`;
-    toolCallId = data.toolCallId as string | undefined;
-  } else {
-    // Generic ApprovalRequest
-    title = (data.message as string) ?? (data.description as string) ?? "Codex needs approval";
-    const cmd = data.command as string | undefined;
-    if (cmd) {
-      kind = "other";
-      title = `Run command: ${cmd.length > 80 ? cmd.slice(0, 77) + "..." : cmd}`;
-    }
-    toolCallId = data.toolCallId as string | undefined;
+  if (method === "item/commandExecution/requestApproval") {
+    const command = typeof data.command === "string" ? data.command : "";
+    return {
+      id: String(requestId),
+      sessionId,
+      engineType: "codex",
+      toolCallId: typeof data.itemId === "string" ? data.itemId : undefined,
+      title: command ? `Approve command: ${truncate(command, 96)}` : "Approve command execution",
+      kind: "other",
+      rawInput: params,
+      options,
+      metadata: typeof data.reason === "string" && data.reason ? { reason: data.reason } : undefined,
+    };
   }
 
-  const options: PermissionOption[] = [
-    { id: "allow_once", label: "Allow", type: "allow_once" },
-    { id: "allow_always", label: "Always Allow", type: "allow_always" },
-    { id: "reject_once", label: "Deny", type: "reject_once" },
-  ];
+  if (method === "item/fileChange/requestApproval") {
+    return {
+      id: String(requestId),
+      sessionId,
+      engineType: "codex",
+      toolCallId: typeof data.itemId === "string" ? data.itemId : undefined,
+      title: typeof data.reason === "string" && data.reason ? data.reason : "Approve file changes",
+      kind: "edit",
+      rawInput: params,
+      options,
+      metadata: typeof data.grantRoot === "string" && data.grantRoot ? { grantRoot: data.grantRoot } : undefined,
+    };
+  }
+
+  if (method === "item/permissions/requestApproval") {
+    const permissions = asRecord(data.permissions);
+    const fileSystem = asRecord(permissions.fileSystem);
+    const hasWrite = Array.isArray(fileSystem.write) && fileSystem.write.length > 0;
+    const hasRead = Array.isArray(fileSystem.read) && fileSystem.read.length > 0;
+
+    return {
+      id: String(requestId),
+      sessionId,
+      engineType: "codex",
+      toolCallId: typeof data.itemId === "string" ? data.itemId : undefined,
+      title: typeof data.reason === "string" && data.reason ? data.reason : "Approve additional permissions",
+      kind: hasWrite ? "edit" : hasRead ? "read" : "other",
+      rawInput: params,
+      options,
+    };
+  }
+
+  if (method === "execCommandApproval") {
+    const command = Array.isArray(data.command)
+      ? data.command.filter((value): value is string => typeof value === "string").join(" ")
+      : "";
+
+    return {
+      id: String(requestId),
+      sessionId,
+      engineType: "codex",
+      toolCallId: typeof data.callId === "string" ? data.callId : undefined,
+      title: command ? `Approve command: ${truncate(command, 96)}` : "Approve command execution",
+      kind: "other",
+      rawInput: params,
+      options: [
+        { id: "allow_once", label: "Allow", type: "allow_once" },
+        { id: "allow_always", label: "Always Allow", type: "allow_always" },
+        { id: "reject_once", label: "Deny", type: "reject_once" },
+      ],
+      metadata: typeof data.reason === "string" && data.reason ? { reason: data.reason } : undefined,
+    };
+  }
+
+  if (method === "applyPatchApproval") {
+    const fileChanges = asRecord(data.fileChanges);
+    const diff = Object.values(fileChanges)
+      .map((value) => asRecord(value))
+      .map((change) => typeof change.diff === "string" ? change.diff : "")
+      .filter(Boolean)
+      .join("\n");
+
+    return {
+      id: String(requestId),
+      sessionId,
+      engineType: "codex",
+      toolCallId: typeof data.callId === "string" ? data.callId : undefined,
+      title: typeof data.reason === "string" && data.reason ? data.reason : "Approve file changes",
+      kind: "edit",
+      diff: diff || undefined,
+      rawInput: params,
+      options: [
+        { id: "allow_once", label: "Allow", type: "allow_once" },
+        { id: "allow_always", label: "Always Allow", type: "allow_always" },
+        { id: "reject_once", label: "Deny", type: "reject_once" },
+      ],
+    };
+  }
 
   return {
     id: String(requestId),
     sessionId,
     engineType: "codex",
-    toolCallId,
-    title,
-    kind,
-    diff,
+    title: "Approve Codex action",
+    kind: "other",
     rawInput: params,
-    options,
+    options: [
+      { id: "allow_once", label: "Allow", type: "allow_once" },
+      { id: "allow_always", label: "Always Allow", type: "allow_always" },
+      { id: "reject_once", label: "Deny", type: "reject_once" },
+    ],
   };
 }
 
-/**
- * Convert a Codex AskForConfirmation to a UnifiedQuestion.
- */
-export function convertConfirmationToQuestion(
+export function convertUserInputToQuestion(
   sessionId: string,
   requestId: number | string,
   params: unknown,
 ): UnifiedQuestion {
-  const data = (params ?? {}) as Record<string, unknown>;
-
-  const question = (data.message as string) ?? (data.question as string) ?? "Codex needs your input";
-  const header = "Confirm";
+  const data = asRecord(params);
+  const questions = Array.isArray(data.questions)
+    ? data.questions
+      .map((question) => asRecord(question))
+      .map((question, index) => ({
+        question:
+          typeof question.question === "string" && question.question
+            ? question.question
+            : `Question ${index + 1}`,
+        header:
+          typeof question.header === "string" && question.header
+            ? question.header
+            : `Input ${index + 1}`,
+        options: Array.isArray(question.options)
+          ? question.options
+            .map((option) => asRecord(option))
+            .map((option) => {
+              const label = typeof option.label === "string" ? option.label : "";
+              if (!label) return null;
+              return {
+                label,
+                description: typeof option.description === "string" ? option.description : "",
+              };
+            })
+            .filter((option): option is { label: string; description: string } => option !== null)
+          : [],
+        multiple: false,
+        custom: question.isOther !== false,
+      }))
+    : [];
 
   return {
     id: String(requestId),
     sessionId,
     engineType: "codex",
-    questions: [{
-      question,
-      header,
-      options: [
-        { label: "Yes", description: "Confirm" },
-        { label: "No", description: "Deny" },
-      ],
-      multiple: false,
-      custom: true,
-    }],
-    metadata: { requestId, rawParams: params },
+    toolCallId:
+      typeof data.itemId === "string"
+        ? data.itemId
+        : undefined,
+    questions: questions.length > 0
+      ? questions
+      : [{
+          question: "Codex needs your input",
+          header: "Input",
+          options: [],
+          multiple: false,
+          custom: true,
+        }],
+    metadata: { rawParams: params },
   };
 }
 
-// ============================================================================
-// Message Finalization
-// ============================================================================
+export function applyTurnUsage(buffer: MessageBuffer, usage: unknown): void {
+  const data = asRecord(usage);
+  if (Object.keys(data).length === 0) return;
 
-/**
- * Build a finalized UnifiedMessage from a MessageBuffer.
- */
+  const source = asRecord(data.last ?? data.total ?? usage);
+  if (Object.keys(source).length === 0) return;
+
+  const input = toNumber(source.inputTokens) ?? toNumber(source.input_tokens) ?? 0;
+  const output = toNumber(source.outputTokens) ?? toNumber(source.output_tokens) ?? 0;
+  const cacheRead = toNumber(source.cachedInputTokens) ?? toNumber(source.cacheReadInputTokens) ?? toNumber(source.cache_read_input_tokens);
+  const reasoning = toNumber(source.reasoningOutputTokens) ?? toNumber(source.reasoning_output_tokens);
+
+  buffer.tokens = {
+    input,
+    output,
+    ...(cacheRead != null
+      ? {
+          cache: {
+            read: cacheRead,
+            write: 0,
+          },
+        }
+      : {}),
+    ...(reasoning != null ? { reasoning } : {}),
+  };
+}
+
+export function applyTurnMetadata(buffer: MessageBuffer, turn: Record<string, unknown>): void {
+  if (typeof turn.model === "string" && turn.model) {
+    buffer.modelId = turn.model;
+  }
+
+  if (typeof turn.reasoningEffort === "string") {
+    buffer.reasoningEffort = normalizeHistoricalEffort(turn.reasoningEffort);
+  }
+
+  if (typeof turn.effort === "string") {
+    buffer.reasoningEffort = normalizeHistoricalEffort(turn.effort);
+  }
+
+  const costUsd = toNumber(turn.costUsd) ?? toNumber(turn.costUSD);
+  if (costUsd != null) {
+    buffer.cost = costUsd;
+    buffer.costUnit = "usd";
+  }
+
+  if (typeof turn.id === "string") {
+    buffer.activeTurnId = turn.id;
+  }
+
+  const diff = typeof turn.diff === "string" ? turn.diff : undefined;
+  if (diff) {
+    buffer.engineMeta = {
+      ...(buffer.engineMeta ?? {}),
+      turnDiff: diff,
+    };
+  }
+}
+
 export function finalizeBufferToMessage(buffer: MessageBuffer): UnifiedMessage {
   return {
     id: buffer.messageId,
@@ -370,198 +623,593 @@ export function finalizeBufferToMessage(buffer: MessageBuffer): UnifiedMessage {
     modelId: buffer.modelId,
     reasoningEffort: buffer.reasoningEffort,
     error: buffer.error,
+    workingDirectory: buffer.workingDirectory,
+    engineMeta: buffer.engineMeta,
   };
 }
 
-/**
- * Create a user message.
- */
 export function createUserMessage(
   sessionId: string,
   text: string,
+  createdAt = Date.now(),
 ): UnifiedMessage {
   const messageId = timeId("msg");
   const partId = timeId("part");
-
-  const textPart: TextPart = {
-    id: partId,
-    messageId,
-    sessionId,
-    type: "text",
-    text,
-  };
 
   return {
     id: messageId,
     sessionId,
     role: "user",
-    time: { created: Date.now(), completed: Date.now() },
-    parts: [textPart],
-  };
-}
-
-// ============================================================================
-// Historical Thread Item Converters
-// ============================================================================
-
-/**
- * A Codex thread item from codex/threadRead.
- */
-interface CodexThreadItem {
-  type?: string;
-  role?: string;
-  content?: string | Array<{ type?: string; text?: string }>;
-  item_type?: string;
-  command?: string;
-  output?: string;
-  path?: string;
-  diff?: string;
-  arguments?: Record<string, unknown>;
-  result?: unknown;
-  timestamp?: number;
-}
-
-/**
- * Convert an array of Codex thread items into UnifiedMessages.
- * Groups consecutive assistant-role items into single messages.
- */
-export function convertThreadItemsToMessages(
-  sessionId: string,
-  items: CodexThreadItem[],
-): UnifiedMessage[] {
-  const messages: UnifiedMessage[] = [];
-  let currentAssistantParts: UnifiedPart[] = [];
-  let currentAssistantTime: number | undefined;
-
-  const flushAssistant = () => {
-    if (currentAssistantParts.length === 0) return;
-    const msgId = timeId("msg");
-    // Update messageId on all parts
-    for (const p of currentAssistantParts) {
-      p.messageId = msgId;
-    }
-    messages.push({
-      id: msgId,
+    time: { created: createdAt, completed: createdAt },
+    parts: [{
+      id: partId,
+      messageId,
       sessionId,
-      role: "assistant",
+      type: "text",
+      text,
+    }],
+  };
+}
+
+export function convertThreadToMessages(
+  sessionId: string,
+  result: CodexThreadReadResult,
+  workingDirectory?: string,
+): UnifiedMessage[] {
+  const thread = result.thread;
+  const turns = Array.isArray(thread?.turns) ? thread.turns : [];
+  const messages: UnifiedMessage[] = [];
+  const threadStart = toMillis(thread?.createdAt, Date.now());
+
+  turns.forEach((turn, turnIndex) => {
+    const createdAt = threadStart + turnIndex * 2;
+    const completedAt = createdAt + 1;
+    const items = Array.isArray(turn.items) ? turn.items : [];
+    const userInputs = items
+      .filter((item) => item.type === "userMessage")
+      .flatMap((item) => extractUserInputs(item.content));
+
+    const userParts = convertUserInputBlocks(sessionId, userInputs);
+    if (userParts.length > 0) {
+      const messageId = timeId("msg");
+      for (const part of userParts) {
+        part.messageId = messageId;
+      }
+      messages.push({
+        id: messageId,
+        sessionId,
+        role: "user",
+        time: { created: createdAt, completed: createdAt },
+        parts: userParts,
+      });
+    }
+
+    const buffer: MessageBuffer = {
+      messageId: timeId("msg"),
+      sessionId,
+      parts: [],
+      textAccumulator: "",
+      textPartId: null,
+      reasoningAccumulator: "",
+      reasoningPartId: null,
+      planAccumulator: undefined,
+      planPartId: null,
+      startTime: createdAt,
+      workingDirectory: workingDirectory ?? thread?.cwd,
+      activeTurnId: turn.id,
+      engineMeta: thread?.id ? { codexThreadId: thread.id } : undefined,
+    };
+
+    for (const item of items) {
+      if (item.type === "userMessage") continue;
+      applyHistoricalItem(buffer, item, completedAt);
+    }
+
+    if (turn.status === "failed" || turn.status === "interrupted") {
+      buffer.error = normalizeError(turn.error) ?? (turn.status === "interrupted" ? "Turn interrupted" : "Turn failed");
+    }
+
+    if (buffer.parts.length === 0 && !buffer.error) {
+      return;
+    }
+
+    messages.push({
+      ...finalizeBufferToMessage(buffer),
       time: {
-        created: currentAssistantTime ?? Date.now(),
-        completed: currentAssistantTime ?? Date.now(),
+        created: createdAt,
+        completed: completedAt,
       },
-      parts: currentAssistantParts,
     });
-    currentAssistantParts = [];
-    currentAssistantTime = undefined;
+  });
+
+  return messages;
+}
+
+function applyHistoricalItem(
+  buffer: MessageBuffer,
+  item: CodexThreadItem,
+  completedAt: number,
+): void {
+  switch (item.type) {
+    case "agentMessage": {
+      if (item.text) appendTextDelta(buffer, item.text);
+      return;
+    }
+    case "reasoning": {
+      const text = [
+        ...(Array.isArray(item.summary) ? item.summary : []),
+        ...extractStringArray(item.content),
+      ].filter(Boolean).join("\n\n");
+      if (text) appendReasoningDelta(buffer, text);
+      return;
+    }
+    case "plan": {
+      replacePlanText(buffer, formatPlanMarkdown(item.text ?? ""));
+      return;
+    }
+    case "contextCompaction": {
+      createSystemNotice(buffer, "compact", "notice:context_compressed");
+      return;
+    }
+    case "enteredReviewMode": {
+      createSystemNotice(buffer, "info", item.review ? `Entered review mode: ${item.review}` : "Entered review mode");
+      return;
+    }
+    case "exitedReviewMode": {
+      createSystemNotice(buffer, "info", item.review ? `Exited review mode: ${item.review}` : "Exited review mode");
+      return;
+    }
+    case "hookPrompt": {
+      createSystemNotice(buffer, "info", "Hook prompt emitted");
+      return;
+    }
+    default:
+      break;
+  }
+
+  const params = itemToParams(item);
+  const callId = item.id ?? timeId("call");
+  const { toolPart } = createToolPart(buffer, callId, item.type ?? "unknown", params);
+  const startTime = completedAt;
+  toolPart.state = {
+    status: "running",
+    input: toolPart.state.input,
+    time: { start: startTime },
   };
 
-  for (const item of items) {
-    const role = item.role ?? (item.item_type ? "assistant" : "user");
-    const timestamp = item.timestamp ?? Date.now();
+  if (toolPart.diff == null) {
+    const diff = extractDiffFromParams(params);
+    if (diff) toolPart.diff = diff;
+  }
 
-    if (role === "user") {
-      // Flush any pending assistant message
-      flushAssistant();
+  completeToolPart(
+    toolPart,
+    itemToOutput(item),
+    normalizeItemError(item),
+    buildToolMetadata(toolPart.normalizedTool, params, itemToOutput(item)),
+  );
 
-      // Extract text from content
-      let text = "";
-      if (typeof item.content === "string") {
-        text = item.content;
-      } else if (Array.isArray(item.content)) {
-        text = item.content
-          .filter((c) => c.type === "input_text" || c.type === "text")
-          .map((c) => c.text ?? "")
-          .join("\n");
-      }
+  applyHistoricalToolTiming(toolPart, startTime, completedAt);
 
-      if (text) {
-        const msgId = timeId("msg");
-        messages.push({
-          id: msgId,
-          sessionId,
-          role: "user",
-          time: { created: timestamp, completed: timestamp },
-          parts: [{
-            id: timeId("part"),
-            messageId: msgId,
+  createStepFinish(buffer);
+}
+
+function convertUserInputBlocks(
+  sessionId: string,
+  blocks: CodexUserInput[],
+): TextPart[] {
+  const messageId = timeId("msg");
+  const parts: TextPart[] = [];
+  let index = 0;
+
+  for (const block of blocks) {
+    switch (block.type) {
+      case "text":
+        if (block.text) {
+          parts.push({
+            id: `${messageId}_p${index++}`,
+            messageId,
             sessionId,
             type: "text",
-            text,
-          } as TextPart],
+            text: block.text,
+          });
+        }
+        break;
+      case "image":
+        parts.push({
+          id: `${messageId}_p${index++}`,
+          messageId,
+          sessionId,
+          type: "text",
+          text: `[Image: ${block.url ?? "image"}]`,
         });
-      }
-    } else {
-      // Assistant-role item
-      if (!currentAssistantTime) currentAssistantTime = timestamp;
-      const placeholderMsgId = ""; // Will be set in flushAssistant
-
-      // Text content
-      if (item.type === "message" || (!item.item_type && typeof item.content === "string")) {
-        const text = typeof item.content === "string" ? item.content : "";
-        if (text) {
-          currentAssistantParts.push({
-            id: timeId("part"),
-            messageId: placeholderMsgId,
-            sessionId,
-            type: "text",
-            text,
-          } as TextPart);
-        }
-      }
-
-      // Tool-related items
-      if (item.item_type) {
-        const normalizedTool = normalizeToolName("codex", item.item_type);
-        const kind = inferToolKind(undefined, normalizedTool);
-        const input: Record<string, unknown> = {};
-        if (item.command) input.command = item.command;
-        if (item.path) input.path = item.path;
-        if (item.arguments) Object.assign(input, item.arguments);
-
-        const title = buildToolTitle(item.item_type, normalizedTool, input);
-
-        const stepStartPart: StepStartPart = {
-          id: timeId("part"),
-          messageId: placeholderMsgId,
+        break;
+      case "localImage":
+        parts.push({
+          id: `${messageId}_p${index++}`,
+          messageId,
           sessionId,
-          type: "step-start",
-        };
-
-        const toolPart: ToolPart = {
-          id: timeId("part"),
-          messageId: placeholderMsgId,
+          type: "text",
+          text: `[Image: ${block.path ?? "image"}]`,
+        });
+        break;
+      case "skill":
+        parts.push({
+          id: `${messageId}_p${index++}`,
+          messageId,
           sessionId,
-          type: "tool",
-          callId: timeId("call"),
-          normalizedTool,
-          originalTool: item.item_type,
-          title,
-          kind,
-          state: {
-            status: "completed",
-            input,
-            output: item.output ?? item.result ?? "",
-            time: { start: timestamp, end: timestamp, duration: 0 },
-          },
-        };
-
-        if (item.diff) {
-          toolPart.diff = item.diff;
-        }
-
-        const stepFinishPart: StepFinishPart = {
-          id: timeId("part"),
-          messageId: placeholderMsgId,
+          type: "text",
+          text: `[Skill: ${block.name ?? "skill"}]`,
+        });
+        break;
+      case "mention":
+        parts.push({
+          id: `${messageId}_p${index++}`,
+          messageId,
           sessionId,
-          type: "step-finish",
-        };
-
-        currentAssistantParts.push(stepStartPart, toolPart, stepFinishPart);
-      }
+          type: "text",
+          text: `[Mention: ${block.name ?? "mention"}]`,
+        });
+        break;
+      default:
+        break;
     }
   }
 
-  // Flush remaining assistant parts
-  flushAssistant();
+  return parts;
+}
 
-  return messages;
+function buildPermissionOptions(
+  method: string,
+  availableDecisions: unknown,
+): PermissionOption[] {
+  if (method === "item/commandExecution/requestApproval") {
+    const decisions = Array.isArray(availableDecisions)
+      ? availableDecisions
+        .map((decision) => {
+          if (typeof decision === "string") return decision;
+          if (decision && typeof decision === "object") return Object.keys(decision as Record<string, unknown>)[0] ?? "";
+          return "";
+        })
+        .filter(Boolean)
+      : [];
+
+    const options: PermissionOption[] = [];
+    if (decisions.length === 0 || decisions.includes("accept")) {
+      options.push({ id: "allow_once", label: "Allow", type: "allow_once" });
+    }
+    if (decisions.length === 0 || decisions.includes("acceptForSession")) {
+      options.push({ id: "allow_always", label: "Always Allow", type: "allow_always" });
+    }
+    options.push({ id: "reject_once", label: "Deny", type: "reject_once" });
+    return options;
+  }
+
+  return [
+    { id: "allow_once", label: "Allow", type: "allow_once" },
+    { id: "allow_always", label: "Always Allow", type: "allow_always" },
+    { id: "reject_once", label: "Deny", type: "reject_once" },
+  ];
+}
+
+function normalizeToolInput(
+  itemType: string,
+  normalizedTool: NormalizedToolName,
+  params: Record<string, unknown>,
+): Record<string, unknown> {
+  const input = { ...params };
+
+  if (normalizedTool === "shell") {
+    if (typeof input.command !== "string") {
+      input.command = typeof params.cmd === "string" ? params.cmd : "";
+    }
+    return input;
+  }
+
+  if (normalizedTool === "edit" || normalizedTool === "write" || normalizedTool === "read") {
+    const filePath = extractFilePath(params);
+    if (filePath) {
+      input.filePath = filePath;
+      input.path = filePath;
+    }
+    return input;
+  }
+
+  if (normalizedTool === "web_fetch") {
+    const query = typeof params.query === "string" ? params.query : undefined;
+    if (typeof input.url !== "string" && query) {
+      input.url = `search:${query}`;
+    }
+    return input;
+  }
+
+  if (normalizedTool === "task") {
+    const description = typeof params.description === "string"
+      ? params.description
+      : typeof params.title === "string"
+        ? params.title
+        : typeof params.tool === "string"
+          ? params.tool
+          : "Delegating task";
+    return {
+      ...input,
+      description,
+      prompt: typeof params.prompt === "string" ? params.prompt : undefined,
+    };
+  }
+
+  if (itemType === "mcpToolCall") {
+    const server = typeof params.server === "string" ? params.server : undefined;
+    const tool = typeof params.tool === "string" ? params.tool : undefined;
+    return {
+      ...input,
+      description: server && tool ? `${server}/${tool}` : tool ?? server ?? "MCP tool",
+    };
+  }
+
+  return input;
+}
+
+function extractFilePath(params: Record<string, unknown>): string | undefined {
+  if (typeof params.filePath === "string" && params.filePath) return params.filePath;
+  if (typeof params.path === "string" && params.path) return params.path;
+  if (typeof params.file_path === "string" && params.file_path) return params.file_path;
+  if (typeof params.savedPath === "string" && params.savedPath) return params.savedPath;
+
+  const changes = Array.isArray(params.changes) ? params.changes : [];
+  for (const change of changes) {
+    const record = asRecord(change);
+    if (typeof record.path === "string" && record.path) return record.path;
+  }
+
+  return undefined;
+}
+
+function extractDiffFromParams(params: Record<string, unknown>): string | undefined {
+  if (typeof params.diff === "string" && params.diff) return params.diff;
+
+  const changes = Array.isArray(params.changes) ? params.changes : [];
+  const diffs = changes
+    .map((change) => {
+      const record = asRecord(change);
+      if (typeof record.diff === "string" && record.diff) return record.diff;
+      if (typeof record.patch === "string" && record.patch) return record.patch;
+      return "";
+    })
+    .filter(Boolean);
+
+  return diffs.length > 0 ? diffs.join("\n") : undefined;
+}
+
+function itemToParams(item: CodexThreadItem): Record<string, unknown> {
+  switch (item.type) {
+    case "commandExecution":
+      return {
+        command: item.command,
+        cwd: item.cwd,
+        commandActions: item.commandActions,
+      };
+    case "fileChange":
+      return {
+        changes: item.changes,
+      };
+    case "mcpToolCall":
+      return {
+        server: item.server,
+        tool: item.tool,
+        arguments: item.arguments,
+      };
+    case "dynamicToolCall":
+      return {
+        tool: item.tool,
+        arguments: item.arguments,
+      };
+    case "collabAgentToolCall":
+      return {
+        tool: item.tool,
+        prompt: item.prompt,
+        description: item.tool ? `Delegating via ${item.tool}` : "Delegating task",
+        model: item.model,
+        reasoningEffort: item.reasoningEffort,
+        receiverThreadIds: item.receiverThreadIds,
+      };
+    case "webSearch":
+      return {
+        query: item.query,
+        action: item.action,
+      };
+    case "imageView":
+      return {
+        path: item.path,
+      };
+    case "imageGeneration":
+      return {
+        description: item.revisedPrompt ?? "Generating image",
+        savedPath: item.savedPath,
+      };
+    default:
+      return {};
+  }
+}
+
+function itemToOutput(item: CodexThreadItem): unknown {
+  switch (item.type) {
+    case "commandExecution":
+      return item.aggregatedOutput ?? "";
+    case "fileChange":
+      return Array.isArray(item.changes)
+        ? item.changes.map((change) => asRecord(change).path).filter(Boolean).join("\n")
+        : "";
+    case "mcpToolCall":
+      return item.result ?? "";
+    case "dynamicToolCall":
+      return item.contentItems ?? item.result ?? "";
+    case "collabAgentToolCall":
+      return {
+        receiverThreadIds: item.receiverThreadIds,
+        agentsStates: item.agentsStates,
+      };
+    case "webSearch":
+      return item.query ?? "";
+    case "imageView":
+      return item.path ?? "";
+    case "imageGeneration":
+      return item.savedPath ?? item.result ?? "";
+    default:
+      return "";
+  }
+}
+
+function buildToolMetadata(
+  normalizedTool: NormalizedToolName,
+  params: Record<string, unknown>,
+  output: unknown,
+): Record<string, unknown> | undefined {
+  const metadata: Record<string, unknown> = {};
+
+  if (normalizedTool === "edit" || normalizedTool === "write") {
+    const diff = extractDiffFromParams(params);
+    if (diff) metadata.diff = diff;
+  }
+
+  if (normalizedTool === "read") {
+    const outputText = stringifyOutput(output);
+    if (outputText) metadata.lines = outputText.split("\n").length;
+  }
+
+  if (normalizedTool === "task" && typeof params.prompt === "string") {
+    metadata.prompt = params.prompt;
+  }
+
+  return Object.keys(metadata).length > 0 ? metadata : undefined;
+}
+
+function formatPlanMarkdown(text: string): string {
+  const trimmed = text.trim();
+  if (!trimmed) return "## Plan\n\n";
+  if (trimmed.startsWith("#")) return trimmed;
+  return `## Plan\n\n${trimmed}`;
+}
+
+function normalizeHistoricalEffort(value: string): ReasoningEffort | undefined {
+  switch (value) {
+    case "low":
+      return "low";
+    case "medium":
+      return "medium";
+    case "high":
+      return "high";
+    case "xhigh":
+      return "max";
+    default:
+      return undefined;
+  }
+}
+
+function normalizeItemError(item: CodexThreadItem): string | undefined {
+  const explicit = normalizeError(item.error);
+  if (explicit) return explicit;
+
+  if (typeof item.exitCode === "number" && item.exitCode !== 0) {
+    return `Exit code: ${item.exitCode}`;
+  }
+
+  if (item.status === "failed" || item.status === "declined") {
+    return typeof item.result === "string" && item.result ? item.result : "Tool failed";
+  }
+
+  return undefined;
+}
+
+function normalizeError(value: unknown): string | undefined {
+  if (typeof value === "string" && value) return value;
+  if (value && typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    const message = typeof record.message === "string" ? record.message : undefined;
+    const details = typeof record.additionalDetails === "string" ? record.additionalDetails : undefined;
+    if (message && details) return `${message}\n\n${details}`;
+    if (message) return message;
+  }
+  return undefined;
+}
+
+function stringifyOutput(output: unknown): string {
+  if (output == null) return "";
+  if (typeof output === "string") return output;
+  try {
+    return JSON.stringify(output, null, 2);
+  } catch {
+    return String(output);
+  }
+}
+
+function getRunningToolOutput(input: unknown): string {
+  if (!input || typeof input !== "object") return "";
+  const output = (input as Record<string, unknown>)._output;
+  return typeof output === "string" ? output : "";
+}
+
+function applyHistoricalToolTiming(toolPart: ToolPart, startTime: number, completedAt: number): void {
+  if (toolPart.state.status === "completed") {
+    toolPart.state = {
+      ...toolPart.state,
+      time: {
+        start: startTime,
+        end: completedAt,
+        duration: Math.max(0, completedAt - startTime),
+      },
+    };
+    return;
+  }
+
+  if (toolPart.state.status === "error") {
+    toolPart.state = {
+      ...toolPart.state,
+      time: {
+        start: startTime,
+        end: completedAt,
+        duration: Math.max(0, completedAt - startTime),
+      },
+    };
+  }
+}
+
+function truncate(value: string, max: number): string {
+  return value.length > max ? `${value.slice(0, max - 3)}...` : value;
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" ? value as Record<string, unknown> : {};
+}
+
+function extractUserInputs(value: unknown): CodexUserInput[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter((input): input is CodexUserInput => Boolean(input) && typeof input === "object");
+}
+
+function extractStringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter((entry): entry is string => typeof entry === "string" && entry.length > 0);
+}
+
+function toNumber(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function toMillis(value: string | number | undefined, fallback: number): number {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value < 1e12 ? value * 1000 : value;
+  }
+
+  if (typeof value === "string" && value) {
+    const numeric = Number(value);
+    if (Number.isFinite(numeric)) {
+      return numeric < 1e12 ? numeric * 1000 : numeric;
+    }
+
+    const parsed = Date.parse(value);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+
+  return fallback;
 }

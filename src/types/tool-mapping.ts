@@ -64,6 +64,16 @@ const COPILOT_TOOL_MAP: Record<string, NormalizedToolName> = {
 // --- Codex tool name mapping (app-server ThreadItem types) ---
 
 const CODEX_TOOL_MAP: Record<string, NormalizedToolName> = {
+  // Stable app-server item types
+  commandExecution: "shell",
+  fileChange: "edit",
+  webSearch: "web_fetch",
+  imageView: "read",
+  collabAgentToolCall: "task",
+  collabToolCall: "task",
+  mcpToolCall: "unknown",
+  dynamicToolCall: "unknown",
+  // Backward compatibility for pre-stable protocol variants
   command_execution: "shell",
   file_change: "edit",
   file_read: "read",

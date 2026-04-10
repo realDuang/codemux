@@ -1513,7 +1513,7 @@ export class CodexAdapter extends EngineAdapter {
             this.cleanupTempDirs([tempDir]);
           }
           const message = error instanceof Error && error.message ? error.message : String(error);
-          throw new Error(`Failed to prepare image attachment: ${message}`);
+          throw new Error(`Failed to prepare image attachment: ${message}`, { cause: error });
         }
       }
 

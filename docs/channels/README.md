@@ -62,7 +62,7 @@ Channel Adapter (in CodeMux)
   ↕ WebSocket (internal)
 Gateway Server
   ↕ Engine routing
-AI Engine (OpenCode / Copilot / Claude Code)
+AI Engine (OpenCode / Copilot / Claude Code / Codex experimental)
 ```
 
 Each channel adapter connects to the CodeMux gateway using the same WebSocket protocol as the web UI, ensuring feature parity.

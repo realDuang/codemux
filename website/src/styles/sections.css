@@ -200,6 +200,7 @@
 .engine-badge.cyan { color: var(--neon-cyan); border-color: var(--neon-cyan); animation-delay: 0s; }
 .engine-badge.magenta { color: var(--neon-magenta); border-color: var(--neon-magenta); animation-delay: 1s; }
 .engine-badge.purple { color: var(--neon-purple); border-color: var(--neon-purple); animation-delay: 2s; }
+.engine-badge.amber { color: var(--neon-amber); border-color: var(--neon-amber); animation-delay: 3s; }
 @keyframes pulse-glow {
   0%, 100% { box-shadow: 0 0 5px currentColor; opacity: 0.7; }
   50% { box-shadow: 0 0 20px currentColor, 0 0 40px currentColor; opacity: 1; }
@@ -265,18 +266,19 @@
   animation: data-flow 2s infinite;
 }
 @keyframes data-flow { 0% { opacity: 0.2; } 50% { opacity: 0.8; } 100% { opacity: 0.2; } }
-.arch-engines { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-top: 5px; }
+.arch-engines { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-top: 5px; }
 .arch-engine { text-align: center; padding: 12px 8px; border-radius: 4px; font-size: 0.7rem; }
 .arch-engine.oc { border: 1px solid rgba(91,196,247,0.3); color: var(--neon-cyan); }
 .arch-engine.cp { border: 1px solid rgba(255,0,170,0.3); color: var(--neon-magenta); }
 .arch-engine.cc { border: 1px solid rgba(176,124,247,0.3); color: var(--neon-purple); }
+.arch-engine.cx { border: 1px solid rgba(245,158,11,0.35); color: var(--neon-amber); }
 .arch-engine small { display: block; margin-top: 4px; color: var(--text-secondary); font-size: 0.6rem; }
 
 /* ========== ENGINES ========== */
 #engines { background: var(--bg-void); overflow: hidden; }
 .engines-header { text-align: center; margin-bottom: 60px; }
 .engines-tagline { font-size: 1.05rem; color: var(--text-secondary); margin-top: 10px; }
-.engine-cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 30px; }
+.engine-cards { display: grid; grid-template-columns: repeat(4, 1fr); gap: 30px; }
 .engine-card {
   background: rgba(18, 18, 26, 0.6); backdrop-filter: blur(10px);
   border: 1px solid rgba(255,255,255,0.05); border-radius: 12px;
@@ -297,17 +299,25 @@
 .engine-card[data-color="cyan"] { --card-color: var(--neon-cyan); }
 .engine-card[data-color="magenta"] { --card-color: var(--neon-magenta); }
 .engine-card[data-color="purple"] { --card-color: var(--neon-purple); }
+.engine-card[data-color="amber"] { --card-color: var(--neon-amber); }
 .engine-icon { font-size: 3rem; margin-bottom: 20px; display: block; }
 .engine-name { font-family: var(--font-heading); font-size: 1.3rem; font-weight: 700; margin-bottom: 10px; }
 .engine-card[data-color="cyan"] .engine-name { color: var(--neon-cyan); }
 .engine-card[data-color="magenta"] .engine-name { color: var(--neon-magenta); }
 .engine-card[data-color="purple"] .engine-name { color: var(--neon-purple); }
+.engine-card[data-color="amber"] .engine-name { color: var(--neon-amber); }
 .engine-protocol {
   font-family: var(--font-mono); font-size: 0.75rem; color: var(--text-secondary);
   margin-bottom: 15px; padding: 4px 10px;
   background: rgba(255,255,255,0.03); border-radius: 4px; display: inline-block;
 }
 .engine-desc { font-size: 0.95rem; color: var(--text-secondary); line-height: 1.7; }
+.engines-note {
+  margin-top: 24px;
+  text-align: center;
+  color: var(--text-secondary);
+  font-size: 0.95rem;
+}
 
 /* ========== FEATURES ========== */
 #features {
@@ -431,6 +441,12 @@
   padding: 5px 12px; border-radius: 4px; cursor: pointer; transition: all 0.3s;
 }
 .copy-btn:hover { background: rgba(91, 196, 247, 0.15); box-shadow: 0 0 10px rgba(91,196,247,0.2); }
+.install-note {
+  margin-top: 24px;
+  text-align: center;
+  color: var(--text-secondary);
+  font-size: 0.95rem;
+}
 
 /* ========== FOOTER ========== */
 footer {
@@ -464,6 +480,7 @@ footer {
 
 /* ========== RESPONSIVE ========== */
 @media (max-width: 1024px) {
+  .arch-engines { grid-template-columns: repeat(2, 1fr); }
   .engine-cards { grid-template-columns: repeat(2, 1fr); }
   .feature-grid { grid-template-columns: repeat(2, 1fr); }
   .overview-grid { grid-template-columns: 1fr; gap: 40px; }

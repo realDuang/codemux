@@ -31,8 +31,11 @@ Switch between engines from a single interface. Each keeps its full power — fi
 | **[OpenCode](https://opencode.ai)** | HTTP REST + SSE | ✅ Stable |
 | **[GitHub Copilot CLI](https://docs.github.com/en/copilot/using-github-copilot/using-github-copilot-coding-agent-in-cli)** | JSON-RPC/stdio | ✅ Stable |
 | **[Claude Code](https://claude.ai/code)** | SDK (stdio) | ✅ Stable |
+| **Codex** | JSON-RPC/stdio (app-server) | ⚠️ Experimental |
 
 > 💡 CodeMux is also the **first — and currently only — open-source GUI for GitHub Copilot CLI**, connecting at the protocol level (JSON-RPC over stdio) to deliver Copilot's complete agentic coding experience in a visual interface.
+>
+> ⚠️ Codex support is currently experimental/unstable. Expect protocol details and behavior to evolve as the upstream app-server protocol changes.
 
 ### 2. Agent Chain-of-Thought Visualization
 
@@ -54,7 +57,7 @@ Tools like [OpenClaw](https://github.com/openclaw/openclaw) have popularized the
 | Thinking steps | ✅ Each tool call rendered as expandable step | ❌ Final answer only |
 | File diffs | ✅ Inline diff viewer with syntax highlighting | ❌ Plain text or none |
 | Shell commands | ✅ Command + output rendered in real time | ❌ Text summary at best |
-| Multi-engine | ✅ Switch between OpenCode / Copilot / Claude Code | ❌ Single model / provider |
+| Multi-engine | ✅ Switch between OpenCode / Copilot / Claude Code / Codex | ❌ Single model / provider |
 | Coding context | ✅ Project-aware sessions with full tool access | ⚠️ Generic assistant context |
 | Image input | ✅ Paste/drag images for all engines to analyze | ❌ Text-only input |
 
@@ -62,7 +65,7 @@ Tools like [OpenClaw](https://github.com/openclaw/openclaw) have popularized the
 
 Text-based coding tools are limited to text input. CodeMux breaks this barrier — **attach images to your prompts and let the AI see what you see**.
 
-Paste a screenshot, drag in a design mockup, or upload an error image — all three engines can analyze images natively. Each engine adapter translates images into its native format behind the scenes, while you get a unified experience:
+Paste a screenshot, drag in a design mockup, or upload an error image — all four engines can analyze images natively. Each engine adapter translates images into its native format behind the scenes, while you get a unified experience:
 
 - **Upload methods**: File picker, drag & drop, clipboard paste
 - **Supported formats**: JPEG, PNG, GIF, WebP (up to 4 images per message, 3MB each)
@@ -80,7 +83,7 @@ CodeMux goes beyond chat — it provides integrated tools to manage your develop
 
 - **File Explorer & Git Monitoring**: Browse project files with a collapsible tree, preview code with syntax highlighting, and track git changes in real time. A "Changes" tab shows modified files with line-level add/remove counts, and an inline diff viewer lets you inspect every change without leaving CodeMux.
 
-- **Slash Commands & Engine Skills**: Type `/` in the input to invoke engine-native commands and skills with autocomplete — `/cancel`, `/status`, `/mode`, `/model`, and more. Each engine exposes its own commands; Copilot surfaces project-level and personal skills, Claude Code surfaces user-installed skills, and OpenCode passes through its SDK commands — all through a unified autocomplete UI.
+- **Slash Commands & Engine Skills**: Type `/` in the input to invoke engine-native commands and skills with autocomplete — `/cancel`, `/status`, `/mode`, `/model`, and more. Each engine exposes its own commands; Copilot surfaces project-level and personal skills, Claude Code surfaces user-installed skills, OpenCode passes through its SDK commands, and Codex surfaces app-server skills — all through a unified autocomplete UI.
 
 ### And More
 
@@ -88,7 +91,7 @@ CodeMux goes beyond chat — it provides integrated tools to manage your develop
 - **Live todo panel**: Agent-generated task lists displayed above the input area with real-time progress tracking
 - **Permission approvals**: Approve or deny sensitive operations (shell, file edits) inline — with "always allow" for trusted patterns
 - **Interactive questions**: Engines can ask single/multi-select questions with descriptions and custom input
-- **Per-engine model selection**: Pick different models for each engine independently; Copilot and Claude Code support custom model ID input
+- **Per-engine model selection**: Pick different models for each engine independently; Claude Code and Codex support custom model ID input
 - **Token usage tracking**: Monitor input, output, and cache token consumption with per-engine cost breakdowns
 
 #### Browser Remote Access
@@ -159,7 +162,7 @@ brew install --cask codemux
 - **macOS (Intel)**: `CodeMux-x.x.x-x64.dmg`
 - **Windows**: `CodeMux-x.x.x-setup.exe`
 
-The desktop app bundles the Cloudflare Tunnel binary and the gateway server. **OpenCode, Copilot CLI, and Claude Code must be installed separately** (see below).
+The desktop app bundles the Cloudflare Tunnel binary and the gateway server. **OpenCode, Copilot CLI, Claude Code, and Codex must be installed separately** (see below).
 
 > ⚠️ **macOS Users (manual download)**: The app is not code-signed. If macOS shows "App is damaged", run:
 >
@@ -221,6 +224,7 @@ After a browser has been approved, it can open **Settings → Channels** in the 
 > - **OpenCode**: Install from [opencode.ai](https://opencode.ai) — `curl -fsSL https://opencode.ai/install | bash` (Unix) or `irm https://opencode.ai/install.ps1 | iex` (Windows)
 > - **Copilot CLI**: Install [GitHub Copilot CLI](https://docs.github.com/en/copilot/using-github-copilot/using-github-copilot-coding-agent-in-cli) separately
 > - **Claude Code**: Install via `npm install -g @anthropic-ai/claude-code` and set your `ANTHROPIC_API_KEY`
+> - **Codex**: Install the `codex` CLI separately and ensure `codex` is in PATH. CodeMux reuses Codex's existing OpenAI login or API key configuration. Experimental/unstable.
 >
 > CodeMux auto-detects installed engines on startup.
 
@@ -269,15 +273,15 @@ Manage connected devices from the Devices page — view last access time, rename
 │              ┌────────┴────────┐                                │
 │              │  Gateway Server │                                │
 │              │ (Engine Manager)│                                │
-│              └──┬──────┬─────┬┘                                 │
-│                 │      │     │                                  │
-│           ┌─────┘   ┌──┘    └──┐                                │
-│           │         │          │                                │
-│     ┌─────┴─────┐ ┌─┴──────┐ ┌┴───────┐                        │
-│     │ OpenCode  │ │Copilot │ │ Claude │                        │
-│     │ Adapter   │ │Adapter │ │Adapter │                        │
-│     │(HTTP+SSE) │ │(stdio) │ │ (SDK)  │                        │
-│     └───────────┘ └────────┘ └────────┘                        │
+│              └──┬──────┬──────┬─────┬┘                            │
+│                 │      │      │     │                             │
+│           ┌─────┘   ┌──┘   ┌──┘   └──┐                            │
+│           │         │      │         │                            │
+│     ┌─────┴─────┐ ┌─┴──────┐ ┌┴───────┐ ┌─────────┐               │
+│     │ OpenCode  │ │Copilot │ │ Claude │ │  Codex  │               │
+│     │ Adapter   │ │Adapter │ │Adapter │ │ Adapter │               │
+│     │(HTTP+SSE) │ │(stdio) │ │ (SDK)  │ │ (stdio) │               │
+│     └───────────┘ └────────┘ └────────┘ └─────────┘               │
 │                                                                 │
 │     Unified Type System: UnifiedPart, ToolPart, AgentMode       │
 └─────────────────────────────────────────────────────────────────┘
@@ -315,7 +319,7 @@ bun run update:cloudflared # Update Cloudflare Tunnel binary
 codemux/
 ├── electron/
 │   ├── main/
-│   │   ├── engines/          # Engine adapters (OpenCode, Copilot, Claude Code)
+│   │   ├── engines/          # Engine adapters (OpenCode, Copilot, Claude Code, Codex)
 │   │   ├── gateway/          # WebSocket server + engine routing
 │   │   ├── channels/         # IM bot channels (Feishu, DingTalk, Telegram, WeCom, Teams)
 │   │   │   └── streaming/    # Cross-channel streaming infrastructure

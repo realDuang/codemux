@@ -21,6 +21,11 @@
 │   │   │   │   ├── index.ts
 │   │   │   │   ├── converters.ts
 │   │   │   │   └── cc-session-files.ts
+│   │   │   ├── codex/                # Codex CLI (JSON-RPC/stdio app-server, experimental)
+│   │   │   │   ├── index.ts
+│   │   │   │   ├── converters.ts
+│   │   │   │   ├── config.ts
+│   │   │   │   └── jsonrpc-client.ts
 │   │   │   └── mock-adapter.ts       # Mock engine for testing
 │   │   ├── gateway/              # WebSocket Gateway
 │   │   │   ├── ws-server.ts          # WebSocket server

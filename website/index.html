@@ -4,9 +4,9 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>CodeMux — Multi-Engine AI Coding Client</title>
-  <meta name="description" content="The first open-source GUI for GitHub Copilot CLI. Unify OpenCode, Copilot CLI, and Claude Code with zero-config remote access from any device.">
+  <meta name="description" content="The first open-source GUI for GitHub Copilot CLI. Unify OpenCode, Copilot CLI, Claude Code, and experimental Codex with zero-config remote access from any device.">
   <meta property="og:title" content="CodeMux — Multi-Engine AI Coding Client">
-  <meta property="og:description" content="One GUI. Three AI engines. Zero-config remote access.">
+  <meta property="og:description" content="One GUI. Four AI engines. Codex support is experimental.">
   <meta property="og:type" content="website">
   <meta name="twitter:card" content="summary_large_image">
   <link rel="icon" type="image/png" href="logo.png">
@@ -54,6 +54,7 @@
         <span class="engine-badge cyan">OpenCode</span>
         <span class="engine-badge magenta">GitHub Copilot CLI</span>
         <span class="engine-badge purple">Claude Code</span>
+        <span class="engine-badge amber">Codex</span>
       </div>
       <div class="hero-cta reveal">
         <a href="https://github.com/realDuang/codemux/releases" target="_blank" rel="noopener noreferrer" class="btn primary" data-i18n="hero.download">DOWNLOAD</a>
@@ -98,6 +99,7 @@
             <div class="arch-engine oc">OpenCode<small>HTTP/SSE</small></div>
             <div class="arch-engine cp">Copilot CLI<small>JSON-RPC</small></div>
             <div class="arch-engine cc">Claude Code<small>SDK/stdio</small></div>
+            <div class="arch-engine cx">Codex<small>JSON-RPC</small></div>
           </div>
         </div>
       </div>
@@ -109,8 +111,8 @@
     <div class="section">
       <div class="engines-header reveal">
         <div class="section-label">// ENGINE MATRIX</div>
-        <h2 class="section-title" data-i18n="engines.title">Three Engines. One Interface.</h2>
-        <p class="engines-tagline" data-i18n="engines.tagline">One GUI. Three powerful engines. Zero compromises.</p>
+        <h2 class="section-title" data-i18n="engines.title">Four Engines. One Interface.</h2>
+        <p class="engines-tagline" data-i18n="engines.tagline">One GUI. Three stable engines plus experimental Codex.</p>
       </div>
       <div class="engine-cards">
         <div class="engine-card reveal" data-color="cyan" style="transition-delay: 0.1s; border-color: rgba(91,196,247,0.15);">
@@ -131,7 +133,14 @@
           <span class="engine-protocol">SDK / stdio</span>
           <p class="engine-desc" data-i18n="engines.claude">Powered by @anthropic-ai/claude-agent-sdk. Deep integration through the official SDK for maximum capability and reliability.</p>
         </div>
+        <div class="engine-card reveal" data-color="amber" style="transition-delay: 0.55s; border-color: rgba(245,158,11,0.18);">
+          <span class="engine-icon">&#129302;</span>
+          <h3 class="engine-name">Codex</h3>
+          <span class="engine-protocol">JSON-RPC / stdio</span>
+          <p class="engine-desc" data-i18n="engines.codex">Protocol-level Codex integration through the stable app-server transport (JSON-RPC over stdio). Support is currently experimental / unstable while the upstream protocol is still evolving.</p>
+        </div>
       </div>
+      <p class="engines-note reveal" data-i18n="engines.note">Codex support is experimental and may change as the upstream app-server protocol evolves.</p>
     </div>
   </section>
 
@@ -187,7 +196,7 @@
         <div class="feature-card reveal" style="transition-delay: 0.85s">
           <span class="feature-icon">&#9000;</span>
           <h3 class="feature-title" data-i18n="features.commands.title">Slash Commands & Skills</h3>
-          <p class="feature-desc" data-i18n="features.commands.desc">Type / for engine-native commands with autocomplete. Copilot surfaces project &amp; personal skills, Claude Code exposes installed skills, OpenCode passes through SDK commands.</p>
+          <p class="feature-desc" data-i18n="features.commands.desc">Type / for engine-native commands with autocomplete. Copilot surfaces project &amp; personal skills, Claude Code exposes installed skills, OpenCode passes through SDK commands, and Codex surfaces app-server skills.</p>
         </div>
       </div>
     </div>
@@ -230,6 +239,7 @@
           </ul>
         </div>
       </div>
+      <p class="install-note reveal" data-i18n="install.engine_note">OpenCode, Copilot CLI, Claude Code, and Codex are installed separately. Codex support is experimental and requires the `codex` CLI in PATH.</p>
     </div>
   </section>
 
@@ -280,6 +290,7 @@
           </div>
         </div>
       </div>
+      <p class="install-note reveal" data-i18n="install.engine_note">OpenCode, Copilot CLI, Claude Code, and Codex are installed separately. Codex support is experimental and requires the `codex` CLI in PATH.</p>
     </div>
   </section>
 
@@ -298,7 +309,7 @@
     <div class="hud-status">
       <span class="hud-item">SYS.STATUS: ONLINE</span>
       <span class="hud-item">BUILD: STABLE</span>
-      <span class="hud-item">ENGINES: 3 ACTIVE</span>
+      <span class="hud-item">ENGINES: 4 AVAILABLE</span>
       <span class="hud-item">PROTOCOL: SECURE</span>
     </div>
     <p class="footer-copy">MIT License &middot; Made with &#9889; by <a href="https://github.com/realDuang" target="_blank" rel="noopener noreferrer">realDuang</a></p>

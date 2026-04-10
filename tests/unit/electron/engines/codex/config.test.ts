@@ -10,6 +10,7 @@ import {
   modeToApprovalPolicy,
   modeToSandboxMode,
   modeToSandboxPolicy,
+  normalizeDirectory,
   sandboxModeFromPolicy,
   toCodexEffort,
 } from "../../../../../electron/main/engines/codex/config";
@@ -50,6 +51,8 @@ describe("codex/config.ts", () => {
   it("clamps approval and sandbox selections to server requirements", () => {
     expect(clampApprovalPolicy("never", { allowedApprovalPolicies: ["untrusted", "on-request"] })).toBe("untrusted");
     expect(clampSandboxMode("workspace-write", { allowedSandboxModes: ["danger-full-access", "read-only"] })).toBe("danger-full-access");
+    expect(clampApprovalPolicy("on-request", { allowedApprovalPolicies: ["on-request", "never"] })).toBe("on-request");
+    expect(clampSandboxMode("read-only", { allowedSandboxModes: ["read-only", "workspace-write"] })).toBe("read-only");
 
     expect(
       clampSandboxPolicy(
@@ -68,19 +71,54 @@ describe("codex/config.ts", () => {
       access: { type: "fullAccess" },
       networkAccess: true,
     });
+
+    expect(
+      clampSandboxPolicy(
+        { type: "dangerFullAccess" },
+        { allowedSandboxModes: ["workspace-write"] },
+      ),
+    ).toEqual({
+      type: "workspaceWrite",
+      writableRoots: [],
+      readOnlyAccess: { type: "fullAccess" },
+      networkAccess: true,
+      excludeTmpdirEnvVar: false,
+      excludeSlashTmp: false,
+    });
+
+    expect(
+      clampSandboxPolicy(
+        {
+          type: "readOnly",
+          access: { type: "fullAccess" },
+          networkAccess: false,
+        },
+        { allowedSandboxModes: ["danger-full-access"] },
+      ),
+    ).toEqual({ type: "dangerFullAccess" });
   });
 
   it("maps reasoning effort to and from Codex values", () => {
     expect(toCodexEffort("max")).toBe("xhigh");
     expect(toCodexEffort("medium")).toBe("medium");
+    expect(toCodexEffort("low")).toBe("low");
 
     expect(fromCodexEffort("xhigh")).toBe("max");
+    expect(fromCodexEffort("medium")).toBe("medium");
     expect(fromCodexEffort("high")).toBe("high");
+    expect(fromCodexEffort("low")).toBe("low");
     expect(fromCodexEffort("minimal")).toBeUndefined();
   });
 
   it("derives sandbox mode from a sandbox policy", () => {
     expect(sandboxModeFromPolicy({ type: "dangerFullAccess" })).toBe("danger-full-access");
+    expect(
+      sandboxModeFromPolicy({
+        type: "readOnly",
+        access: { type: "fullAccess" },
+        networkAccess: false,
+      }),
+    ).toBe("read-only");
     expect(
       sandboxModeFromPolicy({
         type: "workspaceWrite",
@@ -91,6 +129,10 @@ describe("codex/config.ts", () => {
         excludeSlashTmp: false,
       }),
     ).toBe("workspace-write");
+  });
+
+  it("normalizes Windows-style paths before passing them to Codex", () => {
+    expect(normalizeDirectory("C:\\work\\repo")).toBe("C:/work/repo");
   });
 
   it("builds the stable app-server startup args", () => {

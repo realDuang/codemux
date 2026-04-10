@@ -59,8 +59,6 @@ export interface CodexClientOptions {
   cliPath: string;
   args: string[];
   env?: Record<string, string | undefined>;
-  /** Timeout in ms for process startup (default: 15000) */
-  startupTimeout?: number;
 }
 
 /**
@@ -75,7 +73,7 @@ export class CodexJsonRpcClient extends EventEmitter {
     reject: (error: Error) => void;
     timer: ReturnType<typeof setTimeout>;
   }>();
-  private readonly options: Required<Pick<CodexClientOptions, "cliPath" | "args" | "startupTimeout">> & Pick<CodexClientOptions, "env">;
+  private readonly options: Required<Pick<CodexClientOptions, "cliPath" | "args">> & Pick<CodexClientOptions, "env">;
   private _running = false;
 
   constructor(options: CodexClientOptions) {
@@ -84,7 +82,6 @@ export class CodexJsonRpcClient extends EventEmitter {
       cliPath: options.cliPath,
       args: options.args,
       env: options.env,
-      startupTimeout: options.startupTimeout ?? 15_000,
     };
   }
 
@@ -262,8 +259,8 @@ export class CodexJsonRpcClient extends EventEmitter {
     if (!this.proc?.stdin?.writable) {
       throw new Error("Cannot write to Codex stdin: not writable");
     }
+    codexLog.debug(`[→ Codex] ${summarizeMessageForLog(msg)}`);
     const json = JSON.stringify(msg);
-    codexLog.debug(`[→ Codex] ${json}`);
     this.proc.stdin.write(json + "\n");
   }
 
@@ -279,7 +276,7 @@ export class CodexJsonRpcClient extends EventEmitter {
       return;
     }
 
-    codexLog.debug(`[← Codex] ${trimmed.slice(0, 500)}`);
+    codexLog.debug(`[← Codex] ${summarizeMessageForLog(msg)}`);
 
     // Response to our request
     if ("id" in msg && msg.id != null && !("method" in msg)) {
@@ -317,4 +314,35 @@ export class CodexJsonRpcClient extends EventEmitter {
     }
     this.pendingRequests.clear();
   }
+}
+
+function summarizeMessageForLog(msg: JsonRpcMessage): string {
+  if ("method" in msg && typeof msg.method === "string") {
+    const kind = "id" in msg && msg.id != null ? "request" : "notification";
+    const id = "id" in msg && msg.id != null ? ` id=${String(msg.id)}` : "";
+    const summary = summarizePayload("params" in msg ? msg.params : undefined);
+    return `${kind} method=${msg.method}${id}${summary ? ` ${summary}` : ""}`;
+  }
+
+  if ("id" in msg && msg.id != null && !("method" in msg)) {
+    if (msg.error) {
+      return `response id=${String(msg.id)} error=${msg.error.code}`;
+    }
+
+    const summary = summarizePayload(msg.result);
+    return `response id=${String(msg.id)}${summary ? ` ${summary}` : ""}`;
+  }
+
+  return "message";
+}
+
+function summarizePayload(value: unknown): string {
+  if (value == null) return "";
+  if (Array.isArray(value)) return `array(len=${value.length})`;
+  if (typeof value === "string") return `string(len=${value.length})`;
+  if (typeof value === "object") {
+    const keys = Object.keys(value as Record<string, unknown>);
+    return `keys=${keys.slice(0, 5).join(",")}${keys.length > 5 ? ",…" : ""}`;
+  }
+  return `type=${typeof value}`;
 }

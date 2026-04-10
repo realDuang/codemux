@@ -860,6 +860,28 @@
     }
   }
 
+  /* ─── Task Progress (subagent live status) ─── */
+  [data-component="task-progress"] {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 0 0 0 28px;
+    font-size: 0.75rem;
+    color: rgba(14, 165, 233, 0.55);
+
+    :global(.dark) & {
+      color: rgba(125, 211, 252, 0.45);
+    }
+
+    [data-slot="subtool"] {
+      font-weight: 500;
+    }
+
+    [data-slot="tool-count"] {
+      opacity: 0.75;
+    }
+  }
+
   @keyframes pulse {
     0%, 100% { opacity: 1; }
     50% { opacity: 0.4; }

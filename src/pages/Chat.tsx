@@ -40,6 +40,7 @@ import { formatTokenCount, formatCostWithUnit, getEngineBadge } from "../compone
 import { getSetting, saveSetting, bootstrapHostSettings } from "../lib/settings";
 import { refreshThemeFromSettings } from "../lib/theme";
 import { refreshLocaleFromSettings } from "../lib/i18n";
+import { saveScrollPosition, deleteScrollPosition, resolveRemountScroll, resolveSessionSwitchScroll } from "../lib/scroll-position";
 
 import { InputAreaQuestion } from "../components/InputAreaQuestion";
 import { InputAreaPermission } from "../components/InputAreaPermission";
@@ -117,7 +118,11 @@ export default function Chat() {
   // Track sessions whose error/cancelled status has been dismissed by viewing
   const [dismissedSessions, setDismissedSessions] = createSignal<Set<string>>(new Set());
   // Active sessions: pin state + delayed removal for Active section
-  const [pinnedSessions, setPinnedSessions] = createSignal<Set<string>>(new Set());
+  const savedPinsSetting = getSetting<unknown>("pinnedSessions");
+  const savedPins = Array.isArray(savedPinsSetting)
+    ? savedPinsSetting.filter((pin): pin is string => typeof pin === "string")
+    : [];
+  const [pinnedSessions, setPinnedSessions] = createSignal<Set<string>>(new Set(savedPins));
   const [delayingRemoval, setDelayingRemoval] = createSignal<Set<string>>(new Set());
   const delayTimers = new Map<string, ReturnType<typeof setTimeout>>();
   let prevSendingMap: Record<string, boolean> = {};
@@ -200,6 +205,7 @@ export default function Chat() {
     setPinnedSessions((prev) => {
       const next = new Set(prev);
       next.add(sid);
+      saveSetting("pinnedSessions", [...next]);
       return next;
     });
   };
@@ -208,6 +214,7 @@ export default function Chat() {
     setPinnedSessions((prev) => {
       const next = new Set(prev);
       next.delete(sid);
+      saveSetting("pinnedSessions", [...next]);
       return next;
     });
     // Cancel any pending delayed removal
@@ -547,6 +554,12 @@ export default function Chat() {
     scrollRafId2 = requestAnimationFrame(() => {
       scrollRafPending = false;
       setUserScrolledUp(!isNearBottom());
+      // Persist scroll position so it survives navigation and session switches
+      const sid = sessionStore.current;
+      const el = messagesRef();
+      if (sid && el) {
+        saveScrollPosition(sid, el.scrollTop);
+      }
     });
   };
   onCleanup(() => {
@@ -757,6 +770,15 @@ export default function Chat() {
 
       if (!needsSessionBootstrap) {
         logger.debug("[Init] Gateway already initialized, handlers refreshed (remount)");
+        // Restore scroll position for the current session after route navigation
+        const scrollAction = resolveRemountScroll(sessionStore.current);
+        if (scrollAction.action === "restore") {
+          const pos = scrollAction.position;
+          setTimeout(() => {
+            const el = messagesRef();
+            if (el) el.scrollTop = pos;
+          }, 50);
+        }
         return;
       }
 
@@ -800,7 +822,15 @@ export default function Chat() {
 
           setSessionStore("list", sessionInfos);
 
-          // Load scheduled tasks (only if feature is enabled)
+          // Prune pinned session IDs that no longer exist
+          const validIds = new Set(sessionInfos.map(s => s.id));
+          setPinnedSessions((prev) => {
+            const pruned = new Set([...prev].filter(id => validIds.has(id)));
+            if (pruned.size !== prev.size) {
+              saveSetting("pinnedSessions", [...pruned]);
+            }
+            return pruned;
+          });
           if (scheduledTaskStore.enabled) {
             try {
               const tasks = await gateway.listScheduledTasks();
@@ -855,6 +885,14 @@ export default function Chat() {
   const handleSelectSession = async (sessionId: string) => {
     const gen = ++switchGeneration;
     logger.debug("[SelectSession] Switching to session:", sessionId);
+
+    // Save scroll position of the outgoing session before switching
+    const prevSid = sessionStore.current;
+    const prevEl = messagesRef();
+    if (prevSid && prevEl) {
+      saveScrollPosition(prevSid, prevEl.scrollTop);
+    }
+
     setSessionStore("current", sessionId);
     setSessionStore("initError", null);
 
@@ -913,7 +951,20 @@ export default function Chat() {
     if (!existing || !existing.some(m => m.role === "user")) {
       await loadSessionMessages(sessionId);
     } else {
-      setTimeout(() => scrollToBottomStable(), 100);
+      const scrollAction = resolveSessionSwitchScroll(sessionId);
+      if (scrollAction.action === "restore") {
+        const pos = scrollAction.position;
+        setTimeout(() => {
+          if (gen !== switchGeneration || sessionStore.current !== sessionId) return;
+          const el = messagesRef();
+          if (el) el.scrollTop = pos;
+        }, 100);
+      } else {
+        setTimeout(() => {
+          if (gen !== switchGeneration || sessionStore.current !== sessionId) return;
+          scrollToBottomStable();
+        }, 100);
+      }
     }
 
     // Stale check: if the user has already switched to another session
@@ -1014,6 +1065,8 @@ export default function Chat() {
         setTodoPartRef(null);
       }
 
+      deleteScrollPosition(sessionId);
+
       // Remove from list
       setSessionStore("list", (list) => list.filter((s) => s.id !== sessionId));
 
@@ -1112,6 +1165,7 @@ export default function Chat() {
         setMessageStore("permission", session.id, undefined as any);
         setMessageStore("question", session.id, undefined as any);
         setMessageStore("queued", session.id, undefined as any);
+        deleteScrollPosition(session.id);
       }
 
       setSessionStore("list", (list) =>

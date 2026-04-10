@@ -261,6 +261,7 @@ export const ru: LocaleDict = {
     results: "{count} результатов",
     lines: "{count} строк",
     toolHint: "Подсказка",
+    toolUses: "{count} вызовов инструментов",
   },
 
   // Steps (SessionTurn)
@@ -282,6 +283,11 @@ export const ru: LocaleDict = {
     contextOrganized: "Контекст организован",
     cancelled: "Отменено",
     errorOccurred: "Ошибка",
+    stoppedByUser: "Остановлено пользователем.",
+    interrupted: "Ответ модели неожиданно прерван.",
+    emptyResponse: "Получен пустой ответ. Попробуйте отправить сообщение снова.",
+    contextCompressed: "Контекст был автоматически сжат",
+    sessionResumed: "Сессия была возобновлена",
     continueWork: "Продолжить",
     loadingSteps: "Загрузка шагов...",
   },
@@ -301,6 +307,7 @@ export const ru: LocaleDict = {
     revokeOthersSuccess: "Отозвано устройств: {count}",
     noOtherDevices: "Нет других авторизованных устройств",
     securityTip: "Если вы видите незнакомое устройство, немедленно отзовите его доступ",
+    inactiveCleanupTip: "Устройства, неактивные более 14 дней, автоматически удаляются и потребуют повторной авторизации",
     justNow: "Только что",
     minutesAgo: "{count} мин. назад",
     hoursAgo: "{count} ч. назад",

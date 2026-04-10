@@ -1,0 +1,32 @@
+.systemNotice {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 14px;
+  margin: 4px auto;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--text-secondary, #888);
+  background: var(--bg-subtle, rgba(128, 128, 128, 0.08));
+  border-radius: 10px;
+  width: fit-content;
+  max-width: 80%;
+  user-select: none;
+}
+
+.systemNotice[data-type="warning"] {
+  color: var(--text-warning, #b45309);
+  background: var(--bg-warning-subtle, rgba(180, 83, 9, 0.08));
+}
+
+.noticeIcon {
+  flex-shrink: 0;
+  font-size: 12px;
+  line-height: 1;
+}
+
+.noticeText {
+  white-space: pre-wrap;
+  word-break: break-word;
+}

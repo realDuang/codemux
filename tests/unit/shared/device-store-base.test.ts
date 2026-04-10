@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { DeviceStoreBase } from '../../../shared/device-store-base';
 import fs from 'fs';
 
@@ -15,6 +15,9 @@ class TestDeviceStore extends DeviceStoreBase {
   }
   public cleanupExpiredRequestsPublic(): void {
     this.cleanupExpiredRequests();
+  }
+  public cleanupInactiveDevicesPublic(): void {
+    this.cleanupInactiveDevices();
   }
 }
 
@@ -59,7 +62,7 @@ describe('DeviceStoreBase', () => {
       const id = store.generateDeviceId();
       expect(id).toMatch(/^[a-f0-9]+$/);
 
-      const device = { id, name: 'Test', lastSeenAt: 123 } as any;
+      const device = { id, name: 'Test', lastSeenAt: Date.now() } as any;
       store.addDevice(device);
       expect(store.getDevice(id)).toEqual(device);
       expect(store.listDevices()).toContainEqual(device);
@@ -223,12 +226,119 @@ describe('DeviceStoreBase', () => {
     });
 
     it('sorts devices by lastSeenAt descending', () => {
-      store.addDevice({ id: 'd1', lastSeenAt: 100 } as any);
-      store.addDevice({ id: 'd2', lastSeenAt: 300 } as any);
-      store.addDevice({ id: 'd3', lastSeenAt: 200 } as any);
+      const now = Date.now();
+      store.addDevice({ id: 'd1', lastSeenAt: now - 2000 } as any);
+      store.addDevice({ id: 'd2', lastSeenAt: now } as any);
+      store.addDevice({ id: 'd3', lastSeenAt: now - 1000 } as any);
 
       const sorted = store.listDevices();
       expect(sorted.map(d => d.id)).toEqual(['d2', 'd3', 'd1']);
+    });
+  });
+
+  describe('Inactive Device Auto-Cleanup', () => {
+    const FOURTEEN_DAYS = 14 * 24 * 60 * 60 * 1000;
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it('removes non-host devices inactive for more than 14 days', () => {
+      vi.useFakeTimers();
+      const now = Date.now();
+
+      store.addDevice({ id: 'd1', lastSeenAt: now - FOURTEEN_DAYS - 1, isHost: false } as any);
+      store.addDevice({ id: 'd2', lastSeenAt: now - FOURTEEN_DAYS + 60000, isHost: false } as any);
+
+      store.cleanupInactiveDevicesPublic();
+
+      expect(store.getDevice('d1')).toBeUndefined();
+      expect(store.getDevice('d2')).toBeDefined();
+    });
+
+    it('never removes host devices regardless of inactivity', () => {
+      vi.useFakeTimers();
+      const now = Date.now();
+
+      store.addDevice({ id: 'host', lastSeenAt: now - FOURTEEN_DAYS - 1, isHost: true } as any);
+      store.addDevice({ id: 'remote', lastSeenAt: now - FOURTEEN_DAYS - 1, isHost: false } as any);
+
+      store.cleanupInactiveDevicesPublic();
+
+      expect(store.getDevice('host')).toBeDefined();
+      expect(store.getDevice('remote')).toBeUndefined();
+    });
+
+    it('triggers cleanup when listing devices', () => {
+      vi.useFakeTimers();
+      const now = Date.now();
+
+      store.addDevice({ id: 'stale', lastSeenAt: now - FOURTEEN_DAYS - 1 } as any);
+      store.addDevice({ id: 'active', lastSeenAt: now } as any);
+
+      const devices = store.listDevices();
+      expect(devices).toHaveLength(1);
+      expect(devices[0].id).toBe('active');
+    });
+
+    it('triggers cleanup via cleanupExpiredRequests', () => {
+      vi.useFakeTimers();
+      const now = Date.now();
+
+      store.addDevice({ id: 'stale', lastSeenAt: now - FOURTEEN_DAYS - 1 } as any);
+      store.cleanupExpiredRequestsPublic();
+
+      expect(store.getDevice('stale')).toBeUndefined();
+    });
+
+    it('rejects tokens for inactive devices via verifyToken without deleting them', () => {
+      vi.useFakeTimers();
+      const now = Date.now();
+
+      store.addDevice({ id: 'd1', lastSeenAt: now } as any);
+      const token = store.generateToken('d1');
+      expect(store.verifyToken(token).valid).toBe(true);
+
+      // Simulate 15 days of inactivity
+      vi.advanceTimersByTime(FOURTEEN_DAYS + 1);
+      expect(store.verifyToken(token).valid).toBe(false);
+      // Device is still in store — verifyToken does not delete, only rejects
+      expect(store.getDevice('d1')).toBeDefined();
+    });
+
+    it('triggers cleanup via updateLastSeen', () => {
+      vi.useFakeTimers();
+      const now = Date.now();
+
+      store.addDevice({ id: 'stale', lastSeenAt: now - FOURTEEN_DAYS - 1 } as any);
+      store.addDevice({ id: 'active', lastSeenAt: now } as any);
+
+      store.updateLastSeen('active', '1.2.3.4');
+
+      expect(store.getDevice('stale')).toBeUndefined();
+      expect(store.getDevice('active')).toBeDefined();
+    });
+
+    it('throttles cleanup in updateLastSeen to avoid redundant runs', () => {
+      vi.useFakeTimers();
+      const now = Date.now();
+
+      store.addDevice({ id: 'active', lastSeenAt: now } as any);
+
+      // First updateLastSeen triggers cleanup
+      store.updateLastSeen('active', '1.1.1.1');
+
+      // Add a stale device after cleanup already ran
+      store.addDevice({ id: 'stale', lastSeenAt: now - FOURTEEN_DAYS - 1 } as any);
+
+      // Second call within throttle window — cleanup is skipped
+      store.updateLastSeen('active', '2.2.2.2');
+      expect(store.getDevice('stale')).toBeDefined();
+
+      // Advance past throttle interval (1 hour)
+      vi.advanceTimersByTime(60 * 60 * 1000 + 1);
+      store.updateLastSeen('active', '3.3.3.3');
+      expect(store.getDevice('stale')).toBeUndefined();
     });
   });
 

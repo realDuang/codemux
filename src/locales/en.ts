@@ -260,6 +260,7 @@ export interface LocaleDict {
     results: string;
     lines: string;
     toolHint: string;
+    toolUses: string;
   };
 
   // Steps (SessionTurn)
@@ -281,6 +282,11 @@ export interface LocaleDict {
     contextOrganized: string;
     cancelled: string;
     errorOccurred: string;
+    stoppedByUser: string;
+    interrupted: string;
+    emptyResponse: string;
+    contextCompressed: string;
+    sessionResumed: string;
     continueWork: string;
     loadingSteps: string;
   };
@@ -300,6 +306,7 @@ export interface LocaleDict {
     revokeOthersSuccess: string;
     noOtherDevices: string;
     securityTip: string;
+    inactiveCleanupTip: string;
     justNow: string;
     minutesAgo: string;
     hoursAgo: string;
@@ -865,6 +872,7 @@ export const en: LocaleDict = {
     results: "{count} results",
     lines: "{count} lines",
     toolHint: "Hint",
+    toolUses: "{count} tool uses",
   },
 
   // Steps (SessionTurn)
@@ -886,6 +894,11 @@ export const en: LocaleDict = {
     contextOrganized: "Context organized",
     cancelled: "Cancelled",
     errorOccurred: "Error",
+    stoppedByUser: "Stopped by user.",
+    interrupted: "Model response interrupted unexpectedly.",
+    emptyResponse: "Unexpected empty response. Try sending your message again.",
+    contextCompressed: "Context has been automatically compressed",
+    sessionResumed: "Session has been resumed",
     continueWork: "Continue",
     loadingSteps: "Loading steps...",
   },
@@ -905,6 +918,7 @@ export const en: LocaleDict = {
     revokeOthersSuccess: "{count} device(s) revoked",
     noOtherDevices: "No other authorized devices",
     securityTip: "If you see an unfamiliar device, revoke its access immediately",
+    inactiveCleanupTip: "Devices inactive for more than 14 days are automatically removed and will need to re-authorize",
     justNow: "just now",
     minutesAgo: "{count} min ago",
     hoursAgo: "{count}h ago",

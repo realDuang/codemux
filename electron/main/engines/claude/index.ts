@@ -50,6 +50,7 @@ import type {
   ReasoningPart,
   StepStartPart,
   StepFinishPart,
+  SystemNoticePart,
   QuestionInfo,
   EngineCommand,
   CommandInvokeResult,
@@ -61,6 +62,10 @@ import { sdkSessionToUnified, convertSdkMessages } from "./converters";
 import { deleteCCSessionFile, readJsonlTimestamps } from "./cc-session-files";
 import { createRequire } from "node:module";
 import { sep, dirname, join } from "node:path";
+import { readFileSync, readdirSync, statSync, existsSync } from "node:fs";
+import { readdir, stat, readFile } from "node:fs/promises";
+import { homedir } from "node:os";
+import { createTwoFilesPatch } from "diff";
 
 // ============================================================================
 // V2 Session Info — Tracks a persistent SDK session
@@ -85,6 +90,14 @@ interface StreamingBlock {
   content: string;
   toolName?: string;
   toolId?: string;
+}
+
+/** Tracks stream end conditions for comprehensive result classification. */
+interface StreamEndState {
+  /** Whether a result message was received (false = stream interrupted/crashed) */
+  receivedResult: boolean;
+  /** result.subtype === "error_during_execution" — tool error, not an API error */
+  hadErrorDuringExecution: boolean;
 }
 
 // ============================================================================
@@ -180,6 +193,8 @@ export class ClaudeCodeAdapter extends EngineAdapter {
   private sessionDirectories = new Map<string, string>();
   /** Persisted ccSessionId per session, for SDK session resumption across restarts */
   private sessionCcIds = new Map<string, string>();
+  /** Sessions that were just resumed after a dead process — emit notice on next message */
+  private pendingResumeNotice = new Set<string>();
 
   // --- Message accumulation ---
   private messageBuffers = new Map<string, MessageBuffer>();
@@ -211,6 +226,9 @@ export class ClaudeCodeAdapter extends EngineAdapter {
 
   // --- Tool call tracking ---
   private toolCallParts = new Map<string, ToolPart>();
+
+  /** Maps SDK task_id → tool_use_id for correlating task_progress/notification to ToolPart */
+  private taskToToolUseId = new Map<string, string>();
 
   // --- Active requests (for abort) ---
   private activeAbortControllers = new Map<string, AbortController>();
@@ -768,6 +786,20 @@ export class ClaudeCodeAdapter extends EngineAdapter {
       },
     );
 
+    // If session was resumed after a dead process, emit a notice
+    if (this.pendingResumeNotice.delete(sessionId)) {
+      const noticePart: SystemNoticePart = {
+        type: "system-notice",
+        id: timeId("part"),
+        messageId: buffer.messageId,
+        sessionId,
+        noticeType: "info",
+        text: "notice:session_resumed",
+      };
+      buffer.parts.push(noticePart);
+      this.emitPartUpdated(sessionId, buffer, noticePart);
+    }
+
     // Create abort controller for this request
     const abortController = new AbortController();
     this.activeAbortControllers.set(sessionId, abortController);
@@ -1276,14 +1308,14 @@ export class ClaudeCodeAdapter extends EngineAdapter {
   }
 
   /**
-   * Intercept ExitPlanMode: the plan content has already been streamed as text
-   * parts to the frontend. We convert this tool call into a question asking the
-   * user to approve or reject the plan before execution continues.
+   * Intercept ExitPlanMode: read the plan file content and append it to the
+   * message stream so the user can see the full plan, then show a confirmation
+   * dialog asking the user to approve or reject.
    *
-   * Flow: canUseTool blocks → emit question.asked → frontend shows confirm UI
+   * Flow: canUseTool blocks → read plan file → emit plan text → emit question
    *       → user replies → resolve promise → SDK gets allow/deny
    */
-  private handleExitPlanMode(
+  private async handleExitPlanMode(
     sessionId: string,
     input: Record<string, unknown>,
     options: { signal: AbortSignal; toolUseID: string },
@@ -1293,6 +1325,16 @@ export class ClaudeCodeAdapter extends EngineAdapter {
     const allowedPrompts = input.allowedPrompts as
       | Array<{ tool: string; prompt: string }>
       | undefined;
+
+    // Read the plan file and append its content to the message stream
+    // so the user can review it before the confirmation dialog appears.
+    const buffer = this.messageBuffers.get(sessionId);
+    if (buffer) {
+      const planContent = await this.readLatestPlanFile(sessionId);
+      if (planContent) {
+        this.appendText(sessionId, buffer, "\n\n" + planContent);
+      }
+    }
 
     const question: UnifiedQuestion = {
       id: questionId,
@@ -1359,6 +1401,35 @@ export class ClaudeCodeAdapter extends EngineAdapter {
 
       this.emit("question.asked", { question });
     });
+  }
+
+  /**
+   * Read the most recently modified plan file from ~/.claude/plans/.
+   * Returns the file content, or null if no plan file is found.
+   */
+  private async readLatestPlanFile(_sessionId: string): Promise<string | null> {
+    try {
+      const plansDir = join(homedir(), ".claude", "plans");
+      const entries = await readdir(plansDir);
+      const files = await Promise.all(
+        entries
+          .filter((f) => f.endsWith(".md"))
+          .map(async (f) => {
+            const fullPath = join(plansDir, f);
+            const st = await stat(fullPath);
+            return { path: fullPath, mtime: st.mtimeMs };
+          }),
+      );
+      files.sort((a, b) => b.mtime - a.mtime);
+
+      if (files.length === 0) return null;
+
+      // The most recently modified plan file was just written by Claude
+      const content = await readFile(files[0].path, "utf-8");
+      return content.trim() || null;
+    } catch {
+      return null;
+    }
   }
 
   /**
@@ -1526,7 +1597,52 @@ export class ClaudeCodeAdapter extends EngineAdapter {
     args: string,
     options?: { mode?: string; modelId?: string; directory?: string },
   ): Promise<CommandInvokeResult> {
-    // Claude Code processes slash commands as inline text
+    // Built-in CC CLI commands (compact, help, cost, etc.) and built-in skills
+    // (simplify, update-config, etc.) — send as slash command text for CC CLI
+    // to process internally.
+    if (this.isBuiltInCommand(commandName)) {
+      const commandText = `/${commandName}${args ? ` ${args}` : ""}`;
+      const message = await this.sendMessage(
+        sessionId,
+        [{ type: "text", text: commandText }],
+        options,
+      );
+      return { handledAsCommand: true, message };
+    }
+
+    // User-defined skills from .claude/skills/ — CC CLI's SDK mode doesn't
+    // resolve these via slash commands, so we expand the skill content ourselves
+    // and send it as a regular message with skill metadata tags (mimicking
+    // CC CLI's interactive mode behavior).
+    const directory =
+      this.v2Sessions.get(sessionId)?.directory ??
+      this.sessionDirectories.get(sessionId);
+    if (directory) {
+      const skillBody = this.readSkillFileBody(commandName, directory);
+      if (skillBody) {
+        // Construct message mimicking CC CLI's skill invocation format:
+        // metadata tags tell the model this is a loaded skill, then the
+        // SKILL.md body provides the actual instructions.
+        const metaTags = [
+          `<command-name>/${commandName}</command-name>`,
+          `<command-message>${commandName}</command-message>`,
+          args ? `<command-args>${args}</command-args>` : null,
+        ].filter(Boolean).join("\n");
+
+        const messageText = `${metaTags}\n${skillBody}`;
+        claudeLog.info(
+          `[Claude][${sessionId}] Expanding user skill /${commandName} (${skillBody.length} chars)`,
+        );
+        const message = await this.sendMessage(
+          sessionId,
+          [{ type: "text", text: messageText }],
+          options,
+        );
+        return { handledAsCommand: true, message };
+      }
+    }
+
+    // Fallback: send as slash command text (may fail for unknown skills)
     const commandText = `/${commandName}${args ? ` ${args}` : ""}`;
     const message = await this.sendMessage(
       sessionId,
@@ -1534,6 +1650,30 @@ export class ClaudeCodeAdapter extends EngineAdapter {
       options,
     );
     return { handledAsCommand: true, message };
+  }
+
+  /**
+   * Read a skill's SKILL.md file body (content after YAML front matter).
+   * Searches project-local .claude/skills/ first, then global ~/.claude/skills/.
+   */
+  private readSkillFileBody(skillName: string, directory: string): string | null {
+    const dirs = [
+      join(directory, ".claude", "skills"),
+      join(homedir(), ".claude", "skills"),
+    ];
+    for (const dir of dirs) {
+      const skillFile = join(dir, skillName, "SKILL.md");
+      if (existsSync(skillFile)) {
+        try {
+          const content = readFileSync(skillFile, "utf-8");
+          // Strip YAML front matter, keep the body
+          return content.replace(/^---\s*\n[\s\S]*?\n---\s*\n?/, "").trim();
+        } catch {
+          continue;
+        }
+      }
+    }
+    return null;
   }
 
   // ==========================================================================
@@ -1582,29 +1722,39 @@ export class ClaudeCodeAdapter extends EngineAdapter {
   ): Promise<SDKSession> {
     const existing = this.v2Sessions.get(sessionId);
     if (existing) {
-      // Check if permissionMode changed — switch at runtime without destroying session
-      const requestedMode = opts.permissionMode ?? "default";
-      if (existing.permissionMode !== requestedMode) {
-        claudeLog.info(
-          `[Claude][${sessionId}] permissionMode changed from ${existing.permissionMode} to ${requestedMode}, switching at runtime`,
+      // Check if the CLI subprocess is still alive before reusing
+      if (!this.isSessionTransportReady(existing.session)) {
+        claudeLog.warn(
+          `[Claude][${sessionId}] CLI subprocess is dead, cleaning up and recreating session`,
         );
-        existing.permissionMode = requestedMode;
-        try {
-          const query = (existing.session as any).query;
-          if (query && typeof query.setPermissionMode === "function") {
-            await query.setPermissionMode(requestedMode);
-            claudeLog.info(`[Claude][${sessionId}] Permission mode switched to: ${requestedMode}`);
-          } else {
-            claudeLog.warn(`[Claude][${sessionId}] setPermissionMode not available on query, will apply on next message`);
+        this.cleanupSession(sessionId, "transport not ready");
+        this.pendingResumeNotice.add(sessionId);
+        // Fall through to create a new session (ccSessionId is preserved by cleanupSession)
+      } else {
+        // Check if permissionMode changed — switch at runtime without destroying session
+        const requestedMode = opts.permissionMode ?? "default";
+        if (existing.permissionMode !== requestedMode) {
+          claudeLog.info(
+            `[Claude][${sessionId}] permissionMode changed from ${existing.permissionMode} to ${requestedMode}, switching at runtime`,
+          );
+          existing.permissionMode = requestedMode;
+          try {
+            const query = (existing.session as any).query;
+            if (query && typeof query.setPermissionMode === "function") {
+              await query.setPermissionMode(requestedMode);
+              claudeLog.info(`[Claude][${sessionId}] Permission mode switched to: ${requestedMode}`);
+            } else {
+              claudeLog.warn(`[Claude][${sessionId}] setPermissionMode not available on query, will apply on next message`);
+            }
+          } catch (err) {
+            claudeLog.warn(`[Claude][${sessionId}] Failed to set permission mode at runtime:`, err);
           }
-        } catch (err) {
-          claudeLog.warn(`[Claude][${sessionId}] Failed to set permission mode at runtime:`, err);
         }
-      }
 
-      // Session is ready — update usage timestamp and return
-      existing.lastUsedAt = Date.now();
-      return existing.session;
+        // Session is ready — update usage timestamp and return
+        existing.lastUsedAt = Date.now();
+        return existing.session;
+      }
     }
 
     claudeLog.info(
@@ -1641,11 +1791,12 @@ export class ClaudeCodeAdapter extends EngineAdapter {
       model: opts.model ?? this.currentModelId ?? "claude-sonnet-4-20250514",
       env,
       permissionMode: opts.permissionMode ?? "default",
-      allowedTools: ["Read", "Write", "Edit", "Grep", "Glob", "Bash", "WebFetch", "WebSearch", "Task", "TodoWrite", "TodoRead", "NotebookEdit"],
+      allowedTools: ["Read", "Write", "Edit", "Grep", "Glob", "Bash", "WebFetch", "WebSearch", "Task", "TodoWrite", "TodoRead", "NotebookEdit", "Skill"],
       canUseTool: this.createCanUseTool(sessionId),
       systemPrompt: { type: "preset" as const, preset: "claude_code" as const, append: promptAppend },
       pathToClaudeCodeExecutable: this.resolveCliPath(),
       stderr: this.stderrCallback,
+      maxThinkingTokens: 10240,
     };
 
     // Apply reasoning effort level if set for this session
@@ -1715,7 +1866,60 @@ export class ClaudeCodeAdapter extends EngineAdapter {
     };
 
     this.v2Sessions.set(sessionId, info);
+    this.registerProcessExitListener(v2Session, sessionId);
     return v2Session;
+  }
+
+  /**
+   * Check if the CLI subprocess behind a V2 session is still alive.
+   * Returns false if the process has exited (OOM, crash, signal).
+   */
+  private isSessionTransportReady(session: SDKSession): boolean {
+    try {
+      const query = (session as any).query;
+      const transport = query?.transport;
+      if (!transport) return false;
+
+      if (typeof transport.isReady === "function") {
+        return transport.isReady();
+      }
+      if (typeof transport.ready === "boolean") {
+        return transport.ready;
+      }
+      // Can't determine — assume ready to avoid unnecessary recreation
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Register a listener for CLI subprocess exit events.
+   * When the CC subprocess dies (OOM, crash, signal), we immediately clean up
+   * the session entry from v2Sessions. The ccSessionId is preserved in
+   * sessionCcIds so the next getOrCreateV2Session() call can resume it
+   * with a fresh process.
+   */
+  private registerProcessExitListener(session: SDKSession, sessionId: string): void {
+    try {
+      const transport = (session as any).query?.transport;
+      if (!transport) return;
+
+      if (typeof transport.onExit === "function") {
+        transport.onExit((error: Error | undefined) => {
+          claudeLog.warn(
+            `[Claude][${sessionId}] CLI subprocess exited${error ? `: ${error.message}` : ""}`,
+          );
+          // Only clean up if the session is still the one we registered for
+          const current = this.v2Sessions.get(sessionId);
+          if (current && current.session === session) {
+            this.cleanupSession(sessionId, `process exited${error ? ` (${error.message})` : ""}`);
+          }
+        });
+      }
+    } catch (e) {
+      claudeLog.warn(`[Claude][${sessionId}] Failed to register process exit listener:`, e);
+    }
   }
 
   /**
@@ -1751,10 +1955,45 @@ export class ClaudeCodeAdapter extends EngineAdapter {
     "help", "clear", "config", "doctor", "memory", "model",
     "login", "logout", "bug", "mcp", "approved-tools",
     "pr-comments", "release-notes", "listen",
+    // CC CLI built-in skills (returned by supportedCommands() but not user-defined)
+    "update-config", "debug", "simplify", "batch", "loop",
+    "claude-api", "heapdump", "security-review", "insights",
   ]);
 
   private isBuiltInCommand(name: string): boolean {
     return ClaudeCodeAdapter.BUILT_IN_COMMANDS.has(name);
+  }
+
+  /**
+   * Scan a `.claude/skills/` directory for user-defined skills.
+   * Each skill is a subdirectory containing a SKILL.md file with YAML front matter.
+   */
+  private static scanSkillsDir(dir: string): EngineCommand[] {
+    if (!existsSync(dir)) return [];
+    try {
+      const entries = readdirSync(dir);
+      const skills: EngineCommand[] = [];
+      for (const entry of entries) {
+        const skillFile = join(dir, entry, "SKILL.md");
+        if (!existsSync(skillFile)) continue;
+        let name = entry;
+        let description = "";
+        try {
+          const content = readFileSync(skillFile, "utf-8");
+          const fmMatch = content.match(/^---\s*\n([\s\S]*?)\n---/);
+          if (fmMatch) {
+            const nameMatch = fmMatch[1].match(/^name:\s*(.+)$/m);
+            if (nameMatch) name = nameMatch[1].trim();
+            const descMatch = fmMatch[1].match(/^description:\s*(.+)$/m);
+            if (descMatch) description = descMatch[1].trim();
+          }
+        } catch { /* ignore read errors */ }
+        skills.push({ name, description });
+      }
+      return skills;
+    } catch {
+      return [];
+    }
   }
 
   /**
@@ -1796,10 +2035,26 @@ export class ClaudeCodeAdapter extends EngineAdapter {
         argumentHint: cmd.argumentHint || undefined,
       }));
 
+      // Supplement with user-defined skills from .claude/skills/ directories.
+      // The CC CLI's supportedCommands() API may not include these.
+      const existingNames = new Set(this.availableCommands.map((c) => c.name));
+      const userSkillDirs = [
+        join(homedir(), ".claude", "skills"),
+        join(cwd, ".claude", "skills"),
+      ];
+      for (const dir of userSkillDirs) {
+        for (const skill of ClaudeCodeAdapter.scanSkillsDir(dir)) {
+          if (!existingNames.has(skill.name)) {
+            existingNames.add(skill.name);
+            this.availableCommands.push(skill);
+          }
+        }
+      }
+
       // Cache skill names (non-built-in commands) for system prompt injection
-      this.cachedSkillNames = commands
-        .filter((cmd: { name: string }) => !this.isBuiltInCommand(cmd.name))
-        .map((cmd: { name: string }) => cmd.name);
+      this.cachedSkillNames = this.availableCommands
+        .filter((cmd) => !this.isBuiltInCommand(cmd.name))
+        .map((cmd) => cmd.name);
 
       this.emit("commands.changed", {
         engineType: this.engineType,
@@ -1811,12 +2066,21 @@ export class ClaudeCodeAdapter extends EngineAdapter {
       );
     } catch (err) {
       claudeLog.warn(`[Claude][${sessionId}] supportedCommands() failed, using fallback:`, err);
-      // Minimal fallback
+      // Minimal fallback + user-defined skills
       this.availableCommands = [
         { name: "compact", description: "Compact conversation context" },
         { name: "context", description: "Show current context window usage" },
         { name: "cost", description: "Show token usage and cost" },
       ];
+      const existingNames = new Set(this.availableCommands.map((c) => c.name));
+      for (const dir of [join(homedir(), ".claude", "skills"), join(cwd, ".claude", "skills")]) {
+        for (const skill of ClaudeCodeAdapter.scanSkillsDir(dir)) {
+          if (!existingNames.has(skill.name)) {
+            existingNames.add(skill.name);
+            this.availableCommands.push(skill);
+          }
+        }
+      }
       this.emit("commands.changed", {
         engineType: this.engineType,
         commands: this.availableCommands,
@@ -1852,24 +2116,38 @@ export class ClaudeCodeAdapter extends EngineAdapter {
     abortController: AbortController,
   ): Promise<void> {
     const streamingBlocks = new Map<number, StreamingBlock>();
+    const endState: StreamEndState = {
+      receivedResult: false,
+      hadErrorDuringExecution: false,
+    };
 
     try {
       // Send the message — string for text-only, SDKUserMessage for multimodal
       await v2Session.send(messageContent as any);
 
+      // Slash commands (e.g. /compact, /help) are processed locally by the CLI
+      // and may NOT produce a system:init message. We must not misclassify
+      // their output as stale autonomous turns.
+      const isSlashCommand =
+        typeof messageContent === "string" && messageContent.startsWith("/");
+
       // Process stream events — loop to handle multiple turns from enqueued messages
+      let staleTurnRetries = 0;
       while (!abortController.signal.aborted) {
         let firstMessageIsInit = false;
-        let isFirstMessage = true;
+        let messageCount = 0;
+        // Reset per-turn — only the final turn's result matters for end-state
+        endState.receivedResult = false;
+        endState.hadErrorDuringExecution = false;
 
         for await (const sdkMessage of v2Session.stream()) {
           if (abortController.signal.aborted) break;
+          messageCount++;
 
           // Track whether the first message is system:init (normal turn start).
           // Stale autonomous turns (from subagent completions after a previous
           // turn's result) start with other types like task_notification.
-          if (isFirstMessage) {
-            isFirstMessage = false;
+          if (messageCount === 1) {
             firstMessageIsInit =
               (sdkMessage as any).type === "system" &&
               (sdkMessage as any).subtype === "init";
@@ -1880,16 +2158,36 @@ export class ClaudeCodeAdapter extends EngineAdapter {
             sessionId,
             buffer,
             streamingBlocks,
+            endState,
           );
         }
 
-        // If the first message was NOT system:init, this is a stale autonomous
-        // turn produced by the CLI after the previous turn's result (e.g. from
-        // subagent task_notification). Discard and re-enter stream() to consume
-        // the real response for the current turn.
-        if (!firstMessageIsInit && !abortController.signal.aborted) {
+        // Safety: if stream() produced zero messages, the CLI is likely idle
+        // or the subprocess has died. Break immediately to prevent tight-loop
+        // spinning that starves the event loop (see #43203-discard-spin).
+        if (messageCount === 0 && !abortController.signal.aborted) {
+          buffer.error = buffer.error ?? "error:interrupted";
+          endState.hadErrorDuringExecution = true;
+          claudeLog.warn(
+            `[Claude][${sessionId}] stream() returned 0 messages — classifying turn as interrupted before breaking`,
+          );
+          break;
+        }
+
+        // If the first message was NOT system:init, this MAY be a stale
+        // autonomous turn produced by the CLI after the previous turn's result
+        // (e.g. from subagent task_notification). However, slash commands also
+        // lack system:init — don't discard those.
+        if (!firstMessageIsInit && !isSlashCommand && !abortController.signal.aborted) {
+          staleTurnRetries++;
+          if (staleTurnRetries > 3) {
+            claudeLog.warn(
+              `[Claude][${sessionId}] Too many stale turn retries (${staleTurnRetries}), breaking`,
+            );
+            break;
+          }
           claudeLog.info(
-            `[Claude][${sessionId}] Discarding stale autonomous turn (first msg was not system:init)`,
+            `[Claude][${sessionId}] Discarding stale autonomous turn (first msg was not system:init, retry ${staleTurnRetries})`,
           );
           buffer.parts = [];
           buffer.textAccumulator = "";
@@ -1904,7 +2202,40 @@ export class ClaudeCodeAdapter extends EngineAdapter {
           continue;
         }
 
-        // stream() returned (hit a result message) — finalize the current turn
+        // stream() returned (hit a result message) — evaluate end state
+        //
+        // Truth table:
+        // | hasContent | isInterrupted | wasAborted | Error key                 |
+        // |------------|---------------|------------|---------------------------|
+        // | yes        | -             | yes        | "error:stopped_by_user"   |
+        // | yes        | yes           | no         | "error:interrupted"       |
+        // | yes        | no            | no         | (none — normal)           |
+        // | no         | -             | yes        | (none — user intended)    |
+        // | no         | yes           | no         | "error:interrupted"       |
+        // | no         | no            | no         | "error:empty_response"    |
+        const hasContent = !!(buffer.textAccumulator || buffer.parts.length > 0);
+        const wasAborted = abortController.signal.aborted;
+        const isInterrupted = !endState.receivedResult || endState.hadErrorDuringExecution;
+
+        if (!buffer.error) {
+          if (hasContent) {
+            if (wasAborted) {
+              buffer.error = "error:stopped_by_user";
+            } else if (isInterrupted) {
+              buffer.error = "error:interrupted";
+            }
+          } else {
+            // No content
+            if (!wasAborted) {
+              if (isInterrupted) {
+                buffer.error = "error:interrupted";
+              } else {
+                buffer.error = "error:empty_response";
+              }
+            }
+          }
+        }
+
         this.finalizeCurrentTurn(sessionId, buffer, false);
 
         // Check if more enqueued messages need processing
@@ -1983,6 +2314,7 @@ export class ClaudeCodeAdapter extends EngineAdapter {
     sessionId: string,
     buffer: MessageBuffer,
     streamingBlocks: Map<number, StreamingBlock>,
+    endState: StreamEndState,
   ): void {
     claudeLog.debug(
       `[Claude][${sessionId}] handleSdkMessage: type=${(msg as any).type}, subtype=${(msg as any).subtype ?? "N/A"}`,
@@ -2002,7 +2334,7 @@ export class ClaudeCodeAdapter extends EngineAdapter {
         break;
 
       case "result":
-        this.handleResultMessage(msg, sessionId, buffer);
+        this.handleResultMessage(msg, sessionId, buffer, endState);
         break;
 
       case "stream_event":
@@ -2012,6 +2344,14 @@ export class ClaudeCodeAdapter extends EngineAdapter {
           buffer,
           streamingBlocks,
         );
+        break;
+
+      case "tool_progress":
+        this.handleToolProgress(msg as any, sessionId);
+        break;
+
+      case "tool_use_summary":
+        this.handleToolUseSummary(msg as any, sessionId);
         break;
 
       default:
@@ -2069,14 +2409,40 @@ export class ClaudeCodeAdapter extends EngineAdapter {
         buffer.modelId = msg.model;
       }
 
+      // The init message carries slash_commands (user-invocable) and skills
+      // (model-invocable) arrays. Log them to verify CC CLI's discovery.
+      const initSlashCmds: string[] = msg.slash_commands ?? [];
+      const initSkills: string[] = msg.skills ?? [];
       claudeLog.info(
-        `[Claude][${sessionId}] System init: session=${ccSessionId}, model=${msg.model}`,
+        `[Claude][${sessionId}] System init: session=${ccSessionId}, model=${msg.model}, slash_commands=[${initSlashCmds.join(",")}], skills=[${initSkills.join(",")}]`,
       );
 
-      // Note: Command/skill discovery is handled by warmupV2Session() via
-      // supportedCommands() API. The init message's slash_commands/skills
-      // arrays are ignored here to avoid overwriting the richer data from
-      // the API (which includes descriptions and argumentHints).
+      // If CC CLI discovered user-defined skills and our warmup missed them,
+      // merge them into availableCommands so `/skill` works natively next time.
+      if (initSlashCmds.length > 0) {
+        const existingNames = new Set(this.availableCommands.map((c) => c.name));
+        let added = 0;
+        for (const name of initSlashCmds) {
+          if (!existingNames.has(name)) {
+            existingNames.add(name);
+            this.availableCommands.push({ name, description: "" });
+            added++;
+          }
+        }
+        if (added > 0) {
+          // Refresh cachedSkillNames — non-built-in commands are skills
+          this.cachedSkillNames = this.availableCommands
+            .filter((cmd) => !this.isBuiltInCommand(cmd.name))
+            .map((cmd) => cmd.name);
+          this.emit("commands.changed", {
+            engineType: this.engineType,
+            commands: this.availableCommands,
+          });
+          claudeLog.info(
+            `[Claude][${sessionId}] Merged ${added} new commands from init into availableCommands`,
+          );
+        }
+      }
     } else if (msg.subtype === "local_command_output") {
       // Slash command output (e.g., /help, /cost, /compact).
       const output = msg.content ?? "";
@@ -2093,7 +2459,134 @@ export class ClaudeCodeAdapter extends EngineAdapter {
           `[Claude][${sessionId}] Context compacting...`,
         );
       }
+    } else if (msg.subtype === "compact_boundary") {
+      // Context compaction completed — emit a SystemNoticePart so frontend
+      // renders it as a centered gray notification bar instead of inline text.
+      const meta = msg.compact_metadata as
+        | { trigger: "manual" | "auto"; pre_tokens: number }
+        | undefined;
+      if (meta) {
+        const preK = Math.round(meta.pre_tokens / 1000);
+        claudeLog.info(
+          `[Claude][${sessionId}] Context compacted: trigger=${meta.trigger}, pre_tokens=${preK}K`,
+        );
+        const noticePart: SystemNoticePart = {
+          type: "system-notice",
+          id: timeId("part"),
+          messageId: buffer.messageId,
+          sessionId,
+          noticeType: "compact",
+          text: "notice:context_compressed",
+        };
+        buffer.parts.push(noticePart);
+        this.emitPartUpdated(sessionId, buffer, noticePart);
+      }
+    } else if (msg.subtype === "task_started") {
+      // Subagent task started — map task_id to tool_use_id and enrich ToolPart
+      const toolUseId = msg.tool_use_id;
+      const taskId = msg.task_id;
+      if (toolUseId && taskId) {
+        this.taskToToolUseId.set(taskId, toolUseId);
+        const toolPart = this.toolCallParts.get(toolUseId);
+        if (toolPart && (toolPart.state.status === "running" || toolPart.state.status === "pending")) {
+          const input = ((toolPart.state as any).input ?? {}) as Record<string, unknown>;
+          input._taskId = taskId;
+          input._taskDescription = msg.description;
+          if (msg.prompt) input._taskPrompt = msg.prompt;
+          (toolPart.state as any).input = input;
+          this.emit("message.part.updated", { sessionId, messageId: toolPart.messageId, part: toolPart });
+        }
+      }
+      claudeLog.debug(`[Claude][${sessionId}] task_started: task=${taskId}, tool_use=${toolUseId}`);
+    } else if (msg.subtype === "task_progress") {
+      // Subagent progress update — update ToolPart with latest activity info
+      const toolUseId = msg.tool_use_id || this.taskToToolUseId.get(msg.task_id);
+      if (toolUseId) {
+        const toolPart = this.toolCallParts.get(toolUseId);
+        if (toolPart && (toolPart.state.status === "running" || toolPart.state.status === "pending")) {
+          const input = ((toolPart.state as any).input ?? {}) as Record<string, unknown>;
+          if (msg.description) input._taskDescription = msg.description;
+          if (msg.last_tool_name) input._lastToolName = msg.last_tool_name;
+          if (msg.summary) input._summary = msg.summary;
+          if (msg.usage) {
+            input._taskUsage = {
+              totalTokens: msg.usage.total_tokens,
+              toolUses: msg.usage.tool_uses,
+              durationMs: msg.usage.duration_ms,
+            };
+          }
+          (toolPart.state as any).input = input;
+          this.emit("message.part.updated", { sessionId, messageId: toolPart.messageId, part: toolPart });
+        }
+      }
+      claudeLog.debug(`[Claude][${sessionId}] task_progress: task=${msg.task_id}, last_tool=${msg.last_tool_name}`);
+    } else if (msg.subtype === "task_notification") {
+      // Subagent finished — update ToolPart with final status/summary
+      const toolUseId = msg.tool_use_id || this.taskToToolUseId.get(msg.task_id);
+      if (toolUseId) {
+        const toolPart = this.toolCallParts.get(toolUseId);
+        if (toolPart && (toolPart.state.status === "running" || toolPart.state.status === "pending")) {
+          const input = ((toolPart.state as any).input ?? {}) as Record<string, unknown>;
+          input._taskStatus = msg.status;
+          if (msg.summary) input._summary = msg.summary;
+          if (msg.usage) {
+            input._taskUsage = {
+              totalTokens: msg.usage.total_tokens,
+              toolUses: msg.usage.tool_uses,
+              durationMs: msg.usage.duration_ms,
+            };
+          }
+          (toolPart.state as any).input = input;
+          this.emit("message.part.updated", { sessionId, messageId: toolPart.messageId, part: toolPart });
+        }
+        this.taskToToolUseId.delete(msg.task_id);
+      }
+      claudeLog.debug(`[Claude][${sessionId}] task_notification: task=${msg.task_id}, status=${msg.status}`);
     }
+  }
+
+  /**
+   * Handle tool_progress messages — update parent Task ToolPart with current subtool info.
+   */
+  private handleToolProgress(
+    msg: { tool_use_id: string; tool_name: string; parent_tool_use_id: string | null; elapsed_time_seconds: number; task_id?: string },
+    sessionId: string,
+  ): void {
+    // Only interested in tools running inside a subagent (parent_tool_use_id set)
+    const parentToolUseId = msg.parent_tool_use_id;
+    if (parentToolUseId) {
+      const toolPart = this.toolCallParts.get(parentToolUseId);
+      if (toolPart && (toolPart.state.status === "running" || toolPart.state.status === "pending")) {
+        const input = ((toolPart.state as any).input ?? {}) as Record<string, unknown>;
+        input._currentTool = msg.tool_name;
+        input._currentToolElapsed = msg.elapsed_time_seconds;
+        (toolPart.state as any).input = input;
+        this.emit("message.part.updated", { sessionId, messageId: toolPart.messageId, part: toolPart });
+      }
+    }
+  }
+
+  /**
+   * Handle tool_use_summary — enrich the most recent preceding ToolPart with the summary.
+   */
+  private handleToolUseSummary(
+    msg: { summary: string; preceding_tool_use_ids: string[] },
+    sessionId: string,
+  ): void {
+    // Find the last preceding tool_use that is a Task part and attach the summary
+    for (let i = msg.preceding_tool_use_ids.length - 1; i >= 0; i--) {
+      const toolPart = this.toolCallParts.get(msg.preceding_tool_use_ids[i]);
+      if (toolPart && toolPart.normalizedTool === "task") {
+        const input = ((toolPart.state as any).input ?? {}) as Record<string, unknown>;
+        if (!input._summary) {
+          input._summary = msg.summary;
+          (toolPart.state as any).input = input;
+          this.emit("message.part.updated", { sessionId, messageId: toolPart.messageId, part: toolPart });
+        }
+        break;
+      }
+    }
+    claudeLog.debug(`[Claude][${sessionId}] tool_use_summary: ids=${msg.preceding_tool_use_ids.length}`);
   }
 
   /**
@@ -2204,7 +2697,10 @@ export class ClaudeCodeAdapter extends EngineAdapter {
     msg: any,
     sessionId: string,
     buffer: MessageBuffer,
+    endState: StreamEndState,
   ): void {
+    endState.receivedResult = true;
+
     // Extract final usage
     if (msg.usage) {
       buffer.tokens = {
@@ -2224,6 +2720,11 @@ export class ClaudeCodeAdapter extends EngineAdapter {
     // Check for error results
     if (msg.is_error) {
       buffer.error = msg.result ?? "Unknown error";
+    } else if (msg.subtype === "error_during_execution") {
+      endState.hadErrorDuringExecution = true;
+      claudeLog.info(
+        `[Claude][${sessionId}] Result subtype=error_during_execution (interrupted)`,
+      );
     }
 
     // For slash commands: if the buffer has no text content but the result
@@ -2348,10 +2849,10 @@ export class ClaudeCodeAdapter extends EngineAdapter {
             parsedInput = { raw: block.content };
           }
 
-          // Update tool part with parsed input
+          // Update tool part with parsed input (normalize snake_case keys)
           const toolPart = this.toolCallParts.get(block.toolId);
           if (toolPart && toolPart.state.status === "running") {
-            (toolPart.state as any).input = parsedInput;
+            (toolPart.state as any).input = ClaudeCodeAdapter.normalizeInputKeys(parsedInput);
             this.emitPartUpdated(sessionId, buffer, toolPart);
           }
         }
@@ -2468,6 +2969,20 @@ export class ClaudeCodeAdapter extends EngineAdapter {
   // Tool Handling
   // ==========================================================================
 
+  /**
+   * Convert snake_case keys to camelCase so frontend tool components
+   * (which expect camelCase like `filePath`) work with Claude SDK input
+   * (which sends snake_case like `file_path`).
+   */
+  private static normalizeInputKeys(input: Record<string, unknown>): Record<string, unknown> {
+    const result: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(input)) {
+      const camelKey = key.replace(/_([a-z])/g, (_, c) => c.toUpperCase());
+      result[camelKey] = value;
+    }
+    return result;
+  }
+
   private createToolPart(
     sessionId: string,
     buffer: MessageBuffer,
@@ -2477,6 +2992,9 @@ export class ClaudeCodeAdapter extends EngineAdapter {
   ): void {
     const normalizedTool = normalizeToolName("claude", toolName);
     const toolPartId = timeId("tp");
+    const normalizedInput = input && typeof input === "object"
+      ? ClaudeCodeAdapter.normalizeInputKeys(input)
+      : (input ?? {});
     const toolPart: ToolPart = {
       type: "tool",
       id: toolPartId,
@@ -2489,7 +3007,7 @@ export class ClaudeCodeAdapter extends EngineAdapter {
       kind: inferToolKind(undefined, normalizedTool),
       state: {
         status: "running",
-        input: input ?? {},
+        input: normalizedInput,
         time: { start: Date.now() },
       },
     };
@@ -2543,11 +3061,14 @@ export class ClaudeCodeAdapter extends EngineAdapter {
         time: { start: startTime, end: now, duration: now - startTime },
       };
     } else {
+      // Build metadata for tools that need it (e.g., Edit → diff)
+      const metadata = this.buildToolMetadata(toolPart, output);
       toolPart.state = {
         status: "completed",
         input: (toolPart.state as any).input ?? {},
         output,
         time: { start: startTime, end: now, duration: now - startTime },
+        metadata,
       };
     }
 
@@ -2558,6 +3079,33 @@ export class ClaudeCodeAdapter extends EngineAdapter {
 
     // Emit updated tool part
     this.emitPartUpdated(sessionId, buffer, toolPart);
+  }
+
+  /**
+   * Build metadata for completed tool parts.
+   * For Edit tools, constructs a unified diff from oldString/newString.
+   */
+  private buildToolMetadata(
+    toolPart: ToolPart,
+    _output: string,
+  ): Record<string, unknown> | undefined {
+    if (toolPart.normalizedTool !== "edit") return undefined;
+
+    const input = (toolPart.state as any).input as Record<string, unknown> | undefined;
+    if (!input) return undefined;
+
+    const filePath = (input.filePath as string) ?? "";
+    const oldStr = (input.oldString as string) ?? "";
+    const newStr = (input.newString as string) ?? "";
+
+    if (!oldStr && !newStr) return undefined;
+
+    try {
+      const diff = createTwoFilesPatch(filePath, filePath, oldStr, newStr, "", "", { context: 3 });
+      return { diff };
+    } catch {
+      return undefined;
+    }
   }
 
   // ==========================================================================
@@ -2609,6 +3157,11 @@ export class ClaudeCodeAdapter extends EngineAdapter {
     for (const [key, part] of this.toolCallParts) {
       if (part.sessionId === sessionId) {
         this.toolCallParts.delete(key);
+      }
+    }
+    for (const [taskId, toolUseId] of this.taskToToolUseId) {
+      if (!this.toolCallParts.has(toolUseId)) {
+        this.taskToToolUseId.delete(taskId);
       }
     }
 
@@ -2674,6 +3227,11 @@ export class ClaudeCodeAdapter extends EngineAdapter {
         this.toolCallParts.delete(key);
       }
     }
+    for (const [taskId, toolUseId] of this.taskToToolUseId) {
+      if (!this.toolCallParts.has(toolUseId)) {
+        this.taskToToolUseId.delete(taskId);
+      }
+    }
 
     // Resolve ALL sendMessage promises (including enqueued) — used for abort/error
     const resolvers = this.sendResolvers.get(sessionId);
@@ -2713,6 +3271,12 @@ export class ClaudeCodeAdapter extends EngineAdapter {
     this.cleanupIntervalId = setInterval(() => {
       const now = Date.now();
       for (const [sessionId, info] of Array.from(this.v2Sessions.entries())) {
+        // Check for dead processes first (killed by OS, crashed, OOM)
+        if (!this.isSessionTransportReady(info.session)) {
+          this.cleanupSession(sessionId, "process not ready (polling)");
+          continue;
+        }
+
         // Skip sessions with active requests
         if (this.activeAbortControllers.has(sessionId)) {
           info.lastUsedAt = now;

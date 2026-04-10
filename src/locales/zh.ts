@@ -260,6 +260,7 @@ export const zh: LocaleDict = {
     results: "{count} 结果",
     lines: "{count} 行",
     toolHint: "提示",
+    toolUses: "{count} 次工具调用",
   },
 
   // Steps (SessionTurn)
@@ -281,6 +282,11 @@ export const zh: LocaleDict = {
     contextOrganized: "上下文已整理",
     cancelled: "已取消",
     errorOccurred: "错误",
+    stoppedByUser: "已被用户停止。",
+    interrupted: "模型响应意外中断。",
+    emptyResponse: "收到空响应，请重新发送消息。",
+    contextCompressed: "上下文已自动压缩",
+    sessionResumed: "会话已恢复",
     continueWork: "继续",
     loadingSteps: "加载步骤中...",
   },
@@ -300,6 +306,7 @@ export const zh: LocaleDict = {
     revokeOthersSuccess: "已撤销 {count} 个设备",
     noOtherDevices: "没有其他已授权的设备",
     securityTip: "如果发现不认识的设备，请立即撤销其访问权限",
+    inactiveCleanupTip: "超过 14 天未活跃的设备将被自动移除，需要重新授权",
     justNow: "刚刚",
     minutesAgo: "{count}分钟前",
     hoursAgo: "{count}小时前",

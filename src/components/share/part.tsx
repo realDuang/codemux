@@ -51,10 +51,11 @@ import {
   EditTool,
   BashTool,
 } from "./tools";
-import type { UnifiedMessage, UnifiedPart, UnifiedPermission, UnifiedQuestion, ToolPart } from "../../types/unified";
+import type { UnifiedMessage, UnifiedPart, UnifiedPermission, UnifiedQuestion, ToolPart, SystemNoticePart } from "../../types/unified";
 import { useI18n } from "../../lib/i18n";
 import { logger } from "../../lib/logger";
 import { isExpanded, toggleExpanded } from "../../stores/message";
+import { SystemNotice } from "./SystemNotice";
 
 import styles from "./part.module.css";
 
@@ -84,6 +85,11 @@ export function Part(props: PartProps) {
   const { t } = useI18n();
   const [copied, setCopied] = createSignal(false);
   const id = createMemo(() => props.message.id + "-" + props.index);
+
+  // System notices render as centered banners, not the standard part layout
+  if (props.part.type === "system-notice") {
+    return <SystemNotice part={props.part as SystemNoticePart} />;
+  }
 
   return (
     <div
@@ -448,10 +454,22 @@ function Footer(props: ParentProps<{ title: string }>) {
 
 /** Running tool card with live elapsed timer */
 function RunningToolCard(props: { part: ToolPart }) {
+  const { t } = useI18n();
   const startTime = () => getToolInput(props.part.state)?.time?.start ?? (props.part.state as any).time?.start ?? Date.now();
   const isRunning = () =>
     props.part.state.status === "pending" || props.part.state.status === "running";
   const elapsed = createElapsedTimer(startTime, isRunning);
+
+  const isTask = () => props.part.normalizedTool === "task";
+  const taskMeta = () => {
+    if (!isTask()) return undefined;
+    const inp = getToolInput(props.part.state);
+    if (!inp) return undefined;
+    const currentTool = (inp._currentTool ?? inp._lastToolName) as string | undefined;
+    const usage = inp._taskUsage as { toolUses?: number } | undefined;
+    if (!currentTool && !usage?.toolUses) return undefined;
+    return { currentTool, toolUses: usage?.toolUses };
+  };
 
   return (
     <div data-component="tool-running">
@@ -469,6 +487,18 @@ function RunningToolCard(props: { part: ToolPart }) {
         </Show>
         <span data-slot="status">{formatDuration(elapsed())}</span>
       </div>
+      <Show when={taskMeta()}>
+        {(meta) => (
+          <div data-component="task-progress">
+            <Show when={meta().currentTool}>
+              <span data-slot="subtool">{meta().currentTool}</span>
+            </Show>
+            <Show when={meta().toolUses}>
+              <span data-slot="tool-count">{t().parts.toolUses.replace("{count}", String(meta().toolUses))}</span>
+            </Show>
+          </div>
+        )}
+      </Show>
     </div>
   );
 }

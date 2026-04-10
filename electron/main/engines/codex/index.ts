@@ -1478,7 +1478,7 @@ export class CodexAdapter extends EngineAdapter {
 
     for (const image of images) {
       const tempDir = mkdtempSync(join(tmpdir(), "codemux-codex-img-"));
-      const extension = image.mimeType?.split("/")[1] ?? "png";
+      const extension = imageFileExtensionFromMimeType(image.mimeType);
       const tempPath = join(tempDir, `image.${extension}`);
       writeFileSync(tempPath, Buffer.from(image.data, "base64"));
       tempDirs.push(tempDir);
@@ -1897,12 +1897,14 @@ export class CodexAdapter extends EngineAdapter {
   private rejectPendingInteractions(reason: string): void {
     for (const [id, pending] of this.pendingPermissions) {
       this.pendingPermissions.delete(id);
+      this.respondToDroppedPermission(pending, reason);
       this.emit("permission.replied", { permissionId: id, optionId: "reject_once" });
       codexLog.debug(`Dropped pending permission ${id}: ${reason}`);
       void pending;
     }
-    for (const id of this.pendingQuestions.keys()) {
+    for (const [id, pending] of this.pendingQuestions) {
       this.pendingQuestions.delete(id);
+      this.respondToDroppedQuestion(pending, reason);
       codexLog.debug(`Dropped pending question ${id}: ${reason}`);
     }
   }
@@ -1911,13 +1913,51 @@ export class CodexAdapter extends EngineAdapter {
     for (const [id, pending] of this.pendingPermissions) {
       if (pending.sessionId !== sessionId) continue;
       this.pendingPermissions.delete(id);
+      this.respondToDroppedPermission(pending, reason);
       this.emit("permission.replied", { permissionId: id, optionId: "reject_once" });
       codexLog.debug(`Dropped pending permission ${id}: ${reason}`);
     }
     for (const [id, pending] of this.pendingQuestions) {
       if (pending.sessionId !== sessionId) continue;
       this.pendingQuestions.delete(id);
+      this.respondToDroppedQuestion(pending, reason);
       codexLog.debug(`Dropped pending question ${id}: ${reason}`);
+    }
+  }
+
+  private respondToDroppedPermission(pending: PendingPermission, reason: string): void {
+    if (!this.client?.running) return;
+
+    try {
+      switch (pending.method) {
+        case "item/commandExecution/requestApproval":
+          this.client.respond(pending.requestId, { decision: "decline" });
+          return;
+        case "item/fileChange/requestApproval":
+          this.client.respond(pending.requestId, { decision: "decline" });
+          return;
+        case "item/permissions/requestApproval":
+          this.client.respond(pending.requestId, { permissions: {}, scope: "turn" });
+          return;
+        case "execCommandApproval":
+        case "applyPatchApproval":
+          this.client.respond(pending.requestId, { decision: "denied" });
+          return;
+        default:
+          this.client.respondError(pending.requestId, -32000, reason);
+      }
+    } catch (error) {
+      codexLog.warn(`Failed to reject pending permission ${String(pending.requestId)}:`, error);
+    }
+  }
+
+  private respondToDroppedQuestion(pending: PendingQuestion, reason: string): void {
+    if (!this.client?.running) return;
+
+    try {
+      this.client.respondError(pending.requestId, -32000, reason);
+    } catch (error) {
+      codexLog.warn(`Failed to reject pending question ${String(pending.requestId)}:`, error);
     }
   }
 
@@ -2214,4 +2254,22 @@ function toMillis(value: unknown, fallback: number): number {
     if (Number.isFinite(parsed)) return parsed;
   }
   return fallback;
+}
+
+function imageFileExtensionFromMimeType(mimeType?: string): string {
+  if (typeof mimeType !== "string") return "png";
+
+  const normalized = mimeType.trim().toLowerCase().split(";", 1)[0] ?? "";
+  const subtype = normalized.split("/", 2)[1] ?? "";
+
+  switch (subtype) {
+    case "png":
+    case "jpg":
+    case "jpeg":
+    case "webp":
+    case "gif":
+      return subtype;
+    default:
+      return "png";
+  }
 }

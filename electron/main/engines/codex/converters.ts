@@ -821,7 +821,7 @@ function convertUserInputBlocks(
           messageId,
           sessionId,
           type: "text",
-          text: `[Image: ${block.url ?? "image"}]`,
+          text: summarizeImageBlock(block.url),
         });
         break;
       case "localImage":
@@ -830,7 +830,7 @@ function convertUserInputBlocks(
           messageId,
           sessionId,
           type: "text",
-          text: `[Image: ${block.path ?? "image"}]`,
+          text: "[Image]",
         });
         break;
       case "skill":
@@ -1212,4 +1212,15 @@ function toMillis(value: string | number | undefined, fallback: number): number 
   }
 
   return fallback;
+}
+
+function summarizeImageBlock(url?: string): string {
+  if (typeof url === "string") {
+    const match = /^data:([^;,]+)[;,]/i.exec(url);
+    if (match?.[1]) {
+      return `[Image: ${match[1]}]`;
+    }
+  }
+
+  return "[Image]";
 }

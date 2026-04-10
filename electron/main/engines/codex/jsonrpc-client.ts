@@ -133,14 +133,17 @@ export class CodexJsonRpcClient extends EventEmitter {
     this.rl.on("line", (line) => this.handleLine(line));
 
     // Handle process exit
+    const proc = this.proc;
     this.proc.on("exit", (code, signal) => {
       this._running = false;
+      this.cleanupAfterTermination(proc);
       this.rejectAllPending(new Error(`Codex process exited (code=${code}, signal=${signal})`));
       this.emit("exit", code, signal);
     });
 
     this.proc.on("error", (err) => {
       this._running = false;
+      this.cleanupAfterTermination(proc);
       this.rejectAllPending(err);
       this.emit("error", err);
     });
@@ -152,31 +155,46 @@ export class CodexJsonRpcClient extends EventEmitter {
    * Stop the Codex process gracefully.
    */
   async stop(): Promise<void> {
-    if (!this.proc || !this._running) return;
+    const proc = this.proc;
+    if (!proc && !this.rl) return;
 
     this._running = false;
     this.rejectAllPending(new Error("Client stopped"));
 
-    this.rl?.close();
-    this.rl = null;
+    this.closeReadline();
+
+    if (!proc) {
+      this.proc = null;
+      return;
+    }
 
     return new Promise<void>((resolve) => {
-      const proc = this.proc!;
       if (proc.exitCode !== null || proc.killed) {
-        this.proc = null;
+        if (this.proc === proc) {
+          this.proc = null;
+        }
         resolve();
         return;
       }
 
-      const timeout = setTimeout(() => {
-        this.proc = null;
+      let finished = false;
+      let timeout: ReturnType<typeof setTimeout>;
+      const finish = () => {
+        if (finished) return;
+        finished = true;
+        clearTimeout(timeout);
+        if (this.proc === proc) {
+          this.proc = null;
+        }
         resolve();
+      };
+
+      timeout = setTimeout(() => {
+        finish();
       }, 5000);
 
       proc.once("exit", () => {
-        clearTimeout(timeout);
-        this.proc = null;
-        resolve();
+        finish();
       });
 
       if (IS_WIN) {
@@ -313,6 +331,19 @@ export class CodexJsonRpcClient extends EventEmitter {
       pending.reject(error);
     }
     this.pendingRequests.clear();
+  }
+
+  private closeReadline(): void {
+    if (!this.rl) return;
+    this.rl.close();
+    this.rl = null;
+  }
+
+  private cleanupAfterTermination(proc: ChildProcess | null): void {
+    this.closeReadline();
+    if (!proc || this.proc === proc) {
+      this.proc = null;
+    }
   }
 }
 

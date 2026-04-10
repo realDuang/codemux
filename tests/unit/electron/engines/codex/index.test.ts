@@ -1,8 +1,39 @@
 import { existsSync, mkdtempSync } from "fs";
 import { tmpdir } from "os";
-import { join } from "path";
+import { dirname, join } from "path";
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
+
+const { mkdtempSyncMock, writeFileSyncMock, resolveCodexCliPathMock, resolveCodexCliVersionMock } = vi.hoisted(() => ({
+  mkdtempSyncMock: vi.fn(),
+  writeFileSyncMock: vi.fn(),
+  resolveCodexCliPathMock: vi.fn(),
+  resolveCodexCliVersionMock: vi.fn(),
+}));
+
+vi.mock("fs", async () => {
+  const actual = await vi.importActual<typeof import("fs")>("fs");
+  mkdtempSyncMock.mockImplementation(actual.mkdtempSync);
+  writeFileSyncMock.mockImplementation(actual.writeFileSync);
+
+  return {
+    ...actual,
+    mkdtempSync: mkdtempSyncMock,
+    writeFileSync: writeFileSyncMock,
+  };
+});
+
+vi.mock("../../../../../electron/main/engines/codex/config", async () => {
+  const actual = await vi.importActual<typeof import("../../../../../electron/main/engines/codex/config")>(
+    "../../../../../electron/main/engines/codex/config",
+  );
+
+  return {
+    ...actual,
+    resolveCodexCliPath: resolveCodexCliPathMock,
+    resolveCodexCliVersion: resolveCodexCliVersionMock,
+  };
+});
 
 vi.mock("../../../../../electron/main/services/logger", () => ({
   codexLog: {
@@ -75,6 +106,25 @@ async function flushMicrotasks() {
 describe("CodexAdapter", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    resolveCodexCliPathMock.mockReturnValue("/usr/local/bin/codex");
+    resolveCodexCliVersionMock.mockReturnValue("codex-cli 1.2.3");
+  });
+
+  it("sets an error status when startup initialization fails", async () => {
+    const adapter = new CodexAdapter();
+    vi.spyOn(adapter as any, "spawnAndInitialize").mockRejectedValue(new Error("initialize timed out"));
+    vi.spyOn(adapter as any, "refreshRuntimeMetadata").mockResolvedValue(undefined);
+
+    await expect(adapter.start()).rejects.toThrow("initialize timed out");
+
+    expect((adapter as any).spawnAndInitialize).toHaveBeenCalledTimes(1);
+    expect((adapter as any).refreshRuntimeMetadata).not.toHaveBeenCalled();
+    expect(adapter.getStatus()).toBe("error");
+    expect(adapter.getInfo()).toMatchObject({
+      status: "error",
+      errorMessage: "initialize timed out",
+    });
+    expect((adapter as any).startPromise).toBeNull();
   });
 
   it("resumes an existing Codex thread from engineMeta during session creation", async () => {
@@ -1161,6 +1211,33 @@ describe("CodexAdapter", () => {
     (adapter as any).cleanupTempDirs(prepared.tempDirs);
     expect(existsSync(prepared.tempDirs[0])).toBe(false);
     expect(() => (adapter as any).buildPromptInput([])).toThrow("Message content cannot be empty");
+  });
+
+  it("cleans up a temp image directory when writing the decoded attachment fails", () => {
+    const { adapter } = createAdapterWithClient();
+    const imageData = Buffer.from("fake image bytes").toString("base64");
+    let attemptedPath: string | undefined;
+    writeFileSyncMock.mockImplementationOnce((path) => {
+      attemptedPath = String(path);
+      throw new Error("disk full");
+    });
+
+    expect(() => (adapter as any).buildPromptInput([
+      { type: "image", data: imageData, mimeType: "image/png" },
+    ])).toThrow("Failed to prepare image attachment");
+
+    expect(attemptedPath).toBeTruthy();
+    expect(existsSync(dirname(attemptedPath!))).toBe(false);
+  });
+
+  it("rejects oversized image attachments before creating temp directories", () => {
+    const { adapter } = createAdapterWithClient();
+    const imageData = Buffer.alloc(3 * 1024 * 1024 + 1, 1).toString("base64");
+
+    expect(() => (adapter as any).buildPromptInput([
+      { type: "image", data: imageData, mimeType: "image/png" },
+    ])).toThrow("Image attachment exceeds the maximum supported size");
+    expect(mkdtempSyncMock).not.toHaveBeenCalled();
   });
 
   it("resumes unloaded threads on demand and unsubscribes only truly idle sessions", async () => {

@@ -1,72 +1,92 @@
-// ============================================================================
-// Codex Engine Adapter
-//
-// Integrates the OpenAI Codex CLI via its app-server protocol (JSON-RPC over
-// stdio). Follows the same patterns as OpenCode/Copilot/Claude adapters.
-// ============================================================================
+import { mkdtempSync, rmSync, writeFileSync } from "fs";
+import { tmpdir } from "os";
+import { join } from "path";
 
 import type {
-  EngineType,
-  EngineStatus,
-  EngineCapabilities,
-  EngineInfo,
-  AuthMethod,
-  UnifiedSession,
-  UnifiedMessage,
-  ModelListResult,
-  UnifiedModelInfo,
-  UnifiedProject,
   AgentMode,
+  AuthMethod,
+  CommandInvokeResult,
+  EngineCapabilities,
+  EngineCommand,
+  EngineInfo,
+  EngineStatus,
+  EngineType,
   MessagePromptContent,
+  ModelListResult,
   PermissionReply,
   ReasoningEffort,
-  ImportableSession,
   ToolPart,
+  UnifiedMessage,
+  UnifiedModelInfo,
+  UnifiedPermission,
+  UnifiedProject,
+  UnifiedQuestion,
+  UnifiedSession,
+  ImportableSession,
 } from "../../../../src/types/unified";
 import { EngineAdapter, type MessageBuffer } from "../engine-adapter";
-import { CodexJsonRpcClient } from "./jsonrpc-client";
-import {
-  resolveCodexCliPath,
-  buildStartupArgs,
-  modeToApprovalPolicy,
-  CODEX_MODES,
-  CODEX_DEFAULT_MODEL,
-  CODEX_MODEL_LIST,
-} from "./config";
-import {
-  appendTextDelta,
-  appendReasoningDelta,
-  createToolPart,
-  completeToolPart,
-  createStepFinish,
-  convertApprovalToPermission,
-  convertConfirmationToQuestion,
-  finalizeBufferToMessage,
-  createUserMessage,
-  upsertPart,
-  convertThreadItemsToMessages,
-} from "./converters";
 import { CODEMUX_IDENTITY_PROMPT } from "../identity-prompt";
 import { timeId } from "../../utils/id-gen";
 import { codexLog } from "../../services/logger";
+import { CodexJsonRpcClient } from "./jsonrpc-client";
+import {
+  CODEX_FALLBACK_MODEL,
+  CODEX_MODES,
+  type CodexApprovalPolicy,
+  type CodexConfigRequirements,
+  type CodexSandboxMode,
+  type CodexSandboxPolicy,
+  buildStartupArgs,
+  clampApprovalPolicy,
+  clampSandboxMode,
+  clampSandboxPolicy,
+  fromCodexEffort,
+  modeToApprovalPolicy,
+  modeToSandboxMode,
+  modeToSandboxPolicy,
+  normalizeDirectory,
+  resolveCodexCliPath,
+  resolveCodexCliVersion,
+  sandboxModeFromPolicy,
+  toCodexEffort,
+} from "./config";
+import {
+  appendPlanDelta,
+  appendReasoningDelta,
+  appendTextDelta,
+  applyTurnMetadata,
+  applyTurnUsage,
+  completeToolPart,
+  convertApprovalToPermission,
+  convertThreadToMessages,
+  convertUserInputToQuestion,
+  createStepFinish,
+  createSystemNotice,
+  createToolPart,
+  createUserMessage,
+  finalizeBufferToMessage,
+  formatTurnPlanMarkdown,
+  replacePlanText,
+  upsertPart,
+} from "./converters";
 
-// ============================================================================
-// Constants
-// ============================================================================
+const SESSION_IDLE_TIMEOUT_MS = 30 * 60 * 1000;
+const START_TIMEOUT_MS = 120_000;
+const DEFAULT_MODE_ID = "default";
 
-const SESSION_IDLE_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
-const MAX_RECONNECT_ATTEMPTS = 3;
-const RECONNECT_DELAY_MS = 2000;
-
-// ============================================================================
-// Types
-// ============================================================================
+type CodexTurnInput =
+  | { type: "text"; text: string; text_elements: unknown[] }
+  | { type: "localImage"; path: string }
+  | { type: "skill"; name: string; path: string };
 
 interface ThreadInfo {
   threadId: string;
   directory: string;
   createdAt: number;
+  updatedAt: number;
   lastUsedAt: number;
+  title?: string;
+  loaded: boolean;
 }
 
 interface SendResolver {
@@ -74,9 +94,10 @@ interface SendResolver {
   reject: (err: Error) => void;
 }
 
-/** Enqueued message waiting for the current turn to complete. */
 interface QueuedMessage {
-  content: MessagePromptContent[];
+  input: CodexTurnInput[];
+  userMessage: UnifiedMessage;
+  tempDirs: string[];
   options?: {
     mode?: string;
     modelId?: string;
@@ -84,18 +105,54 @@ interface QueuedMessage {
     directory?: string;
   };
   resolver: SendResolver;
-  userMessage: UnifiedMessage;
 }
 
-interface PendingInteraction<T> {
+interface PendingPermission {
+  requestId: number | string;
   sessionId: string;
-  resolve: (value: T) => void;
-  reject: (err: Error) => void;
+  method: string;
+  params: unknown;
+  permission: UnifiedPermission;
 }
 
-// ============================================================================
-// CodexAdapter
-// ============================================================================
+interface PendingQuestion {
+  requestId: number | string;
+  sessionId: string;
+  params: unknown;
+  question: UnifiedQuestion;
+}
+
+interface SkillEntry {
+  name: string;
+  description: string;
+  path: string;
+  scope?: string;
+  enabled: boolean;
+}
+
+interface ThreadResponse {
+  thread?: {
+    id?: string;
+    cwd?: string;
+    createdAt?: number | string;
+    updatedAt?: number | string;
+    name?: string | null;
+    preview?: string;
+  };
+  cwd?: string;
+  model?: string;
+  approvalPolicy?: CodexApprovalPolicy;
+  sandbox?: CodexSandboxPolicy;
+  reasoningEffort?: string | null;
+}
+
+interface TurnResponse {
+  turn?: {
+    id?: string;
+    status?: string;
+  };
+  turnId?: string;
+}
 
 export class CodexAdapter extends EngineAdapter {
   readonly engineType: EngineType = "codex";
@@ -103,129 +160,90 @@ export class CodexAdapter extends EngineAdapter {
   private client: CodexJsonRpcClient | null = null;
   private status: EngineStatus = "stopped";
   private cliPath: string | undefined;
-  private errorMessage: string | undefined;
+  private version: string | undefined;
+  private lastError: string | undefined;
+  private authenticated: boolean | undefined;
+  private authMessage: string | undefined;
+  private startPromise: Promise<void> | null = null;
 
-  // Session ↔ Thread mapping
   private sessionToThread = new Map<string, string>();
   private threadToSession = new Map<string, string>();
   private threads = new Map<string, ThreadInfo>();
 
-  // Streaming state
   private messageBuffers = new Map<string, MessageBuffer>();
-  private sendResolvers = new Map<string, SendResolver>();
-  private activeToolParts = new Map<string, ToolPart>(); // callId → ToolPart
-  private messageQueues = new Map<string, QueuedMessage[]>(); // sessionId → enqueued messages
+  private messageHistory = new Map<string, UnifiedMessage[]>();
+  private turnResolvers = new Map<string, SendResolver[]>();
+  private messageQueues = new Map<string, QueuedMessage[]>();
+  private activeTurnIds = new Map<string, string>();
+  private activeToolParts = new Map<string, ToolPart>();
+  private activeTempDirs = new Map<string, string[]>();
 
-  // Interactive requests
-  private pendingPermissions = new Map<string, PendingInteraction<PermissionReply>>();
-  private pendingQuestions = new Map<string, PendingInteraction<string[][]>>();
+  private pendingPermissions = new Map<string, PendingPermission>();
+  private pendingQuestions = new Map<string, PendingQuestion>();
 
-  // Per-session configuration
   private sessionModes = new Map<string, string>();
   private sessionModels = new Map<string, string>();
-  private sessionReasoningEfforts = new Map<string, ReasoningEffort | null>();
+  private sessionReasoningEfforts = new Map<string, ReasoningEffort>();
   private sessionDirectories = new Map<string, string>();
 
-  // Global state
-  private currentModelId: string = CODEX_DEFAULT_MODEL;
-  private currentMode: string = "suggest";
+  private currentModelId: string = CODEX_FALLBACK_MODEL;
+  private currentMode: string = DEFAULT_MODE_ID;
   private cachedModels: UnifiedModelInfo[] = [];
-  private cleanupIntervalId: ReturnType<typeof setInterval> | null = null;
-  private autoReconnect = true;
-  private reconnectAttempts = 0;
+  private configRequirements: CodexConfigRequirements | null = null;
 
-  // --- Lifecycle ---
+  private skillsByDirectory = new Map<string, EngineCommand[]>();
+  private skillEntriesByDirectory = new Map<string, Map<string, SkillEntry>>();
+
+  private cleanupIntervalId: ReturnType<typeof setInterval> | null = null;
 
   async start(): Promise<void> {
-    if (this.status === "running") return;
+    if (this.status === "running" && this.client?.running) return;
+    if (this.startPromise) return this.startPromise;
 
-    this.status = "starting";
-    this.emit("status.changed", { engineType: this.engineType, status: "starting" });
+    this.startPromise = this.startInternal().finally(() => {
+      this.startPromise = null;
+    });
 
-    // Resolve CLI path
+    return this.startPromise;
+  }
+
+  private async startInternal(): Promise<void> {
+    this.setStatus("starting");
+
     this.cliPath = resolveCodexCliPath();
     if (!this.cliPath) {
-      this.status = "error";
-      this.errorMessage = "Codex CLI not found. Install via: npm i -g @openai/codex";
-      this.emit("status.changed", {
-        engineType: this.engineType,
-        status: "error",
-        error: this.errorMessage,
-      });
-      codexLog.error(this.errorMessage);
-      return;
+      throw this.failStart("Codex CLI not found. Install `codex` and ensure it is in PATH.");
     }
 
-    codexLog.info(`Codex CLI found at: ${this.cliPath}`);
+    this.version = resolveCodexCliVersion(this.cliPath);
 
-    try {
-      await this.spawnAndInitialize();
-      this.autoReconnect = true;
-      this.reconnectAttempts = 0;
+    await this.spawnAndInitialize();
+    await this.refreshRuntimeMetadata();
 
-      // Fetch model list (non-blocking — don't delay startup for model cache)
-      this.refreshModelCache().catch((err) => {
-        codexLog.warn("Failed to refresh model cache:", err);
-      });
-
-      this.status = "running";
-      this.emit("status.changed", { engineType: this.engineType, status: "running" });
-      this.startSessionCleanup();
-      codexLog.info("Codex adapter started successfully");
-    } catch (err: any) {
-      this.status = "error";
-      this.errorMessage = err?.message ?? "Failed to start Codex";
-      this.emit("status.changed", {
-        engineType: this.engineType,
-        status: "error",
-        error: this.errorMessage,
-      });
-      codexLog.error("Failed to start Codex adapter:", err);
-    }
+    this.startSessionCleanup();
+    this.setStatus("running");
   }
 
   async stop(): Promise<void> {
-    this.autoReconnect = false;
     this.stopSessionCleanup();
+    this.rejectPendingInteractions("Adapter stopped");
+    this.rejectQueuedMessages("Adapter stopped");
+    this.failAllInFlight("Adapter stopped");
 
-    // Reject all pending interactions
-    this.rejectAllPendingPermissions("Adapter stopped");
-    this.rejectAllPendingQuestions("Adapter stopped");
-
-    // Reject all send resolvers
-    for (const [, resolver] of this.sendResolvers) {
-      resolver.reject(new Error("Adapter stopped"));
-    }
-    this.sendResolvers.clear();
-    this.messageBuffers.clear();
-    this.activeToolParts.clear();
-
-    // Reject all queued messages
-    for (const [, queue] of this.messageQueues) {
-      for (const queued of queue) {
-        queued.resolver.reject(new Error("Adapter stopped"));
-      }
-    }
-    this.messageQueues.clear();
-
-    // Stop client
     if (this.client) {
-      await this.client.stop();
+      try {
+        await this.client.stop();
+      } catch (error) {
+        codexLog.warn("Failed to stop Codex client cleanly:", error);
+      }
       this.client = null;
     }
 
-    // Clear all maps
-    this.sessionToThread.clear();
-    this.threadToSession.clear();
-    this.threads.clear();
-    this.sessionModes.clear();
-    this.sessionModels.clear();
-    this.sessionReasoningEfforts.clear();
-    this.sessionDirectories.clear();
+    this.activeTurnIds.clear();
+    this.activeToolParts.clear();
+    this.cleanupActiveTempDirs();
 
-    this.status = "stopped";
-    this.emit("status.changed", { engineType: this.engineType, status: "stopped" });
-    codexLog.info("Codex adapter stopped");
+    this.setStatus("stopped");
   }
 
   async healthCheck(): Promise<boolean> {
@@ -240,13 +258,15 @@ export class CodexAdapter extends EngineAdapter {
     return {
       type: this.engineType,
       name: "Codex",
+      version: this.version,
       status: this.status,
       capabilities: this.getCapabilities(),
-      errorMessage: this.errorMessage,
+      authMethods: this.getAuthMethods(),
+      authenticated: this.authenticated,
+      authMessage: this.authMessage,
+      errorMessage: this.status === "error" ? this.lastError : undefined,
     };
   }
-
-  // --- Capabilities ---
 
   getCapabilities(): EngineCapabilities {
     return {
@@ -260,7 +280,7 @@ export class CodexAdapter extends EngineAdapter {
       modelSwitchable: true,
       customModelInput: true,
       messageEnqueue: true,
-      slashCommands: false,
+      slashCommands: true,
       availableModes: this.getModes(),
     };
   }
@@ -268,119 +288,139 @@ export class CodexAdapter extends EngineAdapter {
   getAuthMethods(): AuthMethod[] {
     return [{
       id: "openai",
-      name: "OpenAI API",
-      description: "Authenticate with your OpenAI API key (set OPENAI_API_KEY) or run `codex login`",
+      name: "OpenAI",
+      description: "Use Codex's existing OpenAI login or API key configuration.",
     }];
   }
 
-  // --- Sessions ---
-
   hasSession(sessionId: string): boolean {
-    return this.sessionToThread.has(sessionId);
+    return this.sessionToThread.has(sessionId) && this.client?.running === true;
   }
 
-  async listSessions(_directory?: string): Promise<UnifiedSession[]> {
+  async listSessions(directory?: string): Promise<UnifiedSession[]> {
     const sessions: UnifiedSession[] = [];
+
     for (const [sessionId, threadId] of this.sessionToThread) {
-      const info = this.threads.get(threadId);
-      if (!info) continue;
-      if (_directory && info.directory !== _directory) continue;
+      const thread = this.threads.get(threadId);
+      if (!thread) continue;
+      if (directory && normalizeDirectory(directory) !== thread.directory) continue;
+
       sessions.push({
         id: sessionId,
         engineType: this.engineType,
-        directory: info.directory,
-        time: { created: info.createdAt, updated: info.createdAt },
+        directory: thread.directory,
+        title: thread.title,
+        time: {
+          created: thread.createdAt,
+          updated: thread.updatedAt,
+        },
+        engineMeta: { codexThreadId: threadId },
       });
     }
+
     return sessions;
   }
 
   async createSession(directory: string, meta?: Record<string, unknown>): Promise<UnifiedSession> {
-    const sessionId = timeId("cs");
+    await this.start();
 
-    if (!this.client?.running) {
-      // Try restarting
-      await this.start();
-      if (!this.client?.running) {
-        throw new Error("Codex is not running");
+    const normalizedDirectory = normalizeDirectory(directory);
+    const existingThreadId = resolveThreadId(undefined, meta);
+    let threadResponse: ThreadResponse;
+    if (existingThreadId) {
+      try {
+        threadResponse = await this.resumeThread(existingThreadId, normalizedDirectory);
+      } catch (error) {
+        codexLog.warn(`Failed to resume Codex thread ${existingThreadId}, starting a new one instead:`, error);
+        threadResponse = await this.startThread(normalizedDirectory);
       }
+    } else {
+      threadResponse = await this.startThread(normalizedDirectory);
     }
 
-    // Send ThreadStart to Codex to create a new thread
-    let threadId: string;
-    try {
-      const result = await this.client.request("codex/threadStart", {
-        instructions: CODEMUX_IDENTITY_PROMPT,
-      }) as { thread_id: string };
-      threadId = result.thread_id;
-    } catch (err: any) {
-      codexLog.error(`Failed to create thread for session ${sessionId}:`, err);
-      throw err;
+    const threadId = threadResponse.thread?.id;
+    if (!threadId) {
+      throw new Error("Codex did not return a thread ID");
     }
 
-    // Set up bidirectional mapping
-    this.sessionToThread.set(sessionId, threadId);
-    this.threadToSession.set(threadId, sessionId);
-    this.threads.set(threadId, {
-      threadId,
-      directory,
-      createdAt: Date.now(),
-      lastUsedAt: Date.now(),
+    const sessionId = toEngineSessionId(threadId);
+    this.registerThread(sessionId, threadId, normalizedDirectory, threadResponse.thread?.name ?? undefined, true, threadResponse.thread?.createdAt, threadResponse.thread?.updatedAt);
+
+    if (!this.sessionModes.has(sessionId)) {
+      this.sessionModes.set(sessionId, this.currentMode);
+    }
+    if (!this.sessionDirectories.has(sessionId)) {
+      this.sessionDirectories.set(sessionId, normalizedDirectory);
+    }
+    if (threadResponse.model) {
+      this.sessionModels.set(sessionId, threadResponse.model);
+      this.currentModelId = threadResponse.model;
+    }
+    if (threadResponse.reasoningEffort) {
+      const effort = fromCodexEffort(threadResponse.reasoningEffort);
+      if (effort) this.sessionReasoningEfforts.set(sessionId, effort);
+    }
+
+    if (threadResponse.thread?.name) {
+      setTimeout(() => {
+        this.emit("session.updated", {
+          session: {
+            id: sessionId,
+            engineType: this.engineType,
+            title: threadResponse.thread?.name ?? undefined,
+          },
+        });
+      }, 0);
+    }
+
+    this.refreshCommandsForDirectory(normalizedDirectory).catch((error) => {
+      codexLog.warn(`Failed to refresh skills for ${normalizedDirectory}:`, error);
     });
-    this.sessionDirectories.set(sessionId, directory);
 
-    // Set default mode for this session
-    this.sessionModes.set(sessionId, this.currentMode);
-
-    const session: UnifiedSession = {
+    return {
       id: sessionId,
       engineType: this.engineType,
-      directory,
-      time: { created: Date.now(), updated: Date.now() },
-      engineMeta: { codexThreadId: threadId, ...meta },
+      directory: normalizedDirectory,
+      title: threadResponse.thread?.name ?? undefined,
+      time: {
+        created: toMillis(threadResponse.thread?.createdAt, Date.now()),
+        updated: toMillis(threadResponse.thread?.updatedAt, Date.now()),
+      },
+      engineMeta: { codexThreadId: threadId },
     };
-
-    this.emit("session.created", { session });
-    codexLog.info(`Session created: ${sessionId} → thread ${threadId}`);
-
-    return session;
   }
 
   async getSession(sessionId: string): Promise<UnifiedSession | null> {
     const threadId = this.sessionToThread.get(sessionId);
     if (!threadId) return null;
-    const info = this.threads.get(threadId);
-    if (!info) return null;
+    const thread = this.threads.get(threadId);
+    if (!thread) return null;
 
     return {
       id: sessionId,
       engineType: this.engineType,
-      directory: info.directory,
-      time: { created: info.createdAt, updated: info.createdAt },
+      directory: thread.directory,
+      title: thread.title,
+      time: {
+        created: thread.createdAt,
+        updated: thread.updatedAt,
+      },
       engineMeta: { codexThreadId: threadId },
     };
   }
 
   async deleteSession(sessionId: string): Promise<void> {
     const threadId = this.sessionToThread.get(sessionId);
-    if (threadId) {
-      this.threadToSession.delete(threadId);
-      this.threads.delete(threadId);
+    if (threadId && this.client?.running) {
+      try {
+        await this.client.request("thread/unsubscribe", { threadId });
+      } catch (error) {
+        codexLog.warn(`Failed to unsubscribe thread ${threadId}:`, error);
+      }
     }
-    this.sessionToThread.delete(sessionId);
-    this.sessionModes.delete(sessionId);
-    this.sessionModels.delete(sessionId);
-    this.sessionReasoningEfforts.delete(sessionId);
-    this.sessionDirectories.delete(sessionId);
-    this.messageBuffers.delete(sessionId);
 
-    // Reject pending interactions for this session
-    this.rejectPendingForSession(sessionId, "Session deleted");
-
-    codexLog.info(`Session deleted: ${sessionId}`);
+    this.clearSessionState(sessionId);
   }
-
-  // --- Messages ---
 
   async sendMessage(
     sessionId: string,
@@ -392,260 +432,140 @@ export class CodexAdapter extends EngineAdapter {
       directory?: string;
     },
   ): Promise<UnifiedMessage> {
-    if (!this.client?.running) {
-      // Try restarting
-      await this.start();
-      if (!this.client?.running) {
-        throw new Error("Codex is not running");
-      }
+    const prepared = this.buildPromptInput(content);
+    const userMessage = createUserMessage(sessionId, prepared.displayText);
+    const directory = normalizeDirectory(options?.directory ?? this.sessionDirectories.get(sessionId) ?? this.threads.get(this.sessionToThread.get(sessionId) ?? "")?.directory ?? "");
+    if (!directory) {
+      this.cleanupTempDirs(prepared.tempDirs);
+      throw new Error(`No working directory found for Codex session ${sessionId}`);
     }
 
-    const threadId = this.sessionToThread.get(sessionId);
-    if (!threadId) {
-      throw new Error(`No thread found for session ${sessionId}`);
-    }
+    this.sessionDirectories.set(sessionId, directory);
 
-    // Extract text content
-    const textContent = content
-      .filter((c): c is { type: "text"; text: string } => c.type === "text" && !!c.text)
-      .map((c) => c.text)
-      .join("\n");
-
-    // Extract image attachments
-    const imageContents = content.filter((c) => c.type === "image" && c.data);
-
-    if (!textContent && imageContents.length === 0) {
-      throw new Error("No content provided");
-    }
-
-    // Create user message
-    const userMsg = createUserMessage(sessionId, textContent || "(image)");
-
-    // --- Enqueue path: engine is already processing this session ---
-    const existingResolver = this.sendResolvers.get(sessionId);
-    if (existingResolver) {
-      // If no mode/model overrides, use TurnSteer to append mid-turn
-      const hasModeOverride = options?.mode && options.mode !== (this.sessionModes.get(sessionId) ?? this.currentMode);
-      const hasModelOverride = options?.modelId && options.modelId !== (this.sessionModels.get(sessionId) ?? this.currentModelId);
-
-      if (!hasModeOverride && !hasModelOverride && this.client?.running) {
-        // TurnSteer: append content to the active turn
-        const turnContent = this.buildTurnContent(textContent || "(image)", imageContents);
-        this.client.notify("codex/turnSteer", {
-          thread_id: threadId,
-          content: turnContent,
-        });
-
-        // Emit the user message immediately
-        this.emit("message.updated", { sessionId, message: userMsg });
-
-        codexLog.debug(`TurnSteer sent for session ${sessionId}`);
-
-        // The existing resolver will capture the combined response —
-        // return a promise that resolves when the current turn completes.
-        return new Promise<UnifiedMessage>((resolve) => {
-          const originalResolver = this.sendResolvers.get(sessionId)!;
-          const originalResolve = originalResolver.resolve;
-          originalResolver.resolve = (msg) => {
-            originalResolve(msg);
-            resolve(msg);
-          };
-        });
+    if (this.hasActiveTurn(sessionId)) {
+      if (this.canSteer(sessionId, options, directory)) {
+        return this.steerTurn(sessionId, prepared.input, userMessage, prepared.tempDirs, options);
       }
 
-      // Fallback: queue the message for next turn (different mode/model)
-      return new Promise<UnifiedMessage>((resolve, reject) => {
-        const queue = this.messageQueues.get(sessionId) ?? [];
-        const queuePosition = queue.length + 1;
-
-        queue.push({
-          content,
-          options,
-          resolver: { resolve, reject },
-          userMessage: userMsg,
-        });
-        this.messageQueues.set(sessionId, queue);
-
-        this.emit("message.queued", {
-          sessionId,
-          messageId: userMsg.id,
-          queuePosition,
-        });
-
-        codexLog.debug(`Message enqueued for session ${sessionId} (position ${queuePosition})`);
-      });
+      return this.enqueueMessage(sessionId, prepared.input, userMessage, prepared.tempDirs, options);
     }
 
-    // --- Normal path: session is idle ---
-
-    // Touch lastUsedAt
-    const threadInfo = this.threads.get(threadId);
-    if (threadInfo) threadInfo.lastUsedAt = Date.now();
-
-    // Emit user message immediately
-    this.emit("message.updated", { sessionId, message: userMsg });
-
-    // Create message buffer for assistant response
-    const buffer = this.createMessageBuffer(sessionId);
-
-    // Apply mode/model overrides
-    const modeId = options?.mode ?? this.sessionModes.get(sessionId) ?? this.currentMode;
-    const modelId = options?.modelId ?? this.sessionModels.get(sessionId) ?? this.currentModelId;
-
-    // Build turn content array
-    const turnContent = this.buildTurnContent(textContent, imageContents);
-
-    // Send TurnStart
-    return new Promise<UnifiedMessage>((resolve, reject) => {
-      this.sendResolvers.set(sessionId, { resolve, reject });
-
-      const turnParams: Record<string, unknown> = {
-        thread_id: threadId,
-        content: turnContent,
-        model: modelId,
-        approval_policy: modeToApprovalPolicy(modeId),
-      };
-
-      // Apply reasoning effort if set
-      const effort = options?.reasoningEffort ?? this.sessionReasoningEfforts.get(sessionId);
-      if (effort) {
-        turnParams.reasoning = { effort };
-      }
-
-      this.client!.request("codex/turnStart", turnParams, 120_000).catch((err: Error) => {
-        codexLog.error(`TurnStart failed for session ${sessionId}:`, err);
-        // Only reject if not already resolved (e.g. by TurnComplete)
-        const resolver = this.sendResolvers.get(sessionId);
-        if (resolver) {
-          this.sendResolvers.delete(sessionId);
-          buffer.error = err.message;
-          resolver.resolve(finalizeBufferToMessage(buffer));
-        }
-      });
-    });
+    return this.startPreparedTurn(sessionId, prepared.input, userMessage, prepared.tempDirs, options, false);
   }
 
-  async cancelMessage(sessionId: string, _directory?: string): Promise<void> {
-    if (!this.client?.running) return;
-
+  async cancelMessage(sessionId: string, directory?: string): Promise<void> {
     const threadId = this.sessionToThread.get(sessionId);
-    if (!threadId) return;
-
-    codexLog.info(`Cancelling turn for session ${sessionId}`);
-
-    // Send TurnInterrupt notification
-    this.client.notify("codex/turnInterrupt", { thread_id: threadId });
-
-    // Resolve pending send with cancelled status
-    const resolver = this.sendResolvers.get(sessionId);
-    if (resolver) {
-      this.sendResolvers.delete(sessionId);
-      const buffer = this.messageBuffers.get(sessionId);
-      if (buffer) {
-        buffer.error = "Cancelled";
-        resolver.resolve(finalizeBufferToMessage(buffer));
-        this.messageBuffers.delete(sessionId);
-      } else {
-        const cancelMsg: UnifiedMessage = {
-          id: timeId("msg"),
-          sessionId,
-          role: "assistant",
-          time: { created: Date.now(), completed: Date.now() },
-          parts: [],
-          error: "Cancelled",
-        };
-        resolver.resolve(cancelMsg);
+    const turnId = this.activeTurnIds.get(sessionId);
+    if (threadId && turnId && this.client?.running) {
+      try {
+        await this.client.request("turn/interrupt", { threadId, turnId });
+      } catch (error) {
+        codexLog.warn(`Failed to interrupt turn ${turnId}:`, error);
       }
     }
 
-    // Reject all queued messages
-    const queue = this.messageQueues.get(sessionId);
-    if (queue) {
-      for (const queued of queue) {
-        queued.resolver.reject(new Error("Cancelled"));
-      }
-      this.messageQueues.delete(sessionId);
-    }
-
-    // Reject pending interactions
+    this.failActiveTurn(sessionId, "Cancelled", false);
+    this.rejectQueuedMessagesForSession(sessionId, "Cancelled");
     this.rejectPendingForSession(sessionId, "Cancelled");
+
+    if (directory) {
+      this.sessionDirectories.set(sessionId, normalizeDirectory(directory));
+    }
   }
 
-  async listMessages(_sessionId: string): Promise<UnifiedMessage[]> {
-    // Messages are managed by ConversationStore, not the adapter
-    return [];
+  async listMessages(sessionId: string): Promise<UnifiedMessage[]> {
+    return [...(this.messageHistory.get(sessionId) ?? [])];
   }
-
-  // --- Historical Import ---
 
   async listHistoricalSessions(limit: number): Promise<ImportableSession[]> {
-    if (!this.client?.running) return [];
-
     try {
-      const result = await this.client.request("codex/threadList", {}) as {
-        threads?: Array<{
-          thread_id: string;
-          title?: string;
-          created_at?: number;
-          updated_at?: number;
-          archived?: boolean;
-        }>;
-      };
-
-      const threads = result.threads ?? [];
-      const sessions: ImportableSession[] = threads
-        .filter((t) => !t.archived)
-        .map((t) => ({
-          engineSessionId: `codex_${t.thread_id}`,
-          title: t.title ?? "Codex Thread",
-          directory: "",
-          createdAt: t.created_at ?? 0,
-          updatedAt: t.updated_at ?? t.created_at ?? 0,
-          alreadyImported: this.threadToSession.has(t.thread_id),
-          engineMeta: { codexThreadId: t.thread_id },
-        }))
-        .sort((a, b) => b.updatedAt - a.updatedAt);
-
-      return limit > 0 ? sessions.slice(0, limit) : sessions;
-    } catch (err: any) {
-      codexLog.warn("Failed to list historical sessions:", err?.message);
+      await this.start();
+    } catch {
       return [];
     }
+
+    if (!this.client?.running) return [];
+
+    const sessions: ImportableSession[] = [];
+    let cursor: string | null | undefined;
+
+    do {
+      const response = asRecord(await this.client.request("thread/list", {
+        cursor,
+        limit: limit > 0 ? Math.min(limit, 100) : 100,
+        sortKey: "updated_at",
+        archived: false,
+      }));
+
+      const data = Array.isArray(response.data) ? response.data : [];
+      cursor = typeof response.nextCursor === "string" ? response.nextCursor : null;
+
+      for (const entry of data) {
+        const thread = asRecord(entry);
+        const threadId = typeof thread.id === "string" ? thread.id : undefined;
+        if (!threadId) continue;
+
+        sessions.push({
+          engineSessionId: toEngineSessionId(threadId),
+          title:
+            (typeof thread.name === "string" && thread.name) ||
+            (typeof thread.preview === "string" && thread.preview) ||
+            "Codex Thread",
+          directory: typeof thread.cwd === "string" ? normalizeDirectory(thread.cwd) : "",
+          createdAt: toMillis(thread.createdAt, 0),
+          updatedAt: toMillis(thread.updatedAt, toMillis(thread.createdAt, 0)),
+          alreadyImported: this.threadToSession.has(threadId),
+          engineMeta: { codexThreadId: threadId },
+        });
+
+        if (limit > 0 && sessions.length >= limit) {
+          return sessions.slice(0, limit);
+        }
+      }
+    } while (cursor);
+
+    return sessions;
   }
 
   async getHistoricalMessages(
     engineSessionId: string,
-    _directory: string,
+    directory: string,
     engineMeta?: Record<string, unknown>,
   ): Promise<UnifiedMessage[]> {
+    try {
+      await this.start();
+    } catch {
+      return [];
+    }
+
     if (!this.client?.running) return [];
 
-    const threadId =
-      (engineMeta?.codexThreadId as string) ??
-      (engineSessionId.startsWith("codex_") ? engineSessionId.slice(6) : engineSessionId);
+    const threadId = resolveThreadId(engineSessionId, engineMeta);
+    if (!threadId) return [];
 
     try {
-      const result = await this.client.request("codex/threadRead", {
-        thread_id: threadId,
-      }) as { items?: unknown[] };
+      const response = asRecord(await this.client.request("thread/read", {
+        threadId,
+        includeTurns: true,
+      }));
 
-      const items = result.items ?? [];
-      return convertThreadItemsToMessages(engineSessionId, items as any[]);
-    } catch (err: any) {
-      codexLog.warn(`Failed to get historical messages for ${threadId}:`, err?.message);
+      return convertThreadToMessages(engineSessionId, response as any, normalizeDirectory(directory));
+    } catch (error) {
+      codexLog.warn(`Failed to read Codex thread ${threadId}:`, error);
       return [];
     }
   }
 
-  // --- Models ---
-
   async listModels(): Promise<ModelListResult> {
-    const models = this.cachedModels.length > 0
-      ? this.cachedModels
-      : CODEX_MODEL_LIST.map((m) => ({ ...m, engineType: this.engineType as EngineType }));
+    try {
+      await this.start();
+      await this.refreshModelCache();
+    } catch (error) {
+      codexLog.warn("Failed to refresh Codex model list:", error);
+    }
 
     return {
-      models,
+      models: this.cachedModels,
       currentModelId: this.currentModelId,
     };
   }
@@ -653,10 +573,7 @@ export class CodexAdapter extends EngineAdapter {
   async setModel(sessionId: string, modelId: string): Promise<void> {
     this.sessionModels.set(sessionId, modelId);
     this.currentModelId = modelId;
-    codexLog.info(`Model set to ${modelId} for session ${sessionId}`);
   }
-
-  // --- Modes ---
 
   getModes(): AgentMode[] {
     return CODEX_MODES;
@@ -665,826 +582,1090 @@ export class CodexAdapter extends EngineAdapter {
   async setMode(sessionId: string, modeId: string): Promise<void> {
     this.sessionModes.set(sessionId, modeId);
     this.currentMode = modeId;
-    codexLog.info(`Mode set to ${modeId} for session ${sessionId}`);
   }
 
-  // --- Reasoning Effort ---
-
-  async setReasoningEffort(sessionId: string, effort: ReasoningEffort | null): Promise<void> {
+  override async setReasoningEffort(sessionId: string, effort: ReasoningEffort | null): Promise<void> {
+    if (effort == null) {
+      this.sessionReasoningEfforts.delete(sessionId);
+      return;
+    }
     this.sessionReasoningEfforts.set(sessionId, effort);
   }
 
-  getReasoningEffort(sessionId: string): ReasoningEffort | null {
+  override getReasoningEffort(sessionId: string): ReasoningEffort | null {
     return this.sessionReasoningEfforts.get(sessionId) ?? null;
   }
 
-  // --- Permissions ---
-
   async replyPermission(permissionId: string, reply: PermissionReply, _sessionId?: string): Promise<void> {
     const pending = this.pendingPermissions.get(permissionId);
-    if (!pending) {
-      codexLog.warn(`No pending permission for ID ${permissionId}`);
-      return;
-    }
+    if (!pending) return;
 
     this.pendingPermissions.delete(permissionId);
 
-    // Touch lastUsedAt
-    if (pending.sessionId) {
-      const threadId = this.sessionToThread.get(pending.sessionId);
-      if (threadId) {
-        const info = this.threads.get(threadId);
-        if (info) info.lastUsedAt = Date.now();
+    if (!this.client?.running) {
+      throw new Error("Codex client is not running");
+    }
+
+    switch (pending.method) {
+      case "item/commandExecution/requestApproval":
+        this.client.respond(pending.requestId, {
+          decision: mapCommandApprovalDecision(reply.optionId),
+        });
+        break;
+      case "item/fileChange/requestApproval":
+        this.client.respond(pending.requestId, {
+          decision: mapFileApprovalDecision(reply.optionId),
+        });
+        break;
+      case "item/permissions/requestApproval": {
+        const params = asRecord(pending.params);
+        const granted = reply.optionId === "allow_once" || reply.optionId === "allow_always"
+          ? asRecord(params.permissions)
+          : {};
+        this.client.respond(pending.requestId, {
+          permissions: granted,
+          scope: reply.optionId === "allow_always" ? "session" : "turn",
+        });
+        break;
       }
+      case "execCommandApproval":
+        this.client.respond(pending.requestId, {
+          decision: mapLegacyReviewDecision(reply.optionId),
+        });
+        break;
+      case "applyPatchApproval":
+        this.client.respond(pending.requestId, {
+          decision: mapLegacyReviewDecision(reply.optionId),
+        });
+        break;
+      default:
+        this.client.respondError(pending.requestId, -32601, `Unsupported approval request: ${pending.method}`);
+        break;
     }
 
-    // Respond to the JSON-RPC request
-    const requestId = parseInt(permissionId, 10) || permissionId;
-    const approved = reply.optionId === "allow_once" || reply.optionId === "allow_always";
-
-    if (this.client?.running) {
-      this.client.respond(requestId as number | string, { approved });
-    }
-
-    pending.resolve(reply);
+    this.touchThread(pending.sessionId);
     this.emit("permission.replied", { permissionId, optionId: reply.optionId });
   }
 
-  // --- Questions ---
-
   async replyQuestion(questionId: string, answers: string[][], _sessionId?: string): Promise<void> {
     const pending = this.pendingQuestions.get(questionId);
-    if (!pending) {
-      codexLog.warn(`No pending question for ID ${questionId}`);
-      return;
-    }
+    if (!pending) return;
 
     this.pendingQuestions.delete(questionId);
 
-    // Touch lastUsedAt
-    if (pending.sessionId) {
-      const threadId = this.sessionToThread.get(pending.sessionId);
-      if (threadId) {
-        const info = this.threads.get(threadId);
-        if (info) info.lastUsedAt = Date.now();
-      }
+    if (!this.client?.running) {
+      throw new Error("Codex client is not running");
     }
 
-    // Respond to the JSON-RPC request
-    const requestId = parseInt(questionId, 10) || questionId;
-    const answer = answers[0]?.[0] ?? "";
+    const params = asRecord(pending.params);
+    const questionDefs = Array.isArray(params.questions) ? params.questions : [];
+    const responseAnswers: Record<string, { answers: string[] }> = {};
 
-    if (this.client?.running) {
-      this.client.respond(requestId as number | string, { answer });
-    }
+    questionDefs.forEach((question, index) => {
+      const questionRecord = asRecord(question);
+      const questionIdValue = typeof questionRecord.id === "string" ? questionRecord.id : `q${index}`;
+      responseAnswers[questionIdValue] = {
+        answers: answers[index] ?? [],
+      };
+    });
 
-    pending.resolve(answers);
+    this.client.respond(pending.requestId, { answers: responseAnswers });
+    this.touchThread(pending.sessionId);
     this.emit("question.replied", { questionId, answers });
   }
 
   async rejectQuestion(questionId: string, _sessionId?: string): Promise<void> {
     const pending = this.pendingQuestions.get(questionId);
     if (!pending) return;
-
     this.pendingQuestions.delete(questionId);
 
-    const requestId = parseInt(questionId, 10) || questionId;
     if (this.client?.running) {
-      this.client.respondError(requestId as number | string, -1, "User rejected");
+      this.client.respondError(pending.requestId, -32000, "User rejected the prompt");
     }
-
-    pending.reject(new Error("User rejected"));
   }
-
-  // --- Projects ---
 
   async listProjects(): Promise<UnifiedProject[]> {
     return [];
   }
 
-  // ============================================================================
-  // Private Implementation
-  // ============================================================================
+  override async listCommands(sessionId?: string, directory?: string): Promise<EngineCommand[]> {
+    const normalizedDirectory = normalizeDirectory(
+      directory ??
+      (sessionId ? this.sessionDirectories.get(sessionId) : undefined) ??
+      "",
+    );
 
-  /**
-   * Spawn the Codex process and perform the Initialize handshake.
-   */
+    if (!normalizedDirectory) {
+      return [];
+    }
+
+    try {
+      await this.start();
+      return await this.refreshCommandsForDirectory(normalizedDirectory);
+    } catch (error) {
+      codexLog.warn(`Failed to load Codex skills for ${normalizedDirectory}:`, error);
+      return this.skillsByDirectory.get(normalizedDirectory) ?? [];
+    }
+  }
+
+  override async invokeCommand(
+    sessionId: string,
+    commandName: string,
+    args: string,
+    options?: { mode?: string; modelId?: string; directory?: string },
+  ): Promise<CommandInvokeResult> {
+    const directory = normalizeDirectory(
+      options?.directory ??
+      this.sessionDirectories.get(sessionId) ??
+      this.threads.get(this.sessionToThread.get(sessionId) ?? "")?.directory ??
+      "",
+    );
+
+    if (!directory) {
+      return { handledAsCommand: false };
+    }
+
+    const commands = await this.listCommands(sessionId, directory);
+    if (commands.length === 0) {
+      return { handledAsCommand: false };
+    }
+
+    const skills = this.skillEntriesByDirectory.get(directory);
+    const skill = skills?.get(commandName);
+    if (!skill?.enabled) {
+      return { handledAsCommand: false };
+    }
+
+    const displayText = `/${commandName}${args ? ` ${args}` : ""}`;
+    const userMessage = createUserMessage(sessionId, displayText);
+    const input: CodexTurnInput[] = [
+      { type: "skill", name: skill.name, path: skill.path },
+      ...(args.trim() ? [{ type: "text" as const, text: args, text_elements: [] as unknown[] }] : []),
+    ];
+
+    const message = await this.startPreparedTurn(
+      sessionId,
+      input,
+      userMessage,
+      [],
+      { ...options, directory },
+      false,
+    );
+
+    return {
+      handledAsCommand: true,
+      message,
+    };
+  }
+
   private async spawnAndInitialize(): Promise<void> {
-    if (!this.cliPath) throw new Error("CLI path not resolved");
+    if (!this.cliPath) throw new Error("Codex CLI path is not resolved");
 
-    const args = buildStartupArgs(this.currentModelId, modeToApprovalPolicy(this.currentMode));
-
-    this.client = new CodexJsonRpcClient({
+    const client = new CodexJsonRpcClient({
       cliPath: this.cliPath,
-      args,
+      args: buildStartupArgs(),
     });
 
-    // Wire up event handlers before starting
-    this.client.on("notification", (method, params) => this.handleNotification(method, params));
-    this.client.on("request", (id, method, params) => this.handleServerRequest(id, method, params));
-    this.client.on("error", (err) => {
-      codexLog.error("Codex client error:", err);
-      this.emit("error" as any, err);
+    client.on("notification", (method, params) => this.handleNotification(method, params));
+    client.on("request", (id, method, params) => this.handleServerRequest(id, method, params));
+    client.on("error", (error) => {
+      codexLog.error("Codex client error:", error);
+      this.lastError = error.message;
     });
-    this.client.on("exit", (code, signal) => {
-      codexLog.warn(`Codex process exited: code=${code}, signal=${signal}`);
-
-      // Reject all pending operations
-      for (const [, resolver] of this.sendResolvers) {
-        resolver.reject(new Error("Codex process exited"));
+    client.on("exit", (code, signal) => {
+      codexLog.warn(`Codex process exited (code=${code}, signal=${signal})`);
+      this.client = null;
+      this.setStatus("error", `Codex process exited (code=${code}, signal=${signal})`);
+      this.rejectPendingInteractions("Codex process exited");
+      this.rejectQueuedMessages("Codex process exited");
+      this.failAllInFlight("Codex process exited");
+      this.activeTurnIds.clear();
+      this.activeToolParts.clear();
+      this.cleanupActiveTempDirs();
+      for (const thread of this.threads.values()) {
+        thread.loaded = false;
       }
-      this.sendResolvers.clear();
-      this.rejectAllPendingPermissions("Codex process exited");
-      this.rejectAllPendingQuestions("Codex process exited");
+    });
 
-      // Attempt auto-reconnect
-      if (this.autoReconnect && this.reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
-        this.reconnectAttempts++;
-        codexLog.info(`Auto-reconnect attempt ${this.reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS}...`);
+    await client.start();
+    await client.request("initialize", {
+      clientInfo: {
+        name: "codemux",
+        title: "CodeMux",
+        version: process.env.npm_package_version ?? "0.0.0",
+      },
+      capabilities: {
+        experimentalApi: true,
+        optOutNotificationMethods: null,
+      },
+    });
+    client.notify("initialized");
 
-        this.status = "starting";
-        this.emit("status.changed", { engineType: this.engineType, status: "starting" });
+    this.client = client;
+  }
 
-        setTimeout(async () => {
-          try {
-            await this.spawnAndInitialize();
-            this.reconnectAttempts = 0;
+  private async refreshRuntimeMetadata(): Promise<void> {
+    await Promise.allSettled([
+      this.refreshConfigRequirements(),
+      this.refreshModelCache(),
+      this.refreshAuthStatus(),
+    ]);
+  }
 
-            // Re-create threads for active sessions
-            await this.recreateActiveThreads();
+  private async refreshConfigRequirements(): Promise<void> {
+    if (!this.client?.running) return;
 
-            this.status = "running";
-            this.emit("status.changed", { engineType: this.engineType, status: "running" });
-            codexLog.info("Auto-reconnect successful");
-          } catch (err: any) {
-            codexLog.error(`Auto-reconnect attempt ${this.reconnectAttempts} failed:`, err);
-            if (this.reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
-              this.status = "error";
-              this.errorMessage = `Codex process exited and reconnect failed after ${MAX_RECONNECT_ATTEMPTS} attempts`;
-              this.emit("status.changed", {
-                engineType: this.engineType,
-                status: "error",
-                error: this.errorMessage,
-              });
-            }
-          }
-        }, RECONNECT_DELAY_MS);
+    const response = asRecord(await this.client.request("configRequirements/read"));
+    const requirements = asRecord(response.requirements);
+    this.configRequirements = Object.keys(requirements).length > 0
+      ? {
+          allowedApprovalPolicies: Array.isArray(requirements.allowedApprovalPolicies)
+            ? requirements.allowedApprovalPolicies.filter((value): value is CodexApprovalPolicy => typeof value === "string")
+            : null,
+          allowedSandboxModes: Array.isArray(requirements.allowedSandboxModes)
+            ? requirements.allowedSandboxModes.filter((value): value is CodexSandboxMode => typeof value === "string")
+            : null,
+        }
+      : null;
+  }
+
+  private async refreshAuthStatus(): Promise<void> {
+    if (!this.client?.running) return;
+
+    try {
+      const response = asRecord(await this.client.request("account/read", { refreshToken: false }));
+      const account = asRecord(response.account);
+      const requiresOpenaiAuth = response.requiresOpenaiAuth === true;
+
+      if (Object.keys(account).length === 0) {
+        this.authenticated = false;
+        this.authMessage = requiresOpenaiAuth ? "OpenAI authentication required" : "Not authenticated";
         return;
       }
 
-      this.status = "error";
-      this.errorMessage = `Codex process exited unexpectedly (code=${code})`;
-      this.emit("status.changed", {
-        engineType: this.engineType,
-        status: "error",
-        error: this.errorMessage,
-      });
-    });
+      this.authenticated = true;
+      if (account.type === "chatgpt" && typeof account.email === "string") {
+        this.authMessage = account.email;
+        return;
+      }
+      if (account.type === "apiKey") {
+        this.authMessage = "API key";
+        return;
+      }
 
-    // Start the process
-    await this.client.start();
-
-    // Perform Initialize handshake
-    const initResult = await this.client.request("initialize", {
-      client_name: "codemux",
-      client_version: "1.0.0",
-      protocol_version: "1.0",
-    }) as Record<string, unknown>;
-
-    codexLog.info("Codex initialized:", initResult);
-
-    // Send Initialized notification
-    this.client.notify("initialized", {});
+      this.authMessage = "Authenticated";
+    } catch (error) {
+      codexLog.warn("Failed to read Codex auth status:", error);
+    }
   }
 
-  /**
-   * Fetch available models from OpenAI API.
-   * Uses OPENAI_API_KEY for authentication. Falls back to hardcoded list.
-   */
   private async refreshModelCache(): Promise<void> {
-    const apiKey = process.env.OPENAI_API_KEY;
-    const baseUrl = (process.env.OPENAI_BASE_URL || "https://api.openai.com/v1").replace(/\/+$/, "");
-
-    if (!apiKey) {
-      codexLog.info("No OPENAI_API_KEY found, using default model list");
-      this.cachedModels = CODEX_MODEL_LIST.map((m) => ({ ...m, engineType: this.engineType as EngineType }));
+    if (!this.client?.running) {
+      this.ensureFallbackModels();
       return;
     }
 
-    const modelsUrl = baseUrl.endsWith("/v1") ? `${baseUrl}/models` : `${baseUrl}/v1/models`;
+    const models: UnifiedModelInfo[] = [];
+    let cursor: string | null | undefined;
 
-    try {
-      codexLog.info(`Fetching models from ${modelsUrl}...`);
+    do {
+      const response = asRecord(await this.client.request("model/list", {
+        cursor,
+        limit: 100,
+        includeHidden: false,
+      }));
 
-      const response = await fetch(modelsUrl, {
-        method: "GET",
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
-          "Content-Type": "application/json",
-        },
-        signal: AbortSignal.timeout(15_000),
-      });
+      const data = Array.isArray(response.data) ? response.data : [];
+      cursor = typeof response.nextCursor === "string" ? response.nextCursor : null;
 
-      if (!response.ok) {
-        codexLog.warn(`Models API returned ${response.status}: ${response.statusText}`);
-        this.cachedModels = CODEX_MODEL_LIST.map((m) => ({ ...m, engineType: this.engineType as EngineType }));
-        return;
-      }
+      for (const entry of data) {
+        const model = asRecord(entry);
+        const modelId = typeof model.model === "string"
+          ? model.model
+          : typeof model.id === "string"
+            ? model.id
+            : undefined;
+        if (!modelId) continue;
 
-      const data = (await response.json()) as { data?: Array<{ id: string; owned_by?: string }> };
+        const supportedReasoningEfforts = Array.isArray(model.supportedReasoningEfforts)
+          ? model.supportedReasoningEfforts
+            .map((value) => asRecord(value))
+            .map((value) => typeof value.reasoningEffort === "string" ? fromCodexEffort(value.reasoningEffort) : undefined)
+            .filter((value): value is ReasoningEffort => value !== undefined)
+          : undefined;
+        const defaultReasoningEffort = typeof model.defaultReasoningEffort === "string"
+          ? fromCodexEffort(model.defaultReasoningEffort)
+          : undefined;
 
-      if (!data.data || !Array.isArray(data.data)) {
-        codexLog.warn("Unexpected models response format");
-        this.cachedModels = CODEX_MODEL_LIST.map((m) => ({ ...m, engineType: this.engineType as EngineType }));
-        return;
-      }
-
-      // Filter to models relevant for Codex (GPT-4.1, o-series, etc.)
-      // Exclude embedding, tts, whisper, dall-e, moderation models
-      const excludePatterns = /^(text-|tts-|whisper|dall-e|davinci|babbage|embedding|moderation|ft:|chatgpt-4o-latest)/;
-      const relevantModels = data.data
-        .filter((m) => typeof m.id === "string" && !excludePatterns.test(m.id))
-        .map((m): UnifiedModelInfo => {
-          // Check if this model has known capabilities from our static list
-          const knownModel = CODEX_MODEL_LIST.find((km) => km.modelId === m.id);
-          return {
-            modelId: m.id,
-            name: knownModel?.name ?? m.id,
-            engineType: this.engineType,
-            capabilities: knownModel?.capabilities ?? { reasoning: m.id.startsWith("o") },
-            cost: knownModel?.cost,
-          };
-        })
-        .sort((a, b) => {
-          // Sort: known models first (in config order), then alphabetically
-          const aIdx = CODEX_MODEL_LIST.findIndex((km) => km.modelId === a.modelId);
-          const bIdx = CODEX_MODEL_LIST.findIndex((km) => km.modelId === b.modelId);
-          if (aIdx >= 0 && bIdx >= 0) return aIdx - bIdx;
-          if (aIdx >= 0) return -1;
-          if (bIdx >= 0) return 1;
-          return a.modelId.localeCompare(b.modelId);
+        models.push({
+          modelId,
+          name: typeof model.displayName === "string" && model.displayName ? model.displayName : modelId,
+          description: typeof model.description === "string" ? model.description : undefined,
+          engineType: this.engineType,
+          capabilities: {
+            attachment: Array.isArray(model.inputModalities) && model.inputModalities.includes("image"),
+            reasoning: Boolean(supportedReasoningEfforts && supportedReasoningEfforts.length > 0),
+            supportedReasoningEfforts,
+            defaultReasoningEffort,
+          },
+          meta: {
+            hidden: model.hidden === true,
+            isDefault: model.isDefault === true,
+            upgrade: typeof model.upgrade === "string" ? model.upgrade : undefined,
+          },
         });
 
-      if (relevantModels.length > 0) {
-        this.cachedModels = relevantModels;
-        codexLog.info(`Loaded ${relevantModels.length} models from OpenAI API`);
-      } else {
-        codexLog.warn("No relevant models returned from API, using defaults");
-        this.cachedModels = CODEX_MODEL_LIST.map((m) => ({ ...m, engineType: this.engineType as EngineType }));
+        if (model.isDefault === true) {
+          this.currentModelId = modelId;
+        }
       }
-    } catch (err) {
-      codexLog.warn("Failed to fetch models from OpenAI API:", err);
-      this.cachedModels = CODEX_MODEL_LIST.map((m) => ({ ...m, engineType: this.engineType as EngineType }));
+    } while (cursor);
+
+    if (models.length === 0) {
+      this.ensureFallbackModels();
+      return;
     }
+
+    this.cachedModels = models;
   }
 
-  // --- Notification Handling ---
+  private ensureFallbackModels(): void {
+    if (this.cachedModels.length > 0) return;
+    this.cachedModels = [{
+      modelId: CODEX_FALLBACK_MODEL,
+      name: CODEX_FALLBACK_MODEL,
+      engineType: this.engineType,
+      capabilities: {
+        reasoning: true,
+        supportedReasoningEfforts: ["low", "medium", "high", "max"],
+        defaultReasoningEffort: "medium",
+      },
+    }];
+  }
+
+  private async refreshCommandsForDirectory(directory: string): Promise<EngineCommand[]> {
+    if (!this.client?.running) return this.skillsByDirectory.get(directory) ?? [];
+
+    const response = asRecord(await this.client.request("skills/list", {
+      cwds: [directory],
+      forceReload: false,
+    }));
+    const data = Array.isArray(response.data) ? response.data : [];
+    const entry = data
+      .map((item) => asRecord(item))
+      .find((item) => normalizeDirectory(String(item.cwd ?? "")) === directory)
+      ?? data.map((item) => asRecord(item))[0];
+
+    const skills = Array.isArray(entry?.skills) ? entry.skills : [];
+    const nextCommands: EngineCommand[] = [];
+    const nextSkillEntries = new Map<string, SkillEntry>();
+
+    for (const skillValue of skills) {
+      const skill = asRecord(skillValue);
+      const skillInterface = asRecord(skill.interface);
+      const name = typeof skill.name === "string" ? skill.name : undefined;
+      const path = typeof skill.path === "string" ? skill.path : undefined;
+      if (!name || !path) continue;
+
+      const description =
+        (typeof skillInterface.shortDescription === "string" && skillInterface.shortDescription) ||
+        (typeof skill.shortDescription === "string" && skill.shortDescription) ||
+        (typeof skill.description === "string" && skill.description) ||
+        "";
+      const enabled = skill.enabled !== false;
+
+      nextCommands.push({
+        name,
+        description,
+        source: typeof skill.scope === "string" ? skill.scope : undefined,
+        userInvocable: enabled,
+      });
+      nextSkillEntries.set(name, {
+        name,
+        description,
+        path,
+        scope: typeof skill.scope === "string" ? skill.scope : undefined,
+        enabled,
+      });
+    }
+
+    const previous = this.skillsByDirectory.get(directory) ?? [];
+    this.skillsByDirectory.set(directory, nextCommands);
+    this.skillEntriesByDirectory.set(directory, nextSkillEntries);
+
+    if (JSON.stringify(previous) !== JSON.stringify(nextCommands)) {
+      this.emit("commands.changed", {
+        engineType: this.engineType,
+        commands: nextCommands,
+      });
+    }
+
+    return nextCommands;
+  }
 
   private handleNotification(method: string, params: unknown): void {
-    const data = (params ?? {}) as Record<string, unknown>;
-    const threadId = data.thread_id as string | undefined;
+    const data = asRecord(params);
+    const threadId = extractThreadId(method, data);
     const sessionId = threadId ? this.threadToSession.get(threadId) : undefined;
 
     switch (method) {
-      case "codex/agentMessageDelta":
+      case "thread/started":
+        this.handleThreadStarted(data);
+        return;
+      case "thread/name/updated":
+        if (sessionId) this.handleThreadNameUpdated(sessionId, data);
+        return;
+      case "thread/status/changed":
+        if (threadId) this.handleThreadStatusChanged(threadId, data);
+        return;
+      case "thread/closed":
+        if (threadId) this.handleThreadClosed(threadId);
+        return;
+      case "thread/tokenUsage/updated":
+        if (sessionId) this.handleTokenUsageUpdated(sessionId, data);
+        return;
+      case "turn/started":
+        if (sessionId) this.handleTurnStarted(sessionId, data);
+        return;
+      case "turn/completed":
+        if (sessionId) this.handleTurnCompleted(sessionId, data);
+        return;
+      case "turn/diff/updated":
+        if (sessionId) this.handleTurnDiffUpdated(sessionId, data);
+        return;
+      case "turn/plan/updated":
+        if (sessionId) this.handleTurnPlanUpdated(sessionId, data);
+        return;
+      case "item/started":
+        if (sessionId) this.handleItemStarted(sessionId, data);
+        return;
+      case "item/completed":
+        if (sessionId) this.handleItemCompleted(sessionId, data);
+        return;
+      case "item/agentMessage/delta":
         if (sessionId) this.handleAgentMessageDelta(sessionId, data);
-        break;
-
-      case "codex/reasoningTextDelta":
+        return;
+      case "item/plan/delta":
+        if (sessionId) this.handlePlanDelta(sessionId, data);
+        return;
+      case "item/reasoning/textDelta":
+      case "item/reasoning/summaryTextDelta":
         if (sessionId) this.handleReasoningDelta(sessionId, data);
-        break;
-
-      case "codex/execCommandBegin":
-        if (sessionId) this.handleExecBegin(sessionId, data);
-        break;
-
-      case "codex/execCommandEnd":
-        if (sessionId) this.handleExecEnd(sessionId, data);
-        break;
-
-      case "codex/commandExecutionOutputDelta":
-        if (sessionId) this.handleCommandOutputDelta(sessionId, data);
-        break;
-
-      case "codex/fileChange":
-        if (sessionId) this.handleFileChange(sessionId, data);
-        break;
-
-      case "codex/agentToolCallBegin":
-        if (sessionId) this.handleToolCallBegin(sessionId, data);
-        break;
-
-      case "codex/agentToolCallEnd":
-        if (sessionId) this.handleToolCallEnd(sessionId, data);
-        break;
-
-      case "codex/mcpToolCallBegin":
-        if (sessionId) this.handleToolCallBegin(sessionId, { ...data, item_type: "mcp_tool_call" });
-        break;
-
-      case "codex/mcpToolCallEnd":
-        if (sessionId) this.handleToolCallEnd(sessionId, data);
-        break;
-
-      case "codex/turnComplete":
-        if (sessionId) this.handleTurnComplete(sessionId, data);
-        break;
-
-      case "codex/turnFailed":
-        if (sessionId) this.handleTurnFailed(sessionId, data);
-        break;
-
+        return;
+      case "item/commandExecution/outputDelta":
+        if (sessionId) this.handleToolOutputDelta(sessionId, data);
+        return;
+      case "item/fileChange/outputDelta":
+        if (sessionId) this.handleFileChangeDelta(sessionId, data);
+        return;
+      case "item/mcpToolCall/progress":
+        if (sessionId) this.handleMcpProgress(sessionId, data);
+        return;
+      case "serverRequest/resolved":
+        this.handleServerRequestResolved(data);
+        return;
+      case "skills/changed":
+        this.handleSkillsChanged();
+        return;
+      case "model/rerouted":
+        if (sessionId) this.handleModelRerouted(sessionId, data);
+        return;
+      case "thread/compacted":
+        if (sessionId) this.handleContextCompacted(sessionId);
+        return;
+      case "error":
+        if (sessionId) this.handleTurnError(sessionId, data);
+        return;
       default:
-        codexLog.debug(`Unhandled notification: ${method}`);
+        codexLog.debug(`Unhandled Codex notification: ${method}`);
+        return;
+    }
+  }
+
+  private handleThreadStarted(data: Record<string, unknown>): void {
+    const thread = asRecord(data.thread);
+    const threadId = typeof thread.id === "string" ? thread.id : undefined;
+    if (!threadId) return;
+
+    const sessionId = this.threadToSession.get(threadId);
+    if (!sessionId) return;
+
+    this.registerThread(
+      sessionId,
+      threadId,
+      normalizeDirectory(typeof thread.cwd === "string" ? thread.cwd : this.sessionDirectories.get(sessionId) ?? ""),
+      typeof thread.name === "string" ? thread.name : undefined,
+      true,
+      typeof thread.createdAt === "string" || typeof thread.createdAt === "number" ? thread.createdAt : undefined,
+      typeof thread.updatedAt === "string" || typeof thread.updatedAt === "number" ? thread.updatedAt : undefined,
+    );
+  }
+
+  private handleThreadNameUpdated(sessionId: string, data: Record<string, unknown>): void {
+    const threadId = this.sessionToThread.get(sessionId);
+    if (!threadId) return;
+    const thread = this.threads.get(threadId);
+    if (!thread) return;
+
+    const title = typeof data.threadName === "string" && data.threadName ? data.threadName : undefined;
+    thread.title = title;
+    thread.updatedAt = Date.now();
+
+    this.emit("session.updated", {
+      session: {
+        id: sessionId,
+        engineType: this.engineType,
+        title,
+      },
+    });
+  }
+
+  private handleThreadStatusChanged(threadId: string, data: Record<string, unknown>): void {
+    const thread = this.threads.get(threadId);
+    if (!thread) return;
+    thread.loaded = true;
+    thread.updatedAt = Date.now();
+
+    const status = asRecord(data.status);
+    if (status.type === "notLoaded") {
+      thread.loaded = false;
+    }
+  }
+
+  private handleThreadClosed(threadId: string): void {
+    const thread = this.threads.get(threadId);
+    if (!thread) return;
+    thread.loaded = false;
+  }
+
+  private handleTokenUsageUpdated(sessionId: string, data: Record<string, unknown>): void {
+    const buffer = this.messageBuffers.get(sessionId);
+    if (!buffer) return;
+    applyTurnUsage(buffer, data.tokenUsage);
+  }
+
+  private handleTurnStarted(sessionId: string, data: Record<string, unknown>): void {
+    const buffer = this.ensureBuffer(sessionId);
+    const turn = asRecord(data.turn);
+    const turnId = typeof turn.id === "string" ? turn.id : undefined;
+    if (!turnId) return;
+
+    buffer.activeTurnId = turnId;
+    this.activeTurnIds.set(sessionId, turnId);
+    this.touchThread(sessionId);
+  }
+
+  private handleTurnCompleted(sessionId: string, data: Record<string, unknown>): void {
+    const turn = asRecord(data.turn);
+    const status = typeof turn.status === "string" ? turn.status : "completed";
+
+    if (status === "failed") {
+      this.failActiveTurn(sessionId, normalizeTurnError(turn.error) ?? "Turn failed", false);
+      return;
+    }
+    if (status === "interrupted") {
+      this.failActiveTurn(sessionId, "Cancelled", false);
+      return;
+    }
+
+    const buffer = this.messageBuffers.get(sessionId) ?? this.ensureBuffer(sessionId);
+    applyTurnMetadata(buffer, turn);
+    buffer.activeTurnId = typeof turn.id === "string" ? turn.id : buffer.activeTurnId;
+
+    const message = finalizeBufferToMessage(buffer);
+    this.appendMessageToHistory(sessionId, message);
+    this.emit("message.updated", { sessionId, message });
+    this.resolveTurnResolvers(sessionId, message);
+    this.finishTurn(sessionId);
+    this.processNextQueuedMessage(sessionId);
+  }
+
+  private handleTurnDiffUpdated(sessionId: string, data: Record<string, unknown>): void {
+    const buffer = this.messageBuffers.get(sessionId);
+    if (!buffer) return;
+    if (typeof data.diff !== "string") return;
+    buffer.engineMeta = {
+      ...(buffer.engineMeta ?? {}),
+      turnDiff: data.diff,
+    };
+  }
+
+  private handleTurnPlanUpdated(sessionId: string, data: Record<string, unknown>): void {
+    const buffer = this.ensureBuffer(sessionId);
+    const plan = Array.isArray(data.plan)
+      ? data.plan.map((step) => asRecord(step))
+      : [];
+    const markdown = formatTurnPlanMarkdown(
+      typeof data.explanation === "string" ? data.explanation : null,
+      plan.map((step) => ({
+        step: typeof step.step === "string" ? step.step : undefined,
+        status: typeof step.status === "string" ? step.status : undefined,
+      })),
+    );
+
+    const part = replacePlanText(buffer, markdown);
+    this.emit("message.part.updated", { sessionId, messageId: buffer.messageId, part });
+  }
+
+  private handleItemStarted(sessionId: string, data: Record<string, unknown>): void {
+    const buffer = this.ensureBuffer(sessionId);
+    const item = asRecord(data.item);
+    const itemType = typeof item.type === "string" ? item.type : "unknown";
+
+    switch (itemType) {
+      case "contextCompaction": {
+        const notice = createSystemNotice(buffer, "compact", "notice:context_compressed");
+        this.emit("message.part.updated", { sessionId, messageId: buffer.messageId, part: notice });
+        return;
+      }
+      case "enteredReviewMode": {
+        const notice = createSystemNotice(buffer, "info", "Entered review mode");
+        this.emit("message.part.updated", { sessionId, messageId: buffer.messageId, part: notice });
+        return;
+      }
+      case "exitedReviewMode": {
+        const notice = createSystemNotice(buffer, "info", "Exited review mode");
+        this.emit("message.part.updated", { sessionId, messageId: buffer.messageId, part: notice });
+        return;
+      }
+      case "agentMessage":
+      case "reasoning":
+      case "plan":
+      case "userMessage":
+      case "hookPrompt":
+        return;
+      default:
         break;
     }
+
+    const callId = typeof item.id === "string" ? item.id : timeId("call");
+    if (this.activeToolParts.has(callId)) return;
+
+    const { stepStart, toolPart } = createToolPart(buffer, callId, itemType, this.itemToToolParams(item));
+    this.activeToolParts.set(callId, toolPart);
+    this.emit("message.part.updated", { sessionId, messageId: buffer.messageId, part: stepStart });
+    this.emit("message.part.updated", { sessionId, messageId: buffer.messageId, part: toolPart });
+  }
+
+  private handleItemCompleted(sessionId: string, data: Record<string, unknown>): void {
+    const buffer = this.ensureBuffer(sessionId);
+    const item = asRecord(data.item);
+    const itemType = typeof item.type === "string" ? item.type : "unknown";
+
+    switch (itemType) {
+      case "agentMessage": {
+        const text = typeof item.text === "string" ? item.text : "";
+        if (text) {
+          const part = this.replaceTextPart(buffer, text);
+          this.emit("message.part.updated", { sessionId, messageId: buffer.messageId, part });
+        }
+        return;
+      }
+      case "reasoning": {
+        const content = [
+          ...extractStrings(item.summary),
+          ...extractStrings(item.content),
+        ].join("\n\n");
+        if (content) {
+          const part = this.replaceReasoningPart(buffer, content);
+          this.emit("message.part.updated", { sessionId, messageId: buffer.messageId, part });
+        }
+        return;
+      }
+      case "plan": {
+        const text = typeof item.text === "string" ? item.text : "";
+        const part = replacePlanText(buffer, text.startsWith("#") ? text : `## Plan\n\n${text}`.trimEnd());
+        this.emit("message.part.updated", { sessionId, messageId: buffer.messageId, part });
+        return;
+      }
+      case "contextCompaction": {
+        const notice = createSystemNotice(buffer, "compact", "notice:context_compressed");
+        this.emit("message.part.updated", { sessionId, messageId: buffer.messageId, part: notice });
+        return;
+      }
+      case "enteredReviewMode": {
+        const notice = createSystemNotice(buffer, "info", typeof item.review === "string" && item.review ? `Entered review mode: ${item.review}` : "Entered review mode");
+        this.emit("message.part.updated", { sessionId, messageId: buffer.messageId, part: notice });
+        return;
+      }
+      case "exitedReviewMode": {
+        const notice = createSystemNotice(buffer, "info", typeof item.review === "string" && item.review ? `Exited review mode: ${item.review}` : "Exited review mode");
+        this.emit("message.part.updated", { sessionId, messageId: buffer.messageId, part: notice });
+        return;
+      }
+      default:
+        break;
+    }
+
+    const callId = typeof item.id === "string" ? item.id : "";
+    let toolPart = callId ? this.activeToolParts.get(callId) : undefined;
+    if (!toolPart) {
+      const synthetic = createToolPart(buffer, callId || timeId("call"), itemType, this.itemToToolParams(item));
+      toolPart = synthetic.toolPart;
+      this.emit("message.part.updated", { sessionId, messageId: buffer.messageId, part: synthetic.stepStart });
+      this.emit("message.part.updated", { sessionId, messageId: buffer.messageId, part: toolPart });
+    }
+
+    completeToolPart(
+      toolPart,
+      this.itemToToolOutput(item),
+      normalizeItemToolError(item),
+      this.itemToToolMetadata(item),
+    );
+    if (callId) this.activeToolParts.delete(callId);
+
+    this.emit("message.part.updated", { sessionId, messageId: buffer.messageId, part: toolPart });
+    const stepFinish = createStepFinish(buffer);
+    this.emit("message.part.updated", { sessionId, messageId: buffer.messageId, part: stepFinish });
   }
 
   private handleAgentMessageDelta(sessionId: string, data: Record<string, unknown>): void {
     const buffer = this.ensureBuffer(sessionId);
-    const delta = (data.delta as string) ?? (data.text as string) ?? "";
+    const delta = typeof data.delta === "string" ? data.delta : "";
     if (!delta) return;
+    const part = appendTextDelta(buffer, delta);
+    this.emit("message.part.updated", { sessionId, messageId: buffer.messageId, part });
+  }
 
-    const textPart = appendTextDelta(buffer, delta);
-    this.emit("message.part.updated", {
-      sessionId,
-      messageId: buffer.messageId,
-      part: textPart,
-    });
+  private handlePlanDelta(sessionId: string, data: Record<string, unknown>): void {
+    const buffer = this.ensureBuffer(sessionId);
+    const delta = typeof data.delta === "string" ? data.delta : "";
+    if (!delta) return;
+    const part = appendPlanDelta(buffer, delta);
+    this.emit("message.part.updated", { sessionId, messageId: buffer.messageId, part });
   }
 
   private handleReasoningDelta(sessionId: string, data: Record<string, unknown>): void {
     const buffer = this.ensureBuffer(sessionId);
-    const delta = (data.delta as string) ?? (data.text as string) ?? "";
+    const delta = typeof data.delta === "string" ? data.delta : "";
+    if (!delta) return;
+    const part = appendReasoningDelta(buffer, delta);
+    this.emit("message.part.updated", { sessionId, messageId: buffer.messageId, part });
+  }
+
+  private handleToolOutputDelta(sessionId: string, data: Record<string, unknown>): void {
+    const itemId = typeof data.itemId === "string" ? data.itemId : "";
+    const toolPart = this.activeToolParts.get(itemId);
+    if (!toolPart || toolPart.state.status !== "running") return;
+    const delta = typeof data.delta === "string" ? data.delta : "";
     if (!delta) return;
 
-    const reasoningPart = appendReasoningDelta(buffer, delta);
-    this.emit("message.part.updated", {
-      sessionId,
-      messageId: buffer.messageId,
-      part: reasoningPart,
-    });
+    const input = toolPart.state.input as Record<string, unknown>;
+    input._output = `${typeof input._output === "string" ? input._output : ""}${delta}`;
+    this.emit("message.part.updated", { sessionId, messageId: toolPart.messageId, part: toolPart });
   }
 
-  private handleExecBegin(sessionId: string, data: Record<string, unknown>): void {
-    const buffer = this.ensureBuffer(sessionId);
-    const callId = (data.call_id as string) ?? (data.id as string) ?? timeId("call");
-    const command = data.command as string | undefined;
-    const itemType = "command_execution";
-
-    const { stepStart, toolPart } = createToolPart(buffer, callId, itemType, {
-      command: command ?? "",
-    });
-    this.activeToolParts.set(callId, toolPart);
-
-    this.emit("message.part.updated", { sessionId, messageId: buffer.messageId, part: stepStart });
-    this.emit("message.part.updated", { sessionId, messageId: buffer.messageId, part: toolPart });
-  }
-
-  private handleExecEnd(sessionId: string, data: Record<string, unknown>): void {
-    const buffer = this.ensureBuffer(sessionId);
-    const callId = (data.call_id as string) ?? (data.id as string) ?? "";
-    const toolPart = this.activeToolParts.get(callId);
+  private handleFileChangeDelta(sessionId: string, data: Record<string, unknown>): void {
+    const itemId = typeof data.itemId === "string" ? data.itemId : "";
+    const toolPart = this.activeToolParts.get(itemId);
     if (!toolPart) return;
+    const delta = typeof data.delta === "string" ? data.delta : "";
+    if (!delta) return;
 
-    const exitCode = data.exit_code as number | undefined;
-    // Use explicit output, or fall back to accumulated streaming output
-    const explicitOutput = data.output as string | undefined;
-    const accumulatedOutput = (toolPart.state.status === "running"
-      ? (toolPart.state.input as Record<string, unknown>)?._output as string
-      : undefined);
-    const output = explicitOutput || accumulatedOutput || "";
-    const error = exitCode !== 0 ? `Exit code: ${exitCode}` : undefined;
-
-    completeToolPart(toolPart, output, error);
-    this.activeToolParts.delete(callId);
-
-    this.emit("message.part.updated", { sessionId, messageId: buffer.messageId, part: toolPart });
-
-    const stepFinish = createStepFinish(buffer);
-    this.emit("message.part.updated", { sessionId, messageId: buffer.messageId, part: stepFinish });
+    toolPart.diff = `${toolPart.diff ?? ""}${delta}`;
+    this.emit("message.part.updated", { sessionId, messageId: toolPart.messageId, part: toolPart });
   }
 
-  private handleCommandOutputDelta(sessionId: string, data: Record<string, unknown>): void {
-    const buffer = this.ensureBuffer(sessionId);
-    const callId = (data.call_id as string) ?? (data.id as string) ?? "";
-    const toolPart = this.activeToolParts.get(callId);
-    if (!toolPart) return;
+  private handleMcpProgress(sessionId: string, data: Record<string, unknown>): void {
+    const itemId = typeof data.itemId === "string" ? data.itemId : "";
+    const toolPart = this.activeToolParts.get(itemId);
+    if (!toolPart || toolPart.state.status !== "running") return;
+    const message = typeof data.message === "string" ? data.message : "";
+    if (!message) return;
 
-    // Update running tool output incrementally
-    const delta = (data.delta as string) ?? "";
-    if (delta && toolPart.state.status === "running") {
-      // Append output to the tool's input (used for display)
-      const currentInput = toolPart.state.input as Record<string, unknown>;
-      currentInput._output = ((currentInput._output as string) ?? "") + delta;
-      this.emit("message.part.updated", { sessionId, messageId: buffer.messageId, part: toolPart });
+    const input = toolPart.state.input as Record<string, unknown>;
+    input._output = `${typeof input._output === "string" ? input._output : ""}${input._output ? "\n" : ""}${message}`;
+    this.emit("message.part.updated", { sessionId, messageId: toolPart.messageId, part: toolPart });
+  }
+
+  private handleServerRequestResolved(data: Record<string, unknown>): void {
+    const requestId = String(data.requestId ?? "");
+    if (!requestId) return;
+    this.pendingPermissions.delete(requestId);
+    this.pendingQuestions.delete(requestId);
+  }
+
+  private handleSkillsChanged(): void {
+    for (const directory of this.skillsByDirectory.keys()) {
+      this.refreshCommandsForDirectory(directory).catch((error) => {
+        codexLog.warn(`Failed to refresh skills for ${directory}:`, error);
+      });
     }
   }
 
-  private handleFileChange(sessionId: string, data: Record<string, unknown>): void {
-    const buffer = this.ensureBuffer(sessionId);
-    const callId = (data.call_id as string) ?? (data.id as string) ?? timeId("call");
-    const path = (data.path as string) ?? (data.file as string) ?? "";
-
-    const { stepStart, toolPart } = createToolPart(buffer, callId, "file_change", {
-      path,
-      diff: data.diff,
-    });
-
-    if (data.diff) {
-      toolPart.diff = data.diff as string;
-    }
-
-    // File changes are typically completed immediately
-    completeToolPart(toolPart, `Changed: ${path}`);
-
-    this.emit("message.part.updated", { sessionId, messageId: buffer.messageId, part: stepStart });
-    this.emit("message.part.updated", { sessionId, messageId: buffer.messageId, part: toolPart });
-
-    const stepFinish = createStepFinish(buffer);
-    this.emit("message.part.updated", { sessionId, messageId: buffer.messageId, part: stepFinish });
-  }
-
-  private handleToolCallBegin(sessionId: string, data: Record<string, unknown>): void {
-    const buffer = this.ensureBuffer(sessionId);
-    const callId = (data.call_id as string) ?? (data.id as string) ?? timeId("call");
-    const itemType = (data.item_type as string) ?? (data.type as string) ?? "unknown";
-    const args = data.arguments ?? data.params ?? {};
-
-    const { stepStart, toolPart } = createToolPart(buffer, callId, itemType, args);
-    this.activeToolParts.set(callId, toolPart);
-
-    this.emit("message.part.updated", { sessionId, messageId: buffer.messageId, part: stepStart });
-    this.emit("message.part.updated", { sessionId, messageId: buffer.messageId, part: toolPart });
-  }
-
-  private handleToolCallEnd(sessionId: string, data: Record<string, unknown>): void {
-    const buffer = this.ensureBuffer(sessionId);
-    const callId = (data.call_id as string) ?? (data.id as string) ?? "";
-    const toolPart = this.activeToolParts.get(callId);
-    if (!toolPart) return;
-
-    const output = data.output ?? data.result ?? "";
-    const error = data.error as string | undefined;
-
-    completeToolPart(toolPart, output, error);
-    this.activeToolParts.delete(callId);
-
-    this.emit("message.part.updated", { sessionId, messageId: buffer.messageId, part: toolPart });
-
-    const stepFinish = createStepFinish(buffer);
-    this.emit("message.part.updated", { sessionId, messageId: buffer.messageId, part: stepFinish });
-  }
-
-  private handleTurnFailed(sessionId: string, data: Record<string, unknown>): void {
-    const errorMessage = (data.error as string) ?? (data.message as string) ?? "Turn failed";
-    codexLog.error(`Turn failed for session ${sessionId}: ${errorMessage}`);
-
-    const buffer = this.messageBuffers.get(sessionId);
-    if (buffer) {
-      buffer.error = errorMessage;
-      const message = finalizeBufferToMessage(buffer);
-      this.messageBuffers.delete(sessionId);
-      this.emit("message.updated", { sessionId, message });
-
-      const resolver = this.sendResolvers.get(sessionId);
-      if (resolver) {
-        this.sendResolvers.delete(sessionId);
-        resolver.resolve(message);
-      }
-    } else {
-      // No buffer — create a minimal error message
-      const resolver = this.sendResolvers.get(sessionId);
-      if (resolver) {
-        this.sendResolvers.delete(sessionId);
-        const errorMsg: UnifiedMessage = {
-          id: timeId("msg"),
-          sessionId,
-          role: "assistant",
-          time: { created: Date.now(), completed: Date.now() },
-          parts: [],
-          error: errorMessage,
-        };
-        this.emit("message.updated", { sessionId, message: errorMsg });
-        resolver.resolve(errorMsg);
-      }
-    }
-
-    // Process next queued message if any
-    this.processNextQueuedMessage(sessionId);
-  }
-
-  private handleTurnComplete(sessionId: string, data: Record<string, unknown>): void {
+  private handleModelRerouted(sessionId: string, data: Record<string, unknown>): void {
     const buffer = this.messageBuffers.get(sessionId);
     if (!buffer) return;
-
-    // Extract token usage if available
-    if (data.usage && typeof data.usage === "object") {
-      const usage = data.usage as Record<string, unknown>;
-      const cacheRead = (usage.cache_read_tokens as number) ?? (usage.cached_tokens as number) ?? 0;
-      const cacheWrite = (usage.cache_write_tokens as number) ?? 0;
-      buffer.tokens = {
-        input: (usage.input_tokens as number) ?? (usage.prompt_tokens as number) ?? 0,
-        output: (usage.output_tokens as number) ?? (usage.completion_tokens as number) ?? 0,
-        ...(cacheRead || cacheWrite ? { cache: { read: cacheRead, write: cacheWrite } } : {}),
-      };
+    if (typeof data.toModel === "string" && data.toModel) {
+      buffer.modelId = data.toModel;
     }
-
-    // Extract cost if available (USD)
-    if (typeof data.cost === "number") {
-      buffer.cost = data.cost;
-      buffer.costUnit = "usd";
-    }
-
-    // Extract model info if available
-    if (data.model) {
-      buffer.modelId = data.model as string;
-    }
-
-    // Finalize and emit
-    const message = finalizeBufferToMessage(buffer);
-    this.messageBuffers.delete(sessionId);
-
-    this.emit("message.updated", { sessionId, message });
-
-    // Resolve the send promise
-    const resolver = this.sendResolvers.get(sessionId);
-    if (resolver) {
-      this.sendResolvers.delete(sessionId);
-      resolver.resolve(message);
-    }
-
-    codexLog.debug(`Turn completed for session ${sessionId}`);
-
-    // Process next queued message if any
-    this.processNextQueuedMessage(sessionId);
   }
 
-  // --- Server Request Handling (blocking requests from Codex) ---
+  private handleContextCompacted(sessionId: string): void {
+    const buffer = this.messageBuffers.get(sessionId);
+    if (!buffer) return;
+    const notice = createSystemNotice(buffer, "compact", "notice:context_compressed");
+    this.emit("message.part.updated", { sessionId, messageId: buffer.messageId, part: notice });
+  }
+
+  private handleTurnError(sessionId: string, data: Record<string, unknown>): void {
+    const error = normalizeTurnError(data.error) ?? "Turn failed";
+    this.failActiveTurn(sessionId, error, false);
+  }
 
   private handleServerRequest(id: number | string, method: string, params: unknown): void {
-    const data = (params ?? {}) as Record<string, unknown>;
-    const threadId = data.thread_id as string | undefined;
-    const sessionId = threadId ? this.threadToSession.get(threadId) : undefined;
+    const requestId = String(id);
+    const sessionId = this.resolveSessionIdForRequest(method, params);
 
-    // Approval requests
-    if (
-      method === "codex/approvalRequest" ||
-      method === "codex/fileApprovalRequest" ||
-      method === "codex/execApprovalRequest" ||
-      method === "codex/mcpApprovalRequest" ||
-      method === "codex/backgroundApprovalRequest"
-    ) {
-      if (!sessionId) {
-        this.client?.respond(id, { approved: false });
-        return;
-      }
-      this.handleApprovalRequest(sessionId, id, method, params);
+    if (!sessionId) {
+      this.client?.respondError(id, -32000, `Cannot resolve session for server request ${method}`);
       return;
     }
 
-    // Confirmation request
-    if (method === "codex/askForConfirmation") {
-      if (!sessionId) {
-        this.client?.respond(id, { answer: "no" });
+    switch (method) {
+      case "item/commandExecution/requestApproval":
+      case "item/fileChange/requestApproval":
+      case "item/permissions/requestApproval":
+      case "execCommandApproval":
+      case "applyPatchApproval": {
+        const permission = convertApprovalToPermission(sessionId, requestId, method, params);
+        this.pendingPermissions.set(requestId, { requestId: id, sessionId, method, params, permission });
+        this.emit("permission.asked", { permission });
         return;
       }
-      this.handleConfirmationRequest(sessionId, id, params);
-      return;
-    }
-
-    // Unknown request — respond with error
-    codexLog.warn(`Unhandled server request: ${method}`);
-    this.client?.respondError(id, -32601, `Method not supported: ${method}`);
-  }
-
-  private handleApprovalRequest(
-    sessionId: string,
-    requestId: number | string,
-    method: string,
-    params: unknown,
-  ): void {
-    const permission = convertApprovalToPermission(sessionId, requestId, method, params);
-
-    // Store pending interaction
-    this.pendingPermissions.set(String(requestId), {
-      sessionId,
-      resolve: () => {}, // Resolved via replyPermission
-      reject: (err) => {
-        codexLog.debug(`Permission ${requestId} rejected:`, err.message);
-      },
-    });
-
-    this.emit("permission.asked", { permission });
-  }
-
-  private handleConfirmationRequest(
-    sessionId: string,
-    requestId: number | string,
-    params: unknown,
-  ): void {
-    const question = convertConfirmationToQuestion(sessionId, requestId, params);
-
-    // Store pending interaction
-    this.pendingQuestions.set(String(requestId), {
-      sessionId,
-      resolve: () => {}, // Resolved via replyQuestion
-      reject: (err) => {
-        codexLog.debug(`Question ${requestId} rejected:`, err.message);
-      },
-    });
-
-    this.emit("question.asked", { question });
-  }
-
-  // --- Session Cleanup ---
-
-  /**
-   * After a reconnect, re-create Codex threads for all active sessions.
-   * Updates the bidirectional session↔thread mappings with new thread IDs.
-   */
-  private async recreateActiveThreads(): Promise<void> {
-    const entries = Array.from(this.sessionToThread.entries());
-    if (entries.length === 0) return;
-
-    codexLog.info(`Re-creating ${entries.length} active thread(s) after reconnect...`);
-
-    for (const [sessionId, oldThreadId] of entries) {
-      const info = this.threads.get(oldThreadId);
-      if (!info) continue;
-
-      try {
-        const result = await this.client!.request("codex/threadStart", {
-          instructions: CODEMUX_IDENTITY_PROMPT,
-        }) as { thread_id: string };
-
-        const newThreadId = result.thread_id;
-
-        // Update mappings
-        this.threadToSession.delete(oldThreadId);
-        this.threads.delete(oldThreadId);
-
-        this.sessionToThread.set(sessionId, newThreadId);
-        this.threadToSession.set(newThreadId, sessionId);
-        this.threads.set(newThreadId, {
-          threadId: newThreadId,
-          directory: info.directory,
-          createdAt: info.createdAt,
-          lastUsedAt: Date.now(),
-        });
-
-        codexLog.info(`Session ${sessionId}: thread ${oldThreadId} → ${newThreadId}`);
-      } catch (err: any) {
-        codexLog.error(`Failed to re-create thread for session ${sessionId}:`, err);
+      case "item/tool/requestUserInput": {
+        const question = convertUserInputToQuestion(sessionId, requestId, params);
+        this.pendingQuestions.set(requestId, { requestId: id, sessionId, params, question });
+        this.emit("question.asked", { question });
+        return;
       }
+      default:
+        this.client?.respondError(id, -32601, `CodeMux does not support ${method}`);
     }
   }
 
-  private startSessionCleanup(): void {
-    if (this.cleanupIntervalId) return;
+  private resolveSessionIdForRequest(method: string, params: unknown): string | undefined {
+    const data = asRecord(params);
 
-    this.cleanupIntervalId = setInterval(() => {
-      const now = Date.now();
-      for (const [sessionId, threadId] of Array.from(this.sessionToThread.entries())) {
-        // Skip sessions with active turns
-        if (this.sendResolvers.has(sessionId)) {
-          const info = this.threads.get(threadId);
-          if (info) info.lastUsedAt = now;
-          continue;
-        }
-
-        const info = this.threads.get(threadId);
-        if (!info) continue;
-
-        if (now - info.lastUsedAt > SESSION_IDLE_TIMEOUT_MS) {
-          this.cleanupSession(sessionId, "idle timeout (30 min)");
-        }
-      }
-    }, 60_000); // Check every minute
-  }
-
-  private stopSessionCleanup(): void {
-    if (this.cleanupIntervalId) {
-      clearInterval(this.cleanupIntervalId);
-      this.cleanupIntervalId = null;
+    if (method === "execCommandApproval" || method === "applyPatchApproval") {
+      const conversationId = typeof data.conversationId === "string" ? data.conversationId : undefined;
+      return conversationId ? this.threadToSession.get(conversationId) ?? toEngineSessionId(conversationId) : undefined;
     }
+
+    const threadId = typeof data.threadId === "string" ? data.threadId : undefined;
+    if (!threadId) return undefined;
+    return this.threadToSession.get(threadId) ?? toEngineSessionId(threadId);
   }
 
-  private cleanupSession(sessionId: string, reason: string): void {
-    codexLog.info(`Cleaning up session ${sessionId}: ${reason}`);
+  private buildPromptInput(content: MessagePromptContent[]): { input: CodexTurnInput[]; tempDirs: string[]; displayText: string } {
+    const text = content
+      .filter((item): item is { type: "text"; text: string } => item.type === "text" && typeof item.text === "string")
+      .map((item) => item.text)
+      .join("\n")
+      .trim();
+    const images = content.filter((item): item is { type: "image"; data: string; mimeType?: string } => item.type === "image" && typeof item.data === "string");
 
-    this.rejectPendingForSession(sessionId, reason);
-
-    const threadId = this.sessionToThread.get(sessionId);
-    if (threadId) {
-      this.threadToSession.delete(threadId);
-      this.threads.delete(threadId);
+    if (!text && images.length === 0) {
+      throw new Error("Message content cannot be empty");
     }
-    this.sessionToThread.delete(sessionId);
-    this.sessionModes.delete(sessionId);
-    this.sessionModels.delete(sessionId);
-    this.sessionReasoningEfforts.delete(sessionId);
-    this.sessionDirectories.delete(sessionId);
-    this.messageBuffers.delete(sessionId);
-  }
 
-  // --- Buffer Management ---
-
-  /**
-   * Build the content array for a TurnStart request, supporting text + images.
-   */
-  private buildTurnContent(
-    text: string,
-    imageContents: MessagePromptContent[],
-  ): unknown[] {
-    const turnContent: unknown[] = [];
+    const input: CodexTurnInput[] = [];
+    const tempDirs: string[] = [];
 
     if (text) {
-      turnContent.push({ type: "input_text", text });
+      input.push({ type: "text", text, text_elements: [] });
     }
 
-    for (const img of imageContents) {
-      if (img.data) {
-        // Codex accepts base64 data URIs for images
-        const mimeType = img.mimeType ?? "image/png";
-        turnContent.push({
-          type: "input_image",
-          image_url: `data:${mimeType};base64,${img.data}`,
-        });
-      }
+    for (const image of images) {
+      const tempDir = mkdtempSync(join(tmpdir(), "codemux-codex-img-"));
+      const extension = image.mimeType?.split("/")[1] ?? "png";
+      const tempPath = join(tempDir, `image.${extension}`);
+      writeFileSync(tempPath, Buffer.from(image.data, "base64"));
+      tempDirs.push(tempDir);
+      input.push({ type: "localImage", path: tempPath });
     }
 
-    return turnContent;
+    return {
+      input,
+      tempDirs,
+      displayText: text || "(image)",
+    };
   }
 
-  /**
-   * Process the next queued message for a session after a turn completes.
-   */
-  private processNextQueuedMessage(sessionId: string): void {
+  private async startPreparedTurn(
+    sessionId: string,
+    input: CodexTurnInput[],
+    userMessage: UnifiedMessage,
+    tempDirs: string[],
+    options: {
+      mode?: string;
+      modelId?: string;
+      reasoningEffort?: ReasoningEffort | null;
+      directory?: string;
+    } | undefined,
+    emitQueuedConsumed: boolean,
+  ): Promise<UnifiedMessage> {
+    const directory = normalizeDirectory(options?.directory ?? this.sessionDirectories.get(sessionId) ?? this.threads.get(this.sessionToThread.get(sessionId) ?? "")?.directory ?? "");
+    const threadId = await this.ensureThreadLoaded(sessionId, directory);
+    const modeId = options?.mode ?? this.sessionModes.get(sessionId) ?? this.currentMode;
+    const modelId = options?.modelId ?? this.sessionModels.get(sessionId) ?? this.currentModelId;
+    const reasoningEffort = options?.reasoningEffort ?? this.sessionReasoningEfforts.get(sessionId) ?? null;
+    const approvalPolicy = clampApprovalPolicy(modeToApprovalPolicy(modeId), this.configRequirements);
+    const sandboxPolicy = clampSandboxPolicy(modeToSandboxPolicy(modeId, directory), this.configRequirements);
+
+    const buffer = this.createMessageBuffer(sessionId, directory, threadId);
+    this.messageBuffers.set(sessionId, buffer);
+    this.activeTempDirs.set(sessionId, [...tempDirs]);
+
+    if (emitQueuedConsumed) {
+      this.emit("message.queued.consumed", { sessionId, messageId: userMessage.id });
+    }
+    this.appendMessageToHistory(sessionId, userMessage);
+    this.emit("message.updated", { sessionId, message: userMessage });
+
+    return new Promise<UnifiedMessage>((resolve, reject) => {
+      this.pushTurnResolver(sessionId, { resolve, reject });
+      this.touchThread(sessionId);
+
+      void this.client!.request("turn/start", {
+        threadId,
+        input,
+        cwd: directory,
+        approvalPolicy,
+        sandboxPolicy,
+        model: modelId,
+        effort: reasoningEffort ? toCodexEffort(reasoningEffort) : undefined,
+        collaborationMode: {
+          mode: modeId,
+          settings: {
+            model: modelId,
+            reasoning_effort: reasoningEffort ? toCodexEffort(reasoningEffort) : null,
+            developer_instructions: null,
+          },
+        },
+      }, START_TIMEOUT_MS)
+        .then((response) => {
+          const result = asRecord(response) as TurnResponse;
+          const turnId = typeof result.turn?.id === "string"
+            ? result.turn.id
+            : typeof result.turnId === "string"
+              ? result.turnId
+              : undefined;
+          if (turnId) {
+            this.activeTurnIds.set(sessionId, turnId);
+            buffer.activeTurnId = turnId;
+          }
+          buffer.modelId = modelId;
+          buffer.reasoningEffort = reasoningEffort ?? undefined;
+        })
+        .catch((error) => {
+          codexLog.error(`Failed to start turn for ${sessionId}:`, error);
+          this.failActiveTurn(sessionId, error instanceof Error ? error.message : String(error), false);
+        });
+    });
+  }
+
+  private async steerTurn(
+    sessionId: string,
+    input: CodexTurnInput[],
+    userMessage: UnifiedMessage,
+    tempDirs: string[],
+    options: {
+      mode?: string;
+      modelId?: string;
+      reasoningEffort?: ReasoningEffort | null;
+      directory?: string;
+    } | undefined,
+  ): Promise<UnifiedMessage> {
+    const threadId = this.sessionToThread.get(sessionId);
+    const activeTurnId = this.activeTurnIds.get(sessionId);
+    if (!threadId || !activeTurnId || !this.client?.running) {
+      return this.enqueueMessage(sessionId, input, userMessage, tempDirs, options);
+    }
+
+    try {
+      await this.client.request("turn/steer", {
+        threadId,
+        input,
+        expectedTurnId: activeTurnId,
+      }, START_TIMEOUT_MS);
+
+      this.appendMessageToHistory(sessionId, userMessage);
+      this.emit("message.updated", { sessionId, message: userMessage });
+      const existing = this.activeTempDirs.get(sessionId) ?? [];
+      this.activeTempDirs.set(sessionId, [...existing, ...tempDirs]);
+      this.touchThread(sessionId);
+
+      return new Promise<UnifiedMessage>((resolve, reject) => {
+        this.pushTurnResolver(sessionId, { resolve, reject });
+      });
+    } catch (error) {
+      codexLog.warn(`turn/steer failed for ${sessionId}, falling back to queue:`, error);
+      return this.enqueueMessage(sessionId, input, userMessage, tempDirs, options);
+    }
+  }
+
+  private async enqueueMessage(
+    sessionId: string,
+    input: CodexTurnInput[],
+    userMessage: UnifiedMessage,
+    tempDirs: string[],
+    options: {
+      mode?: string;
+      modelId?: string;
+      reasoningEffort?: ReasoningEffort | null;
+      directory?: string;
+    } | undefined,
+  ): Promise<UnifiedMessage> {
+    return new Promise<UnifiedMessage>((resolve, reject) => {
+      const queue = this.messageQueues.get(sessionId) ?? [];
+      queue.push({
+        input,
+        userMessage,
+        tempDirs,
+        options,
+        resolver: { resolve, reject },
+      });
+      this.messageQueues.set(sessionId, queue);
+
+      this.emit("message.queued", {
+        sessionId,
+        messageId: userMessage.id,
+        queuePosition: queue.length,
+      });
+    });
+  }
+
+  private async processNextQueuedMessage(sessionId: string): Promise<void> {
+    if (this.hasActiveTurn(sessionId)) return;
+
     const queue = this.messageQueues.get(sessionId);
     if (!queue || queue.length === 0) return;
 
-    const next = queue.shift()!;
+    const next = queue.shift();
+    if (!next) return;
     if (queue.length === 0) {
       this.messageQueues.delete(sessionId);
     }
 
-    // Emit the deferred user message
-    this.emit("message.queued.consumed", {
-      sessionId,
-      messageId: next.userMessage.id,
-    });
-    this.emit("message.updated", { sessionId, message: next.userMessage });
-
-    // Extract content
-    const textContent = next.content
-      .filter((c): c is { type: "text"; text: string } => c.type === "text" && !!c.text)
-      .map((c) => c.text)
-      .join("\n");
-    const imageContents = next.content.filter((c) => c.type === "image" && c.data);
-
-    // Create new buffer
-    const buffer = this.createMessageBuffer(sessionId);
-
-    // Apply options
-    const threadId = this.sessionToThread.get(sessionId);
-    if (!threadId) {
-      next.resolver.reject(new Error("No thread found"));
-      return;
+    try {
+      const message = await this.startPreparedTurn(
+        sessionId,
+        next.input,
+        next.userMessage,
+        next.tempDirs,
+        next.options,
+        true,
+      );
+      next.resolver.resolve(message);
+    } catch (error) {
+      this.cleanupTempDirs(next.tempDirs);
+      next.resolver.reject(error instanceof Error ? error : new Error(String(error)));
     }
-
-    const modeId = next.options?.mode ?? this.sessionModes.get(sessionId) ?? this.currentMode;
-    const modelId = next.options?.modelId ?? this.sessionModels.get(sessionId) ?? this.currentModelId;
-    const turnContent = this.buildTurnContent(textContent, imageContents);
-
-    // Register resolver
-    this.sendResolvers.set(sessionId, next.resolver);
-
-    const turnParams: Record<string, unknown> = {
-      thread_id: threadId,
-      content: turnContent,
-      model: modelId,
-      approval_policy: modeToApprovalPolicy(modeId),
-    };
-
-    const effort = next.options?.reasoningEffort ?? this.sessionReasoningEfforts.get(sessionId);
-    if (effort) {
-      turnParams.reasoning = { effort };
-    }
-
-    this.client!.request("codex/turnStart", turnParams, 120_000).catch((err: Error) => {
-      codexLog.error(`TurnStart (queued) failed for session ${sessionId}:`, err);
-      const resolver = this.sendResolvers.get(sessionId);
-      if (resolver) {
-        this.sendResolvers.delete(sessionId);
-        buffer.error = err.message;
-        resolver.resolve(finalizeBufferToMessage(buffer));
-      }
-    });
   }
 
-  private createMessageBuffer(sessionId: string): MessageBuffer {
-    const buffer: MessageBuffer = {
+  private createMessageBuffer(sessionId: string, directory: string, threadId: string): MessageBuffer {
+    return {
       messageId: timeId("msg"),
       sessionId,
       parts: [],
@@ -1492,57 +1673,545 @@ export class CodexAdapter extends EngineAdapter {
       textPartId: null,
       reasoningAccumulator: "",
       reasoningPartId: null,
+      planAccumulator: undefined,
+      planPartId: null,
       startTime: Date.now(),
+      workingDirectory: directory,
+      activeTurnId: this.activeTurnIds.get(sessionId),
+      engineMeta: { codexThreadId: threadId },
     };
+  }
+
+  private ensureBuffer(sessionId: string): MessageBuffer {
+    const existing = this.messageBuffers.get(sessionId);
+    if (existing) return existing;
+
+    const threadId = this.sessionToThread.get(sessionId) ?? resolveThreadId(sessionId);
+    const directory = this.sessionDirectories.get(sessionId) ?? this.threads.get(threadId ?? "")?.directory ?? ".";
+    const buffer = this.createMessageBuffer(sessionId, directory, threadId ?? "");
     this.messageBuffers.set(sessionId, buffer);
     return buffer;
   }
 
-  private ensureBuffer(sessionId: string): MessageBuffer {
-    let buffer = this.messageBuffers.get(sessionId);
-    if (!buffer) {
-      buffer = this.createMessageBuffer(sessionId);
-    }
-    return buffer;
+  private replaceTextPart(buffer: MessageBuffer, text: string) {
+    buffer.textAccumulator = text;
+    buffer.leadingTrimmed = true;
+    if (!buffer.textPartId) buffer.textPartId = timeId("part");
+    const part = {
+      id: buffer.textPartId,
+      messageId: buffer.messageId,
+      sessionId: buffer.sessionId,
+      type: "text" as const,
+      text,
+    };
+    upsertPart(buffer.parts, part);
+    return part;
   }
 
-  // --- Cleanup Helpers ---
+  private replaceReasoningPart(buffer: MessageBuffer, text: string) {
+    buffer.reasoningAccumulator = text;
+    if (!buffer.reasoningPartId) buffer.reasoningPartId = timeId("part");
+    const part = {
+      id: buffer.reasoningPartId,
+      messageId: buffer.messageId,
+      sessionId: buffer.sessionId,
+      type: "reasoning" as const,
+      text,
+    };
+    upsertPart(buffer.parts, part);
+    return part;
+  }
 
-  private rejectAllPendingPermissions(reason: string): void {
+  private itemToToolParams(item: Record<string, unknown>): Record<string, unknown> {
+    const type = typeof item.type === "string" ? item.type : "unknown";
+    switch (type) {
+      case "commandExecution":
+        return {
+          command: item.command,
+          cwd: item.cwd,
+          commandActions: item.commandActions,
+        };
+      case "fileChange":
+        return { changes: item.changes };
+      case "mcpToolCall":
+        return { server: item.server, tool: item.tool, arguments: item.arguments };
+      case "dynamicToolCall":
+        return { tool: item.tool, arguments: item.arguments };
+      case "collabAgentToolCall":
+        return {
+          tool: item.tool,
+          prompt: item.prompt,
+          description: typeof item.tool === "string" ? `Delegating via ${item.tool}` : "Delegating task",
+        };
+      case "webSearch":
+        return { query: item.query, action: item.action };
+      case "imageView":
+        return { path: item.path };
+      case "imageGeneration":
+        return { description: item.revisedPrompt ?? "Generating image", savedPath: item.savedPath };
+      default:
+        return {};
+    }
+  }
+
+  private itemToToolOutput(item: Record<string, unknown>): unknown {
+    const type = typeof item.type === "string" ? item.type : "unknown";
+    switch (type) {
+      case "commandExecution":
+        return item.aggregatedOutput ?? "";
+      case "fileChange": {
+        const changes = Array.isArray(item.changes) ? item.changes : [];
+        return changes
+          .map((change) => asRecord(change))
+          .map((change) => typeof change.path === "string" ? change.path : "")
+          .filter(Boolean)
+          .join("\n");
+      }
+      case "mcpToolCall":
+        return item.result ?? "";
+      case "dynamicToolCall":
+        return item.contentItems ?? item.result ?? "";
+      case "collabAgentToolCall":
+        return { receiverThreadIds: item.receiverThreadIds, agentsStates: item.agentsStates };
+      case "webSearch":
+        return item.query ?? "";
+      case "imageView":
+        return item.path ?? "";
+      case "imageGeneration":
+        return item.savedPath ?? item.result ?? "";
+      default:
+        return "";
+    }
+  }
+
+  private itemToToolMetadata(item: Record<string, unknown>): Record<string, unknown> | undefined {
+    const type = typeof item.type === "string" ? item.type : "unknown";
+    if (type === "fileChange") {
+      const changes = Array.isArray(item.changes) ? item.changes : [];
+      const diff = changes
+        .map((change) => asRecord(change))
+        .map((change) => typeof change.diff === "string" ? change.diff : "")
+        .filter(Boolean)
+        .join("\n");
+      return diff ? { diff } : undefined;
+    }
+    return undefined;
+  }
+
+  private async startThread(directory: string): Promise<ThreadResponse> {
+    const modeId = this.currentMode;
+    const approvalPolicy = clampApprovalPolicy(modeToApprovalPolicy(modeId), this.configRequirements);
+    const sandboxMode = clampSandboxMode(modeToSandboxMode(modeId), this.configRequirements);
+    const response = asRecord(await this.client!.request("thread/start", {
+      cwd: directory,
+      model: this.currentModelId,
+      approvalPolicy,
+      sandbox: sandboxMode,
+      baseInstructions: CODEMUX_IDENTITY_PROMPT,
+      serviceName: "codemux",
+      experimentalRawEvents: false,
+      persistExtendedHistory: true,
+    })) as ThreadResponse;
+
+    return response;
+  }
+
+  private async resumeThread(threadId: string, directory: string): Promise<ThreadResponse> {
+    const sessionId = toEngineSessionId(threadId);
+    const modeId = this.sessionModes.get(sessionId) ?? this.currentMode;
+    const approvalPolicy = clampApprovalPolicy(modeToApprovalPolicy(modeId), this.configRequirements);
+    const sandboxMode = clampSandboxMode(modeToSandboxMode(modeId), this.configRequirements);
+    const modelId = this.sessionModels.get(sessionId) ?? this.currentModelId;
+
+    const response = asRecord(await this.client!.request("thread/resume", {
+      threadId,
+      cwd: directory,
+      model: modelId,
+      approvalPolicy,
+      sandbox: sandboxMode,
+      baseInstructions: CODEMUX_IDENTITY_PROMPT,
+      persistExtendedHistory: true,
+    })) as ThreadResponse;
+
+    return response;
+  }
+
+  private async ensureThreadLoaded(sessionId: string, directory: string): Promise<string> {
+    if (!this.client?.running) {
+      throw new Error("Codex client is not running");
+    }
+
+    const threadId = this.sessionToThread.get(sessionId) ?? resolveThreadId(sessionId);
+    if (!threadId) {
+      throw new Error(`No Codex thread found for session ${sessionId}`);
+    }
+
+    const thread = this.threads.get(threadId);
+    if (thread?.loaded) {
+      return threadId;
+    }
+
+    const response = await this.resumeThread(threadId, directory);
+    this.registerThread(
+      sessionId,
+      threadId,
+      directory,
+      response.thread?.name ?? thread?.title,
+      true,
+      response.thread?.createdAt ?? thread?.createdAt,
+      response.thread?.updatedAt ?? thread?.updatedAt,
+    );
+    return threadId;
+  }
+
+  private pushTurnResolver(sessionId: string, resolver: SendResolver): void {
+    const resolvers = this.turnResolvers.get(sessionId) ?? [];
+    resolvers.push(resolver);
+    this.turnResolvers.set(sessionId, resolvers);
+  }
+
+  private resolveTurnResolvers(sessionId: string, message: UnifiedMessage): void {
+    const resolvers = this.turnResolvers.get(sessionId) ?? [];
+    this.turnResolvers.delete(sessionId);
+    for (const resolver of resolvers) {
+      resolver.resolve(message);
+    }
+  }
+
+  private rejectQueuedMessages(reason: string): void {
+    for (const [sessionId] of this.messageQueues) {
+      this.rejectQueuedMessagesForSession(sessionId, reason);
+    }
+  }
+
+  private rejectQueuedMessagesForSession(sessionId: string, reason: string): void {
+    const queue = this.messageQueues.get(sessionId);
+    if (!queue) return;
+    this.messageQueues.delete(sessionId);
+    for (const queued of queue) {
+      this.cleanupTempDirs(queued.tempDirs);
+      queued.resolver.reject(new Error(reason));
+    }
+  }
+
+  private rejectPendingInteractions(reason: string): void {
     for (const [id, pending] of this.pendingPermissions) {
-      pending.reject(new Error(reason));
+      this.pendingPermissions.delete(id);
+      this.emit("permission.replied", { permissionId: id, optionId: "reject_once" });
+      codexLog.debug(`Dropped pending permission ${id}: ${reason}`);
+      void pending;
     }
-    this.pendingPermissions.clear();
-  }
-
-  private rejectAllPendingQuestions(reason: string): void {
-    for (const [id, pending] of this.pendingQuestions) {
-      pending.reject(new Error(reason));
+    for (const id of this.pendingQuestions.keys()) {
+      this.pendingQuestions.delete(id);
+      codexLog.debug(`Dropped pending question ${id}: ${reason}`);
     }
-    this.pendingQuestions.clear();
   }
 
   private rejectPendingForSession(sessionId: string, reason: string): void {
     for (const [id, pending] of this.pendingPermissions) {
-      if (pending.sessionId === sessionId) {
-        // Respond to JSON-RPC so Codex doesn't hang
-        const requestId = parseInt(id, 10) || id;
-        if (this.client?.running) {
-          this.client.respond(requestId as number | string, { approved: false });
-        }
-        pending.reject(new Error(reason));
-        this.pendingPermissions.delete(id);
-      }
+      if (pending.sessionId !== sessionId) continue;
+      this.pendingPermissions.delete(id);
+      this.emit("permission.replied", { permissionId: id, optionId: "reject_once" });
+      codexLog.debug(`Dropped pending permission ${id}: ${reason}`);
     }
     for (const [id, pending] of this.pendingQuestions) {
-      if (pending.sessionId === sessionId) {
-        const requestId = parseInt(id, 10) || id;
-        if (this.client?.running) {
-          this.client.respondError(requestId as number | string, -1, reason);
-        }
-        pending.reject(new Error(reason));
-        this.pendingQuestions.delete(id);
+      if (pending.sessionId !== sessionId) continue;
+      this.pendingQuestions.delete(id);
+      codexLog.debug(`Dropped pending question ${id}: ${reason}`);
+    }
+  }
+
+  private failAllInFlight(errorMessage: string): void {
+    for (const sessionId of this.messageBuffers.keys()) {
+      this.failActiveTurn(sessionId, errorMessage, false);
+    }
+  }
+
+  private failActiveTurn(sessionId: string, errorMessage: string, staleSession: boolean): void {
+    const buffer = this.messageBuffers.get(sessionId) ?? this.ensureBuffer(sessionId);
+    buffer.error = errorMessage;
+    const message: UnifiedMessage = {
+      ...finalizeBufferToMessage(buffer),
+      staleSession,
+    };
+
+    this.appendMessageToHistory(sessionId, message);
+    this.emit("message.updated", { sessionId, message });
+    this.resolveTurnResolvers(sessionId, message);
+    this.finishTurn(sessionId);
+    void this.processNextQueuedMessage(sessionId);
+  }
+
+  private finishTurn(sessionId: string): void {
+    this.messageBuffers.delete(sessionId);
+    this.activeTurnIds.delete(sessionId);
+
+    const tempDirs = this.activeTempDirs.get(sessionId);
+    if (tempDirs) {
+      this.cleanupTempDirs(tempDirs);
+      this.activeTempDirs.delete(sessionId);
+    }
+  }
+
+  private hasActiveTurn(sessionId: string): boolean {
+    return this.activeTurnIds.has(sessionId) || this.messageBuffers.has(sessionId) || (this.turnResolvers.get(sessionId)?.length ?? 0) > 0;
+  }
+
+  private canSteer(
+    sessionId: string,
+    options: {
+      mode?: string;
+      modelId?: string;
+      reasoningEffort?: ReasoningEffort | null;
+      directory?: string;
+    } | undefined,
+    directory: string,
+  ): boolean {
+    const requestedMode = options?.mode ?? this.sessionModes.get(sessionId) ?? this.currentMode;
+    const requestedModel = options?.modelId ?? this.sessionModels.get(sessionId) ?? this.currentModelId;
+    const requestedEffort = options?.reasoningEffort ?? this.sessionReasoningEfforts.get(sessionId) ?? null;
+    const sessionDirectory = normalizeDirectory(this.sessionDirectories.get(sessionId) ?? directory);
+
+    return requestedMode === (this.sessionModes.get(sessionId) ?? this.currentMode)
+      && requestedModel === (this.sessionModels.get(sessionId) ?? this.currentModelId)
+      && requestedEffort === (this.sessionReasoningEfforts.get(sessionId) ?? null)
+      && directory === sessionDirectory;
+  }
+
+  private registerThread(
+    sessionId: string,
+    threadId: string,
+    directory: string,
+    title: string | undefined,
+    loaded: boolean,
+    createdAt?: string | number,
+    updatedAt?: string | number,
+  ): void {
+    const normalizedDirectory = normalizeDirectory(directory);
+    this.sessionToThread.set(sessionId, threadId);
+    this.threadToSession.set(threadId, sessionId);
+    this.sessionDirectories.set(sessionId, normalizedDirectory);
+
+    const existing = this.threads.get(threadId);
+    const now = Date.now();
+    this.threads.set(threadId, {
+      threadId,
+      directory: normalizedDirectory,
+      createdAt: toMillis(createdAt, existing?.createdAt ?? now),
+      updatedAt: toMillis(updatedAt, existing?.updatedAt ?? now),
+      lastUsedAt: now,
+      title: title ?? existing?.title,
+      loaded,
+    });
+  }
+
+  private touchThread(sessionId: string): void {
+    const threadId = this.sessionToThread.get(sessionId);
+    if (!threadId) return;
+    const thread = this.threads.get(threadId);
+    if (!thread) return;
+    thread.lastUsedAt = Date.now();
+    thread.updatedAt = Date.now();
+  }
+
+  private clearSessionState(sessionId: string): void {
+    const threadId = this.sessionToThread.get(sessionId);
+    if (threadId) {
+      this.threadToSession.delete(threadId);
+      this.threads.delete(threadId);
+    }
+
+    this.sessionToThread.delete(sessionId);
+    this.messageBuffers.delete(sessionId);
+    this.messageHistory.delete(sessionId);
+    this.turnResolvers.delete(sessionId);
+    this.activeTurnIds.delete(sessionId);
+    this.sessionModes.delete(sessionId);
+    this.sessionModels.delete(sessionId);
+    this.sessionReasoningEfforts.delete(sessionId);
+    this.sessionDirectories.delete(sessionId);
+    this.rejectQueuedMessagesForSession(sessionId, "Session deleted");
+    this.rejectPendingForSession(sessionId, "Session deleted");
+
+    const tempDirs = this.activeTempDirs.get(sessionId);
+    if (tempDirs) {
+      this.cleanupTempDirs(tempDirs);
+      this.activeTempDirs.delete(sessionId);
+    }
+  }
+
+  private appendMessageToHistory(sessionId: string, message: UnifiedMessage): void {
+    const history = this.messageHistory.get(sessionId) ?? [];
+    history.push(message);
+    this.messageHistory.set(sessionId, history);
+  }
+
+  private startSessionCleanup(): void {
+    if (this.cleanupIntervalId) return;
+    this.cleanupIntervalId = setInterval(() => {
+      void this.cleanupIdleThreads();
+    }, 60_000);
+  }
+
+  private stopSessionCleanup(): void {
+    if (!this.cleanupIntervalId) return;
+    clearInterval(this.cleanupIntervalId);
+    this.cleanupIntervalId = null;
+  }
+
+  private async cleanupIdleThreads(): Promise<void> {
+    if (!this.client?.running) return;
+    const now = Date.now();
+
+    for (const [threadId, thread] of this.threads) {
+      if (!thread.loaded) continue;
+      const sessionId = this.threadToSession.get(threadId);
+      if (!sessionId) continue;
+      if (this.hasActiveTurn(sessionId)) continue;
+      if ((this.messageQueues.get(sessionId)?.length ?? 0) > 0) continue;
+      if (now - thread.lastUsedAt < SESSION_IDLE_TIMEOUT_MS) continue;
+
+      try {
+        await this.client.request("thread/unsubscribe", { threadId });
+        thread.loaded = false;
+      } catch (error) {
+        codexLog.warn(`Failed to unsubscribe idle Codex thread ${threadId}:`, error);
       }
     }
   }
+
+  private cleanupTempDirs(tempDirs: string[]): void {
+    for (const dir of tempDirs) {
+      try {
+        rmSync(dir, { recursive: true, force: true });
+      } catch {}
+    }
+  }
+
+  private cleanupActiveTempDirs(): void {
+    for (const dirs of this.activeTempDirs.values()) {
+      this.cleanupTempDirs(dirs);
+    }
+    this.activeTempDirs.clear();
+  }
+
+  private setStatus(status: EngineStatus, error?: string): void {
+    this.status = status;
+    this.lastError = status === "error" ? error : undefined;
+    this.emit("status.changed", {
+      engineType: this.engineType,
+      status,
+      error,
+    });
+  }
+
+  private failStart(message: string): Error {
+    this.setStatus("error", message);
+    return new Error(message);
+  }
+}
+
+function toEngineSessionId(threadId: string): string {
+  return threadId.startsWith("codex_") ? threadId : `codex_${threadId}`;
+}
+
+function resolveThreadId(engineSessionId?: string, engineMeta?: Record<string, unknown>): string | undefined {
+  if (engineMeta?.codexThreadId && typeof engineMeta.codexThreadId === "string") {
+    return engineMeta.codexThreadId;
+  }
+  if (!engineSessionId) return undefined;
+  return engineSessionId.startsWith("codex_") ? engineSessionId.slice("codex_".length) : engineSessionId;
+}
+
+function extractThreadId(method: string, data: Record<string, unknown>): string | undefined {
+  if (typeof data.threadId === "string") return data.threadId;
+  if (method === "thread/started") {
+    const thread = asRecord(data.thread);
+    return typeof thread.id === "string" ? thread.id : undefined;
+  }
+  return undefined;
+}
+
+function mapCommandApprovalDecision(optionId: string): string {
+  switch (optionId) {
+    case "allow_always":
+      return "acceptForSession";
+    case "reject_once":
+      return "decline";
+    case "allow_once":
+    default:
+      return "accept";
+  }
+}
+
+function mapFileApprovalDecision(optionId: string): string {
+  switch (optionId) {
+    case "allow_always":
+      return "acceptForSession";
+    case "reject_once":
+      return "decline";
+    case "allow_once":
+    default:
+      return "accept";
+  }
+}
+
+function mapLegacyReviewDecision(optionId: string): string {
+  switch (optionId) {
+    case "allow_always":
+      return "approved_for_session";
+    case "reject_once":
+      return "denied";
+    case "allow_once":
+    default:
+      return "approved";
+  }
+}
+
+function normalizeTurnError(error: unknown): string | undefined {
+  if (typeof error === "string" && error) return error;
+  if (!error || typeof error !== "object") return undefined;
+
+  const record = error as Record<string, unknown>;
+  const message = typeof record.message === "string" ? record.message : undefined;
+  const details = typeof record.additionalDetails === "string" ? record.additionalDetails : undefined;
+  if (message && details) return `${message}\n\n${details}`;
+  return message;
+}
+
+function normalizeItemToolError(item: Record<string, unknown>): string | undefined {
+  const explicit = normalizeTurnError(item.error);
+  if (explicit) return explicit;
+  if (typeof item.exitCode === "number" && item.exitCode !== 0) {
+    return `Exit code: ${item.exitCode}`;
+  }
+  if (item.status === "failed" || item.status === "declined") {
+    return typeof item.result === "string" && item.result ? item.result : "Tool failed";
+  }
+  return undefined;
+}
+
+function extractStrings(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((entry): entry is string => typeof entry === "string" && entry.length > 0)
+    : [];
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" ? value as Record<string, unknown> : {};
+}
+
+function toMillis(value: unknown, fallback: number): number {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value < 1e12 ? value * 1000 : value;
+  }
+  if (typeof value === "string" && value) {
+    const numeric = Number(value);
+    if (Number.isFinite(numeric)) {
+      return numeric < 1e12 ? numeric * 1000 : numeric;
+    }
+    const parsed = Date.parse(value);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return fallback;
 }

@@ -295,7 +295,7 @@ export class CodexAdapter extends EngineAdapter {
       customModelInput: true,
       messageEnqueue: true,
       slashCommands: true,
-      fastModeSupported: this.authType === "chatgpt",
+      fastModeSupported: this.authenticated === true,
       availableModes: this.getModes(),
     };
   }
@@ -838,6 +838,13 @@ export class CodexAdapter extends EngineAdapter {
       this.refreshModelCache(),
       this.refreshAuthStatus(),
     ]);
+
+    // If account/read reports unauthenticated but models are available
+    // (e.g. custom model_provider in config.toml), treat as authenticated.
+    if (!this.authenticated && this.cachedModels.length > 0) {
+      this.authenticated = true;
+      this.authMessage ??= "Authenticated";
+    }
   }
 
   private async refreshConfigRequirements(): Promise<void> {

@@ -1371,18 +1371,18 @@ describe("CodexAdapter", () => {
     expect((adapter as any).sessionServiceTiers.get(session.id)).toBe("fast");
   });
 
-  it("reports fastModeSupported based on auth type", async () => {
+  it("reports fastModeSupported based on authenticated state", async () => {
     const { adapter } = createAdapterWithClient();
 
-    // Default: no auth type set
+    // Default: not authenticated
     expect(adapter.getCapabilities().fastModeSupported).toBe(false);
 
-    // ChatGPT auth
-    (adapter as any).authType = "chatgpt";
+    // Authenticated (any auth type)
+    (adapter as any).authenticated = true;
     expect(adapter.getCapabilities().fastModeSupported).toBe(true);
 
-    // API key auth
-    (adapter as any).authType = "apiKey";
+    // Explicitly not authenticated
+    (adapter as any).authenticated = false;
     expect(adapter.getCapabilities().fastModeSupported).toBe(false);
   });
 

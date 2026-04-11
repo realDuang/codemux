@@ -562,22 +562,46 @@ export default function Settings() {
                                     </select>
                                   }
                                 >
-                                  {/* Custom model input with datalist for engines that allow arbitrary model IDs */}
-                                  <input
-                                    type="text"
-                                    list={`models-${engine.type}`}
-                                    value={selectedModelId()}
-                                    onChange={(e) => handleModelSelect(e.currentTarget.value)}
-                                    placeholder="Enter model ID..."
-                                    class="w-full sm:w-[260px] px-3 py-1.5 text-sm font-medium rounded-lg border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-gray-700 dark:text-gray-300 transition-colors hover:bg-gray-100 dark:hover:bg-slate-600"
-                                  />
-                                  <datalist id={`models-${engine.type}`}>
-                                    <For each={models()}>
-                                      {(model) => (
-                                        <option value={model.modelId}>{model.name}</option>
-                                      )}
-                                    </For>
-                                  </datalist>
+                                  {/* Custom model input with dropdown for engines that allow arbitrary model IDs */}
+                                  <div class="relative w-full sm:w-[260px]">
+                                    <input
+                                      type="text"
+                                      value={selectedModelId()}
+                                      onInput={(e) => handleModelSelect(e.currentTarget.value)}
+                                      onFocus={(e) => {
+                                        const dropdown = e.currentTarget.nextElementSibling as HTMLElement;
+                                        if (dropdown) dropdown.style.display = "block";
+                                      }}
+                                      onBlur={(e) => {
+                                        const dropdown = e.currentTarget.nextElementSibling as HTMLElement;
+                                        setTimeout(() => {
+                                          if (dropdown) dropdown.style.display = "none";
+                                        }, 150);
+                                      }}
+                                      placeholder="Enter model ID..."
+                                      class="w-full px-3 py-1.5 text-sm font-medium rounded-lg border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-gray-700 dark:text-gray-300 transition-colors hover:bg-gray-100 dark:hover:bg-slate-600"
+                                    />
+                                    <div
+                                      style="display:none"
+                                      class="absolute z-50 mt-1 w-full max-h-48 overflow-y-auto rounded-lg border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-700 shadow-lg"
+                                    >
+                                      <For each={models()}>
+                                        {(model) => (
+                                          <div
+                                            class="px-3 py-1.5 text-sm text-gray-700 dark:text-gray-300 cursor-pointer hover:bg-gray-100 dark:hover:bg-slate-600"
+                                            onMouseDown={(e) => {
+                                              e.preventDefault();
+                                              handleModelSelect(model.modelId);
+                                              const input = e.currentTarget.closest("div.relative")?.querySelector("input") as HTMLInputElement;
+                                              if (input) { input.value = model.modelId; input.blur(); }
+                                            }}
+                                          >
+                                            {model.name || model.modelId}
+                                          </div>
+                                        )}
+                                      </For>
+                                    </div>
+                                  </div>
                                 </Show>
                               </div>
                             </div>

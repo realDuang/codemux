@@ -1060,6 +1060,13 @@ export class ClaudeCodeAdapter extends EngineAdapter {
           name: m.display_name || m.id,
           description: "",
           engineType: "claude" as EngineType,
+          // HTTP /v1/models doesn't return reasoning capabilities, so assume
+          // all Claude models support the standard effort levels.
+          capabilities: {
+            reasoning: true,
+            supportedReasoningEfforts: [...REASONING_EFFORT_VALUES],
+            defaultReasoningEffort: "medium" as const,
+          },
         }))
         .sort((a, b) => a.modelId.localeCompare(b.modelId));
 

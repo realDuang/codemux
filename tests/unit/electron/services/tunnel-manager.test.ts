@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import path from "node:path";
 import { EventEmitter } from "events";
 
 // ---------------------------------------------------------------------------
@@ -167,7 +168,7 @@ describe("TunnelManager", () => {
         const result = (tunnelManager as any).getCloudflaredPath();
         expect(result).toContain("cloudflared");
         expect(result).toContain("darwin-arm64");
-        expect(result).toBe("/app/resources/cloudflared/darwin-arm64/cloudflared");
+        expect(result).toBe(path.join("/app/resources", "cloudflared", "darwin-arm64", "cloudflared"));
       } finally {
         Object.defineProperty(process, "resourcesPath", { value: originalResourcesPath, configurable: true });
         Object.defineProperty(process, "platform", { value: originalPlatform, configurable: true });
@@ -187,7 +188,7 @@ describe("TunnelManager", () => {
 
       try {
         const result = (tunnelManager as any).getCloudflaredPath();
-        expect(result).toBe("/app/resources/cloudflared/win32-x64/cloudflared.exe");
+        expect(result).toBe(path.join("/app/resources", "cloudflared", "win32-x64", "cloudflared.exe"));
       } finally {
         Object.defineProperty(process, "resourcesPath", { value: originalResourcesPath, configurable: true });
         Object.defineProperty(process, "platform", { value: originalPlatform, configurable: true });

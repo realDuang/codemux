@@ -123,6 +123,15 @@ describe("GatewayWsClient", () => {
   });
 
   afterEach(() => {
+    // Clear pending request timers without rejecting to avoid unhandled rejections
+    const pending = (client as any).pending as Map<string, any>;
+    if (pending) {
+      for (const [, p] of pending) {
+        if (p.timer) clearTimeout(p.timer);
+      }
+      pending.clear();
+    }
+    client.disconnect();
     vi.restoreAllMocks();
     vi.useRealTimers();
   });

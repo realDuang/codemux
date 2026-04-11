@@ -388,11 +388,11 @@ describe("StreamingController", () => {
 
         ctrl.applyPart(session, textPart("part-2", "New"));
 
-        // During the async gap, platformMessageId should be empty to prevent stale patches
-        // (it gets set to "" synchronously before await)
-        // After updateText resolves and before sendText resolves, it should be ""
-        // We can't directly test intermediate state easily, but we verified the behavior
-        // through the other tests above.
+        // platformMessageId is set to "" synchronously before the first await
+        // to prevent stale patches from being sent during the async gap
+        expect(session.platformMessageId).toBe("");
+        expect(session.currentTextPartId).toBe("part-2");
+        expect(session.textBuffer).toBe("New");
       });
     });
   });

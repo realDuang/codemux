@@ -965,11 +965,11 @@ describe("GatewayServer", () => {
       await sendMessage(ws, {
         type: GatewayRequestType.QUESTION_REPLY,
         requestId: "r1",
-        payload: { questionId: "q-1", answers: ["yes"] },
+        payload: { questionId: "q-1", answers: [["yes"]] },
       });
 
       expect(engineManager.replyQuestion).toHaveBeenCalledWith("q-1", [
-        "yes",
+        ["yes"],
       ]);
     });
 

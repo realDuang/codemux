@@ -1391,7 +1391,7 @@ describe("CodexAdapter", () => {
     const { sessionId } = seedSession(adapter);
 
     (adapter as any).sessionServiceTiers.set(sessionId, "fast");
-    (adapter as any).cleanupSession(sessionId);
+    (adapter as any).clearSessionState(sessionId);
     expect((adapter as any).sessionServiceTiers.has(sessionId)).toBe(false);
   });
 });

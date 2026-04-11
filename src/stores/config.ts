@@ -27,7 +27,7 @@ interface ConfigState {
   /** User-selected reasoning effort per engine type, persisted to settings.json */
   engineReasoningEfforts: Record<string, ReasoningEffort>;
   /** User-selected service tier per engine type (Codex fast/flex), persisted to settings.json */
-  engineServiceTiers: Record<string, CodexServiceTier>;
+  engineServiceTiers: Record<string, CodexServiceTier | undefined>;
 }
 
 export const [configStore, setConfigStore] = createStore<ConfigState>({
@@ -255,7 +255,11 @@ export function saveServiceTier(engineType: string, tier: CodexServiceTier): voi
 
 /** Clear service tier for an engine (disables fast mode). */
 export function clearServiceTier(engineType: string): void {
-  setConfigStore("engineServiceTiers", engineType, undefined!);
+  setConfigStore("engineServiceTiers", (tiers) => {
+    const next = { ...tiers };
+    delete next[engineType];
+    return next;
+  });
   saveNestedSetting(`engineServiceTiers.${engineType}`, null);
 }
 

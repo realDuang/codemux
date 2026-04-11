@@ -29,8 +29,9 @@ vi.mock('solid-js/store', () => ({
         Object.keys(storeContainer.data).forEach((k: string) => delete storeContainer.data[k]);
         Object.assign(storeContainer.data, pathOrValue);
       } else if (args.length === 1) {
-        // Single path: setConfigStore('key', value)
-        storeContainer.data[pathOrValue] = args[0];
+        // Single path: setConfigStore('key', value) or setConfigStore('key', updaterFn)
+        const value = typeof args[0] === 'function' ? args[0](storeContainer.data[pathOrValue]) : args[0];
+        storeContainer.data[pathOrValue] = value;
       } else if (args.length === 2) {
         // Nested path: setConfigStore('key', 'subkey', value)
         if (!storeContainer.data[pathOrValue] || typeof storeContainer.data[pathOrValue] !== 'object') {

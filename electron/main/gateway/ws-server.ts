@@ -41,6 +41,7 @@ import {
   type WorktreeMergeRequest,
   type WorktreeListBranchesRequest,
 } from "../../../src/types/unified";
+import { isCodexServiceTier } from "../../../src/types/unified";
 
 interface ClientConnection {
   id: string;
@@ -291,7 +292,7 @@ export class GatewayServer {
           mode: req.mode,
           modelId: req.modelId,
           reasoningEffort: req.reasoningEffort,
-          serviceTier: req.serviceTier,
+          serviceTier: isCodexServiceTier(req.serviceTier) ? req.serviceTier : undefined,
         });
       }
 
@@ -427,7 +428,7 @@ export class GatewayServer {
           mode: req.mode,
           modelId: req.modelId,
           reasoningEffort: req.reasoningEffort,
-          serviceTier: req.serviceTier,
+          serviceTier: isCodexServiceTier(req.serviceTier) ? req.serviceTier : undefined,
         });
       }
 

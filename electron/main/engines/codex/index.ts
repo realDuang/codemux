@@ -25,6 +25,7 @@ import type {
   UnifiedSession,
   ImportableSession,
 } from "../../../../src/types/unified";
+import { isCodexServiceTier } from "../../../../src/types/unified";
 import { EngineAdapter, type MessageBuffer } from "../engine-adapter";
 import { CODEMUX_IDENTITY_PROMPT } from "../identity-prompt";
 import { timeId } from "../../utils/id-gen";
@@ -1561,7 +1562,17 @@ export class CodexAdapter extends EngineAdapter {
     const modeId = options?.mode ?? this.sessionModes.get(sessionId) ?? this.currentMode;
     const modelId = options?.modelId ?? this.sessionModels.get(sessionId) ?? this.currentModelId;
     const reasoningEffort = options?.reasoningEffort ?? this.sessionReasoningEfforts.get(sessionId) ?? null;
-    const serviceTier = options?.serviceTier ?? this.sessionServiceTiers.get(sessionId) ?? null;
+    const hasExplicitServiceTier = options != null && Object.prototype.hasOwnProperty.call(options, "serviceTier");
+    const serviceTier = hasExplicitServiceTier
+      ? (options!.serviceTier ?? null)
+      : (this.sessionServiceTiers.get(sessionId) ?? null);
+    if (hasExplicitServiceTier) {
+      if (serviceTier && isCodexServiceTier(serviceTier)) {
+        this.sessionServiceTiers.set(sessionId, serviceTier);
+      } else {
+        this.sessionServiceTiers.delete(sessionId);
+      }
+    }
     const approvalPolicy = clampApprovalPolicy(modeToApprovalPolicy(modeId), this.configRequirements);
     const sandboxPolicy = clampSandboxPolicy(modeToSandboxPolicy(modeId, directory), this.configRequirements);
 
@@ -1853,7 +1864,7 @@ export class CodexAdapter extends EngineAdapter {
     return undefined;
   }
 
-  private async startThread(directory: string, serviceTier?: CodexServiceTier | null): Promise<ThreadResponse> {
+  private async startThread(directory: string): Promise<ThreadResponse> {
     const modeId = this.currentMode;
     const approvalPolicy = clampApprovalPolicy(modeToApprovalPolicy(modeId), this.configRequirements);
     const sandboxMode = clampSandboxMode(modeToSandboxMode(modeId), this.configRequirements);
@@ -1866,7 +1877,6 @@ export class CodexAdapter extends EngineAdapter {
       serviceName: "codemux",
       experimentalRawEvents: false,
       persistExtendedHistory: true,
-      ...(serviceTier ? { serviceTier } : {}),
     })) as ThreadResponse;
 
     return response;

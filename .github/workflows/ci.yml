@@ -136,7 +136,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh pr diff ${{ github.event.pull_request.number }} --name-only > /tmp/changed-files.txt
+          gh pr view ${{ github.event.pull_request.number }} --json files --jq '.files[].path' > /tmp/changed-files.txt
           bun scripts/check-incremental-coverage.ts --threshold 60 --files /tmp/changed-files.txt
 
   # #54 Multi-platform E2E testing

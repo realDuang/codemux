@@ -13,6 +13,7 @@ import { isElectron } from "../lib/platform";
 import { Auth } from "../lib/auth";
 import { configStore, saveEngineModelSelection, isEngineEnabled, setEngineEnabled } from "../stores/config";
 import { ReasoningEffortSelector } from "../components/ReasoningEffortSelector";
+import { CodexFastModeToggle } from "../components/CodexFastModeToggle";
 import { sessionStore, setSessionStore } from "../stores/session";
 import { setScheduledTaskStore } from "../stores/scheduled-task";
 import { gateway } from "../lib/gateway-api";
@@ -589,6 +590,11 @@ export default function Settings() {
                               models={models}
                               selectedModelId={selectedModelId}
                             />
+                          </Show>
+
+                          {/* Codex Fast Mode toggle */}
+                          <Show when={engine.type === "codex" && showModelSelector() && isEngineEnabled(engine.type)}>
+                            <CodexFastModeToggle engineType={engine.type} />
                           </Show>
 
                           {/* Import History button - only for running + enabled engines */}

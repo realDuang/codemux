@@ -14,6 +14,7 @@ import {
   sandboxModeFromPolicy,
   toCodexEffort,
 } from "../../../../../electron/main/engines/codex/config";
+import { isCodexServiceTier } from "../../../../../src/types/unified";
 
 describe("codex/config.ts", () => {
   it("defines the expected Codex modes", () => {
@@ -137,5 +138,15 @@ describe("codex/config.ts", () => {
 
   it("builds the stable app-server startup args", () => {
     expect(buildStartupArgs()).toEqual(["app-server"]);
+  });
+
+  it("validates CodexServiceTier values", () => {
+    expect(isCodexServiceTier("fast")).toBe(true);
+    expect(isCodexServiceTier("flex")).toBe(true);
+    expect(isCodexServiceTier("slow")).toBe(false);
+    expect(isCodexServiceTier("")).toBe(false);
+    expect(isCodexServiceTier(null)).toBe(false);
+    expect(isCodexServiceTier(undefined)).toBe(false);
+    expect(isCodexServiceTier(42)).toBe(false);
   });
 });

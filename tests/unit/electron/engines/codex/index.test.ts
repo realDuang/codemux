@@ -1304,4 +1304,94 @@ describe("CodexAdapter", () => {
     }));
     expect((adapter as any).messageBuffers.has(sessionId)).toBe(false);
   });
+
+  // ---------------------------------------------------------------------------
+  // Service tier (Fast mode) tests
+  // ---------------------------------------------------------------------------
+
+  it("passes serviceTier to turn/start when provided in sendMessage options", async () => {
+    const { adapter, client } = createAdapterWithClient();
+    const { sessionId } = seedSession(adapter);
+    client.request.mockImplementation(async (method: string) => {
+      if (method === "turn/start") return { turn: { id: "turn-1" } };
+      throw new Error(`unexpected method: ${method}`);
+    });
+
+    adapter.sendMessage(
+      sessionId,
+      [{ type: "text", text: "Hello" }],
+      { directory: "/repo", serviceTier: "fast" },
+    );
+    await flushMicrotasks();
+
+    expect(client.request).toHaveBeenCalledWith(
+      "turn/start",
+      expect.objectContaining({
+        threadId: "thread-1",
+        serviceTier: "fast",
+      }),
+      120000,
+    );
+  });
+
+  it("omits serviceTier from turn/start when not provided", async () => {
+    const { adapter, client } = createAdapterWithClient();
+    const { sessionId } = seedSession(adapter);
+    client.request.mockImplementation(async (method: string) => {
+      if (method === "turn/start") return { turn: { id: "turn-1" } };
+      throw new Error(`unexpected method: ${method}`);
+    });
+
+    adapter.sendMessage(
+      sessionId,
+      [{ type: "text", text: "Hello" }],
+      { directory: "/repo" },
+    );
+    await flushMicrotasks();
+
+    const turnStartCall = client.request.mock.calls.find((call) => call[0] === "turn/start");
+    expect(turnStartCall).toBeDefined();
+    expect(turnStartCall![1]).not.toHaveProperty("serviceTier");
+  });
+
+  it("caches serviceTier from thread/start response", async () => {
+    const { adapter, client } = createAdapterWithClient();
+    client.request.mockImplementation(async (method: string) => {
+      if (method === "thread/start") {
+        return {
+          thread: { id: "thread-fast", createdAt: Date.now(), updatedAt: Date.now(), name: "Fast Thread" },
+          model: "gpt-5.4",
+          serviceTier: "fast",
+        };
+      }
+      throw new Error(`unexpected method: ${method}`);
+    });
+
+    const session = await adapter.createSession("/repo");
+    expect((adapter as any).sessionServiceTiers.get(session.id)).toBe("fast");
+  });
+
+  it("reports fastModeSupported based on auth type", async () => {
+    const { adapter } = createAdapterWithClient();
+
+    // Default: no auth type set
+    expect(adapter.getCapabilities().fastModeSupported).toBe(false);
+
+    // ChatGPT auth
+    (adapter as any).authType = "chatgpt";
+    expect(adapter.getCapabilities().fastModeSupported).toBe(true);
+
+    // API key auth
+    (adapter as any).authType = "apiKey";
+    expect(adapter.getCapabilities().fastModeSupported).toBe(false);
+  });
+
+  it("cleans up sessionServiceTiers on session cleanup", () => {
+    const { adapter } = createAdapterWithClient();
+    const { sessionId } = seedSession(adapter);
+
+    (adapter as any).sessionServiceTiers.set(sessionId, "fast");
+    (adapter as any).cleanupSession(sessionId);
+    expect((adapter as any).sessionServiceTiers.has(sessionId)).toBe(false);
+  });
 });

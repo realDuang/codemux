@@ -1,5 +1,5 @@
 import { createStore } from "solid-js/store";
-import { isReasoningEffort, type EngineInfo, type EngineType, type ReasoningEffort, type UnifiedModelInfo } from "../types/unified";
+import { isReasoningEffort, isCodexServiceTier, type CodexServiceTier, type EngineInfo, type EngineType, type ReasoningEffort, type UnifiedModelInfo } from "../types/unified";
 import { getSetting, saveSetting, getNestedSetting, saveNestedSetting } from "../lib/settings";
 
 export interface EngineModelSelection {
@@ -26,6 +26,8 @@ interface ConfigState {
   defaultNewSessionEngine: EngineType | null;
   /** User-selected reasoning effort per engine type, persisted to settings.json */
   engineReasoningEfforts: Record<string, ReasoningEffort>;
+  /** User-selected service tier per engine type (Codex fast/flex), persisted to settings.json */
+  engineServiceTiers: Record<string, CodexServiceTier>;
 }
 
 export const [configStore, setConfigStore] = createStore<ConfigState>({
@@ -40,6 +42,7 @@ export const [configStore, setConfigStore] = createStore<ConfigState>({
   enabledEngines: {},
   defaultNewSessionEngine: null,
   engineReasoningEfforts: {},
+  engineServiceTiers: {},
 });
 
 export function loadEngineModelSelection(engineType: string): EngineModelSelection | null {
@@ -236,6 +239,55 @@ export function restoreReasoningEfforts(): void {
     const saved = loadReasoningEffort(engine.type);
     if (saved) {
       setConfigStore("engineReasoningEfforts", engine.type, saved);
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Service tier per engine (Codex Fast / Flex mode)
+// ---------------------------------------------------------------------------
+
+/** Save service tier for an engine and persist to settings.json. */
+export function saveServiceTier(engineType: string, tier: CodexServiceTier): void {
+  setConfigStore("engineServiceTiers", engineType, tier);
+  saveNestedSetting(`engineServiceTiers.${engineType}`, tier);
+}
+
+/** Clear service tier for an engine (disables fast mode). */
+export function clearServiceTier(engineType: string): void {
+  setConfigStore("engineServiceTiers", engineType, undefined!);
+  saveNestedSetting(`engineServiceTiers.${engineType}`, null);
+}
+
+/** Load persisted service tier for an engine. */
+export function loadServiceTier(engineType: string): CodexServiceTier | null {
+  const saved = getNestedSetting<string>(`engineServiceTiers.${engineType}`);
+  if (isCodexServiceTier(saved)) return saved;
+  return null;
+}
+
+/** Get the effective service tier for an engine, checking capabilities. */
+export function getServiceTierForEngine(engineType: string): CodexServiceTier | null {
+  const saved = configStore.engineServiceTiers[engineType] ?? null;
+  if (!saved) return null;
+
+  const engine = configStore.engines.find((e) => e.type === engineType);
+  if (!engine?.capabilities.fastModeSupported) return null;
+
+  return saved;
+}
+
+/** Check if fast mode is active for an engine. */
+export function isFastModeActive(engineType: string): boolean {
+  return getServiceTierForEngine(engineType) === "fast";
+}
+
+/** Restore persisted service tiers for all known engines into the store. */
+export function restoreServiceTiers(): void {
+  for (const engine of configStore.engines) {
+    const saved = loadServiceTier(engine.type);
+    if (saved) {
+      setConfigStore("engineServiceTiers", engine.type, saved);
     }
   }
 }

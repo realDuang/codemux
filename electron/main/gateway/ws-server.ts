@@ -291,6 +291,7 @@ export class GatewayServer {
           mode: req.mode,
           modelId: req.modelId,
           reasoningEffort: req.reasoningEffort,
+          serviceTier: req.serviceTier,
         });
       }
 
@@ -426,6 +427,7 @@ export class GatewayServer {
           mode: req.mode,
           modelId: req.modelId,
           reasoningEffort: req.reasoningEffort,
+          serviceTier: req.serviceTier,
         });
       }
 

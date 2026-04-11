@@ -22,6 +22,7 @@ import type {
   MessagePromptContent,
   PermissionReply,
   ReasoningEffort,
+  CodexServiceTier,
   ConversationMeta,
   ConversationMessage,
   ImportableSession,
@@ -827,7 +828,7 @@ export class EngineManager extends EventEmitter {
   async sendMessage(
     sessionId: string,
     content: MessagePromptContent[],
-    options?: { mode?: string; modelId?: string; reasoningEffort?: ReasoningEffort | null },
+    options?: { mode?: string; modelId?: string; reasoningEffort?: ReasoningEffort | null; serviceTier?: CodexServiceTier | null },
   ): Promise<UnifiedMessage> {
     this.activeSessions.add(sessionId);
     try {
@@ -987,7 +988,7 @@ export class EngineManager extends EventEmitter {
     sessionId: string,
     commandName: string,
     args: string,
-    options?: { mode?: string; modelId?: string; reasoningEffort?: ReasoningEffort | null },
+    options?: { mode?: string; modelId?: string; reasoningEffort?: ReasoningEffort | null; serviceTier?: CodexServiceTier | null },
   ): Promise<CommandInvokeResult> {
     const conv = conversationStore.get(sessionId);
     if (!conv) throw new Error(`Conversation not found: ${sessionId}`);

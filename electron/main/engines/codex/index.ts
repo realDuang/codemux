@@ -5,6 +5,7 @@ import { join } from "path";
 import type {
   AgentMode,
   AuthMethod,
+  CodexServiceTier,
   CommandInvokeResult,
   EngineCapabilities,
   EngineCommand,
@@ -103,6 +104,7 @@ interface QueuedMessage {
     mode?: string;
     modelId?: string;
     reasoningEffort?: ReasoningEffort | null;
+    serviceTier?: CodexServiceTier | null;
     directory?: string;
   };
   resolver: SendResolver;
@@ -145,6 +147,7 @@ interface ThreadResponse {
   approvalPolicy?: CodexApprovalPolicy;
   sandbox?: CodexSandboxPolicy;
   reasoningEffort?: string | null;
+  serviceTier?: string | null;
 }
 
 interface TurnResponse {
@@ -165,6 +168,7 @@ export class CodexAdapter extends EngineAdapter {
   private lastError: string | undefined;
   private authenticated: boolean | undefined;
   private authMessage: string | undefined;
+  private authType: "chatgpt" | "apiKey" | undefined;
   private startPromise: Promise<void> | null = null;
 
   private sessionToThread = new Map<string, string>();
@@ -185,6 +189,7 @@ export class CodexAdapter extends EngineAdapter {
   private sessionModes = new Map<string, string>();
   private sessionModels = new Map<string, string>();
   private sessionReasoningEfforts = new Map<string, ReasoningEffort>();
+  private sessionServiceTiers = new Map<string, CodexServiceTier>();
   private sessionDirectories = new Map<string, string>();
 
   private currentModelId: string = CODEX_FALLBACK_MODEL;
@@ -289,6 +294,7 @@ export class CodexAdapter extends EngineAdapter {
       customModelInput: true,
       messageEnqueue: true,
       slashCommands: true,
+      fastModeSupported: this.authType === "chatgpt",
       availableModes: this.getModes(),
     };
   }
@@ -368,6 +374,9 @@ export class CodexAdapter extends EngineAdapter {
       const effort = fromCodexEffort(threadResponse.reasoningEffort);
       if (effort) this.sessionReasoningEfforts.set(sessionId, effort);
     }
+    if (threadResponse.serviceTier === "fast" || threadResponse.serviceTier === "flex") {
+      this.sessionServiceTiers.set(sessionId, threadResponse.serviceTier);
+    }
 
     if (threadResponse.thread?.name) {
       setTimeout(() => {
@@ -437,6 +446,7 @@ export class CodexAdapter extends EngineAdapter {
       mode?: string;
       modelId?: string;
       reasoningEffort?: ReasoningEffort | null;
+      serviceTier?: CodexServiceTier | null;
       directory?: string;
     },
   ): Promise<UnifiedMessage> {
@@ -720,7 +730,7 @@ export class CodexAdapter extends EngineAdapter {
     sessionId: string,
     commandName: string,
     args: string,
-    options?: { mode?: string; modelId?: string; directory?: string },
+    options?: { mode?: string; modelId?: string; reasoningEffort?: ReasoningEffort | null; serviceTier?: CodexServiceTier | null; directory?: string },
   ): Promise<CommandInvokeResult> {
     const directory = normalizeDirectory(
       options?.directory ??
@@ -856,20 +866,24 @@ export class CodexAdapter extends EngineAdapter {
 
       if (Object.keys(account).length === 0) {
         this.authenticated = false;
+        this.authType = undefined;
         this.authMessage = requiresOpenaiAuth ? "OpenAI authentication required" : "Not authenticated";
         return;
       }
 
       this.authenticated = true;
       if (account.type === "chatgpt" && typeof account.email === "string") {
+        this.authType = "chatgpt";
         this.authMessage = account.email;
         return;
       }
       if (account.type === "apiKey") {
+        this.authType = "apiKey";
         this.authMessage = "API key";
         return;
       }
 
+      this.authType = undefined;
       this.authMessage = "Authenticated";
     } catch (error) {
       codexLog.warn("Failed to read Codex auth status:", error);
@@ -1537,6 +1551,7 @@ export class CodexAdapter extends EngineAdapter {
       mode?: string;
       modelId?: string;
       reasoningEffort?: ReasoningEffort | null;
+      serviceTier?: CodexServiceTier | null;
       directory?: string;
     } | undefined,
     emitQueuedConsumed: boolean,
@@ -1546,6 +1561,7 @@ export class CodexAdapter extends EngineAdapter {
     const modeId = options?.mode ?? this.sessionModes.get(sessionId) ?? this.currentMode;
     const modelId = options?.modelId ?? this.sessionModels.get(sessionId) ?? this.currentModelId;
     const reasoningEffort = options?.reasoningEffort ?? this.sessionReasoningEfforts.get(sessionId) ?? null;
+    const serviceTier = options?.serviceTier ?? this.sessionServiceTiers.get(sessionId) ?? null;
     const approvalPolicy = clampApprovalPolicy(modeToApprovalPolicy(modeId), this.configRequirements);
     const sandboxPolicy = clampSandboxPolicy(modeToSandboxPolicy(modeId, directory), this.configRequirements);
 
@@ -1571,6 +1587,7 @@ export class CodexAdapter extends EngineAdapter {
         sandboxPolicy,
         model: modelId,
         effort: reasoningEffort ? toCodexEffort(reasoningEffort) : undefined,
+        ...(serviceTier ? { serviceTier } : {}),
         collaborationMode: {
           mode: modeId,
           settings: {
@@ -1610,6 +1627,7 @@ export class CodexAdapter extends EngineAdapter {
       mode?: string;
       modelId?: string;
       reasoningEffort?: ReasoningEffort | null;
+      serviceTier?: CodexServiceTier | null;
       directory?: string;
     } | undefined,
   ): Promise<UnifiedMessage> {
@@ -1650,6 +1668,7 @@ export class CodexAdapter extends EngineAdapter {
       mode?: string;
       modelId?: string;
       reasoningEffort?: ReasoningEffort | null;
+      serviceTier?: CodexServiceTier | null;
       directory?: string;
     } | undefined,
   ): Promise<UnifiedMessage> {
@@ -1834,7 +1853,7 @@ export class CodexAdapter extends EngineAdapter {
     return undefined;
   }
 
-  private async startThread(directory: string): Promise<ThreadResponse> {
+  private async startThread(directory: string, serviceTier?: CodexServiceTier | null): Promise<ThreadResponse> {
     const modeId = this.currentMode;
     const approvalPolicy = clampApprovalPolicy(modeToApprovalPolicy(modeId), this.configRequirements);
     const sandboxMode = clampSandboxMode(modeToSandboxMode(modeId), this.configRequirements);
@@ -1847,6 +1866,7 @@ export class CodexAdapter extends EngineAdapter {
       serviceName: "codemux",
       experimentalRawEvents: false,
       persistExtendedHistory: true,
+      ...(serviceTier ? { serviceTier } : {}),
     })) as ThreadResponse;
 
     return response;
@@ -1858,6 +1878,7 @@ export class CodexAdapter extends EngineAdapter {
     const approvalPolicy = clampApprovalPolicy(modeToApprovalPolicy(modeId), this.configRequirements);
     const sandboxMode = clampSandboxMode(modeToSandboxMode(modeId), this.configRequirements);
     const modelId = this.sessionModels.get(sessionId) ?? this.currentModelId;
+    const serviceTier = this.sessionServiceTiers.get(sessionId);
 
     const response = asRecord(await this.client!.request("thread/resume", {
       threadId,
@@ -1867,6 +1888,7 @@ export class CodexAdapter extends EngineAdapter {
       sandbox: sandboxMode,
       baseInstructions: CODEMUX_IDENTITY_PROMPT,
       persistExtendedHistory: true,
+      ...(serviceTier ? { serviceTier } : {}),
     })) as ThreadResponse;
 
     return response;
@@ -2039,6 +2061,7 @@ export class CodexAdapter extends EngineAdapter {
       mode?: string;
       modelId?: string;
       reasoningEffort?: ReasoningEffort | null;
+      serviceTier?: CodexServiceTier | null;
       directory?: string;
     } | undefined,
     directory: string,
@@ -2046,11 +2069,13 @@ export class CodexAdapter extends EngineAdapter {
     const requestedMode = options?.mode ?? this.sessionModes.get(sessionId) ?? this.currentMode;
     const requestedModel = options?.modelId ?? this.sessionModels.get(sessionId) ?? this.currentModelId;
     const requestedEffort = options?.reasoningEffort ?? this.sessionReasoningEfforts.get(sessionId) ?? null;
+    const requestedTier = options?.serviceTier ?? this.sessionServiceTiers.get(sessionId) ?? null;
     const sessionDirectory = normalizeDirectory(this.sessionDirectories.get(sessionId) ?? directory);
 
     return requestedMode === (this.sessionModes.get(sessionId) ?? this.currentMode)
       && requestedModel === (this.sessionModels.get(sessionId) ?? this.currentModelId)
       && requestedEffort === (this.sessionReasoningEfforts.get(sessionId) ?? null)
+      && requestedTier === (this.sessionServiceTiers.get(sessionId) ?? null)
       && directory === sessionDirectory;
   }
 
@@ -2105,6 +2130,7 @@ export class CodexAdapter extends EngineAdapter {
     this.sessionModes.delete(sessionId);
     this.sessionModels.delete(sessionId);
     this.sessionReasoningEfforts.delete(sessionId);
+    this.sessionServiceTiers.delete(sessionId);
     this.sessionDirectories.delete(sessionId);
     this.rejectQueuedMessagesForSession(sessionId, "Session deleted");
     this.rejectPendingForSession(sessionId, "Session deleted");

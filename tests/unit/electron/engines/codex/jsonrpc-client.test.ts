@@ -263,7 +263,16 @@ describe("CodexJsonRpcClient", () => {
     const stopPromise = client.stop();
 
     expect(rl.close).toHaveBeenCalledTimes(1);
-    expect(proc.kill).toHaveBeenCalledWith("SIGTERM");
+    if (process.platform === "win32") {
+      // On Windows, stop() uses taskkill via spawn instead of proc.kill
+      expect(spawnMock).toHaveBeenCalledWith(
+        "taskkill",
+        ["/pid", String(proc.pid), "/T", "/F"],
+        { stdio: "ignore" },
+      );
+    } else {
+      expect(proc.kill).toHaveBeenCalledWith("SIGTERM");
+    }
 
     proc.emit("exit", 0, null);
 

@@ -131,6 +131,12 @@ jobs:
           json-summary-path: coverage/coverage-summary.json
           json-final-path: coverage/coverage-final.json
 
+      - name: Incremental coverage gate (60% for changed files)
+        if: matrix.os == 'ubuntu-latest' && github.event_name == 'pull_request'
+        run: |
+          git fetch origin ${{ github.event.pull_request.base.ref }} --depth=1
+          bun scripts/check-incremental-coverage.ts --threshold 60 --base origin/${{ github.event.pull_request.base.ref }}
+
   # #54 Multi-platform E2E testing
   e2e-test:
     name: E2E Tests (${{ matrix.os }})

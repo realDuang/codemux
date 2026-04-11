@@ -26,10 +26,10 @@ export default defineConfig({
         "src/components/file-icons/**",
       ],
       thresholds: {
-        lines: 15,
-        functions: 15,
-        branches: 15,
-        statements: 15,
+        lines: 50,
+        functions: 50,
+        branches: 50,
+        statements: 50,
       },
     },
     benchmark: {

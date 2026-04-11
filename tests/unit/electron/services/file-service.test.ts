@@ -431,7 +431,11 @@ describe("file-service (branch coverage extensions)", () => {
   });
 
   afterAll(() => {
-    rmSync(EXTRA_DIR, { recursive: true, force: true });
+    try {
+      rmSync(EXTRA_DIR, { recursive: true, force: true, maxRetries: 3, retryDelay: 200 });
+    } catch {
+      // Windows may hold file locks from git processes — ignore cleanup errors
+    }
   });
 
   // ── listDirectory with workspaceDir ──────────────────────────────────────
@@ -573,7 +577,11 @@ describe("file-service (controlled git repo)", () => {
   });
 
   afterAll(() => {
-    rmSync(repoDir, { recursive: true, force: true });
+    try {
+      rmSync(repoDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 200 });
+    } catch {
+      // Windows may hold git file locks
+    }
   });
 
   // ── getGitDiff ─────────────────────────────────────────────────────────

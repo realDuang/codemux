@@ -133,9 +133,11 @@ jobs:
 
       - name: Incremental coverage gate (60% for changed files)
         if: matrix.os == 'ubuntu-latest' && github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          git fetch origin ${{ github.event.pull_request.base.ref }} --depth=1
-          bun scripts/check-incremental-coverage.ts --threshold 60 --base origin/${{ github.event.pull_request.base.ref }}
+          gh pr diff ${{ github.event.pull_request.number }} --name-only > /tmp/changed-files.txt
+          bun scripts/check-incremental-coverage.ts --threshold 60 --files /tmp/changed-files.txt
 
   # #54 Multi-platform E2E testing
   e2e-test:

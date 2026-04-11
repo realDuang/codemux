@@ -26,6 +26,7 @@ function getArg(name: string, fallback: string): string {
 
 const THRESHOLD = Number(getArg("threshold", "60"));
 const BASE_BRANCH = getArg("base", "main");
+const FILES_PATH = getArg("files", "");
 const COVERAGE_PATH = resolve("coverage/coverage-final.json");
 
 // ---------------------------------------------------------------------------
@@ -61,10 +62,22 @@ if (!existsSync(COVERAGE_PATH)) {
   process.exit(1);
 }
 
-// Get changed files relative to the base branch
-const diffOutput = execSync(`git diff --name-only --diff-filter=ACMR ${BASE_BRANCH}...HEAD`, {
-  encoding: "utf-8",
-}).trim();
+// Get changed files — prefer --files flag (from gh pr diff), fall back to git diff
+let diffOutput: string;
+if (FILES_PATH && existsSync(FILES_PATH)) {
+  diffOutput = readFileSync(FILES_PATH, "utf-8").trim();
+} else {
+  try {
+    diffOutput = execSync(`git diff --name-only --diff-filter=ACMR ${BASE_BRANCH}...HEAD`, {
+      encoding: "utf-8",
+    }).trim();
+  } catch {
+    // Shallow clone may lack merge base — fall back to two-dot diff
+    diffOutput = execSync(`git diff --name-only --diff-filter=ACMR ${BASE_BRANCH} HEAD`, {
+      encoding: "utf-8",
+    }).trim();
+  }
+}
 
 if (!diffOutput) {
   console.log("✅ No changed files — incremental coverage check skipped.");

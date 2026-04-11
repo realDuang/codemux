@@ -22,6 +22,8 @@ export default defineConfig({
         "shared/settings-keys.ts",
         "electron/main/index.ts",
         "electron/main/engines/identity-prompt.ts",
+        "electron/preload/**",
+        "src/components/file-icons/**",
       ],
       thresholds: {
         lines: 15,

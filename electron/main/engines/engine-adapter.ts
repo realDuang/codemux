@@ -21,6 +21,7 @@ import type {
   MessagePromptContent,
   PermissionReply,
   ReasoningEffort,
+  CodexServiceTier,
   ImportableSession,
   EngineCommand,
   CommandInvokeResult,
@@ -210,6 +211,7 @@ export abstract class EngineAdapter extends EventEmitter {
       mode?: string;
       modelId?: string;
       reasoningEffort?: ReasoningEffort | null;
+      serviceTier?: CodexServiceTier | null;
       directory?: string;
     },
   ): Promise<UnifiedMessage>;
@@ -326,7 +328,7 @@ export abstract class EngineAdapter extends EventEmitter {
     _sessionId: string,
     _commandName: string,
     _args: string,
-    _options?: { mode?: string; modelId?: string; directory?: string },
+    _options?: { mode?: string; modelId?: string; reasoningEffort?: ReasoningEffort | null; serviceTier?: CodexServiceTier | null; directory?: string },
   ): Promise<CommandInvokeResult> {
     return { handledAsCommand: false };
   }

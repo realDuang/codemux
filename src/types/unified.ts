@@ -49,6 +49,8 @@ export interface EngineCapabilities {
   messageEnqueue: boolean;
   /** Whether the engine supports slash commands / skills */
   slashCommands: boolean;
+  /** Whether the engine supports Codex Fast mode (service tier) */
+  fastModeSupported?: boolean;
   /** Available agent modes */
   availableModes: AgentMode[];
 }
@@ -118,6 +120,15 @@ export function normalizeReasoningEfforts(values: readonly unknown[] | null | un
   if (!values) return undefined;
   const normalized = values.filter(isReasoningEffort);
   return normalized.length > 0 ? normalized : undefined;
+}
+
+/** Codex service tier for Fast / Flex mode */
+export type CodexServiceTier = "fast" | "flex";
+
+export const CODEX_SERVICE_TIER_VALUES = ["fast", "flex"] as const;
+
+export function isCodexServiceTier(value: unknown): value is CodexServiceTier {
+  return typeof value === "string" && (CODEX_SERVICE_TIER_VALUES as readonly string[]).includes(value);
 }
 
 /** Result of listing models — includes which model is currently active */
@@ -674,6 +685,7 @@ export interface MessageSendRequest {
   mode?: string;
   modelId?: string;
   reasoningEffort?: ReasoningEffort | null;
+  serviceTier?: CodexServiceTier | null;
 }
 
 export interface MessagePromptContent {
@@ -823,6 +835,7 @@ export interface CommandInvokeRequest {
   mode?: string;
   modelId?: string;
   reasoningEffort?: ReasoningEffort | null;
+  serviceTier?: CodexServiceTier | null;
 }
 
 /** Result of a slash command invocation */

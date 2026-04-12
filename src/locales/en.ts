@@ -368,6 +368,9 @@ export interface LocaleDict {
     defaultModelDesc: string;
     reasoningEffort: string;
     reasoningEffortDesc: string;
+    fastMode: string;
+    fastModeDesc: string;
+    fastModeUnavailable: string;
     noModelsAvailable: string;
     modelInputPlaceholder: string;
     enabled: string;
@@ -980,6 +983,9 @@ export const en: LocaleDict = {
     defaultModelDesc: "Model used for conversations",
     reasoningEffort: "Reasoning Effort",
     reasoningEffortDesc: "Controls how much effort the model puts into reasoning",
+    fastMode: "Fast Mode",
+    fastModeDesc: "Higher speed inference at 2\u00d7 credit usage (Codex only)",
+    fastModeUnavailable: "Fast mode requires ChatGPT authentication",
     noModelsAvailable: "No models available",
     modelInputPlaceholder: "Enter model ID (e.g. claude-sonnet-4-20250514)",
     enabled: "Enabled",

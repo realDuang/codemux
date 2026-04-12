@@ -251,7 +251,7 @@ class GatewayAPI {
   sendMessage(
     sessionId: string,
     text: string,
-    options?: { mode?: string; modelId?: string; images?: import("../types/unified").ImageAttachment[]; reasoningEffort?: import("../types/unified").ReasoningEffort | null },
+    options?: { mode?: string; modelId?: string; images?: import("../types/unified").ImageAttachment[]; reasoningEffort?: import("../types/unified").ReasoningEffort | null; serviceTier?: import("../types/unified").CodexServiceTier | null },
   ): Promise<UnifiedMessage> {
     const content: import("../types/unified").MessagePromptContent[] = [{ type: "text", text }];
     if (options?.images) {
@@ -265,6 +265,7 @@ class GatewayAPI {
       mode: options?.mode,
       modelId: options?.modelId,
       reasoningEffort: options?.reasoningEffort,
+      serviceTier: options?.serviceTier,
     });
   }
 
@@ -377,7 +378,7 @@ class GatewayAPI {
     sessionId: string,
     commandName: string,
     args: string,
-    options?: { mode?: string; modelId?: string; reasoningEffort?: import("../types/unified").ReasoningEffort | null },
+    options?: { mode?: string; modelId?: string; reasoningEffort?: import("../types/unified").ReasoningEffort | null; serviceTier?: import("../types/unified").CodexServiceTier | null },
   ): Promise<CommandInvokeResult> {
     return gatewayClient.invokeCommand({ sessionId, commandName, args, ...options });
   }

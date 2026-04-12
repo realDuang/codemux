@@ -904,4 +904,45 @@ describe("MockEngineAdapter", () => {
       );
     });
   });
+
+  // ---------------------------------------------------------------------------
+  // EngineAdapter base class default methods
+  // ---------------------------------------------------------------------------
+
+  describe("EngineAdapter base defaults", () => {
+    it("hasSession returns true by default", () => {
+      expect(adapter.hasSession("any-session")).toBe(true);
+    });
+
+    it("listHistoricalSessions returns sorted and limited sessions", async () => {
+      await adapter.start();
+      await adapter.createSession("/test/a");
+      await adapter.createSession("/test/b");
+      await adapter.createSession("/test/c");
+
+      const all = await adapter.listHistoricalSessions(0);
+      expect(all).toHaveLength(3);
+
+      const limited = await adapter.listHistoricalSessions(2);
+      expect(limited).toHaveLength(2);
+    });
+
+    it("setReasoningEffort is a no-op", async () => {
+      await expect(adapter.setReasoningEffort("s", "high")).resolves.toBeUndefined();
+    });
+
+    it("getReasoningEffort returns null by default", () => {
+      expect(adapter.getReasoningEffort("s")).toBeNull();
+    });
+
+    it("listCommands returns empty array by default", async () => {
+      const cmds = await adapter.listCommands("s", "/dir");
+      expect(cmds).toEqual([]);
+    });
+
+    it("invokeCommand returns handledAsCommand false by default", async () => {
+      const result = await adapter.invokeCommand("s", "test", "args");
+      expect(result).toEqual({ handledAsCommand: false });
+    });
+  });
 });

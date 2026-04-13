@@ -1,5 +1,5 @@
-import { mkdtempSync, rmSync, writeFileSync } from "fs";
-import { tmpdir } from "os";
+import { mkdtempSync, rmSync, writeFileSync, readFileSync, existsSync } from "fs";
+import { tmpdir, homedir } from "os";
 import { join } from "path";
 
 import type {
@@ -76,6 +76,28 @@ const SESSION_IDLE_TIMEOUT_MS = 30 * 60 * 1000;
 const START_TIMEOUT_MS = 120_000;
 const DEFAULT_MODE_ID = "default";
 const MAX_IMAGE_ATTACHMENT_BYTES = 3 * 1024 * 1024;
+
+/**
+ * Read the `model_provider` field from `~/.codex/config.toml`.
+ * Uses simple line parsing to avoid a TOML dependency.
+ */
+function readCodexModelProvider(): string | undefined {
+  try {
+    const configPath = join(homedir(), ".codex", "config.toml");
+    if (!existsSync(configPath)) return undefined;
+    const content = readFileSync(configPath, "utf-8");
+    // Match top-level `model_provider = "..."` (before any [section] header)
+    for (const line of content.split("\n")) {
+      const trimmed = line.trim();
+      if (trimmed.startsWith("[")) break; // entered a section
+      const match = trimmed.match(/^model_provider\s*=\s*"([^"]+)"/);
+      if (match) return match[1];
+    }
+  } catch (err) {
+    codexLog.warn("[Codex] Failed to read ~/.codex/config.toml:", err);
+  }
+  return undefined;
+}
 
 type CodexTurnInput =
   | { type: "text"; text: string; text_elements: unknown[] }
@@ -843,7 +865,7 @@ export class CodexAdapter extends EngineAdapter {
     // (e.g. custom model_provider in config.toml), treat as authenticated.
     if (!this.authenticated && this.cachedModels.length > 0) {
       this.authenticated = true;
-      this.authMessage ??= "Authenticated";
+      this.authMessage = readCodexModelProvider() ?? "Authenticated";
     }
   }
 

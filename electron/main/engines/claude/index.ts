@@ -1799,6 +1799,7 @@ export class ClaudeCodeAdapter extends EngineAdapter {
     // Build environment variables
     const env: Record<string, string | undefined> = {
       ...process.env,
+      ...readClaudeSettingsEnv(),
       ...this.options?.env,
     };
     // Don't let stale env var override the user's model selection
@@ -2041,6 +2042,7 @@ export class ClaudeCodeAdapter extends EngineAdapter {
     const cwd = directory.replaceAll("/", process.platform === "win32" ? "\\" : "/");
     const env: Record<string, string | undefined> = {
       ...process.env,
+      ...readClaudeSettingsEnv(),
       ...this.options?.env,
     };
     delete env.ANTHROPIC_MODEL;

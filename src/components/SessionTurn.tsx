@@ -572,12 +572,25 @@ export function SessionTurn(props: SessionTurnProps) {
   // since isWorking reactivity can be lost through Index/prop chain.
   const [tick, setTick] = createSignal(Date.now());
 
+  // Safety-net end time: captured once when we first notice the session is done
+  // but time.completed is missing (e.g. session.idle event was dropped).
+  const [capturedEndTime, setCapturedEndTime] = createSignal<number | undefined>();
+
   const finalEndTime = createMemo(() => {
     // Only trust time.completed when isWorking is false — during multi-step
     // tasks, intermediate messages may carry completed timestamps prematurely.
     if (props.isWorking) return undefined;
     const lastAssistant = props.assistantMessages.at(-1);
-    return lastAssistant?.time?.completed ?? lastAssistant?.time?.created;
+    return lastAssistant?.time?.completed ?? capturedEndTime();
+  });
+
+  createEffect(() => {
+    if (!props.isWorking && !capturedEndTime()) {
+      const lastAssistant = props.assistantMessages.at(-1);
+      if (lastAssistant && !lastAssistant.time?.completed) {
+        setCapturedEndTime(Date.now());
+      }
+    }
   });
 
   createEffect(() => {

@@ -875,6 +875,17 @@ export class EngineManager extends EventEmitter {
       this.engineToConvMap.delete(engineSessionId);
     }
 
+    // Ensure completed assistant messages always have time.completed.
+    // Some adapters (e.g. OpenCode) strip time.completed during multi-step loops
+    // and only restore it on session.idle — if that event is lost (e.g. WebSocket
+    // reconnect), the field stays undefined, causing the frontend timer to tick
+    // indefinitely on an already-finished message.
+    if (result.role === "assistant" && !result.time.completed) {
+      const finalized = { ...result, time: { ...result.time, completed: Date.now() } };
+      this.persistMessage(sessionId, finalized);
+      this.emit("message.updated", { sessionId, message: finalized });
+    }
+
     return result;
     } finally {
       this.activeSessions.delete(sessionId);

@@ -44,6 +44,9 @@ interface SessionSidebarProps {
   onManageWorktrees?: (projectDirectory: string) => void;
   onRemoveWorktree?: (projectDirectory: string, worktreeName: string, worktreeBranch: string) => void;
   onMergeWorktree?: (projectDirectory: string, worktreeName: string, worktreeBranch: string) => void;
+  // Team Orchestration
+  onNewTeamTask?: (directory?: string) => void;
+  orchestrationParentSessionIds?: Set<string>;
 }
 
 // Project grouping data structure
@@ -247,28 +250,50 @@ export function SessionSidebar(props: SessionSidebarProps) {
     setSessionStore("worktreeExpanded", key, !isWorktreeExpanded(key));
   };
 
-  /** Split sessions by worktree for a project group */
+  /** Split sessions by worktree and team for a project group */
   const getWorktreeSessionGroups = (
     projectDir: string,
     sessions: SessionInfo[],
-  ): { local: SessionInfo[]; worktreeGroups: { worktree: UnifiedWorktree; sessions: SessionInfo[] }[] } => {
-    const worktrees = getProjectWorktrees(projectDir);
-    if (worktrees.length === 0) {
-      return { local: sessions, worktreeGroups: [] };
+  ): {
+    local: SessionInfo[];
+    worktreeGroups: { worktree: UnifiedWorktree; sessions: SessionInfo[] }[];
+    teamGroups: { teamId: string; sessions: SessionInfo[] }[];
+  } => {
+    // First split out team sessions
+    const teamMap = new Map<string, SessionInfo[]>();
+    const nonTeamSessions: SessionInfo[] = [];
+    for (const s of sessions) {
+      if (s.teamId) {
+        const arr = teamMap.get(s.teamId) || [];
+        arr.push(s);
+        teamMap.set(s.teamId, arr);
+      } else {
+        nonTeamSessions.push(s);
+      }
     }
-
-    // Filter out worktree sessions when feature is disabled
-    if (!worktreeEnabled()) {
-      return { local: sessions.filter((s) => !s.worktreeId), worktreeGroups: [] };
-    }
-
-    const local = sessions.filter((s) => !s.worktreeId);
-    const wtGroups = worktrees.map((wt) => ({
-      worktree: wt,
-      sessions: sessions.filter((s) => s.worktreeId === wt.name),
+    const teamGroups = Array.from(teamMap.entries()).map(([teamId, sess]) => ({
+      teamId,
+      sessions: sess,
     }));
 
-    return { local, worktreeGroups: wtGroups };
+    const worktrees = getProjectWorktrees(projectDir);
+    if (worktrees.length === 0) {
+      return { local: nonTeamSessions, worktreeGroups: [], teamGroups };
+    }
+
+    if (!worktreeEnabled()) {
+      return { local: nonTeamSessions.filter((s) => !s.worktreeId), worktreeGroups: [], teamGroups };
+    }
+
+    const local = nonTeamSessions.filter((s) => !s.worktreeId);
+    const wtGroups = worktrees
+      .filter((wt) => !wt.name.startsWith("team-"))
+      .map((wt) => ({
+        worktree: wt,
+        sessions: nonTeamSessions.filter((s) => s.worktreeId === wt.name),
+      }));
+
+    return { local, worktreeGroups: wtGroups, teamGroups };
   };
 
   // Load worktrees for all projects when feature is enabled
@@ -845,6 +870,24 @@ export function SessionSidebar(props: SessionSidebarProps) {
                           <path d="M12 5v14" />
                         </svg>
                       </button>
+                      {/* New team task - default workspace */}
+                      <Show when={props.onNewTeamTask}>
+                        <button
+                          class="p-1 text-gray-400 hover:text-indigo-600 dark:hover:text-indigo-400 rounded transition-all"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            props.onNewTeamTask?.(dwg().project ? getProjectDirectory(dwg().project!) : undefined);
+                          }}
+                          title="New Team Task"
+                        >
+                          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
+                            <circle cx="9" cy="7" r="4" />
+                            <line x1="19" x2="19" y1="8" y2="14" />
+                            <line x1="22" x2="16" y1="11" y2="11" />
+                          </svg>
+                        </button>
+                      </Show>
                     </div>
                   </div>
 
@@ -1163,6 +1206,24 @@ export function SessionSidebar(props: SessionSidebarProps) {
                           <path d="M12 5v14" />
                         </svg>
                       </button>
+                      {/* New team task */}
+                      <Show when={props.onNewTeamTask}>
+                        <button
+                          class="p-1 text-gray-400 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-900/20 rounded transition-all"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            props.onNewTeamTask?.(project.project ? getProjectDirectory(project.project) : undefined);
+                          }}
+                          title="New Team Task"
+                        >
+                          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
+                            <circle cx="9" cy="7" r="4" />
+                            <line x1="19" x2="19" y1="8" y2="14" />
+                            <line x1="22" x2="16" y1="11" y2="11" />
+                          </svg>
+                        </button>
+                      </Show>
                       {/* Manage worktrees (only when feature enabled) */}
                       <Show when={worktreeEnabled() && project.project?.directory}>
                         <button
@@ -1216,8 +1277,10 @@ export function SessionSidebar(props: SessionSidebarProps) {
                       <div class="ml-4 mt-1">
                       {(() => {
                         const dir = project.project?.directory || "";
-                        const { local, worktreeGroups } = getWorktreeSessionGroups(dir, project.sessions);
+                        const { local, worktreeGroups, teamGroups } = getWorktreeSessionGroups(dir, project.sessions);
                         const hasWorktrees = worktreeGroups.length > 0;
+                        const hasTeams = teamGroups.length > 0;
+                        const hasSubgroups = hasWorktrees || hasTeams;
 
                         const renderSessionList = (sessions: SessionInfo[]) => (
                           <For each={sessions}>
@@ -1449,8 +1512,8 @@ export function SessionSidebar(props: SessionSidebarProps) {
                       </For>
                         );
 
-                        // No worktrees → flat session list
-                        if (!hasWorktrees) {
+                        // No subgroups → flat session list
+                        if (!hasSubgroups) {
                           return renderSessionList(project.sessions);
                         }
 
@@ -1594,6 +1657,83 @@ export function SessionSidebar(props: SessionSidebarProps) {
                                   </Show>
                                 </div>
                               )}
+                            </For>
+                            {/* Team groups */}
+                            <For each={teamGroups}>
+                              {(teamGroup) => {
+                                const teamKey = `${dir}::team::${teamGroup.teamId}`;
+                                const parentSession = () => teamGroup.sessions.find(s =>
+                                  props.orchestrationParentSessionIds?.has(s.id)
+                                );
+                                const teamLabel = () => {
+                                  const p = parentSession();
+                                  const title = p?.title;
+                                  if (title && title !== "New Session" && title !== "New Chat") return title;
+                                  return `Team ${teamGroup.teamId.slice(5, 13)}`;
+                                };
+                                return (
+                                  <div class="mb-1.5">
+                                    <div
+                                      class="group relative flex items-center gap-1.5 px-2 py-1 cursor-pointer hover:bg-gray-100 dark:hover:bg-slate-900 rounded-md transition-colors"
+                                      onClick={() => toggleWorktreeExpanded(teamKey)}
+                                    >
+                                      <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24"
+                                        fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                                        class={`flex-shrink-0 text-gray-400 transition-transform duration-200 ${isWorktreeExpanded(teamKey) || isSearching() ? "rotate-90" : ""}`}
+                                      >
+                                        <path d="m9 18 6-6-6-6" />
+                                      </svg>
+                                      <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24"
+                                        fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                                        class="flex-shrink-0 text-indigo-500 dark:text-indigo-400"
+                                      >
+                                        <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
+                                        <circle cx="9" cy="7" r="4" />
+                                        <path d="M22 21v-2a4 4 0 0 0-3-3.87" />
+                                        <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+                                      </svg>
+                                      <span class="text-xs font-medium text-gray-600 dark:text-gray-300 truncate flex-1 min-w-0" title={teamGroup.teamId}>
+                                        {teamLabel()}
+                                      </span>
+                                      <span class="text-[10px] text-gray-400 dark:text-gray-500 flex-shrink-0">
+                                        {teamGroup.sessions.length}
+                                      </span>
+                                    </div>
+                                    <Show when={isWorktreeExpanded(teamKey) || isSearching()}>
+                                      <div class="ml-2">
+                                        {/* Parent session (orchestrator) — normal rendering */}
+                                        <Show when={parentSession()}>
+                                          {renderSessionList([parentSession()!])}
+                                        </Show>
+                                        {/* Subtask sessions — compact rendering */}
+                                        <Show when={teamGroup.sessions.filter(s => s.id !== parentSession()?.id).length > 0}>
+                                          <div class="ml-3 border-l border-slate-200 dark:border-slate-700/50 pl-2">
+                                            <For each={teamGroup.sessions.filter(s => s.id !== parentSession()?.id)}>
+                                              {(session, idx) => (
+                                                <div
+                                                  class="flex items-center gap-1.5 px-1.5 py-1 cursor-pointer rounded-md hover:bg-gray-50 dark:hover:bg-slate-800/50 transition-colors"
+                                                  classList={{ "bg-blue-50/50 dark:bg-blue-950/20": session.id === props.currentSessionId }}
+                                                  onClick={() => props.onSelectSession(session.id)}
+                                                >
+                                                  <span class="text-[9px] text-slate-400 dark:text-slate-500 font-mono w-4 flex-shrink-0">
+                                                    #{idx() + 1}
+                                                  </span>
+                                                  <span class="text-[11px] text-slate-500 dark:text-slate-400 truncate flex-1 min-w-0">
+                                                    {session.title || "Subtask"}
+                                                  </span>
+                                                  <span class="text-[9px] px-1 py-0.5 rounded bg-slate-100 dark:bg-slate-700 text-slate-400 dark:text-slate-500 uppercase flex-shrink-0">
+                                                    {session.engineType}
+                                                  </span>
+                                                </div>
+                                              )}
+                                            </For>
+                                          </div>
+                                        </Show>
+                                      </div>
+                                    </Show>
+                                  </div>
+                                );
+                              }}
                             </For>
                           </>
                         );

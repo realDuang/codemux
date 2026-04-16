@@ -8,6 +8,8 @@ export interface SessionInfo {
   directory: string;
   projectID?: string;
   worktreeId?: string;
+  /** Team orchestration group ID — groups parent + child sessions together */
+  teamId?: string;
   createdAt: string;
   updatedAt: string;
 }

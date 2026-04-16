@@ -17,6 +17,7 @@ import { gatewayLog } from "../services/logger";
 import log from "../services/logger";
 import { conversationStore } from "../services/conversation-store";
 import { scheduledTaskService } from "../services/scheduled-task-service";
+import { orchestratorService } from "../services/orchestrator-service";
 import {
   GatewayRequestType,
   GatewayNotificationType,
@@ -502,6 +503,26 @@ export class GatewayServer {
         return worktreeManager.listBranches(req.directory);
       }
 
+      // Orchestration
+      case GatewayRequestType.ORCHESTRATION_CREATE:
+        return orchestratorService.createRun(p.parentSessionId, p.directory, p.prompt, p.engineTypes, p.roleMappings);
+      case GatewayRequestType.ORCHESTRATION_DECOMPOSE:
+        // Fire-and-forget: return ack immediately, progress via orchestration.updated events
+        orchestratorService.decomposeTask(p.runId).catch((err) => {
+          gatewayLog.error("[Orchestration] decompose failed:", err);
+        });
+        return { ok: true };
+      case GatewayRequestType.ORCHESTRATION_CONFIRM:
+        // Fire-and-forget: execution is long-running, progress via events
+        orchestratorService.confirmAndExecute(p.runId, p.subtasks).catch((err) => {
+          gatewayLog.error("[Orchestration] confirm+execute failed:", err);
+        });
+        return { ok: true };
+      case GatewayRequestType.ORCHESTRATION_CANCEL:
+        return orchestratorService.cancelRun(p.runId);
+      case GatewayRequestType.ORCHESTRATION_LIST:
+        return orchestratorService.listRuns();
+
       default:
         throw Object.assign(
           new Error(`Unknown request type: ${type}`),
@@ -624,6 +645,11 @@ export class GatewayServer {
         type: GatewayNotificationType.SCHEDULED_TASKS_CHANGED,
         payload: data,
       });
+    });
+
+    // Orchestration events
+    orchestratorService.on("orchestration.updated", (data) => {
+      this.broadcast({ type: GatewayNotificationType.ORCHESTRATION_UPDATED, payload: data });
     });
   }
 

@@ -156,6 +156,8 @@ describe('settings', () => {
             theme: 'dark',
             locale: 'zh',
             engineModels: { claude: { providerID: 'anthropic', modelID: 'sonnet' } },
+            engineReasoningEfforts: { claude: 'high' },
+            engineServiceTiers: { codex: 'fast', opencode: null },
           },
         }),
       });
@@ -167,6 +169,9 @@ describe('settings', () => {
       expect(getSetting('theme')).toBe('dark');
       expect(getSetting('locale')).toBe('zh');
       expect(getNestedSetting('engineModels.claude.modelID')).toBe('sonnet');
+      expect(getNestedSetting('engineReasoningEfforts.claude')).toBe('high');
+      expect(getNestedSetting('engineServiceTiers.codex')).toBe('fast');
+      expect(getNestedSetting('engineServiceTiers.opencode')).toBeNull();
     });
 
     it('does not overwrite existing localStorage on fetch failure', async () => {
@@ -214,6 +219,30 @@ describe('settings', () => {
           Authorization: 'Bearer test-token',
         },
         body: JSON.stringify({ theme: 'dark' }),
+      });
+    });
+
+    it('fires PATCH for shared nested keys by sending the root object', () => {
+      vi.mocked(Auth.isAuthenticated).mockReturnValue(true);
+
+      saveNestedSetting('engineReasoningEfforts.copilot', 'high');
+      expect(fetch).toHaveBeenNthCalledWith(1, '/api/settings/shared', {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: 'Bearer test-token',
+        },
+        body: JSON.stringify({ engineReasoningEfforts: { copilot: 'high' } }),
+      });
+
+      saveNestedSetting('engineServiceTiers.codex', null);
+      expect(fetch).toHaveBeenNthCalledWith(2, '/api/settings/shared', {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: 'Bearer test-token',
+        },
+        body: JSON.stringify({ engineServiceTiers: { codex: null } }),
       });
     });
 

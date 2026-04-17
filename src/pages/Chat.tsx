@@ -57,6 +57,9 @@ import { handleFileChanged, refreshGitStatus } from "../stores/file";
 import { configStore, setConfigStore, getSelectedModelForEngine, isEngineEnabled, getDefaultEngineType, getEffectiveReasoningEffortForEngine, getServiceTierForEngine } from "../stores/config";
 import { scheduledTaskStore, setScheduledTaskStore } from "../stores/scheduled-task";
 import { computeActiveSessions } from "../lib/active-sessions";
+import { orchestrationStore, updateRun, setCurrentRunId, generateTeamId, registerTeam, associateRunWithTeam, getTeamId, isTeamParentSession, getRunForTeam, restoreFromRuns, autoDetectTeams, getRoleMappings } from "../stores/orchestration";
+import { OrchestrationCards } from "../components/orchestration/OrchestrationCards";
+import type { OrchestrationRun } from "../types/unified";
 
 // Binary search helper (consistent with opencode desktop)
 function binarySearch<T>(
@@ -450,6 +453,8 @@ export default function Chat() {
 
   // Send validation error (auto-clears after 3s)
   const [sendError, setSendError] = createSignal<string | null>(null);
+  // Orchestrator view mode: dashboard (cards) vs chat (messages)
+  const [orchestratorView, setOrchestratorView] = createSignal<"dashboard" | "chat">("dashboard");
   let sendErrorTimer: ReturnType<typeof setTimeout> | undefined;
   const showSendError = (msg: string) => {
     clearTimeout(sendErrorTimer);
@@ -755,6 +760,49 @@ export default function Chat() {
         onScheduledTaskFailed: (_taskId: string, error: string) => {
           notify(formatMessage(t().scheduledTask.taskFailed, { error }), "warning", 5000);
         },
+        onOrchestrationUpdated: (run: OrchestrationRun) => {
+          updateRun(run);
+
+          if (run.parentSessionId && (run.status === "failed" || run.status === "cancelled")) {
+            setSendingFor(run.parentSessionId, false);
+          }
+
+          // Ensure child subtask sessions appear in the sidebar with correct teamId and worktreeId
+          const teamId = getTeamId(run.parentSessionId);
+          if (teamId) {
+            for (const task of run.subtasks) {
+              if (!task.sessionId) continue;
+              const existing = sessionStore.list.find(s => s.id === task.sessionId);
+              if (existing) {
+                if (!existing.teamId || !existing.worktreeId) {
+                  const parentSession = sessionStore.list.find(s => s.id === run.parentSessionId);
+                  setSessionStore("list", (list) =>
+                    list.map(s => s.id === task.sessionId ? {
+                      ...s,
+                      teamId: s.teamId || teamId,
+                      worktreeId: s.worktreeId || parentSession?.worktreeId,
+                    } : s)
+                  );
+                }
+              } else {
+                const parentSession = sessionStore.list.find(s => s.id === run.parentSessionId);
+                if (parentSession) {
+                  setSessionStore("list", (list) => [...list, {
+                    id: task.sessionId!,
+                    engineType: task.engineType,
+                    title: task.description,
+                    directory: parentSession.directory,
+                    projectID: parentSession.projectID,
+                    worktreeId: parentSession.worktreeId,
+                    teamId,
+                    createdAt: new Date().toISOString(),
+                    updatedAt: new Date().toISOString(),
+                  }]);
+                }
+              }
+            }
+          }
+        },
       };
 
       const needsSessionBootstrap =
@@ -785,6 +833,7 @@ export default function Chat() {
       setSessionStore({
         loading: true,
         showDefaultWorkspace: getSetting<boolean>("showDefaultWorkspace") ?? true,
+        teamOrchestrationEnabled: getSetting<boolean>("teamOrchestrationEnabled") ?? false,
       });
       setScheduledTaskStore("enabled", getSetting<boolean>("scheduledTasksEnabled") ?? true);
 
@@ -821,6 +870,37 @@ export default function Chat() {
           });
 
           setSessionStore("list", sessionInfos);
+
+          // Restore orchestration state (team groupings) from backend runs
+          try {
+            const runs = await gateway.listOrchestrations();
+            if (gen === initGeneration && !disposed && runs.length > 0) {
+              const sessionTeamMap = restoreFromRuns(runs);
+              if (sessionTeamMap.size > 0) {
+                setSessionStore("list", (list) =>
+                  list.map(s => {
+                    const teamId = sessionTeamMap.get(s.id);
+                    return teamId ? { ...s, teamId } : s;
+                  })
+                );
+              }
+            }
+          } catch (err) {
+            logger.warn("[Init] Failed to restore orchestration state:", err);
+          }
+
+          // Auto-detect team sessions from worktreeId pattern (handles sessions without runs)
+          if (gen === initGeneration && !disposed) {
+            const teamMap = autoDetectTeams(sessionStore.list);
+            if (teamMap.size > 0) {
+              setSessionStore("list", (list) =>
+                list.map(s => {
+                  const teamId = teamMap.get(s.id);
+                  return teamId && !s.teamId ? { ...s, teamId } : s;
+                })
+              );
+            }
+          }
 
           // Prune pinned session IDs that no longer exist
           const validIds = new Set(sessionInfos.map(s => s.id));
@@ -895,6 +975,7 @@ export default function Chat() {
 
     setSessionStore("current", sessionId);
     setSessionStore("initError", null);
+    setOrchestratorView("dashboard");
 
     // Capture status BEFORE clearing unread/dismissed — otherwise
     // getSessionStatus() would return "idle" instead of "completed".
@@ -1030,6 +1111,139 @@ export default function Chat() {
     }
   };
 
+  // New team task
+  const handleNewTeamTask = async (directory?: string) => {
+    try {
+      const defaultProject = sessionStore.projects.find(p => p.isDefault);
+      const dir = directory || defaultProject?.directory || sessionStore.projects[0]?.directory || ".";
+      const engineType = getDefaultEngineType();
+
+      // Create a dedicated worktree for the team — all team sessions work in isolation
+      let worktreeInfo: { name: string; directory: string } | undefined;
+      try {
+        const teamWorktreeName = `team-${Date.now().toString(36)}`;
+        const wt = await gateway.createWorktree(dir, { name: teamWorktreeName });
+        worktreeInfo = { name: wt.name, directory: wt.directory };
+        // Add worktree to session store immediately for sidebar reactivity
+        setSessionStore("worktrees", dir, (prev) => [...(prev || []), wt]);
+        logger.info(`[TeamTask] Created team worktree: ${wt.name} at ${wt.directory}`);
+      } catch (err) {
+        logger.warn("[TeamTask] Failed to create team worktree, using original directory:", err);
+      }
+
+      // Create the orchestrator session — pass worktreeId so the backend resolves the directory
+      // and associates the session with the worktree
+      const newSession = await gateway.createSession(engineType, dir, worktreeInfo?.name);
+      const project = sessionStore.projects.find(p => p.directory === dir);
+
+      const teamId = generateTeamId();
+      const processedSession: SessionInfo = {
+        ...toSessionInfo(newSession, project?.id),
+        teamId,
+      };
+
+      const existingSession = sessionStore.list.find(s => s.id === processedSession.id);
+      if (!existingSession) {
+        setSessionStore("list", (list) => [processedSession, ...list]);
+      } else if (!existingSession.teamId) {
+        setSessionStore("list", (list) =>
+          list.map(s => s.id === processedSession.id ? { ...s, teamId } : s)
+        );
+      }
+      setSessionStore("current", processedSession.id);
+      if (isMobile()) setIsSidebarOpen(false);
+      setMessageStore("message", processedSession.id, []);
+
+      registerTeam(teamId, processedSession.id, worktreeInfo);
+      setTimeout(() => scrollToBottomStable(), 100);
+    } catch (error) {
+      logger.error("[TeamTask] Failed to create team task:", error);
+      notify(t().notification.sessionCreateFailed);
+    }
+  };
+
+  const orchestrationParentSessionIds = createMemo(() => {
+    const ids = new Set<string>();
+    for (const team of Object.values(orchestrationStore.teams)) {
+      ids.add(team.parentSessionId);
+    }
+    return ids;
+  });
+
+  /** Whether the current session should show Dashboard/Chat tab bar */
+  const showOrchestrationTabs = () => {
+    const sid = sessionStore.current;
+    if (!sid) return false;
+    const teamId = getTeamId(sid);
+    if (!teamId || !isTeamParentSession(sid)) return false;
+    return !!getRunForTeam(teamId);
+  };
+
+  /** Get the current orchestration run ID for the active team parent session */
+  const currentOrchestrationRunId = () => {
+    const sid = sessionStore.current;
+    if (!sid) return null;
+    const teamId = getTeamId(sid);
+    if (!teamId || !isTeamParentSession(sid)) return null;
+    const run = getRunForTeam(teamId);
+    return run?.id ?? null;
+  };
+
+  const handleTeamSend = async (sessionId: string, prompt: string) => {
+    const teamId = getTeamId(sessionId);
+    if (!teamId) return;
+
+    setSendingFor(sessionId, true);
+
+    // Show the user's prompt as a temp message
+    const tempMsgId = `msg-temp-${Date.now()}`;
+    const tempPartId = `part-temp-${Date.now()}`;
+    const tempMsg: UnifiedMessage = {
+      id: tempMsgId, sessionId, role: "user",
+      time: { created: Date.now() }, parts: [],
+    };
+    const tempPart: UnifiedPart = {
+      id: tempPartId, messageId: tempMsgId, sessionId,
+      type: "text", text: prompt,
+    };
+    const existingMessages = messageStore.message[sessionId] || [];
+    setMessageStore("message", sessionId, [...existingMessages, tempMsg]);
+    setMessageStore("part", tempMsgId, [tempPart]);
+    scheduleScrollToBottom();
+
+    try {
+      const session = sessionStore.list.find(s => s.id === sessionId);
+      const dir = session?.directory || ".";
+      const runningEngines = configStore.engines.filter(e => e.status === "running" && isEngineEnabled(e.type));
+
+      // Pass worktree info from team registration to the run
+      const teamInfo = orchestrationStore.teams[teamId];
+      const run = await gateway.createOrchestration({
+        parentSessionId: sessionId,
+        directory: dir,
+        prompt,
+        engineTypes: runningEngines.map(e => e.type),
+        roleMappings: getRoleMappings(),
+        worktreeInfo: teamInfo?.worktreeInfo,
+      });
+
+      updateRun(run);
+      associateRunWithTeam(teamId, run.id);
+      setCurrentRunId(run.id);
+      setOrchestratorView("dashboard");
+
+      gateway.decomposeOrchestration(run.id).catch((err) => {
+        logger.error("[TeamTask] Decomposition failed:", err);
+        notify("Task decomposition failed");
+        setSendingFor(sessionId, false);
+      });
+    } catch (error) {
+      logger.error("[TeamTask] Failed to start team orchestration:", error);
+      notify(t().notification.messageSendFailed);
+      setSendingFor(sessionId, false);
+    }
+  };
+
   // Delete session
   const handleDeleteSession = async (sessionId: string) => {
     logger.debug("[DeleteSession] Deleting session:", sessionId);
@@ -1120,6 +1334,38 @@ export default function Chat() {
         return toSessionInfo(s, project?.id);
       });
       setSessionStore("list", sessionInfos);
+
+      // Restore orchestration team groupings from backend runs
+      try {
+        const runs = await gateway.listOrchestrations();
+        if (runs.length > 0) {
+          const sessionTeamMap = restoreFromRuns(runs);
+          if (sessionTeamMap.size > 0) {
+            setSessionStore("list", (list) =>
+              list.map(s => {
+                const teamId = sessionTeamMap.get(s.id);
+                return teamId ? { ...s, teamId } : s;
+              })
+            );
+          }
+        }
+      } catch (err) {
+        logger.warn("[RefreshSessions] Failed to restore orchestration state:", err);
+      }
+
+      // Auto-detect team sessions from worktreeId pattern (handles sessions without runs)
+      {
+        const teamMap = autoDetectTeams(sessionStore.list);
+        if (teamMap.size > 0) {
+          setSessionStore("list", (list) =>
+            list.map(s => {
+              const teamId = teamMap.get(s.id);
+              return teamId && !s.teamId ? { ...s, teamId } : s;
+            })
+          );
+        }
+      }
+
       // Clear worktree cache so sidebar effect re-fetches
       setSessionStore("worktrees", {});
     } catch (error) {
@@ -1556,16 +1802,41 @@ export default function Chat() {
 
   const handleSessionCreated = (created: UnifiedSession) => {
     logger.debug("[WS] session.created received:", created);
-    // Only add if not already in the list (avoid duplicates from local creation)
-    const exists = sessionStore.list.some((s) => s.id === created.id);
-    if (exists) return;
+    const teamId = getTeamId(created.id);
 
-    // Find matching project by directory
+    const exists = sessionStore.list.some((s) => s.id === created.id);
+    if (exists) {
+      if (teamId) {
+        setSessionStore("list", (list) =>
+          list.map(s => s.id === created.id && !s.teamId ? { ...s, teamId } : s)
+        );
+      }
+      return;
+    }
+
+    // If an orchestration is actively dispatching/running, defer adding
+    const hasActiveOrchestration = !teamId && Object.values(orchestrationStore.runs).some(r =>
+      r.status === "dispatching" || r.status === "running"
+    );
+    if (hasActiveOrchestration) {
+      setTimeout(() => {
+        if (sessionStore.list.some(s => s.id === created.id)) return;
+        const latestTeamId = getTeamId(created.id);
+        const project = sessionStore.projects.find(p => p.directory === created.directory);
+        const info = toSessionInfo(created, project?.id);
+        if (latestTeamId) info.teamId = latestTeamId;
+        setSessionStore("list", (list) => [info, ...list]);
+      }, 100);
+      return;
+    }
+
     const project = sessionStore.projects.find(
       (p) => p.directory === created.directory,
     );
 
-    setSessionStore("list", (list) => [toSessionInfo(created, project?.id), ...list]);
+    const info = toSessionInfo(created, project?.id);
+    if (teamId) info.teamId = teamId;
+    setSessionStore("list", (list) => [info, ...list]);
   };
 
   const handlePermissionAsked = (permission: UnifiedPermission) => {
@@ -1731,6 +2002,12 @@ export default function Chat() {
   const handleSendMessage = async (text: string, agent: AgentMode, images?: import("../types/unified").ImageAttachment[]) => {
     const sessionId = sessionStore.current;
     if (!sessionId) return;
+
+    // Team session interception: route to orchestration flow instead of normal send
+    if (isTeamParentSession(sessionId)) {
+      await handleTeamSend(sessionId, text);
+      return;
+    }
 
     // Allow sending when idle, or when generating if engine supports enqueue
     const isBusy = sending();
@@ -1929,6 +2206,29 @@ export default function Chat() {
         {/* Center: Session title + badges (draggable gap) */}
         <div class="flex-1 flex items-center justify-center gap-1.5 sm:gap-2 min-w-0 px-2 sm:px-4 overflow-hidden">
           <Show when={sessionStore.current}>
+            {/* Back to Team button — for child subtask sessions */}
+            <Show when={(() => {
+              const sid = sessionStore.current!;
+              const teamId = getTeamId(sid);
+              if (!teamId || isTeamParentSession(sid)) return null;
+              const team = orchestrationStore.teams[teamId];
+              return team ?? null;
+            })()}>
+              {(team) => (
+                <>
+                  <button
+                    onClick={() => handleSelectSession(team().parentSessionId)}
+                    class="flex items-center gap-1 text-[11px] text-indigo-500 dark:text-indigo-400 hover:text-indigo-700 dark:hover:text-indigo-300 transition-colors electron-no-drag flex-shrink-0"
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                      <path d="m15 18-6-6 6-6" />
+                    </svg>
+                    Team
+                  </button>
+                  <span class="text-gray-300 dark:text-gray-600 text-[11px] electron-no-drag">/</span>
+                </>
+              )}
+            </Show>
             <h1 class="text-[13px] font-medium text-gray-600 dark:text-gray-400 truncate electron-no-drag">
               {getDisplayTitle(currentSessionTitle())}
             </h1>
@@ -2036,6 +2336,8 @@ export default function Chat() {
               onMergeWorktree={(dir, name, branch) => {
                 setMergeWorktreeInfo({ dir, name, branch });
               }}
+              onNewTeamTask={sessionStore.teamOrchestrationEnabled ? handleNewTeamTask : undefined}
+              orchestrationParentSessionIds={orchestrationParentSessionIds()}
             />
           </Show>
           <Show when={refreshingSessions()}>
@@ -2161,23 +2463,92 @@ export default function Chat() {
                   </div>
                 </Show>
                 <div class="max-w-4xl mx-auto w-full py-6">
+                  {/* Tab bar — Dashboard / Chat switcher for team parent sessions */}
+                  <Show when={showOrchestrationTabs()}>
+                    <div class="flex items-center gap-1 mb-4 bg-gray-100 dark:bg-slate-800/80 rounded-lg p-0.5 w-fit">
+                      <button
+                        class={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
+                          orchestratorView() === "dashboard"
+                            ? "bg-white dark:bg-slate-700 text-gray-900 dark:text-white shadow-sm"
+                            : "text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300"
+                        }`}
+                        onClick={() => setOrchestratorView("dashboard")}
+                      >
+                        Dashboard
+                      </button>
+                      <button
+                        class={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
+                          orchestratorView() === "chat"
+                            ? "bg-white dark:bg-slate-700 text-gray-900 dark:text-white shadow-sm"
+                            : "text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300"
+                        }`}
+                        onClick={() => setOrchestratorView("chat")}
+                      >
+                        Chat
+                      </button>
+                    </div>
+                  </Show>
+
+                  {/* View content — Dashboard or Chat */}
                   <Show
-                    when={sessionStore.current && messageStore.message[sessionStore.current]?.length > 0}
+                    when={showOrchestrationTabs() && orchestratorView() === "dashboard"}
                     fallback={
-                      <div class="flex flex-col items-center justify-center h-[50vh] text-center px-4">
-                        <div class="w-16 h-16 bg-gray-100 dark:bg-slate-800 rounded-2xl flex items-center justify-center mb-6 text-gray-400 dark:text-gray-500">
-                          <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M14 9a2 2 0 0 1-2 2H6l-4 4V4c0-1.1.9-2 2-2h8a2 2 0 0 1 2 2v5Z" /><path d="M18 9h2a2 2 0 0 1 2 2v11l-4-4h-6a2 2 0 0 1-2-2v-1" /></svg>
-                        </div>
-                        <h2 class="text-xl font-semibold text-gray-900 dark:text-white mb-2">
-                          {t().chat.startConversation}
-                        </h2>
-                        <p class="text-sm text-gray-500 dark:text-gray-400 max-w-xs mx-auto">
-                          {t().chat.startConversationDesc}
-                        </p>
-                      </div>
+                      /* Chat view: empty state or message list */
+                      <Show
+                        when={sessionStore.current && messageStore.message[sessionStore.current]?.length > 0}
+                        fallback={
+                          <Show
+                            when={sessionStore.current && isTeamParentSession(sessionStore.current)}
+                            fallback={
+                              <div class="flex flex-col items-center justify-center h-[50vh] text-center px-4">
+                                <div class="w-16 h-16 bg-gray-100 dark:bg-slate-800 rounded-2xl flex items-center justify-center mb-6 text-gray-400 dark:text-gray-500">
+                                  <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M14 9a2 2 0 0 1-2 2H6l-4 4V4c0-1.1.9-2 2-2h8a2 2 0 0 1 2 2v5Z" /><path d="M18 9h2a2 2 0 0 1 2 2v11l-4-4h-6a2 2 0 0 1-2-2v-1" /></svg>
+                                </div>
+                                <h2 class="text-xl font-semibold text-gray-900 dark:text-white mb-2">
+                                  {t().chat.startConversation}
+                                </h2>
+                                <p class="text-sm text-gray-500 dark:text-gray-400 max-w-xs mx-auto">
+                                  {t().chat.startConversationDesc}
+                                </p>
+                              </div>
+                            }
+                          >
+                            {/* Team session welcome */}
+                            <div class="flex flex-col items-center justify-center h-[50vh] text-center px-4">
+                              <div class="w-16 h-16 bg-indigo-50 dark:bg-indigo-900/20 rounded-2xl flex items-center justify-center mb-6">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="text-indigo-500">
+                                  <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
+                                  <circle cx="9" cy="7" r="4" />
+                                  <path d="M22 21v-2a4 4 0 0 0-3-3.87" />
+                                  <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+                                </svg>
+                              </div>
+                              <h2 class="text-xl font-semibold text-gray-900 dark:text-white mb-2">
+                                Team Task
+                              </h2>
+                              <p class="text-sm text-gray-500 dark:text-gray-400 max-w-sm mx-auto mb-1">
+                                Describe the task you want multiple engines to collaborate on.
+                              </p>
+                              <p class="text-xs text-gray-400 dark:text-gray-500 max-w-sm mx-auto">
+                                The task will be decomposed into subtasks and dispatched to different engines in parallel.
+                              </p>
+                            </div>
+                          </Show>
+                        }
+                      >
+                        <MessageList sessionID={sessionStore.current!} isWorking={sending()} scrollContainerRef={messagesRef} onPermissionRespond={handlePermissionRespond} onQuestionRespond={handleQuestionRespond} onQuestionDismiss={handleQuestionDismiss} onContinue={handleContinue} />
+                      </Show>
                     }
                   >
-                    <MessageList sessionID={sessionStore.current!} isWorking={sending()} scrollContainerRef={messagesRef} onPermissionRespond={handlePermissionRespond} onQuestionRespond={handleQuestionRespond} onQuestionDismiss={handleQuestionDismiss} onContinue={handleContinue} />
+                    {/* Dashboard view: OrchestrationCards only */}
+                    <Show when={currentOrchestrationRunId()}>
+                      {(runId) => (
+                        <OrchestrationCards
+                          runId={runId()}
+                          onViewSession={handleSelectSession}
+                        />
+                      )}
+                    </Show>
                   </Show>
                 </div>
               </div>

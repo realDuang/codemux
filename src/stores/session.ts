@@ -8,6 +8,8 @@ export interface SessionInfo {
   directory: string;
   projectID?: string;
   worktreeId?: string;
+  /** Team orchestration group ID — groups parent + child sessions together */
+  teamId?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -35,6 +37,8 @@ export const [sessionStore, setSessionStore] = createStore<{
   worktrees: Record<string, UnifiedWorktree[]>;
   /** Worktree expand/collapse state */
   worktreeExpanded: WorktreeExpandState;
+  /** Whether cross-engine team orchestration is enabled */
+  teamOrchestrationEnabled: boolean;
 }>({
   list: [],
   current: null,
@@ -46,6 +50,7 @@ export const [sessionStore, setSessionStore] = createStore<{
   showDefaultWorkspace: true,
   worktrees: {},
   worktreeExpanded: {},
+  teamOrchestrationEnabled: false,
 });
 
 /** Set the sending (streaming) state for a session. */

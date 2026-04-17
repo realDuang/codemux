@@ -512,6 +512,74 @@ export interface WorktreeMergeResult {
   message: string;
 }
 
+// --- Orchestration types ---
+
+export type OrchestratorRole = "explorer" | "researcher" | "reviewer" | "designer" | "coder";
+
+export interface RoleEngineMapping {
+  role: OrchestratorRole;
+  label: string;
+  description: string;
+  engineType: EngineType;
+  modelId?: string;
+  /** Whether this role only reads (no file modifications) */
+  readOnly?: boolean;
+}
+
+export type OrchestrationStatus = "setup" | "decomposing" | "confirming" | "dispatching" | "running" | "aggregating" | "completed" | "failed" | "cancelled";
+export type SubtaskStatus = "blocked" | "pending" | "running" | "completed" | "failed";
+
+export interface OrchestrationSubtask {
+  id: string;
+  description: string;
+  engineType: EngineType;
+  modelId?: string;
+  role?: OrchestratorRole;
+  dependsOn: string[];
+  sessionId?: string;
+  worktreeId?: string;
+  worktreeName?: string;
+  needsWorktree: boolean;
+  status: SubtaskStatus;
+  resultSummary?: string;
+  error?: string;
+  duration?: number;
+  toolUses?: number;
+}
+
+export interface OrchestrationRun {
+  id: string;
+  parentSessionId: string;
+  directory: string;
+  status: OrchestrationStatus;
+  prompt: string;
+  engineTypes: EngineType[];
+  subtasks: OrchestrationSubtask[];
+  /** Worktree directory used by all subtasks (isolated from original repo) */
+  teamWorktreeDir?: string;
+  /** Worktree name (for display / cleanup) */
+  teamWorktreeName?: string;
+  /** Role → engine mapping for this run */
+  roleMappings?: RoleEngineMapping[];
+  resultSummary?: string;
+  createdAt: number;
+  completedAt?: number;
+}
+
+export interface OrchestrationCreateRequest {
+  parentSessionId: string;
+  directory: string;
+  prompt: string;
+  engineTypes: EngineType[];
+  roleMappings?: RoleEngineMapping[];
+  worktreeInfo?: { name: string; directory: string };
+}
+
+export interface OrchestrationConfirmRequest {
+  runId: string;
+  subtasks: OrchestrationSubtask[];
+}
+
 // ============================================================================
 // WebSocket Gateway Protocol Types
 // ============================================================================
@@ -635,6 +703,13 @@ export const GatewayRequestType = {
   WORKTREE_REMOVE: "worktree.remove",
   WORKTREE_MERGE: "worktree.merge",
   WORKTREE_LIST_BRANCHES: "worktree.listBranches",
+
+  // Orchestration
+  ORCHESTRATION_CREATE: "orchestration.create",
+  ORCHESTRATION_DECOMPOSE: "orchestration.decompose",
+  ORCHESTRATION_CONFIRM: "orchestration.confirm",
+  ORCHESTRATION_CANCEL: "orchestration.cancel",
+  ORCHESTRATION_LIST: "orchestration.list",
 } as const;
 
 // --- Notification type constants ---
@@ -669,6 +744,9 @@ export const GatewayNotificationType = {
   WORKTREE_CREATED: "worktree.created",
   WORKTREE_REMOVED: "worktree.removed",
   WORKTREE_MERGE_RESULT: "worktree.mergeResult",
+
+  // Orchestration
+  ORCHESTRATION_UPDATED: "orchestration.updated",
 } as const;
 
 // --- Request / Response payload types ---

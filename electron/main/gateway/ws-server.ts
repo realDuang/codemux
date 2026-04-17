@@ -65,6 +65,7 @@ export class GatewayServer {
   ) {
     this.engineManager = engineManager;
     this.authValidator = options?.authValidator;
+    orchestratorService.init(engineManager);
     this.subscribeToEngineEvents();
 
     onFileChange((event) => {
@@ -456,7 +457,8 @@ export class GatewayServer {
       // Worktree
       case GatewayRequestType.WORKTREE_CREATE: {
         const req = p as WorktreeCreateRequest;
-        if (!this.isWorktreeEnabled()) {
+        // Allow team worktrees even when worktree feature is disabled (internal orchestration)
+        if (!this.isWorktreeEnabled() && !req.name?.startsWith("team-")) {
           throw Object.assign(new Error("Worktree feature is disabled"), { code: "WORKTREE_DISABLED" });
         }
         const { worktreeManager } = await import("../services/worktree-manager");
@@ -505,7 +507,7 @@ export class GatewayServer {
 
       // Orchestration
       case GatewayRequestType.ORCHESTRATION_CREATE:
-        return orchestratorService.createRun(p.parentSessionId, p.directory, p.prompt, p.engineTypes, p.roleMappings);
+        return orchestratorService.createRun(p.parentSessionId, p.directory, p.prompt, p.engineTypes, p.roleMappings, p.worktreeInfo);
       case GatewayRequestType.ORCHESTRATION_DECOMPOSE:
         // Fire-and-forget: return ack immediately, progress via orchestration.updated events
         orchestratorService.decomposeTask(p.runId).catch((err) => {

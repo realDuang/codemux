@@ -1,4 +1,7 @@
 import { EventEmitter } from "node:events";
+import path from "node:path";
+import fs from "node:fs";
+import { app } from "electron";
 import log from "electron-log/main";
 import type { EngineManager } from "../gateway/engine-manager";
 import type { OrchestrationRun, OrchestrationSubtask, EngineType, RoleEngineMapping } from "../../../src/types/unified";
@@ -15,15 +18,17 @@ class OrchestratorService extends EventEmitter {
   private autoApproveSessions = new Set<string>();
   /** Resolvers notified when any subtask finishes (for DAG waitForAnyCompletion) */
   private subtaskDoneResolvers: Array<() => void> = [];
+  private persistPath: string | null = null;
 
   init(engineManager: EngineManager): void {
     this.engineManager = engineManager;
     this.subscribePermissionAutoApprove();
+    this.loadFromDisk();
     orchLog.info("OrchestratorService initialized");
   }
 
   // Creates a new orchestration run
-  createRun(parentSessionId: string, directory: string, prompt: string, engineTypes: EngineType[], roleMappings?: RoleEngineMapping[]): OrchestrationRun {
+  createRun(parentSessionId: string, directory: string, prompt: string, engineTypes: EngineType[], roleMappings?: RoleEngineMapping[], worktreeInfo?: { name: string; directory: string }): OrchestrationRun {
     const id = generateId();
     const run: OrchestrationRun = {
       id,
@@ -34,6 +39,8 @@ class OrchestratorService extends EventEmitter {
       engineTypes,
       subtasks: [],
       roleMappings,
+      teamWorktreeName: worktreeInfo?.name,
+      teamWorktreeDir: worktreeInfo?.directory,
       createdAt: Date.now(),
     };
     this.activeRuns.set(id, run);
@@ -137,10 +144,7 @@ Respond with ONLY the JSON array, no markdown fencing, no explanation.`;
     this.emitUpdate(run);
 
     try {
-      // Create a clean worktree from main for isolation
-      await this.createTeamWorktree(run);
-
-      // Execute the DAG (subtasks use the team worktree directory)
+      // Execute the DAG (subtasks use the team worktree directory if available)
       await this.executeDAG(run);
     } catch (err: any) {
       orchLog.error("Orchestration failed:", err);
@@ -191,22 +195,6 @@ Respond with ONLY the JSON array, no markdown fencing, no explanation.`;
     const run = this.activeRuns.get(runId);
     if (!run) throw new Error(`Orchestration run not found: ${runId}`);
     return run;
-  }
-
-  private async createTeamWorktree(run: OrchestrationRun): Promise<void> {
-    try {
-      const { worktreeManager } = await import("./worktree-manager");
-      const info = await worktreeManager.create(run.directory, {
-        name: `team-${run.id.slice(5, 13)}`,
-        // baseBranch defaults to auto-detected main branch
-      });
-      run.teamWorktreeName = info.name;
-      run.teamWorktreeDir = info.directory;
-      orchLog.info(`Team worktree created: ${info.name} at ${info.directory}`);
-    } catch (err: any) {
-      orchLog.warn("Failed to create team worktree, using original directory:", err.message);
-      // Continue without worktree — subtasks will use the original directory
-    }
   }
 
   private async executeDAG(run: OrchestrationRun): Promise<void> {
@@ -262,11 +250,11 @@ Respond with ONLY the JSON array, no markdown fencing, no explanation.`;
   private async dispatchSubtask(run: OrchestrationRun, task: OrchestrationSubtask, context: string): Promise<void> {
     if (!this.engineManager) throw new Error("Not initialized");
 
-    // Use the team worktree directory if available, otherwise fall back to original
-    const dir = run.teamWorktreeDir || run.directory;
-
+    // Use worktreeId so the session is properly associated with the team worktree
     const startTime = Date.now();
-    const session = await this.engineManager.createSession(task.engineType, dir);
+    const session = run.teamWorktreeName
+      ? await this.engineManager.createSession(task.engineType, run.directory, run.teamWorktreeName)
+      : await this.engineManager.createSession(task.engineType, run.teamWorktreeDir || run.directory);
     task.sessionId = session.id;
     task.status = "running";
     this.autoApproveSessions.add(session.id);
@@ -277,7 +265,7 @@ Respond with ONLY the JSON array, no markdown fencing, no explanation.`;
       : task.description;
 
     // sendMessage blocks until the engine finishes — no need for separate completion detection
-    await this.engineManager.sendMessage(
+    const result = await this.engineManager.sendMessage(
       session.id,
       [{ type: "text", text: prompt }],
       task.modelId ? { modelId: task.modelId } : undefined,
@@ -286,8 +274,12 @@ Respond with ONLY the JSON array, no markdown fencing, no explanation.`;
     task.duration = Math.round((Date.now() - startTime) / 1000);
     task.status = "completed";
 
-    // Extract a summary of the result
-    task.resultSummary = await this.extractResultSummary(task);
+    // Extract summary directly from engine's response (avoids disk persistence race)
+    const textParts = result.parts?.filter((p: any) => p.type === "text") || [];
+    const fullText = textParts.map((p: any) => p.text || "").join("\n");
+    task.resultSummary = fullText.length > 2000
+      ? fullText.slice(0, 2000) + "..."
+      : (fullText || "Task completed.");
 
     this.emitUpdate(run);
 
@@ -480,8 +472,53 @@ Respond with ONLY the JSON array, no markdown fencing, no explanation.`;
     });
   }
 
+  // --- Persistence ---
+
+  private getStorePath(): string {
+    if (!this.persistPath) {
+      this.persistPath = path.join(app.getPath("userData"), "orchestrations.json");
+    }
+    return this.persistPath;
+  }
+
+  private saveToDisk(): void {
+    try {
+      const runs = Array.from(this.activeRuns.values());
+      fs.writeFileSync(this.getStorePath(), JSON.stringify(runs, null, 2), "utf-8");
+    } catch (err: any) {
+      orchLog.warn("Failed to persist orchestrations:", err.message);
+    }
+  }
+
+  private loadFromDisk(): void {
+    try {
+      const filePath = this.getStorePath();
+      if (!fs.existsSync(filePath)) return;
+      const raw = fs.readFileSync(filePath, "utf-8");
+      const runs: OrchestrationRun[] = JSON.parse(raw);
+      for (const run of runs) {
+        // Mark any previously-running tasks as failed (interrupted by restart)
+        if (run.status === "running" || run.status === "dispatching" || run.status === "decomposing") {
+          run.status = "failed";
+          run.completedAt = run.completedAt || Date.now();
+          for (const task of run.subtasks) {
+            if (task.status === "running" || task.status === "blocked" || task.status === "pending") {
+              task.status = "failed";
+              task.error = "Interrupted by app restart";
+            }
+          }
+        }
+        this.activeRuns.set(run.id, run);
+      }
+      orchLog.info(`Loaded ${runs.length} orchestration runs from disk`);
+    } catch (err: any) {
+      orchLog.warn("Failed to load orchestrations from disk:", err.message);
+    }
+  }
+
   private emitUpdate(run: OrchestrationRun): void {
     this.emit("orchestration.updated", { run: { ...run, subtasks: [...run.subtasks] } });
+    this.saveToDisk();
   }
 }
 

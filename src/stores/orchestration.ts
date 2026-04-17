@@ -23,6 +23,8 @@ interface TeamInfo {
   parentSessionId: string;
   /** Associated orchestration run ID (set after user sends prompt) */
   runId?: string;
+  /** Worktree info created for this team */
+  worktreeInfo?: { name: string; directory: string };
 }
 
 const [orchestrationStore, setOrchestrationStore] = createStore<{
@@ -50,8 +52,8 @@ export function generateTeamId(): string {
 }
 
 /** Register a new team with its parent session */
-export function registerTeam(teamId: string, parentSessionId: string): void {
-  setOrchestrationStore("teams", teamId, { id: teamId, parentSessionId });
+export function registerTeam(teamId: string, parentSessionId: string, worktreeInfo?: { name: string; directory: string }): void {
+  setOrchestrationStore("teams", teamId, { id: teamId, parentSessionId, worktreeInfo });
   setOrchestrationStore("sessionToTeam", parentSessionId, teamId);
 }
 
@@ -120,8 +122,11 @@ export function restoreFromRuns(runs: OrchestrationRun[]): Map<string, string> {
     // Store the run
     setOrchestrationStore("runs", run.id, { ...run });
 
-    // Register team
-    setOrchestrationStore("teams", teamId, { id: teamId, parentSessionId: run.parentSessionId, runId: run.id });
+    // Register team (include worktree info if available)
+    const worktreeInfo = run.teamWorktreeName && run.teamWorktreeDir
+      ? { name: run.teamWorktreeName, directory: run.teamWorktreeDir }
+      : undefined;
+    setOrchestrationStore("teams", teamId, { id: teamId, parentSessionId: run.parentSessionId, runId: run.id, worktreeInfo });
     setOrchestrationStore("sessionToTeam", run.parentSessionId, teamId);
     sessionTeamMap.set(run.parentSessionId, teamId);
 
@@ -139,6 +144,42 @@ export function restoreFromRuns(runs: OrchestrationRun[]): Map<string, string> {
     }
   }
   return sessionTeamMap;
+}
+
+/**
+ * Auto-detect team sessions from worktreeId pattern.
+ * For sessions whose worktreeId starts with "team-" but aren't yet registered
+ * in the orchestration store, register them as teams.
+ * Returns a map of sessionId → teamId for sessions that were auto-registered.
+ */
+export function autoDetectTeams(sessions: { id: string; worktreeId?: string }[]): Map<string, string> {
+  const result = new Map<string, string>();
+
+  // Group sessions by team worktree name
+  const worktreeToSessions = new Map<string, string[]>();
+  for (const s of sessions) {
+    if (s.worktreeId?.startsWith("team-") && !orchestrationStore.sessionToTeam[s.id]) {
+      const arr = worktreeToSessions.get(s.worktreeId) || [];
+      arr.push(s.id);
+      worktreeToSessions.set(s.worktreeId, arr);
+    }
+  }
+
+  for (const [worktreeName, sessionIds] of worktreeToSessions) {
+    // The first session created in the team worktree is the parent (orchestrator)
+    const parentSessionId = sessionIds[0];
+    const teamId = `team_${worktreeName.slice(5)}`;
+
+    if (!orchestrationStore.teams[teamId]) {
+      setOrchestrationStore("teams", teamId, { id: teamId, parentSessionId });
+    }
+    for (const sid of sessionIds) {
+      setOrchestrationStore("sessionToTeam", sid, teamId);
+      result.set(sid, teamId);
+    }
+  }
+
+  return result;
 }
 
 /** Update the role → engine mapping and persist */

@@ -572,6 +572,7 @@ export interface OrchestrationCreateRequest {
   prompt: string;
   engineTypes: EngineType[];
   roleMappings?: RoleEngineMapping[];
+  worktreeInfo?: { name: string; directory: string };
 }
 
 export interface OrchestrationConfirmRequest {

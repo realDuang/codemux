@@ -85,7 +85,7 @@ function DeviceCard(props: DeviceCardProps) {
                     class="px-2 py-1 text-sm border rounded dark:bg-slate-800 dark:border-slate-700"
                     placeholder={t().devices.renameDevicePlaceholder}
                     onKeyDown={(e) => {
-                      if (e.key === "Enter") props.onConfirmRename();
+                      if (e.key === "Enter" && !e.isComposing) props.onConfirmRename();
                       if (e.key === "Escape") props.onCancelRename();
                     }}
                     autofocus

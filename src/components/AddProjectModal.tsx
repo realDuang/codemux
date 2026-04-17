@@ -42,7 +42,7 @@ export function AddProjectModal(props: AddProjectModalProps) {
   };
 
   const handleKeyDown = (e: KeyboardEvent) => {
-    if (e.key === "Enter" && !loading()) {
+    if (e.key === "Enter" && !e.isComposing && !loading()) {
       handleAdd();
     } else if (e.key === "Escape") {
       props.onClose();

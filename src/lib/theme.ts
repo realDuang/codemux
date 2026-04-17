@@ -9,7 +9,7 @@ function getSavedTheme(): ThemeMode {
   if (saved && ["light", "dark", "system"].includes(saved)) {
     return saved as ThemeMode;
   }
-  return "system";
+  return "dark";
 }
 
 function saveTheme(theme: ThemeMode): void {

@@ -123,6 +123,15 @@ export const ru: LocaleDict = {
     experimental: "Экспериментальные",
     scheduledTasksEnabled: "Запланированные задачи",
     scheduledTasksEnabledDesc: "Включить функцию запланированных задач для автоматического выполнения задач по расписанию",
+    teamOrchestration: "Кросс-движковая командная оркестрация",
+    teamOrchestrationDesc: "Разбивайте сложные задачи на подзадачи и распределяйте их между несколькими AI-движками для параллельного выполнения",
+    teamOrchestrationRoles: "Сопоставление ролей и движков",
+    teamOrchestrationRolesDesc: "Настройте, какой движок обрабатывает каждую роль агента при командной оркестрации",
+    roleExplorer: "Исследователь",
+    roleResearcher: "Аналитик",
+    roleReviewer: "Рецензент",
+    roleDesigner: "Дизайнер",
+    roleCoder: "Программист",
   },
 
   // Remote Access page

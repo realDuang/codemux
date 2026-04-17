@@ -122,6 +122,15 @@ export const zh: LocaleDict = {
     experimental: "实验性功能",
     scheduledTasksEnabled: "定时任务",
     scheduledTasksEnabledDesc: "启用定时任务功能，按计划自动执行任务",
+    teamOrchestration: "跨引擎团队协作",
+    teamOrchestrationDesc: "将复杂任务分解为子任务，分配到多个 AI 引擎并行执行",
+    teamOrchestrationRoles: "角色-引擎映射",
+    teamOrchestrationRolesDesc: "配置团队协作中每种代理角色使用的引擎",
+    roleExplorer: "探索者",
+    roleResearcher: "研究员",
+    roleReviewer: "审查者",
+    roleDesigner: "设计师",
+    roleCoder: "编码者",
   },
 
   // Remote Access page

@@ -121,6 +121,15 @@ export interface LocaleDict {
     experimental: string;
     scheduledTasksEnabled: string;
     scheduledTasksEnabledDesc: string;
+    teamOrchestration: string;
+    teamOrchestrationDesc: string;
+    teamOrchestrationRoles: string;
+    teamOrchestrationRolesDesc: string;
+    roleExplorer: string;
+    roleResearcher: string;
+    roleReviewer: string;
+    roleDesigner: string;
+    roleCoder: string;
   };
 
   // Remote Access page
@@ -739,6 +748,15 @@ export const en: LocaleDict = {
     experimental: "Experimental",
     scheduledTasksEnabled: "Scheduled Tasks",
     scheduledTasksEnabledDesc: "Enable the scheduled tasks feature to automatically run tasks on a schedule",
+    teamOrchestration: "Cross-Engine Team Orchestration",
+    teamOrchestrationDesc: "Decompose complex tasks and distribute subtasks across multiple AI engines for parallel execution",
+    teamOrchestrationRoles: "Role-Engine Mapping",
+    teamOrchestrationRolesDesc: "Configure which engine handles each agent role during team orchestration",
+    roleExplorer: "Explorer",
+    roleResearcher: "Researcher",
+    roleReviewer: "Reviewer",
+    roleDesigner: "Designer",
+    roleCoder: "Coder",
   },
 
   // Remote Access page

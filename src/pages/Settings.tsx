@@ -16,6 +16,7 @@ import { ReasoningEffortSelector } from "../components/ReasoningEffortSelector";
 import { CodexFastModeToggle } from "../components/CodexFastModeToggle";
 import { sessionStore, setSessionStore } from "../stores/session";
 import { setScheduledTaskStore } from "../stores/scheduled-task";
+import { orchestrationStore, DEFAULT_ROLE_MAPPINGS, updateRoleMappings } from "../stores/orchestration";
 import { gateway } from "../lib/gateway-api";
 import { systemAPI, updateAPI, autostartAPI } from "../lib/electron-api";
 import { getSetting, saveSetting } from "../lib/settings";
@@ -75,6 +76,27 @@ export default function Settings() {
     const newValue = !worktreeEnabled();
     setWorktreeEnabledSignal(newValue);
     saveSetting("worktreeEnabled", newValue);
+  };
+
+  // Team orchestration toggle
+  const [teamOrchestrationEnabled, setTeamOrchestrationEnabled] = createSignal(
+    getSetting<boolean>("teamOrchestrationEnabled") ?? false,
+  );
+
+  const handleTeamOrchestrationToggle = () => {
+    const newValue = !teamOrchestrationEnabled();
+    setTeamOrchestrationEnabled(newValue);
+    saveSetting("teamOrchestrationEnabled", newValue);
+  };
+
+  // Role-engine mapping (reads from orchestration store which already handles persistence)
+  const handleRoleEngineChange = (role: string, engineType: string) => {
+    const mappings = [...orchestrationStore.roleMappings];
+    const idx = mappings.findIndex(m => m.role === role);
+    if (idx >= 0) {
+      mappings[idx] = { ...mappings[idx], engineType: engineType as EngineType };
+      updateRoleMappings(mappings);
+    }
   };
 
   const [enginesLoading, setEnginesLoading] = createSignal(true);
@@ -286,6 +308,11 @@ export default function Settings() {
                 </button>
               </li>
             </Show>
+            <li>
+              <button onClick={() => document.getElementById("section-features")?.scrollIntoView({ behavior: "smooth" })} class="w-full text-left block px-3 py-2 text-[13px] font-medium text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-slate-800 rounded-lg transition-colors">
+                {t().settings.features}
+              </button>
+            </li>
             <li>
               <button onClick={() => document.getElementById("section-experimental")?.scrollIntoView({ behavior: "smooth" })} class="w-full text-left block px-3 py-2 text-[13px] font-medium text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-slate-800 rounded-lg transition-colors">
                 {t().settings.experimental}
@@ -733,10 +760,10 @@ export default function Settings() {
               </section>
             </Show>
 
-            {/* Experimental Section */}
-            <section id="section-experimental">
+            {/* Features Section */}
+            <section id="section-features">
               <h2 class="text-sm font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-4 px-1">
-                {t().settings.experimental}
+                {t().settings.features}
               </h2>
               <div class="bg-white dark:bg-slate-800 rounded-xl shadow-xs border border-gray-200 dark:border-slate-700 overflow-visible">
                 {/* Show Default Workspace toggle */}
@@ -823,6 +850,104 @@ export default function Settings() {
                     </button>
                   </div>
                 </div>
+              </div>
+            </section>
+
+            {/* Experimental Section */}
+            <section id="section-experimental">
+              <h2 class="text-sm font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-4 px-1">
+                {t().settings.experimental}
+              </h2>
+              <div class="bg-white dark:bg-slate-800 rounded-xl shadow-xs border border-gray-200 dark:border-slate-700 overflow-visible">
+                {/* Team Orchestration toggle */}
+                <div class="p-4 sm:p-6 flex items-center justify-between gap-4" classList={{ "border-b border-gray-200 dark:border-slate-700": teamOrchestrationEnabled() }}>
+                  <div>
+                    <h3 class="text-base font-medium text-gray-900 dark:text-white">
+                      {t().settings.teamOrchestration}
+                    </h3>
+                    <p class="text-sm text-gray-500 dark:text-gray-400 mt-1">
+                      {t().settings.teamOrchestrationDesc}
+                    </p>
+                  </div>
+                  <div class="flex-shrink-0">
+                    <button
+                      onClick={handleTeamOrchestrationToggle}
+                      class={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                        teamOrchestrationEnabled() ? "bg-blue-600" : "bg-gray-300 dark:bg-slate-600"
+                      }`}
+                      role="switch"
+                      aria-checked={teamOrchestrationEnabled()}
+                      aria-label={t().settings.teamOrchestration}
+                    >
+                      <span
+                        class={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                          teamOrchestrationEnabled() ? "translate-x-6" : "translate-x-1"
+                        }`}
+                      />
+                    </button>
+                  </div>
+                </div>
+                {/* Role-Engine Mapping (shown only when team orchestration is enabled) */}
+                <Show when={teamOrchestrationEnabled()}>
+                  <div class="p-4 sm:p-6">
+                    <h3 class="text-base font-medium text-gray-900 dark:text-white">
+                      {t().settings.teamOrchestrationRoles}
+                    </h3>
+                    <p class="text-sm text-gray-500 dark:text-gray-400 mt-1 mb-4">
+                      {t().settings.teamOrchestrationRolesDesc}
+                    </p>
+                    <div class="space-y-3">
+                      <For each={orchestrationStore.roleMappings}>
+                        {(mapping) => {
+                          const roleLabels: Record<string, () => string> = {
+                            explorer: () => t().settings.roleExplorer,
+                            researcher: () => t().settings.roleResearcher,
+                            reviewer: () => t().settings.roleReviewer,
+                            designer: () => t().settings.roleDesigner,
+                            coder: () => t().settings.roleCoder,
+                          };
+                          let selectRef: HTMLSelectElement | undefined;
+                          // Sync native <select> value with reactive state — SolidJS
+                          // doesn't reliably update select.value when <For> re-renders options.
+                          createEffect(() => {
+                            const val = mapping.engineType;
+                            if (!selectRef) return;
+                            if (configStore.engines.length === 0) return;
+                            if (selectRef.value !== val) {
+                              selectRef.value = val;
+                            }
+                          });
+                          return (
+                            <div class="flex items-center justify-between gap-3">
+                              <div class="min-w-0">
+                                <div class="text-sm font-medium text-gray-700 dark:text-gray-300">
+                                  {roleLabels[mapping.role]?.() || mapping.role}
+                                </div>
+                                <div class="text-xs text-gray-400 dark:text-gray-500 truncate">
+                                  {mapping.description}
+                                </div>
+                              </div>
+                              <select
+                                ref={selectRef}
+                                value={mapping.engineType}
+                                onChange={(e) => handleRoleEngineChange(mapping.role, e.currentTarget.value)}
+                                class="px-2.5 py-1 text-sm rounded-lg border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-gray-700 dark:text-gray-300 cursor-pointer flex-shrink-0"
+                              >
+                                <For each={configStore.engines}>
+                                  {(engine) => (
+                                    <option value={engine.type}>
+                                      {engine.type}{engine.status !== "running" ? " (stopped)" : ""}
+                                    </option>
+                                  )}
+                                </For>
+                              </select>
+                            </div>
+                          );
+                        }}
+                      </For>
+                    </div>
+                  </div>
+                </Show>
               </div>
             </section>
 

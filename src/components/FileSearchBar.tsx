@@ -140,7 +140,7 @@ export function FileSearchBar(props: FileSearchBarProps) {
   const handleKeyDown = (e: KeyboardEvent) => {
     if (e.key === "Escape") {
       props.onClose();
-    } else if (e.key === "Enter") {
+    } else if (e.key === "Enter" && !e.isComposing) {
       if (e.shiftKey) goPrev();
       else goNext();
     }

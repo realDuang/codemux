@@ -54,7 +54,7 @@ import { ResizeHandle } from "../components/ResizeHandle";
 import { fileStore, togglePanel, setPanelWidth, closePanel } from "../stores/file";
 import { handleFileChanged, refreshGitStatus } from "../stores/file";
 
-import { configStore, setConfigStore, getSelectedModelForEngine, isEngineEnabled, getDefaultEngineType, getEffectiveReasoningEffortForEngine } from "../stores/config";
+import { configStore, setConfigStore, getSelectedModelForEngine, isEngineEnabled, getDefaultEngineType, getEffectiveReasoningEffortForEngine, getServiceTierForEngine } from "../stores/config";
 import { scheduledTaskStore, setScheduledTaskStore } from "../stores/scheduled-task";
 import { connectTeamHandlers, createTeamRun, getTeamRunForSession, cancelTeamRun } from "../stores/team";
 import { teamStore } from "../stores/team";
@@ -1676,6 +1676,7 @@ export default function Chat() {
     setSendingFor(sessionId, true);
 
     const reasoningEffort = getEffectiveReasoningEffortForEngine(currentEngineType());
+    const serviceTier = getServiceTierForEngine(currentEngineType());
     const commandText = args ? `/${commandName} ${args}` : `/${commandName}`;
     const tempMessageId = `msg-temp-${Date.now()}`;
     const tempPartId = `part-temp-${Date.now()}`;
@@ -1710,6 +1711,7 @@ export default function Chat() {
         mode: agent.id,
         modelId,
         reasoningEffort,
+        serviceTier,
       });
       // Check if assistant message is finalized
       const msgs = messageStore.message[sessionId] || [];
@@ -1782,6 +1784,7 @@ export default function Chat() {
     setSendingFor(sessionId, true);
 
     const reasoningEffort = getEffectiveReasoningEffortForEngine(currentEngineType());
+    const serviceTier = getServiceTierForEngine(currentEngineType());
     const tempMessageId = `msg-temp-${Date.now()}`;
     const tempPartId = `part-temp-${Date.now()}`;
 
@@ -1812,6 +1815,7 @@ export default function Chat() {
         modelId,
         images,
         reasoningEffort,
+        serviceTier,
       }).catch((error) => {
         logger.error("[SendMessage] Failed to enqueue message:", error);
         notify(t().notification.messageSendFailed);
@@ -1863,6 +1867,7 @@ export default function Chat() {
         modelId,
         images,
         reasoningEffort,
+        serviceTier,
       });
       // sendMessage RPC resolved — the engine considers the prompt handled.
       // However, in multi-step agent loops (e.g. OpenCode), the RPC may resolve

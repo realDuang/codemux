@@ -21,6 +21,7 @@ import type {
   MessagePromptContent,
   PermissionReply,
   ReasoningEffort,
+  CodexServiceTier,
   ImportableSession,
   EngineCommand,
   CommandInvokeResult,
@@ -38,17 +39,23 @@ export interface MessageBuffer {
   textPartId: string | null;
   reasoningAccumulator: string;
   reasoningPartId: string | null;
+  planAccumulator?: string;
+  planPartId?: string | null;
   startTime: number;
   tokens?: {
     input: number;
     output: number;
     cache?: { read: number; write: number };
+    reasoning?: number;
   };
   cost?: number;
   costUnit?: "usd" | "premium_requests";
   modelId?: string;
   reasoningEffort?: ReasoningEffort;
   error?: string;
+  workingDirectory?: string;
+  activeTurnId?: string;
+  engineMeta?: Record<string, unknown>;
   /** Set to true once leading whitespace has been trimmed from textAccumulator */
   leadingTrimmed?: boolean;
 }
@@ -204,6 +211,7 @@ export abstract class EngineAdapter extends EventEmitter {
       mode?: string;
       modelId?: string;
       reasoningEffort?: ReasoningEffort | null;
+      serviceTier?: CodexServiceTier | null;
       directory?: string;
     },
   ): Promise<UnifiedMessage>;
@@ -320,7 +328,7 @@ export abstract class EngineAdapter extends EventEmitter {
     _sessionId: string,
     _commandName: string,
     _args: string,
-    _options?: { mode?: string; modelId?: string; directory?: string },
+    _options?: { mode?: string; modelId?: string; reasoningEffort?: ReasoningEffort | null; serviceTier?: CodexServiceTier | null; directory?: string },
   ): Promise<CommandInvokeResult> {
     return { handledAsCommand: false };
   }

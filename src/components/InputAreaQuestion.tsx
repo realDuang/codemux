@@ -221,7 +221,7 @@ export function InputAreaQuestion(props: InputAreaQuestionProps) {
               value={customInputs()[pageIndex()] || ""}
               onInput={(e) => setCustomInput(e.currentTarget.value)}
               onKeyDown={(e) => {
-                if (e.key === "Enter" && hasAnyAnswer()) {
+                if (e.key === "Enter" && !e.isComposing && hasAnyAnswer()) {
                   e.preventDefault();
                   if (isLastPage()) {
                     handleSubmit();

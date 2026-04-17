@@ -61,10 +61,32 @@ const COPILOT_TOOL_MAP: Record<string, NormalizedToolName> = {
   report_intent: "unknown",
 };
 
+// --- Codex tool name mapping (app-server ThreadItem types) ---
+
+const CODEX_TOOL_MAP: Record<string, NormalizedToolName> = {
+  // Stable app-server item types
+  commandExecution: "shell",
+  fileChange: "edit",
+  webSearch: "web_fetch",
+  imageView: "read",
+  collabAgentToolCall: "task",
+  collabToolCall: "task",
+  mcpToolCall: "unknown",
+  dynamicToolCall: "unknown",
+  // Backward compatibility for pre-stable protocol variants
+  command_execution: "shell",
+  file_change: "edit",
+  file_read: "read",
+  code_execution: "shell",
+  local_shell_command: "shell",
+  mcp_tool_call: "unknown",
+};
+
 const ENGINE_TOOL_MAPS: Partial<Record<EngineType, Record<string, NormalizedToolName>>> = {
   opencode: OPENCODE_TOOL_MAP,
   claude: CLAUDE_TOOL_MAP,
   copilot: COPILOT_TOOL_MAP,
+  codex: CODEX_TOOL_MAP,
 };
 
 /**

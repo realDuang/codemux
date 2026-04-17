@@ -40,6 +40,7 @@ import { GatewayServer } from "./gateway/ws-server";
 import { OpenCodeAdapter } from "./engines/opencode";
 import { CopilotSdkAdapter } from "./engines/copilot";
 import { ClaudeCodeAdapter } from "./engines/claude";
+import { CodexAdapter } from "./engines/codex";
 import { ChannelManager } from "./channels/channel-manager";
 import { WebhookServer } from "./channels/webhook-server";
 import { FeishuAdapter } from "./channels/feishu/feishu-adapter";
@@ -61,9 +62,11 @@ const gatewayServer = new GatewayServer(engineManager);
 const openCodeAdapter = new OpenCodeAdapter({ port: OPENCODE_PORT });
 const copilotAdapter = new CopilotSdkAdapter();
 const claudeAdapter = new ClaudeCodeAdapter();
+const codexAdapter = new CodexAdapter();
 engineManager.registerAdapter(openCodeAdapter);
 engineManager.registerAdapter(copilotAdapter);
 engineManager.registerAdapter(claudeAdapter);
+engineManager.registerAdapter(codexAdapter);
 
 // Export for IPC handlers
 export { engineManager, gatewayServer };
@@ -178,6 +181,7 @@ if (!gotTheLock) {
       ["OpenCode", openCodeAdapter],
       ["Copilot", copilotAdapter],
       ["Claude", claudeAdapter],
+      ["Codex", codexAdapter],
     ] as const;
     for (const [name, adapter] of engines) {
       const p = (adapter as any).start().then(

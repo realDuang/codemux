@@ -11,6 +11,8 @@ export const SHARED_SETTINGS_KEYS = [
   "showDefaultWorkspace",
   "scheduledTasksEnabled",
   "worktreeEnabled",
+  "engineReasoningEfforts",
+  "engineServiceTiers",
 ] as const;
 
 export type SharedSettingsKey = (typeof SHARED_SETTINGS_KEYS)[number];
@@ -27,6 +29,8 @@ export function isSharedSettingsKey(key: string): key is SharedSettingsKey {
 
 const VALID_THEMES = new Set(["light", "dark", "system"]);
 const VALID_LOCALES = new Set(["en", "zh", "ru"]);
+const VALID_REASONING_EFFORTS = new Set(["low", "medium", "high", "max"]);
+const VALID_SERVICE_TIERS = new Set(["fast", "flex"]);
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -66,6 +70,28 @@ export function isValidSharedSettingValue(key: SharedSettingsKey, value: unknown
             return false;
           }
         }
+      }
+      return true;
+    }
+    case "engineReasoningEfforts": {
+      if (!isPlainObject(value)) return false;
+      const entries = Object.entries(value);
+      if (entries.length > 16) return false;
+      for (const [engineKey, v] of entries) {
+        if (engineKey === "__proto__" || engineKey === "constructor" || engineKey === "prototype") return false;
+        if (engineKey.length === 0 || engineKey.length > 64) return false;
+        if (typeof v !== "string" || !VALID_REASONING_EFFORTS.has(v)) return false;
+      }
+      return true;
+    }
+    case "engineServiceTiers": {
+      if (!isPlainObject(value)) return false;
+      const entries = Object.entries(value);
+      if (entries.length > 16) return false;
+      for (const [engineKey, v] of entries) {
+        if (engineKey === "__proto__" || engineKey === "constructor" || engineKey === "prototype") return false;
+        if (engineKey.length === 0 || engineKey.length > 64) return false;
+        if (v !== null && (typeof v !== "string" || !VALID_SERVICE_TIERS.has(v))) return false;
       }
       return true;
     }

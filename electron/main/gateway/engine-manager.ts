@@ -22,6 +22,7 @@ import type {
   MessagePromptContent,
   PermissionReply,
   ReasoningEffort,
+  CodexServiceTier,
   ConversationMeta,
   ConversationMessage,
   ImportableSession,
@@ -827,7 +828,7 @@ export class EngineManager extends EventEmitter {
   async sendMessage(
     sessionId: string,
     content: MessagePromptContent[],
-    options?: { mode?: string; modelId?: string; reasoningEffort?: ReasoningEffort | null },
+    options?: { mode?: string; modelId?: string; reasoningEffort?: ReasoningEffort | null; serviceTier?: CodexServiceTier | null },
   ): Promise<UnifiedMessage> {
     this.activeSessions.add(sessionId);
     try {
@@ -872,6 +873,17 @@ export class EngineManager extends EventEmitter {
       engineManagerLog.warn(`Stale session detected for ${sessionId}, clearing engineSessionId`);
       conversationStore.clearEngineSession(sessionId);
       this.engineToConvMap.delete(engineSessionId);
+    }
+
+    // Ensure completed assistant messages always have time.completed.
+    // Some adapters (e.g. OpenCode) strip time.completed during multi-step loops
+    // and only restore it on session.idle — if that event is lost (e.g. WebSocket
+    // reconnect), the field stays undefined, causing the frontend timer to tick
+    // indefinitely on an already-finished message.
+    if (result.role === "assistant" && !result.time.completed) {
+      const finalized = { ...result, time: { ...result.time, completed: Date.now() } };
+      this.persistMessage(sessionId, finalized);
+      this.emit("message.updated", { sessionId, message: finalized });
     }
 
     return result;
@@ -987,7 +999,7 @@ export class EngineManager extends EventEmitter {
     sessionId: string,
     commandName: string,
     args: string,
-    options?: { mode?: string; modelId?: string; reasoningEffort?: ReasoningEffort | null },
+    options?: { mode?: string; modelId?: string; reasoningEffort?: ReasoningEffort | null; serviceTier?: CodexServiceTier | null },
   ): Promise<CommandInvokeResult> {
     const conv = conversationStore.get(sessionId);
     if (!conv) throw new Error(`Conversation not found: ${sessionId}`);

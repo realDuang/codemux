@@ -344,6 +344,8 @@ describe('auth-route-handlers', () => {
         locale: 'zh',
         logLevel: 'debug',
         engineModels: { claude: { providerID: 'anthropic', modelID: 'sonnet' } },
+        engineReasoningEfforts: { claude: 'max' },
+        engineServiceTiers: { codex: 'fast', opencode: null },
         lastSessionId: 'sess-123',
         someInternalKey: 'secret',
       });
@@ -356,6 +358,8 @@ describe('auth-route-handlers', () => {
         theme: 'dark',
         locale: 'zh',
         engineModels: { claude: { providerID: 'anthropic', modelID: 'sonnet' } },
+        engineReasoningEfforts: { claude: 'max' },
+        engineServiceTiers: { codex: 'fast', opencode: null },
         serverMode: process.env.CODEMUX_SERVER_MODE === "1",
       });
       // Sensitive keys must not leak
@@ -400,6 +404,24 @@ describe('auth-route-handlers', () => {
 
       expect(await handleSettingsRoutes(req, mockRes, pathname, mockStore, mockSettingsFns)).toBe(true);
       expect(mockSettingsFns.saveSettings).toHaveBeenCalledWith({ theme: 'light', locale: 'en' });
+      const responseBody = JSON.parse((mockRes.end as any).mock.calls[0][0]);
+      expect(responseBody.success).toBe(true);
+    });
+
+    it('PATCH saves valid reasoning effort and service tier settings', async () => {
+      const pathname = '/api/settings/shared';
+      const req = createMockReq(pathname, 'PATCH', {
+        engineReasoningEfforts: { claude: 'high' },
+        engineServiceTiers: { codex: 'fast', opencode: null },
+      });
+      req.headers.authorization = 'Bearer valid-token';
+      mockStore.verifyToken.mockReturnValue({ valid: true, deviceId: 'dev1' });
+
+      expect(await handleSettingsRoutes(req, mockRes, pathname, mockStore, mockSettingsFns)).toBe(true);
+      expect(mockSettingsFns.saveSettings).toHaveBeenCalledWith({
+        engineReasoningEfforts: { claude: 'high' },
+        engineServiceTiers: { codex: 'fast', opencode: null },
+      });
       const responseBody = JSON.parse((mockRes.end as any).mock.calls[0][0]);
       expect(responseBody.success).toBe(true);
     });
@@ -450,6 +472,32 @@ describe('auth-route-handlers', () => {
     it('PATCH rejects non-boolean for boolean settings', async () => {
       const pathname = '/api/settings/shared';
       const req = createMockReq(pathname, 'PATCH', { worktreeEnabled: 'yes' });
+      req.headers.authorization = 'Bearer valid-token';
+      mockStore.verifyToken.mockReturnValue({ valid: true, deviceId: 'dev1' });
+
+      expect(await handleSettingsRoutes(req, mockRes, pathname, mockStore, mockSettingsFns)).toBe(true);
+      expect(mockRes.writeHead).toHaveBeenCalledWith(400, expect.any(Object));
+      expect(mockSettingsFns.saveSettings).not.toHaveBeenCalled();
+    });
+
+    it('PATCH rejects invalid reasoning effort values', async () => {
+      const pathname = '/api/settings/shared';
+      const req = createMockReq(pathname, 'PATCH', {
+        engineReasoningEfforts: { claude: 'turbo' },
+      });
+      req.headers.authorization = 'Bearer valid-token';
+      mockStore.verifyToken.mockReturnValue({ valid: true, deviceId: 'dev1' });
+
+      expect(await handleSettingsRoutes(req, mockRes, pathname, mockStore, mockSettingsFns)).toBe(true);
+      expect(mockRes.writeHead).toHaveBeenCalledWith(400, expect.any(Object));
+      expect(mockSettingsFns.saveSettings).not.toHaveBeenCalled();
+    });
+
+    it('PATCH rejects engineServiceTiers with prototype-pollution keys', async () => {
+      const pathname = '/api/settings/shared';
+      const req = createMockReq(pathname, 'PATCH', {
+        engineServiceTiers: { constructor: 'fast' },
+      });
       req.headers.authorization = 'Bearer valid-token';
       mockStore.verifyToken.mockReturnValue({ valid: true, deviceId: 'dev1' });
 

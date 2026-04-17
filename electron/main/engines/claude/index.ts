@@ -151,6 +151,28 @@ export function getClaudeReasoningCapabilities(
 }
 
 // ============================================================================
+// Read ~/.claude/settings.json env field for proxy auth detection
+// ============================================================================
+
+function readClaudeSettingsEnv(): Record<string, string> {
+  try {
+    const settingsPath = join(homedir(), ".claude", "settings.json");
+    if (!existsSync(settingsPath)) return {};
+    const settings = JSON.parse(readFileSync(settingsPath, "utf-8"));
+    if (settings && typeof settings.env === "object" && settings.env !== null) {
+      const env: Record<string, string> = {};
+      for (const [key, value] of Object.entries(settings.env)) {
+        if (typeof value === "string") env[key] = value;
+      }
+      return env;
+    }
+  } catch (err) {
+    claudeLog.warn("[Claude] Failed to read ~/.claude/settings.json env:", err);
+  }
+  return {};
+}
+
+// ============================================================================
 // Session idle timeout (30 min)
 // ============================================================================
 
@@ -293,6 +315,7 @@ export class ClaudeCodeAdapter extends EngineAdapter {
     try {
       const env: Record<string, string | undefined> = {
         ...process.env,
+        ...readClaudeSettingsEnv(),
         ...this.options?.env,
       };
       const sdkEnv = { ...env };
@@ -974,6 +997,7 @@ export class ClaudeCodeAdapter extends EngineAdapter {
   private async refreshModelCache(): Promise<void> {
     const env: Record<string, string | undefined> = {
       ...process.env,
+      ...readClaudeSettingsEnv(),
       ...this.options?.env,
     };
 
@@ -1060,6 +1084,13 @@ export class ClaudeCodeAdapter extends EngineAdapter {
           name: m.display_name || m.id,
           description: "",
           engineType: "claude" as EngineType,
+          // HTTP /v1/models doesn't return reasoning capabilities, so assume
+          // all Claude models support the standard effort levels.
+          capabilities: {
+            reasoning: true,
+            supportedReasoningEfforts: [...REASONING_EFFORT_VALUES],
+            defaultReasoningEffort: "medium" as const,
+          },
         }))
         .sort((a, b) => a.modelId.localeCompare(b.modelId));
 
@@ -1768,6 +1799,7 @@ export class ClaudeCodeAdapter extends EngineAdapter {
     // Build environment variables
     const env: Record<string, string | undefined> = {
       ...process.env,
+      ...readClaudeSettingsEnv(),
       ...this.options?.env,
     };
     // Don't let stale env var override the user's model selection
@@ -2010,6 +2042,7 @@ export class ClaudeCodeAdapter extends EngineAdapter {
     const cwd = directory.replaceAll("/", process.platform === "win32" ? "\\" : "/");
     const env: Record<string, string | undefined> = {
       ...process.env,
+      ...readClaudeSettingsEnv(),
       ...this.options?.env,
     };
     delete env.ANTHROPIC_MODEL;

@@ -29,8 +29,9 @@ vi.mock('solid-js/store', () => ({
         Object.keys(storeContainer.data).forEach((k: string) => delete storeContainer.data[k]);
         Object.assign(storeContainer.data, pathOrValue);
       } else if (args.length === 1) {
-        // Single path: setConfigStore('key', value)
-        storeContainer.data[pathOrValue] = args[0];
+        // Single path: setConfigStore('key', value) or setConfigStore('key', updaterFn)
+        const value = typeof args[0] === 'function' ? args[0](storeContainer.data[pathOrValue]) : args[0];
+        storeContainer.data[pathOrValue] = value;
       } else if (args.length === 2) {
         // Nested path: setConfigStore('key', 'subkey', value)
         if (!storeContainer.data[pathOrValue] || typeof storeContainer.data[pathOrValue] !== 'object') {
@@ -55,6 +56,12 @@ import {
   loadReasoningEffort,
   getEffectiveReasoningEffortForEngine,
   restoreReasoningEfforts,
+  saveServiceTier,
+  loadServiceTier,
+  clearServiceTier,
+  getServiceTierForEngine,
+  isFastModeActive,
+  restoreServiceTiers,
   configStore,
   setConfigStore,
 } from '../../../../src/stores/config';
@@ -74,6 +81,7 @@ describe('config store', () => {
       engineModelSelections: {},
       enabledEngines: {},
       engineReasoningEfforts: {},
+      engineServiceTiers: {},
     });
   });
 
@@ -300,6 +308,90 @@ describe('config store', () => {
 
       expect(loadReasoningEffort('copilot')).toBeNull();
       expect(getEffectiveReasoningEffortForEngine('copilot')).toBeNull();
+    });
+  });
+
+  describe('service tier persistence', () => {
+    it('saveServiceTier updates store and persists', () => {
+      saveServiceTier('codex', 'fast');
+      expect(configStore.engineServiceTiers['codex']).toBe('fast');
+      expect(settings.saveNestedSetting).toHaveBeenCalledWith('engineServiceTiers.codex', 'fast');
+    });
+
+    it('clearServiceTier removes from store and persists null', () => {
+      saveServiceTier('codex', 'fast');
+      vi.clearAllMocks();
+      clearServiceTier('codex');
+      expect(configStore.engineServiceTiers['codex']).toBeUndefined();
+      expect(settings.saveNestedSetting).toHaveBeenCalledWith('engineServiceTiers.codex', null);
+    });
+
+    it('loadServiceTier returns persisted value when valid', () => {
+      vi.mocked(settings.getNestedSetting).mockReturnValue('fast');
+      expect(loadServiceTier('codex')).toBe('fast');
+
+      vi.mocked(settings.getNestedSetting).mockReturnValue('flex');
+      expect(loadServiceTier('codex')).toBe('flex');
+    });
+
+    it('loadServiceTier returns null for invalid or missing values', () => {
+      vi.mocked(settings.getNestedSetting).mockReturnValue(undefined);
+      expect(loadServiceTier('codex')).toBeNull();
+
+      vi.mocked(settings.getNestedSetting).mockReturnValue('bogus');
+      expect(loadServiceTier('codex')).toBeNull();
+
+      vi.mocked(settings.getNestedSetting).mockReturnValue('');
+      expect(loadServiceTier('codex')).toBeNull();
+    });
+
+    it('getServiceTierForEngine returns tier when engine supports fast mode', () => {
+      setConfigStore('engines', [
+        { type: 'codex', capabilities: { fastModeSupported: true } } as any,
+      ]);
+      setConfigStore('engineServiceTiers', 'codex', 'fast');
+      expect(getServiceTierForEngine('codex')).toBe('fast');
+    });
+
+    it('getServiceTierForEngine returns null when engine does not support fast mode', () => {
+      setConfigStore('engines', [
+        { type: 'codex', capabilities: { fastModeSupported: false } } as any,
+      ]);
+      setConfigStore('engineServiceTiers', 'codex', 'fast');
+      expect(getServiceTierForEngine('codex')).toBeNull();
+    });
+
+    it('getServiceTierForEngine returns null when no tier saved', () => {
+      setConfigStore('engines', [
+        { type: 'codex', capabilities: { fastModeSupported: true } } as any,
+      ]);
+      expect(getServiceTierForEngine('codex')).toBeNull();
+    });
+
+    it('isFastModeActive returns true only when tier is "fast"', () => {
+      setConfigStore('engines', [
+        { type: 'codex', capabilities: { fastModeSupported: true } } as any,
+      ]);
+      setConfigStore('engineServiceTiers', 'codex', 'fast');
+      expect(isFastModeActive('codex')).toBe(true);
+
+      setConfigStore('engineServiceTiers', 'codex', 'flex');
+      expect(isFastModeActive('codex')).toBe(false);
+    });
+
+    it('restoreServiceTiers loads persisted tiers for all engines', () => {
+      setConfigStore('engines', [
+        { type: 'codex', name: 'Codex' } as any,
+        { type: 'opencode', name: 'OpenCode' } as any,
+      ]);
+      vi.mocked(settings.getNestedSetting).mockImplementation((key: string) => {
+        if (key === 'engineServiceTiers.codex') return 'fast';
+        if (key === 'engineServiceTiers.opencode') return undefined;
+        return undefined;
+      });
+      restoreServiceTiers();
+      expect(configStore.engineServiceTiers['codex']).toBe('fast');
+      expect(configStore.engineServiceTiers['opencode']).toBeUndefined();
     });
   });
 });

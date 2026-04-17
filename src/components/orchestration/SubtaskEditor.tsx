@@ -44,11 +44,6 @@ export function SubtaskEditor(props: SubtaskEditorProps) {
     return `→ ${labels.join(", ")}`;
   };
 
-  const selectedEngine = () =>
-    props.availableEngines.find((e) => e.type === props.subtask.engineType);
-
-  const availableModels = () => selectedEngine()?.models ?? [];
-
   const update = (partial: Partial<OrchestrationSubtask>) => {
     props.onUpdate({ ...props.subtask, ...partial });
   };
@@ -134,69 +129,33 @@ export function SubtaskEditor(props: SubtaskEditorProps) {
             />
           </div>
 
-          {/* Role + Engine + Model row */}
-          <div class="flex gap-2">
-            {/* Role selector */}
-            <Show when={props.roleMappings && props.roleMappings.length > 0}>
-              <div class="flex flex-col gap-1 flex-1">
-                <label class="text-[11px] font-medium text-slate-500 dark:text-slate-400 uppercase tracking-wide">
-                  Role
-                </label>
-                <select
-                  class="text-sm rounded-md border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-100 px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-indigo-400/50 focus:border-indigo-400 transition-colors"
-                  value={props.subtask.role ?? ""}
-                  onChange={(e) => {
-                    const role = e.currentTarget.value as OrchestratorRole;
-                    if (role && props.onRoleChange) {
-                      props.onRoleChange(role);
-                    }
-                  }}
-                >
-                  <option value="">No role</option>
-                  <For each={props.roleMappings!}>
-                    {(mapping) => (
-                      <option value={mapping.role}>
-                        {mapping.label}
-                      </option>
-                    )}
-                  </For>
-                </select>
-              </div>
-            </Show>
-
-            <div class="flex flex-col gap-1 flex-1">
+          {/* Role selector */}
+          <Show when={props.roleMappings && props.roleMappings.length > 0}>
+            <div class="flex flex-col gap-1">
               <label class="text-[11px] font-medium text-slate-500 dark:text-slate-400 uppercase tracking-wide">
-                Engine
+                Role
               </label>
               <select
                 class="text-sm rounded-md border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-100 px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-indigo-400/50 focus:border-indigo-400 transition-colors"
-                value={props.subtask.engineType}
-                onChange={(e) => update({ engineType: e.currentTarget.value, modelId: undefined })}
+                value={props.subtask.role ?? ""}
+                onChange={(e) => {
+                  const role = e.currentTarget.value as OrchestratorRole;
+                  if (role && props.onRoleChange) {
+                    props.onRoleChange(role);
+                  }
+                }}
               >
-                <For each={props.availableEngines}>
-                  {(eng) => <option value={eng.type}>{eng.name}</option>}
+                <option value="">No role</option>
+                <For each={props.roleMappings!}>
+                  {(mapping) => (
+                    <option value={mapping.role}>
+                      {mapping.label} — {mapping.description}
+                    </option>
+                  )}
                 </For>
               </select>
             </div>
-
-            <Show when={availableModels().length > 0}>
-              <div class="flex flex-col gap-1 flex-1">
-                <label class="text-[11px] font-medium text-slate-500 dark:text-slate-400 uppercase tracking-wide">
-                  Model
-                </label>
-                <select
-                  class="text-sm rounded-md border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-100 px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-indigo-400/50 focus:border-indigo-400 transition-colors"
-                  value={props.subtask.modelId ?? ""}
-                  onChange={(e) => update({ modelId: e.currentTarget.value || undefined })}
-                >
-                  <option value="">Default</option>
-                  <For each={availableModels()}>
-                    {(m) => <option value={m.id}>{m.name ?? m.id}</option>}
-                  </For>
-                </select>
-              </div>
-            </Show>
-          </div>
+          </Show>
 
           {/* Dependencies */}
           <Show when={props.allSubtasks.length > 1}>
@@ -232,7 +191,7 @@ export function SubtaskEditor(props: SubtaskEditorProps) {
             <button
               type="button"
               onClick={props.onDelete}
-              class="text-xs text-red-400 hover:text-red-600 dark:text-red-500 dark:hover:text-red-400 transition-colors px-2 py-1 rounded hover:bg-red-50 dark:hover:bg-red-900/20"
+              class="text-xs bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 border border-red-200 dark:border-red-800/50 hover:bg-red-100 dark:hover:bg-red-900/40 transition-colors px-2 py-1 rounded"
             >
               Remove subtask
             </button>

@@ -239,6 +239,9 @@ export const ru: LocaleDict = {
     imageUnsupportedType: "Неподдерживаемый формат изображения",
     imageLimitReached: "Максимум 4 изображения на сообщение",
     removeImage: "Удалить изображение",
+    teamRelayPlaceholder: "Напишите активному оркестратору...",
+    teamRelayNotice: "Heavy Brain активен — сообщения из этой сессии отправляются напрямую оркестратору.",
+    teamRelayImageUnsupported: "При отправке сообщения активному оркестратору вложения изображений не поддерживаются.",
     noCommandsFound: "Команды не найдены",
     reasoningEffortLow: "Низкий",
     reasoningEffortMedium: "Средний",
@@ -499,6 +502,9 @@ export const ru: LocaleDict = {
     gatewayReconnected: "Соединение восстановлено.",
     engineError: "Ошибка движка: {message}",
     defaultEngineSaveFailed: "Не удалось сохранить движок по умолчанию.",
+    teamRunStarted: "Team run запущен.",
+    teamRunFailed: "Не удалось запустить team run: {message}",
+    teamMessageRelayFailed: "Не удалось отправить сообщение активному оркестратору: {message}",
   },
 
   // File Explorer

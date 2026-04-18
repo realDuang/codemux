@@ -44,6 +44,7 @@ import {
   type TeamCreateRequest,
   type TeamCancelRequest,
   type TeamGetRequest,
+  type TeamSendMessageRequest,
 } from "../../../src/types/unified";
 import { isCodexServiceTier } from "../../../src/types/unified";
 
@@ -516,6 +517,12 @@ export class GatewayServer {
       case GatewayRequestType.TEAM_CANCEL: {
         const req = p as TeamCancelRequest;
         return agentTeamService.cancelRun(req.runId);
+      }
+
+      case GatewayRequestType.TEAM_SEND_MESSAGE: {
+        const req = p as TeamSendMessageRequest;
+        agentTeamService.sendMessageToRun(req.runId, req.text);
+        return;
       }
 
       case GatewayRequestType.TEAM_LIST: {

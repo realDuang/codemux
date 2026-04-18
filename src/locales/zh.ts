@@ -238,6 +238,9 @@ export const zh: LocaleDict = {
     imageUnsupportedType: "不支持的图片格式",
     imageLimitReached: "每条消息最多 4 张图片",
     removeImage: "移除图片",
+    teamRelayPlaceholder: "直接给当前 orchestrator 留言...",
+    teamRelayNotice: "Heavy Brain 正在运行中；你在这个 session 发送的消息会直接转发给 orchestrator。",
+    teamRelayImageUnsupported: "直接给 orchestrator 发消息时暂不支持图片附件。",
     noCommandsFound: "未找到匹配的命令",
     reasoningEffortLow: "低",
     reasoningEffortMedium: "中",
@@ -496,6 +499,9 @@ export const zh: LocaleDict = {
     gatewayReconnected: "连接已恢复。",
     engineError: "引擎错误：{message}",
     defaultEngineSaveFailed: "默认引擎保存失败。",
+    teamRunStarted: "Team run 已启动。",
+    teamRunFailed: "Team run 启动失败：{message}",
+    teamMessageRelayFailed: "转发消息给当前 orchestrator 失败：{message}",
   },
 
   // File Explorer

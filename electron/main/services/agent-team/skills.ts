@@ -39,22 +39,41 @@ export interface StructuredOutputSkill<T> {
 export function extractJsonBlocks(text: string): string[] {
   const blocks: string[] = [];
 
-  // 1. Match ```json ... ``` fenced code blocks
-  const fenceRegex = /```(?:json)?\s*\n?([\s\S]*?)```/g;
-  let match: RegExpExecArray | null;
-  while ((match = fenceRegex.exec(text)) !== null) {
-    const content = match[1].trim();
-    if (content.startsWith("{") || content.startsWith("[")) {
-      blocks.push(content);
-    }
-  }
+  // Strategy: find top-level JSON objects/arrays by bracket-balanced scanning.
+  // This handles JSON values that contain ``` fences (e.g. prompts with code blocks)
+  // which break naive regex-based fence matching.
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (ch !== "{" && ch !== "[") continue;
 
-  // 2. If no fenced blocks found, try to find bare JSON
-  if (blocks.length === 0) {
-    // Match outermost { ... } or [ ... ]
-    const bareRegex = /(\{[\s\S]*\}|\[[\s\S]*\])/g;
-    while ((match = bareRegex.exec(text)) !== null) {
-      blocks.push(match[1].trim());
+    const close = ch === "{" ? "}" : "]";
+    let depth = 1;
+    let inString = false;
+    let escaped = false;
+    let j = i + 1;
+
+    for (; j < text.length && depth > 0; j++) {
+      const c = text[j];
+      if (escaped) {
+        escaped = false;
+        continue;
+      }
+      if (c === "\\") {
+        if (inString) escaped = true;
+        continue;
+      }
+      if (c === '"') {
+        inString = !inString;
+        continue;
+      }
+      if (inString) continue;
+      if (c === ch) depth++;
+      else if (c === close) depth--;
+    }
+
+    if (depth === 0) {
+      blocks.push(text.slice(i, j));
+      i = j - 1; // skip past this block
     }
   }
 
@@ -197,7 +216,7 @@ export const dagPlanningSkill: StructuredOutputSkill<DagPlanOutput> = {
   formatPrompt: `
 ## Output Format Requirements
 
-You MUST output your task plan as a single JSON code block with the following schema:
+Your **final answer** MUST be a single JSON code block with the following schema. This JSON will be parsed by an external orchestration system — it is not for human reading.
 
 \`\`\`json
 {
@@ -222,7 +241,7 @@ Before writing the JSON block, verify ALL of the following:
 4. No circular dependency chains (e.g. A depends on B, B depends on A)
 5. Each prompt is self-contained — the worker agent CANNOT see other tasks or the original request
 6. At least one task has dependsOn: [] (the DAG must have a root)
-7. Output ONLY the JSON block — no additional text before or after
+7. Your final answer is ONLY the JSON block — no additional text before or after
 `.trim(),
 
   parse(text: string) {
@@ -252,7 +271,8 @@ export interface DispatchTask {
 
 export type DispatchInstruction =
   | { action: "dispatch"; tasks: DispatchTask[] }
-  | { action: "complete"; result: string };
+  | { action: "complete"; result: string }
+  | { action: "continueWaiting" };
 
 function validateDispatchInstruction(
   data: unknown,
@@ -268,6 +288,10 @@ function validateDispatchInstruction(
       return { ok: false, error: "action 'complete' requires a 'result' string." };
     }
     return { ok: true, data: { action: "complete", result: obj.result } };
+  }
+
+  if (obj.action === "continueWaiting") {
+    return { ok: true, data: { action: "continueWaiting" } };
   }
 
   if (obj.action === "dispatch") {
@@ -310,7 +334,7 @@ function validateDispatchInstruction(
 
   return {
     ok: false,
-    error: `Unknown action '${String(obj.action)}'. Expected 'dispatch' or 'complete'.`,
+    error: `Unknown action '${String(obj.action)}'. Expected 'dispatch', 'complete', or 'continue'.`,
   };
 }
 
@@ -320,9 +344,9 @@ export const dispatchSkill: StructuredOutputSkill<DispatchInstruction> = {
   formatPrompt: `
 ## Communication Protocol
 
-You MUST communicate your decisions via JSON code blocks. Two actions are available:
+You communicate your decisions via JSON code blocks. This JSON is parsed by an external orchestration system — it is not for human reading. Every response MUST be a single JSON block with one of these actions:
 
-### 1. Dispatch tasks to worker agents:
+### 1. Dispatch new tasks:
 \`\`\`json
 {
   "action": "dispatch",
@@ -345,13 +369,20 @@ You MUST communicate your decisions via JSON code blocks. Two actions are availa
 }
 \`\`\`
 
+### 3. Acknowledge and wait for more results:
+\`\`\`json
+{
+  "action": "continueWaiting"
+}
+\`\`\`
+
 ## Self-Check Before Outputting (MANDATORY)
 
 1. JSON syntax is valid
-2. action is either "dispatch" or "complete"
+2. action is "dispatch", "complete", or "continueWaiting"
 3. If dispatch: every task has id, description, and a detailed self-contained prompt
 4. If complete: result contains a meaningful summary of all work done
-5. Output ONLY the JSON block — no additional text before or after
+5. Your response is ONLY the JSON block — no additional text before or after
 `.trim(),
 
   parse(text: string) {
@@ -363,8 +394,8 @@ You MUST communicate your decisions via JSON code blocks. Two actions are availa
   correctionPrompt(rawText: string, error: string) {
     return (
       `Your previous output had a format error:\n${error}\n\n` +
-      `Please output ONLY the corrected JSON block. Use either ` +
-      `{ "action": "dispatch", "tasks": [...] } or { "action": "complete", "result": "..." }.`
+      `Please output ONLY the corrected JSON block. Use one of: ` +
+      `{ "action": "dispatch", "tasks": [...] }, { "action": "complete", "result": "..." }, or { "action": "continueWaiting" }.`
     );
   },
 };
@@ -386,21 +417,30 @@ export async function executeWithSkill<T>(
   prompt: string,
   skill: StructuredOutputSkill<T>,
   maxRetries = 1,
+  log?: { info: (...args: unknown[]) => void; warn: (...args: unknown[]) => void },
 ): Promise<{ ok: true; data: T } | { ok: false; error: string }> {
   // First attempt: send prompt with skill format instructions
   const fullPrompt = `${skill.formatPrompt}\n\n---\n\n${prompt}`;
   const responseText = await sendMessage(fullPrompt);
 
+  log?.info(`[${skill.name}] LLM response (${responseText.length} chars): ${responseText.slice(0, 500)}${responseText.length > 500 ? "..." : ""}`);
+
   const result = skill.parse(responseText);
   if (result.ok) return result;
 
+  log?.warn(`[${skill.name}] Parse failed: ${result.error}`);
+
   // Retry with correction prompt
+  let lastError = result.error;
   for (let i = 0; i < maxRetries; i++) {
-    const correction = skill.correctionPrompt(responseText, result.error);
+    const correction = skill.correctionPrompt(responseText, lastError);
     const retryText = await sendMessage(correction);
+    log?.info(`[${skill.name}] Retry ${i + 1} response (${retryText.length} chars): ${retryText.slice(0, 500)}${retryText.length > 500 ? "..." : ""}`);
     const retryResult = skill.parse(retryText);
     if (retryResult.ok) return retryResult;
+    lastError = retryResult.error;
+    log?.warn(`[${skill.name}] Retry ${i + 1} parse failed: ${lastError}`);
   }
 
-  return result; // Return last failure
+  return { ok: false, error: lastError };
 }

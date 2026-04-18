@@ -9,6 +9,7 @@ import { timeId } from "../../utils/id-gen";
 import { agentTeamLog } from "./logger";
 import { LightBrainOrchestrator } from "./light-brain";
 import { HeavyBrainOrchestrator } from "./heavy-brain";
+import type { UserChannel } from "./user-channel";
 import type { EngineManager } from "../../gateway/engine-manager";
 import type {
   TeamRun,
@@ -39,6 +40,8 @@ export class AgentTeamService extends EventEmitter {
   private autoApproveSessions = new Set<string>();
   /** Active Heavy Brain orchestrators (for cancellation). */
   private activeOrchestrators = new Map<string, HeavyBrainOrchestrator>();
+  /** Active user channels for human-in-the-loop (both Light and Heavy Brain). */
+  private activeUserChannels = new Map<string, UserChannel>();
   private initialized = false;
 
   // --- Lifecycle ---
@@ -58,6 +61,7 @@ export class AgentTeamService extends EventEmitter {
       orchestrator.cancel();
     }
     this.activeOrchestrators.clear();
+    this.activeUserChannels.clear();
     this.autoApproveSessions.clear();
     this.initialized = false;
     agentTeamLog.info("Agent Team Service shut down");
@@ -140,6 +144,7 @@ export class AgentTeamService extends EventEmitter {
       orchestrator.cancel();
       this.activeOrchestrators.delete(runId);
     }
+    this.activeUserChannels.delete(runId);
 
     // Cancel all running child sessions
     for (const task of run.tasks) {
@@ -162,6 +167,26 @@ export class AgentTeamService extends EventEmitter {
     agentTeamLog.info(`Cancelled team run ${runId}`);
   }
 
+  /**
+   * Send a user message to a running orchestrator (Light or Heavy Brain).
+   * The message will be forwarded with highest priority.
+   */
+  sendMessageToRun(runId: string, text: string): void {
+    const run = this.runs.get(runId);
+    if (!run) throw new Error(`Team run not found: ${runId}`);
+    if (run.status !== "running" && run.status !== "planning") {
+      throw new Error(`Team run ${runId} is not active (status: ${run.status})`);
+    }
+
+    const channel = this.activeUserChannels.get(runId);
+    if (!channel) {
+      throw new Error(`No active user channel for run ${runId}`);
+    }
+
+    channel.send(text);
+    agentTeamLog.info(`User message sent to run ${runId}`);
+  }
+
   listRuns(): TeamRun[] {
     return Array.from(this.runs.values());
   }
@@ -178,6 +203,8 @@ export class AgentTeamService extends EventEmitter {
       this.emitRunUpdated(run);
     };
 
+    const resolvedEngine = orchestratorEngineType ?? this.engineManager!.getDefaultEngineType();
+
     if (run.mode === "light") {
       const orchestrator = new LightBrainOrchestrator(
         this.engineManager!,
@@ -190,10 +217,12 @@ export class AgentTeamService extends EventEmitter {
         this.autoApproveSessions,
       );
       this.activeOrchestrators.set(run.id, orchestrator);
+      this.activeUserChannels.set(run.id, orchestrator.userChannel);
       try {
-        await orchestrator.run(run, orchestratorEngineType, onTaskUpdated);
+        await orchestrator.run(run, resolvedEngine, onTaskUpdated);
       } finally {
         this.activeOrchestrators.delete(run.id);
+        this.activeUserChannels.delete(run.id);
       }
     }
 

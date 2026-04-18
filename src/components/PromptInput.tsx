@@ -136,6 +136,8 @@ interface PromptInputProps {
   onCommandInvoke?: (commandName: string, args: string, agent: AgentMode) => void;
   /** Called when user triggers a team run */
   onTeamSend?: (text: string, mode: "light" | "heavy") => void;
+  /** When true, prompt sends are relayed to the active Heavy Brain orchestrator */
+  relayToOrchestrator?: boolean;
 }
 
 export function PromptInput(props: PromptInputProps) {
@@ -180,6 +182,7 @@ export function PromptInput(props: PromptInputProps) {
 
   /** Parse the current text: detect `/command args` prefix */
   const commandQuery = createMemo(() => {
+    if (props.relayToOrchestrator) return null;
     const val = text();
     if (!val.startsWith("/")) return null;
     // Only trigger for single-line prefix (no newlines before command)
@@ -415,7 +418,7 @@ export function PromptInput(props: PromptInputProps) {
   const doSend = () => {
     const trimmed = text().trim();
     // Detect slash command: text starts with / and onCommandInvoke is provided
-    if (trimmed.startsWith("/") && props.onCommandInvoke) {
+    if (!props.relayToOrchestrator && trimmed.startsWith("/") && props.onCommandInvoke) {
       const spaceIdx = trimmed.indexOf(" ");
       const commandName = spaceIdx === -1 ? trimmed.slice(1) : trimmed.slice(1, spaceIdx);
       const args = spaceIdx === -1 ? "" : trimmed.slice(spaceIdx + 1).trim();
@@ -452,6 +455,9 @@ export function PromptInput(props: PromptInputProps) {
 
   // Placeholder text based on active mode and generating state
   const modePlaceholder = createMemo(() => {
+    if (props.relayToOrchestrator) {
+      return t().prompt.teamRelayPlaceholder;
+    }
     if (props.isGenerating) {
       if (props.canEnqueue) return t().prompt.typeNextMessage ?? "Type your next message...";
       return t().prompt.waitingForResponse ?? "Waiting for response...";
@@ -479,12 +485,13 @@ export function PromptInput(props: PromptInputProps) {
               return (
                 <button
                   onClick={() => handleAgentChange(mode)}
+                  disabled={props.relayToOrchestrator}
                   class={`px-2 sm:px-3 py-1.5 text-xs font-medium rounded-lg transition-all flex items-center gap-1 sm:gap-1.5 min-h-[36px] ${
                     isActive()
                       ? `${color} text-white shadow-md shadow-current/20`
                       : "bg-slate-100/60 dark:bg-slate-800/60 text-slate-500 dark:text-slate-400 hover:bg-slate-200/80 dark:hover:bg-slate-700/60 backdrop-blur-sm"
-                  }`}
-                  title={mode.description ?? displayName}
+                  } ${props.relayToOrchestrator ? "opacity-60 cursor-not-allowed" : ""}`}
+                  title={props.relayToOrchestrator ? t().prompt.teamRelayNotice : (mode.description ?? displayName)}
                 >
                   {icon}
                   <span class="hidden sm:inline">{displayName}</span>
@@ -494,6 +501,12 @@ export function PromptInput(props: PromptInputProps) {
           </For>
         </div>
       </div>
+
+      <Show when={props.relayToOrchestrator}>
+        <div class="mb-2 px-1 text-xs text-amber-700 dark:text-amber-300">
+          {t().prompt.teamRelayNotice}
+        </div>
+      </Show>
 
       {/* Input area */}
       <div

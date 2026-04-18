@@ -20,6 +20,23 @@ const [teamStore, setTeamStore] = createStore<TeamStoreState>({
 
 export { teamStore };
 
+function isActiveTeamRun(run: TeamRun): boolean {
+  return run.status === "planning" || run.status === "running";
+}
+
+function pickPreferredRun(runs: TeamRun[]): TeamRun | undefined {
+  if (runs.length === 0) return undefined;
+  return runs.reduce((best, run) => {
+    if (!best) return run;
+    const bestActive = isActiveTeamRun(best);
+    const runActive = isActiveTeamRun(run);
+    if (runActive !== bestActive) {
+      return runActive ? run : best;
+    }
+    return run.time.created > best.time.created ? run : best;
+  }, runs[0]);
+}
+
 /** Initialize notification handlers for team events */
 export function initTeamStore(): void {
   // These handlers are set during gateway-api initialization
@@ -85,7 +102,28 @@ export async function cancelTeamRun(runId: string): Promise<void> {
 
 /** Get the active team run for a given session */
 export function getTeamRunForSession(sessionId: string): TeamRun | undefined {
-  return teamStore.runs.find((r) => r.parentSessionId === sessionId);
+  return pickPreferredRun(teamStore.runs.filter((r) => r.parentSessionId === sessionId));
+}
+
+/** Get the active team run for a given session, if any */
+export function getActiveTeamRunForSession(sessionId: string): TeamRun | undefined {
+  return pickPreferredRun(
+    teamStore.runs.filter((r) => r.parentSessionId === sessionId && isActiveTeamRun(r)),
+  );
+}
+
+/** Get the active Heavy Brain run for a given session, if any */
+export function getActiveHeavyTeamRunForSession(sessionId: string): TeamRun | undefined {
+  return pickPreferredRun(
+    teamStore.runs.filter(
+      (r) => r.parentSessionId === sessionId && r.mode === "heavy" && isActiveTeamRun(r),
+    ),
+  );
+}
+
+/** Send a user follow-up message to an active team run orchestrator */
+export async function sendTeamRunMessage(runId: string, text: string): Promise<void> {
+  await gateway.sendTeamMessage(runId, text);
 }
 
 /** Get team run by ID */

@@ -639,6 +639,7 @@ export const GatewayRequestType = {
   // Agent Team
   TEAM_CREATE: "team.create",
   TEAM_CANCEL: "team.cancel",
+  TEAM_SEND_MESSAGE: "team.send-message",
   TEAM_LIST: "team.list",
   TEAM_GET: "team.get",
 } as const;
@@ -1043,4 +1044,9 @@ export interface TeamCancelRequest {
 
 export interface TeamGetRequest {
   runId: string;
+}
+
+export interface TeamSendMessageRequest {
+  runId: string;
+  text: string;
 }

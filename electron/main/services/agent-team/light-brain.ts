@@ -86,9 +86,20 @@ export class LightBrainOrchestrator {
     engines: EngineInfo[],
   ): Promise<RawTaskNode[]> {
     // Create a temporary planning session
+    // Inject format spec + planner role as system-level prompt for engines
+    // that support it (e.g. Copilot). Also sent as user message for compatibility.
+    const prompt = buildPlanningPrompt(
+      teamRun.originalPrompt,
+      engines,
+      teamRun.directory,
+    );
+    const systemPrompt = `${dagPlanningSkill.formatPrompt}\n\n---\n\n${prompt}`;
+
     const planSession = await this.engineManager.createSession(
       plannerEngineType,
       teamRun.directory,
+      undefined,
+      { systemPrompt },
     );
 
     // Register for auto-approve
@@ -99,22 +110,21 @@ export class LightBrainOrchestrator {
     }
     this.autoApproveSessions.add(planSession.id);
 
-    // Build planning prompt
-    const prompt = buildPlanningPrompt(
-      teamRun.originalPrompt,
-      engines,
-      teamRun.directory,
-    );
-
     // Execute with skill (includes format spec + self-check + retry)
     const sendMessage = async (text: string): Promise<string> => {
       const msg = await this.engineManager.sendMessage(planSession.id, [
         { type: "text", text },
       ]);
-      return extractTextFromMessage(msg);
+      agentTeamLog.info(`[${teamRun.id}] sendMessage returned: role=${msg.role}, parts=${JSON.stringify(msg.parts?.map(p => ({ type: p.type, textLen: (p as any).text?.length })))}`);
+      const extracted = extractTextFromMessage(msg);
+      agentTeamLog.info(`[${teamRun.id}] extractTextFromMessage: ${extracted.length} chars`);
+      if (extracted.length === 0) {
+        agentTeamLog.warn(`[${teamRun.id}] Empty text! Full message: ${JSON.stringify(msg).slice(0, 1000)}`);
+      }
+      return extracted;
     };
 
-    const result = await executeWithSkill(sendMessage, prompt, dagPlanningSkill);
+    const result = await executeWithSkill(sendMessage, prompt, dagPlanningSkill, 1, agentTeamLog);
 
     if (!result.ok) {
       throw new Error(`DAG planning failed: ${result.error}`);

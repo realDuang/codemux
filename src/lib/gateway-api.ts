@@ -498,6 +498,10 @@ class GatewayAPI {
     return gatewayClient.cancelTeamRun(runId);
   }
 
+  sendTeamMessage(runId: string, text: string): Promise<void> {
+    return gatewayClient.sendTeamMessage(runId, text);
+  }
+
   listTeamRuns(): Promise<TeamRun[]> {
     return gatewayClient.listTeamRuns();
   }

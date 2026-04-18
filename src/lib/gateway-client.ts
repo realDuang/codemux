@@ -618,6 +618,10 @@ export class GatewayClient {
     return this.request(GatewayRequestType.TEAM_CANCEL, { runId });
   }
 
+  sendTeamMessage(runId: string, text: string): Promise<void> {
+    return this.request(GatewayRequestType.TEAM_SEND_MESSAGE, { runId, text });
+  }
+
   listTeamRuns(): Promise<TeamRun[]> {
     return this.request(GatewayRequestType.TEAM_LIST);
   }

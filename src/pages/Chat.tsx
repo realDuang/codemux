@@ -56,7 +56,15 @@ import { handleFileChanged, refreshGitStatus } from "../stores/file";
 
 import { configStore, setConfigStore, getSelectedModelForEngine, isEngineEnabled, getDefaultEngineType, getEffectiveReasoningEffortForEngine, getServiceTierForEngine } from "../stores/config";
 import { scheduledTaskStore, setScheduledTaskStore } from "../stores/scheduled-task";
-import { connectTeamHandlers, createTeamRun, getTeamRunForSession, cancelTeamRun } from "../stores/team";
+import {
+  connectTeamHandlers,
+  createTeamRun,
+  getActiveHeavyTeamRunForSession,
+  getActiveTeamRunForSession,
+  getTeamRunForSession,
+  cancelTeamRun,
+  sendTeamRunMessage,
+} from "../stores/team";
 import { teamStore } from "../stores/team";
 import { computeActiveSessions } from "../lib/active-sessions";
 
@@ -1737,12 +1745,21 @@ export default function Chat() {
     if (!sessionId) return;
     const session = sessionStore.list.find(s => s.id === sessionId);
     const directory = session?.directory || ".";
+    if (getActiveTeamRunForSession(sessionId)) {
+      return;
+    }
     try {
       await createTeamRun(sessionId, text, mode, directory, currentEngineType());
-      notify("Team run started", "info", 3000);
+      notify(t().notification.teamRunStarted, "info", 3000);
     } catch (err: any) {
       logger.error("[TeamRun] Failed to create:", err);
-      notify(`Team run failed: ${err.message}`, "error", 5000);
+      notify(
+        formatMessage(t().notification.teamRunFailed, {
+          message: err?.message ?? String(err),
+        }),
+        "error",
+        5000,
+      );
     }
   };
 
@@ -1750,6 +1767,18 @@ export default function Chat() {
     const sid = sessionStore.current;
     if (!sid) return undefined;
     return getTeamRunForSession(sid);
+  });
+
+  const activeTeamRun = createMemo(() => {
+    const sid = sessionStore.current;
+    if (!sid) return undefined;
+    return getActiveTeamRunForSession(sid);
+  });
+
+  const activeHeavyRelayRun = createMemo(() => {
+    const sid = sessionStore.current;
+    if (!sid) return undefined;
+    return getActiveHeavyTeamRunForSession(sid);
   });
 
   const handleCancelTeamRun = async () => {
@@ -1762,9 +1791,76 @@ export default function Chat() {
     }
   };
 
+  const appendOptimisticUserText = (sessionId: string, text: string): string => {
+    const nonce = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const tempMessageId = `msg-temp-${nonce}`;
+    const tempPartId = `part-temp-${nonce}`;
+
+    const tempMessageInfo: UnifiedMessage = {
+      id: tempMessageId,
+      sessionId,
+      role: "user",
+      time: {
+        created: Date.now(),
+      },
+      parts: [],
+    };
+
+    const tempPart: UnifiedPart = {
+      id: tempPartId,
+      messageId: tempMessageId,
+      sessionId,
+      type: "text",
+      text,
+    } as UnifiedPart;
+
+    const messages = messageStore.message[sessionId] || [];
+    const tempExists = messages.some((m) => m.id === tempMessageId);
+    if (!tempExists) {
+      setMessageStore("message", sessionId, (draft) => [...draft, tempMessageInfo]);
+    }
+
+    setMessageStore("part", tempMessageId, [tempPart]);
+    setUserScrolledUp(false);
+    setTimeout(() => scrollToBottom(), 0);
+
+    return tempMessageId;
+  };
+
+  const removeOptimisticMessage = (sessionId: string, messageId: string) => {
+    setMessageStore("message", sessionId, (draft) =>
+      draft.filter((m) => m.id !== messageId),
+    );
+    setMessageStore("part", messageId, undefined as any);
+  };
+
   const handleSendMessage = async (text: string, agent: AgentMode, images?: import("../types/unified").ImageAttachment[]) => {
     const sessionId = sessionStore.current;
     if (!sessionId) return;
+
+    const relayRun = activeHeavyRelayRun();
+    if (relayRun) {
+      if (images && images.length > 0) {
+        showSendError(t().prompt.teamRelayImageUnsupported);
+        return;
+      }
+
+      const tempMessageId = appendOptimisticUserText(sessionId, text);
+      try {
+        await sendTeamRunMessage(relayRun.id, text);
+      } catch (error) {
+        logger.error("[TeamRun] Failed to relay message:", error);
+        notify(
+          formatMessage(t().notification.teamMessageRelayFailed, {
+            message: error instanceof Error ? error.message : String(error),
+          }),
+          "error",
+          5000,
+        );
+        removeOptimisticMessage(sessionId, tempMessageId);
+      }
+      return;
+    }
 
     // Allow sending when idle, or when generating if engine supports enqueue
     const isBusy = sending();
@@ -1786,7 +1882,6 @@ export default function Chat() {
     const reasoningEffort = getEffectiveReasoningEffortForEngine(currentEngineType());
     const serviceTier = getServiceTierForEngine(currentEngineType());
     const tempMessageId = `msg-temp-${Date.now()}`;
-    const tempPartId = `part-temp-${Date.now()}`;
 
     // --- Enqueue path: fire-and-forget ---
     // When the engine is busy and supports enqueue, we must NOT await the RPC.
@@ -1828,38 +1923,7 @@ export default function Chat() {
     }
 
     // --- Normal path: create temp user message and await the RPC ---
-    const tempMessageInfo: UnifiedMessage = {
-      id: tempMessageId,
-      sessionId: sessionId,
-      role: "user",
-      time: {
-        created: Date.now(),
-      },
-      parts: [],
-    };
-
-    const tempPart: UnifiedPart = {
-      id: tempPartId,
-      messageId: tempMessageId,
-      sessionId: sessionId,
-      type: "text",
-      text,
-    } as UnifiedPart;
-
-    const messages = messageStore.message[sessionId] || [];
-
-    // User temp messages are always the newest — append to end.
-    // Don't use binarySearch here: engine message IDs (e.g. UUID from OpenCode)
-    // may sort before "msg-temp-" in lexicographic order, causing the user message
-    // to land after all assistant messages and breaking turn grouping.
-    const tempExists = messages.some(m => m.id === tempMessageId);
-    if (!tempExists) {
-      setMessageStore("message", sessionId, (draft) => [...draft, tempMessageInfo]);
-    }
-
-    setMessageStore("part", tempMessageId, [tempPart]);
-    setUserScrolledUp(false);
-    setTimeout(() => scrollToBottom(), 0);
+    const optimisticMessageId = appendOptimisticUserText(sessionId, text);
 
     try {
       await gateway.sendMessage(sessionId, text, {
@@ -1884,10 +1948,7 @@ export default function Chat() {
       logger.error("[SendMessage] Failed to send message:", error);
       notify(t().notification.messageSendFailed);
       // Remove the optimistic temp message on failure
-      setMessageStore("message", sessionId, (draft) =>
-        draft.filter((m) => m.id !== tempMessageId),
-      );
-      setMessageStore("part", tempMessageId, undefined as any);
+      removeOptimisticMessage(sessionId, optimisticMessageId);
       setSendingFor(sessionId, false);
     }
   };
@@ -2353,6 +2414,11 @@ export default function Chat() {
                                 </For>
                               </div>
                             </Show>
+                            <Show when={run().mode === "heavy" && (run().status === "planning" || run().status === "running")}>
+                              <div class="mt-1.5 text-xs text-amber-700 dark:text-amber-300">
+                                {t().prompt.teamRelayNotice}
+                              </div>
+                            </Show>
                             <Show when={run().finalResult}>
                               <div class="mt-1.5 text-xs text-gray-600 dark:text-gray-400 border-t border-gray-200 dark:border-gray-700 pt-1.5 line-clamp-3">
                                 {run().finalResult}
@@ -2373,10 +2439,14 @@ export default function Chat() {
                       onAgentChange={setCurrentAgent}
                       availableModes={configStore.engines.find(e => e.type === currentEngineType())?.capabilities?.availableModes}
                       disabled={!sessionStore.current}
-                      imageAttachmentEnabled={configStore.engines.find(e => e.type === currentEngineType())?.capabilities?.imageAttachment ?? false}
+                      imageAttachmentEnabled={
+                        (configStore.engines.find(e => e.type === currentEngineType())?.capabilities?.imageAttachment ?? false)
+                        && !activeHeavyRelayRun()
+                      }
                       availableCommands={availableCommands()}
                       onCommandInvoke={handleCommandInvoke}
-                      onTeamSend={handleTeamSend}
+                      onTeamSend={activeTeamRun() ? undefined : handleTeamSend}
+                      relayToOrchestrator={!!activeHeavyRelayRun()}
                     />
                   </Show>
                   <div class="mt-2 text-center">

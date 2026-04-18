@@ -237,6 +237,9 @@ export interface LocaleDict {
     imageUnsupportedType: string;
     imageLimitReached: string;
     removeImage: string;
+    teamRelayPlaceholder: string;
+    teamRelayNotice: string;
+    teamRelayImageUnsupported: string;
     /** Slash command autocomplete: no matching commands */
     noCommandsFound: string;
     reasoningEffortLow: string;
@@ -498,6 +501,9 @@ export interface LocaleDict {
     gatewayReconnected: string;
     engineError: string;
     defaultEngineSaveFailed: string;
+    teamRunStarted: string;
+    teamRunFailed: string;
+    teamMessageRelayFailed: string;
   };
 
   // File Explorer
@@ -855,6 +861,9 @@ export const en: LocaleDict = {
     imageUnsupportedType: "Unsupported image type",
     imageLimitReached: "Maximum 4 images per message",
     removeImage: "Remove image",
+    teamRelayPlaceholder: "Message the active orchestrator...",
+    teamRelayNotice: "Heavy Brain is active - messages from this session go directly to the orchestrator.",
+    teamRelayImageUnsupported: "Image attachments are not supported while messaging the active orchestrator.",
     noCommandsFound: "No commands found",
     reasoningEffortLow: "Low",
     reasoningEffortMedium: "Medium",
@@ -1111,6 +1120,9 @@ export const en: LocaleDict = {
     gatewayReconnected: "Connection restored.",
     engineError: "Engine error: {message}",
     defaultEngineSaveFailed: "Failed to save the default engine.",
+    teamRunStarted: "Team run started.",
+    teamRunFailed: "Team run failed: {message}",
+    teamMessageRelayFailed: "Failed to send the message to the active orchestrator: {message}",
   },
 
   // File Explorer

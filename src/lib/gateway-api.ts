@@ -32,6 +32,9 @@ import type {
   ScheduledTaskRunResult,
   UnifiedWorktree,
   WorktreeMergeResult,
+  TeamRun,
+  TeamCreateRequest,
+  TaskNode,
 } from "../types/unified";
 
 // --- Notification callback types ---
@@ -54,6 +57,8 @@ export interface GatewayNotificationHandlers {
   onScheduledTaskFired?: (taskId: string, conversationId: string) => void;
   onScheduledTaskFailed?: (taskId: string, error: string) => void;
   onScheduledTasksChanged?: (tasks: ScheduledTask[]) => void;
+  onTeamRunUpdated?: (run: TeamRun) => void;
+  onTeamTaskUpdated?: (runId: string, task: TaskNode) => void;
   onConnected?: () => void;
   onDisconnected?: (reason: string) => void;
 }
@@ -207,6 +212,15 @@ class GatewayAPI {
 
     this.bind("scheduledTasks.changed", (data) => {
       this.handlers.onScheduledTasksChanged?.(data.tasks);
+    });
+
+    // Agent Team
+    this.bind("team.run.updated", (data) => {
+      this.handlers.onTeamRunUpdated?.(data.run);
+    });
+
+    this.bind("team.task.updated", (data) => {
+      this.handlers.onTeamTaskUpdated?.(data.runId, data.task);
     });
   }
 
@@ -472,6 +486,28 @@ class GatewayAPI {
 
   listBranches(directory: string): Promise<string[]> {
     return gatewayClient.request("worktree.listBranches", { directory });
+  }
+
+  // --- Agent Team ---
+
+  createTeamRun(req: TeamCreateRequest): Promise<TeamRun> {
+    return gatewayClient.createTeamRun(req);
+  }
+
+  cancelTeamRun(runId: string): Promise<void> {
+    return gatewayClient.cancelTeamRun(runId);
+  }
+
+  sendTeamMessage(runId: string, text: string): Promise<void> {
+    return gatewayClient.sendTeamMessage(runId, text);
+  }
+
+  listTeamRuns(): Promise<TeamRun[]> {
+    return gatewayClient.listTeamRuns();
+  }
+
+  getTeamRun(runId: string): Promise<TeamRun | null> {
+    return gatewayClient.getTeamRun(runId);
   }
 }
 

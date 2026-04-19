@@ -47,6 +47,8 @@ import {
   type ScheduledTaskCreateRequest,
   type ScheduledTaskUpdateRequest,
   type ScheduledTaskRunResult,
+  type TeamRun,
+  type TeamCreateRequest,
 } from "../types/unified";
 
 // --- Event types emitted by GatewayClient ---
@@ -83,6 +85,10 @@ export interface GatewayClientEvents {
   "scheduledTask.fired": (data: { taskId: string; conversationId: string }) => void;
   "scheduledTask.failed": (data: { taskId: string; error: string }) => void;
   "scheduledTasks.changed": (data: { tasks: ScheduledTask[] }) => void;
+
+  /** Agent Team push notifications */
+  "team.run.updated": (data: { run: TeamRun }) => void;
+  "team.task.updated": (data: { runId: string; task: any }) => void;
 }
 
 // --- Pending request tracking ---
@@ -600,6 +606,28 @@ export class GatewayClient {
 
   runScheduledTaskNow(id: string): Promise<ScheduledTaskRunResult> {
     return this.request(GatewayRequestType.SCHEDULED_TASK_RUN_NOW, { id });
+  }
+
+  // --- Agent Team API ---
+
+  createTeamRun(req: TeamCreateRequest): Promise<TeamRun> {
+    return this.request(GatewayRequestType.TEAM_CREATE, req);
+  }
+
+  cancelTeamRun(runId: string): Promise<void> {
+    return this.request(GatewayRequestType.TEAM_CANCEL, { runId });
+  }
+
+  sendTeamMessage(runId: string, text: string): Promise<void> {
+    return this.request(GatewayRequestType.TEAM_SEND_MESSAGE, { runId, text });
+  }
+
+  listTeamRuns(): Promise<TeamRun[]> {
+    return this.request(GatewayRequestType.TEAM_LIST);
+  }
+
+  getTeamRun(runId: string): Promise<TeamRun | null> {
+    return this.request(GatewayRequestType.TEAM_GET, { runId });
   }
 
   // --- Log forwarding (fire-and-forget, no response expected) ---

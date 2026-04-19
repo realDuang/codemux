@@ -690,6 +690,7 @@ export class EngineManager extends EventEmitter {
     engineType: EngineType | undefined,
     directory: string,
     worktreeId?: string,
+    meta?: Record<string, unknown>,
   ): Promise<UnifiedSession> {
     const resolvedType = engineType || this.getDefaultEngineType();
     const adapter = this.getAdapterOrThrow(resolvedType); // Validate engine exists
@@ -719,7 +720,8 @@ export class EngineManager extends EventEmitter {
     // or Claude V2 session init) happens at session creation time, so features
     // like slash command autocomplete work before the user sends a message.
     try {
-      const engineSession = await adapter.createSession(conv.directory, conv.engineMeta);
+      const adapterMeta = { ...conv.engineMeta, ...meta };
+      const engineSession = await adapter.createSession(conv.directory, adapterMeta);
       conversationStore.setEngineSession(conv.id, engineSession.id, engineSession.engineMeta);
       this.engineToConvMap.set(engineSession.id, conv.id);
     } catch (err) {
@@ -884,6 +886,23 @@ export class EngineManager extends EventEmitter {
       const finalized = { ...result, time: { ...result.time, completed: Date.now() } };
       this.persistMessage(sessionId, finalized);
       this.emit("message.updated", { sessionId, message: finalized });
+    }
+
+    // Merge buffered content parts into the returned message.
+    // Adapters stream text/file content via message.part.updated events which
+    // are buffered in contentPartsBuffer but NOT included in the message
+    // returned by adapter.sendMessage(). Callers that read result.parts
+    // (e.g. AgentTeamService) would otherwise see an empty parts array.
+    const bufferedContent = this.contentPartsBuffer.get(result.id);
+    if (bufferedContent && bufferedContent.length > 0) {
+      const existingIds = new Set((result.parts || []).map((p) => p.id));
+      const merged = [...(result.parts || [])];
+      for (const bp of bufferedContent) {
+        if (!existingIds.has(bp.id)) {
+          merged.push(bp);
+        }
+      }
+      result.parts = merged;
     }
 
     return result;

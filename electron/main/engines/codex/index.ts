@@ -214,6 +214,8 @@ export class CodexAdapter extends EngineAdapter {
   private sessionReasoningEfforts = new Map<string, ReasoningEffort>();
   private sessionServiceTiers = new Map<string, CodexServiceTier>();
   private sessionDirectories = new Map<string, string>();
+  /** Custom system prompts per session (e.g. orchestration instructions for agent team) */
+  private sessionSystemPrompts = new Map<string, string>();
 
   private currentModelId: string = CODEX_FALLBACK_MODEL;
   private currentMode: string = DEFAULT_MODE_ID;
@@ -362,17 +364,24 @@ export class CodexAdapter extends EngineAdapter {
     await this.start();
 
     const normalizedDirectory = normalizeDirectory(directory);
+    const customSystemPrompt = (meta?.systemPrompt && typeof meta.systemPrompt === "string") ? meta.systemPrompt : undefined;
     const existingThreadId = resolveThreadId(undefined, meta);
+    const startThread = () =>
+      customSystemPrompt
+        ? this.startThread(normalizedDirectory, customSystemPrompt)
+        : this.startThread(normalizedDirectory);
     let threadResponse: ThreadResponse;
     if (existingThreadId) {
       try {
-        threadResponse = await this.resumeThread(existingThreadId, normalizedDirectory);
+        threadResponse = customSystemPrompt
+          ? await this.resumeThread(existingThreadId, normalizedDirectory, customSystemPrompt)
+          : await this.resumeThread(existingThreadId, normalizedDirectory);
       } catch (error) {
         codexLog.warn(`Failed to resume Codex thread ${existingThreadId}, starting a new one instead:`, error);
-        threadResponse = await this.startThread(normalizedDirectory);
+        threadResponse = await startThread();
       }
     } else {
-      threadResponse = await this.startThread(normalizedDirectory);
+      threadResponse = await startThread();
     }
 
     const threadId = threadResponse.thread?.id;
@@ -388,6 +397,9 @@ export class CodexAdapter extends EngineAdapter {
     }
     if (!this.sessionDirectories.has(sessionId)) {
       this.sessionDirectories.set(sessionId, normalizedDirectory);
+    }
+    if (customSystemPrompt) {
+      this.sessionSystemPrompts.set(sessionId, customSystemPrompt);
     }
     if (threadResponse.model) {
       this.sessionModels.set(sessionId, threadResponse.model);
@@ -1893,16 +1905,19 @@ export class CodexAdapter extends EngineAdapter {
     return undefined;
   }
 
-  private async startThread(directory: string): Promise<ThreadResponse> {
+  private async startThread(directory: string, customSystemPrompt?: string): Promise<ThreadResponse> {
     const modeId = this.currentMode;
     const approvalPolicy = clampApprovalPolicy(modeToApprovalPolicy(modeId), this.configRequirements);
     const sandboxMode = clampSandboxMode(modeToSandboxMode(modeId), this.configRequirements);
+    const baseInstructions = customSystemPrompt
+      ? CODEMUX_IDENTITY_PROMPT + "\n\n" + customSystemPrompt
+      : CODEMUX_IDENTITY_PROMPT;
     const response = asRecord(await this.client!.request("thread/start", {
       cwd: directory,
       model: this.currentModelId,
       approvalPolicy,
       sandbox: sandboxMode,
-      baseInstructions: CODEMUX_IDENTITY_PROMPT,
+      baseInstructions,
       serviceName: "codemux",
       experimentalRawEvents: false,
       persistExtendedHistory: true,
@@ -1911,13 +1926,17 @@ export class CodexAdapter extends EngineAdapter {
     return response;
   }
 
-  private async resumeThread(threadId: string, directory: string): Promise<ThreadResponse> {
+  private async resumeThread(threadId: string, directory: string, customSystemPrompt?: string): Promise<ThreadResponse> {
     const sessionId = toEngineSessionId(threadId);
     const modeId = this.sessionModes.get(sessionId) ?? this.currentMode;
     const approvalPolicy = clampApprovalPolicy(modeToApprovalPolicy(modeId), this.configRequirements);
     const sandboxMode = clampSandboxMode(modeToSandboxMode(modeId), this.configRequirements);
     const modelId = this.sessionModels.get(sessionId) ?? this.currentModelId;
     const serviceTier = this.sessionServiceTiers.get(sessionId);
+    const systemPrompt = customSystemPrompt ?? this.sessionSystemPrompts.get(sessionId);
+    const baseInstructions = systemPrompt
+      ? CODEMUX_IDENTITY_PROMPT + "\n\n" + systemPrompt
+      : CODEMUX_IDENTITY_PROMPT;
 
     const response = asRecord(await this.client!.request("thread/resume", {
       threadId,
@@ -1925,7 +1944,7 @@ export class CodexAdapter extends EngineAdapter {
       model: modelId,
       approvalPolicy,
       sandbox: sandboxMode,
-      baseInstructions: CODEMUX_IDENTITY_PROMPT,
+      baseInstructions,
       persistExtendedHistory: true,
       ...(serviceTier ? { serviceTier } : {}),
     })) as ThreadResponse;
@@ -2171,6 +2190,7 @@ export class CodexAdapter extends EngineAdapter {
     this.sessionReasoningEfforts.delete(sessionId);
     this.sessionServiceTiers.delete(sessionId);
     this.sessionDirectories.delete(sessionId);
+    this.sessionSystemPrompts.delete(sessionId);
     this.rejectQueuedMessagesForSession(sessionId, "Session deleted");
     this.rejectPendingForSession(sessionId, "Session deleted");
 

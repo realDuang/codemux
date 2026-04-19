@@ -17,6 +17,7 @@ import { gatewayLog } from "../services/logger";
 import log from "../services/logger";
 import { conversationStore } from "../services/conversation-store";
 import { scheduledTaskService } from "../services/scheduled-task-service";
+import { agentTeamService } from "../services/agent-team";
 import {
   GatewayRequestType,
   GatewayNotificationType,
@@ -40,6 +41,10 @@ import {
   type WorktreeRemoveRequest,
   type WorktreeMergeRequest,
   type WorktreeListBranchesRequest,
+  type TeamCreateRequest,
+  type TeamCancelRequest,
+  type TeamGetRequest,
+  type TeamSendMessageRequest,
 } from "../../../src/types/unified";
 import { isCodexServiceTier } from "../../../src/types/unified";
 
@@ -502,6 +507,33 @@ export class GatewayServer {
         return worktreeManager.listBranches(req.directory);
       }
 
+      // --- Agent Team ---
+
+      case GatewayRequestType.TEAM_CREATE: {
+        const req = p as TeamCreateRequest;
+        return agentTeamService.createRun(req);
+      }
+
+      case GatewayRequestType.TEAM_CANCEL: {
+        const req = p as TeamCancelRequest;
+        return agentTeamService.cancelRun(req.runId);
+      }
+
+      case GatewayRequestType.TEAM_SEND_MESSAGE: {
+        const req = p as TeamSendMessageRequest;
+        agentTeamService.sendMessageToRun(req.runId, req.text);
+        return;
+      }
+
+      case GatewayRequestType.TEAM_LIST: {
+        return agentTeamService.listRuns();
+      }
+
+      case GatewayRequestType.TEAM_GET: {
+        const req = p as TeamGetRequest;
+        return agentTeamService.getRun(req.runId);
+      }
+
       default:
         throw Object.assign(
           new Error(`Unknown request type: ${type}`),
@@ -622,6 +654,20 @@ export class GatewayServer {
     scheduledTaskService.on("tasks.changed", (data) => {
       this.broadcast({
         type: GatewayNotificationType.SCHEDULED_TASKS_CHANGED,
+        payload: data,
+      });
+    });
+
+    // Agent Team events
+    agentTeamService.on("team.run.updated", (data) => {
+      this.broadcast({
+        type: GatewayNotificationType.TEAM_RUN_UPDATED,
+        payload: data,
+      });
+    });
+    agentTeamService.on("team.task.updated", (data) => {
+      this.broadcast({
+        type: GatewayNotificationType.TEAM_TASK_UPDATED,
         payload: data,
       });
     });

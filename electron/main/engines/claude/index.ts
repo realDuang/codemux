@@ -215,6 +215,8 @@ export class ClaudeCodeAdapter extends EngineAdapter {
   private sessionDirectories = new Map<string, string>();
   /** Persisted ccSessionId per session, for SDK session resumption across restarts */
   private sessionCcIds = new Map<string, string>();
+  /** Custom system prompts per session (e.g. orchestration instructions for agent team) */
+  private sessionSystemPrompts = new Map<string, string>();
   /** Sessions that were just resumed after a dead process — emit notice on next message */
   private pendingResumeNotice = new Set<string>();
 
@@ -562,6 +564,9 @@ export class ClaudeCodeAdapter extends EngineAdapter {
     if (meta?.ccSessionId && typeof meta.ccSessionId === "string") {
       this.sessionCcIds.set(sessionId, meta.ccSessionId);
     }
+    if (meta?.systemPrompt && typeof meta.systemPrompt === "string") {
+      this.sessionSystemPrompts.set(sessionId, meta.systemPrompt);
+    }
     this.emit("session.created", { session });
 
     // Warm up in background — store the promise so listCommands() can await it.
@@ -626,6 +631,7 @@ export class ClaudeCodeAdapter extends EngineAdapter {
     }
 
     this.sessionDirectories.delete(sessionId);
+    this.sessionSystemPrompts.delete(sessionId);
     this.messageHistory.delete(sessionId);
     this.messageBuffers.delete(sessionId);
     this.sessionModes.delete(sessionId);
@@ -1813,10 +1819,14 @@ export class ClaudeCodeAdapter extends EngineAdapter {
     // narrower than the internal Options type. The SDK internally passes these
     // through to ProcessTransport which accepts all Options fields.
 
-    // Build system prompt append: identity + cached user skills
+    // Build system prompt append: identity + cached user skills + optional custom system prompt
     let promptAppend = CODEMUX_IDENTITY_PROMPT;
     if (this.cachedSkillNames.length > 0) {
       promptAppend += `\n\nThe user has installed the following additional skills (invokable via the Skill tool): ${this.cachedSkillNames.join(", ")}. When the user's request matches one of these skills, use the Skill tool to invoke it.`;
+    }
+    const customSystemPrompt = this.sessionSystemPrompts.get(sessionId);
+    if (customSystemPrompt) {
+      promptAppend += "\n\n" + customSystemPrompt;
     }
 
     const sdkOptions: any = {

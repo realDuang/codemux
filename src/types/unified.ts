@@ -635,6 +635,13 @@ export const GatewayRequestType = {
   WORKTREE_REMOVE: "worktree.remove",
   WORKTREE_MERGE: "worktree.merge",
   WORKTREE_LIST_BRANCHES: "worktree.listBranches",
+
+  // Agent Team
+  TEAM_CREATE: "team.create",
+  TEAM_CANCEL: "team.cancel",
+  TEAM_SEND_MESSAGE: "team.send-message",
+  TEAM_LIST: "team.list",
+  TEAM_GET: "team.get",
 } as const;
 
 // --- Notification type constants ---
@@ -669,6 +676,10 @@ export const GatewayNotificationType = {
   WORKTREE_CREATED: "worktree.created",
   WORKTREE_REMOVED: "worktree.removed",
   WORKTREE_MERGE_RESULT: "worktree.mergeResult",
+
+  // Agent Team
+  TEAM_RUN_UPDATED: "team.run.updated",
+  TEAM_TASK_UPDATED: "team.task.updated",
 } as const;
 
 // --- Request / Response payload types ---
@@ -954,4 +965,90 @@ export interface ScheduledTaskUpdateRequest {
 export interface ScheduledTaskRunResult {
   taskId: string;
   conversationId: string;
+}
+
+// ============================================================================
+// Agent Team Types
+// ============================================================================
+
+export type TeamRunStatus = "planning" | "running" | "completed" | "failed" | "cancelled";
+export type TaskNodeStatus = "pending" | "blocked" | "running" | "completed" | "failed" | "cancelled";
+export type TeamMode = "light" | "heavy";
+
+/** A single task node in the execution DAG */
+export interface TaskNode {
+  id: string;
+  /** Human-readable description of this task */
+  description: string;
+  /** The prompt to send to the child session */
+  prompt: string;
+  /** Which engine to run this task on (optional — defaults to project engine) */
+  engineType?: EngineType;
+  /** IDs of tasks that must complete before this one starts */
+  dependsOn: string[];
+  /** Current execution status */
+  status: TaskNodeStatus;
+  /** ConversationId of the child session (set when task starts running) */
+  sessionId?: string;
+  /** Result summary extracted from the completed message */
+  result?: string;
+  /** Error message if failed */
+  error?: string;
+  /** Timing */
+  time?: { started?: number; completed?: number };
+  /** Optional: worktreeId for file-isolation tasks */
+  worktreeId?: string;
+}
+
+/** Represents a complete Agent Team run */
+export interface TeamRun {
+  id: string;
+  /** The parent session that initiated this team run */
+  parentSessionId: string;
+  /** Directory for all child sessions */
+  directory: string;
+  /** User's original request */
+  originalPrompt: string;
+  /** Light or Heavy brain mode */
+  mode: TeamMode;
+  /** Current overall status */
+  status: TeamRunStatus;
+  /** All task nodes in the DAG */
+  tasks: TaskNode[];
+  /** Orchestrator session ID (Heavy Brain only) */
+  orchestratorSessionId?: string;
+  /** Timing */
+  time: { created: number; completed?: number };
+  /** Final synthesized result */
+  finalResult?: string;
+}
+
+// --- Agent Team Gateway types ---
+
+export interface TeamCreateRequest {
+  /** Parent session initiating the team run */
+  sessionId: string;
+  /** User's task description */
+  prompt: string;
+  /** Light or Heavy brain mode */
+  mode: TeamMode;
+  /** Engine for the planner (light) or orchestrator (heavy) */
+  engineType?: EngineType;
+  /** Working directory */
+  directory: string;
+}
+
+export interface TeamCancelRequest {
+  runId: string;
+}
+
+export interface TeamGetRequest {
+  runId: string;
+}
+
+export interface TeamSendMessageRequest {
+  /** Active Heavy Brain run receiving the relayed follow-up */
+  runId: string;
+  /** Follow-up text forwarded to the Heavy Brain orchestrator */
+  text: string;
 }

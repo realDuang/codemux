@@ -12,6 +12,7 @@ LOCAL_URL_FILE="$STATE_DIR/local-url"
 TUNNEL_URL_FILE="$STATE_DIR/tunnel-url"
 XVFB_SCREEN="${CODEMUX_XVFB_SCREEN:-1280x720x24}"
 DEFAULT_TIMEOUT="${CODEMUX_SERVER_START_TIMEOUT:-90}"
+STARTED_LOCAL_URL=""
 
 export PATH="$HOME/.bun/bin:$HOME/.opencode/bin:$PATH"
 
@@ -20,12 +21,14 @@ usage() {
 Usage:
   ./scripts/server-dev.sh start [--foreground] [--replace] [--tunnel]
   ./scripts/server-dev.sh stop
+  ./scripts/server-dev.sh restart
   ./scripts/server-dev.sh status
   ./scripts/server-dev.sh logs [app|tunnel]
 
 Examples:
   ./scripts/server-dev.sh start --foreground
   ./scripts/server-dev.sh start --replace --tunnel
+  ./scripts/server-dev.sh restart
   ./scripts/server-dev.sh status
 EOF
 }
@@ -279,11 +282,10 @@ start_foreground() {
     dbus-run-session -- xvfb-run --auto-servernum --server-args="-screen 0 $XVFB_SCREEN" bun run dev
 }
 
-start_background() {
-  local with_tunnel="$1"
-
+start_managed_app_background() {
   mkdir -p "$STATE_DIR"
-  rm -f "$LOCAL_URL_FILE" "$TUNNEL_URL_FILE"
+  STARTED_LOCAL_URL=""
+  rm -f "$LOCAL_URL_FILE"
   : > "$APP_LOG"
 
   setsid bash -lc "export PATH=\"$HOME/.bun/bin:$HOME/.opencode/bin:\$PATH\"; export CODEMUX_DISABLE_COPILOT_DBUS=1; export CODEMUX_SERVER_MODE=1; cd \"$REPO_DIR\"; exec dbus-run-session -- xvfb-run --auto-servernum --server-args='-screen 0 $XVFB_SCREEN' bun run dev" > "$APP_LOG" 2>&1 &
@@ -294,16 +296,29 @@ start_background() {
   info "Started CodeMux headless dev (PID $app_pid); waiting for the renderer URL..."
   local local_url
   if ! local_url=$(wait_for_local_url "$app_pid"); then
+    rm -f "$APP_PID_FILE" "$LOCAL_URL_FILE"
     warn "CodeMux exited before the renderer URL was detected. Recent logs:"
     tail -n 40 "$APP_LOG" || true
-    exit 1
+    return 1
   fi
 
+  STARTED_LOCAL_URL="$local_url"
   success "CodeMux dev is ready: $local_url"
   printf '  App log: %s
 ' "$APP_LOG"
   print_auth_status
+}
 
+start_background() {
+  local with_tunnel="$1"
+
+  rm -f "$TUNNEL_URL_FILE"
+
+  if ! start_managed_app_background; then
+    exit 1
+  fi
+
+  local local_url="$STARTED_LOCAL_URL"
   if [ "$with_tunnel" -eq 1 ]; then
     : > "$TUNNEL_LOG"
     setsid bash -lc "exec cloudflared tunnel --url '$local_url'" > "$TUNNEL_LOG" 2>&1 &
@@ -322,6 +337,54 @@ start_background() {
 ' "$TUNNEL_LOG"
     printf '  Review access requests from this terminal: bun run server:access-requests
 '
+  fi
+}
+
+restart_app() {
+  cleanup_stale_pid_file "$APP_PID_FILE"
+  cleanup_stale_pid_file "$TUNNEL_PID_FILE"
+
+  local app_pid tunnel_pid previous_local_url tunnel_url repo_pids
+  app_pid=$(read_pid_file "$APP_PID_FILE" 2>/dev/null || true)
+  tunnel_pid=$(read_pid_file "$TUNNEL_PID_FILE" 2>/dev/null || true)
+  previous_local_url=$(read_local_url 2>/dev/null || true)
+  tunnel_url=$(read_tunnel_url 2>/dev/null || true)
+  repo_pids=$(find_repo_processes || true)
+
+  if [ -z "$app_pid" ]; then
+    if [ -n "$repo_pids" ]; then
+      fail "Found CodeMux dev processes without managed state. Run bun run server:down first."
+    fi
+    warn "No managed CodeMux app process was running. Starting a fresh instance instead."
+  else
+    info "Restarting CodeMux headless dev (PID $app_pid)..."
+    kill_process_group_from_file "$APP_PID_FILE"
+  fi
+
+  rm -f "$LOCAL_URL_FILE"
+
+  if ! start_managed_app_background; then
+    if [ -n "$tunnel_pid" ] && is_process_group_running "$tunnel_pid"; then
+      warn "Managed Cloudflare tunnel is still running."
+      [ -n "$tunnel_url" ] && printf '  Tunnel URL: %s\n' "$tunnel_url"
+      printf '  Tunnel log: %s\n' "$TUNNEL_LOG"
+    fi
+    exit 1
+  fi
+
+  local restarted_local_url="$STARTED_LOCAL_URL"
+  if [ -n "$tunnel_pid" ] && is_process_group_running "$tunnel_pid"; then
+    success "Preserved managed Cloudflare tunnel."
+    [ -n "$tunnel_url" ] && printf '  Tunnel URL: %s\n' "$tunnel_url"
+    printf '  Tunnel log: %s\n' "$TUNNEL_LOG"
+    if [ -n "$previous_local_url" ] && [ "$previous_local_url" != "$restarted_local_url" ]; then
+      warn "App restarted on $restarted_local_url, but the preserved tunnel still targets $previous_local_url."
+      printf '  Recreate the tunnel if remote access stops working: bun run server:down && bun run server:tunnel\n'
+    else
+      printf '  Public URL should stay the same while the existing tunnel process remains healthy.\n'
+    fi
+  else
+    warn "No managed Cloudflare tunnel was running. Restart completed without public tunnel."
   fi
 }
 
@@ -480,6 +543,11 @@ main() {
     stop)
       [ "$#" -eq 0 ] || fail "stop does not accept extra arguments"
       stop_all
+      ;;
+    restart)
+      [ "$#" -eq 0 ] || fail "restart does not accept extra arguments"
+      ensure_repo_ready
+      restart_app
       ;;
     status)
       [ "$#" -eq 0 ] || fail "status does not accept extra arguments"

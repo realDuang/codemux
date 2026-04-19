@@ -29,7 +29,23 @@ import { SessionSidebar } from "../components/SessionSidebar";
 import { HideProjectModal } from "../components/HideProjectModal";
 import { AddProjectModal } from "../components/AddProjectModal";
 import { ScheduledTaskModal } from "../components/ScheduledTaskModal";
-import type { UnifiedMessage, UnifiedPart, UnifiedPermission, UnifiedQuestion, UnifiedSession, UnifiedProject, AgentMode, EngineType, SessionActivityStatus, EngineCommand, ScheduledTask, ScheduledTaskCreateRequest, ScheduledTaskUpdateRequest } from "../types/unified";
+import type {
+  UnifiedMessage,
+  UnifiedPart,
+  UnifiedPermission,
+  UnifiedQuestion,
+  UnifiedSession,
+  UnifiedProject,
+  AgentMode,
+  EngineType,
+  SessionActivityStatus,
+  EngineCommand,
+  ScheduledTask,
+  ScheduledTaskCreateRequest,
+  ScheduledTaskUpdateRequest,
+  TeamRun,
+  TaskNode,
+} from "../types/unified";
 import WorktreeModal from "../components/WorktreeModal";
 import MergeWorktreeModal from "../components/MergeWorktreeModal";
 import { DeleteWorktreeModal } from "../components/DeleteWorktreeModal";
@@ -56,6 +72,16 @@ import { handleFileChanged, refreshGitStatus } from "../stores/file";
 
 import { configStore, setConfigStore, getSelectedModelForEngine, isEngineEnabled, getDefaultEngineType, getEffectiveReasoningEffortForEngine, getServiceTierForEngine } from "../stores/config";
 import { scheduledTaskStore, setScheduledTaskStore } from "../stores/scheduled-task";
+import {
+  connectTeamHandlers,
+  createTeamRun,
+  getActiveHeavyTeamRunForSession,
+  getActiveTeamRunForSession,
+  getTeamRunsForSession,
+  hydrateTeamRuns,
+  cancelTeamRun,
+  sendTeamRunMessage,
+} from "../stores/team";
 import { computeActiveSessions } from "../lib/active-sessions";
 
 // Binary search helper (consistent with opencode desktop)
@@ -755,6 +781,7 @@ export default function Chat() {
         onScheduledTaskFailed: (_taskId: string, error: string) => {
           notify(formatMessage(t().scheduledTask.taskFailed, { error }), "warning", 5000);
         },
+        ...connectTeamHandlers(),
       };
 
       const needsSessionBootstrap =
@@ -798,14 +825,16 @@ export default function Chat() {
       (async () => {
         // Load all projects and sessions from ConversationStore (single call each)
         try {
-          const [allProjects, allSessions] = await Promise.all([
+          const [allProjects, allSessions, allTeamRuns] = await Promise.all([
             gateway.listAllProjects(),
             gateway.listAllSessions(),
+            gateway.listTeamRuns(),
           ]);
 
           if (gen !== initGeneration || disposed) return;
 
           setSessionStore("projects", allProjects);
+          hydrateTeamRuns(allTeamRuns);
 
           // Filter sessions to valid directories only (worktree sessions pass through via worktreeId)
           const validDirectories = new Set(allProjects.map(p => p.directory));
@@ -1728,9 +1757,196 @@ export default function Chat() {
     }
   };
 
+  // --- Team Run ---
+  const handleTeamSend = async (text: string, mode: "light" | "heavy") => {
+    const sessionId = sessionStore.current;
+    if (!sessionId) return;
+    const session = sessionStore.list.find(s => s.id === sessionId);
+    const directory = session?.directory || ".";
+    if (getActiveTeamRunForSession(sessionId)) {
+      return;
+    }
+    try {
+      await createTeamRun(sessionId, text, mode, directory, currentEngineType());
+      notify(t().notification.teamRunStarted, "info", 3000);
+    } catch (err: any) {
+      logger.error("[TeamRun] Failed to create:", err);
+      notify(
+        formatMessage(t().notification.teamRunFailed, {
+          message: err?.message ?? String(err),
+        }),
+        "error",
+        5000,
+      );
+    }
+  };
+
+  const sessionTeamRuns = createMemo(() => {
+    const sid = sessionStore.current;
+    if (!sid) return [];
+    return getTeamRunsForSession(sid);
+  });
+
+  const activeTeamRun = createMemo(() => {
+    const sid = sessionStore.current;
+    if (!sid) return undefined;
+    return getActiveTeamRunForSession(sid);
+  });
+
+  const activeHeavyRelayRun = createMemo(() => {
+    const sid = sessionStore.current;
+    if (!sid) return undefined;
+    return getActiveHeavyTeamRunForSession(sid);
+  });
+
+  const handleCancelTeamRun = async (runId: string) => {
+    try {
+      await cancelTeamRun(runId);
+    } catch (err: any) {
+      logger.error("[TeamRun] Failed to cancel:", err);
+    }
+  };
+
+  const isTerminalTeamRun = (run: TeamRun) =>
+    ["completed", "failed", "cancelled"].includes(run.status);
+
+  const getTeamRunStatusColor = (run: TeamRun) => {
+    switch (run.status) {
+      case "completed":
+        return "bg-green-100 dark:bg-green-900/20 border-green-200 dark:border-green-800";
+      case "failed":
+        return "bg-red-100 dark:bg-red-900/20 border-red-200 dark:border-red-800";
+      case "cancelled":
+        return "bg-gray-100 dark:bg-gray-900/20 border-gray-200 dark:border-gray-700";
+      default:
+        return "bg-amber-50 dark:bg-amber-900/15 border-amber-200/50 dark:border-amber-700/30";
+    }
+  };
+
+  const getTeamRunStatusLabel = (run: TeamRun) => {
+    const completed = run.tasks.filter((task) => task.status === "completed").length;
+    switch (run.status) {
+      case "planning":
+        return t().chat.teamRunPlanning;
+      case "running":
+        return formatMessage(t().chat.teamRunRunning, {
+          completed,
+          total: run.tasks.length,
+        });
+      case "completed":
+        return t().chat.teamRunCompleted;
+      case "failed":
+        return t().chat.teamRunFailed;
+      case "cancelled":
+        return t().chat.teamRunCancelled;
+      default:
+        return run.status;
+    }
+  };
+
+  const getTeamRunModeLabel = (run: TeamRun) =>
+    run.mode === "heavy" ? t().chat.teamRunModeHeavy : t().chat.teamRunModeLight;
+
+  const getTeamTaskStatusIcon = (task: TaskNode) => {
+    switch (task.status) {
+      case "completed":
+        return "\u2713";
+      case "failed":
+        return "\u2717";
+      case "running":
+        return "\u25CB";
+      case "blocked":
+        return "\u25CB";
+      case "cancelled":
+        return "\u2014";
+      default:
+        return "\u00B7";
+    }
+  };
+
+  const getTeamTaskStatusColor = (task: TaskNode) => {
+    switch (task.status) {
+      case "completed":
+        return "text-green-600 dark:text-green-400";
+      case "failed":
+        return "text-red-600 dark:text-red-400";
+      case "running":
+        return "text-amber-600 dark:text-amber-400";
+      default:
+        return "text-gray-500 dark:text-gray-400";
+    }
+  };
+
+  const appendOptimisticUserText = (sessionId: string, text: string): string => {
+    const nonce = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const tempMessageId = `msg-temp-${nonce}`;
+    const tempPartId = `part-temp-${nonce}`;
+
+    const tempMessageInfo: UnifiedMessage = {
+      id: tempMessageId,
+      sessionId,
+      role: "user",
+      time: {
+        created: Date.now(),
+      },
+      parts: [],
+    };
+
+    const tempPart: UnifiedPart = {
+      id: tempPartId,
+      messageId: tempMessageId,
+      sessionId,
+      type: "text",
+      text,
+    } as UnifiedPart;
+
+    const messages = messageStore.message[sessionId] || [];
+    const tempExists = messages.some((m) => m.id === tempMessageId);
+    if (!tempExists) {
+      setMessageStore("message", sessionId, (draft) => [...draft, tempMessageInfo]);
+    }
+
+    setMessageStore("part", tempMessageId, [tempPart]);
+    setUserScrolledUp(false);
+    setTimeout(() => scrollToBottom(), 0);
+
+    return tempMessageId;
+  };
+
+  const removeOptimisticMessage = (sessionId: string, messageId: string) => {
+    setMessageStore("message", sessionId, (draft) =>
+      draft.filter((m) => m.id !== messageId),
+    );
+    setMessageStore("part", messageId, undefined as any);
+  };
+
   const handleSendMessage = async (text: string, agent: AgentMode, images?: import("../types/unified").ImageAttachment[]) => {
     const sessionId = sessionStore.current;
     if (!sessionId) return;
+
+    const relayRun = activeHeavyRelayRun();
+    if (relayRun) {
+      if (images && images.length > 0) {
+        showSendError(t().prompt.teamRelayImageUnsupported);
+        return;
+      }
+
+      const tempMessageId = appendOptimisticUserText(sessionId, text);
+      try {
+        await sendTeamRunMessage(relayRun.id, text);
+      } catch (error) {
+        logger.error("[TeamRun] Failed to relay message:", error);
+        notify(
+          formatMessage(t().notification.teamMessageRelayFailed, {
+            message: error instanceof Error ? error.message : String(error),
+          }),
+          "error",
+          5000,
+        );
+        removeOptimisticMessage(sessionId, tempMessageId);
+      }
+      return;
+    }
 
     // Allow sending when idle, or when generating if engine supports enqueue
     const isBusy = sending();
@@ -1752,7 +1968,6 @@ export default function Chat() {
     const reasoningEffort = getEffectiveReasoningEffortForEngine(currentEngineType());
     const serviceTier = getServiceTierForEngine(currentEngineType());
     const tempMessageId = `msg-temp-${Date.now()}`;
-    const tempPartId = `part-temp-${Date.now()}`;
 
     // --- Enqueue path: fire-and-forget ---
     // When the engine is busy and supports enqueue, we must NOT await the RPC.
@@ -1794,38 +2009,7 @@ export default function Chat() {
     }
 
     // --- Normal path: create temp user message and await the RPC ---
-    const tempMessageInfo: UnifiedMessage = {
-      id: tempMessageId,
-      sessionId: sessionId,
-      role: "user",
-      time: {
-        created: Date.now(),
-      },
-      parts: [],
-    };
-
-    const tempPart: UnifiedPart = {
-      id: tempPartId,
-      messageId: tempMessageId,
-      sessionId: sessionId,
-      type: "text",
-      text,
-    } as UnifiedPart;
-
-    const messages = messageStore.message[sessionId] || [];
-
-    // User temp messages are always the newest — append to end.
-    // Don't use binarySearch here: engine message IDs (e.g. UUID from OpenCode)
-    // may sort before "msg-temp-" in lexicographic order, causing the user message
-    // to land after all assistant messages and breaking turn grouping.
-    const tempExists = messages.some(m => m.id === tempMessageId);
-    if (!tempExists) {
-      setMessageStore("message", sessionId, (draft) => [...draft, tempMessageInfo]);
-    }
-
-    setMessageStore("part", tempMessageId, [tempPart]);
-    setUserScrolledUp(false);
-    setTimeout(() => scrollToBottom(), 0);
+    const optimisticMessageId = appendOptimisticUserText(sessionId, text);
 
     try {
       await gateway.sendMessage(sessionId, text, {
@@ -1850,10 +2034,7 @@ export default function Chat() {
       logger.error("[SendMessage] Failed to send message:", error);
       notify(t().notification.messageSendFailed);
       // Remove the optimistic temp message on failure
-      setMessageStore("message", sessionId, (draft) =>
-        draft.filter((m) => m.id !== tempMessageId),
-      );
-      setMessageStore("part", tempMessageId, undefined as any);
+      removeOptimisticMessage(sessionId, optimisticMessageId);
       setSendingFor(sessionId, false);
     }
   };
@@ -2242,6 +2423,140 @@ export default function Chat() {
                       </div>
                     </Show>
 
+                    {/* Team Runs */}
+                    <Show when={sessionTeamRuns().length > 0}>
+                      <div class="mb-2 space-y-2">
+                        <div class="px-1 text-[11px] font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">
+                          {t().chat.teamRunsTitle}
+                        </div>
+                        <For each={sessionTeamRuns()}>
+                          {(run) => {
+                            const isActiveRun = () => run.id === activeTeamRun()?.id;
+                            const isRelayRun = () => run.id === activeHeavyRelayRun()?.id;
+
+                            return (
+                              <div class={`px-3 py-2 rounded-lg border text-sm ${getTeamRunStatusColor(run)}`}>
+                                <div class="flex items-start justify-between gap-2">
+                                  <div class="min-w-0">
+                                    <div class="flex flex-wrap items-center gap-2">
+                                      <span class="font-medium text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">
+                                        {t().chat.teamRunLabel} ({getTeamRunModeLabel(run)})
+                                      </span>
+                                      <span class="text-xs text-gray-700 dark:text-gray-200">
+                                        {getTeamRunStatusLabel(run)}
+                                      </span>
+                                      <Show when={isActiveRun()}>
+                                        <span class="rounded-full bg-white/70 dark:bg-black/20 px-1.5 py-0.5 text-[10px] font-medium text-gray-600 dark:text-gray-300">
+                                          {t().chat.teamRunActive}
+                                        </span>
+                                      </Show>
+                                    </div>
+                                    <div class="mt-1 text-[11px] text-gray-500 dark:text-gray-400 break-all">
+                                      {run.id}
+                                    </div>
+                                  </div>
+                                  <Show when={!isTerminalTeamRun(run)}>
+                                    <button
+                                      type="button"
+                                      onClick={() => void handleCancelTeamRun(run.id)}
+                                      class="text-xs text-red-500 hover:text-red-700 dark:hover:text-red-400 font-medium"
+                                    >
+                                      {t().chat.teamRunCancel}
+                                    </button>
+                                  </Show>
+                                </div>
+
+                                <Show when={run.tasks.length > 0}>
+                                  <div class="mt-2 space-y-1.5">
+                                    <For each={run.tasks}>
+                                      {(task) => (
+                                        <div class="rounded-md border border-gray-200/70 bg-white/60 px-2 py-1.5 dark:border-gray-700/70 dark:bg-black/10">
+                                          <div class="flex items-start justify-between gap-2">
+                                            <div class="min-w-0 flex-1">
+                                              <div class={`flex items-center gap-1.5 text-xs ${getTeamTaskStatusColor(task)}`}>
+                                                <span class="w-3 text-center font-mono">{getTeamTaskStatusIcon(task)}</span>
+                                                <span class="font-medium">{task.id}</span>
+                                                <span class="truncate">{task.description}</span>
+                                              </div>
+
+                                              <div class="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-gray-500 dark:text-gray-400">
+                                                <Show when={task.dependsOn.length > 0}>
+                                                  <span>
+                                                    {formatMessage(t().chat.teamTaskDependsOn, {
+                                                      ids: task.dependsOn.join(", "),
+                                                    })}
+                                                  </span>
+                                                </Show>
+                                                <Show when={task.engineType}>
+                                                  <span>
+                                                    {formatMessage(t().chat.teamTaskEngine, {
+                                                      engine: task.engineType!,
+                                                    })}
+                                                  </span>
+                                                </Show>
+                                                <Show when={task.worktreeId}>
+                                                  <span>
+                                                    {formatMessage(t().chat.teamTaskWorktree, {
+                                                      name: task.worktreeId!,
+                                                    })}
+                                                  </span>
+                                                </Show>
+                                                <Show when={task.sessionId && task.sessionId !== sessionStore.current}>
+                                                  <button
+                                                    type="button"
+                                                    onClick={() => void handleSelectSession(task.sessionId!)}
+                                                    class="underline hover:text-gray-700 dark:hover:text-gray-200"
+                                                  >
+                                                    {t().chat.teamTaskOpenSession}
+                                                  </button>
+                                                </Show>
+                                              </div>
+
+                                              <Show when={task.error}>
+                                                <div class="mt-1 text-[11px] text-red-600 dark:text-red-400 whitespace-pre-wrap line-clamp-2">
+                                                  {task.error}
+                                                </div>
+                                              </Show>
+                                              <Show when={!task.error && task.result}>
+                                                <div class="mt-1 text-[11px] text-gray-600 dark:text-gray-300 whitespace-pre-wrap line-clamp-2">
+                                                  {task.result}
+                                                </div>
+                                              </Show>
+                                            </div>
+
+                                            <Show when={task.status === "running"}>
+                                              <span class="mt-0.5 h-1.5 w-1.5 rounded-full bg-amber-400 animate-pulse flex-shrink-0" />
+                                            </Show>
+                                          </div>
+                                        </div>
+                                      )}
+                                    </For>
+                                  </div>
+                                </Show>
+
+                                <Show when={isRelayRun() && (run.status === "planning" || run.status === "running")}>
+                                  <div class="mt-2 text-xs text-amber-700 dark:text-amber-300">
+                                    {t().prompt.teamRelayNotice}
+                                  </div>
+                                </Show>
+
+                                <Show when={run.finalResult}>
+                                  <div class="mt-2 border-t border-gray-200 dark:border-gray-700 pt-1.5">
+                                    <div class="text-[11px] font-medium text-gray-500 dark:text-gray-400">
+                                      {t().chat.teamRunFinalResult}
+                                    </div>
+                                    <div class="mt-1 text-xs text-gray-600 dark:text-gray-300 whitespace-pre-wrap line-clamp-4">
+                                      {run.finalResult}
+                                    </div>
+                                  </div>
+                                </Show>
+                              </div>
+                            );
+                          }}
+                        </For>
+                      </div>
+                    </Show>
+
                     <PromptInput
                       onSend={handleSendMessage}
                       onCancel={handleCancelMessage}
@@ -2252,9 +2567,14 @@ export default function Chat() {
                       onAgentChange={setCurrentAgent}
                       availableModes={configStore.engines.find(e => e.type === currentEngineType())?.capabilities?.availableModes}
                       disabled={!sessionStore.current}
-                      imageAttachmentEnabled={configStore.engines.find(e => e.type === currentEngineType())?.capabilities?.imageAttachment ?? false}
+                      imageAttachmentEnabled={
+                        (configStore.engines.find(e => e.type === currentEngineType())?.capabilities?.imageAttachment ?? false)
+                        && !activeHeavyRelayRun()
+                      }
                       availableCommands={availableCommands()}
                       onCommandInvoke={handleCommandInvoke}
+                      onTeamSend={activeTeamRun() ? undefined : handleTeamSend}
+                      relayToOrchestrator={!!activeHeavyRelayRun()}
                     />
                   </Show>
                   <div class="mt-2 text-center">

@@ -100,7 +100,7 @@ CodeMux는 채팅을 넘어 — 개발 워크플로를 인터페이스에서 직
 
 - **LAN**: 자동 감지된 IP + QR 코드, 수초 내 준비 완료
 - **공용 인터넷**: 원클릭 [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/) — 포트 포워딩, VPN, 방화벽 변경 불필요. **퀵 터널**(랜덤 임시 URL, 제로 설정)과 **네임드 터널**(`~/.cloudflared/` 인증 정보를 통한 영구 커스텀 도메인) 모두 지원
-- **내장 보안**: 기기 인증, JWT 토큰, Cloudflare를 통한 HTTPS; 퀵 터널 URL은 재시작마다 변경, 네임드 터널은 커스텀 호스트명 유지
+- **내장 보안**: 기기 인증, JWT 토큰, Cloudflare를 통한 HTTPS; 퀵 터널 URL은 터널 자체를 다시 만들 때 변경되며, 네임드 터널은 커스텀 호스트명을 유지합니다
 
 #### IM 봇 채널
 

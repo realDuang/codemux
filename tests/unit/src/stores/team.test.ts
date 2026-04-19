@@ -51,8 +51,10 @@ vi.mock("solid-js/store", () => ({
 import type { TeamRun } from "../../../../src/types/unified";
 import {
   connectTeamHandlers,
+  createTeamRun,
   getActiveHeavyTeamRunForSession,
   getActiveTeamRunForSession,
+  getTeamRun,
   getTeamRunForSession,
   getTeamRunsForSession,
   hydrateTeamRuns,
@@ -154,6 +156,24 @@ describe("team store selectors", () => {
         "team-complete-old",
       ]);
     });
+
+    it("deduplicates runs with the same id and keeps the latest version", () => {
+      hydrateTeamRuns([
+        makeRun({ id: "team-dup", status: "planning", time: { created: 10 } }),
+        makeRun({
+          id: "team-dup",
+          status: "completed",
+          finalResult: "All done",
+          time: { created: 10 },
+        }),
+      ]);
+
+      const runs = getTeamRunsForSession("session-1");
+      expect(runs).toHaveLength(1);
+      expect(runs[0].status).toBe("completed");
+      expect(runs[0].finalResult).toBe("All done");
+      expect(getTeamRun("team-dup")?.status).toBe("completed");
+    });
   });
 
   describe("hydrateTeamRuns", () => {
@@ -177,6 +197,20 @@ describe("team store selectors", () => {
       await sendTeamRunMessage("team-123", "Need a tighter plan");
 
       expect(gatewayMock.sendTeamMessage).toHaveBeenCalledWith("team-123", "Need a tighter plan");
+    });
+  });
+
+  describe("createTeamRun", () => {
+    it("upserts the created run when a matching notification already added it", async () => {
+      const handlers = connectTeamHandlers();
+      const run = makeRun({ id: "team-dup", status: "planning" });
+
+      handlers.onTeamRunUpdated(run);
+      gatewayMock.createTeamRun.mockResolvedValue(run);
+
+      await createTeamRun("session-1", "Investigate issue", "heavy", "/repo", "claude");
+
+      expect(teamStore.runs.filter((candidate) => candidate.id === "team-dup")).toHaveLength(1);
     });
   });
 });

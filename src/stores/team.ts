@@ -38,6 +38,31 @@ function pickPreferredRun(runs: TeamRun[]): TeamRun | undefined {
   return [...runs].sort(compareTeamRuns)[0];
 }
 
+function dedupeTeamRuns(runs: TeamRun[]): TeamRun[] {
+  const deduped = new Map<string, TeamRun>();
+  for (const run of runs) {
+    deduped.set(run.id, run);
+  }
+  return [...deduped.values()];
+}
+
+function upsertTeamRun(runs: TeamRun[], run: TeamRun): TeamRun[] {
+  return [...runs.filter((existing) => existing.id !== run.id), run];
+}
+
+function getLatestTeamRun(runs: TeamRun[], runId: string): TeamRun | undefined {
+  for (let index = runs.length - 1; index >= 0; index -= 1) {
+    if (runs[index].id === runId) {
+      return runs[index];
+    }
+  }
+  return undefined;
+}
+
+function getSessionRuns(sessionId: string): TeamRun[] {
+  return dedupeTeamRuns(teamStore.runs.filter((run) => run.parentSessionId === sessionId));
+}
+
 /** Initialize notification handlers for team events */
 export function initTeamStore(): void {
   // These handlers are set during gateway-api initialization
@@ -51,27 +76,19 @@ export function connectTeamHandlers(): {
 } {
   return {
     onTeamRunUpdated: (run: TeamRun) => {
-      setTeamStore("runs", (runs) => {
-        const idx = runs.findIndex((r) => r.id === run.id);
-        if (idx >= 0) {
-          const updated = [...runs];
-          updated[idx] = run;
-          return updated;
-        }
-        return [...runs, run];
-      });
+      setTeamStore("runs", (runs) => upsertTeamRun(runs, run));
     },
 
-    onTeamTaskUpdated: (runId: string, task: TaskNode) => {
-      setTeamStore("runs", (runs) =>
-        runs.map((run) => {
-          if (run.id !== runId) return run;
-          return {
-            ...run,
-            tasks: run.tasks.map((t) => (t.id === task.id ? task : t)),
-          };
-        }),
-      );
+      onTeamTaskUpdated: (runId: string, task: TaskNode) => {
+      setTeamStore("runs", (runs) => {
+        const run = getLatestTeamRun(runs, runId);
+        if (!run) return runs;
+
+        return upsertTeamRun(runs, {
+          ...run,
+          tasks: run.tasks.map((t) => (t.id === task.id ? task : t)),
+        });
+      });
     },
   };
 }
@@ -79,11 +96,12 @@ export function connectTeamHandlers(): {
 /** Replace the known team runs with a hydrated snapshot from the backend. */
 export function hydrateTeamRuns(runs: TeamRun[]): void {
   const activeRunId = teamStore.activeRunId;
-  const nextActiveRunId = activeRunId && runs.some((run) => run.id === activeRunId)
+  const dedupedRuns = dedupeTeamRuns(runs);
+  const nextActiveRunId = activeRunId && dedupedRuns.some((run) => run.id === activeRunId)
     ? activeRunId
     : null;
 
-  setTeamStore("runs", runs);
+  setTeamStore("runs", dedupedRuns);
   setTeamStore("activeRunId", nextActiveRunId);
 }
 
@@ -102,7 +120,7 @@ export async function createTeamRun(
     directory,
     engineType,
   });
-  setTeamStore("runs", (runs) => [...runs, run]);
+  setTeamStore("runs", (runs) => upsertTeamRun(runs, run));
   setTeamStore("activeRunId", run.id);
   return run;
 }
@@ -114,28 +132,27 @@ export async function cancelTeamRun(runId: string): Promise<void> {
 
 /** Get the active team run for a given session */
 export function getTeamRunForSession(sessionId: string): TeamRun | undefined {
-  return pickPreferredRun(teamStore.runs.filter((r) => r.parentSessionId === sessionId));
+  return pickPreferredRun(getSessionRuns(sessionId));
 }
 
 /** Get all known team runs for a session, sorted by activity then recency. */
 export function getTeamRunsForSession(sessionId: string): TeamRun[] {
-  return teamStore.runs
-    .filter((run) => run.parentSessionId === sessionId)
+  return getSessionRuns(sessionId)
     .sort(compareTeamRuns);
 }
 
 /** Get the active team run for a given session, if any */
 export function getActiveTeamRunForSession(sessionId: string): TeamRun | undefined {
   return pickPreferredRun(
-    teamStore.runs.filter((r) => r.parentSessionId === sessionId && isActiveTeamRun(r)),
+    getSessionRuns(sessionId).filter((r) => isActiveTeamRun(r)),
   );
 }
 
 /** Get the active Heavy Brain run for a given session, if any */
 export function getActiveHeavyTeamRunForSession(sessionId: string): TeamRun | undefined {
   return pickPreferredRun(
-    teamStore.runs.filter(
-      (r) => r.parentSessionId === sessionId && r.mode === "heavy" && isActiveTeamRun(r),
+    getSessionRuns(sessionId).filter(
+      (r) => r.mode === "heavy" && isActiveTeamRun(r),
     ),
   );
 }
@@ -147,5 +164,5 @@ export async function sendTeamRunMessage(runId: string, text: string): Promise<v
 
 /** Get team run by ID */
 export function getTeamRun(runId: string): TeamRun | undefined {
-  return teamStore.runs.find((r) => r.id === runId);
+  return getLatestTeamRun(teamStore.runs, runId);
 }

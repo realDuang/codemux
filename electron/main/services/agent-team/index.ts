@@ -124,10 +124,18 @@ export class AgentTeamService extends EventEmitter {
       throw new Error("AgentTeamService not initialized");
     }
 
+    if (Boolean(req.worktreeId) !== Boolean(req.parentDirectory)) {
+      throw new Error(
+        "Team runs started from worktree sessions must include both worktreeId and parentDirectory.",
+      );
+    }
+
     const run: TeamRun = {
       id: timeId("team"),
       parentSessionId: req.sessionId,
       directory: req.directory,
+      parentDirectory: req.parentDirectory,
+      worktreeId: req.worktreeId,
       originalPrompt: req.prompt,
       mode: req.mode,
       status: "planning",

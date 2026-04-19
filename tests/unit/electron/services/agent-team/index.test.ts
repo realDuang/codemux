@@ -162,6 +162,21 @@ describe("AgentTeamService", () => {
         "A:completed",
       ]);
     });
+
+    it("rejects incomplete worktree team-run context", async () => {
+      const service = createService();
+      service.init(createEngineManagerMock("opencode"));
+
+      await expect(service.createRun({
+        sessionId: "parent-session",
+        prompt: "Do the work",
+        mode: "light",
+        directory: "/repo/.worktrees/feature-branch",
+        worktreeId: "feature-branch",
+      } as any)).rejects.toThrow(
+        "Team runs started from worktree sessions must include both worktreeId and parentDirectory.",
+      );
+    });
   });
 
   describe("relay contract", () => {

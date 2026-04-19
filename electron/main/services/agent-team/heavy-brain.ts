@@ -123,8 +123,8 @@ export class HeavyBrainOrchestrator {
 
       const orchSession = await this.engineManager.createSession(
         engineType,
-        teamRun.directory,
-        undefined,
+        teamRun.parentDirectory ?? teamRun.directory,
+        teamRun.worktreeId,
         { systemPrompt },
       );
       teamRun.orchestratorSessionId = orchSession.id;
@@ -490,14 +490,14 @@ export class HeavyBrainOrchestrator {
     );
   }
 
-  private convertDispatchTasks(tasks: DispatchTask[]): TaskNode[] {
+  private convertDispatchTasks(tasks: DispatchTask[], defaultWorktreeId?: string): TaskNode[] {
     return tasks.map((t): TaskNode => ({
       id: t.id || `task_${this.nextAutoTaskIndex++}`,
       description: t.description,
       prompt: t.prompt,
       engineType: t.engineType as EngineType | undefined,
       dependsOn: t.dependsOn || [],
-      worktreeId: t.worktreeId,
+      worktreeId: t.worktreeId ?? defaultWorktreeId,
       status: "pending",
     }));
   }
@@ -541,7 +541,7 @@ export class HeavyBrainOrchestrator {
     tasks: DispatchTask[],
     onTaskUpdated: (task: TaskNode) => void,
   ): MergeDispatchTasksResult {
-    const newTasks = this.convertDispatchTasks(tasks);
+    const newTasks = this.convertDispatchTasks(tasks, teamRun.worktreeId);
     const validation = this.validateMergedTasks(teamRun.tasks, newTasks);
     if (!validation.ok) {
       return validation;
@@ -652,8 +652,9 @@ export class HeavyBrainOrchestrator {
       onTaskUpdated(task);
 
       let state!: RunningTaskState;
-      const promise = executor.execute(task, teamRun.directory, {
+      const promise = executor.execute(task, teamRun.parentDirectory ?? teamRun.directory, {
         upstreamContext,
+        defaultWorktreeId: teamRun.worktreeId,
         onSessionCreated: (sessionId) => {
           state.sessionId = sessionId;
           if (this.cancelled || this.terminal) {

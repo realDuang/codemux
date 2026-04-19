@@ -45,6 +45,70 @@ function makeRun(overrides: Partial<TeamRun> = {}): TeamRun {
 }
 
 describe("LightBrainOrchestrator", () => {
+  it("keeps worktree team runs inside the parent project worktree context", async () => {
+    const engineManager = {
+      getDefaultEngineType: vi.fn(() => "opencode"),
+      listEngines: vi.fn(() => [{
+        type: "opencode",
+        name: "OpenCode",
+        status: "running",
+      }]),
+      createSession: vi.fn()
+        .mockResolvedValueOnce({ id: "planner-session" })
+        .mockResolvedValueOnce({ id: "worker-session" }),
+      sendMessage: vi.fn(async (sessionId: string) => {
+        if (sessionId === "planner-session") {
+          return makeTextMessage(`\`\`\`json
+{
+  "tasks": [
+    {
+      "id": "t1",
+      "description": "Edit isolated files",
+      "prompt": "Apply the requested change",
+      "dependsOn": []
+    }
+  ]
+}
+\`\`\``);
+        }
+
+        if (sessionId === "worker-session") {
+          return makeTextMessage("worker done");
+        }
+
+        throw new Error(`Unexpected session ${sessionId}`);
+      }),
+      cancelMessage: vi.fn(async () => {}),
+    } as any;
+
+    const orchestrator = new LightBrainOrchestrator(engineManager, new Set());
+    const teamRun = makeRun({
+      directory: "/repo/.worktrees/feature-branch",
+      parentDirectory: "/repo",
+      worktreeId: "feature-branch",
+    });
+
+    await orchestrator.run(teamRun, () => {}, "opencode");
+
+    expect(teamRun.status).toBe("completed");
+    expect(teamRun.tasks[0].worktreeId).toBe("feature-branch");
+    expect(engineManager.createSession).toHaveBeenNthCalledWith(
+      1,
+      "opencode",
+      "/repo",
+      "feature-branch",
+      expect.objectContaining({
+        systemPrompt: expect.any(String),
+      }),
+    );
+    expect(engineManager.createSession).toHaveBeenNthCalledWith(
+      2,
+      "opencode",
+      "/repo",
+      "feature-branch",
+    );
+  });
+
   it("passes planner-provided worktreeId to worker sessions", async () => {
     const engineManager = {
       getDefaultEngineType: vi.fn(() => "opencode"),

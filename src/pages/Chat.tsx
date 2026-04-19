@@ -1763,11 +1763,21 @@ export default function Chat() {
     if (!sessionId) return;
     const session = sessionStore.list.find(s => s.id === sessionId);
     const directory = session?.directory || ".";
+    const parentDirectory = session?.worktreeId
+      ? sessionStore.projects.find((project) => project.id === session.projectID)?.directory
+      : undefined;
     if (getActiveTeamRunForSession(sessionId)) {
       return;
     }
     try {
-      await createTeamRun(sessionId, text, mode, directory, currentEngineType());
+      if (session?.worktreeId && !parentDirectory) {
+        throw new Error("Unable to resolve the parent project directory for this worktree session.");
+      }
+
+      await createTeamRun(sessionId, text, mode, directory, currentEngineType(), {
+        worktreeId: session?.worktreeId,
+        parentDirectory,
+      });
       notify(t().notification.teamRunStarted, "info", 3000);
     } catch (err: any) {
       logger.error("[TeamRun] Failed to create:", err);

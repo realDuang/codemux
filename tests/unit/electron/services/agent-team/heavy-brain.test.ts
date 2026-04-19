@@ -524,4 +524,61 @@ describe("HeavyBrainOrchestrator", () => {
     expect(teamRun.tasks[0].worktreeId).toBe("feature-branch");
     expect(engineManager.createSession).toHaveBeenNthCalledWith(2, "opencode", "/repo", "feature-branch");
   });
+
+  it("keeps worktree team runs inside the parent project worktree context", async () => {
+    const sendMessage = vi.fn(async (sessionId: string, content: Array<{ text?: string }>) => {
+      const text = content[0]?.text ?? "";
+
+      if (sessionId === "orch-session") {
+        if (text.includes("## Task Completed: A")) {
+          return makeJsonMessage({ action: "complete", result: "done" });
+        }
+
+        return makeJsonMessage({
+          action: "dispatch",
+          tasks: [
+            {
+              id: "A",
+              description: "Task A",
+              prompt: "Run A",
+              dependsOn: [],
+            },
+          ],
+        });
+      }
+
+      if (sessionId === "worker-a") {
+        return makeTextMessage("A result");
+      }
+
+      throw new Error(`Unexpected session ${sessionId}`);
+    });
+
+    const engineManager = createEngineManagerMock(["orch-session", "worker-a"], sendMessage);
+    const orchestrator = new HeavyBrainOrchestrator(engineManager, new Set());
+    const teamRun = makeRun({
+      directory: "/repo/.worktrees/feature-branch",
+      parentDirectory: "/repo",
+      worktreeId: "feature-branch",
+    });
+
+    await orchestrator.run(teamRun, "opencode", () => {});
+
+    expect(teamRun.tasks[0].worktreeId).toBe("feature-branch");
+    expect(engineManager.createSession).toHaveBeenNthCalledWith(
+      1,
+      "opencode",
+      "/repo",
+      "feature-branch",
+      expect.objectContaining({
+        systemPrompt: expect.any(String),
+      }),
+    );
+    expect(engineManager.createSession).toHaveBeenNthCalledWith(
+      2,
+      "opencode",
+      "/repo",
+      "feature-branch",
+    );
+  });
 });

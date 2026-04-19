@@ -132,4 +132,24 @@ describe("TaskExecutor", () => {
 
     expect(engineManager.createSession).toHaveBeenCalledWith("opencode", "/repo", "feature-branch");
   });
+
+  it("inherits the default worktreeId when the task does not override it", async () => {
+    const engineManager = new EngineManagerMock();
+    const executor = new TaskExecutor(engineManager as any, new Set(), "opencode");
+    const task = makeTask({ id: "t1" });
+
+    await executor.execute(
+      task,
+      "/repo",
+      {
+        defaultWorktreeId: "feature-branch",
+        maxRetries: 0,
+        retryBackoffMs: 0,
+        inactivityTimeoutMs: 1000,
+      },
+    );
+
+    expect(task.worktreeId).toBe("feature-branch");
+    expect(engineManager.createSession).toHaveBeenCalledWith("opencode", "/repo", "feature-branch");
+  });
 });

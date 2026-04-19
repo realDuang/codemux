@@ -108,7 +108,10 @@ export class DAGExecutor extends EventEmitter {
 
     const upstreamContext = TaskExecutor.buildUpstreamContext(dependencies);
 
-    return this.taskExecutor.execute(task, this.directory, { upstreamContext });
+    return this.taskExecutor.execute(task, this.directory, {
+      upstreamContext,
+      defaultWorktreeId: run.worktreeId,
+    });
   }
 
   /**

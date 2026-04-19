@@ -112,6 +112,10 @@ export async function createTeamRun(
   mode: "light" | "heavy",
   directory: string,
   engineType?: string,
+  context?: {
+    worktreeId?: string;
+    parentDirectory?: string;
+  },
 ): Promise<TeamRun> {
   const run = await gateway.createTeamRun({
     sessionId,
@@ -119,6 +123,8 @@ export async function createTeamRun(
     mode,
     directory,
     engineType,
+    worktreeId: context?.worktreeId,
+    parentDirectory: context?.parentDirectory,
   });
   setTeamStore("runs", (runs) => upsertTeamRun(runs, run));
   setTeamStore("activeRunId", run.id);

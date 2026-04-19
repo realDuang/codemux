@@ -51,7 +51,7 @@ export class LightBrainOrchestrator {
       prompt: raw.prompt,
       engineType: raw.engineType as EngineType | undefined,
       dependsOn: raw.dependsOn,
-      worktreeId: raw.worktreeId,
+      worktreeId: raw.worktreeId ?? teamRun.worktreeId,
       status: "pending",
     }));
 
@@ -65,7 +65,10 @@ export class LightBrainOrchestrator {
       this.autoApproveSessions,
       defaultEngineType,
     );
-    const dagExecutor = new DAGExecutor(taskExecutor, teamRun.directory);
+    const dagExecutor = new DAGExecutor(
+      taskExecutor,
+      teamRun.parentDirectory ?? teamRun.directory,
+    );
 
     // Forward task update events
     dagExecutor.on("task.updated", ({ task }) => onTaskUpdated(task));
@@ -106,8 +109,8 @@ export class LightBrainOrchestrator {
 
     const planSession = await this.engineManager.createSession(
       plannerEngineType,
-      teamRun.directory,
-      undefined,
+      teamRun.parentDirectory ?? teamRun.directory,
+      teamRun.worktreeId,
       { systemPrompt },
     );
 

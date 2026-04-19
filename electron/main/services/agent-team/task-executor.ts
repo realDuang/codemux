@@ -22,6 +22,7 @@ export type AutoApproveSessionTracker = Set<string> | ((sessionId: string) => vo
 
 export interface TaskExecutionOptions {
   upstreamContext?: string;
+  defaultWorktreeId?: string;
   onSessionCreated?: (sessionId: string) => void;
   shouldCancel?: () => boolean;
   inactivityTimeoutMs?: number;
@@ -188,8 +189,12 @@ export class TaskExecutor {
     inactivityTimeoutMs: number,
   ): Promise<TaskExecutionResult> {
     const engineType = (task.engineType as EngineType) || this.defaultEngineType;
+    const worktreeId = task.worktreeId ?? options.defaultWorktreeId;
+    if (!task.worktreeId && worktreeId) {
+      task.worktreeId = worktreeId;
+    }
 
-    const session = await this.engineManager.createSession(engineType, directory, task.worktreeId);
+    const session = await this.engineManager.createSession(engineType, directory, worktreeId);
     task.sessionId = session.id;
 
     this.registerAutoApprove(session.id);

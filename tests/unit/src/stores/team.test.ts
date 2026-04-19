@@ -203,13 +203,38 @@ describe("team store selectors", () => {
   describe("createTeamRun", () => {
     it("upserts the created run when a matching notification already added it", async () => {
       const handlers = connectTeamHandlers();
-      const run = makeRun({ id: "team-dup", status: "planning" });
+      const run = makeRun({
+        id: "team-dup",
+        status: "planning",
+        directory: "/repo/.worktrees/feature-branch",
+        parentDirectory: "/repo",
+        worktreeId: "feature-branch",
+      });
 
       handlers.onTeamRunUpdated(run);
       gatewayMock.createTeamRun.mockResolvedValue(run);
 
-      await createTeamRun("session-1", "Investigate issue", "heavy", "/repo", "claude");
+      await createTeamRun(
+        "session-1",
+        "Investigate issue",
+        "heavy",
+        "/repo/.worktrees/feature-branch",
+        "claude",
+        {
+          worktreeId: "feature-branch",
+          parentDirectory: "/repo",
+        },
+      );
 
+      expect(gatewayMock.createTeamRun).toHaveBeenCalledWith({
+        sessionId: "session-1",
+        prompt: "Investigate issue",
+        mode: "heavy",
+        directory: "/repo/.worktrees/feature-branch",
+        engineType: "claude",
+        worktreeId: "feature-branch",
+        parentDirectory: "/repo",
+      });
       expect(teamStore.runs.filter((candidate) => candidate.id === "team-dup")).toHaveLength(1);
     });
   });

@@ -1005,8 +1005,12 @@ export interface TeamRun {
   id: string;
   /** The parent session that initiated this team run */
   parentSessionId: string;
-  /** Directory for all child sessions */
+  /** Directory of the session that initiated this team run */
   directory: string;
+  /** Parent repo directory for worktree-originated team runs */
+  parentDirectory?: string;
+  /** Default worktree for child sessions created by this run */
+  worktreeId?: string;
   /** User's original request */
   originalPrompt: string;
   /** Light or Heavy brain mode */
@@ -1034,8 +1038,12 @@ export interface TeamCreateRequest {
   mode: TeamMode;
   /** Engine for the planner (light) or orchestrator (heavy) */
   engineType?: EngineType;
-  /** Working directory */
+  /** Working directory of the initiating session */
   directory: string;
+  /** Parent repo directory when the initiating session belongs to a worktree */
+  parentDirectory?: string;
+  /** Worktree name when the initiating session belongs to a worktree */
+  worktreeId?: string;
 }
 
 export interface TeamCancelRequest {

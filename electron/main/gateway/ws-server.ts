@@ -30,6 +30,8 @@ import {
   type QuestionReplyRequest,
   type ProjectSetEngineRequest,
   type ModelSetRequest,
+  type ReasoningEffortSetRequest,
+  type ServiceTierSetRequest,
   type ModeSetRequest,
   type SessionImportPreviewRequest,
   type SessionImportExecuteRequest,
@@ -315,6 +317,19 @@ export class GatewayServer {
       case GatewayRequestType.MODEL_SET: {
         const req = p as ModelSetRequest;
         return this.engineManager.setModel(req.sessionId, req.modelId);
+      }
+
+      case GatewayRequestType.REASONING_EFFORT_SET: {
+        const req = p as ReasoningEffortSetRequest;
+        return this.engineManager.setReasoningEffort(req.sessionId, req.reasoningEffort);
+      }
+
+      case GatewayRequestType.SERVICE_TIER_SET: {
+        const req = p as ServiceTierSetRequest;
+        return this.engineManager.setServiceTier(
+          req.sessionId,
+          isCodexServiceTier(req.serviceTier) ? req.serviceTier : null,
+        );
       }
 
       // Mode

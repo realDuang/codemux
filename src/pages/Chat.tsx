@@ -17,7 +17,16 @@ import { gateway } from "../lib/gateway-api";
 import { ensureGatewayInitialized, refreshEngineConfigState } from "../lib/engine-bootstrap";
 import { logger } from "../lib/logger";
 import { isElectron } from "../lib/platform";
-import { sessionStore, setSessionStore, type SessionInfo, setSendingFor } from "../stores/session";
+import {
+  sessionStore,
+  setSessionStore,
+  type SessionInfo,
+  clearInputDraft,
+  getInputDraft,
+  setInputDraft,
+  setSendingFor,
+  updateSessionInfo,
+} from "../stores/session";
 import {
   messageStore,
   setMessageStore,
@@ -29,7 +38,25 @@ import { SessionSidebar } from "../components/SessionSidebar";
 import { HideProjectModal } from "../components/HideProjectModal";
 import { AddProjectModal } from "../components/AddProjectModal";
 import { ScheduledTaskModal } from "../components/ScheduledTaskModal";
-import type { UnifiedMessage, UnifiedPart, UnifiedPermission, UnifiedQuestion, UnifiedSession, UnifiedProject, AgentMode, EngineType, SessionActivityStatus, EngineCommand, ScheduledTask, ScheduledTaskCreateRequest, ScheduledTaskUpdateRequest } from "../types/unified";
+import type {
+  UnifiedMessage,
+  UnifiedPart,
+  UnifiedPermission,
+  UnifiedQuestion,
+  UnifiedSession,
+  UnifiedProject,
+  AgentMode,
+  CodexServiceTier,
+  EngineType,
+  ImageAttachment,
+  ReasoningEffort,
+  SessionActivityStatus,
+  EngineCommand,
+  UnifiedModelInfo,
+  ScheduledTask,
+  ScheduledTaskCreateRequest,
+  ScheduledTaskUpdateRequest,
+} from "../types/unified";
 import WorktreeModal from "../components/WorktreeModal";
 import MergeWorktreeModal from "../components/MergeWorktreeModal";
 import { DeleteWorktreeModal } from "../components/DeleteWorktreeModal";
@@ -54,9 +81,19 @@ import { ResizeHandle } from "../components/ResizeHandle";
 import { fileStore, togglePanel, setPanelWidth, closePanel } from "../stores/file";
 import { handleFileChanged, refreshGitStatus } from "../stores/file";
 
-import { configStore, setConfigStore, getSelectedModelForEngine, isEngineEnabled, getDefaultEngineType, getEffectiveReasoningEffortForEngine, getServiceTierForEngine } from "../stores/config";
+import {
+  configStore,
+  setConfigStore,
+  getSelectedModelForSession,
+  getEffectiveReasoningEffortForSession,
+  getServiceTierForSession,
+  isEngineEnabled,
+  getDefaultEngineType,
+} from "../stores/config";
 import { scheduledTaskStore, setScheduledTaskStore } from "../stores/scheduled-task";
 import { computeActiveSessions } from "../lib/active-sessions";
+import { ReasoningEffortSelector } from "../components/ReasoningEffortSelector";
+import { CodexFastModeToggle } from "../components/CodexFastModeToggle";
 
 // Binary search helper (consistent with opencode desktop)
 function binarySearch<T>(
@@ -89,6 +126,10 @@ function toSessionInfo(s: UnifiedSession, projectID?: string): SessionInfo {
     engineType: s.engineType,
     title: s.title || "",
     directory: s.directory || "",
+    mode: s.mode,
+    modelId: s.modelId,
+    reasoningEffort: s.reasoningEffort,
+    serviceTier: s.serviceTier,
     projectID: projectID ?? s.projectId ?? undefined,
     worktreeId: s.worktreeId,
     createdAt: new Date(s.time.created).toISOString(),
@@ -99,6 +140,7 @@ function toSessionInfo(s: UnifiedSession, projectID?: string): SessionInfo {
 export default function Chat() {
   const { t } = useI18n();
   const navigate = useNavigate();
+  const emptyDraft = () => ({ text: "", images: [] as ImageAttachment[] });
   // Per-session sending state lives in sessionStore.sendingMap (persists across navigations).
   const sending = createMemo(() => {
     const sid = sessionStore.current;
@@ -332,9 +374,6 @@ export default function Chat() {
     setTodoPartRef(null);
   });
 
-  // Agent mode state - default to "build" matching OpenCode's default
-  const [currentAgent, setCurrentAgent] = createSignal<AgentMode>({ id: "build", label: "Build" });
-
   // Slash command state — available commands for the current engine
   const [availableCommands, setAvailableCommands] = createSignal<EngineCommand[]>([]);
 
@@ -349,6 +388,170 @@ export default function Chat() {
     const session = sessionStore.list.find(s => s.id === sid);
     return session?.engineType || getDefaultEngineType();
   });
+
+  const currentSessionInfo = createMemo(() => {
+    const sid = sessionStore.current;
+    if (!sid) return undefined;
+    return sessionStore.list.find((session) => session.id === sid);
+  });
+
+  const currentEngineInfo = createMemo(() =>
+    configStore.engines.find((engine) => engine.type === currentEngineType()),
+  );
+
+  const currentAvailableModes = createMemo(() =>
+    currentEngineInfo()?.capabilities?.availableModes ?? [],
+  );
+
+  const currentAgent = createMemo<AgentMode>(() => {
+    const availableModes = currentAvailableModes();
+    if (availableModes.length === 0) {
+      return { id: "build", label: "Build" };
+    }
+    const currentModeId = currentSessionInfo()?.mode;
+    return availableModes.find((mode) => mode.id === currentModeId) ?? availableModes[0];
+  });
+
+  const currentSessionModels = createMemo(() =>
+    configStore.engineModels[currentEngineType()] || [],
+  );
+
+  const currentSessionModelId = createMemo(() =>
+    getSelectedModelForSession(currentEngineType(), currentSessionInfo()?.modelId),
+  );
+
+  const currentSessionReasoningEffort = createMemo(() =>
+    getEffectiveReasoningEffortForSession(
+      currentEngineType(),
+      currentSessionInfo()?.modelId,
+      currentSessionInfo()?.reasoningEffort ?? null,
+    ),
+  );
+
+  const currentSessionServiceTier = createMemo(() =>
+    getServiceTierForSession(
+      currentEngineType(),
+      currentSessionInfo()?.serviceTier ?? null,
+    ),
+  );
+
+  const currentModelProviderGroups = createMemo(() => {
+    const groups = new Map<string, { name: string; models: UnifiedModelInfo[] }>();
+    for (const model of currentSessionModels()) {
+      const providerId = model.providerId || "default";
+      if (!groups.has(providerId)) {
+        groups.set(providerId, {
+          name: model.providerName || providerId,
+          models: [],
+        });
+      }
+      groups.get(providerId)!.models.push(model);
+    }
+    return Array.from(groups.values());
+  });
+
+  const currentDraft = createMemo(() => {
+    const sid = sessionStore.current;
+    return sid ? getInputDraft(sid) : emptyDraft();
+  });
+
+  const showSessionConfigError = (error: unknown) => {
+    const message = error instanceof Error ? error.message : String(error);
+    notify(message, "error", 5000);
+  };
+
+  const handleAgentChange = async (agent: AgentMode) => {
+    const sessionId = sessionStore.current;
+    if (!sessionId) return;
+    const previousMode = currentSessionInfo()?.mode;
+    updateSessionInfo(sessionId, { mode: agent.id });
+    try {
+      await gateway.setMode(sessionId, agent.id);
+    } catch (error) {
+      updateSessionInfo(sessionId, { mode: previousMode });
+      logger.error("[Mode] Failed to update session mode:", error);
+      showSessionConfigError(error);
+    }
+  };
+
+  const handleSessionModelChange = async (modelId: string) => {
+    const sessionId = sessionStore.current;
+    if (!sessionId) return;
+    const previousModelId = currentSessionInfo()?.modelId;
+    updateSessionInfo(sessionId, { modelId });
+    try {
+      await gateway.setModel(sessionId, modelId);
+    } catch (error) {
+      updateSessionInfo(sessionId, { modelId: previousModelId });
+      logger.error("[Model] Failed to update session model:", error);
+      showSessionConfigError(error);
+    }
+  };
+
+  const handleSessionReasoningEffortChange = async (effort: ReasoningEffort) => {
+    const sessionId = sessionStore.current;
+    if (!sessionId) return;
+    const previousEffort = currentSessionInfo()?.reasoningEffort;
+    updateSessionInfo(sessionId, { reasoningEffort: effort });
+    try {
+      await gateway.setReasoningEffort(sessionId, effort);
+    } catch (error) {
+      updateSessionInfo(sessionId, { reasoningEffort: previousEffort });
+      logger.error("[ReasoningEffort] Failed to update session reasoning effort:", error);
+      showSessionConfigError(error);
+    }
+  };
+
+  const handleSessionFastModeToggle = async (nextActive: boolean) => {
+    const sessionId = sessionStore.current;
+    if (!sessionId) return;
+    const nextTier: CodexServiceTier | undefined = nextActive ? "fast" : undefined;
+    const previousTier = currentSessionInfo()?.serviceTier;
+    updateSessionInfo(sessionId, { serviceTier: nextTier });
+    try {
+      await gateway.setServiceTier(sessionId, nextTier ?? null);
+    } catch (error) {
+      updateSessionInfo(sessionId, { serviceTier: previousTier });
+      logger.error("[ServiceTier] Failed to update session fast mode:", error);
+      showSessionConfigError(error);
+    }
+  };
+
+  const updateCurrentDraft = (patch: { text?: string; images?: ImageAttachment[] }) => {
+    const sessionId = sessionStore.current;
+    if (!sessionId) return;
+    setInputDraft(sessionId, patch);
+  };
+
+  const persistNewSessionDefaults = async (
+    sessionId: string,
+    engineType: EngineType,
+    availableModes?: AgentMode[],
+  ) => {
+    const defaultMode = availableModes?.[0]?.id;
+    const defaultModelId = getSelectedModelForSession(engineType);
+    const defaultReasoningEffort = getEffectiveReasoningEffortForSession(engineType);
+    const defaultServiceTier = getServiceTierForSession(engineType);
+
+    updateSessionInfo(sessionId, {
+      mode: defaultMode,
+      modelId: defaultModelId,
+      reasoningEffort: defaultReasoningEffort ?? undefined,
+      serviceTier: defaultServiceTier ?? undefined,
+    });
+
+    try {
+      await Promise.all([
+        ...(defaultMode ? [gateway.setMode(sessionId, defaultMode)] : []),
+        ...(defaultModelId ? [gateway.setModel(sessionId, defaultModelId)] : []),
+        gateway.setReasoningEffort(sessionId, defaultReasoningEffort ?? null),
+        gateway.setServiceTier(sessionId, defaultServiceTier ?? null),
+      ]);
+    } catch (error) {
+      logger.error("[SessionDefaults] Failed to persist session defaults:", error);
+      showSessionConfigError(error);
+    }
+  };
 
   // Engine badge for title bar
   const currentEngineBadge = createMemo(() =>
@@ -391,22 +594,6 @@ export default function Chat() {
       if (msg.cost != null) { cost += msg.cost; hasCost = true; costUnit = msg.costUnit; }
     }
     return hasTokens ? { input, output, cost: hasCost ? cost : undefined, costUnit } : null;
-  });
-
-  // Keep currentAgent in sync: whenever the engine type changes or engine
-  // capabilities are refreshed (e.g. modes populated after createSession),
-  // reset to the first available mode if the current one doesn't belong to
-  // the active engine.
-  createEffect(() => {
-    const engineType = currentEngineType();
-    const engineInfo = configStore.engines.find(e => e.type === engineType);
-    const availableModes = engineInfo?.capabilities?.availableModes;
-    if (availableModes && availableModes.length > 0) {
-      const cur = currentAgent();
-      if (!availableModes.some(m => m.id === cur.id)) {
-        setCurrentAgent(availableModes[0]);
-      }
-    }
   });
 
   // Fetch available slash commands when the engine type changes.
@@ -929,16 +1116,6 @@ export default function Chat() {
       setConfigStore("currentEngineType", session.engineType);
     }
 
-    // Only reset mode when current mode is incompatible with the engine
-    const engineInfo = configStore.engines.find(e => e.type === (session?.engineType || configStore.currentEngineType));
-    const availableModes = engineInfo?.capabilities?.availableModes;
-    if (availableModes && availableModes.length > 0) {
-      const cur = currentAgent();
-      if (!availableModes.some(m => m.id === cur.id)) {
-        setCurrentAgent(availableModes[0]);
-      }
-    }
-
     if (isMobile()) {
       setIsSidebarOpen(false);
     }
@@ -1015,12 +1192,9 @@ export default function Chat() {
         const engines = await gateway.listEngines();
         setConfigStore("engines", engines);
 
-        // Auto-select first available mode for the new engine
         const engineInfo = engines.find(e => e.type === engineType);
         const availableModes = engineInfo?.capabilities?.availableModes;
-        if (availableModes && availableModes.length > 0) {
-          setCurrentAgent(availableModes[0]);
-        }
+        await persistNewSessionDefaults(processedSession.id, engineType as EngineType, availableModes);
       } catch {
         // Non-critical: mode list may be stale but won't block
       }
@@ -1058,6 +1232,7 @@ export default function Chat() {
       setMessageStore("permission", sessionId, undefined as any);
       setMessageStore("question", sessionId, undefined as any);
       setMessageStore("queued", sessionId, undefined as any);
+      clearInputDraft(sessionId);
 
       // Clear todoPartRef if it points to the deleted session
       const ref = todoPartRef();
@@ -1544,6 +1719,18 @@ export default function Chat() {
               ...s,
               title: updated.title || s.title,
               directory: updated.directory || s.directory || "",
+              ...(Object.prototype.hasOwnProperty.call(updated, "mode") && {
+                mode: updated.mode,
+              }),
+              ...(Object.prototype.hasOwnProperty.call(updated, "modelId") && {
+                modelId: updated.modelId,
+              }),
+              ...(Object.prototype.hasOwnProperty.call(updated, "reasoningEffort") && {
+                reasoningEffort: updated.reasoningEffort,
+              }),
+              ...(Object.prototype.hasOwnProperty.call(updated, "serviceTier") && {
+                serviceTier: updated.serviceTier,
+              }),
               ...(updated.time && {
                 createdAt: new Date(updated.time.created).toISOString(),
                 updatedAt: new Date(updated.time.updated).toISOString(),
@@ -1664,7 +1851,7 @@ export default function Chat() {
     const isBusy = sending();
     if (isBusy && !canEnqueue()) return;
 
-    const modelId = getSelectedModelForEngine(currentEngineType());
+    const modelId = currentSessionModelId();
     if (!modelId) {
       showSendError(t().chat.noModelError);
       return;
@@ -1672,8 +1859,8 @@ export default function Chat() {
 
     setSendingFor(sessionId, true);
 
-    const reasoningEffort = getEffectiveReasoningEffortForEngine(currentEngineType());
-    const serviceTier = getServiceTierForEngine(currentEngineType());
+    const reasoningEffort = currentSessionReasoningEffort();
+    const serviceTier = currentSessionServiceTier();
     const commandText = args ? `/${commandName} ${args}` : `/${commandName}`;
     const tempMessageId = `msg-temp-${Date.now()}`;
     const tempPartId = `part-temp-${Date.now()}`;
@@ -1741,7 +1928,7 @@ export default function Chat() {
       showSendError(t().chat.noModeError);
       return;
     }
-    const modelId = getSelectedModelForEngine(currentEngineType());
+    const modelId = currentSessionModelId();
     if (!modelId) {
       showSendError(t().chat.noModelError);
       return;
@@ -1749,8 +1936,8 @@ export default function Chat() {
 
     setSendingFor(sessionId, true);
 
-    const reasoningEffort = getEffectiveReasoningEffortForEngine(currentEngineType());
-    const serviceTier = getServiceTierForEngine(currentEngineType());
+    const reasoningEffort = currentSessionReasoningEffort();
+    const serviceTier = currentSessionServiceTier();
     const tempMessageId = `msg-temp-${Date.now()}`;
     const tempPartId = `part-temp-${Date.now()}`;
 
@@ -2242,6 +2429,75 @@ export default function Chat() {
                       </div>
                     </Show>
 
+                    <Show when={sessionStore.current}>
+                      <div class="mb-2 flex flex-wrap items-center gap-2 px-1">
+                        <div class="flex items-center gap-2 px-2.5 py-1.5 rounded-xl bg-slate-100/70 dark:bg-slate-800/70 border border-slate-200/70 dark:border-slate-700/70">
+                          <span class="text-[11px] font-medium text-slate-500 dark:text-slate-400">
+                            {t().engine.defaultModel}
+                          </span>
+                          <Show
+                            when={currentEngineInfo()?.capabilities?.customModelInput}
+                            fallback={
+                              <select
+                                value={currentSessionModelId() ?? ""}
+                                onChange={(e) => handleSessionModelChange(e.currentTarget.value)}
+                                disabled={currentEngineInfo()?.capabilities?.modelSwitchable === false || currentSessionModels().length === 0}
+                                class="min-w-[180px] max-w-[280px] px-2 py-1 text-xs rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-700 dark:text-slate-200"
+                              >
+                                <For each={currentModelProviderGroups()}>
+                                  {(group) => (
+                                    <Show
+                                      when={currentModelProviderGroups().length > 1}
+                                      fallback={
+                                        <For each={group.models}>
+                                          {(model) => (
+                                            <option value={model.modelId}>{model.name}</option>
+                                          )}
+                                        </For>
+                                      }
+                                    >
+                                      <optgroup label={group.name}>
+                                        <For each={group.models}>
+                                          {(model) => (
+                                            <option value={model.modelId}>{model.name}</option>
+                                          )}
+                                        </For>
+                                      </optgroup>
+                                    </Show>
+                                  )}
+                                </For>
+                              </select>
+                            }
+                          >
+                            <input
+                              type="text"
+                              value={currentSessionModelId() ?? ""}
+                              onInput={(e) => handleSessionModelChange(e.currentTarget.value)}
+                              disabled={currentEngineInfo()?.capabilities?.modelSwitchable === false}
+                              placeholder="Enter model ID..."
+                              class="min-w-[180px] max-w-[280px] px-2 py-1 text-xs rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-700 dark:text-slate-200"
+                            />
+                          </Show>
+                        </div>
+
+                        <ReasoningEffortSelector
+                          compact
+                          engineType={currentEngineType() as EngineType}
+                          models={currentSessionModels}
+                          selectedModelId={() => currentSessionModelId() ?? ""}
+                          currentEffort={currentSessionReasoningEffort}
+                          onSelect={handleSessionReasoningEffortChange}
+                        />
+
+                        <CodexFastModeToggle
+                          compact
+                          engineType={currentEngineType() as EngineType}
+                          active={() => currentSessionServiceTier() === "fast"}
+                          onToggle={handleSessionFastModeToggle}
+                        />
+                      </div>
+                    </Show>
+
                     <PromptInput
                       onSend={handleSendMessage}
                       onCancel={handleCancelMessage}
@@ -2249,12 +2505,16 @@ export default function Chat() {
                       canEnqueue={canEnqueue()}
                       queueCount={queueCount()}
                       currentAgent={currentAgent()}
-                      onAgentChange={setCurrentAgent}
-                      availableModes={configStore.engines.find(e => e.type === currentEngineType())?.capabilities?.availableModes}
+                      onAgentChange={handleAgentChange}
+                      availableModes={currentAvailableModes()}
                       disabled={!sessionStore.current}
-                      imageAttachmentEnabled={configStore.engines.find(e => e.type === currentEngineType())?.capabilities?.imageAttachment ?? false}
+                      imageAttachmentEnabled={currentEngineInfo()?.capabilities?.imageAttachment ?? false}
                       availableCommands={availableCommands()}
                       onCommandInvoke={handleCommandInvoke}
+                      text={currentDraft().text}
+                      onTextChange={(text) => updateCurrentDraft({ text })}
+                      images={currentDraft().images}
+                      onImagesChange={(images) => updateCurrentDraft({ images })}
                     />
                   </Show>
                   <div class="mt-2 text-center">

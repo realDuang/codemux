@@ -51,6 +51,10 @@ function convToSession(conv: ConversationMeta): UnifiedSession {
     engineType: conv.engineType,
     directory: normalizeDir(conv.directory),
     title: conv.title,
+    mode: conv.mode,
+    modelId: conv.modelId,
+    reasoningEffort: conv.reasoningEffort,
+    serviceTier: conv.serviceTier,
     worktreeId: conv.worktreeId,
     projectId: `dir-${projectDir}`,
     time: {
@@ -323,6 +327,23 @@ export class EngineManager extends EventEmitter {
             conversationStore.get(convId)?.engineSessionId ?? "",
             data.session.engineMeta as Record<string, unknown>,
           );
+        }
+        if (
+          Object.prototype.hasOwnProperty.call(data.session, "mode")
+          || Object.prototype.hasOwnProperty.call(data.session, "modelId")
+          || Object.prototype.hasOwnProperty.call(data.session, "reasoningEffort")
+          || Object.prototype.hasOwnProperty.call(data.session, "serviceTier")
+        ) {
+          conversationStore.updateSessionConfig(convId, {
+            ...(Object.prototype.hasOwnProperty.call(data.session, "mode") ? { mode: data.session.mode ?? null } : {}),
+            ...(Object.prototype.hasOwnProperty.call(data.session, "modelId") ? { modelId: data.session.modelId ?? null } : {}),
+            ...(Object.prototype.hasOwnProperty.call(data.session, "reasoningEffort")
+              ? { reasoningEffort: data.session.reasoningEffort ?? null }
+              : {}),
+            ...(Object.prototype.hasOwnProperty.call(data.session, "serviceTier")
+              ? { serviceTier: data.session.serviceTier ?? null }
+              : {}),
+          });
         }
         this.emit("session.updated", this.rewriteSessionId(data as any, engineSessionId!, convId) as any);
       } else {
@@ -823,6 +844,54 @@ export class EngineManager extends EventEmitter {
     return { success: true };
   }
 
+  private resolveSessionOptions(
+    conv: ConversationMeta,
+    options?: {
+      mode?: string;
+      modelId?: string;
+      reasoningEffort?: ReasoningEffort | null;
+      serviceTier?: CodexServiceTier | null;
+    },
+  ): {
+    mode?: string;
+    modelId?: string;
+    reasoningEffort?: ReasoningEffort | null;
+    serviceTier?: CodexServiceTier | null;
+  } {
+    const hasExplicitReasoningEffort = options != null
+      && Object.prototype.hasOwnProperty.call(options, "reasoningEffort");
+    const hasExplicitServiceTier = options != null
+      && Object.prototype.hasOwnProperty.call(options, "serviceTier");
+
+    return {
+      mode: options?.mode ?? conv.mode,
+      modelId: options?.modelId ?? conv.modelId,
+      reasoningEffort: hasExplicitReasoningEffort
+        ? (options?.reasoningEffort ?? null)
+        : (conv.reasoningEffort ?? undefined),
+      serviceTier: hasExplicitServiceTier
+        ? (options?.serviceTier ?? null)
+        : (conv.serviceTier ?? undefined),
+    };
+  }
+
+  private updateStoredSessionConfig(
+    sessionId: string,
+    patch: {
+      mode?: string | null;
+      modelId?: string | null;
+      reasoningEffort?: ReasoningEffort | null;
+      serviceTier?: CodexServiceTier | null;
+    },
+  ): ConversationMeta {
+    const conv = conversationStore.updateSessionConfig(sessionId, patch);
+    if (!conv) {
+      throw new Error(`Conversation not found: ${sessionId}`);
+    }
+    this.emit("session.updated", { session: convToSession(conv) });
+    return conv;
+  }
+
   // --- Messages ---
 
   async sendMessage(
@@ -862,8 +931,9 @@ export class EngineManager extends EventEmitter {
     // (Some adapters like OpenCode don't emit user message events)
     await this.persistUserMessage(sessionId, content);
 
+    const resolvedOptions = this.resolveSessionOptions(conv, options);
     const result = await adapter.sendMessage(engineSessionId, content, {
-      ...options,
+      ...resolvedOptions,
       directory: conv.directory,
     });
 
@@ -1020,11 +1090,13 @@ export class EngineManager extends EventEmitter {
     this.applyTitleFallback(sessionId, [{ type: "text", text: commandText }]);
     await this.persistUserMessage(sessionId, [{ type: "text", text: commandText }]);
 
+    const resolvedOptions = this.resolveSessionOptions(conv, options);
+
     const result = await adapter.invokeCommand(
       engineSessionId,
       commandName,
       args,
-      { ...options, directory: conv.directory },
+      { ...resolvedOptions, directory: conv.directory },
     );
 
     // If the adapter couldn't handle it, fall back to sendMessage
@@ -1032,7 +1104,7 @@ export class EngineManager extends EventEmitter {
       const message = await adapter.sendMessage(
         engineSessionId,
         [{ type: "text", text: commandText }],
-        { ...options, directory: conv.directory },
+        { ...resolvedOptions, directory: conv.directory },
       );
       return { handledAsCommand: false, message };
     }
@@ -1048,9 +1120,9 @@ export class EngineManager extends EventEmitter {
   }
 
   async setModel(sessionId: string, modelId: string): Promise<void> {
-    const conv = conversationStore.get(sessionId);
-    if (!conv?.engineSessionId) {
-      throw new Error(`No engine session for conversation: ${sessionId}`);
+    const conv = this.updateStoredSessionConfig(sessionId, { modelId });
+    if (!conv.engineSessionId) {
+      return;
     }
     const adapter = this.getAdapterForSession(sessionId);
     return adapter.setModel(conv.engineSessionId, modelId);
@@ -1064,12 +1136,30 @@ export class EngineManager extends EventEmitter {
   }
 
   async setMode(sessionId: string, modeId: string): Promise<void> {
-    const conv = conversationStore.get(sessionId);
-    if (!conv?.engineSessionId) {
-      throw new Error(`No engine session for conversation: ${sessionId}`);
+    const conv = this.updateStoredSessionConfig(sessionId, { mode: modeId });
+    if (!conv.engineSessionId) {
+      return;
     }
     const adapter = this.getAdapterForSession(sessionId);
     return adapter.setMode(conv.engineSessionId, modeId);
+  }
+
+  async setReasoningEffort(sessionId: string, effort: ReasoningEffort | null): Promise<void> {
+    const conv = this.updateStoredSessionConfig(sessionId, { reasoningEffort: effort });
+    if (!conv.engineSessionId) {
+      return;
+    }
+    const adapter = this.getAdapterForSession(sessionId);
+    return adapter.setReasoningEffort(conv.engineSessionId, effort);
+  }
+
+  async setServiceTier(sessionId: string, tier: CodexServiceTier | null): Promise<void> {
+    const conv = this.updateStoredSessionConfig(sessionId, { serviceTier: tier });
+    if (!conv.engineSessionId) {
+      return;
+    }
+    const adapter = this.getAdapterForSession(sessionId);
+    return adapter.setServiceTier(conv.engineSessionId, tier);
   }
 
   // --- Permissions ---

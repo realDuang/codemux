@@ -134,16 +134,46 @@ interface PromptInputProps {
   availableCommands?: EngineCommand[];
   /** Called when user invokes a slash command (instead of onSend) */
   onCommandInvoke?: (commandName: string, args: string, agent: AgentMode) => void;
+  /** Controlled text draft for the current session */
+  text?: string;
+  onTextChange?: (text: string) => void;
+  /** Controlled image draft for the current session */
+  images?: ImageAttachment[];
+  onImagesChange?: (images: ImageAttachment[]) => void;
 }
 
 export function PromptInput(props: PromptInputProps) {
   const { t } = useI18n();
-  const [text, setText] = createSignal("");
+  const [internalText, setInternalText] = createSignal("");
   const [textarea, setTextarea] = createSignal<HTMLTextAreaElement>();
-  const [images, setImages] = createSignal<ImageAttachment[]>([]);
+  const [internalImages, setInternalImages] = createSignal<ImageAttachment[]>([]);
   const [dragOver, setDragOver] = createSignal(false);
   let fileInputRef: HTMLInputElement | undefined;
   let pasteCounter = 0;
+
+  const text = createMemo(() => props.text ?? internalText());
+  const images = createMemo(() => props.images ?? internalImages());
+
+  const setTextValue = (value: string) => {
+    if (props.onTextChange) {
+      props.onTextChange(value);
+    }
+    if (props.text === undefined) {
+      setInternalText(value);
+    }
+  };
+
+  const setImagesValue = (
+    value: ImageAttachment[] | ((prev: ImageAttachment[]) => ImageAttachment[]),
+  ) => {
+    const next = typeof value === "function" ? value(images()) : value;
+    if (props.onImagesChange) {
+      props.onImagesChange(next);
+    }
+    if (props.images === undefined) {
+      setInternalImages(next);
+    }
+  };
 
   // --- Slash command autocomplete state ---
   const [showCommandMenu, setShowCommandMenu] = createSignal(false);
@@ -197,7 +227,7 @@ export function PromptInput(props: PromptInputProps) {
 
   /** Select a command from the autocomplete menu */
   const selectCommand = (cmd: EngineCommand) => {
-    setText(`/${cmd.name} `);
+    setTextValue(`/${cmd.name} `);
     setShowCommandMenu(false);
     textarea()?.focus();
   };
@@ -249,7 +279,7 @@ export function PromptInput(props: PromptInputProps) {
       const dataUrl = reader.result as string;
       const base64 = dataUrl.split(",")[1];
       if (!base64) return;
-      setImages((prev) => [
+      setImagesValue((prev) => [
         ...prev,
         {
           id: `img_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
@@ -264,7 +294,7 @@ export function PromptInput(props: PromptInputProps) {
   };
 
   const removeImage = (id: string) => {
-    setImages((prev) => prev.filter((img) => img.id !== id));
+    setImagesValue((prev) => prev.filter((img) => img.id !== id));
   };
 
   const handlePaste = (e: ClipboardEvent) => {
@@ -320,11 +350,14 @@ export function PromptInput(props: PromptInputProps) {
   };
 
   createEffect(() => {
-    // Reset height when text is cleared
+    text();
+    const el = textarea();
+    if (!el) return;
     if (!text()) {
-      const el = textarea();
-      if (el) el.style.height = "auto";
+      el.style.height = "auto";
+      return;
     }
+    adjustHeight();
   });
 
   // Sync agent with props when it changes externally
@@ -391,18 +424,18 @@ export function PromptInput(props: PromptInputProps) {
       const spaceIdx = trimmed.indexOf(" ");
       const commandName = spaceIdx === -1 ? trimmed.slice(1) : trimmed.slice(1, spaceIdx);
       const args = spaceIdx === -1 ? "" : trimmed.slice(spaceIdx + 1).trim();
-      if (commandName) {
-        props.onCommandInvoke(commandName, args, agent());
-        setText("");
-        setImages([]);
-        return;
+        if (commandName) {
+          props.onCommandInvoke(commandName, args, agent());
+          setTextValue("");
+          setImagesValue([]);
+          return;
+        }
       }
-    }
     // Normal send
     const imgs = images().length > 0 ? [...images()] : undefined;
     props.onSend(text(), agent(), imgs);
-    setText("");
-    setImages([]);
+    setTextValue("");
+    setImagesValue([]);
   };
 
   const handleSend = () => {
@@ -532,7 +565,7 @@ export function PromptInput(props: PromptInputProps) {
           ref={setTextarea}
           value={text()}
           onInput={(e) => {
-            setText(e.currentTarget.value);
+            setTextValue(e.currentTarget.value);
             adjustHeight();
           }}
           onKeyDown={handleKeyDown}

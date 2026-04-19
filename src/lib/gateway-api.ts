@@ -291,6 +291,20 @@ class GatewayAPI {
     return gatewayClient.setModel({ sessionId, modelId });
   }
 
+  setReasoningEffort(
+    sessionId: string,
+    reasoningEffort: import("../types/unified").ReasoningEffort | null,
+  ): Promise<void> {
+    return gatewayClient.setReasoningEffort({ sessionId, reasoningEffort });
+  }
+
+  setServiceTier(
+    sessionId: string,
+    serviceTier: import("../types/unified").CodexServiceTier | null,
+  ): Promise<void> {
+    return gatewayClient.setServiceTier({ sessionId, serviceTier });
+  }
+
   // --- Mode ---
 
   setMode(sessionId: string, modeId: string): Promise<void> {

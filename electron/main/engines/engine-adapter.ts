@@ -276,6 +276,16 @@ export abstract class EngineAdapter extends EventEmitter {
     return null;
   }
 
+  // --- Service Tier ---
+
+  /** Set the service tier for a session (no-op by default) */
+  async setServiceTier(_sessionId: string, _tier: CodexServiceTier | null): Promise<void> {}
+
+  /** Get the current service tier for a session */
+  getServiceTier(_sessionId: string): CodexServiceTier | null {
+    return null;
+  }
+
   // --- Permissions ---
 
   /** Reply to a permission request */

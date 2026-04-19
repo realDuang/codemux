@@ -1,12 +1,15 @@
 import { For, Show } from "solid-js";
 import type { UnifiedPermission } from "../types/unified";
 import { useI18n } from "../lib/i18n";
+import { getPermissionPreview, getPermissionTargets } from "./input-area-context";
 import styles from "./InputAreaPermission.module.css";
 
 interface InputAreaPermissionProps {
   permission: UnifiedPermission;
   onRespond: (sessionID: string, permissionID: string, reply: string) => void;
 }
+
+const MAX_VISIBLE_TARGETS = 4;
 
 /**
  * InputAreaPermission — Permission prompt displayed in the input area.
@@ -46,6 +49,33 @@ export function InputAreaPermission(props: InputAreaPermissionProps) {
         ];
   };
 
+  const kindLabel = () => {
+    switch (props.permission.kind) {
+      case "read":
+        return t().permission.kindRead;
+      case "edit":
+        return t().permission.kindEdit;
+      default:
+        return t().permission.kindOther;
+    }
+  };
+
+  const targets = () => {
+    return getPermissionTargets(props.permission);
+  };
+
+  const visibleTargets = () => targets().slice(0, MAX_VISIBLE_TARGETS);
+  const hiddenTargetCount = () => Math.max(0, targets().length - visibleTargets().length);
+  const preview = () => {
+    const contextPreview = getPermissionPreview(props.permission);
+    if (!contextPreview) return null;
+
+    return {
+      label: contextPreview.type === "diff" ? t().permission.diffPreview : t().permission.requestPreview,
+      content: contextPreview.content,
+    };
+  };
+
   return (
     <div class={styles.root}>
       <div class={styles.header}>
@@ -57,10 +87,39 @@ export function InputAreaPermission(props: InputAreaPermissionProps) {
         <span class={styles.headerLabel}>{t().permission.waitingApproval}</span>
       </div>
 
+      <div class={styles.meta}>
+        <span class={styles.metaBadge}>{kindLabel()}</span>
+        <Show when={props.permission.toolCallId}>
+          <span class={styles.metaBadge}>
+            <span>{t().permission.toolCall}</span>
+            <span class={styles.metaMono}>{props.permission.toolCallId}</span>
+          </span>
+        </Show>
+      </div>
+
       <p class={styles.title}>{props.permission.title}</p>
 
-      <Show when={props.permission.patterns && props.permission.patterns.length > 0}>
-        <p class={styles.patterns}>{props.permission.patterns?.join(", ")}</p>
+      <Show when={visibleTargets().length > 0}>
+        <div class={styles.contextSection}>
+          <div class={styles.contextLabel}>{t().permission.targets}</div>
+          <div class={styles.targetList}>
+            <For each={visibleTargets()}>
+              {(target) => <span class={styles.targetChip}>{target}</span>}
+            </For>
+            <Show when={hiddenTargetCount() > 0}>
+              <span class={styles.targetChip}>+{hiddenTargetCount()}</span>
+            </Show>
+          </div>
+        </div>
+      </Show>
+
+      <Show when={preview()}>
+        {(contextPreview) => (
+          <div class={styles.contextSection}>
+            <div class={styles.contextLabel}>{contextPreview().label}</div>
+            <pre class={styles.preview}>{contextPreview().content}</pre>
+          </div>
+        )}
       </Show>
 
       <div class={styles.actions}>

@@ -41,27 +41,113 @@
   color: rgba(253, 224, 71, 0.85);
 }
 
+.meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.metaBadge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  border: 1px solid rgba(245, 158, 11, 0.18);
+  background: rgba(255, 255, 255, 0.55);
+  color: rgba(146, 64, 14, 0.9);
+  font-size: 0.6875rem;
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+:global(.dark) .metaBadge {
+  border-color: rgba(251, 191, 36, 0.18);
+  background: rgba(120, 53, 15, 0.2);
+  color: rgba(253, 224, 71, 0.85);
+}
+
+.metaMono {
+  font-family: var(--font-mono, monospace);
+  word-break: break-all;
+  font-weight: 500;
+}
+
 /* ── Permission info ── */
 .title {
   font-size: 0.8125rem;
+  font-weight: 500;
   color: rgba(120, 53, 15, 0.85);
-  margin-bottom: 2px;
+  margin-bottom: 8px;
 }
 
 :global(.dark) .title {
   color: rgba(252, 211, 77, 0.85);
 }
 
-.patterns {
-  font-size: 0.75rem;
-  color: rgba(180, 83, 9, 0.6);
-  font-family: var(--font-mono, monospace);
-  margin-bottom: 8px;
-  word-break: break-all;
+.contextSection {
+  margin-top: 8px;
 }
 
-:global(.dark) .patterns {
-  color: rgba(251, 191, 36, 0.5);
+.contextLabel {
+  font-size: 0.6875rem;
+  font-weight: 600;
+  color: rgba(180, 83, 9, 0.75);
+  margin-bottom: 6px;
+}
+
+:global(.dark) .contextLabel {
+  color: rgba(251, 191, 36, 0.68);
+}
+
+.targetList {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.targetChip {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.55);
+  border: 1px solid rgba(245, 158, 11, 0.15);
+  color: rgba(146, 64, 14, 0.82);
+  font-size: 0.75rem;
+  font-family: var(--font-mono, monospace);
+  line-height: 1.25;
+  word-break: break-word;
+}
+
+:global(.dark) .targetChip {
+  background: rgba(120, 53, 15, 0.18);
+  border-color: rgba(251, 191, 36, 0.14);
+  color: rgba(253, 224, 71, 0.78);
+}
+
+.preview {
+  margin: 0;
+  padding: 9px 10px;
+  border-radius: 8px;
+  border: 1px solid rgba(245, 158, 11, 0.14);
+  background: rgba(255, 255, 255, 0.5);
+  color: rgba(120, 53, 15, 0.82);
+  font-size: 0.75rem;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: var(--font-mono, monospace);
+  overflow: auto;
+  max-height: 152px;
+}
+
+:global(.dark) .preview {
+  border-color: rgba(251, 191, 36, 0.14);
+  background: rgba(120, 53, 15, 0.2);
+  color: rgba(253, 224, 71, 0.78);
 }
 
 /* ── Action buttons ── */

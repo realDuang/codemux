@@ -42,6 +42,39 @@
   color: rgba(165, 180, 252, 0.9);
 }
 
+.meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.metaBadge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  border: 1px solid rgba(99, 102, 241, 0.16);
+  background: rgba(255, 255, 255, 0.6);
+  color: rgba(55, 48, 163, 0.88);
+  font-size: 0.6875rem;
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+:global(.dark) .metaBadge {
+  border-color: rgba(129, 140, 248, 0.18);
+  background: rgba(49, 46, 129, 0.3);
+  color: rgba(199, 210, 254, 0.88);
+}
+
+.metaMono {
+  font-family: var(--font-mono, monospace);
+  word-break: break-all;
+  font-weight: 500;
+}
+
 /* ── Progress segments for multi-question ── */
 .progress {
   display: flex;

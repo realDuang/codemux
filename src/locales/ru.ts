@@ -33,6 +33,13 @@ export const ru: LocaleDict = {
     allowOnce: "Разрешить один раз",
     allowAlways: "Всегда разрешать",
     waitingApproval: "Ожидание подтверждения",
+    kindRead: "Чтение",
+    kindEdit: "Изменение",
+    kindOther: "Другое",
+    toolCall: "Вызов инструмента",
+    targets: "Цели",
+    diffPreview: "Изменения",
+    requestPreview: "Детали запроса",
   },
 
   // Question
@@ -44,6 +51,8 @@ export const ru: LocaleDict = {
     selectMultiple: "Можно выбрать несколько вариантов",
     back: "Назад",
     next: "Далее",
+    relatedTool: "Связанный инструмент",
+    progress: "Вопрос {current} из {total}",
   },
 
   // Login page

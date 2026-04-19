@@ -148,7 +148,7 @@ export function formatSingleTaskResult(task: TaskNode, remainingCount: number): 
 
   lines.push("");
   if (remainingCount > 0) {
-    lines.push(`---\n${remainingCount} task(s) still running. You may output a JSON block to dispatch new tasks or mark complete, or just acknowledge to wait for more results.`);
+    lines.push(`---\n${remainingCount} task(s) are still pending or running. You may output a JSON block to dispatch new tasks or mark complete, or just acknowledge to wait for more results.`);
   } else {
     lines.push(`---\nAll tasks have finished. Output a JSON block: dispatch more tasks, or mark complete with a summary.`);
   }
@@ -168,8 +168,8 @@ export function formatUserMessage(text: string, remainingTasks: number): string 
     ``,
     `---`,
     remainingTasks > 0
-      ? `${remainingTasks} task(s) still running. Respond with a JSON block.`
-      : `No tasks currently running. Respond with a JSON block.`,
+      ? `${remainingTasks} task(s) are still pending or running. Respond with a JSON block.`
+      : `No tasks are currently pending or running. Respond with a JSON block.`,
   ];
   return lines.join("\n");
 }

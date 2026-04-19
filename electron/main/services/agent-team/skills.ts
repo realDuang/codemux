@@ -111,6 +111,7 @@ export interface RawTaskNode {
   prompt: string;
   dependsOn: string[];
   engineType?: string;
+  worktreeId?: string;
 }
 
 interface DagPlanOutput {
@@ -154,6 +155,9 @@ function validateDagPlan(data: unknown): { ok: true; data: DagPlanOutput } | { o
     }
     if (!Array.isArray(t.dependsOn)) {
       errors.push(`Task '${t.id}': missing 'dependsOn' array`);
+    }
+    if (t.worktreeId != null && typeof t.worktreeId !== "string") {
+      errors.push(`Task '${t.id}': invalid 'worktreeId'`);
     }
   }
 
@@ -224,12 +228,13 @@ Your **final answer** MUST be a single JSON code block with the following schema
     {
       "id": "string (unique, e.g. t1, t2)",
       "description": "string (1-sentence summary of the task)",
-      "prompt": "string (detailed, self-contained instructions for the worker agent)",
-      "dependsOn": ["array of task IDs this task depends on, use [] if none"],
-      "engineType": "optional string: claude | copilot | opencode (omit to use default)"
-    }
-  ]
-}
+       "prompt": "string (detailed, self-contained instructions for the worker agent)",
+       "dependsOn": ["array of task IDs this task depends on, use [] if none"],
+       "engineType": "optional string: claude | copilot | opencode (omit to use default)",
+       "worktreeId": "optional string: existing worktree name for isolated file changes"
+     }
+   ]
+ }
 \`\`\`
 
 ## Self-Check Before Outputting (MANDATORY)
@@ -267,6 +272,7 @@ export interface DispatchTask {
   prompt: string;
   engineType?: string;
   dependsOn?: string[];
+  worktreeId?: string;
 }
 
 export type DispatchInstruction =
@@ -317,6 +323,9 @@ function validateDispatchInstruction(
       if (!t.prompt || typeof t.prompt !== "string") {
         errors.push(`Task '${t.id}': missing 'prompt'`);
       }
+      if (t.worktreeId != null && typeof t.worktreeId !== "string") {
+        errors.push(`Task '${t.id}': invalid 'worktreeId'`);
+      }
     }
 
     if (errors.length > 0) {
@@ -352,13 +361,15 @@ You communicate your decisions via JSON code blocks. This JSON is parsed by an e
   "action": "dispatch",
   "tasks": [
     {
-      "id": "unique_id",
-      "description": "1-sentence summary",
-      "prompt": "detailed, self-contained instructions for the worker agent",
-      "engineType": "optional: claude | copilot | opencode"
-    }
-  ]
-}
+       "id": "unique_id",
+       "description": "1-sentence summary",
+       "prompt": "detailed, self-contained instructions for the worker agent",
+       "engineType": "optional: claude | copilot | opencode",
+       "dependsOn": ["optional array of already-known task IDs"],
+       "worktreeId": "optional string: existing worktree name for isolated file changes"
+     }
+   ]
+ }
 \`\`\`
 
 ### 2. Mark orchestration as complete:

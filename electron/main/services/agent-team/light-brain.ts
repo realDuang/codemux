@@ -6,7 +6,12 @@
 import type { EngineManager } from "../../gateway/engine-manager";
 import type { TaskNode, TeamRun, EngineType, EngineInfo } from "../../../../src/types/unified";
 import { DAGExecutor } from "./dag-executor";
-import { TaskExecutor, extractTextFromMessage } from "./task-executor";
+import {
+  TaskExecutor,
+  extractTextFromMessage,
+  trackAutoApproveSession,
+  type AutoApproveSessionTracker,
+} from "./task-executor";
 import { dagPlanningSkill, executeWithSkill, type RawTaskNode } from "./skills";
 import { buildPlanningPrompt } from "./prompts";
 import { agentTeamLog } from "./logger";
@@ -14,7 +19,7 @@ import { agentTeamLog } from "./logger";
 export class LightBrainOrchestrator {
   constructor(
     private engineManager: EngineManager,
-    private autoApproveSessions: Set<string>,
+    private autoApproveSessions: AutoApproveSessionTracker,
   ) {}
 
   /**
@@ -25,16 +30,19 @@ export class LightBrainOrchestrator {
   async run(
     teamRun: TeamRun,
     onTaskUpdated: (task: TaskNode) => void,
+    plannerEngineType?: EngineType,
   ): Promise<void> {
     const defaultEngineType = this.engineManager.getDefaultEngineType();
-    const plannerEngineType = (teamRun.mode === "light" ? defaultEngineType : defaultEngineType) as EngineType;
+    const resolvedPlannerEngineType = plannerEngineType ?? defaultEngineType;
 
     // --- Phase 1: Planning ---
     teamRun.status = "planning";
-    agentTeamLog.info(`[${teamRun.id}] Light Brain: planning phase`);
+    agentTeamLog.info(
+      `[${teamRun.id}] Light Brain: planning phase using ${resolvedPlannerEngineType}`,
+    );
 
     const engines = this.engineManager.listEngines();
-    const tasks = await this.generateDAG(teamRun, plannerEngineType, engines);
+    const tasks = await this.generateDAG(teamRun, resolvedPlannerEngineType, engines);
 
     // Convert raw tasks to TaskNodes
     teamRun.tasks = tasks.map((raw): TaskNode => ({
@@ -43,6 +51,7 @@ export class LightBrainOrchestrator {
       prompt: raw.prompt,
       engineType: raw.engineType as EngineType | undefined,
       dependsOn: raw.dependsOn,
+      worktreeId: raw.worktreeId,
       status: "pending",
     }));
 
@@ -103,12 +112,7 @@ export class LightBrainOrchestrator {
     );
 
     // Register for auto-approve
-    if (this.autoApproveSessions.size > 200) {
-      const recent = [...this.autoApproveSessions].slice(-100);
-      this.autoApproveSessions.clear();
-      for (const id of recent) this.autoApproveSessions.add(id);
-    }
-    this.autoApproveSessions.add(planSession.id);
+    trackAutoApproveSession(this.autoApproveSessions, planSession.id);
 
     // Execute with skill (includes format spec + self-check + retry)
     const sendMessage = async (text: string): Promise<string> => {

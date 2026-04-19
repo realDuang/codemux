@@ -7,6 +7,7 @@
 import { EventEmitter } from "events";
 import type { TaskNode, TeamRun } from "../../../../src/types/unified";
 import { TaskExecutor } from "./task-executor";
+import { AGENT_TEAM_MAX_CONCURRENT_TASKS } from "./guardrails";
 
 export interface DAGExecutorEvents {
   /** A task's status changed */
@@ -22,6 +23,7 @@ export class DAGExecutor extends EventEmitter {
   constructor(
     private taskExecutor: TaskExecutor,
     private directory: string,
+    private maxConcurrentTasks = AGENT_TEAM_MAX_CONCURRENT_TASKS,
   ) {
     super();
   }
@@ -38,10 +40,10 @@ export class DAGExecutor extends EventEmitter {
     const executedTasks: TaskNode[] = [];
 
     while (true) {
-      const ready = this.findReadyTasks(run.tasks);
+      const ready = DAGExecutor.findReadyTasks(run.tasks).slice(0, this.maxConcurrentTasks);
       if (ready.length === 0) break;
 
-      // Execute all ready tasks in parallel
+      // Execute the next ready batch up to the concurrency limit.
       const results = await Promise.allSettled(
         ready.map((task) => this.runSingleTask(run, task)),
       );
@@ -70,7 +72,7 @@ export class DAGExecutor extends EventEmitter {
       }
 
       // Propagate failures: mark downstream tasks as blocked
-      this.propagateFailures(run.tasks);
+      DAGExecutor.propagateFailures(run.tasks);
     }
 
     return executedTasks;
@@ -81,7 +83,7 @@ export class DAGExecutor extends EventEmitter {
    * - status is "pending"
    * - all dependencies are "completed"
    */
-  private findReadyTasks(tasks: TaskNode[]): TaskNode[] {
+  static findReadyTasks(tasks: TaskNode[]): TaskNode[] {
     return tasks.filter((task) => {
       if (task.status !== "pending") return false;
       return task.dependsOn.every((depId) => {
@@ -106,13 +108,14 @@ export class DAGExecutor extends EventEmitter {
 
     const upstreamContext = TaskExecutor.buildUpstreamContext(dependencies);
 
-    return this.taskExecutor.execute(task, this.directory, upstreamContext);
+    return this.taskExecutor.execute(task, this.directory, { upstreamContext });
   }
 
   /**
    * Mark tasks as "blocked" if any of their dependencies failed.
    */
-  private propagateFailures(tasks: TaskNode[]): void {
+  static propagateFailures(tasks: TaskNode[]): TaskNode[] {
+    const blockedTasks: TaskNode[] = [];
     let changed = true;
     while (changed) {
       changed = false;
@@ -127,10 +130,13 @@ export class DAGExecutor extends EventEmitter {
         if (hasFailedDep) {
           task.status = "blocked";
           task.error = "Blocked by failed upstream task";
+          blockedTasks.push(task);
           changed = true;
         }
       }
     }
+
+    return blockedTasks;
   }
 
   /**

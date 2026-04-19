@@ -54,6 +54,8 @@ import {
   getActiveHeavyTeamRunForSession,
   getActiveTeamRunForSession,
   getTeamRunForSession,
+  getTeamRunsForSession,
+  hydrateTeamRuns,
   sendTeamRunMessage,
   teamStore,
 } from "../../../../src/stores/team";
@@ -132,6 +134,41 @@ describe("team store selectors", () => {
       );
 
       expect(getActiveHeavyTeamRunForSession("session-1")?.id).toBe("team-heavy-active");
+    });
+
+    it("returns all runs sorted by activity first, then newest first", () => {
+      const handlers = connectTeamHandlers();
+      handlers.onTeamRunUpdated(
+        makeRun({ id: "team-complete-new", status: "completed", time: { created: 30 } }),
+      );
+      handlers.onTeamRunUpdated(
+        makeRun({ id: "team-active", status: "running", time: { created: 10 } }),
+      );
+      handlers.onTeamRunUpdated(
+        makeRun({ id: "team-complete-old", status: "completed", time: { created: 20 } }),
+      );
+
+      expect(getTeamRunsForSession("session-1").map((run) => run.id)).toEqual([
+        "team-active",
+        "team-complete-new",
+        "team-complete-old",
+      ]);
+    });
+  });
+
+  describe("hydrateTeamRuns", () => {
+    it("replaces the known runs with a backend snapshot", () => {
+      hydrateTeamRuns([
+        makeRun({ id: "team-old", status: "completed" }),
+        makeRun({ id: "team-active", status: "running", mode: "heavy" }),
+      ]);
+
+      hydrateTeamRuns([
+        makeRun({ id: "team-restored", status: "failed", mode: "light" }),
+      ]);
+
+      expect(teamStore.runs.map((run) => run.id)).toEqual(["team-restored"]);
+      expect(teamStore.activeRunId).toBeNull();
     });
   });
 

@@ -5,6 +5,9 @@
 // ============================================================================
 
 import { EventEmitter } from "events";
+import fs from "node:fs";
+import path from "node:path";
+import { app } from "electron";
 import { timeId } from "../../utils/id-gen";
 import { agentTeamLog } from "./logger";
 import { LightBrainOrchestrator } from "./light-brain";
@@ -17,6 +20,13 @@ import type {
   TaskNode,
   EngineType,
 } from "../../../../src/types/unified";
+
+const SAVE_DEBOUNCE_MS = 500;
+
+interface TeamRunFileFormat {
+  version: 1;
+  runs: TeamRun[];
+}
 
 // --- Event types ---
 
@@ -38,31 +48,42 @@ export class AgentTeamService extends EventEmitter {
   private runs = new Map<string, TeamRun>();
   /** Session IDs created by team runs — auto-approve permissions for these. */
   private autoApproveSessions = new Set<string>();
+  /** Run-scoped auto-approve session tracking for deterministic cleanup. */
+  private autoApproveSessionsByRun = new Map<string, Set<string>>();
   /** Active Heavy Brain orchestrators (for cancellation). */
   private activeOrchestrators = new Map<string, HeavyBrainOrchestrator>();
-  /** Active user channels for human-in-the-loop (both Light and Heavy Brain). */
-  private activeUserChannels = new Map<string, UserChannel>();
+  /** Active Heavy Brain relay channels for human-in-the-loop messages. */
+  private activeRelayChannels = new Map<string, UserChannel>();
+  private saveTimer: ReturnType<typeof setTimeout> | null = null;
   private initialized = false;
 
   // --- Lifecycle ---
 
   init(engineManager: EngineManager): void {
     if (this.initialized) return;
+    this.runs.clear();
+    this.autoApproveSessions.clear();
+    this.autoApproveSessionsByRun.clear();
+    this.activeOrchestrators.clear();
+    this.activeRelayChannels.clear();
     this.engineManager = engineManager;
+    this.loadFromDisk();
     this.subscribePermissionAutoApprove();
     this.initialized = true;
-    agentTeamLog.info("Agent Team Service initialized");
+    agentTeamLog.info(`Agent Team Service initialized with ${this.runs.size} run(s)`);
   }
 
   async shutdown(): Promise<void> {
     // Cancel all running orchestrators
     for (const [runId, orchestrator] of this.activeOrchestrators) {
       agentTeamLog.info(`Cancelling orchestrator for run ${runId}`);
-      orchestrator.cancel();
+      await orchestrator.cancel();
     }
     this.activeOrchestrators.clear();
-    this.activeUserChannels.clear();
+    this.activeRelayChannels.clear();
+    this.autoApproveSessionsByRun.clear();
     this.autoApproveSessions.clear();
+    this.flushPendingSave();
     this.initialized = false;
     agentTeamLog.info("Agent Team Service shut down");
   }
@@ -141,35 +162,48 @@ export class AgentTeamService extends EventEmitter {
     // Cancel heavy brain orchestrator if active
     const orchestrator = this.activeOrchestrators.get(runId);
     if (orchestrator) {
-      orchestrator.cancel();
+      await orchestrator.cancel();
       this.activeOrchestrators.delete(runId);
-    }
-    this.activeUserChannels.delete(runId);
-
-    // Cancel all running child sessions
-    for (const task of run.tasks) {
-      if (task.sessionId && task.status === "running") {
+    } else {
+      if (run.orchestratorSessionId) {
         try {
-          await this.engineManager?.cancelMessage(task.sessionId);
-        } catch {
-          // Best-effort
+          await this.engineManager?.cancelMessage(run.orchestratorSessionId);
+        } catch (error) {
+          agentTeamLog.warn(
+            `Failed to cancel orchestrator session ${run.orchestratorSessionId}: ${error instanceof Error ? error.message : String(error)}`,
+          );
         }
-        task.status = "cancelled";
       }
-      if (task.status === "pending") {
-        task.status = "cancelled";
+
+      for (const task of run.tasks) {
+        if (task.sessionId && task.status === "running") {
+          try {
+            await this.engineManager?.cancelMessage(task.sessionId);
+          } catch (error) {
+            agentTeamLog.warn(
+              `Failed to cancel task session ${task.sessionId}: ${error instanceof Error ? error.message : String(error)}`,
+            );
+          }
+        }
+
+        if (task.status === "pending" || task.status === "running") {
+          task.status = "cancelled";
+          task.time = { ...task.time, completed: task.time?.completed ?? Date.now() };
+        }
       }
+
+      run.status = "cancelled";
+      run.finalResult = "Orchestration was cancelled.";
+      run.time.completed = Date.now();
     }
 
-    run.status = "cancelled";
-    run.time.completed = Date.now();
+    this.cleanupRunRuntimeState(runId);
     this.emitRunUpdated(run);
     agentTeamLog.info(`Cancelled team run ${runId}`);
   }
 
   /**
-   * Send a user message to a running orchestrator (Light or Heavy Brain).
-   * The message will be forwarded with highest priority.
+   * Relay a user message to an active Heavy Brain orchestrator.
    */
   sendMessageToRun(runId: string, text: string): void {
     const run = this.runs.get(runId);
@@ -177,10 +211,15 @@ export class AgentTeamService extends EventEmitter {
     if (run.status !== "running" && run.status !== "planning") {
       throw new Error(`Team run ${runId} is not active (status: ${run.status})`);
     }
+    if (run.mode !== "heavy") {
+      throw new Error(
+        `Relay messaging is only supported for active Heavy Brain runs. Run ${runId} is ${run.mode}.`,
+      );
+    }
 
-    const channel = this.activeUserChannels.get(runId);
+    const channel = this.activeRelayChannels.get(runId);
     if (!channel) {
-      throw new Error(`No active user channel for run ${runId}`);
+      throw new Error(`No active Heavy Brain relay channel for run ${runId}`);
     }
 
     channel.send(text);
@@ -188,7 +227,7 @@ export class AgentTeamService extends EventEmitter {
   }
 
   listRuns(): TeamRun[] {
-    return Array.from(this.runs.values());
+    return Array.from(this.runs.values()).sort((a, b) => b.time.created - a.time.created);
   }
 
   getRun(runId: string): TeamRun | null {
@@ -204,32 +243,161 @@ export class AgentTeamService extends EventEmitter {
     };
 
     const resolvedEngine = orchestratorEngineType ?? this.engineManager!.getDefaultEngineType();
+    const registerAutoApproveSession = (sessionId: string) => {
+      this.registerAutoApproveSession(run.id, sessionId);
+    };
 
-    if (run.mode === "light") {
-      const orchestrator = new LightBrainOrchestrator(
-        this.engineManager!,
-        this.autoApproveSessions,
-      );
-      await orchestrator.run(run, onTaskUpdated);
-    } else {
-      const orchestrator = new HeavyBrainOrchestrator(
-        this.engineManager!,
-        this.autoApproveSessions,
-      );
-      this.activeOrchestrators.set(run.id, orchestrator);
-      this.activeUserChannels.set(run.id, orchestrator.userChannel);
-      try {
+    try {
+      if (run.mode === "light") {
+        const orchestrator = new LightBrainOrchestrator(
+          this.engineManager!,
+          registerAutoApproveSession,
+        );
+        await orchestrator.run(run, onTaskUpdated, resolvedEngine);
+      } else {
+        const orchestrator = new HeavyBrainOrchestrator(
+          this.engineManager!,
+          registerAutoApproveSession,
+        );
+        this.activeOrchestrators.set(run.id, orchestrator);
+        this.activeRelayChannels.set(run.id, orchestrator.userChannel);
         await orchestrator.run(run, resolvedEngine, onTaskUpdated);
-      } finally {
-        this.activeOrchestrators.delete(run.id);
-        this.activeUserChannels.delete(run.id);
+      }
+    } finally {
+      this.cleanupRunRuntimeState(run.id);
+      this.emitRunUpdated(run);
+    }
+  }
+
+  private registerAutoApproveSession(runId: string, sessionId: string): void {
+    this.autoApproveSessions.add(sessionId);
+
+    const runSessions = this.autoApproveSessionsByRun.get(runId) ?? new Set<string>();
+    runSessions.add(sessionId);
+    this.autoApproveSessionsByRun.set(runId, runSessions);
+  }
+
+  private unregisterAutoApproveSessions(runId: string): void {
+    const runSessions = this.autoApproveSessionsByRun.get(runId);
+    if (!runSessions) return;
+
+    for (const sessionId of runSessions) {
+      this.autoApproveSessions.delete(sessionId);
+    }
+    this.autoApproveSessionsByRun.delete(runId);
+  }
+
+  private cleanupRunRuntimeState(runId: string): void {
+    this.activeOrchestrators.delete(runId);
+    this.activeRelayChannels.delete(runId);
+    this.unregisterAutoApproveSessions(runId);
+  }
+
+  private getFilePath(): string {
+    return path.join(app.getPath("userData"), "agent-team-runs.json");
+  }
+
+  private loadFromDisk(): void {
+    const filePath = this.getFilePath();
+
+    try {
+      if (!fs.existsSync(filePath)) {
+        agentTeamLog.info("No agent-team-runs.json found, starting empty");
+        return;
+      }
+
+      const raw = fs.readFileSync(filePath, "utf-8");
+      const data = JSON.parse(raw) as TeamRunFileFormat;
+
+      if (data.version !== 1 || !Array.isArray(data.runs)) {
+        agentTeamLog.warn("Invalid agent-team-runs.json format, ignoring");
+        return;
+      }
+
+      for (const run of data.runs) {
+        this.runs.set(run.id, run);
+      }
+
+      const recoveredCount = this.recoverInterruptedRuns();
+      if (recoveredCount > 0) {
+        this.writeToDisk();
+      }
+
+      agentTeamLog.info(`Loaded ${data.runs.length} team run(s) from disk`);
+    } catch (error) {
+      agentTeamLog.error("Failed to load agent-team-runs.json:", error);
+    }
+  }
+
+  private recoverInterruptedRuns(): number {
+    let recoveredCount = 0;
+    const completionTime = Date.now();
+
+    for (const run of this.runs.values()) {
+      if (run.status !== "planning" && run.status !== "running") {
+        continue;
+      }
+
+      recoveredCount += 1;
+      run.status = "failed";
+      run.finalResult = "Agent Team run was interrupted because CodeMux restarted before it completed.";
+      run.time.completed = completionTime;
+
+      for (const task of run.tasks) {
+        if (task.status !== "pending" && task.status !== "running") {
+          continue;
+        }
+
+        task.status = "cancelled";
+        task.time = { ...task.time, completed: task.time?.completed ?? completionTime };
       }
     }
 
-    this.emitRunUpdated(run);
+    return recoveredCount;
+  }
+
+  private writeToDisk(): void {
+    const filePath = this.getFilePath();
+    const data: TeamRunFileFormat = {
+      version: 1,
+      runs: this.listRuns(),
+    };
+
+    try {
+      const dir = path.dirname(filePath);
+      if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true });
+      }
+
+      const tmpPath = `${filePath}.tmp`;
+      fs.writeFileSync(tmpPath, JSON.stringify(data, null, 2), "utf-8");
+      fs.renameSync(tmpPath, filePath);
+    } catch (error) {
+      agentTeamLog.error("Failed to write agent-team-runs.json:", error);
+    }
+  }
+
+  private scheduleSave(): void {
+    if (this.saveTimer) {
+      clearTimeout(this.saveTimer);
+    }
+
+    this.saveTimer = setTimeout(() => {
+      this.saveTimer = null;
+      this.writeToDisk();
+    }, SAVE_DEBOUNCE_MS);
+  }
+
+  private flushPendingSave(): void {
+    if (!this.saveTimer) return;
+
+    clearTimeout(this.saveTimer);
+    this.saveTimer = null;
+    this.writeToDisk();
   }
 
   private emitRunUpdated(run: TeamRun): void {
+    this.scheduleSave();
     this.emit("team.run.updated", { run });
   }
 }

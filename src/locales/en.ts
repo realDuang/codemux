@@ -74,6 +74,22 @@ export interface LocaleDict {
     noModelError: string;
     queued: string;
     disconnected: string;
+    teamRunsTitle: string;
+    teamRunLabel: string;
+    teamRunModeLight: string;
+    teamRunModeHeavy: string;
+    teamRunPlanning: string;
+    teamRunRunning: string;
+    teamRunCompleted: string;
+    teamRunFailed: string;
+    teamRunCancelled: string;
+    teamRunActive: string;
+    teamRunCancel: string;
+    teamRunFinalResult: string;
+    teamTaskDependsOn: string;
+    teamTaskEngine: string;
+    teamTaskWorktree: string;
+    teamTaskOpenSession: string;
   };
 
   // Settings page
@@ -698,6 +714,22 @@ export const en: LocaleDict = {
     noModelError: "No model configured. Please set a model in Settings > Engines.",
     queued: "Queued",
     disconnected: "Disconnected",
+    teamRunsTitle: "Team runs",
+    teamRunLabel: "Team",
+    teamRunModeLight: "light",
+    teamRunModeHeavy: "heavy",
+    teamRunPlanning: "Planning...",
+    teamRunRunning: "{completed}/{total} tasks",
+    teamRunCompleted: "Completed",
+    teamRunFailed: "Failed",
+    teamRunCancelled: "Cancelled",
+    teamRunActive: "Active",
+    teamRunCancel: "Cancel",
+    teamRunFinalResult: "Final result",
+    teamTaskDependsOn: "Depends on: {ids}",
+    teamTaskEngine: "Engine: {engine}",
+    teamTaskWorktree: "Worktree: {name}",
+    teamTaskOpenSession: "Open session",
   },
 
   // Settings page

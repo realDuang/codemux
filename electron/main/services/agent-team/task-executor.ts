@@ -5,12 +5,46 @@
 
 import type { EngineManager } from "../../gateway/engine-manager";
 import type { TaskNode, EngineType, UnifiedMessage, UnifiedPart } from "../../../../src/types/unified";
+import {
+  AGENT_TEAM_INACTIVITY_TIMEOUT_MS,
+  AGENT_TEAM_MAX_TASK_RETRIES,
+  AGENT_TEAM_RETRY_BACKOFF_MS,
+} from "./guardrails";
 
 /** Result of executing a single task */
 export interface TaskExecutionResult {
   sessionId: string;
   summary: string;
   error?: string;
+}
+
+export type AutoApproveSessionTracker = Set<string> | ((sessionId: string) => void);
+
+export interface TaskExecutionOptions {
+  upstreamContext?: string;
+  onSessionCreated?: (sessionId: string) => void;
+  shouldCancel?: () => boolean;
+  inactivityTimeoutMs?: number;
+  maxRetries?: number;
+  retryBackoffMs?: number;
+}
+
+export function trackAutoApproveSession(
+  tracker: AutoApproveSessionTracker,
+  sessionId: string,
+): void {
+  if (typeof tracker === "function") {
+    tracker(sessionId);
+    return;
+  }
+
+  if (tracker.size > 200) {
+    const recent = [...tracker].slice(-100);
+    tracker.clear();
+    for (const id of recent) tracker.add(id);
+  }
+
+  tracker.add(sessionId);
 }
 
 /**
@@ -24,10 +58,49 @@ export function extractTextFromMessage(message: UnifiedMessage): string {
   return textParts.join("\n").trim();
 }
 
+function stringifyError(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function formatDuration(ms: number): string {
+  if (ms % 60_000 === 0) {
+    const minutes = ms / 60_000;
+    return `${minutes} minute${minutes === 1 ? "" : "s"}`;
+  }
+
+  if (ms % 1000 === 0) {
+    const seconds = ms / 1000;
+    return `${seconds} second${seconds === 1 ? "" : "s"}`;
+  }
+
+  return `${ms}ms`;
+}
+
+function isRecoverableExecutionError(error: unknown): boolean {
+  const message = stringifyError(error).toLowerCase();
+  return (
+    message.includes("timed out after") ||
+    message.includes("timeout") ||
+    message.includes("network") ||
+    message.includes("connection") ||
+    message.includes("temporar") ||
+    message.includes("unavailable") ||
+    message.includes("rate limit") ||
+    message.includes("429") ||
+    message.includes("503") ||
+    message.includes("econnreset") ||
+    message.includes("epipe")
+  );
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 export class TaskExecutor {
   constructor(
     private engineManager: EngineManager,
-    private autoApproveSessions: Set<string>,
+    private autoApproveSessions: AutoApproveSessionTracker,
     private defaultEngineType: EngineType,
   ) {}
 
@@ -41,36 +114,53 @@ export class TaskExecutor {
   async execute(
     task: TaskNode,
     directory: string,
-    upstreamContext?: string,
+    options: TaskExecutionOptions = {},
   ): Promise<TaskExecutionResult> {
-    const engineType = (task.engineType as EngineType) || this.defaultEngineType;
+    const maxRetries = options.maxRetries ?? AGENT_TEAM_MAX_TASK_RETRIES;
+    const inactivityTimeoutMs = options.inactivityTimeoutMs ?? AGENT_TEAM_INACTIVITY_TIMEOUT_MS;
+    const retryBackoffMs = options.retryBackoffMs ?? AGENT_TEAM_RETRY_BACKOFF_MS;
 
-    // 1. Create a new session
-    const session = await this.engineManager.createSession(engineType, directory);
-    task.sessionId = session.id;
+    let attempt = 0;
+    let lastSessionId = task.sessionId ?? "";
 
-    // 2. Register session for auto-approve permissions
-    this.registerAutoApprove(session.id);
+    while (true) {
+      if (options.shouldCancel?.()) {
+        return {
+          sessionId: lastSessionId,
+          summary: "",
+          error: "Task cancelled before execution started.",
+        };
+      }
 
-    // 3. Build prompt with upstream context
-    let prompt = task.prompt;
-    if (upstreamContext) {
-      prompt = `${upstreamContext}\n\n---\n\nYour task:\n${task.prompt}`;
+      try {
+        const result = await this.executeAttempt(task, directory, options, inactivityTimeoutMs);
+        return result;
+      } catch (error) {
+        lastSessionId = task.sessionId ?? lastSessionId;
+
+        if (options.shouldCancel?.()) {
+          return {
+            sessionId: lastSessionId,
+            summary: "",
+            error: "Task cancelled during execution.",
+          };
+        }
+
+        if (attempt >= maxRetries || !isRecoverableExecutionError(error)) {
+          return {
+            sessionId: lastSessionId,
+            summary: "",
+            error: stringifyError(error),
+          };
+        }
+
+        attempt += 1;
+
+        if (retryBackoffMs > 0) {
+          await sleep(retryBackoffMs);
+        }
+      }
     }
-
-    // 4. Send message and wait for completion
-    const message = await this.engineManager.sendMessage(session.id, [
-      { type: "text", text: prompt },
-    ]);
-
-    // 5. Extract result text
-    const summary = extractTextFromMessage(message);
-
-    if (message.error) {
-      return { sessionId: session.id, summary, error: message.error };
-    }
-
-    return { sessionId: session.id, summary };
   }
 
   /**
@@ -88,12 +178,146 @@ export class TaskExecutor {
   }
 
   private registerAutoApprove(sessionId: string): void {
-    // Keep the set bounded (same pattern as ScheduledTaskService)
-    if (this.autoApproveSessions.size > 200) {
-      const recent = [...this.autoApproveSessions].slice(-100);
-      this.autoApproveSessions.clear();
-      for (const id of recent) this.autoApproveSessions.add(id);
+    trackAutoApproveSession(this.autoApproveSessions, sessionId);
+  }
+
+  private async executeAttempt(
+    task: TaskNode,
+    directory: string,
+    options: TaskExecutionOptions,
+    inactivityTimeoutMs: number,
+  ): Promise<TaskExecutionResult> {
+    const engineType = (task.engineType as EngineType) || this.defaultEngineType;
+
+    const session = await this.engineManager.createSession(engineType, directory, task.worktreeId);
+    task.sessionId = session.id;
+
+    this.registerAutoApprove(session.id);
+    options.onSessionCreated?.(session.id);
+
+    if (options.shouldCancel?.()) {
+      return {
+        sessionId: session.id,
+        summary: "",
+        error: "Task cancelled before execution started.",
+      };
     }
-    this.autoApproveSessions.add(sessionId);
+
+    let prompt = task.prompt;
+    if (options.upstreamContext) {
+      prompt = `${options.upstreamContext}\n\n---\n\nYour task:\n${task.prompt}`;
+    }
+
+    try {
+      const message = await this.waitForSessionResponse(
+        session.id,
+        this.engineManager.sendMessage(session.id, [
+          { type: "text", text: prompt },
+        ]),
+        inactivityTimeoutMs,
+      );
+
+      const summary = extractTextFromMessage(message);
+
+      if (message.error) {
+        return { sessionId: session.id, summary, error: message.error };
+      }
+
+      return { sessionId: session.id, summary };
+    } catch (error) {
+      if (!stringifyError(error).includes("of inactivity")) {
+        await this.cancelSessionQuietly(session.id);
+      }
+      throw error;
+    }
+  }
+
+  private async waitForSessionResponse(
+    sessionId: string,
+    responsePromise: Promise<UnifiedMessage>,
+    inactivityTimeoutMs: number,
+  ): Promise<UnifiedMessage> {
+    const eventSource: Pick<EngineManager, "cancelMessage"> & Partial<Pick<EngineManager, "on" | "off">> =
+      this.engineManager;
+
+    return await new Promise<UnifiedMessage>((resolve, reject) => {
+      let settled = false;
+      let timer: ReturnType<typeof setTimeout> | null = null;
+
+      const finish = (callback: () => void) => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        cleanup();
+        callback();
+      };
+
+      const resetTimer = () => {
+        if (settled) {
+          return;
+        }
+        if (timer) {
+          clearTimeout(timer);
+        }
+        timer = setTimeout(() => {
+          void this.cancelSessionQuietly(sessionId).finally(() => {
+            finish(() => reject(new Error(`Task timed out after ${formatDuration(inactivityTimeoutMs)} of inactivity.`)));
+          });
+        }, inactivityTimeoutMs);
+      };
+
+      const handlePartUpdated = (data: { sessionId: string }) => {
+        if (data.sessionId === sessionId) {
+          resetTimer();
+        }
+      };
+      const handleMessageUpdated = (data: { sessionId: string }) => {
+        if (data.sessionId === sessionId) {
+          resetTimer();
+        }
+      };
+      const handlePermissionAsked = (data: { permission: { sessionId: string } }) => {
+        if (data.permission.sessionId === sessionId) {
+          resetTimer();
+        }
+      };
+      const handleQuestionAsked = (data: { question: { sessionId: string } }) => {
+        if (data.question.sessionId === sessionId) {
+          resetTimer();
+        }
+      };
+
+      const cleanup = () => {
+        if (timer) {
+          clearTimeout(timer);
+          timer = null;
+        }
+        eventSource.off?.("message.part.updated", handlePartUpdated);
+        eventSource.off?.("message.updated", handleMessageUpdated);
+        eventSource.off?.("permission.asked", handlePermissionAsked);
+        eventSource.off?.("question.asked", handleQuestionAsked);
+      };
+
+      eventSource.on?.("message.part.updated", handlePartUpdated);
+      eventSource.on?.("message.updated", handleMessageUpdated);
+      eventSource.on?.("permission.asked", handlePermissionAsked);
+      eventSource.on?.("question.asked", handleQuestionAsked);
+
+      resetTimer();
+
+      responsePromise.then(
+        (message) => finish(() => resolve(message)),
+        (error) => finish(() => reject(error)),
+      );
+    });
+  }
+
+  private async cancelSessionQuietly(sessionId: string): Promise<void> {
+    try {
+      await this.engineManager.cancelMessage(sessionId);
+    } catch {
+      // Best effort cleanup only.
+    }
   }
 }

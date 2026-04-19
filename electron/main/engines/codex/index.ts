@@ -366,16 +366,22 @@ export class CodexAdapter extends EngineAdapter {
     const normalizedDirectory = normalizeDirectory(directory);
     const customSystemPrompt = (meta?.systemPrompt && typeof meta.systemPrompt === "string") ? meta.systemPrompt : undefined;
     const existingThreadId = resolveThreadId(undefined, meta);
+    const startThread = () =>
+      customSystemPrompt
+        ? this.startThread(normalizedDirectory, customSystemPrompt)
+        : this.startThread(normalizedDirectory);
     let threadResponse: ThreadResponse;
     if (existingThreadId) {
       try {
-        threadResponse = await this.resumeThread(existingThreadId, normalizedDirectory, customSystemPrompt);
+        threadResponse = customSystemPrompt
+          ? await this.resumeThread(existingThreadId, normalizedDirectory, customSystemPrompt)
+          : await this.resumeThread(existingThreadId, normalizedDirectory);
       } catch (error) {
         codexLog.warn(`Failed to resume Codex thread ${existingThreadId}, starting a new one instead:`, error);
-        threadResponse = await this.startThread(normalizedDirectory, customSystemPrompt);
+        threadResponse = await startThread();
       }
     } else {
-      threadResponse = await this.startThread(normalizedDirectory, customSystemPrompt);
+      threadResponse = await startThread();
     }
 
     const threadId = threadResponse.thread?.id;

@@ -182,6 +182,28 @@ describe("dagPlanningSkill.parse", () => {
     expect(result.ok).toBe(true);
     if (result.ok) expect(result.data.tasks[0].engineType).toBe("claude");
   });
+
+  it("accepts optional worktreeId field", () => {
+    const text = `\`\`\`json
+{"tasks": [
+  {"id": "t1", "description": "A", "prompt": "Do A", "dependsOn": [], "worktreeId": "feature-branch"}
+]}
+\`\`\``;
+    const result = dagPlanningSkill.parse(text);
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.data.tasks[0].worktreeId).toBe("feature-branch");
+  });
+
+  it("rejects invalid worktreeId field", () => {
+    const text = `\`\`\`json
+{"tasks": [
+  {"id": "t1", "description": "A", "prompt": "Do A", "dependsOn": [], "worktreeId": 123}
+]}
+\`\`\``;
+    const result = dagPlanningSkill.parse(text);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toContain("worktreeId");
+  });
 });
 
 // =============================================================================
@@ -244,6 +266,29 @@ describe("dispatchSkill.parse", () => {
     const result = dispatchSkill.parse(text);
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.error).toContain("description");
+  });
+
+  it("accepts optional dispatch worktreeId field", () => {
+    const text = `\`\`\`json
+{
+  "action": "dispatch",
+  "tasks": [
+    {"id": "t1", "description": "Analyze", "prompt": "Analyze the code", "worktreeId": "feature-branch"}
+  ]
+}
+\`\`\``;
+    const result = dispatchSkill.parse(text);
+    expect(result.ok).toBe(true);
+    if (result.ok && result.data.action === "dispatch") {
+      expect(result.data.tasks[0].worktreeId).toBe("feature-branch");
+    }
+  });
+
+  it("rejects invalid dispatch worktreeId field", () => {
+    const text = '```json\n{"action": "dispatch", "tasks": [{"id": "t1", "description": "Analyze", "prompt": "Analyze the code", "worktreeId": 42}]}\n```';
+    const result = dispatchSkill.parse(text);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toContain("worktreeId");
   });
 });
 

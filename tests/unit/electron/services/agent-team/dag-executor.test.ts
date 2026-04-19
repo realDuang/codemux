@@ -149,6 +149,56 @@ describe("DAGExecutor", () => {
 
     expect(tasks.every((t) => t.status === "completed")).toBe(true);
   });
+
+  it("limits concurrently running ready tasks", async () => {
+    const deferreds = new Map<string, () => void>();
+    let thirdTaskStarted!: () => void;
+    const thirdTaskStartedPromise = new Promise<void>((resolve) => {
+      thirdTaskStarted = resolve;
+    });
+    let active = 0;
+    let maxActive = 0;
+
+    mockTaskExecutor.execute = vi.fn((task: TaskNode) => {
+      active += 1;
+      maxActive = Math.max(maxActive, active);
+      if (task.id === "t3") {
+        thirdTaskStarted();
+      }
+
+      return new Promise((resolve) => {
+        deferreds.set(task.id, () => {
+          active -= 1;
+          resolve({ sessionId: `s_${task.id}`, summary: `Result of ${task.id}` });
+        });
+      });
+    }) as any;
+
+    const tasks = [
+      makeTask({ id: "t1" }),
+      makeTask({ id: "t2" }),
+      makeTask({ id: "t3" }),
+    ];
+    const run = makeRun(tasks);
+
+    const dagExecutor = new DAGExecutor(mockTaskExecutor, "/test", 2);
+    const executionPromise = dagExecutor.executeReadyTasks(run);
+    await Promise.resolve();
+
+    expect(mockTaskExecutor.execute).toHaveBeenCalledTimes(2);
+
+    deferreds.get("t1")?.();
+    deferreds.get("t2")?.();
+    await thirdTaskStartedPromise;
+
+    expect(mockTaskExecutor.execute).toHaveBeenCalledTimes(3);
+
+    deferreds.get("t3")?.();
+    await executionPromise;
+
+    expect(maxActive).toBe(2);
+    expect(tasks.every((task) => task.status === "completed")).toBe(true);
+  });
 });
 
 describe("DAGExecutor static helpers", () => {

@@ -1047,6 +1047,8 @@ export interface TeamGetRequest {
 }
 
 export interface TeamSendMessageRequest {
+  /** Active Heavy Brain run receiving the relayed follow-up */
   runId: string;
+  /** Follow-up text forwarded to the Heavy Brain orchestrator */
   text: string;
 }

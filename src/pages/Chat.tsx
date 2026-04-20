@@ -1629,21 +1629,24 @@ export default function Chat() {
     try {
       const { questions, permissions } = await gateway.listPending(sessionId);
 
-      const existingQs = messageStore.question[sessionId] || [];
-      const existingQIds = new Set(existingQs.map((q) => q.id));
-      const newQs = questions.filter((q) => !existingQIds.has(q.id));
-      if (newQs.length > 0) {
-        logger.debug("[Resync] Restored", newQs.length, "pending question(s) for", sessionId);
-        setMessageStore("question", sessionId, [...existingQs, ...newQs]);
-      }
+      // Use functional updaters so concurrent question.asked / permission.asked
+      // notifications that land between the RPC response and this setter can't
+      // be clobbered (lost-update bug).
+      setMessageStore("question", sessionId, (current = []) => {
+        const currentIds = new Set(current.map((q) => q.id));
+        const missing = questions.filter((q) => !currentIds.has(q.id));
+        if (missing.length === 0) return current;
+        logger.debug("[Resync] Restored", missing.length, "pending question(s) for", sessionId);
+        return [...current, ...missing];
+      });
 
-      const existingPs = messageStore.permission[sessionId] || [];
-      const existingPIds = new Set(existingPs.map((p) => p.id));
-      const newPs = permissions.filter((p) => !existingPIds.has(p.id));
-      if (newPs.length > 0) {
-        logger.debug("[Resync] Restored", newPs.length, "pending permission(s) for", sessionId);
-        setMessageStore("permission", sessionId, [...existingPs, ...newPs]);
-      }
+      setMessageStore("permission", sessionId, (current = []) => {
+        const currentIds = new Set(current.map((p) => p.id));
+        const missing = permissions.filter((p) => !currentIds.has(p.id));
+        if (missing.length === 0) return current;
+        logger.debug("[Resync] Restored", missing.length, "pending permission(s) for", sessionId);
+        return [...current, ...missing];
+      });
     } catch (err) {
       logger.warn("[Resync] Failed to list pending for", sessionId, err);
     }

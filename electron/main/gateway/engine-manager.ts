@@ -1150,6 +1150,11 @@ export class EngineManager extends EventEmitter {
     if (!adapter) return { questions: [], permissions: [] };
 
     const engineSessionId = conv.engineSessionId;
+    // Without an engine-side session id we have no safe way to filter: adapters
+    // treat an undefined sessionId as "no filter" and would leak pending items
+    // from unrelated sessions (then rewrite them to this conversationId).
+    if (engineSessionId == null) return { questions: [], permissions: [] };
+
     const questions = adapter
       .getPendingQuestions(engineSessionId)
       .map((q) => ({ ...q, sessionId: conversationId }));

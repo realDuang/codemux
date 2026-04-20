@@ -637,8 +637,10 @@ export class OpenCodeAdapter extends EngineAdapter {
   }
 
   private handleQuestionRejected(data: any): void {
+    const questionId = data.requestID ?? data.id;
+    this.activeQuestions.delete(questionId);
     this.emit("question.replied", {
-      questionId: data.requestID ?? data.id,
+      questionId,
       answers: [],
     });
   }

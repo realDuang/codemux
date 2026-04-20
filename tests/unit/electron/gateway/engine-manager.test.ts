@@ -2408,5 +2408,24 @@ describe("EngineManager", () => {
       const result = engineManager.getPending("missing");
       expect(result).toEqual({ questions: [], permissions: [] });
     });
+
+    it("returns empty arrays when engineSessionId is missing (avoids leaking pending items from unrelated sessions)", () => {
+      engineManager.registerAdapter(adapterA);
+      (conversationStore.get as any).mockReturnValue({
+        id: "conv-nosession",
+        engineType: "opencode",
+        engineSessionId: null,
+        directory: "/dir",
+      });
+      const spyQ = vi.spyOn(adapterA, "getPendingQuestions");
+      const spyP = vi.spyOn(adapterA, "getPendingPermissions");
+
+      const result = engineManager.getPending("conv-nosession");
+
+      expect(result).toEqual({ questions: [], permissions: [] });
+      // Must NOT call the adapter with undefined (which would bypass filtering)
+      expect(spyQ).not.toHaveBeenCalled();
+      expect(spyP).not.toHaveBeenCalled();
+    });
   });
 });

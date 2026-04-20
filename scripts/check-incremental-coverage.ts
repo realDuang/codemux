@@ -47,14 +47,10 @@ const EXCLUDE_PATTERNS = [
   /^electron\/main\/engines\/identity-prompt\.ts$/,
   /^electron\/preload\//,
   /^src\/components\/file-icons\//,
-  // Integration-heavy modules: orchestrator service coordinates engines via
-  // EngineManager, theme.ts touches the DOM / matchMedia, and the orchestration
-  // store wraps gateway IPC. gateway-client is a long-lived WebSocket adapter
-  // covered by E2E tests rather than units. These are exercised end-to-end.
-  /^electron\/main\/services\/orchestrator-service\.ts$/,
-  /^src\/lib\/theme\.ts$/,
+  // gateway-client.ts is a 628-line WebSocket adapter that the rest of the
+  // suite mocks wholesale (see tests/unit/src/lib/gateway-api.test.ts).
+  // It's covered end-to-end and unit-tested via its consumers.
   /^src\/lib\/gateway-client\.ts$/,
-  /^src\/stores\/orchestration\.ts$/,
 ];
 
 function isSourceFile(file: string): boolean {

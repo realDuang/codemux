@@ -305,4 +305,57 @@ describe("AgentTeamService", () => {
       expect(saved.runs.some((savedRun: TeamRun) => savedRun.id === "light-run")).toBe(true);
     });
   });
+
+  describe("role mappings", () => {
+    it("returns DEFAULT_ROLE_MAPPINGS when nothing is persisted", () => {
+      const service = createService();
+      const mappings = service.getRoleMappings();
+      expect(mappings.length).toBeGreaterThanOrEqual(5);
+      expect(mappings.map((m) => m.role)).toEqual(
+        expect.arrayContaining(["explorer", "researcher", "reviewer", "designer", "coder"]),
+      );
+    });
+
+    it("persists role mapping updates to settings.json and reloads them", () => {
+      const service = createService();
+      const updated = [
+        { role: "coder" as const, label: "Coder", description: "code", engineType: "copilot" as EngineType, modelId: "gpt-5" },
+      ];
+      service.updateRoleMappings(updated);
+      const settingsFile = path.join(tmpDir, "settings.json");
+      expect(fs.existsSync(settingsFile)).toBe(true);
+      const raw = JSON.parse(fs.readFileSync(settingsFile, "utf-8"));
+      expect(raw["team.roleMappings"]).toEqual(updated);
+
+      const reloaded = service.getRoleMappings();
+      expect(reloaded).toEqual(updated);
+    });
+
+    it("resolveRole returns mapped engine+model for known role, fallback for unknown", () => {
+      const service = createService();
+      service.updateRoleMappings([
+        { role: "coder" as const, label: "C", description: "d", engineType: "claude" as EngineType, modelId: "sonnet-4" },
+      ]);
+      expect(service.resolveRole("coder", "opencode")).toEqual({ engineType: "claude", modelId: "sonnet-4" });
+      // unknown role → falls back to provided default
+      expect(service.resolveRole("explorer", "opencode")).toEqual({ engineType: "opencode" });
+    });
+  });
+
+  describe("plan confirmation gate", () => {
+    it("awaitPlanConfirmation resolves when confirmPlan is called with tasks", async () => {
+      const service = createService();
+      const gate = service.awaitPlanConfirmation("run-abc");
+      const tasks = [
+        { id: "t1", description: "x", prompt: "y", dependsOn: [], status: "pending" as const },
+      ];
+      service.confirmPlan("run-abc", tasks);
+      await expect(gate).resolves.toEqual(tasks);
+    });
+
+    it("confirmPlan throws when no pending gate exists", () => {
+      const service = createService();
+      expect(() => service.confirmPlan("nonexistent-run", [])).toThrow(/No pending plan confirmation/);
+    });
+  });
 });

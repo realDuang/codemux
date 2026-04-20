@@ -155,4 +155,91 @@ describe("LightBrainOrchestrator", () => {
     expect(teamRun.tasks[0].worktreeId).toBe("feature-branch");
     expect(engineManager.createSession).toHaveBeenNthCalledWith(2, "opencode", "/repo", "feature-branch");
   });
+
+  it("pauses in awaiting-confirmation when requirePlanConfirmation is set, then resumes with user-edited tasks", async () => {
+    const engineManager = {
+      getDefaultEngineType: vi.fn(() => "opencode"),
+      listEngines: vi.fn(() => [{ type: "opencode", name: "OpenCode", status: "running" }]),
+      createSession: vi.fn()
+        .mockResolvedValueOnce({ id: "planner-session" })
+        .mockResolvedValueOnce({ id: "worker-session" }),
+      sendMessage: vi.fn(async (sessionId: string) => {
+        if (sessionId === "planner-session") {
+          return makeTextMessage(`\`\`\`json
+{
+  "tasks": [
+    { "id": "t1", "description": "Auto plan", "prompt": "auto", "dependsOn": [] }
+  ]
+}
+\`\`\``);
+        }
+        return makeTextMessage("worker done");
+      }),
+      cancelMessage: vi.fn(async () => {}),
+    } as any;
+
+    const statuses: string[] = [];
+    const awaitPlanConfirmation = vi.fn(async (_runId: string) => {
+      // Snapshot the team run status while paused
+      statuses.push(teamRun.status);
+      return [
+        {
+          id: "t-user-1",
+          description: "User-edited task",
+          prompt: "Do edited work",
+          dependsOn: [],
+          status: "pending" as const,
+        },
+      ];
+    });
+
+    const orchestrator = new LightBrainOrchestrator(
+      engineManager,
+      new Set(),
+      undefined,
+      awaitPlanConfirmation,
+    );
+    const teamRun = makeRun({ requirePlanConfirmation: true });
+
+    await orchestrator.run(teamRun, () => {}, "opencode");
+
+    expect(awaitPlanConfirmation).toHaveBeenCalledWith("team-run");
+    expect(statuses[0]).toBe("awaiting-confirmation");
+    expect(teamRun.status).toBe("completed");
+    expect(teamRun.tasks).toHaveLength(1);
+    expect(teamRun.tasks[0].id).toBe("t-user-1");
+    expect(teamRun.tasks[0].description).toBe("User-edited task");
+  });
+
+  it("marks run failed cleanly if plan confirmation is rejected (e.g. run cancelled)", async () => {
+    const engineManager = {
+      getDefaultEngineType: vi.fn(() => "opencode"),
+      listEngines: vi.fn(() => [{ type: "opencode", name: "OpenCode", status: "running" }]),
+      createSession: vi.fn().mockResolvedValueOnce({ id: "planner-session" }),
+      sendMessage: vi.fn(async () => makeTextMessage(`\`\`\`json
+{
+  "tasks": [{ "id": "t1", "description": "x", "prompt": "y", "dependsOn": [] }]
+}
+\`\`\``)),
+      cancelMessage: vi.fn(async () => {}),
+    } as any;
+
+    const awaitPlanConfirmation = vi.fn(() => Promise.reject(new Error("Run cancelled")));
+
+    const orchestrator = new LightBrainOrchestrator(
+      engineManager,
+      new Set(),
+      undefined,
+      awaitPlanConfirmation,
+    );
+    const teamRun = makeRun({ requirePlanConfirmation: true });
+
+    await orchestrator.run(teamRun, () => {}, "opencode");
+
+    expect(teamRun.status).toBe("failed");
+    expect(teamRun.finalResult).toContain("Plan confirmation failed");
+    expect(teamRun.time.completed).toBeDefined();
+    // Worker session was never created
+    expect(engineManager.createSession).toHaveBeenCalledTimes(1);
+  });
 });

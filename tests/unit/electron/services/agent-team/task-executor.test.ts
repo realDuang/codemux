@@ -152,4 +152,58 @@ describe("TaskExecutor", () => {
     expect(task.worktreeId).toBe("feature-branch");
     expect(engineManager.createSession).toHaveBeenCalledWith("opencode", "/repo", "feature-branch");
   });
+
+  it("resolves task.role to engineType via RoleResolver when engineType is not pre-set", async () => {
+    const engineManager = new EngineManagerMock();
+    const resolveRole = vi.fn((role: string) =>
+      role === "explorer" ? { engineType: "claude" as const, modelId: "sonnet-4" } : null,
+    );
+    const executor = new TaskExecutor(engineManager as any, new Set(), "opencode", resolveRole);
+    const task = makeTask({ id: "t1", role: "explorer" });
+
+    await executor.execute(task, "/repo", {
+      maxRetries: 0,
+      retryBackoffMs: 0,
+      inactivityTimeoutMs: 1000,
+    });
+
+    expect(resolveRole).toHaveBeenCalledWith("explorer");
+    expect(task.engineType).toBe("claude");
+    expect(task.modelId).toBe("sonnet-4");
+    expect(engineManager.createSession).toHaveBeenCalledWith("claude", "/repo", undefined);
+  });
+
+  it("preserves explicit task.engineType even when task.role is also set", async () => {
+    const engineManager = new EngineManagerMock();
+    const resolveRole = vi.fn(() => ({ engineType: "claude" as const }));
+    const executor = new TaskExecutor(engineManager as any, new Set(), "opencode", resolveRole);
+    const task = makeTask({ id: "t1", role: "explorer", engineType: "copilot" });
+
+    await executor.execute(task, "/repo", {
+      maxRetries: 0,
+      retryBackoffMs: 0,
+      inactivityTimeoutMs: 1000,
+    });
+
+    expect(resolveRole).not.toHaveBeenCalled();
+    expect(task.engineType).toBe("copilot");
+    expect(engineManager.createSession).toHaveBeenCalledWith("copilot", "/repo", undefined);
+  });
+
+  it("falls back to defaultEngineType when RoleResolver returns null", async () => {
+    const engineManager = new EngineManagerMock();
+    const resolveRole = vi.fn(() => null);
+    const executor = new TaskExecutor(engineManager as any, new Set(), "opencode", resolveRole);
+    const task = makeTask({ id: "t1", role: "designer" });
+
+    await executor.execute(task, "/repo", {
+      maxRetries: 0,
+      retryBackoffMs: 0,
+      inactivityTimeoutMs: 1000,
+    });
+
+    expect(resolveRole).toHaveBeenCalledWith("designer");
+    expect(task.engineType).toBeUndefined();
+    expect(engineManager.createSession).toHaveBeenCalledWith("opencode", "/repo", undefined);
+  });
 });

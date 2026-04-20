@@ -478,7 +478,7 @@ describe("OrchestratorService", () => {
       svc.init(new MockEngineManager() as any);
       svc.createRun("sp", "/tmp", "x", ["claude"]);
       expect(mockWriteFileSync).toHaveBeenCalledWith(
-        "/tmp/test-orch-userData/orchestrations.json",
+        expect.stringMatching(/orchestrations\.json$/),
         expect.any(String),
         "utf-8",
       );

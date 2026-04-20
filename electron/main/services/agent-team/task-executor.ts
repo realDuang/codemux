@@ -4,12 +4,15 @@
 // ============================================================================
 
 import type { EngineManager } from "../../gateway/engine-manager";
-import type { TaskNode, EngineType, UnifiedMessage, UnifiedPart } from "../../../../src/types/unified";
+import type { TaskNode, EngineType, UnifiedMessage, UnifiedPart, OrchestratorRole } from "../../../../src/types/unified";
 import {
   AGENT_TEAM_INACTIVITY_TIMEOUT_MS,
   AGENT_TEAM_MAX_TASK_RETRIES,
   AGENT_TEAM_RETRY_BACKOFF_MS,
 } from "./guardrails";
+
+/** Role → engine/model resolver (injected by AgentTeamService). */
+export type RoleResolver = (role: OrchestratorRole) => { engineType: EngineType; modelId?: string } | null;
 
 /** Result of executing a single task */
 export interface TaskExecutionResult {
@@ -103,6 +106,7 @@ export class TaskExecutor {
     private engineManager: EngineManager,
     private autoApproveSessions: AutoApproveSessionTracker,
     private defaultEngineType: EngineType,
+    private resolveRole?: RoleResolver,
   ) {}
 
   /**
@@ -188,6 +192,17 @@ export class TaskExecutor {
     options: TaskExecutionOptions,
     inactivityTimeoutMs: number,
   ): Promise<TaskExecutionResult> {
+    // Resolve role → engine/model if task has a role and engineType wasn't explicitly set
+    if (task.role && !task.engineType && this.resolveRole) {
+      const resolved = this.resolveRole(task.role);
+      if (resolved) {
+        task.engineType = resolved.engineType;
+        if (resolved.modelId && !task.modelId) {
+          task.modelId = resolved.modelId;
+        }
+      }
+    }
+
     const engineType = (task.engineType as EngineType) || this.defaultEngineType;
     const worktreeId = task.worktreeId ?? options.defaultWorktreeId;
     if (!task.worktreeId && worktreeId) {

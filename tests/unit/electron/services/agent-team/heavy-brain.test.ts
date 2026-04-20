@@ -463,7 +463,7 @@ describe("HeavyBrainOrchestrator", () => {
       ["orch-session", "worker-a", "worker-b", "worker-c"],
       sendMessage,
     );
-    const orchestrator = new HeavyBrainOrchestrator(engineManager, new Set(), 1);
+    const orchestrator = new HeavyBrainOrchestrator(engineManager, new Set(), undefined, 1);
     const teamRun = makeRun();
 
     const runPromise = orchestrator.run(teamRun, "opencode", () => {});

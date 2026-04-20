@@ -11,6 +11,7 @@ import {
   extractTextFromMessage,
   trackAutoApproveSession,
   type AutoApproveSessionTracker,
+  type RoleResolver,
 } from "./task-executor";
 import { dagPlanningSkill, executeWithSkill, type RawTaskNode } from "./skills";
 import { buildPlanningPrompt } from "./prompts";
@@ -20,6 +21,8 @@ export class LightBrainOrchestrator {
   constructor(
     private engineManager: EngineManager,
     private autoApproveSessions: AutoApproveSessionTracker,
+    private resolveRole?: RoleResolver,
+    private awaitPlanConfirmation?: (runId: string) => Promise<TaskNode[]>,
   ) {}
 
   /**
@@ -57,6 +60,27 @@ export class LightBrainOrchestrator {
 
     agentTeamLog.info(`[${teamRun.id}] Light Brain: DAG generated with ${teamRun.tasks.length} tasks`);
 
+    // --- Phase 1.5: Plan confirmation (optional) ---
+    if (teamRun.requirePlanConfirmation && this.awaitPlanConfirmation) {
+      teamRun.status = "awaiting-confirmation";
+      agentTeamLog.info(`[${teamRun.id}] Light Brain: awaiting user plan confirmation`);
+      try {
+        const confirmedTasks = await this.awaitPlanConfirmation(teamRun.id);
+        // Replace tasks with user-approved (possibly edited) version.
+        teamRun.tasks = confirmedTasks.map((t): TaskNode => ({
+          ...t,
+          status: "pending",
+          worktreeId: t.worktreeId ?? teamRun.worktreeId,
+        }));
+        agentTeamLog.info(`[${teamRun.id}] Light Brain: plan confirmed (${teamRun.tasks.length} tasks)`);
+      } catch (err) {
+        teamRun.status = "failed";
+        teamRun.finalResult = `Plan confirmation failed: ${(err as Error).message}`;
+        teamRun.time.completed = Date.now();
+        return;
+      }
+    }
+
     // --- Phase 2: Execution ---
     teamRun.status = "running";
 
@@ -64,6 +88,7 @@ export class LightBrainOrchestrator {
       this.engineManager,
       this.autoApproveSessions,
       defaultEngineType,
+      this.resolveRole,
     );
     const dagExecutor = new DAGExecutor(
       taskExecutor,

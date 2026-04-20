@@ -1129,6 +1129,8 @@ export interface TeamRun {
   time: { created: number; completed?: number };
   /** Final synthesized result */
   finalResult?: string;
+  /** Whether this run paused for user plan confirmation before execution */
+  requirePlanConfirmation?: boolean;
 }
 
 // --- Agent Team Gateway types ---

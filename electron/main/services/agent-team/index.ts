@@ -190,11 +190,16 @@ export class AgentTeamService extends EventEmitter {
       directory: req.directory,
       parentDirectory: req.parentDirectory,
       worktreeId: req.worktreeId,
+      teamWorktreeName: req.teamWorktreeInfo?.name,
+      teamWorktreeDir: req.teamWorktreeInfo?.directory,
+      roleMappings: req.roleMappings ?? this.getRoleMappings(),
       originalPrompt: req.prompt,
       mode: req.mode,
       status: "planning",
       tasks: [],
       time: { created: Date.now() },
+      // Plan confirmation defaults: Light = on, Heavy = off (can be overridden)
+      requirePlanConfirmation: req.requirePlanConfirmation ?? (req.mode === "light"),
     };
 
     this.runs.set(run.id, run);
@@ -371,18 +376,23 @@ export class AgentTeamService extends EventEmitter {
     const registerAutoApproveSession = (sessionId: string) => {
       this.registerAutoApproveSession(run.id, sessionId);
     };
+    const resolveRole = (role: OrchestratorRole) => this.resolveRole(role, resolvedEngine);
+    const awaitPlanConfirmation = (runId: string) => this.awaitPlanConfirmation(runId);
 
     try {
       if (run.mode === "light") {
         const orchestrator = new LightBrainOrchestrator(
           this.engineManager!,
           registerAutoApproveSession,
+          resolveRole,
+          awaitPlanConfirmation,
         );
         await orchestrator.run(run, onTaskUpdated, resolvedEngine);
       } else {
         const orchestrator = new HeavyBrainOrchestrator(
           this.engineManager!,
           registerAutoApproveSession,
+          resolveRole,
         );
         this.activeOrchestrators.set(run.id, orchestrator);
         this.activeRelayChannels.set(run.id, orchestrator.userChannel);

@@ -13,6 +13,7 @@ import {
   trackAutoApproveSession,
   type AutoApproveSessionTracker,
   type TaskExecutionResult,
+  type RoleResolver,
 } from "./task-executor";
 import { dispatchSkill, type DispatchInstruction, type DispatchTask } from "./skills";
 import { buildOrchestratorPrompt, formatSingleTaskResult, formatTaskResults, formatUserMessage } from "./prompts";
@@ -79,6 +80,7 @@ export class HeavyBrainOrchestrator {
   constructor(
     private engineManager: EngineManager,
     private autoApproveSessions: AutoApproveSessionTracker,
+    private resolveRole?: RoleResolver,
     private maxConcurrentTasks = AGENT_TEAM_MAX_CONCURRENT_TASKS,
   ) {}
 
@@ -138,6 +140,7 @@ export class HeavyBrainOrchestrator {
         this.engineManager,
         this.autoApproveSessions,
         defaultEngineType,
+        this.resolveRole,
       );
 
       // --- Initial prompt ---

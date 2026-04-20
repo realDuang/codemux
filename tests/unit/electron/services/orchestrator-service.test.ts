@@ -10,12 +10,14 @@ const {
   mockExistsSync,
   mockReadFileSync,
   mockWriteFileSync,
+  mockRenameSync,
   mockGetPath,
   mockOrchLog,
 } = vi.hoisted(() => ({
   mockExistsSync: vi.fn(() => false),
   mockReadFileSync: vi.fn(),
   mockWriteFileSync: vi.fn(),
+  mockRenameSync: vi.fn(),
   mockGetPath: vi.fn(() => "/tmp/test-orch-userData"),
   mockOrchLog: {
     info: vi.fn(),
@@ -34,10 +36,12 @@ vi.mock("node:fs", () => ({
     existsSync: mockExistsSync,
     readFileSync: mockReadFileSync,
     writeFileSync: mockWriteFileSync,
+    renameSync: mockRenameSync,
   },
   existsSync: mockExistsSync,
   readFileSync: mockReadFileSync,
   writeFileSync: mockWriteFileSync,
+  renameSync: mockRenameSync,
 }));
 
 vi.mock("electron-log/main", () => ({
@@ -440,13 +444,24 @@ describe("OrchestratorService", () => {
     it("auto-approves accept-typed permission options for orchestrated sessions", async () => {
       const svc = await freshService();
       const em = new MockEngineManager();
-      em.sendMessage.mockResolvedValue({ parts: [{ type: "text", text: "ok" }] });
+      // Hold sendMessage so the subtask stays "running" while we fire the
+      // permission event — auto-approval is now scoped to a run's lifetime
+      // and is revoked once the run reaches a terminal state.
+      let releaseSend: (v: any) => void = () => {};
+      em.sendMessage.mockReturnValue(
+        new Promise((resolve) => {
+          releaseSend = resolve;
+        }),
+      );
       svc.init(em as any);
       const run = svc.createRun("sp", "/tmp", "x", ["claude"]);
-      await svc.confirmAndExecute(run.id, [makeSubtask({ id: "a" })]);
+      const execPromise = svc.confirmAndExecute(run.id, [makeSubtask({ id: "a" })]);
 
-      const childSession = em.createSession.mock.results[0].value as any;
-      const sessionId = (await childSession).id;
+      // Wait until createSession resolves so we have a child sessionId
+      const childSession = await em.createSession.mock.results[0].value;
+      const sessionId = childSession.id;
+      // Yield to let dispatchSubtask reach the in-flight sendMessage call
+      await new Promise((r) => setTimeout(r, 0));
 
       em.emit("permission.asked", {
         permission: {
@@ -459,6 +474,28 @@ describe("OrchestratorService", () => {
         },
       });
       expect(em.replyPermission).toHaveBeenCalledWith("perm_1", { optionId: "ok_opt" });
+
+      releaseSend({ parts: [{ type: "text", text: "ok" }] });
+      await execPromise;
+    });
+
+    it("revokes auto-approval after the run reaches a terminal state", async () => {
+      const svc = await freshService();
+      const em = new MockEngineManager();
+      em.sendMessage.mockResolvedValue({ parts: [{ type: "text", text: "ok" }] });
+      svc.init(em as any);
+      const run = svc.createRun("sp", "/tmp", "x", ["claude"]);
+      await svc.confirmAndExecute(run.id, [makeSubtask({ id: "a" })]);
+
+      const childSession = await em.createSession.mock.results[0].value;
+      em.emit("permission.asked", {
+        permission: {
+          id: "perm_late",
+          sessionId: childSession.id,
+          options: [{ id: "ok", type: "accept" }],
+        },
+      });
+      expect(em.replyPermission).not.toHaveBeenCalled();
     });
 
     it("ignores permission events for unknown sessions", async () => {
@@ -473,14 +510,20 @@ describe("OrchestratorService", () => {
   });
 
   describe("disk persistence", () => {
-    it("writes runs to the userData orchestrations.json on every emitUpdate", async () => {
+    it("atomically writes runs (.tmp + rename) to userData orchestrations.json after debounce", async () => {
       const svc = await freshService();
       svc.init(new MockEngineManager() as any);
       svc.createRun("sp", "/tmp", "x", ["claude"]);
+      // saveToDisk is debounced (~200ms); flush by shutting down
+      await svc.shutdown();
       expect(mockWriteFileSync).toHaveBeenCalledWith(
-        expect.stringMatching(/orchestrations\.json$/),
+        expect.stringMatching(/orchestrations\.json\.tmp$/),
         expect.any(String),
         "utf-8",
+      );
+      expect(mockRenameSync).toHaveBeenCalledWith(
+        expect.stringMatching(/orchestrations\.json\.tmp$/),
+        expect.stringMatching(/orchestrations\.json$/),
       );
     });
 
@@ -533,6 +576,8 @@ describe("OrchestratorService", () => {
       const svc = await freshService();
       svc.init(new MockEngineManager() as any);
       expect(() => svc.createRun("sp", "/tmp", "x", ["claude"])).not.toThrow();
+      // Flush the debounced write so the error is observed
+      await svc.shutdown();
       expect(mockOrchLog.warn).toHaveBeenCalledWith(
         expect.stringContaining("Failed to persist orchestrations"),
         expect.any(String),

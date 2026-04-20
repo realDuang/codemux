@@ -74,6 +74,11 @@ export interface LocaleDict {
     noModelError: string;
     queued: string;
     disconnected: string;
+    dashboardTab: string;
+    chatTab: string;
+    teamTask: string;
+    teamTaskDesc: string;
+    teamTaskDetail: string;
   };
 
   // Settings page
@@ -701,6 +706,11 @@ export const en: LocaleDict = {
     noModelError: "No model configured. Please set a model in Settings > Engines.",
     queued: "Queued",
     disconnected: "Disconnected",
+    dashboardTab: "Dashboard",
+    chatTab: "Chat",
+    teamTask: "Team Task",
+    teamTaskDesc: "Describe the task you want multiple engines to collaborate on.",
+    teamTaskDetail: "The task will be decomposed into subtasks and dispatched to different engines in parallel.",
   },
 
   // Settings page

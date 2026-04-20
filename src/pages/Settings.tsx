@@ -87,6 +87,7 @@ export default function Settings() {
     const newValue = !teamOrchestrationEnabled();
     setTeamOrchestrationEnabled(newValue);
     saveSetting("teamOrchestrationEnabled", newValue);
+    setSessionStore("teamOrchestrationEnabled", newValue);
   };
 
   // Role-engine mapping (reads from orchestration store which already handles persistence)

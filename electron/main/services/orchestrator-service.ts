@@ -16,9 +16,13 @@ class OrchestratorService extends EventEmitter {
   private engineManager: EngineManager | null = null;
   private activeRuns = new Map<string, OrchestrationRun>();
   private autoApproveSessions = new Set<string>();
+  /** runId → set of sessionIds auto-approved for that run (so we can revoke on completion) */
+  private runAutoApprovals = new Map<string, Set<string>>();
   /** Resolvers notified when any subtask finishes (for DAG waitForAnyCompletion) */
   private subtaskDoneResolvers: Array<() => void> = [];
   private persistPath: string | null = null;
+  private saveTimer: NodeJS.Timeout | null = null;
+  private readonly SAVE_DEBOUNCE_MS = 200;
 
   init(engineManager: EngineManager): void {
     this.engineManager = engineManager;
@@ -60,7 +64,10 @@ class OrchestratorService extends EventEmitter {
 
       // Use the parent session (already created by frontend with user's chosen engine)
       const sessionId = run.parentSessionId;
-      this.autoApproveSessions.add(sessionId);
+      // Auto-approve permission prompts for the parent session ONLY for the
+      // duration of this run; they are revoked when the run reaches a terminal
+      // state to prevent future prompts from being silently approved.
+      this.addAutoApprove(run.id, sessionId);
 
       // Build decomposition prompt
       const engineDescriptions = run.engineTypes.map(e => `- ${e}`).join("\n");
@@ -130,6 +137,7 @@ Respond with ONLY the JSON array, no markdown fencing, no explanation.`;
     } catch (err: any) {
       orchLog.error("Failed to decompose task:", err);
       run.status = "failed";
+      this.revokeAutoApprovals(run.id);
       this.emitUpdate(run);
       throw err;
     }
@@ -149,6 +157,7 @@ Respond with ONLY the JSON array, no markdown fencing, no explanation.`;
     } catch (err: any) {
       orchLog.error("Orchestration failed:", err);
       run.status = "failed";
+      this.revokeAutoApprovals(run.id);
       this.emitUpdate(run);
     }
   }
@@ -171,6 +180,7 @@ Respond with ONLY the JSON array, no markdown fencing, no explanation.`;
     }
     run.status = "cancelled";
     run.completedAt = Date.now();
+    this.revokeAutoApprovals(run.id);
     this.emitUpdate(run);
   }
 
@@ -187,6 +197,12 @@ Respond with ONLY the JSON array, no markdown fencing, no explanation.`;
         } catch { /* ignore */ }
       }
     }
+    // Flush any pending debounced writes
+    if (this.saveTimer) {
+      clearTimeout(this.saveTimer);
+      this.saveTimer = null;
+    }
+    this.flushToDisk();
   }
 
   // --- Internal methods ---
@@ -244,6 +260,7 @@ Respond with ONLY the JSON array, no markdown fencing, no explanation.`;
 
     run.status = run.subtasks.every(t => t.status === "completed") ? "completed" : "failed";
     run.completedAt = Date.now();
+    this.revokeAutoApprovals(run.id);
     this.emitUpdate(run);
   }
 
@@ -257,7 +274,7 @@ Respond with ONLY the JSON array, no markdown fencing, no explanation.`;
       : await this.engineManager.createSession(task.engineType, run.teamWorktreeDir || run.directory);
     task.sessionId = session.id;
     task.status = "running";
-    this.autoApproveSessions.add(session.id);
+    this.addAutoApprove(run.id, session.id);
     this.emitUpdate(run);
 
     const prompt = context
@@ -271,7 +288,7 @@ Respond with ONLY the JSON array, no markdown fencing, no explanation.`;
       task.modelId ? { modelId: task.modelId } : undefined,
     );
 
-    task.duration = Math.round((Date.now() - startTime) / 1000);
+    task.duration = Date.now() - startTime;
     task.status = "completed";
 
     // Extract summary directly from engine's response (avoids disk persistence race)
@@ -472,6 +489,25 @@ Respond with ONLY the JSON array, no markdown fencing, no explanation.`;
     });
   }
 
+  /** Add a session to the auto-approve set, scoped to a specific run. */
+  private addAutoApprove(runId: string, sessionId: string): void {
+    this.autoApproveSessions.add(sessionId);
+    let set = this.runAutoApprovals.get(runId);
+    if (!set) {
+      set = new Set();
+      this.runAutoApprovals.set(runId, set);
+    }
+    set.add(sessionId);
+  }
+
+  /** Revoke all auto-approvals granted for a run. Called when run reaches a terminal state. */
+  private revokeAutoApprovals(runId: string): void {
+    const set = this.runAutoApprovals.get(runId);
+    if (!set) return;
+    for (const sid of set) this.autoApproveSessions.delete(sid);
+    this.runAutoApprovals.delete(runId);
+  }
+
   // --- Persistence ---
 
   private getStorePath(): string {
@@ -481,10 +517,27 @@ Respond with ONLY the JSON array, no markdown fencing, no explanation.`;
     return this.persistPath;
   }
 
+  /**
+   * Schedule a debounced, atomic write of the current runs to disk.
+   * - Coalesces rapid `emitUpdate()` bursts into a single write.
+   * - Writes to a `.tmp` file then renames so a crash mid-write cannot
+   *   leave `orchestrations.json` truncated.
+   */
   private saveToDisk(): void {
+    if (this.saveTimer) return;
+    this.saveTimer = setTimeout(() => {
+      this.saveTimer = null;
+      this.flushToDisk();
+    }, this.SAVE_DEBOUNCE_MS);
+  }
+
+  private flushToDisk(): void {
     try {
       const runs = Array.from(this.activeRuns.values());
-      fs.writeFileSync(this.getStorePath(), JSON.stringify(runs, null, 2), "utf-8");
+      const filePath = this.getStorePath();
+      const tmpPath = `${filePath}.tmp`;
+      fs.writeFileSync(tmpPath, JSON.stringify(runs, null, 2), "utf-8");
+      fs.renameSync(tmpPath, filePath);
     } catch (err: any) {
       orchLog.warn("Failed to persist orchestrations:", err.message);
     }

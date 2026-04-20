@@ -763,7 +763,13 @@ export default function Chat() {
         onOrchestrationUpdated: (run: OrchestrationRun) => {
           updateRun(run);
 
-          if (run.parentSessionId && (run.status === "failed" || run.status === "cancelled")) {
+          if (
+            run.parentSessionId &&
+            (run.status === "failed" ||
+              run.status === "cancelled" ||
+              run.status === "confirming" ||
+              run.status === "completed")
+          ) {
             setSendingFor(run.parentSessionId, false);
           }
 
@@ -2474,7 +2480,7 @@ export default function Chat() {
                         }`}
                         onClick={() => setOrchestratorView("dashboard")}
                       >
-                        Dashboard
+                        {t().chat.dashboardTab}
                       </button>
                       <button
                         class={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
@@ -2484,7 +2490,7 @@ export default function Chat() {
                         }`}
                         onClick={() => setOrchestratorView("chat")}
                       >
-                        Chat
+                        {t().chat.chatTab}
                       </button>
                     </div>
                   </Show>
@@ -2524,13 +2530,13 @@ export default function Chat() {
                                 </svg>
                               </div>
                               <h2 class="text-xl font-semibold text-gray-900 dark:text-white mb-2">
-                                Team Task
+                                {t().chat.teamTask}
                               </h2>
                               <p class="text-sm text-gray-500 dark:text-gray-400 max-w-sm mx-auto mb-1">
-                                Describe the task you want multiple engines to collaborate on.
+                                {t().chat.teamTaskDesc}
                               </p>
                               <p class="text-xs text-gray-400 dark:text-gray-500 max-w-sm mx-auto">
-                                The task will be decomposed into subtasks and dispatched to different engines in parallel.
+                                {t().chat.teamTaskDetail}
                               </p>
                             </div>
                           </Show>

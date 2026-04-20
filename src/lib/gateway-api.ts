@@ -36,6 +36,9 @@ import type {
   OrchestrationSubtask,
   OrchestrationCreateRequest,
   OrchestrationConfirmRequest,
+  TeamRun,
+  TeamCreateRequest,
+  TaskNode,
 } from "../types/unified";
 
 // --- Notification callback types ---
@@ -59,6 +62,8 @@ export interface GatewayNotificationHandlers {
   onScheduledTaskFailed?: (taskId: string, error: string) => void;
   onScheduledTasksChanged?: (tasks: ScheduledTask[]) => void;
   onOrchestrationUpdated?: (run: OrchestrationRun) => void;
+  onTeamRunUpdated?: (run: TeamRun) => void;
+  onTeamTaskUpdated?: (runId: string, task: TaskNode) => void;
   onConnected?: () => void;
   onDisconnected?: (reason: string) => void;
 }
@@ -216,6 +221,15 @@ class GatewayAPI {
 
     this.bind("orchestration.updated", (data) => {
       this.handlers.onOrchestrationUpdated?.(data.run);
+    });
+
+    // Agent Team
+    this.bind("team.run.updated", (data) => {
+      this.handlers.onTeamRunUpdated?.(data.run);
+    });
+
+    this.bind("team.task.updated", (data) => {
+      this.handlers.onTeamTaskUpdated?.(data.runId, data.task);
     });
   }
 
@@ -483,7 +497,7 @@ class GatewayAPI {
     return gatewayClient.request("worktree.listBranches", { directory });
   }
 
-  // --- Orchestration ---
+  // --- Orchestration (PR #117 — to be absorbed) ---
 
   async createOrchestration(req: OrchestrationCreateRequest): Promise<OrchestrationRun> {
     return gatewayClient.request("orchestration.create", req);
@@ -503,6 +517,28 @@ class GatewayAPI {
 
   async listOrchestrations(): Promise<OrchestrationRun[]> {
     return gatewayClient.request("orchestration.list", {});
+  }
+
+  // --- Agent Team (Light/Heavy Brain) ---
+
+  createTeamRun(req: TeamCreateRequest): Promise<TeamRun> {
+    return gatewayClient.createTeamRun(req);
+  }
+
+  cancelTeamRun(runId: string): Promise<void> {
+    return gatewayClient.cancelTeamRun(runId);
+  }
+
+  sendTeamMessage(runId: string, text: string): Promise<void> {
+    return gatewayClient.sendTeamMessage(runId, text);
+  }
+
+  listTeamRuns(): Promise<TeamRun[]> {
+    return gatewayClient.listTeamRuns();
+  }
+
+  getTeamRun(runId: string): Promise<TeamRun | null> {
+    return gatewayClient.getTeamRun(runId);
   }
 }
 

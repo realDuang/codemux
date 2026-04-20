@@ -100,7 +100,7 @@ Access your coding agents from any device — phone, tablet, or another machine 
 
 - **LAN**: Auto-detected IP + QR code, ready in seconds
 - **Public Internet**: One-click [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/) — no port forwarding, no VPN, no firewall changes. Supports both **quick tunnels** (random ephemeral URL, zero config) and **named tunnels** (persistent custom domain via `~/.cloudflared/` credentials)
-- **Security built-in**: Device authorization, JWT tokens, HTTPS via Cloudflare; quick tunnel URLs rotate on every restart, named tunnels preserve your custom hostname
+- **Security built-in**: Device authorization, JWT tokens, HTTPS via Cloudflare; quick tunnel URLs rotate whenever the tunnel itself is recreated, while named tunnels preserve your custom hostname
 
 #### IM Bot Channels
 
@@ -201,6 +201,7 @@ bun run server:dev
 # Run the same headless dev stack in the background
 bun run server:up
 bun run server:status
+bun run server:restart
 bun run server:down
 
 # Run the headless dev stack and start a Cloudflare quick tunnel
@@ -214,6 +215,8 @@ bun run server:access-requests
 ```
 
 `bun run start` is still the lightest option for a web-only standalone server. The desktop app's "Public Access" toggle manages Cloudflare inside the packaged app; on a headless dev server, `bun run server:tunnel` provides the equivalent quick-tunnel workflow from the shell.
+
+If you want to restart CodeMux itself without rotating the current quick-tunnel URL, use `bun run server:restart`. It restarts the managed app process and keeps the existing `cloudflared` process alive whenever possible, so remote browsers can usually stay on the same public origin.
 
 
 `bun run server:tunnel` now prints the access code after startup. When a remote browser submits that code, you can stay entirely in SSH and run `bun run server:access-requests` to review and interactively approve or deny pending requests. If you started CodeMux with `bun run server:dev`, open a second SSH session and run `bun run server:access-code` / `bun run server:access-requests`.
@@ -301,6 +304,7 @@ bun run dev                # Electron + Vite HMR
 bun run server:dev         # Foreground headless Electron dev
 bun run server:up          # Background headless Electron dev
 bun run server:tunnel      # Background headless Electron dev + quick tunnel
+bun run server:restart     # Restart app only; preserve managed quick tunnel when possible
 bun run server:access-code # Print the current 6-digit access code
 bun run server:access-requests # Interactively review pending remote access requests
 bun run server:down        # Stop background headless Electron dev

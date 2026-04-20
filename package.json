@@ -28,6 +28,7 @@
     "server:tunnel": "bash ./scripts/server-dev.sh start --replace --tunnel",
     "server:down": "bash ./scripts/server-dev.sh stop",
     "server:status": "bash ./scripts/server-dev.sh status",
+    "server:restart": "bash ./scripts/server-dev.sh restart",
     "server:access-code": "bun scripts/server-auth.ts access-code",
     "server:access-requests": "bun scripts/server-auth.ts access-requests",
     "update:cloudflared": "bun scripts/update-cloudflared.ts",

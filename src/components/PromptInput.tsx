@@ -134,6 +134,10 @@ interface PromptInputProps {
   availableCommands?: EngineCommand[];
   /** Called when user invokes a slash command (instead of onSend) */
   onCommandInvoke?: (commandName: string, args: string, agent: AgentMode) => void;
+  /** Called when user triggers a team run */
+  onTeamSend?: (text: string, mode: "light" | "heavy") => void;
+  /** When true, prompt sends are relayed to the active Heavy Brain orchestrator */
+  relayToOrchestrator?: boolean;
 }
 
 export function PromptInput(props: PromptInputProps) {
@@ -142,8 +146,34 @@ export function PromptInput(props: PromptInputProps) {
   const [textarea, setTextarea] = createSignal<HTMLTextAreaElement>();
   const [images, setImages] = createSignal<ImageAttachment[]>([]);
   const [dragOver, setDragOver] = createSignal(false);
+  const [showTeamMenu, setShowTeamMenu] = createSignal(false);
+  let teamMenuRef: HTMLDivElement | undefined;
   let fileInputRef: HTMLInputElement | undefined;
   let pasteCounter = 0;
+
+  // Close team menu on click outside
+  const handleTeamClickOutside = (e: MouseEvent) => {
+    if (teamMenuRef && !teamMenuRef.contains(e.target as Node)) {
+      setShowTeamMenu(false);
+    }
+  };
+  createEffect(() => {
+    if (showTeamMenu()) {
+      document.addEventListener("mousedown", handleTeamClickOutside);
+    } else {
+      document.removeEventListener("mousedown", handleTeamClickOutside);
+    }
+  });
+  onCleanup(() => document.removeEventListener("mousedown", handleTeamClickOutside));
+
+  const handleTeamSend = (mode: "light" | "heavy") => {
+    const trimmed = text().trim();
+    if (!trimmed || !props.onTeamSend) return;
+    props.onTeamSend(trimmed, mode);
+    setText("");
+    setImages([]);
+    setShowTeamMenu(false);
+  };
 
   // --- Slash command autocomplete state ---
   const [showCommandMenu, setShowCommandMenu] = createSignal(false);
@@ -152,6 +182,7 @@ export function PromptInput(props: PromptInputProps) {
 
   /** Parse the current text: detect `/command args` prefix */
   const commandQuery = createMemo(() => {
+    if (props.relayToOrchestrator) return null;
     const val = text();
     if (!val.startsWith("/")) return null;
     // Only trigger for single-line prefix (no newlines before command)
@@ -387,7 +418,7 @@ export function PromptInput(props: PromptInputProps) {
   const doSend = () => {
     const trimmed = text().trim();
     // Detect slash command: text starts with / and onCommandInvoke is provided
-    if (trimmed.startsWith("/") && props.onCommandInvoke) {
+    if (!props.relayToOrchestrator && trimmed.startsWith("/") && props.onCommandInvoke) {
       const spaceIdx = trimmed.indexOf(" ");
       const commandName = spaceIdx === -1 ? trimmed.slice(1) : trimmed.slice(1, spaceIdx);
       const args = spaceIdx === -1 ? "" : trimmed.slice(spaceIdx + 1).trim();
@@ -424,6 +455,9 @@ export function PromptInput(props: PromptInputProps) {
 
   // Placeholder text based on active mode and generating state
   const modePlaceholder = createMemo(() => {
+    if (props.relayToOrchestrator) {
+      return t().prompt.teamRelayPlaceholder;
+    }
     if (props.isGenerating) {
       if (props.canEnqueue) return t().prompt.typeNextMessage ?? "Type your next message...";
       return t().prompt.waitingForResponse ?? "Waiting for response...";
@@ -451,12 +485,13 @@ export function PromptInput(props: PromptInputProps) {
               return (
                 <button
                   onClick={() => handleAgentChange(mode)}
+                  disabled={props.relayToOrchestrator}
                   class={`px-2 sm:px-3 py-1.5 text-xs font-medium rounded-lg transition-all flex items-center gap-1 sm:gap-1.5 min-h-[36px] ${
                     isActive()
                       ? `${color} text-white shadow-md shadow-current/20`
                       : "bg-slate-100/60 dark:bg-slate-800/60 text-slate-500 dark:text-slate-400 hover:bg-slate-200/80 dark:hover:bg-slate-700/60 backdrop-blur-sm"
-                  }`}
-                  title={mode.description ?? displayName}
+                  } ${props.relayToOrchestrator ? "opacity-60 cursor-not-allowed" : ""}`}
+                  title={props.relayToOrchestrator ? t().prompt.teamRelayNotice : (mode.description ?? displayName)}
                 >
                   {icon}
                   <span class="hidden sm:inline">{displayName}</span>
@@ -466,6 +501,12 @@ export function PromptInput(props: PromptInputProps) {
           </For>
         </div>
       </div>
+
+      <Show when={props.relayToOrchestrator}>
+        <div class="mb-2 px-1 text-xs text-amber-700 dark:text-amber-300">
+          {t().prompt.teamRelayNotice}
+        </div>
+      </Show>
 
       {/* Input area */}
       <div
@@ -582,6 +623,55 @@ export function PromptInput(props: PromptInputProps) {
                       <path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48" />
                     </svg>
                   </button>
+                </Show>
+                {/* Team run trigger */}
+                <Show when={props.onTeamSend}>
+                  <div class="relative" ref={(el) => { teamMenuRef = el; }}>
+                    <button
+                      onClick={() => setShowTeamMenu(!showTeamMenu())}
+                      disabled={!text().trim() || props.disabled}
+                      class="p-2 rounded-xl text-slate-400 hover:text-amber-600 dark:hover:text-amber-400 transition-colors disabled:opacity-30"
+                      aria-label="Team Run"
+                      title="Send as Team Run"
+                    >
+                      <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
+                        <circle cx="9" cy="7" r="4" />
+                        <path d="M22 21v-2a4 4 0 0 0-3-3.87" />
+                        <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+                      </svg>
+                    </button>
+                    <Show when={showTeamMenu()}>
+                      <div class="absolute bottom-full right-0 mb-1 bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-xl shadow-xl shadow-black/10 dark:shadow-black/30 overflow-hidden z-50 min-w-[160px]">
+                        <button
+                          onClick={() => handleTeamSend("light")}
+                          class="w-full text-left px-3 py-2.5 flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-amber-50 dark:hover:bg-amber-900/20 transition-colors"
+                        >
+                          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
+                          </svg>
+                          <div>
+                            <div class="font-medium">Light Brain</div>
+                            <div class="text-[10px] text-gray-400 dark:text-gray-500">DAG plan, parallel exec</div>
+                          </div>
+                        </button>
+                        <button
+                          onClick={() => handleTeamSend("heavy")}
+                          class="w-full text-left px-3 py-2.5 flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-amber-50 dark:hover:bg-amber-900/20 transition-colors border-t border-gray-100 dark:border-slate-700"
+                        >
+                          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <circle cx="12" cy="12" r="10" />
+                            <path d="M12 16v-4" />
+                            <path d="M12 8h.01" />
+                          </svg>
+                          <div>
+                            <div class="font-medium">Heavy Brain</div>
+                            <div class="text-[10px] text-gray-400 dark:text-gray-500">LLM orchestrator loop</div>
+                          </div>
+                        </button>
+                      </div>
+                    </Show>
+                  </div>
                 </Show>
                 <button
                   onClick={handleSend}

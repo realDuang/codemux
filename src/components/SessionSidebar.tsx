@@ -522,7 +522,7 @@ export function SessionSidebar(props: SessionSidebarProps) {
                   const cancelEditing = () => setEditingSessionId(null);
 
                   const handleKeyDown = (e: KeyboardEvent) => {
-                    if (e.key === "Enter") saveTitle();
+                    if (e.key === "Enter" && !e.isComposing) saveTitle();
                     else if (e.key === "Escape") cancelEditing();
                   };
 
@@ -905,7 +905,7 @@ export function SessionSidebar(props: SessionSidebarProps) {
                             const cancelEditing = () => setEditingSessionId(null);
 
                             const handleKeyDown = (e: KeyboardEvent) => {
-                              if (e.key === "Enter") saveTitle();
+                              if (e.key === "Enter" && !e.isComposing) saveTitle();
                               else if (e.key === "Escape") cancelEditing();
                             };
 
@@ -1290,7 +1290,7 @@ export function SessionSidebar(props: SessionSidebarProps) {
                           };
 
                           const handleKeyDown = (e: KeyboardEvent) => {
-                            if (e.key === "Enter") {
+                            if (e.key === "Enter" && !e.isComposing) {
                               saveTitle();
                             } else if (e.key === "Escape") {
                               cancelEditing();

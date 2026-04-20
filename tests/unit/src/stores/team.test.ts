@@ -1,0 +1,241 @@
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+const gatewayMock = vi.hoisted(() => ({
+  createTeamRun: vi.fn(),
+  cancelTeamRun: vi.fn(),
+  sendTeamMessage: vi.fn(),
+}));
+
+const { storeContainer } = vi.hoisted(() => {
+  const storeContainer: { data: any; setter: any } = { data: {}, setter: null };
+  return { storeContainer };
+});
+
+vi.mock("../../../../src/lib/gateway-api", () => ({
+  gateway: gatewayMock,
+}));
+
+vi.mock("solid-js/store", () => ({
+  createStore: vi.fn((initial: any) => {
+    Object.keys(storeContainer.data).forEach((key) => delete storeContainer.data[key]);
+    Object.assign(storeContainer.data, initial);
+
+    storeContainer.setter = (pathOrValue: any, ...args: any[]) => {
+      if (args.length === 0) {
+        Object.keys(storeContainer.data).forEach((key) => delete storeContainer.data[key]);
+        Object.assign(storeContainer.data, pathOrValue);
+        return;
+      }
+
+      if (args.length === 1) {
+        const next = typeof args[0] === "function"
+          ? args[0](storeContainer.data[pathOrValue])
+          : args[0];
+        storeContainer.data[pathOrValue] = next;
+        return;
+      }
+
+      if (!storeContainer.data[pathOrValue] || typeof storeContainer.data[pathOrValue] !== "object") {
+        storeContainer.data[pathOrValue] = {};
+      }
+      storeContainer.data[pathOrValue] = {
+        ...storeContainer.data[pathOrValue],
+        [args[0]]: args[1],
+      };
+    };
+
+    return [storeContainer.data, storeContainer.setter];
+  }),
+}));
+
+import type { TeamRun } from "../../../../src/types/unified";
+import {
+  connectTeamHandlers,
+  createTeamRun,
+  getActiveHeavyTeamRunForSession,
+  getActiveTeamRunForSession,
+  getTeamRun,
+  getTeamRunForSession,
+  getTeamRunsForSession,
+  hydrateTeamRuns,
+  sendTeamRunMessage,
+  teamStore,
+} from "../../../../src/stores/team";
+
+function makeRun(overrides: Partial<TeamRun> = {}): TeamRun {
+  return {
+    id: "team-1",
+    parentSessionId: "session-1",
+    directory: "/repo",
+    originalPrompt: "Investigate issue",
+    mode: "heavy",
+    status: "completed",
+    tasks: [],
+    time: { created: 1 },
+    ...overrides,
+  };
+}
+
+describe("team store selectors", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    teamStore.runs.splice(0, teamStore.runs.length);
+    teamStore.activeRunId = null;
+  });
+
+  describe("getTeamRunForSession", () => {
+    it("prefers an active run over a newer completed run", () => {
+      const handlers = connectTeamHandlers();
+      const activeRun = makeRun({
+        id: "team-active",
+        status: "running",
+        time: { created: 10 },
+      });
+      const completedRun = makeRun({
+        id: "team-complete",
+        status: "completed",
+        time: { created: 20 },
+      });
+
+      handlers.onTeamRunUpdated(completedRun);
+      handlers.onTeamRunUpdated(activeRun);
+
+      expect(getTeamRunForSession("session-1")?.id).toBe("team-active");
+    });
+
+    it("falls back to the newest run when none are active", () => {
+      const handlers = connectTeamHandlers();
+      handlers.onTeamRunUpdated(makeRun({ id: "team-old", time: { created: 10 } }));
+      handlers.onTeamRunUpdated(makeRun({ id: "team-new", time: { created: 20 } }));
+
+      expect(getTeamRunForSession("session-1")?.id).toBe("team-new");
+    });
+  });
+
+  describe("active team run helpers", () => {
+    it("returns the active run for the session", () => {
+      const handlers = connectTeamHandlers();
+      handlers.onTeamRunUpdated(makeRun({ id: "team-complete", status: "completed" }));
+      handlers.onTeamRunUpdated(
+        makeRun({ id: "team-light", mode: "light", status: "planning", time: { created: 5 } }),
+      );
+
+      expect(getActiveTeamRunForSession("session-1")?.id).toBe("team-light");
+    });
+
+    it("returns only active heavy runs for orchestrator relays", () => {
+      const handlers = connectTeamHandlers();
+      handlers.onTeamRunUpdated(
+        makeRun({ id: "team-light", mode: "light", status: "running", time: { created: 30 } }),
+      );
+      handlers.onTeamRunUpdated(
+        makeRun({ id: "team-heavy-old", mode: "heavy", status: "completed", time: { created: 40 } }),
+      );
+      handlers.onTeamRunUpdated(
+        makeRun({ id: "team-heavy-active", mode: "heavy", status: "running", time: { created: 20 } }),
+      );
+
+      expect(getActiveHeavyTeamRunForSession("session-1")?.id).toBe("team-heavy-active");
+    });
+
+    it("returns all runs sorted by activity first, then newest first", () => {
+      const handlers = connectTeamHandlers();
+      handlers.onTeamRunUpdated(
+        makeRun({ id: "team-complete-new", status: "completed", time: { created: 30 } }),
+      );
+      handlers.onTeamRunUpdated(
+        makeRun({ id: "team-active", status: "running", time: { created: 10 } }),
+      );
+      handlers.onTeamRunUpdated(
+        makeRun({ id: "team-complete-old", status: "completed", time: { created: 20 } }),
+      );
+
+      expect(getTeamRunsForSession("session-1").map((run) => run.id)).toEqual([
+        "team-active",
+        "team-complete-new",
+        "team-complete-old",
+      ]);
+    });
+
+    it("deduplicates runs with the same id and keeps the latest version", () => {
+      hydrateTeamRuns([
+        makeRun({ id: "team-dup", status: "planning", time: { created: 10 } }),
+        makeRun({
+          id: "team-dup",
+          status: "completed",
+          finalResult: "All done",
+          time: { created: 10 },
+        }),
+      ]);
+
+      const runs = getTeamRunsForSession("session-1");
+      expect(runs).toHaveLength(1);
+      expect(runs[0].status).toBe("completed");
+      expect(runs[0].finalResult).toBe("All done");
+      expect(getTeamRun("team-dup")?.status).toBe("completed");
+    });
+  });
+
+  describe("hydrateTeamRuns", () => {
+    it("replaces the known runs with a backend snapshot", () => {
+      hydrateTeamRuns([
+        makeRun({ id: "team-old", status: "completed" }),
+        makeRun({ id: "team-active", status: "running", mode: "heavy" }),
+      ]);
+
+      hydrateTeamRuns([
+        makeRun({ id: "team-restored", status: "failed", mode: "light" }),
+      ]);
+
+      expect(teamStore.runs.map((run) => run.id)).toEqual(["team-restored"]);
+      expect(teamStore.activeRunId).toBeNull();
+    });
+  });
+
+  describe("sendTeamRunMessage", () => {
+    it("delegates to the gateway team message API", async () => {
+      await sendTeamRunMessage("team-123", "Need a tighter plan");
+
+      expect(gatewayMock.sendTeamMessage).toHaveBeenCalledWith("team-123", "Need a tighter plan");
+    });
+  });
+
+  describe("createTeamRun", () => {
+    it("upserts the created run when a matching notification already added it", async () => {
+      const handlers = connectTeamHandlers();
+      const run = makeRun({
+        id: "team-dup",
+        status: "planning",
+        directory: "/repo/.worktrees/feature-branch",
+        parentDirectory: "/repo",
+        worktreeId: "feature-branch",
+      });
+
+      handlers.onTeamRunUpdated(run);
+      gatewayMock.createTeamRun.mockResolvedValue(run);
+
+      await createTeamRun(
+        "session-1",
+        "Investigate issue",
+        "heavy",
+        "/repo/.worktrees/feature-branch",
+        "claude",
+        {
+          worktreeId: "feature-branch",
+          parentDirectory: "/repo",
+        },
+      );
+
+      expect(gatewayMock.createTeamRun).toHaveBeenCalledWith({
+        sessionId: "session-1",
+        prompt: "Investigate issue",
+        mode: "heavy",
+        directory: "/repo/.worktrees/feature-branch",
+        engineType: "claude",
+        worktreeId: "feature-branch",
+        parentDirectory: "/repo",
+      });
+      expect(teamStore.runs.filter((candidate) => candidate.id === "team-dup")).toHaveLength(1);
+    });
+  });
+});

@@ -128,6 +128,10 @@ if (!gotTheLock) {
     // Initialize scheduled task service (persistent desktop-level scheduled tasks)
     scheduledTaskService.init(engineManager);
 
+    // Initialize agent team service (cross-engine orchestration)
+    const { agentTeamService } = await import("./services/agent-team");
+    agentTeamService.init(engineManager);
+
     // Register IPC handlers
     registerIpcHandlers();
 

@@ -18,6 +18,7 @@ import log from "../services/logger";
 import { conversationStore } from "../services/conversation-store";
 import { scheduledTaskService } from "../services/scheduled-task-service";
 import { orchestratorService } from "../services/orchestrator-service";
+import { agentTeamService } from "../services/agent-team";
 import {
   GatewayRequestType,
   GatewayNotificationType,
@@ -41,6 +42,10 @@ import {
   type WorktreeRemoveRequest,
   type WorktreeMergeRequest,
   type WorktreeListBranchesRequest,
+  type TeamCreateRequest,
+  type TeamCancelRequest,
+  type TeamGetRequest,
+  type TeamSendMessageRequest,
 } from "../../../src/types/unified";
 import { isCodexServiceTier } from "../../../src/types/unified";
 
@@ -505,17 +510,15 @@ export class GatewayServer {
         return worktreeManager.listBranches(req.directory);
       }
 
-      // Orchestration
+      // Orchestration (PR #117 — to be absorbed into Agent Team)
       case GatewayRequestType.ORCHESTRATION_CREATE:
         return orchestratorService.createRun(p.parentSessionId, p.directory, p.prompt, p.engineTypes, p.roleMappings, p.worktreeInfo);
       case GatewayRequestType.ORCHESTRATION_DECOMPOSE:
-        // Fire-and-forget: return ack immediately, progress via orchestration.updated events
         orchestratorService.decomposeTask(p.runId).catch((err) => {
           gatewayLog.error("[Orchestration] decompose failed:", err);
         });
         return { ok: true };
       case GatewayRequestType.ORCHESTRATION_CONFIRM:
-        // Fire-and-forget: execution is long-running, progress via events
         orchestratorService.confirmAndExecute(p.runId, p.subtasks).catch((err) => {
           gatewayLog.error("[Orchestration] confirm+execute failed:", err);
         });
@@ -524,6 +527,33 @@ export class GatewayServer {
         return orchestratorService.cancelRun(p.runId);
       case GatewayRequestType.ORCHESTRATION_LIST:
         return orchestratorService.listRuns();
+
+      // --- Agent Team (Light/Heavy Brain) ---
+
+      case GatewayRequestType.TEAM_CREATE: {
+        const req = p as TeamCreateRequest;
+        return agentTeamService.createRun(req);
+      }
+
+      case GatewayRequestType.TEAM_CANCEL: {
+        const req = p as TeamCancelRequest;
+        return agentTeamService.cancelRun(req.runId);
+      }
+
+      case GatewayRequestType.TEAM_SEND_MESSAGE: {
+        const req = p as TeamSendMessageRequest;
+        agentTeamService.sendMessageToRun(req.runId, req.text);
+        return;
+      }
+
+      case GatewayRequestType.TEAM_LIST: {
+        return agentTeamService.listRuns();
+      }
+
+      case GatewayRequestType.TEAM_GET: {
+        const req = p as TeamGetRequest;
+        return agentTeamService.getRun(req.runId);
+      }
 
       default:
         throw Object.assign(
@@ -649,9 +679,23 @@ export class GatewayServer {
       });
     });
 
-    // Orchestration events
+    // Orchestration events (PR #117 — to be absorbed)
     orchestratorService.on("orchestration.updated", (data) => {
       this.broadcast({ type: GatewayNotificationType.ORCHESTRATION_UPDATED, payload: data });
+    });
+
+    // Agent Team events
+    agentTeamService.on("team.run.updated", (data) => {
+      this.broadcast({
+        type: GatewayNotificationType.TEAM_RUN_UPDATED,
+        payload: data,
+      });
+    });
+    agentTeamService.on("team.task.updated", (data) => {
+      this.broadcast({
+        type: GatewayNotificationType.TEAM_TASK_UPDATED,
+        payload: data,
+      });
     });
   }
 

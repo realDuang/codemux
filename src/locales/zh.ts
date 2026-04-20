@@ -75,6 +75,11 @@ export const zh: LocaleDict = {
     noModelError: "未配置模型，请在设置 > 引擎中设置模型。",
     queued: "排队中",
     disconnected: "已断开",
+    dashboardTab: "卡片",
+    chatTab: "对话",
+    teamTask: "团队任务",
+    teamTaskDesc: "描述你希望多个引擎协作完成的任务。",
+    teamTaskDetail: "该任务将被拆解为多个子任务，并行分发给不同引擎执行。",
   },
 
   // Settings page

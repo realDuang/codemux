@@ -82,6 +82,7 @@ import {
   cancelTeamRun,
   sendTeamRunMessage,
 } from "../stores/team";
+import { TeamRunCard } from "../components/team/TeamRunCard";
 import { computeActiveSessions } from "../lib/active-sessions";
 import { orchestrationStore, updateRun, setCurrentRunId, generateTeamId, registerTeam, associateRunWithTeam, getTeamId, isTeamParentSession, getRunForTeam, restoreFromRuns, autoDetectTeams, getRoleMappings } from "../stores/orchestration";
 import { OrchestrationCards } from "../components/orchestration/OrchestrationCards";
@@ -2088,75 +2089,14 @@ export default function Chat() {
     }
   };
 
-  const isTerminalTeamRun = (run: TeamRun) =>
-    ["completed", "failed", "cancelled"].includes(run.status);
-
-  const getTeamRunStatusColor = (run: TeamRun) => {
-    switch (run.status) {
-      case "completed":
-        return "bg-green-100 dark:bg-green-900/20 border-green-200 dark:border-green-800";
-      case "failed":
-        return "bg-red-100 dark:bg-red-900/20 border-red-200 dark:border-red-800";
-      case "cancelled":
-        return "bg-gray-100 dark:bg-gray-900/20 border-gray-200 dark:border-gray-700";
-      default:
-        return "bg-amber-50 dark:bg-amber-900/15 border-amber-200/50 dark:border-amber-700/30";
+  const handleConfirmTeamPlan = async (runId: string, tasks: TaskNode[]) => {
+    try {
+      await gateway.confirmTeamPlan(runId, tasks);
+    } catch (err: any) {
+      logger.error("[TeamRun] Failed to confirm plan:", err);
     }
   };
 
-  const getTeamRunStatusLabel = (run: TeamRun) => {
-    const completed = run.tasks.filter((task) => task.status === "completed").length;
-    switch (run.status) {
-      case "planning":
-        return t().chat.teamRunPlanning;
-      case "running":
-        return formatMessage(t().chat.teamRunRunning, {
-          completed,
-          total: run.tasks.length,
-        });
-      case "completed":
-        return t().chat.teamRunCompleted;
-      case "failed":
-        return t().chat.teamRunFailed;
-      case "cancelled":
-        return t().chat.teamRunCancelled;
-      default:
-        return run.status;
-    }
-  };
-
-  const getTeamRunModeLabel = (run: TeamRun) =>
-    run.mode === "heavy" ? t().chat.teamRunModeHeavy : t().chat.teamRunModeLight;
-
-  const getTeamTaskStatusIcon = (task: TaskNode) => {
-    switch (task.status) {
-      case "completed":
-        return "\u2713";
-      case "failed":
-        return "\u2717";
-      case "running":
-        return "\u25CB";
-      case "blocked":
-        return "\u25CB";
-      case "cancelled":
-        return "\u2014";
-      default:
-        return "\u00B7";
-    }
-  };
-
-  const getTeamTaskStatusColor = (task: TaskNode) => {
-    switch (task.status) {
-      case "completed":
-        return "text-green-600 dark:text-green-400";
-      case "failed":
-        return "text-red-600 dark:text-red-400";
-      case "running":
-        return "text-amber-600 dark:text-amber-400";
-      default:
-        return "text-gray-500 dark:text-gray-400";
-    }
-  };
 
   const appendOptimisticUserText = (sessionId: string, text: string): string => {
     const nonce = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -2812,124 +2752,16 @@ export default function Chat() {
                           {t().chat.teamRunsTitle}
                         </div>
                         <For each={sessionTeamRuns()}>
-                          {(run) => {
-                            const isActiveRun = () => run.id === activeTeamRun()?.id;
-
-                            return (
-                              <div class="space-y-2">
-                                <div class={`px-3 py-2 rounded-lg border text-sm ${getTeamRunStatusColor(run)}`}>
-                                  <div class="flex items-start justify-between gap-2">
-                                    <div class="min-w-0">
-                                      <div class="flex flex-wrap items-center gap-2">
-                                        <span class="font-medium text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">
-                                          {t().chat.teamRunLabel} ({getTeamRunModeLabel(run)})
-                                        </span>
-                                        <span class="text-xs text-gray-700 dark:text-gray-200">
-                                          {getTeamRunStatusLabel(run)}
-                                        </span>
-                                        <Show when={isActiveRun()}>
-                                          <span class="rounded-full bg-white/70 dark:bg-black/20 px-1.5 py-0.5 text-[10px] font-medium text-gray-600 dark:text-gray-300">
-                                            {t().chat.teamRunActive}
-                                          </span>
-                                        </Show>
-                                      </div>
-                                      <div class="mt-1 text-[11px] text-gray-500 dark:text-gray-400 break-all">
-                                        {run.id}
-                                      </div>
-                                    </div>
-                                    <Show when={!isTerminalTeamRun(run)}>
-                                      <button
-                                        type="button"
-                                        onClick={() => void handleCancelTeamRun(run.id)}
-                                        class="text-xs text-red-500 hover:text-red-700 dark:hover:text-red-400 font-medium"
-                                      >
-                                        {t().chat.teamRunCancel}
-                                      </button>
-                                    </Show>
-                                  </div>
-
-                                  <Show when={run.tasks.length > 0}>
-                                    <div class="mt-2 space-y-1.5">
-                                      <For each={run.tasks}>
-                                        {(task) => (
-                                          <div class="rounded-md border border-gray-200/70 bg-white/60 px-2 py-1.5 dark:border-gray-700/70 dark:bg-black/10">
-                                            <div class="flex items-start justify-between gap-2">
-                                              <div class="min-w-0 flex-1">
-                                                <div class={`flex items-center gap-1.5 text-xs ${getTeamTaskStatusColor(task)}`}>
-                                                  <span class="w-3 text-center font-mono">{getTeamTaskStatusIcon(task)}</span>
-                                                  <span class="font-medium">{task.id}</span>
-                                                  <span class="truncate">{task.description}</span>
-                                                </div>
-
-                                                <div class="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-gray-500 dark:text-gray-400">
-                                                  <Show when={task.dependsOn.length > 0}>
-                                                    <span>
-                                                      {formatMessage(t().chat.teamTaskDependsOn, {
-                                                        ids: task.dependsOn.join(", "),
-                                                      })}
-                                                    </span>
-                                                  </Show>
-                                                  <Show when={task.engineType}>
-                                                    <span>
-                                                      {formatMessage(t().chat.teamTaskEngine, {
-                                                        engine: task.engineType!,
-                                                      })}
-                                                    </span>
-                                                  </Show>
-                                                  <Show when={task.worktreeId}>
-                                                    <span>
-                                                      {formatMessage(t().chat.teamTaskWorktree, {
-                                                        name: task.worktreeId!,
-                                                      })}
-                                                    </span>
-                                                  </Show>
-                                                  <Show when={task.sessionId && task.sessionId !== sessionStore.current}>
-                                                    <button
-                                                      type="button"
-                                                      onClick={() => void handleSelectSession(task.sessionId!)}
-                                                      class="underline hover:text-gray-700 dark:hover:text-gray-200"
-                                                    >
-                                                      {t().chat.teamTaskOpenSession}
-                                                    </button>
-                                                  </Show>
-                                                </div>
-
-                                                <Show when={task.error}>
-                                                  <div class="mt-1 text-[11px] text-red-600 dark:text-red-400 whitespace-pre-wrap line-clamp-2">
-                                                    {task.error}
-                                                  </div>
-                                                </Show>
-                                                <Show when={!task.error && task.result}>
-                                                  <div class="mt-1 text-[11px] text-gray-600 dark:text-gray-300 whitespace-pre-wrap line-clamp-2">
-                                                    {task.result}
-                                                  </div>
-                                                </Show>
-                                              </div>
-
-                                              <Show when={task.status === "running"}>
-                                                <span class="mt-0.5 h-1.5 w-1.5 rounded-full bg-amber-400 animate-pulse flex-shrink-0" />
-                                              </Show>
-                                            </div>
-                                          </div>
-                                        )}
-                                      </For>
-                                    </div>
-                                  </Show>
-                                </div>
-
-                                <Show when={run.finalResult}>
-                                  <div class="rounded-lg border border-gray-200 bg-white/70 px-3 py-2 text-sm dark:border-gray-700 dark:bg-slate-900/40">
-                                    <div class="text-[11px] font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">
-                                      {t().chat.teamRunFinalResult}
-                                    </div>
-                                    <div class="mt-2 max-h-64 overflow-y-auto whitespace-pre-wrap break-words text-xs text-gray-600 dark:text-gray-300">
-                                      {run.finalResult}
-                                    </div>
-                                  </div>
-                                </Show>
-                              </div>
-                            );
-                          }}
+                          {(run) => (
+                            <TeamRunCard
+                              run={run}
+                              isActive={run.id === activeTeamRun()?.id}
+                              currentSessionId={sessionStore.current}
+                              onCancel={(runId) => void handleCancelTeamRun(runId)}
+                              onSelectSession={(sid) => void handleSelectSession(sid)}
+                              onConfirmPlan={(runId, tasks) => void handleConfirmTeamPlan(runId, tasks)}
+                            />
+                          )}
                         </For>
                       </div>
                     </Show>

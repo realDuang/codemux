@@ -79,6 +79,9 @@ export interface LocaleDict {
     teamRunModeLight: string;
     teamRunModeHeavy: string;
     teamRunPlanning: string;
+    teamRunAwaitingConfirmation: string;
+    teamRunConfirmPlan: string;
+    teamRunEditPlan: string;
     teamRunRunning: string;
     teamRunCompleted: string;
     teamRunFailed: string;
@@ -728,6 +731,9 @@ export const en: LocaleDict = {
     teamRunModeLight: "light",
     teamRunModeHeavy: "heavy",
     teamRunPlanning: "Planning...",
+    teamRunAwaitingConfirmation: "Awaiting plan confirmation",
+    teamRunConfirmPlan: "Confirm & execute",
+    teamRunEditPlan: "Edit plan",
     teamRunRunning: "{completed}/{total} tasks",
     teamRunCompleted: "Completed",
     teamRunFailed: "Failed",

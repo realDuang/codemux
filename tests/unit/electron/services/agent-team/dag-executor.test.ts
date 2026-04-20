@@ -234,4 +234,75 @@ describe("DAGExecutor static helpers", () => {
     ];
     expect(DAGExecutor.isAllSuccessful(tasks)).toBe(false);
   });
+
+  describe("team worktree routing", () => {
+    let execSpyLocal: any;
+    let mockExec: TaskExecutor;
+
+    beforeEach(() => {
+      execSpyLocal = vi.fn(async (task: TaskNode) => ({
+        sessionId: `s_${task.id}`,
+        summary: "",
+      }));
+      mockExec = { execute: execSpyLocal } as any;
+    });
+
+    it("routes write-capable tasks into teamWorktreeDir when set", async () => {
+      const tasks = [makeTask({ id: "writer", needsWorktree: true })];
+      const run = makeRun(tasks);
+      run.teamWorktreeDir = "/repo/.worktrees/team-run";
+      run.teamWorktreeName = "team-run";
+
+      const dagExecutor = new DAGExecutor(mockExec, "/repo");
+      await dagExecutor.executeReadyTasks(run);
+
+      const [, passedDir, opts] = execSpyLocal.mock.calls[0];
+      expect(passedDir).toBe("/repo/.worktrees/team-run");
+      expect(opts.defaultWorktreeId).toBe("team-run");
+    });
+
+    it("keeps read-only tasks in the primary directory", async () => {
+      const tasks = [makeTask({ id: "reader", needsWorktree: false })];
+      const run = makeRun(tasks);
+      run.teamWorktreeDir = "/repo/.worktrees/team-run";
+      run.teamWorktreeName = "team-run";
+      run.worktreeId = "main";
+
+      const dagExecutor = new DAGExecutor(mockExec, "/repo");
+      await dagExecutor.executeReadyTasks(run);
+
+      const [, passedDir, opts] = execSpyLocal.mock.calls[0];
+      expect(passedDir).toBe("/repo");
+      expect(opts.defaultWorktreeId).toBe("main");
+    });
+
+    it("treats read-only role mappings as read-only for routing", async () => {
+      const tasks = [makeTask({ id: "explorer", role: "explorer" })];
+      const run = makeRun(tasks);
+      run.teamWorktreeDir = "/repo/.worktrees/team-run";
+      run.teamWorktreeName = "team-run";
+      run.roleMappings = [
+        { role: "explorer", label: "E", description: "", engineType: "opencode", readOnly: true },
+      ];
+
+      const dagExecutor = new DAGExecutor(mockExec, "/repo");
+      await dagExecutor.executeReadyTasks(run);
+
+      const [, passedDir] = execSpyLocal.mock.calls[0];
+      expect(passedDir).toBe("/repo");
+    });
+
+    it("falls back to run.directory / worktreeId when teamWorktreeDir is unset", async () => {
+      const tasks = [makeTask({ id: "writer", needsWorktree: true })];
+      const run = makeRun(tasks);
+      run.worktreeId = "w1";
+
+      const dagExecutor = new DAGExecutor(mockExec, "/repo");
+      await dagExecutor.executeReadyTasks(run);
+
+      const [, passedDir, opts] = execSpyLocal.mock.calls[0];
+      expect(passedDir).toBe("/repo");
+      expect(opts.defaultWorktreeId).toBe("w1");
+    });
+  });
 });

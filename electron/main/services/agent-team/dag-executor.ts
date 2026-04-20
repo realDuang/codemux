@@ -95,6 +95,14 @@ export class DAGExecutor extends EventEmitter {
 
   /**
    * Execute a single task with upstream context injection.
+   *
+   * Team-worktree routing:
+   * - If run.teamWorktreeDir is set and the task is write-capable (needsWorktree
+   *   !== false), the task runs in the shared team worktree so sibling tasks
+   *   see each other's edits.
+   * - Read-only tasks (needsWorktree === false) skip the team worktree and
+   *   run in the run's primary directory, avoiding contention.
+   * - When teamWorktreeDir is not set, behavior is unchanged.
    */
   private async runSingleTask(run: TeamRun, task: TaskNode) {
     task.status = "running";
@@ -108,9 +116,23 @@ export class DAGExecutor extends EventEmitter {
 
     const upstreamContext = TaskExecutor.buildUpstreamContext(dependencies);
 
-    return this.taskExecutor.execute(task, this.directory, {
+    // Choose directory + default worktree based on team worktree presence.
+    const readOnlyByRole = task.role
+      ? (run.roleMappings?.find((m) => m.role === task.role)?.readOnly ?? false)
+      : false;
+    const isReadOnly = task.needsWorktree === false || readOnlyByRole;
+    const useTeamWorktree = !!run.teamWorktreeDir && !isReadOnly;
+
+    const effectiveDirectory = useTeamWorktree
+      ? (run.teamWorktreeDir as string)
+      : this.directory;
+    const effectiveDefaultWorktreeId = useTeamWorktree
+      ? (run.teamWorktreeName ?? run.worktreeId)
+      : run.worktreeId;
+
+    return this.taskExecutor.execute(task, effectiveDirectory, {
       upstreamContext,
-      defaultWorktreeId: run.worktreeId,
+      defaultWorktreeId: effectiveDefaultWorktreeId,
     });
   }
 

@@ -19,13 +19,64 @@ import type {
   TeamCreateRequest,
   TaskNode,
   EngineType,
+  RoleEngineMapping,
+  OrchestratorRole,
 } from "../../../../src/types/unified";
+import { loadSettings, saveSettings } from "../logger";
 
 const SAVE_DEBOUNCE_MS = 500;
+const ROLE_MAPPINGS_SETTING_KEY = "team.roleMappings";
+
+/** Default role → engine mapping (inspired by oh-my-opencode-slim agent roles, via PR #117). */
+export const DEFAULT_ROLE_MAPPINGS: RoleEngineMapping[] = [
+  {
+    role: "explorer",
+    label: "Explorer",
+    description: "Codebase search, file/symbol location, pattern matching (read-only)",
+    engineType: "claude",
+    readOnly: true,
+  },
+  {
+    role: "researcher",
+    label: "Researcher",
+    description: "Documentation research, external resources, library/API investigation (read-only)",
+    engineType: "claude",
+    readOnly: true,
+  },
+  {
+    role: "reviewer",
+    label: "Reviewer",
+    description: "Architecture analysis, code review, quality checks (read-only)",
+    engineType: "claude",
+    readOnly: true,
+  },
+  {
+    role: "designer",
+    label: "Designer",
+    description: "UI/UX design and implementation, frontend styling, visual components",
+    engineType: "claude",
+  },
+  {
+    role: "coder",
+    label: "Coder",
+    description: "Code implementation, refactoring, bug fixing, feature development",
+    engineType: "claude",
+  },
+];
 
 interface TeamRunFileFormat {
   version: 1;
   runs: TeamRun[];
+}
+
+/**
+ * A pending plan-confirmation gate. Light Brain (and optionally Heavy Brain)
+ * stashes a resolver here when paused at `awaiting-confirmation`. The
+ * gateway handler for TEAM_CONFIRM_PLAN calls `resolve(tasks)` to unblock it.
+ */
+interface PendingConfirmation {
+  resolve: (tasks: TaskNode[]) => void;
+  reject: (reason: unknown) => void;
 }
 
 // --- Event types ---
@@ -33,6 +84,7 @@ interface TeamRunFileFormat {
 export interface AgentTeamServiceEvents {
   "team.run.updated": (data: { run: TeamRun }) => void;
   "team.task.updated": (data: { runId: string; task: TaskNode }) => void;
+  "team.roleMappings.updated": (data: { mappings: RoleEngineMapping[] }) => void;
 }
 
 export declare interface AgentTeamService {
@@ -54,6 +106,8 @@ export class AgentTeamService extends EventEmitter {
   private activeOrchestrators = new Map<string, HeavyBrainOrchestrator>();
   /** Active Heavy Brain relay channels for human-in-the-loop messages. */
   private activeRelayChannels = new Map<string, UserChannel>();
+  /** Pending plan-confirmation gates keyed by runId. */
+  private pendingConfirmations = new Map<string, PendingConfirmation>();
   private saveTimer: ReturnType<typeof setTimeout> | null = null;
   private initialized = false;
 
@@ -242,6 +296,69 @@ export class AgentTeamService extends EventEmitter {
     return this.runs.get(runId) ?? null;
   }
 
+  // --- Plan confirmation ---
+
+  /**
+   * Register a pending plan-confirmation gate for a run. Called by
+   * LightBrainOrchestrator (and optionally HeavyBrainOrchestrator) when it
+   * reaches the `awaiting-confirmation` phase. Returns a promise that
+   * resolves with the user-approved task list.
+   */
+  awaitPlanConfirmation(runId: string): Promise<TaskNode[]> {
+    return new Promise<TaskNode[]>((resolve, reject) => {
+      this.pendingConfirmations.set(runId, { resolve, reject });
+    });
+  }
+
+  /**
+   * Resolve a pending plan-confirmation gate. Called by the gateway when the
+   * user confirms / edits the plan via TEAM_CONFIRM_PLAN.
+   */
+  confirmPlan(runId: string, tasks: TaskNode[]): void {
+    const gate = this.pendingConfirmations.get(runId);
+    if (!gate) {
+      throw new Error(`No pending plan confirmation for run ${runId}`);
+    }
+    this.pendingConfirmations.delete(runId);
+    gate.resolve(tasks);
+    agentTeamLog.info(`Plan confirmed for run ${runId} with ${tasks.length} task(s)`);
+  }
+
+  private rejectPendingConfirmation(runId: string, reason: string): void {
+    const gate = this.pendingConfirmations.get(runId);
+    if (!gate) return;
+    this.pendingConfirmations.delete(runId);
+    gate.reject(new Error(reason));
+  }
+
+  // --- Role mappings ---
+
+  getRoleMappings(): RoleEngineMapping[] {
+    const stored = loadSettings()[ROLE_MAPPINGS_SETTING_KEY];
+    if (Array.isArray(stored) && stored.length > 0) {
+      // Validate role field exists
+      return stored.filter((m: any): m is RoleEngineMapping =>
+        m && typeof m === "object" && typeof m.role === "string" && typeof m.engineType === "string"
+      );
+    }
+    return DEFAULT_ROLE_MAPPINGS.map((m) => ({ ...m }));
+  }
+
+  updateRoleMappings(mappings: RoleEngineMapping[]): RoleEngineMapping[] {
+    saveSettings({ [ROLE_MAPPINGS_SETTING_KEY]: mappings });
+    agentTeamLog.info(`Updated role mappings (${mappings.length} roles)`);
+    this.emit("team.roleMappings.updated", { mappings });
+    return mappings;
+  }
+
+  resolveRole(role: OrchestratorRole, fallback: EngineType): { engineType: EngineType; modelId?: string } {
+    const mapping = this.getRoleMappings().find((m) => m.role === role);
+    if (mapping) {
+      return { engineType: mapping.engineType, modelId: mapping.modelId };
+    }
+    return { engineType: fallback };
+  }
+
   // --- Execution ---
 
   private async executeRun(run: TeamRun, orchestratorEngineType?: EngineType): Promise<void> {
@@ -298,6 +415,7 @@ export class AgentTeamService extends EventEmitter {
   private cleanupRunRuntimeState(runId: string): void {
     this.activeOrchestrators.delete(runId);
     this.activeRelayChannels.delete(runId);
+    this.rejectPendingConfirmation(runId, "Run ended before plan was confirmed");
     this.unregisterAutoApproveSessions(runId);
   }
 

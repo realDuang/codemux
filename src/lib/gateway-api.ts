@@ -39,6 +39,7 @@ import type {
   TeamRun,
   TeamCreateRequest,
   TaskNode,
+  RoleEngineMapping,
 } from "../types/unified";
 
 // --- Notification callback types ---
@@ -539,6 +540,18 @@ class GatewayAPI {
 
   getTeamRun(runId: string): Promise<TeamRun | null> {
     return gatewayClient.getTeamRun(runId);
+  }
+
+  confirmTeamPlan(runId: string, tasks: TaskNode[]): Promise<{ ok: boolean }> {
+    return gatewayClient.confirmTeamPlan(runId, tasks);
+  }
+
+  getTeamRoleMappings(): Promise<{ mappings: RoleEngineMapping[] }> {
+    return gatewayClient.getTeamRoleMappings();
+  }
+
+  updateTeamRoleMappings(mappings: RoleEngineMapping[]): Promise<{ mappings: RoleEngineMapping[] }> {
+    return gatewayClient.updateTeamRoleMappings(mappings);
   }
 }
 

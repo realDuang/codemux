@@ -50,6 +50,8 @@ import {
   type OrchestrationRun,
   type TeamRun,
   type TeamCreateRequest,
+  type TaskNode,
+  type RoleEngineMapping,
 } from "../types/unified";
 
 // --- Event types emitted by GatewayClient ---
@@ -632,6 +634,18 @@ export class GatewayClient {
 
   getTeamRun(runId: string): Promise<TeamRun | null> {
     return this.request(GatewayRequestType.TEAM_GET, { runId });
+  }
+
+  confirmTeamPlan(runId: string, tasks: TaskNode[]): Promise<{ ok: boolean }> {
+    return this.request(GatewayRequestType.TEAM_CONFIRM_PLAN, { runId, tasks });
+  }
+
+  getTeamRoleMappings(): Promise<{ mappings: RoleEngineMapping[] }> {
+    return this.request(GatewayRequestType.TEAM_GET_ROLE_MAPPINGS, {});
+  }
+
+  updateTeamRoleMappings(mappings: RoleEngineMapping[]): Promise<{ mappings: RoleEngineMapping[] }> {
+    return this.request(GatewayRequestType.TEAM_UPDATE_ROLE_MAPPINGS, { mappings });
   }
 
   // --- Log forwarding (fire-and-forget, no response expected) ---

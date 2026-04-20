@@ -46,6 +46,8 @@ import {
   type TeamCancelRequest,
   type TeamGetRequest,
   type TeamSendMessageRequest,
+  type TeamConfirmPlanRequest,
+  type TeamUpdateRoleMappingsRequest,
 } from "../../../src/types/unified";
 import { isCodexServiceTier } from "../../../src/types/unified";
 
@@ -553,6 +555,21 @@ export class GatewayServer {
       case GatewayRequestType.TEAM_GET: {
         const req = p as TeamGetRequest;
         return agentTeamService.getRun(req.runId);
+      }
+
+      case GatewayRequestType.TEAM_CONFIRM_PLAN: {
+        const req = p as TeamConfirmPlanRequest;
+        agentTeamService.confirmPlan(req.runId, req.tasks);
+        return { ok: true };
+      }
+
+      case GatewayRequestType.TEAM_GET_ROLE_MAPPINGS: {
+        return { mappings: agentTeamService.getRoleMappings() };
+      }
+
+      case GatewayRequestType.TEAM_UPDATE_ROLE_MAPPINGS: {
+        const req = p as TeamUpdateRoleMappingsRequest;
+        return { mappings: agentTeamService.updateRoleMappings(req.mappings) };
       }
 
       default:

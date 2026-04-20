@@ -717,6 +717,9 @@ export const GatewayRequestType = {
   TEAM_SEND_MESSAGE: "team.send-message",
   TEAM_LIST: "team.list",
   TEAM_GET: "team.get",
+  TEAM_CONFIRM_PLAN: "team.confirmPlan",
+  TEAM_GET_ROLE_MAPPINGS: "team.getRoleMappings",
+  TEAM_UPDATE_ROLE_MAPPINGS: "team.updateRoleMappings",
 } as const;
 
 // --- Notification type constants ---
@@ -1049,7 +1052,13 @@ export interface ScheduledTaskRunResult {
 // Agent Team Types
 // ============================================================================
 
-export type TeamRunStatus = "planning" | "running" | "completed" | "failed" | "cancelled";
+export type TeamRunStatus =
+  | "planning"
+  | "awaiting-confirmation"
+  | "running"
+  | "completed"
+  | "failed"
+  | "cancelled";
 export type TaskNodeStatus = "pending" | "blocked" | "running" | "completed" | "failed" | "cancelled";
 export type TeamMode = "light" | "heavy";
 
@@ -1062,6 +1071,10 @@ export interface TaskNode {
   prompt: string;
   /** Which engine to run this task on (optional — defaults to project engine) */
   engineType?: EngineType;
+  /** Optional model override (used together with role → engine mapping) */
+  modelId?: string;
+  /** Role this task maps to; resolves engineType/modelId via RoleEngineMapping */
+  role?: OrchestratorRole;
   /** IDs of tasks that must complete before this one starts */
   dependsOn: string[];
   /** Current execution status */
@@ -1076,6 +1089,10 @@ export interface TaskNode {
   time?: { started?: number; completed?: number };
   /** Optional: worktreeId for file-isolation tasks */
   worktreeId?: string;
+  /** Whether this task writes files — read-only roles/tasks can skip the team worktree */
+  needsWorktree?: boolean;
+  /** Duration in seconds (set on completion) */
+  duration?: number;
 }
 
 /** Represents a complete Agent Team run */
@@ -1089,6 +1106,15 @@ export interface TeamRun {
   parentDirectory?: string;
   /** Default worktree for child sessions created by this run */
   worktreeId?: string;
+  /**
+   * Team-scoped worktree shared by all child sessions in this run.
+   * When set, overrides individual TaskNode.worktreeId unless the task
+   * is read-only (needsWorktree === false).
+   */
+  teamWorktreeName?: string;
+  teamWorktreeDir?: string;
+  /** Role → engine mapping snapshot for this run */
+  roleMappings?: RoleEngineMapping[];
   /** User's original request */
   originalPrompt: string;
   /** Light or Heavy brain mode */
@@ -1122,6 +1148,18 @@ export interface TeamCreateRequest {
   parentDirectory?: string;
   /** Worktree name when the initiating session belongs to a worktree */
   worktreeId?: string;
+  /** Role → engine mapping snapshot for this run */
+  roleMappings?: RoleEngineMapping[];
+  /**
+   * Pre-allocated team worktree (created by the caller, e.g. the frontend,
+   * to share one worktree across all child sessions).
+   */
+  teamWorktreeInfo?: { name: string; directory: string };
+  /**
+   * Whether the user wants to confirm the plan before execution.
+   * Defaults to true for Light Brain, false for Heavy Brain.
+   */
+  requirePlanConfirmation?: boolean;
 }
 
 export interface TeamCancelRequest {
@@ -1137,4 +1175,18 @@ export interface TeamSendMessageRequest {
   runId: string;
   /** Follow-up text forwarded to the Heavy Brain orchestrator */
   text: string;
+}
+
+export interface TeamConfirmPlanRequest {
+  runId: string;
+  /** Edited / approved task list from the user */
+  tasks: TaskNode[];
+}
+
+export interface TeamUpdateRoleMappingsRequest {
+  mappings: RoleEngineMapping[];
+}
+
+export interface TeamGetRoleMappingsResponse {
+  mappings: RoleEngineMapping[];
 }

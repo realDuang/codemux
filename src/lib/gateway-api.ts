@@ -313,6 +313,15 @@ class GatewayAPI {
     return gatewayClient.rejectQuestion(questionId);
   }
 
+  // --- Pending state (resync) ---
+
+  listPending(sessionId: string): Promise<{
+    questions: UnifiedQuestion[];
+    permissions: UnifiedPermission[];
+  }> {
+    return gatewayClient.listPending(sessionId);
+  }
+
   // --- Project ---
 
   listProjects(engineType: EngineType): Promise<UnifiedProject[]> {

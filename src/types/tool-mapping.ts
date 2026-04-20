@@ -59,6 +59,8 @@ const COPILOT_TOOL_MAP: Record<string, NormalizedToolName> = {
   sql: "sql",
   // Intent (Copilot-specific, not a real tool)
   report_intent: "unknown",
+  // User-input question (surfaced as a Question Dock entry; tool part is suppressed by renderer)
+  ask_user: "unknown",
 };
 
 // --- Codex tool name mapping (app-server ThreadItem types) ---

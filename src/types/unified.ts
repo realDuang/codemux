@@ -585,6 +585,9 @@ export const GatewayRequestType = {
   QUESTION_REPLY: "question.reply",
   QUESTION_REJECT: "question.reject",
 
+  // Pending state (resync after reconnect / session switch)
+  PENDING_LIST: "pending.list",
+
   // Project
   PROJECT_LIST: "project.list",
   PROJECT_SET_ENGINE: "project.setEngine",

@@ -108,6 +108,12 @@ export class OpenCodeAdapter extends EngineAdapter {
   // Cached model pricing (per-million-token rates) keyed by "providerID/modelID"
   private modelPricing = new Map<string, ModelPricing>();
 
+  // Pending permission/question tracking for resync after reconnect/session switch.
+  // OpenCode's SDK holds authoritative pending state; these are local mirrors added on
+  // permission.asked/question.asked and cleared on *.replied events.
+  private activePermissions = new Map<string, UnifiedPermission>();
+  private activeQuestions = new Map<string, UnifiedQuestion>();
+
   /** Look up cached pricing for an SDK message's providerID/modelID */
   private getPricing(sdk: any): ModelPricing | undefined {
     if (!sdk.providerID || !sdk.modelID) return undefined;
@@ -584,12 +590,15 @@ export class OpenCodeAdapter extends EngineAdapter {
       patterns: data.pattern ? (Array.isArray(data.pattern) ? data.pattern : [data.pattern]) : [],
     };
 
+    this.activePermissions.set(permission.id, permission);
     this.emit("permission.asked", { permission });
   }
 
   private handlePermissionReplied(data: any): void {
+    const permissionId = data.permissionID ?? data.id;
+    this.activePermissions.delete(permissionId);
     this.emit("permission.replied", {
-      permissionId: data.permissionID ?? data.id,
+      permissionId,
       optionId: data.response ?? "unknown",
     });
   }
@@ -614,12 +623,15 @@ export class OpenCodeAdapter extends EngineAdapter {
       questions,
     };
 
+    this.activeQuestions.set(question.id, question);
     this.emit("question.asked", { question });
   }
 
   private handleQuestionReplied(data: any): void {
+    const questionId = data.requestID ?? data.id;
+    this.activeQuestions.delete(questionId);
     this.emit("question.replied", {
-      questionId: data.requestID ?? data.id,
+      questionId,
       answers: data.answers ?? [],
     });
   }
@@ -1210,6 +1222,7 @@ export class OpenCodeAdapter extends EngineAdapter {
       permissionId,
       optionId: reply.optionId,
     });
+    this.activePermissions.delete(permissionId);
   }
 
   // --- Questions ---
@@ -1226,6 +1239,7 @@ export class OpenCodeAdapter extends EngineAdapter {
       questionId,
       answers,
     });
+    this.activeQuestions.delete(questionId);
   }
 
   async rejectQuestion(questionId: string, sessionId?: string): Promise<void> {
@@ -1239,6 +1253,23 @@ export class OpenCodeAdapter extends EngineAdapter {
       questionId,
       answers: [],
     });
+    this.activeQuestions.delete(questionId);
+  }
+
+  getPendingQuestions(sessionId?: string): UnifiedQuestion[] {
+    const out: UnifiedQuestion[] = [];
+    for (const q of this.activeQuestions.values()) {
+      if (!sessionId || q.sessionId === sessionId) out.push(q);
+    }
+    return out;
+  }
+
+  getPendingPermissions(sessionId?: string): UnifiedPermission[] {
+    const out: UnifiedPermission[] = [];
+    for (const p of this.activePermissions.values()) {
+      if (!sessionId || p.sessionId === sessionId) out.push(p);
+    }
+    return out;
   }
 
   // --- Projects ---

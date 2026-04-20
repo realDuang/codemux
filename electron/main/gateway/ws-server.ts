@@ -346,6 +346,11 @@ export class GatewayServer {
         return this.engineManager.rejectQuestion(req.questionId);
       }
 
+      case GatewayRequestType.PENDING_LIST: {
+        const sessionId = (p as { sessionId: string }).sessionId;
+        return this.engineManager.getPending(sessionId);
+      }
+
       // Project
       case GatewayRequestType.PROJECT_LIST:
         return this.engineManager.listProjects(p.engineType as EngineType);

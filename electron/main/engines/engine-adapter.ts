@@ -285,6 +285,15 @@ export abstract class EngineAdapter extends EventEmitter {
     sessionId?: string,
   ): Promise<void>;
 
+  /**
+   * List pending permission requests (not yet replied to).
+   * Optionally filter by sessionId.
+   * Default: returns empty array (engines without permission support).
+   */
+  getPendingPermissions(_sessionId?: string): UnifiedPermission[] {
+    return [];
+  }
+
   // --- Questions ---
 
   /** Reply to a question request */
@@ -299,6 +308,15 @@ export abstract class EngineAdapter extends EventEmitter {
     questionId: string,
     sessionId?: string,
   ): Promise<void>;
+
+  /**
+   * List pending question requests (not yet answered).
+   * Optionally filter by sessionId.
+   * Default: returns empty array (engines without question support).
+   */
+  getPendingQuestions(_sessionId?: string): UnifiedQuestion[] {
+    return [];
+  }
 
   // --- Projects ---
 

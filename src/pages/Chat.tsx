@@ -690,6 +690,10 @@ export default function Chat() {
           if (sessionStore.initError) {
             initializeSession();
           }
+          // Resync pending question/permission state for the active session —
+          // a reconnect may have caused us to miss one-shot `*.asked` events.
+          const sid = sessionStore.current;
+          if (sid) void resyncPending(sid);
         },
         onDisconnected: (reason: string) => {
           logger.warn("[Gateway] Disconnected:", reason);
@@ -973,6 +977,10 @@ export default function Chat() {
 
     // Persist last selected session for restore on next app launch
     saveSetting("lastSessionId", sessionId);
+
+    // Resync any pending questions/permissions we may have missed while the
+    // user was on another session (or while WS was disconnected).
+    void resyncPending(sessionId);
   };
 
   // New session
@@ -1607,6 +1615,37 @@ export default function Chat() {
         setMessageStore("question", sessionId, filtered);
         break;
       }
+    }
+  };
+
+  /**
+   * Resync pending questions/permissions for a session from the backend.
+   * Called on session switch and after WS reconnect so the user isn't stranded
+   * if a `question.asked` / `permission.asked` notification was missed.
+   * Merges with existing store entries (dedupe by id) — never removes, since
+   * an already-seen item might still be valid.
+   */
+  const resyncPending = async (sessionId: string) => {
+    try {
+      const { questions, permissions } = await gateway.listPending(sessionId);
+
+      const existingQs = messageStore.question[sessionId] || [];
+      const existingQIds = new Set(existingQs.map((q) => q.id));
+      const newQs = questions.filter((q) => !existingQIds.has(q.id));
+      if (newQs.length > 0) {
+        logger.debug("[Resync] Restored", newQs.length, "pending question(s) for", sessionId);
+        setMessageStore("question", sessionId, [...existingQs, ...newQs]);
+      }
+
+      const existingPs = messageStore.permission[sessionId] || [];
+      const existingPIds = new Set(existingPs.map((p) => p.id));
+      const newPs = permissions.filter((p) => !existingPIds.has(p.id));
+      if (newPs.length > 0) {
+        logger.debug("[Resync] Restored", newPs.length, "pending permission(s) for", sessionId);
+        setMessageStore("permission", sessionId, [...existingPs, ...newPs]);
+      }
+    } catch (err) {
+      logger.warn("[Resync] Failed to list pending for", sessionId, err);
     }
   };
 

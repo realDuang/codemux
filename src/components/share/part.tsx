@@ -91,6 +91,16 @@ export function Part(props: PartProps) {
     return <SystemNotice part={props.part as SystemNoticePart} />;
   }
 
+  // ask_user tool calls are surfaced via the Question Dock (InputAreaQuestion);
+  // rendering them as a regular tool part just shows an empty "running unknown tool"
+  // card — suppress it entirely so only the Question Dock represents the prompt.
+  if (
+    props.part.type === "tool" &&
+    (props.part as ToolPart).originalTool === "ask_user"
+  ) {
+    return null;
+  }
+
   return (
     <div
       class={styles.root}

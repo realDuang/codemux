@@ -725,6 +725,22 @@ export class CodexAdapter extends EngineAdapter {
     }
   }
 
+  getPendingQuestions(sessionId?: string): UnifiedQuestion[] {
+    const out: UnifiedQuestion[] = [];
+    for (const p of this.pendingQuestions.values()) {
+      if (!sessionId || p.question.sessionId === sessionId) out.push(p.question);
+    }
+    return out;
+  }
+
+  getPendingPermissions(sessionId?: string): UnifiedPermission[] {
+    const out: UnifiedPermission[] = [];
+    for (const p of this.pendingPermissions.values()) {
+      if (!sessionId || p.permission.sessionId === sessionId) out.push(p.permission);
+    }
+    return out;
+  }
+
   async listProjects(): Promise<UnifiedProject[]> {
     return [];
   }

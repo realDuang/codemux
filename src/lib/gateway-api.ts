@@ -6,6 +6,7 @@
  */
 
 import { gatewayClient } from "./gateway-client";
+import { GatewayRequestType } from "../types/unified";
 import { logger } from "./logger";
 import type {
   EngineType,
@@ -319,7 +320,7 @@ class GatewayAPI {
     questions: UnifiedQuestion[];
     permissions: UnifiedPermission[];
   }> {
-    return gatewayClient.listPending(sessionId);
+    return gatewayClient.request(GatewayRequestType.PENDING_LIST, { sessionId });
   }
 
   // --- Project ---

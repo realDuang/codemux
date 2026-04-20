@@ -482,15 +482,6 @@ export class GatewayClient {
     return this.request(GatewayRequestType.QUESTION_REJECT, { questionId });
   }
 
-  // --- Pending state (resync) ---
-
-  listPending(sessionId: string): Promise<{
-    questions: UnifiedQuestion[];
-    permissions: UnifiedPermission[];
-  }> {
-    return this.request(GatewayRequestType.PENDING_LIST, { sessionId });
-  }
-
   // --- Project API ---
 
   listProjects(engineType: EngineType): Promise<UnifiedProject[]> {

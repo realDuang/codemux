@@ -63,6 +63,15 @@ export function associateRunWithTeam(teamId: string, runId: string): void {
   setOrchestrationStore("teams", teamId, "runId", runId);
 }
 
+/**
+ * Associate a child session with a team for sidebar grouping.
+ * Used by the AgentTeamService-driven flow to mirror PR #117's sidebar
+ * grouping semantics.
+ */
+export function associateChildSession(teamId: string, sessionId: string): void {
+  setOrchestrationStore("sessionToTeam", sessionId, teamId);
+}
+
 /** Get the teamId for a session (parent or child) */
 export function getTeamId(sessionId: string): string | undefined {
   return orchestrationStore.sessionToTeam[sessionId];

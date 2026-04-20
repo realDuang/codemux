@@ -84,7 +84,7 @@ import {
 } from "../stores/team";
 import { TeamRunCard } from "../components/team/TeamRunCard";
 import { computeActiveSessions } from "../lib/active-sessions";
-import { orchestrationStore, updateRun, setCurrentRunId, generateTeamId, registerTeam, associateRunWithTeam, getTeamId, isTeamParentSession, getRunForTeam, restoreFromRuns, autoDetectTeams, getRoleMappings } from "../stores/orchestration";
+import { orchestrationStore, updateRun, setCurrentRunId, generateTeamId, registerTeam, associateRunWithTeam, associateChildSession, getTeamId, isTeamParentSession, getRunForTeam, restoreFromRuns, autoDetectTeams, getRoleMappings } from "../stores/orchestration";
 import { OrchestrationCards } from "../components/orchestration/OrchestrationCards";
 import type { OrchestrationRun } from "../types/unified";
 
@@ -830,7 +830,35 @@ export default function Chat() {
             }
           }
         },
-        ...connectTeamHandlers(),
+        ...(() => {
+          const teamHandlers = connectTeamHandlers();
+          // Bridge: mirror AgentTeamService team runs into PR #117's
+          // sidebar grouping registry so child sessions collapse under
+          // their parent session in SessionSidebar.
+          const bridgeToSidebar = (run: import("../types/unified").TeamRun) => {
+            if (!run.parentSessionId) return;
+            const teamId = getTeamId(run.parentSessionId) ?? run.id;
+            const worktreeInfo = run.teamWorktreeName && run.teamWorktreeDir
+              ? { name: run.teamWorktreeName, directory: run.teamWorktreeDir }
+              : undefined;
+            registerTeam(teamId, run.parentSessionId, worktreeInfo);
+            associateRunWithTeam(teamId, run.id);
+            for (const task of run.tasks) {
+              if (task.sessionId) {
+                associateChildSession(teamId, task.sessionId);
+              }
+            }
+          };
+          return {
+            onTeamRunUpdated: (run: import("../types/unified").TeamRun) => {
+              teamHandlers.onTeamRunUpdated(run);
+              bridgeToSidebar(run);
+            },
+            onTeamTaskUpdated: (runId: string, task: import("../types/unified").TaskNode) => {
+              teamHandlers.onTeamTaskUpdated(runId, task);
+            },
+          };
+        })(),
       };
 
       const needsSessionBootstrap =

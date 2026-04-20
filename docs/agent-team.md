@@ -78,17 +78,48 @@ Resolution order in `TaskExecutor`:
 2. Else if `task.role` is set and `resolveRole` returns a mapping → use it.
 3. Else fall back to the run's `defaultEngineType`.
 
-## Team Worktree (Planned)
+## Team Worktree
 
-Read/write tasks benefit from sharing a single git worktree so successive tasks
-see each other's edits. Types already carry `teamWorktreeName` / `teamWorktreeDir`
-on `TeamRun`; full enforcement in `DAGExecutor.runSingleTask` is a future
-increment. Read-only roles (explorer/researcher/reviewer) opt out and use the
-parent directory to avoid contention.
+Read/write tasks share a single git worktree so successive tasks see each
+other's edits. `TeamRun.teamWorktreeName` / `teamWorktreeDir` carry the
+shared worktree through the run, and `DAGExecutor.runSingleTask`
+routes each task based on its read/write intent:
 
-The gateway `WORKTREE_CREATE` handler already whitelists `team-*` names so the
-orchestrator can provision worktrees even when the global worktree feature flag
-is off.
+- **Write-capable task** (`needsWorktree !== false`, or role mapping
+  has `readOnly: false`) → runs with `directory = teamWorktreeDir`
+  and `defaultWorktreeId = teamWorktreeName`, so all writers share a
+  single worktree.
+- **Read-only task** (`needsWorktree === false`, or role mapping has
+  `readOnly: true`) → runs in the run's primary directory, avoiding
+  contention with writers.
+
+When `teamWorktreeDir` is unset, all tasks use the run's directory
+and existing `run.worktreeId`.
+
+The gateway `WORKTREE_CREATE` handler whitelists `team-*` names so the
+orchestrator can provision worktrees even when the global worktree
+feature flag is off.
+
+## Result Aggregation to Parent
+
+When a run reaches a terminal state (`completed` / `failed`) and has a
+`parentSessionId`, `AgentTeamService.relayResultsToParentSession()`
+sends the aggregated `finalResult` + failed-task list as a user message
+to the parent session. The parent engine then summarizes for the user,
+keeping everything in one conversation.
+
+Gated by `TeamRun.aggregateToParent` (defaults to `true`; set `false`
+to disable). Failures are swallowed with a warn log so a broken parent
+session cannot corrupt run state.
+
+## Sidebar Grouping
+
+Chat wraps `connectTeamHandlers()` to mirror every TeamRun update into
+PR #117's orchestration sidebar registry (`registerTeam` +
+`associateRunWithTeam` + `associateChildSession`), so Light/Heavy brain
+child sessions collapse under their parent session in
+`SessionSidebar` with the same UX as PR #117's orchestrator-service
+flow.
 
 ## Service Coexistence
 

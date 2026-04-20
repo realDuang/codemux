@@ -1,6 +1,7 @@
 import { createStore } from "solid-js/store";
 import type { OrchestrationRun, RoleEngineMapping, OrchestratorRole, EngineType } from "../types/unified";
 import { getSetting, saveSetting } from "../lib/settings";
+import { gateway } from "../lib/gateway-api";
 
 /** Default role → engine mapping (inspired by oh-my-opencode-slim agent roles) */
 export const DEFAULT_ROLE_MAPPINGS: RoleEngineMapping[] = [
@@ -182,10 +183,26 @@ export function autoDetectTeams(sessions: { id: string; worktreeId?: string }[])
   return result;
 }
 
-/** Update the role → engine mapping and persist */
+/** Update the role → engine mapping and persist.
+ *
+ * Writes to three places:
+ * - orchestrationStore (reactive frontend state, PR #117 flow)
+ * - saveSetting("orchestration.roleMapping", ...) (localStorage/settings.json
+ *   fallback for the PR #117 flow)
+ * - gateway.updateTeamRoleMappings(...) (Light/Heavy brain flow; persists to
+ *   settings.json under team.roleMappings so AgentTeamService.resolveRole()
+ *   picks up the same edits)
+ *
+ * The gateway call is best-effort — UI state is updated regardless of RPC
+ * failure.
+ */
 export function updateRoleMappings(mappings: RoleEngineMapping[]): void {
   setOrchestrationStore("roleMappings", mappings);
   saveSetting("orchestration.roleMapping", mappings);
+  // Mirror to AgentTeamService so Light/Heavy brain sees the same config.
+  void gateway.updateTeamRoleMappings(mappings).catch((err: unknown) => {
+    console.warn("[Orchestration] Failed to sync role mappings to team service:", err);
+  });
 }
 
 /** Get the engine type for a given role */

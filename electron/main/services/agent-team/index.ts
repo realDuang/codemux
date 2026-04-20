@@ -200,6 +200,8 @@ export class AgentTeamService extends EventEmitter {
       time: { created: Date.now() },
       // Plan confirmation defaults: Light = on, Heavy = off (can be overridden)
       requirePlanConfirmation: req.requirePlanConfirmation ?? (req.mode === "light"),
+      // Default: relay results to parent when we have one
+      aggregateToParent: req.aggregateToParent ?? true,
     };
 
     this.runs.set(run.id, run);
@@ -398,9 +400,46 @@ export class AgentTeamService extends EventEmitter {
         this.activeRelayChannels.set(run.id, orchestrator.userChannel);
         await orchestrator.run(run, resolvedEngine, onTaskUpdated);
       }
+      await this.relayResultsToParentSession(run);
     } finally {
       this.cleanupRunRuntimeState(run.id);
       this.emitRunUpdated(run);
+    }
+  }
+
+  /**
+   * Send the aggregated run result back to the parent session so the parent
+   * engine can summarize it for the user. Silently no-ops if there is no
+   * parent session, no result, or the engine send fails.
+   *
+   * Gated by `run.aggregateToParent` (defaults to true when a parentSessionId
+   * exists, preserving the original single-session UX).
+   */
+  private async relayResultsToParentSession(run: TeamRun): Promise<void> {
+    if (!run.parentSessionId || !this.engineManager) return;
+    if (run.aggregateToParent === false) return;
+    if (run.status !== "completed" && run.status !== "failed") return;
+    if (!run.finalResult) return;
+
+    const failed = run.tasks.filter((t) => t.status === "failed");
+    const failedSection = failed.length > 0
+      ? `\n\nFailed tasks:\n${failed.map((t) => `- ${t.description}: ${t.error ?? "unknown error"}`).join("\n")}`
+      : "";
+
+    const header = run.status === "completed"
+      ? "The agent team has completed. Here are the results from each task:"
+      : "The agent team finished with failures. Partial results:";
+
+    const prompt = `${header}\n\n${run.finalResult}${failedSection}\n\nPlease provide a concise summary of what was accomplished${failed.length > 0 ? ", any issues encountered," : ""} and suggested next steps if applicable.`;
+
+    try {
+      await this.engineManager.sendMessage(
+        run.parentSessionId,
+        [{ type: "text", text: prompt }],
+      );
+      agentTeamLog.info(`[${run.id}] Relayed aggregated results to parent session ${run.parentSessionId}`);
+    } catch (err) {
+      agentTeamLog.warn(`[${run.id}] Failed to relay results to parent session:`, err);
     }
   }
 

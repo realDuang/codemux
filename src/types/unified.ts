@@ -1131,6 +1131,12 @@ export interface TeamRun {
   finalResult?: string;
   /** Whether this run paused for user plan confirmation before execution */
   requirePlanConfirmation?: boolean;
+  /**
+   * Whether to relay the aggregated result back to the parent session
+   * (as a user message) so the parent engine can summarize for the user.
+   * Defaults to true when parentSessionId is set.
+   */
+  aggregateToParent?: boolean;
 }
 
 // --- Agent Team Gateway types ---
@@ -1162,6 +1168,11 @@ export interface TeamCreateRequest {
    * Defaults to true for Light Brain, false for Heavy Brain.
    */
   requirePlanConfirmation?: boolean;
+  /**
+   * Whether to relay the aggregated result back to the parent session
+   * after the run completes. Defaults to true when a parent session exists.
+   */
+  aggregateToParent?: boolean;
 }
 
 export interface TeamCancelRequest {

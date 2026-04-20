@@ -213,6 +213,52 @@ describe("AgentTeamService", () => {
     });
   });
 
+  describe("result aggregation to parent session", () => {
+    it("relays aggregated result to parentSessionId after light run completes", async () => {
+      const engineManager = createEngineManagerMock("opencode");
+      const service = createService();
+      const run = makeRun({ aggregateToParent: true });
+
+      service.init(engineManager);
+      await (service as any).executeRun(run, "opencode");
+
+      // The final call should be the aggregation relay to parent session
+      const calls = (engineManager.sendMessage as any).mock.calls;
+      const relayCall = calls.find((c: any[]) => c[0] === "parent-session");
+      expect(relayCall).toBeDefined();
+      expect(relayCall[1][0].text).toContain("agent team");
+      expect(relayCall[1][0].text).toContain("A result");
+      expect(run.status).toBe("completed");
+    });
+
+    it("skips relay when aggregateToParent is false", async () => {
+      const engineManager = createEngineManagerMock("opencode");
+      const service = createService();
+      const run = makeRun({ aggregateToParent: false });
+
+      service.init(engineManager);
+      await (service as any).executeRun(run, "opencode");
+
+      const calls = (engineManager.sendMessage as any).mock.calls;
+      const relayCall = calls.find((c: any[]) => c[0] === "parent-session");
+      expect(relayCall).toBeUndefined();
+      expect(run.status).toBe("completed");
+    });
+
+    it("skips relay when parentSessionId is missing", async () => {
+      const engineManager = createEngineManagerMock("opencode");
+      const service = createService();
+      const run = makeRun({ parentSessionId: undefined as any, aggregateToParent: true });
+
+      service.init(engineManager);
+      await (service as any).executeRun(run, "opencode");
+
+      const calls = (engineManager.sendMessage as any).mock.calls;
+      const relayCall = calls.find((c: any[]) => c[0] === "parent-session" || c[0] === undefined);
+      expect(relayCall).toBeUndefined();
+    });
+  });
+
   describe("lifecycle hardening", () => {
     it("loads persisted runs and marks in-progress work as interrupted", () => {
       const filePath = path.join(tmpDir, "agent-team-runs.json");

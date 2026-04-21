@@ -1,9 +1,9 @@
 import { EventEmitter } from "events";
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { TaskExecutor } from "../../../../../electron/main/services/agent-team/task-executor";
-import type { TaskNode, UnifiedMessage } from "../../../../../src/types/unified";
+import { TaskExecutor } from "../../../../../electron/main/services/orchestration/task-executor";
+import type { OrchestrationSubtask, UnifiedMessage } from "../../../../../src/types/unified";
 
-function makeTask(overrides: Partial<TaskNode> & { id: string }): TaskNode {
+function makeTask(overrides: Partial<OrchestrationSubtask> & { id: string }): OrchestrationSubtask {
   return {
     id: overrides.id,
     description: `Task ${overrides.id}`,

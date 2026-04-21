@@ -30,8 +30,8 @@ export function TeamResultCard(props: TeamResultCardProps) {
   const successCount = () => props.run.subtasks.filter((t) => t.status === "completed").length;
   const failedCount = () => props.run.subtasks.filter((t) => t.status === "failed").length;
   const totalDuration = () => {
-    if (props.run.completedAt && props.run.createdAt) {
-      return props.run.completedAt - props.run.createdAt;
+    if (props.run.time.completed && props.run.time.created) {
+      return props.run.time.completed - props.run.time.created;
     }
     return undefined;
   };

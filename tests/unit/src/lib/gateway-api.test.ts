@@ -43,11 +43,11 @@ const mockGatewayClient = {
   updateScheduledTask: vi.fn().mockResolvedValue({ id: 't1' }),
   deleteScheduledTask: vi.fn().mockResolvedValue({ success: true }),
   runScheduledTaskNow: vi.fn().mockResolvedValue({ success: true }),
-  createTeamRun: vi.fn().mockResolvedValue({ id: 'team-1' }),
-  cancelTeamRun: vi.fn().mockResolvedValue(undefined),
-  sendTeamMessage: vi.fn().mockResolvedValue(undefined),
-  listTeamRuns: vi.fn().mockResolvedValue([]),
-  getTeamRun: vi.fn().mockResolvedValue(null),
+  createOrchestrationRun: vi.fn().mockResolvedValue({ id: 'team-1' }),
+  cancelOrchestrationRun: vi.fn().mockResolvedValue(undefined),
+  sendOrchestrationMessage: vi.fn().mockResolvedValue(undefined),
+  listOrchestrationRuns: vi.fn().mockResolvedValue([]),
+  getOrchestrationRun: vi.fn().mockResolvedValue(null),
   request: vi.fn().mockResolvedValue({}),
   on: vi.fn(),
   off: vi.fn(),
@@ -424,9 +424,9 @@ describe('GatewayAPI', () => {
     expect(mockGatewayClient.request).toHaveBeenCalledWith('worktree.listBranches', { directory: '/dir' });
   });
 
-  // --- Agent Team ---
+  // --- Orchestration ---
 
-  it('createTeamRun delegates', async () => {
+  it('createOrchestration delegates', async () => {
     const req = {
       sessionId: 'sess-1',
       prompt: 'Investigate issue',
@@ -435,53 +435,53 @@ describe('GatewayAPI', () => {
       engineType: 'claude',
     } as any;
 
-    await gateway.createTeamRun(req);
+    await gateway.createOrchestration(req);
 
-    expect(mockGatewayClient.createTeamRun).toHaveBeenCalledWith(req);
+    expect(mockGatewayClient.createOrchestrationRun).toHaveBeenCalledWith(req);
   });
 
-  it('cancelTeamRun delegates', async () => {
-    await gateway.cancelTeamRun('team-1');
-    expect(mockGatewayClient.cancelTeamRun).toHaveBeenCalledWith('team-1');
+  it('cancelOrchestration delegates', async () => {
+    await gateway.cancelOrchestration('team-1');
+    expect(mockGatewayClient.cancelOrchestrationRun).toHaveBeenCalledWith('team-1');
   });
 
-  it('sendTeamMessage delegates', async () => {
-    await gateway.sendTeamMessage('team-1', 'Need a tighter plan');
-    expect(mockGatewayClient.sendTeamMessage).toHaveBeenCalledWith('team-1', 'Need a tighter plan');
+  it('sendOrchestrationMessage delegates', async () => {
+    await gateway.sendOrchestrationMessage('team-1', 'Need a tighter plan');
+    expect(mockGatewayClient.sendOrchestrationMessage).toHaveBeenCalledWith('team-1', 'Need a tighter plan');
   });
 
-  it('listTeamRuns delegates', async () => {
-    await gateway.listTeamRuns();
-    expect(mockGatewayClient.listTeamRuns).toHaveBeenCalled();
+  it('listOrchestrations delegates', async () => {
+    await gateway.listOrchestrations();
+    expect(mockGatewayClient.listOrchestrationRuns).toHaveBeenCalled();
   });
 
-  it('getTeamRun delegates', async () => {
-    await gateway.getTeamRun('team-1');
-    expect(mockGatewayClient.getTeamRun).toHaveBeenCalledWith('team-1');
+  it('getOrchestration delegates', async () => {
+    await gateway.getOrchestration('team-1');
+    expect(mockGatewayClient.getOrchestrationRun).toHaveBeenCalledWith('team-1');
   });
 
-  it('binds team notifications to the provided handlers', async () => {
-    const onTeamRunUpdated = vi.fn();
-    const onTeamTaskUpdated = vi.fn();
+  it('binds orchestration notifications to the provided handlers', async () => {
+    const onOrchestrationUpdated = vi.fn();
+    const onOrchestrationSubtaskUpdated = vi.fn();
     const run = { id: 'team-1' } as any;
-    const task = { id: 'task-1' } as any;
+    const subtask = { id: 'task-1' } as any;
 
-    await gateway.init({ onTeamRunUpdated, onTeamTaskUpdated });
+    await gateway.init({ onOrchestrationUpdated, onOrchestrationSubtaskUpdated });
 
-    const teamRunHandler = mockGatewayClient.on.mock.calls.find(
-      ([event]) => event === 'team.run.updated',
+    const runHandler = mockGatewayClient.on.mock.calls.find(
+      ([event]) => event === 'orchestration.updated',
     )?.[1];
-    const teamTaskHandler = mockGatewayClient.on.mock.calls.find(
-      ([event]) => event === 'team.task.updated',
+    const subtaskHandler = mockGatewayClient.on.mock.calls.find(
+      ([event]) => event === 'orchestration.subtask.updated',
     )?.[1];
 
-    expect(teamRunHandler).toBeTypeOf('function');
-    expect(teamTaskHandler).toBeTypeOf('function');
+    expect(runHandler).toBeTypeOf('function');
+    expect(subtaskHandler).toBeTypeOf('function');
 
-    teamRunHandler?.({ run });
-    teamTaskHandler?.({ runId: 'team-1', task });
+    runHandler?.({ run });
+    subtaskHandler?.({ runId: 'team-1', subtask });
 
-    expect(onTeamRunUpdated).toHaveBeenCalledWith(run);
-    expect(onTeamTaskUpdated).toHaveBeenCalledWith('team-1', task);
+    expect(onOrchestrationUpdated).toHaveBeenCalledWith(run);
+    expect(onOrchestrationSubtaskUpdated).toHaveBeenCalledWith('team-1', subtask);
   });
 });

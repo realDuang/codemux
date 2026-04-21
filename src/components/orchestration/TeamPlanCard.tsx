@@ -47,6 +47,7 @@ export function TeamPlanCard(props: TeamPlanCardProps) {
       {
         id: makeSubtaskId(),
         description: "",
+        prompt: "",
         engineType: firstEngine,
         dependsOn: [],
         needsWorktree: false,

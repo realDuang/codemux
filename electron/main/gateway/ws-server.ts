@@ -17,8 +17,7 @@ import { gatewayLog } from "../services/logger";
 import log from "../services/logger";
 import { conversationStore } from "../services/conversation-store";
 import { scheduledTaskService } from "../services/scheduled-task-service";
-import { orchestratorService } from "../services/orchestrator-service";
-import { agentTeamService } from "../services/agent-team";
+import { orchestrationService } from "../services/orchestration";
 import {
   GatewayRequestType,
   GatewayNotificationType,
@@ -42,12 +41,12 @@ import {
   type WorktreeRemoveRequest,
   type WorktreeMergeRequest,
   type WorktreeListBranchesRequest,
-  type TeamCreateRequest,
-  type TeamCancelRequest,
-  type TeamGetRequest,
-  type TeamSendMessageRequest,
-  type TeamConfirmPlanRequest,
-  type TeamUpdateRoleMappingsRequest,
+  type OrchestrationCreateRequest,
+  type OrchestrationCancelRequest,
+  type OrchestrationGetRequest,
+  type OrchestrationSendMessageRequest,
+  type OrchestrationConfirmPlanRequest,
+  type OrchestrationUpdateRoleMappingsRequest,
 } from "../../../src/types/unified";
 import { isCodexServiceTier } from "../../../src/types/unified";
 
@@ -72,7 +71,6 @@ export class GatewayServer {
   ) {
     this.engineManager = engineManager;
     this.authValidator = options?.authValidator;
-    orchestratorService.init(engineManager);
     this.subscribeToEngineEvents();
 
     onFileChange((event) => {
@@ -512,64 +510,49 @@ export class GatewayServer {
         return worktreeManager.listBranches(req.directory);
       }
 
-      // Orchestration (PR #117 — to be absorbed into Agent Team)
-      case GatewayRequestType.ORCHESTRATION_CREATE:
-        return orchestratorService.createRun(p.parentSessionId, p.directory, p.prompt, p.engineTypes, p.roleMappings, p.worktreeInfo);
-      case GatewayRequestType.ORCHESTRATION_DECOMPOSE:
-        orchestratorService.decomposeTask(p.runId).catch((err) => {
-          gatewayLog.error("[Orchestration] decompose failed:", err);
-        });
+      // Orchestration (unified Light/Heavy brain + role-based plan confirmation)
+      case GatewayRequestType.ORCHESTRATION_CREATE: {
+        const req = p as OrchestrationCreateRequest;
+        return orchestrationService.createRun(req);
+      }
+
+      case GatewayRequestType.ORCHESTRATION_DECOMPOSE: {
+        // Legacy frontend hint — decomposition is started automatically by createRun;
+        // this handler exists for backward compatibility and is a no-op.
         return { ok: true };
-      case GatewayRequestType.ORCHESTRATION_CONFIRM:
-        orchestratorService.confirmAndExecute(p.runId, p.subtasks).catch((err) => {
-          gatewayLog.error("[Orchestration] confirm+execute failed:", err);
-        });
+      }
+
+      case GatewayRequestType.ORCHESTRATION_CONFIRM: {
+        const req = p as OrchestrationConfirmPlanRequest;
+        orchestrationService.confirmPlan(req.runId, req.subtasks);
         return { ok: true };
-      case GatewayRequestType.ORCHESTRATION_CANCEL:
-        return orchestratorService.cancelRun(p.runId);
+      }
+
+      case GatewayRequestType.ORCHESTRATION_CANCEL: {
+        const req = p as OrchestrationCancelRequest;
+        return orchestrationService.cancelRun(req.runId);
+      }
+
       case GatewayRequestType.ORCHESTRATION_LIST:
-        return orchestratorService.listRuns();
+        return orchestrationService.listRuns();
 
-      // --- Agent Team (Light/Heavy Brain) ---
-
-      case GatewayRequestType.TEAM_CREATE: {
-        const req = p as TeamCreateRequest;
-        return agentTeamService.createRun(req);
+      case GatewayRequestType.ORCHESTRATION_GET: {
+        const req = p as OrchestrationGetRequest;
+        return orchestrationService.getRun(req.runId);
       }
 
-      case GatewayRequestType.TEAM_CANCEL: {
-        const req = p as TeamCancelRequest;
-        return agentTeamService.cancelRun(req.runId);
-      }
-
-      case GatewayRequestType.TEAM_SEND_MESSAGE: {
-        const req = p as TeamSendMessageRequest;
-        agentTeamService.sendMessageToRun(req.runId, req.text);
+      case GatewayRequestType.ORCHESTRATION_SEND_MESSAGE: {
+        const req = p as OrchestrationSendMessageRequest;
+        orchestrationService.sendMessageToRun(req.runId, req.text);
         return;
       }
 
-      case GatewayRequestType.TEAM_LIST: {
-        return agentTeamService.listRuns();
-      }
+      case GatewayRequestType.ORCHESTRATION_GET_ROLE_MAPPINGS:
+        return { mappings: orchestrationService.getRoleMappings() };
 
-      case GatewayRequestType.TEAM_GET: {
-        const req = p as TeamGetRequest;
-        return agentTeamService.getRun(req.runId);
-      }
-
-      case GatewayRequestType.TEAM_CONFIRM_PLAN: {
-        const req = p as TeamConfirmPlanRequest;
-        agentTeamService.confirmPlan(req.runId, req.tasks);
-        return { ok: true };
-      }
-
-      case GatewayRequestType.TEAM_GET_ROLE_MAPPINGS: {
-        return { mappings: agentTeamService.getRoleMappings() };
-      }
-
-      case GatewayRequestType.TEAM_UPDATE_ROLE_MAPPINGS: {
-        const req = p as TeamUpdateRoleMappingsRequest;
-        return { mappings: agentTeamService.updateRoleMappings(req.mappings) };
+      case GatewayRequestType.ORCHESTRATION_UPDATE_ROLE_MAPPINGS: {
+        const req = p as OrchestrationUpdateRoleMappingsRequest;
+        return { mappings: orchestrationService.updateRoleMappings(req.mappings) };
       }
 
       default:
@@ -696,21 +679,13 @@ export class GatewayServer {
       });
     });
 
-    // Orchestration events (PR #117 — to be absorbed)
-    orchestratorService.on("orchestration.updated", (data) => {
+    // Orchestration events
+    orchestrationService.on("orchestration.updated", (data) => {
       this.broadcast({ type: GatewayNotificationType.ORCHESTRATION_UPDATED, payload: data });
     });
-
-    // Agent Team events
-    agentTeamService.on("team.run.updated", (data) => {
+    orchestrationService.on("orchestration.subtask.updated", (data) => {
       this.broadcast({
-        type: GatewayNotificationType.TEAM_RUN_UPDATED,
-        payload: data,
-      });
-    });
-    agentTeamService.on("team.task.updated", (data) => {
-      this.broadcast({
-        type: GatewayNotificationType.TEAM_TASK_UPDATED,
+        type: GatewayNotificationType.ORCHESTRATION_SUBTASK_UPDATED,
         payload: data,
       });
     });

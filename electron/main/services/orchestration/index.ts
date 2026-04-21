@@ -9,15 +9,15 @@ import fs from "node:fs";
 import path from "node:path";
 import { app } from "electron";
 import { timeId } from "../../utils/id-gen";
-import { agentTeamLog } from "./logger";
+import { orchestrationLog } from "./logger";
 import { LightBrainOrchestrator } from "./light-brain";
 import { HeavyBrainOrchestrator } from "./heavy-brain";
 import type { UserChannel } from "./user-channel";
 import type { EngineManager } from "../../gateway/engine-manager";
 import type {
-  TeamRun,
-  TeamCreateRequest,
-  TaskNode,
+  OrchestrationRun,
+  OrchestrationCreateRequest,
+  OrchestrationSubtask,
   EngineType,
   RoleEngineMapping,
   OrchestratorRole,
@@ -25,7 +25,7 @@ import type {
 import { loadSettings, saveSettings } from "../logger";
 
 const SAVE_DEBOUNCE_MS = 500;
-const ROLE_MAPPINGS_SETTING_KEY = "team.roleMappings";
+const ROLE_MAPPINGS_SETTING_KEY = "orchestration.roleMappings";
 
 /** Default role → engine mapping (inspired by oh-my-opencode-slim agent roles, via PR #117). */
 export const DEFAULT_ROLE_MAPPINGS: RoleEngineMapping[] = [
@@ -64,9 +64,9 @@ export const DEFAULT_ROLE_MAPPINGS: RoleEngineMapping[] = [
   },
 ];
 
-interface TeamRunFileFormat {
+interface OrchestrationRunFileFormat {
   version: 1;
-  runs: TeamRun[];
+  runs: OrchestrationRun[];
 }
 
 /**
@@ -75,29 +75,29 @@ interface TeamRunFileFormat {
  * gateway handler for TEAM_CONFIRM_PLAN calls `resolve(tasks)` to unblock it.
  */
 interface PendingConfirmation {
-  resolve: (tasks: TaskNode[]) => void;
+  resolve: (tasks: OrchestrationSubtask[]) => void;
   reject: (reason: unknown) => void;
 }
 
 // --- Event types ---
 
-export interface AgentTeamServiceEvents {
-  "team.run.updated": (data: { run: TeamRun }) => void;
-  "team.task.updated": (data: { runId: string; task: TaskNode }) => void;
-  "team.roleMappings.updated": (data: { mappings: RoleEngineMapping[] }) => void;
+export interface OrchestrationServiceEvents {
+  "orchestration.updated": (data: { run: OrchestrationRun }) => void;
+  "orchestration.subtask.updated": (data: { runId: string; task: OrchestrationSubtask }) => void;
+  "orchestration.roleMappings.updated": (data: { mappings: RoleEngineMapping[] }) => void;
 }
 
-export declare interface AgentTeamService {
-  on<K extends keyof AgentTeamServiceEvents>(event: K, listener: AgentTeamServiceEvents[K]): this;
-  off<K extends keyof AgentTeamServiceEvents>(event: K, listener: AgentTeamServiceEvents[K]): this;
-  emit<K extends keyof AgentTeamServiceEvents>(event: K, ...args: Parameters<AgentTeamServiceEvents[K]>): boolean;
+export declare interface OrchestrationService {
+  on<K extends keyof OrchestrationServiceEvents>(event: K, listener: OrchestrationServiceEvents[K]): this;
+  off<K extends keyof OrchestrationServiceEvents>(event: K, listener: OrchestrationServiceEvents[K]): this;
+  emit<K extends keyof OrchestrationServiceEvents>(event: K, ...args: Parameters<OrchestrationServiceEvents[K]>): boolean;
 }
 
 // --- Service ---
 
-export class AgentTeamService extends EventEmitter {
+export class OrchestrationService extends EventEmitter {
   private engineManager: EngineManager | null = null;
-  private runs = new Map<string, TeamRun>();
+  private runs = new Map<string, OrchestrationRun>();
   /** Session IDs created by team runs — auto-approve permissions for these. */
   private autoApproveSessions = new Set<string>();
   /** Run-scoped auto-approve session tracking for deterministic cleanup. */
@@ -124,13 +124,13 @@ export class AgentTeamService extends EventEmitter {
     this.loadFromDisk();
     this.subscribePermissionAutoApprove();
     this.initialized = true;
-    agentTeamLog.info(`Agent Team Service initialized with ${this.runs.size} run(s)`);
+    orchestrationLog.info(`Agent Team Service initialized with ${this.runs.size} run(s)`);
   }
 
   async shutdown(): Promise<void> {
     // Cancel all running orchestrators
     for (const [runId, orchestrator] of this.activeOrchestrators) {
-      agentTeamLog.info(`Cancelling orchestrator for run ${runId}`);
+      orchestrationLog.info(`Cancelling orchestrator for run ${runId}`);
       await orchestrator.cancel();
     }
     this.activeOrchestrators.clear();
@@ -139,7 +139,7 @@ export class AgentTeamService extends EventEmitter {
     this.autoApproveSessions.clear();
     this.flushPendingSave();
     this.initialized = false;
-    agentTeamLog.info("Agent Team Service shut down");
+    orchestrationLog.info("Agent Team Service shut down");
   }
 
   // --- Auto-approve (same pattern as ScheduledTaskService) ---
@@ -160,7 +160,7 @@ export class AgentTeamService extends EventEmitter {
       );
 
       if (acceptOption) {
-        agentTeamLog.info(`Auto-approving permission ${permission.id} for session ${sessionId}`);
+        orchestrationLog.info(`Auto-approving permission ${permission.id} for session ${sessionId}`);
         this.engineManager!.replyPermission(permission.id, { optionId: acceptOption.id });
       }
     });
@@ -170,12 +170,12 @@ export class AgentTeamService extends EventEmitter {
 
   /**
    * Create and start a new team run.
-   * Returns immediately with the run in "planning" status.
+   * Returns immediately with the run in "decomposing" status.
    * Execution happens asynchronously.
    */
-  async createRun(req: TeamCreateRequest): Promise<TeamRun> {
+  async createRun(req: OrchestrationCreateRequest): Promise<OrchestrationRun> {
     if (!this.engineManager) {
-      throw new Error("AgentTeamService not initialized");
+      throw new Error("OrchestrationService not initialized");
     }
 
     if (Boolean(req.worktreeId) !== Boolean(req.parentDirectory)) {
@@ -184,7 +184,7 @@ export class AgentTeamService extends EventEmitter {
       );
     }
 
-    const run: TeamRun = {
+    const run: OrchestrationRun = {
       id: timeId("team"),
       parentSessionId: req.sessionId,
       directory: req.directory,
@@ -193,10 +193,11 @@ export class AgentTeamService extends EventEmitter {
       teamWorktreeName: req.teamWorktreeInfo?.name,
       teamWorktreeDir: req.teamWorktreeInfo?.directory,
       roleMappings: req.roleMappings ?? this.getRoleMappings(),
-      originalPrompt: req.prompt,
+      prompt: req.prompt,
+      engineTypes: req.engineTypes ?? (req.engineType ? [req.engineType] : []),
       mode: req.mode,
-      status: "planning",
-      tasks: [],
+      status: "decomposing",
+      subtasks: [],
       time: { created: Date.now() },
       // Plan confirmation defaults: Light = on, Heavy = off (can be overridden)
       requirePlanConfirmation: req.requirePlanConfirmation ?? (req.mode === "light"),
@@ -207,13 +208,13 @@ export class AgentTeamService extends EventEmitter {
     this.runs.set(run.id, run);
     this.emitRunUpdated(run);
 
-    agentTeamLog.info(`Created team run ${run.id} (${run.mode} brain)`);
+    orchestrationLog.info(`Created team run ${run.id} (${run.mode} brain)`);
 
     // Start execution asynchronously
     void this.executeRun(run, req.engineType as EngineType | undefined).catch((err) => {
-      agentTeamLog.error(`Team run ${run.id} failed:`, err);
+      orchestrationLog.error(`Team run ${run.id} failed:`, err);
       run.status = "failed";
-      run.finalResult = `Orchestration error: ${err.message}`;
+      run.resultSummary = `Orchestration error: ${err.message}`;
       run.time.completed = Date.now();
       this.emitRunUpdated(run);
     });
@@ -238,18 +239,18 @@ export class AgentTeamService extends EventEmitter {
         try {
           await this.engineManager?.cancelMessage(run.orchestratorSessionId);
         } catch (error) {
-          agentTeamLog.warn(
+          orchestrationLog.warn(
             `Failed to cancel orchestrator session ${run.orchestratorSessionId}: ${error instanceof Error ? error.message : String(error)}`,
           );
         }
       }
 
-      for (const task of run.tasks) {
+      for (const task of run.subtasks) {
         if (task.sessionId && task.status === "running") {
           try {
             await this.engineManager?.cancelMessage(task.sessionId);
           } catch (error) {
-            agentTeamLog.warn(
+            orchestrationLog.warn(
               `Failed to cancel task session ${task.sessionId}: ${error instanceof Error ? error.message : String(error)}`,
             );
           }
@@ -262,13 +263,13 @@ export class AgentTeamService extends EventEmitter {
       }
 
       run.status = "cancelled";
-      run.finalResult = "Orchestration was cancelled.";
+      run.resultSummary = "Orchestration was cancelled.";
       run.time.completed = Date.now();
     }
 
     this.cleanupRunRuntimeState(runId);
     this.emitRunUpdated(run);
-    agentTeamLog.info(`Cancelled team run ${runId}`);
+    orchestrationLog.info(`Cancelled team run ${runId}`);
   }
 
   /**
@@ -277,7 +278,7 @@ export class AgentTeamService extends EventEmitter {
   sendMessageToRun(runId: string, text: string): void {
     const run = this.runs.get(runId);
     if (!run) throw new Error(`Team run not found: ${runId}`);
-    if (run.status !== "running" && run.status !== "planning") {
+    if (run.status !== "running" && run.status !== "decomposing") {
       throw new Error(`Team run ${runId} is not active (status: ${run.status})`);
     }
     if (run.mode !== "heavy") {
@@ -292,14 +293,14 @@ export class AgentTeamService extends EventEmitter {
     }
 
     channel.send(text);
-    agentTeamLog.info(`User message sent to run ${runId}`);
+    orchestrationLog.info(`User message sent to run ${runId}`);
   }
 
-  listRuns(): TeamRun[] {
+  listRuns(): OrchestrationRun[] {
     return Array.from(this.runs.values()).sort((a, b) => b.time.created - a.time.created);
   }
 
-  getRun(runId: string): TeamRun | null {
+  getRun(runId: string): OrchestrationRun | null {
     return this.runs.get(runId) ?? null;
   }
 
@@ -311,8 +312,8 @@ export class AgentTeamService extends EventEmitter {
    * reaches the `awaiting-confirmation` phase. Returns a promise that
    * resolves with the user-approved task list.
    */
-  awaitPlanConfirmation(runId: string): Promise<TaskNode[]> {
-    return new Promise<TaskNode[]>((resolve, reject) => {
+  awaitPlanConfirmation(runId: string): Promise<OrchestrationSubtask[]> {
+    return new Promise<OrchestrationSubtask[]>((resolve, reject) => {
       this.pendingConfirmations.set(runId, { resolve, reject });
     });
   }
@@ -321,14 +322,14 @@ export class AgentTeamService extends EventEmitter {
    * Resolve a pending plan-confirmation gate. Called by the gateway when the
    * user confirms / edits the plan via TEAM_CONFIRM_PLAN.
    */
-  confirmPlan(runId: string, tasks: TaskNode[]): void {
+  confirmPlan(runId: string, tasks: OrchestrationSubtask[]): void {
     const gate = this.pendingConfirmations.get(runId);
     if (!gate) {
       throw new Error(`No pending plan confirmation for run ${runId}`);
     }
     this.pendingConfirmations.delete(runId);
     gate.resolve(tasks);
-    agentTeamLog.info(`Plan confirmed for run ${runId} with ${tasks.length} task(s)`);
+    orchestrationLog.info(`Plan confirmed for run ${runId} with ${tasks.length} task(s)`);
   }
 
   private rejectPendingConfirmation(runId: string, reason: string): void {
@@ -353,8 +354,8 @@ export class AgentTeamService extends EventEmitter {
 
   updateRoleMappings(mappings: RoleEngineMapping[]): RoleEngineMapping[] {
     saveSettings({ [ROLE_MAPPINGS_SETTING_KEY]: mappings });
-    agentTeamLog.info(`Updated role mappings (${mappings.length} roles)`);
-    this.emit("team.roleMappings.updated", { mappings });
+    orchestrationLog.info(`Updated role mappings (${mappings.length} roles)`);
+    this.emit("orchestration.roleMappings.updated", { mappings });
     return mappings;
   }
 
@@ -368,9 +369,9 @@ export class AgentTeamService extends EventEmitter {
 
   // --- Execution ---
 
-  private async executeRun(run: TeamRun, orchestratorEngineType?: EngineType): Promise<void> {
-    const onTaskUpdated = (task: TaskNode) => {
-      this.emit("team.task.updated", { runId: run.id, task });
+  private async executeRun(run: OrchestrationRun, orchestratorEngineType?: EngineType): Promise<void> {
+    const onTaskUpdated = (task: OrchestrationSubtask) => {
+      this.emit("orchestration.subtask.updated", { runId: run.id, task });
       this.emitRunUpdated(run);
     };
 
@@ -415,13 +416,13 @@ export class AgentTeamService extends EventEmitter {
    * Gated by `run.aggregateToParent` (defaults to true when a parentSessionId
    * exists, preserving the original single-session UX).
    */
-  private async relayResultsToParentSession(run: TeamRun): Promise<void> {
+  private async relayResultsToParentSession(run: OrchestrationRun): Promise<void> {
     if (!run.parentSessionId || !this.engineManager) return;
     if (run.aggregateToParent === false) return;
     if (run.status !== "completed" && run.status !== "failed") return;
-    if (!run.finalResult) return;
+    if (!run.resultSummary) return;
 
-    const failed = run.tasks.filter((t) => t.status === "failed");
+    const failed = run.subtasks.filter((t) => t.status === "failed");
     const failedSection = failed.length > 0
       ? `\n\nFailed tasks:\n${failed.map((t) => `- ${t.description}: ${t.error ?? "unknown error"}`).join("\n")}`
       : "";
@@ -430,16 +431,16 @@ export class AgentTeamService extends EventEmitter {
       ? "The agent team has completed. Here are the results from each task:"
       : "The agent team finished with failures. Partial results:";
 
-    const prompt = `${header}\n\n${run.finalResult}${failedSection}\n\nPlease provide a concise summary of what was accomplished${failed.length > 0 ? ", any issues encountered," : ""} and suggested next steps if applicable.`;
+    const prompt = `${header}\n\n${run.resultSummary}${failedSection}\n\nPlease provide a concise summary of what was accomplished${failed.length > 0 ? ", any issues encountered," : ""} and suggested next steps if applicable.`;
 
     try {
       await this.engineManager.sendMessage(
         run.parentSessionId,
         [{ type: "text", text: prompt }],
       );
-      agentTeamLog.info(`[${run.id}] Relayed aggregated results to parent session ${run.parentSessionId}`);
+      orchestrationLog.info(`[${run.id}] Relayed aggregated results to parent session ${run.parentSessionId}`);
     } catch (err) {
-      agentTeamLog.warn(`[${run.id}] Failed to relay results to parent session:`, err);
+      orchestrationLog.warn(`[${run.id}] Failed to relay results to parent session:`, err);
     }
   }
 
@@ -469,7 +470,7 @@ export class AgentTeamService extends EventEmitter {
   }
 
   private getFilePath(): string {
-    return path.join(app.getPath("userData"), "agent-team-runs.json");
+    return path.join(app.getPath("userData"), "orchestration-runs.json");
   }
 
   private loadFromDisk(): void {
@@ -477,15 +478,15 @@ export class AgentTeamService extends EventEmitter {
 
     try {
       if (!fs.existsSync(filePath)) {
-        agentTeamLog.info("No agent-team-runs.json found, starting empty");
+        orchestrationLog.info("No orchestration-runs.json found, starting empty");
         return;
       }
 
       const raw = fs.readFileSync(filePath, "utf-8");
-      const data = JSON.parse(raw) as TeamRunFileFormat;
+      const data = JSON.parse(raw) as OrchestrationRunFileFormat;
 
       if (data.version !== 1 || !Array.isArray(data.runs)) {
-        agentTeamLog.warn("Invalid agent-team-runs.json format, ignoring");
+        orchestrationLog.warn("Invalid orchestration-runs.json format, ignoring");
         return;
       }
 
@@ -498,9 +499,9 @@ export class AgentTeamService extends EventEmitter {
         this.writeToDisk();
       }
 
-      agentTeamLog.info(`Loaded ${data.runs.length} team run(s) from disk`);
+      orchestrationLog.info(`Loaded ${data.runs.length} team run(s) from disk`);
     } catch (error) {
-      agentTeamLog.error("Failed to load agent-team-runs.json:", error);
+      orchestrationLog.error("Failed to load orchestration-runs.json:", error);
     }
   }
 
@@ -509,16 +510,16 @@ export class AgentTeamService extends EventEmitter {
     const completionTime = Date.now();
 
     for (const run of this.runs.values()) {
-      if (run.status !== "planning" && run.status !== "running") {
+      if (run.status !== "decomposing" && run.status !== "running") {
         continue;
       }
 
       recoveredCount += 1;
       run.status = "failed";
-      run.finalResult = "Agent Team run was interrupted because CodeMux restarted before it completed.";
+      run.resultSummary = "Agent Team run was interrupted because CodeMux restarted before it completed.";
       run.time.completed = completionTime;
 
-      for (const task of run.tasks) {
+      for (const task of run.subtasks) {
         if (task.status !== "pending" && task.status !== "running") {
           continue;
         }
@@ -533,7 +534,7 @@ export class AgentTeamService extends EventEmitter {
 
   private writeToDisk(): void {
     const filePath = this.getFilePath();
-    const data: TeamRunFileFormat = {
+    const data: OrchestrationRunFileFormat = {
       version: 1,
       runs: this.listRuns(),
     };
@@ -548,7 +549,7 @@ export class AgentTeamService extends EventEmitter {
       fs.writeFileSync(tmpPath, JSON.stringify(data, null, 2), "utf-8");
       fs.renameSync(tmpPath, filePath);
     } catch (error) {
-      agentTeamLog.error("Failed to write agent-team-runs.json:", error);
+      orchestrationLog.error("Failed to write orchestration-runs.json:", error);
     }
   }
 
@@ -571,11 +572,11 @@ export class AgentTeamService extends EventEmitter {
     this.writeToDisk();
   }
 
-  private emitRunUpdated(run: TeamRun): void {
+  private emitRunUpdated(run: OrchestrationRun): void {
     this.scheduleSave();
-    this.emit("team.run.updated", { run });
+    this.emit("orchestration.updated", { run });
   }
 }
 
 /** Singleton instance */
-export const agentTeamService = new AgentTeamService();
+export const orchestrationService = new OrchestrationService();

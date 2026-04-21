@@ -195,12 +195,12 @@ export function autoDetectTeams(sessions: { id: string; worktreeId?: string }[])
 /** Update the role → engine mapping and persist.
  *
  * Writes to three places:
- * - orchestrationStore (reactive frontend state, PR #117 flow)
+ * - orchestrationStore (reactive frontend state)
  * - saveSetting("orchestration.roleMapping", ...) (localStorage/settings.json
- *   fallback for the PR #117 flow)
- * - gateway.updateTeamRoleMappings(...) (Light/Heavy brain flow; persists to
- *   settings.json under team.roleMappings so AgentTeamService.resolveRole()
- *   picks up the same edits)
+ *   fallback)
+ * - gateway.updateOrchestrationRoleMappings(...) (persists to settings.json
+ *   under orchestration.roleMappings so OrchestrationService picks up the
+ *   same edits)
  *
  * The gateway call is best-effort — UI state is updated regardless of RPC
  * failure.
@@ -208,9 +208,8 @@ export function autoDetectTeams(sessions: { id: string; worktreeId?: string }[])
 export function updateRoleMappings(mappings: RoleEngineMapping[]): void {
   setOrchestrationStore("roleMappings", mappings);
   saveSetting("orchestration.roleMapping", mappings);
-  // Mirror to AgentTeamService so Light/Heavy brain sees the same config.
-  void gateway.updateTeamRoleMappings(mappings).catch((err: unknown) => {
-    console.warn("[Orchestration] Failed to sync role mappings to team service:", err);
+  void gateway.updateOrchestrationRoleMappings(mappings).catch((err: unknown) => {
+    console.warn("[Orchestration] Failed to sync role mappings:", err);
   });
 }
 

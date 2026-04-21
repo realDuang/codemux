@@ -74,25 +74,25 @@ export interface LocaleDict {
     noModelError: string;
     queued: string;
     disconnected: string;
-    teamRunsTitle: string;
-    teamRunLabel: string;
-    teamRunModeLight: string;
-    teamRunModeHeavy: string;
-    teamRunPlanning: string;
-    teamRunAwaitingConfirmation: string;
-    teamRunConfirmPlan: string;
-    teamRunEditPlan: string;
-    teamRunRunning: string;
-    teamRunCompleted: string;
-    teamRunFailed: string;
-    teamRunCancelled: string;
-    teamRunActive: string;
-    teamRunCancel: string;
-    teamRunFinalResult: string;
-    teamTaskDependsOn: string;
-    teamTaskEngine: string;
-    teamTaskWorktree: string;
-    teamTaskOpenSession: string;
+    orchestrationRunsTitle: string;
+    orchestrationRunLabel: string;
+    orchestrationRunModeLight: string;
+    orchestrationRunModeHeavy: string;
+    orchestrationRunPlanning: string;
+    orchestrationRunAwaitingConfirmation: string;
+    orchestrationRunConfirmPlan: string;
+    orchestrationRunEditPlan: string;
+    orchestrationRunRunning: string;
+    orchestrationRunCompleted: string;
+    orchestrationRunFailed: string;
+    orchestrationRunCancelled: string;
+    orchestrationRunActive: string;
+    orchestrationRunCancel: string;
+    orchestrationRunFinalResult: string;
+    orchestrationSubtaskDependsOn: string;
+    orchestrationSubtaskEngine: string;
+    orchestrationSubtaskWorktree: string;
+    orchestrationSubtaskOpenSession: string;
   };
 
   // Settings page
@@ -265,9 +265,9 @@ export interface LocaleDict {
     imageUnsupportedType: string;
     imageLimitReached: string;
     removeImage: string;
-    teamRelayPlaceholder: string;
-    teamRelayNotice: string;
-    teamRelayImageUnsupported: string;
+    orchestrationRelayPlaceholder: string;
+    orchestrationRelayNotice: string;
+    orchestrationRelayImageUnsupported: string;
     /** Slash command autocomplete: no matching commands */
     noCommandsFound: string;
     reasoningEffortLow: string;
@@ -529,9 +529,9 @@ export interface LocaleDict {
     gatewayReconnected: string;
     engineError: string;
     defaultEngineSaveFailed: string;
-    teamRunStarted: string;
-    teamRunFailed: string;
-    teamMessageRelayFailed: string;
+    orchestrationRunStarted: string;
+    orchestrationRunFailed: string;
+    orchestrationMessageRelayFailed: string;
   };
 
   // File Explorer
@@ -726,25 +726,25 @@ export const en: LocaleDict = {
     noModelError: "No model configured. Please set a model in Settings > Engines.",
     queued: "Queued",
     disconnected: "Disconnected",
-    teamRunsTitle: "Team runs",
-    teamRunLabel: "Team",
-    teamRunModeLight: "light",
-    teamRunModeHeavy: "heavy",
-    teamRunPlanning: "Planning...",
-    teamRunAwaitingConfirmation: "Awaiting plan confirmation",
-    teamRunConfirmPlan: "Confirm & execute",
-    teamRunEditPlan: "Edit plan",
-    teamRunRunning: "{completed}/{total} tasks",
-    teamRunCompleted: "Completed",
-    teamRunFailed: "Failed",
-    teamRunCancelled: "Cancelled",
-    teamRunActive: "Active",
-    teamRunCancel: "Cancel",
-    teamRunFinalResult: "Final result",
-    teamTaskDependsOn: "Depends on: {ids}",
-    teamTaskEngine: "Engine: {engine}",
-    teamTaskWorktree: "Worktree: {name}",
-    teamTaskOpenSession: "Open session",
+    orchestrationRunsTitle: "Orchestrations",
+    orchestrationRunLabel: "Team",
+    orchestrationRunModeLight: "light",
+    orchestrationRunModeHeavy: "heavy",
+    orchestrationRunPlanning: "Planning...",
+    orchestrationRunAwaitingConfirmation: "Awaiting plan confirmation",
+    orchestrationRunConfirmPlan: "Confirm & execute",
+    orchestrationRunEditPlan: "Edit plan",
+    orchestrationRunRunning: "{completed}/{total} tasks",
+    orchestrationRunCompleted: "Completed",
+    orchestrationRunFailed: "Failed",
+    orchestrationRunCancelled: "Cancelled",
+    orchestrationRunActive: "Active",
+    orchestrationRunCancel: "Cancel",
+    orchestrationRunFinalResult: "Final result",
+    orchestrationSubtaskDependsOn: "Depends on: {ids}",
+    orchestrationSubtaskEngine: "Engine: {engine}",
+    orchestrationSubtaskWorktree: "Worktree: {name}",
+    orchestrationSubtaskOpenSession: "Open session",
   },
 
   // Settings page
@@ -917,9 +917,9 @@ export const en: LocaleDict = {
     imageUnsupportedType: "Unsupported image type",
     imageLimitReached: "Maximum 4 images per message",
     removeImage: "Remove image",
-    teamRelayPlaceholder: "Message the active orchestrator...",
-    teamRelayNotice: "Heavy Brain is active - messages from this session go directly to the orchestrator.",
-    teamRelayImageUnsupported: "Image attachments are not supported while messaging the active orchestrator.",
+    orchestrationRelayPlaceholder: "Message the active orchestrator...",
+    orchestrationRelayNotice: "Heavy Brain is active - messages from this session go directly to the orchestrator.",
+    orchestrationRelayImageUnsupported: "Image attachments are not supported while messaging the active orchestrator.",
     noCommandsFound: "No commands found",
     reasoningEffortLow: "Low",
     reasoningEffortMedium: "Medium",
@@ -1176,9 +1176,9 @@ export const en: LocaleDict = {
     gatewayReconnected: "Connection restored.",
     engineError: "Engine error: {message}",
     defaultEngineSaveFailed: "Failed to save the default engine.",
-    teamRunStarted: "Team run started.",
-    teamRunFailed: "Team run failed: {message}",
-    teamMessageRelayFailed: "Failed to send the message to the active orchestrator: {message}",
+    orchestrationRunStarted: "Orchestration started.",
+    orchestrationRunFailed: "Orchestration failed: {message}",
+    orchestrationMessageRelayFailed: "Failed to send the message to the active orchestrator: {message}",
   },
 
   // File Explorer

@@ -5,7 +5,7 @@ import {
   dagPlanningSkill,
   dispatchSkill,
   executeWithSkill,
-} from "../../../../../electron/main/services/agent-team/skills";
+} from "../../../../../electron/main/services/orchestration/skills";
 
 // =============================================================================
 // extractJsonBlocks

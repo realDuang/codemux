@@ -46,7 +46,7 @@ const mockScheduledTaskService = vi.hoisted(() => ({
   runNow: vi.fn(),
 }));
 
-const mockAgentTeamService = vi.hoisted(() => ({
+const mockOrchestrationService = vi.hoisted(() => ({
   on: vi.fn(),
   createRun: vi.fn(async () => ({ id: "team-1" })),
   cancelRun: vi.fn(async () => {}),
@@ -123,8 +123,8 @@ vi.mock("../../../../electron/main/services/scheduled-task-service", () => ({
   scheduledTaskService: mockScheduledTaskService,
 }));
 
-vi.mock("../../../../electron/main/services/agent-team", () => ({
-  agentTeamService: mockAgentTeamService,
+vi.mock("../../../../electron/main/services/orchestration", () => ({
+  orchestrationService: mockOrchestrationService,
 }));
 
 // ---------------------------------------------------------------------------
@@ -307,11 +307,11 @@ describe("GatewayServer", () => {
       const engineManager = createMockEngineManager();
       new GatewayServer(engineManager as any);
 
-      const subscribedEvents = mockAgentTeamService.on.mock.calls.map(
+      const subscribedEvents = mockOrchestrationService.on.mock.calls.map(
         (call: any[]) => call[0],
       );
-      expect(subscribedEvents).toContain("team.run.updated");
-      expect(subscribedEvents).toContain("team.task.updated");
+      expect(subscribedEvents).toContain("orchestration.updated");
+      expect(subscribedEvents).toContain("orchestration.subtask.updated");
     });
 
     it("registers file change handler via onFileChange", () => {
@@ -1358,8 +1358,8 @@ describe("GatewayServer", () => {
   // =========================================================================
 
   describe("routeRequest - agent team", () => {
-    it("TEAM_CREATE delegates to agentTeamService.createRun", async () => {
-      mockAgentTeamService.createRun.mockResolvedValueOnce({ id: "team-1", status: "planning" });
+    it("ORCHESTRATION_CREATE delegates to orchestrationService.createRun", async () => {
+      mockOrchestrationService.createRun.mockResolvedValueOnce({ id: "team-1", status: "planning" });
       const { connect, sendMessage } = createTestHarness();
       const ws = connect();
 
@@ -1372,72 +1372,72 @@ describe("GatewayServer", () => {
       };
 
       await sendMessage(ws, {
-        type: GatewayRequestType.TEAM_CREATE,
+        type: GatewayRequestType.ORCHESTRATION_CREATE,
         requestId: "r1",
         payload,
       });
 
-      expect(mockAgentTeamService.createRun).toHaveBeenCalledWith(payload);
+      expect(mockOrchestrationService.createRun).toHaveBeenCalledWith(payload);
       const response = JSON.parse(ws.send.mock.calls[0][0]);
       expect(response.payload).toEqual({ id: "team-1", status: "planning" });
     });
 
-    it("TEAM_CANCEL delegates to agentTeamService.cancelRun", async () => {
+    it("ORCHESTRATION_CANCEL delegates to orchestrationService.cancelRun", async () => {
       const { connect, sendMessage } = createTestHarness();
       const ws = connect();
 
       await sendMessage(ws, {
-        type: GatewayRequestType.TEAM_CANCEL,
+        type: GatewayRequestType.ORCHESTRATION_CANCEL,
         requestId: "r1",
         payload: { runId: "team-1" },
       });
 
-      expect(mockAgentTeamService.cancelRun).toHaveBeenCalledWith("team-1");
+      expect(mockOrchestrationService.cancelRun).toHaveBeenCalledWith("team-1");
     });
 
-    it("TEAM_SEND_MESSAGE delegates to agentTeamService.sendMessageToRun", async () => {
+    it("ORCHESTRATION_SEND_MESSAGE delegates to orchestrationService.sendMessageToRun", async () => {
       const { connect, sendMessage } = createTestHarness();
       const ws = connect();
 
       await sendMessage(ws, {
-        type: GatewayRequestType.TEAM_SEND_MESSAGE,
+        type: GatewayRequestType.ORCHESTRATION_SEND_MESSAGE,
         requestId: "r1",
         payload: { runId: "team-1", text: "Need a tighter plan" },
       });
 
-      expect(mockAgentTeamService.sendMessageToRun).toHaveBeenCalledWith("team-1", "Need a tighter plan");
+      expect(mockOrchestrationService.sendMessageToRun).toHaveBeenCalledWith("team-1", "Need a tighter plan");
       const response = JSON.parse(ws.send.mock.calls[0][0]);
       expect(response.payload).toBeUndefined();
     });
 
-    it("TEAM_LIST delegates to agentTeamService.listRuns", async () => {
-      mockAgentTeamService.listRuns.mockReturnValueOnce([{ id: "team-1" }]);
+    it("ORCHESTRATION_LIST delegates to orchestrationService.listRuns", async () => {
+      mockOrchestrationService.listRuns.mockReturnValueOnce([{ id: "team-1" }]);
       const { connect, sendMessage } = createTestHarness();
       const ws = connect();
 
       await sendMessage(ws, {
-        type: GatewayRequestType.TEAM_LIST,
+        type: GatewayRequestType.ORCHESTRATION_LIST,
         requestId: "r1",
         payload: {},
       });
 
-      expect(mockAgentTeamService.listRuns).toHaveBeenCalled();
+      expect(mockOrchestrationService.listRuns).toHaveBeenCalled();
       const response = JSON.parse(ws.send.mock.calls[0][0]);
       expect(response.payload).toEqual([{ id: "team-1" }]);
     });
 
-    it("TEAM_GET delegates to agentTeamService.getRun", async () => {
-      mockAgentTeamService.getRun.mockResolvedValueOnce({ id: "team-1", status: "running" });
+    it("ORCHESTRATION_GET delegates to orchestrationService.getRun", async () => {
+      mockOrchestrationService.getRun.mockResolvedValueOnce({ id: "team-1", status: "running" });
       const { connect, sendMessage } = createTestHarness();
       const ws = connect();
 
       await sendMessage(ws, {
-        type: GatewayRequestType.TEAM_GET,
+        type: GatewayRequestType.ORCHESTRATION_GET,
         requestId: "r1",
         payload: { runId: "team-1" },
       });
 
-      expect(mockAgentTeamService.getRun).toHaveBeenCalledWith("team-1");
+      expect(mockOrchestrationService.getRun).toHaveBeenCalledWith("team-1");
       const response = JSON.parse(ws.send.mock.calls[0][0]);
       expect(response.payload).toEqual({ id: "team-1", status: "running" });
     });
@@ -1681,11 +1681,11 @@ describe("GatewayServer", () => {
       const { connect } = createTestHarness();
       const ws = connect();
 
-      const teamRunUpdatedCall = mockAgentTeamService.on.mock.calls.find(
-        (call: any[]) => call[0] === "team.run.updated",
+      const teamRunUpdatedCall = mockOrchestrationService.on.mock.calls.find(
+        (call: any[]) => call[0] === "orchestration.updated",
       );
-      const teamTaskUpdatedCall = mockAgentTeamService.on.mock.calls.find(
-        (call: any[]) => call[0] === "team.task.updated",
+      const teamTaskUpdatedCall = mockOrchestrationService.on.mock.calls.find(
+        (call: any[]) => call[0] === "orchestration.subtask.updated",
       );
       expect(teamRunUpdatedCall).toBeDefined();
       expect(teamTaskUpdatedCall).toBeDefined();
@@ -1699,14 +1699,14 @@ describe("GatewayServer", () => {
       expect(ws.send).toHaveBeenNthCalledWith(
         1,
         JSON.stringify({
-          type: GatewayNotificationType.TEAM_RUN_UPDATED,
+          type: GatewayNotificationType.ORCHESTRATION_UPDATED,
           payload: { run: { id: "team-1" } },
         }),
       );
       expect(ws.send).toHaveBeenNthCalledWith(
         2,
         JSON.stringify({
-          type: GatewayNotificationType.TEAM_TASK_UPDATED,
+          type: GatewayNotificationType.ORCHESTRATION_SUBTASK_UPDATED,
           payload: { runId: "team-1", task: { id: "task-1" } },
         }),
       );

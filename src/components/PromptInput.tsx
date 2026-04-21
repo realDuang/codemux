@@ -456,7 +456,7 @@ export function PromptInput(props: PromptInputProps) {
   // Placeholder text based on active mode and generating state
   const modePlaceholder = createMemo(() => {
     if (props.relayToOrchestrator) {
-      return t().prompt.teamRelayPlaceholder;
+      return t().prompt.orchestrationRelayPlaceholder;
     }
     if (props.isGenerating) {
       if (props.canEnqueue) return t().prompt.typeNextMessage ?? "Type your next message...";
@@ -491,7 +491,7 @@ export function PromptInput(props: PromptInputProps) {
                       ? `${color} text-white shadow-md shadow-current/20`
                       : "bg-slate-100/60 dark:bg-slate-800/60 text-slate-500 dark:text-slate-400 hover:bg-slate-200/80 dark:hover:bg-slate-700/60 backdrop-blur-sm"
                   } ${props.relayToOrchestrator ? "opacity-60 cursor-not-allowed" : ""}`}
-                  title={props.relayToOrchestrator ? t().prompt.teamRelayNotice : (mode.description ?? displayName)}
+                  title={props.relayToOrchestrator ? t().prompt.orchestrationRelayNotice : (mode.description ?? displayName)}
                 >
                   {icon}
                   <span class="hidden sm:inline">{displayName}</span>
@@ -504,7 +504,7 @@ export function PromptInput(props: PromptInputProps) {
 
       <Show when={props.relayToOrchestrator}>
         <div class="mb-2 px-1 text-xs text-amber-700 dark:text-amber-300">
-          {t().prompt.teamRelayNotice}
+          {t().prompt.orchestrationRelayNotice}
         </div>
       </Show>
 

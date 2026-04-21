@@ -48,9 +48,8 @@ import {
   type ScheduledTaskUpdateRequest,
   type ScheduledTaskRunResult,
   type OrchestrationRun,
-  type TeamRun,
-  type TeamCreateRequest,
-  type TaskNode,
+  type OrchestrationSubtask,
+  type OrchestrationCreateRequest,
   type RoleEngineMapping,
 } from "../types/unified";
 
@@ -89,12 +88,9 @@ export interface GatewayClientEvents {
   "scheduledTask.failed": (data: { taskId: string; error: string }) => void;
   "scheduledTasks.changed": (data: { tasks: ScheduledTask[] }) => void;
 
-  /** Orchestration push notifications (PR #117) */
+  /** Orchestration push notifications */
   "orchestration.updated": (data: { run: OrchestrationRun }) => void;
-
-  /** Agent Team push notifications */
-  "team.run.updated": (data: { run: TeamRun }) => void;
-  "team.task.updated": (data: { runId: string; task: any }) => void;
+  "orchestration.subtask.updated": (data: { runId: string; subtask: OrchestrationSubtask }) => void;
 }
 
 // --- Pending request tracking ---
@@ -614,38 +610,38 @@ export class GatewayClient {
     return this.request(GatewayRequestType.SCHEDULED_TASK_RUN_NOW, { id });
   }
 
-  // --- Agent Team API ---
+  // --- Orchestration API ---
 
-  createTeamRun(req: TeamCreateRequest): Promise<TeamRun> {
-    return this.request(GatewayRequestType.TEAM_CREATE, req);
+  createOrchestrationRun(req: OrchestrationCreateRequest): Promise<OrchestrationRun> {
+    return this.request(GatewayRequestType.ORCHESTRATION_CREATE, req);
   }
 
-  cancelTeamRun(runId: string): Promise<void> {
-    return this.request(GatewayRequestType.TEAM_CANCEL, { runId });
+  cancelOrchestrationRun(runId: string): Promise<void> {
+    return this.request(GatewayRequestType.ORCHESTRATION_CANCEL, { runId });
   }
 
-  sendTeamMessage(runId: string, text: string): Promise<void> {
-    return this.request(GatewayRequestType.TEAM_SEND_MESSAGE, { runId, text });
+  sendOrchestrationMessage(runId: string, text: string): Promise<void> {
+    return this.request(GatewayRequestType.ORCHESTRATION_SEND_MESSAGE, { runId, text });
   }
 
-  listTeamRuns(): Promise<TeamRun[]> {
-    return this.request(GatewayRequestType.TEAM_LIST);
+  listOrchestrationRuns(): Promise<OrchestrationRun[]> {
+    return this.request(GatewayRequestType.ORCHESTRATION_LIST);
   }
 
-  getTeamRun(runId: string): Promise<TeamRun | null> {
-    return this.request(GatewayRequestType.TEAM_GET, { runId });
+  getOrchestrationRun(runId: string): Promise<OrchestrationRun | null> {
+    return this.request(GatewayRequestType.ORCHESTRATION_GET, { runId });
   }
 
-  confirmTeamPlan(runId: string, tasks: TaskNode[]): Promise<{ ok: boolean }> {
-    return this.request(GatewayRequestType.TEAM_CONFIRM_PLAN, { runId, tasks });
+  confirmOrchestrationPlan(runId: string, subtasks: OrchestrationSubtask[]): Promise<{ ok: boolean }> {
+    return this.request(GatewayRequestType.ORCHESTRATION_CONFIRM, { runId, subtasks });
   }
 
-  getTeamRoleMappings(): Promise<{ mappings: RoleEngineMapping[] }> {
-    return this.request(GatewayRequestType.TEAM_GET_ROLE_MAPPINGS, {});
+  getOrchestrationRoleMappings(): Promise<{ mappings: RoleEngineMapping[] }> {
+    return this.request(GatewayRequestType.ORCHESTRATION_GET_ROLE_MAPPINGS, {});
   }
 
-  updateTeamRoleMappings(mappings: RoleEngineMapping[]): Promise<{ mappings: RoleEngineMapping[] }> {
-    return this.request(GatewayRequestType.TEAM_UPDATE_ROLE_MAPPINGS, { mappings });
+  updateOrchestrationRoleMappings(mappings: RoleEngineMapping[]): Promise<{ mappings: RoleEngineMapping[] }> {
+    return this.request(GatewayRequestType.ORCHESTRATION_UPDATE_ROLE_MAPPINGS, { mappings });
   }
 
   // --- Log forwarding (fire-and-forget, no response expected) ---

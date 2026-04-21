@@ -5,7 +5,7 @@
 // ============================================================================
 
 import type { EngineManager } from "../../gateway/engine-manager";
-import type { TaskNode, TeamRun, EngineType, UnifiedMessage } from "../../../../src/types/unified";
+import type { OrchestrationSubtask, OrchestrationRun, EngineType, UnifiedMessage } from "../../../../src/types/unified";
 import { DAGExecutor } from "./dag-executor";
 import {
   TaskExecutor,
@@ -17,7 +17,7 @@ import {
 } from "./task-executor";
 import { dispatchSkill, type DispatchInstruction, type DispatchTask } from "./skills";
 import { buildOrchestratorPrompt, formatSingleTaskResult, formatTaskResults, formatUserMessage } from "./prompts";
-import { agentTeamLog } from "./logger";
+import { orchestrationLog } from "./logger";
 import { UserChannel } from "./user-channel";
 import { AGENT_TEAM_MAX_CONCURRENT_TASKS } from "./guardrails";
 
@@ -59,7 +59,7 @@ type ParseInstructionResult =
   | { ok: false; error: string; response: UnifiedMessage };
 
 type MergeDispatchTasksResult =
-  | { ok: true; tasks: TaskNode[] }
+  | { ok: true; tasks: OrchestrationSubtask[] }
   | { ok: false; error: string };
 
 export class HeavyBrainOrchestrator {
@@ -67,8 +67,8 @@ export class HeavyBrainOrchestrator {
   private terminal = false;
   private nextAutoTaskIndex = 0;
   private activeRun: {
-    teamRun: TeamRun;
-    onTaskUpdated: (task: TaskNode) => void;
+    teamRun: OrchestrationRun;
+    onTaskUpdated: (task: OrchestrationSubtask) => void;
   } | null = null;
   private activeRunningTasks: RunningTasks | null = null;
   private cancelSignal: Promise<void> = Promise.resolve();
@@ -91,13 +91,13 @@ export class HeavyBrainOrchestrator {
    * 3. Until orchestrator signals "complete" or max iterations
    */
   async run(
-    teamRun: TeamRun,
+    teamRun: OrchestrationRun,
     orchestratorEngineType: EngineType | undefined,
-    onTaskUpdated: (task: TaskNode) => void,
+    onTaskUpdated: (task: OrchestrationSubtask) => void,
   ): Promise<void> {
     this.cancelled = false;
     this.terminal = false;
-    this.nextAutoTaskIndex = teamRun.tasks.length;
+    this.nextAutoTaskIndex = teamRun.subtasks.length;
     this.activeRun = { teamRun, onTaskUpdated };
     this.activeRunningTasks = null;
     this.cancelledSessionIds.clear();
@@ -110,12 +110,12 @@ export class HeavyBrainOrchestrator {
 
     try {
       // --- Create orchestrator session ---
-      teamRun.status = "planning";
-      agentTeamLog.info(`[${teamRun.id}] Heavy Brain: creating orchestrator session on ${engineType}`);
+      teamRun.status = "decomposing";
+      orchestrationLog.info(`[${teamRun.id}] Heavy Brain: creating orchestrator session on ${engineType}`);
 
       const engines = this.engineManager.listEngines();
       const prompt = buildOrchestratorPrompt(
-        teamRun.originalPrompt,
+        teamRun.prompt,
         engines,
         teamRun.directory,
       );
@@ -185,7 +185,7 @@ export class HeavyBrainOrchestrator {
             return;
           }
 
-          agentTeamLog.info(
+          orchestrationLog.info(
             `[${teamRun.id}] Heavy Brain: dispatching ${mergeResult.tasks.length} tasks (iteration ${iterations})`,
           );
 
@@ -234,10 +234,10 @@ export class HeavyBrainOrchestrator {
    * Returns the last orchestrator response for the main loop to parse.
    */
   private async executeAndReportIncrementally(
-    teamRun: TeamRun,
+    teamRun: OrchestrationRun,
     orchSessionId: string,
     executor: TaskExecutor,
-    onTaskUpdated: (task: TaskNode) => void,
+    onTaskUpdated: (task: OrchestrationSubtask) => void,
   ): Promise<UnifiedMessage> {
     const running: RunningTasks = new Map();
     this.activeRunningTasks = running;
@@ -253,7 +253,7 @@ export class HeavyBrainOrchestrator {
       if (pendingUserMsg) {
         const response = await this.sendToOrchestrator(
           orchSessionId,
-          formatUserMessage(pendingUserMsg, this.countOpenTasks(teamRun.tasks)),
+          formatUserMessage(pendingUserMsg, this.countOpenTasks(teamRun.subtasks)),
         );
         if (!response || this.terminal) {
           return this.markTerminal(lastResponse ?? this.createSyntheticMessage(orchSessionId));
@@ -295,10 +295,10 @@ export class HeavyBrainOrchestrator {
 
       if (winner.type === "user") {
         // User message arrived — send to orchestrator immediately
-        agentTeamLog.info(`[${teamRun.id}] Human feedback received (${running.size} tasks running)`);
+        orchestrationLog.info(`[${teamRun.id}] Human feedback received (${running.size} tasks running)`);
         const response = await this.sendToOrchestrator(
           orchSessionId,
-          formatUserMessage(winner.text, this.countOpenTasks(teamRun.tasks)),
+          formatUserMessage(winner.text, this.countOpenTasks(teamRun.subtasks)),
         );
         if (!response || this.terminal) {
           return this.markTerminal(lastResponse ?? this.createSyntheticMessage(orchSessionId));
@@ -324,7 +324,7 @@ export class HeavyBrainOrchestrator {
       }
 
       // Update task status
-      const task = teamRun.tasks.find((candidate) => candidate.id === winner.id);
+      const task = teamRun.subtasks.find((candidate) => candidate.id === winner.id);
       if (!task) {
         continue;
       }
@@ -334,20 +334,20 @@ export class HeavyBrainOrchestrator {
       if (winner.result.error) {
         task.status = "failed";
         task.error = winner.result.error;
-        task.result = winner.result.summary;
+        task.resultSummary = winner.result.summary;
       } else {
         task.status = "completed";
-        task.result = winner.result.summary;
+        task.resultSummary = winner.result.summary;
       }
       onTaskUpdated(task);
       this.propagateBlockedTasks(teamRun, onTaskUpdated);
 
-      agentTeamLog.info(
+      orchestrationLog.info(
         `[${teamRun.id}] Task ${winner.id} ${task.status} (${running.size} remaining)`,
       );
 
       // Send this task's result to orchestrator
-      const resultMsg = formatSingleTaskResult(task, this.countOpenTasks(teamRun.tasks));
+      const resultMsg = formatSingleTaskResult(task, this.countOpenTasks(teamRun.subtasks));
       const response = await this.sendToOrchestrator(orchSessionId, resultMsg);
       if (!response || this.terminal) {
         return this.markTerminal(lastResponse ?? this.createSyntheticMessage(orchSessionId));
@@ -391,7 +391,7 @@ export class HeavyBrainOrchestrator {
 
     const guardedResponse = responsePromise.catch((error) => {
       if (this.cancelled || this.terminal) {
-        agentTeamLog.debug(
+        orchestrationLog.debug(
           `[${orchSessionId}] Ignoring orchestrator response after cancellation: ${error instanceof Error ? error.message : String(error)}`,
         );
         return null;
@@ -417,11 +417,11 @@ export class HeavyBrainOrchestrator {
    * tasks are dispatched or remaining tasks are cancelled.
    */
   private async handleOrchestratorResponse(
-    teamRun: TeamRun,
+    teamRun: OrchestrationRun,
     orchSessionId: string,
     lastResponse: UnifiedMessage,
     running: RunningTasks,
-    onTaskUpdated: (task: TaskNode) => void,
+    onTaskUpdated: (task: OrchestrationSubtask) => void,
   ): Promise<UnifiedMessage> {
     const parsed = await this.parseInstruction(teamRun, orchSessionId, lastResponse);
     lastResponse = parsed.response;
@@ -450,7 +450,7 @@ export class HeavyBrainOrchestrator {
         return this.markTerminal(lastResponse);
       }
 
-      agentTeamLog.info(
+      orchestrationLog.info(
         `[${teamRun.id}] Orchestrator dispatched ${mergeResult.tasks.length} new tasks mid-execution`,
       );
     }
@@ -493,8 +493,8 @@ export class HeavyBrainOrchestrator {
     );
   }
 
-  private convertDispatchTasks(tasks: DispatchTask[], defaultWorktreeId?: string): TaskNode[] {
-    return tasks.map((t): TaskNode => ({
+  private convertDispatchTasks(tasks: DispatchTask[], defaultWorktreeId?: string): OrchestrationSubtask[] {
+    return tasks.map((t): OrchestrationSubtask => ({
       id: t.id || `task_${this.nextAutoTaskIndex++}`,
       description: t.description,
       prompt: t.prompt,
@@ -510,7 +510,7 @@ export class HeavyBrainOrchestrator {
   }
 
   private async parseInstruction(
-    teamRun: TeamRun,
+    teamRun: OrchestrationRun,
     orchSessionId: string,
     response: UnifiedMessage,
   ): Promise<ParseInstructionResult> {
@@ -521,7 +521,7 @@ export class HeavyBrainOrchestrator {
       return { ok: true, data: instruction.data, response };
     }
 
-    agentTeamLog.warn(
+    orchestrationLog.warn(
       `[${teamRun.id}] Orchestrator response not valid JSON: ${instruction.error}`,
     );
 
@@ -540,17 +540,17 @@ export class HeavyBrainOrchestrator {
   }
 
   private mergeDispatchTasks(
-    teamRun: TeamRun,
+    teamRun: OrchestrationRun,
     tasks: DispatchTask[],
-    onTaskUpdated: (task: TaskNode) => void,
+    onTaskUpdated: (task: OrchestrationSubtask) => void,
   ): MergeDispatchTasksResult {
     const newTasks = this.convertDispatchTasks(tasks, teamRun.worktreeId);
-    const validation = this.validateMergedTasks(teamRun.tasks, newTasks);
+    const validation = this.validateMergedTasks(teamRun.subtasks, newTasks);
     if (!validation.ok) {
       return validation;
     }
 
-    teamRun.tasks.push(...newTasks);
+    teamRun.subtasks.push(...newTasks);
     for (const task of newTasks) {
       onTaskUpdated(task);
     }
@@ -560,8 +560,8 @@ export class HeavyBrainOrchestrator {
   }
 
   private validateMergedTasks(
-    existingTasks: TaskNode[],
-    newTasks: TaskNode[],
+    existingTasks: OrchestrationSubtask[],
+    newTasks: OrchestrationSubtask[],
   ): MergeDispatchTasksResult {
     const combined = [...existingTasks, ...newTasks];
     const ids = new Set<string>();
@@ -620,10 +620,10 @@ export class HeavyBrainOrchestrator {
   }
 
   private propagateBlockedTasks(
-    teamRun: TeamRun,
-    onTaskUpdated: (task: TaskNode) => void,
+    teamRun: OrchestrationRun,
+    onTaskUpdated: (task: OrchestrationSubtask) => void,
   ): void {
-    const blockedTasks = DAGExecutor.propagateFailures(teamRun.tasks);
+    const blockedTasks = DAGExecutor.propagateFailures(teamRun.subtasks);
     for (const task of blockedTasks) {
       task.time = { ...task.time, completed: task.time?.completed ?? Date.now() };
       onTaskUpdated(task);
@@ -631,22 +631,22 @@ export class HeavyBrainOrchestrator {
   }
 
   private startReadyTasks(
-    teamRun: TeamRun,
+    teamRun: OrchestrationRun,
     running: RunningTasks,
     executor: TaskExecutor,
-    onTaskUpdated: (task: TaskNode) => void,
+    onTaskUpdated: (task: OrchestrationSubtask) => void,
   ): void {
     const capacity = Math.max(this.maxConcurrentTasks - running.size, 0);
     if (capacity === 0) {
       return;
     }
 
-    const readyTasks = DAGExecutor.findReadyTasks(teamRun.tasks).slice(0, capacity);
+    const readyTasks = DAGExecutor.findReadyTasks(teamRun.subtasks).slice(0, capacity);
 
     for (const task of readyTasks) {
       const dependencies = task.dependsOn
-        .map((depId) => teamRun.tasks.find((candidate) => candidate.id === depId))
-        .filter((candidate): candidate is TaskNode => candidate != null);
+        .map((depId) => teamRun.subtasks.find((candidate) => candidate.id === depId))
+        .filter((candidate): candidate is OrchestrationSubtask => candidate != null);
 
       const upstreamContext = TaskExecutor.buildUpstreamContext(dependencies);
 
@@ -671,27 +671,27 @@ export class HeavyBrainOrchestrator {
     }
   }
 
-  private countOpenTasks(tasks: TaskNode[]): number {
+  private countOpenTasks(tasks: OrchestrationSubtask[]): number {
     return tasks.filter((task) => task.status === "pending" || task.status === "running").length;
   }
 
   private async completeRun(
-    teamRun: TeamRun,
+    teamRun: OrchestrationRun,
     result: string,
-    onTaskUpdated: (task: TaskNode) => void,
+    onTaskUpdated: (task: OrchestrationSubtask) => void,
   ): Promise<void> {
     if (await this.finalizeRun(teamRun, "completed", result, onTaskUpdated)) {
-      agentTeamLog.info(`[${teamRun.id}] Heavy Brain: orchestrator signaled complete`);
+      orchestrationLog.info(`[${teamRun.id}] Heavy Brain: orchestrator signaled complete`);
     }
   }
 
   private async failRun(
-    teamRun: TeamRun,
+    teamRun: OrchestrationRun,
     message: string,
-    onTaskUpdated: (task: TaskNode) => void,
+    onTaskUpdated: (task: OrchestrationSubtask) => void,
   ): Promise<void> {
     if (await this.finalizeRun(teamRun, "failed", message, onTaskUpdated)) {
-      agentTeamLog.error(`[${teamRun.id}] Heavy Brain: ${message}`);
+      orchestrationLog.error(`[${teamRun.id}] Heavy Brain: ${message}`);
     }
   }
 
@@ -701,10 +701,10 @@ export class HeavyBrainOrchestrator {
   }
 
   private async finalizeRun(
-    teamRun: TeamRun,
-    status: TeamRun["status"],
+    teamRun: OrchestrationRun,
+    status: OrchestrationRun["status"],
     result: string,
-    onTaskUpdated: (task: TaskNode) => void,
+    onTaskUpdated: (task: OrchestrationSubtask) => void,
   ): Promise<boolean> {
     if (this.terminal) {
       return false;
@@ -714,18 +714,18 @@ export class HeavyBrainOrchestrator {
     this.resolveCancelSignal?.();
     await this.cancelOutstandingTasks(teamRun, onTaskUpdated);
     teamRun.status = status;
-    teamRun.finalResult = result;
+    teamRun.resultSummary = result;
     teamRun.time.completed = Date.now();
     return true;
   }
 
   private async cancelOutstandingTasks(
-    teamRun: TeamRun,
-    onTaskUpdated: (task: TaskNode) => void,
+    teamRun: OrchestrationRun,
+    onTaskUpdated: (task: OrchestrationSubtask) => void,
   ): Promise<void> {
     const cancellationPromises: Promise<void>[] = [];
 
-    for (const task of teamRun.tasks) {
+    for (const task of teamRun.subtasks) {
       if (task.status === "running") {
         const sessionId = this.activeRunningTasks?.get(task.id)?.sessionId ?? task.sessionId;
         if (sessionId) {
@@ -754,7 +754,7 @@ export class HeavyBrainOrchestrator {
     try {
       await this.engineManager.cancelMessage(sessionId);
     } catch (error) {
-      agentTeamLog.warn(
+      orchestrationLog.warn(
         `[${label}] Failed to cancel session ${sessionId}: ${error instanceof Error ? error.message : String(error)}`,
       );
     }

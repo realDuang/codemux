@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 
-vi.mock("../../../../../electron/main/services/agent-team/logger", () => ({
-  agentTeamLog: {
+vi.mock("../../../../../electron/main/services/orchestration/logger", () => ({
+  orchestrationLog: {
     info: vi.fn(),
     warn: vi.fn(),
     error: vi.fn(),
@@ -9,8 +9,8 @@ vi.mock("../../../../../electron/main/services/agent-team/logger", () => ({
   },
 }));
 
-import { HeavyBrainOrchestrator } from "../../../../../electron/main/services/agent-team/heavy-brain";
-import type { TeamRun, UnifiedMessage } from "../../../../../src/types/unified";
+import { HeavyBrainOrchestrator } from "../../../../../electron/main/services/orchestration/heavy-brain";
+import type { OrchestrationRun, UnifiedMessage } from "../../../../../src/types/unified";
 
 function makeTextMessage(text: string, overrides: Partial<UnifiedMessage> = {}): UnifiedMessage {
   const messageId = `msg-${Math.random().toString(36).slice(2, 8)}`;
@@ -34,15 +34,15 @@ function makeJsonMessage(payload: unknown, overrides: Partial<UnifiedMessage> = 
   return makeTextMessage(`\`\`\`json\n${JSON.stringify(payload)}\n\`\`\``, overrides);
 }
 
-function makeRun(overrides: Partial<TeamRun> = {}): TeamRun {
+function makeRun(overrides: Partial<OrchestrationRun> = {}): OrchestrationRun {
   return {
     id: "team-run",
     parentSessionId: "parent-session",
     directory: "/repo",
-    originalPrompt: "Do the work",
+    prompt: "Do the work",
     mode: "heavy",
-    status: "planning",
-    tasks: [],
+    status: "decomposing",
+    subtasks: [],
     time: { created: 1_000 },
     ...overrides,
   };
@@ -130,7 +130,7 @@ describe("HeavyBrainOrchestrator", () => {
     });
 
     expect(teamRun.status).toBe("completed");
-    expect(teamRun.tasks.map((task) => `${task.id}:${task.status}`)).toEqual([
+    expect(teamRun.subtasks.map((task) => `${task.id}:${task.status}`)).toEqual([
       "A:completed",
       "B:completed",
     ]);
@@ -192,7 +192,7 @@ describe("HeavyBrainOrchestrator", () => {
     await orchestrator.run(teamRun, "opencode", () => {});
 
     expect(teamRun.status).toBe("completed");
-    expect(teamRun.tasks.map((task) => `${task.id}:${task.status}`)).toEqual([
+    expect(teamRun.subtasks.map((task) => `${task.id}:${task.status}`)).toEqual([
       "A:completed",
       "B:completed",
     ]);
@@ -235,9 +235,9 @@ describe("HeavyBrainOrchestrator", () => {
     await orchestrator.run(teamRun, "opencode", () => {});
 
     expect(teamRun.status).toBe("failed");
-    expect(teamRun.finalResult).toContain("Duplicate task id 'A'");
-    expect(teamRun.tasks).toHaveLength(1);
-    expect(teamRun.tasks[0].status).toBe("completed");
+    expect(teamRun.resultSummary).toContain("Duplicate task id 'A'");
+    expect(teamRun.subtasks).toHaveLength(1);
+    expect(teamRun.subtasks[0].status).toBe("completed");
     expect(engineManager.createSession).toHaveBeenCalledTimes(2);
   });
 
@@ -288,8 +288,8 @@ describe("HeavyBrainOrchestrator", () => {
     await orchestrator.run(teamRun, "opencode", () => {});
 
     expect(teamRun.status).toBe("completed");
-    expect(teamRun.finalResult).toBe("handled failure");
-    expect(teamRun.tasks.map((task) => `${task.id}:${task.status}`)).toEqual([
+    expect(teamRun.resultSummary).toBe("handled failure");
+    expect(teamRun.subtasks.map((task) => `${task.id}:${task.status}`)).toEqual([
       "A:failed",
       "B:blocked",
     ]);
@@ -337,8 +337,8 @@ describe("HeavyBrainOrchestrator", () => {
     await orchestrator.run(teamRun, "opencode", () => {});
 
     expect(teamRun.status).toBe("completed");
-    expect(teamRun.finalResult).toBe("done early");
-    expect(teamRun.tasks.map((task) => `${task.id}:${task.status}`)).toEqual([
+    expect(teamRun.resultSummary).toBe("done early");
+    expect(teamRun.subtasks.map((task) => `${task.id}:${task.status}`)).toEqual([
       "A:completed",
       "B:cancelled",
       "C:cancelled",
@@ -349,7 +349,7 @@ describe("HeavyBrainOrchestrator", () => {
     await Promise.resolve();
     await Promise.resolve();
 
-    expect(teamRun.tasks.find((task) => task.id === "B")?.status).toBe("cancelled");
+    expect(teamRun.subtasks.find((task) => task.id === "B")?.status).toBe("cancelled");
   });
 
   it("cancels active sessions on user cancel and ignores late worker results", async () => {
@@ -387,8 +387,8 @@ describe("HeavyBrainOrchestrator", () => {
     await runPromise;
 
     expect(teamRun.status).toBe("cancelled");
-    expect(teamRun.finalResult).toBe("Orchestration was cancelled.");
-    expect(teamRun.tasks.map((task) => `${task.id}:${task.status}`)).toEqual([
+    expect(teamRun.resultSummary).toBe("Orchestration was cancelled.");
+    expect(teamRun.subtasks.map((task) => `${task.id}:${task.status}`)).toEqual([
       "A:cancelled",
     ]);
     expect(engineManager.cancelMessage).toHaveBeenCalledWith("orch-session");
@@ -398,7 +398,7 @@ describe("HeavyBrainOrchestrator", () => {
     await Promise.resolve();
     await Promise.resolve();
 
-    expect(teamRun.tasks[0].status).toBe("cancelled");
+    expect(teamRun.subtasks[0].status).toBe("cancelled");
   });
 
   it("respects the max concurrent task limit when starting ready workers", async () => {
@@ -521,7 +521,7 @@ describe("HeavyBrainOrchestrator", () => {
 
     await orchestrator.run(teamRun, "opencode", () => {});
 
-    expect(teamRun.tasks[0].worktreeId).toBe("feature-branch");
+    expect(teamRun.subtasks[0].worktreeId).toBe("feature-branch");
     expect(engineManager.createSession).toHaveBeenNthCalledWith(2, "opencode", "/repo", "feature-branch");
   });
 
@@ -564,7 +564,7 @@ describe("HeavyBrainOrchestrator", () => {
 
     await orchestrator.run(teamRun, "opencode", () => {});
 
-    expect(teamRun.tasks[0].worktreeId).toBe("feature-branch");
+    expect(teamRun.subtasks[0].worktreeId).toBe("feature-branch");
     expect(engineManager.createSession).toHaveBeenNthCalledWith(
       1,
       "opencode",

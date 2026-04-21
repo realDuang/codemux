@@ -10,8 +10,8 @@ vi.mock("electron", () => ({
   },
 }));
 
-vi.mock("../../../../../electron/main/services/agent-team/logger", () => ({
-  agentTeamLog: {
+vi.mock("../../../../../electron/main/services/orchestration/logger", () => ({
+  orchestrationLog: {
     info: vi.fn(),
     warn: vi.fn(),
     error: vi.fn(),
@@ -20,8 +20,8 @@ vi.mock("../../../../../electron/main/services/agent-team/logger", () => ({
 }));
 
 import { app } from "electron";
-import { AgentTeamService } from "../../../../../electron/main/services/agent-team";
-import type { EngineType, TaskNode, TeamRun, UnifiedMessage } from "../../../../../src/types/unified";
+import { OrchestrationService } from "../../../../../electron/main/services/orchestration";
+import type { EngineType, OrchestrationSubtask, OrchestrationRun, UnifiedMessage } from "../../../../../src/types/unified";
 
 function makeTextMessage(text: string, overrides: Partial<UnifiedMessage> = {}): UnifiedMessage {
   const messageId = `msg-${Math.random().toString(36).slice(2, 8)}`;
@@ -45,7 +45,7 @@ function makeJsonMessage(payload: unknown, overrides: Partial<UnifiedMessage> = 
   return makeTextMessage(`\`\`\`json\n${JSON.stringify(payload)}\n\`\`\``, overrides);
 }
 
-function makeTask(overrides: Partial<TaskNode> = {}): TaskNode {
+function makeTask(overrides: Partial<OrchestrationSubtask> = {}): OrchestrationSubtask {
   return {
     id: "task-a",
     description: "Task A",
@@ -56,15 +56,15 @@ function makeTask(overrides: Partial<TaskNode> = {}): TaskNode {
   };
 }
 
-function makeRun(overrides: Partial<TeamRun> = {}): TeamRun {
+function makeRun(overrides: Partial<OrchestrationRun> = {}): OrchestrationRun {
   return {
     id: "team-run",
     parentSessionId: "parent-session",
     directory: "/repo",
-    originalPrompt: "Do the work",
+    prompt: "Do the work",
     mode: "light",
-    status: "planning",
-    tasks: [],
+    status: "decomposing",
+    subtasks: [],
     time: { created: 1_000 },
     ...overrides,
   };
@@ -107,15 +107,15 @@ function createEngineManagerMock(defaultEngineType: EngineType = "opencode") {
 }
 
 let tmpDir: string;
-const services: AgentTeamService[] = [];
+const services: OrchestrationService[] = [];
 
-function createService(): AgentTeamService {
-  const service = new AgentTeamService();
+function createService(): OrchestrationService {
+  const service = new OrchestrationService();
   services.push(service);
   return service;
 }
 
-describe("AgentTeamService", () => {
+describe("OrchestrationService", () => {
   beforeEach(() => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "agent-team-service-"));
     vi.mocked(app.getPath).mockReturnValue(tmpDir);
@@ -158,7 +158,7 @@ describe("AgentTeamService", () => {
         }),
       );
       expect(run.status).toBe("completed");
-      expect(run.tasks.map((task) => `${task.id}:${task.status}`)).toEqual([
+      expect(run.subtasks.map((task) => `${task.id}:${task.status}`)).toEqual([
         "A:completed",
       ]);
     });
@@ -261,17 +261,17 @@ describe("AgentTeamService", () => {
 
   describe("lifecycle hardening", () => {
     it("loads persisted runs and marks in-progress work as interrupted", () => {
-      const filePath = path.join(tmpDir, "agent-team-runs.json");
+      const filePath = path.join(tmpDir, "orchestration-runs.json");
       const persistedRunningRun = makeRun({
         id: "persisted-running",
         mode: "heavy",
         status: "running",
         orchestratorSessionId: "orch-session",
-        tasks: [
+        subtasks: [
           makeTask({
             id: "A",
             status: "completed",
-            result: "done",
+            resultSummary: "done",
             time: { started: 10, completed: 20 },
           }),
           makeTask({
@@ -294,7 +294,7 @@ describe("AgentTeamService", () => {
       const persistedCompletedRun = makeRun({
         id: "persisted-complete",
         status: "completed",
-        finalResult: "done",
+        resultSummary: "done",
         time: { created: 500, completed: 700 },
       });
 
@@ -308,18 +308,18 @@ describe("AgentTeamService", () => {
 
       const recoveredRun = service.getRun("persisted-running");
       expect(recoveredRun?.status).toBe("failed");
-      expect(recoveredRun?.finalResult).toContain("interrupted because CodeMux restarted");
+      expect(recoveredRun?.resultSummary).toContain("interrupted because CodeMux restarted");
       expect(recoveredRun?.time.completed).toBeDefined();
-      expect(recoveredRun?.tasks.map((task) => `${task.id}:${task.status}`)).toEqual([
+      expect(recoveredRun?.subtasks.map((task) => `${task.id}:${task.status}`)).toEqual([
         "A:completed",
         "B:cancelled",
         "C:cancelled",
       ]);
 
       const saved = JSON.parse(fs.readFileSync(filePath, "utf-8"));
-      const savedRecovered = saved.runs.find((run: TeamRun) => run.id === "persisted-running");
+      const savedRecovered = saved.runs.find((run: OrchestrationRun) => run.id === "persisted-running");
       expect(savedRecovered.status).toBe("failed");
-      expect(savedRecovered.tasks.map((task: TaskNode) => task.status)).toEqual([
+      expect(savedRecovered.subtasks.map((task: OrchestrationSubtask) => task.status)).toEqual([
         "completed",
         "cancelled",
         "cancelled",
@@ -332,7 +332,7 @@ describe("AgentTeamService", () => {
       const service = createService();
       const engineManager = createEngineManagerMock();
       const run = makeRun({ id: "light-run", mode: "light" });
-      const filePath = path.join(tmpDir, "agent-team-runs.json");
+      const filePath = path.join(tmpDir, "orchestration-runs.json");
 
       service.init(engineManager);
       (service as any).runs.set(run.id, run);
@@ -348,7 +348,7 @@ describe("AgentTeamService", () => {
       expect(fs.existsSync(filePath)).toBe(true);
 
       const saved = JSON.parse(fs.readFileSync(filePath, "utf-8"));
-      expect(saved.runs.some((savedRun: TeamRun) => savedRun.id === "light-run")).toBe(true);
+      expect(saved.runs.some((savedRun: OrchestrationRun) => savedRun.id === "light-run")).toBe(true);
     });
   });
 
@@ -371,7 +371,7 @@ describe("AgentTeamService", () => {
       const settingsFile = path.join(tmpDir, "settings.json");
       expect(fs.existsSync(settingsFile)).toBe(true);
       const raw = JSON.parse(fs.readFileSync(settingsFile, "utf-8"));
-      expect(raw["team.roleMappings"]).toEqual(updated);
+      expect(raw["orchestration.roleMappings"]).toEqual(updated);
 
       const reloaded = service.getRoleMappings();
       expect(reloaded).toEqual(updated);

@@ -35,10 +35,7 @@ import type {
   OrchestrationRun,
   OrchestrationSubtask,
   OrchestrationCreateRequest,
-  OrchestrationConfirmRequest,
-  TeamRun,
-  TeamCreateRequest,
-  TaskNode,
+  OrchestrationConfirmPlanRequest,
   RoleEngineMapping,
 } from "../types/unified";
 
@@ -63,8 +60,7 @@ export interface GatewayNotificationHandlers {
   onScheduledTaskFailed?: (taskId: string, error: string) => void;
   onScheduledTasksChanged?: (tasks: ScheduledTask[]) => void;
   onOrchestrationUpdated?: (run: OrchestrationRun) => void;
-  onTeamRunUpdated?: (run: TeamRun) => void;
-  onTeamTaskUpdated?: (runId: string, task: TaskNode) => void;
+  onOrchestrationSubtaskUpdated?: (runId: string, subtask: OrchestrationSubtask) => void;
   onConnected?: () => void;
   onDisconnected?: (reason: string) => void;
 }
@@ -224,13 +220,8 @@ class GatewayAPI {
       this.handlers.onOrchestrationUpdated?.(data.run);
     });
 
-    // Agent Team
-    this.bind("team.run.updated", (data) => {
-      this.handlers.onTeamRunUpdated?.(data.run);
-    });
-
-    this.bind("team.task.updated", (data) => {
-      this.handlers.onTeamTaskUpdated?.(data.runId, data.task);
+    this.bind("orchestration.subtask.updated", (data) => {
+      this.handlers.onOrchestrationSubtaskUpdated?.(data.runId, data.subtask);
     });
   }
 
@@ -498,60 +489,38 @@ class GatewayAPI {
     return gatewayClient.request("worktree.listBranches", { directory });
   }
 
-  // --- Orchestration (PR #117 — to be absorbed) ---
+  // --- Orchestration (unified Light/Heavy brain + role-based plan confirmation) ---
 
   async createOrchestration(req: OrchestrationCreateRequest): Promise<OrchestrationRun> {
-    return gatewayClient.request("orchestration.create", req);
-  }
-
-  async decomposeOrchestration(runId: string): Promise<{ ok: boolean }> {
-    return gatewayClient.request("orchestration.decompose", { runId });
-  }
-
-  async confirmOrchestration(req: OrchestrationConfirmRequest): Promise<{ ok: boolean }> {
-    return gatewayClient.request("orchestration.confirm", req);
+    return gatewayClient.createOrchestrationRun(req);
   }
 
   async cancelOrchestration(runId: string): Promise<void> {
-    return gatewayClient.request("orchestration.cancel", { runId });
+    return gatewayClient.cancelOrchestrationRun(runId);
+  }
+
+  async sendOrchestrationMessage(runId: string, text: string): Promise<void> {
+    return gatewayClient.sendOrchestrationMessage(runId, text);
   }
 
   async listOrchestrations(): Promise<OrchestrationRun[]> {
-    return gatewayClient.request("orchestration.list", {});
+    return gatewayClient.listOrchestrationRuns();
   }
 
-  // --- Agent Team (Light/Heavy Brain) ---
-
-  createTeamRun(req: TeamCreateRequest): Promise<TeamRun> {
-    return gatewayClient.createTeamRun(req);
+  async getOrchestration(runId: string): Promise<OrchestrationRun | null> {
+    return gatewayClient.getOrchestrationRun(runId);
   }
 
-  cancelTeamRun(runId: string): Promise<void> {
-    return gatewayClient.cancelTeamRun(runId);
+  async confirmOrchestrationPlan(req: OrchestrationConfirmPlanRequest): Promise<{ ok: boolean }> {
+    return gatewayClient.confirmOrchestrationPlan(req.runId, req.subtasks);
   }
 
-  sendTeamMessage(runId: string, text: string): Promise<void> {
-    return gatewayClient.sendTeamMessage(runId, text);
+  async getOrchestrationRoleMappings(): Promise<{ mappings: RoleEngineMapping[] }> {
+    return gatewayClient.getOrchestrationRoleMappings();
   }
 
-  listTeamRuns(): Promise<TeamRun[]> {
-    return gatewayClient.listTeamRuns();
-  }
-
-  getTeamRun(runId: string): Promise<TeamRun | null> {
-    return gatewayClient.getTeamRun(runId);
-  }
-
-  confirmTeamPlan(runId: string, tasks: TaskNode[]): Promise<{ ok: boolean }> {
-    return gatewayClient.confirmTeamPlan(runId, tasks);
-  }
-
-  getTeamRoleMappings(): Promise<{ mappings: RoleEngineMapping[] }> {
-    return gatewayClient.getTeamRoleMappings();
-  }
-
-  updateTeamRoleMappings(mappings: RoleEngineMapping[]): Promise<{ mappings: RoleEngineMapping[] }> {
-    return gatewayClient.updateTeamRoleMappings(mappings);
+  async updateOrchestrationRoleMappings(mappings: RoleEngineMapping[]): Promise<{ mappings: RoleEngineMapping[] }> {
+    return gatewayClient.updateOrchestrationRoleMappings(mappings);
   }
 }
 

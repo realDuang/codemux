@@ -5,13 +5,13 @@
 // ============================================================================
 
 import { EventEmitter } from "events";
-import type { TaskNode, TeamRun } from "../../../../src/types/unified";
+import type { OrchestrationSubtask, OrchestrationRun } from "../../../../src/types/unified";
 import { TaskExecutor } from "./task-executor";
 import { AGENT_TEAM_MAX_CONCURRENT_TASKS } from "./guardrails";
 
 export interface DAGExecutorEvents {
   /** A task's status changed */
-  "task.updated": (data: { runId: string; task: TaskNode }) => void;
+  "task.updated": (data: { runId: string; task: OrchestrationSubtask }) => void;
 }
 
 export declare interface DAGExecutor {
@@ -36,11 +36,11 @@ export class DAGExecutor extends EventEmitter {
    * @param run - The team run containing the task DAG
    * @returns The tasks that were executed in this call
    */
-  async executeReadyTasks(run: TeamRun): Promise<TaskNode[]> {
-    const executedTasks: TaskNode[] = [];
+  async executeReadyTasks(run: OrchestrationRun): Promise<OrchestrationSubtask[]> {
+    const executedTasks: OrchestrationSubtask[] = [];
 
     while (true) {
-      const ready = DAGExecutor.findReadyTasks(run.tasks).slice(0, this.maxConcurrentTasks);
+      const ready = DAGExecutor.findReadyTasks(run.subtasks).slice(0, this.maxConcurrentTasks);
       if (ready.length === 0) break;
 
       // Execute the next ready batch up to the concurrency limit.
@@ -55,7 +55,7 @@ export class DAGExecutor extends EventEmitter {
 
         if (result.status === "fulfilled") {
           task.status = "completed";
-          task.result = result.value.summary;
+          task.resultSummary = result.value.summary;
           task.sessionId = result.value.sessionId;
           if (result.value.error) {
             task.status = "failed";
@@ -72,7 +72,7 @@ export class DAGExecutor extends EventEmitter {
       }
 
       // Propagate failures: mark downstream tasks as blocked
-      DAGExecutor.propagateFailures(run.tasks);
+      DAGExecutor.propagateFailures(run.subtasks);
     }
 
     return executedTasks;
@@ -83,7 +83,7 @@ export class DAGExecutor extends EventEmitter {
    * - status is "pending"
    * - all dependencies are "completed"
    */
-  static findReadyTasks(tasks: TaskNode[]): TaskNode[] {
+  static findReadyTasks(tasks: OrchestrationSubtask[]): OrchestrationSubtask[] {
     return tasks.filter((task) => {
       if (task.status !== "pending") return false;
       return task.dependsOn.every((depId) => {
@@ -104,15 +104,15 @@ export class DAGExecutor extends EventEmitter {
    *   run in the run's primary directory, avoiding contention.
    * - When teamWorktreeDir is not set, behavior is unchanged.
    */
-  private async runSingleTask(run: TeamRun, task: TaskNode) {
+  private async runSingleTask(run: OrchestrationRun, task: OrchestrationSubtask) {
     task.status = "running";
     task.time = { ...task.time, started: Date.now() };
     this.emit("task.updated", { runId: run.id, task });
 
     // Gather upstream results for context injection
     const dependencies = task.dependsOn
-      .map((depId) => run.tasks.find((t) => t.id === depId))
-      .filter((t): t is TaskNode => t != null);
+      .map((depId) => run.subtasks.find((t) => t.id === depId))
+      .filter((t): t is OrchestrationSubtask => t != null);
 
     const upstreamContext = TaskExecutor.buildUpstreamContext(dependencies);
 
@@ -139,8 +139,8 @@ export class DAGExecutor extends EventEmitter {
   /**
    * Mark tasks as "blocked" if any of their dependencies failed.
    */
-  static propagateFailures(tasks: TaskNode[]): TaskNode[] {
-    const blockedTasks: TaskNode[] = [];
+  static propagateFailures(tasks: OrchestrationSubtask[]): OrchestrationSubtask[] {
+    const blockedTasks: OrchestrationSubtask[] = [];
     let changed = true;
     while (changed) {
       changed = false;
@@ -167,7 +167,7 @@ export class DAGExecutor extends EventEmitter {
   /**
    * Check if the DAG execution is complete (no more pending/running tasks).
    */
-  static isComplete(tasks: TaskNode[]): boolean {
+  static isComplete(tasks: OrchestrationSubtask[]): boolean {
     return tasks.every((t) =>
       t.status === "completed" || t.status === "failed" || t.status === "blocked" || t.status === "cancelled",
     );
@@ -176,7 +176,7 @@ export class DAGExecutor extends EventEmitter {
   /**
    * Check if all tasks completed successfully.
    */
-  static isAllSuccessful(tasks: TaskNode[]): boolean {
+  static isAllSuccessful(tasks: OrchestrationSubtask[]): boolean {
     return tasks.every((t) => t.status === "completed");
   }
 }

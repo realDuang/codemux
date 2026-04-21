@@ -4,14 +4,14 @@
 // ============================================================================
 
 import type { EngineManager } from "../../gateway/engine-manager";
-import type { TaskNode, EngineType, UnifiedMessage, UnifiedPart, OrchestratorRole } from "../../../../src/types/unified";
+import type { OrchestrationSubtask, EngineType, UnifiedMessage, UnifiedPart, OrchestratorRole } from "../../../../src/types/unified";
 import {
   AGENT_TEAM_INACTIVITY_TIMEOUT_MS,
   AGENT_TEAM_MAX_TASK_RETRIES,
   AGENT_TEAM_RETRY_BACKOFF_MS,
 } from "./guardrails";
 
-/** Role → engine/model resolver (injected by AgentTeamService). */
+/** Role → engine/model resolver (injected by OrchestrationService). */
 export type RoleResolver = (role: OrchestratorRole) => { engineType: EngineType; modelId?: string } | null;
 
 /** Result of executing a single task */
@@ -117,7 +117,7 @@ export class TaskExecutor {
    * @param upstreamContext - Optional context from completed upstream tasks
    */
   async execute(
-    task: TaskNode,
+    task: OrchestrationSubtask,
     directory: string,
     options: TaskExecutionOptions = {},
   ): Promise<TaskExecutionResult> {
@@ -171,12 +171,12 @@ export class TaskExecutor {
   /**
    * Build upstream context string from completed dependency tasks.
    */
-  static buildUpstreamContext(dependencies: TaskNode[]): string | undefined {
-    const completed = dependencies.filter((d) => d.status === "completed" && d.result);
+  static buildUpstreamContext(dependencies: OrchestrationSubtask[]): string | undefined {
+    const completed = dependencies.filter((d) => d.status === "completed" && d.resultSummary);
     if (completed.length === 0) return undefined;
 
     const sections = completed.map(
-      (d) => `[Task "${d.description}"]: ${d.result}`,
+      (d) => `[Task "${d.description}"]: ${d.resultSummary}`,
     );
 
     return `Context from completed upstream tasks:\n---\n${sections.join("\n---\n")}`;
@@ -187,7 +187,7 @@ export class TaskExecutor {
   }
 
   private async executeAttempt(
-    task: TaskNode,
+    task: OrchestrationSubtask,
     directory: string,
     options: TaskExecutionOptions,
     inactivityTimeoutMs: number,

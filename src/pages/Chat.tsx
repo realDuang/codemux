@@ -43,8 +43,6 @@ import type {
   ScheduledTask,
   ScheduledTaskCreateRequest,
   ScheduledTaskUpdateRequest,
-  TeamRun,
-  TaskNode,
 } from "../types/unified";
 import WorktreeModal from "../components/WorktreeModal";
 import MergeWorktreeModal from "../components/MergeWorktreeModal";
@@ -72,21 +70,10 @@ import { handleFileChanged, refreshGitStatus } from "../stores/file";
 
 import { configStore, setConfigStore, getSelectedModelForEngine, isEngineEnabled, getDefaultEngineType, getEffectiveReasoningEffortForEngine, getServiceTierForEngine } from "../stores/config";
 import { scheduledTaskStore, setScheduledTaskStore } from "../stores/scheduled-task";
-import {
-  connectTeamHandlers,
-  createTeamRun,
-  getActiveHeavyTeamRunForSession,
-  getActiveTeamRunForSession,
-  getTeamRunsForSession,
-  hydrateTeamRuns,
-  cancelTeamRun,
-  sendTeamRunMessage,
-} from "../stores/team";
-import { TeamRunCard } from "../components/team/TeamRunCard";
 import { computeActiveSessions } from "../lib/active-sessions";
 import { orchestrationStore, updateRun, setCurrentRunId, generateTeamId, registerTeam, associateRunWithTeam, associateChildSession, getTeamId, isTeamParentSession, getRunForTeam, restoreFromRuns, autoDetectTeams, getRoleMappings } from "../stores/orchestration";
 import { OrchestrationCards } from "../components/orchestration/OrchestrationCards";
-import type { OrchestrationRun } from "../types/unified";
+import type { OrchestrationRun, OrchestrationSubtask } from "../types/unified";
 
 // Binary search helper (consistent with opencode desktop)
 function binarySearch<T>(
@@ -816,7 +803,7 @@ export default function Chat() {
                 if (parentSession) {
                   setSessionStore("list", (list) => [...list, {
                     id: task.sessionId!,
-                    engineType: task.engineType,
+                    engineType: task.engineType ?? parentSession.engineType,
                     title: task.description,
                     directory: parentSession.directory,
                     projectID: parentSession.projectID,
@@ -830,35 +817,15 @@ export default function Chat() {
             }
           }
         },
-        ...(() => {
-          const teamHandlers = connectTeamHandlers();
-          // Bridge: mirror AgentTeamService team runs into PR #117's
-          // sidebar grouping registry so child sessions collapse under
-          // their parent session in SessionSidebar.
-          const bridgeToSidebar = (run: import("../types/unified").TeamRun) => {
-            if (!run.parentSessionId) return;
-            const teamId = getTeamId(run.parentSessionId) ?? run.id;
-            const worktreeInfo = run.teamWorktreeName && run.teamWorktreeDir
-              ? { name: run.teamWorktreeName, directory: run.teamWorktreeDir }
-              : undefined;
-            registerTeam(teamId, run.parentSessionId, worktreeInfo);
-            associateRunWithTeam(teamId, run.id);
-            for (const task of run.tasks) {
-              if (task.sessionId) {
-                associateChildSession(teamId, task.sessionId);
-              }
-            }
-          };
-          return {
-            onTeamRunUpdated: (run: import("../types/unified").TeamRun) => {
-              teamHandlers.onTeamRunUpdated(run);
-              bridgeToSidebar(run);
-            },
-            onTeamTaskUpdated: (runId: string, task: import("../types/unified").TaskNode) => {
-              teamHandlers.onTeamTaskUpdated(runId, task);
-            },
-          };
-        })(),
+        onOrchestrationSubtaskUpdated: (runId: string, subtask: OrchestrationSubtask) => {
+          // Keep sidebar bridge in sync when a subtask gets its child sessionId
+          const run = orchestrationStore.runs[runId];
+          if (!run || !run.parentSessionId) return;
+          const teamId = getTeamId(run.parentSessionId) ?? run.id;
+          if (subtask.sessionId) {
+            associateChildSession(teamId, subtask.sessionId);
+          }
+        },
       };
 
       const needsSessionBootstrap =
@@ -903,16 +870,14 @@ export default function Chat() {
       (async () => {
         // Load all projects and sessions from ConversationStore (single call each)
         try {
-          const [allProjects, allSessions, allTeamRuns] = await Promise.all([
+          const [allProjects, allSessions] = await Promise.all([
             gateway.listAllProjects(),
             gateway.listAllSessions(),
-            gateway.listTeamRuns(),
           ]);
 
           if (gen !== initGeneration || disposed) return;
 
           setSessionStore("projects", allProjects);
-          hydrateTeamRuns(allTeamRuns);
 
           // Filter sessions to valid directories only (worktree sessions pass through via worktreeId)
           const validDirectories = new Set(allProjects.map(p => p.directory));
@@ -1277,26 +1242,23 @@ export default function Chat() {
       // Pass worktree info from team registration to the run
       const teamInfo = orchestrationStore.teams[teamId];
       const run = await gateway.createOrchestration({
-        parentSessionId: sessionId,
+        sessionId,
         directory: dir,
         prompt,
+        mode: "light",
+        engineType: currentEngineType(),
         engineTypes: runningEngines.map(e => e.type),
         roleMappings: getRoleMappings(),
-        worktreeInfo: teamInfo?.worktreeInfo,
+        teamWorktreeInfo: teamInfo?.worktreeInfo,
+        requirePlanConfirmation: true,
       });
 
       updateRun(run);
       associateRunWithTeam(teamId, run.id);
       setCurrentRunId(run.id);
       setOrchestratorView("dashboard");
-
-      gateway.decomposeOrchestration(run.id).catch((err) => {
-        logger.error("[TeamTask] Decomposition failed:", err);
-        notify("Task decomposition failed");
-        setSendingFor(sessionId, false);
-      });
     } catch (error) {
-      logger.error("[TeamTask] Failed to start team orchestration:", error);
+      logger.error("[Orchestration] Failed to start:", error);
       notify(t().notification.messageSendFailed);
       setSendingFor(sessionId, false);
     }
@@ -2057,74 +2019,17 @@ export default function Chat() {
     }
   };
 
-  // --- Team Run ---
-  const handleTeamSend = async (text: string, mode: "light" | "heavy") => {
-    const sessionId = sessionStore.current;
-    if (!sessionId) return;
-    const session = sessionStore.list.find(s => s.id === sessionId);
-    const directory = session?.directory || ".";
-    const parentDirectory = session?.worktreeId
-      ? sessionStore.projects.find((project) => project.id === session.projectID)?.directory
-      : undefined;
-    if (getActiveTeamRunForSession(sessionId)) {
-      return;
-    }
-    try {
-      if (session?.worktreeId && !parentDirectory) {
-        throw new Error("Unable to resolve the parent project directory for this worktree session.");
-      }
-
-      await createTeamRun(sessionId, text, mode, directory, currentEngineType(), {
-        worktreeId: session?.worktreeId,
-        parentDirectory,
-      });
-      notify(t().notification.teamRunStarted, "info", 3000);
-    } catch (err: any) {
-      logger.error("[TeamRun] Failed to create:", err);
-      notify(
-        formatMessage(t().notification.teamRunFailed, {
-          message: err?.message ?? String(err),
-        }),
-        "error",
-        5000,
-      );
-    }
-  };
-
-  const sessionTeamRuns = createMemo(() => {
-    const sid = sessionStore.current;
-    if (!sid) return [];
-    return getTeamRunsForSession(sid);
-  });
-
-  const activeTeamRun = createMemo(() => {
-    const sid = sessionStore.current;
-    if (!sid) return undefined;
-    return getActiveTeamRunForSession(sid);
-  });
-
+  // --- Orchestration relay (Heavy Brain user message forwarding) ---
   const activeHeavyRelayRun = createMemo(() => {
     const sid = sessionStore.current;
     if (!sid) return undefined;
-    return getActiveHeavyTeamRunForSession(sid);
+    return Object.values(orchestrationStore.runs).find(
+      (r) =>
+        r.mode === "heavy" &&
+        r.parentSessionId === sid &&
+        (r.status === "running" || r.status === "decomposing"),
+    );
   });
-
-  const handleCancelTeamRun = async (runId: string) => {
-    try {
-      await cancelTeamRun(runId);
-    } catch (err: any) {
-      logger.error("[TeamRun] Failed to cancel:", err);
-    }
-  };
-
-  const handleConfirmTeamPlan = async (runId: string, tasks: TaskNode[]) => {
-    try {
-      await gateway.confirmTeamPlan(runId, tasks);
-    } catch (err: any) {
-      logger.error("[TeamRun] Failed to confirm plan:", err);
-    }
-  };
-
 
   const appendOptimisticUserText = (sessionId: string, text: string): string => {
     const nonce = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -2183,17 +2088,17 @@ export default function Chat() {
     const relayRun = activeHeavyRelayRun();
     if (relayRun) {
       if (images && images.length > 0) {
-        showSendError(t().prompt.teamRelayImageUnsupported);
+        showSendError(t().prompt.orchestrationRelayImageUnsupported);
         return;
       }
 
       const tempMessageId = appendOptimisticUserText(sessionId, text);
       try {
-        await sendTeamRunMessage(relayRun.id, text);
+        await gateway.sendOrchestrationMessage(relayRun.id, text);
       } catch (error) {
         logger.error("[TeamRun] Failed to relay message:", error);
         notify(
-          formatMessage(t().notification.teamMessageRelayFailed, {
+          formatMessage(t().notification.orchestrationMessageRelayFailed, {
             message: error instanceof Error ? error.message : String(error),
           }),
           "error",
@@ -2773,27 +2678,6 @@ export default function Chat() {
                       </div>
                     </Show>
 
-                    {/* Team Runs */}
-                    <Show when={sessionTeamRuns().length > 0}>
-                      <div class="mb-2 space-y-2">
-                        <div class="px-1 text-[11px] font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">
-                          {t().chat.teamRunsTitle}
-                        </div>
-                        <For each={sessionTeamRuns()}>
-                          {(run) => (
-                            <TeamRunCard
-                              run={run}
-                              isActive={run.id === activeTeamRun()?.id}
-                              currentSessionId={sessionStore.current}
-                              onCancel={(runId) => void handleCancelTeamRun(runId)}
-                              onSelectSession={(sid) => void handleSelectSession(sid)}
-                              onConfirmPlan={(runId, tasks) => void handleConfirmTeamPlan(runId, tasks)}
-                            />
-                          )}
-                        </For>
-                      </div>
-                    </Show>
-
                     <PromptInput
                       onSend={handleSendMessage}
                       onCancel={handleCancelMessage}
@@ -2810,7 +2694,6 @@ export default function Chat() {
                       }
                       availableCommands={availableCommands()}
                       onCommandInvoke={handleCommandInvoke}
-                      onTeamSend={activeTeamRun() ? undefined : handleTeamSend}
                       relayToOrchestrator={!!activeHeavyRelayRun()}
                     />
                   </Show>

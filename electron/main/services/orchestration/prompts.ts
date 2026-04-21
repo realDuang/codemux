@@ -2,7 +2,7 @@
 // Prompt Templates — Engine-agnostic prompts for agent team orchestration
 // ============================================================================
 
-import type { EngineInfo, TaskNode, TeamRun } from "../../../../src/types/unified";
+import type { EngineInfo, OrchestrationSubtask, OrchestrationRun } from "../../../../src/types/unified";
 
 /**
  * Format available engines list for inclusion in prompts.
@@ -96,16 +96,16 @@ ${userRequest}`;
 /**
  * Format task results for injection back into the orchestrator (Heavy Brain).
  */
-export function formatTaskResults(run: TeamRun): string {
+export function formatTaskResults(run: OrchestrationRun): string {
   const lines: string[] = ["## Task Execution Results\n"];
 
-  for (const task of run.tasks) {
+  for (const task of run.subtasks) {
     if (task.status === "completed") {
       const duration = task.time?.started && task.time?.completed
         ? `${((task.time.completed - task.time.started) / 1000).toFixed(1)}s`
         : "";
       lines.push(`### ${task.id}: "${task.description}" [COMPLETED]${duration ? ` (${duration})` : ""}`);
-      lines.push(task.result || "(no output)");
+      lines.push(task.resultSummary || "(no output)");
       lines.push("");
     } else if (task.status === "failed") {
       lines.push(`### ${task.id}: "${task.description}" [FAILED]`);
@@ -118,9 +118,9 @@ export function formatTaskResults(run: TeamRun): string {
     }
   }
 
-  const completed = run.tasks.filter((t) => t.status === "completed").length;
-  const failed = run.tasks.filter((t) => t.status === "failed").length;
-  const total = run.tasks.length;
+  const completed = run.subtasks.filter((t) => t.status === "completed").length;
+  const failed = run.subtasks.filter((t) => t.status === "failed").length;
+  const total = run.subtasks.length;
   lines.push(`---\n${completed}/${total} tasks completed${failed > 0 ? `, ${failed} failed` : ""}. What would you like to do next?`);
 
   return lines.join("\n");
@@ -129,7 +129,7 @@ export function formatTaskResults(run: TeamRun): string {
 /**
  * Format a single completed task result for incremental reporting (Heavy Brain).
  */
-export function formatSingleTaskResult(task: TaskNode, remainingCount: number): string {
+export function formatSingleTaskResult(task: OrchestrationSubtask, remainingCount: number): string {
   const duration = task.time?.started && task.time?.completed
     ? ` (${((task.time.completed - task.time.started) / 1000).toFixed(1)}s)`
     : "";
@@ -139,7 +139,7 @@ export function formatSingleTaskResult(task: TaskNode, remainingCount: number): 
   if (task.status === "completed") {
     lines.push(`## Task Completed: ${task.id}${duration}`);
     lines.push(`**${task.description}**\n`);
-    lines.push(task.result || "(no output)");
+    lines.push(task.resultSummary || "(no output)");
   } else if (task.status === "failed") {
     lines.push(`## Task Failed: ${task.id}${duration}`);
     lines.push(`**${task.description}**\n`);

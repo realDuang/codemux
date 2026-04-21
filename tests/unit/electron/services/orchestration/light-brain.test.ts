@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 
-vi.mock("../../../../../electron/main/services/agent-team/logger", () => ({
-  agentTeamLog: {
+vi.mock("../../../../../electron/main/services/orchestration/logger", () => ({
+  orchestrationLog: {
     info: vi.fn(),
     warn: vi.fn(),
     error: vi.fn(),
@@ -9,8 +9,8 @@ vi.mock("../../../../../electron/main/services/agent-team/logger", () => ({
   },
 }));
 
-import { LightBrainOrchestrator } from "../../../../../electron/main/services/agent-team/light-brain";
-import type { TeamRun, UnifiedMessage } from "../../../../../src/types/unified";
+import { LightBrainOrchestrator } from "../../../../../electron/main/services/orchestration/light-brain";
+import type { OrchestrationRun, UnifiedMessage } from "../../../../../src/types/unified";
 
 function makeTextMessage(text: string, overrides: Partial<UnifiedMessage> = {}): UnifiedMessage {
   const messageId = `msg-${Math.random().toString(36).slice(2, 8)}`;
@@ -30,15 +30,15 @@ function makeTextMessage(text: string, overrides: Partial<UnifiedMessage> = {}):
   };
 }
 
-function makeRun(overrides: Partial<TeamRun> = {}): TeamRun {
+function makeRun(overrides: Partial<OrchestrationRun> = {}): OrchestrationRun {
   return {
     id: "team-run",
     parentSessionId: "parent-session",
     directory: "/repo",
-    originalPrompt: "Do the work",
+    prompt: "Do the work",
     mode: "light",
-    status: "planning",
-    tasks: [],
+    status: "decomposing",
+    subtasks: [],
     time: { created: 1_000 },
     ...overrides,
   };
@@ -91,7 +91,7 @@ describe("LightBrainOrchestrator", () => {
     await orchestrator.run(teamRun, () => {}, "opencode");
 
     expect(teamRun.status).toBe("completed");
-    expect(teamRun.tasks[0].worktreeId).toBe("feature-branch");
+    expect(teamRun.subtasks[0].worktreeId).toBe("feature-branch");
     expect(engineManager.createSession).toHaveBeenNthCalledWith(
       1,
       "opencode",
@@ -152,7 +152,7 @@ describe("LightBrainOrchestrator", () => {
     await orchestrator.run(teamRun, () => {}, "opencode");
 
     expect(teamRun.status).toBe("completed");
-    expect(teamRun.tasks[0].worktreeId).toBe("feature-branch");
+    expect(teamRun.subtasks[0].worktreeId).toBe("feature-branch");
     expect(engineManager.createSession).toHaveBeenNthCalledWith(2, "opencode", "/repo", "feature-branch");
   });
 
@@ -204,11 +204,11 @@ describe("LightBrainOrchestrator", () => {
     await orchestrator.run(teamRun, () => {}, "opencode");
 
     expect(awaitPlanConfirmation).toHaveBeenCalledWith("team-run");
-    expect(statuses[0]).toBe("awaiting-confirmation");
+    expect(statuses[0]).toBe("confirming");
     expect(teamRun.status).toBe("completed");
-    expect(teamRun.tasks).toHaveLength(1);
-    expect(teamRun.tasks[0].id).toBe("t-user-1");
-    expect(teamRun.tasks[0].description).toBe("User-edited task");
+    expect(teamRun.subtasks).toHaveLength(1);
+    expect(teamRun.subtasks[0].id).toBe("t-user-1");
+    expect(teamRun.subtasks[0].description).toBe("User-edited task");
   });
 
   it("marks run failed cleanly if plan confirmation is rejected (e.g. run cancelled)", async () => {
@@ -237,7 +237,7 @@ describe("LightBrainOrchestrator", () => {
     await orchestrator.run(teamRun, () => {}, "opencode");
 
     expect(teamRun.status).toBe("failed");
-    expect(teamRun.finalResult).toContain("Plan confirmation failed");
+    expect(teamRun.resultSummary).toContain("Plan confirmation failed");
     expect(teamRun.time.completed).toBeDefined();
     // Worker session was never created
     expect(engineManager.createSession).toHaveBeenCalledTimes(1);

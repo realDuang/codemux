@@ -1,6 +1,6 @@
-# Agent Team
+# Orchestration
 
-Agent Team is a multi-agent orchestration layer that lets a single user prompt fan
+The Orchestration system is a multi-agent layer that lets a single user prompt fan
 out into a DAG of subtasks executed by one or more engine sessions. It fuses two
 designs:
 
@@ -17,8 +17,8 @@ team-worktree concepts.
 
 | Brain  | Entry file                                   | Behavior                                                                 |
 | ------ | -------------------------------------------- | ------------------------------------------------------------------------ |
-| Light  | `electron/main/services/agent-team/light-brain.ts` | One-shot planner: asks an engine to produce a DAG, then executes it.  |
-| Heavy  | `electron/main/services/agent-team/heavy-brain.ts` | Persistent orchestrator: drives dispatch iteratively; supports UserChannel relays for clarification from the human. |
+| Light  | `electron/main/services/orchestration/light-brain.ts` | One-shot planner: asks an engine to produce a DAG, then executes it.  |
+| Heavy  | `electron/main/services/orchestration/heavy-brain.ts` | Persistent orchestrator: drives dispatch iteratively; supports UserChannel relays for clarification from the human. |
 
 Both brains share:
 
@@ -32,14 +32,14 @@ Both brains share:
 ## Plan Confirmation
 
 The Light Brain pauses between planning and execution when
-`teamRun.requirePlanConfirmation` is true (default for Light, off for Heavy).
+`orchestrationRun.requirePlanConfirmation` is true (default for Light, off for Heavy).
 
 Flow:
 
-1. Light Brain generates a DAG and sets `teamRun.status = "awaiting-confirmation"`.
-2. Gateway emits `team.run.updated`; UI shows the plan in `TeamRunCard` with a
+1. Light Brain generates a DAG and sets `orchestrationRun.status = "awaiting-confirmation"`.
+2. Gateway emits `orchestration.updated`; UI shows the plan in `OrchestrationCards` with a
    "Confirm & execute" button.
-3. User inspects/edits tasks in `TeamRunCard`, then fires
+3. User inspects/edits tasks in `OrchestrationCards`, then fires
    `gateway.confirmTeamPlan(runId, tasks)`.
 4. The service's `confirmPlan(runId, tasks)` resolves the pending gate;
    Light Brain resumes with the user-edited DAG.
@@ -58,7 +58,7 @@ Tasks can declare a semantic role instead of a concrete engine:
 ```
 
 Built-in roles (see `DEFAULT_ROLE_MAPPINGS` in
-`electron/main/services/agent-team/index.ts`):
+`electron/main/services/orchestration/index.ts`):
 
 | role       | read-only | intended use                         |
 | ---------- | --------- | ------------------------------------ |
@@ -69,7 +69,7 @@ Built-in roles (see `DEFAULT_ROLE_MAPPINGS` in
 | coder      | no        | implementation                       |
 
 Mappings are persisted in `settings.json` under `team.roleMappings`. They can be
-overridden at runtime via `AgentTeamService.updateRoleMappings()` / gateway
+overridden at runtime via `OrchestrationService.updateRoleMappings()` / gateway
 `TEAM_UPDATE_ROLE_MAPPINGS`.
 
 Resolution order in `TaskExecutor`:
@@ -81,7 +81,7 @@ Resolution order in `TaskExecutor`:
 ## Team Worktree
 
 Read/write tasks share a single git worktree so successive tasks see each
-other's edits. `TeamRun.teamWorktreeName` / `teamWorktreeDir` carry the
+other's edits. `OrchestrationRun.teamWorktreeName` / `teamWorktreeDir` carry the
 shared worktree through the run, and `DAGExecutor.runSingleTask`
 routes each task based on its read/write intent:
 
@@ -103,18 +103,18 @@ feature flag is off.
 ## Result Aggregation to Parent
 
 When a run reaches a terminal state (`completed` / `failed`) and has a
-`parentSessionId`, `AgentTeamService.relayResultsToParentSession()`
+`parentSessionId`, `OrchestrationService.relayResultsToParentSession()`
 sends the aggregated `finalResult` + failed-task list as a user message
 to the parent session. The parent engine then summarizes for the user,
 keeping everything in one conversation.
 
-Gated by `TeamRun.aggregateToParent` (defaults to `true`; set `false`
+Gated by `OrchestrationRun.aggregateToParent` (defaults to `true`; set `false`
 to disable). Failures are swallowed with a warn log so a broken parent
 session cannot corrupt run state.
 
 ## Sidebar Grouping
 
-Chat wraps `connectTeamHandlers()` to mirror every TeamRun update into
+Chat wraps `connectOrchestrationHandlers()` to mirror every TeamRun update into
 PR #117's orchestration sidebar registry (`registerTeam` +
 `associateRunWithTeam` + `associateChildSession`), so Light/Heavy brain
 child sessions collapse under their parent session in
@@ -124,7 +124,7 @@ flow.
 ## Service Coexistence
 
 During the merge we kept PR #117's `orchestrator-service.ts` (role-based
-orchestrator) alongside fridayliu's `agent-team/index.ts` (Light/Heavy brain).
+orchestrator) alongside fridayliu's `orchestration/index.ts` (Light/Heavy brain).
 Both are wired into `ws-server.ts` and both have a UI surface in `Chat.tsx`.
 This lets the two flows ship side-by-side; a future cleanup pass can decide
 whether to delete the PR #117 service once the Light/Heavy flow owns all the
@@ -148,13 +148,13 @@ See `src/types/unified.ts` for the payload schemas.
 
 Primary specs:
 
-- `tests/unit/electron/services/agent-team/index.test.ts` — lifecycle,
+- `tests/unit/electron/services/orchestration/index.test.ts` — lifecycle,
   persistence, role mappings, plan-confirm gate.
-- `tests/unit/electron/services/agent-team/light-brain.test.ts` — planning,
+- `tests/unit/electron/services/orchestration/light-brain.test.ts` — planning,
   awaiting-confirmation pause/resume, rejection.
-- `tests/unit/electron/services/agent-team/heavy-brain.test.ts` — dispatch,
+- `tests/unit/electron/services/orchestration/heavy-brain.test.ts` — dispatch,
   UserChannel relays.
-- `tests/unit/electron/services/agent-team/task-executor.test.ts` — role
+- `tests/unit/electron/services/orchestration/task-executor.test.ts` — role
   resolution, retry, error surfacing.
-- `tests/unit/electron/services/agent-team/dag-executor.test.ts` — DAG order,
+- `tests/unit/electron/services/orchestration/dag-executor.test.ts` — DAG order,
   concurrency cap.

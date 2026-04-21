@@ -10,7 +10,7 @@ vi.mock("electron", () => ({
 }));
 
 vi.mock("../../../../../electron/main/services/logger", () => ({
-  agentTeamLog: {
+  orchestrationLog: {
     info: vi.fn(),
     warn: vi.fn(),
     error: vi.fn(),
@@ -18,11 +18,11 @@ vi.mock("../../../../../electron/main/services/logger", () => ({
   },
 }));
 
-import { DAGExecutor } from "../../../../../electron/main/services/agent-team/dag-executor";
-import { TaskExecutor } from "../../../../../electron/main/services/agent-team/task-executor";
-import type { TeamRun, TaskNode } from "../../../../../src/types/unified";
+import { DAGExecutor } from "../../../../../electron/main/services/orchestration/dag-executor";
+import { TaskExecutor } from "../../../../../electron/main/services/orchestration/task-executor";
+import type { OrchestrationRun, OrchestrationSubtask } from "../../../../../src/types/unified";
 
-function makeTask(overrides: Partial<TaskNode> & { id: string }): TaskNode {
+function makeTask(overrides: Partial<OrchestrationSubtask> & { id: string }): OrchestrationSubtask {
   return {
     description: `Task ${overrides.id}`,
     prompt: `Do ${overrides.id}`,
@@ -32,15 +32,15 @@ function makeTask(overrides: Partial<TaskNode> & { id: string }): TaskNode {
   };
 }
 
-function makeRun(tasks: TaskNode[]): TeamRun {
+function makeRun(subtasks: OrchestrationSubtask[]): OrchestrationRun {
   return {
     id: "team_test",
     parentSessionId: "parent",
     directory: "/test",
-    originalPrompt: "test",
+    prompt: "test",
     mode: "light",
     status: "running",
-    tasks,
+    subtasks,
     time: { created: Date.now() },
   };
 }
@@ -51,7 +51,7 @@ describe("DAGExecutor", () => {
   beforeEach(() => {
     // Create a mock TaskExecutor
     mockTaskExecutor = {
-      execute: vi.fn(async (task: TaskNode) => ({
+      execute: vi.fn(async (task: OrchestrationSubtask) => ({
         sessionId: `session_${task.id}`,
         summary: `Result of ${task.id}`,
       })),
@@ -77,7 +77,7 @@ describe("DAGExecutor", () => {
 
   it("respects dependencies: t2 waits for t1", async () => {
     const executionOrder: string[] = [];
-    mockTaskExecutor.execute = vi.fn(async (task: TaskNode) => {
+    mockTaskExecutor.execute = vi.fn(async (task: OrchestrationSubtask) => {
       executionOrder.push(task.id);
       return { sessionId: `s_${task.id}`, summary: `Result of ${task.id}` };
     });
@@ -98,7 +98,7 @@ describe("DAGExecutor", () => {
   });
 
   it("propagates failures: downstream tasks become blocked", async () => {
-    mockTaskExecutor.execute = vi.fn(async (task: TaskNode) => {
+    mockTaskExecutor.execute = vi.fn(async (task: OrchestrationSubtask) => {
       if (task.id === "t1") throw new Error("t1 failed");
       return { sessionId: `s_${task.id}`, summary: `ok` };
     });
@@ -159,7 +159,7 @@ describe("DAGExecutor", () => {
     let active = 0;
     let maxActive = 0;
 
-    mockTaskExecutor.execute = vi.fn((task: TaskNode) => {
+    mockTaskExecutor.execute = vi.fn((task: OrchestrationSubtask) => {
       active += 1;
       maxActive = Math.max(maxActive, active);
       if (task.id === "t3") {
@@ -203,7 +203,7 @@ describe("DAGExecutor", () => {
 
 describe("DAGExecutor static helpers", () => {
   it("isComplete returns true when all tasks are terminal", () => {
-    const tasks: TaskNode[] = [
+    const tasks: OrchestrationSubtask[] = [
       makeTask({ id: "t1", status: "completed" } as any),
       makeTask({ id: "t2", status: "failed" } as any),
       makeTask({ id: "t3", status: "blocked" } as any),
@@ -212,7 +212,7 @@ describe("DAGExecutor static helpers", () => {
   });
 
   it("isComplete returns false when tasks are pending", () => {
-    const tasks: TaskNode[] = [
+    const tasks: OrchestrationSubtask[] = [
       makeTask({ id: "t1", status: "completed" } as any),
       makeTask({ id: "t2", status: "pending" } as any),
     ];
@@ -220,7 +220,7 @@ describe("DAGExecutor static helpers", () => {
   });
 
   it("isAllSuccessful returns true when all completed", () => {
-    const tasks: TaskNode[] = [
+    const tasks: OrchestrationSubtask[] = [
       makeTask({ id: "t1", status: "completed" } as any),
       makeTask({ id: "t2", status: "completed" } as any),
     ];
@@ -228,7 +228,7 @@ describe("DAGExecutor static helpers", () => {
   });
 
   it("isAllSuccessful returns false when any failed", () => {
-    const tasks: TaskNode[] = [
+    const tasks: OrchestrationSubtask[] = [
       makeTask({ id: "t1", status: "completed" } as any),
       makeTask({ id: "t2", status: "failed" } as any),
     ];
@@ -240,7 +240,7 @@ describe("DAGExecutor static helpers", () => {
     let mockExec: TaskExecutor;
 
     beforeEach(() => {
-      execSpyLocal = vi.fn(async (task: TaskNode) => ({
+      execSpyLocal = vi.fn(async (task: OrchestrationSubtask) => ({
         sessionId: `s_${task.id}`,
         summary: "",
       }));

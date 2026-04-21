@@ -27,6 +27,8 @@ import {
   type QuestionReplyRequest,
   type ProjectSetEngineRequest,
   type ModelSetRequest,
+  type ReasoningEffortSetRequest,
+  type ServiceTierSetRequest,
   type ModeSetRequest,
   type ImportableSession,
   type SessionImportPreviewRequest,
@@ -458,6 +460,14 @@ export class GatewayClient {
 
   setModel(req: ModelSetRequest): Promise<void> {
     return this.request(GatewayRequestType.MODEL_SET, req);
+  }
+
+  setReasoningEffort(req: ReasoningEffortSetRequest): Promise<void> {
+    return this.request(GatewayRequestType.REASONING_EFFORT_SET, req);
+  }
+
+  setServiceTier(req: ServiceTierSetRequest): Promise<void> {
+    return this.request(GatewayRequestType.SERVICE_TIER_SET, req);
   }
 
   // --- Mode API ---

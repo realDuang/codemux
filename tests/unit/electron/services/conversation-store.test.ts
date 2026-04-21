@@ -180,6 +180,44 @@ describe("ConversationStore", () => {
       conversationStore.rename(conv2.id, "Renamed");
       expect(conversationStore.get(conv2.id)!.title).toBe("Renamed");
     });
+
+    it("updates persisted session config fields without touching unrelated metadata", () => {
+      const conv = conversationStore.create({
+        engineType: "opencode",
+        directory: "/test",
+        title: "Pinned title",
+      });
+
+      const updated = conversationStore.updateSessionConfig(conv.id, {
+        mode: "plan",
+        modelId: "gpt-5.4",
+        reasoningEffort: "high",
+        serviceTier: "fast",
+      });
+
+      expect(updated).toMatchObject({
+        id: conv.id,
+        title: "Pinned title",
+        mode: "plan",
+        modelId: "gpt-5.4",
+        reasoningEffort: "high",
+        serviceTier: "fast",
+      });
+
+      const cleared = conversationStore.updateSessionConfig(conv.id, {
+        reasoningEffort: null,
+        serviceTier: null,
+      });
+
+      expect(cleared?.reasoningEffort).toBeUndefined();
+      expect(cleared?.serviceTier).toBeUndefined();
+      expect(cleared?.mode).toBe("plan");
+      expect(cleared?.modelId).toBe("gpt-5.4");
+
+      expect(
+        conversationStore.updateSessionConfig("missing", { mode: "agent" }),
+      ).toBeNull();
+    });
   });
 
   describe("Messages", () => {

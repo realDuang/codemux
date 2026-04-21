@@ -131,6 +131,13 @@ export function isCodexServiceTier(value: unknown): value is CodexServiceTier {
   return typeof value === "string" && (CODEX_SERVICE_TIER_VALUES as readonly string[]).includes(value);
 }
 
+export interface UnifiedSessionConfig {
+  mode?: string;
+  modelId?: string;
+  reasoningEffort?: ReasoningEffort;
+  serviceTier?: CodexServiceTier;
+}
+
 /** Result of listing models — includes which model is currently active */
 export interface ModelListResult {
   models: UnifiedModelInfo[];
@@ -139,7 +146,7 @@ export interface ModelListResult {
 
 // --- Conversation (self-owned persistence layer) ---
 
-export interface ConversationMeta {
+export interface ConversationMeta extends UnifiedSessionConfig {
   id: string;
   engineType: EngineType;
   directory: string;
@@ -201,7 +208,7 @@ export type StepPart =
 
 // --- Session ---
 
-export interface UnifiedSession {
+export interface UnifiedSession extends UnifiedSessionConfig {
   id: string;
   engineType: EngineType;
   directory: string;
@@ -573,6 +580,8 @@ export const GatewayRequestType = {
   // Model
   MODEL_LIST: "model.list",
   MODEL_SET: "model.set",
+  REASONING_EFFORT_SET: "reasoningEffort.set",
+  SERVICE_TIER_SET: "serviceTier.set",
 
   // Mode
   MODE_GET: "mode.get",
@@ -724,6 +733,16 @@ export interface ProjectSetEngineRequest {
 export interface ModelSetRequest {
   sessionId: string;
   modelId: string;
+}
+
+export interface ReasoningEffortSetRequest {
+  sessionId: string;
+  reasoningEffort: ReasoningEffort | null;
+}
+
+export interface ServiceTierSetRequest {
+  sessionId: string;
+  serviceTier: CodexServiceTier | null;
 }
 
 export interface ModeSetRequest {

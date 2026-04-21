@@ -158,6 +158,8 @@ function createMockEngineManager() {
     listModels: vi.fn(async () => ({ models: [] })),
     setModel: vi.fn(async () => {}),
     setMode: vi.fn(async () => {}),
+    setReasoningEffort: vi.fn(async () => {}),
+    setServiceTier: vi.fn(async () => {}),
     replyPermission: vi.fn(async () => {}),
     replyQuestion: vi.fn(async () => {}),
     rejectQuestion: vi.fn(async () => {}),
@@ -941,6 +943,32 @@ describe("GatewayServer", () => {
       });
 
       expect(engineManager.setMode).toHaveBeenCalledWith("sess-1", "plan");
+    });
+
+    it("REASONING_EFFORT_SET delegates with sessionId and effort", async () => {
+      const { connect, sendMessage, engineManager } = createTestHarness();
+      const ws = connect();
+
+      await sendMessage(ws, {
+        type: GatewayRequestType.REASONING_EFFORT_SET,
+        requestId: "r1",
+        payload: { sessionId: "sess-1", reasoningEffort: "high" },
+      });
+
+      expect(engineManager.setReasoningEffort).toHaveBeenCalledWith("sess-1", "high");
+    });
+
+    it("SERVICE_TIER_SET delegates with sessionId and tier", async () => {
+      const { connect, sendMessage, engineManager } = createTestHarness();
+      const ws = connect();
+
+      await sendMessage(ws, {
+        type: GatewayRequestType.SERVICE_TIER_SET,
+        requestId: "r1",
+        payload: { sessionId: "sess-1", serviceTier: "fast" },
+      });
+
+      expect(engineManager.setServiceTier).toHaveBeenCalledWith("sess-1", "fast");
     });
 
     it("PERMISSION_REPLY delegates with permissionId and optionId", async () => {

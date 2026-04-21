@@ -23,6 +23,7 @@ vi.mock("../../../../electron/main/services/conversation-store", () => {
     saveSteps: vi.fn(),
     setEngineSession: vi.fn(),
     clearEngineSession: vi.fn(),
+    updateSessionConfig: vi.fn(),
     findByEngineSession: vi.fn(() => null),
     deriveProjects: vi.fn(() => []),
     flushAll: vi.fn(),
@@ -97,6 +98,8 @@ class MockEngineAdapter extends EngineAdapter {
   setMode = vi.fn(async () => {});
   setReasoningEffort = vi.fn(async () => {});
   getReasoningEffort = vi.fn(() => null);
+  setServiceTier = vi.fn(async () => {});
+  getServiceTier = vi.fn(() => null);
   replyPermission = vi.fn(async () => {});
   replyQuestion = vi.fn(async () => {});
   rejectQuestion = vi.fn(async () => {});
@@ -592,6 +595,33 @@ describe("EngineManager", () => {
       expect(conversationStore.clearEngineSession).toHaveBeenCalledWith("conv1");
     });
 
+    it("merges persisted session config into sendMessage options", async () => {
+      (conversationStore.get as any).mockReturnValue(
+        makeMockConv({
+          engineSessionId: "existing-s1",
+          mode: "plan",
+          modelId: "gpt-5.4",
+          reasoningEffort: "high",
+          serviceTier: "fast",
+        }),
+      );
+      adapterA.hasSession.mockReturnValue(true);
+
+      await engineManager.sendMessage("conv1", [{ type: "text", text: "hello" }]);
+
+      expect(adapterA.sendMessage).toHaveBeenCalledWith(
+        "existing-s1",
+        expect.any(Array),
+        expect.objectContaining({
+          directory: "/dir",
+          mode: "plan",
+          modelId: "gpt-5.4",
+          reasoningEffort: "high",
+          serviceTier: "fast",
+        }),
+      );
+    });
+
     it("throws when conversation not found in sendMessage", async () => {
       (conversationStore.get as any).mockReturnValue(null);
       await expect(
@@ -759,33 +789,60 @@ describe("EngineManager", () => {
     beforeEach(() => {
       engineManager.registerAdapter(adapterA);
       (conversationStore.get as any).mockReturnValue(makeMockConv({ engineSessionId: "s1" }));
+      (conversationStore.updateSessionConfig as any).mockImplementation(
+        (_sessionId: string, patch: Record<string, unknown>) => makeMockConv({ engineSessionId: "s1", ...patch }),
+      );
     });
 
-    it("delegates model, mode, and reasoning effort operations to the adapter", async () => {
+    it("persists model, mode, reasoning effort, and service tier and delegates to live sessions", async () => {
       await engineManager.listModels(adapterA.engineType);
       expect(adapterA.listModels).toHaveBeenCalled();
 
       await engineManager.setModel("conv1", "gpt-4");
+      expect(conversationStore.updateSessionConfig).toHaveBeenCalledWith("conv1", { modelId: "gpt-4" });
       expect(adapterA.setModel).toHaveBeenCalledWith("s1", "gpt-4");
 
       engineManager.getModes(adapterA.engineType);
       expect(adapterA.getModes).toHaveBeenCalled();
 
       await engineManager.setMode("conv1", "fast");
+      expect(conversationStore.updateSessionConfig).toHaveBeenCalledWith("conv1", { mode: "fast" });
       expect(adapterA.setMode).toHaveBeenCalledWith("s1", "fast");
+
+      await engineManager.setReasoningEffort("conv1", "high");
+      expect(conversationStore.updateSessionConfig).toHaveBeenCalledWith("conv1", { reasoningEffort: "high" });
+      expect(adapterA.setReasoningEffort).toHaveBeenCalledWith("s1", "high");
+
+      await engineManager.setServiceTier("conv1", "fast");
+      expect(conversationStore.updateSessionConfig).toHaveBeenCalledWith("conv1", { serviceTier: "fast" });
+      expect(adapterA.setServiceTier).toHaveBeenCalledWith("s1", "fast");
     });
 
-    it("throws setModel when no engineSessionId", async () => {
-      (conversationStore.get as any).mockReturnValue(makeMockConv({ engineSessionId: null }));
-      await expect(engineManager.setModel("conv1", "gpt-4")).rejects.toThrow(
-        /No engine session for conversation/,
+    it("persists session config even when no engine session is active", async () => {
+      (conversationStore.updateSessionConfig as any).mockImplementation(
+        (_sessionId: string, patch: Record<string, unknown>) => makeMockConv({ engineSessionId: null, ...patch }),
       );
+
+      await expect(engineManager.setModel("conv1", "gpt-4")).resolves.toBeUndefined();
+      await expect(engineManager.setMode("conv1", "plan")).resolves.toBeUndefined();
+      await expect(engineManager.setReasoningEffort("conv1", "medium")).resolves.toBeUndefined();
+      await expect(engineManager.setServiceTier("conv1", null)).resolves.toBeUndefined();
+
+      expect(conversationStore.updateSessionConfig).toHaveBeenCalledWith("conv1", { modelId: "gpt-4" });
+      expect(conversationStore.updateSessionConfig).toHaveBeenCalledWith("conv1", { mode: "plan" });
+      expect(conversationStore.updateSessionConfig).toHaveBeenCalledWith("conv1", { reasoningEffort: "medium" });
+      expect(conversationStore.updateSessionConfig).toHaveBeenCalledWith("conv1", { serviceTier: null });
+      expect(adapterA.setModel).not.toHaveBeenCalled();
+      expect(adapterA.setMode).not.toHaveBeenCalled();
+      expect(adapterA.setReasoningEffort).not.toHaveBeenCalled();
+      expect(adapterA.setServiceTier).not.toHaveBeenCalled();
     });
 
-    it("throws setMode when no engineSessionId", async () => {
-      (conversationStore.get as any).mockReturnValue(makeMockConv({ engineSessionId: null }));
-      await expect(engineManager.setMode("conv1", "plan")).rejects.toThrow(
-        /No engine session for conversation/,
+    it("throws when persisting session config for an unknown conversation", async () => {
+      (conversationStore.updateSessionConfig as any).mockReturnValue(null);
+
+      await expect(engineManager.setModel("conv1", "gpt-4")).rejects.toThrow(
+        /Conversation not found/,
       );
     });
   });
@@ -988,6 +1045,35 @@ describe("EngineManager", () => {
       await engineManager.invokeCommand("conv1", "help", "");
       const sendArgs = (adapterA.sendMessage as any).mock.calls[0][1];
       expect(sendArgs[0].text).toBe("/help");
+    });
+
+    it("merges persisted session config into invokeCommand options", async () => {
+      (conversationStore.get as any).mockReturnValue(
+        makeMockConv({
+          engineSessionId: "eng-s3",
+          mode: "plan",
+          modelId: "gpt-5.4",
+          reasoningEffort: "high",
+          serviceTier: "fast",
+        }),
+      );
+      adapterA.hasSession.mockReturnValue(true);
+      adapterA.invokeCommand.mockResolvedValue({ handledAsCommand: true } as any);
+
+      await engineManager.invokeCommand("conv1", "help", "topic");
+
+      expect(adapterA.invokeCommand).toHaveBeenCalledWith(
+        "eng-s3",
+        "help",
+        "topic",
+        expect.objectContaining({
+          directory: "/dir",
+          mode: "plan",
+          modelId: "gpt-5.4",
+          reasoningEffort: "high",
+          serviceTier: "fast",
+        }),
+      );
     });
   });
 

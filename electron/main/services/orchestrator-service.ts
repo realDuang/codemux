@@ -291,12 +291,12 @@ Respond with ONLY the JSON array, no markdown fencing, no explanation.`;
     task.duration = Date.now() - startTime;
     task.status = "completed";
 
-    // Extract summary directly from engine's response (avoids disk persistence race)
+    // Store the engine's full response — no length truncation. Downstream
+    // context injection / aggregation prompts pass it as-is; if the combined
+    // prompt exceeds the model's context, the engine handles compaction.
     const textParts = result.parts?.filter((p: any) => p.type === "text") || [];
     const fullText = textParts.map((p: any) => p.text || "").join("\n");
-    task.resultSummary = fullText.length > 2000
-      ? fullText.slice(0, 2000) + "..."
-      : (fullText || "Task completed.");
+    task.resultSummary = fullText || "Task completed.";
 
     this.emitUpdate(run);
 
@@ -349,24 +349,6 @@ Respond with ONLY the JSON array, no markdown fencing, no explanation.`;
     const resolvers = this.subtaskDoneResolvers;
     this.subtaskDoneResolvers = [];
     for (const resolve of resolvers) resolve();
-  }
-
-  private async extractResultSummary(task: OrchestrationSubtask): Promise<string> {
-    if (!task.sessionId) return "";
-    try {
-      const { conversationStore } = await import("./conversation-store");
-      const messages = await conversationStore.listMessages(task.sessionId);
-      if (messages && messages.length > 0) {
-        const lastAssistant = [...messages].reverse().find(m => m.role === "assistant");
-        if (lastAssistant) {
-          const textParts = lastAssistant.parts?.filter((p: any) => p.type === "text") || [];
-          const fullText = textParts.map((p: any) => p.text || "").join("\n");
-          // Truncate to first 2000 chars as summary
-          return fullText.length > 2000 ? fullText.slice(0, 2000) + "..." : fullText;
-        }
-      }
-    } catch { /* ignore */ }
-    return "Task completed.";
   }
 
   private async aggregateResults(run: OrchestrationRun): Promise<void> {

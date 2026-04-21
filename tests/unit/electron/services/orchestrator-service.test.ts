@@ -365,7 +365,7 @@ describe("OrchestratorService", () => {
       expect(final.status).toBe("failed");
     });
 
-    it("truncates very long result summaries to 2000+ chars", async () => {
+    it("preserves the engine's full response in resultSummary (no truncation)", async () => {
       const svc = await freshService();
       const em = new MockEngineManager();
       const longText = "a".repeat(5000);
@@ -376,8 +376,7 @@ describe("OrchestratorService", () => {
 
       const final = svc.listRuns().find((r) => r.id === run.id)!;
       const summary = final.subtasks[0].resultSummary || "";
-      expect(summary.length).toBe(2000 + "...".length);
-      expect(summary.endsWith("...")).toBe(true);
+      expect(summary).toBe(longText);
     });
   });
 

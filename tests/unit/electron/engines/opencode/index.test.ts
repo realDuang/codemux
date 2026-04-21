@@ -346,7 +346,7 @@ describe("OpenCodeAdapter", () => {
     it("routes permission.asked to handlePermissionAsked", () => {
       const { adapter } = createAdapterWithClient();
       const spy = vi.spyOn(adapter as any, "handlePermissionAsked");
-      const props = { id: "perm-1", sessionID: "s-1", type: "write" };
+      const props = { id: "perm-1", sessionID: "s-1", permission: "write" };
 
       (adapter as any).handleSdkEvent({ type: "permission.asked", properties: props });
 
@@ -1277,11 +1277,11 @@ describe("OpenCodeAdapter", () => {
       (adapter as any).handlePermissionAsked({
         id: "perm-1",
         sessionID: "s-1",
-        type: "write",
-        callID: "call-1",
+        permission: "write",
+        tool: { callID: "call-1", messageID: "msg-1" },
         title: "Write to file",
         metadata: { path: "/file.ts" },
-        pattern: "/repo/**",
+        patterns: ["/repo/**"],
       });
 
       expect(events).toHaveLength(1);
@@ -1301,7 +1301,7 @@ describe("OpenCodeAdapter", () => {
       const events: any[] = [];
       adapter.on("permission.asked", (e) => events.push(e));
 
-      (adapter as any).handlePermissionAsked({ id: "p-1", sessionID: "s-1", type: "write", pattern: "/repo/**" });
+      (adapter as any).handlePermissionAsked({ id: "p-1", sessionID: "s-1", permission: "write", patterns: ["/repo/**"] });
 
       expect(events[0].permission.patterns).toEqual(["/repo/**"]);
     });
@@ -1314,8 +1314,8 @@ describe("OpenCodeAdapter", () => {
       (adapter as any).handlePermissionAsked({
         id: "p-1",
         sessionID: "s-1",
-        type: "write",
-        pattern: ["/a/**", "/b/**"],
+        permission: "write",
+        patterns: ["/a/**", "/b/**"],
       });
 
       expect(events[0].permission.patterns).toEqual(["/a/**", "/b/**"]);
@@ -1326,7 +1326,7 @@ describe("OpenCodeAdapter", () => {
       const events: any[] = [];
       adapter.on("permission.asked", (e) => events.push(e));
 
-      (adapter as any).handlePermissionAsked({ id: "p-1", sessionID: "s-1", type: "read" });
+      (adapter as any).handlePermissionAsked({ id: "p-1", sessionID: "s-1", permission: "read" });
 
       expect(events[0].permission.patterns).toEqual([]);
     });
@@ -1336,7 +1336,7 @@ describe("OpenCodeAdapter", () => {
       const events: any[] = [];
       adapter.on("permission.asked", (e) => events.push(e));
 
-      (adapter as any).handlePermissionAsked({ id: "p-1", sessionID: "s-1", type: "execute" });
+      (adapter as any).handlePermissionAsked({ id: "p-1", sessionID: "s-1", permission: "execute" });
 
       expect(events[0].permission.title).toBe("execute");
     });

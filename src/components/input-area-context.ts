@@ -29,11 +29,14 @@ const PREVIEW_OMIT_KEYS = new Set([
   "filePaths",
   "files",
   "grantRoot",
+  "intention",
   "itemId",
+  "kind",
   "path",
   "paths",
   "pattern",
   "patterns",
+  "title",
   "toolCallId",
 ]);
 
@@ -155,7 +158,7 @@ function buildRequestPreview(source: unknown): string | undefined {
     return compactPreview(commandPreview, 6, 240);
   }
 
-  for (const key of ["reason", "prompt", "description", "input"] as const) {
+  for (const key of ["reason", "prompt", "description", "intention", "input"] as const) {
     if (typeof record[key] === "string" && record[key].trim().length > 0) {
       return compactPreview(record[key] as string, 5, 260);
     }

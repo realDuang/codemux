@@ -35,10 +35,12 @@ export interface LocaleDict {
     kindRead: string;
     kindEdit: string;
     kindOther: string;
+    kindShell: string;
+    kindUrlAccess: string;
+    kindWebSearch: string;
     toolCall: string;
     targets: string;
     diffPreview: string;
-    requestPreview: string;
   };
   // Question
   question: {
@@ -673,13 +675,15 @@ export const en: LocaleDict = {
     allowOnce: "Allow once",
     allowAlways: "Allow always",
     waitingApproval: "Waiting for approval",
-    kindRead: "Read",
-    kindEdit: "Edit",
-    kindOther: "Other",
+    kindRead: "File Read",
+    kindEdit: "File Edit",
+    kindOther: "Permission Request",
+    kindShell: "Shell Command",
+    kindUrlAccess: "URL Access",
+    kindWebSearch: "Web Search",
     toolCall: "Tool call",
     targets: "Targets",
     diffPreview: "Changes",
-    requestPreview: "Request details",
   },
   // Question
   question: {

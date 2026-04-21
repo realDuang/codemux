@@ -91,12 +91,12 @@ export function Part(props: PartProps) {
     return <SystemNotice part={props.part as SystemNoticePart} />;
   }
 
-  // ask_user tool calls are surfaced via the Question Dock (InputAreaQuestion);
-  // rendering them as a regular tool part just shows an empty "running unknown tool"
-  // card — suppress it entirely so only the Question Dock represents the prompt.
+  // Tool parts can opt out of stream rendering (e.g. when they have a dedicated
+  // UI surface like Copilot's `ask_user` → Question Dock). The adapter layer
+  // owns this decision; the renderer stays engine-agnostic.
   if (
     props.part.type === "tool" &&
-    (props.part as ToolPart).originalTool === "ask_user"
+    (props.part as ToolPart).suppressInStream
   ) {
     return null;
   }

@@ -108,12 +108,6 @@ export class OpenCodeAdapter extends EngineAdapter {
   // Cached model pricing (per-million-token rates) keyed by "providerID/modelID"
   private modelPricing = new Map<string, ModelPricing>();
 
-  // Pending permission/question tracking for resync after reconnect/session switch.
-  // OpenCode's SDK holds authoritative pending state; these are local mirrors added on
-  // permission.asked/question.asked and cleared on *.replied events.
-  private activePermissions = new Map<string, UnifiedPermission>();
-  private activeQuestions = new Map<string, UnifiedQuestion>();
-
   /** Look up cached pricing for an SDK message's providerID/modelID */
   private getPricing(sdk: any): ModelPricing | undefined {
     if (!sdk.providerID || !sdk.modelID) return undefined;
@@ -571,13 +565,47 @@ export class OpenCodeAdapter extends EngineAdapter {
   }
 
   private handlePermissionAsked(data: any): void {
+    const permission = this.toUnifiedPermission(data);
+    this.emit("permission.asked", { permission });
+  }
+
+  private handlePermissionReplied(data: any): void {
+    const permissionId = data.permissionID ?? data.id;
+    this.emit("permission.replied", {
+      permissionId,
+      optionId: data.response ?? "unknown",
+    });
+  }
+
+  private handleQuestionAsked(data: SdkQuestionRequest): void {
+    const question = this.toUnifiedQuestion(data);
+    this.emit("question.asked", { question });
+  }
+
+  private handleQuestionReplied(data: any): void {
+    const questionId = data.requestID ?? data.id;
+    this.emit("question.replied", {
+      questionId,
+      answers: data.answers ?? [],
+    });
+  }
+
+  private handleQuestionRejected(data: any): void {
+    const questionId = data.requestID ?? data.id;
+    this.emit("question.replied", {
+      questionId,
+      answers: [],
+    });
+  }
+
+  /** Map an OpenCode SDK PermissionRequest → UnifiedPermission */
+  private toUnifiedPermission(data: any): UnifiedPermission {
     const options: PermissionOption[] = [
       { id: "once", label: "Allow once", type: "accept_once" },
       { id: "always", label: "Always allow", type: "accept_always" },
       { id: "reject", label: "Reject", type: "reject" },
     ];
-
-    const permission: UnifiedPermission = {
+    return {
       id: data.id,
       sessionId: data.sessionID,
       engineType: this.engineType,
@@ -589,21 +617,10 @@ export class OpenCodeAdapter extends EngineAdapter {
       permission: data.type,
       patterns: data.pattern ? (Array.isArray(data.pattern) ? data.pattern : [data.pattern]) : [],
     };
-
-    this.activePermissions.set(permission.id, permission);
-    this.emit("permission.asked", { permission });
   }
 
-  private handlePermissionReplied(data: any): void {
-    const permissionId = data.permissionID ?? data.id;
-    this.activePermissions.delete(permissionId);
-    this.emit("permission.replied", {
-      permissionId,
-      optionId: data.response ?? "unknown",
-    });
-  }
-
-  private handleQuestionAsked(data: SdkQuestionRequest): void {
+  /** Map an OpenCode SDK QuestionRequest → UnifiedQuestion */
+  private toUnifiedQuestion(data: SdkQuestionRequest): UnifiedQuestion {
     const questions: QuestionInfo[] = (data.questions || []).map((q) => ({
       question: q.question,
       header: q.header,
@@ -614,35 +631,13 @@ export class OpenCodeAdapter extends EngineAdapter {
       multiple: q.multiple,
       custom: q.custom,
     }));
-
-    const question: UnifiedQuestion = {
+    return {
       id: data.id,
       sessionId: data.sessionID,
       engineType: this.engineType,
       toolCallId: data.tool?.callID,
       questions,
     };
-
-    this.activeQuestions.set(question.id, question);
-    this.emit("question.asked", { question });
-  }
-
-  private handleQuestionReplied(data: any): void {
-    const questionId = data.requestID ?? data.id;
-    this.activeQuestions.delete(questionId);
-    this.emit("question.replied", {
-      questionId,
-      answers: data.answers ?? [],
-    });
-  }
-
-  private handleQuestionRejected(data: any): void {
-    const questionId = data.requestID ?? data.id;
-    this.activeQuestions.delete(questionId);
-    this.emit("question.replied", {
-      questionId,
-      answers: [],
-    });
   }
 
   // --- EngineAdapter Implementation ---
@@ -1224,7 +1219,6 @@ export class OpenCodeAdapter extends EngineAdapter {
       permissionId,
       optionId: reply.optionId,
     });
-    this.activePermissions.delete(permissionId);
   }
 
   // --- Questions ---
@@ -1241,7 +1235,6 @@ export class OpenCodeAdapter extends EngineAdapter {
       questionId,
       answers,
     });
-    this.activeQuestions.delete(questionId);
   }
 
   async rejectQuestion(questionId: string, sessionId?: string): Promise<void> {
@@ -1255,23 +1248,38 @@ export class OpenCodeAdapter extends EngineAdapter {
       questionId,
       answers: [],
     });
-    this.activeQuestions.delete(questionId);
   }
 
-  getPendingQuestions(sessionId?: string): UnifiedQuestion[] {
-    const out: UnifiedQuestion[] = [];
-    for (const q of this.activeQuestions.values()) {
-      if (!sessionId || q.sessionId === sessionId) out.push(q);
+  /**
+   * Query the OpenCode server directly for pending questions. Unlike
+   * Copilot/Claude/Codex — where the adapter holds the Promise resolver and is
+   * therefore authoritative — OpenCode's truth lives in the server process
+   * (another REST client could reply, server could time out internally, etc),
+   * so maintaining a local mirror would be drift-prone.
+   */
+  async getPendingQuestions(sessionId?: string): Promise<UnifiedQuestion[]> {
+    try {
+      const client = this.ensureClient();
+      const result = await client.question.list();
+      if (result.error) return [];
+      const all = (result.data ?? []).map((q) => this.toUnifiedQuestion(q as SdkQuestionRequest));
+      return sessionId ? all.filter((q) => q.sessionId === sessionId) : all;
+    } catch {
+      return [];
     }
-    return out;
   }
 
-  getPendingPermissions(sessionId?: string): UnifiedPermission[] {
-    const out: UnifiedPermission[] = [];
-    for (const p of this.activePermissions.values()) {
-      if (!sessionId || p.sessionId === sessionId) out.push(p);
+  /** See getPendingQuestions — same rationale for going to the server. */
+  async getPendingPermissions(sessionId?: string): Promise<UnifiedPermission[]> {
+    try {
+      const client = this.ensureClient();
+      const result = await client.permission.list();
+      if (result.error) return [];
+      const all = (result.data ?? []).map((p) => this.toUnifiedPermission(p));
+      return sessionId ? all.filter((p) => p.sessionId === sessionId) : all;
+    } catch {
+      return [];
     }
-    return out;
   }
 
   // --- Projects ---

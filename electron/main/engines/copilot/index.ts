@@ -768,19 +768,15 @@ export class CopilotSdkAdapter extends EngineAdapter {
   }
 
   getPendingQuestions(sessionId?: string): UnifiedQuestion[] {
-    const out: UnifiedQuestion[] = [];
-    for (const p of this.pendingQuestions.values()) {
-      if (!sessionId || p.question.sessionId === sessionId) out.push(p.question);
-    }
-    return out;
+    return CopilotSdkAdapter.filterPending(
+      this.pendingQuestions, sessionId, (p) => p.question, (p) => p.question.sessionId,
+    );
   }
 
   getPendingPermissions(sessionId?: string): UnifiedPermission[] {
-    const out: UnifiedPermission[] = [];
-    for (const p of this.pendingPermissions.values()) {
-      if (!sessionId || p.permission.sessionId === sessionId) out.push(p.permission);
-    }
-    return out;
+    return CopilotSdkAdapter.filterPending(
+      this.pendingPermissions, sessionId, (p) => p.permission, (p) => p.permission.sessionId,
+    );
   }
 
   async listProjects(): Promise<UnifiedProject[]> { return []; }
@@ -1179,6 +1175,9 @@ export class CopilotSdkAdapter extends EngineAdapter {
         input: normalizedTool === "todo" ? normalizeTodoInput(data.arguments) : (data.arguments || {}),
         time: { start: Date.now() },
       },
+      // ask_user is surfaced via the Question Dock (InputAreaQuestion); hide the
+      // redundant tool card in the message stream.
+      suppressInStream: data.toolName === "ask_user",
     };
     this.toolCallParts.set(data.toolCallId, toolPart);
     buffer.parts.push(toolPart);

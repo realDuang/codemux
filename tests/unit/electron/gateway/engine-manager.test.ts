@@ -2358,7 +2358,7 @@ describe("EngineManager", () => {
   });
 
   describe("getPending", () => {
-    it("aggregates pending questions/permissions from the conversation's engine adapter and rewrites sessionId to conversationId", () => {
+    it("aggregates pending questions/permissions from the conversation's engine adapter and rewrites sessionId to conversationId", async () => {
       engineManager.registerAdapter(adapterA);
 
       (conversationStore.get as any).mockReturnValue({
@@ -2393,7 +2393,7 @@ describe("EngineManager", () => {
         ];
       });
 
-      const result = engineManager.getPending("conv-pending");
+      const result = await engineManager.getPending("conv-pending");
 
       expect(result.questions).toHaveLength(1);
       expect(result.questions[0].id).toBe("q1");
@@ -2403,13 +2403,13 @@ describe("EngineManager", () => {
       expect(result.permissions[0].sessionId).toBe("conv-pending");
     });
 
-    it("returns empty arrays when the conversation is unknown", () => {
+    it("returns empty arrays when the conversation is unknown", async () => {
       (conversationStore.get as any).mockReturnValue(null);
-      const result = engineManager.getPending("missing");
+      const result = await engineManager.getPending("missing");
       expect(result).toEqual({ questions: [], permissions: [] });
     });
 
-    it("returns empty arrays when engineSessionId is missing (avoids leaking pending items from unrelated sessions)", () => {
+    it("returns empty arrays when engineSessionId is missing (avoids leaking pending items from unrelated sessions)", async () => {
       engineManager.registerAdapter(adapterA);
       (conversationStore.get as any).mockReturnValue({
         id: "conv-nosession",
@@ -2420,7 +2420,7 @@ describe("EngineManager", () => {
       const spyQ = vi.spyOn(adapterA, "getPendingQuestions");
       const spyP = vi.spyOn(adapterA, "getPendingPermissions");
 
-      const result = engineManager.getPending("conv-nosession");
+      const result = await engineManager.getPending("conv-nosession");
 
       expect(result).toEqual({ questions: [], permissions: [] });
       // Must NOT call the adapter with undefined (which would bypass filtering)

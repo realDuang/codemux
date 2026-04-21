@@ -1140,10 +1140,10 @@ export class EngineManager extends EventEmitter {
    * in-memory pending state, and rewrites sessionId back to the conversationId
    * so the frontend receives ids it can route.
    */
-  getPending(conversationId: string): {
+  async getPending(conversationId: string): Promise<{
     questions: UnifiedQuestion[];
     permissions: UnifiedPermission[];
-  } {
+  }> {
     const conv = conversationStore.get(conversationId);
     if (!conv) return { questions: [], permissions: [] };
     const adapter = this.adapters.get(conv.engineType);
@@ -1155,12 +1155,12 @@ export class EngineManager extends EventEmitter {
     // from unrelated sessions (then rewrite them to this conversationId).
     if (engineSessionId == null) return { questions: [], permissions: [] };
 
-    const questions = adapter
-      .getPendingQuestions(engineSessionId)
-      .map((q) => ({ ...q, sessionId: conversationId }));
-    const permissions = adapter
-      .getPendingPermissions(engineSessionId)
-      .map((p) => ({ ...p, sessionId: conversationId }));
+    const [rawQuestions, rawPermissions] = await Promise.all([
+      Promise.resolve(adapter.getPendingQuestions(engineSessionId)),
+      Promise.resolve(adapter.getPendingPermissions(engineSessionId)),
+    ]);
+    const questions = rawQuestions.map((q) => ({ ...q, sessionId: conversationId }));
+    const permissions = rawPermissions.map((p) => ({ ...p, sessionId: conversationId }));
 
     return { questions, permissions };
   }

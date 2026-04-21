@@ -1625,27 +1625,62 @@ export default function Chat() {
    * Merges with existing store entries (dedupe by id) — never removes, since
    * an already-seen item might still be valid.
    */
+  /**
+   * Resync pending questions/permissions for a session from the backend.
+   * Called on session switch and after WS reconnect so the user isn't stranded
+   * if a `question.asked` / `permission.asked` notification was missed.
+   *
+   * Merge strategy (handles cross-device replies too):
+   *   1. Snapshot the store's ids before the RPC. Anything in the snapshot that
+   *      the server no longer reports was consumed elsewhere (e.g. another
+   *      device answered) — drop it.
+   *   2. Keep items that arrived during the RPC in-flight (not in snapshot) so
+   *      concurrent `*.asked` events aren't clobbered.
+   *   3. Append server items that aren't already in the store.
+   */
   const resyncPending = async (sessionId: string) => {
+    const preQuestionIds = new Set(
+      (messageStore.question[sessionId] ?? []).map((q) => q.id),
+    );
+    const prePermissionIds = new Set(
+      (messageStore.permission[sessionId] ?? []).map((p) => p.id),
+    );
+
     try {
       const { questions, permissions } = await gateway.listPending(sessionId);
+      const serverQIds = new Set(questions.map((q) => q.id));
+      const serverPIds = new Set(permissions.map((p) => p.id));
 
-      // Use functional updaters so concurrent question.asked / permission.asked
-      // notifications that land between the RPC response and this setter can't
-      // be clobbered (lost-update bug).
       setMessageStore("question", sessionId, (current = []) => {
-        const currentIds = new Set(current.map((q) => q.id));
-        const missing = questions.filter((q) => !currentIds.has(q.id));
-        if (missing.length === 0) return current;
-        logger.debug("[Resync] Restored", missing.length, "pending question(s) for", sessionId);
-        return [...current, ...missing];
+        const kept = current.filter(
+          (q) => serverQIds.has(q.id) || !preQuestionIds.has(q.id),
+        );
+        const keptIds = new Set(kept.map((q) => q.id));
+        const appended = questions.filter((q) => !keptIds.has(q.id));
+        if (appended.length > 0) {
+          logger.debug("[Resync] Restored", appended.length, "pending question(s) for", sessionId);
+        }
+        const dropped = current.length - kept.length;
+        if (dropped > 0) {
+          logger.debug("[Resync] Dropped", dropped, "stale question(s) for", sessionId);
+        }
+        return appended.length === 0 && dropped === 0 ? current : [...kept, ...appended];
       });
 
       setMessageStore("permission", sessionId, (current = []) => {
-        const currentIds = new Set(current.map((p) => p.id));
-        const missing = permissions.filter((p) => !currentIds.has(p.id));
-        if (missing.length === 0) return current;
-        logger.debug("[Resync] Restored", missing.length, "pending permission(s) for", sessionId);
-        return [...current, ...missing];
+        const kept = current.filter(
+          (p) => serverPIds.has(p.id) || !prePermissionIds.has(p.id),
+        );
+        const keptIds = new Set(kept.map((p) => p.id));
+        const appended = permissions.filter((p) => !keptIds.has(p.id));
+        if (appended.length > 0) {
+          logger.debug("[Resync] Restored", appended.length, "pending permission(s) for", sessionId);
+        }
+        const dropped = current.length - kept.length;
+        if (dropped > 0) {
+          logger.debug("[Resync] Dropped", dropped, "stale permission(s) for", sessionId);
+        }
+        return appended.length === 0 && dropped === 0 ? current : [...kept, ...appended];
       });
     } catch (err) {
       logger.warn("[Resync] Failed to list pending for", sessionId, err);

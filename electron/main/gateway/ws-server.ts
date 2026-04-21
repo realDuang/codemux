@@ -28,6 +28,7 @@ import {
   type MessageSendRequest,
   type PermissionReplyRequest,
   type QuestionReplyRequest,
+  type PendingListRequest,
   type ProjectSetEngineRequest,
   type ModelSetRequest,
   type ModeSetRequest,
@@ -347,8 +348,8 @@ export class GatewayServer {
       }
 
       case GatewayRequestType.PENDING_LIST: {
-        const sessionId = (p as { sessionId: string }).sessionId;
-        return this.engineManager.getPending(sessionId);
+        const req = p as PendingListRequest;
+        return this.engineManager.getPending(req.sessionId);
       }
 
       // Project

@@ -1,4 +1,5 @@
 import { For, Show } from "solid-js";
+import { parsePatch } from "diff";
 import type { UnifiedPermission, PermissionDetail } from "../types/unified";
 import { useI18n } from "../lib/i18n";
 import { getPermissionTargets } from "./input-area-context";
@@ -139,12 +140,21 @@ export function InputAreaPermission(props: InputAreaPermissionProps) {
       </Show>
 
       <Show when={props.permission.diff}>
-        <div class={styles.contextSection}>
-          <div class={styles.contextLabel}>{t().permission.diffPreview}</div>
-          <div class={styles.diffContainer}>
-            <ContentDiff diff={props.permission.diff!} />
-          </div>
-        </div>
+        {(diff) => {
+          const canParseDiff = () => {
+            try { return parsePatch(diff()).some(p => p.hunks.length > 0); } catch { return false; }
+          };
+          return (
+            <div class={styles.contextSection}>
+              <div class={styles.contextLabel}>{t().permission.diffPreview}</div>
+              <Show when={canParseDiff()} fallback={<pre class={styles.preview}>{diff()}</pre>}>
+                <div class={styles.diffContainer}>
+                  <ContentDiff diff={diff()} />
+                </div>
+              </Show>
+            </div>
+          );
+        }}
       </Show>
 
       <div class={styles.actions}>

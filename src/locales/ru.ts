@@ -39,7 +39,6 @@ export const ru: LocaleDict = {
     kindShell: "Команда оболочки",
     kindUrlAccess: "Доступ к URL",
     kindWebSearch: "Веб-поиск",
-    toolCall: "Вызов инструмента",
     targets: "Цели",
     diffPreview: "Изменения",
   },

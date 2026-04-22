@@ -39,7 +39,6 @@ export const zh: LocaleDict = {
     kindShell: "执行命令",
     kindUrlAccess: "访问 URL",
     kindWebSearch: "网页搜索",
-    toolCall: "工具调用",
     targets: "目标",
     diffPreview: "变更预览",
   },

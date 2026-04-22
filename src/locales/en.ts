@@ -38,7 +38,6 @@ export interface LocaleDict {
     kindShell: string;
     kindUrlAccess: string;
     kindWebSearch: string;
-    toolCall: string;
     targets: string;
     diffPreview: string;
   };
@@ -681,7 +680,6 @@ export const en: LocaleDict = {
     kindShell: "Shell Command",
     kindUrlAccess: "URL Access",
     kindWebSearch: "Web Search",
-    toolCall: "Tool call",
     targets: "Targets",
     diffPreview: "Changes",
   },

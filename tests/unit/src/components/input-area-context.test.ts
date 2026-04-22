@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import {
-  getPermissionPreview,
   getPermissionTargets,
   getQuestionContext,
 } from "../../../../src/components/input-area-context";
@@ -31,30 +30,6 @@ describe("input-area context helpers", () => {
       "src/app.ts",
       "/repo",
     ]);
-  });
-
-  it("prefers diff previews and otherwise falls back to command previews", () => {
-    expect(getPermissionPreview({
-      diff: "@@ -1 +1 @@\n-old value\n+new value",
-      rawInput: {
-        command: "npm run lint",
-      },
-      metadata: undefined,
-    })).toEqual({
-      type: "diff",
-      content: "@@ -1 +1 @@\n-old value\n+new value",
-    });
-
-    expect(getPermissionPreview({
-      rawInput: {
-        command: ["npm", "run", "build"],
-        args: "--watch",
-      },
-      metadata: undefined,
-    })).toEqual({
-      type: "request",
-      content: "npm run build --watch",
-    });
   });
 
   it("returns related tool and progress details for question prompts", () => {

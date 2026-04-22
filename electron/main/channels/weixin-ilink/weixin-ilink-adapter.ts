@@ -207,6 +207,51 @@ export class WeixinIlinkAdapter extends ChannelAdapter {
     channelLog.info(`${LOG_PREFIX} Adapter stopped`);
   }
 
+  /**
+   * Forget the currently logged-in WeChat account: stop polling, drop all
+   * persisted session bindings, and wipe in-memory credentials. The caller
+   * (manager / IPC handler) is responsible for persisting the cleared
+   * credentials to disk via channelManager.updateConfig.
+   */
+  async logout(): Promise<void> {
+    channelLog.info(`${LOG_PREFIX} Logging out (clearing credentials + bindings)`);
+    if (this.status === "running" || this.status === "starting") {
+      await this.stop();
+    }
+    this.sessionMapper.clearAllBindings();
+    this.config = {
+      ...this.config,
+      botToken: "",
+      accountId: "",
+    };
+  }
+
+  /** Options patch the manager should persist after logout / auth-expired. */
+  static readonly CLEARED_CREDENTIALS: Record<string, unknown> = {
+    botToken: "",
+    accountId: "",
+  };
+
+  /**
+   * Token was rejected by iLink (-14). Tear down everything, then notify the
+   * manager to persist the wipe and disable the channel. The error string is
+   * left visible on the channel card for the user.
+   */
+  private async handleSessionExpired(): Promise<void> {
+    try {
+      await this.logout();
+    } catch (err) {
+      channelLog.error(`${LOG_PREFIX} logout() during session expiry failed:`, err);
+    }
+    this.status = "error";
+    this.error = "WeChat session expired — please scan the QR code again to re-login.";
+    this.emit("status.changed", this.status);
+    this.emit("auth.expired", {
+      reason: this.error,
+      clearOptions: WeixinIlinkAdapter.CLEARED_CREDENTIALS,
+    });
+  }
+
   getInfo(): ChannelInfo {
     return {
       type: this.channelType,
@@ -302,12 +347,12 @@ export class WeixinIlinkAdapter extends ChannelAdapter {
 
         const ret = response.ret ?? response.errcode ?? 0;
         if (WeixinIlinkTransport.isSessionExpired(ret, response.errcode)) {
-          channelLog.error(`${LOG_PREFIX} Session expired (-14) — re-auth via QR required`);
-          this.connected = false;
-          this.status = "error";
-          this.error = "Session expired — re-auth required";
-          this.emit("status.changed", this.status);
+          channelLog.error(`${LOG_PREFIX} Session expired (-14) — auto-clearing credentials`);
           this.pollingActive = false;
+          // Run cleanup async — we're inside the loop so don't await; the
+          // logout call will tear down polling/transport/gateway and wipe
+          // the session mapper. Then signal the manager to persist the wipe.
+          void this.handleSessionExpired();
           break;
         }
 

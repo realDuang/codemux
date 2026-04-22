@@ -9,7 +9,7 @@ import { WeixinIlinkLoginModal } from "../components/WeixinIlinkLoginModal";
 import { logger } from "../lib/logger";
 import { WEB_PORT, WEB_STANDALONE_PORT } from "../../shared/ports";
 import { isElectron } from "../lib/platform";
-import { systemAPI, tunnelAPI, channelAPI, type ChannelInfo, type TunnelInfo, type TunnelConfig } from "../lib/electron-api";
+import { systemAPI, tunnelAPI, channelAPI, weixinIlinkAPI, type ChannelInfo, type TunnelInfo, type TunnelConfig } from "../lib/electron-api";
 import { getSetting, saveSetting, bootstrapHostSettings } from "../lib/settings";
 import { refreshThemeFromSettings } from "../lib/theme";
 import { refreshLocaleFromSettings } from "../lib/i18n";
@@ -770,6 +770,27 @@ export default function EntryPage() {
         const newStatus = await channelAPI.getStatus("weixin-ilink");
         if (newStatus) setWeixinIlinkStatus(newStatus);
       }
+    }
+  };
+
+  const handleWeixinIlinkLogout = async () => {
+    if (!confirm(t().channel.weixinIlinkLogoutConfirm)) return;
+    setWeixinIlinkLoading(true);
+    try {
+      await weixinIlinkAPI.logout();
+      // Reset local config snapshot so the UI immediately reflects logged-out state.
+      setWeixinIlinkConfig({
+        ...weixinIlinkConfig(),
+        botToken: "",
+        accountId: "",
+      });
+      const status = await channelAPI.getStatus("weixin-ilink");
+      if (status) setWeixinIlinkStatus(status);
+      else setWeixinIlinkStatus({ type: "weixin-ilink", name: "WeChat iLink", status: "stopped" });
+    } catch (err) {
+      logger.error("[EntryPage] Failed to logout WeChat iLink:", err);
+    } finally {
+      setWeixinIlinkLoading(false);
     }
   };
 
@@ -1681,18 +1702,32 @@ export default function EntryPage() {
                                 </div>
                               </div>
                               <div class="flex items-center gap-2">
-                                <button
-                                  onClick={() => setWeixinIlinkLoginOpen(true)}
-                                  class="px-3 py-1.5 text-xs font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-slate-800 rounded-lg transition-colors border border-gray-200 dark:border-slate-700"
+                                <Show
+                                  when={!!weixinIlinkConfig().botToken && !!weixinIlinkConfig().accountId}
+                                  fallback={
+                                    <button
+                                      onClick={() => setWeixinIlinkLoginOpen(true)}
+                                      class="px-3 py-1.5 text-xs font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-slate-800 rounded-lg transition-colors border border-gray-200 dark:border-slate-700"
+                                    >
+                                      {t().channel.login}
+                                    </button>
+                                  }
                                 >
-                                  {t().channel.login}
-                                </button>
+                                  <button
+                                    onClick={handleWeixinIlinkLogout}
+                                    disabled={weixinIlinkLoading()}
+                                    class="px-3 py-1.5 text-xs font-medium text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors border border-red-200 dark:border-red-900/40 disabled:opacity-50 disabled:cursor-not-allowed"
+                                  >
+                                    {t().channel.weixinIlinkLogout}
+                                  </button>
+                                </Show>
                                 <button
                                   onClick={handleWeixinIlinkToggle}
-                                  disabled={weixinIlinkLoading()}
+                                  disabled={weixinIlinkLoading() || !weixinIlinkConfig().botToken || !weixinIlinkConfig().accountId}
+                                  title={!weixinIlinkConfig().botToken || !weixinIlinkConfig().accountId ? t().channel.weixinIlinkLoginRequiredHint : undefined}
                                   class={`relative inline-flex h-7 w-12 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:ring-offset-2 ${
                                     weixinIlinkStatus()?.status === "running" ? "bg-blue-600" : "bg-gray-200 dark:bg-slate-700"
-                                  } ${weixinIlinkLoading() ? "opacity-50 cursor-not-allowed" : ""}`}
+                                  } ${weixinIlinkLoading() || !weixinIlinkConfig().botToken || !weixinIlinkConfig().accountId ? "opacity-50 cursor-not-allowed" : ""}`}
                                 >
                                   <span class="sr-only">Toggle WeChat iLink Bot</span>
                                   <span

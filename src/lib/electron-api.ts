@@ -487,6 +487,10 @@ export const weixinIlinkAPI = {
     const api = getWeixinIlinkAPI();
     return api ? api.pollQrCodeStatus(qrcode, baseUrl) : null;
   },
+  async logout(): Promise<{ success: boolean } | null> {
+    const api = getWeixinIlinkAPI();
+    return api ? api.logout() : null;
+  },
 };
 
 /**

@@ -269,6 +269,11 @@ export function registerIpcHandlers(): void {
     },
   );
 
+  ipcMain.handle("channel:weixin-ilink:logout", async () => {
+    await channelManager.logoutChannel("weixin-ilink");
+    return { success: true };
+  });
+
   // ===========================================================================
   // Settings (persisted to settings.json in userData)
   // ===========================================================================

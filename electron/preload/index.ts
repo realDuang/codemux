@@ -84,6 +84,7 @@ const electronAPI = {
       ipcRenderer.invoke("channel:weixin-ilink:get-qrcode", baseUrl),
     pollQrCodeStatus: (qrcode: string, baseUrl?: string) =>
       ipcRenderer.invoke("channel:weixin-ilink:poll-qrcode-status", qrcode, baseUrl),
+    logout: () => ipcRenderer.invoke("channel:weixin-ilink:logout"),
   },
 
   // Settings API (persisted to settings.json)

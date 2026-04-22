@@ -421,6 +421,10 @@ export interface LocaleDict {
     weixinIlinkError: string;
     weixinIlinkRetry: string;
     weixinIlinkAlreadyConfigured: string;
+    weixinIlinkLogout: string;
+    weixinIlinkLogoutConfirm: string;
+    weixinIlinkLoginRequiredHint: string;
+    weixinIlinkSessionExpired: string;
     appId: string;
     appIdPlaceholder: string;
     appSecret: string;
@@ -1060,6 +1064,10 @@ export const en: LocaleDict = {
     weixinIlinkError: "Failed to fetch QR code.",
     weixinIlinkRetry: "Retry",
     weixinIlinkAlreadyConfigured: "A bot is already configured. Scanning will replace it.",
+    weixinIlinkLogout: "Logout",
+    weixinIlinkLogoutConfirm: "Log out the current WeChat account? This stops the bot and clears all saved session bindings on this device. The remote WeChat session may stay valid until it expires server-side.",
+    weixinIlinkLoginRequiredHint: "Click Login and scan the QR code first.",
+    weixinIlinkSessionExpired: "WeChat session expired — please scan the QR code again to re-login.",
     appId: "App ID",
     appIdPlaceholder: "Enter Feishu / Lark App ID",
     appSecret: "App Secret",

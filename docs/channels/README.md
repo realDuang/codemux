@@ -11,7 +11,7 @@ Connect CodeMux to your favorite messaging platforms to interact with AI coding 
 | [Telegram](telegram/README.md) | Webhook / Long Polling | ✅ Draft / Edit | ❌ P2P only | MarkdownV2 + Buttons | [→ Setup](telegram/README.md) |
 | [WeCom (企业微信)](wecom/README.md) | HTTP Callback (AES XML) | ❌ Batch mode | ✅ App group chat | Markdown | [→ Setup](wecom/README.md) |
 | [Microsoft Teams](teams/README.md) | Bot Framework HTTP | ✅ Edit-in-place | ❌ P2P only | Adaptive Cards v1.5 | [→ Setup](teams/README.md) |
-| WeChat iLink (微信个人号) | HTTP long-poll | ❌ Batch mode | ❌ P2P only | Plain text | (in-app config) |
+| WeChat iLink (微信个人号) | HTTP long-poll | ❌ Batch mode | ❌ P2P only | Plain text | [→ Setup](weixin-ilink/README.md) |
 
 ## Connection Types
 

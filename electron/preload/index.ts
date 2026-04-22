@@ -78,6 +78,14 @@ const electronAPI = {
     getStatus: (type: string) => ipcRenderer.invoke("channel:getStatus", type),
   },
 
+  // WeChat iLink QR auth
+  weixinIlink: {
+    getQrCode: (baseUrl?: string) =>
+      ipcRenderer.invoke("channel:weixin-ilink:get-qrcode", baseUrl),
+    pollQrCodeStatus: (qrcode: string, baseUrl?: string) =>
+      ipcRenderer.invoke("channel:weixin-ilink:poll-qrcode-status", qrcode, baseUrl),
+  },
+
   // Settings API (persisted to settings.json)
   settings: {
     /** Synchronously cached settings — available immediately at module init */

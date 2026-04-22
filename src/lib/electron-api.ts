@@ -458,6 +458,37 @@ export const autostartAPI = {
   },
 };
 
+// WeChat iLink QR auth API (Electron only — uses main-process HTTP client)
+export interface IlinkQrCode {
+  qrcode: string;
+  qrcodeImgContent: string;
+  baseUrl: string;
+}
+
+export interface IlinkQrStatus {
+  status: "wait" | "scaned" | "confirmed" | "expired";
+  botToken?: string;
+  accountId?: string;
+  baseUrl?: string;
+  userId?: string;
+}
+
+function getWeixinIlinkAPI(): any {
+  const api = getElectronAPI();
+  return (api as any)?.weixinIlink ?? null;
+}
+
+export const weixinIlinkAPI = {
+  async getQrCode(baseUrl?: string): Promise<IlinkQrCode | null> {
+    const api = getWeixinIlinkAPI();
+    return api ? api.getQrCode(baseUrl) : null;
+  },
+  async pollQrCodeStatus(qrcode: string, baseUrl?: string): Promise<IlinkQrStatus | null> {
+    const api = getWeixinIlinkAPI();
+    return api ? api.pollQrCodeStatus(qrcode, baseUrl) : null;
+  },
+};
+
 /**
  * Get the OpenCode session storage folder path for a project.
  * OpenCode uses xdg-basedir: ~/.local/share/opencode/storage/session/{projectId}/

@@ -409,6 +409,18 @@ export interface LocaleDict {
     wecomBotDesc: string;
     teamsBot: string;
     teamsBotDesc: string;
+    weixinIlinkBot: string;
+    weixinIlinkBotDesc: string;
+    weixinIlinkLoginTitle: string;
+    weixinIlinkLoading: string;
+    weixinIlinkScanPrompt: string;
+    weixinIlinkScanedPrompt: string;
+    weixinIlinkConfirmedPrompt: string;
+    weixinIlinkExpired: string;
+    weixinIlinkRefresh: string;
+    weixinIlinkError: string;
+    weixinIlinkRetry: string;
+    weixinIlinkAlreadyConfigured: string;
     appId: string;
     appIdPlaceholder: string;
     appSecret: string;
@@ -451,6 +463,7 @@ export interface LocaleDict {
     streamingThrottleDesc: string;
     ms: string;
     configure: string;
+    login: string;
     configRequired: string;
     secretConfiguredHint: string;
     save: string;
@@ -1036,6 +1049,18 @@ export const en: LocaleDict = {
     wecomBotDesc: "Connect to WeCom (WeChat Work) to use CodeMux via app messages",
     teamsBot: "Teams Bot",
     teamsBotDesc: "Connect to Microsoft Teams to use CodeMux via bot messages",
+    weixinIlinkBot: "WeChat Personal (iLink)",
+    weixinIlinkBotDesc: "Connect to WeChat personal account via iLink (QR-scan login)",
+    weixinIlinkLoginTitle: "WeChat iLink Login",
+    weixinIlinkLoading: "Fetching QR code...",
+    weixinIlinkScanPrompt: "Open WeChat on your phone and scan the QR code.",
+    weixinIlinkScanedPrompt: "Scanned. Confirm login on your phone...",
+    weixinIlinkConfirmedPrompt: "Login confirmed, saving...",
+    weixinIlinkExpired: "QR code expired.",
+    weixinIlinkRefresh: "Refresh QR code",
+    weixinIlinkError: "Failed to fetch QR code.",
+    weixinIlinkRetry: "Retry",
+    weixinIlinkAlreadyConfigured: "A bot is already configured. Scanning will replace it.",
     appId: "App ID",
     appIdPlaceholder: "Enter Feishu / Lark App ID",
     appSecret: "App Secret",
@@ -1078,6 +1103,7 @@ export const en: LocaleDict = {
     streamingThrottleDesc: "Minimum interval between Feishu / Lark message updates",
     ms: "ms",
     configure: "Configure",
+    login: "Login",
     configRequired: "App ID and App Secret are required to enable the bot",
     secretConfiguredHint: "Configured — leave empty to keep current",
     save: "Save",

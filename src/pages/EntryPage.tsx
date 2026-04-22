@@ -5,6 +5,7 @@ import { useI18n } from "../lib/i18n";
 import { LanguageSwitcher } from "../components/LanguageSwitcher";
 import { FeishuConfigModal } from "../components/FeishuConfigModal";
 import { ChannelConfigModal } from "../components/ChannelConfigModal";
+import { WeixinIlinkLoginModal } from "../components/WeixinIlinkLoginModal";
 import { logger } from "../lib/logger";
 import { WEB_PORT, WEB_STANDALONE_PORT } from "../../shared/ports";
 import { isElectron } from "../lib/platform";
@@ -98,6 +99,18 @@ export default function EntryPage() {
   });
   const [telegramConfigOpen, setTelegramConfigOpen] = createSignal(false);
   const [telegramLoading, setTelegramLoading] = createSignal(false);
+
+  // WeChat iLink channel states
+  const [weixinIlinkStatus, setWeixinIlinkStatus] = createSignal<ChannelInfo | null>(null);
+  const [weixinIlinkConfig, setWeixinIlinkConfig] = createSignal({
+    botToken: "",
+    accountId: "",
+    baseUrl: "https://ilinkai.weixin.qq.com",
+    autoApprovePermissions: true,
+    streamingThrottleMs: 1500,
+  });
+  const [weixinIlinkLoginOpen, setWeixinIlinkLoginOpen] = createSignal(false);
+  const [weixinIlinkLoading, setWeixinIlinkLoading] = createSignal(false);
 
   // WeCom channel states
   const [wecomStatus, setWecomStatus] = createSignal<ChannelInfo | null>(null);
@@ -197,6 +210,7 @@ export default function EntryPage() {
       loadFeishuStatus();
       loadDingtalkStatus();
       loadTelegramStatus();
+      loadWeixinIlinkStatus();
       loadWecomStatus();
       loadTeamsStatus();
     });
@@ -250,6 +264,7 @@ export default function EntryPage() {
     loadFeishuStatus();
     loadDingtalkStatus();
     loadTelegramStatus();
+    loadWeixinIlinkStatus();
     loadWecomStatus();
     loadTeamsStatus();
   };
@@ -667,6 +682,93 @@ export default function EntryPage() {
         logger.error("[EntryPage] Failed to start Telegram after config save:", err);
         const newStatus = await channelAPI.getStatus("telegram");
         if (newStatus) setTelegramStatus(newStatus);
+      }
+    }
+  };
+
+  // =========================================================================
+  // WeChat iLink channel handlers
+  // =========================================================================
+
+  const loadWeixinIlinkStatus = async () => {
+    try {
+      const status = await channelAPI.getStatus("weixin-ilink");
+      if (status) setWeixinIlinkStatus(status);
+
+      const config = await channelAPI.getConfig("weixin-ilink");
+      if (config?.options) {
+        setWeixinIlinkConfig({
+          botToken: (config.options.botToken as string) || "",
+          accountId: (config.options.accountId as string) || "",
+          baseUrl: (config.options.baseUrl as string) || "https://ilinkai.weixin.qq.com",
+          autoApprovePermissions: config.options.autoApprovePermissions !== false,
+          streamingThrottleMs: (config.options.streamingThrottleMs as number) || 1500,
+        });
+      }
+    } catch (err) {
+      logger.error("[EntryPage] Failed to load WeChat iLink status:", err);
+    }
+  };
+
+  const handleWeixinIlinkToggle = async () => {
+    const currentStatus = weixinIlinkStatus();
+    const isRunning = currentStatus?.status === "running" || currentStatus?.status === "starting";
+
+    setWeixinIlinkLoading(true);
+    try {
+      if (isRunning) {
+        await channelAPI.stop("weixin-ilink");
+        setWeixinIlinkStatus({ type: "weixin-ilink", name: "WeChat iLink", status: "stopped" });
+      } else {
+        const cfg = weixinIlinkConfig();
+        if (!cfg.botToken || !cfg.accountId) {
+          setWeixinIlinkLoginOpen(true);
+          setWeixinIlinkLoading(false);
+          return;
+        }
+        await channelAPI.start("weixin-ilink");
+        setTimeout(async () => {
+          const status = await channelAPI.getStatus("weixin-ilink");
+          if (status) setWeixinIlinkStatus(status);
+        }, 1500);
+      }
+    } catch (err) {
+      logger.error("[EntryPage] Failed to toggle WeChat iLink:", err);
+      const status = await channelAPI.getStatus("weixin-ilink");
+      if (status) setWeixinIlinkStatus(status);
+    } finally {
+      setWeixinIlinkLoading(false);
+    }
+  };
+
+  const handleWeixinIlinkLoginSuccess = async (loginData: {
+    botToken: string;
+    accountId: string;
+    baseUrl?: string;
+  }) => {
+    const config = {
+      botToken: loginData.botToken,
+      accountId: loginData.accountId,
+      baseUrl: loginData.baseUrl || "https://ilinkai.weixin.qq.com",
+      autoApprovePermissions: weixinIlinkConfig().autoApprovePermissions,
+      streamingThrottleMs: weixinIlinkConfig().streamingThrottleMs,
+    };
+
+    await channelAPI.updateConfig("weixin-ilink", { options: config });
+    setWeixinIlinkConfig(config);
+
+    const status = weixinIlinkStatus();
+    if (status?.status !== "running") {
+      try {
+        await channelAPI.start("weixin-ilink");
+        setTimeout(async () => {
+          const newStatus = await channelAPI.getStatus("weixin-ilink");
+          if (newStatus) setWeixinIlinkStatus(newStatus);
+        }, 1500);
+      } catch (err) {
+        logger.error("[EntryPage] Failed to start WeChat iLink after login:", err);
+        const newStatus = await channelAPI.getStatus("weixin-ilink");
+        if (newStatus) setWeixinIlinkStatus(newStatus);
       }
     }
   };
@@ -1548,6 +1650,69 @@ export default function EntryPage() {
                               </div>
                             </Show>
                           </div>
+
+                          {/* WeChat iLink Bot Row */}
+                          <div class="rounded-lg border border-gray-200 dark:border-slate-800 overflow-hidden">
+                            <div class="p-4 flex items-center justify-between">
+                              <div class="flex items-center gap-3">
+                                <div class="w-9 h-9 rounded-lg bg-green-100 dark:bg-green-900/30 flex items-center justify-center">
+                                  <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="currentColor" class="text-green-600 dark:text-green-400">
+                                    <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/>
+                                  </svg>
+                                </div>
+                                <div>
+                                  <div class="flex items-center gap-2">
+                                    <h3 class="text-sm font-medium text-gray-900 dark:text-white">
+                                      {t().channel.weixinIlinkBot}
+                                    </h3>
+                                    <Show when={weixinIlinkLoading() || weixinIlinkStatus()?.status === "starting"}>
+                                      <span class="inline-flex h-2 w-2 rounded-full bg-yellow-400 animate-pulse"></span>
+                                    </Show>
+                                    <Show when={!weixinIlinkLoading() && weixinIlinkStatus()?.status === "running"}>
+                                      <span class="inline-flex h-2 w-2 rounded-full bg-green-500"></span>
+                                    </Show>
+                                    <Show when={!weixinIlinkLoading() && weixinIlinkStatus()?.status === "error"}>
+                                      <span class="inline-flex h-2 w-2 rounded-full bg-red-500"></span>
+                                    </Show>
+                                  </div>
+                                  <p class="text-xs text-gray-500 dark:text-gray-400">
+                                    {t().channel.weixinIlinkBotDesc}
+                                  </p>
+                                </div>
+                              </div>
+                              <div class="flex items-center gap-2">
+                                <button
+                                  onClick={() => setWeixinIlinkLoginOpen(true)}
+                                  class="px-3 py-1.5 text-xs font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-slate-800 rounded-lg transition-colors border border-gray-200 dark:border-slate-700"
+                                >
+                                  {t().channel.login}
+                                </button>
+                                <button
+                                  onClick={handleWeixinIlinkToggle}
+                                  disabled={weixinIlinkLoading()}
+                                  class={`relative inline-flex h-7 w-12 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:ring-offset-2 ${
+                                    weixinIlinkStatus()?.status === "running" ? "bg-blue-600" : "bg-gray-200 dark:bg-slate-700"
+                                  } ${weixinIlinkLoading() ? "opacity-50 cursor-not-allowed" : ""}`}
+                                >
+                                  <span class="sr-only">Toggle WeChat iLink Bot</span>
+                                  <span
+                                    class={`pointer-events-none inline-block h-6 w-6 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
+                                      weixinIlinkStatus()?.status === "running" ? "translate-x-5" : "translate-x-0"
+                                    }`}
+                                  />
+                                </button>
+                              </div>
+                            </div>
+                            {/* Error message display */}
+                            <Show when={weixinIlinkStatus()?.status === "error" && weixinIlinkStatus()?.error}>
+                              <div class="px-4 py-3 bg-red-50 dark:bg-red-900/10 border-t border-red-100 dark:border-red-900/30">
+                                <p class="text-xs text-red-600 dark:text-red-400 flex items-center gap-2">
+                                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" x2="12" y1="8" y2="12"/><line x1="12" x2="12.01" y1="16" y2="16"/></svg>
+                                  {weixinIlinkStatus()?.error}
+                                </p>
+                              </div>
+                            </Show>
+                          </div>
                         </div>
                       </div>
 
@@ -1911,6 +2076,21 @@ export default function EntryPage() {
                 onClose={() => setFeishuConfigOpen(false)}
                 initialConfig={feishuConfig()}
                 onSave={handleFeishuConfigSave}
+              />
+
+              <WeixinIlinkLoginModal
+                isOpen={weixinIlinkLoginOpen()}
+                onClose={() => setWeixinIlinkLoginOpen(false)}
+                initialConfig={weixinIlinkConfig()}
+                onSave={async (config: any) => {
+                  const loginData = {
+                    botToken: config.botToken,
+                    accountId: config.accountId,
+                    baseUrl: config.baseUrl,
+                  };
+                  await handleWeixinIlinkLoginSuccess(loginData);
+                  setWeixinIlinkLoginOpen(false);
+                }}
               />
 
               <ChannelConfigModal

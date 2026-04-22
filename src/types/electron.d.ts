@@ -96,6 +96,17 @@ interface ElectronAPI {
     getStatus: (type: string) => Promise<{ type: string; name: string; status: "stopped" | "starting" | "running" | "error"; error?: string; webhookMeta?: { path: string; platformConfigGuide: string } | null } | null>;
   };
 
+  weixinIlink?: {
+    getQrCode: (baseUrl?: string) => Promise<{ qrcode: string; qrcodeImgContent: string; baseUrl: string }>;
+    pollQrCodeStatus: (qrcode: string, baseUrl?: string) => Promise<{
+      status: "wait" | "scaned" | "confirmed" | "expired";
+      botToken?: string;
+      accountId?: string;
+      baseUrl?: string;
+      userId?: string;
+    }>;
+  };
+
   update?: {
     checkForUpdates: () => Promise<UpdateState>;
     quitAndInstall: () => Promise<void>;

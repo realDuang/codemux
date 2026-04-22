@@ -5,6 +5,7 @@ import { isElectron } from "../lib/platform";
 import { channelAPI, getElectronAPI, tunnelAPI, type ChannelInfo, type TunnelInfo } from "../lib/electron-api";
 import { FeishuConfigModal } from "./FeishuConfigModal";
 import { ChannelConfigModal, type ConfigField } from "./ChannelConfigModal";
+import { WeixinIlinkLoginModal, type WeixinIlinkConfig } from "./WeixinIlinkLoginModal";
 
 // ---------------------------------------------------------------------------
 // Channel registry — each entry drives one ChannelCard + modal
@@ -65,6 +66,22 @@ const channelRegistry: ChannelDef[] = [
       { key: "webhookUrl", label: t().channel.webhookUrl, type: "text", placeholder: t().channel.webhookUrlPlaceholder },
       { key: "autoApprovePermissions", label: t().channel.autoApprove, type: "toggle", disabled: true },
     ],
+    isConfigured: (c) => !!c.botToken,
+  },
+  {
+    type: "weixin-ilink",
+    badge: "WX",
+    badgeClass: "bg-green-100 dark:bg-green-900/30 text-green-600 dark:text-green-400",
+    titleKey: "weixinIlinkBot",
+    descKey: "weixinIlinkBotDesc",
+    connection: "direct",
+    defaultConfig: {
+      botToken: "",
+      baseUrl: "https://ilinkai.weixin.qq.com",
+      accountId: "",
+      autoApprovePermissions: true,
+      streamingThrottleMs: 1500,
+    },
     isConfigured: (c) => !!c.botToken,
   },
   {
@@ -429,8 +446,17 @@ export function ChannelManagementSettings() {
         onSave={(cfg) => channelMap.feishu.save(cfg as unknown as Record<string, unknown>)}
       />
 
+      {/* WeChat iLink uses a QR-scan login modal */}
+      <WeixinIlinkLoginModal
+        isOpen={channelMap["weixin-ilink"].configOpen()}
+        onClose={() => channelMap["weixin-ilink"].setConfigOpen(false)}
+        initialConfig={channelMap["weixin-ilink"].config() as unknown as WeixinIlinkConfig}
+        secretsConfigured={channelMap["weixin-ilink"].secretsConfigured()}
+        onSave={(cfg) => channelMap["weixin-ilink"].save(cfg as unknown as Record<string, unknown>)}
+      />
+
       {/* Generic modals for all other channels */}
-      <For each={channels.filter((c) => c.def.type !== "feishu" && c.def.fields)}>
+      <For each={channels.filter((c) => c.def.type !== "feishu" && c.def.type !== "weixin-ilink" && c.def.fields)}>
         {(c) => (
           <ChannelConfigModal
             isOpen={c.state.configOpen()}

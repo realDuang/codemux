@@ -1,5 +1,4 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { DEFAULT_TELEGRAM_CONFIG } from "../../../../../electron/main/channels/telegram/telegram-types";
 
 const { mockScopedLogger } = vi.hoisted(() => ({
   mockScopedLogger: {
@@ -14,7 +13,7 @@ const { mockScopedLogger } = vi.hoisted(() => ({
 
 vi.mock("../../../../../electron/main/services/logger", () => ({
   channelLog: mockScopedLogger,
-  telegramLog: mockScopedLogger,
+  wecomLog: mockScopedLogger,
   getDefaultEngineFromSettings: vi.fn(() => "opencode"),
 }));
 
@@ -25,47 +24,65 @@ vi.mock("electron", () => ({
   },
 }));
 
-import { TelegramAdapter } from "../../../../../electron/main/channels/telegram/telegram-adapter";
+import { WeComAdapter } from "../../../../../electron/main/channels/wecom/wecom-adapter";
+import { DEFAULT_WECOM_CONFIG } from "../../../../../electron/main/channels/wecom/wecom-types";
 
-describe("TelegramAdapter", () => {
+describe("WeComAdapter", () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
 
-  describe("getInfo", () => {
+  describe("getInfo / getWebhookMeta", () => {
     it("reports stopped status before start", () => {
-      const a = new TelegramAdapter();
+      const a = new WeComAdapter();
       const info = a.getInfo();
-      expect(info.type).toBe("telegram");
+      expect(info.type).toBe("wecom");
       expect(info.status).toBe("stopped");
-      expect(info.stats?.mode).toBe("polling");
     });
 
-    it("reports webhook mode when webhookUrl set", () => {
-      const a = new TelegramAdapter() as any;
-      a.config = { ...DEFAULT_TELEGRAM_CONFIG, webhookUrl: "https://x.com/wh" };
-      expect(a.getInfo().stats?.mode).toBe("webhook");
+    it("returns expected webhook meta", () => {
+      const a = new WeComAdapter();
+      const meta = a.getWebhookMeta();
+      expect(meta.path).toBe("/webhook/wecom");
+      expect(meta.platformConfigGuide).toBeDefined();
     });
   });
 
   describe("start", () => {
-    it("rejects when botToken is missing", async () => {
-      const a = new TelegramAdapter();
+    it("rejects when corpId/corpSecret missing", async () => {
+      const a = new WeComAdapter();
       await expect(
         a.start({
-          type: "telegram",
-          name: "Telegram Bot",
+          type: "wecom",
+          name: "WeCom Bot",
           enabled: true,
-          options: { ...DEFAULT_TELEGRAM_CONFIG },
+          options: { ...DEFAULT_WECOM_CONFIG },
         }),
-      ).rejects.toThrow(/botToken/);
+      ).rejects.toThrow(/corpId and corpSecret/);
+      expect(a.getInfo().status).toBe("error");
+    });
+
+    it("rejects when callbackToken/callbackEncodingAESKey missing", async () => {
+      const a = new WeComAdapter();
+      await expect(
+        a.start({
+          type: "wecom",
+          name: "WeCom Bot",
+          enabled: true,
+          options: {
+            ...DEFAULT_WECOM_CONFIG,
+            corpId: "c",
+            corpSecret: "s",
+          },
+        }),
+      ).rejects.toThrow(/callbackToken and callbackEncodingAESKey/);
       expect(a.getInfo().status).toBe("error");
     });
   });
 
   describe("setWebhookServer", () => {
-    it("stores reference", () => {
-      const a = new TelegramAdapter() as any;
+    it("stores webhook server reference", () => {
+      const a = new WeComAdapter() as any;
       const srv = { registerRoute: vi.fn(), unregisterRoute: vi.fn() };
       a.setWebhookServer(srv);
       expect(a.webhookServer).toBe(srv);
@@ -74,11 +91,14 @@ describe("TelegramAdapter", () => {
 
   describe("stop", () => {
     it("nulls transport / streamingController / gatewayClient and emits disconnected", async () => {
-      const a = new TelegramAdapter() as any;
+      const a = new WeComAdapter() as any;
       a.status = "running";
-      a.transport = { sendText: vi.fn(), deleteWebhook: vi.fn(async () => true) };
+      a.transport = { sendText: vi.fn() };
       a.gatewayClient = { disconnect: vi.fn() };
       a.streamingController = {};
+      a.tokenManager = {};
+      a.crypto = {};
+      a.webhookServer = { unregisterRoute: vi.fn() };
       const events: string[] = [];
       a.on("status.changed", (s: any) => events.push(`status:${s}`));
       a.on("disconnected", (r: any) => events.push(`disconnected:${r}`));
@@ -88,92 +108,53 @@ describe("TelegramAdapter", () => {
       expect(a.transport).toBeNull();
       expect(a.gatewayClient).toBeNull();
       expect(a.streamingController).toBeNull();
-      expect(a.getInfo().status).toBe("stopped");
+      expect(a.tokenManager).toBeNull();
+      expect(a.crypto).toBeNull();
+      expect(a.webhookServer.unregisterRoute).toHaveBeenCalledWith("/webhook/wecom");
       expect(events).toContain("status:stopped");
       expect(events).toContain("disconnected:stopped");
-    });
-
-    it("unregisters webhook route and deletes webhook on Telegram", async () => {
-      const a = new TelegramAdapter() as any;
-      const unregister = vi.fn();
-      const deleteWebhook = vi.fn(async () => true);
-      a.webhookServer = { unregisterRoute: unregister };
-      a.transport = { deleteWebhook };
-      a.config = { ...DEFAULT_TELEGRAM_CONFIG, webhookUrl: "https://x.com/wh" };
-      await a.stop();
-      expect(unregister).toHaveBeenCalledWith("/webhook/telegram");
-      expect(deleteWebhook).toHaveBeenCalled();
-    });
-
-    it("aborts in-flight long polling before shutdown completes", async () => {
-      const adapter = new TelegramAdapter() as any;
-      const getUpdates = vi.fn((_offset?: number, _timeout?: number, signal?: AbortSignal) => new Promise((_, reject) => {
-        signal?.addEventListener(
-          "abort",
-          () => reject(Object.assign(new Error("aborted"), { name: "AbortError" })),
-          { once: true },
-        );
-      }));
-
-      adapter.status = "running";
-      adapter.config = { ...DEFAULT_TELEGRAM_CONFIG, botToken: "token" };
-      adapter.transport = {
-        getUpdates,
-        deleteWebhook: vi.fn().mockResolvedValue(true),
-      };
-      adapter.pollingActive = true;
-      adapter.pollingGeneration = 1;
-      adapter.pollingAbortController = new AbortController();
-      adapter.pollingLoopPromise = adapter.pollingLoop(1, adapter.pollingAbortController.signal);
-
-      await Promise.resolve();
-      await expect(adapter.stop()).resolves.toBeUndefined();
-
-      expect(getUpdates).toHaveBeenCalledWith(undefined, 30, expect.any(AbortSignal));
-      expect(adapter.pollingAbortController).toBeNull();
-      expect(adapter.transport).toBeNull();
-      expect(adapter.status).toBe("stopped");
     });
   });
 
   describe("updateConfig", () => {
-    it("restarts when webhook delivery settings change", async () => {
-      const adapter = new TelegramAdapter() as any;
-      adapter.status = "running";
-      adapter.config = {
-        ...DEFAULT_TELEGRAM_CONFIG,
-        botToken: "token",
-        webhookUrl: "",
-        webhookSecretToken: "",
-      };
-      adapter.stop = vi.fn().mockResolvedValue(undefined);
-      adapter.start = vi.fn().mockResolvedValue(undefined);
-
-      await adapter.updateConfig({
-        options: {
-          webhookUrl: "https://example.com/webhook/telegram",
-          webhookSecretToken: "secret",
-        },
-      });
-
-      expect(adapter.stop).toHaveBeenCalledTimes(1);
-      expect(adapter.start).toHaveBeenCalledTimes(1);
-    });
-
-    it("restarts when botToken changes", async () => {
-      const a = new TelegramAdapter() as any;
+    it("restarts when corpId changes", async () => {
+      const a = new WeComAdapter() as any;
       a.status = "running";
-      a.config = { ...DEFAULT_TELEGRAM_CONFIG, botToken: "old" };
+      a.config = {
+        ...DEFAULT_WECOM_CONFIG,
+        corpId: "old",
+        corpSecret: "s",
+        callbackToken: "t",
+        callbackEncodingAESKey: "k",
+      };
       a.stop = vi.fn().mockResolvedValue(undefined);
       a.start = vi.fn().mockResolvedValue(undefined);
-      await a.updateConfig({ options: { botToken: "new" } });
+      await a.updateConfig({ options: { corpId: "new" } });
+      expect(a.stop).toHaveBeenCalled();
+      expect(a.start).toHaveBeenCalled();
+    });
+
+    it("restarts when agentId changes", async () => {
+      const a = new WeComAdapter() as any;
+      a.status = "running";
+      a.config = {
+        ...DEFAULT_WECOM_CONFIG,
+        corpId: "c", corpSecret: "s", callbackToken: "t",
+        callbackEncodingAESKey: "k", agentId: 1,
+      };
+      a.stop = vi.fn().mockResolvedValue(undefined);
+      a.start = vi.fn().mockResolvedValue(undefined);
+      await a.updateConfig({ options: { agentId: 2 } });
       expect(a.start).toHaveBeenCalled();
     });
 
     it("does not restart when only autoApprovePermissions changes", async () => {
-      const a = new TelegramAdapter() as any;
+      const a = new WeComAdapter() as any;
       a.status = "running";
-      a.config = { ...DEFAULT_TELEGRAM_CONFIG, botToken: "t" };
+      a.config = {
+        ...DEFAULT_WECOM_CONFIG, corpId: "c", corpSecret: "s",
+        callbackToken: "t", callbackEncodingAESKey: "k",
+      };
       a.stop = vi.fn().mockResolvedValue(undefined);
       a.start = vi.fn().mockResolvedValue(undefined);
       await a.updateConfig({ options: { autoApprovePermissions: false } });
@@ -181,270 +162,208 @@ describe("TelegramAdapter", () => {
       expect(a.start).not.toHaveBeenCalled();
     });
 
-    it("does not restart when adapter is not running", async () => {
-      const a = new TelegramAdapter() as any;
+    it("does not restart when adapter not running", async () => {
+      const a = new WeComAdapter() as any;
       a.status = "stopped";
-      a.config = { ...DEFAULT_TELEGRAM_CONFIG };
+      a.config = { ...DEFAULT_WECOM_CONFIG };
       a.stop = vi.fn().mockResolvedValue(undefined);
       a.start = vi.fn().mockResolvedValue(undefined);
-      await a.updateConfig({ options: { botToken: "x" } });
+      await a.updateConfig({ options: { corpId: "x" } });
       expect(a.stop).not.toHaveBeenCalled();
       expect(a.start).not.toHaveBeenCalled();
-      expect(a.config.botToken).toBe("x");
-    });
-
-    it("does not restart when the same bot token is re-saved", async () => {
-      const adapter = new TelegramAdapter() as any;
-      adapter.status = "running";
-      adapter.config = { ...DEFAULT_TELEGRAM_CONFIG, botToken: "token" };
-      adapter.stop = vi.fn().mockResolvedValue(undefined);
-      adapter.start = vi.fn().mockResolvedValue(undefined);
-
-      await adapter.updateConfig({ options: { botToken: "token" } });
-
-      expect(adapter.stop).not.toHaveBeenCalled();
-      expect(adapter.start).not.toHaveBeenCalled();
+      expect(a.config.corpId).toBe("x");
     });
   });
 
   describe("isTempSessionExpired", () => {
     it("false within TTL, true past TTL", () => {
-      const a = new TelegramAdapter() as any;
+      const a = new WeComAdapter() as any;
       expect(a.isTempSessionExpired({ lastActiveAt: Date.now() - 1000 })).toBe(false);
       expect(a.isTempSessionExpired({ lastActiveAt: Date.now() - 999_999_999 })).toBe(true);
     });
   });
 
-  describe("isBotMentioned / stripBotMention", () => {
-    it("returns false without entities or username", () => {
-      const a = new TelegramAdapter() as any;
-      expect(a.isBotMentioned({ text: "hi" })).toBe(false);
-      a.botUsername = "mybot";
-      expect(a.isBotMentioned({ text: "hi" })).toBe(false);
-    });
-
-    it("returns true when bot is @mentioned", () => {
-      const a = new TelegramAdapter() as any;
-      a.botUsername = "mybot";
-      const result = a.isBotMentioned({
-        text: "hello @mybot please",
-        entities: [{ type: "mention", offset: 6, length: 6 }],
-      });
-      expect(result).toBe(true);
-    });
-
-    it("returns true when message has a bot_command entity", () => {
-      const a = new TelegramAdapter() as any;
-      a.botUsername = "mybot";
-      const result = a.isBotMentioned({
-        text: "/help",
-        entities: [{ type: "bot_command", offset: 0, length: 5 }],
-      });
-      expect(result).toBe(true);
-    });
-
-    it("returns false for unrelated mention", () => {
-      const a = new TelegramAdapter() as any;
-      a.botUsername = "mybot";
-      const result = a.isBotMentioned({
-        text: "hello @other",
-        entities: [{ type: "mention", offset: 6, length: 6 }],
-      });
-      expect(result).toBe(false);
-    });
-
-    it("stripBotMention removes @username", () => {
-      const a = new TelegramAdapter() as any;
-      a.botUsername = "mybot";
-      expect(a.stripBotMention("hello @mybot world")).toBe("hello  world");
-    });
-
-    it("stripBotMention returns text unchanged when no username set", () => {
-      const a = new TelegramAdapter() as any;
-      expect(a.stripBotMention("hi")).toBe("hi");
-    });
-  });
-
-  describe("processUpdate", () => {
-    it("dispatches message updates", async () => {
-      const a = new TelegramAdapter() as any;
-      a.handleTelegramMessage = vi.fn(async () => undefined);
-      await a.processUpdate({ update_id: 1, message: { text: "x" } });
-      expect(a.handleTelegramMessage).toHaveBeenCalled();
-    });
-
-    it("dispatches callback_query updates", async () => {
-      const a = new TelegramAdapter() as any;
-      a.handleCallbackQuery = vi.fn(async () => undefined);
-      await a.processUpdate({ update_id: 1, callback_query: { id: "x" } });
-      expect(a.handleCallbackQuery).toHaveBeenCalled();
-    });
-  });
-
-  describe("handleTelegramMessage", () => {
+  describe("processIncomingMessage", () => {
     function makeBase() {
-      const a = new TelegramAdapter() as any;
+      const a = new WeComAdapter() as any;
       a.transport = { sendText: vi.fn(async () => "") };
       a.gatewayClient = {};
       a.handleP2PMessage = vi.fn(async () => undefined);
-      a.handleGroupMessage = vi.fn(async () => undefined);
       return a;
     }
 
-    it("ignores messages without text", async () => {
+    it("ignores non-text messages", async () => {
       const a = makeBase();
-      await a.handleTelegramMessage({
-        message_id: 1,
-        from: { id: 1, first_name: "A" },
-        chat: { id: 100, type: "private" },
-        date: 0,
+      await a.processIncomingMessage({
+        toUserName: "corp", fromUserName: "u1", createTime: 0,
+        msgType: "image", msgId: "m1", agentId: 1,
       });
       expect(a.handleP2PMessage).not.toHaveBeenCalled();
     });
 
-    it("ignores messages from bots", async () => {
+    it("dedupes by msgId", async () => {
       const a = makeBase();
-      await a.handleTelegramMessage({
-        message_id: 1,
-        from: { id: 1, first_name: "A", is_bot: true },
-        chat: { id: 100, type: "private" },
-        date: 0,
-        text: "hi",
-      });
-      expect(a.handleP2PMessage).not.toHaveBeenCalled();
-    });
-
-    it("dedupes by chatId:message_id", async () => {
-      const a = makeBase();
-      const ev = {
-        message_id: 1,
-        from: { id: 1, first_name: "A" },
-        chat: { id: 100, type: "private" as const },
-        date: 0,
-        text: "hi",
+      const msg = {
+        toUserName: "corp", fromUserName: "u1", createTime: 0,
+        msgType: "text", content: "hi", msgId: "m1", agentId: 1,
       };
-      await a.handleTelegramMessage(ev);
-      await a.handleTelegramMessage(ev);
+      await a.processIncomingMessage(msg);
+      await a.processIncomingMessage(msg);
       expect(a.handleP2PMessage).toHaveBeenCalledTimes(1);
     });
 
-    it("routes private chat to handleP2PMessage and stores P2P chat", async () => {
+    it("skips empty content", async () => {
       const a = makeBase();
-      await a.handleTelegramMessage({
-        message_id: 1,
-        from: { id: 1, first_name: "Alice", username: "ali" },
-        chat: { id: 100, type: "private" },
-        date: 0,
-        text: "hi",
+      await a.processIncomingMessage({
+        toUserName: "corp", fromUserName: "u1", createTime: 0,
+        msgType: "text", content: "  ", msgId: "m1", agentId: 1,
       });
-      expect(a.handleP2PMessage).toHaveBeenCalledWith("100", "1", "hi");
-      expect(a.sessionMapper.getP2PChat("100")).toBeDefined();
+      expect(a.handleP2PMessage).not.toHaveBeenCalled();
     });
 
-    it("routes group chat to handleGroupMessage when bot mentioned", async () => {
+    it("registers P2P chat and routes to handleP2PMessage", async () => {
       const a = makeBase();
-      a.botUsername = "mybot";
-      await a.handleTelegramMessage({
-        message_id: 1,
-        from: { id: 1, first_name: "Alice" },
-        chat: { id: 200, type: "group" },
-        date: 0,
-        text: "hello @mybot",
-        entities: [{ type: "mention", offset: 6, length: 6 }],
+      await a.processIncomingMessage({
+        toUserName: "corp", fromUserName: "u1", createTime: 0,
+        msgType: "text", content: "hi", msgId: "m1", agentId: 1,
       });
-      expect(a.handleGroupMessage).toHaveBeenCalled();
-    });
-
-    it("routes group chat to handleGroupMessage when text starts with /", async () => {
-      const a = makeBase();
-      await a.handleTelegramMessage({
-        message_id: 1,
-        from: { id: 1, first_name: "Alice" },
-        chat: { id: 200, type: "supergroup" },
-        date: 0,
-        text: "/help",
-      });
-      expect(a.handleGroupMessage).toHaveBeenCalled();
-    });
-
-    it("ignores group messages without mention or command", async () => {
-      const a = makeBase();
-      await a.handleTelegramMessage({
-        message_id: 1,
-        from: { id: 1, first_name: "Alice" },
-        chat: { id: 200, type: "group" },
-        date: 0,
-        text: "just chatting",
-      });
-      expect(a.handleGroupMessage).not.toHaveBeenCalled();
+      expect(a.handleP2PMessage).toHaveBeenCalledWith("user:u1", "u1", "hi");
+      expect(a.sessionMapper.getP2PChat("user:u1")).toBeDefined();
     });
   });
 
-  describe("handleCallbackQuery", () => {
-    function makeCb() {
-      const a = new TelegramAdapter() as any;
-      a.transport = { answerCallbackQuery: vi.fn(async () => undefined) };
-      a.gatewayClient = {
-        replyPermission: vi.fn(async () => undefined),
-        replyQuestion: vi.fn(async () => undefined),
+  describe("handleWebhook routing", () => {
+    it("returns 405 for unknown methods", async () => {
+      const a = new WeComAdapter() as any;
+      const res = await a.handleWebhook({ method: "PUT", query: {}, headers: {}, rawBody: Buffer.from("") });
+      expect(res.status).toBe(405);
+    });
+
+    it("GET returns 500 if crypto not initialized", async () => {
+      const a = new WeComAdapter() as any;
+      const res = await a.handleWebhook({ method: "GET", query: {}, headers: {}, rawBody: Buffer.from("") });
+      expect(res.status).toBe(500);
+    });
+
+    it("GET returns 400 when params missing", async () => {
+      const a = new WeComAdapter() as any;
+      a.crypto = { verifyUrl: vi.fn(), generateSignature: vi.fn(), debugDecrypt: vi.fn() };
+      const res = await a.handleWebhook({ method: "GET", query: {}, headers: {}, rawBody: Buffer.from("") });
+      expect(res.status).toBe(400);
+    });
+
+    it("GET returns 200 with plaintext on successful verification", async () => {
+      const a = new WeComAdapter() as any;
+      a.crypto = {
+        verifyUrl: vi.fn(() => "echoed"),
+        generateSignature: vi.fn(),
+        debugDecrypt: vi.fn(),
       };
-      return a;
-    }
-
-    it("returns when data missing", async () => {
-      const a = makeCb();
-      await a.handleCallbackQuery({ id: "x" });
-      expect(a.transport.answerCallbackQuery).not.toHaveBeenCalled();
+      const res = await a.handleWebhook({
+        method: "GET",
+        query: { msg_signature: "s", timestamp: "t", nonce: "n", echostr: "e" },
+        headers: {},
+        rawBody: Buffer.from(""),
+      });
+      expect(res.status).toBe(200);
+      expect(res.body).toBe("echoed");
     });
 
-    it("returns when chat id missing", async () => {
-      const a = makeCb();
-      await a.handleCallbackQuery({ id: "x", data: "perm:1:2" });
-      expect(a.transport.answerCallbackQuery).not.toHaveBeenCalled();
+    it("GET returns 403 with sig mismatch path", async () => {
+      const a = new WeComAdapter() as any;
+      a.crypto = {
+        verifyUrl: vi.fn(() => null),
+        generateSignature: vi.fn(() => "different"),
+        debugDecrypt: vi.fn(() => ({ error: "bad" })),
+      };
+      const res = await a.handleWebhook({
+        method: "GET",
+        query: { msg_signature: "s", timestamp: "t", nonce: "n", echostr: "e" },
+        headers: {},
+        rawBody: Buffer.from(""),
+      });
+      expect(res.status).toBe(403);
     });
 
-    it("perm action calls replyPermission", async () => {
-      const a = makeCb();
-      await a.handleCallbackQuery({
-        id: "cb1",
-        data: "perm:p1:opt1",
-        message: { chat: { id: 100, type: "private" } },
+    it("GET returns 403 with sig OK but decrypt fail path", async () => {
+      const a = new WeComAdapter() as any;
+      a.crypto = {
+        verifyUrl: vi.fn(() => null),
+        generateSignature: vi.fn(() => "s"),
+        debugDecrypt: vi.fn(() => ({ error: "decryption error" })),
+      };
+      const res = await a.handleWebhook({
+        method: "GET",
+        query: { msg_signature: "s", timestamp: "t", nonce: "n", echostr: "e" },
+        headers: {},
+        rawBody: Buffer.from(""),
       });
-      expect(a.gatewayClient.replyPermission).toHaveBeenCalledWith({
-        permissionId: "p1",
-        optionId: "opt1",
-      });
+      expect(res.status).toBe(403);
     });
 
-    it("question action calls replyQuestion and clears pending", async () => {
-      const a = makeCb();
-      a.sessionMapper.setPendingQuestion("100", { questionId: "q1", sessionId: "s1" });
-      await a.handleCallbackQuery({
-        id: "cb1",
-        data: "question:q1:Yes",
-        message: { chat: { id: 100, type: "private" } },
+    it("POST returns 500 if crypto missing", async () => {
+      const a = new WeComAdapter() as any;
+      const res = await a.handleWebhook({
+        method: "POST",
+        query: { msg_signature: "s", timestamp: "t", nonce: "n" },
+        headers: {},
+        rawBody: Buffer.from(""),
       });
-      expect(a.gatewayClient.replyQuestion).toHaveBeenCalledWith({
-        questionId: "q1",
-        answers: [["Yes"]],
-      });
-      expect(a.sessionMapper.getPendingQuestion("100")).toBeUndefined();
+      expect(res.status).toBe(500);
     });
 
-    it("unknown action falls through to verbose log", async () => {
-      const a = makeCb();
-      await a.handleCallbackQuery({
-        id: "cb1",
-        data: "unknown:x",
-        message: { chat: { id: 100, type: "private" } },
+    it("POST returns 400 if params missing", async () => {
+      const a = new WeComAdapter() as any;
+      a.crypto = { decryptMessage: vi.fn() };
+      const res = await a.handleWebhook({
+        method: "POST", query: {}, headers: {}, rawBody: Buffer.from(""),
       });
-      expect(a.transport.answerCallbackQuery).toHaveBeenCalled();
+      expect(res.status).toBe(400);
+    });
+
+    it("POST returns 400 if Encrypt element missing", async () => {
+      const a = new WeComAdapter() as any;
+      a.crypto = { decryptMessage: vi.fn() };
+      const res = await a.handleWebhook({
+        method: "POST",
+        query: { msg_signature: "s", timestamp: "t", nonce: "n" },
+        headers: {},
+        rawBody: Buffer.from("<xml></xml>"),
+      });
+      expect(res.status).toBe(400);
+    });
+
+    it("POST returns 403 if decrypt fails", async () => {
+      const a = new WeComAdapter() as any;
+      a.crypto = { decryptMessage: vi.fn(() => null) };
+      const res = await a.handleWebhook({
+        method: "POST",
+        query: { msg_signature: "s", timestamp: "t", nonce: "n" },
+        headers: {},
+        rawBody: Buffer.from("<xml><Encrypt><![CDATA[abc]]></Encrypt></xml>"),
+      });
+      expect(res.status).toBe(403);
+    });
+
+    it("POST returns 200 success on decrypted payload", async () => {
+      const a = new WeComAdapter() as any;
+      a.crypto = {
+        decryptMessage: vi.fn(() => "<xml><MsgType><![CDATA[image]]></MsgType><MsgId><![CDATA[m1]]></MsgId><FromUserName><![CDATA[u1]]></FromUserName></xml>"),
+      };
+      const res = await a.handleWebhook({
+        method: "POST",
+        query: { msg_signature: "s", timestamp: "t", nonce: "n" },
+        headers: {},
+        rawBody: Buffer.from("<xml><Encrypt><![CDATA[abc]]></Encrypt></xml>"),
+      });
+      expect(res.status).toBe(200);
+      expect(res.body).toBe("success");
     });
   });
 
   describe("handleP2PMessage dispatch", () => {
     function makeP2P() {
-      const a = new TelegramAdapter() as any;
+      const a = new WeComAdapter() as any;
       a.transport = { sendText: vi.fn(async () => "") };
       a.gatewayClient = {
         replyQuestion: vi.fn(async () => undefined),
@@ -454,7 +373,7 @@ describe("TelegramAdapter", () => {
       return a;
     }
 
-    it("delegates parseable command to handleP2PCommand and clears pending", async () => {
+    it("delegates command to handleP2PCommand and clears pending selection", async () => {
       const a = makeP2P();
       a.sessionMapper.setPendingSelection("c1", { type: "project", projects: [] });
       a.handleP2PCommand = vi.fn(async () => undefined);
@@ -465,11 +384,11 @@ describe("TelegramAdapter", () => {
 
     it("freeform answer routes to pending question", async () => {
       const a = makeP2P();
-      a.sessionMapper.setPendingQuestion("c1", { questionId: "q-1", sessionId: "s-1" });
-      await a.handleP2PMessage("c1", "u1", "my answer");
+      a.sessionMapper.setPendingQuestion("c1", { questionId: "q-1" });
+      await a.handleP2PMessage("c1", "u1", "answer");
       expect(a.gatewayClient.replyQuestion).toHaveBeenCalledWith({
         questionId: "q-1",
-        answers: [["my answer"]],
+        answers: [["answer"]],
       });
     });
 
@@ -484,48 +403,29 @@ describe("TelegramAdapter", () => {
       const a = makeP2P();
       a.sessionMapper.getOrCreateP2PChat("c1", "u1");
       a.sessionMapper.setTempSession("c1", {
-        conversationId: "x",
-        engineType: "claude",
-        directory: "/d",
-        projectId: "p",
-        lastActiveAt: Date.now(),
-        messageQueue: [],
-        processing: true,
+        conversationId: "x", engineType: "claude", directory: "/d", projectId: "p",
+        lastActiveAt: Date.now(), messageQueue: [], processing: true,
       });
       a.enqueueP2PMessage = vi.fn(async () => undefined);
       await a.handleP2PMessage("c1", "u1", "hi");
       expect(a.enqueueP2PMessage).toHaveBeenCalledWith("c1", "hi");
     });
 
-    it("creates temp session if last project selected and no temp exists", async () => {
+    it("creates temp session when last project selected and no temp exists", async () => {
       const a = makeP2P();
       a.sessionMapper.getOrCreateP2PChat("c1", "u1");
       a.sessionMapper.setP2PLastProject("c1", {
-        directory: "/d",
-        engineType: "claude",
-        projectId: "p",
+        directory: "/d", engineType: "claude", projectId: "p",
       });
       a.createTempSessionAndSend = vi.fn(async () => undefined);
       await a.handleP2PMessage("c1", "u1", "hi");
       expect(a.createTempSessionAndSend).toHaveBeenCalled();
     });
-
-    it("dispatches pending project selection by number", async () => {
-      const a = makeP2P();
-      a.sessionMapper.getOrCreateP2PChat("c1", "u1");
-      a.sessionMapper.setPendingSelection("c1", {
-        type: "project",
-        projects: [{ id: "p1", name: "n", directory: "/d", engineType: "claude" }],
-      } as any);
-      a.handlePendingSelection = vi.fn(async () => true);
-      await a.handleP2PMessage("c1", "u1", "1");
-      expect(a.handlePendingSelection).toHaveBeenCalled();
-    });
   });
 
   describe("handleP2PCommand routing", () => {
     function makeCmd() {
-      const a = new TelegramAdapter() as any;
+      const a = new WeComAdapter() as any;
       a.transport = { sendText: vi.fn(async () => "") };
       a.gatewayClient = null;
       return a;
@@ -533,15 +433,13 @@ describe("TelegramAdapter", () => {
 
     it("returns when command is null", async () => {
       const a = makeCmd();
-      await a.handleP2PCommand("c1", null);
-      expect(a.transport.sendText).not.toHaveBeenCalled();
+      await expect(a.handleP2PCommand("c1", null)).resolves.toBeUndefined();
     });
 
     it("returns when transport missing", async () => {
       const a = makeCmd();
       a.transport = null;
-      await a.handleP2PCommand("c1", { command: "help", args: "" });
-      expect(true).toBe(true);
+      await expect(a.handleP2PCommand("c1", { command: "help", args: "" })).resolves.toBeUndefined();
     });
 
     it("/help sends help text", async () => {
@@ -563,14 +461,14 @@ describe("TelegramAdapter", () => {
       expect(a.showProjectList).toHaveBeenCalled();
     });
 
-    it("/new and /switch dispatch", async () => {
+    it("/new and /switch dispatch to handleNewCommand / handleSwitchCommand", async () => {
       const a = makeCmd();
-      a.handleP2PNewCommand = vi.fn(async () => undefined);
-      a.handleP2PSwitchCommand = vi.fn(async () => undefined);
+      a.handleNewCommand = vi.fn(async () => undefined);
+      a.handleSwitchCommand = vi.fn(async () => undefined);
       await a.handleP2PCommand("c1", { command: "new", args: "" });
       await a.handleP2PCommand("c1", { command: "switch", args: "" });
-      expect(a.handleP2PNewCommand).toHaveBeenCalled();
-      expect(a.handleP2PSwitchCommand).toHaveBeenCalled();
+      expect(a.handleNewCommand).toHaveBeenCalled();
+      expect(a.handleSwitchCommand).toHaveBeenCalled();
     });
 
     it("falls through to unknown-command warning", async () => {
@@ -580,66 +478,66 @@ describe("TelegramAdapter", () => {
     });
   });
 
-  describe("handleP2PNewCommand / handleP2PSwitchCommand guards", () => {
-    it("handleP2PNewCommand prompts when no project selected", async () => {
-      const a = new TelegramAdapter() as any;
+  describe("handleNewCommand / handleSwitchCommand guards", () => {
+    it("handleNewCommand prompts when no project is selected", async () => {
+      const a = new WeComAdapter() as any;
       a.transport = { sendText: vi.fn(async () => "") };
-      await a.handleP2PNewCommand("c1");
+      await a.handleNewCommand("c1");
       expect(a.transport.sendText.mock.calls[0][1]).toContain("/project");
     });
 
-    it("handleP2PNewCommand calls createNewSessionForProject when project known", async () => {
-      const a = new TelegramAdapter() as any;
+    it("handleNewCommand calls createNewSessionForProject when project known", async () => {
+      const a = new WeComAdapter() as any;
       a.transport = { sendText: vi.fn(async () => "") };
       a.sessionMapper.getOrCreateP2PChat("c1", "u1");
       a.sessionMapper.setP2PLastProject("c1", {
         directory: "/foo/x", engineType: "claude", projectId: "p",
       });
       a.createNewSessionForProject = vi.fn(async () => undefined);
-      await a.handleP2PNewCommand("c1");
+      await a.handleNewCommand("c1");
       expect(a.createNewSessionForProject).toHaveBeenCalled();
     });
 
-    it("handleP2PNewCommand cleans up existing temp before create", async () => {
-      const a = new TelegramAdapter() as any;
+    it("handleNewCommand cleans up existing temp session before creating", async () => {
+      const a = new WeComAdapter() as any;
       a.transport = { sendText: vi.fn(async () => "") };
       a.sessionMapper.getOrCreateP2PChat("c1", "u1");
       a.sessionMapper.setP2PLastProject("c1", {
         directory: "/foo/x", engineType: "claude", projectId: "p",
       });
       a.sessionMapper.setTempSession("c1", {
-        conversationId: "t1", engineType: "claude", directory: "/d", projectId: "p",
+        conversationId: "x", engineType: "claude", directory: "/d", projectId: "p",
         lastActiveAt: Date.now(), messageQueue: [], processing: false,
       });
       a.cleanupExpiredTempSession = vi.fn(async () => undefined);
       a.createNewSessionForProject = vi.fn(async () => undefined);
-      await a.handleP2PNewCommand("c1");
+      await a.handleNewCommand("c1");
       expect(a.cleanupExpiredTempSession).toHaveBeenCalled();
     });
 
-    it("handleP2PSwitchCommand prompts when no project selected", async () => {
-      const a = new TelegramAdapter() as any;
+    it("handleSwitchCommand prompts when no project selected", async () => {
+      const a = new WeComAdapter() as any;
       a.transport = { sendText: vi.fn(async () => "") };
-      await a.handleP2PSwitchCommand("c1");
+      await a.handleSwitchCommand("c1");
       expect(a.transport.sendText.mock.calls[0][1]).toContain("/project");
     });
 
-    it("handleP2PSwitchCommand calls showSessionListForProject", async () => {
-      const a = new TelegramAdapter() as any;
+    it("handleSwitchCommand calls showSessionListForProject", async () => {
+      const a = new WeComAdapter() as any;
       a.transport = { sendText: vi.fn(async () => "") };
       a.sessionMapper.getOrCreateP2PChat("c1", "u1");
       a.sessionMapper.setP2PLastProject("c1", {
         directory: "/foo/x", engineType: "claude", projectId: "p",
       });
       a.showSessionListForProject = vi.fn(async () => undefined);
-      await a.handleP2PSwitchCommand("c1");
+      await a.handleSwitchCommand("c1");
       expect(a.showSessionListForProject).toHaveBeenCalled();
     });
   });
 
-  describe("showProjectList / showSessionListForProject / showGroupProjectList", () => {
-    it("showProjectList sends list and stores pending", async () => {
-      const a = new TelegramAdapter() as any;
+  describe("showProjectList / showSessionListForProject", () => {
+    it("showProjectList stores pending after sending list", async () => {
+      const a = new WeComAdapter() as any;
       a.transport = { sendText: vi.fn(async () => "") };
       a.gatewayClient = {
         listAllProjects: vi.fn(async () => [
@@ -652,22 +550,15 @@ describe("TelegramAdapter", () => {
     });
 
     it("showProjectList does not store pending when list empty", async () => {
-      const a = new TelegramAdapter() as any;
+      const a = new WeComAdapter() as any;
       a.transport = { sendText: vi.fn(async () => "") };
       a.gatewayClient = { listAllProjects: vi.fn(async () => []) };
       await a.showProjectList("c1");
       expect(a.sessionMapper.getPendingSelection("c1")).toBeUndefined();
     });
 
-    it("showProjectList no-ops without gatewayClient", async () => {
-      const a = new TelegramAdapter() as any;
-      a.transport = { sendText: vi.fn() };
-      await a.showProjectList("c1");
-      expect(a.transport.sendText).not.toHaveBeenCalled();
-    });
-
     it("showSessionListForProject filters by directory and stores pending", async () => {
-      const a = new TelegramAdapter() as any;
+      const a = new WeComAdapter() as any;
       a.transport = { sendText: vi.fn(async () => "") };
       a.gatewayClient = {
         listAllSessions: vi.fn(async () => [
@@ -684,55 +575,46 @@ describe("TelegramAdapter", () => {
       expect(pending?.type).toBe("session");
       expect(pending?.sessions).toHaveLength(1);
     });
-
-    it("showGroupProjectList stores pending for group", async () => {
-      const a = new TelegramAdapter() as any;
-      a.transport = { sendText: vi.fn(async () => "") };
-      a.gatewayClient = {
-        listAllProjects: vi.fn(async () => [
-          { id: "p1", name: "a", directory: "/a", engineType: "claude" },
-        ]),
-      };
-      await a.showGroupProjectList("g1");
-      expect(a.sessionMapper.getPendingSelection("g1")?.type).toBe("project");
-    });
   });
 
-  describe("createNewSessionForProject / createTempSessionAndSend / queue / cleanup", () => {
-    it("createNewSessionForProject stores temp session", async () => {
-      const a = new TelegramAdapter() as any;
+  describe("createNewSessionForProject", () => {
+    it("creates session and stores temp on success", async () => {
+      const a = new WeComAdapter() as any;
       a.transport = { sendText: vi.fn(async () => "") };
       a.gatewayClient = {
-        createSession: vi.fn(async () => ({ id: "s1", engineType: "claude" })),
+        createSession: vi.fn(async () => ({ id: "sess-1", engineType: "claude" })),
       };
       a.sessionMapper.getOrCreateP2PChat("c1", "u1");
       await a.createNewSessionForProject(
-        "c1",
-        { directory: "/d", engineType: "claude", projectId: "p" },
+        "c1", "u1",
+        { directory: "/foo/x", engineType: "claude", projectId: "p" },
         "alpha",
       );
-      expect(a.sessionMapper.getTempSession("c1")?.conversationId).toBe("s1");
+      expect(a.sessionMapper.getTempSession("c1")?.conversationId).toBe("sess-1");
+      expect(a.transport.sendText.mock.calls.at(-1)[1]).toContain("已创建新会话");
     });
 
-    it("createNewSessionForProject reports error", async () => {
-      const a = new TelegramAdapter() as any;
+    it("reports error when createSession fails", async () => {
+      const a = new WeComAdapter() as any;
       a.transport = { sendText: vi.fn(async () => "") };
       a.gatewayClient = {
-        createSession: vi.fn(async () => { throw new Error("nope"); }),
+        createSession: vi.fn(async () => { throw new Error("boom"); }),
       };
       await a.createNewSessionForProject(
-        "c1",
-        { directory: "/d", projectId: "p" },
+        "c1", "u1",
+        { directory: "/foo/x", engineType: "claude", projectId: "p" },
         "alpha",
       );
       expect(a.transport.sendText.mock.calls.at(-1)[1]).toContain("创建会话失败");
     });
+  });
 
-    it("createTempSessionAndSend stores temp + enqueues message", async () => {
-      const a = new TelegramAdapter() as any;
+  describe("createTempSessionAndSend / enqueue / process / cleanup", () => {
+    it("createTempSessionAndSend stores temp and enqueues", async () => {
+      const a = new WeComAdapter() as any;
       a.transport = { sendText: vi.fn(async () => "") };
       a.gatewayClient = {
-        createSession: vi.fn(async () => ({ id: "sess-2", engineType: "claude" })),
+        createSession: vi.fn(async () => ({ id: "s2", engineType: "claude" })),
       };
       a.enqueueP2PMessage = vi.fn(async () => undefined);
       a.sessionMapper.getOrCreateP2PChat("c1", "u1");
@@ -741,12 +623,12 @@ describe("TelegramAdapter", () => {
         { directory: "/d", engineType: "claude", projectId: "p" },
         "hi",
       );
-      expect(a.sessionMapper.getTempSession("c1")?.conversationId).toBe("sess-2");
+      expect(a.sessionMapper.getTempSession("c1")?.conversationId).toBe("s2");
       expect(a.enqueueP2PMessage).toHaveBeenCalledWith("c1", "hi");
     });
 
-    it("createTempSessionAndSend reports error on createSession failure", async () => {
-      const a = new TelegramAdapter() as any;
+    it("createTempSessionAndSend reports error on failure", async () => {
+      const a = new WeComAdapter() as any;
       a.transport = { sendText: vi.fn(async () => "") };
       a.gatewayClient = {
         createSession: vi.fn(async () => { throw new Error("nope"); }),
@@ -760,12 +642,12 @@ describe("TelegramAdapter", () => {
     });
 
     it("enqueueP2PMessage no-ops without temp session", async () => {
-      const a = new TelegramAdapter() as any;
+      const a = new WeComAdapter() as any;
       await expect(a.enqueueP2PMessage("c1", "x")).resolves.toBeUndefined();
     });
 
     it("enqueueP2PMessage starts processing when not running", async () => {
-      const a = new TelegramAdapter() as any;
+      const a = new WeComAdapter() as any;
       a.sessionMapper.getOrCreateP2PChat("c1", "u1");
       a.sessionMapper.setTempSession("c1", {
         conversationId: "x", engineType: "claude", directory: "/d", projectId: "p",
@@ -777,7 +659,7 @@ describe("TelegramAdapter", () => {
     });
 
     it("processP2PQueue clears processing when queue empty", async () => {
-      const a = new TelegramAdapter() as any;
+      const a = new WeComAdapter() as any;
       a.sessionMapper.getOrCreateP2PChat("c1", "u1");
       a.sessionMapper.setTempSession("c1", {
         conversationId: "x", engineType: "claude", directory: "/d", projectId: "p",
@@ -787,8 +669,8 @@ describe("TelegramAdapter", () => {
       expect(a.sessionMapper.getTempSession("c1")?.processing).toBe(false);
     });
 
-    it("processP2PQueue calls sendToEngineP2P when queue has items", async () => {
-      const a = new TelegramAdapter() as any;
+    it("processP2PQueue calls sendToEngineP2P when message queued", async () => {
+      const a = new WeComAdapter() as any;
       a.sessionMapper.getOrCreateP2PChat("c1", "u1");
       a.sessionMapper.setTempSession("c1", {
         conversationId: "x", engineType: "claude", directory: "/d", projectId: "p",
@@ -799,15 +681,34 @@ describe("TelegramAdapter", () => {
       expect(a.sendToEngineP2P).toHaveBeenCalled();
     });
 
-    it("sendToEngineP2P bails when prerequisites missing", async () => {
-      const a = new TelegramAdapter() as any;
-      const t = { processing: true } as any;
-      await a.sendToEngineP2P("c1", t, "hi");
-      expect(t.processing).toBe(false);
+    it("sendToEngineP2P aborts when gateway/transport missing", async () => {
+      const a = new WeComAdapter() as any;
+      const temp = {
+        conversationId: "x", engineType: "claude", directory: "/d", projectId: "p",
+        lastActiveAt: Date.now(), messageQueue: [], processing: true,
+      };
+      await a.sendToEngineP2P("c1", temp, "hi");
+      expect(temp.processing).toBe(false);
+    });
+
+    it("sendToEngineP2P sends placeholder and assigns msg id", async () => {
+      const a = new WeComAdapter() as any;
+      a.transport = { sendText: vi.fn(async () => "ph-1") };
+      a.streamingController = { applyPart: vi.fn(), finalize: vi.fn() };
+      const sendPromise = Promise.resolve({ id: "msg-1" });
+      a.gatewayClient = { sendMessage: vi.fn(() => sendPromise) };
+      const temp: any = {
+        conversationId: "conv-1", engineType: "claude", directory: "/d", projectId: "p",
+        lastActiveAt: 0, messageQueue: [], processing: true,
+      };
+      await a.sendToEngineP2P("c1", temp, "hi");
+      await sendPromise;
+      expect(a.transport.sendText).toHaveBeenCalled();
+      expect(temp.streamingSession).toBeDefined();
     });
 
     it("cleanupExpiredTempSession deletes session and clears mapping", async () => {
-      const a = new TelegramAdapter() as any;
+      const a = new WeComAdapter() as any;
       a.gatewayClient = { deleteSession: vi.fn(async () => undefined) };
       a.sessionMapper.getOrCreateP2PChat("c1", "u1");
       a.sessionMapper.setTempSession("c1", {
@@ -820,7 +721,7 @@ describe("TelegramAdapter", () => {
     });
 
     it("cleanupExpiredTempSession swallows deletion errors", async () => {
-      const a = new TelegramAdapter() as any;
+      const a = new WeComAdapter() as any;
       a.gatewayClient = {
         deleteSession: vi.fn(async () => { throw new Error("404"); }),
       };
@@ -834,7 +735,7 @@ describe("TelegramAdapter", () => {
     });
 
     it("cleanupExpiredTempSession is no-op without temp session", async () => {
-      const a = new TelegramAdapter() as any;
+      const a = new WeComAdapter() as any;
       a.gatewayClient = { deleteSession: vi.fn() };
       await a.cleanupExpiredTempSession("c1");
       expect(a.gatewayClient.deleteSession).not.toHaveBeenCalled();
@@ -843,7 +744,7 @@ describe("TelegramAdapter", () => {
 
   describe("handleProjectSelection / handleSessionSelection / handlePendingSelection", () => {
     it("handleProjectSelection returns false on non-numeric input", async () => {
-      const a = new TelegramAdapter() as any;
+      const a = new WeComAdapter() as any;
       a.transport = { sendText: vi.fn(async () => "") };
       a.gatewayClient = { listAllSessions: vi.fn(async () => []) };
       const ok = await a.handleProjectSelection("c1", "abc", {
@@ -854,7 +755,7 @@ describe("TelegramAdapter", () => {
     });
 
     it("handleProjectSelection returns false on out-of-range index", async () => {
-      const a = new TelegramAdapter() as any;
+      const a = new WeComAdapter() as any;
       a.transport = { sendText: vi.fn(async () => "") };
       a.gatewayClient = { listAllSessions: vi.fn(async () => []) };
       const ok = await a.handleProjectSelection("c1", "5", {
@@ -865,7 +766,7 @@ describe("TelegramAdapter", () => {
     });
 
     it("handleProjectSelection on valid index sets last project + shows sessions", async () => {
-      const a = new TelegramAdapter() as any;
+      const a = new WeComAdapter() as any;
       a.transport = { sendText: vi.fn(async () => "") };
       a.gatewayClient = { listAllSessions: vi.fn(async () => []) };
       a.sessionMapper.getOrCreateP2PChat("c1", "u1");
@@ -880,30 +781,47 @@ describe("TelegramAdapter", () => {
     });
 
     it("handleSessionSelection returns false on non-numeric input", async () => {
-      const a = new TelegramAdapter() as any;
+      const a = new WeComAdapter() as any;
       a.transport = { sendText: vi.fn(async () => "") };
-      const ok = await a.handleSessionSelection("c1", "abc", {
+      const ok = await a.handleSessionSelection("c1", "u1", "abc", {
         type: "session", directory: "/d", projectId: "p",
         sessions: [{ id: "s1", engineType: "claude" }],
       });
       expect(ok).toBe(false);
     });
 
-    it("handleSessionSelection returns false when pending lacks directory or projectId", async () => {
-      const a = new TelegramAdapter() as any;
+    it("handleSessionSelection returns false when missing dir/projectId", async () => {
+      const a = new WeComAdapter() as any;
       a.transport = { sendText: vi.fn(async () => "") };
-      const ok = await a.handleSessionSelection("c1", "1", {
+      const ok = await a.handleSessionSelection("c1", "u1", "1", {
         type: "session",
         sessions: [{ id: "s1", engineType: "claude" }],
       });
       expect(ok).toBe(false);
     });
 
-    it("handleSessionSelection on valid index binds temp session", async () => {
-      const a = new TelegramAdapter() as any;
+    it("handleSessionSelection short-circuits when session already has group", async () => {
+      const a = new WeComAdapter() as any;
       a.transport = { sendText: vi.fn(async () => "") };
       a.sessionMapper.getOrCreateP2PChat("c1", "u1");
-      const ok = await a.handleSessionSelection("c1", "1", {
+      a.sessionMapper.createGroupBinding({
+        chatId: "g1", conversationId: "s1", engineType: "claude",
+        directory: "/d", projectId: "p", ownerUserId: "u1",
+        streamingSessions: new Map(), createdAt: Date.now(),
+      });
+      const ok = await a.handleSessionSelection("c1", "u1", "1", {
+        type: "session", directory: "/d", projectId: "p",
+        sessions: [{ id: "s1", engineType: "claude" }],
+      });
+      expect(ok).toBe(true);
+      expect(a.transport.sendText.mock.calls.at(-1)[1]).toContain("已有对应的群聊");
+    });
+
+    it("handleSessionSelection on valid index stores temp session", async () => {
+      const a = new WeComAdapter() as any;
+      a.transport = { sendText: vi.fn(async () => "") };
+      a.sessionMapper.getOrCreateP2PChat("c1", "u1");
+      const ok = await a.handleSessionSelection("c1", "u1", "1", {
         type: "session", directory: "/d", projectId: "p", projectName: "alpha",
         sessions: [{ id: "s1", title: "x", engineType: "claude" }],
       });
@@ -911,61 +829,36 @@ describe("TelegramAdapter", () => {
       expect(a.sessionMapper.getTempSession("c1")?.conversationId).toBe("s1");
     });
 
-    it("handlePendingSelection dispatches to project handler", async () => {
-      const a = new TelegramAdapter() as any;
+    it("handlePendingSelection dispatches by type", async () => {
+      const a = new WeComAdapter() as any;
       a.transport = { sendText: vi.fn(async () => "") };
       a.gatewayClient = { listAllSessions: vi.fn(async () => []) };
       a.sessionMapper.getOrCreateP2PChat("c1", "u1");
-      const ok = await a.handlePendingSelection("c1", "u1", "1", {
+      const ok1 = await a.handlePendingSelection("c1", "u1", "1", {
         type: "project",
         projects: [{ id: "p1", name: "n", directory: "/d", engineType: "claude" }],
       });
-      expect(ok).toBe(true);
-    });
-
-    it("handlePendingSelection dispatches to session handler", async () => {
-      const a = new TelegramAdapter() as any;
-      a.transport = { sendText: vi.fn(async () => "") };
-      a.sessionMapper.getOrCreateP2PChat("c1", "u1");
-      const ok = await a.handlePendingSelection("c1", "u1", "1", {
+      const ok2 = await a.handlePendingSelection("c1", "u1", "1", {
         type: "session", directory: "/d", projectId: "p",
         sessions: [{ id: "s1", engineType: "claude" }],
       });
-      expect(ok).toBe(true);
-    });
-
-    it("handlePendingSelection returns false for unknown type", async () => {
-      const a = new TelegramAdapter() as any;
-      const ok = await a.handlePendingSelection("c1", "u1", "1", { type: "unknown" });
-      expect(ok).toBe(false);
+      const ok3 = await a.handlePendingSelection("c1", "u1", "1", { type: "unknown" });
+      expect(ok1).toBe(true);
+      expect(ok2).toBe(true);
+      expect(ok3).toBe(false);
     });
   });
 
   describe("handleGroupMessage / handleGroupCommand", () => {
-    it("handleGroupMessage shows /bind hint when no binding and unknown text", async () => {
-      const a = new TelegramAdapter() as any;
+    it("handleGroupMessage warns when no binding", async () => {
+      const a = new WeComAdapter() as any;
       a.transport = { sendText: vi.fn(async () => "") };
       await a.handleGroupMessage("g1", "hi");
-      expect(a.transport.sendText.mock.calls[0][1]).toContain("/bind");
+      expect(a.transport.sendText.mock.calls[0][1]).toContain("未绑定");
     });
 
-    it("handleGroupMessage /help (no binding) sends help text", async () => {
-      const a = new TelegramAdapter() as any;
-      a.transport = { sendText: vi.fn(async () => "") };
-      await a.handleGroupMessage("g1", "/help");
-      expect(a.transport.sendText).toHaveBeenCalled();
-    });
-
-    it("handleGroupMessage /bind (no binding) calls showGroupProjectList", async () => {
-      const a = new TelegramAdapter() as any;
-      a.transport = { sendText: vi.fn(async () => "") };
-      a.showGroupProjectList = vi.fn(async () => undefined);
-      await a.handleGroupMessage("g1", "/bind");
-      expect(a.showGroupProjectList).toHaveBeenCalledWith("g1");
-    });
-
-    it("handleGroupMessage routes commands to handleGroupCommand when bound", async () => {
-      const a = new TelegramAdapter() as any;
+    it("handleGroupMessage routes commands to handleGroupCommand", async () => {
+      const a = new WeComAdapter() as any;
       a.transport = { sendText: vi.fn(async () => "") };
       a.sessionMapper.createGroupBinding({
         chatId: "g1", conversationId: "s1", engineType: "claude",
@@ -978,7 +871,7 @@ describe("TelegramAdapter", () => {
     });
 
     it("handleGroupMessage routes pending question reply", async () => {
-      const a = new TelegramAdapter() as any;
+      const a = new WeComAdapter() as any;
       a.transport = { sendText: vi.fn(async () => "") };
       a.gatewayClient = { replyQuestion: vi.fn(async () => undefined) };
       a.sessionMapper.createGroupBinding({
@@ -986,7 +879,7 @@ describe("TelegramAdapter", () => {
         directory: "/d", projectId: "p", ownerUserId: "u1",
         streamingSessions: new Map(), createdAt: Date.now(),
       });
-      a.sessionMapper.setPendingQuestion("g1", { questionId: "q-1", sessionId: "s1" });
+      a.sessionMapper.setPendingQuestion("group:g1", { questionId: "q-1" });
       await a.handleGroupMessage("g1", "an answer");
       expect(a.gatewayClient.replyQuestion).toHaveBeenCalledWith({
         questionId: "q-1",
@@ -995,7 +888,7 @@ describe("TelegramAdapter", () => {
     });
 
     it("handleGroupMessage routes plain text to sendToEngine", async () => {
-      const a = new TelegramAdapter() as any;
+      const a = new WeComAdapter() as any;
       a.transport = { sendText: vi.fn(async () => "") };
       a.sessionMapper.createGroupBinding({
         chatId: "g1", conversationId: "s1", engineType: "claude",
@@ -1008,7 +901,7 @@ describe("TelegramAdapter", () => {
     });
 
     it("handleGroupCommand /help sends help text", async () => {
-      const a = new TelegramAdapter() as any;
+      const a = new WeComAdapter() as any;
       a.transport = { sendText: vi.fn(async () => "") };
       a.gatewayClient = {};
       const binding = {
@@ -1016,12 +909,12 @@ describe("TelegramAdapter", () => {
         directory: "/d", projectId: "p", ownerUserId: "u1",
         streamingSessions: new Map(), createdAt: Date.now(),
       };
-      await a.handleGroupCommand("g1", binding, { command: "help", args: "" });
+      await a.handleGroupCommand("group:g1", binding, { command: "help", args: "" });
       expect(a.transport.sendText).toHaveBeenCalled();
     });
 
     it("handleGroupCommand falls through to unknown-command warning", async () => {
-      const a = new TelegramAdapter() as any;
+      const a = new WeComAdapter() as any;
       a.transport = { sendText: vi.fn(async () => "") };
       a.gatewayClient = {
         cancelMessage: vi.fn(),
@@ -1032,33 +925,125 @@ describe("TelegramAdapter", () => {
         directory: "/d", projectId: "p", ownerUserId: "u1",
         streamingSessions: new Map(), createdAt: Date.now(),
       };
-      await a.handleGroupCommand("g1", binding, { command: "foo", args: "" });
+      await a.handleGroupCommand("group:g1", binding, { command: "foo", args: "" });
       expect(a.transport.sendText.mock.calls.at(-1)[1]).toContain("未知命令");
     });
   });
 
+  describe("createGroupForSession", () => {
+    it("short-circuits when session already has a group binding", async () => {
+      const a = new WeComAdapter() as any;
+      a.transport = { sendText: vi.fn(async () => ""), createGroup: vi.fn() };
+      a.gatewayClient = { getSession: vi.fn() };
+      a.sessionMapper.createGroupBinding({
+        chatId: "g1", conversationId: "conv-1", engineType: "claude",
+        directory: "/d", projectId: "p", ownerUserId: "u1",
+        streamingSessions: new Map(), createdAt: Date.now(),
+      });
+      await a.createGroupForSession("u1", "conv-1", "claude", "/d", "p", "alpha", "p2p");
+      expect(a.transport.sendText.mock.calls[0][1]).toContain("已有对应的群聊");
+      expect(a.transport.createGroup).not.toHaveBeenCalled();
+    });
+
+    it("creates group binding and sends welcome on success", async () => {
+      const a = new WeComAdapter() as any;
+      a.transport = {
+        sendText: vi.fn(async () => ""),
+        createGroup: vi.fn(async () => "newchat"),
+      };
+      a.gatewayClient = {
+        getSession: vi.fn(async () => ({ title: "MySession" })),
+      };
+      await a.createGroupForSession("u1", "conv-1", "claude", "/d", "p", "alpha", "p2p");
+      expect(a.transport.createGroup).toHaveBeenCalled();
+      expect(a.sessionMapper.findGroupByConversationId("conv-1")?.chatId).toBe("newchat");
+    });
+
+    it("warns when createGroup returns no chatid", async () => {
+      const a = new WeComAdapter() as any;
+      a.transport = {
+        sendText: vi.fn(async () => ""),
+        createGroup: vi.fn(async () => null),
+      };
+      a.gatewayClient = { getSession: vi.fn(async () => ({ title: "T" })) };
+      await a.createGroupForSession("u1", "conv-1", "claude", "/d", "p", "alpha", "p2p");
+      expect(a.transport.sendText.mock.calls.at(-1)[1]).toContain("失败");
+    });
+
+    it("reports error when createGroup throws", async () => {
+      const a = new WeComAdapter() as any;
+      a.transport = {
+        sendText: vi.fn(async () => ""),
+        createGroup: vi.fn(async () => { throw new Error("oops"); }),
+      };
+      a.gatewayClient = { getSession: vi.fn(async () => ({ title: "T" })) };
+      await a.createGroupForSession("u1", "conv-1", "claude", "/d", "p", "alpha", "p2p");
+      expect(a.transport.sendText.mock.calls.at(-1)[1]).toContain("创建群聊失败");
+    });
+  });
+
   describe("sendToEngine (group)", () => {
-    it("returns silently when prerequisites missing", async () => {
-      const a = new TelegramAdapter() as any;
+    it("aborts when streamingController missing", async () => {
+      const a = new WeComAdapter() as any;
+      a.transport = { sendText: vi.fn(async () => "ph") };
+      a.gatewayClient = { sendMessage: vi.fn(async () => ({ id: "m" })) };
       const binding = {
         chatId: "g1", conversationId: "s1", engineType: "claude" as const,
         directory: "/d", projectId: "p", ownerUserId: "u1",
         streamingSessions: new Map(), createdAt: Date.now(),
       };
-      await expect(a.sendToEngine("g1", binding, "hi")).resolves.toBeUndefined();
+      await a.sendToEngine("group:g1", binding, "hi");
+      expect(a.transport.sendText).not.toHaveBeenCalled();
+    });
+
+    it("sends placeholder and registers streaming session on success", async () => {
+      const a = new WeComAdapter() as any;
+      a.transport = { sendText: vi.fn(async () => "ph") };
+      a.streamingController = {};
+      const sendPromise = Promise.resolve({ id: "m1" });
+      a.gatewayClient = { sendMessage: vi.fn(() => sendPromise) };
+      const binding = {
+        chatId: "g1", conversationId: "s1", engineType: "claude" as const,
+        directory: "/d", projectId: "p", ownerUserId: "u1",
+        streamingSessions: new Map(), createdAt: Date.now(),
+      };
+      a.sessionMapper.createGroupBinding(binding);
+      await a.sendToEngine("group:g1", binding, "hi");
+      await sendPromise;
+      expect(a.transport.sendText).toHaveBeenCalled();
     });
   });
 
   describe("gateway event handlers", () => {
     function makeGw() {
-      const a = new TelegramAdapter() as any;
-      a.transport = {
-        sendText: vi.fn(async () => ""),
-        sendMessageWithKeyboard: vi.fn(async () => undefined),
-      };
+      const a = new WeComAdapter() as any;
+      a.transport = { sendText: vi.fn(async () => ""), updateGroup: vi.fn(async () => undefined) };
       a.streamingController = { applyPart: vi.fn(), finalize: vi.fn() };
       return a;
     }
+
+    it("subscribeGatewayEvents wires handlers on gatewayClient", () => {
+      const a = new WeComAdapter() as any;
+      const handlers: Record<string, Function> = {};
+      a.gatewayClient = {
+        on: vi.fn((evt: string, cb: Function) => { handlers[evt] = cb; }),
+      };
+      a.subscribeGatewayEvents();
+      expect(Object.keys(handlers)).toEqual(
+        expect.arrayContaining([
+          "message.part.updated",
+          "message.updated",
+          "permission.asked",
+          "question.asked",
+          "session.updated",
+        ]),
+      );
+    });
+
+    it("subscribeGatewayEvents no-op without gateway client", () => {
+      const a = new WeComAdapter() as any;
+      expect(() => a.subscribeGatewayEvents()).not.toThrow();
+    });
 
     it("handleMessageCompleted skips non-assistant or non-completed", () => {
       const a = makeGw();
@@ -1068,16 +1053,15 @@ describe("TelegramAdapter", () => {
       expect(a.finalizeP2PStreaming).not.toHaveBeenCalled();
     });
 
-    it("handleMessageCompleted finalizes via group binding when present", () => {
+    it("handleMessageCompleted finalizes via group binding", () => {
       const a = makeGw();
       const ss = { conversationId: "conv-1", completed: false } as any;
-      const binding = {
-        chatId: "g1", conversationId: "conv-1", engineType: "claude" as const,
+      a.sessionMapper.createGroupBinding({
+        chatId: "g1", conversationId: "conv-1", engineType: "claude",
         directory: "/d", projectId: "p", ownerUserId: "u1",
         streamingSessions: new Map([["m1", ss]]),
         createdAt: Date.now(),
-      };
-      a.sessionMapper.createGroupBinding(binding);
+      });
       a.handleMessageCompleted("conv-1", { id: "m1", role: "assistant", time: { completed: 1 } });
       expect(a.streamingController.finalize).toHaveBeenCalled();
     });
@@ -1094,7 +1078,7 @@ describe("TelegramAdapter", () => {
       expect(a.finalizeP2PStreaming).toHaveBeenCalled();
     });
 
-    it("handlePartUpdated forwards group streaming session to applyPart", () => {
+    it("handlePartUpdated forwards group streaming to applyPart", () => {
       const a = makeGw();
       const ss = { conversationId: "conv-1", completed: false } as any;
       a.sessionMapper.createGroupBinding({
@@ -1107,7 +1091,7 @@ describe("TelegramAdapter", () => {
       expect(a.streamingController.applyPart).toHaveBeenCalled();
     });
 
-    it("handlePartUpdated forwards P2P streaming session to applyPart", () => {
+    it("handlePartUpdated forwards P2P streaming to applyPart", () => {
       const a = makeGw();
       a.sessionMapper.getOrCreateP2PChat("c1", "u1");
       a.sessionMapper.setTempSession("c1", {
@@ -1119,7 +1103,7 @@ describe("TelegramAdapter", () => {
       expect(a.streamingController.applyPart).toHaveBeenCalled();
     });
 
-    it("handlePartUpdated no-ops when no streaming session is active", () => {
+    it("handlePartUpdated no-ops with no active session", () => {
       const a = makeGw();
       a.handlePartUpdated("missing", { type: "text", text: "x" });
       expect(a.streamingController.applyPart).not.toHaveBeenCalled();
@@ -1151,22 +1135,6 @@ describe("TelegramAdapter", () => {
       expect(a.gatewayClient.replyPermission).not.toHaveBeenCalled();
     });
 
-    it("handlePermissionAsked sends inline keyboard when not auto-approved", () => {
-      const a = makeGw();
-      a.config = { ...a.config, autoApprovePermissions: false };
-      a.gatewayClient = { replyPermission: vi.fn() };
-      a.sessionMapper.getOrCreateP2PChat("c1", "u1");
-      a.sessionMapper.setTempSession("c1", {
-        conversationId: "conv-1", engineType: "claude", directory: "/d", projectId: "p",
-        lastActiveAt: Date.now(), messageQueue: [], processing: false,
-      });
-      a.handlePermissionAsked({
-        id: "perm-1", sessionId: "conv-1", title: "Confirm?",
-        options: [{ id: "ok", label: "OK" }, { id: "no", label: "No" }],
-      });
-      expect(a.transport.sendMessageWithKeyboard).toHaveBeenCalled();
-    });
-
     it("handleQuestionAsked sends prompt and registers pendingQuestion", () => {
       const a = makeGw();
       a.sessionMapper.getOrCreateP2PChat("c1", "u1");
@@ -1178,11 +1146,11 @@ describe("TelegramAdapter", () => {
         id: "q-1", sessionId: "conv-1",
         questions: [{ question: "go?", options: [{ label: "yes" }, { label: "no" }] }],
       });
-      expect(a.transport.sendMessageWithKeyboard).toHaveBeenCalled();
+      expect(a.transport.sendText).toHaveBeenCalled();
       expect(a.sessionMapper.getPendingQuestion("c1")?.questionId).toBe("q-1");
     });
 
-    it("handleQuestionAsked sends 'no options' message when questions array empty", () => {
+    it("handleQuestionAsked sends 'no options' message when array empty", () => {
       const a = makeGw();
       a.sessionMapper.getOrCreateP2PChat("c1", "u1");
       a.sessionMapper.setTempSession("c1", {
@@ -1193,93 +1161,72 @@ describe("TelegramAdapter", () => {
       expect(a.transport.sendText.mock.calls[0][1]).toContain("无选项");
     });
 
-    it("handleSessionUpdated updates streaming session titles for bound group", () => {
+    it("handleQuestionAsked routes to group target when bound", () => {
+      const a = makeGw();
+      a.sessionMapper.createGroupBinding({
+        chatId: "g1", conversationId: "conv-1", engineType: "claude",
+        directory: "/d", projectId: "p", ownerUserId: "u1",
+        streamingSessions: new Map(), createdAt: Date.now(),
+      });
+      a.handleQuestionAsked({
+        id: "q-1", sessionId: "conv-1",
+        questions: [{ question: "go?", options: [{ label: "yes" }] }],
+      });
+      expect(a.sessionMapper.getPendingQuestion("group:g1")?.questionId).toBe("q-1");
+    });
+
+    it("handleSessionUpdated updates streaming titles + group name", async () => {
       const a = makeGw();
       const ss = { conversationId: "conv-1", completed: false, sessionTitle: "old" } as any;
       a.sessionMapper.createGroupBinding({
         chatId: "g1", conversationId: "conv-1", engineType: "claude",
-        directory: "/d", projectId: "p", ownerUserId: "u1",
+        directory: "/foo/d", projectId: "p", ownerUserId: "u1",
         streamingSessions: new Map([["m1", ss]]),
         createdAt: Date.now(),
       });
-      a.handleSessionUpdated({ id: "conv-1", title: "new title" });
+      await a.handleSessionUpdated({ id: "conv-1", title: "new title" });
       expect(ss.sessionTitle).toBe("new title");
+      expect(a.transport.updateGroup).toHaveBeenCalled();
     });
 
-    it("handleSessionUpdated no-ops when no group binding", () => {
+    it("handleSessionUpdated no-ops without binding", async () => {
       const a = makeGw();
-      expect(() => a.handleSessionUpdated({ id: "missing", title: "x" })).not.toThrow();
+      await expect(a.handleSessionUpdated({ id: "missing", title: "x" })).resolves.toBeUndefined();
     });
 
-    it("subscribeGatewayEvents wires callbacks", () => {
-      const a = new TelegramAdapter() as any;
-      const handlers: Record<string, Function> = {};
-      a.gatewayClient = {
-        on: vi.fn((event: string, cb: Function) => { handlers[event] = cb; }),
-      };
-      a.subscribeGatewayEvents();
-      expect(Object.keys(handlers).sort()).toEqual([
-        "message.part.updated",
-        "message.updated",
-        "permission.asked",
-        "question.asked",
-        "session.updated",
-      ].sort());
+    it("handleSessionUpdated swallows updateGroup errors", async () => {
+      const a = makeGw();
+      a.transport.updateGroup = vi.fn(async () => { throw new Error("rate"); });
+      a.sessionMapper.createGroupBinding({
+        chatId: "g1", conversationId: "conv-1", engineType: "claude",
+        directory: "/foo/d", projectId: "p", ownerUserId: "u1",
+        streamingSessions: new Map(), createdAt: Date.now(),
+      });
+      await expect(a.handleSessionUpdated({ id: "conv-1", title: "t" })).resolves.toBeUndefined();
     });
   });
 
-  describe("webhook handling", () => {
-    it("handleWebhookRequest rejects bad secret token", async () => {
-      const a = new TelegramAdapter() as any;
-      a.config = { ...DEFAULT_TELEGRAM_CONFIG, webhookSecretToken: "secret" };
-      const res = await a.handleWebhookRequest({
-        method: "POST", headers: { "x-telegram-bot-api-secret-token": "bad" }, body: {},
+  describe("finalizeP2PStreaming", () => {
+    it("finalizes streaming and processes next queued message", async () => {
+      const a = new WeComAdapter() as any;
+      a.streamingController = { finalize: vi.fn() };
+      a.processP2PQueue = vi.fn(async () => undefined);
+      a.sessionMapper.getOrCreateP2PChat("c1", "u1");
+      a.sessionMapper.setTempSession("c1", {
+        conversationId: "conv-1", engineType: "claude", directory: "/d", projectId: "p",
+        lastActiveAt: 0, messageQueue: [], processing: false,
+        streamingSession: { completed: false } as any,
       });
-      expect(res.status).toBe(403);
+      await a.finalizeP2PStreaming("c1", { id: "m1", role: "assistant" });
+      expect(a.streamingController.finalize).toHaveBeenCalled();
+      expect(a.processP2PQueue).toHaveBeenCalledWith("c1");
     });
 
-    it("handleWebhookRequest rejects non-POST", async () => {
-      const a = new TelegramAdapter() as any;
-      a.config = { ...DEFAULT_TELEGRAM_CONFIG };
-      const res = await a.handleWebhookRequest({ method: "GET", headers: {}, body: null });
-      expect(res.status).toBe(405);
-    });
-
-    it("handleWebhookRequest accepts valid POST and processes update", async () => {
-      const a = new TelegramAdapter() as any;
-      a.config = { ...DEFAULT_TELEGRAM_CONFIG };
-      a.processUpdate = vi.fn(async () => undefined);
-      const res = await a.handleWebhookRequest({
-        method: "POST", headers: {}, body: { update_id: 1 },
-      });
-      expect(res.status).toBe(200);
-      expect(a.processUpdate).toHaveBeenCalled();
-    });
-  });
-
-  describe("setupWebhook", () => {
-    it("registers route and calls transport.setWebhook", async () => {
-      const a = new TelegramAdapter() as any;
-      a.config = { ...DEFAULT_TELEGRAM_CONFIG, webhookUrl: "https://x.com/wh", webhookSecretToken: "s" };
-      const registerRoute = vi.fn();
-      a.webhookServer = { registerRoute };
-      a.transport = { setWebhook: vi.fn(async () => true) };
-      await a.setupWebhook();
-      expect(registerRoute).toHaveBeenCalledWith("/webhook/telegram", expect.any(Function));
-      expect(a.transport.setWebhook).toHaveBeenCalledWith("https://x.com/wh", "s");
-    });
-
-    it("throws when setWebhook returns false", async () => {
-      const a = new TelegramAdapter() as any;
-      a.config = { ...DEFAULT_TELEGRAM_CONFIG, webhookUrl: "https://x.com/wh" };
-      a.transport = { setWebhook: vi.fn(async () => false) };
-      await expect(a.setupWebhook()).rejects.toThrow(/Failed to set/);
-    });
-
-    it("returns silently when transport or webhookUrl missing", async () => {
-      const a = new TelegramAdapter() as any;
-      a.config = { ...DEFAULT_TELEGRAM_CONFIG, webhookUrl: "" };
-      await expect(a.setupWebhook()).resolves.toBeUndefined();
+    it("no-ops when no temp session / streaming exists", async () => {
+      const a = new WeComAdapter() as any;
+      a.streamingController = { finalize: vi.fn() };
+      await a.finalizeP2PStreaming("c1", { id: "m1", role: "assistant" });
+      expect(a.streamingController.finalize).not.toHaveBeenCalled();
     });
   });
 });

@@ -462,6 +462,10 @@ export class ClaudeCodeAdapter extends EngineAdapter {
     this.rejectAllPendingPermissions("Adapter stopped");
     this.rejectAllPendingQuestions("Adapter stopped");
 
+    // Clear any pending engineTitle refresh timers
+    for (const t of this.pendingTitleRefreshes.values()) clearTimeout(t);
+    this.pendingTitleRefreshes.clear();
+
     // Stop cleanup interval
     this.stopSessionCleanup();
 
@@ -646,6 +650,8 @@ export class ClaudeCodeAdapter extends EngineAdapter {
       this.pendingTitleRefreshes.delete(sessionId);
       void this.refreshEngineTitle(sessionId);
     }, 1000);
+    // Don't keep the event loop alive during shutdown
+    t.unref?.();
     this.pendingTitleRefreshes.set(sessionId, t);
   }
 
@@ -654,6 +660,13 @@ export class ClaudeCodeAdapter extends EngineAdapter {
   }
 
   async deleteSession(sessionId: string): Promise<void> {
+    // Cancel any pending engineTitle refresh for this session
+    const titleTimer = this.pendingTitleRefreshes.get(sessionId);
+    if (titleTimer) {
+      clearTimeout(titleTimer);
+      this.pendingTitleRefreshes.delete(sessionId);
+    }
+
     // Abort any active request for this session
     const controller = this.activeAbortControllers.get(sessionId);
     if (controller) {

@@ -890,8 +890,7 @@ export class OpenCodeAdapter extends EngineAdapter {
       });
     } catch (err) {
       // Don't surface — local rename already succeeded
-      // eslint-disable-next-line no-console
-      console.warn(`[opencode] session.update title failed for ${sessionId}:`, err);
+      openCodeLog.warn(`session.update title failed for ${sessionId}:`, err);
     }
   }
 

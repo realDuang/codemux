@@ -478,7 +478,6 @@ export const ru: LocaleDict = {
     teamsWebhookGuide: "Укажите этот URL в Azure Bot Service → Settings → Messaging Endpoint",
     wecomWebhookGuide: "Укажите этот URL в консоли администратора WeCom → Приложение → Получение сообщений → URL обратного вызова",
     webhookEndpoint: "Endpoint",
-    teamsInstallHint: "Установка бота в Teams: Приложения → Управление приложениями → Загрузить пользовательское приложение → Выбрать сгенерированный teams-app.zip (находится в директории .channels/ проекта или в директории данных приложения)",
   },
 
   // Token Usage

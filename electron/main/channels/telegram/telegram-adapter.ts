@@ -31,15 +31,15 @@ import { createStreamingSession, type StreamingSession } from "../streaming/stre
 import { TelegramTransport } from "./telegram-transport";
 import { TelegramRenderer } from "./telegram-renderer";
 import { didConfigValuesChange, mergeDefinedConfig } from "../config-utils";
+import { parseCommand } from "../shared/command-parser";
+import { P2P_CAPABILITIES, GROUP_CAPABILITIES } from "../shared/command-types";
+import { buildHelpText } from "../shared/help-text-builder";
 import {
-  parseCommand,
-  buildHelpText,
-  buildGroupHelpText,
   buildProjectListText,
   buildSessionListText,
   buildQuestionText,
-  buildHistoryEntries,
-} from "./telegram-command-parser";
+} from "../shared/list-builders";
+import { handleSessionOpsCommand, type SessionContext } from "../shared/session-commands";
 import {
   DEFAULT_TELEGRAM_CONFIG,
   TEMP_SESSION_TTL_MS,
@@ -645,24 +645,84 @@ export class TelegramAdapter extends ChannelAdapter {
     chatId: string,
     command: ReturnType<typeof parseCommand>,
   ): Promise<void> {
-    if (!command) return;
+    if (!command || !this.transport) return;
+
+    if (this.gatewayClient) {
+      const handled = await handleSessionOpsCommand(command, {
+        sendText: (text) => this.transport!.sendText(chatId, text),
+        gatewayClient: this.gatewayClient,
+        getContext: (): SessionContext | null => {
+          const t = this.sessionMapper.getTempSession(chatId);
+          if (!t) return null;
+          return {
+            conversationId: t.conversationId,
+            engineType: t.engineType,
+            directory: t.directory,
+          };
+        },
+      });
+      if (handled) return;
+    }
 
     switch (command.command) {
       case "help":
       case "start":
-        await this.transport!.sendText(chatId, buildHelpText());
+        await this.transport.sendText(chatId, buildHelpText(P2P_CAPABILITIES));
         break;
 
       case "project":
         await this.showProjectList(chatId);
         break;
 
+      case "new":
+        await this.handleP2PNewCommand(chatId);
+        break;
+
+      case "switch":
+        await this.handleP2PSwitchCommand(chatId);
+        break;
+
       default:
-        await this.transport!.sendText(
+        await this.transport.sendText(
           chatId,
-          "📋 此命令仅在会话中可用。使用 /help 查看可用命令。",
+          `📋 未知命令：${command.command}。使用 /help 查看可用命令。`,
         );
     }
+  }
+
+  /** /new — create a new session under the last selected project. */
+  private async handleP2PNewCommand(chatId: string): Promise<void> {
+    if (!this.transport) return;
+    const p2pState = this.sessionMapper.getP2PChat(chatId);
+    if (!p2pState?.lastSelectedProject) {
+      await this.transport.sendText(
+        chatId,
+        "📋 当前未选择项目。请先使用 /project 选择项目。",
+      );
+      return;
+    }
+    if (this.sessionMapper.getTempSession(chatId)) {
+      await this.cleanupExpiredTempSession(chatId);
+    }
+    const project = p2pState.lastSelectedProject;
+    const projectName = project.directory.split(/[\\/]/).pop() || project.directory;
+    await this.createNewSessionForProject(chatId, project, projectName);
+  }
+
+  /** /switch — list existing sessions in the last selected project. */
+  private async handleP2PSwitchCommand(chatId: string): Promise<void> {
+    if (!this.transport) return;
+    const p2pState = this.sessionMapper.getP2PChat(chatId);
+    if (!p2pState?.lastSelectedProject) {
+      await this.transport.sendText(
+        chatId,
+        "📋 当前未选择项目。请先使用 /project 选择项目。",
+      );
+      return;
+    }
+    const project = p2pState.lastSelectedProject;
+    const projectName = project.directory.split(/[\\/]/).pop() || project.directory;
+    await this.showSessionListForProject(chatId, project, projectName);
   }
 
   // ============================================================================
@@ -926,7 +986,7 @@ export class TelegramAdapter extends ChannelAdapter {
     return true;
   }
 
-  /** Handle session number selection or "new" */
+  /** Handle session number selection. To create a new session, use /new instead. */
   private async handleSessionSelection(
     chatId: string,
     text: string,
@@ -935,16 +995,6 @@ export class TelegramAdapter extends ChannelAdapter {
     const trimmed = text.trim().toLowerCase();
     if (!pending.directory || !pending.projectId) {
       return false;
-    }
-
-    if (trimmed === "new") {
-      this.sessionMapper.clearPendingSelection(chatId);
-      await this.createNewSessionForProject(
-        chatId,
-        { directory: pending.directory, engineType: pending.engineType, projectId: pending.projectId },
-        pending.projectName || "",
-      );
-      return true;
     }
 
     const num = parseInt(trimmed, 10);
@@ -985,7 +1035,10 @@ export class TelegramAdapter extends ChannelAdapter {
       // No binding yet — show help on how to bind
       const command = parseCommand(text);
       if (command?.command === "help") {
-        await this.transport!.sendText(groupChatId, buildGroupHelpText());
+        await this.transport!.sendText(
+          groupChatId,
+          buildHelpText(GROUP_CAPABILITIES, { requiresMention: true }),
+        );
       } else if (command?.command === "bind") {
         // /bind — show project list for group binding
         await this.showGroupProjectList(groupChatId);
@@ -1042,82 +1095,30 @@ export class TelegramAdapter extends ChannelAdapter {
     binding: TelegramGroupBinding,
     command: ReturnType<typeof parseCommand>,
   ): Promise<void> {
-    if (!command || !this.gatewayClient) return;
+    if (!command || !this.gatewayClient || !this.transport) return;
+
+    const handled = await handleSessionOpsCommand(command, {
+      sendText: (text) => this.transport!.sendText(groupChatId, text),
+      gatewayClient: this.gatewayClient,
+      getContext: (): SessionContext => ({
+        conversationId: binding.conversationId,
+        engineType: binding.engineType,
+        directory: binding.directory,
+      }),
+    });
+    if (handled) return;
 
     switch (command.command) {
       case "help":
-        await this.transport!.sendText(groupChatId, buildGroupHelpText());
+      case "start":
+        await this.transport.sendText(
+          groupChatId,
+          buildHelpText(GROUP_CAPABILITIES, { requiresMention: true }),
+        );
         break;
-
-      case "cancel":
-        await this.gatewayClient.cancelMessage(binding.conversationId);
-        await this.transport!.sendText(groupChatId, "📋 消息已取消。");
-        break;
-
-      case "status": {
-        const projectName = binding.directory.split(/[\\/]/).pop();
-        const lines = [
-          "📋 会话状态\n",
-          `项目：${projectName}（${binding.engineType}）`,
-          `会话：${binding.conversationId}`,
-        ];
-        await this.transport!.sendText(groupChatId, lines.join("\n"));
-        break;
-      }
-
-      case "mode": {
-        if (!command.args || command.args.length === 0) {
-          await this.transport!.sendText(groupChatId, "📋 用法：/mode <agent|plan|build>");
-          return;
-        }
-        await this.gatewayClient.setMode({
-          sessionId: binding.conversationId,
-          modeId: command.args[0],
-        });
-        await this.transport!.sendText(groupChatId, `📋 模式已切换为：${command.args[0]}`);
-        break;
-      }
-
-      case "model": {
-        if (
-          command.subcommand === "list" ||
-          (!command.subcommand && (!command.args || command.args.length === 0))
-        ) {
-          const result = await this.gatewayClient.listModels(binding.engineType);
-          const lines = ["📋 模型列表", "─────────────────────────"];
-          for (const m of result.models) {
-            const current = m.modelId === result.currentModelId ? "（当前）" : "";
-            lines.push(`  ${m.name || m.modelId}${current}`);
-          }
-          lines.push("─────────────────────────");
-          lines.push("使用 /model <model-id> 切换模型。");
-          await this.transport!.sendText(groupChatId, lines.join("\n"));
-        } else if (command.args && command.args.length > 0) {
-          await this.gatewayClient.setModel({
-            sessionId: binding.conversationId,
-            modelId: command.args[0],
-          });
-          await this.transport!.sendText(groupChatId, `📋 模型已切换为：${command.args[0]}`);
-        }
-        break;
-      }
-
-      case "history": {
-        const messages = await this.gatewayClient.listMessages(binding.conversationId);
-        const entries = buildHistoryEntries(messages);
-        if (entries.length === 0) {
-          await this.transport!.sendText(groupChatId, "📋 暂无会话历史记录。");
-        } else {
-          await this.transport!.sendText(groupChatId, "📋 会话历史");
-          for (const entry of entries) {
-            await this.transport!.sendText(groupChatId, `${entry.emoji} ${entry.text}`);
-          }
-        }
-        break;
-      }
 
       default:
-        await this.transport!.sendText(
+        await this.transport.sendText(
           groupChatId,
           `📋 未知命令：${command.command}。使用 /help 查看可用命令。`,
         );

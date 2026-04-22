@@ -146,10 +146,4 @@ export interface WeixinIlinkPendingSelection {
 }
 
 // --- Command parser types ---
-
-export interface ParsedCommand {
-  command: string;
-  subcommand?: string;
-  args: string[];
-  raw: string;
-}
+// (ParsedCommand moved to ../shared/command-types.ts)

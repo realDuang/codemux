@@ -25,14 +25,15 @@ import { createStreamingSession } from "../streaming/streaming-types";
 import { WeixinIlinkTransport } from "./weixin-ilink-transport";
 import { WeixinIlinkRenderer } from "./weixin-ilink-renderer";
 import { didConfigValuesChange, mergeDefinedConfig } from "../config-utils";
+import { parseCommand } from "../shared/command-parser";
+import { P2P_CAPABILITIES } from "../shared/command-types";
+import { buildHelpText } from "../shared/help-text-builder";
 import {
-  parseCommand,
-  buildHelpText,
   buildProjectListText,
   buildSessionListText,
   buildQuestionText,
-  buildHistoryEntries,
-} from "./weixin-ilink-command-parser";
+} from "../shared/list-builders";
+import { handleSessionOpsCommand, type SessionContext } from "../shared/session-commands";
 import {
   DEFAULT_WEIXIN_ILINK_CONFIG,
   TEMP_SESSION_TTL_MS,
@@ -478,108 +479,41 @@ export class WeixinIlinkAdapter extends ChannelAdapter {
   ): Promise<void> {
     if (!command || !this.transport) return;
 
+    // Try shared Class-B session-ops first (cancel/status/mode/model/history)
+    if (this.gatewayClient) {
+      const handled = await handleSessionOpsCommand(command, {
+        sendText: (text) => this.transport!.sendText(chatId, text),
+        gatewayClient: this.gatewayClient,
+        getContext: (): SessionContext | null => {
+          const t = this.sessionMapper.getTempSession(chatId);
+          if (!t) return null;
+          return {
+            conversationId: t.conversationId,
+            engineType: t.engineType,
+            directory: t.directory,
+          };
+        },
+      });
+      if (handled) return;
+    }
+
     switch (command.command) {
       case "help":
       case "start":
-        await this.transport.sendText(chatId, buildHelpText());
+        await this.transport.sendText(chatId, buildHelpText(P2P_CAPABILITIES));
         break;
 
       case "project":
         await this.showProjectList(chatId);
         break;
 
-      case "cancel": {
-        const temp = this.sessionMapper.getTempSession(chatId);
-        if (temp && this.gatewayClient) {
-          await this.gatewayClient.cancelMessage(temp.conversationId);
-          await this.transport.sendText(chatId, "📋 消息已取消。");
-        } else {
-          await this.transport.sendText(chatId, "📋 当前没有正在运行的消息。");
-        }
+      case "new":
+        await this.handleNewCommand(chatId);
         break;
-      }
 
-      case "status": {
-        const temp = this.sessionMapper.getTempSession(chatId);
-        if (!temp) {
-          await this.transport.sendText(chatId, "📋 当前没有活动会话。使用 /project 选择项目。");
-          break;
-        }
-        const projectName = temp.directory.split(/[\\/]/).pop();
-        const lines = [
-          "📋 会话状态",
-          `项目：${projectName}（${temp.engineType}）`,
-          `会话：${temp.conversationId}`,
-        ];
-        await this.transport.sendText(chatId, lines.join("\n"));
+      case "switch":
+        await this.handleSwitchCommand(chatId);
         break;
-      }
-
-      case "mode": {
-        const temp = this.sessionMapper.getTempSession(chatId);
-        if (!temp || !this.gatewayClient) {
-          await this.transport.sendText(chatId, "📋 当前没有活动会话。");
-          break;
-        }
-        if (!command.args || command.args.length === 0) {
-          await this.transport.sendText(chatId, "📋 用法：/mode <agent|plan|build>");
-          break;
-        }
-        await this.gatewayClient.setMode({
-          sessionId: temp.conversationId,
-          modeId: command.args[0],
-        });
-        await this.transport.sendText(chatId, `📋 模式已切换为：${command.args[0]}`);
-        break;
-      }
-
-      case "model": {
-        const temp = this.sessionMapper.getTempSession(chatId);
-        if (!temp || !this.gatewayClient) {
-          await this.transport.sendText(chatId, "📋 当前没有活动会话。");
-          break;
-        }
-        if (
-          command.subcommand === "list" ||
-          (!command.subcommand && (!command.args || command.args.length === 0))
-        ) {
-          const result = await this.gatewayClient.listModels(temp.engineType);
-          const lines = ["📋 模型列表", "─────────────────────────"];
-          for (const m of result.models) {
-            const current = m.modelId === result.currentModelId ? "（当前）" : "";
-            lines.push(`  ${m.name || m.modelId}${current}`);
-          }
-          lines.push("─────────────────────────");
-          lines.push("使用 /model <model-id> 切换模型。");
-          await this.transport.sendText(chatId, lines.join("\n"));
-        } else if (command.args && command.args.length > 0) {
-          await this.gatewayClient.setModel({
-            sessionId: temp.conversationId,
-            modelId: command.args[0],
-          });
-          await this.transport.sendText(chatId, `📋 模型已切换为：${command.args[0]}`);
-        }
-        break;
-      }
-
-      case "history": {
-        const temp = this.sessionMapper.getTempSession(chatId);
-        if (!temp || !this.gatewayClient) {
-          await this.transport.sendText(chatId, "📋 当前没有活动会话。");
-          break;
-        }
-        const messages = await this.gatewayClient.listMessages(temp.conversationId);
-        const entries = buildHistoryEntries(messages);
-        if (entries.length === 0) {
-          await this.transport.sendText(chatId, "📋 暂无会话历史记录。");
-        } else {
-          await this.transport.sendText(chatId, "📋 会话历史");
-          for (const entry of entries) {
-            await this.transport.sendText(chatId, `${entry.emoji} ${entry.text}`);
-          }
-        }
-        break;
-      }
 
       default:
         await this.transport.sendText(
@@ -587,6 +521,42 @@ export class WeixinIlinkAdapter extends ChannelAdapter {
           `📋 未知命令：${command.command}。使用 /help 查看可用命令。`,
         );
     }
+  }
+
+  /** /new — create a new session under the last selected project. */
+  private async handleNewCommand(chatId: string): Promise<void> {
+    if (!this.transport) return;
+    const p2pState = this.sessionMapper.getP2PChat(chatId);
+    if (!p2pState?.lastSelectedProject) {
+      await this.transport.sendText(
+        chatId,
+        "📋 当前未选择项目。请先使用 /project 选择项目。",
+      );
+      return;
+    }
+    const project = p2pState.lastSelectedProject;
+    const projectName = project.directory.split(/[\\/]/).pop() || project.directory;
+    // Cleanup any prior temp session
+    if (this.sessionMapper.getTempSession(chatId)) {
+      await this.cleanupExpiredTempSession(chatId);
+    }
+    await this.createNewSessionForProject(chatId, project, projectName);
+  }
+
+  /** /switch — list existing sessions in the last selected project. */
+  private async handleSwitchCommand(chatId: string): Promise<void> {
+    if (!this.transport) return;
+    const p2pState = this.sessionMapper.getP2PChat(chatId);
+    if (!p2pState?.lastSelectedProject) {
+      await this.transport.sendText(
+        chatId,
+        "📋 当前未选择项目。请先使用 /project 选择项目。",
+      );
+      return;
+    }
+    const project = p2pState.lastSelectedProject;
+    const projectName = project.directory.split(/[\\/]/).pop() || project.directory;
+    await this.showSessionListForProject(chatId, project, projectName);
   }
 
   // ============================================================================
@@ -699,16 +669,7 @@ export class WeixinIlinkAdapter extends ChannelAdapter {
     const trimmed = text.trim().toLowerCase();
     if (!pending.directory || !pending.projectId) return false;
 
-    if (trimmed === "new") {
-      this.sessionMapper.clearPendingSelection(chatId);
-      await this.createNewSessionForProject(
-        chatId,
-        { directory: pending.directory, engineType: pending.engineType, projectId: pending.projectId },
-        pending.projectName || "",
-      );
-      return true;
-    }
-
+    // To create a new session, use /new — keyword "new" is no longer accepted here
     const num = parseInt(trimmed, 10);
     if (isNaN(num) || num < 1 || !pending.sessions || num > pending.sessions.length) {
       return false;

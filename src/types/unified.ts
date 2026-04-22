@@ -143,7 +143,19 @@ export interface ConversationMeta {
   id: string;
   engineType: EngineType;
   directory: string;
-  title: string;
+  /**
+   * Legacy single-title field. New code persists `customTitle`/`engineTitle`
+   * separately and derives a display title at render time. Kept here so old
+   * stored data still renders something instead of falling all the way back
+   * to the first-prompt label.
+   */
+  title?: string;
+  /** User-set title (via rename). Highest priority in displayTitle resolution. */
+  customTitle?: string;
+  /** Engine-summarized title pushed via session.updated / aiTitle. */
+  engineTitle?: string;
+  /** Truncated first user prompt — used as last-resort fallback for displayTitle. */
+  firstPrompt?: string;
   createdAt: number;
   updatedAt: number;
   messageCount: number;

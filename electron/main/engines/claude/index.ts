@@ -14,6 +14,8 @@ import {
   unstable_v2_resumeSession,
   listSessions as sdkListSessions,
   getSessionMessages as sdkGetSessionMessages,
+  getSessionInfo as sdkGetSessionInfo,
+  renameSession as sdkRenameSession,
   query as sdkQuery,
 } from "@anthropic-ai/claude-agent-sdk";
 import type {
@@ -215,6 +217,8 @@ export class ClaudeCodeAdapter extends EngineAdapter {
   private sessionDirectories = new Map<string, string>();
   /** Persisted ccSessionId per session, for SDK session resumption across restarts */
   private sessionCcIds = new Map<string, string>();
+  /** Pending debounced timers for engine-title refresh (Claude SDK getSessionInfo). */
+  private pendingTitleRefreshes = new Map<string, ReturnType<typeof setTimeout>>();
   /** Sessions that were just resumed after a dead process — emit notice on next message */
   private pendingResumeNotice = new Set<string>();
 
@@ -572,6 +576,77 @@ export class ClaudeCodeAdapter extends EngineAdapter {
 
   hasSession(sessionId: string): boolean {
     return this.v2Sessions.has(sessionId) || this.sessionDirectories.has(sessionId);
+  }
+
+  /**
+   * Rename a Claude session via SDK. The codemux session ID is opaque to the
+   * SDK; the real on-disk session is keyed by ccSessionId (captured during
+   * the system init message).
+   */
+  async renameSession(
+    sessionId: string,
+    title: string,
+    directory?: string,
+    engineMeta?: Record<string, unknown>,
+  ): Promise<void> {
+    const ccSessionId =
+      this.sessionCcIds.get(sessionId) ??
+      (typeof engineMeta?.ccSessionId === "string"
+        ? (engineMeta.ccSessionId as string)
+        : undefined);
+    if (!ccSessionId) {
+      claudeLog.debug(
+        `[Claude][${sessionId}] renameSession skipped — no ccSessionId yet`,
+      );
+      return;
+    }
+    try {
+      await sdkRenameSession(ccSessionId, title, directory ? { dir: directory } : undefined);
+    } catch (err) {
+      claudeLog.warn(`[Claude][${sessionId}] renameSession via SDK failed:`, err);
+    }
+  }
+
+  /**
+   * Fetch the SDK's pre-computed session summary (which already collapses
+   * customTitle / aiTitle / firstPrompt priority) and emit it as engineTitle.
+   * Called with debounce after each turn completes.
+   */
+  private async refreshEngineTitle(sessionId: string): Promise<void> {
+    const ccSessionId = this.sessionCcIds.get(sessionId);
+    if (!ccSessionId) return;
+    const directory = this.sessionDirectories.get(sessionId);
+    try {
+      const info = await sdkGetSessionInfo(
+        ccSessionId,
+        directory ? { dir: directory } : undefined,
+      );
+      const title = info?.summary;
+      if (!title) return;
+      this.emit("session.updated", {
+        session: {
+          id: sessionId,
+          engineType: this.engineType,
+          title,
+        },
+      });
+    } catch (err) {
+      claudeLog.debug(
+        `[Claude][${sessionId}] getSessionInfo failed:`,
+        (err as Error)?.message,
+      );
+    }
+  }
+
+  /** Debounced wrapper around refreshEngineTitle (1s after last result). */
+  private scheduleEngineTitleRefresh(sessionId: string): void {
+    const existing = this.pendingTitleRefreshes.get(sessionId);
+    if (existing) clearTimeout(existing);
+    const t = setTimeout(() => {
+      this.pendingTitleRefreshes.delete(sessionId);
+      void this.refreshEngineTitle(sessionId);
+    }, 1000);
+    this.pendingTitleRefreshes.set(sessionId, t);
   }
 
   async getSession(sessionId: string): Promise<UnifiedSession | null> {
@@ -2778,6 +2853,11 @@ export class ClaudeCodeAdapter extends EngineAdapter {
       `[Claude][${sessionId}] Result: cost=$${buffer.cost?.toFixed(4)}, ` +
         `tokens=${buffer.tokens?.input ?? 0}/${buffer.tokens?.output ?? 0}`,
     );
+
+    // Claude Code writes aiTitle/customTitle into the JSONL session file
+    // shortly after a turn completes. Debounce a getSessionInfo() call to
+    // pick up the latest title without polling or watching files.
+    this.scheduleEngineTitleRefresh(sessionId);
   }
 
   /**
@@ -3251,7 +3331,7 @@ export class ClaudeCodeAdapter extends EngineAdapter {
     // Emit final message
     this.emit("message.updated", { sessionId: buffer.sessionId, message: finalMessage });
 
-    // Title updates are handled by EngineManager's applyTitleFallback()
+    // Title updates: engineTitle is refreshed via getSessionInfo after each turn (see scheduleEngineTitleRefresh)
 
     // Clean up
     this.messageBuffers.delete(sessionId);

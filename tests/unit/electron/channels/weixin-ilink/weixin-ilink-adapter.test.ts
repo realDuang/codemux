@@ -150,4 +150,85 @@ describe("WeixinIlinkAdapter", () => {
       expect(adapter.config.botToken).toBe("new");
     });
   });
+
+  describe("logout", () => {
+    it("exposes CLEARED_CREDENTIALS static with empty botToken/accountId", () => {
+      expect(WeixinIlinkAdapter.CLEARED_CREDENTIALS).toEqual({
+        botToken: "",
+        accountId: "",
+      });
+    });
+
+    it("from stopped state: clears bindings and credentials without calling stop()", async () => {
+      const adapter = new WeixinIlinkAdapter() as any;
+      adapter.status = "stopped";
+      adapter.config = { ...DEFAULT_WEIXIN_ILINK_CONFIG, botToken: "tk", accountId: "acct" };
+      adapter.stop = vi.fn().mockResolvedValue(undefined);
+      const clearSpy = vi.spyOn(adapter.sessionMapper, "clearAllBindings");
+
+      await adapter.logout();
+
+      expect(adapter.stop).not.toHaveBeenCalled();
+      expect(clearSpy).toHaveBeenCalledTimes(1);
+      expect(adapter.config.botToken).toBe("");
+      expect(adapter.config.accountId).toBe("");
+    });
+
+    it("from running state: stops the adapter then wipes bindings + credentials", async () => {
+      const adapter = new WeixinIlinkAdapter() as any;
+      adapter.status = "running";
+      adapter.config = { ...DEFAULT_WEIXIN_ILINK_CONFIG, botToken: "tk", accountId: "acct" };
+      adapter.stop = vi.fn().mockResolvedValue(undefined);
+      const clearSpy = vi.spyOn(adapter.sessionMapper, "clearAllBindings");
+
+      await adapter.logout();
+
+      expect(adapter.stop).toHaveBeenCalledTimes(1);
+      expect(clearSpy).toHaveBeenCalledTimes(1);
+      expect(adapter.config.botToken).toBe("");
+      expect(adapter.config.accountId).toBe("");
+    });
+  });
+
+  describe("handleSessionExpired", () => {
+    it("calls logout, transitions to error, emits status.changed and auth.expired", async () => {
+      const adapter = new WeixinIlinkAdapter() as any;
+      adapter.status = "running";
+      adapter.config = { ...DEFAULT_WEIXIN_ILINK_CONFIG, botToken: "tk", accountId: "acct" };
+      adapter.stop = vi.fn().mockResolvedValue(undefined);
+
+      const events: Array<{ name: string; payload: any }> = [];
+      adapter.on("status.changed", (s: any) => events.push({ name: "status.changed", payload: s }));
+      adapter.on("auth.expired", (p: any) => events.push({ name: "auth.expired", payload: p }));
+
+      await adapter.handleSessionExpired();
+
+      expect(adapter.stop).toHaveBeenCalled();
+      expect(adapter.status).toBe("error");
+      expect(adapter.error).toMatch(/expired/i);
+      // First emission must be status.changed("error"), then auth.expired
+      const statusEvt = events.find((e) => e.name === "status.changed");
+      const authEvt = events.find((e) => e.name === "auth.expired");
+      expect(statusEvt?.payload).toBe("error");
+      expect(authEvt?.payload.clearOptions).toEqual(
+        WeixinIlinkAdapter.CLEARED_CREDENTIALS,
+      );
+      expect(authEvt?.payload.reason).toMatch(/expired/i);
+    });
+
+    it("still emits auth.expired even if logout() throws", async () => {
+      const adapter = new WeixinIlinkAdapter() as any;
+      adapter.status = "running";
+      adapter.config = { ...DEFAULT_WEIXIN_ILINK_CONFIG, botToken: "tk", accountId: "acct" };
+      adapter.stop = vi.fn().mockRejectedValue(new Error("stop failed"));
+
+      const handler = vi.fn();
+      adapter.on("auth.expired", handler);
+
+      await adapter.handleSessionExpired();
+
+      expect(handler).toHaveBeenCalledTimes(1);
+      expect(adapter.status).toBe("error");
+    });
+  });
 });

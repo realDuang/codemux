@@ -10,6 +10,7 @@ import {
 import {
   buildProjectListText,
   buildSessionListText,
+  buildQuestionText,
   buildHistoryEntries,
 } from "../../../../../electron/main/channels/shared/list-builders";
 
@@ -128,5 +129,118 @@ describe("shared list builders", () => {
     expect(entries).toHaveLength(2);
     expect(entries[0]).toMatchObject({ emoji: "👤", text: "hello" });
     expect(entries[1]).toMatchObject({ emoji: "🤖", text: "world" });
+  });
+
+  it("buildHistoryEntries returns [] for empty messages array", () => {
+    expect(buildHistoryEntries([])).toEqual([]);
+  });
+
+  it("buildHistoryEntries skips messages with no textual content", () => {
+    const entries = buildHistoryEntries([
+      { role: "user", parts: [{ type: "image", url: "x" }] } as any,
+      { role: "assistant", parts: [{ type: "text", text: "   " }] } as any,
+      { role: "user", parts: [{ type: "text", text: "real" }] } as any,
+    ]);
+    expect(entries).toHaveLength(1);
+    expect(entries[0].text).toBe("real");
+  });
+
+  it("buildHistoryEntries concatenates multiple text parts with newline", () => {
+    const entries = buildHistoryEntries([
+      {
+        role: "assistant",
+        parts: [
+          { type: "text", text: "line1" },
+          { type: "tool_use", id: "x" },
+          { type: "text", text: "line2" },
+        ],
+      } as any,
+    ]);
+    expect(entries).toHaveLength(1);
+    expect(entries[0].text).toBe("line1\nline2");
+  });
+
+  it("buildHistoryEntries truncates content longer than 500 chars with ellipsis", () => {
+    const long = "a".repeat(600);
+    const entries = buildHistoryEntries([
+      { role: "user", parts: [{ type: "text", text: long }] } as any,
+    ]);
+    expect(entries[0].text).toHaveLength(503);
+    expect(entries[0].text.endsWith("...")).toBe(true);
+  });
+
+  it("buildHistoryEntries does not truncate content of exactly 500 chars", () => {
+    const exact = "b".repeat(500);
+    const entries = buildHistoryEntries([
+      { role: "user", parts: [{ type: "text", text: exact }] } as any,
+    ]);
+    expect(entries[0].text).toBe(exact);
+  });
+
+  it("buildSessionListText sorts by updated DESC and limits to 9", () => {
+    const sessions = Array.from({ length: 12 }, (_, i) => ({
+      id: `s${i}`,
+      title: `T${i}`,
+      time: { updated: i * 100 },
+    })) as any[];
+    const text = buildSessionListText(sessions, "proj");
+    // The most recent (T11) should be first, T3 should be the 9th (last shown)
+    expect(text).toContain("1. T11");
+    expect(text).toContain("9. T3");
+    expect(text).not.toContain("T2");
+    expect(text).not.toContain("T0");
+  });
+
+  it("buildSessionListText falls back to id-prefix title when missing", () => {
+    const text = buildSessionListText(
+      [{ id: "abcdef0123456789", time: { updated: 1 } } as any],
+      "proj",
+    );
+    expect(text).toContain("Session abcdef01");
+  });
+
+  it("buildSessionListText appends [engineType] when present", () => {
+    const text = buildSessionListText(
+      [{ id: "x", title: "Hello", engineType: "claude", time: { updated: 1 } } as any],
+      "proj",
+    );
+    expect(text).toContain("Hello [claude]");
+  });
+
+  it("buildSessionListText empty list shows /new hint by default", () => {
+    const text = buildSessionListText([], "proj");
+    expect(text).toContain("使用 /new 创建新会话");
+  });
+
+  it("buildProjectListText falls back to directory basename when name is missing", () => {
+    const text = buildProjectListText([
+      { id: "p", name: "", directory: "/foo/bar/baz", engineType: "claude" } as any,
+    ]);
+    expect(text).toContain("1. baz");
+  });
+
+  it("buildProjectListText falls back to directory itself when basename empty", () => {
+    const text = buildProjectListText([
+      { id: "p", name: "", directory: "weird", engineType: "claude" } as any,
+    ]);
+    expect(text).toContain("1. weird");
+  });
+
+  it("buildQuestionText renders question and numbered options", () => {
+    const text = buildQuestionText("Continue?", [
+      { id: "yes", label: "Yes" },
+      { id: "no", label: "No" },
+    ]);
+    expect(text).toContain("Agent 提问");
+    expect(text).toContain("Continue?");
+    expect(text).toContain("1. Yes");
+    expect(text).toContain("2. No");
+    expect(text).toContain("回复消息以回答");
+  });
+
+  it("buildQuestionText handles empty options gracefully", () => {
+    const text = buildQuestionText("Just FYI", []);
+    expect(text).toContain("Just FYI");
+    expect(text).not.toMatch(/^\s+1\./m);
   });
 });

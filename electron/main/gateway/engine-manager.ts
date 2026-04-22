@@ -12,6 +12,8 @@ import type {
   EngineType,
   EngineInfo,
   UnifiedSession,
+  UnifiedQuestion,
+  UnifiedPermission,
   UnifiedMessage,
   UnifiedPart,
   TextPart,
@@ -1128,6 +1130,39 @@ export class EngineManager extends EventEmitter {
   async listProjects(engineType: EngineType): Promise<UnifiedProject[]> {
     // Derive projects from conversations for this engine type
     return conversationStore.deriveProjects().filter(p => p.engineType === engineType);
+  }
+
+  // --- Pending state (for resync after reconnect / session switch) ---
+
+  /**
+   * Aggregate pending questions and permissions for a specific conversation.
+   * Resolves conversationId → engineSessionId per adapter, queries the adapter's
+   * in-memory pending state, and rewrites sessionId back to the conversationId
+   * so the frontend receives ids it can route.
+   */
+  async getPending(conversationId: string): Promise<{
+    questions: UnifiedQuestion[];
+    permissions: UnifiedPermission[];
+  }> {
+    const conv = conversationStore.get(conversationId);
+    if (!conv) return { questions: [], permissions: [] };
+    const adapter = this.adapters.get(conv.engineType);
+    if (!adapter) return { questions: [], permissions: [] };
+
+    const engineSessionId = conv.engineSessionId;
+    // Without an engine-side session id we have no safe way to filter: adapters
+    // treat an undefined sessionId as "no filter" and would leak pending items
+    // from unrelated sessions (then rewrite them to this conversationId).
+    if (engineSessionId == null) return { questions: [], permissions: [] };
+
+    const [rawQuestions, rawPermissions] = await Promise.all([
+      Promise.resolve(adapter.getPendingQuestions(engineSessionId)),
+      Promise.resolve(adapter.getPendingPermissions(engineSessionId)),
+    ]);
+    const questions = rawQuestions.map((q) => ({ ...q, sessionId: conversationId }));
+    const permissions = rawPermissions.map((p) => ({ ...p, sessionId: conversationId }));
+
+    return { questions, permissions };
   }
 
   // --- Session Registration (for adapters that load existing sessions) ---

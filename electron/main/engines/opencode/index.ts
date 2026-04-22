@@ -565,13 +565,47 @@ export class OpenCodeAdapter extends EngineAdapter {
   }
 
   private handlePermissionAsked(data: any): void {
+    const permission = this.toUnifiedPermission(data);
+    this.emit("permission.asked", { permission });
+  }
+
+  private handlePermissionReplied(data: any): void {
+    const permissionId = data.permissionID ?? data.id;
+    this.emit("permission.replied", {
+      permissionId,
+      optionId: data.response ?? "unknown",
+    });
+  }
+
+  private handleQuestionAsked(data: SdkQuestionRequest): void {
+    const question = this.toUnifiedQuestion(data);
+    this.emit("question.asked", { question });
+  }
+
+  private handleQuestionReplied(data: any): void {
+    const questionId = data.requestID ?? data.id;
+    this.emit("question.replied", {
+      questionId,
+      answers: data.answers ?? [],
+    });
+  }
+
+  private handleQuestionRejected(data: any): void {
+    const questionId = data.requestID ?? data.id;
+    this.emit("question.replied", {
+      questionId,
+      answers: [],
+    });
+  }
+
+  /** Map an OpenCode SDK PermissionRequest → UnifiedPermission */
+  private toUnifiedPermission(data: any): UnifiedPermission {
     const options: PermissionOption[] = [
       { id: "once", label: "Allow once", type: "accept_once" },
       { id: "always", label: "Always allow", type: "accept_always" },
       { id: "reject", label: "Reject", type: "reject" },
     ];
-
-    const permission: UnifiedPermission = {
+    return {
       id: data.id,
       sessionId: data.sessionID,
       engineType: this.engineType,
@@ -583,18 +617,10 @@ export class OpenCodeAdapter extends EngineAdapter {
       permission: data.type,
       patterns: data.pattern ? (Array.isArray(data.pattern) ? data.pattern : [data.pattern]) : [],
     };
-
-    this.emit("permission.asked", { permission });
   }
 
-  private handlePermissionReplied(data: any): void {
-    this.emit("permission.replied", {
-      permissionId: data.permissionID ?? data.id,
-      optionId: data.response ?? "unknown",
-    });
-  }
-
-  private handleQuestionAsked(data: SdkQuestionRequest): void {
+  /** Map an OpenCode SDK QuestionRequest → UnifiedQuestion */
+  private toUnifiedQuestion(data: SdkQuestionRequest): UnifiedQuestion {
     const questions: QuestionInfo[] = (data.questions || []).map((q) => ({
       question: q.question,
       header: q.header,
@@ -605,30 +631,13 @@ export class OpenCodeAdapter extends EngineAdapter {
       multiple: q.multiple,
       custom: q.custom,
     }));
-
-    const question: UnifiedQuestion = {
+    return {
       id: data.id,
       sessionId: data.sessionID,
       engineType: this.engineType,
       toolCallId: data.tool?.callID,
       questions,
     };
-
-    this.emit("question.asked", { question });
-  }
-
-  private handleQuestionReplied(data: any): void {
-    this.emit("question.replied", {
-      questionId: data.requestID ?? data.id,
-      answers: data.answers ?? [],
-    });
-  }
-
-  private handleQuestionRejected(data: any): void {
-    this.emit("question.replied", {
-      questionId: data.requestID ?? data.id,
-      answers: [],
-    });
   }
 
   // --- EngineAdapter Implementation ---
@@ -1239,6 +1248,38 @@ export class OpenCodeAdapter extends EngineAdapter {
       questionId,
       answers: [],
     });
+  }
+
+  /**
+   * Query the OpenCode server directly for pending questions. Unlike
+   * Copilot/Claude/Codex — where the adapter holds the Promise resolver and is
+   * therefore authoritative — OpenCode's truth lives in the server process
+   * (another REST client could reply, server could time out internally, etc),
+   * so maintaining a local mirror would be drift-prone.
+   */
+  async getPendingQuestions(sessionId?: string): Promise<UnifiedQuestion[]> {
+    try {
+      const client = this.ensureClient();
+      const result = await client.question.list();
+      if (result.error) return [];
+      const all = (result.data ?? []).map((q) => this.toUnifiedQuestion(q as SdkQuestionRequest));
+      return sessionId ? all.filter((q) => q.sessionId === sessionId) : all;
+    } catch {
+      return [];
+    }
+  }
+
+  /** See getPendingQuestions — same rationale for going to the server. */
+  async getPendingPermissions(sessionId?: string): Promise<UnifiedPermission[]> {
+    try {
+      const client = this.ensureClient();
+      const result = await client.permission.list();
+      if (result.error) return [];
+      const all = (result.data ?? []).map((p) => this.toUnifiedPermission(p));
+      return sessionId ? all.filter((p) => p.sessionId === sessionId) : all;
+    } catch {
+      return [];
+    }
   }
 
   // --- Projects ---

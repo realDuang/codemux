@@ -387,6 +387,13 @@ export interface ToolPart extends PartBase {
   locations?: Array<{ path: string }>;
   /** Diff preview content (from SDK's rawOutput.detailedContent or rawInput.diff) */
   diff?: string;
+  /**
+   * When true, the rendering layer hides this tool part from the message stream.
+   * Set by engine adapters for tool calls that have a dedicated UI surface
+   * elsewhere (e.g. Copilot's `ask_user` → Question Dock). Keeps engine-specific
+   * rendering decisions inside the adapter layer.
+   */
+  suppressInStream?: boolean;
 }
 
 export interface SystemNoticePart extends PartBase {
@@ -478,6 +485,15 @@ export interface QuestionReplyRequest {
   questionId: string;
   /** Each element is the selected labels for the corresponding question */
   answers: string[][];
+}
+
+export interface PendingListRequest {
+  sessionId: string;
+}
+
+export interface PendingListResponse {
+  questions: UnifiedQuestion[];
+  permissions: UnifiedPermission[];
 }
 
 // --- Project ---
@@ -652,6 +668,9 @@ export const GatewayRequestType = {
   // Question
   QUESTION_REPLY: "question.reply",
   QUESTION_REJECT: "question.reject",
+
+  // Pending state (resync after reconnect / session switch)
+  PENDING_LIST: "pending.list",
 
   // Project
   PROJECT_LIST: "project.list",

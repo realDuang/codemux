@@ -767,6 +767,18 @@ export class CopilotSdkAdapter extends EngineAdapter {
     this.pendingQuestions.delete(questionId);
   }
 
+  getPendingQuestions(sessionId?: string): UnifiedQuestion[] {
+    return CopilotSdkAdapter.filterPending(
+      this.pendingQuestions, sessionId, (p) => p.question, (p) => p.question.sessionId,
+    );
+  }
+
+  getPendingPermissions(sessionId?: string): UnifiedPermission[] {
+    return CopilotSdkAdapter.filterPending(
+      this.pendingPermissions, sessionId, (p) => p.permission, (p) => p.permission.sessionId,
+    );
+  }
+
   async listProjects(): Promise<UnifiedProject[]> { return []; }
 
   // --- Slash Commands / Skills ---
@@ -1163,6 +1175,9 @@ export class CopilotSdkAdapter extends EngineAdapter {
         input: normalizedTool === "todo" ? normalizeTodoInput(data.arguments) : (data.arguments || {}),
         time: { start: Date.now() },
       },
+      // ask_user is surfaced via the Question Dock (InputAreaQuestion); hide the
+      // redundant tool card in the message stream.
+      suppressInStream: data.toolName === "ask_user",
     };
     this.toolCallParts.set(data.toolCallId, toolPart);
     buffer.parts.push(toolPart);

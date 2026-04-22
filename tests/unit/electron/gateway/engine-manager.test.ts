@@ -2356,4 +2356,76 @@ describe("EngineManager", () => {
       expect(saveStepsCall[2][0].sessionId).toBe("conv-sdr");
     });
   });
+
+  describe("getPending", () => {
+    it("aggregates pending questions/permissions from the conversation's engine adapter and rewrites sessionId to conversationId", async () => {
+      engineManager.registerAdapter(adapterA);
+
+      (conversationStore.get as any).mockReturnValue({
+        id: "conv-pending",
+        engineType: "opencode",
+        engineSessionId: "eng-pending",
+        directory: "/dir",
+      });
+
+      adapterA.getPendingQuestions = vi.fn((sid?: string) => {
+        expect(sid).toBe("eng-pending");
+        return [
+          {
+            id: "q1",
+            sessionId: "eng-pending",
+            engineType: "opencode",
+            questions: [{ question: "?", options: [] }],
+          } as any,
+        ];
+      });
+      adapterA.getPendingPermissions = vi.fn((sid?: string) => {
+        expect(sid).toBe("eng-pending");
+        return [
+          {
+            id: "p1",
+            sessionId: "eng-pending",
+            engineType: "opencode",
+            title: "Edit",
+            kind: "edit",
+            options: [],
+          } as any,
+        ];
+      });
+
+      const result = await engineManager.getPending("conv-pending");
+
+      expect(result.questions).toHaveLength(1);
+      expect(result.questions[0].id).toBe("q1");
+      expect(result.questions[0].sessionId).toBe("conv-pending");
+      expect(result.permissions).toHaveLength(1);
+      expect(result.permissions[0].id).toBe("p1");
+      expect(result.permissions[0].sessionId).toBe("conv-pending");
+    });
+
+    it("returns empty arrays when the conversation is unknown", async () => {
+      (conversationStore.get as any).mockReturnValue(null);
+      const result = await engineManager.getPending("missing");
+      expect(result).toEqual({ questions: [], permissions: [] });
+    });
+
+    it("returns empty arrays when engineSessionId is missing (avoids leaking pending items from unrelated sessions)", async () => {
+      engineManager.registerAdapter(adapterA);
+      (conversationStore.get as any).mockReturnValue({
+        id: "conv-nosession",
+        engineType: "opencode",
+        engineSessionId: null,
+        directory: "/dir",
+      });
+      const spyQ = vi.spyOn(adapterA, "getPendingQuestions");
+      const spyP = vi.spyOn(adapterA, "getPendingPermissions");
+
+      const result = await engineManager.getPending("conv-nosession");
+
+      expect(result).toEqual({ questions: [], permissions: [] });
+      // Must NOT call the adapter with undefined (which would bypass filtering)
+      expect(spyQ).not.toHaveBeenCalled();
+      expect(spyP).not.toHaveBeenCalled();
+    });
+  });
 });

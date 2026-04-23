@@ -1213,9 +1213,9 @@ describe("TelegramAdapter", () => {
 
     it("subscribeGatewayEvents wires callbacks", () => {
       const a = new TelegramAdapter() as any;
-      const handlers: Record<string, Function> = {};
+      const handlers: Record<string, (...args: unknown[]) => unknown> = {};
       a.gatewayClient = {
-        on: vi.fn((event: string, cb: Function) => { handlers[event] = cb; }),
+        on: vi.fn((event: string, cb: (...args: unknown[]) => unknown) => { handlers[event] = cb; }),
       };
       a.subscribeGatewayEvents();
       expect(Object.keys(handlers).sort()).toEqual([

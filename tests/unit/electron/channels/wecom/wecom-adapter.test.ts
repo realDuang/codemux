@@ -1024,9 +1024,9 @@ describe("WeComAdapter", () => {
 
     it("subscribeGatewayEvents wires handlers on gatewayClient", () => {
       const a = new WeComAdapter() as any;
-      const handlers: Record<string, Function> = {};
+      const handlers: Record<string, (...args: unknown[]) => unknown> = {};
       a.gatewayClient = {
-        on: vi.fn((evt: string, cb: Function) => { handlers[evt] = cb; }),
+        on: vi.fn((evt: string, cb: (...args: unknown[]) => unknown) => { handlers[evt] = cb; }),
       };
       a.subscribeGatewayEvents();
       expect(Object.keys(handlers)).toEqual(

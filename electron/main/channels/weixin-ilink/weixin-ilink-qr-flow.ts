@@ -30,7 +30,8 @@ export interface QrCodeResult {
 }
 
 export interface QrCodeStatusResult {
-  status: "wait" | "scaned" | "confirmed" | "expired";
+  /** Normalized from upstream `scaned` → `scanned`. */
+  status: "wait" | "scanned" | "confirmed" | "expired";
   /** Present only on `confirmed` */
   botToken?: string;
   /** Present only on `confirmed` (= ilink_bot_id) */
@@ -100,7 +101,7 @@ export async function pollQrStatus(
   }
 
   return {
-    status: resp.status ?? "wait",
+    status: resp.status === "scaned" ? "scanned" : (resp.status ?? "wait"),
     botToken: resp.bot_token,
     accountId: resp.ilink_bot_id,
     baseUrl: resp.baseurl,

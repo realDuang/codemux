@@ -466,7 +466,7 @@ export interface IlinkQrCode {
 }
 
 export interface IlinkQrStatus {
-  status: "wait" | "scaned" | "confirmed" | "expired";
+  status: "wait" | "scanned" | "confirmed" | "expired";
   botToken?: string;
   accountId?: string;
   baseUrl?: string;

@@ -99,7 +99,7 @@ interface ElectronAPI {
   weixinIlink?: {
     getQrCode: (baseUrl?: string) => Promise<{ qrcode: string; qrcodeImgContent: string; baseUrl: string }>;
     pollQrCodeStatus: (qrcode: string, baseUrl?: string) => Promise<{
-      status: "wait" | "scaned" | "confirmed" | "expired";
+      status: "wait" | "scanned" | "confirmed" | "expired";
       botToken?: string;
       accountId?: string;
       baseUrl?: string;

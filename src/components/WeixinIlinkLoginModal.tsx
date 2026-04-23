@@ -21,7 +21,7 @@ interface WeixinIlinkLoginModalProps {
 }
 
 const POLL_INTERVAL_MS = 2000;
-type Stage = "idle" | "loading" | "ready" | "scaned" | "confirmed" | "expired" | "error";
+type Stage = "idle" | "loading" | "ready" | "scanned" | "confirmed" | "expired" | "error";
 
 export function WeixinIlinkLoginModal(props: WeixinIlinkLoginModalProps) {
   const { t } = useI18n();
@@ -53,6 +53,7 @@ export function WeixinIlinkLoginModal(props: WeixinIlinkLoginModalProps) {
   };
 
   const startQrFlow = async () => {
+    stopPolling();
     stopped = false;
     setStage("loading");
     setErrorMsg("");
@@ -88,8 +89,8 @@ export function WeixinIlinkLoginModal(props: WeixinIlinkLoginModalProps) {
         case "wait":
           if (stage() !== "ready") setStage("ready");
           break;
-        case "scaned":
-          setStage("scaned");
+        case "scanned":
+          setStage("scanned");
           break;
         case "expired":
           stopPolling();
@@ -151,23 +152,35 @@ export function WeixinIlinkLoginModal(props: WeixinIlinkLoginModalProps) {
     stopPolling();
   });
 
+  let dialogRef: HTMLDivElement | undefined;
+
   const handleKeyDown = (e: KeyboardEvent) => {
     if (e.key === "Escape") closeAndCleanup();
   };
 
+  createEffect(() => {
+    if (props.isOpen) {
+      // Focus the dialog container so keyboard events (Escape) are received.
+      requestAnimationFrame(() => dialogRef?.focus());
+    }
+  });
+
   return (
     <Show when={props.isOpen}>
-      <div class="fixed inset-0 z-50 flex items-center justify-center" onKeyDown={handleKeyDown}>
+      <div class="fixed inset-0 z-50 flex items-center justify-center">
         <div
           class="absolute inset-0 bg-black/50 backdrop-blur-xs"
           onClick={closeAndCleanup}
           aria-hidden="true"
         />
         <div
+          ref={dialogRef}
+          tabIndex={-1}
           role="dialog"
           aria-modal="true"
           aria-labelledby="weixin-ilink-login-modal-title"
-          class="relative bg-white dark:bg-slate-900 rounded-xl shadow-2xl w-full max-w-sm mx-4 overflow-hidden flex flex-col"
+          class="relative bg-white dark:bg-slate-900 rounded-xl shadow-2xl w-full max-w-sm mx-4 overflow-hidden flex flex-col outline-none"
+          onKeyDown={handleKeyDown}
         >
           <div class="flex items-center justify-between px-6 py-4 border-b border-gray-200 dark:border-slate-800">
             <h2 id="weixin-ilink-login-modal-title" class="text-lg font-semibold text-gray-900 dark:text-white">
@@ -192,7 +205,7 @@ export function WeixinIlinkLoginModal(props: WeixinIlinkLoginModalProps) {
               </p>
             </Show>
 
-            <Show when={stage() === "ready" || stage() === "scaned" || stage() === "confirmed"}>
+            <Show when={stage() === "ready" || stage() === "scanned" || stage() === "confirmed"}>
               <Show when={qrImg()}>
                 <img
                   src={qrImg()}
@@ -204,7 +217,7 @@ export function WeixinIlinkLoginModal(props: WeixinIlinkLoginModalProps) {
                 <Show when={stage() === "ready"}>
                   {(t().channel as Record<string, string>).weixinIlinkScanPrompt ?? "Open WeChat on your phone and scan the QR code."}
                 </Show>
-                <Show when={stage() === "scaned"}>
+                <Show when={stage() === "scanned"}>
                   {(t().channel as Record<string, string>).weixinIlinkScanedPrompt ?? "Scanned. Confirm login on your phone..."}
                 </Show>
                 <Show when={stage() === "confirmed"}>

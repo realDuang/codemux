@@ -125,6 +125,7 @@ interface PendingQuestion {
 const DEFAULT_MODES: AgentMode[] = [
   { id: "default", label: "Default", description: "Standard behavior, prompts for dangerous operations" },
   { id: "acceptEdits", label: "Auto-Accept", description: "Auto-accept file edit operations" },
+  { id: "autopilot", label: "Autopilot", description: "Fully autonomous, skip all permission prompts" },
   { id: "plan", label: "Plan", description: "Planning mode, no actual tool execution" },
 ];
 
@@ -777,8 +778,9 @@ export class ClaudeCodeAdapter extends EngineAdapter {
     this.emit("message.updated", { sessionId, message: assistantMessage });
 
     // Determine permission mode from mode option
+    // "autopilot" is handled in canUseTool; SDK uses "default" permissionMode
     const mode = options?.mode ?? this.sessionModes.get(sessionId) ?? "default";
-    const permissionMode = mode as "default" | "plan" | "acceptEdits" | "dontAsk";
+    const permissionMode = (mode === "autopilot" ? "default" : mode) as "default" | "plan" | "acceptEdits" | "dontAsk";
 
     // Apply reasoning effort if it changed (triggers session rebuild via getOrCreateV2Session)
     if (options?.reasoningEffort !== undefined) {
@@ -1211,18 +1213,22 @@ export class ClaudeCodeAdapter extends EngineAdapter {
     this.sessionModes.set(sessionId, modeId);
     claudeLog.info(`[Claude][${sessionId}] Mode set to: ${modeId}`);
 
+    // Map codemux mode → SDK permissionMode
+    // "autopilot" is handled in canUseTool (auto-approve), SDK stays on "default"
+    const sdkPermissionMode = modeId === "autopilot" ? "default" : modeId;
+
     const v2Info = this.v2Sessions.get(sessionId);
     if (v2Info) {
       // Update tracked permissionMode
-      v2Info.permissionMode = modeId as any;
+      v2Info.permissionMode = sdkPermissionMode as any;
 
       // Use the internal Query API to switch permission mode at runtime
       // (same pattern as cancelMessage's interrupt() call)
       try {
         const query = (v2Info.session as any).query;
         if (query && typeof query.setPermissionMode === "function") {
-          await query.setPermissionMode(modeId);
-          claudeLog.info(`[Claude][${sessionId}] Permission mode switched to: ${modeId}`);
+          await query.setPermissionMode(sdkPermissionMode);
+          claudeLog.info(`[Claude][${sessionId}] Permission mode switched to: ${sdkPermissionMode}`);
         } else {
           claudeLog.warn(`[Claude][${sessionId}] setPermissionMode not available on query, will apply on next message`);
         }
@@ -1317,8 +1323,8 @@ export class ClaudeCodeAdapter extends EngineAdapter {
    * Create a canUseTool callback bound to a specific codemux session ID.
    * This callback is invoked by the SDK before each tool execution.
    *
-   * When permissionMode is "default", dangerous tools trigger this callback
-   * and we emit a UnifiedPermission for user approval.
+   * - Autopilot mode: auto-approve everything
+   * - Default/acceptEdits: emit UnifiedPermission for user approval
    */
   private createCanUseTool(sessionId: string): CanUseTool {
     return async (
@@ -1336,12 +1342,18 @@ export class ClaudeCodeAdapter extends EngineAdapter {
         agentID?: string;
       },
     ): Promise<PermissionResult> => {
-      // --- ExitPlanMode: intercept and ask user for confirmation ---
+      // --- ExitPlanMode: always intercept regardless of mode ---
       if (toolName === "ExitPlanMode") {
         return this.handleExitPlanMode(sessionId, input, options);
       }
 
-      // --- Emit permission prompt and wait for user response ---
+      // --- Autopilot: auto-approve all tools ---
+      const currentMode = this.sessionModes.get(sessionId) ?? "default";
+      if (currentMode === "autopilot") {
+        return { behavior: "allow", updatedInput: input };
+      }
+
+      // --- Default / acceptEdits: emit permission prompt ---
       return this.handleToolPermission(sessionId, toolName, input, options);
     };
   }

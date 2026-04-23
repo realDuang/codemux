@@ -39,7 +39,6 @@ export const ru: LocaleDict = {
     kindShell: "Команда оболочки",
     kindUrlAccess: "Доступ к URL",
     kindWebSearch: "Веб-поиск",
-    targets: "Цели",
     diffPreview: "Изменения",
   },
 
@@ -52,7 +51,6 @@ export const ru: LocaleDict = {
     selectMultiple: "Можно выбрать несколько вариантов",
     back: "Назад",
     next: "Далее",
-    relatedTool: "Связанный инструмент",
     progress: "Вопрос {current} из {total}",
   },
 

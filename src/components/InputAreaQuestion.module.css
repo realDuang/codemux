@@ -69,12 +69,6 @@
   color: rgba(199, 210, 254, 0.88);
 }
 
-.metaMono {
-  font-family: var(--font-mono, monospace);
-  word-break: break-all;
-  font-weight: 500;
-}
-
 /* ── Progress segments for multi-question ── */
 .progress {
   display: flex;

@@ -39,7 +39,6 @@ export const zh: LocaleDict = {
     kindShell: "执行命令",
     kindUrlAccess: "访问 URL",
     kindWebSearch: "网页搜索",
-    targets: "目标",
     diffPreview: "变更预览",
   },
   // Question
@@ -51,7 +50,6 @@ export const zh: LocaleDict = {
     selectMultiple: "可选择多个选项",
     back: "上一步",
     next: "下一步",
-    relatedTool: "相关工具",
     progress: "问题 {current} / {total}",
   },
 

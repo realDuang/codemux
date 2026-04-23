@@ -1277,11 +1277,11 @@ describe("OpenCodeAdapter", () => {
       (adapter as any).handlePermissionAsked({
         id: "perm-1",
         sessionID: "s-1",
-        permission: "write",
-        tool: { callID: "call-1", messageID: "msg-1" },
+        type: "write",
+        callID: "call-1",
         title: "Write to file",
         metadata: { path: "/file.ts" },
-        patterns: ["/repo/**"],
+        pattern: ["/repo/**"],
       });
 
       expect(events).toHaveLength(1);
@@ -1301,7 +1301,7 @@ describe("OpenCodeAdapter", () => {
       const events: any[] = [];
       adapter.on("permission.asked", (e) => events.push(e));
 
-      (adapter as any).handlePermissionAsked({ id: "p-1", sessionID: "s-1", permission: "write", patterns: ["/repo/**"] });
+      (adapter as any).handlePermissionAsked({ id: "p-1", sessionID: "s-1", type: "write", pattern: "/repo/**" });
 
       expect(events[0].permission.patterns).toEqual(["/repo/**"]);
     });
@@ -1314,8 +1314,8 @@ describe("OpenCodeAdapter", () => {
       (adapter as any).handlePermissionAsked({
         id: "p-1",
         sessionID: "s-1",
-        permission: "write",
-        patterns: ["/a/**", "/b/**"],
+        type: "write",
+        pattern: ["/a/**", "/b/**"],
       });
 
       expect(events[0].permission.patterns).toEqual(["/a/**", "/b/**"]);
@@ -1326,7 +1326,7 @@ describe("OpenCodeAdapter", () => {
       const events: any[] = [];
       adapter.on("permission.asked", (e) => events.push(e));
 
-      (adapter as any).handlePermissionAsked({ id: "p-1", sessionID: "s-1", permission: "read" });
+      (adapter as any).handlePermissionAsked({ id: "p-1", sessionID: "s-1", type: "read" });
 
       expect(events[0].permission.patterns).toEqual([]);
     });
@@ -1336,7 +1336,7 @@ describe("OpenCodeAdapter", () => {
       const events: any[] = [];
       adapter.on("permission.asked", (e) => events.push(e));
 
-      (adapter as any).handlePermissionAsked({ id: "p-1", sessionID: "s-1", permission: "execute" });
+      (adapter as any).handlePermissionAsked({ id: "p-1", sessionID: "s-1", type: "execute" });
 
       expect(events[0].permission.title).toBe("execute");
     });

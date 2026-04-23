@@ -153,17 +153,9 @@ export function InputAreaQuestion(props: InputAreaQuestionProps) {
         </Show>
       </div>
 
-      <Show when={questionContext().toolCallId || questionContext().isMultiQuestion}>
+      <Show when={questionContext().isMultiQuestion}>
         <div class={styles.meta}>
-          <Show when={questionContext().toolCallId}>
-            <span class={styles.metaBadge}>
-              <span>{t().question.relatedTool}</span>
-              <span class={styles.metaMono}>{questionContext().toolCallId}</span>
-            </span>
-          </Show>
-          <Show when={questionContext().isMultiQuestion}>
-            <span class={styles.metaBadge}>{questionProgressLabel()}</span>
-          </Show>
+          <span class={styles.metaBadge}>{questionProgressLabel()}</span>
         </div>
       </Show>
 

@@ -1352,8 +1352,7 @@ export class CopilotSdkAdapter extends EngineAdapter {
     ];
 
     const rawReq = { ...req };
-    const intention = typeof rawReq.intention === "string" && rawReq.intention.trim() ? rawReq.intention.trim() : "";
-    const title = intention || `${req.kind} permission requested`;
+    const title = `${req.kind} permission requested`;
 
     // Build structured details from Copilot SDK fields per kind
     // See: @github/copilot-sdk dist/generated/session-events.d.ts

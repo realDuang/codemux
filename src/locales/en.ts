@@ -38,7 +38,6 @@ export interface LocaleDict {
     kindShell: string;
     kindUrlAccess: string;
     kindWebSearch: string;
-    targets: string;
     diffPreview: string;
   };
   // Question
@@ -50,7 +49,6 @@ export interface LocaleDict {
     selectMultiple: string;
     back: string;
     next: string;
-    relatedTool: string;
     progress: string;
   };
 
@@ -680,7 +678,6 @@ export const en: LocaleDict = {
     kindShell: "Shell Command",
     kindUrlAccess: "URL Access",
     kindWebSearch: "Web Search",
-    targets: "Targets",
     diffPreview: "Changes",
   },
   // Question
@@ -692,7 +689,6 @@ export const en: LocaleDict = {
     selectMultiple: "Select multiple options",
     back: "Back",
     next: "Next",
-    relatedTool: "Related tool",
     progress: "Question {current} of {total}",
   },
 

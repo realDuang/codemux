@@ -184,6 +184,21 @@ const SESSION_IDLE_TIMEOUT_MS = 30 * 60 * 1000;
 // ClaudeCodeAdapter
 // ============================================================================
 
+/**
+ * Reject titles that look like system-injected noise (XML-style tags such as
+ * `<task-notification>`, `<system-reminder>`, `<command-name>` etc.) so the UI
+ * doesn't display them as the conversation title.
+ */
+export function isUsableTitle(title: string | undefined): title is string {
+  if (!title) return false;
+  const trimmed = title.trim();
+  if (!trimmed) return false;
+  // Anything starting with an XML/HTML-like opening tag is noise from injected
+  // tool output / hook payloads, not a real summary.
+  if (/^<[a-zA-Z][\w-]*[\s>]/.test(trimmed)) return false;
+  return true;
+}
+
 export class ClaudeCodeAdapter extends EngineAdapter {
   readonly engineType: EngineType = "claude";
 
@@ -615,6 +630,10 @@ export class ClaudeCodeAdapter extends EngineAdapter {
    * Fetch the SDK's pre-computed session summary (which already collapses
    * customTitle / aiTitle / firstPrompt priority) and emit it as engineTitle.
    * Called with debounce after each turn completes.
+   *
+   * Note: the SDK's aiTitle generation can produce garbage when the session
+   * contains tool/system-injected user messages (e.g. `<task-notification>`
+   * blocks from background agents). Detect that and fall back to firstPrompt.
    */
   private async refreshEngineTitle(sessionId: string): Promise<void> {
     const ccSessionId = this.sessionCcIds.get(sessionId);
@@ -625,7 +644,10 @@ export class ClaudeCodeAdapter extends EngineAdapter {
         ccSessionId,
         directory ? { dir: directory } : undefined,
       );
-      const title = info?.summary;
+      if (!info) return;
+      const title = isUsableTitle(info.summary)
+        ? info.summary
+        : info.firstPrompt;
       if (!title) return;
       this.emit("session.updated", {
         session: {

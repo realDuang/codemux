@@ -158,8 +158,7 @@ function createMockEngineManager() {
     listModels: vi.fn(async () => ({ models: [] })),
     setModel: vi.fn(async () => {}),
     setMode: vi.fn(async () => {}),
-    setReasoningEffort: vi.fn(async () => {}),
-    setServiceTier: vi.fn(async () => {}),
+    updateSessionConfig: vi.fn(async () => {}),
     replyPermission: vi.fn(async () => {}),
     replyQuestion: vi.fn(async () => {}),
     rejectQuestion: vi.fn(async () => {}),
@@ -945,30 +944,42 @@ describe("GatewayServer", () => {
       expect(engineManager.setMode).toHaveBeenCalledWith("sess-1", "plan");
     });
 
-    it("REASONING_EFFORT_SET delegates with sessionId and effort", async () => {
+    it("SESSION_CONFIG_UPDATE delegates with sessionId and config patch", async () => {
       const { connect, sendMessage, engineManager } = createTestHarness();
       const ws = connect();
 
       await sendMessage(ws, {
-        type: GatewayRequestType.REASONING_EFFORT_SET,
+        type: GatewayRequestType.SESSION_CONFIG_UPDATE,
         requestId: "r1",
-        payload: { sessionId: "sess-1", reasoningEffort: "high" },
+        payload: {
+          sessionId: "sess-1",
+          config: { reasoningEffort: "high", serviceTier: "fast" },
+        },
       });
 
-      expect(engineManager.setReasoningEffort).toHaveBeenCalledWith("sess-1", "high");
+      expect(engineManager.updateSessionConfig).toHaveBeenCalledWith("sess-1", {
+        reasoningEffort: "high",
+        serviceTier: "fast",
+      });
     });
 
-    it("SERVICE_TIER_SET delegates with sessionId and tier", async () => {
+    it("SESSION_CONFIG_UPDATE strips invalid reasoning effort and service tier values", async () => {
       const { connect, sendMessage, engineManager } = createTestHarness();
       const ws = connect();
 
       await sendMessage(ws, {
-        type: GatewayRequestType.SERVICE_TIER_SET,
-        requestId: "r1",
-        payload: { sessionId: "sess-1", serviceTier: "fast" },
+        type: GatewayRequestType.SESSION_CONFIG_UPDATE,
+        requestId: "r2",
+        payload: {
+          sessionId: "sess-1",
+          config: { reasoningEffort: "bogus", serviceTier: "invalid" },
+        },
       });
 
-      expect(engineManager.setServiceTier).toHaveBeenCalledWith("sess-1", "fast");
+      expect(engineManager.updateSessionConfig).toHaveBeenCalledWith("sess-1", {
+        reasoningEffort: undefined,
+        serviceTier: undefined,
+      });
     });
 
     it("PERMISSION_REPLY delegates with permissionId and optionId", async () => {

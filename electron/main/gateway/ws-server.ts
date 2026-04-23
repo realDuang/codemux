@@ -30,8 +30,7 @@ import {
   type QuestionReplyRequest,
   type ProjectSetEngineRequest,
   type ModelSetRequest,
-  type ReasoningEffortSetRequest,
-  type ServiceTierSetRequest,
+  type SessionConfigUpdateRequest,
   type ModeSetRequest,
   type SessionImportPreviewRequest,
   type SessionImportExecuteRequest,
@@ -43,7 +42,7 @@ import {
   type WorktreeMergeRequest,
   type WorktreeListBranchesRequest,
 } from "../../../src/types/unified";
-import { isCodexServiceTier } from "../../../src/types/unified";
+import { isCodexServiceTier, isReasoningEffort } from "../../../src/types/unified";
 
 interface ClientConnection {
   id: string;
@@ -319,17 +318,21 @@ export class GatewayServer {
         return this.engineManager.setModel(req.sessionId, req.modelId);
       }
 
-      case GatewayRequestType.REASONING_EFFORT_SET: {
-        const req = p as ReasoningEffortSetRequest;
-        return this.engineManager.setReasoningEffort(req.sessionId, req.reasoningEffort);
-      }
-
-      case GatewayRequestType.SERVICE_TIER_SET: {
-        const req = p as ServiceTierSetRequest;
-        return this.engineManager.setServiceTier(
-          req.sessionId,
-          isCodexServiceTier(req.serviceTier) ? req.serviceTier : null,
-        );
+      case GatewayRequestType.SESSION_CONFIG_UPDATE: {
+        const req = p as SessionConfigUpdateRequest;
+        const config = req.config ?? {};
+        // Validate reasoning effort and service tier at the gateway boundary
+        if (Object.prototype.hasOwnProperty.call(config, "reasoningEffort") && config.reasoningEffort !== null) {
+          if (!isReasoningEffort(config.reasoningEffort)) {
+            config.reasoningEffort = undefined;
+          }
+        }
+        if (Object.prototype.hasOwnProperty.call(config, "serviceTier") && config.serviceTier !== null) {
+          if (!isCodexServiceTier(config.serviceTier)) {
+            config.serviceTier = undefined;
+          }
+        }
+        return this.engineManager.updateSessionConfig(req.sessionId, config);
       }
 
       // Mode

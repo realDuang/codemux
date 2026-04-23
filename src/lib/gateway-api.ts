@@ -305,6 +305,13 @@ class GatewayAPI {
     return gatewayClient.setServiceTier({ sessionId, serviceTier });
   }
 
+  updateSessionConfig(
+    sessionId: string,
+    config: Partial<import("../types/unified").UnifiedSessionConfig>,
+  ): Promise<void> {
+    return gatewayClient.updateSessionConfig({ sessionId, config });
+  }
+
   // --- Mode ---
 
   setMode(sessionId: string, modeId: string): Promise<void> {

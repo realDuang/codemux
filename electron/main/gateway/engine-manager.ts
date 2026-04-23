@@ -23,6 +23,7 @@ import type {
   PermissionReply,
   ReasoningEffort,
   CodexServiceTier,
+  UnifiedSessionConfig,
   ConversationMeta,
   ConversationMessage,
   ImportableSession,
@@ -1144,22 +1145,50 @@ export class EngineManager extends EventEmitter {
     return adapter.setMode(conv.engineSessionId, modeId);
   }
 
-  async setReasoningEffort(sessionId: string, effort: ReasoningEffort | null): Promise<void> {
-    const conv = this.updateStoredSessionConfig(sessionId, { reasoningEffort: effort });
-    if (!conv.engineSessionId) {
-      return;
-    }
-    const adapter = this.getAdapterForSession(sessionId);
-    return adapter.setReasoningEffort(conv.engineSessionId, effort);
-  }
+  async updateSessionConfig(
+    sessionId: string,
+    config: Partial<UnifiedSessionConfig>,
+  ): Promise<void> {
+    const patch: {
+      mode?: string | null;
+      modelId?: string | null;
+      reasoningEffort?: ReasoningEffort | null;
+      serviceTier?: CodexServiceTier | null;
+    } = {};
 
-  async setServiceTier(sessionId: string, tier: CodexServiceTier | null): Promise<void> {
-    const conv = this.updateStoredSessionConfig(sessionId, { serviceTier: tier });
+    if (Object.prototype.hasOwnProperty.call(config, "mode")) {
+      patch.mode = config.mode ?? null;
+    }
+    if (Object.prototype.hasOwnProperty.call(config, "modelId")) {
+      patch.modelId = config.modelId ?? null;
+    }
+    if (Object.prototype.hasOwnProperty.call(config, "reasoningEffort")) {
+      patch.reasoningEffort = config.reasoningEffort ?? null;
+    }
+    if (Object.prototype.hasOwnProperty.call(config, "serviceTier")) {
+      patch.serviceTier = config.serviceTier ?? null;
+    }
+
+    const conv = this.updateStoredSessionConfig(sessionId, patch);
     if (!conv.engineSessionId) {
       return;
     }
+
     const adapter = this.getAdapterForSession(sessionId);
-    return adapter.setServiceTier(conv.engineSessionId, tier);
+    const engineSessionId = conv.engineSessionId;
+
+    if (Object.prototype.hasOwnProperty.call(config, "mode") && config.mode) {
+      await adapter.setMode(engineSessionId, config.mode);
+    }
+    if (Object.prototype.hasOwnProperty.call(config, "modelId") && config.modelId) {
+      await adapter.setModel(engineSessionId, config.modelId);
+    }
+    if (Object.prototype.hasOwnProperty.call(config, "reasoningEffort")) {
+      await adapter.setReasoningEffort(engineSessionId, config.reasoningEffort ?? null);
+    }
+    if (Object.prototype.hasOwnProperty.call(config, "serviceTier")) {
+      await adapter.setServiceTier(engineSessionId, config.serviceTier ?? null);
+    }
   }
 
   // --- Permissions ---

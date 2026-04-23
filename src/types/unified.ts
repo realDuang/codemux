@@ -580,8 +580,9 @@ export const GatewayRequestType = {
   // Model
   MODEL_LIST: "model.list",
   MODEL_SET: "model.set",
-  REASONING_EFFORT_SET: "reasoningEffort.set",
-  SERVICE_TIER_SET: "serviceTier.set",
+
+  // Session config (unified patch for mode, model, reasoning effort, service tier)
+  SESSION_CONFIG_UPDATE: "session.configUpdate",
 
   // Mode
   MODE_GET: "mode.get",
@@ -743,6 +744,11 @@ export interface ReasoningEffortSetRequest {
 export interface ServiceTierSetRequest {
   sessionId: string;
   serviceTier: CodexServiceTier | null;
+}
+
+export interface SessionConfigUpdateRequest {
+  sessionId: string;
+  config: Partial<UnifiedSessionConfig>;
 }
 
 export interface ModeSetRequest {

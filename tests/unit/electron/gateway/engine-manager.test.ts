@@ -809,13 +809,29 @@ describe("EngineManager", () => {
       expect(conversationStore.updateSessionConfig).toHaveBeenCalledWith("conv1", { mode: "fast" });
       expect(adapterA.setMode).toHaveBeenCalledWith("s1", "fast");
 
-      await engineManager.setReasoningEffort("conv1", "high");
-      expect(conversationStore.updateSessionConfig).toHaveBeenCalledWith("conv1", { reasoningEffort: "high" });
+      await engineManager.updateSessionConfig("conv1", { reasoningEffort: "high", serviceTier: "fast" });
       expect(adapterA.setReasoningEffort).toHaveBeenCalledWith("s1", "high");
-
-      await engineManager.setServiceTier("conv1", "fast");
-      expect(conversationStore.updateSessionConfig).toHaveBeenCalledWith("conv1", { serviceTier: "fast" });
       expect(adapterA.setServiceTier).toHaveBeenCalledWith("s1", "fast");
+    });
+
+    it("updateSessionConfig persists and dispatches all fields in a single call", async () => {
+      await engineManager.updateSessionConfig("conv1", {
+        mode: "plan",
+        modelId: "gpt-5",
+        reasoningEffort: "medium",
+        serviceTier: "flex",
+      });
+
+      expect(conversationStore.updateSessionConfig).toHaveBeenCalledWith("conv1", {
+        mode: "plan",
+        modelId: "gpt-5",
+        reasoningEffort: "medium",
+        serviceTier: "flex",
+      });
+      expect(adapterA.setMode).toHaveBeenCalledWith("s1", "plan");
+      expect(adapterA.setModel).toHaveBeenCalledWith("s1", "gpt-5");
+      expect(adapterA.setReasoningEffort).toHaveBeenCalledWith("s1", "medium");
+      expect(adapterA.setServiceTier).toHaveBeenCalledWith("s1", "flex");
     });
 
     it("persists session config even when no engine session is active", async () => {
@@ -825,13 +841,12 @@ describe("EngineManager", () => {
 
       await expect(engineManager.setModel("conv1", "gpt-4")).resolves.toBeUndefined();
       await expect(engineManager.setMode("conv1", "plan")).resolves.toBeUndefined();
-      await expect(engineManager.setReasoningEffort("conv1", "medium")).resolves.toBeUndefined();
-      await expect(engineManager.setServiceTier("conv1", null)).resolves.toBeUndefined();
+      await expect(
+        engineManager.updateSessionConfig("conv1", { reasoningEffort: "medium", serviceTier: null }),
+      ).resolves.toBeUndefined();
 
       expect(conversationStore.updateSessionConfig).toHaveBeenCalledWith("conv1", { modelId: "gpt-4" });
       expect(conversationStore.updateSessionConfig).toHaveBeenCalledWith("conv1", { mode: "plan" });
-      expect(conversationStore.updateSessionConfig).toHaveBeenCalledWith("conv1", { reasoningEffort: "medium" });
-      expect(conversationStore.updateSessionConfig).toHaveBeenCalledWith("conv1", { serviceTier: null });
       expect(adapterA.setModel).not.toHaveBeenCalled();
       expect(adapterA.setMode).not.toHaveBeenCalled();
       expect(adapterA.setReasoningEffort).not.toHaveBeenCalled();

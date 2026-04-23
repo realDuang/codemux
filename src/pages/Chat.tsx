@@ -46,7 +46,6 @@ import type {
   UnifiedSession,
   UnifiedProject,
   AgentMode,
-  CodexServiceTier,
   EngineType,
   ImageAttachment,
   ReasoningEffort,
@@ -92,8 +91,6 @@ import {
 } from "../stores/config";
 import { scheduledTaskStore, setScheduledTaskStore } from "../stores/scheduled-task";
 import { computeActiveSessions } from "../lib/active-sessions";
-import { ReasoningEffortSelector } from "../components/ReasoningEffortSelector";
-import { CodexFastModeToggle } from "../components/CodexFastModeToggle";
 
 // Binary search helper (consistent with opencode desktop)
 function binarySearch<T>(
@@ -450,6 +447,16 @@ export default function Chat() {
     return Array.from(groups.values());
   });
 
+  const currentSupportedEfforts = createMemo(() => {
+    const modelId = currentSessionModelId();
+    const model = modelId ? currentSessionModels().find((m) => m.modelId === modelId) : undefined;
+    return model?.capabilities?.supportedReasoningEfforts ?? [];
+  });
+
+  const currentFastModeSupported = createMemo(() =>
+    currentEngineInfo()?.capabilities?.fastModeSupported === true,
+  );
+
   const currentDraft = createMemo(() => {
     const sid = sessionStore.current;
     return sid ? getInputDraft(sid) : emptyDraft();
@@ -460,62 +467,37 @@ export default function Chat() {
     notify(message, "error", 5000);
   };
 
-  const handleAgentChange = async (agent: AgentMode) => {
+  const handleSessionConfigChange = async (
+    patch: Partial<import("../types/unified").UnifiedSessionConfig>,
+  ) => {
     const sessionId = sessionStore.current;
     if (!sessionId) return;
-    const previousMode = currentSessionInfo()?.mode;
-    updateSessionInfo(sessionId, { mode: agent.id });
+    const prev = currentSessionInfo();
+    const rollback: Partial<SessionInfo> = {};
+    for (const key of Object.keys(patch) as (keyof typeof patch)[]) {
+      (rollback as any)[key] = prev?.[key];
+    }
+    updateSessionInfo(sessionId, patch);
     try {
-      await gateway.setMode(sessionId, agent.id);
+      await gateway.updateSessionConfig(sessionId, patch);
     } catch (error) {
-      updateSessionInfo(sessionId, { mode: previousMode });
-      logger.error("[Mode] Failed to update session mode:", error);
+      updateSessionInfo(sessionId, rollback);
+      logger.error("[SessionConfig] Failed to update session config:", error);
       showSessionConfigError(error);
     }
   };
 
-  const handleSessionModelChange = async (modelId: string) => {
-    const sessionId = sessionStore.current;
-    if (!sessionId) return;
-    const previousModelId = currentSessionInfo()?.modelId;
-    updateSessionInfo(sessionId, { modelId });
-    try {
-      await gateway.setModel(sessionId, modelId);
-    } catch (error) {
-      updateSessionInfo(sessionId, { modelId: previousModelId });
-      logger.error("[Model] Failed to update session model:", error);
-      showSessionConfigError(error);
-    }
-  };
+  const handleAgentChange = (agent: AgentMode) =>
+    handleSessionConfigChange({ mode: agent.id });
 
-  const handleSessionReasoningEffortChange = async (effort: ReasoningEffort) => {
-    const sessionId = sessionStore.current;
-    if (!sessionId) return;
-    const previousEffort = currentSessionInfo()?.reasoningEffort;
-    updateSessionInfo(sessionId, { reasoningEffort: effort });
-    try {
-      await gateway.setReasoningEffort(sessionId, effort);
-    } catch (error) {
-      updateSessionInfo(sessionId, { reasoningEffort: previousEffort });
-      logger.error("[ReasoningEffort] Failed to update session reasoning effort:", error);
-      showSessionConfigError(error);
-    }
-  };
+  const handleSessionModelChange = (modelId: string) =>
+    handleSessionConfigChange({ modelId });
 
-  const handleSessionFastModeToggle = async (nextActive: boolean) => {
-    const sessionId = sessionStore.current;
-    if (!sessionId) return;
-    const nextTier: CodexServiceTier | undefined = nextActive ? "fast" : undefined;
-    const previousTier = currentSessionInfo()?.serviceTier;
-    updateSessionInfo(sessionId, { serviceTier: nextTier });
-    try {
-      await gateway.setServiceTier(sessionId, nextTier ?? null);
-    } catch (error) {
-      updateSessionInfo(sessionId, { serviceTier: previousTier });
-      logger.error("[ServiceTier] Failed to update session fast mode:", error);
-      showSessionConfigError(error);
-    }
-  };
+  const handleSessionReasoningEffortChange = (effort: ReasoningEffort) =>
+    handleSessionConfigChange({ reasoningEffort: effort });
+
+  const handleSessionFastModeToggle = (nextActive: boolean) =>
+    handleSessionConfigChange({ serviceTier: nextActive ? "fast" : undefined });
 
   const updateCurrentDraft = (patch: { text?: string; images?: ImageAttachment[] }) => {
     const sessionId = sessionStore.current;
@@ -528,25 +510,17 @@ export default function Chat() {
     engineType: EngineType,
     availableModes?: AgentMode[],
   ) => {
-    const defaultMode = availableModes?.[0]?.id;
-    const defaultModelId = getSelectedModelForSession(engineType);
-    const defaultReasoningEffort = getEffectiveReasoningEffortForSession(engineType);
-    const defaultServiceTier = getServiceTierForSession(engineType);
+    const defaultConfig: Partial<import("../types/unified").UnifiedSessionConfig> = {
+      mode: availableModes?.[0]?.id,
+      modelId: getSelectedModelForSession(engineType),
+      reasoningEffort: getEffectiveReasoningEffortForSession(engineType) ?? undefined,
+      serviceTier: getServiceTierForSession(engineType) ?? undefined,
+    };
 
-    updateSessionInfo(sessionId, {
-      mode: defaultMode,
-      modelId: defaultModelId,
-      reasoningEffort: defaultReasoningEffort ?? undefined,
-      serviceTier: defaultServiceTier ?? undefined,
-    });
+    updateSessionInfo(sessionId, defaultConfig);
 
     try {
-      await Promise.all([
-        ...(defaultMode ? [gateway.setMode(sessionId, defaultMode)] : []),
-        ...(defaultModelId ? [gateway.setModel(sessionId, defaultModelId)] : []),
-        gateway.setReasoningEffort(sessionId, defaultReasoningEffort ?? null),
-        gateway.setServiceTier(sessionId, defaultServiceTier ?? null),
-      ]);
+      await gateway.updateSessionConfig(sessionId, defaultConfig);
     } catch (error) {
       logger.error("[SessionDefaults] Failed to persist session defaults:", error);
       showSessionConfigError(error);
@@ -2429,12 +2403,26 @@ export default function Chat() {
                       </div>
                     </Show>
 
-                    <Show when={sessionStore.current}>
-                      <div class="mb-2 flex flex-wrap items-center gap-2 px-1">
-                        <div class="flex items-center gap-2 px-2.5 py-1.5 rounded-xl bg-slate-100/70 dark:bg-slate-800/70 border border-slate-200/70 dark:border-slate-700/70">
-                          <span class="text-[11px] font-medium text-slate-500 dark:text-slate-400">
-                            {t().engine.defaultModel}
-                          </span>
+                    <PromptInput
+                      onSend={handleSendMessage}
+                      onCancel={handleCancelMessage}
+                      isGenerating={sending()}
+                      canEnqueue={canEnqueue()}
+                      queueCount={queueCount()}
+                      currentAgent={currentAgent()}
+                      onAgentChange={handleAgentChange}
+                      availableModes={currentAvailableModes()}
+                      disabled={!sessionStore.current}
+                      imageAttachmentEnabled={currentEngineInfo()?.capabilities?.imageAttachment ?? false}
+                      availableCommands={availableCommands()}
+                      onCommandInvoke={handleCommandInvoke}
+                      text={currentDraft().text}
+                      onTextChange={(text) => updateCurrentDraft({ text })}
+                      images={currentDraft().images}
+                      onImagesChange={(images) => updateCurrentDraft({ images })}
+                      toolbarContent={
+                        <Show when={sessionStore.current}>
+                          {/* Model selector */}
                           <Show
                             when={currentEngineInfo()?.capabilities?.customModelInput}
                             fallback={
@@ -2442,7 +2430,8 @@ export default function Chat() {
                                 value={currentSessionModelId() ?? ""}
                                 onChange={(e) => handleSessionModelChange(e.currentTarget.value)}
                                 disabled={currentEngineInfo()?.capabilities?.modelSwitchable === false || currentSessionModels().length === 0}
-                                class="min-w-[180px] max-w-[280px] px-2 py-1 text-xs rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-700 dark:text-slate-200"
+                                class="max-w-[200px] pl-2 pr-6 py-1 text-[11px] rounded-lg border-0 bg-transparent text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700/50 cursor-pointer focus:ring-1 focus:ring-slate-300 dark:focus:ring-slate-600 appearance-none"
+                                style={{ "background-image": "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E\")", "background-repeat": "no-repeat", "background-position": "right 6px center" }}
                               >
                                 <For each={currentModelProviderGroups()}>
                                   {(group) => (
@@ -2475,46 +2464,49 @@ export default function Chat() {
                               onInput={(e) => handleSessionModelChange(e.currentTarget.value)}
                               disabled={currentEngineInfo()?.capabilities?.modelSwitchable === false}
                               placeholder="Enter model ID..."
-                              class="min-w-[180px] max-w-[280px] px-2 py-1 text-xs rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-700 dark:text-slate-200"
+                              class="max-w-[180px] px-2 py-1 text-[11px] rounded-lg border-0 bg-transparent text-slate-500 dark:text-slate-400 focus:ring-1 focus:ring-slate-300 dark:focus:ring-slate-600"
                             />
                           </Show>
-                        </div>
-
-                        <ReasoningEffortSelector
-                          compact
-                          engineType={currentEngineType() as EngineType}
-                          models={currentSessionModels}
-                          selectedModelId={() => currentSessionModelId() ?? ""}
-                          currentEffort={currentSessionReasoningEffort}
-                          onSelect={handleSessionReasoningEffortChange}
-                        />
-
-                        <CodexFastModeToggle
-                          compact
-                          engineType={currentEngineType() as EngineType}
-                          active={() => currentSessionServiceTier() === "fast"}
-                          onToggle={handleSessionFastModeToggle}
-                        />
-                      </div>
-                    </Show>
-
-                    <PromptInput
-                      onSend={handleSendMessage}
-                      onCancel={handleCancelMessage}
-                      isGenerating={sending()}
-                      canEnqueue={canEnqueue()}
-                      queueCount={queueCount()}
-                      currentAgent={currentAgent()}
-                      onAgentChange={handleAgentChange}
-                      availableModes={currentAvailableModes()}
-                      disabled={!sessionStore.current}
-                      imageAttachmentEnabled={currentEngineInfo()?.capabilities?.imageAttachment ?? false}
-                      availableCommands={availableCommands()}
-                      onCommandInvoke={handleCommandInvoke}
-                      text={currentDraft().text}
-                      onTextChange={(text) => updateCurrentDraft({ text })}
-                      images={currentDraft().images}
-                      onImagesChange={(images) => updateCurrentDraft({ images })}
+                          {/* Reasoning effort dropdown */}
+                          <Show when={currentSupportedEfforts().length > 0}>
+                            <span class="text-slate-300 dark:text-slate-600 select-none">·</span>
+                            <select
+                              value={currentSessionReasoningEffort() ?? ""}
+                              onChange={(e) => handleSessionReasoningEffortChange(e.currentTarget.value as ReasoningEffort)}
+                              class="pl-2 pr-6 py-1 text-[11px] rounded-lg border-0 bg-transparent text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700/50 cursor-pointer focus:ring-1 focus:ring-slate-300 dark:focus:ring-slate-600 appearance-none"
+                              style={{ "background-image": "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E\")", "background-repeat": "no-repeat", "background-position": "right 6px center" }}
+                              aria-label={t().engine.reasoningEffort}
+                            >
+                              <For each={currentSupportedEfforts()}>
+                                {(effort) => (
+                                  <option value={effort}>
+                                    {effort === "low" ? t().prompt.reasoningEffortLow
+                                      : effort === "medium" ? t().prompt.reasoningEffortMedium
+                                      : effort === "high" ? t().prompt.reasoningEffortHigh
+                                      : effort === "max" ? t().prompt.reasoningEffortMax
+                                      : effort}
+                                  </option>
+                                )}
+                              </For>
+                            </select>
+                          </Show>
+                          {/* Fast mode toggle */}
+                          <Show when={currentFastModeSupported()}>
+                            <span class="text-slate-300 dark:text-slate-600 select-none">·</span>
+                            <button
+                              onClick={() => handleSessionFastModeToggle(currentSessionServiceTier() !== "fast")}
+                              class={`px-2 py-1 text-[11px] rounded-lg transition-colors ${
+                                currentSessionServiceTier() === "fast"
+                                  ? "text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/30"
+                                  : "text-slate-400 dark:text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-700/50"
+                              }`}
+                              title={t().engine.fastModeDesc}
+                            >
+                              ⚡ {t().engine.fastMode}
+                            </button>
+                          </Show>
+                        </Show>
+                      }
                     />
                   </Show>
                   <div class="mt-2 text-center">

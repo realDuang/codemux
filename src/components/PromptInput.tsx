@@ -1,4 +1,4 @@
-import { createSignal, createEffect, createMemo, For, Show, onCleanup } from "solid-js";
+import { createSignal, createEffect, createMemo, For, Show, onCleanup, type JSX } from "solid-js";
 import { IconArrowUp } from "./icons";
 import { useI18n } from "../lib/i18n";
 import { notify } from "../lib/notifications";
@@ -140,6 +140,8 @@ interface PromptInputProps {
   /** Controlled image draft for the current session */
   images?: ImageAttachment[];
   onImagesChange?: (images: ImageAttachment[]) => void;
+  /** Toolbar content rendered in the bottom bar (left of send button) */
+  toolbarContent?: JSX.Element;
 }
 
 export function PromptInput(props: PromptInputProps) {
@@ -424,13 +426,13 @@ export function PromptInput(props: PromptInputProps) {
       const spaceIdx = trimmed.indexOf(" ");
       const commandName = spaceIdx === -1 ? trimmed.slice(1) : trimmed.slice(1, spaceIdx);
       const args = spaceIdx === -1 ? "" : trimmed.slice(spaceIdx + 1).trim();
-        if (commandName) {
-          props.onCommandInvoke(commandName, args, agent());
-          setTextValue("");
-          setImagesValue([]);
-          return;
-        }
+      if (commandName) {
+        props.onCommandInvoke(commandName, args, agent());
+        setTextValue("");
+        setImagesValue([]);
+        return;
       }
+    }
     // Normal send
     const imgs = images().length > 0 ? [...images()] : undefined;
     props.onSend(text(), agent(), imgs);
@@ -577,7 +579,7 @@ export function PromptInput(props: PromptInputProps) {
               : modePlaceholder()
           }
           rows={1}
-          class={`w-full px-3 sm:px-4 py-3 pr-16 sm:pr-20 bg-transparent resize-none focus:outline-none dark:text-white max-h-[120px] sm:max-h-[200px] overflow-y-auto text-sm placeholder:text-slate-400 dark:placeholder:text-slate-500 ${props.disabled ? "cursor-not-allowed opacity-50" : ""}`}
+          class={`w-full px-3 sm:px-4 py-3 bg-transparent resize-none focus:outline-none dark:text-white max-h-[120px] sm:max-h-[200px] overflow-y-auto text-sm placeholder:text-slate-400 dark:placeholder:text-slate-500 ${props.disabled ? "cursor-not-allowed opacity-50" : ""}`}
           style={{ "min-height": "52px" }}
         />
         {/* Hidden file input for image selection */}
@@ -593,63 +595,72 @@ export function PromptInput(props: PromptInputProps) {
             e.currentTarget.value = "";
           }}
         />
-        {/* Attachment button + 3-state send button */}
-        {(() => {
-          const isGenerating = props.isGenerating;
-          const hasContent = !!text().trim() || images().length > 0;
-          const showSendButton = !isGenerating || (isGenerating && props.canEnqueue && hasContent);
-          const showStopButton = isGenerating && !(props.canEnqueue && hasContent);
+        {/* Bottom toolbar: session config (left) + action buttons (right) */}
+        <div class="flex items-center justify-between px-2 pb-2 pt-0.5 gap-2">
+          {/* Left: toolbar content (model/effort/fast mode) */}
+          <div class="flex items-center gap-1.5 overflow-x-auto min-w-0">
+            {props.toolbarContent}
+          </div>
+          {/* Right: attachment + send/stop buttons */}
+          {(() => {
+            const isGenerating = props.isGenerating;
+            const hasContent = !!text().trim() || images().length > 0;
+            const showSendButton = !isGenerating || (isGenerating && props.canEnqueue && hasContent);
+            const showStopButton = isGenerating && !(props.canEnqueue && hasContent);
 
-          if (showSendButton) {
-            return (
-              <div class="absolute right-2.5 bottom-2.5 flex items-center gap-1">
-                <Show when={props.imageAttachmentEnabled}>
+            if (showSendButton) {
+              return (
+                <div class="flex items-center gap-1 flex-shrink-0">
+                  <Show when={props.imageAttachmentEnabled}>
+                    <button
+                      onClick={() => fileInputRef?.click()}
+                      disabled={props.disabled || images().length >= MAX_IMAGES}
+                      class="p-2 rounded-xl text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 transition-colors disabled:opacity-30"
+                      aria-label={t().prompt.attachImage}
+                      title={t().prompt.attachImage}
+                    >
+                      <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48" />
+                      </svg>
+                    </button>
+                  </Show>
                   <button
-                    onClick={() => fileInputRef?.click()}
-                    disabled={props.disabled || images().length >= MAX_IMAGES}
-                    class="p-2 rounded-xl text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 transition-colors disabled:opacity-30"
-                    aria-label={t().prompt.attachImage}
-                    title={t().prompt.attachImage}
+                    onClick={handleSend}
+                    disabled={!hasContent || props.disabled}
+                    class={`p-2 rounded-xl text-white transition-all disabled:bg-slate-200 dark:disabled:bg-slate-700 disabled:text-slate-400 dark:disabled:text-slate-500 shadow-md disabled:shadow-none ${activeAccent().bgHover}`}
+                    aria-label={t().prompt.send}
                   >
-                    <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                      <path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48" />
-                    </svg>
+                    <IconArrowUp width={20} height={20} />
                   </button>
-                </Show>
-                <button
-                  onClick={handleSend}
-                  disabled={!hasContent || props.disabled}
-                  class={`p-2 rounded-xl text-white transition-all disabled:bg-slate-200 dark:disabled:bg-slate-700 disabled:text-slate-400 dark:disabled:text-slate-500 shadow-md disabled:shadow-none ${activeAccent().bgHover}`}
-                  aria-label={t().prompt.send}
-                >
-                  <IconArrowUp width={20} height={20} />
-                </button>
-              </div>
-            );
-          }
+                </div>
+              );
+            }
 
-          if (showStopButton) {
-            return (
-              <button
-                onClick={() => props.onCancel?.()}
-                class="absolute right-2.5 bottom-2.5 p-2 rounded-xl bg-red-500 hover:bg-red-600 text-white transition-all shadow-md"
-                aria-label="Stop"
-              >
-                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
-                  <rect x="6" y="6" width="12" height="12" rx="2" />
-                </svg>
-                {/* Queue count badge */}
-                <Show when={(props.queueCount ?? 0) > 0}>
-                  <span class="absolute -top-1.5 -right-1.5 min-w-[18px] h-[18px] flex items-center justify-center px-1 text-[10px] font-bold bg-amber-500 text-white rounded-full shadow-sm">
-                    {props.queueCount}
-                  </span>
-                </Show>
-              </button>
-            );
-          }
+            if (showStopButton) {
+              return (
+                <div class="flex items-center flex-shrink-0 relative">
+                  <button
+                    onClick={() => props.onCancel?.()}
+                    class="p-2 rounded-xl bg-red-500 hover:bg-red-600 text-white transition-all shadow-md"
+                    aria-label="Stop"
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+                      <rect x="6" y="6" width="12" height="12" rx="2" />
+                    </svg>
+                    {/* Queue count badge */}
+                    <Show when={(props.queueCount ?? 0) > 0}>
+                      <span class="absolute -top-1.5 -right-1.5 min-w-[18px] h-[18px] flex items-center justify-center px-1 text-[10px] font-bold bg-amber-500 text-white rounded-full shadow-sm">
+                        {props.queueCount}
+                      </span>
+                    </Show>
+                  </button>
+                </div>
+              );
+            }
 
-          return null;
-        })()}
+            return null;
+          })()}
+        </div>
       </div>
     </div>
   );

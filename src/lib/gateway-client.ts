@@ -27,8 +27,7 @@ import {
   type QuestionReplyRequest,
   type ProjectSetEngineRequest,
   type ModelSetRequest,
-  type ReasoningEffortSetRequest,
-  type ServiceTierSetRequest,
+  type SessionConfigUpdateRequest,
   type ModeSetRequest,
   type ImportableSession,
   type SessionImportPreviewRequest,
@@ -462,12 +461,16 @@ export class GatewayClient {
     return this.request(GatewayRequestType.MODEL_SET, req);
   }
 
-  setReasoningEffort(req: ReasoningEffortSetRequest): Promise<void> {
-    return this.request(GatewayRequestType.REASONING_EFFORT_SET, req);
+  setReasoningEffort(req: { sessionId: string; reasoningEffort: import("../types/unified").ReasoningEffort | null }): Promise<void> {
+    return this.updateSessionConfig({ sessionId: req.sessionId, config: { reasoningEffort: req.reasoningEffort ?? undefined } });
   }
 
-  setServiceTier(req: ServiceTierSetRequest): Promise<void> {
-    return this.request(GatewayRequestType.SERVICE_TIER_SET, req);
+  setServiceTier(req: { sessionId: string; serviceTier: import("../types/unified").CodexServiceTier | null }): Promise<void> {
+    return this.updateSessionConfig({ sessionId: req.sessionId, config: { serviceTier: req.serviceTier ?? undefined } });
+  }
+
+  updateSessionConfig(req: SessionConfigUpdateRequest): Promise<void> {
+    return this.request(GatewayRequestType.SESSION_CONFIG_UPDATE, req);
   }
 
   // --- Mode API ---

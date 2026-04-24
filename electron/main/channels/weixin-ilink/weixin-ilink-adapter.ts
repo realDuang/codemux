@@ -32,6 +32,8 @@ import {
   buildProjectListText,
   buildSessionListText,
   buildQuestionText,
+  buildSessionNotification,
+  groupAndSortSessions,
 } from "../shared/list-builders";
 import { handleSessionOpsCommand, type SessionContext } from "../shared/session-commands";
 import {
@@ -515,6 +517,25 @@ export class WeixinIlinkAdapter extends ChannelAdapter {
       return;
     }
 
+    // 6. No project → use default workspace as fallback
+    if (this.gatewayClient) {
+      const allProjects = await this.gatewayClient.listAllProjects();
+      const defaultProject = allProjects.find(p => p.isDefault);
+      if (defaultProject) {
+        if (this.sessionMapper.getTempSession(chatId)) {
+          await this.cleanupExpiredTempSession(chatId);
+        }
+        const defaultRef = {
+          directory: defaultProject.directory,
+          engineType: defaultProject.engineType,
+          projectId: defaultProject.id,
+        };
+        await this.createTempSessionAndSend(chatId, defaultRef, text, "默认工作区");
+        return;
+      }
+    }
+
+    // 7. Fallback: show project list
     await this.showProjectList(chatId);
   }
 
@@ -527,7 +548,7 @@ export class WeixinIlinkAdapter extends ChannelAdapter {
     // Try shared Class-B session-ops first (cancel/status/mode/model/history)
     if (this.gatewayClient) {
       const handled = await handleSessionOpsCommand(command, {
-        sendText: (text) => this.transport!.sendText(chatId, text),
+        sendText: (text) => this.transport!.sendMarkdown(chatId, text),
         gatewayClient: this.gatewayClient,
         getContext: (): SessionContext | null => {
           const t = this.sessionMapper.getTempSession(chatId);
@@ -545,7 +566,7 @@ export class WeixinIlinkAdapter extends ChannelAdapter {
     switch (command.command) {
       case "help":
       case "start":
-        await this.transport.sendText(chatId, buildHelpText(P2P_CAPABILITIES));
+        await this.transport.sendMarkdown(chatId, buildHelpText(P2P_CAPABILITIES));
         break;
 
       case "project":
@@ -561,9 +582,9 @@ export class WeixinIlinkAdapter extends ChannelAdapter {
         break;
 
       default:
-        await this.transport.sendText(
+        await this.transport.sendMarkdown(
           chatId,
-          `📋 未知命令：${command.command}。使用 /help 查看可用命令。`,
+          `📋 未知命令：\`/${command.command}\`。使用 \`/help\` 查看可用命令。`,
         );
     }
   }
@@ -573,9 +594,9 @@ export class WeixinIlinkAdapter extends ChannelAdapter {
     if (!this.transport) return;
     const p2pState = this.sessionMapper.getP2PChat(chatId);
     if (!p2pState?.lastSelectedProject) {
-      await this.transport.sendText(
+      await this.transport.sendMarkdown(
         chatId,
-        "📋 当前未选择项目。请先使用 /project 选择项目。",
+        "📋 当前未选择项目。请先使用 `/project` 选择项目。",
       );
       return;
     }
@@ -593,9 +614,9 @@ export class WeixinIlinkAdapter extends ChannelAdapter {
     if (!this.transport) return;
     const p2pState = this.sessionMapper.getP2PChat(chatId);
     if (!p2pState?.lastSelectedProject) {
-      await this.transport.sendText(
+      await this.transport.sendMarkdown(
         chatId,
-        "📋 当前未选择项目。请先使用 /project 选择项目。",
+        "📋 当前未选择项目。请先使用 `/project` 选择项目。",
       );
       return;
     }
@@ -610,13 +631,27 @@ export class WeixinIlinkAdapter extends ChannelAdapter {
 
   private async showProjectList(chatId: string): Promise<void> {
     if (!this.gatewayClient || !this.transport) return;
-    const projects = await this.gatewayClient.listAllProjects();
-    await this.transport.sendText(chatId, buildProjectListText(projects));
+
+    const allProjects = await this.gatewayClient.listAllProjects();
+    const projects = allProjects.filter(p => !p.isDefault);
+
     if (projects.length > 0) {
+      await this.transport.sendMarkdown(chatId, buildProjectListText(projects));
       this.sessionMapper.setPendingSelection(chatId, {
         type: "project",
         projects,
       });
+    } else {
+      const defaultProject = allProjects.find(p => p.isDefault);
+      if (defaultProject) {
+        await this.transport.sendMarkdown(chatId, buildProjectListText([]));
+      } else {
+        await this.transport.sendMarkdown(chatId, buildProjectListText([]));
+        this.sessionMapper.setPendingSelection(chatId, {
+          type: "project",
+          projects: [],
+        });
+      }
     }
   }
 
@@ -627,11 +662,12 @@ export class WeixinIlinkAdapter extends ChannelAdapter {
   ): Promise<void> {
     if (!this.gatewayClient || !this.transport) return;
     const sessions = await this.gatewayClient.listAllSessions();
-    const filtered = sessions.filter((s) => s.directory === project.directory);
-    await this.transport.sendText(chatId, buildSessionListText(filtered, projectName));
+    const filtered = sessions.filter((s) => s.projectId === project.projectId);
+    const sorted = groupAndSortSessions(filtered);
+    await this.transport.sendMarkdown(chatId, buildSessionListText(sorted, projectName));
     this.sessionMapper.setPendingSelection(chatId, {
       type: "session",
-      sessions: filtered,
+      sessions: sorted,
       engineType: project.engineType,
       directory: project.directory,
       projectId: project.projectId,
@@ -662,12 +698,12 @@ export class WeixinIlinkAdapter extends ChannelAdapter {
       };
 
       this.sessionMapper.setTempSession(chatId, tempSession);
-      await this.transport.sendText(
+      await this.transport.sendMarkdown(
         chatId,
-        `📋 已创建会话：${projectName}\n发送消息即可开始对话。`,
+        buildSessionNotification(projectName, session.engineType, session.id),
       );
     } catch (err) {
-      await this.transport.sendText(
+      await this.transport.sendMarkdown(
         chatId,
         `📋 创建会话失败：${err instanceof Error ? err.message : String(err)}`,
       );
@@ -689,8 +725,15 @@ export class WeixinIlinkAdapter extends ChannelAdapter {
     text: string,
     pending: WeixinIlinkPendingSelection,
   ): Promise<boolean> {
+    // Empty project list — clear stale pending state before re-fetching
+    if (!pending.projects || pending.projects.length === 0) {
+      this.sessionMapper.clearPendingSelection(chatId);
+      await this.showProjectList(chatId);
+      return true;
+    }
+
     const num = parseInt(text.trim(), 10);
-    if (isNaN(num) || num < 1 || !pending.projects || num > pending.projects.length) {
+    if (isNaN(num) || num < 1 || num > pending.projects.length) {
       return false;
     }
     const project = pending.projects[num - 1];
@@ -733,9 +776,9 @@ export class WeixinIlinkAdapter extends ChannelAdapter {
       processing: false,
     };
     this.sessionMapper.setTempSession(chatId, tempSession);
-    await this.transport.sendText(
+    await this.transport.sendMarkdown(
       chatId,
-      `📋 已切换到会话：${session.title || session.id.slice(0, 8)}\n发送消息即可继续对话。`,
+      buildSessionNotification(pending.projectName || pending.directory || "unknown", session.engineType, session.id),
     );
     return true;
   }
@@ -752,6 +795,7 @@ export class WeixinIlinkAdapter extends ChannelAdapter {
     chatId: string,
     project: { directory: string; engineType?: EngineType; projectId: string },
     text: string,
+    projectName?: string,
   ): Promise<void> {
     if (!this.gatewayClient || !this.transport) return;
 
@@ -770,9 +814,11 @@ export class WeixinIlinkAdapter extends ChannelAdapter {
         processing: false,
       };
       this.sessionMapper.setTempSession(chatId, tempSession);
+      const name = projectName || project.directory.split(/[\\/]/).pop() || project.directory;
+      await this.transport.sendMarkdown(chatId, buildSessionNotification(name, session.engineType, session.id));
       await this.enqueueP2PMessage(chatId, text);
     } catch (err) {
-      await this.transport.sendText(
+      await this.transport.sendMarkdown(
         chatId,
         `📋 创建临时会话失败：${err instanceof Error ? err.message : String(err)}`,
       );
@@ -940,13 +986,13 @@ export class WeixinIlinkAdapter extends ChannelAdapter {
     }
 
     if (!permission.options || permission.options.length === 0) return;
-    const lines: string[] = ["🔐 权限请求", permission.title || permission.id, "─────────────────────────"];
+    const lines: string[] = ["🔐 权限请求", permission.title || permission.id, ""];
     for (let i = 0; i < permission.options.length; i++) {
       lines.push(`  ${i + 1}. ${permission.options[i].label || permission.options[i].id}`);
     }
-    lines.push("─────────────────────────");
+    lines.push("");
     lines.push("回复对应数字以选择。");
-    void this.transport.sendText(targetChatId, lines.join("\n"));
+    void this.transport.sendMarkdown(targetChatId, lines.join("\n"));
   }
 
   private handleQuestionAsked(question: UnifiedQuestion): void {
@@ -957,13 +1003,13 @@ export class WeixinIlinkAdapter extends ChannelAdapter {
       const q = question.questions[0];
       const options = q.options.map((o, i) => ({ id: String(i), label: o.label || o.description }));
       const questionText = buildQuestionText(q.question || "Agent 有一个问题：", options);
-      void this.transport.sendText(targetChatId, questionText);
+      void this.transport.sendMarkdown(targetChatId, questionText);
       this.sessionMapper.setPendingQuestion(targetChatId, {
         questionId: question.id,
         sessionId: question.sessionId,
       });
     } else {
-      void this.transport.sendText(targetChatId, "📋 Agent 提问（无选项）");
+      void this.transport.sendMarkdown(targetChatId, "📋 Agent 提问（无选项）");
     }
   }
 }

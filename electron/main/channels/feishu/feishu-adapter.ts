@@ -27,6 +27,8 @@ import {
   buildProjectListText,
   buildSessionListText,
   buildQuestionText,
+  buildSessionNotification,
+  groupAndSortSessions,
 } from "../shared/list-builders";
 import {
   handleSessionOpsCommand,
@@ -671,13 +673,16 @@ export class FeishuAdapter extends ChannelAdapter {
       const allProjects = await this.gatewayClient.listAllProjects();
       const defaultProject = allProjects.find(p => p.isDefault);
       if (defaultProject) {
+        // Cleanup expired temp session from a previous default-workspace round
+        if (this.sessionMapper.getTempSession(chatId)) {
+          await this.cleanupExpiredTempSession(chatId);
+        }
         const defaultRef = {
           directory: defaultProject.directory,
           engineType: defaultProject.engineType,
           projectId: defaultProject.id,
         };
-        this.sessionMapper.setP2PLastProject(chatId, defaultRef);
-        await this.createTempSessionAndSend(chatId, defaultRef, text);
+        await this.createTempSessionAndSend(chatId, defaultRef, text, "默认工作区");
         return;
       }
     }
@@ -694,7 +699,7 @@ export class FeishuAdapter extends ChannelAdapter {
 
     if (this.gatewayClient) {
       const handled = await handleSessionOpsCommand(command, {
-        sendText: (text) => this.transport!.sendText(chatId, text),
+        sendText: async (text) => { await this.transport!.sendMarkdown(chatId, text); },
         gatewayClient: this.gatewayClient,
         getContext: (): SessionContext | null => {
           const t = this.sessionMapper.getTempSession(chatId);
@@ -712,7 +717,7 @@ export class FeishuAdapter extends ChannelAdapter {
     switch (command.command) {
       case "help":
       case "start":
-        await this.transport.sendText(chatId, buildHelpText(P2P_CAPABILITIES));
+        await this.transport.sendMarkdown(chatId, buildHelpText(P2P_CAPABILITIES));
         break;
 
       case "project":
@@ -728,9 +733,9 @@ export class FeishuAdapter extends ChannelAdapter {
         break;
 
       default:
-        await this.transport.sendText(
+        await this.transport.sendMarkdown(
           chatId,
-          `📋 未知命令：${command.command}。使用 /help 查看可用命令。`,
+          `📋 未知命令：\`/${command.command}\`。使用 \`/help\` 查看可用命令。`,
         );
     }
   }
@@ -741,15 +746,15 @@ export class FeishuAdapter extends ChannelAdapter {
     if (!this.transport || !this.gatewayClient) return;
     const p2pState = this.sessionMapper.getP2PChat(chatId);
     if (!p2pState?.lastSelectedProject) {
-      await this.transport.sendText(
+      await this.transport.sendMarkdown(
         chatId,
-        "📋 当前未选择项目。请先使用 /project 选择项目。",
+        "📋 当前未选择项目。请先使用 `/project` 选择项目。",
       );
       return;
     }
     const userOpenId = p2pState.openId;
     if (!userOpenId) {
-      await this.transport.sendText(
+      await this.transport.sendMarkdown(
         chatId,
         "📋 无法识别用户身份，无法创建群聊会话。",
       );
@@ -768,9 +773,9 @@ export class FeishuAdapter extends ChannelAdapter {
     if (!this.transport) return;
     const p2pState = this.sessionMapper.getP2PChat(chatId);
     if (!p2pState?.lastSelectedProject) {
-      await this.transport.sendText(
+      await this.transport.sendMarkdown(
         chatId,
-        "📋 当前未选择项目。请先使用 /project 选择项目。",
+        "📋 当前未选择项目。请先使用 `/project` 选择项目。",
       );
       return;
     }
@@ -793,7 +798,7 @@ export class FeishuAdapter extends ChannelAdapter {
 
     if (projects.length > 0) {
       const text = buildProjectListText(projects);
-      await this.transport!.sendText(chatId, text);
+      await this.transport!.sendMarkdown(chatId, text);
       // Flatten projects in display order (grouped by engine) for number mapping
       const flatProjects = this.flattenProjectsByEngine(projects);
       this.sessionMapper.setPendingSelection(chatId, {
@@ -801,19 +806,18 @@ export class FeishuAdapter extends ChannelAdapter {
         projects: flatProjects,
       });
     } else {
-      // No real projects — auto-use default workspace without showing empty list
+      // No real projects — show informational message.
+      // Do NOT set lastSelectedProject; let step 6 handle temp session creation
+      // when the user sends a natural-language message.
       const defaultProject = allProjects.find(p => p.isDefault);
       if (defaultProject) {
-        const defaultRef = {
-          directory: defaultProject.directory,
-          engineType: defaultProject.engineType,
-          projectId: defaultProject.id,
-        };
-        this.sessionMapper.setP2PLastProject(chatId, defaultRef);
+        await this.transport!.sendMarkdown(chatId, buildProjectListText([]));
       } else {
-        // No projects at all — show empty project list message
-        const text = buildProjectListText(projects);
-        await this.transport!.sendText(chatId, text);
+        await this.transport!.sendMarkdown(chatId, buildProjectListText([]));
+        this.sessionMapper.setPendingSelection(chatId, {
+          type: "project",
+          projects: [],
+        });
       }
     }
   }
@@ -826,13 +830,14 @@ export class FeishuAdapter extends ChannelAdapter {
   ): Promise<void> {
     if (!this.gatewayClient) return;
     const sessions = await this.gatewayClient.listAllSessions();
-    const filtered = sessions.filter((s) => s.directory === project.directory);
-    const sessionText = buildSessionListText(filtered, projectName);
-    await this.transport!.sendText(chatId, sessionText);
+    const filtered = sessions.filter((s) => s.projectId === project.projectId);
+    const sorted = groupAndSortSessions(filtered);
+    const sessionText = buildSessionListText(sorted, projectName);
+    await this.transport!.sendMarkdown(chatId, sessionText);
 
     this.sessionMapper.setPendingSelection(chatId, {
       type: "session",
-      sessions: filtered,
+      sessions: sorted,
       engineType: project.engineType,
       directory: project.directory,
       projectId: project.projectId,
@@ -863,7 +868,7 @@ export class FeishuAdapter extends ChannelAdapter {
         chatId,
       );
     } catch (err) {
-      await this.transport!.sendText(
+      await this.transport!.sendMarkdown(
         chatId,
         `📋 创建会话失败：${err instanceof Error ? err.message : String(err)}`,
       );
@@ -909,6 +914,7 @@ export class FeishuAdapter extends ChannelAdapter {
     chatId: string,
     project: { directory: string; engineType?: EngineType; projectId: string },
     text: string,
+    projectName?: string,
   ): Promise<void> {
     if (!this.gatewayClient) return;
 
@@ -929,9 +935,11 @@ export class FeishuAdapter extends ChannelAdapter {
       };
 
       this.sessionMapper.setTempSession(chatId, tempSession);
+      const name = projectName || project.directory.split(/[\\/]/).pop() || project.directory;
+      await this.transport!.sendMarkdown(chatId, buildSessionNotification(name, session.engineType, session.id));
       await this.enqueueP2PMessage(chatId, text);
     } catch (err) {
-      await this.transport!.sendText(
+      await this.transport!.sendMarkdown(
         chatId,
         `📋 创建临时会话失败：${err instanceof Error ? err.message : String(err)}`,
       );
@@ -1067,8 +1075,15 @@ export class FeishuAdapter extends ChannelAdapter {
     text: string,
     pending: import("./feishu-types").PendingSelection,
   ): Promise<boolean> {
+    // Empty project list — clear stale pending state before re-fetching
+    if (!pending.projects || pending.projects.length === 0) {
+      this.sessionMapper.clearPendingSelection(chatId);
+      await this.showProjectList(chatId);
+      return true;
+    }
+
     const num = parseInt(text.trim(), 10);
-    if (isNaN(num) || num < 1 || !pending.projects || num > pending.projects.length) {
+    if (isNaN(num) || num < 1 || num > pending.projects.length) {
       return false; // Not a valid number — fall through to show project list again
     }
 
@@ -1112,7 +1127,7 @@ export class FeishuAdapter extends ChannelAdapter {
 
     // Check if this session already has a bound group chat — if so, direct user there
     if (this.sessionMapper.hasGroupForConversation(session.id)) {
-      await this.transport!.sendText(
+      await this.transport!.sendMarkdown(
         chatId,
         `📋 此会话已有对应的群聊，请直接在群聊中发送消息。`,
       );
@@ -1139,7 +1154,7 @@ export class FeishuAdapter extends ChannelAdapter {
   private async handleGroupMessage(groupChatId: string, text: string): Promise<void> {
     const binding = this.sessionMapper.getGroupBinding(groupChatId);
     if (!binding) {
-      await this.transport!.sendText(groupChatId, "📋 此群聊未绑定到 CodeMux 会话。");
+      await this.transport!.sendMarkdown(groupChatId, "📋 此群聊未绑定到 CodeMux 会话。");
       return;
     }
 
@@ -1173,7 +1188,7 @@ export class FeishuAdapter extends ChannelAdapter {
     if (!command || !this.gatewayClient || !this.transport) return;
 
     const handled = await handleSessionOpsCommand(command, {
-      sendText: (text) => this.transport!.sendText(groupChatId, text),
+      sendText: async (text) => { await this.transport!.sendMarkdown(groupChatId, text); },
       gatewayClient: this.gatewayClient,
       getContext: (): SessionContext => ({
         conversationId: binding.conversationId,
@@ -1186,16 +1201,16 @@ export class FeishuAdapter extends ChannelAdapter {
     switch (command.command) {
       case "help":
       case "start":
-        await this.transport.sendText(
+        await this.transport.sendMarkdown(
           groupChatId,
           buildHelpText(GROUP_CAPABILITIES),
         );
         break;
 
       default:
-        await this.transport.sendText(
+        await this.transport.sendMarkdown(
           groupChatId,
-          `📋 未知命令：${command.command}。使用 /help 查看可用命令。`,
+          `📋 未知命令：\`/${command.command}\`。使用 \`/help\` 查看可用命令。`,
         );
     }
   }
@@ -1218,7 +1233,7 @@ export class FeishuAdapter extends ChannelAdapter {
     if (this.sessionMapper.hasGroupForConversation(conversationId)) {
       const existingChatId = this.sessionMapper.findGroupChatIdByConversationId(conversationId);
       if (p2pChatId) {
-        await this.transport.sendText(
+        await this.transport.sendMarkdown(
           p2pChatId,
           `Session already has a group chat. Check your Feishu groups.`,
         );
@@ -1259,7 +1274,7 @@ export class FeishuAdapter extends ChannelAdapter {
       if (!newChatId) {
         this.channelLog.error("Failed to create group chat: no chat_id returned");
         if (p2pChatId) {
-          await this.transport.sendText(p2pChatId, "Failed to create group chat. Please try again.");
+          await this.transport.sendMarkdown(p2pChatId, "Failed to create group chat. Please try again.");
         }
         return;
       }
@@ -1284,7 +1299,7 @@ export class FeishuAdapter extends ChannelAdapter {
 
       // Notify user in P2P
       if (p2pChatId) {
-        await this.transport.sendText(
+        await this.transport.sendMarkdown(
           p2pChatId,
           `Group created for session. Check your Feishu groups for "${groupName}".`,
         );
@@ -1292,7 +1307,7 @@ export class FeishuAdapter extends ChannelAdapter {
     } catch (err) {
       this.channelLog.error("Failed to create group for session:", err);
       if (p2pChatId) {
-        await this.transport.sendText(
+        await this.transport.sendMarkdown(
           p2pChatId,
           `Failed to create group: ${err instanceof Error ? err.message : String(err)}`,
         );
@@ -1630,7 +1645,7 @@ export class FeishuAdapter extends ChannelAdapter {
         q.question || "Agent 有一个问题：",
         options,
       );
-      this.transport!.sendText(targetChatId, text);
+      this.transport!.sendMarkdown(targetChatId, text);
 
       // Store pending question so the next reply is routed as an answer
       this.sessionMapper.setPendingQuestion(targetChatId, {
@@ -1638,7 +1653,7 @@ export class FeishuAdapter extends ChannelAdapter {
         sessionId: question.sessionId,
       });
     } else {
-      this.transport!.sendText(targetChatId, "📋 Agent 提问（无选项）");
+      this.transport!.sendMarkdown(targetChatId, "📋 Agent 提问（无选项）");
     }
   }
 

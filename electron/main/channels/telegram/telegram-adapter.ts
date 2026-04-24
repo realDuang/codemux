@@ -38,6 +38,8 @@ import {
   buildProjectListText,
   buildSessionListText,
   buildQuestionText,
+  buildSessionNotification,
+  groupAndSortSessions,
 } from "../shared/list-builders";
 import { handleSessionOpsCommand, type SessionContext } from "../shared/session-commands";
 import {
@@ -637,7 +639,25 @@ export class TelegramAdapter extends ChannelAdapter {
       return;
     }
 
-    // 6. No project → show project list
+    // 6. No project → use default workspace as fallback
+    if (this.gatewayClient) {
+      const allProjects = await this.gatewayClient.listAllProjects();
+      const defaultProject = allProjects.find(p => p.isDefault);
+      if (defaultProject) {
+        if (this.sessionMapper.getTempSession(chatId)) {
+          await this.cleanupExpiredTempSession(chatId);
+        }
+        const defaultRef = {
+          directory: defaultProject.directory,
+          engineType: defaultProject.engineType,
+          projectId: defaultProject.id,
+        };
+        await this.createTempSessionAndSend(chatId, defaultRef, text, "默认工作区");
+        return;
+      }
+    }
+
+    // 7. Fallback: show project list
     await this.showProjectList(chatId);
   }
 
@@ -649,7 +669,7 @@ export class TelegramAdapter extends ChannelAdapter {
 
     if (this.gatewayClient) {
       const handled = await handleSessionOpsCommand(command, {
-        sendText: (text) => this.transport!.sendText(chatId, text),
+        sendText: (text) => this.transport!.sendMarkdown(chatId, text),
         gatewayClient: this.gatewayClient,
         getContext: (): SessionContext | null => {
           const t = this.sessionMapper.getTempSession(chatId);
@@ -667,7 +687,7 @@ export class TelegramAdapter extends ChannelAdapter {
     switch (command.command) {
       case "help":
       case "start":
-        await this.transport.sendText(chatId, buildHelpText(P2P_CAPABILITIES));
+        await this.transport.sendMarkdown(chatId, buildHelpText(P2P_CAPABILITIES));
         break;
 
       case "project":
@@ -683,9 +703,9 @@ export class TelegramAdapter extends ChannelAdapter {
         break;
 
       default:
-        await this.transport.sendText(
+        await this.transport.sendMarkdown(
           chatId,
-          `📋 未知命令：${command.command}。使用 /help 查看可用命令。`,
+          `📋 未知命令：\`/${command.command}\`。使用 \`/help\` 查看可用命令。`,
         );
     }
   }
@@ -695,9 +715,9 @@ export class TelegramAdapter extends ChannelAdapter {
     if (!this.transport) return;
     const p2pState = this.sessionMapper.getP2PChat(chatId);
     if (!p2pState?.lastSelectedProject) {
-      await this.transport.sendText(
+      await this.transport.sendMarkdown(
         chatId,
-        "📋 当前未选择项目。请先使用 /project 选择项目。",
+        "📋 当前未选择项目。请先使用 `/project` 选择项目。",
       );
       return;
     }
@@ -714,9 +734,9 @@ export class TelegramAdapter extends ChannelAdapter {
     if (!this.transport) return;
     const p2pState = this.sessionMapper.getP2PChat(chatId);
     if (!p2pState?.lastSelectedProject) {
-      await this.transport.sendText(
+      await this.transport.sendMarkdown(
         chatId,
-        "📋 当前未选择项目。请先使用 /project 选择项目。",
+        "📋 当前未选择项目。请先使用 `/project` 选择项目。",
       );
       return;
     }
@@ -733,16 +753,27 @@ export class TelegramAdapter extends ChannelAdapter {
   private async showProjectList(chatId: string): Promise<void> {
     if (!this.gatewayClient) return;
 
-    const projects = await this.gatewayClient.listAllProjects();
-    const text = buildProjectListText(projects);
-    await this.transport!.sendText(chatId, text);
+    const allProjects = await this.gatewayClient.listAllProjects();
+    const projects = allProjects.filter(p => !p.isDefault);
 
     if (projects.length > 0) {
+      await this.transport!.sendMarkdown(chatId, buildProjectListText(projects));
       const flatProjects = this.flattenProjectsByEngine(projects);
       this.sessionMapper.setPendingSelection(chatId, {
         type: "project",
         projects: flatProjects,
       });
+    } else {
+      const defaultProject = allProjects.find(p => p.isDefault);
+      if (defaultProject) {
+        await this.transport!.sendMarkdown(chatId, buildProjectListText([]));
+      } else {
+        await this.transport!.sendMarkdown(chatId, buildProjectListText([]));
+        this.sessionMapper.setPendingSelection(chatId, {
+          type: "project",
+          projects: [],
+        });
+      }
     }
   }
 
@@ -754,13 +785,14 @@ export class TelegramAdapter extends ChannelAdapter {
   ): Promise<void> {
     if (!this.gatewayClient) return;
     const sessions = await this.gatewayClient.listAllSessions();
-    const filtered = sessions.filter((s) => s.directory === project.directory);
-    const sessionText = buildSessionListText(filtered, projectName);
-    await this.transport!.sendText(chatId, sessionText);
+    const filtered = sessions.filter((s) => s.projectId === project.projectId);
+    const sorted = groupAndSortSessions(filtered);
+    const sessionText = buildSessionListText(sorted, projectName);
+    await this.transport!.sendMarkdown(chatId, sessionText);
 
     this.sessionMapper.setPendingSelection(chatId, {
       type: "session",
-      sessions: filtered,
+      sessions: sorted,
       engineType: project.engineType,
       directory: project.directory,
       projectId: project.projectId,
@@ -793,12 +825,12 @@ export class TelegramAdapter extends ChannelAdapter {
 
       this.sessionMapper.setTempSession(chatId, tempSession);
 
-      await this.transport!.sendText(
+      await this.transport!.sendMarkdown(
         chatId,
-        `📋 已创建会话：${projectName}\n发送消息即可开始对话。`,
+        buildSessionNotification(projectName, session.engineType, session.id),
       );
     } catch (err) {
-      await this.transport!.sendText(
+      await this.transport!.sendMarkdown(
         chatId,
         `📋 创建会话失败：${err instanceof Error ? err.message : String(err)}`,
       );
@@ -819,6 +851,7 @@ export class TelegramAdapter extends ChannelAdapter {
     chatId: string,
     project: { directory: string; engineType?: EngineType; projectId: string },
     text: string,
+    projectName?: string,
   ): Promise<void> {
     if (!this.gatewayClient) return;
 
@@ -839,9 +872,13 @@ export class TelegramAdapter extends ChannelAdapter {
       };
 
       this.sessionMapper.setTempSession(chatId, tempSession);
+
+      const name = projectName || project.directory.split(/[\\/]/).pop() || project.directory;
+      await this.transport!.sendMarkdown(chatId, buildSessionNotification(name, session.engineType, session.id));
+
       await this.enqueueP2PMessage(chatId, text);
     } catch (err) {
-      await this.transport!.sendText(
+      await this.transport!.sendMarkdown(
         chatId,
         `📋 创建临时会话失败：${err instanceof Error ? err.message : String(err)}`,
       );
@@ -967,8 +1004,15 @@ export class TelegramAdapter extends ChannelAdapter {
     text: string,
     pending: TelegramPendingSelection,
   ): Promise<boolean> {
+    // Empty project list — clear stale pending state before re-fetching
+    if (!pending.projects || pending.projects.length === 0) {
+      this.sessionMapper.clearPendingSelection(chatId);
+      await this.showProjectList(chatId);
+      return true;
+    }
+
     const num = parseInt(text.trim(), 10);
-    if (isNaN(num) || num < 1 || !pending.projects || num > pending.projects.length) {
+    if (isNaN(num) || num < 1 || num > pending.projects.length) {
       return false;
     }
 
@@ -1017,9 +1061,10 @@ export class TelegramAdapter extends ChannelAdapter {
     };
 
     this.sessionMapper.setTempSession(chatId, tempSession);
-    await this.transport!.sendText(
+    const projectName = pending.projectName || pending.directory?.split(/[\\/]/).pop() || "";
+    await this.transport!.sendMarkdown(
       chatId,
-      `📋 已切换到会话：${session.title || session.id.slice(0, 8)}\n发送消息即可继续对话。`,
+      buildSessionNotification(projectName, session.engineType, session.id),
     );
     return true;
   }
@@ -1035,7 +1080,7 @@ export class TelegramAdapter extends ChannelAdapter {
       // No binding yet — show help on how to bind
       const command = parseCommand(text);
       if (command?.command === "help") {
-        await this.transport!.sendText(
+        await this.transport!.sendMarkdown(
           groupChatId,
           buildHelpText(GROUP_CAPABILITIES, { requiresMention: true }),
         );
@@ -1043,9 +1088,9 @@ export class TelegramAdapter extends ChannelAdapter {
         // /bind — show project list for group binding
         await this.showGroupProjectList(groupChatId);
       } else {
-        await this.transport!.sendText(
+        await this.transport!.sendMarkdown(
           groupChatId,
-          "📋 此群聊未绑定到 CodeMux 会话。使用 /bind 绑定项目。",
+          "📋 此群聊未绑定到 CodeMux 会话。使用 `/bind` 绑定项目。",
         );
       }
       return;
@@ -1079,7 +1124,7 @@ export class TelegramAdapter extends ChannelAdapter {
 
     const projects = await this.gatewayClient.listAllProjects();
     const text = buildProjectListText(projects);
-    await this.transport!.sendText(groupChatId, text);
+    await this.transport!.sendMarkdown(groupChatId, text);
 
     if (projects.length > 0) {
       const flatProjects = this.flattenProjectsByEngine(projects);
@@ -1098,7 +1143,7 @@ export class TelegramAdapter extends ChannelAdapter {
     if (!command || !this.gatewayClient || !this.transport) return;
 
     const handled = await handleSessionOpsCommand(command, {
-      sendText: (text) => this.transport!.sendText(groupChatId, text),
+      sendText: (text) => this.transport!.sendMarkdown(groupChatId, text),
       gatewayClient: this.gatewayClient,
       getContext: (): SessionContext => ({
         conversationId: binding.conversationId,
@@ -1111,16 +1156,16 @@ export class TelegramAdapter extends ChannelAdapter {
     switch (command.command) {
       case "help":
       case "start":
-        await this.transport.sendText(
+        await this.transport.sendMarkdown(
           groupChatId,
           buildHelpText(GROUP_CAPABILITIES, { requiresMention: true }),
         );
         break;
 
       default:
-        await this.transport.sendText(
+        await this.transport.sendMarkdown(
           groupChatId,
-          `📋 未知命令：${command.command}。使用 /help 查看可用命令。`,
+          `📋 未知命令：\`/${command.command}\`。使用 \`/help\` 查看可用命令。`,
         );
     }
   }
@@ -1340,7 +1385,7 @@ export class TelegramAdapter extends ChannelAdapter {
         sessionId: question.sessionId,
       });
     } else {
-      void this.transport.sendText(targetChatId, "📋 Agent 提问（无选项）");
+      void this.transport.sendMarkdown(targetChatId, "📋 Agent 提问（无选项）");
     }
   }
 

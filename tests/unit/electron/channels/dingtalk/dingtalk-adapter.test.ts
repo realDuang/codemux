@@ -77,7 +77,7 @@ describe("DingTalkAdapter", () => {
     it("nulls transport / streamingController / gatewayClient and emits disconnected", async () => {
       const a = new DingTalkAdapter() as any;
       a.status = "running";
-      a.transport = { sendText: vi.fn() };
+      a.transport = { sendText: vi.fn(), sendMarkdown: vi.fn(async () => "") };
       a.gatewayClient = { disconnect: vi.fn() };
       a.streamingController = {};
       a.tokenManager = {};
@@ -154,7 +154,7 @@ describe("DingTalkAdapter", () => {
   describe("handleDingTalkMessage", () => {
     function makeBase() {
       const a = new DingTalkAdapter() as any;
-      a.transport = { sendText: vi.fn(async () => "") };
+      a.transport = { sendText: vi.fn(async () => ""), sendMarkdown: vi.fn(async () => "") };
       a.gatewayClient = {};
       a.handleP2PMessage = vi.fn(async () => undefined);
       a.handleGroupMessage = vi.fn(async () => undefined);
@@ -244,7 +244,7 @@ describe("DingTalkAdapter", () => {
   describe("handleP2PMessage dispatch", () => {
     function makeP2P() {
       const a = new DingTalkAdapter() as any;
-      a.transport = { sendText: vi.fn(async () => "") };
+      a.transport = { sendText: vi.fn(async () => ""), sendMarkdown: vi.fn(async () => "") };
       a.gatewayClient = {
         replyQuestion: vi.fn(async () => undefined),
         listAllProjects: vi.fn(async () => []),
@@ -313,7 +313,7 @@ describe("DingTalkAdapter", () => {
   describe("handleP2PCommand routing", () => {
     function makeCmd() {
       const a = new DingTalkAdapter() as any;
-      a.transport = { sendText: vi.fn(async () => "") };
+      a.transport = { sendText: vi.fn(async () => ""), sendMarkdown: vi.fn(async () => "") };
       a.gatewayClient = null;
       return a;
     }
@@ -329,7 +329,7 @@ describe("DingTalkAdapter", () => {
     it("/help sends help text", async () => {
       const a = makeCmd();
       await a.handleP2PCommand("c1", { command: "help", args: "" });
-      expect(a.transport.sendText).toHaveBeenCalled();
+      expect(a.transport.sendMarkdown).toHaveBeenCalled();
     });
 
     it("/project calls showProjectList", async () => {
@@ -352,34 +352,34 @@ describe("DingTalkAdapter", () => {
     it("falls through to unknown-command warning", async () => {
       const a = makeCmd();
       await a.handleP2PCommand("c1", { command: "foo", args: "" });
-      expect(a.transport.sendText.mock.calls.at(-1)[1]).toContain("未知命令");
+      expect(a.transport.sendMarkdown.mock.calls.at(-1)[1]).toContain("未知命令");
     });
   });
 
   describe("handleP2PNewCommand / handleP2PSwitchCommand guards", () => {
     it("handleP2PNewCommand prompts when no project is selected", async () => {
       const a = new DingTalkAdapter() as any;
-      a.transport = { sendText: vi.fn(async () => "") };
+      a.transport = { sendText: vi.fn(async () => ""), sendMarkdown: vi.fn(async () => "") };
       a.gatewayClient = {};
       await a.handleP2PNewCommand("c1");
-      expect(a.transport.sendText.mock.calls[0][1]).toContain("/project");
+      expect(a.transport.sendMarkdown.mock.calls[0][1]).toContain("/project");
     });
 
     it("handleP2PNewCommand prompts when ownerUserId missing", async () => {
       const a = new DingTalkAdapter() as any;
-      a.transport = { sendText: vi.fn(async () => "") };
+      a.transport = { sendText: vi.fn(async () => ""), sendMarkdown: vi.fn(async () => "") };
       a.gatewayClient = {};
       a.sessionMapper.getOrCreateP2PChat("c1", "");
       a.sessionMapper.setP2PLastProject("c1", {
         directory: "/x", engineType: "claude", projectId: "p",
       });
       await a.handleP2PNewCommand("c1");
-      expect(a.transport.sendText.mock.calls[0][1]).toContain("用户身份");
+      expect(a.transport.sendMarkdown.mock.calls[0][1]).toContain("用户身份");
     });
 
     it("handleP2PNewCommand calls createNewSessionForProject when project + user known", async () => {
       const a = new DingTalkAdapter() as any;
-      a.transport = { sendText: vi.fn(async () => "") };
+      a.transport = { sendText: vi.fn(async () => ""), sendMarkdown: vi.fn(async () => "") };
       a.gatewayClient = {};
       a.sessionMapper.getOrCreateP2PChat("c1", "u1");
       a.sessionMapper.setP2PLastProject("c1", {
@@ -392,14 +392,14 @@ describe("DingTalkAdapter", () => {
 
     it("handleP2PSwitchCommand prompts when no project selected", async () => {
       const a = new DingTalkAdapter() as any;
-      a.transport = { sendText: vi.fn(async () => "") };
+      a.transport = { sendText: vi.fn(async () => ""), sendMarkdown: vi.fn(async () => "") };
       await a.handleP2PSwitchCommand("c1");
-      expect(a.transport.sendText.mock.calls[0][1]).toContain("/project");
+      expect(a.transport.sendMarkdown.mock.calls[0][1]).toContain("/project");
     });
 
     it("handleP2PSwitchCommand calls showSessionListForProject", async () => {
       const a = new DingTalkAdapter() as any;
-      a.transport = { sendText: vi.fn(async () => "") };
+      a.transport = { sendText: vi.fn(async () => ""), sendMarkdown: vi.fn(async () => "") };
       a.sessionMapper.getOrCreateP2PChat("c1", "u1");
       a.sessionMapper.setP2PLastProject("c1", {
         directory: "/foo/x", engineType: "claude", projectId: "p",
@@ -413,32 +413,32 @@ describe("DingTalkAdapter", () => {
   describe("showProjectList / showSessionListForProject", () => {
     it("showProjectList sends list and stores pending", async () => {
       const a = new DingTalkAdapter() as any;
-      a.transport = { sendText: vi.fn(async () => "") };
+      a.transport = { sendText: vi.fn(async () => ""), sendMarkdown: vi.fn(async () => "") };
       a.gatewayClient = {
         listAllProjects: vi.fn(async () => [
           { id: "p1", name: "alpha", directory: "/a", engineType: "claude" },
         ]),
       };
       await a.showProjectList("c1");
-      expect(a.transport.sendText).toHaveBeenCalled();
+      expect(a.transport.sendMarkdown).toHaveBeenCalled();
       expect(a.sessionMapper.getPendingSelection("c1")?.type).toBe("project");
     });
 
     it("showProjectList does not store pending when list is empty", async () => {
       const a = new DingTalkAdapter() as any;
-      a.transport = { sendText: vi.fn(async () => "") };
+      a.transport = { sendText: vi.fn(async () => ""), sendMarkdown: vi.fn(async () => "") };
       a.gatewayClient = { listAllProjects: vi.fn(async () => []) };
       await a.showProjectList("c1");
-      expect(a.sessionMapper.getPendingSelection("c1")).toBeUndefined();
+      expect(a.sessionMapper.getPendingSelection("c1")).toEqual({ type: "project", projects: [] });
     });
 
     it("showSessionListForProject filters by directory and stores pending", async () => {
       const a = new DingTalkAdapter() as any;
-      a.transport = { sendText: vi.fn(async () => "") };
+      a.transport = { sendText: vi.fn(async () => ""), sendMarkdown: vi.fn(async () => "") };
       a.gatewayClient = {
         listAllSessions: vi.fn(async () => [
-          { id: "s1", directory: "/a", engineType: "claude", title: "x" },
-          { id: "s2", directory: "/b", engineType: "claude", title: "y" },
+          { id: "s1", directory: "/a", engineType: "claude", title: "x", projectId: "p" },
+          { id: "s2", directory: "/b", engineType: "claude", title: "y", projectId: "other" },
         ]),
       };
       await a.showSessionListForProject(
@@ -455,7 +455,7 @@ describe("DingTalkAdapter", () => {
   describe("createTempSessionAndSend / enqueueP2PMessage / processP2PQueue / cleanupExpiredTempSession", () => {
     it("createTempSessionAndSend stores temp + enqueues message", async () => {
       const a = new DingTalkAdapter() as any;
-      a.transport = { sendText: vi.fn(async () => "") };
+      a.transport = { sendText: vi.fn(async () => ""), sendMarkdown: vi.fn(async () => "") };
       a.gatewayClient = {
         createSession: vi.fn(async () => ({ id: "sess-2", engineType: "claude" })),
       };
@@ -472,7 +472,7 @@ describe("DingTalkAdapter", () => {
 
     it("createTempSessionAndSend reports error on createSession failure", async () => {
       const a = new DingTalkAdapter() as any;
-      a.transport = { sendText: vi.fn(async () => "") };
+      a.transport = { sendText: vi.fn(async () => ""), sendMarkdown: vi.fn(async () => "") };
       a.gatewayClient = {
         createSession: vi.fn(async () => { throw new Error("nope"); }),
       };
@@ -481,7 +481,7 @@ describe("DingTalkAdapter", () => {
         { directory: "/d", projectId: "p" },
         "hi",
       );
-      expect(a.transport.sendText.mock.calls.at(-1)[1]).toContain("创建临时会话失败");
+      expect(a.transport.sendMarkdown.mock.calls.at(-1)[1]).toContain("创建临时会话失败");
     });
 
     it("enqueueP2PMessage no-ops without temp session", async () => {
@@ -550,7 +550,7 @@ describe("DingTalkAdapter", () => {
   describe("handleProjectSelection / handleSessionSelection", () => {
     it("handleProjectSelection returns false on non-numeric input", async () => {
       const a = new DingTalkAdapter() as any;
-      a.transport = { sendText: vi.fn(async () => "") };
+      a.transport = { sendText: vi.fn(async () => ""), sendMarkdown: vi.fn(async () => "") };
       a.gatewayClient = { listAllSessions: vi.fn(async () => []) };
       const ok = await a.handleProjectSelection("c1", "abc", {
         type: "project",
@@ -561,7 +561,7 @@ describe("DingTalkAdapter", () => {
 
     it("handleProjectSelection returns false on out-of-range index", async () => {
       const a = new DingTalkAdapter() as any;
-      a.transport = { sendText: vi.fn(async () => "") };
+      a.transport = { sendText: vi.fn(async () => ""), sendMarkdown: vi.fn(async () => "") };
       a.gatewayClient = { listAllSessions: vi.fn(async () => []) };
       const ok = await a.handleProjectSelection("c1", "5", {
         type: "project",
@@ -572,7 +572,7 @@ describe("DingTalkAdapter", () => {
 
     it("handleProjectSelection on valid index sets last project + shows sessions", async () => {
       const a = new DingTalkAdapter() as any;
-      a.transport = { sendText: vi.fn(async () => "") };
+      a.transport = { sendText: vi.fn(async () => ""), sendMarkdown: vi.fn(async () => "") };
       a.gatewayClient = { listAllSessions: vi.fn(async () => []) };
       a.sessionMapper.getOrCreateP2PChat("c1", "u1");
       const ok = await a.handleProjectSelection("c1", "1", {
@@ -587,7 +587,7 @@ describe("DingTalkAdapter", () => {
 
     it("handleSessionSelection returns false on non-numeric input", async () => {
       const a = new DingTalkAdapter() as any;
-      a.transport = { sendText: vi.fn(async () => "") };
+      a.transport = { sendText: vi.fn(async () => ""), sendMarkdown: vi.fn(async () => "") };
       const ok = await a.handleSessionSelection("c1", "u1", "abc", {
         type: "session", directory: "/d", projectId: "p",
         sessions: [{ id: "s1", engineType: "claude" }],
@@ -597,7 +597,7 @@ describe("DingTalkAdapter", () => {
 
     it("handleSessionSelection returns false when pending lacks directory or projectId", async () => {
       const a = new DingTalkAdapter() as any;
-      a.transport = { sendText: vi.fn(async () => "") };
+      a.transport = { sendText: vi.fn(async () => ""), sendMarkdown: vi.fn(async () => "") };
       const ok = await a.handleSessionSelection("c1", "u1", "1", {
         type: "session",
         sessions: [{ id: "s1", engineType: "claude" }],
@@ -607,7 +607,7 @@ describe("DingTalkAdapter", () => {
 
     it("handleSessionSelection short-circuits if session already has a group", async () => {
       const a = new DingTalkAdapter() as any;
-      a.transport = { sendText: vi.fn(async () => "") };
+      a.transport = { sendText: vi.fn(async () => ""), sendMarkdown: vi.fn(async () => "") };
       a.sessionMapper.getOrCreateP2PChat("c1", "u1");
       // Pre-bind a group for this session id
       a.sessionMapper.createGroupBinding({
@@ -622,12 +622,12 @@ describe("DingTalkAdapter", () => {
       });
       expect(ok).toBe(true);
       expect(a.createGroupForSession).not.toHaveBeenCalled();
-      expect(a.transport.sendText.mock.calls.at(-1)[1]).toContain("已有对应的群聊");
+      expect(a.transport.sendMarkdown.mock.calls.at(-1)[1]).toContain("已有对应的群聊");
     });
 
     it("handleSessionSelection on valid index calls createGroupForSession", async () => {
       const a = new DingTalkAdapter() as any;
-      a.transport = { sendText: vi.fn(async () => "") };
+      a.transport = { sendText: vi.fn(async () => ""), sendMarkdown: vi.fn(async () => "") };
       a.sessionMapper.getOrCreateP2PChat("c1", "u1");
       a.createGroupForSession = vi.fn(async () => undefined);
       const ok = await a.handleSessionSelection("c1", "u1", "1", {
@@ -642,7 +642,7 @@ describe("DingTalkAdapter", () => {
   describe("handlePendingSelection dispatch", () => {
     it("dispatches to handleProjectSelection for type=project", async () => {
       const a = new DingTalkAdapter() as any;
-      a.transport = { sendText: vi.fn(async () => "") };
+      a.transport = { sendText: vi.fn(async () => ""), sendMarkdown: vi.fn(async () => "") };
       a.gatewayClient = { listAllSessions: vi.fn(async () => []) };
       a.sessionMapper.getOrCreateP2PChat("c1", "u1");
       const ok = await a.handlePendingSelection("c1", "u1", "1", {
@@ -654,7 +654,7 @@ describe("DingTalkAdapter", () => {
 
     it("dispatches to handleSessionSelection for type=session", async () => {
       const a = new DingTalkAdapter() as any;
-      a.transport = { sendText: vi.fn(async () => "") };
+      a.transport = { sendText: vi.fn(async () => ""), sendMarkdown: vi.fn(async () => "") };
       a.sessionMapper.getOrCreateP2PChat("c1", "u1");
       a.createGroupForSession = vi.fn(async () => undefined);
       const ok = await a.handlePendingSelection("c1", "u1", "1", {
@@ -674,14 +674,14 @@ describe("DingTalkAdapter", () => {
   describe("handleGroupMessage / handleGroupCommand", () => {
     it("handleGroupMessage warns when no binding", async () => {
       const a = new DingTalkAdapter() as any;
-      a.transport = { sendText: vi.fn(async () => "") };
+      a.transport = { sendText: vi.fn(async () => ""), sendMarkdown: vi.fn(async () => "") };
       await a.handleGroupMessage("g1", "hi");
-      expect(a.transport.sendText.mock.calls[0][1]).toContain("未绑定");
+      expect(a.transport.sendMarkdown.mock.calls[0][1]).toContain("未绑定");
     });
 
     it("handleGroupMessage routes commands to handleGroupCommand", async () => {
       const a = new DingTalkAdapter() as any;
-      a.transport = { sendText: vi.fn(async () => "") };
+      a.transport = { sendText: vi.fn(async () => ""), sendMarkdown: vi.fn(async () => "") };
       a.sessionMapper.createGroupBinding({
         chatId: "g1", conversationId: "s1", engineType: "claude",
         directory: "/d", projectId: "p", ownerUserId: "u1",
@@ -694,7 +694,7 @@ describe("DingTalkAdapter", () => {
 
     it("handleGroupMessage routes pending question reply", async () => {
       const a = new DingTalkAdapter() as any;
-      a.transport = { sendText: vi.fn(async () => "") };
+      a.transport = { sendText: vi.fn(async () => ""), sendMarkdown: vi.fn(async () => "") };
       a.gatewayClient = { replyQuestion: vi.fn(async () => undefined) };
       a.sessionMapper.createGroupBinding({
         chatId: "g1", conversationId: "s1", engineType: "claude",
@@ -711,7 +711,7 @@ describe("DingTalkAdapter", () => {
 
     it("handleGroupMessage routes plain text to sendToEngine", async () => {
       const a = new DingTalkAdapter() as any;
-      a.transport = { sendText: vi.fn(async () => "") };
+      a.transport = { sendText: vi.fn(async () => ""), sendMarkdown: vi.fn(async () => "") };
       a.sessionMapper.createGroupBinding({
         chatId: "g1", conversationId: "s1", engineType: "claude",
         directory: "/d", projectId: "p", ownerUserId: "u1",
@@ -724,7 +724,7 @@ describe("DingTalkAdapter", () => {
 
     it("handleGroupCommand /help sends help text", async () => {
       const a = new DingTalkAdapter() as any;
-      a.transport = { sendText: vi.fn(async () => "") };
+      a.transport = { sendText: vi.fn(async () => ""), sendMarkdown: vi.fn(async () => "") };
       a.gatewayClient = {};
       const binding = {
         chatId: "g1", conversationId: "s1", engineType: "claude" as const,
@@ -732,12 +732,12 @@ describe("DingTalkAdapter", () => {
         streamingSessions: new Map(), createdAt: Date.now(),
       };
       await a.handleGroupCommand("g1", binding, { command: "help", args: "" });
-      expect(a.transport.sendText).toHaveBeenCalled();
+      expect(a.transport.sendMarkdown).toHaveBeenCalled();
     });
 
     it("handleGroupCommand falls through to unknown-command warning", async () => {
       const a = new DingTalkAdapter() as any;
-      a.transport = { sendText: vi.fn(async () => "") };
+      a.transport = { sendText: vi.fn(async () => ""), sendMarkdown: vi.fn(async () => "") };
       a.gatewayClient = {
         cancelMessage: vi.fn(),
         listMessages: vi.fn(async () => []),
@@ -748,14 +748,14 @@ describe("DingTalkAdapter", () => {
         streamingSessions: new Map(), createdAt: Date.now(),
       };
       await a.handleGroupCommand("g1", binding, { command: "foo", args: "" });
-      expect(a.transport.sendText.mock.calls.at(-1)[1]).toContain("未知命令");
+      expect(a.transport.sendMarkdown.mock.calls.at(-1)[1]).toContain("未知命令");
     });
   });
 
   describe("gateway event handlers", () => {
     function makeGw() {
       const a = new DingTalkAdapter() as any;
-      a.transport = { sendText: vi.fn(async () => "") };
+      a.transport = { sendText: vi.fn(async () => ""), sendMarkdown: vi.fn(async () => "") };
       a.streamingController = { applyPart: vi.fn(), finalize: vi.fn() };
       return a;
     }
@@ -862,7 +862,7 @@ describe("DingTalkAdapter", () => {
         id: "q-1", sessionId: "conv-1",
         questions: [{ question: "go?", options: [{ label: "yes" }, { label: "no" }] }],
       });
-      expect(a.transport.sendText).toHaveBeenCalled();
+      expect(a.transport.sendMarkdown).toHaveBeenCalled();
       expect(a.sessionMapper.getPendingQuestion("c1")?.questionId).toBe("q-1");
     });
 
@@ -874,7 +874,7 @@ describe("DingTalkAdapter", () => {
         lastActiveAt: Date.now(), messageQueue: [], processing: false,
       });
       a.handleQuestionAsked({ id: "q-1", sessionId: "conv-1", questions: [] });
-      expect(a.transport.sendText.mock.calls[0][1]).toContain("无选项");
+      expect(a.transport.sendMarkdown.mock.calls[0][1]).toContain("无选项");
     });
 
     it("handleSessionUpdated updates streaming session titles for bound group", () => {

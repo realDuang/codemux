@@ -239,6 +239,11 @@ export class WeixinIlinkTransport implements MessageTransport {
     }
   }
 
+  /** Send markdown. iLink client auto-renders markdown in text messages. */
+  async sendMarkdown(chatId: string, markdown: string): Promise<string> {
+    return this.sendText(chatId, markdown);
+  }
+
   /** iLink has no message-edit API. Updates degrade to no-op (batch mode). */
   async updateText(_messageId: string, _text: string): Promise<void> {
     /* not supported by iLink */

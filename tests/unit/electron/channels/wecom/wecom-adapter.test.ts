@@ -93,7 +93,7 @@ describe("WeComAdapter", () => {
     it("nulls transport / streamingController / gatewayClient and emits disconnected", async () => {
       const a = new WeComAdapter() as any;
       a.status = "running";
-      a.transport = { sendText: vi.fn() };
+      a.transport = { sendText: vi.fn(), sendMarkdown: vi.fn(async () => "") };
       a.gatewayClient = { disconnect: vi.fn() };
       a.streamingController = {};
       a.tokenManager = {};
@@ -186,7 +186,7 @@ describe("WeComAdapter", () => {
   describe("processIncomingMessage", () => {
     function makeBase() {
       const a = new WeComAdapter() as any;
-      a.transport = { sendText: vi.fn(async () => "") };
+      a.transport = { sendText: vi.fn(async () => ""), sendMarkdown: vi.fn(async () => "") };
       a.gatewayClient = {};
       a.handleP2PMessage = vi.fn(async () => undefined);
       return a;
@@ -364,7 +364,7 @@ describe("WeComAdapter", () => {
   describe("handleP2PMessage dispatch", () => {
     function makeP2P() {
       const a = new WeComAdapter() as any;
-      a.transport = { sendText: vi.fn(async () => "") };
+      a.transport = { sendText: vi.fn(async () => ""), sendMarkdown: vi.fn(async () => "") };
       a.gatewayClient = {
         replyQuestion: vi.fn(async () => undefined),
         listAllProjects: vi.fn(async () => []),
@@ -426,7 +426,7 @@ describe("WeComAdapter", () => {
   describe("handleP2PCommand routing", () => {
     function makeCmd() {
       const a = new WeComAdapter() as any;
-      a.transport = { sendText: vi.fn(async () => "") };
+      a.transport = { sendText: vi.fn(async () => ""), sendMarkdown: vi.fn(async () => "") };
       a.gatewayClient = null;
       return a;
     }
@@ -445,13 +445,13 @@ describe("WeComAdapter", () => {
     it("/help sends help text", async () => {
       const a = makeCmd();
       await a.handleP2PCommand("c1", { command: "help", args: "" });
-      expect(a.transport.sendText).toHaveBeenCalled();
+      expect(a.transport.sendMarkdown).toHaveBeenCalled();
     });
 
     it("/start sends help text", async () => {
       const a = makeCmd();
       await a.handleP2PCommand("c1", { command: "start", args: "" });
-      expect(a.transport.sendText).toHaveBeenCalled();
+      expect(a.transport.sendMarkdown).toHaveBeenCalled();
     });
 
     it("/project calls showProjectList", async () => {
@@ -474,21 +474,21 @@ describe("WeComAdapter", () => {
     it("falls through to unknown-command warning", async () => {
       const a = makeCmd();
       await a.handleP2PCommand("c1", { command: "foo", args: "" });
-      expect(a.transport.sendText.mock.calls.at(-1)[1]).toContain("未知命令");
+      expect(a.transport.sendMarkdown.mock.calls.at(-1)[1]).toContain("未知命令");
     });
   });
 
   describe("handleNewCommand / handleSwitchCommand guards", () => {
     it("handleNewCommand prompts when no project is selected", async () => {
       const a = new WeComAdapter() as any;
-      a.transport = { sendText: vi.fn(async () => "") };
+      a.transport = { sendText: vi.fn(async () => ""), sendMarkdown: vi.fn(async () => "") };
       await a.handleNewCommand("c1");
-      expect(a.transport.sendText.mock.calls[0][1]).toContain("/project");
+      expect(a.transport.sendMarkdown.mock.calls[0][1]).toContain("/project");
     });
 
     it("handleNewCommand calls createNewSessionForProject when project known", async () => {
       const a = new WeComAdapter() as any;
-      a.transport = { sendText: vi.fn(async () => "") };
+      a.transport = { sendText: vi.fn(async () => ""), sendMarkdown: vi.fn(async () => "") };
       a.sessionMapper.getOrCreateP2PChat("c1", "u1");
       a.sessionMapper.setP2PLastProject("c1", {
         directory: "/foo/x", engineType: "claude", projectId: "p",
@@ -500,7 +500,7 @@ describe("WeComAdapter", () => {
 
     it("handleNewCommand cleans up existing temp session before creating", async () => {
       const a = new WeComAdapter() as any;
-      a.transport = { sendText: vi.fn(async () => "") };
+      a.transport = { sendText: vi.fn(async () => ""), sendMarkdown: vi.fn(async () => "") };
       a.sessionMapper.getOrCreateP2PChat("c1", "u1");
       a.sessionMapper.setP2PLastProject("c1", {
         directory: "/foo/x", engineType: "claude", projectId: "p",
@@ -517,14 +517,14 @@ describe("WeComAdapter", () => {
 
     it("handleSwitchCommand prompts when no project selected", async () => {
       const a = new WeComAdapter() as any;
-      a.transport = { sendText: vi.fn(async () => "") };
+      a.transport = { sendText: vi.fn(async () => ""), sendMarkdown: vi.fn(async () => "") };
       await a.handleSwitchCommand("c1");
-      expect(a.transport.sendText.mock.calls[0][1]).toContain("/project");
+      expect(a.transport.sendMarkdown.mock.calls[0][1]).toContain("/project");
     });
 
     it("handleSwitchCommand calls showSessionListForProject", async () => {
       const a = new WeComAdapter() as any;
-      a.transport = { sendText: vi.fn(async () => "") };
+      a.transport = { sendText: vi.fn(async () => ""), sendMarkdown: vi.fn(async () => "") };
       a.sessionMapper.getOrCreateP2PChat("c1", "u1");
       a.sessionMapper.setP2PLastProject("c1", {
         directory: "/foo/x", engineType: "claude", projectId: "p",
@@ -538,32 +538,32 @@ describe("WeComAdapter", () => {
   describe("showProjectList / showSessionListForProject", () => {
     it("showProjectList stores pending after sending list", async () => {
       const a = new WeComAdapter() as any;
-      a.transport = { sendText: vi.fn(async () => "") };
+      a.transport = { sendText: vi.fn(async () => ""), sendMarkdown: vi.fn(async () => "") };
       a.gatewayClient = {
         listAllProjects: vi.fn(async () => [
           { id: "p1", name: "alpha", directory: "/a", engineType: "claude" },
         ]),
       };
       await a.showProjectList("c1");
-      expect(a.transport.sendText).toHaveBeenCalled();
+      expect(a.transport.sendMarkdown).toHaveBeenCalled();
       expect(a.sessionMapper.getPendingSelection("c1")?.type).toBe("project");
     });
 
     it("showProjectList does not store pending when list empty", async () => {
       const a = new WeComAdapter() as any;
-      a.transport = { sendText: vi.fn(async () => "") };
+      a.transport = { sendText: vi.fn(async () => ""), sendMarkdown: vi.fn(async () => "") };
       a.gatewayClient = { listAllProjects: vi.fn(async () => []) };
       await a.showProjectList("c1");
-      expect(a.sessionMapper.getPendingSelection("c1")).toBeUndefined();
+      expect(a.sessionMapper.getPendingSelection("c1")).toEqual({ type: "project", projects: [] });
     });
 
     it("showSessionListForProject filters by directory and stores pending", async () => {
       const a = new WeComAdapter() as any;
-      a.transport = { sendText: vi.fn(async () => "") };
+      a.transport = { sendText: vi.fn(async () => ""), sendMarkdown: vi.fn(async () => "") };
       a.gatewayClient = {
         listAllSessions: vi.fn(async () => [
-          { id: "s1", directory: "/a", engineType: "claude", title: "x" },
-          { id: "s2", directory: "/b", engineType: "claude", title: "y" },
+          { id: "s1", directory: "/a", engineType: "claude", title: "x", projectId: "p" },
+          { id: "s2", directory: "/b", engineType: "claude", title: "y", projectId: "other" },
         ]),
       };
       await a.showSessionListForProject(
@@ -580,7 +580,7 @@ describe("WeComAdapter", () => {
   describe("createNewSessionForProject", () => {
     it("creates session and stores temp on success", async () => {
       const a = new WeComAdapter() as any;
-      a.transport = { sendText: vi.fn(async () => "") };
+      a.transport = { sendText: vi.fn(async () => ""), sendMarkdown: vi.fn(async () => "") };
       a.gatewayClient = {
         createSession: vi.fn(async () => ({ id: "sess-1", engineType: "claude" })),
       };
@@ -591,12 +591,12 @@ describe("WeComAdapter", () => {
         "alpha",
       );
       expect(a.sessionMapper.getTempSession("c1")?.conversationId).toBe("sess-1");
-      expect(a.transport.sendText.mock.calls.at(-1)[1]).toContain("已创建新会话");
+      expect(a.transport.sendMarkdown.mock.calls.at(-1)[1]).toContain("alpha");
     });
 
     it("reports error when createSession fails", async () => {
       const a = new WeComAdapter() as any;
-      a.transport = { sendText: vi.fn(async () => "") };
+      a.transport = { sendText: vi.fn(async () => ""), sendMarkdown: vi.fn(async () => "") };
       a.gatewayClient = {
         createSession: vi.fn(async () => { throw new Error("boom"); }),
       };
@@ -605,14 +605,14 @@ describe("WeComAdapter", () => {
         { directory: "/foo/x", engineType: "claude", projectId: "p" },
         "alpha",
       );
-      expect(a.transport.sendText.mock.calls.at(-1)[1]).toContain("创建会话失败");
+      expect(a.transport.sendMarkdown.mock.calls.at(-1)[1]).toContain("创建会话失败");
     });
   });
 
   describe("createTempSessionAndSend / enqueue / process / cleanup", () => {
     it("createTempSessionAndSend stores temp and enqueues", async () => {
       const a = new WeComAdapter() as any;
-      a.transport = { sendText: vi.fn(async () => "") };
+      a.transport = { sendText: vi.fn(async () => ""), sendMarkdown: vi.fn(async () => "") };
       a.gatewayClient = {
         createSession: vi.fn(async () => ({ id: "s2", engineType: "claude" })),
       };
@@ -629,7 +629,7 @@ describe("WeComAdapter", () => {
 
     it("createTempSessionAndSend reports error on failure", async () => {
       const a = new WeComAdapter() as any;
-      a.transport = { sendText: vi.fn(async () => "") };
+      a.transport = { sendText: vi.fn(async () => ""), sendMarkdown: vi.fn(async () => "") };
       a.gatewayClient = {
         createSession: vi.fn(async () => { throw new Error("nope"); }),
       };
@@ -638,7 +638,7 @@ describe("WeComAdapter", () => {
         { directory: "/d", projectId: "p" },
         "hi",
       );
-      expect(a.transport.sendText.mock.calls.at(-1)[1]).toContain("创建临时会话失败");
+      expect(a.transport.sendMarkdown.mock.calls.at(-1)[1]).toContain("创建临时会话失败");
     });
 
     it("enqueueP2PMessage no-ops without temp session", async () => {
@@ -693,7 +693,7 @@ describe("WeComAdapter", () => {
 
     it("sendToEngineP2P sends placeholder and assigns msg id", async () => {
       const a = new WeComAdapter() as any;
-      a.transport = { sendText: vi.fn(async () => "ph-1") };
+      a.transport = { sendText: vi.fn(async () => "ph-1"), sendMarkdown: vi.fn(async () => "") };
       a.streamingController = { applyPart: vi.fn(), finalize: vi.fn() };
       const sendPromise = Promise.resolve({ id: "msg-1" });
       a.gatewayClient = { sendMessage: vi.fn(() => sendPromise) };
@@ -745,7 +745,7 @@ describe("WeComAdapter", () => {
   describe("handleProjectSelection / handleSessionSelection / handlePendingSelection", () => {
     it("handleProjectSelection returns false on non-numeric input", async () => {
       const a = new WeComAdapter() as any;
-      a.transport = { sendText: vi.fn(async () => "") };
+      a.transport = { sendText: vi.fn(async () => ""), sendMarkdown: vi.fn(async () => "") };
       a.gatewayClient = { listAllSessions: vi.fn(async () => []) };
       const ok = await a.handleProjectSelection("c1", "abc", {
         type: "project",
@@ -756,7 +756,7 @@ describe("WeComAdapter", () => {
 
     it("handleProjectSelection returns false on out-of-range index", async () => {
       const a = new WeComAdapter() as any;
-      a.transport = { sendText: vi.fn(async () => "") };
+      a.transport = { sendText: vi.fn(async () => ""), sendMarkdown: vi.fn(async () => "") };
       a.gatewayClient = { listAllSessions: vi.fn(async () => []) };
       const ok = await a.handleProjectSelection("c1", "5", {
         type: "project",
@@ -767,7 +767,7 @@ describe("WeComAdapter", () => {
 
     it("handleProjectSelection on valid index sets last project + shows sessions", async () => {
       const a = new WeComAdapter() as any;
-      a.transport = { sendText: vi.fn(async () => "") };
+      a.transport = { sendText: vi.fn(async () => ""), sendMarkdown: vi.fn(async () => "") };
       a.gatewayClient = { listAllSessions: vi.fn(async () => []) };
       a.sessionMapper.getOrCreateP2PChat("c1", "u1");
       const ok = await a.handleProjectSelection("c1", "1", {
@@ -782,7 +782,7 @@ describe("WeComAdapter", () => {
 
     it("handleSessionSelection returns false on non-numeric input", async () => {
       const a = new WeComAdapter() as any;
-      a.transport = { sendText: vi.fn(async () => "") };
+      a.transport = { sendText: vi.fn(async () => ""), sendMarkdown: vi.fn(async () => "") };
       const ok = await a.handleSessionSelection("c1", "u1", "abc", {
         type: "session", directory: "/d", projectId: "p",
         sessions: [{ id: "s1", engineType: "claude" }],
@@ -792,7 +792,7 @@ describe("WeComAdapter", () => {
 
     it("handleSessionSelection returns false when missing dir/projectId", async () => {
       const a = new WeComAdapter() as any;
-      a.transport = { sendText: vi.fn(async () => "") };
+      a.transport = { sendText: vi.fn(async () => ""), sendMarkdown: vi.fn(async () => "") };
       const ok = await a.handleSessionSelection("c1", "u1", "1", {
         type: "session",
         sessions: [{ id: "s1", engineType: "claude" }],
@@ -802,7 +802,7 @@ describe("WeComAdapter", () => {
 
     it("handleSessionSelection short-circuits when session already has group", async () => {
       const a = new WeComAdapter() as any;
-      a.transport = { sendText: vi.fn(async () => "") };
+      a.transport = { sendText: vi.fn(async () => ""), sendMarkdown: vi.fn(async () => "") };
       a.sessionMapper.getOrCreateP2PChat("c1", "u1");
       a.sessionMapper.createGroupBinding({
         chatId: "g1", conversationId: "s1", engineType: "claude",
@@ -814,12 +814,12 @@ describe("WeComAdapter", () => {
         sessions: [{ id: "s1", engineType: "claude" }],
       });
       expect(ok).toBe(true);
-      expect(a.transport.sendText.mock.calls.at(-1)[1]).toContain("已有对应的群聊");
+      expect(a.transport.sendMarkdown.mock.calls.at(-1)[1]).toContain("已有对应的群聊");
     });
 
     it("handleSessionSelection on valid index stores temp session", async () => {
       const a = new WeComAdapter() as any;
-      a.transport = { sendText: vi.fn(async () => "") };
+      a.transport = { sendText: vi.fn(async () => ""), sendMarkdown: vi.fn(async () => "") };
       a.sessionMapper.getOrCreateP2PChat("c1", "u1");
       const ok = await a.handleSessionSelection("c1", "u1", "1", {
         type: "session", directory: "/d", projectId: "p", projectName: "alpha",
@@ -831,7 +831,7 @@ describe("WeComAdapter", () => {
 
     it("handlePendingSelection dispatches by type", async () => {
       const a = new WeComAdapter() as any;
-      a.transport = { sendText: vi.fn(async () => "") };
+      a.transport = { sendText: vi.fn(async () => ""), sendMarkdown: vi.fn(async () => "") };
       a.gatewayClient = { listAllSessions: vi.fn(async () => []) };
       a.sessionMapper.getOrCreateP2PChat("c1", "u1");
       const ok1 = await a.handlePendingSelection("c1", "u1", "1", {
@@ -852,14 +852,14 @@ describe("WeComAdapter", () => {
   describe("handleGroupMessage / handleGroupCommand", () => {
     it("handleGroupMessage warns when no binding", async () => {
       const a = new WeComAdapter() as any;
-      a.transport = { sendText: vi.fn(async () => "") };
+      a.transport = { sendText: vi.fn(async () => ""), sendMarkdown: vi.fn(async () => "") };
       await a.handleGroupMessage("g1", "hi");
-      expect(a.transport.sendText.mock.calls[0][1]).toContain("未绑定");
+      expect(a.transport.sendMarkdown.mock.calls[0][1]).toContain("未绑定");
     });
 
     it("handleGroupMessage routes commands to handleGroupCommand", async () => {
       const a = new WeComAdapter() as any;
-      a.transport = { sendText: vi.fn(async () => "") };
+      a.transport = { sendText: vi.fn(async () => ""), sendMarkdown: vi.fn(async () => "") };
       a.sessionMapper.createGroupBinding({
         chatId: "g1", conversationId: "s1", engineType: "claude",
         directory: "/d", projectId: "p", ownerUserId: "u1",
@@ -872,7 +872,7 @@ describe("WeComAdapter", () => {
 
     it("handleGroupMessage routes pending question reply", async () => {
       const a = new WeComAdapter() as any;
-      a.transport = { sendText: vi.fn(async () => "") };
+      a.transport = { sendText: vi.fn(async () => ""), sendMarkdown: vi.fn(async () => "") };
       a.gatewayClient = { replyQuestion: vi.fn(async () => undefined) };
       a.sessionMapper.createGroupBinding({
         chatId: "g1", conversationId: "s1", engineType: "claude",
@@ -889,7 +889,7 @@ describe("WeComAdapter", () => {
 
     it("handleGroupMessage routes plain text to sendToEngine", async () => {
       const a = new WeComAdapter() as any;
-      a.transport = { sendText: vi.fn(async () => "") };
+      a.transport = { sendText: vi.fn(async () => ""), sendMarkdown: vi.fn(async () => "") };
       a.sessionMapper.createGroupBinding({
         chatId: "g1", conversationId: "s1", engineType: "claude",
         directory: "/d", projectId: "p", ownerUserId: "u1",
@@ -902,7 +902,7 @@ describe("WeComAdapter", () => {
 
     it("handleGroupCommand /help sends help text", async () => {
       const a = new WeComAdapter() as any;
-      a.transport = { sendText: vi.fn(async () => "") };
+      a.transport = { sendText: vi.fn(async () => ""), sendMarkdown: vi.fn(async () => "") };
       a.gatewayClient = {};
       const binding = {
         chatId: "g1", conversationId: "s1", engineType: "claude" as const,
@@ -910,12 +910,12 @@ describe("WeComAdapter", () => {
         streamingSessions: new Map(), createdAt: Date.now(),
       };
       await a.handleGroupCommand("group:g1", binding, { command: "help", args: "" });
-      expect(a.transport.sendText).toHaveBeenCalled();
+      expect(a.transport.sendMarkdown).toHaveBeenCalled();
     });
 
     it("handleGroupCommand falls through to unknown-command warning", async () => {
       const a = new WeComAdapter() as any;
-      a.transport = { sendText: vi.fn(async () => "") };
+      a.transport = { sendText: vi.fn(async () => ""), sendMarkdown: vi.fn(async () => "") };
       a.gatewayClient = {
         cancelMessage: vi.fn(),
         listMessages: vi.fn(async () => []),
@@ -926,14 +926,14 @@ describe("WeComAdapter", () => {
         streamingSessions: new Map(), createdAt: Date.now(),
       };
       await a.handleGroupCommand("group:g1", binding, { command: "foo", args: "" });
-      expect(a.transport.sendText.mock.calls.at(-1)[1]).toContain("未知命令");
+      expect(a.transport.sendMarkdown.mock.calls.at(-1)[1]).toContain("未知命令");
     });
   });
 
   describe("createGroupForSession", () => {
     it("short-circuits when session already has a group binding", async () => {
       const a = new WeComAdapter() as any;
-      a.transport = { sendText: vi.fn(async () => ""), createGroup: vi.fn() };
+      a.transport = { sendText: vi.fn(async () => ""), sendMarkdown: vi.fn(async () => ""), createGroup: vi.fn() };
       a.gatewayClient = { getSession: vi.fn() };
       a.sessionMapper.createGroupBinding({
         chatId: "g1", conversationId: "conv-1", engineType: "claude",
@@ -941,7 +941,7 @@ describe("WeComAdapter", () => {
         streamingSessions: new Map(), createdAt: Date.now(),
       });
       await a.createGroupForSession("u1", "conv-1", "claude", "/d", "p", "alpha", "p2p");
-      expect(a.transport.sendText.mock.calls[0][1]).toContain("已有对应的群聊");
+      expect(a.transport.sendMarkdown.mock.calls[0][1]).toContain("已有对应的群聊");
       expect(a.transport.createGroup).not.toHaveBeenCalled();
     });
 
@@ -949,6 +949,7 @@ describe("WeComAdapter", () => {
       const a = new WeComAdapter() as any;
       a.transport = {
         sendText: vi.fn(async () => ""),
+        sendMarkdown: vi.fn(async () => ""),
         createGroup: vi.fn(async () => "newchat"),
       };
       a.gatewayClient = {
@@ -963,29 +964,31 @@ describe("WeComAdapter", () => {
       const a = new WeComAdapter() as any;
       a.transport = {
         sendText: vi.fn(async () => ""),
+        sendMarkdown: vi.fn(async () => ""),
         createGroup: vi.fn(async () => null),
       };
       a.gatewayClient = { getSession: vi.fn(async () => ({ title: "T" })) };
       await a.createGroupForSession("u1", "conv-1", "claude", "/d", "p", "alpha", "p2p");
-      expect(a.transport.sendText.mock.calls.at(-1)[1]).toContain("失败");
+      expect(a.transport.sendMarkdown.mock.calls.at(-1)[1]).toContain("失败");
     });
 
     it("reports error when createGroup throws", async () => {
       const a = new WeComAdapter() as any;
       a.transport = {
         sendText: vi.fn(async () => ""),
+        sendMarkdown: vi.fn(async () => ""),
         createGroup: vi.fn(async () => { throw new Error("oops"); }),
       };
       a.gatewayClient = { getSession: vi.fn(async () => ({ title: "T" })) };
       await a.createGroupForSession("u1", "conv-1", "claude", "/d", "p", "alpha", "p2p");
-      expect(a.transport.sendText.mock.calls.at(-1)[1]).toContain("创建群聊失败");
+      expect(a.transport.sendMarkdown.mock.calls.at(-1)[1]).toContain("创建群聊失败");
     });
   });
 
   describe("sendToEngine (group)", () => {
     it("aborts when streamingController missing", async () => {
       const a = new WeComAdapter() as any;
-      a.transport = { sendText: vi.fn(async () => "ph") };
+      a.transport = { sendText: vi.fn(async () => "ph"), sendMarkdown: vi.fn(async () => "") };
       a.gatewayClient = { sendMessage: vi.fn(async () => ({ id: "m" })) };
       const binding = {
         chatId: "g1", conversationId: "s1", engineType: "claude" as const,
@@ -998,7 +1001,7 @@ describe("WeComAdapter", () => {
 
     it("sends placeholder and registers streaming session on success", async () => {
       const a = new WeComAdapter() as any;
-      a.transport = { sendText: vi.fn(async () => "ph") };
+      a.transport = { sendText: vi.fn(async () => "ph"), sendMarkdown: vi.fn(async () => "") };
       a.streamingController = {};
       const sendPromise = Promise.resolve({ id: "m1" });
       a.gatewayClient = { sendMessage: vi.fn(() => sendPromise) };
@@ -1017,7 +1020,7 @@ describe("WeComAdapter", () => {
   describe("gateway event handlers", () => {
     function makeGw() {
       const a = new WeComAdapter() as any;
-      a.transport = { sendText: vi.fn(async () => ""), updateGroup: vi.fn(async () => undefined) };
+      a.transport = { sendText: vi.fn(async () => ""), sendMarkdown: vi.fn(async () => ""), updateGroup: vi.fn(async () => undefined) };
       a.streamingController = { applyPart: vi.fn(), finalize: vi.fn() };
       return a;
     }
@@ -1146,7 +1149,7 @@ describe("WeComAdapter", () => {
         id: "q-1", sessionId: "conv-1",
         questions: [{ question: "go?", options: [{ label: "yes" }, { label: "no" }] }],
       });
-      expect(a.transport.sendText).toHaveBeenCalled();
+      expect(a.transport.sendMarkdown).toHaveBeenCalled();
       expect(a.sessionMapper.getPendingQuestion("c1")?.questionId).toBe("q-1");
     });
 
@@ -1158,7 +1161,7 @@ describe("WeComAdapter", () => {
         lastActiveAt: Date.now(), messageQueue: [], processing: false,
       });
       a.handleQuestionAsked({ id: "q-1", sessionId: "conv-1", questions: [] });
-      expect(a.transport.sendText.mock.calls[0][1]).toContain("无选项");
+      expect(a.transport.sendMarkdown.mock.calls[0][1]).toContain("无选项");
     });
 
     it("handleQuestionAsked routes to group target when bound", () => {

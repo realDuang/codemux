@@ -31,6 +31,7 @@ function makeAdapterWithStubs(): any {
   const a = new TeamsAdapter() as any;
   a.transport = {
     sendText: vi.fn(async () => "compound-1"),
+    sendMarkdown: vi.fn(async () => ""),
     sendAdaptiveCard: vi.fn(async () => "card-1"),
     setServiceUrl: vi.fn(),
   };
@@ -92,7 +93,7 @@ describe("TeamsAdapter", () => {
     it("nulls transport / streamingController / gatewayClient and emits disconnected", async () => {
       const a = new TeamsAdapter() as any;
       a.status = "running";
-      a.transport = { sendText: vi.fn() };
+      a.transport = { sendText: vi.fn(), sendMarkdown: vi.fn(async () => "") };
       a.gatewayClient = { disconnect: vi.fn() };
       a.streamingController = {};
       a.conversationRefs.set("c1", {} as any);
@@ -392,7 +393,7 @@ describe("TeamsAdapter", () => {
         serviceUrl: "https://svc",
       });
       expect(a.transport.setServiceUrl).toHaveBeenCalledWith("g1", "https://svc");
-      expect(a.transport.sendText).toHaveBeenCalled();
+      expect(a.transport.sendMarkdown).toHaveBeenCalled();
     });
 
     it("cleans up when bot is removed", async () => {
@@ -557,13 +558,13 @@ describe("TeamsAdapter", () => {
     it("/help sends help text", async () => {
       const a = makeCmd();
       await a.handleP2PCommand("c1", { command: "help", args: [], raw: "/help" });
-      expect(a.transport.sendText).toHaveBeenCalled();
+      expect(a.transport.sendMarkdown).toHaveBeenCalled();
     });
 
     it("/start sends help text", async () => {
       const a = makeCmd();
       await a.handleP2PCommand("c1", { command: "start", args: [], raw: "/start" });
-      expect(a.transport.sendText).toHaveBeenCalled();
+      expect(a.transport.sendMarkdown).toHaveBeenCalled();
     });
 
     it("/project calls showProjectList", async () => {
@@ -586,7 +587,7 @@ describe("TeamsAdapter", () => {
     it("falls through to unknown-command warning", async () => {
       const a = makeCmd();
       await a.handleP2PCommand("c1", { command: "foo", args: [], raw: "/foo" });
-      expect(a.transport.sendText.mock.calls.at(-1)[1]).toContain("未知命令");
+      expect(a.transport.sendMarkdown.mock.calls.at(-1)[1]).toContain("未知命令");
     });
 
     it("with gatewayClient: passes session-ops to handleSessionOpsCommand path", async () => {
@@ -602,7 +603,7 @@ describe("TeamsAdapter", () => {
       });
       // /history isn't in the switch case, exits via session-ops handler
       await a.handleP2PCommand("c1", { command: "history", args: [], raw: "/history" });
-      expect(a.transport.sendText).toHaveBeenCalled();
+      expect(a.transport.sendMarkdown).toHaveBeenCalled();
     });
   });
 
@@ -610,7 +611,7 @@ describe("TeamsAdapter", () => {
     it("handleP2PNewCommand prompts when no project selected", async () => {
       const a = makeAdapterWithStubs();
       await a.handleP2PNewCommand("c1");
-      expect(a.transport.sendText.mock.calls[0][1]).toContain("/project");
+      expect(a.transport.sendMarkdown.mock.calls[0][1]).toContain("/project");
     });
 
     it("handleP2PNewCommand calls createNewSessionForProject when project known", async () => {
@@ -643,7 +644,7 @@ describe("TeamsAdapter", () => {
     it("handleP2PSwitchCommand prompts when no project selected", async () => {
       const a = makeAdapterWithStubs();
       await a.handleP2PSwitchCommand("c1");
-      expect(a.transport.sendText.mock.calls[0][1]).toContain("/project");
+      expect(a.transport.sendMarkdown.mock.calls[0][1]).toContain("/project");
     });
 
     it("handleP2PSwitchCommand calls showSessionListForProject", async () => {
@@ -667,7 +668,7 @@ describe("TeamsAdapter", () => {
         ]),
       };
       await a.showProjectList("c1");
-      expect(a.transport.sendText).toHaveBeenCalled();
+      expect(a.transport.sendMarkdown).toHaveBeenCalled();
       expect(a.sessionMapper.getPendingSelection("c1")?.type).toBe("project");
     });
 
@@ -680,15 +681,15 @@ describe("TeamsAdapter", () => {
       const a = makeAdapterWithStubs();
       a.gatewayClient = { listAllProjects: vi.fn(async () => []) };
       await a.showProjectList("c1");
-      expect(a.sessionMapper.getPendingSelection("c1")).toBeUndefined();
+      expect(a.sessionMapper.getPendingSelection("c1")).toEqual({ type: "project", projects: [] });
     });
 
     it("showSessionListForProject filters by directory", async () => {
       const a = makeAdapterWithStubs();
       a.gatewayClient = {
         listAllSessions: vi.fn(async () => [
-          { id: "s1", directory: "/a", engineType: "claude", title: "x" },
-          { id: "s2", directory: "/b", engineType: "claude", title: "y" },
+          { id: "s1", directory: "/a", engineType: "claude", title: "x", projectId: "p" },
+          { id: "s2", directory: "/b", engineType: "claude", title: "y", projectId: "other" },
         ]),
       };
       await a.showSessionListForProject(
@@ -727,7 +728,7 @@ describe("TeamsAdapter", () => {
         { directory: "/d", projectId: "p" },
         "x",
       );
-      expect(a.transport.sendText.mock.calls.at(-1)[1]).toContain("创建会话失败");
+      expect(a.transport.sendMarkdown.mock.calls.at(-1)[1]).toContain("创建会话失败");
     });
 
     it("createTempSessionAndSend stores temp + enqueues message", async () => {
@@ -756,7 +757,7 @@ describe("TeamsAdapter", () => {
         { directory: "/d", projectId: "p" },
         "hi",
       );
-      expect(a.transport.sendText.mock.calls.at(-1)[1]).toContain("创建临时会话失败");
+      expect(a.transport.sendMarkdown.mock.calls.at(-1)[1]).toContain("创建临时会话失败");
     });
   });
 
@@ -914,13 +915,13 @@ describe("TeamsAdapter", () => {
     it("handleGroupMessage warns when no binding", async () => {
       const a = makeAdapterWithStubs();
       await a.handleGroupMessage("g1", "hi", "https://svc");
-      expect(a.transport.sendText.mock.calls[0][1]).toContain("未绑定");
+      expect(a.transport.sendMarkdown.mock.calls[0][1]).toContain("未绑定");
     });
 
     it("handleGroupMessage shows help on /help when no binding", async () => {
       const a = makeAdapterWithStubs();
       await a.handleGroupMessage("g1", "/help", "https://svc");
-      expect(a.transport.sendText).toHaveBeenCalled();
+      expect(a.transport.sendMarkdown).toHaveBeenCalled();
     });
 
     it("handleGroupMessage shows project list on /bind when no binding", async () => {
@@ -990,7 +991,7 @@ describe("TeamsAdapter", () => {
         streamingSessions: new Map(), createdAt: Date.now(),
       };
       await a.handleGroupCommand("g1", binding, { command: "help", args: [], raw: "/help" });
-      expect(a.transport.sendText).toHaveBeenCalled();
+      expect(a.transport.sendMarkdown).toHaveBeenCalled();
     });
 
     it("handleGroupCommand falls through to unknown-command warning", async () => {
@@ -1002,7 +1003,7 @@ describe("TeamsAdapter", () => {
         streamingSessions: new Map(), createdAt: Date.now(),
       };
       await a.handleGroupCommand("g1", binding, { command: "foo", args: [], raw: "/foo" });
-      expect(a.transport.sendText.mock.calls.at(-1)[1]).toContain("未知命令");
+      expect(a.transport.sendMarkdown.mock.calls.at(-1)[1]).toContain("未知命令");
     });
 
     it("handleGroupCommand returns when no command/gateway/transport", async () => {
@@ -1013,7 +1014,7 @@ describe("TeamsAdapter", () => {
         streamingSessions: new Map(), createdAt: Date.now(),
       };
       await a.handleGroupCommand("g1", binding, null);
-      expect(a.transport.sendText).not.toHaveBeenCalled();
+      expect(a.transport.sendMarkdown).not.toHaveBeenCalled();
     });
   });
 
@@ -1093,7 +1094,7 @@ describe("TeamsAdapter", () => {
         sessions: [],
       }, "https://svc");
       expect(ok).toBe(true);
-      expect(a.transport.sendText.mock.calls.at(-1)[1]).toContain("创建会话失败");
+      expect(a.transport.sendMarkdown.mock.calls.at(-1)[1]).toContain("创建会话失败");
     });
 
     it("handleGroupSessionSelection valid numeric creates binding", async () => {
@@ -1264,7 +1265,7 @@ describe("TeamsAdapter", () => {
         lastActiveAt: Date.now(), messageQueue: [], processing: false,
       });
       a.handleQuestionAsked({ id: "q-1", sessionId: "conv-1", questions: [] });
-      expect(a.transport.sendText.mock.calls[0][1]).toContain("无选项");
+      expect(a.transport.sendMarkdown.mock.calls[0][1]).toContain("无选项");
     });
 
     it("handleSessionUpdated updates streaming session titles for bound group", () => {

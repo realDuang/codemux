@@ -12,7 +12,14 @@ import {
   buildSessionListText,
   buildQuestionText,
   buildHistoryEntries,
+  buildSessionNotification,
+  relativeTimeZh,
+  truncateTitle,
+  groupAndSortSessions,
 } from "../../../../../electron/main/channels/shared/list-builders";
+import {
+  markdownToTelegramHtml,
+} from "../../../../../electron/main/channels/telegram/telegram-transport";
 
 describe("shared command parser", () => {
   describe("parseCommand", () => {
@@ -93,8 +100,19 @@ describe("shared help-text builder", () => {
 });
 
 describe("shared list builders", () => {
-  it("renders empty project list", () => {
-    expect(buildProjectListText([])).toContain("未找到项目");
+  it("renders empty project list with default workspace guidance", () => {
+    const text = buildProjectListText([]);
+    expect(text).toContain("暂无可用项目");
+    expect(text).toContain("桌面端");
+    expect(text).toContain("/help");
+  });
+
+  it("buildSessionNotification shows project name, engine type, and short session ID", () => {
+    const text = buildSessionNotification("codemux", "claude", "abc12345-6789-0000");
+    expect(text).toContain("codemux");
+    expect(text).toContain("claude");
+    expect(text).toContain("abc12345");
+    expect(text).not.toContain("6789-0000");
   });
 
   it("renders numbered project list", () => {
@@ -107,8 +125,9 @@ describe("shared list builders", () => {
   });
 
   it("renders session list with /new hint by default", () => {
+    const now = Date.now();
     const text = buildSessionListText(
-      [{ id: "s1", title: "Existing", time: { updated: 100 } } as any],
+      [{ id: "s1", title: "Existing", time: { updated: now } } as any],
       "myproj",
     );
     expect(text).toContain("myproj");
@@ -177,23 +196,23 @@ describe("shared list builders", () => {
     expect(entries[0].text).toBe(exact);
   });
 
-  it("buildSessionListText sorts by updated DESC and limits to 9", () => {
+  it("buildSessionListText shows all sessions without limit", () => {
+    const now = Date.now();
     const sessions = Array.from({ length: 12 }, (_, i) => ({
       id: `s${i}`,
       title: `T${i}`,
-      time: { updated: i * 100 },
+      time: { updated: now - i * 100_000 },
     })) as any[];
+    // Sessions are pre-sorted (caller's responsibility via groupAndSortSessions)
     const text = buildSessionListText(sessions, "proj");
-    // The most recent (T11) should be first, T3 should be the 9th (last shown)
-    expect(text).toContain("1. T11");
-    expect(text).toContain("9. T3");
-    expect(text).not.toContain("T2");
-    expect(text).not.toContain("T0");
+    // All 12 sessions should be visible
+    expect(text).toContain("1. T0");
+    expect(text).toContain("12. T11");
   });
 
   it("buildSessionListText falls back to id-prefix title when missing", () => {
     const text = buildSessionListText(
-      [{ id: "abcdef0123456789", time: { updated: 1 } } as any],
+      [{ id: "abcdef0123456789", time: { updated: Date.now() } } as any],
       "proj",
     );
     expect(text).toContain("Session abcdef01");
@@ -201,7 +220,7 @@ describe("shared list builders", () => {
 
   it("buildSessionListText appends [engineType] when present", () => {
     const text = buildSessionListText(
-      [{ id: "x", title: "Hello", engineType: "claude", time: { updated: 1 } } as any],
+      [{ id: "x", title: "Hello", engineType: "claude", time: { updated: Date.now() } } as any],
       "proj",
     );
     expect(text).toContain("Hello [claude]");
@@ -209,7 +228,8 @@ describe("shared list builders", () => {
 
   it("buildSessionListText empty list shows /new hint by default", () => {
     const text = buildSessionListText([], "proj");
-    expect(text).toContain("使用 /new 创建新会话");
+    expect(text).toContain("`/new`");
+    expect(text).toContain("创建新会话");
   });
 
   it("buildProjectListText falls back to directory basename when name is missing", () => {
@@ -242,5 +262,201 @@ describe("shared list builders", () => {
     const text = buildQuestionText("Just FYI", []);
     expect(text).toContain("Just FYI");
     expect(text).not.toMatch(/^\s+1\./m);
+  });
+
+  it("buildSessionListText displays relative time", () => {
+    const twoHoursAgo = Date.now() - 2 * 60 * 60 * 1000;
+    const text = buildSessionListText(
+      [{ id: "s1", title: "Task", time: { updated: twoHoursAgo } } as any],
+      "proj",
+    );
+    expect(text).toContain("(2小时前)");
+  });
+
+  it("buildSessionListText truncates long titles", () => {
+    const longTitle = "A".repeat(40);
+    const text = buildSessionListText(
+      [{ id: "s1", title: longTitle, time: { updated: Date.now() } } as any],
+      "proj",
+    );
+    expect(text).toContain("A".repeat(28) + "…");
+    expect(text).not.toContain(longTitle);
+  });
+
+  it("buildSessionListText groups worktree sessions by worktreeId", () => {
+    const now = Date.now();
+    const sessions = [
+      { id: "n1", title: "Normal 1", time: { updated: now } },
+      { id: "n2", title: "Normal 2", time: { updated: now - 1000 } },
+      { id: "w1", title: "WT Task 1", worktreeId: "fix-ci", time: { updated: now - 2000 } },
+      { id: "w2", title: "WT Task 2", worktreeId: "fix-ci", time: { updated: now - 3000 } },
+      { id: "w3", title: "WT Task 3", worktreeId: "feat-login", time: { updated: now - 4000 } },
+    ] as any[];
+    const text = buildSessionListText(sessions, "proj");
+    // Normal sessions first
+    expect(text).toContain("1. Normal 1");
+    expect(text).toContain("2. Normal 2");
+    // Worktree group headers
+    expect(text).toContain("🌿 fix-ci");
+    expect(text).toContain("🌿 feat-login");
+    // Numbering continues across groups
+    expect(text).toContain("3. WT Task 1");
+    expect(text).toContain("4. WT Task 2");
+    expect(text).toContain("5. WT Task 3");
+    // Group header comes before its sessions
+    const fixCiPos = text.indexOf("🌿 fix-ci");
+    const wtTask1Pos = text.indexOf("3. WT Task 1");
+    expect(fixCiPos).toBeLessThan(wtTask1Pos);
+  });
+
+  it("buildSessionListText omits worktree header when no worktree sessions", () => {
+    const text = buildSessionListText(
+      [{ id: "n1", title: "Normal", time: { updated: Date.now() } } as any],
+      "proj",
+    );
+    expect(text).not.toContain("🌿");
+  });
+});
+
+describe("relativeTimeZh", () => {
+  it("returns 刚刚 for recent timestamps", () => {
+    expect(relativeTimeZh(Date.now())).toBe("刚刚");
+    expect(relativeTimeZh(Date.now() - 30_000)).toBe("刚刚");
+  });
+
+  it("returns minutes for 1-59 minutes", () => {
+    expect(relativeTimeZh(Date.now() - 5 * 60_000)).toBe("5分钟前");
+    expect(relativeTimeZh(Date.now() - 59 * 60_000)).toBe("59分钟前");
+  });
+
+  it("returns hours for 1-23 hours", () => {
+    expect(relativeTimeZh(Date.now() - 2 * 3600_000)).toBe("2小时前");
+    expect(relativeTimeZh(Date.now() - 23 * 3600_000)).toBe("23小时前");
+  });
+
+  it("returns days for 1-6 days", () => {
+    expect(relativeTimeZh(Date.now() - 3 * 86400_000)).toBe("3天前");
+  });
+
+  it("returns weeks for 1-4 weeks", () => {
+    expect(relativeTimeZh(Date.now() - 14 * 86400_000)).toBe("2周前");
+  });
+
+  it("returns months for 5+ weeks", () => {
+    expect(relativeTimeZh(Date.now() - 60 * 86400_000)).toBe("2月前");
+  });
+});
+
+describe("truncateTitle", () => {
+  it("returns title as-is when within limit", () => {
+    expect(truncateTitle("short")).toBe("short");
+  });
+
+  it("returns title as-is when exactly at limit", () => {
+    const exact = "A".repeat(28);
+    expect(truncateTitle(exact)).toBe(exact);
+  });
+
+  it("truncates and adds ellipsis when over limit", () => {
+    const long = "A".repeat(40);
+    expect(truncateTitle(long)).toBe("A".repeat(28) + "…");
+  });
+
+  it("respects custom maxLen", () => {
+    expect(truncateTitle("abcdefgh", 5)).toBe("abcde…");
+  });
+});
+
+describe("groupAndSortSessions", () => {
+  it("places normal sessions before worktree sessions", () => {
+    const now = Date.now();
+    const sessions = [
+      { id: "w1", worktreeId: "wt", time: { updated: now } },
+      { id: "n1", time: { updated: now - 1000 } },
+    ] as any[];
+    const result = groupAndSortSessions(sessions);
+    expect(result[0].id).toBe("n1");
+    expect(result[1].id).toBe("w1");
+  });
+
+  it("sorts each group by recency (most recent first)", () => {
+    const now = Date.now();
+    const sessions = [
+      { id: "n1", time: { updated: now - 2000 } },
+      { id: "n2", time: { updated: now } },
+      { id: "w1", worktreeId: "wt", time: { updated: now - 3000 } },
+      { id: "w2", worktreeId: "wt", time: { updated: now - 1000 } },
+    ] as any[];
+    const result = groupAndSortSessions(sessions);
+    expect(result.map((s: any) => s.id)).toEqual(["n2", "n1", "w2", "w1"]);
+  });
+
+  it("groups worktree sessions by worktreeId and sorts groups by most-recent session", () => {
+    const now = Date.now();
+    const sessions = [
+      { id: "a1", worktreeId: "alpha", time: { updated: now - 5000 } },
+      { id: "b1", worktreeId: "beta", time: { updated: now - 1000 } },
+      { id: "a2", worktreeId: "alpha", time: { updated: now - 3000 } },
+    ] as any[];
+    const result = groupAndSortSessions(sessions);
+    // beta group (most recent at now-1000) comes before alpha group (now-3000)
+    expect(result.map((s: any) => s.id)).toEqual(["b1", "a2", "a1"]);
+  });
+
+  it("returns empty array for empty input", () => {
+    expect(groupAndSortSessions([])).toEqual([]);
+  });
+});
+
+describe("markdown format", () => {
+  it("builders use **bold** headers, not ───── dividers", () => {
+    const projectList = buildProjectListText([
+      { id: "p1", name: "alpha", directory: "/a", engineType: "claude" } as any,
+    ]);
+    expect(projectList).toContain("**📋 项目列表**");
+    expect(projectList).not.toContain("─");
+
+    const sessionList = buildSessionListText(
+      [{ id: "s1", title: "T", time: { updated: Date.now() } } as any],
+      "proj",
+    );
+    expect(sessionList).toContain("**📋 会话列表");
+    expect(sessionList).not.toContain("─");
+
+    const question = buildQuestionText("Q?", [{ id: "y", label: "Yes" }]);
+    expect(question).toContain("**📋 Agent 提问**");
+    expect(question).not.toContain("─");
+  });
+
+  it("buildSessionNotification uses **bold** and `code`", () => {
+    const text = buildSessionNotification("codemux", "claude", "abc12345-long");
+    expect(text).toContain("**codemux**");
+    expect(text).toContain("`abc12345`");
+  });
+});
+
+describe("markdownToTelegramHtml", () => {
+  it("converts **bold** to <b>bold</b>", () => {
+    expect(markdownToTelegramHtml("**hello**")).toBe("<b>hello</b>");
+  });
+
+  it("converts `code` to <code>code</code>", () => {
+    expect(markdownToTelegramHtml("`abc`")).toBe("<code>abc</code>");
+  });
+
+  it("escapes HTML entities", () => {
+    expect(markdownToTelegramHtml("a < b & c > d")).toBe("a &lt; b &amp; c &gt; d");
+  });
+
+  it("handles mixed formatting", () => {
+    const input = "**📋 项目列表**\n\n1. alpha\n\n使用 `/help` 查看。";
+    const html = markdownToTelegramHtml(input);
+    expect(html).toContain("<b>📋 项目列表</b>");
+    expect(html).toContain("<code>/help</code>");
+    expect(html).toContain("1. alpha");
+  });
+
+  it("returns plain text unchanged", () => {
+    expect(markdownToTelegramHtml("no formatting")).toBe("no formatting");
   });
 });

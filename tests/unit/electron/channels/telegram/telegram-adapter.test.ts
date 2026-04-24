@@ -656,7 +656,7 @@ describe("TelegramAdapter", () => {
       a.transport = { sendText: vi.fn(async () => "") };
       a.gatewayClient = { listAllProjects: vi.fn(async () => []) };
       await a.showProjectList("c1");
-      expect(a.sessionMapper.getPendingSelection("c1")).toBeUndefined();
+      expect(a.sessionMapper.getPendingSelection("c1")).toEqual({ type: "project", projects: [] });
     });
 
     it("showProjectList no-ops without gatewayClient", async () => {
@@ -671,8 +671,8 @@ describe("TelegramAdapter", () => {
       a.transport = { sendText: vi.fn(async () => "") };
       a.gatewayClient = {
         listAllSessions: vi.fn(async () => [
-          { id: "s1", directory: "/a", engineType: "claude", title: "x" },
-          { id: "s2", directory: "/b", engineType: "claude", title: "y" },
+          { id: "s1", directory: "/a", engineType: "claude", title: "x", projectId: "p" },
+          { id: "s2", directory: "/b", engineType: "claude", title: "y", projectId: "other" },
         ]),
       };
       await a.showSessionListForProject(

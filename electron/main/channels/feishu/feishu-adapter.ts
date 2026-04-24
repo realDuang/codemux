@@ -27,6 +27,8 @@ import {
   buildProjectListText,
   buildSessionListText,
   buildQuestionText,
+  buildSessionNotification,
+  groupAndSortSessions,
 } from "../shared/list-builders";
 import {
   handleSessionOpsCommand,
@@ -671,13 +673,16 @@ export class FeishuAdapter extends ChannelAdapter {
       const allProjects = await this.gatewayClient.listAllProjects();
       const defaultProject = allProjects.find(p => p.isDefault);
       if (defaultProject) {
+        // Cleanup expired temp session from a previous default-workspace round
+        if (this.sessionMapper.getTempSession(chatId)) {
+          await this.cleanupExpiredTempSession(chatId);
+        }
         const defaultRef = {
           directory: defaultProject.directory,
           engineType: defaultProject.engineType,
           projectId: defaultProject.id,
         };
-        this.sessionMapper.setP2PLastProject(chatId, defaultRef);
-        await this.createTempSessionAndSend(chatId, defaultRef, text);
+        await this.createTempSessionAndSend(chatId, defaultRef, text, "默认工作区");
         return;
       }
     }
@@ -801,19 +806,18 @@ export class FeishuAdapter extends ChannelAdapter {
         projects: flatProjects,
       });
     } else {
-      // No real projects — auto-use default workspace without showing empty list
+      // No real projects — show informational message.
+      // Do NOT set lastSelectedProject; let step 6 handle temp session creation
+      // when the user sends a natural-language message.
       const defaultProject = allProjects.find(p => p.isDefault);
       if (defaultProject) {
-        const defaultRef = {
-          directory: defaultProject.directory,
-          engineType: defaultProject.engineType,
-          projectId: defaultProject.id,
-        };
-        this.sessionMapper.setP2PLastProject(chatId, defaultRef);
+        await this.transport!.sendText(chatId, buildProjectListText([]));
       } else {
-        // No projects at all — show empty project list message
-        const text = buildProjectListText(projects);
-        await this.transport!.sendText(chatId, text);
+        await this.transport!.sendText(chatId, buildProjectListText([]));
+        this.sessionMapper.setPendingSelection(chatId, {
+          type: "project",
+          projects: [],
+        });
       }
     }
   }
@@ -826,13 +830,14 @@ export class FeishuAdapter extends ChannelAdapter {
   ): Promise<void> {
     if (!this.gatewayClient) return;
     const sessions = await this.gatewayClient.listAllSessions();
-    const filtered = sessions.filter((s) => s.directory === project.directory);
-    const sessionText = buildSessionListText(filtered, projectName);
+    const filtered = sessions.filter((s) => s.projectId === project.projectId);
+    const sorted = groupAndSortSessions(filtered);
+    const sessionText = buildSessionListText(sorted, projectName);
     await this.transport!.sendText(chatId, sessionText);
 
     this.sessionMapper.setPendingSelection(chatId, {
       type: "session",
-      sessions: filtered,
+      sessions: sorted,
       engineType: project.engineType,
       directory: project.directory,
       projectId: project.projectId,
@@ -909,6 +914,7 @@ export class FeishuAdapter extends ChannelAdapter {
     chatId: string,
     project: { directory: string; engineType?: EngineType; projectId: string },
     text: string,
+    projectName?: string,
   ): Promise<void> {
     if (!this.gatewayClient) return;
 
@@ -929,6 +935,8 @@ export class FeishuAdapter extends ChannelAdapter {
       };
 
       this.sessionMapper.setTempSession(chatId, tempSession);
+      const name = projectName || project.directory.split(/[\\/]/).pop() || project.directory;
+      await this.transport!.sendText(chatId, buildSessionNotification(name, session.engineType, session.id));
       await this.enqueueP2PMessage(chatId, text);
     } catch (err) {
       await this.transport!.sendText(
@@ -1067,8 +1075,15 @@ export class FeishuAdapter extends ChannelAdapter {
     text: string,
     pending: import("./feishu-types").PendingSelection,
   ): Promise<boolean> {
+    // Empty project list — clear stale pending state before re-fetching
+    if (!pending.projects || pending.projects.length === 0) {
+      this.sessionMapper.clearPendingSelection(chatId);
+      await this.showProjectList(chatId);
+      return true;
+    }
+
     const num = parseInt(text.trim(), 10);
-    if (isNaN(num) || num < 1 || !pending.projects || num > pending.projects.length) {
+    if (isNaN(num) || num < 1 || num > pending.projects.length) {
       return false; // Not a valid number — fall through to show project list again
     }
 

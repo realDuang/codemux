@@ -621,7 +621,7 @@ describe("FeishuAdapter", () => {
       };
       a.sessionMapper.getOrCreateP2PChat("c1", "u1");
       await a.showProjectList("c1");
-      expect(a.sessionMapper.getP2PChat("c1")?.lastSelectedProject?.projectId).toBe("def");
+      expect(a.sessionMapper.getP2PChat("c1")?.lastSelectedProject).toBeUndefined();
     });
 
     it("showProjectList sends empty list message when no projects at all", async () => {
@@ -637,8 +637,8 @@ describe("FeishuAdapter", () => {
       a.transport = { sendText: vi.fn(async () => "") };
       a.gatewayClient = {
         listAllSessions: vi.fn(async () => [
-          { id: "s1", directory: "/a", engineType: "claude", title: "x" },
-          { id: "s2", directory: "/b", engineType: "claude", title: "y" },
+          { id: "s1", directory: "/a", engineType: "claude", title: "x", projectId: "p" },
+          { id: "s2", directory: "/b", engineType: "claude", title: "y", projectId: "other" },
         ]),
       };
       a.sessionMapper.getOrCreateP2PChat("c1", "u1");

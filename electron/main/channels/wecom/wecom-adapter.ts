@@ -577,7 +577,7 @@ export class WeComAdapter extends ChannelAdapter {
 
     if (this.gatewayClient) {
       const handled = await handleSessionOpsCommand(command, {
-        sendText: (text) => this.transport!.sendText(chatId, text),
+        sendText: (text) => this.transport!.sendMarkdown(chatId, text),
         gatewayClient: this.gatewayClient,
         getContext: (): SessionContext | null => {
           const t = this.sessionMapper.getTempSession(chatId);
@@ -595,7 +595,7 @@ export class WeComAdapter extends ChannelAdapter {
     switch (command.command) {
       case "help":
       case "start":
-        await this.transport.sendText(chatId, buildHelpText(P2P_CAPABILITIES));
+        await this.transport.sendMarkdown(chatId, buildHelpText(P2P_CAPABILITIES));
         break;
 
       case "project":
@@ -611,9 +611,9 @@ export class WeComAdapter extends ChannelAdapter {
         break;
 
       default:
-        await this.transport.sendText(
+        await this.transport.sendMarkdown(
           chatId,
-          `📋 未知命令：${command.command}。使用 /help 查看可用命令。`,
+          `📋 未知命令：\`${command.command}\`。使用 \`/help\` 查看可用命令。`,
         );
     }
   }
@@ -623,9 +623,9 @@ export class WeComAdapter extends ChannelAdapter {
     if (!this.transport) return;
     const p2pState = this.sessionMapper.getP2PChat(chatId);
     if (!p2pState?.lastSelectedProject) {
-      await this.transport.sendText(
+      await this.transport.sendMarkdown(
         chatId,
-        "📋 当前未选择项目。请先使用 /project 选择项目。",
+        "📋 当前未选择项目。请先使用 `/project` 选择项目。",
       );
       return;
     }
@@ -642,9 +642,9 @@ export class WeComAdapter extends ChannelAdapter {
     if (!this.transport) return;
     const p2pState = this.sessionMapper.getP2PChat(chatId);
     if (!p2pState?.lastSelectedProject) {
-      await this.transport.sendText(
+      await this.transport.sendMarkdown(
         chatId,
-        "📋 当前未选择项目。请先使用 /project 选择项目。",
+        "📋 当前未选择项目。请先使用 `/project` 选择项目。",
       );
       return;
     }
@@ -664,7 +664,7 @@ export class WeComAdapter extends ChannelAdapter {
     const projects = allProjects.filter(p => !p.isDefault);
 
     if (projects.length > 0) {
-      await this.transport.sendText(chatId, buildProjectListText(projects));
+      await this.transport.sendMarkdown(chatId, buildProjectListText(projects));
       const flatProjects = this.flattenProjectsByEngine(projects);
       this.sessionMapper.setPendingSelection(chatId, {
         type: "project",
@@ -673,9 +673,9 @@ export class WeComAdapter extends ChannelAdapter {
     } else {
       const defaultProject = allProjects.find(p => p.isDefault);
       if (defaultProject) {
-        await this.transport.sendText(chatId, buildProjectListText([]));
+        await this.transport.sendMarkdown(chatId, buildProjectListText([]));
       } else {
-        await this.transport.sendText(chatId, buildProjectListText([]));
+        await this.transport.sendMarkdown(chatId, buildProjectListText([]));
         this.sessionMapper.setPendingSelection(chatId, {
           type: "project",
           projects: [],
@@ -694,7 +694,7 @@ export class WeComAdapter extends ChannelAdapter {
     const filtered = sessions.filter((s) => s.projectId === project.projectId);
     const sorted = groupAndSortSessions(filtered);
     const sessionText = buildSessionListText(sorted, projectName);
-    await this.transport.sendText(chatId, sessionText);
+    await this.transport.sendMarkdown(chatId, sessionText);
 
     this.sessionMapper.setPendingSelection(chatId, {
       type: "session",
@@ -733,12 +733,12 @@ export class WeComAdapter extends ChannelAdapter {
       };
       this.sessionMapper.setTempSession(chatId, tempSession);
 
-      await this.transport.sendText(
+      await this.transport.sendMarkdown(
         chatId,
         buildSessionNotification(projectName, session.engineType, session.id),
       );
     } catch (err) {
-      await this.transport.sendText(
+      await this.transport.sendMarkdown(
         chatId,
         `📋 创建会话失败：${err instanceof Error ? err.message : String(err)}`,
       );
@@ -814,7 +814,7 @@ export class WeComAdapter extends ChannelAdapter {
     this.sessionMapper.clearPendingSelection(chatId);
 
     if (this.sessionMapper.hasGroupForConversation(session.id)) {
-      await this.transport!.sendText(
+      await this.transport!.sendMarkdown(
         chatId,
         "📋 此会话已有对应的群聊，请直接在群聊中发送消息。",
       );
@@ -834,7 +834,7 @@ export class WeComAdapter extends ChannelAdapter {
     this.sessionMapper.setTempSession(chatId, tempSession);
 
     const projectName = pending.projectName || pending.directory?.split(/[\\/]/).pop() || "";
-    await this.transport!.sendText(
+    await this.transport!.sendMarkdown(
       chatId,
       buildSessionNotification(projectName, session.engineType, session.id),
     );
@@ -877,11 +877,11 @@ export class WeComAdapter extends ChannelAdapter {
       this.sessionMapper.setTempSession(chatId, tempSession);
 
       const name = projectName || project.directory.split(/[\\/]/).pop() || project.directory;
-      await this.transport!.sendText(chatId, buildSessionNotification(name, session.engineType, session.id));
+      await this.transport!.sendMarkdown(chatId, buildSessionNotification(name, session.engineType, session.id));
 
       await this.enqueueP2PMessage(chatId, text);
     } catch (err) {
-      await this.transport!.sendText(
+      await this.transport!.sendMarkdown(
         chatId,
         `📋 创建临时会话失败：${err instanceof Error ? err.message : String(err)}`,
       );
@@ -984,7 +984,7 @@ export class WeComAdapter extends ChannelAdapter {
   async handleGroupMessage(groupChatId: string, text: string): Promise<void> {
     const binding = this.sessionMapper.getGroupBinding(groupChatId);
     if (!binding) {
-      await this.transport!.sendText(`group:${groupChatId}`, "📋 此群聊未绑定到 CodeMux 会话。");
+      await this.transport!.sendMarkdown(`group:${groupChatId}`, "📋 此群聊未绑定到 CodeMux 会话。");
       return;
     }
 
@@ -1018,7 +1018,7 @@ export class WeComAdapter extends ChannelAdapter {
     if (!command || !this.gatewayClient || !this.transport) return;
 
     const handled = await handleSessionOpsCommand(command, {
-      sendText: (text) => this.transport!.sendText(chatTarget, text),
+      sendText: (text) => this.transport!.sendMarkdown(chatTarget, text),
       gatewayClient: this.gatewayClient,
       getContext: (): SessionContext => ({
         conversationId: binding.conversationId,
@@ -1031,13 +1031,13 @@ export class WeComAdapter extends ChannelAdapter {
     switch (command.command) {
       case "help":
       case "start":
-        await this.transport.sendText(chatTarget, buildHelpText(GROUP_CAPABILITIES));
+        await this.transport.sendMarkdown(chatTarget, buildHelpText(GROUP_CAPABILITIES));
         break;
 
       default:
-        await this.transport.sendText(
+        await this.transport.sendMarkdown(
           chatTarget,
-          `📋 未知命令：${command.command}。使用 /help 查看可用命令。`,
+          `📋 未知命令：\`${command.command}\`。使用 \`/help\` 查看可用命令。`,
         );
     }
   }
@@ -1059,7 +1059,7 @@ export class WeComAdapter extends ChannelAdapter {
 
     if (this.sessionMapper.hasGroupForConversation(conversationId)) {
       if (p2pChatId) {
-        await this.transport.sendText(
+        await this.transport.sendMarkdown(
           p2pChatId,
           "📋 此会话已有对应的群聊。",
         );
@@ -1095,7 +1095,7 @@ export class WeComAdapter extends ChannelAdapter {
       if (!newChatId) {
         channelLog.error("[WeCom] Failed to create group chat: no chatid returned");
         if (p2pChatId) {
-          await this.transport.sendText(p2pChatId, "📋 创建群聊失败，请重试。");
+          await this.transport.sendMarkdown(p2pChatId, "📋 创建群聊失败，请重试。");
         }
         return;
       }
@@ -1123,13 +1123,13 @@ export class WeComAdapter extends ChannelAdapter {
         `会话：${conversationId.slice(0, 8)}...`,
         `─────────────────────────`,
         `发送消息即可与 AI 助手对话。`,
-        `使用 /help 查看可用命令。`,
+        `使用 \`/help\` 查看可用命令。`,
       ].join("\n");
-      await this.transport.sendText(`group:${newChatId}`, welcomeText);
+      await this.transport.sendMarkdown(`group:${newChatId}`, welcomeText);
 
       // Notify user in P2P
       if (p2pChatId) {
-        await this.transport.sendText(
+        await this.transport.sendMarkdown(
           p2pChatId,
           `📋 已创建群聊「${groupName}」，请在企业微信中查看。`,
         );
@@ -1137,7 +1137,7 @@ export class WeComAdapter extends ChannelAdapter {
     } catch (err) {
       channelLog.error("[WeCom] Failed to create group for session:", err);
       if (p2pChatId) {
-        await this.transport.sendText(
+        await this.transport.sendMarkdown(
           p2pChatId,
           `📋 创建群聊失败：${err instanceof Error ? err.message : String(err)}`,
         );
@@ -1322,14 +1322,14 @@ export class WeComAdapter extends ChannelAdapter {
         q.question || "Agent 有一个问题：",
         options,
       );
-      this.transport.sendText(targetChatId, text);
+      this.transport.sendMarkdown(targetChatId, text);
 
       this.sessionMapper.setPendingQuestion(targetChatId, {
         questionId: question.id,
         sessionId: question.sessionId,
       });
     } else {
-      this.transport.sendText(targetChatId, "📋 Agent 提问（无选项）");
+      this.transport.sendMarkdown(targetChatId, "📋 Agent 提问（无选项）");
     }
   }
 

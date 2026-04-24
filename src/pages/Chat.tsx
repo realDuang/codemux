@@ -41,7 +41,6 @@ import { ScheduledTaskModal } from "../components/ScheduledTaskModal";
 import type {
   UnifiedMessage,
   UnifiedPart,
-  TextPart,
   UnifiedPermission,
   UnifiedQuestion,
   UnifiedSession,
@@ -553,48 +552,13 @@ export default function Chat() {
     return messageStore.queued[sid] || [];
   });
 
-  const consumeQueuedPreview = (sessionId: string, messageId: string) => {
+  const consumeQueuedPreview = (sessionId: string, _messageId: string) => {
     const queued = messageStore.queued[sessionId];
     if (!queued || queued.length === 0) {
       return;
     }
 
-    const [consumedPreview] = queued;
     setMessageStore("queued", sessionId, (draft) => draft.slice(1));
-
-    if (!messageId || !consumedPreview) {
-      return;
-    }
-
-    const existingMessages = messageStore.message[sessionId] || [];
-    if (existingMessages.some((message) => message.id === messageId)) {
-      return;
-    }
-
-    const text = consumedPreview.text.trim();
-    const parts: TextPart[] = text
-      ? [{
-          id: `part-queued-placeholder-${messageId}`,
-          messageId,
-          sessionId,
-          type: "text",
-          text,
-        }]
-      : [];
-
-    const placeholder: UnifiedMessage = {
-      id: messageId,
-      sessionId,
-      role: "user",
-      time: { created: consumedPreview.enqueuedAt },
-      parts,
-    };
-
-    if (parts.length > 0 && !(messageStore.part[messageId]?.length > 0)) {
-      setMessageStore("part", messageId, parts);
-    }
-
-    setMessageStore("message", sessionId, [...existingMessages, placeholder]);
   };
 
   // Aggregate token usage across all assistant messages in the current session
@@ -1966,8 +1930,8 @@ export default function Chat() {
     // Instead of creating a temp user message (which would steal the isWorking
     // indicator from the currently processing turn), we store the message in
     // the queued store. It will be rendered as a preview above the input area.
-    // The actual user message bubble is created when the adapter starts processing
-    // (triggered by message.updated or message.queued.consumed).
+    // The actual user message bubble is created by the adapter's eventual
+    // message.updated event when processing for that turn really begins.
     if (isBusy) {
       const queuedMsg: QueuedMessage = {
         id: tempMessageId,

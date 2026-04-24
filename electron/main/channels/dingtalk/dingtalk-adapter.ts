@@ -39,6 +39,8 @@ import {
   buildProjectListText,
   buildSessionListText,
   buildQuestionText,
+  buildSessionNotification,
+  groupAndSortSessions,
 } from "../shared/list-builders";
 import {
   handleSessionOpsCommand,
@@ -449,7 +451,25 @@ export class DingTalkAdapter extends ChannelAdapter {
       return;
     }
 
-    // 6. No project → show project list
+    // 6. No project → use default workspace as fallback
+    if (this.gatewayClient) {
+      const allProjects = await this.gatewayClient.listAllProjects();
+      const defaultProject = allProjects.find(p => p.isDefault);
+      if (defaultProject) {
+        if (this.sessionMapper.getTempSession(chatId)) {
+          await this.cleanupExpiredTempSession(chatId);
+        }
+        const defaultRef = {
+          directory: defaultProject.directory,
+          engineType: defaultProject.engineType,
+          projectId: defaultProject.id,
+        };
+        await this.createTempSessionAndSend(chatId, defaultRef, text, "默认工作区");
+        return;
+      }
+    }
+
+    // 7. Fallback: show project list
     await this.showProjectList(chatId);
   }
 
@@ -554,16 +574,27 @@ export class DingTalkAdapter extends ChannelAdapter {
   private async showProjectList(chatId: string): Promise<void> {
     if (!this.gatewayClient) return;
 
-    const projects = await this.gatewayClient.listAllProjects();
-    const text = buildProjectListText(projects);
-    await this.transport!.sendText(chatId, text);
+    const allProjects = await this.gatewayClient.listAllProjects();
+    const projects = allProjects.filter(p => !p.isDefault);
 
     if (projects.length > 0) {
+      await this.transport!.sendText(chatId, buildProjectListText(projects));
       const flatProjects = this.flattenProjectsByEngine(projects);
       this.sessionMapper.setPendingSelection(chatId, {
         type: "project",
         projects: flatProjects,
       });
+    } else {
+      const defaultProject = allProjects.find(p => p.isDefault);
+      if (defaultProject) {
+        await this.transport!.sendText(chatId, buildProjectListText([]));
+      } else {
+        await this.transport!.sendText(chatId, buildProjectListText([]));
+        this.sessionMapper.setPendingSelection(chatId, {
+          type: "project",
+          projects: [],
+        });
+      }
     }
   }
 
@@ -575,13 +606,14 @@ export class DingTalkAdapter extends ChannelAdapter {
   ): Promise<void> {
     if (!this.gatewayClient) return;
     const sessions = await this.gatewayClient.listAllSessions();
-    const filtered = sessions.filter((s) => s.directory === project.directory);
-    const sessionText = buildSessionListText(filtered, projectName);
+    const filtered = sessions.filter((s) => s.projectId === project.projectId);
+    const sorted = groupAndSortSessions(filtered);
+    const sessionText = buildSessionListText(sorted, projectName);
     await this.transport!.sendText(chatId, sessionText);
 
     this.sessionMapper.setPendingSelection(chatId, {
       type: "session",
-      sessions: filtered,
+      sessions: sorted,
       engineType: project.engineType,
       directory: project.directory,
       projectId: project.projectId,
@@ -633,6 +665,7 @@ export class DingTalkAdapter extends ChannelAdapter {
     chatId: string,
     project: { directory: string; engineType?: EngineType; projectId: string },
     text: string,
+    projectName?: string,
   ): Promise<void> {
     if (!this.gatewayClient) return;
 
@@ -653,6 +686,8 @@ export class DingTalkAdapter extends ChannelAdapter {
       };
 
       this.sessionMapper.setTempSession(chatId, tempSession);
+      const name = projectName || project.directory.split(/[\\/]/).pop() || project.directory;
+      await this.transport!.sendText(chatId, buildSessionNotification(name, session.engineType, session.id));
       await this.enqueueP2PMessage(chatId, text);
     } catch (err) {
       await this.transport!.sendText(
@@ -775,8 +810,14 @@ export class DingTalkAdapter extends ChannelAdapter {
     text: string,
     pending: DingTalkPendingSelection,
   ): Promise<boolean> {
+    // Empty project list — re-fetch to check if projects are now available
+    if (!pending.projects || pending.projects.length === 0) {
+      await this.showProjectList(chatId);
+      return true;
+    }
+
     const num = parseInt(text.trim(), 10);
-    if (isNaN(num) || num < 1 || !pending.projects || num > pending.projects.length) {
+    if (isNaN(num) || num < 1 || num > pending.projects.length) {
       return false;
     }
 

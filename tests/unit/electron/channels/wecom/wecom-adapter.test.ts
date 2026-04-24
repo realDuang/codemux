@@ -554,7 +554,7 @@ describe("WeComAdapter", () => {
       a.transport = { sendText: vi.fn(async () => "") };
       a.gatewayClient = { listAllProjects: vi.fn(async () => []) };
       await a.showProjectList("c1");
-      expect(a.sessionMapper.getPendingSelection("c1")).toBeUndefined();
+      expect(a.sessionMapper.getPendingSelection("c1")).toEqual({ type: "project", projects: [] });
     });
 
     it("showSessionListForProject filters by directory and stores pending", async () => {
@@ -562,8 +562,8 @@ describe("WeComAdapter", () => {
       a.transport = { sendText: vi.fn(async () => "") };
       a.gatewayClient = {
         listAllSessions: vi.fn(async () => [
-          { id: "s1", directory: "/a", engineType: "claude", title: "x" },
-          { id: "s2", directory: "/b", engineType: "claude", title: "y" },
+          { id: "s1", directory: "/a", engineType: "claude", title: "x", projectId: "p" },
+          { id: "s2", directory: "/b", engineType: "claude", title: "y", projectId: "other" },
         ]),
       };
       await a.showSessionListForProject(
@@ -591,7 +591,7 @@ describe("WeComAdapter", () => {
         "alpha",
       );
       expect(a.sessionMapper.getTempSession("c1")?.conversationId).toBe("sess-1");
-      expect(a.transport.sendText.mock.calls.at(-1)[1]).toContain("已创建新会话");
+      expect(a.transport.sendText.mock.calls.at(-1)[1]).toContain("alpha");
     });
 
     it("reports error when createSession fails", async () => {

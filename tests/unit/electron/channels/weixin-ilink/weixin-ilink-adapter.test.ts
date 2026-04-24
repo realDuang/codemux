@@ -434,7 +434,7 @@ describe("WeixinIlinkAdapter", () => {
       expect(temp.conversationId).toBe("sess-ABCDEFGH");
       expect(adapter.transport.sendText).toHaveBeenCalled();
       const arg = adapter.transport.sendText.mock.calls[0][1] as string;
-      expect(arg).toContain("Hi");
+      expect(arg).toContain("sess-ABC");
     });
   });
 
@@ -724,7 +724,7 @@ describe("WeixinIlinkAdapter", () => {
       a.transport = { sendText: vi.fn(async () => "") };
       a.gatewayClient = { listAllProjects: vi.fn(async () => []) };
       await a.showProjectList("c1");
-      expect(a.sessionMapper.getPendingSelection("c1")).toBeUndefined();
+      expect(a.sessionMapper.getPendingSelection("c1")).toEqual({ type: "project", projects: [] });
     });
 
     it("showSessionListForProject filters sessions by directory and stores pending", async () => {
@@ -732,8 +732,8 @@ describe("WeixinIlinkAdapter", () => {
       a.transport = { sendText: vi.fn(async () => "") };
       a.gatewayClient = {
         listAllSessions: vi.fn(async () => [
-          { id: "s1", directory: "/a", engineType: "claude", title: "x" },
-          { id: "s2", directory: "/b", engineType: "claude", title: "y" },
+          { id: "s1", directory: "/a", engineType: "claude", title: "x", projectId: "p" },
+          { id: "s2", directory: "/b", engineType: "claude", title: "y", projectId: "other" },
         ]),
       };
       await a.showSessionListForProject(
@@ -763,7 +763,7 @@ describe("WeixinIlinkAdapter", () => {
       );
       const t = a.sessionMapper.getTempSession("c1");
       expect(t?.conversationId).toBe("sess-1");
-      expect(a.transport.sendText.mock.calls.at(-1)[1]).toContain("已创建会话");
+      expect(a.transport.sendText.mock.calls.at(-1)[1]).toContain("proj");
     });
 
     it("createNewSessionForProject reports error message on failure", async () => {

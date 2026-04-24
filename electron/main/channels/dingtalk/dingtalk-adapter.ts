@@ -810,8 +810,9 @@ export class DingTalkAdapter extends ChannelAdapter {
     text: string,
     pending: DingTalkPendingSelection,
   ): Promise<boolean> {
-    // Empty project list — re-fetch to check if projects are now available
+    // Empty project list — clear stale pending state before re-fetching
     if (!pending.projects || pending.projects.length === 0) {
+      this.sessionMapper.clearPendingSelection(chatId);
       await this.showProjectList(chatId);
       return true;
     }

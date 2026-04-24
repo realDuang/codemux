@@ -1019,8 +1019,9 @@ export class TeamsAdapter extends ChannelAdapter {
     text: string,
     pending: TeamsPendingSelection,
   ): Promise<boolean> {
-    // Empty project list — re-fetch to check if projects are now available
+    // Empty project list — clear stale pending state before re-fetching
     if (!pending.projects || pending.projects.length === 0) {
+      this.sessionMapper.clearPendingSelection(chatId);
       await this.showProjectList(chatId);
       return true;
     }
@@ -1213,9 +1214,10 @@ export class TeamsAdapter extends ChannelAdapter {
     pending: TeamsPendingSelection,
     serviceUrl: string,
   ): Promise<boolean> {
-    // Empty project list — re-fetch to check if projects are now available
+    // Empty project list — clear stale pending state before re-fetching
     if (!pending.projects || pending.projects.length === 0) {
-      await this.showProjectList(groupChatId);
+      this.sessionMapper.clearPendingSelection(groupChatId);
+      await this.showGroupProjectList(groupChatId, serviceUrl);
       return true;
     }
 

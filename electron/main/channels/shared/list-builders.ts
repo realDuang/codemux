@@ -10,6 +10,11 @@ import type {
   UnifiedSession,
 } from "../../../../src/types/unified";
 
+/** Escape markdown metacharacters in user-controlled strings. */
+function escapeMarkdownInline(value: string): string {
+  return value.replace(/[\\*`]/g, "\\$&");
+}
+
 /** Build a numbered project list for selection. */
 export function buildProjectListText(projects: UnifiedProject[]): string {
   if (projects.length === 0) {
@@ -24,7 +29,7 @@ export function buildProjectListText(projects: UnifiedProject[]): string {
   const lines: string[] = ["**📋 项目列表**", ""];
   for (let i = 0; i < projects.length; i++) {
     const p = projects[i];
-    const name = p.name || p.directory.split(/[\\/]/).pop() || p.directory;
+    const name = escapeMarkdownInline(p.name || p.directory.split(/[\\/]/).pop() || p.directory);
     lines.push(`${i + 1}. ${name}`);
   }
   lines.push("");
@@ -38,7 +43,9 @@ export function buildSessionNotification(
   engineType: string,
   sessionId: string,
 ): string {
-  return `📋 **${projectName}**（${engineType}）· \`${sessionId.slice(0, 8)}\``;
+  const safeProjectName = escapeMarkdownInline(projectName);
+  const safeEngineType = escapeMarkdownInline(engineType);
+  return `📋 **${safeProjectName}**（${safeEngineType}）· \`${sessionId.slice(0, 8)}\``;
 }
 
 const SESSION_TITLE_MAX_LEN = 28;
@@ -127,7 +134,7 @@ export function buildSessionListText(
       : "使用 `/new` 创建新会话";
 
   const lines: string[] = [
-    `**📋 会话列表 — ${projectName}**`,
+    `**📋 会话列表 — ${escapeMarkdownInline(projectName)}**`,
     "",
   ];
 
@@ -147,7 +154,7 @@ export function buildSessionListText(
       }
 
       const title = truncateTitle(s.title || `Session ${s.id.slice(0, 8)}`);
-      const engineLabel = s.engineType ? ` [${s.engineType}]` : "";
+      const engineLabel = s.engineType ? ` [${escapeMarkdownInline(s.engineType)}]` : "";
       const timeLabel = s.time?.updated ? ` (${relativeTimeZh(s.time.updated)})` : "";
       lines.push(`${i + 1}. ${title}${engineLabel}${timeLabel}`);
     }

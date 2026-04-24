@@ -705,7 +705,7 @@ export class TelegramAdapter extends ChannelAdapter {
       default:
         await this.transport.sendMarkdown(
           chatId,
-          `📋 未知命令：${command.command}。使用 \`/help\` 查看可用命令。`,
+          `📋 未知命令：\`/${command.command}\`。使用 \`/help\` 查看可用命令。`,
         );
     }
   }
@@ -1165,7 +1165,7 @@ export class TelegramAdapter extends ChannelAdapter {
       default:
         await this.transport.sendMarkdown(
           groupChatId,
-          `📋 未知命令：${command.command}。使用 \`/help\` 查看可用命令。`,
+          `📋 未知命令：\`/${command.command}\`。使用 \`/help\` 查看可用命令。`,
         );
     }
   }

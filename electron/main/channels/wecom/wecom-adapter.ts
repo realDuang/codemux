@@ -613,7 +613,7 @@ export class WeComAdapter extends ChannelAdapter {
       default:
         await this.transport.sendMarkdown(
           chatId,
-          `📋 未知命令：\`${command.command}\`。使用 \`/help\` 查看可用命令。`,
+          `📋 未知命令：\`/${command.command}\`。使用 \`/help\` 查看可用命令。`,
         );
     }
   }
@@ -1037,7 +1037,7 @@ export class WeComAdapter extends ChannelAdapter {
       default:
         await this.transport.sendMarkdown(
           chatTarget,
-          `📋 未知命令：\`${command.command}\`。使用 \`/help\` 查看可用命令。`,
+          `📋 未知命令：\`/${command.command}\`。使用 \`/help\` 查看可用命令。`,
         );
     }
   }
@@ -1116,12 +1116,12 @@ export class WeComAdapter extends ChannelAdapter {
 
       // Send welcome message to the new group
       const welcomeText = [
-        `📋 CodeMux 会话群`,
-        `─────────────────────────`,
+        `**📋 CodeMux 会话群**`,
+        ``,
         `项目：${projectName}`,
         `引擎：${engineType}`,
-        `会话：${conversationId.slice(0, 8)}...`,
-        `─────────────────────────`,
+        `会话：\`${conversationId.slice(0, 8)}\``,
+        ``,
         `发送消息即可与 AI 助手对话。`,
         `使用 \`/help\` 查看可用命令。`,
       ].join("\n");

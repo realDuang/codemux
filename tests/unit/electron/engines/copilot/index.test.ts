@@ -1058,8 +1058,8 @@ describe("CopilotSdkAdapter", () => {
     });
   });
 
-  describe("handleTurnStart()", () => {
-    it("finalizes the previous turn and emits the next queued user before the new turn starts", () => {
+  describe("handleTurnEnd()", () => {
+    it("finalizes the previous turn and emits the next queued user after the turn ends", () => {
       const updates: any[] = [];
       const consumed: any[] = [];
       const r1 = vi.fn();
@@ -1078,7 +1078,7 @@ describe("CopilotSdkAdapter", () => {
         { id: "user-msg-2", role: "user", sessionId: "s1", time: { created: 2000 }, parts: [] },
       ]);
 
-      (adapter as any).handleTurnStart("s1", {});
+      (adapter as any).handleTurnEnd("s1", {});
 
       expect(r1).toHaveBeenCalledTimes(1);
       expect(r2).not.toHaveBeenCalled();
@@ -1092,7 +1092,7 @@ describe("CopilotSdkAdapter", () => {
       expect(assistantUpdate?.message.id).toBe("msg-existing");
       expect(userUpdate?.message.id).toBe("user-msg-2");
       expect((adapter as any).pendingUserMessages.has("s1")).toBe(false);
-      expect((adapter as any).messageBuffers.has("s1")).toBe(true);
+      expect((adapter as any).messageBuffers.has("s1")).toBe(false);
     });
   });
 

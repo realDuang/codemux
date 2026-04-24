@@ -1201,6 +1201,19 @@ export class CopilotSdkAdapter extends EngineAdapter {
   }
 
   private handleTurnStart(sessionId: string, _data: any): void {
+    const buffer = this.getOrCreateBuffer(sessionId);
+    const stepStartPart: any = { id: timeId("part"), messageId: buffer.messageId, sessionId, type: "step-start" };
+    buffer.parts.push(stepStartPart);
+    this.emit("message.part.updated", { sessionId, messageId: buffer.messageId, part: stepStartPart });
+  }
+
+  private handleTurnEnd(sessionId: string, _data: any): void {
+    const buffer = this.getOrCreateBuffer(sessionId);
+    this.flushTextAccumulator(buffer, sessionId);
+    const stepFinishPart: any = { id: timeId("part"), messageId: buffer.messageId, sessionId, type: "step-finish" };
+    buffer.parts.push(stepFinishPart);
+    this.emit("message.part.updated", { sessionId, messageId: buffer.messageId, part: stepFinishPart });
+
     const pendingUsers = this.pendingUserMessages.get(sessionId);
     if (pendingUsers && pendingUsers.length > 0) {
       const previousTurn = this.finalizeBuffer(sessionId);
@@ -1222,19 +1235,6 @@ export class CopilotSdkAdapter extends EngineAdapter {
         this.pendingUserMessages.delete(sessionId);
       }
     }
-
-    const buffer = this.getOrCreateBuffer(sessionId);
-    const stepStartPart: any = { id: timeId("part"), messageId: buffer.messageId, sessionId, type: "step-start" };
-    buffer.parts.push(stepStartPart);
-    this.emit("message.part.updated", { sessionId, messageId: buffer.messageId, part: stepStartPart });
-  }
-
-  private handleTurnEnd(sessionId: string, _data: any): void {
-    const buffer = this.getOrCreateBuffer(sessionId);
-    this.flushTextAccumulator(buffer, sessionId);
-    const stepFinishPart: any = { id: timeId("part"), messageId: buffer.messageId, sessionId, type: "step-finish" };
-    buffer.parts.push(stepFinishPart);
-    this.emit("message.part.updated", { sessionId, messageId: buffer.messageId, part: stepFinishPart });
   }
 
   private handleSessionIdle(sessionId: string): void {

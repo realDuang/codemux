@@ -1079,7 +1079,7 @@ describe("CopilotSdkAdapter", () => {
 
     it("auto-approves for kinds in allowedAlwaysKinds", async () => {
       (adapter as any).sessionModes.set("s1", "interactive");
-      (adapter as any).allowedAlwaysKinds.add("read");
+      (adapter as any).allowedAlwaysKinds.set("s1", new Set(["read"]));
 
       const result = await (adapter as any).handlePermissionRequest(
         { kind: "read", toolCallId: "t1" },
@@ -1131,7 +1131,8 @@ describe("CopilotSdkAdapter", () => {
       const resolve = vi.fn();
       (adapter as any).pendingPermissions.set("p1", {
         resolve,
-        permission: { id: "p1", sessionId: "s1", rawInput: { kind: "write" } },
+        permission: { id: "p1", sessionId: "s1" },
+        sdkKind: "write",
       });
 
       await adapter.replyPermission("p1", { optionId: "allow_once" });
@@ -1144,20 +1145,22 @@ describe("CopilotSdkAdapter", () => {
       const resolve = vi.fn();
       (adapter as any).pendingPermissions.set("p1", {
         resolve,
-        permission: { id: "p1", sessionId: "s1", rawInput: { kind: "shell" } },
+        permission: { id: "p1", sessionId: "s1" },
+        sdkKind: "shell",
       });
 
       await adapter.replyPermission("p1", { optionId: "allow_always" });
 
       expect(resolve).toHaveBeenCalledWith({ kind: "approved" });
-      expect((adapter as any).allowedAlwaysKinds.has("shell")).toBe(true);
+      expect((adapter as any).allowedAlwaysKinds.get("s1")?.has("shell")).toBe(true);
     });
 
     it("resolves with denied-interactively for reject_once", async () => {
       const resolve = vi.fn();
       (adapter as any).pendingPermissions.set("p1", {
         resolve,
-        permission: { id: "p1", sessionId: "s1", rawInput: { kind: "write" } },
+        permission: { id: "p1", sessionId: "s1" },
+        sdkKind: "write",
       });
 
       await adapter.replyPermission("p1", { optionId: "reject_once" });
@@ -1171,7 +1174,8 @@ describe("CopilotSdkAdapter", () => {
       const resolve = vi.fn();
       (adapter as any).pendingPermissions.set("p1", {
         resolve,
-        permission: { id: "p1", sessionId: "s1", rawInput: {} },
+        permission: { id: "p1", sessionId: "s1" },
+        sdkKind: "write",
       });
 
       await adapter.replyPermission("p1", { optionId: "allow_once" });

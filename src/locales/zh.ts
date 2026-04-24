@@ -33,6 +33,13 @@ export const zh: LocaleDict = {
     allowOnce: "允许一次",
     allowAlways: "总是允许",
     waitingApproval: "等待批准",
+    kindRead: "读取文件",
+    kindEdit: "编辑文件",
+    kindOther: "权限请求",
+    kindShell: "执行命令",
+    kindUrlAccess: "访问 URL",
+    kindWebSearch: "网页搜索",
+    diffPreview: "变更预览",
   },
   // Question
   question: {
@@ -43,6 +50,7 @@ export const zh: LocaleDict = {
     selectMultiple: "可选择多个选项",
     back: "上一步",
     next: "下一步",
+    progress: "问题 {current} / {total}",
   },
 
   // Login page

@@ -83,6 +83,8 @@ interface PermissionRequest {
 interface PendingPermission {
   resolve: (result: PermissionRequestResult) => void;
   permission: UnifiedPermission;
+  /** Original SDK kind (e.g. "shell", "url", "read") for always-approve tracking */
+  sdkKind: string;
 }
 
 interface PendingQuestion {
@@ -126,7 +128,12 @@ export class CopilotSdkAdapter extends EngineAdapter {
   private sessionDirectories = new Map<string, string>();
 
   private sessionTodos = new Map<string, Map<string, { id: string; title: string; status: string }>>();
-  private allowedAlwaysKinds = new Set<string>();
+  // Workaround: The Copilot SDK's PermissionRequestResult only supports { kind: "approved" }
+  // with no session-wide scope. The CLI's native terminal UI handles "Always Allow" internally
+  // via its own rule engine, but that mechanism is not exposed to SDK integrators.
+  // We track approved-always kinds client-side per session to auto-approve future requests
+  // of the same kind within that session. Granularity is per-kind (e.g. all "shell"), not per-command pattern.
+  private allowedAlwaysKinds = new Map<string, Set<string>>();
   private cachedCommands: EngineCommand[] = [];
 
   private messageBuffers = new Map<string, MessageBuffer>();
@@ -375,6 +382,7 @@ export class CopilotSdkAdapter extends EngineAdapter {
     this.sessionModes.delete(sessionId);
     this.sessionDirectories.delete(sessionId);
     this.sessionTodos.delete(sessionId);
+    this.allowedAlwaysKinds.delete(sessionId);
   }
 
   async sendMessage(
@@ -735,9 +743,10 @@ export class CopilotSdkAdapter extends EngineAdapter {
     const optionId = reply.optionId;
     const isApproved = optionId === "allow_once" || optionId === "allow_always";
 
-    if (optionId === "allow_always" && pending.permission.rawInput) {
-      const rawKind = (pending.permission.rawInput as any).kind;
-      if (rawKind) this.allowedAlwaysKinds.add(rawKind);
+    if (optionId === "allow_always") {
+      const sid = pending.permission.sessionId;
+      if (!this.allowedAlwaysKinds.has(sid)) this.allowedAlwaysKinds.set(sid, new Set());
+      this.allowedAlwaysKinds.get(sid)!.add(pending.sdkKind);
     }
 
     pending.resolve({ kind: isApproved ? "approved" : "denied-interactively-by-user" });
@@ -1331,20 +1340,89 @@ export class CopilotSdkAdapter extends EngineAdapter {
   private handlePermissionRequest(req: PermissionRequest, ctx: { sessionId: string }): Promise<PermissionRequestResult> {
     const sessionId = ctx.sessionId;
     if ((this.sessionModes.get(sessionId) || "autopilot") === "autopilot") return Promise.resolve({ kind: "approved" });
-    if (this.allowedAlwaysKinds.has(req.kind)) return Promise.resolve({ kind: "approved" });
+    if (this.allowedAlwaysKinds.get(sessionId)?.has(req.kind)) return Promise.resolve({ kind: "approved" });
 
     const permissionId = timeId("perm");
     const kind: any = req.kind === "read" ? "read" : req.kind === "write" || req.kind === "shell" ? "edit" : "other";
+    const toolName = req.kind === "url" ? "web_fetch" : req.kind === "shell" ? "shell" : req.kind === "read" ? "read" : req.kind === "write" ? "edit" : req.kind === "mcp" ? "mcp" : undefined;
     const options: PermissionOption[] = [
       { id: "allow_once", label: "Allow Once", type: "allow_once" },
       { id: "allow_always", label: "Always Allow", type: "allow_always" },
       { id: "reject_once", label: "Deny", type: "reject_once" },
     ];
 
-    const permission: UnifiedPermission = { id: permissionId, sessionId, engineType: this.engineType, toolCallId: req.toolCallId, title: req.title || `${req.kind} permission requested`, kind, diff: req.diff, rawInput: { ...req }, options };
+    const rawReq = { ...req };
+    const title = `${req.kind} permission requested`;
+
+    // Build structured details from Copilot SDK fields per kind
+    // See: @github/copilot-sdk dist/generated/session-events.d.ts
+    const details: import("../../../../src/types/unified").PermissionDetail[] = [];
+    switch (req.kind) {
+      case "shell": {
+        const cmd = typeof rawReq.fullCommandText === "string" ? rawReq.fullCommandText.trim()
+          : typeof rawReq.command === "string" ? rawReq.command.trim() : "";
+        if (cmd) details.push({ label: "Command", value: cmd, mono: true });
+        if (typeof rawReq.warning === "string" && rawReq.warning.trim()) {
+          details.push({ label: "Warning", value: rawReq.warning.trim() });
+        }
+        break;
+      }
+      case "write": {
+        const file = typeof rawReq.fileName === "string" ? rawReq.fileName.trim() : "";
+        if (file) details.push({ label: "File", value: file, mono: true });
+        break;
+      }
+      case "read": {
+        const path = typeof rawReq.path === "string" ? rawReq.path.trim() : "";
+        if (path) details.push({ label: "Path", value: path, mono: true });
+        break;
+      }
+      case "url": {
+        if (typeof rawReq.url === "string" && rawReq.url.trim()) {
+          details.push({ label: "URL", value: rawReq.url.trim(), mono: true });
+        }
+        break;
+      }
+      case "mcp": {
+        const toolTitle = typeof rawReq.toolTitle === "string" ? rawReq.toolTitle.trim() : "";
+        const server = typeof rawReq.serverName === "string" ? rawReq.serverName.trim() : "";
+        if (toolTitle) details.push({ label: "Tool", value: toolTitle });
+        if (server) details.push({ label: "Server", value: server });
+        break;
+      }
+      case "memory": {
+        if (typeof rawReq.subject === "string" && rawReq.subject.trim()) {
+          details.push({ label: "Subject", value: rawReq.subject.trim() });
+        }
+        if (typeof rawReq.fact === "string" && rawReq.fact.trim()) {
+          details.push({ label: "Fact", value: rawReq.fact.trim() });
+        }
+        break;
+      }
+      case "custom-tool": {
+        if (typeof rawReq.toolName === "string" && rawReq.toolName.trim()) {
+          details.push({ label: "Tool", value: rawReq.toolName.trim() });
+        }
+        if (typeof rawReq.toolDescription === "string" && rawReq.toolDescription.trim()) {
+          details.push({ label: "Description", value: rawReq.toolDescription.trim() });
+        }
+        break;
+      }
+      case "hook": {
+        if (typeof rawReq.toolName === "string" && rawReq.toolName.trim()) {
+          details.push({ label: "Tool", value: rawReq.toolName.trim() });
+        }
+        if (typeof rawReq.hookMessage === "string" && rawReq.hookMessage.trim()) {
+          details.push({ label: "Message", value: rawReq.hookMessage.trim() });
+        }
+        break;
+      }
+    }
+
+    const permission: UnifiedPermission = { id: permissionId, sessionId, engineType: this.engineType, toolCallId: req.toolCallId, toolName, title, kind, diff: req.diff, details, options };
 
     return new Promise<PermissionRequestResult>((resolve) => {
-      this.pendingPermissions.set(permissionId, { resolve, permission });
+      this.pendingPermissions.set(permissionId, { resolve, permission, sdkKind: req.kind });
       this.emit("permission.asked", { permission });
     });
   }

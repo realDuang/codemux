@@ -32,6 +32,13 @@ export interface LocaleDict {
     allowOnce: string;
     allowAlways: string;
     waitingApproval: string;
+    kindRead: string;
+    kindEdit: string;
+    kindOther: string;
+    kindShell: string;
+    kindUrlAccess: string;
+    kindWebSearch: string;
+    diffPreview: string;
   };
   // Question
   question: {
@@ -42,6 +49,7 @@ export interface LocaleDict {
     selectMultiple: string;
     back: string;
     next: string;
+    progress: string;
   };
 
   // Login page
@@ -680,6 +688,13 @@ export const en: LocaleDict = {
     allowOnce: "Allow once",
     allowAlways: "Allow always",
     waitingApproval: "Waiting for approval",
+    kindRead: "File Read",
+    kindEdit: "File Edit",
+    kindOther: "Permission Request",
+    kindShell: "Shell Command",
+    kindUrlAccess: "URL Access",
+    kindWebSearch: "Web Search",
+    diffPreview: "Changes",
   },
   // Question
   question: {
@@ -690,6 +705,7 @@ export const en: LocaleDict = {
     selectMultiple: "Select multiple options",
     back: "Back",
     next: "Next",
+    progress: "Question {current} of {total}",
   },
 
   // Login page

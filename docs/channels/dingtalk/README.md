@@ -79,17 +79,19 @@ Go to **Permission Management** (权限管理) and request:
 
 ```
 P2P Chat (Entry Point)
-  ├─ /project list → Show available projects
-  ├─ Select project → Choose or create session
-  └─ Scene group created → Redirected to group
+  ├─ /project → Show project list (reply with a number to switch)
+  ├─ /new → Create a new session in the current project (auto-creates a scene group)
+  ├─ /switch → Show existing sessions for the current project
+  └─ /help → Show all commands
 
 Group Chat (Session)
   ├─ Send message → AI engine processes and responds
   ├─ /cancel → Stop current request
-  ├─ /mode agent|plan → Switch agent mode
-  ├─ /model list → Show available models
-  ├─ /status → Show session info
-  └─ /history → View recent messages
+  ├─ /status → Show current session info
+  ├─ /mode <agent|plan|build> → Switch agent mode
+  ├─ /model [list|<id>] → List or switch model
+  ├─ /history → View recent messages
+  └─ /help → Show all commands
 ```
 
 ### Streaming Behavior

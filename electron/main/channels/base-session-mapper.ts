@@ -445,4 +445,25 @@ export class BaseSessionMapper<
       }
     }
   }
+
+  /**
+   * Drop all in-memory state AND wipe the persisted bindings file.
+   * Use when the channel needs to fully forget its tenant — e.g. iLink logout
+   * or token-expiry auto-cleanup. Pending streaming timers are cleared first
+   * to avoid leaks, then the bindings JSON is overwritten with an empty list.
+   */
+  clearAllBindings(): void {
+    this.cleanup();
+    this.groupBindings.clear();
+    this.conversationToGroupIndex.clear();
+    this.p2pChats.clear();
+    this.userIdToChatIndex.clear();
+    this.tempConversationToChat.clear();
+    this.processedMessageIds.clear();
+    this.creatingGroups.clear();
+    this.pendingQuestions.clear();
+    this.standalonePendingSelections.clear();
+    this.saveBindings();
+    channelLog.info(`[${this.channelType}] Cleared all bindings (memory + disk)`);
+  }
 }

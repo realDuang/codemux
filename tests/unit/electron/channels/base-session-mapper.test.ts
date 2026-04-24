@@ -973,4 +973,59 @@ describe("BaseSessionMapper", () => {
       expect(mapper.getPendingSelection("p2p-1")).toBeDefined();
     });
   });
+
+  // =========================================================================
+  // clearAllBindings — full wipe used by logout / token-expiry cleanup
+  // =========================================================================
+
+  describe("clearAllBindings", () => {
+    it("empties every in-memory map and persists empty bindings file", () => {
+      // Populate group bindings, P2P state, temp session, dedup, pending question
+      const b1 = makeBinding("chat-1", "conv-1");
+      mapper.createGroupBinding(b1);
+      mapper.getOrCreateP2PChat("p2p-1", "user-1");
+      mapper.setUserIdMapping("user-1", "p2p-1");
+      mapper.setTempSession("p2p-1", makeTempSession("temp-conv-1"));
+      mapper.setPendingSelection("group-x", { type: "project" });
+      mapper.setPendingQuestion("chat-1", { questionId: "q1", sessionId: "s1" });
+      mapper.markCreating("conv-creating");
+      mapper.isDuplicate("dedup-id");
+
+      vi.mocked(fs.writeFileSync).mockClear();
+      mapper.clearAllBindings();
+
+      expect(mapper.getGroupBinding("chat-1")).toBeUndefined();
+      expect(mapper.findGroupByConversationId("conv-1")).toBeUndefined();
+      expect(mapper.getP2PChat("p2p-1")).toBeUndefined();
+      expect(mapper.getChatIdByUserId("user-1")).toBeUndefined();
+      expect(mapper.findP2PChatByTempConversation("temp-conv-1")).toBeUndefined();
+      expect(mapper.getPendingSelection("group-x")).toBeUndefined();
+      expect(mapper.getPendingQuestion("chat-1")).toBeUndefined();
+      // creatingGroups cleared — markCreating works again immediately
+      expect(mapper.markCreating("conv-creating")).toBe(true);
+      // dedup set cleared — same id is "new" again
+      expect(mapper.isDuplicate("dedup-id")).toBe(false);
+
+      // Persisted JSON written as []
+      expect(fs.writeFileSync).toHaveBeenCalled();
+      const writeCall = vi.mocked(fs.writeFileSync).mock.calls.at(-1);
+      expect(writeCall?.[1]).toBe("[]");
+    });
+
+    it("clears patchTimers via cleanup before wiping maps", () => {
+      const b = makeBinding("chat-1", "conv-1");
+      const timer = setTimeout(() => {}, 5000);
+      b.streamingSessions.set("msg-1", makeStreamingSession({ patchTimer: timer }));
+      mapper.createGroupBinding(b);
+
+      const spy = vi.spyOn(global, "clearTimeout");
+      mapper.clearAllBindings();
+
+      expect(spy).toHaveBeenCalledWith(timer);
+    });
+
+    it("is safe to call when nothing is registered", () => {
+      expect(() => mapper.clearAllBindings()).not.toThrow();
+    });
+  });
 });

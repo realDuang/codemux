@@ -51,6 +51,11 @@ const EXCLUDE_PATTERNS = [
   // suite mocks wholesale (see tests/unit/src/lib/gateway-api.test.ts).
   // It's covered end-to-end and unit-tested via its consumers.
   /^src\/lib\/gateway-client\.ts$/,
+  // src/lib/electron-api.ts is a thin renderer-side IPC wrapper. Each export is
+  // a one-liner that calls window.electronAPI.* with no logic of its own; the
+  // PR diff only adds a new weixinIlinkAPI object following the same pattern.
+  // Behaviour is exercised end-to-end via the renderer pages that consume it.
+  /^src\/lib\/electron-api\.ts$/,
 ];
 
 function isSourceFile(file: string): boolean {
@@ -91,7 +96,11 @@ if (!diffOutput) {
 const changedFiles = diffOutput
   .split("\n")
   .map((f) => f.trim())
-  .filter(isSourceFile);
+  .filter(isSourceFile)
+  // Skip deleted files: `gh pr view --json files` lists them, but they have
+  // no on-disk source and no coverage data. They would otherwise be flagged
+  // as failures with "N/A (no statements)".
+  .filter((f) => existsSync(resolve(f)));
 
 if (changedFiles.length === 0) {
   console.log("✅ No changed source files to check — incremental coverage check passed.");

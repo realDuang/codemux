@@ -30,15 +30,15 @@ import type { WebhookServer, WebhookRequest, WebhookResponse } from "../webhook-
 import { WeComCrypto } from "./wecom-crypto";
 import { WeComTransport } from "./wecom-transport";
 import { WeComRenderer } from "./wecom-renderer";
+import { parseCommand } from "../shared/command-parser";
+import { P2P_CAPABILITIES, GROUP_CAPABILITIES } from "../shared/command-types";
+import { buildHelpText } from "../shared/help-text-builder";
 import {
-  parseCommand,
-  buildHelpText,
-  buildGroupHelpText,
   buildProjectListText,
   buildSessionListText,
   buildQuestionText,
-  buildHistoryEntries,
-} from "./wecom-command-parser";
+} from "../shared/list-builders";
+import { handleSessionOpsCommand, type SessionContext } from "../shared/session-commands";
 import {
   DEFAULT_WECOM_CONFIG,
   TEMP_SESSION_TTL_MS,
@@ -555,21 +555,82 @@ export class WeComAdapter extends ChannelAdapter {
   ): Promise<void> {
     if (!command || !this.transport) return;
 
+    if (this.gatewayClient) {
+      const handled = await handleSessionOpsCommand(command, {
+        sendText: (text) => this.transport!.sendText(chatId, text),
+        gatewayClient: this.gatewayClient,
+        getContext: (): SessionContext | null => {
+          const t = this.sessionMapper.getTempSession(chatId);
+          if (!t) return null;
+          return {
+            conversationId: t.conversationId,
+            engineType: t.engineType,
+            directory: t.directory,
+          };
+        },
+      });
+      if (handled) return;
+    }
+
     switch (command.command) {
       case "help":
-        await this.transport.sendText(chatId, buildHelpText());
+      case "start":
+        await this.transport.sendText(chatId, buildHelpText(P2P_CAPABILITIES));
         break;
 
       case "project":
         await this.showProjectList(chatId);
         break;
 
+      case "new":
+        await this.handleNewCommand(chatId);
+        break;
+
+      case "switch":
+        await this.handleSwitchCommand(chatId);
+        break;
+
       default:
         await this.transport.sendText(
           chatId,
-          "📋 此命令仅在会话群聊中可用。使用 /help 查看可用命令。",
+          `📋 未知命令：${command.command}。使用 /help 查看可用命令。`,
         );
     }
+  }
+
+  /** /new — create a new session under the last selected project (P2P only). */
+  private async handleNewCommand(chatId: string): Promise<void> {
+    if (!this.transport) return;
+    const p2pState = this.sessionMapper.getP2PChat(chatId);
+    if (!p2pState?.lastSelectedProject) {
+      await this.transport.sendText(
+        chatId,
+        "📋 当前未选择项目。请先使用 /project 选择项目。",
+      );
+      return;
+    }
+    if (this.sessionMapper.getTempSession(chatId)) {
+      await this.cleanupExpiredTempSession(chatId);
+    }
+    const project = p2pState.lastSelectedProject;
+    const projectName = project.directory.split(/[\\/]/).pop() || project.directory;
+    await this.createNewSessionForProject(chatId, p2pState.userId || chatId, project, projectName);
+  }
+
+  /** /switch — list existing sessions in the last selected project (P2P only). */
+  private async handleSwitchCommand(chatId: string): Promise<void> {
+    if (!this.transport) return;
+    const p2pState = this.sessionMapper.getP2PChat(chatId);
+    if (!p2pState?.lastSelectedProject) {
+      await this.transport.sendText(
+        chatId,
+        "📋 当前未选择项目。请先使用 /project 选择项目。",
+      );
+      return;
+    }
+    const project = p2pState.lastSelectedProject;
+    const projectName = project.directory.split(/[\\/]/).pop() || project.directory;
+    await this.showSessionListForProject(chatId, project, projectName);
   }
 
   // =========================================================================
@@ -702,16 +763,8 @@ export class WeComAdapter extends ChannelAdapter {
       return false;
     }
 
-    if (trimmed === "new") {
-      this.sessionMapper.clearPendingSelection(chatId);
-      await this.createNewSessionForProject(
-        chatId,
-        userId,
-        { directory: pending.directory, engineType: pending.engineType, projectId: pending.projectId },
-        pending.projectName || "",
-      );
-      return true;
-    }
+    // To create a new session, use /new — keyword "new" is no longer accepted here
+    void userId;
 
     const num = parseInt(trimmed, 10);
     if (isNaN(num) || num < 1 || !pending.sessions || num > pending.sessions.length) {
@@ -919,77 +972,22 @@ export class WeComAdapter extends ChannelAdapter {
   ): Promise<void> {
     if (!command || !this.gatewayClient || !this.transport) return;
 
+    const handled = await handleSessionOpsCommand(command, {
+      sendText: (text) => this.transport!.sendText(chatTarget, text),
+      gatewayClient: this.gatewayClient,
+      getContext: (): SessionContext => ({
+        conversationId: binding.conversationId,
+        engineType: binding.engineType,
+        directory: binding.directory,
+      }),
+    });
+    if (handled) return;
+
     switch (command.command) {
       case "help":
-        await this.transport.sendText(chatTarget, buildGroupHelpText());
+      case "start":
+        await this.transport.sendText(chatTarget, buildHelpText(GROUP_CAPABILITIES));
         break;
-
-      case "cancel":
-        await this.gatewayClient.cancelMessage(binding.conversationId);
-        await this.transport.sendText(chatTarget, "📋 消息已取消。");
-        break;
-
-      case "status": {
-        const projectName = binding.directory.split(/[\\/]/).pop();
-        const lines = [
-          "📋 会话状态\n",
-          `项目：${projectName}（${binding.engineType}）`,
-          `会话：${binding.conversationId}`,
-        ];
-        await this.transport.sendText(chatTarget, lines.join("\n"));
-        break;
-      }
-
-      case "mode": {
-        if (!command.args || command.args.length === 0) {
-          await this.transport.sendText(chatTarget, "📋 用法：/mode <agent|plan|build>");
-          return;
-        }
-        await this.gatewayClient.setMode({
-          sessionId: binding.conversationId,
-          modeId: command.args[0],
-        });
-        await this.transport.sendText(chatTarget, `📋 模式已切换为：${command.args[0]}`);
-        break;
-      }
-
-      case "model": {
-        if (
-          command.subcommand === "list" ||
-          (!command.subcommand && (!command.args || command.args.length === 0))
-        ) {
-          const result = await this.gatewayClient.listModels(binding.engineType);
-          const lines = ["📋 模型列表", "─────────────────────────"];
-          for (const m of result.models) {
-            const current = m.modelId === result.currentModelId ? "（当前）" : "";
-            lines.push(`  ${m.name || m.modelId}${current}`);
-          }
-          lines.push("─────────────────────────");
-          lines.push("使用 /model <model-id> 切换模型。");
-          await this.transport.sendText(chatTarget, lines.join("\n"));
-        } else if (command.args && command.args.length > 0) {
-          await this.gatewayClient.setModel({
-            sessionId: binding.conversationId,
-            modelId: command.args[0],
-          });
-          await this.transport.sendText(chatTarget, `📋 模型已切换为：${command.args[0]}`);
-        }
-        break;
-      }
-
-      case "history": {
-        const messages = await this.gatewayClient.listMessages(binding.conversationId);
-        const entries = buildHistoryEntries(messages);
-        if (entries.length === 0) {
-          await this.transport.sendText(chatTarget, "📋 暂无会话历史记录。");
-        } else {
-          await this.transport.sendText(chatTarget, "📋 会话历史");
-          for (const entry of entries) {
-            await this.transport.sendText(chatTarget, `${entry.emoji} ${entry.text}`);
-          }
-        }
-        break;
-      }
 
       default:
         await this.transport.sendText(

@@ -159,17 +159,19 @@ When a user clicks a menu item, Feishu sends an `application.bot.menu_v6` event 
 
 ```
 P2P Chat (Entry Point)
-  ├─ /project list → Show available projects
-  ├─ Select project → Choose or create session
-  └─ Group created → Redirected to group chat
+  ├─ /project → Show project list (reply with a number to switch)
+  ├─ /new → Create a new session in the current project (auto-creates a group)
+  ├─ /switch → Show existing sessions for the current project
+  └─ /help → Show all commands
 
 Group Chat (Session)
   ├─ Send message → AI engine processes and responds
   ├─ /cancel → Stop current request
-  ├─ /mode agent|plan → Switch agent mode
-  ├─ /model list → Show available models
-  ├─ /status → Show session info
-  └─ /history → View recent messages
+  ├─ /status → Show current session info
+  ├─ /mode <agent|plan|build> → Switch agent mode
+  ├─ /model [list|<id>] → List or switch model
+  ├─ /history → View recent messages
+  └─ /help → Show all commands
 ```
 
 ### Streaming

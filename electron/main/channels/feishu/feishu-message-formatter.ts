@@ -60,14 +60,6 @@ export function formatStreamingText(textBuffer: string): string {
   return textBuffer + "\n\n_Thinking..._";
 }
 
-/**
- * Build a brief hint message for new P2P temp sessions.
- * Shown once after the first reply completes to help users discover commands.
- */
-export function buildTempSessionHintText(): string {
-  return "💡 发送 /help 查看所有命令 | 发送 /project 选择项目并创建专属群聊会话";
-}
-
 function capitalize(str: string): string {
   return str.charAt(0).toUpperCase() + str.slice(1);
 }

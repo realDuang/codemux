@@ -71,6 +71,37 @@ export class TelegramTransport implements MessageTransport {
   }
 
   /**
+   * Send a markdown-formatted message using HTML parse mode.
+   * Converts standard markdown (**bold**, `code`) to Telegram HTML (<b>, <code>).
+   * Falls back to plain text on parse error.
+   */
+  async sendMarkdown(chatId: string, markdown: string): Promise<string> {
+    try {
+      await this.rateLimiter.consume();
+      const html = markdownToTelegramHtml(markdown);
+      const result = await this.callApi("sendMessage", {
+        chat_id: chatId,
+        text: html,
+        parse_mode: "HTML",
+      });
+      if (result?.result?.message_id) {
+        return String(result.result.message_id);
+      }
+      // Fallback: send as plain text
+      const plainResult = await this.callApi("sendMessage", {
+        chat_id: chatId,
+        text: markdown,
+      });
+      return plainResult?.result?.message_id
+        ? String(plainResult.result.message_id)
+        : "";
+    } catch (err) {
+      channelLog.error(`${LOG_PREFIX} Failed to send markdown message:`, err);
+      return "";
+    }
+  }
+
+  /**
    * Update an existing message with new text content via editMessageText.
    * The messageId format is "chatId:messageId" to carry both pieces of info.
    */
@@ -379,4 +410,19 @@ export class TelegramTransport implements MessageTransport {
  */
 function escapeMarkdownV2(text: string): string {
   return text.replace(/([_*\[\]()~`>#+\-=|{}.!\\])/g, "\\$1");
+}
+
+/**
+ * Convert standard markdown to Telegram HTML format.
+ * Handles **bold** → <b>bold</b> and `code` → <code>code</code>.
+ * Escapes HTML entities to prevent injection.
+ */
+export function markdownToTelegramHtml(md: string): string {
+  // 1. Escape HTML entities
+  let html = md.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  // 2. Convert **bold** → <b>bold</b>
+  html = html.replace(/\*\*(.+?)\*\*/g, "<b>$1</b>");
+  // 3. Convert `code` → <code>code</code>
+  html = html.replace(/`([^`]+)`/g, "<code>$1</code>");
+  return html;
 }

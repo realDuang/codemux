@@ -1058,6 +1058,44 @@ describe("CopilotSdkAdapter", () => {
     });
   });
 
+  describe("handleTurnStart()", () => {
+    it("finalizes the previous turn and emits the next queued user before the new turn starts", () => {
+      const updates: any[] = [];
+      const consumed: any[] = [];
+      const r1 = vi.fn();
+      const r2 = vi.fn();
+
+      adapter.on("message.updated", (e) => updates.push(e));
+      adapter.on("message.queued.consumed", (e) => consumed.push(e));
+
+      (adapter as any).messageBuffers.set("s1", makeBuffer("s1", {
+        messageId: "msg-existing",
+        textAccumulator: "first response",
+        textPartId: "part-existing",
+      }));
+      (adapter as any).idleResolvers.set("s1", [r1, r2]);
+      (adapter as any).pendingUserMessages.set("s1", [
+        { id: "user-msg-2", role: "user", sessionId: "s1", time: { created: 2000 }, parts: [] },
+      ]);
+
+      (adapter as any).handleTurnStart("s1", {});
+
+      expect(r1).toHaveBeenCalledTimes(1);
+      expect(r2).not.toHaveBeenCalled();
+      expect((adapter as any).idleResolvers.get("s1")).toHaveLength(1);
+
+      expect(consumed).toHaveLength(1);
+      expect(consumed[0]).toMatchObject({ sessionId: "s1", messageId: "user-msg-2" });
+
+      const assistantUpdate = updates.find((e) => e.message?.role === "assistant");
+      const userUpdate = updates.find((e) => e.message?.role === "user");
+      expect(assistantUpdate?.message.id).toBe("msg-existing");
+      expect(userUpdate?.message.id).toBe("user-msg-2");
+      expect((adapter as any).pendingUserMessages.has("s1")).toBe(false);
+      expect((adapter as any).messageBuffers.has("s1")).toBe(true);
+    });
+  });
+
   // ============================================================================
   // E. Permission Handling
   // ============================================================================

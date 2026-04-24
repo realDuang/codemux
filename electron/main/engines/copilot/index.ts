@@ -1201,6 +1201,28 @@ export class CopilotSdkAdapter extends EngineAdapter {
   }
 
   private handleTurnStart(sessionId: string, _data: any): void {
+    const pendingUsers = this.pendingUserMessages.get(sessionId);
+    if (pendingUsers && pendingUsers.length > 0) {
+      const previousTurn = this.finalizeBuffer(sessionId);
+      if (previousTurn) {
+        const resolvers = this.idleResolvers.get(sessionId);
+        if (resolvers && resolvers.length > 0) {
+          const first = resolvers.shift()!;
+          first(previousTurn);
+          if (resolvers.length === 0) {
+            this.idleResolvers.delete(sessionId);
+          }
+        }
+      }
+
+      const userMsg = pendingUsers.shift()!;
+      this.emit("message.queued.consumed", { sessionId, messageId: userMsg.id });
+      this.emit("message.updated", { sessionId, message: userMsg });
+      if (pendingUsers.length === 0) {
+        this.pendingUserMessages.delete(sessionId);
+      }
+    }
+
     const buffer = this.getOrCreateBuffer(sessionId);
     const stepStartPart: any = { id: timeId("part"), messageId: buffer.messageId, sessionId, type: "step-start" };
     buffer.parts.push(stepStartPart);
@@ -1220,17 +1242,13 @@ export class CopilotSdkAdapter extends EngineAdapter {
     if (finalMessage) {
       const resolvers = this.idleResolvers.get(sessionId);
       if (resolvers && resolvers.length > 0) {
-        // Copilot CLI processes all enqueued messages in a single turn —
-        // session.idle fires only ONCE after all are done. Resolve ALL resolvers
-        // with the final message (the combined response).
+        // session.idle finalizes the last active turn. Any earlier queued turns
+        // should already have been split and resolved by handleTurnStart().
         this.idleResolvers.delete(sessionId);
         for (const r of resolvers) r(finalMessage);
 
-        // Clear all deferred user messages and emit queued.consumed for each
-        // remaining queued item so the frontend clears its queue preview.
-        // Also emit message.updated for each deferred user message so the frontend
-        // creates the user bubble (the enqueue path doesn't create an optimistic
-        // temp message — it stores the text in a preview queue instead).
+        // Fallback: if the SDK never emitted a subsequent turn_start, flush any
+        // deferred user messages here so the frontend still clears its queue preview.
         const pendingUsers = this.pendingUserMessages.get(sessionId);
         if (pendingUsers && pendingUsers.length > 0) {
           for (const userMsg of pendingUsers) {

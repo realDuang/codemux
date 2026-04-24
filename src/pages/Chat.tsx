@@ -41,6 +41,7 @@ import { ScheduledTaskModal } from "../components/ScheduledTaskModal";
 import type {
   UnifiedMessage,
   UnifiedPart,
+  TextPart,
   UnifiedPermission,
   UnifiedQuestion,
   UnifiedSession,
@@ -552,6 +553,50 @@ export default function Chat() {
     return messageStore.queued[sid] || [];
   });
 
+  const consumeQueuedPreview = (sessionId: string, messageId: string) => {
+    const queued = messageStore.queued[sessionId];
+    if (!queued || queued.length === 0) {
+      return;
+    }
+
+    const [consumedPreview] = queued;
+    setMessageStore("queued", sessionId, (draft) => draft.slice(1));
+
+    if (!messageId || !consumedPreview) {
+      return;
+    }
+
+    const existingMessages = messageStore.message[sessionId] || [];
+    if (existingMessages.some((message) => message.id === messageId)) {
+      return;
+    }
+
+    const text = consumedPreview.text.trim();
+    const parts: TextPart[] = text
+      ? [{
+          id: `part-queued-placeholder-${messageId}`,
+          messageId,
+          sessionId,
+          type: "text",
+          text,
+        }]
+      : [];
+
+    const placeholder: UnifiedMessage = {
+      id: messageId,
+      sessionId,
+      role: "user",
+      time: { created: consumedPreview.enqueuedAt },
+      parts,
+    };
+
+    if (parts.length > 0 && !(messageStore.part[messageId]?.length > 0)) {
+      setMessageStore("part", messageId, parts);
+    }
+
+    setMessageStore("message", sessionId, [...existingMessages, placeholder]);
+  };
+
   // Aggregate token usage across all assistant messages in the current session
   const sessionUsage = createMemo(() => {
     const sid = sessionStore.current;
@@ -893,12 +938,9 @@ export default function Chat() {
         onMessageQueued: (sessionId: string, _messageId: string, _queuePosition: number) => {
           logger.debug("[WS] message.queued for session:", sessionId);
         },
-        onMessageQueuedConsumed: (sessionId: string, _messageId: string) => {
-          logger.debug("[WS] message.queued.consumed for session:", sessionId);
-          const queued = messageStore.queued[sessionId];
-          if (queued && queued.length > 0) {
-            setMessageStore("queued", sessionId, (draft) => draft.slice(1));
-          }
+        onMessageQueuedConsumed: (sessionId: string, messageId: string) => {
+          logger.debug("[WS] message.queued.consumed for session:", sessionId, messageId);
+          consumeQueuedPreview(sessionId, messageId);
         },
         onFileChanged: handleFileChanged,
         onCommandsChanged: (engineType: EngineType, commands: EngineCommand[]) => {

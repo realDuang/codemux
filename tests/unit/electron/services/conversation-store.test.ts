@@ -84,29 +84,28 @@ describe("ConversationStore", () => {
 
   describe("Conversation CRUD", () => {
     it("creates conversations with metadata and handles retrieval", () => {
-      // create() returns a ConversationMeta with correct fields
+      // create() returns a ConversationMeta with correct fields.
+      // Titles are now derived at render time from customTitle/engineTitle/firstPrompt;
+      // the store no longer initializes a title in create().
       const conv = conversationStore.create({
         engineType: "claude",
         directory: "/projects/foo",
-        title: "My Project"
       });
       expect(conv.id).toMatch(/^conv_/);
       expect(conv.engineType).toBe("claude");
       expect(conv.directory).toBe("/projects/foo");
-      expect(conv.title).toBe("My Project");
+      expect(conv.title).toBeUndefined();
+      expect(conv.customTitle).toBeUndefined();
+      expect(conv.engineTitle).toBeUndefined();
       expect(conv.createdAt).toBeLessThanOrEqual(Date.now());
       expect(conv.updatedAt).toBe(conv.createdAt);
       expect(conv.messageCount).toBe(0);
 
-      // create() generates a default title if not provided
-      const conv2 = conversationStore.create({
-        engineType: "opencode",
-        directory: "/test"
-      });
-      expect(conv2.title).toMatch(/^Chat \d+-\d+ \d+:\d+/);
+      // setCustomTitle() overrides displayTitle on the wire layer
+      conversationStore.setCustomTitle(conv.id, "My Project");
+      expect(conversationStore.get(conv.id)!.customTitle).toBe("My Project");
 
       // get() returns the conversation or null
-      expect(conversationStore.get(conv.id)).toEqual(conv);
       expect(conversationStore.get("non-existent")).toBeNull();
     });
 
@@ -175,10 +174,10 @@ describe("ConversationStore", () => {
       expect(fs.existsSync(msgPath)).toBe(false);
       expect(fs.existsSync(stepsPath)).toBe(false);
 
-      // rename() is a shorthand for update({ title })
+      // setCustomTitle() persists user-set title
       const conv2 = conversationStore.create({ engineType: "opencode", directory: "/test2" });
-      conversationStore.rename(conv2.id, "Renamed");
-      expect(conversationStore.get(conv2.id)!.title).toBe("Renamed");
+      conversationStore.setCustomTitle(conv2.id, "Renamed");
+      expect(conversationStore.get(conv2.id)!.customTitle).toBe("Renamed");
     });
   });
 
@@ -200,13 +199,18 @@ describe("ConversationStore", () => {
       const updatedConv = conversationStore.get(conv.id)!;
       expect(updatedConv.messageCount).toBe(1);
       expect(updatedConv.preview).toBe("Hello");
-      expect(updatedConv.title).toBe("Hello");
+      // First user message captures firstPrompt fallback
+      expect(updatedConv.firstPrompt).toBe("Hello");
+      // No title is auto-set anymore — displayTitle is derived at render time
+      expect(updatedConv.title).toBeUndefined();
+      expect(updatedConv.customTitle).toBeUndefined();
+      expect(updatedConv.engineTitle).toBeUndefined();
 
       const messages = await conversationStore.listMessages(conv.id);
       expect(messages.length).toBe(1);
       expect(messages[0].id).toBe("msg_1");
 
-      // First message with long text triggers auto-title truncation (50 chars + "...")
+      // First message with long text triggers firstPrompt truncation (100 chars + "…")
       const conv2 = conversationStore.create({ engineType: "opencode", directory: "/test2" });
       const longFirstMsg: ConversationMessage = {
         ...mockMsg,
@@ -215,10 +219,10 @@ describe("ConversationStore", () => {
       };
       await conversationStore.appendMessage(conv2.id, longFirstMsg);
       const conv2Updated = conversationStore.get(conv2.id)!;
-      expect(conv2Updated.title.length).toBe(53);
-      expect(conv2Updated.title.endsWith("...")).toBe(true);
+      expect(conv2Updated.firstPrompt!.length).toBe(101);
+      expect(conv2Updated.firstPrompt!.endsWith("…")).toBe(true);
 
-      // appendMessage() handles long previews (title only auto-set on first message)
+      // appendMessage() handles long previews (firstPrompt only set on first message)
       const longText = "A".repeat(200);
       const longMsg: ConversationMessage = {
         ...mockMsg,
@@ -229,8 +233,8 @@ describe("ConversationStore", () => {
       const updatedLong = conversationStore.get(conv.id)!;
       expect(updatedLong.preview?.length).toBe(103);
       expect(updatedLong.preview?.endsWith("...")).toBe(true);
-      // Title stays as "Hello" from first message — auto-title only applies on messages.length === 1
-      expect(updatedLong.title).toBe("Hello");
+      // firstPrompt stays as "Hello" from first message
+      expect(updatedLong.firstPrompt).toBe("Hello");
     });
 
     it("updates existing messages in history", async () => {
@@ -319,8 +323,10 @@ describe("ConversationStore", () => {
 
   describe("Persistence & Recovery", () => {
     it("recovers state from disk and handles corruption or version mismatches", async () => {
-      // survives re-initialization (persistence check)
-      const conv = conversationStore.create({ engineType: "opencode", directory: "/persist", title: "Keep Me" });
+      // survives re-initialization (persistence check) — uses legacy title field
+      // to verify pre-refactor data is preserved across reloads.
+      const conv = conversationStore.create({ engineType: "opencode", directory: "/persist" });
+      conversationStore.update(conv.id, { title: "Keep Me" });
       await conversationStore.flushAll();
       (conversationStore as any).initialized = false;
       (conversationStore as any).index = new Map();

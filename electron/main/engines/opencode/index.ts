@@ -886,6 +886,23 @@ export class OpenCodeAdapter extends EngineAdapter {
     this.userMessageIds.delete(sessionId);
   }
 
+  /** Push a renamed title to OpenCode via session.update. */
+  async renameSession(sessionId: string, title: string, directory?: string): Promise<void> {
+    const session = this.sessions.get(sessionId);
+    const dir = directory ?? session?.directory;
+    const client = dir ? this.createClient(dir) : this.ensureClient();
+    try {
+      await client.session.update({
+        sessionID: sessionId,
+        ...(dir ? { directory: dir } : {}),
+        title,
+      });
+    } catch (err) {
+      // Don't surface — local rename already succeeded
+      openCodeLog.warn(`session.update title failed for ${sessionId}:`, err);
+    }
+  }
+
   // --- Messages ---
 
   async sendMessage(

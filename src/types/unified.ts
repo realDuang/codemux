@@ -239,6 +239,10 @@ export interface UnifiedMessage {
     created: number;
     completed?: number;
   };
+  /** Timestamp when a queued message entered the queue (user clicked send) */
+  enqueuedAt?: number;
+  /** Timestamp when a queued message started being processed by the engine */
+  processedAt?: number;
   parts: UnifiedPart[];
   /** Token usage */
   tokens?: {

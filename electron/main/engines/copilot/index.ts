@@ -141,6 +141,13 @@ export class CopilotSdkAdapter extends EngineAdapter {
   private pendingUserMessages = new Map<string, UnifiedMessage[]>();
   private toolCallParts = new Map<string, ToolPart>();
   private taskCompleteCallIds = new Set<string>();
+  /**
+   * Deferred turn transition: queued user message waiting to be emitted.
+   * Set by handleTurnEnd when there are queued messages. Committed when
+   * the SDK echoes `user.message` or `assistant.message` with content,
+   * whichever arrives first.
+   */
+  private pendingTurnTransition = new Map<string, { userMsg: UnifiedMessage; startedAt: number }>();
 
   constructor(private options?: { cliPath?: string; env?: Record<string, string> }) {
     super();
@@ -605,6 +612,7 @@ export class CopilotSdkAdapter extends EngineAdapter {
       for (const r of resolvers) r(finalMessage);
     }
     this.pendingUserMessages.delete(sessionId);
+    this.pendingTurnTransition.delete(sessionId);
   }
 
   async listMessages(sessionId: string): Promise<UnifiedMessage[]> {
@@ -1046,6 +1054,7 @@ export class CopilotSdkAdapter extends EngineAdapter {
         case "assistant.message_delta": this.handleMessageDelta(sessionId, event.data as any); break;
         case "assistant.reasoning_delta": this.handleReasoningDelta(sessionId, event.data as any); break;
         case "assistant.message": this.handleAssistantMessage(sessionId, event.data as any); break;
+        case "user.message": this.commitTurnTransition(sessionId); break;
         case "tool.execution_start": this.handleToolStart(sessionId, event.data as any); break;
         case "tool.execution_complete": this.handleToolComplete(sessionId, event.data as any); break;
         case "tool.execution_partial_result": this.handleToolPartialResult(sessionId, event.data as any); break;
@@ -1112,14 +1121,20 @@ export class CopilotSdkAdapter extends EngineAdapter {
   }
 
   private handleAssistantMessage(sessionId: string, data: { content?: string }): void {
-    const buffer = this.messageBuffers.get(sessionId);
-    if (!buffer && data.content) {
-      const newBuffer = this.getOrCreateBuffer(sessionId);
-      newBuffer.textAccumulator = data.content;
-      if (!newBuffer.textPartId) newBuffer.textPartId = timeId("part");
-      const textPart: TextPart = { id: newBuffer.textPartId, messageId: newBuffer.messageId, sessionId, type: "text", text: data.content };
-      upsertPart(newBuffer.parts, textPart);
-      this.emit("message.part.updated", { sessionId, messageId: newBuffer.messageId, part: textPart });
+    if (!data.content) return;
+
+    const buffer = this.getOrCreateBuffer(sessionId);
+    buffer.textAccumulator = data.content;
+    buffer.leadingTrimmed = true;
+    if (!buffer.textPartId) buffer.textPartId = timeId("part");
+    const textPart: TextPart = { id: buffer.textPartId, messageId: buffer.messageId, sessionId, type: "text", text: data.content };
+    upsertPart(buffer.parts, textPart);
+    this.emit("message.part.updated", { sessionId, messageId: buffer.messageId, part: textPart });
+
+    // Content-bearing assistant.message is the final text for this user's turn.
+    // If a turn transition is pending, commit it now.
+    if (this.pendingTurnTransition.has(sessionId)) {
+      this.commitTurnTransition(sessionId);
     }
   }
 
@@ -1201,6 +1216,10 @@ export class CopilotSdkAdapter extends EngineAdapter {
   }
 
   private handleTurnStart(sessionId: string, _data: any): void {
+    if (this.pendingTurnTransition.has(sessionId)) {
+      return;
+    }
+
     const buffer = this.getOrCreateBuffer(sessionId);
     const stepStartPart: any = { id: timeId("part"), messageId: buffer.messageId, sessionId, type: "step-start" };
     buffer.parts.push(stepStartPart);
@@ -1208,6 +1227,12 @@ export class CopilotSdkAdapter extends EngineAdapter {
   }
 
   private handleTurnEnd(sessionId: string, _data: any): void {
+    if (this.pendingTurnTransition.has(sessionId)) {
+      const buffer = this.getOrCreateBuffer(sessionId);
+      this.flushTextAccumulator(buffer, sessionId);
+      return;
+    }
+
     const buffer = this.getOrCreateBuffer(sessionId);
     this.flushTextAccumulator(buffer, sessionId);
     const stepFinishPart: any = { id: timeId("part"), messageId: buffer.messageId, sessionId, type: "step-finish" };
@@ -1216,39 +1241,56 @@ export class CopilotSdkAdapter extends EngineAdapter {
 
     const pendingUsers = this.pendingUserMessages.get(sessionId);
     if (pendingUsers && pendingUsers.length > 0) {
-      const previousTurn = this.finalizeBuffer(sessionId);
-      if (previousTurn) {
-        const resolvers = this.idleResolvers.get(sessionId);
-        if (resolvers && resolvers.length > 0) {
-          const first = resolvers.shift()!;
-          first(previousTurn);
-          if (resolvers.length === 0) {
-            this.idleResolvers.delete(sessionId);
-          }
-        }
-      }
-
       const userMsg = pendingUsers.shift()!;
-      this.emit("message.queued.consumed", { sessionId, messageId: userMsg.id });
-      this.emit("message.updated", { sessionId, message: userMsg });
       if (pendingUsers.length === 0) {
         this.pendingUserMessages.delete(sessionId);
       }
+      this.pendingTurnTransition.set(sessionId, { userMsg, startedAt: Date.now() });
     }
   }
 
+  /**
+   * Commit a deferred turn transition: finalize the previous buffer (including
+   * any late text/tool content), resolve the idle resolver, emit the queued
+   * user message, and create a fresh buffer for the new turn.
+   */
+  private commitTurnTransition(sessionId: string): void {
+    const pending = this.pendingTurnTransition.get(sessionId);
+    if (!pending) return;
+    this.pendingTurnTransition.delete(sessionId);
+
+    const previousTurn = this.finalizeBuffer(sessionId);
+
+    if (previousTurn) {
+      const resolvers = this.idleResolvers.get(sessionId);
+      if (resolvers && resolvers.length > 0) {
+        const first = resolvers.shift()!;
+        first(previousTurn);
+        if (resolvers.length === 0) {
+          this.idleResolvers.delete(sessionId);
+        }
+      }
+    }
+
+    this.emit("message.queued.consumed", { sessionId, messageId: pending.userMsg.id });
+    this.emit("message.updated", { sessionId, message: pending.userMsg });
+
+    const buffer = this.getOrCreateBuffer(sessionId);
+    const stepStartPart: any = { id: timeId("part"), messageId: buffer.messageId, sessionId, type: "step-start" };
+    buffer.parts.push(stepStartPart);
+    this.emit("message.part.updated", { sessionId, messageId: buffer.messageId, part: stepStartPart });
+  }
+
   private handleSessionIdle(sessionId: string): void {
+    this.commitTurnTransition(sessionId);
+
     const finalMessage = this.finalizeBuffer(sessionId);
     if (finalMessage) {
       const resolvers = this.idleResolvers.get(sessionId);
       if (resolvers && resolvers.length > 0) {
-        // session.idle finalizes the last active turn. Any earlier queued turns
-        // should already have been split and resolved by handleTurnStart().
         this.idleResolvers.delete(sessionId);
         for (const r of resolvers) r(finalMessage);
 
-        // Fallback: if the SDK never emitted a subsequent turn_start, flush any
-        // deferred user messages here so the frontend still clears its queue preview.
         const pendingUsers = this.pendingUserMessages.get(sessionId);
         if (pendingUsers && pendingUsers.length > 0) {
           for (const userMsg of pendingUsers) {
@@ -1276,6 +1318,7 @@ export class CopilotSdkAdapter extends EngineAdapter {
       }
     }
     this.pendingUserMessages.delete(sessionId);
+    this.pendingTurnTransition.delete(sessionId);
   }
 
   private handleModelChange(sessionId: string, data: { newModel?: string }): void { if (data.newModel) this.currentModelId = data.newModel; }
@@ -1298,6 +1341,7 @@ export class CopilotSdkAdapter extends EngineAdapter {
   }
 
   private handleAbort(sessionId: string, _data: any): void {
+    this.pendingTurnTransition.delete(sessionId);
     const finalMessage = this.finalizeBuffer(sessionId);
     if (finalMessage) {
       const resolver = this.idleResolvers.get(sessionId);

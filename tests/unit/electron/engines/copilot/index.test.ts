@@ -845,7 +845,7 @@ describe("CopilotSdkAdapter", () => {
   });
 
   describe("handleAssistantMessage()", () => {
-    it("is a no-op when a buffer already exists (streaming takes precedence)", () => {
+    it("updates existing buffer with content from assistant.message", () => {
       const partUpdates: any[] = [];
       adapter.on("message.part.updated", (e) => partUpdates.push(e));
       (adapter as any).messageBuffers.set("s1", makeBuffer("s1", {
@@ -855,7 +855,10 @@ describe("CopilotSdkAdapter", () => {
 
       (adapter as any).handleAssistantMessage("s1", { content: "non-streaming" });
 
-      expect(partUpdates).toHaveLength(0);
+      // Content should be processed — sets new content on the buffer
+      expect(partUpdates.length).toBeGreaterThanOrEqual(1);
+      const buf = (adapter as any).messageBuffers.get("s1");
+      expect(buf.textAccumulator).toBe("non-streaming");
     });
 
     it("creates a buffer and sets content when no buffer exists", () => {
@@ -1059,40 +1062,136 @@ describe("CopilotSdkAdapter", () => {
   });
 
   describe("handleTurnEnd()", () => {
-    it("finalizes the previous turn and emits the next queued user after the turn ends", () => {
+    /**
+     * Integration test that replays the exact Copilot SDK event sequence observed
+     * in real queued-message sessions (from JSONL event files).
+     *
+     * Real SDK event flow for "分析open的issue" + queued "以及PR":
+     *
+     *   user.message("分析open的issue")
+     *   turn_start(0) → assistant.message(empty) → tool(report_intent) → tool(powershell) → turn_end(0)
+     *   turn_start(1) → assistant.message(empty) → tool(powershell) → turn_end(1)
+     *   ...more tool turns...
+     *   turn_start(6) → assistant.message(CONTENT="issue分析") → turn_end(6)
+     *   user.message("以及PR")     ← queued message echo
+     *   turn_start(0) → assistant.message(empty) → tool(report_intent) → tool(powershell) → turn_end(0)
+     *   ...more tool turns...
+     *   turn_start(2) → assistant.message(CONTENT="PR分析") → turn_end(2)
+     *   session.idle
+     *
+     * Expected behavior:
+     *   - Turn 1 assistant message contains "issue分析" text
+     *   - Turn 2 assistant message contains "PR分析" text
+     *   - user.message echo triggers the buffer split
+     */
+    it("queued message: all Turn 1 content (tools + text) stays in Turn 1 buffer", () => {
       const updates: any[] = [];
+      const partUpdates: any[] = [];
       const consumed: any[] = [];
-      const r1 = vi.fn();
-      const r2 = vi.fn();
+      const r1 = vi.fn(); // resolver for Turn 1
+      const r2 = vi.fn(); // resolver for Turn 2
 
       adapter.on("message.updated", (e) => updates.push(e));
+      adapter.on("message.part.updated", (e) => partUpdates.push(e));
       adapter.on("message.queued.consumed", (e) => consumed.push(e));
 
+      // Set up initial state: buffer exists (normal sendMessage path created it)
+      // and there's a queued user message waiting
       (adapter as any).messageBuffers.set("s1", makeBuffer("s1", {
-        messageId: "msg-existing",
-        textAccumulator: "first response",
-        textPartId: "part-existing",
+        messageId: "asst-msg-1",
       }));
       (adapter as any).idleResolvers.set("s1", [r1, r2]);
       (adapter as any).pendingUserMessages.set("s1", [
         { id: "user-msg-2", role: "user", sessionId: "s1", time: { created: 2000 }, parts: [] },
       ]);
 
-      (adapter as any).handleTurnEnd("s1", {});
+      // === Replay SDK event sequence for Turn 1 ===
 
+      // turn_start(0): tool turn
+      (adapter as any).handleTurnStart("s1", { turnId: "0" });
+      // assistant.message (no content)
+      (adapter as any).handleAssistantMessage("s1", { messageId: "sdk-msg-1" });
+      // tool calls
+      (adapter as any).handleToolStart("s1", { toolCallId: "tc1", toolName: "report_intent", arguments: { intent: "test" } });
+      (adapter as any).handleToolComplete("s1", { toolCallId: "tc1", success: true, result: { content: "ok" } });
+      (adapter as any).handleToolStart("s1", { toolCallId: "tc2", toolName: "powershell", arguments: { command: "git status" } });
+      (adapter as any).handleToolComplete("s1", { toolCallId: "tc2", success: true, result: { content: "clean" } });
+
+      // turn_end(0) — queued user exists → sets PENDING_TRANSITION
+      (adapter as any).handleTurnEnd("s1", { turnId: "0" });
+
+      // Verify: transition is pending, nothing resolved yet, msg stays in queue
+      expect((adapter as any).pendingTurnTransition.has("s1")).toBe(true);
+      expect(r1).not.toHaveBeenCalled();
+      expect(consumed).toHaveLength(0);
+      // Buffer still alive — belongs to Turn 1
+      expect((adapter as any).messageBuffers.has("s1")).toBe(true);
+      const bufAfterFirstTurnEnd = (adapter as any).messageBuffers.get("s1");
+      expect(bufAfterFirstTurnEnd.messageId).toBe("asst-msg-1");
+
+      // turn_start(1): more tool turns (still Turn 1's work — skipped due to PENDING)
+      (adapter as any).handleTurnStart("s1", { turnId: "1" });
+      // assistant.message (no content)
+      (adapter as any).handleAssistantMessage("s1", { messageId: "sdk-msg-2" });
+      // more tool calls — should still go to Turn 1 buffer
+      (adapter as any).handleToolStart("s1", { toolCallId: "tc3", toolName: "powershell", arguments: { command: "ls" } });
+      (adapter as any).handleToolComplete("s1", { toolCallId: "tc3", success: true, result: { content: "files" } });
+      // turn_end(1)
+      (adapter as any).handleTurnEnd("s1", { turnId: "1" });
+
+      // Verify: still in Turn 1 buffer, tool parts accumulated there
+      expect((adapter as any).messageBuffers.get("s1").messageId).toBe("asst-msg-1");
+      const turn1ToolParts = (adapter as any).messageBuffers.get("s1").parts.filter((p: any) => p.type === "tool");
+      expect(turn1ToolParts.length).toBeGreaterThanOrEqual(2); // at least tc1 and tc3
+
+      // turn_start(6): text turn — assistant.message WITH CONTENT
+      // This triggers commitTurnTransition (content = Turn 1's final text)
+      (adapter as any).handleTurnStart("s1", { turnId: "6" });
+      (adapter as any).handleAssistantMessage("s1", { messageId: "sdk-msg-final", content: "Issue分析结果：共9个issue" });
+
+      // commitTurnTransition already fired — Turn 1 finalized, Turn 2 buffer created
       expect(r1).toHaveBeenCalledTimes(1);
-      expect(r2).not.toHaveBeenCalled();
-      expect((adapter as any).idleResolvers.get("s1")).toHaveLength(1);
+      const turn1Message = r1.mock.calls[0][0];
+      expect(turn1Message.id).toBe("asst-msg-1");
+      // Turn 1 message should have text part with the issue analysis
+      const turn1TextParts = turn1Message.parts.filter((p: any) => p.type === "text");
+      expect(turn1TextParts.length).toBe(1);
+      expect(turn1TextParts[0].text).toBe("Issue分析结果：共9个issue");
+      // Turn 1 message should also have tool parts
+      const turn1FinalToolParts = turn1Message.parts.filter((p: any) => p.type === "tool");
+      expect(turn1FinalToolParts.length).toBeGreaterThanOrEqual(2);
 
+      // User message emitted
       expect(consumed).toHaveLength(1);
-      expect(consumed[0]).toMatchObject({ sessionId: "s1", messageId: "user-msg-2" });
-
-      const assistantUpdate = updates.find((e) => e.message?.role === "assistant");
-      const userUpdate = updates.find((e) => e.message?.role === "user");
-      expect(assistantUpdate?.message.id).toBe("msg-existing");
+      const userUpdate = updates.find((e: any) => e.message?.role === "user");
       expect(userUpdate?.message.id).toBe("user-msg-2");
-      expect((adapter as any).pendingUserMessages.has("s1")).toBe(false);
-      expect((adapter as any).messageBuffers.has("s1")).toBe(false);
+
+      // New buffer created for Turn 2
+      const newBuf = (adapter as any).messageBuffers.get("s1");
+      expect(newBuf).toBeDefined();
+      expect(newBuf.messageId).not.toBe("asst-msg-1");
+
+      // === Turn 2 events ===
+      // assistant.message (no content) + tools
+      (adapter as any).handleAssistantMessage("s1", { messageId: "sdk-msg-t2" });
+      (adapter as any).handleToolStart("s1", { toolCallId: "tc4", toolName: "powershell", arguments: { command: "gh pr list" } });
+      (adapter as any).handleToolComplete("s1", { toolCallId: "tc4", success: true, result: { content: "PRs" } });
+
+      // assistant.message WITH content for Turn 2
+      (adapter as any).handleAssistantMessage("s1", { messageId: "sdk-msg-t2-final", content: "PR分析结果：共6个PR" });
+
+      // session.idle → finalizes Turn 2
+      (adapter as any).handleSessionIdle("s1");
+
+      // Turn 2 resolved
+      expect(r2).toHaveBeenCalledTimes(1);
+      const turn2Message = r2.mock.calls[0][0];
+      // Turn 2 message should have its own text
+      const turn2TextParts = turn2Message.parts.filter((p: any) => p.type === "text");
+      expect(turn2TextParts.length).toBe(1);
+      expect(turn2TextParts[0].text).toBe("PR分析结果：共6个PR");
+      // Turn 2 text should NOT contain Turn 1's text
+      expect(turn2TextParts[0].text).not.toContain("Issue分析");
     });
   });
 

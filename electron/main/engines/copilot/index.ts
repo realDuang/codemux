@@ -1272,8 +1272,13 @@ export class CopilotSdkAdapter extends EngineAdapter {
       }
     }
 
-    this.emit("message.queued.consumed", { sessionId, messageId: pending.userMsg.id });
-    this.emit("message.updated", { sessionId, message: pending.userMsg });
+    const userMsg = {
+      ...pending.userMsg,
+      enqueuedAt: pending.userMsg.time.created,
+      processedAt: pending.startedAt,
+    };
+    this.emit("message.queued.consumed", { sessionId, messageId: userMsg.id });
+    this.emit("message.updated", { sessionId, message: userMsg });
 
     const buffer = this.getOrCreateBuffer(sessionId);
     const stepStartPart: any = { id: timeId("part"), messageId: buffer.messageId, sessionId, type: "step-start" };

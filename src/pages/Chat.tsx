@@ -2008,9 +2008,11 @@ export default function Chat() {
       // the latest assistant message is truly finalized before clearing the sending
       // state. If it's not, handleMessageUpdated will clear it when the final
       // message.updated arrives with time.completed or error.
+      // Also keep sending active if there are still queued messages being processed.
       const msgs = messageStore.message[sessionId] || [];
       const lastAssistant = [...msgs].reverse().find((m) => m.role === "assistant");
-      if (!lastAssistant || lastAssistant.time.completed || lastAssistant.error) {
+      const hasQueued = (messageStore.queued[sessionId]?.length ?? 0) > 0;
+      if (!hasQueued && (!lastAssistant || lastAssistant.time.completed || lastAssistant.error)) {
         setSendingFor(sessionId, false);
       }
     } catch (error) {

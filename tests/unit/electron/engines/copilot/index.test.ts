@@ -1145,11 +1145,19 @@ describe("CopilotSdkAdapter", () => {
       expect(turn1ToolParts.length).toBeGreaterThanOrEqual(2); // at least tc1 and tc3
 
       // turn_start(6): text turn — assistant.message WITH CONTENT
-      // This triggers commitTurnTransition (content = Turn 1's final text)
       (adapter as any).handleTurnStart("s1", { turnId: "6" });
       (adapter as any).handleAssistantMessage("s1", { messageId: "sdk-msg-final", content: "Issue分析结果：共9个issue" });
+      // turn_end(6)
+      (adapter as any).handleTurnEnd("s1", { turnId: "6" });
 
-      // commitTurnTransition already fired — Turn 1 finalized, Turn 2 buffer created
+      // Content is in buffer but transition not committed yet (waiting for user.message echo)
+      expect((adapter as any).pendingTurnTransition.has("s1")).toBe(true);
+      expect(r1).not.toHaveBeenCalled();
+
+      // user.message echo → commits the transition
+      (adapter as any).commitTurnTransition("s1");
+
+      // Turn 1 finalized with all content
       expect(r1).toHaveBeenCalledTimes(1);
       const turn1Message = r1.mock.calls[0][0];
       expect(turn1Message.id).toBe("asst-msg-1");

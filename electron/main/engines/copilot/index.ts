@@ -1130,12 +1130,6 @@ export class CopilotSdkAdapter extends EngineAdapter {
     const textPart: TextPart = { id: buffer.textPartId, messageId: buffer.messageId, sessionId, type: "text", text: data.content };
     upsertPart(buffer.parts, textPart);
     this.emit("message.part.updated", { sessionId, messageId: buffer.messageId, part: textPart });
-
-    // Content-bearing assistant.message is the final text for this user's turn.
-    // If a turn transition is pending, commit it now.
-    if (this.pendingTurnTransition.has(sessionId)) {
-      this.commitTurnTransition(sessionId);
-    }
   }
 
   private handleToolStart(sessionId: string, data: { toolCallId: string; toolName: string; arguments?: any }): void {

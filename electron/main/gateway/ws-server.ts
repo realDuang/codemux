@@ -17,6 +17,7 @@ import { gatewayLog } from "../services/logger";
 import log from "../services/logger";
 import { conversationStore } from "../services/conversation-store";
 import { scheduledTaskService } from "../services/scheduled-task-service";
+import { orchestratorService } from "../services/orchestrator-service";
 import {
   GatewayRequestType,
   GatewayNotificationType,
@@ -28,6 +29,7 @@ import {
   type MessageSendRequest,
   type PermissionReplyRequest,
   type QuestionReplyRequest,
+  type PendingListRequest,
   type ProjectSetEngineRequest,
   type ModelSetRequest,
   type SessionConfigUpdateRequest,
@@ -65,6 +67,7 @@ export class GatewayServer {
   ) {
     this.engineManager = engineManager;
     this.authValidator = options?.authValidator;
+    orchestratorService.init(engineManager);
     this.subscribeToEngineEvents();
 
     onFileChange((event) => {
@@ -364,6 +367,11 @@ export class GatewayServer {
         return this.engineManager.rejectQuestion(req.questionId);
       }
 
+      case GatewayRequestType.PENDING_LIST: {
+        const req = p as PendingListRequest;
+        return this.engineManager.getPending(req.sessionId);
+      }
+
       // Project
       case GatewayRequestType.PROJECT_LIST:
         return this.engineManager.listProjects(p.engineType as EngineType);
@@ -473,7 +481,8 @@ export class GatewayServer {
       // Worktree
       case GatewayRequestType.WORKTREE_CREATE: {
         const req = p as WorktreeCreateRequest;
-        if (!this.isWorktreeEnabled()) {
+        // Allow team worktrees even when worktree feature is disabled (internal orchestration)
+        if (!this.isWorktreeEnabled() && !req.name?.startsWith("team-")) {
           throw Object.assign(new Error("Worktree feature is disabled"), { code: "WORKTREE_DISABLED" });
         }
         const { worktreeManager } = await import("../services/worktree-manager");
@@ -519,6 +528,26 @@ export class GatewayServer {
         const { worktreeManager } = await import("../services/worktree-manager");
         return worktreeManager.listBranches(req.directory);
       }
+
+      // Orchestration
+      case GatewayRequestType.ORCHESTRATION_CREATE:
+        return orchestratorService.createRun(p.parentSessionId, p.directory, p.prompt, p.engineTypes, p.roleMappings, p.worktreeInfo);
+      case GatewayRequestType.ORCHESTRATION_DECOMPOSE:
+        // Fire-and-forget: return ack immediately, progress via orchestration.updated events
+        orchestratorService.decomposeTask(p.runId).catch((err) => {
+          gatewayLog.error("[Orchestration] decompose failed:", err);
+        });
+        return { ok: true };
+      case GatewayRequestType.ORCHESTRATION_CONFIRM:
+        // Fire-and-forget: execution is long-running, progress via events
+        orchestratorService.confirmAndExecute(p.runId, p.subtasks).catch((err) => {
+          gatewayLog.error("[Orchestration] confirm+execute failed:", err);
+        });
+        return { ok: true };
+      case GatewayRequestType.ORCHESTRATION_CANCEL:
+        return orchestratorService.cancelRun(p.runId);
+      case GatewayRequestType.ORCHESTRATION_LIST:
+        return orchestratorService.listRuns();
 
       default:
         throw Object.assign(
@@ -642,6 +671,11 @@ export class GatewayServer {
         type: GatewayNotificationType.SCHEDULED_TASKS_CHANGED,
         payload: data,
       });
+    });
+
+    // Orchestration events
+    orchestratorService.on("orchestration.updated", (data) => {
+      this.broadcast({ type: GatewayNotificationType.ORCHESTRATION_UPDATED, payload: data });
     });
   }
 

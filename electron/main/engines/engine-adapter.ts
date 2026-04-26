@@ -295,6 +295,17 @@ export abstract class EngineAdapter extends EventEmitter {
     sessionId?: string,
   ): Promise<void>;
 
+  /**
+   * List pending permission requests (not yet replied to).
+   * Optionally filter by sessionId.
+   * Default: returns empty array (engines without permission support).
+   * Async so adapters backed by a remote authoritative server (OpenCode) can
+   * query it directly instead of maintaining a drift-prone local mirror.
+   */
+  getPendingPermissions(_sessionId?: string): Promise<UnifiedPermission[]> | UnifiedPermission[] {
+    return [];
+  }
+
   // --- Questions ---
 
   /** Reply to a question request */
@@ -309,6 +320,36 @@ export abstract class EngineAdapter extends EventEmitter {
     questionId: string,
     sessionId?: string,
   ): Promise<void>;
+
+  /**
+   * List pending question requests (not yet answered).
+   * Optionally filter by sessionId.
+   * Default: returns empty array (engines without question support).
+   */
+  getPendingQuestions(_sessionId?: string): Promise<UnifiedQuestion[]> | UnifiedQuestion[] {
+    return [];
+  }
+
+  /**
+   * Filter a Map of pending entries by engine-side sessionId. Shared helper
+   * used by Copilot/Claude/Codex whose pending Maps hold `{ ...; question }`
+   * or `{ ...; permission }` value shapes — each knows how to project out the
+   * UnifiedQuestion/UnifiedPermission. When `sessionId` is undefined we still
+   * must not match entries with a nullish session id on either side (that
+   * would bypass filtering); callers already avoid passing undefined.
+   */
+  protected static filterPending<V, R>(
+    map: Map<string, V>,
+    sessionId: string | undefined,
+    project: (v: V) => R,
+    getSessionId: (v: V) => string | undefined,
+  ): R[] {
+    const out: R[] = [];
+    for (const v of map.values()) {
+      if (!sessionId || getSessionId(v) === sessionId) out.push(project(v));
+    }
+    return out;
+  }
 
   // --- Projects ---
 

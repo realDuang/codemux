@@ -19,6 +19,8 @@ export interface SessionInfo {
   serviceTier?: CodexServiceTier;
   projectID?: string;
   worktreeId?: string;
+  /** Team orchestration group ID — groups parent + child sessions together */
+  teamId?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -53,6 +55,8 @@ export const [sessionStore, setSessionStore] = createStore<{
   worktreeExpanded: WorktreeExpandState;
   /** Per-session prompt drafts kept while switching sessions */
   inputDrafts: Record<string, SessionInputDraft>;
+  /** Whether cross-engine team orchestration is enabled */
+  teamOrchestrationEnabled: boolean;
 }>({
   list: [],
   current: null,
@@ -65,6 +69,7 @@ export const [sessionStore, setSessionStore] = createStore<{
   worktrees: {},
   worktreeExpanded: {},
   inputDrafts: {},
+  teamOrchestrationEnabled: false,
 });
 
 /** Set the sending (streaming) state for a session. */

@@ -1568,6 +1568,18 @@ export class ClaudeCodeAdapter extends EngineAdapter {
     pending.resolve(""); // Empty answer = rejection
   }
 
+  getPendingQuestions(sessionId?: string): UnifiedQuestion[] {
+    return ClaudeCodeAdapter.filterPending(
+      this.pendingQuestions, sessionId, (p) => p.question, (p) => p.question.sessionId,
+    );
+  }
+
+  getPendingPermissions(sessionId?: string): UnifiedPermission[] {
+    return ClaudeCodeAdapter.filterPending(
+      this.pendingPermissions, sessionId, (p) => p.permission, (p) => p.permission.sessionId,
+    );
+  }
+
   // ==========================================================================
   // Projects
   // ==========================================================================

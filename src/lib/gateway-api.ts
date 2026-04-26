@@ -6,6 +6,7 @@
  */
 
 import { gatewayClient } from "./gateway-client";
+import { GatewayRequestType } from "../types/unified";
 import { logger } from "./logger";
 import type {
   EngineType,
@@ -32,6 +33,10 @@ import type {
   ScheduledTaskRunResult,
   UnifiedWorktree,
   WorktreeMergeResult,
+  OrchestrationRun,
+  OrchestrationSubtask,
+  OrchestrationCreateRequest,
+  OrchestrationConfirmRequest,
 } from "../types/unified";
 
 // --- Notification callback types ---
@@ -54,6 +59,7 @@ export interface GatewayNotificationHandlers {
   onScheduledTaskFired?: (taskId: string, conversationId: string) => void;
   onScheduledTaskFailed?: (taskId: string, error: string) => void;
   onScheduledTasksChanged?: (tasks: ScheduledTask[]) => void;
+  onOrchestrationUpdated?: (run: OrchestrationRun) => void;
   onConnected?: () => void;
   onDisconnected?: (reason: string) => void;
 }
@@ -208,6 +214,10 @@ class GatewayAPI {
     this.bind("scheduledTasks.changed", (data) => {
       this.handlers.onScheduledTasksChanged?.(data.tasks);
     });
+
+    this.bind("orchestration.updated", (data) => {
+      this.handlers.onOrchestrationUpdated?.(data.run);
+    });
   }
 
   // --- Engine ---
@@ -332,6 +342,15 @@ class GatewayAPI {
 
   rejectQuestion(questionId: string): Promise<void> {
     return gatewayClient.rejectQuestion(questionId);
+  }
+
+  // --- Pending state (resync) ---
+
+  listPending(sessionId: string): Promise<{
+    questions: UnifiedQuestion[];
+    permissions: UnifiedPermission[];
+  }> {
+    return gatewayClient.request(GatewayRequestType.PENDING_LIST, { sessionId });
   }
 
   // --- Project ---
@@ -493,6 +512,28 @@ class GatewayAPI {
 
   listBranches(directory: string): Promise<string[]> {
     return gatewayClient.request("worktree.listBranches", { directory });
+  }
+
+  // --- Orchestration ---
+
+  async createOrchestration(req: OrchestrationCreateRequest): Promise<OrchestrationRun> {
+    return gatewayClient.request("orchestration.create", req);
+  }
+
+  async decomposeOrchestration(runId: string): Promise<{ ok: boolean }> {
+    return gatewayClient.request("orchestration.decompose", { runId });
+  }
+
+  async confirmOrchestration(req: OrchestrationConfirmRequest): Promise<{ ok: boolean }> {
+    return gatewayClient.request("orchestration.confirm", req);
+  }
+
+  async cancelOrchestration(runId: string): Promise<void> {
+    return gatewayClient.request("orchestration.cancel", { runId });
+  }
+
+  async listOrchestrations(): Promise<OrchestrationRun[]> {
+    return gatewayClient.request("orchestration.list", {});
   }
 }
 

@@ -64,26 +64,63 @@ Connect CodeMux to Microsoft Teams using the Bot Framework. Requires a Cloudflar
 
 ## Step 4: Install the Bot in Teams
 
-### Option A: Use Auto-Generated App Package (Recommended)
+You need to package the bot as a Teams app and upload it to Teams. The recommended path is the [Teams Developer Portal](https://dev.teams.microsoft.com/), which generates a valid app package for you.
 
-CodeMux automatically generates a Teams app package when the channel starts:
+### Option A: Teams Developer Portal (Recommended)
 
-1. Start the Teams channel in CodeMux (Step 5 below)
-2. Find the generated package at:
-   - **Windows**: `%APPDATA%\codemux\channels\teams-app.zip`
-   - **macOS**: `~/Library/Application Support/codemux/channels/teams-app.zip`
-3. Upload to Teams:
-   - **Admin install**: [Teams Admin Center](https://admin.teams.microsoft.com/) → **Teams apps** → **Manage apps** → **Upload new app**
-   - **Sideload** (for testing): Teams → Apps → **Manage your apps** → **Upload a custom app**
+1. Go to [Teams Developer Portal](https://dev.teams.microsoft.com/) → **Apps** → **+ New app**
+2. Fill in the basic information (name, descriptions, developer info, icons)
+3. Under **App features**, add a **Bot**:
+   - Choose **Enter a bot ID** and paste your **Microsoft App ID** (from Step 1)
+   - Select scopes: **Personal**, **Team**, **Group Chat**
+4. (Optional) Add a **Command list** so users see suggested commands. Common commands:
+   - Personal scope: `/help`, `/project`, `/new`, `/switch`, `/cancel`, `/status`, `/mode`, `/model`, `/history`
+   - Team / Group Chat scope: `/help`, `/cancel`, `/status`, `/mode`, `/model`, `/history`
+5. Click **Publish** → **Download the app package** to get a `.zip` file
+6. Upload to Teams:
+   - **Sideload (testing)**: Teams → **Apps** → **Manage your apps** → **Upload an app** → **Upload a custom app**
+   - **Org-wide install**: [Teams Admin Center](https://admin.teams.microsoft.com/) → **Teams apps** → **Manage apps** → **Upload new app**
 
-### Option B: Use Teams Developer Portal
+### Option B: Build the Manifest Manually
 
-1. Go to [Teams Developer Portal](https://dev.teams.microsoft.com/) → **Apps** → **Import app**
-2. Upload the auto-generated zip file
-3. Or create a new app manually:
-   - Add a **Bot** with your Microsoft App ID
-   - Set the messaging endpoint to your tunnel URL + `/api/messages`
-   - Set scopes: Personal, Team, Group Chat
+If you prefer to author the manifest by hand, create a folder containing `manifest.json`, `color.png` (192×192), and `outline.png` (32×32), then zip them.
+
+Minimal `manifest.json` template (replace `<APP_ID>`, `<BOT_NAME>`, etc.):
+
+```json
+{
+  "$schema": "https://developer.microsoft.com/en-us/json-schemas/teams/v1.17/MicrosoftTeams.schema.json",
+  "manifestVersion": "1.17",
+  "version": "1.0.0",
+  "id": "<APP_ID>",
+  "packageName": "com.example.codemux",
+  "developer": {
+    "name": "<YOUR_NAME>",
+    "websiteUrl": "https://example.com",
+    "privacyUrl": "https://example.com/privacy",
+    "termsOfUseUrl": "https://example.com/terms"
+  },
+  "icons": { "color": "color.png", "outline": "outline.png" },
+  "name": { "short": "<BOT_NAME>", "full": "<BOT_NAME>" },
+  "description": {
+    "short": "CodeMux Teams bot",
+    "full": "Connect Microsoft Teams to CodeMux AI engines."
+  },
+  "accentColor": "#0078D4",
+  "bots": [
+    {
+      "botId": "<APP_ID>",
+      "scopes": ["personal", "team", "groupchat"],
+      "supportsFiles": false,
+      "isNotificationOnly": false
+    }
+  ],
+  "permissions": ["identity", "messageTeamMembers"],
+  "validDomains": []
+}
+```
+
+Zip the three files at the **root** of the archive (no parent folder), then sideload via Teams → **Apps** → **Manage your apps** → **Upload a custom app**.
 
 ## Step 5: Configure in CodeMux
 
@@ -154,7 +191,6 @@ Teams responses use Adaptive Cards v1.5, which include:
 | "Unauthorized" errors | Wrong App ID or Password | Verify credentials match Azure AD registration |
 | "Failed to fetch token" | Tenant ID mismatch | For Single Tenant: set Tenant ID. For Multi-tenant: leave empty |
 | Bot doesn't respond | Messaging endpoint wrong | Verify endpoint is `https://your-domain/api/messages` in Azure Bot config |
-| App package not generated | Channel not started | Start the Teams channel first, then check the output path |
 | "Token validation failed" | Clock skew or expired secret | Re-generate client secret in Azure Portal |
 | Bot not visible in Teams | App not installed | Upload the app package via Teams Admin Center or sideload |
 | Messages not received | Tunnel not running | Start Cloudflare Tunnel before interacting with the bot |
@@ -168,6 +204,6 @@ Teams responses use Adaptive Cards v1.5, which include:
 - **Authentication**: Azure AD OAuth2 client credentials (JWT token validation)
 - **Token Refresh**: Auto-refresh on expiry (~1 hour lifetime)
 - **Message Format**: Adaptive Cards v1.5 with Markdown content
-- **App Package**: Auto-generated at `{userData}/channels/teams-app.zip` (manifest v1.17 + icons)
+- **App Package**: Built manually via Teams Developer Portal (see Step 4)
 - **Rate Limiting**: TokenBucket — 5 burst capacity, 1 token/sec refill
 - **Dev Mode**: Set `skipAuth: true` to disable JWT validation (local testing only, **never in production**)

@@ -129,7 +129,7 @@ WeCom **does not support editing sent messages**. Because of this:
 ### Session Management
 
 - Sessions are managed in the P2P chat (user ↔ bot direct messages)
-- Use `/project` to switch projects, `/session` to switch sessions
+- Use `/project` to switch project, `/new` to create a new session, `/switch` to pick an existing one
 - Use `/help` to see all available commands
 - Session state is persisted and survives app restarts
 

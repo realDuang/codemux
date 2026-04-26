@@ -74,6 +74,11 @@ export interface LocaleDict {
     noModelError: string;
     queued: string;
     disconnected: string;
+    dashboardTab: string;
+    chatTab: string;
+    teamTask: string;
+    teamTaskDesc: string;
+    teamTaskDetail: string;
   };
 
   // Settings page
@@ -121,6 +126,15 @@ export interface LocaleDict {
     experimental: string;
     scheduledTasksEnabled: string;
     scheduledTasksEnabledDesc: string;
+    teamOrchestration: string;
+    teamOrchestrationDesc: string;
+    teamOrchestrationRoles: string;
+    teamOrchestrationRolesDesc: string;
+    roleExplorer: string;
+    roleResearcher: string;
+    roleReviewer: string;
+    roleDesigner: string;
+    roleCoder: string;
   };
 
   // Remote Access page
@@ -395,6 +409,22 @@ export interface LocaleDict {
     wecomBotDesc: string;
     teamsBot: string;
     teamsBotDesc: string;
+    weixinIlinkBot: string;
+    weixinIlinkBotDesc: string;
+    weixinIlinkLoginTitle: string;
+    weixinIlinkLoading: string;
+    weixinIlinkScanPrompt: string;
+    weixinIlinkScanedPrompt: string;
+    weixinIlinkConfirmedPrompt: string;
+    weixinIlinkExpired: string;
+    weixinIlinkRefresh: string;
+    weixinIlinkError: string;
+    weixinIlinkRetry: string;
+    weixinIlinkAlreadyConfigured: string;
+    weixinIlinkLogout: string;
+    weixinIlinkLogoutConfirm: string;
+    weixinIlinkLoginRequiredHint: string;
+    weixinIlinkSessionExpired: string;
     appId: string;
     appIdPlaceholder: string;
     appSecret: string;
@@ -437,6 +467,7 @@ export interface LocaleDict {
     streamingThrottleDesc: string;
     ms: string;
     configure: string;
+    login: string;
     configRequired: string;
     secretConfiguredHint: string;
     save: string;
@@ -450,7 +481,6 @@ export interface LocaleDict {
     teamsWebhookGuide: string;
     wecomWebhookGuide: string;
     webhookEndpoint: string;
-    teamsInstallHint: string;
   };
 
   // Token Usage
@@ -692,6 +722,11 @@ export const en: LocaleDict = {
     noModelError: "No model configured. Please set a model in Settings > Engines.",
     queued: "Queued",
     disconnected: "Disconnected",
+    dashboardTab: "Dashboard",
+    chatTab: "Chat",
+    teamTask: "Team Task",
+    teamTaskDesc: "Describe the task you want multiple engines to collaborate on.",
+    teamTaskDetail: "The task will be decomposed into subtasks and dispatched to different engines in parallel.",
   },
 
   // Settings page
@@ -739,6 +774,15 @@ export const en: LocaleDict = {
     experimental: "Experimental",
     scheduledTasksEnabled: "Scheduled Tasks",
     scheduledTasksEnabledDesc: "Enable the scheduled tasks feature to automatically run tasks on a schedule",
+    teamOrchestration: "Cross-Engine Team Orchestration",
+    teamOrchestrationDesc: "Decompose complex tasks and distribute subtasks across multiple AI engines for parallel execution",
+    teamOrchestrationRoles: "Role-Engine Mapping",
+    teamOrchestrationRolesDesc: "Configure which engine handles each agent role during team orchestration",
+    roleExplorer: "Explorer",
+    roleResearcher: "Researcher",
+    roleReviewer: "Reviewer",
+    roleDesigner: "Designer",
+    roleCoder: "Coder",
   },
 
   // Remote Access page
@@ -1008,6 +1052,22 @@ export const en: LocaleDict = {
     wecomBotDesc: "Connect to WeCom (WeChat Work) to use CodeMux via app messages",
     teamsBot: "Teams Bot",
     teamsBotDesc: "Connect to Microsoft Teams to use CodeMux via bot messages",
+    weixinIlinkBot: "WeChat Personal (iLink)",
+    weixinIlinkBotDesc: "Connect to WeChat personal account via iLink (QR-scan login)",
+    weixinIlinkLoginTitle: "WeChat iLink Login",
+    weixinIlinkLoading: "Fetching QR code...",
+    weixinIlinkScanPrompt: "Open WeChat on your phone and scan the QR code.",
+    weixinIlinkScanedPrompt: "Scanned. Confirm login on your phone...",
+    weixinIlinkConfirmedPrompt: "Login confirmed, saving...",
+    weixinIlinkExpired: "QR code expired.",
+    weixinIlinkRefresh: "Refresh QR code",
+    weixinIlinkError: "Failed to fetch QR code.",
+    weixinIlinkRetry: "Retry",
+    weixinIlinkAlreadyConfigured: "A bot is already configured. Scanning will replace it.",
+    weixinIlinkLogout: "Logout",
+    weixinIlinkLogoutConfirm: "Log out the current WeChat account? This stops the bot and clears all saved session bindings on this device. The remote WeChat session may stay valid until it expires server-side.",
+    weixinIlinkLoginRequiredHint: "Click Login and scan the QR code first.",
+    weixinIlinkSessionExpired: "WeChat session expired — please scan the QR code again to re-login.",
     appId: "App ID",
     appIdPlaceholder: "Enter Feishu / Lark App ID",
     appSecret: "App Secret",
@@ -1050,6 +1110,7 @@ export const en: LocaleDict = {
     streamingThrottleDesc: "Minimum interval between Feishu / Lark message updates",
     ms: "ms",
     configure: "Configure",
+    login: "Login",
     configRequired: "App ID and App Secret are required to enable the bot",
     secretConfiguredHint: "Configured — leave empty to keep current",
     save: "Save",
@@ -1063,7 +1124,6 @@ export const en: LocaleDict = {
     teamsWebhookGuide: "Configure this URL as Messaging Endpoint in Azure Bot Service → Settings",
     wecomWebhookGuide: "Configure this URL as callback URL in WeCom Admin Console → App → Receive Messages",
     webhookEndpoint: "Endpoint",
-    teamsInstallHint: "Install the bot in Teams: Apps → Manage your apps → Upload a custom app → select the generated teams-app.zip (in project .channels/ folder or app data directory)",
   },
 
   // Token Usage

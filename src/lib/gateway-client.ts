@@ -48,6 +48,7 @@ import {
   type ScheduledTaskCreateRequest,
   type ScheduledTaskUpdateRequest,
   type ScheduledTaskRunResult,
+  type OrchestrationRun,
 } from "../types/unified";
 
 // --- Event types emitted by GatewayClient ---
@@ -84,6 +85,9 @@ export interface GatewayClientEvents {
   "scheduledTask.fired": (data: { taskId: string; conversationId: string }) => void;
   "scheduledTask.failed": (data: { taskId: string; error: string }) => void;
   "scheduledTasks.changed": (data: { tasks: ScheduledTask[] }) => void;
+
+  /** Orchestration push notifications */
+  "orchestration.updated": (data: { run: OrchestrationRun }) => void;
 }
 
 // --- Pending request tracking ---

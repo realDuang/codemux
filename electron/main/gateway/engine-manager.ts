@@ -406,11 +406,37 @@ export class EngineManager extends EventEmitter {
    * Persist a UnifiedMessage to ConversationStore.
    * Splits content parts (text/file) into ConversationMessage and step parts into StepsFile.
    * Only persists completed assistant messages (those with time.completed).
-   * User messages are persisted separately in persistUserMessage().
+   * User messages are normally persisted via persistUserMessage(); this method only
+   * updates the most recent persisted user message when an adapter emits an enriched
+   * user message carrying enqueuedAt/processedAt (i.e. a queued message that just
+   * started processing).
    */
   private async persistMessage(conversationId: string, message: UnifiedMessage): Promise<void> {
-    // User messages are handled in persistUserMessage() to avoid duplicates
-    if (message.role === "user") return;
+    if (message.role === "user") {
+      // Adapter-emitted user messages have a different ID than the one we wrote
+      // via persistUserMessage at send time. The only field worth persisting from
+      // the adapter side is queue timing (enqueuedAt/processedAt). Match the most
+      // recent on-disk user message and patch those fields onto it.
+      if (message.enqueuedAt == null && message.processedAt == null) return;
+      try {
+        const existing = await conversationStore.listMessages(conversationId);
+        for (let i = existing.length - 1; i >= 0; i--) {
+          const m = existing[i];
+          if (m.role !== "user") continue;
+          // Skip if already patched (idempotent on retry/duplicate emits)
+          if (m.processedAt != null) return;
+          await conversationStore.updateMessage(conversationId, m.id, {
+            ...m,
+            enqueuedAt: message.enqueuedAt ?? m.enqueuedAt,
+            processedAt: message.processedAt ?? m.processedAt,
+          });
+          return;
+        }
+      } catch (err) {
+        engineManagerLog.warn(`Failed to patch user message timing for ${conversationId}:`, err);
+      }
+      return;
+    }
 
     const isCompleted = !!message.time.completed;
     if (!isCompleted) return; // Skip incomplete assistant messages (initial empty emit)
@@ -1036,6 +1062,8 @@ export class EngineManager extends EventEmitter {
         sessionId,
         role: msg.role,
         time: msg.time,
+        enqueuedAt: msg.enqueuedAt,
+        processedAt: msg.processedAt,
         parts: msg.parts as UnifiedPart[],
         stepCount,
         tokens: msg.tokens,

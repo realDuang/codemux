@@ -1169,15 +1169,28 @@ describe("CopilotSdkAdapter", () => {
       const turn1FinalToolParts = turn1Message.parts.filter((p: any) => p.type === "tool");
       expect(turn1FinalToolParts.length).toBeGreaterThanOrEqual(2);
 
-      // User message emitted
+      // User message emitted with timing fields populated correctly
       expect(consumed).toHaveLength(1);
       const userUpdate = updates.find((e: any) => e.message?.role === "user");
       expect(userUpdate?.message.id).toBe("user-msg-2");
+      // enqueuedAt = original creation time; processedAt = commit time (now),
+      // NOT the earlier turn_end time. Both must be present and ordered.
+      expect(userUpdate?.message.enqueuedAt).toBe(2000);
+      expect(userUpdate?.message.processedAt).toBeGreaterThan(2000);
+      expect(userUpdate?.message.processedAt).toBeLessThanOrEqual(Date.now());
 
       // New buffer created for Turn 2
       const newBuf = (adapter as any).messageBuffers.get("s1");
       expect(newBuf).toBeDefined();
       expect(newBuf.messageId).not.toBe("asst-msg-1");
+
+      // Persistence: enqueuedAt/processedAt must be written to messageHistory
+      // so reloads (which read from disk) preserve queue timing context.
+      const history: any[] = (adapter as any).messageHistory.get("s1") || [];
+      const persistedQueued = history.find((m) => m.id === "user-msg-2");
+      expect(persistedQueued).toBeDefined();
+      expect(persistedQueued.enqueuedAt).toBe(2000);
+      expect(persistedQueued.processedAt).toBeGreaterThan(2000);
 
       // === Turn 2 events ===
       // assistant.message (no content) + tools
@@ -1200,6 +1213,48 @@ describe("CopilotSdkAdapter", () => {
       expect(turn2TextParts[0].text).toBe("PR分析结果：共6个PR");
       // Turn 2 text should NOT contain Turn 1's text
       expect(turn2TextParts[0].text).not.toContain("Issue分析");
+    });
+
+    it("abort during pending turn transition surfaces the queued user message", () => {
+      const updates: any[] = [];
+      const consumed: any[] = [];
+      adapter.on("message.updated", (e) => updates.push(e));
+      adapter.on("message.queued.consumed", (e) => consumed.push(e));
+
+      // Set up a pending transition (as if turn_end already shifted a queued msg)
+      (adapter as any).messageBuffers.set("s1", makeBuffer("s1", { messageId: "asst-1" }));
+      (adapter as any).pendingTurnTransition.set("s1", {
+        userMsg: { id: "u-queued", role: "user", sessionId: "s1", time: { created: 1000 }, parts: [] },
+      });
+      (adapter as any).pendingUserMessages.set("s1", [
+        { id: "u-also-queued", role: "user", sessionId: "s1", time: { created: 1500 }, parts: [] },
+      ]);
+
+      (adapter as any).handleAbort("s1", {});
+
+      // Both the pending-transition message and the still-queued one are surfaced
+      const userIds = consumed.map((e) => e.messageId).sort();
+      expect(userIds).toEqual(["u-also-queued", "u-queued"]);
+      const queuedUpdate = updates.find((e: any) => e.message?.id === "u-queued");
+      expect(queuedUpdate?.message.enqueuedAt).toBe(1000);
+      expect(queuedUpdate?.message.processedAt).toBeGreaterThanOrEqual(1000);
+
+      // State cleaned up
+      expect((adapter as any).pendingTurnTransition.has("s1")).toBe(false);
+      expect((adapter as any).pendingUserMessages.has("s1")).toBe(false);
+      expect((adapter as any).messageBuffers.has("s1")).toBe(false);
+    });
+
+    it("handleAssistantMessage is idempotent for repeated identical content", () => {
+      const partUpdates: any[] = [];
+      adapter.on("message.part.updated", (e) => partUpdates.push(e));
+
+      (adapter as any).handleAssistantMessage("s1", { content: "hello" });
+      const countAfterFirst = partUpdates.length;
+      (adapter as any).handleAssistantMessage("s1", { content: "hello" });
+
+      // Second identical call should not emit a new update
+      expect(partUpdates.length).toBe(countAfterFirst);
     });
   });
 

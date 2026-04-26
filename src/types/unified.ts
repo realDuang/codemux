@@ -171,6 +171,10 @@ export interface ConversationMessage {
   id: string;
   role: MessageRole;
   time: { created: number; completed?: number };
+  /** Timestamp when a queued message entered the queue (user clicked send) */
+  enqueuedAt?: number;
+  /** Timestamp when a queued message started being processed by the engine */
+  processedAt?: number;
   /** Content-only parts (text, file) — steps stored separately */
   parts: Array<TextPart | FilePart>;
   tokens?: {

@@ -122,6 +122,11 @@ export class GatewayClient {
   private static readonly BATCHED_EVENTS = new Set([
     "message.part.updated",
     "message.updated",
+    // Keep in sync with the message.updated batch so wire order is preserved.
+    // Otherwise consumed fires immediately and clears the queued preview before
+    // the preceding `message.updated` (Turn N completed) is handled, which then
+    // sees an empty queue and incorrectly clears the `sending` state.
+    "message.queued.consumed",
   ]);
 
   get connected(): boolean {

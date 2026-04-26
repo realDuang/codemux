@@ -26,6 +26,7 @@ import type {
   ReasoningEffort,
   CodexServiceTier,
   UnifiedSessionConfig,
+  SessionConfigPatch,
   ConversationMeta,
   ConversationMessage,
   ImportableSession,
@@ -1180,7 +1181,7 @@ export class EngineManager extends EventEmitter {
 
   async updateSessionConfig(
     sessionId: string,
-    config: Partial<UnifiedSessionConfig>,
+    config: SessionConfigPatch,
   ): Promise<void> {
     const patch: {
       mode?: string | null;

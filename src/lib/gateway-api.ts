@@ -303,7 +303,7 @@ class GatewayAPI {
 
   updateSessionConfig(
     sessionId: string,
-    config: Partial<import("../types/unified").UnifiedSessionConfig>,
+    config: import("../types/unified").SessionConfigPatch,
   ): Promise<void> {
     return gatewayClient.updateSessionConfig({ sessionId, config });
   }

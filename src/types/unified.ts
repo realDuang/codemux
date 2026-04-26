@@ -138,6 +138,20 @@ export interface UnifiedSessionConfig {
   serviceTier?: CodexServiceTier;
 }
 
+/**
+ * Patch shape for session config updates over the wire. Distinguishes between:
+ *   - missing key  → don't touch
+ *   - explicit null → clear the persisted override
+ *   - value         → set
+ *
+ * The base UnifiedSessionConfig has optional-but-never-null fields because that
+ * matches how config is stored. Patches need explicit null to express "clear",
+ * since `undefined` is dropped by JSON serialization on the wire.
+ */
+export type SessionConfigPatch = {
+  [K in keyof UnifiedSessionConfig]?: UnifiedSessionConfig[K] | null;
+};
+
 /** Result of listing models — includes which model is currently active */
 export interface ModelListResult {
   models: UnifiedModelInfo[];
@@ -853,7 +867,7 @@ export interface ServiceTierSetRequest {
 
 export interface SessionConfigUpdateRequest {
   sessionId: string;
-  config: Partial<UnifiedSessionConfig>;
+  config: SessionConfigPatch;
 }
 
 export interface ModeSetRequest {

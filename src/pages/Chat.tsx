@@ -471,7 +471,7 @@ export default function Chat() {
   };
 
   const handleSessionConfigChange = async (
-    patch: Partial<import("../types/unified").UnifiedSessionConfig>,
+    patch: import("../types/unified").SessionConfigPatch,
   ) => {
     const sessionId = sessionStore.current;
     if (!sessionId) return;
@@ -480,7 +480,15 @@ export default function Chat() {
     for (const key of Object.keys(patch) as (keyof typeof patch)[]) {
       (rollback as any)[key] = prev?.[key];
     }
-    updateSessionInfo(sessionId, patch);
+    // Local SessionInfo has no `null` slots — coerce nulls to undefined for the
+    // optimistic store update. The wire payload keeps `null` so the backend can
+    // clear persisted config (undefined is dropped by JSON serialization).
+    const optimistic: Partial<SessionInfo> = {};
+    for (const key of Object.keys(patch) as (keyof typeof patch)[]) {
+      const v = patch[key];
+      (optimistic as any)[key] = v === null ? undefined : v;
+    }
+    updateSessionInfo(sessionId, optimistic);
     try {
       await gateway.updateSessionConfig(sessionId, patch);
     } catch (error) {
@@ -517,7 +525,7 @@ export default function Chat() {
     handleSessionConfigChange({ reasoningEffort: effort });
 
   const handleSessionFastModeToggle = (nextActive: boolean) =>
-    handleSessionConfigChange({ serviceTier: nextActive ? "fast" : undefined });
+    handleSessionConfigChange({ serviceTier: nextActive ? "fast" : null });
 
   const updateCurrentDraft = (patch: { text?: string; images?: ImageAttachment[] }) => {
     const sessionId = sessionStore.current;

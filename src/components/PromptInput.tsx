@@ -8,11 +8,6 @@ const ACCEPTED_IMAGE_TYPES = ["image/jpeg", "image/png", "image/gif", "image/web
 const MAX_IMAGE_SIZE = 3 * 1024 * 1024; // 3MB per image — stays within WS payload limits after base64/JSON overhead
 const MAX_IMAGES = 4;
 
-const defaultModes: AgentMode[] = [
-  { id: "build", label: "Build" },
-  { id: "plan", label: "Plan" },
-];
-
 /**
  * Resolve a display name for a mode.
  * Prefers `mode.label`; falls back to extracting the hash fragment from a URI
@@ -332,10 +327,13 @@ export function PromptInput(props: PromptInputProps) {
 
   const handleDragLeave = () => setDragOver(false);
 
-  const modes = createMemo(() =>
+  const modes = createMemo<AgentMode[]>(() =>
     props.availableModes && props.availableModes.length > 0
       ? props.availableModes
-      : defaultModes
+      : [
+          { id: "build", label: t().chat.defaultModeLabel },
+          { id: "plan", label: t().prompt.plan },
+        ]
   );
 
   // Default to first available mode

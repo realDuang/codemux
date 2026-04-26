@@ -301,20 +301,6 @@ class GatewayAPI {
     return gatewayClient.setModel({ sessionId, modelId });
   }
 
-  setReasoningEffort(
-    sessionId: string,
-    reasoningEffort: import("../types/unified").ReasoningEffort | null,
-  ): Promise<void> {
-    return gatewayClient.setReasoningEffort({ sessionId, reasoningEffort });
-  }
-
-  setServiceTier(
-    sessionId: string,
-    serviceTier: import("../types/unified").CodexServiceTier | null,
-  ): Promise<void> {
-    return gatewayClient.setServiceTier({ sessionId, serviceTier });
-  }
-
   updateSessionConfig(
     sessionId: string,
     config: Partial<import("../types/unified").UnifiedSessionConfig>,

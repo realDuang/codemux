@@ -406,7 +406,7 @@ export default function Chat() {
   const currentAgent = createMemo<AgentMode>(() => {
     const availableModes = currentAvailableModes();
     if (availableModes.length === 0) {
-      return { id: "build", label: "Build" };
+      return { id: "build", label: t().chat.defaultModeLabel };
     }
     const currentModeId = currentSessionInfo()?.mode;
     return availableModes.find((mode) => mode.id === currentModeId) ?? availableModes[0];
@@ -495,6 +495,23 @@ export default function Chat() {
 
   const handleSessionModelChange = (modelId: string) =>
     handleSessionConfigChange({ modelId });
+
+  // Debounced variant for the custom-model text input — committing on every
+  // keystroke would fire one RPC + persistence write per character.
+  let modelInputDebounceTimer: ReturnType<typeof setTimeout> | undefined;
+  const [modelInputDraft, setModelInputDraft] = createSignal<string | null>(null);
+  const handleSessionModelInputChange = (modelId: string) => {
+    setModelInputDraft(modelId);
+    if (modelInputDebounceTimer) clearTimeout(modelInputDebounceTimer);
+    modelInputDebounceTimer = setTimeout(() => {
+      modelInputDebounceTimer = undefined;
+      setModelInputDraft(null);
+      handleSessionModelChange(modelId);
+    }, 400);
+  };
+  onCleanup(() => {
+    if (modelInputDebounceTimer) clearTimeout(modelInputDebounceTimer);
+  });
 
   const handleSessionReasoningEffortChange = (effort: ReasoningEffort) =>
     handleSessionConfigChange({ reasoningEffort: effort });
@@ -2922,10 +2939,18 @@ export default function Chat() {
                           >
                             <input
                               type="text"
-                              value={currentSessionModelId() ?? ""}
-                              onInput={(e) => handleSessionModelChange(e.currentTarget.value)}
+                              value={modelInputDraft() ?? currentSessionModelId() ?? ""}
+                              onInput={(e) => handleSessionModelInputChange(e.currentTarget.value)}
+                              onBlur={(e) => {
+                                if (modelInputDebounceTimer) {
+                                  clearTimeout(modelInputDebounceTimer);
+                                  modelInputDebounceTimer = undefined;
+                                }
+                                setModelInputDraft(null);
+                                handleSessionModelChange(e.currentTarget.value);
+                              }}
                               disabled={currentEngineInfo()?.capabilities?.modelSwitchable === false}
-                              placeholder="Enter model ID..."
+                              placeholder={t().chat.modelIdPlaceholder}
                               class="max-w-[180px] px-2 py-1 text-[11px] rounded-lg border-0 bg-transparent text-slate-500 dark:text-slate-400 focus:ring-1 focus:ring-slate-300 dark:focus:ring-slate-600"
                             />
                           </Show>

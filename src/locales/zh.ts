@@ -80,6 +80,8 @@ export const zh: LocaleDict = {
     teamTask: "团队任务",
     teamTaskDesc: "描述你希望多个引擎协作完成的任务。",
     teamTaskDetail: "该任务将被拆解为多个子任务，并行分发给不同引擎执行。",
+    modelIdPlaceholder: "输入模型 ID...",
+    defaultModeLabel: "构建",
   },
 
   // Settings page

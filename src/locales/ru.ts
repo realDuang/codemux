@@ -81,6 +81,8 @@ export const ru: LocaleDict = {
     teamTask: "Командная задача",
     teamTaskDesc: "Опишите задачу, над которой будут совместно работать несколько движков.",
     teamTaskDetail: "Задача будет разложена на подзадачи и параллельно распределена между разными движками.",
+    modelIdPlaceholder: "Введите ID модели...",
+    defaultModeLabel: "Сборка",
   },
 
   // Settings page

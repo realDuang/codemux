@@ -79,6 +79,10 @@ export interface LocaleDict {
     teamTask: string;
     teamTaskDesc: string;
     teamTaskDetail: string;
+    /** Placeholder for the custom model ID input */
+    modelIdPlaceholder: string;
+    /** Default mode label fallback when an engine has no available modes */
+    defaultModeLabel: string;
   };
 
   // Settings page
@@ -727,6 +731,8 @@ export const en: LocaleDict = {
     teamTask: "Team Task",
     teamTaskDesc: "Describe the task you want multiple engines to collaborate on.",
     teamTaskDetail: "The task will be decomposed into subtasks and dispatched to different engines in parallel.",
+    modelIdPlaceholder: "Enter model ID...",
+    defaultModeLabel: "Build",
   },
 
   // Settings page

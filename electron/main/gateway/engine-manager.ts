@@ -417,16 +417,19 @@ export class EngineManager extends EventEmitter {
     if (message.role === "user") {
       // Adapter-emitted user messages have a different ID than the one we wrote
       // via persistUserMessage at send time. The only field worth persisting from
-      // the adapter side is queue timing (enqueuedAt/processedAt). Match the most
-      // recent on-disk user message and patch those fields onto it.
+      // the adapter side is queue timing (enqueuedAt/processedAt). Adapters commit
+      // queued messages in FIFO order (oldest first), so we patch the OLDEST
+      // persisted user message that lacks processedAt — not the most recent.
+      // Patching the most recent would mis-attribute timing data when N>1
+      // queued messages exist, since persistUserMessage writes them in send order
+      // but each adapter commit only knows "the next queued one in FIFO order".
       if (message.enqueuedAt == null && message.processedAt == null) return;
       try {
         const existing = await conversationStore.listMessages(conversationId);
-        for (let i = existing.length - 1; i >= 0; i--) {
+        for (let i = 0; i < existing.length; i++) {
           const m = existing[i];
           if (m.role !== "user") continue;
-          // Skip if already patched (idempotent on retry/duplicate emits)
-          if (m.processedAt != null) return;
+          if (m.processedAt != null) continue; // already patched
           await conversationStore.updateMessage(conversationId, m.id, {
             ...m,
             enqueuedAt: message.enqueuedAt ?? m.enqueuedAt,

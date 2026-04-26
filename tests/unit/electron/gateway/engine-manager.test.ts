@@ -1286,7 +1286,7 @@ describe("EngineManager", () => {
       );
     });
 
-    it("skips persisting user messages from message.updated event", async () => {
+    it("skips persisting user messages without queue timing fields", async () => {
       const userMessage = {
         id: "user-m1",
         sessionId: "engine-s1",
@@ -1296,11 +1296,68 @@ describe("EngineManager", () => {
       } as any;
       adapterA.emit("message.updated", { sessionId: "engine-s1", message: userMessage });
       await new Promise((r) => setTimeout(r, 0));
-      // user messages should be skipped by persistMessage
+      // user messages without enqueuedAt/processedAt should be skipped — they're
+      // already persisted via persistUserMessage() at send time.
       expect(conversationStore.appendMessage).not.toHaveBeenCalledWith(
         "conv1",
         expect.objectContaining({ id: "user-m1" }),
       );
+      expect(conversationStore.updateMessage).not.toHaveBeenCalled();
+    });
+
+    it("patches enqueuedAt/processedAt onto the OLDEST persisted user message lacking processedAt (FIFO)", async () => {
+      // Simulate 3 queued messages persisted earlier via persistUserMessage,
+      // none of which has processedAt yet. Adapter commits queued messages in
+      // FIFO order, so the patch must land on the oldest pending one (u1),
+      // not the most recent (u3).
+      const existingMessages = [
+        { id: "u-done", role: "user", time: { created: 100, completed: 100 }, parts: [], enqueuedAt: 100, processedAt: 110 },
+        { id: "u1", role: "user", time: { created: 200, completed: 200 }, parts: [] },
+        { id: "u2", role: "user", time: { created: 300, completed: 300 }, parts: [] },
+        { id: "u3", role: "user", time: { created: 400, completed: 400 }, parts: [] },
+      ];
+      (conversationStore.listMessages as any).mockResolvedValue(existingMessages);
+
+      const enrichedUserMsg = {
+        id: "internal-uid-from-adapter",
+        sessionId: "engine-s1",
+        role: "user",
+        time: { created: 200, completed: 200 },
+        enqueuedAt: 200,
+        processedAt: 1500,
+        parts: [],
+      } as any;
+      adapterA.emit("message.updated", { sessionId: "engine-s1", message: enrichedUserMsg });
+      await new Promise((r) => setTimeout(r, 0));
+
+      // Should patch u1 (oldest pending), NOT u3 (most recent)
+      expect(conversationStore.updateMessage).toHaveBeenCalledTimes(1);
+      const [convId, msgId, patched] = (conversationStore.updateMessage as any).mock.calls[0];
+      expect(convId).toBe("conv1");
+      expect(msgId).toBe("u1");
+      expect(patched.enqueuedAt).toBe(200);
+      expect(patched.processedAt).toBe(1500);
+    });
+
+    it("does not double-patch a user message that already has processedAt (idempotent)", async () => {
+      const existingMessages = [
+        { id: "u1", role: "user", time: { created: 100, completed: 100 }, parts: [], enqueuedAt: 100, processedAt: 150 },
+        { id: "u2", role: "user", time: { created: 200, completed: 200 }, parts: [] },
+      ];
+      (conversationStore.listMessages as any).mockResolvedValue(existingMessages);
+
+      // Adapter re-emits a message that was already patched (e.g. duplicate event)
+      const enrichedUserMsg = {
+        id: "internal", sessionId: "engine-s1", role: "user",
+        time: { created: 100, completed: 100 },
+        enqueuedAt: 100, processedAt: 150, parts: [],
+      } as any;
+      adapterA.emit("message.updated", { sessionId: "engine-s1", message: enrichedUserMsg });
+      await new Promise((r) => setTimeout(r, 0));
+
+      // Should patch u2 (oldest pending), skipping u1 which already has processedAt
+      expect(conversationStore.updateMessage).toHaveBeenCalledTimes(1);
+      expect((conversationStore.updateMessage as any).mock.calls[0][1]).toBe("u2");
     });
 
     it("emits message.updated as-is when convId cannot be resolved", () => {

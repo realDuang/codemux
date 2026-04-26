@@ -470,14 +470,6 @@ export class GatewayClient {
     return this.request(GatewayRequestType.MODEL_SET, req);
   }
 
-  setReasoningEffort(req: { sessionId: string; reasoningEffort: import("../types/unified").ReasoningEffort | null }): Promise<void> {
-    return this.updateSessionConfig({ sessionId: req.sessionId, config: { reasoningEffort: req.reasoningEffort ?? undefined } });
-  }
-
-  setServiceTier(req: { sessionId: string; serviceTier: import("../types/unified").CodexServiceTier | null }): Promise<void> {
-    return this.updateSessionConfig({ sessionId: req.sessionId, config: { serviceTier: req.serviceTier ?? undefined } });
-  }
-
   updateSessionConfig(req: SessionConfigUpdateRequest): Promise<void> {
     return this.request(GatewayRequestType.SESSION_CONFIG_UPDATE, req);
   }

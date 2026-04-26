@@ -1059,6 +1059,44 @@ describe("CopilotSdkAdapter", () => {
       expect(r2).toHaveBeenCalledTimes(1);
       expect(r1.mock.calls[0][0]).toEqual(r2.mock.calls[0][0]);
     });
+
+    it("commits a pending turn transition as fallback when user.message echo is missing", () => {
+      // Simulates: turn_end set up a pending transition, but the SDK never
+      // echoes user.message — session.idle must commit the transition so the
+      // queued user message and Turn N response both get surfaced.
+      const updates: any[] = [];
+      const consumed: any[] = [];
+      const r1 = vi.fn();
+      const r2 = vi.fn();
+      adapter.on("message.updated", (e) => updates.push(e));
+      adapter.on("message.queued.consumed", (e) => consumed.push(e));
+
+      (adapter as any).messageBuffers.set("s1", makeBuffer("s1", {
+        messageId: "asst-turn-1",
+        textAccumulator: "turn 1 final",
+        textPartId: "tp1",
+      }));
+      (adapter as any).idleResolvers.set("s1", [r1, r2]);
+      (adapter as any).pendingTurnTransition.set("s1", {
+        userMsg: { id: "queued-u1", role: "user", sessionId: "s1", time: { created: 1000 }, parts: [] },
+      });
+
+      (adapter as any).handleSessionIdle("s1");
+
+      // Turn 1 resolver got the assistant message
+      expect(r1).toHaveBeenCalledTimes(1);
+      expect(r1.mock.calls[0][0].id).toBe("asst-turn-1");
+      // Turn 2 resolver also resolved (final finalizeBuffer or fallback)
+      expect(r2).toHaveBeenCalledTimes(1);
+      // Queued user message surfaced with timing
+      expect(consumed.some((e) => e.messageId === "queued-u1")).toBe(true);
+      const queuedUpdate = updates.find((e: any) => e.message?.id === "queued-u1");
+      expect(queuedUpdate?.message.enqueuedAt).toBe(1000);
+      expect(queuedUpdate?.message.processedAt).toBeGreaterThanOrEqual(1000);
+      // Cleanup
+      expect((adapter as any).pendingTurnTransition.has("s1")).toBe(false);
+      expect((adapter as any).messageBuffers.has("s1")).toBe(false);
+    });
   });
 
   describe("handleTurnEnd()", () => {
@@ -1155,7 +1193,9 @@ describe("CopilotSdkAdapter", () => {
       expect(r1).not.toHaveBeenCalled();
 
       // user.message echo → commits the transition
+      const tBeforeCommit = Date.now();
       (adapter as any).commitTurnTransition("s1");
+      const tAfterCommit = Date.now();
 
       // Turn 1 finalized with all content
       expect(r1).toHaveBeenCalledTimes(1);
@@ -1173,11 +1213,12 @@ describe("CopilotSdkAdapter", () => {
       expect(consumed).toHaveLength(1);
       const userUpdate = updates.find((e: any) => e.message?.role === "user");
       expect(userUpdate?.message.id).toBe("user-msg-2");
-      // enqueuedAt = original creation time; processedAt = commit time (now),
-      // NOT the earlier turn_end time. Both must be present and ordered.
+      // enqueuedAt = original creation time; processedAt MUST be captured at
+      // commit time, not at handleTurnEnd time. We bound it to the actual
+      // commit window to catch regressions where processedAt is set too early.
       expect(userUpdate?.message.enqueuedAt).toBe(2000);
-      expect(userUpdate?.message.processedAt).toBeGreaterThan(2000);
-      expect(userUpdate?.message.processedAt).toBeLessThanOrEqual(Date.now());
+      expect(userUpdate?.message.processedAt).toBeGreaterThanOrEqual(tBeforeCommit);
+      expect(userUpdate?.message.processedAt).toBeLessThanOrEqual(tAfterCommit);
 
       // New buffer created for Turn 2
       const newBuf = (adapter as any).messageBuffers.get("s1");
@@ -1190,7 +1231,8 @@ describe("CopilotSdkAdapter", () => {
       const persistedQueued = history.find((m) => m.id === "user-msg-2");
       expect(persistedQueued).toBeDefined();
       expect(persistedQueued.enqueuedAt).toBe(2000);
-      expect(persistedQueued.processedAt).toBeGreaterThan(2000);
+      expect(persistedQueued.processedAt).toBeGreaterThanOrEqual(tBeforeCommit);
+      expect(persistedQueued.processedAt).toBeLessThanOrEqual(tAfterCommit);
 
       // === Turn 2 events ===
       // assistant.message (no content) + tools

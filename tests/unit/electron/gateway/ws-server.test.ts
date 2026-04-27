@@ -967,7 +967,11 @@ describe("GatewayServer", () => {
       const { connect, sendMessage, engineManager } = createTestHarness();
       const ws = connect();
 
-      const resp1 = await sendMessage(ws, {
+      // Authenticate the connection so requests are processed
+      ws.authenticated = true;
+
+      // Invalid reasoningEffort
+      await sendMessage(ws, {
         type: GatewayRequestType.SESSION_CONFIG_UPDATE,
         requestId: "r2",
         payload: {
@@ -975,10 +979,15 @@ describe("GatewayServer", () => {
           config: { reasoningEffort: "bogus" },
         },
       });
-      expect(resp1?.error?.code).toBe("INVALID_REASONING_EFFORT");
+      expect(ws.send).toHaveBeenCalled();
+      const resp1 = JSON.parse(ws.send.mock.calls[ws.send.mock.calls.length - 1][0]);
+      expect(resp1.error?.code).toBe("INVALID_REASONING_EFFORT");
       expect(engineManager.updateSessionConfig).not.toHaveBeenCalled();
 
-      const resp2 = await sendMessage(ws, {
+      ws.send.mockClear();
+
+      // Invalid serviceTier
+      await sendMessage(ws, {
         type: GatewayRequestType.SESSION_CONFIG_UPDATE,
         requestId: "r3",
         payload: {
@@ -986,7 +995,8 @@ describe("GatewayServer", () => {
           config: { serviceTier: "invalid" },
         },
       });
-      expect(resp2?.error?.code).toBe("INVALID_SERVICE_TIER");
+      const resp2 = JSON.parse(ws.send.mock.calls[ws.send.mock.calls.length - 1][0]);
+      expect(resp2.error?.code).toBe("INVALID_SERVICE_TIER");
       expect(engineManager.updateSessionConfig).not.toHaveBeenCalled();
     });
 

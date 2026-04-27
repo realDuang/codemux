@@ -673,14 +673,16 @@ export function PromptInput(props: PromptInputProps) {
                     </Show>
                   </div>
                 </Show>
-                <button
-                  onClick={handleSend}
-                  disabled={!hasContent || props.disabled}
-                  class={`p-2 rounded-xl text-white transition-all disabled:bg-slate-200 dark:disabled:bg-slate-700 disabled:text-slate-400 dark:disabled:text-slate-500 shadow-md disabled:shadow-none ${activeAccent().bgHover}`}
-                  aria-label={t().prompt.send}
-                >
-                  <IconArrowUp width={20} height={20} />
-                </button>
+                <Show when={!props.onTeamSend}>
+                  <button
+                    onClick={handleSend}
+                    disabled={!hasContent || props.disabled}
+                    class={`p-2 rounded-xl text-white transition-all disabled:bg-slate-200 dark:disabled:bg-slate-700 disabled:text-slate-400 dark:disabled:text-slate-500 shadow-md disabled:shadow-none ${activeAccent().bgHover}`}
+                    aria-label={t().prompt.send}
+                  >
+                    <IconArrowUp width={20} height={20} />
+                  </button>
+                </Show>
               </div>
             );
           }

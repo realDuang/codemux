@@ -257,7 +257,9 @@ describe("DAGExecutor static helpers", () => {
       await dagExecutor.executeReadyTasks(run);
 
       const [, passedDir, opts] = execSpyLocal.mock.calls[0];
-      expect(passedDir).toBe("/repo/.worktrees/team-run");
+      // directory is always the parent project dir — createSession resolves the
+      // worktree dir internally from defaultWorktreeId
+      expect(passedDir).toBe("/repo");
       expect(opts.defaultWorktreeId).toBe("team-run");
     });
 

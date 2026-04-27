@@ -771,8 +771,8 @@ export function SessionTurn(props: SessionTurnProps) {
       {/* Compacting Turn - Show simplified UI */}
       <Show when={isCompactingTurn()} fallback={
         <>
-          {/* User Message - Only show when there are displayable parts */}
-          <Show when={filteredUserParts().length > 0}>
+          {/* User Message - Only show when there are displayable parts and not an internal message */}
+          <Show when={filteredUserParts().length > 0 && !props.userMessage.internal}>
             <div class={styles.userMessage}>
               <Index each={filteredUserParts()}>
                 {(part, partIndex) => (

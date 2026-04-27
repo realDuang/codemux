@@ -21,8 +21,11 @@ import type {
   EngineType,
   RoleEngineMapping,
   OrchestratorRole,
+  ConversationMessage,
+  TextPart,
 } from "../../../../src/types/unified";
 import { loadSettings, saveSettings } from "../logger";
+import { conversationStore } from "../conversation-store";
 
 const SAVE_DEBOUNCE_MS = 500;
 const ROLE_MAPPINGS_SETTING_KEY = "orchestration.roleMappings";
@@ -208,6 +211,27 @@ export class OrchestrationService extends EventEmitter {
     this.runs.set(run.id, run);
     this.emitRunUpdated(run);
 
+    // Persist the user's prompt as a user message in the parent session
+    // so it survives page refresh (the frontend only creates a temp message).
+    try {
+      const msgId = timeId("msg");
+      const userMessage: ConversationMessage = {
+        id: msgId,
+        role: "user",
+        time: { created: Date.now(), completed: Date.now() },
+        parts: [{
+          type: "text" as const,
+          id: `${msgId}_p0`,
+          messageId: msgId,
+          sessionId: req.sessionId,
+          text: req.prompt,
+        } as TextPart],
+      };
+      await conversationStore.appendMessage(req.sessionId, userMessage);
+    } catch (err) {
+      orchestrationLog.warn(`Failed to persist user prompt for run ${run.id}:`, err);
+    }
+
     orchestrationLog.info(`Created team run ${run.id} (${run.mode} brain)`);
 
     // Start execution asynchronously
@@ -313,6 +337,12 @@ export class OrchestrationService extends EventEmitter {
    * resolves with the user-approved task list.
    */
   awaitPlanConfirmation(runId: string): Promise<OrchestrationSubtask[]> {
+    // Notify the frontend that the run has transitioned to "confirming" status
+    // so the UI can show the plan confirmation card with approve/cancel buttons.
+    const run = this.runs.get(runId);
+    if (run) {
+      this.emitRunUpdated(run);
+    }
     return new Promise<OrchestrationSubtask[]>((resolve, reject) => {
       this.pendingConfirmations.set(runId, { resolve, reject });
     });
@@ -396,6 +426,7 @@ export class OrchestrationService extends EventEmitter {
           this.engineManager!,
           registerAutoApproveSession,
           resolveRole,
+          awaitPlanConfirmation,
         );
         this.activeOrchestrators.set(run.id, orchestrator);
         this.activeRelayChannels.set(run.id, orchestrator.userChannel);
@@ -437,6 +468,7 @@ export class OrchestrationService extends EventEmitter {
       await this.engineManager.sendMessage(
         run.parentSessionId,
         [{ type: "text", text: prompt }],
+        { internal: true },
       );
       orchestrationLog.info(`[${run.id}] Relayed aggregated results to parent session ${run.parentSessionId}`);
     } catch (err) {

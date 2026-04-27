@@ -1212,7 +1212,7 @@ export default function Chat() {
     return run?.id ?? null;
   };
 
-  const handleOrchestrationSend = async (sessionId: string, prompt: string) => {
+  const handleOrchestrationSend = async (sessionId: string, prompt: string, mode: "light" | "heavy" = "light") => {
     const teamId = getTeamId(sessionId);
     if (!teamId) return;
 
@@ -1239,17 +1239,28 @@ export default function Chat() {
       const dir = session?.directory || ".";
       const runningEngines = configStore.engines.filter(e => e.status === "running" && isEngineEnabled(e.type));
 
+      // For worktree sessions, resolve the parent project directory so the
+      // orchestration run correctly groups child sessions under the same project.
+      const parentProject = session?.projectID
+        ? sessionStore.projects.find(p => p.id === session.projectID)
+        : undefined;
+      const parentDirectory = session?.worktreeId && parentProject
+        ? parentProject.directory
+        : undefined;
+
       // Pass worktree info from team registration to the run
       const teamInfo = orchestrationStore.teams[teamId];
       const run = await gateway.createOrchestration({
         sessionId,
         directory: dir,
         prompt,
-        mode: "light",
+        mode,
         engineType: currentEngineType(),
         engineTypes: runningEngines.map(e => e.type),
         roleMappings: getRoleMappings(),
         teamWorktreeInfo: teamInfo?.worktreeInfo,
+        worktreeId: session?.worktreeId,
+        parentDirectory,
         requirePlanConfirmation: true,
       });
 
@@ -2694,6 +2705,13 @@ export default function Chat() {
                       }
                       availableCommands={availableCommands()}
                       onCommandInvoke={handleCommandInvoke}
+                      onTeamSend={(() => {
+                        const sid = sessionStore.current;
+                        if (!sid || !isTeamParentSession(sid)) return undefined;
+                        const teamId = getTeamId(sid);
+                        if (teamId && getRunForTeam(teamId)) return undefined;
+                        return (text: string, mode: "light" | "heavy") => handleOrchestrationSend(sid, text, mode);
+                      })()}
                       relayToOrchestrator={!!activeHeavyRelayRun()}
                     />
                   </Show>

@@ -178,6 +178,8 @@ export interface ConversationMessage {
   modelId?: string;
   reasoningEffort?: ReasoningEffort;
   error?: string;
+  /** True when this is an internal/system message (e.g. orchestration relay) that should be hidden in the UI */
+  internal?: boolean;
 }
 
 export interface StepsFile {
@@ -258,6 +260,8 @@ export interface UnifiedMessage {
   engineMeta?: Record<string, unknown>;
   /** Number of step parts (tool, reasoning, etc.) — used for lazy loading */
   stepCount?: number;
+  /** True when this is an internal/system message (e.g. orchestration relay) that should be hidden in the UI */
+  internal?: boolean;
 }
 
 // --- Part (discriminated union) ---

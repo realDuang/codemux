@@ -123,9 +123,11 @@ export class DAGExecutor extends EventEmitter {
     const isReadOnly = task.needsWorktree === false || readOnlyByRole;
     const useTeamWorktree = !!run.teamWorktreeDir && !isReadOnly;
 
-    const effectiveDirectory = useTeamWorktree
-      ? (run.teamWorktreeDir as string)
-      : this.directory;
+    // Always pass the parent project directory to createSession — the worktree
+    // directory is resolved inside createSession from the worktreeId. Passing
+    // the already-resolved worktree dir breaks resolveProjectId which uses the
+    // last path segment, and also breaks parentDirectory derivation.
+    const effectiveDirectory = this.directory;
     const effectiveDefaultWorktreeId = useTeamWorktree
       ? (run.teamWorktreeName ?? run.worktreeId)
       : run.worktreeId;

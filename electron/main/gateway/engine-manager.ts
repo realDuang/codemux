@@ -116,6 +116,9 @@ export class EngineManager extends EventEmitter {
   /** Track which sessions have active sendMessage calls (for idle detection) */
   private activeSessions = new Set<string>();
 
+  /** Engine session IDs with pending internal sends — suppress user message.updated events */
+  private internalSendSessions = new Set<string>();
+
   // --- Adapter Registration ---
 
   registerAdapter(adapter: EngineAdapter): void {
@@ -290,6 +293,13 @@ export class EngineManager extends EventEmitter {
     adapter.on("message.updated", (data) => {
       const { sessionId: engineSessionId, message } = data;
       const convId = this.resolveConversationId(engineSessionId);
+
+      // Suppress user message events from internal sends (e.g. orchestration relay).
+      // The user message was already persisted with internal: true by persistUserMessage;
+      // the engine re-emitting it without the flag would show it as user input.
+      if (message.role === "user" && this.internalSendSessions.has(engineSessionId)) {
+        return;
+      }
 
       if (convId) {
         // Persist the message
@@ -536,7 +546,7 @@ export class EngineManager extends EventEmitter {
    * Called before adapter.sendMessage() to ensure user messages are saved
    * even if the adapter doesn't emit user message events (e.g., OpenCode).
    */
-  private async persistUserMessage(conversationId: string, content: MessagePromptContent[]): Promise<void> {
+  private async persistUserMessage(conversationId: string, content: MessagePromptContent[], internal?: boolean): Promise<void> {
     try {
       const now = Date.now();
       const msgId = timeId("msg");
@@ -573,6 +583,7 @@ export class EngineManager extends EventEmitter {
         role: "user",
         time: { created: now, completed: now },
         parts,
+        ...(internal ? { internal: true } : {}),
       };
 
       await conversationStore.appendMessage(conversationId, convMessage);
@@ -830,7 +841,7 @@ export class EngineManager extends EventEmitter {
   async sendMessage(
     sessionId: string,
     content: MessagePromptContent[],
-    options?: { mode?: string; modelId?: string; reasoningEffort?: ReasoningEffort | null; serviceTier?: CodexServiceTier | null },
+    options?: { mode?: string; modelId?: string; reasoningEffort?: ReasoningEffort | null; serviceTier?: CodexServiceTier | null; internal?: boolean },
   ): Promise<UnifiedMessage> {
     this.activeSessions.add(sessionId);
     try {
@@ -858,16 +869,29 @@ export class EngineManager extends EventEmitter {
     // which would cause applyTitleFallback to skip (title no longer default).
     // Run BEFORE adapter.sendMessage so the sidebar updates immediately,
     // not after the (potentially long-running) engine processing completes.
-    this.applyTitleFallback(sessionId, content);
+    if (!options?.internal) {
+      this.applyTitleFallback(sessionId, content);
+    }
 
     // Persist user message before sending to engine
     // (Some adapters like OpenCode don't emit user message events)
-    await this.persistUserMessage(sessionId, content);
+    // Internal messages (e.g. orchestration relay) are persisted but marked
+    // so the frontend can hide the user bubble while keeping the turn intact.
+    await this.persistUserMessage(sessionId, content, options?.internal);
+
+    // Mark session to suppress user message.updated events from the engine
+    // for internal sends — the user message is already persisted with internal: true.
+    if (options?.internal) {
+      this.internalSendSessions.add(engineSessionId);
+    }
 
     const result = await adapter.sendMessage(engineSessionId, content, {
       ...options,
       directory: conv.directory,
     });
+
+    // Clear the internal send suppression flag after the send completes
+    this.internalSendSessions.delete(engineSessionId);
 
     // If the engine reported a stale session (no SSE response within timeout),
     // clear the engineSessionId so the next attempt creates a fresh session.
@@ -992,6 +1016,7 @@ export class EngineManager extends EventEmitter {
         modelId: msg.modelId,
         reasoningEffort: msg.reasoningEffort,
         error: msg.error,
+        internal: msg.internal,
       };
     });
   }

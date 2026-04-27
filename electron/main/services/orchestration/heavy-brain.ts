@@ -81,6 +81,7 @@ export class HeavyBrainOrchestrator {
     private engineManager: EngineManager,
     private autoApproveSessions: AutoApproveSessionTracker,
     private resolveRole?: RoleResolver,
+    private awaitPlanConfirmation?: (runId: string) => Promise<OrchestrationSubtask[]>,
     private maxConcurrentTasks = AGENT_TEAM_MAX_CONCURRENT_TASKS,
   ) {}
 
@@ -154,6 +155,7 @@ export class HeavyBrainOrchestrator {
 
       teamRun.status = "running";
       let iterations = 0;
+      let planConfirmed = false;
 
       // --- Orchestration loop ---
       while (iterations++ < MAX_ITERATIONS && !this.terminal) {
@@ -184,6 +186,28 @@ export class HeavyBrainOrchestrator {
             await this.failRun(teamRun, `Orchestrator task graph error: ${mergeResult.error}`, onTaskUpdated);
             return;
           }
+
+          // --- Plan confirmation (first dispatch only) ---
+          if (!planConfirmed && teamRun.requirePlanConfirmation && this.awaitPlanConfirmation) {
+            teamRun.status = "confirming";
+            orchestrationLog.info(`[${teamRun.id}] Heavy Brain: awaiting user plan confirmation`);
+            try {
+              const confirmedTasks = await this.awaitPlanConfirmation(teamRun.id);
+              teamRun.subtasks = confirmedTasks.map((t): OrchestrationSubtask => ({
+                ...t,
+                status: "pending",
+                worktreeId: t.worktreeId ?? teamRun.worktreeId,
+              }));
+              orchestrationLog.info(`[${teamRun.id}] Heavy Brain: plan confirmed (${teamRun.subtasks.length} tasks)`);
+            } catch (err) {
+              teamRun.status = "failed";
+              teamRun.resultSummary = `Plan confirmation failed: ${(err as Error).message}`;
+              teamRun.time.completed = Date.now();
+              return;
+            }
+            teamRun.status = "running";
+          }
+          planConfirmed = true;
 
           orchestrationLog.info(
             `[${teamRun.id}] Heavy Brain: dispatching ${mergeResult.tasks.length} tasks (iteration ${iterations})`,

@@ -1077,9 +1077,9 @@ describe("CopilotSdkAdapter", () => {
         textPartId: "tp1",
       }));
       (adapter as any).idleResolvers.set("s1", [r1, r2]);
-      (adapter as any).pendingTurnTransition.set("s1", {
-        userMsg: { id: "queued-u1", role: "user", sessionId: "s1", time: { created: 1000 }, parts: [] },
-      });
+      // Embed pending queued msg directly on the buffer (new design)
+      const buf1 = (adapter as any).messageBuffers.get("s1");
+      buf1.pendingQueuedUserMsg = { id: "queued-u1", role: "user", sessionId: "s1", time: { created: 1000 }, parts: [] };
 
       (adapter as any).handleSessionIdle("s1");
 
@@ -1093,8 +1093,7 @@ describe("CopilotSdkAdapter", () => {
       const queuedUpdate = updates.find((e: any) => e.message?.id === "queued-u1");
       expect(queuedUpdate?.message.enqueuedAt).toBe(1000);
       expect(queuedUpdate?.message.processedAt).toBeGreaterThanOrEqual(1000);
-      // Cleanup
-      expect((adapter as any).pendingTurnTransition.has("s1")).toBe(false);
+      // Cleanup: buffer (and its embedded pendingQueuedUserMsg) cleared
       expect((adapter as any).messageBuffers.has("s1")).toBe(false);
     });
   });
@@ -1158,8 +1157,8 @@ describe("CopilotSdkAdapter", () => {
       // turn_end(0) — queued user exists → sets PENDING_TRANSITION
       (adapter as any).handleTurnEnd("s1", { turnId: "0" });
 
-      // Verify: transition is pending, nothing resolved yet, msg stays in queue
-      expect((adapter as any).pendingTurnTransition.has("s1")).toBe(true);
+      // Verify: transition is pending (embedded on buffer), nothing resolved yet
+      expect((adapter as any).messageBuffers.get("s1").pendingQueuedUserMsg).toBeDefined();
       expect(r1).not.toHaveBeenCalled();
       expect(consumed).toHaveLength(0);
       // Buffer still alive — belongs to Turn 1
@@ -1189,7 +1188,7 @@ describe("CopilotSdkAdapter", () => {
       (adapter as any).handleTurnEnd("s1", { turnId: "6" });
 
       // Content is in buffer but transition not committed yet (waiting for user.message echo)
-      expect((adapter as any).pendingTurnTransition.has("s1")).toBe(true);
+      expect((adapter as any).messageBuffers.get("s1").pendingQueuedUserMsg).toBeDefined();
       expect(r1).not.toHaveBeenCalled();
 
       // user.message echo → commits the transition
@@ -1264,10 +1263,9 @@ describe("CopilotSdkAdapter", () => {
       adapter.on("message.queued.consumed", (e) => consumed.push(e));
 
       // Set up a pending transition (as if turn_end already shifted a queued msg)
-      (adapter as any).messageBuffers.set("s1", makeBuffer("s1", { messageId: "asst-1" }));
-      (adapter as any).pendingTurnTransition.set("s1", {
-        userMsg: { id: "u-queued", role: "user", sessionId: "s1", time: { created: 1000 }, parts: [] },
-      });
+      const buf = makeBuffer("s1", { messageId: "asst-1" }) as any;
+      buf.pendingQueuedUserMsg = { id: "u-queued", role: "user", sessionId: "s1", time: { created: 1000 }, parts: [] };
+      (adapter as any).messageBuffers.set("s1", buf);
       (adapter as any).pendingUserMessages.set("s1", [
         { id: "u-also-queued", role: "user", sessionId: "s1", time: { created: 1500 }, parts: [] },
       ]);
@@ -1281,8 +1279,7 @@ describe("CopilotSdkAdapter", () => {
       expect(queuedUpdate?.message.enqueuedAt).toBe(1000);
       expect(queuedUpdate?.message.processedAt).toBeGreaterThanOrEqual(1000);
 
-      // State cleaned up
-      expect((adapter as any).pendingTurnTransition.has("s1")).toBe(false);
+      // State cleaned up: buffer (with embedded pendingQueuedUserMsg) deleted
       expect((adapter as any).pendingUserMessages.has("s1")).toBe(false);
       expect((adapter as any).messageBuffers.has("s1")).toBe(false);
     });

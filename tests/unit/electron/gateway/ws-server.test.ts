@@ -963,23 +963,31 @@ describe("GatewayServer", () => {
       });
     });
 
-    it("SESSION_CONFIG_UPDATE strips invalid reasoning effort and service tier values", async () => {
+    it("SESSION_CONFIG_UPDATE rejects invalid reasoning effort and service tier values", async () => {
       const { connect, sendMessage, engineManager } = createTestHarness();
       const ws = connect();
 
-      await sendMessage(ws, {
+      const resp1 = await sendMessage(ws, {
         type: GatewayRequestType.SESSION_CONFIG_UPDATE,
         requestId: "r2",
         payload: {
           sessionId: "sess-1",
-          config: { reasoningEffort: "bogus", serviceTier: "invalid" },
+          config: { reasoningEffort: "bogus" },
         },
       });
+      expect(resp1?.error?.code).toBe("INVALID_REASONING_EFFORT");
+      expect(engineManager.updateSessionConfig).not.toHaveBeenCalled();
 
-      expect(engineManager.updateSessionConfig).toHaveBeenCalledWith("sess-1", {
-        reasoningEffort: undefined,
-        serviceTier: undefined,
+      const resp2 = await sendMessage(ws, {
+        type: GatewayRequestType.SESSION_CONFIG_UPDATE,
+        requestId: "r3",
+        payload: {
+          sessionId: "sess-1",
+          config: { serviceTier: "invalid" },
+        },
       });
+      expect(resp2?.error?.code).toBe("INVALID_SERVICE_TIER");
+      expect(engineManager.updateSessionConfig).not.toHaveBeenCalled();
     });
 
     it("PERMISSION_REPLY delegates with permissionId and optionId", async () => {

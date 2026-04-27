@@ -83,6 +83,8 @@ export interface LocaleDict {
     modelIdPlaceholder: string;
     /** Default mode label fallback when an engine has no available modes */
     defaultModeLabel: string;
+    /** Tooltip hint shown on the chat toolbar's model/mode controls */
+    sessionScopeHint: string;
   };
 
   // Settings page
@@ -389,6 +391,8 @@ export interface LocaleDict {
     fastMode: string;
     fastModeDesc: string;
     fastModeUnavailable: string;
+    /** Hint explaining that engine-level model/effort/fastMode are defaults for new sessions */
+    sessionDefaultsHint: string;
     noModelsAvailable: string;
     modelInputPlaceholder: string;
     enabled: string;
@@ -733,6 +737,7 @@ export const en: LocaleDict = {
     teamTaskDetail: "The task will be decomposed into subtasks and dispatched to different engines in parallel.",
     modelIdPlaceholder: "Enter model ID...",
     defaultModeLabel: "Build",
+    sessionScopeHint: "Applies to this session only. Defaults for new sessions live in Settings.",
   },
 
   // Settings page
@@ -1036,6 +1041,7 @@ export const en: LocaleDict = {
     fastMode: "Fast Mode",
     fastModeDesc: "Higher speed inference at 2\u00d7 credit usage (Codex only)",
     fastModeUnavailable: "Fast mode requires ChatGPT authentication",
+    sessionDefaultsHint: "These settings apply only to newly created sessions. Existing sessions keep their own per-session model, mode, and effort overrides — adjust those from the chat toolbar.",
     noModelsAvailable: "No models available",
     modelInputPlaceholder: "Enter model ID (e.g. claude-sonnet-4-20250514)",
     enabled: "Enabled",

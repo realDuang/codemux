@@ -141,16 +141,6 @@ export class CopilotSdkAdapter extends EngineAdapter {
   private pendingUserMessages = new Map<string, UnifiedMessage[]>();
   private toolCallParts = new Map<string, ToolPart>();
   private taskCompleteCallIds = new Set<string>();
-  /**
-   * Deferred turn transition: queued user message waiting to be emitted.
-   * Set by handleTurnEnd when there are queued messages. Committed when the
-   * SDK echoes `user.message` (the SDK's signal that it has actually moved on
-   * to the next prompt) or, as a fallback, when `session.idle` arrives. The
-   * `processedAt` timestamp is captured at commit time, not at handleTurnEnd,
-   * because the SDK keeps emitting late Turn-1 events between turn_end and
-   * the user.message echo.
-   */
-  private pendingTurnTransition = new Map<string, { userMsg: UnifiedMessage }>();
 
   constructor(private options?: { cliPath?: string; env?: Record<string, string> }) {
     super();
@@ -615,7 +605,8 @@ export class CopilotSdkAdapter extends EngineAdapter {
       for (const r of resolvers) r(finalMessage);
     }
     this.pendingUserMessages.delete(sessionId);
-    this.pendingTurnTransition.delete(sessionId);
+    // pendingQueuedUserMsg lives on messageBuffers; finalizeBuffer above
+    // already cleaned it up.
   }
 
   async listMessages(sessionId: string): Promise<UnifiedMessage[]> {
@@ -1232,8 +1223,20 @@ export class CopilotSdkAdapter extends EngineAdapter {
     if (toolPart) this.emit("message.part.updated", { sessionId, messageId: toolPart.messageId, part: toolPart });
   }
 
+  /**
+   * Whether a deferred turn transition is pending for this session — i.e. the
+   * SDK has emitted turn_end for the previous turn (with queued messages),
+   * but we haven't yet seen the user.message echo (or session.idle fallback)
+   * that actually commits the transition. While pending, intermediate
+   * step-start/step-finish boundaries are suppressed because all SDK turns
+   * up to the commit belong to the same logical assistant message.
+   */
+  private hasPendingTransition(sessionId: string): boolean {
+    return this.messageBuffers.get(sessionId)?.pendingQueuedUserMsg != null;
+  }
+
   private handleTurnStart(sessionId: string, _data: any): void {
-    if (this.pendingTurnTransition.has(sessionId)) {
+    if (this.hasPendingTransition(sessionId)) {
       return;
     }
 
@@ -1244,7 +1247,7 @@ export class CopilotSdkAdapter extends EngineAdapter {
   }
 
   private handleTurnEnd(sessionId: string, _data: any): void {
-    if (this.pendingTurnTransition.has(sessionId)) {
+    if (this.hasPendingTransition(sessionId)) {
       const buffer = this.getOrCreateBuffer(sessionId);
       this.flushTextAccumulator(buffer, sessionId);
       return;
@@ -1262,7 +1265,8 @@ export class CopilotSdkAdapter extends EngineAdapter {
       if (pendingUsers.length === 0) {
         this.pendingUserMessages.delete(sessionId);
       }
-      this.pendingTurnTransition.set(sessionId, { userMsg });
+      // Embed on the buffer so it's automatically cleaned up on finalization.
+      buffer.pendingQueuedUserMsg = userMsg;
     }
   }
 
@@ -1272,10 +1276,12 @@ export class CopilotSdkAdapter extends EngineAdapter {
    * user message, and create a fresh buffer for the new turn.
    */
   private commitTurnTransition(sessionId: string): void {
-    const pending = this.pendingTurnTransition.get(sessionId);
-    if (!pending) return;
-    this.pendingTurnTransition.delete(sessionId);
+    const buffer = this.messageBuffers.get(sessionId);
+    const queuedUserMsg = buffer?.pendingQueuedUserMsg;
+    if (!queuedUserMsg) return;
 
+    // finalizeBuffer deletes the buffer (including pendingQueuedUserMsg) — we've
+    // already captured the queued msg in the local variable above.
     const previousTurn = this.finalizeBuffer(sessionId);
 
     if (previousTurn) {
@@ -1292,21 +1298,21 @@ export class CopilotSdkAdapter extends EngineAdapter {
     // processedAt is captured here, NOT at handleTurnEnd time. The SDK keeps
     // emitting late Turn-1 events after turn_end, and only signals the actual
     // start of the next prompt by echoing user.message (which triggers commit).
-    const userMsg = {
-      ...pending.userMsg,
-      enqueuedAt: pending.userMsg.time.created,
+    const enriched = {
+      ...queuedUserMsg,
+      enqueuedAt: queuedUserMsg.time.created,
       processedAt: Date.now(),
     };
     // Persist the enriched user message so reloads preserve enqueuedAt/processedAt
     // (the original userMsg pushed to history at enqueue time lacks these fields).
-    this.appendMessageToHistory(sessionId, userMsg);
-    this.emit("message.queued.consumed", { sessionId, messageId: userMsg.id });
-    this.emit("message.updated", { sessionId, message: userMsg });
+    this.appendMessageToHistory(sessionId, enriched);
+    this.emit("message.queued.consumed", { sessionId, messageId: enriched.id });
+    this.emit("message.updated", { sessionId, message: enriched });
 
-    const buffer = this.getOrCreateBuffer(sessionId);
-    const stepStartPart: any = { id: timeId("part"), messageId: buffer.messageId, sessionId, type: "step-start" };
-    buffer.parts.push(stepStartPart);
-    this.emit("message.part.updated", { sessionId, messageId: buffer.messageId, part: stepStartPart });
+    const newBuffer = this.getOrCreateBuffer(sessionId);
+    const stepStartPart: any = { id: timeId("part"), messageId: newBuffer.messageId, sessionId, type: "step-start" };
+    newBuffer.parts.push(stepStartPart);
+    this.emit("message.part.updated", { sessionId, messageId: newBuffer.messageId, part: stepStartPart });
   }
 
   private handleSessionIdle(sessionId: string): void {
@@ -1354,7 +1360,7 @@ export class CopilotSdkAdapter extends EngineAdapter {
       }
     }
     this.pendingUserMessages.delete(sessionId);
-    this.pendingTurnTransition.delete(sessionId);
+    // pendingQueuedUserMsg lives on messageBuffers; finalizeBuffer cleaned it.
   }
 
   private handleModelChange(sessionId: string, data: { newModel?: string }): void { if (data.newModel) this.currentModelId = data.newModel; }
@@ -1379,17 +1385,17 @@ export class CopilotSdkAdapter extends EngineAdapter {
   private handleAbort(sessionId: string, _data: any): void {
     // If a turn transition was pending, surface the queued user message so the
     // frontend doesn't silently drop it. Then finalize whatever was buffered.
-    const pending = this.pendingTurnTransition.get(sessionId);
-    this.pendingTurnTransition.delete(sessionId);
-    if (pending) {
-      const userMsg = {
-        ...pending.userMsg,
-        enqueuedAt: pending.userMsg.time.created,
+    const buffer = this.messageBuffers.get(sessionId);
+    const queuedUserMsg = buffer?.pendingQueuedUserMsg;
+    if (queuedUserMsg) {
+      const enriched = {
+        ...queuedUserMsg,
+        enqueuedAt: queuedUserMsg.time.created,
         processedAt: Date.now(),
       };
-      this.appendMessageToHistory(sessionId, userMsg);
-      this.emit("message.queued.consumed", { sessionId, messageId: userMsg.id });
-      this.emit("message.updated", { sessionId, message: userMsg });
+      this.appendMessageToHistory(sessionId, enriched);
+      this.emit("message.queued.consumed", { sessionId, messageId: enriched.id });
+      this.emit("message.updated", { sessionId, message: enriched });
     }
 
     const finalMessage = this.finalizeBuffer(sessionId);

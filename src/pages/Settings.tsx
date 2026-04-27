@@ -371,9 +371,12 @@ export default function Settings() {
 
             {/* Engines Section */}
             <section id="section-engines">
-              <h2 class="text-sm font-medium text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-4 px-1">
+              <h2 class="text-sm font-medium text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-1 px-1">
                 {t().engine.engines}
               </h2>
+              <p class="text-xs text-slate-500 dark:text-slate-400 mb-4 px-1">
+                {t().engine.sessionDefaultsHint}
+              </p>
               <Show
                 when={configStore.engines.length > 0}
                 fallback={

@@ -82,6 +82,7 @@ export const zh: LocaleDict = {
     teamTaskDetail: "该任务将被拆解为多个子任务，并行分发给不同引擎执行。",
     modelIdPlaceholder: "输入模型 ID...",
     defaultModeLabel: "构建",
+    sessionScopeHint: "仅对当前会话生效。新建会话的默认值请在设置中配置。",
   },
 
   // Settings page
@@ -387,6 +388,7 @@ export const zh: LocaleDict = {
     fastMode: "快速模式",
     fastModeDesc: "更快的推理速度，消耗 2 倍积分（仅限 Codex）",
     fastModeUnavailable: "快速模式需要 ChatGPT 认证",
+    sessionDefaultsHint: "这些设置仅对新建会话生效。已有会话保留各自的模型 / 模式 / 推理强度等覆盖项，请在聊天工具栏内调整。",
     noModelsAvailable: "暂无可用模型",
     modelInputPlaceholder: "输入模型 ID（如 claude-sonnet-4-20250514）",
     enabled: "已启用",

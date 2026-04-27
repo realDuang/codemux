@@ -324,15 +324,23 @@ export class GatewayServer {
       case GatewayRequestType.SESSION_CONFIG_UPDATE: {
         const req = p as SessionConfigUpdateRequest;
         const config = req.config ?? {};
-        // Validate reasoning effort and service tier at the gateway boundary
+        // Validate reasoning effort and service tier at the gateway boundary.
+        // Reject loud rather than silently dropping the field — silent drops
+        // make the RPC look successful while the value never persists.
         if (Object.prototype.hasOwnProperty.call(config, "reasoningEffort") && config.reasoningEffort !== null) {
           if (!isReasoningEffort(config.reasoningEffort)) {
-            config.reasoningEffort = undefined;
+            throw Object.assign(
+              new Error(`Invalid reasoningEffort: ${JSON.stringify(config.reasoningEffort)}`),
+              { code: "INVALID_REASONING_EFFORT" },
+            );
           }
         }
         if (Object.prototype.hasOwnProperty.call(config, "serviceTier") && config.serviceTier !== null) {
           if (!isCodexServiceTier(config.serviceTier)) {
-            config.serviceTier = undefined;
+            throw Object.assign(
+              new Error(`Invalid serviceTier: ${JSON.stringify(config.serviceTier)}`),
+              { code: "INVALID_SERVICE_TIER" },
+            );
           }
         }
         return this.engineManager.updateSessionConfig(req.sessionId, config);

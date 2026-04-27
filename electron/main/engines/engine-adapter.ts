@@ -58,6 +58,13 @@ export interface MessageBuffer {
   engineMeta?: Record<string, unknown>;
   /** Set to true once leading whitespace has been trimmed from textAccumulator */
   leadingTrimmed?: boolean;
+  /**
+   * Queued user message waiting to be emitted as the next turn's prompt.
+   * Set by Copilot's handleTurnEnd when there are queued messages; consumed
+   * by commitTurnTransition. Embedding it on the buffer rather than a parallel
+   * Map ensures cleanup happens automatically when the buffer is finalized.
+   */
+  pendingQueuedUserMsg?: UnifiedMessage;
 }
 
 // --- Adapter Events ---

@@ -1155,12 +1155,7 @@ export class EngineManager extends EventEmitter {
   }
 
   async setModel(sessionId: string, modelId: string): Promise<void> {
-    const conv = this.updateStoredSessionConfig(sessionId, { modelId });
-    if (!conv.engineSessionId) {
-      return;
-    }
-    const adapter = this.getAdapterForSession(sessionId);
-    return adapter.setModel(conv.engineSessionId, modelId);
+    return this.updateSessionConfig(sessionId, { modelId });
   }
 
   // --- Modes ---
@@ -1171,12 +1166,7 @@ export class EngineManager extends EventEmitter {
   }
 
   async setMode(sessionId: string, modeId: string): Promise<void> {
-    const conv = this.updateStoredSessionConfig(sessionId, { mode: modeId });
-    if (!conv.engineSessionId) {
-      return;
-    }
-    const adapter = this.getAdapterForSession(sessionId);
-    return adapter.setMode(conv.engineSessionId, modeId);
+    return this.updateSessionConfig(sessionId, { mode: modeId });
   }
 
   async updateSessionConfig(

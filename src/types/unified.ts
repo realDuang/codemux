@@ -855,16 +855,6 @@ export interface ModelSetRequest {
   modelId: string;
 }
 
-export interface ReasoningEffortSetRequest {
-  sessionId: string;
-  reasoningEffort: ReasoningEffort | null;
-}
-
-export interface ServiceTierSetRequest {
-  sessionId: string;
-  serviceTier: CodexServiceTier | null;
-}
-
 export interface SessionConfigUpdateRequest {
   sessionId: string;
   config: SessionConfigPatch;

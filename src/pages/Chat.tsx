@@ -2909,6 +2909,10 @@ export default function Chat() {
                       onImagesChange={(images) => updateCurrentDraft({ images })}
                       toolbarContent={
                         <Show when={sessionStore.current}>
+                          <span
+                            class="contents"
+                            title={t().chat.sessionScopeHint}
+                          >
                           {/* Model selector */}
                           <Show
                             when={currentEngineInfo()?.capabilities?.customModelInput}
@@ -3000,6 +3004,7 @@ export default function Chat() {
                               ⚡ {t().engine.fastMode}
                             </button>
                           </Show>
+                          </span>
                         </Show>
                       }
                     />

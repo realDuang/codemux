@@ -90,6 +90,12 @@ interface PendingQuestion {
   question: UnifiedQuestion;
 }
 
+const approvePermissionOnce = (): PermissionRequestResult => ({ kind: "approve-once" });
+const rejectPermission = (feedback?: string): PermissionRequestResult => (
+  feedback ? { kind: "reject", feedback } : { kind: "reject" }
+);
+const noPermissionResult = (): PermissionRequestResult => ({ kind: "no-result" });
+
 type CopilotReasoningEffort = NonNullable<SessionConfig["reasoningEffort"]>;
 
 function buildCopilotSubprocessEnv(extraEnv?: Record<string, string>): NodeJS.ProcessEnv {
@@ -589,7 +595,7 @@ export class CopilotSdkAdapter extends EngineAdapter {
     }
     for (const [id, pending] of this.pendingPermissions) {
       if (pending.permission.sessionId === sessionId) {
-        pending.resolve({ kind: "denied-interactively-by-user" });
+        pending.resolve(rejectPermission());
         this.pendingPermissions.delete(id);
       }
     }
@@ -632,7 +638,7 @@ export class CopilotSdkAdapter extends EngineAdapter {
       const config: ResumeSessionConfig = {
         streaming: true,
         workingDirectory: directory,
-        onPermissionRequest: () => ({ kind: "denied-interactively-by-user" as const }),
+        onPermissionRequest: noPermissionResult,
       };
       session = await this.client!.resumeSession(engineSessionId, config);
       const events = await session.getMessages();
@@ -740,7 +746,7 @@ export class CopilotSdkAdapter extends EngineAdapter {
       if (rawKind) this.allowedAlwaysKinds.add(rawKind);
     }
 
-    pending.resolve({ kind: isApproved ? "approved" : "denied-interactively-by-user" });
+    pending.resolve(isApproved ? approvePermissionOnce() : rejectPermission());
     this.pendingPermissions.delete(permissionId);
     this.emit("permission.replied", { permissionId, optionId });
   }
@@ -1330,8 +1336,8 @@ export class CopilotSdkAdapter extends EngineAdapter {
 
   private handlePermissionRequest(req: PermissionRequest, ctx: { sessionId: string }): Promise<PermissionRequestResult> {
     const sessionId = ctx.sessionId;
-    if ((this.sessionModes.get(sessionId) || "autopilot") === "autopilot") return Promise.resolve({ kind: "approved" });
-    if (this.allowedAlwaysKinds.has(req.kind)) return Promise.resolve({ kind: "approved" });
+    if ((this.sessionModes.get(sessionId) || "autopilot") === "autopilot") return Promise.resolve(approvePermissionOnce());
+    if (this.allowedAlwaysKinds.has(req.kind)) return Promise.resolve(approvePermissionOnce());
 
     const permissionId = timeId("perm");
     const kind: any = req.kind === "read" ? "read" : req.kind === "write" || req.kind === "shell" ? "edit" : "other";
@@ -1432,7 +1438,7 @@ export class CopilotSdkAdapter extends EngineAdapter {
   }
 
   private rejectAllPendingPermissions(_reason: string): void {
-    for (const [_id, pending] of this.pendingPermissions) pending.resolve({ kind: "denied-no-approval-rule-and-could-not-request-from-user" });
+    for (const [_id, pending] of this.pendingPermissions) pending.resolve(rejectPermission());
     this.pendingPermissions.clear();
   }
 

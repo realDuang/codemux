@@ -265,7 +265,7 @@ describe("CopilotSdkAdapter", () => {
       expect(adapter.getStatus()).toBe("stopped");
     });
 
-    it("rejects all pending permissions with a system-deny result", async () => {
+    it("rejects all pending permissions with a reject result", async () => {
       await adapter.start();
       const resolve = vi.fn();
       (adapter as any).pendingPermissions.set("p1", {
@@ -275,9 +275,7 @@ describe("CopilotSdkAdapter", () => {
 
       await adapter.stop();
 
-      expect(resolve).toHaveBeenCalledWith({
-        kind: "denied-no-approval-rule-and-could-not-request-from-user",
-      });
+      expect(resolve).toHaveBeenCalledWith({ kind: "reject" });
       expect((adapter as any).pendingPermissions.size).toBe(0);
     });
 
@@ -701,7 +699,7 @@ describe("CopilotSdkAdapter", () => {
       expect(sess.abort).toHaveBeenCalledTimes(1);
     });
 
-    it("resolves pending permissions for the session with denied-interactively", async () => {
+    it("resolves pending permissions for the session with reject", async () => {
       const sess = makeMockSession("s1");
       (adapter as any).activeSessions.set("s1", sess);
       const resolve = vi.fn();
@@ -712,7 +710,7 @@ describe("CopilotSdkAdapter", () => {
 
       await adapter.cancelMessage("s1");
 
-      expect(resolve).toHaveBeenCalledWith({ kind: "denied-interactively-by-user" });
+      expect(resolve).toHaveBeenCalledWith({ kind: "reject" });
       expect((adapter as any).pendingPermissions.has("p1")).toBe(false);
     });
 
@@ -1073,7 +1071,7 @@ describe("CopilotSdkAdapter", () => {
         { sessionId: "s1" },
       );
 
-      expect(result).toEqual({ kind: "approved" });
+      expect(result).toEqual({ kind: "approve-once" });
       expect(permEvents).toHaveLength(0);
     });
 
@@ -1086,7 +1084,7 @@ describe("CopilotSdkAdapter", () => {
         { sessionId: "s1" },
       );
 
-      expect(result).toEqual({ kind: "approved" });
+      expect(result).toEqual({ kind: "approve-once" });
     });
 
     it("emits permission.asked in non-autopilot mode and waits for reply", async () => {
@@ -1106,9 +1104,9 @@ describe("CopilotSdkAdapter", () => {
       expect(perm.options.map((o: any) => o.id)).toEqual(["allow_once", "allow_always", "reject_once"]);
 
       const pending = (adapter as any).pendingPermissions.get(perm.id);
-      pending.resolve({ kind: "approved" });
+      pending.resolve({ kind: "approve-once" });
 
-      await expect(requestPromise).resolves.toEqual({ kind: "approved" });
+      await expect(requestPromise).resolves.toEqual({ kind: "approve-once" });
     });
 
     it("maps 'read' kind to 'read', 'shell' to 'edit', unknown to 'other'", async () => {
@@ -1127,7 +1125,7 @@ describe("CopilotSdkAdapter", () => {
   });
 
   describe("replyPermission()", () => {
-    it("resolves with approved for allow_once", async () => {
+    it("resolves with approve-once for allow_once", async () => {
       const resolve = vi.fn();
       (adapter as any).pendingPermissions.set("p1", {
         resolve,
@@ -1136,11 +1134,11 @@ describe("CopilotSdkAdapter", () => {
 
       await adapter.replyPermission("p1", { optionId: "allow_once" });
 
-      expect(resolve).toHaveBeenCalledWith({ kind: "approved" });
+      expect(resolve).toHaveBeenCalledWith({ kind: "approve-once" });
       expect((adapter as any).pendingPermissions.has("p1")).toBe(false);
     });
 
-    it("resolves with approved AND persists kind to allowedAlwaysKinds for allow_always", async () => {
+    it("resolves with approve-once AND persists kind to allowedAlwaysKinds for allow_always", async () => {
       const resolve = vi.fn();
       (adapter as any).pendingPermissions.set("p1", {
         resolve,
@@ -1149,11 +1147,11 @@ describe("CopilotSdkAdapter", () => {
 
       await adapter.replyPermission("p1", { optionId: "allow_always" });
 
-      expect(resolve).toHaveBeenCalledWith({ kind: "approved" });
+      expect(resolve).toHaveBeenCalledWith({ kind: "approve-once" });
       expect((adapter as any).allowedAlwaysKinds.has("shell")).toBe(true);
     });
 
-    it("resolves with denied-interactively for reject_once", async () => {
+    it("resolves with reject for reject_once", async () => {
       const resolve = vi.fn();
       (adapter as any).pendingPermissions.set("p1", {
         resolve,
@@ -1162,7 +1160,7 @@ describe("CopilotSdkAdapter", () => {
 
       await adapter.replyPermission("p1", { optionId: "reject_once" });
 
-      expect(resolve).toHaveBeenCalledWith({ kind: "denied-interactively-by-user" });
+      expect(resolve).toHaveBeenCalledWith({ kind: "reject" });
     });
 
     it("emits permission.replied with the correct optionId", async () => {

@@ -55,6 +55,22 @@ export class DingTalkTransport implements MessageTransport {
     }
   }
 
+  /** Send a markdown-formatted message via DingTalk sampleMarkdown msgKey. */
+  async sendMarkdown(chatId: string, markdown: string): Promise<string> {
+    try {
+      await this.rateLimiter.consume();
+      const token = await this.tokenManager.getToken();
+      if (chatId.startsWith("cid")) {
+        return await this.sendGroupMessage(token, chatId, "markdown", markdown);
+      } else {
+        return await this.sendIndividualMessage(token, chatId, "markdown", markdown);
+      }
+    } catch (err) {
+      dingtalkLog.error("Failed to send markdown message:", err);
+      return "";
+    }
+  }
+
   /**
    * Update an existing message with new text content.
    * DingTalk does not support editing regular messages natively.

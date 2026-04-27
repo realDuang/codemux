@@ -17,6 +17,9 @@ import {
   truncateTitle,
   groupAndSortSessions,
 } from "../../../../../electron/main/channels/shared/list-builders";
+import {
+  markdownToTelegramHtml,
+} from "../../../../../electron/main/channels/telegram/telegram-transport";
 
 describe("shared command parser", () => {
   describe("parseCommand", () => {
@@ -75,8 +78,11 @@ describe("shared help-text builder", () => {
     expect(text).toContain("/switch");
     expect(text).toContain("/cancel");
     expect(text).toContain("/status");
-    expect(text).toContain("/mode");
-    expect(text).toContain("/model");
+    expect(text).toContain("/mode agent|plan|build");
+    expect(text).toContain("/model list");
+    expect(text).toContain("/model model-id");
+    expect(text).not.toContain("<agent");
+    expect(text).not.toContain("<id>");
     expect(text).toContain("/history");
     expect(text).toContain("/help");
   });
@@ -225,7 +231,8 @@ describe("shared list builders", () => {
 
   it("buildSessionListText empty list shows /new hint by default", () => {
     const text = buildSessionListText([], "proj");
-    expect(text).toContain("使用 /new 创建新会话");
+    expect(text).toContain("`/new`");
+    expect(text).toContain("创建新会话");
   });
 
   it("buildProjectListText falls back to directory basename when name is missing", () => {
@@ -401,5 +408,58 @@ describe("groupAndSortSessions", () => {
 
   it("returns empty array for empty input", () => {
     expect(groupAndSortSessions([])).toEqual([]);
+  });
+});
+
+describe("markdown format", () => {
+  it("builders use **bold** headers, not ───── dividers", () => {
+    const projectList = buildProjectListText([
+      { id: "p1", name: "alpha", directory: "/a", engineType: "claude" } as any,
+    ]);
+    expect(projectList).toContain("**📋 项目列表**");
+    expect(projectList).not.toContain("─");
+
+    const sessionList = buildSessionListText(
+      [{ id: "s1", title: "T", time: { updated: Date.now() } } as any],
+      "proj",
+    );
+    expect(sessionList).toContain("**📋 会话列表");
+    expect(sessionList).not.toContain("─");
+
+    const question = buildQuestionText("Q?", [{ id: "y", label: "Yes" }]);
+    expect(question).toContain("**📋 Agent 提问**");
+    expect(question).not.toContain("─");
+  });
+
+  it("buildSessionNotification uses **bold** and `code`", () => {
+    const text = buildSessionNotification("codemux", "claude", "abc12345-long");
+    expect(text).toContain("**codemux**");
+    expect(text).toContain("`abc12345`");
+  });
+});
+
+describe("markdownToTelegramHtml", () => {
+  it("converts **bold** to <b>bold</b>", () => {
+    expect(markdownToTelegramHtml("**hello**")).toBe("<b>hello</b>");
+  });
+
+  it("converts `code` to <code>code</code>", () => {
+    expect(markdownToTelegramHtml("`abc`")).toBe("<code>abc</code>");
+  });
+
+  it("escapes HTML entities", () => {
+    expect(markdownToTelegramHtml("a < b & c > d")).toBe("a &lt; b &amp; c &gt; d");
+  });
+
+  it("handles mixed formatting", () => {
+    const input = "**📋 项目列表**\n\n1. alpha\n\n使用 `/help` 查看。";
+    const html = markdownToTelegramHtml(input);
+    expect(html).toContain("<b>📋 项目列表</b>");
+    expect(html).toContain("<code>/help</code>");
+    expect(html).toContain("1. alpha");
+  });
+
+  it("returns plain text unchanged", () => {
+    expect(markdownToTelegramHtml("no formatting")).toBe("no formatting");
   });
 });

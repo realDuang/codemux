@@ -102,9 +102,15 @@ describe("handleSessionOpsCommand", () => {
     expect(h.sendText.mock.calls[0][0]).toContain("引擎：codex");
   });
 
-  it("/mode without args shows usage hint", async () => {
+  it("/mode without args shows available modes", async () => {
     expect(await invoke(h, cmd("mode"))).toBe(true);
-    expect(h.sendText.mock.calls[0][0]).toContain("用法");
+    const out = h.sendText.mock.calls[0][0];
+    expect(out).toContain("模式列表");
+    expect(out).toContain("`agent`");
+    expect(out).toContain("`plan`");
+    expect(out).toContain("`build`");
+    expect(out).toContain("/mode agent");
+    expect(out).not.toContain("<agent");
     expect(h.gatewayClient.setMode).not.toHaveBeenCalled();
   });
 
@@ -122,8 +128,11 @@ describe("handleSessionOpsCommand", () => {
     expect(h.gatewayClient.listModels).toHaveBeenCalledWith("claude");
     const out = h.sendText.mock.calls[0][0];
     expect(out).toContain("Model One");
+    expect(out).toContain("`m1`");
     expect(out).toContain("（当前）");
     expect(out).toContain("Model Two");
+    expect(out).toContain("`m2`");
+    expect(out).toContain("/model model-id");
   });
 
   it("/model list (subcommand) lists models", async () => {

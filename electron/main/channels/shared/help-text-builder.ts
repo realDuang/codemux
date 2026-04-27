@@ -12,31 +12,31 @@ export interface HelpFooter {
 }
 
 /**
- * Build the help text for a chat context. Output is plain text (no Markdown)
- * to ensure consistent rendering across all IM platforms.
+ * Build the help text for a chat context. Output is standard markdown,
+ * sent via transport.sendMarkdown for platform-appropriate rendering.
  */
 export function buildHelpText(
   capabilities: CommandCapabilities,
   footer: HelpFooter = { requiresMention: false },
 ): string {
-  const lines: string[] = ["📋 CodeMux Bot — 命令", "─────────────────────────"];
+  const lines: string[] = ["**📋 CodeMux Bot**", ""];
 
   if (capabilities.navigation) {
-    lines.push("/project — 切换项目");
-    lines.push("/new — 在当前项目下创建新会话");
-    lines.push("/switch — 切换到当前项目下的其他会话");
+    lines.push("`/project` · 切换项目");
+    lines.push("`/new` · 创建新会话");
+    lines.push("`/switch` · 切换会话");
   }
 
   if (capabilities.sessionOps) {
-    lines.push("/status — 查看当前会话信息");
-    lines.push("/cancel — 取消正在运行的消息");
-    lines.push("/mode <agent|plan|build> — 切换模式");
-    lines.push("/model [list|<id>] — 列出/切换模型");
-    lines.push("/history — 查看会话历史");
+    lines.push("`/status` · 查看会话信息");
+    lines.push("`/cancel` · 取消运行中的消息");
+    lines.push("`/mode agent|plan|build` · 切换模式");
+    lines.push("`/model list` / `/model model-id` · 切换模型");
+    lines.push("`/history` · 查看历史");
   }
 
   if (capabilities.general) {
-    lines.push("/help — 显示此帮助");
+    lines.push("`/help` · 显示帮助");
   }
 
   lines.push("");
@@ -57,6 +57,6 @@ export function buildHelpText(
 export function buildWelcomeText(): string {
   return [
     "👋 欢迎使用 CodeMux！",
-    "输入 /help 查看可用命令，或直接发送消息开始对话。",
+    "输入 `/help` 查看可用命令，或直接发送消息开始对话。",
   ].join("\n");
 }

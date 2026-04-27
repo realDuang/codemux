@@ -48,6 +48,7 @@ import { DingTalkAdapter } from "./channels/dingtalk/dingtalk-adapter";
 import { TelegramAdapter } from "./channels/telegram/telegram-adapter";
 import { WeComAdapter } from "./channels/wecom/wecom-adapter";
 import { TeamsAdapter } from "./channels/teams/teams-adapter";
+import { WeixinIlinkAdapter } from "./channels/weixin-ilink/weixin-ilink-adapter";
 import { updateManager } from "./services/update-manager";
 import { trayManager } from "./services/tray-manager";
 import { scheduledTaskService } from "./services/scheduled-task-service";
@@ -82,6 +83,7 @@ channelManager.registerAdapter(new DingTalkAdapter());
 channelManager.registerAdapter(new TelegramAdapter());
 channelManager.registerAdapter(new WeComAdapter());
 channelManager.registerAdapter(new TeamsAdapter());
+channelManager.registerAdapter(new WeixinIlinkAdapter());
 
 // Export for IPC handlers
 export { channelManager };

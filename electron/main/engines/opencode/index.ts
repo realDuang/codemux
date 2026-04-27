@@ -9,7 +9,6 @@ import {
   createOpencodeClient,
   type OpencodeClient,
   type Session as SdkSession,
-  type Event as SdkEvent,
   type GlobalEvent as SdkGlobalEvent,
   type Part as SdkPart,
   type QuestionRequest as SdkQuestionRequest,
@@ -225,7 +224,7 @@ export class OpenCodeAdapter extends EngineAdapter {
     }
   }
 
-  private handleSdkEvent(event: SdkEvent): void {
+  private handleSdkEvent(event: SdkGlobalEvent["payload"]): void {
     switch (event.type) {
       case "message.part.updated":
         this.handlePartUpdated(event.properties.part);

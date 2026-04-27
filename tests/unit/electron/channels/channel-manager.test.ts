@@ -301,4 +301,86 @@ describe("ChannelManager", () => {
         expect(manager.getStatus("unknown")).toBeUndefined();
     });
   });
+
+  describe("logoutChannel", () => {
+    class LogoutAdapter extends MockChannelAdapter {
+      static CLEARED_CREDENTIALS = { apiKey: null, secret: null };
+      logout = vi.fn(async () => undefined);
+    }
+
+    it("throws for unknown channel type", async () => {
+      await expect(manager.logoutChannel("ghost")).rejects.toThrow("not found");
+    });
+
+    it("throws when adapter has no logout() method", async () => {
+      manager.registerAdapter(mockAdapter);
+      await expect(manager.logoutChannel("test-channel")).rejects.toThrow(
+        "does not support logout",
+      );
+    });
+
+    it("calls adapter.logout, persists CLEARED_CREDENTIALS, and disables channel", async () => {
+      const adapter = new LogoutAdapter("logout-channel");
+      manager.registerAdapter(adapter);
+      await manager.startChannel("logout-channel");
+      // give it some prior options that should be wiped
+      await manager.updateConfig("logout-channel", {
+        options: { apiKey: "secret-key", secret: "shh", keepMe: "x" },
+      });
+
+      await manager.logoutChannel("logout-channel");
+
+      expect(adapter.logout).toHaveBeenCalledTimes(1);
+      const config = manager.getConfig("logout-channel");
+      expect(config?.enabled).toBe(false);
+      expect(config?.options.apiKey).toBeNull();
+      expect(config?.options.secret).toBeNull();
+      // updateConfig merges options — unrelated keys are preserved
+      expect(config?.options.keepMe).toBe("x");
+    });
+
+    it("falls back to {} when adapter has no CLEARED_CREDENTIALS static", async () => {
+      class NoStaticLogout extends MockChannelAdapter {
+        logout = vi.fn(async () => undefined);
+      }
+      const adapter = new NoStaticLogout("logout-empty");
+      manager.registerAdapter(adapter);
+      await manager.startChannel("logout-empty");
+      await manager.logoutChannel("logout-empty");
+      expect(adapter.logout).toHaveBeenCalled();
+      expect(manager.getConfig("logout-empty")?.enabled).toBe(false);
+    });
+  });
+
+  describe("auth.expired listener", () => {
+    it("disables channel and merges clearOptions on auth.expired emission", async () => {
+      manager.registerAdapter(mockAdapter);
+      await manager.startChannel("test-channel");
+      await manager.updateConfig("test-channel", {
+        options: { apiKey: "old-key" },
+      });
+
+      mockAdapter.emit("auth.expired", {
+        reason: "token-expired",
+        clearOptions: { apiKey: null },
+      });
+
+      // Allow microtask queue to drain (handler is async/void)
+      await new Promise((r) => setImmediate(r));
+
+      const cfg = manager.getConfig("test-channel");
+      expect(cfg?.enabled).toBe(false);
+      expect(cfg?.options.apiKey).toBeNull();
+    });
+
+    it("uses {} when clearOptions is omitted", async () => {
+      manager.registerAdapter(mockAdapter);
+      await manager.startChannel("test-channel");
+
+      mockAdapter.emit("auth.expired", { reason: "x" });
+      await new Promise((r) => setImmediate(r));
+
+      expect(manager.getConfig("test-channel")?.enabled).toBe(false);
+    });
+  });
 });

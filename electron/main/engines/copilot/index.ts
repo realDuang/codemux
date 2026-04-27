@@ -103,6 +103,12 @@ interface PendingQuestion {
   question: UnifiedQuestion;
 }
 
+const approvePermissionOnce = (): PermissionRequestResult => ({ kind: "approve-once" });
+const rejectPermission = (feedback?: string): PermissionRequestResult => (
+  feedback ? { kind: "reject", feedback } : { kind: "reject" }
+);
+const userNotAvailablePermission = (): PermissionRequestResult => ({ kind: "user-not-available" });
+
 type CopilotReasoningEffort = NonNullable<SessionConfig["reasoningEffort"]>;
 
 function buildCopilotSubprocessEnv(extraEnv?: Record<string, string>): NodeJS.ProcessEnv {
@@ -663,7 +669,7 @@ export class CopilotSdkAdapter extends EngineAdapter {
     }
     for (const [id, pending] of this.pendingPermissions) {
       if (pending.permission.sessionId === sessionId) {
-        pending.resolve({ kind: "reject" });
+        pending.resolve(rejectPermission());
         this.pendingPermissions.delete(id);
       }
     }
@@ -706,7 +712,7 @@ export class CopilotSdkAdapter extends EngineAdapter {
       const config: ResumeSessionConfig = {
         streaming: true,
         workingDirectory: directory,
-        onPermissionRequest: () => ({ kind: "user-not-available" as const }),
+        onPermissionRequest: userNotAvailablePermission,
       };
       session = await this.client!.resumeSession(engineSessionId, config);
       const events = await session.getMessages();
@@ -1610,8 +1616,8 @@ export class CopilotSdkAdapter extends EngineAdapter {
 
   private handlePermissionRequest(req: CopilotPermissionRequest, ctx: { sessionId: string }): Promise<PermissionRequestResult> {
     const sessionId = ctx.sessionId;
-    if ((this.sessionModes.get(sessionId) || "autopilot") === "autopilot") return Promise.resolve({ kind: "approve-once" });
-    if (this.allowedAlwaysKinds.get(sessionId)?.has(req.kind)) return Promise.resolve({ kind: "approve-once" });
+    if ((this.sessionModes.get(sessionId) || "autopilot") === "autopilot") return Promise.resolve(approvePermissionOnce());
+    if (this.allowedAlwaysKinds.get(sessionId)?.has(req.kind)) return Promise.resolve(approvePermissionOnce());
 
     const permissionId = timeId("perm");
 
@@ -1713,7 +1719,7 @@ export class CopilotSdkAdapter extends EngineAdapter {
   }
 
   private rejectAllPendingPermissions(_reason: string): void {
-    for (const [_id, pending] of this.pendingPermissions) pending.resolve({ kind: "user-not-available" });
+    for (const [_id, pending] of this.pendingPermissions) pending.resolve(userNotAvailablePermission());
     this.pendingPermissions.clear();
   }
 

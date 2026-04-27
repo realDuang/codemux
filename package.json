@@ -1,6 +1,6 @@
 {
   "name": "codemux",
-  "version": "1.6.1",
+  "version": "1.6.3",
   "type": "module",
   "description": "A unified AI coding assistant client - access multiple AI coding engines from any device via desktop app or web interface",
   "author": "realDuang",
@@ -44,10 +44,10 @@
     "lint:fix": "eslint . --fix"
   },
   "dependencies": {
-    "@anthropic-ai/claude-agent-sdk": "^0.2.63",
+    "@anthropic-ai/claude-agent-sdk": "^0.2.119",
     "@github/copilot-sdk": "0.3.0",
     "@larksuiteoapi/node-sdk": "^1.42.0",
-    "@opencode-ai/sdk": "^1.2.15",
+    "@opencode-ai/sdk": "^1.14.28",
     "@parcel/watcher": "^2.5.1",
     "@shikijs/transformers": "^1.22.0",
     "@solid-primitives/i18n": "^2.2.1",
@@ -61,6 +61,7 @@
     "marked": "^11.1.0",
     "marked-shiki": "^1.1.2",
     "material-icon-theme": "^5.32.0",
+    "qrcode": "^1.5.4",
     "shell-env": "^4.0.3",
     "shiki": "^1.22.0",
     "solid-js": "^1.8.0",
@@ -74,6 +75,7 @@
     "@types/diff": "^5.0.9",
     "@types/luxon": "^3.4.0",
     "@types/node": "^20.0.0",
+    "@types/qrcode": "^1.5.6",
     "@types/ws": "^8.18.1",
     "@vitest/coverage-v8": "4.0.18",
     "bun-types": "latest",

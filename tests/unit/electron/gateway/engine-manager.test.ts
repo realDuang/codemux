@@ -1305,18 +1305,11 @@ describe("EngineManager", () => {
       expect(conversationStore.updateMessage).not.toHaveBeenCalled();
     });
 
-    it("patches enqueuedAt/processedAt onto the OLDEST persisted user message lacking processedAt (FIFO)", async () => {
-      // Simulate 3 queued messages persisted earlier via persistUserMessage,
-      // none of which has processedAt yet. Adapter commits queued messages in
-      // FIFO order, so the patch must land on the oldest pending one (u1),
-      // not the most recent (u3).
-      const existingMessages = [
-        { id: "u-done", role: "user", time: { created: 100, completed: 100 }, parts: [], enqueuedAt: 100, processedAt: 110 },
-        { id: "u1", role: "user", time: { created: 200, completed: 200 }, parts: [] },
-        { id: "u2", role: "user", time: { created: 300, completed: 300 }, parts: [] },
-        { id: "u3", role: "user", time: { created: 400, completed: 400 }, parts: [] },
-      ];
-      (conversationStore.listMessages as any).mockResolvedValue(existingMessages);
+    it("patches enqueuedAt/processedAt onto the FIFO-next persisted user message via in-memory queue", async () => {
+      // Simulate persistUserMessage having pushed 2 message IDs to the in-memory
+      // queue. Adapter commits trigger persistMessage which should shift the queue
+      // head and patch by ID — no full listMessages scan.
+      (engineManager as any).pendingUserMsgIdQueue.set("conv1", ["u1", "u2"]);
 
       const enrichedUserMsg = {
         id: "internal-uid-from-adapter",
@@ -1330,23 +1323,22 @@ describe("EngineManager", () => {
       adapterA.emit("message.updated", { sessionId: "engine-s1", message: enrichedUserMsg });
       await new Promise((r) => setTimeout(r, 0));
 
-      // Should patch u1 (oldest pending), NOT u3 (most recent)
+      // First call: targets u1 (FIFO head) with partial timing patch
       expect(conversationStore.updateMessage).toHaveBeenCalledTimes(1);
-      const [convId, msgId, patched] = (conversationStore.updateMessage as any).mock.calls[0];
+      const [convId, msgId, patch] = (conversationStore.updateMessage as any).mock.calls[0];
       expect(convId).toBe("conv1");
       expect(msgId).toBe("u1");
-      expect(patched.enqueuedAt).toBe(200);
-      expect(patched.processedAt).toBe(1500);
+      expect(patch).toEqual({ enqueuedAt: 200, processedAt: 1500 });
+      // listMessages must NOT be called — that was the optimization point
+      expect(conversationStore.listMessages).not.toHaveBeenCalled();
+      // Queue head was consumed — u2 remains
+      expect((engineManager as any).pendingUserMsgIdQueue.get("conv1")).toEqual(["u2"]);
     });
 
-    it("does not double-patch a user message that already has processedAt (idempotent)", async () => {
-      const existingMessages = [
-        { id: "u1", role: "user", time: { created: 100, completed: 100 }, parts: [], enqueuedAt: 100, processedAt: 150 },
-        { id: "u2", role: "user", time: { created: 200, completed: 200 }, parts: [] },
-      ];
-      (conversationStore.listMessages as any).mockResolvedValue(existingMessages);
+    it("returns silently when no pending queue entry exists (duplicate emit)", async () => {
+      // No queue entry — simulates a duplicate adapter emit after the queue was drained
+      (engineManager as any).pendingUserMsgIdQueue.delete("conv1");
 
-      // Adapter re-emits a message that was already patched (e.g. duplicate event)
       const enrichedUserMsg = {
         id: "internal", sessionId: "engine-s1", role: "user",
         time: { created: 100, completed: 100 },
@@ -1355,9 +1347,9 @@ describe("EngineManager", () => {
       adapterA.emit("message.updated", { sessionId: "engine-s1", message: enrichedUserMsg });
       await new Promise((r) => setTimeout(r, 0));
 
-      // Should patch u2 (oldest pending), skipping u1 which already has processedAt
-      expect(conversationStore.updateMessage).toHaveBeenCalledTimes(1);
-      expect((conversationStore.updateMessage as any).mock.calls[0][1]).toBe("u2");
+      // Nothing to patch — no DB calls
+      expect(conversationStore.updateMessage).not.toHaveBeenCalled();
+      expect(conversationStore.listMessages).not.toHaveBeenCalled();
     });
 
     it("emits message.updated as-is when convId cannot be resolved", () => {

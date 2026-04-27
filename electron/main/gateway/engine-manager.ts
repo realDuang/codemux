@@ -109,6 +109,15 @@ export class EngineManager extends EventEmitter {
   private stepPartsBuffer = new Map<string, UnifiedPart[]>();
   /** Accumulate content-type parts (text/file) during streaming: messageId → (TextPart|FilePart)[] */
   private contentPartsBuffer = new Map<string, Array<TextPart | FilePart>>();
+  /**
+   * In-memory FIFO queue of persisted user message IDs awaiting timing patch.
+   * Populated by persistUserMessage at send time; drained by persistMessage
+   * when an adapter emits an enriched user message (enqueuedAt/processedAt).
+   * Avoids a full conversationStore.listMessages() scan per queued commit.
+   * Single-process app (Electron requestSingleInstanceLock), so in-memory
+   * state is authoritative.
+   */
+  private pendingUserMsgIdQueue = new Map<string, string[]>();
 
   // --- Incremental step persistence ---
   /** messageIds whose step buffers have unsaved changes */
@@ -417,27 +426,21 @@ export class EngineManager extends EventEmitter {
   private async persistMessage(conversationId: string, message: UnifiedMessage): Promise<void> {
     if (message.role === "user") {
       // Adapter-emitted user messages have a different ID than the one we wrote
-      // via persistUserMessage at send time. The only field worth persisting from
-      // the adapter side is queue timing (enqueuedAt/processedAt). Adapters commit
-      // queued messages in FIFO order (oldest first), so we patch the OLDEST
-      // persisted user message that lacks processedAt — not the most recent.
-      // Patching the most recent would mis-attribute timing data when N>1
-      // queued messages exist, since persistUserMessage writes them in send order
-      // but each adapter commit only knows "the next queued one in FIFO order".
+      // via persistUserMessage at send time. Track the FIFO order of pending
+      // writes in pendingUserMsgIdQueue so we can patch the right message by
+      // ID with one targeted updateMessage call — no full listMessages scan.
       if (message.enqueuedAt == null && message.processedAt == null) return;
+      const queue = this.pendingUserMsgIdQueue.get(conversationId);
+      const targetId = queue?.shift();
+      if (queue && queue.length === 0) this.pendingUserMsgIdQueue.delete(conversationId);
+      if (!targetId) return; // No pending entry — likely a duplicate emit
       try {
-        const existing = await conversationStore.listMessages(conversationId);
-        for (let i = 0; i < existing.length; i++) {
-          const m = existing[i];
-          if (m.role !== "user") continue;
-          if (m.processedAt != null) continue; // already patched
-          await conversationStore.updateMessage(conversationId, m.id, {
-            ...m,
-            enqueuedAt: message.enqueuedAt ?? m.enqueuedAt,
-            processedAt: message.processedAt ?? m.processedAt,
-          });
-          return;
-        }
+        // Partial patch — updateMessage internally merges via Object.assign,
+        // so we don't need to send the full message body.
+        await conversationStore.updateMessage(conversationId, targetId, {
+          enqueuedAt: message.enqueuedAt,
+          processedAt: message.processedAt,
+        });
       } catch (err) {
         engineManagerLog.warn(`Failed to patch user message timing for ${conversationId}:`, err);
       }
@@ -630,6 +633,13 @@ export class EngineManager extends EventEmitter {
       };
 
       await conversationStore.appendMessage(conversationId, convMessage);
+
+      // Enqueue this message ID so a later adapter-emitted enriched user
+      // message (carrying enqueuedAt/processedAt) can patch it in O(1) without
+      // re-reading the entire conversation from disk.
+      const queue = this.pendingUserMsgIdQueue.get(conversationId) ?? [];
+      queue.push(msgId);
+      this.pendingUserMsgIdQueue.set(conversationId, queue);
 
       engineManagerLog.debug(
         `Persisted user message ${msgId} to conversation ${conversationId}: ${parts.length} parts`,
@@ -827,6 +837,7 @@ export class EngineManager extends EventEmitter {
 
     await conversationStore.delete(sessionId);
     this.sessionEngineMap.delete(sessionId);
+    this.pendingUserMsgIdQueue.delete(sessionId);
   }
 
   /**
@@ -869,6 +880,7 @@ export class EngineManager extends EventEmitter {
       }
       await conversationStore.delete(conv.id);
       this.sessionEngineMap.delete(conv.id);
+      this.pendingUserMsgIdQueue.delete(conv.id);
     }
   }
 

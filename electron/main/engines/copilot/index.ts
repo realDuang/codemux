@@ -38,6 +38,7 @@ import type {
   ReasoningEffort,
   ToolPart,
   TextPart,
+  PermissionDetail,
   PermissionOption,
   EngineCommand,
   CommandInvokeResult,
@@ -73,11 +74,20 @@ interface UserInputResponse {
   wasFreeform: boolean;
 }
 
-/** Equivalent to SDK's PermissionRequest */
-interface PermissionRequest {
-  kind: string;
-  toolCallId: string;
-  [key: string]: any;
+type CopilotPermissionHandler = NonNullable<SessionConfig["onPermissionRequest"]>;
+type CopilotPermissionRequest = Parameters<CopilotPermissionHandler>[0];
+type CopilotPermissionRequestedEvent = Extract<SessionEvent, { type: "permission.requested" }>;
+type CopilotPermissionRequestedData = CopilotPermissionRequestedEvent["data"];
+type CopilotPermissionPromptRequest = NonNullable<CopilotPermissionRequestedData["promptRequest"]>;
+type CopilotPermissionSessionApproval = Extract<
+  Exclude<PermissionRequestResult, { kind: "no-result" }>,
+  { kind: "approve-for-session" }
+>["approval"];
+
+interface PermissionPromptContext {
+  requestId: string;
+  permissionRequest: CopilotPermissionRequestedData["permissionRequest"];
+  promptRequest?: CopilotPermissionPromptRequest;
 }
 
 interface PendingPermission {
@@ -85,6 +95,7 @@ interface PendingPermission {
   permission: UnifiedPermission;
   /** Original SDK kind (e.g. "shell", "url", "read") for always-approve tracking */
   sdkKind: string;
+  sessionApproval?: CopilotPermissionSessionApproval;
 }
 
 interface PendingQuestion {
@@ -109,6 +120,63 @@ function buildCopilotSubprocessEnv(extraEnv?: Record<string, string>): NodeJS.Pr
 
   return env;
 }
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
+
+function readString(source: Record<string, unknown>, key: string): string | undefined {
+  const value = source[key];
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  return trimmed || undefined;
+}
+
+function readBoolean(source: Record<string, unknown>, key: string): boolean | undefined {
+  const value = source[key];
+  return typeof value === "boolean" ? value : undefined;
+}
+
+function readStringArray(source: Record<string, unknown>, key: string): string[] {
+  const value = source[key];
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter((item): item is string => typeof item === "string")
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function readCommandIdentifiers(source: Record<string, unknown>): string[] {
+  const direct = readStringArray(source, "commandIdentifiers");
+  if (direct.length > 0) return direct;
+
+  const commands = source.commands;
+  if (!Array.isArray(commands)) return [];
+
+  return commands
+    .map((command) => asRecord(command))
+    .map((command) => command ? readString(command, "identifier") : undefined)
+    .filter((identifier): identifier is string => !!identifier);
+}
+
+function appendStringDetail(
+  details: PermissionDetail[],
+  label: string,
+  value: string | undefined,
+  mono = false,
+): void {
+  if (!value) return;
+  details.push({ label, value, ...(mono ? { mono: true } : {}) });
+}
+
+function permissionPromptKindToSdkKind(kind: string, accessKind?: string): string {
+  if (kind === "commands") return "shell";
+  if (kind === "path") return accessKind || "read";
+  return kind;
+}
+
 export class CopilotSdkAdapter extends EngineAdapter {
   readonly engineType: EngineType = "copilot";
 
@@ -128,11 +196,8 @@ export class CopilotSdkAdapter extends EngineAdapter {
   private sessionDirectories = new Map<string, string>();
 
   private sessionTodos = new Map<string, Map<string, { id: string; title: string; status: string }>>();
-  // Workaround: The Copilot SDK's PermissionRequestResult only supports { kind: "approved" }
-  // with no session-wide scope. The CLI's native terminal UI handles "Always Allow" internally
-  // via its own rule engine, but that mechanism is not exposed to SDK integrators.
-  // We track approved-always kinds client-side per session to auto-approve future requests
-  // of the same kind within that session. Granularity is per-kind (e.g. all "shell"), not per-command pattern.
+  // Fallback for permission prompts that still expose an "Always Allow" option but
+  // cannot be mapped to the SDK's native approve-for-session payload.
   private allowedAlwaysKinds = new Map<string, Set<string>>();
   private cachedCommands: EngineCommand[] = [];
 
@@ -141,6 +206,7 @@ export class CopilotSdkAdapter extends EngineAdapter {
 
   private pendingPermissions = new Map<string, PendingPermission>();
   private pendingQuestions = new Map<string, PendingQuestion>();
+  private permissionPromptContexts = new Map<string, PermissionPromptContext[]>();
 
   private idleResolvers = new Map<string, Array<(msg: UnifiedMessage) => void>>();
   // Queued user messages (deferred emit) — emitted only when the engine
@@ -313,7 +379,7 @@ export class CopilotSdkAdapter extends EngineAdapter {
       workingDirectory: directory,
       streaming: true,
       model: this.currentModelId ?? undefined,
-      onPermissionRequest: (req, ctx) => this.handlePermissionRequest(req as any, ctx),
+      onPermissionRequest: (req, ctx) => this.handlePermissionRequest(req, ctx),
       onUserInputRequest: (req, ctx) => this.handleUserInputRequest(req as any, ctx),
       systemMessage: { mode: "append" as const, content: CODEMUX_IDENTITY_PROMPT },
     };
@@ -597,7 +663,7 @@ export class CopilotSdkAdapter extends EngineAdapter {
     }
     for (const [id, pending] of this.pendingPermissions) {
       if (pending.permission.sessionId === sessionId) {
-        pending.resolve({ kind: "denied-interactively-by-user" });
+        pending.resolve({ kind: "reject" });
         this.pendingPermissions.delete(id);
       }
     }
@@ -640,7 +706,7 @@ export class CopilotSdkAdapter extends EngineAdapter {
       const config: ResumeSessionConfig = {
         streaming: true,
         workingDirectory: directory,
-        onPermissionRequest: () => ({ kind: "denied-interactively-by-user" as const }),
+        onPermissionRequest: () => ({ kind: "user-not-available" as const }),
       };
       session = await this.client!.resumeSession(engineSessionId, config);
       const events = await session.getMessages();
@@ -742,14 +808,17 @@ export class CopilotSdkAdapter extends EngineAdapter {
 
     const optionId = reply.optionId;
     const isApproved = optionId === "allow_once" || optionId === "allow_always";
+    let result: PermissionRequestResult = isApproved ? { kind: "approve-once" } : { kind: "reject" };
 
-    if (optionId === "allow_always") {
+    if (optionId === "allow_always" && pending.sessionApproval) {
+      result = { kind: "approve-for-session", approval: pending.sessionApproval };
+    } else if (optionId === "allow_always") {
       const sid = pending.permission.sessionId;
       if (!this.allowedAlwaysKinds.has(sid)) this.allowedAlwaysKinds.set(sid, new Set());
       this.allowedAlwaysKinds.get(sid)!.add(pending.sdkKind);
     }
 
-    pending.resolve({ kind: isApproved ? "approved" : "denied-interactively-by-user" });
+    pending.resolve(result);
     this.pendingPermissions.delete(permissionId);
     this.emit("permission.replied", { permissionId, optionId });
   }
@@ -1017,7 +1086,7 @@ export class CopilotSdkAdapter extends EngineAdapter {
       model: this.currentModelId ?? undefined,
       ...(sdkReasoningEffort ? { reasoningEffort: sdkReasoningEffort } : {}),
       systemMessage: { mode: "append" as const, content: CODEMUX_IDENTITY_PROMPT },
-      onPermissionRequest: (req, ctx) => this.handlePermissionRequest(req as any, ctx),
+      onPermissionRequest: (req, ctx) => this.handlePermissionRequest(req, ctx),
       onUserInputRequest: (req, ctx) => this.handleUserInputRequest(req as any, ctx),
     };
 
@@ -1039,7 +1108,7 @@ export class CopilotSdkAdapter extends EngineAdapter {
           model: this.currentModelId ?? undefined,
           ...(sdkReasoningEffort ? { reasoningEffort: sdkReasoningEffort } : {}),
           systemMessage: { mode: "append" as const, content: CODEMUX_IDENTITY_PROMPT },
-          onPermissionRequest: (req, ctx) => this.handlePermissionRequest(req as any, ctx),
+          onPermissionRequest: (req, ctx) => this.handlePermissionRequest(req, ctx),
           onUserInputRequest: (req, ctx) => this.handleUserInputRequest(req as any, ctx),
         };
         const newSession = await this.client!.createSession(newConfig);
@@ -1079,6 +1148,7 @@ export class CopilotSdkAdapter extends EngineAdapter {
         case "session.mode_changed": this.handleModeChanged(sessionId, event.data as any); break;
         case "assistant.usage": this.handleUsage(sessionId, event.data as any); break;
         case "abort": this.handleAbort(sessionId, event.data as any); break;
+        case "permission.requested": this.rememberPermissionPromptContext(sessionId, event.data as CopilotPermissionRequestedData); break;
         case "subagent.started": this.handleSubagentStarted(sessionId, event.data as any); break;
         case "subagent.completed": this.handleSubagentCompleted(sessionId, event.data as any); break;
 
@@ -1337,93 +1407,226 @@ export class CopilotSdkAdapter extends EngineAdapter {
     this.toolCallParts.delete(data.toolCallId);
   }
 
-  private handlePermissionRequest(req: PermissionRequest, ctx: { sessionId: string }): Promise<PermissionRequestResult> {
-    const sessionId = ctx.sessionId;
-    if ((this.sessionModes.get(sessionId) || "autopilot") === "autopilot") return Promise.resolve({ kind: "approved" });
-    if (this.allowedAlwaysKinds.get(sessionId)?.has(req.kind)) return Promise.resolve({ kind: "approved" });
+  private getPermissionPromptContextKey(
+    sessionId: string,
+    request: { kind: string; toolCallId?: string },
+  ): string {
+    return `${sessionId}:${request.toolCallId || request.kind}`;
+  }
 
-    const permissionId = timeId("perm");
-    const kind: any = req.kind === "read" ? "read" : req.kind === "write" || req.kind === "shell" ? "edit" : "other";
-    const toolName = req.kind === "url" ? "web_fetch" : req.kind === "shell" ? "shell" : req.kind === "read" ? "read" : req.kind === "write" ? "edit" : req.kind === "mcp" ? "mcp" : undefined;
+  private rememberPermissionPromptContext(
+    sessionId: string,
+    data: CopilotPermissionRequestedData,
+  ): void {
+    if (data.resolvedByHook) return;
+
+    const context: PermissionPromptContext = {
+      requestId: data.requestId,
+      permissionRequest: data.permissionRequest,
+      promptRequest: data.promptRequest,
+    };
+    const key = this.getPermissionPromptContextKey(sessionId, data.permissionRequest);
+    const contexts = this.permissionPromptContexts.get(key) ?? [];
+    contexts.push(context);
+    this.permissionPromptContexts.set(key, contexts);
+  }
+
+  private consumePermissionPromptContext(
+    sessionId: string,
+    request: CopilotPermissionRequest,
+  ): PermissionPromptContext | undefined {
+    const key = this.getPermissionPromptContextKey(sessionId, request);
+    const contexts = this.permissionPromptContexts.get(key);
+    if (!contexts || contexts.length === 0) return undefined;
+
+    const context = contexts.shift();
+    if (contexts.length === 0) {
+      this.permissionPromptContexts.delete(key);
+    }
+    return context;
+  }
+
+  private createPermissionOptions(canOfferSessionApproval: boolean): PermissionOption[] {
     const options: PermissionOption[] = [
       { id: "allow_once", label: "Allow Once", type: "allow_once" },
-      { id: "allow_always", label: "Always Allow", type: "allow_always" },
-      { id: "reject_once", label: "Deny", type: "reject_once" },
     ];
+    if (canOfferSessionApproval) {
+      options.push({ id: "allow_always", label: "Always Allow", type: "allow_always" });
+    }
+    options.push({ id: "reject_once", label: "Deny", type: "reject_once" });
+    return options;
+  }
 
-    const rawReq = { ...req };
-    const title = `${req.kind} permission requested`;
+  private buildSessionApproval(
+    source: Record<string, unknown>,
+    sourceKind: string,
+    effectiveKind: string,
+  ): CopilotPermissionSessionApproval | undefined {
+    if (sourceKind === "commands" || effectiveKind === "shell") {
+      const commandIdentifiers = readCommandIdentifiers(source);
+      return commandIdentifiers.length > 0
+        ? { kind: "commands", commandIdentifiers }
+        : undefined;
+    }
+    if (effectiveKind === "write") return { kind: "write" };
+    if (effectiveKind === "read") return { kind: "read" };
+    if (effectiveKind === "memory") return { kind: "memory" };
+    if (effectiveKind === "mcp") {
+      const serverName = readString(source, "serverName");
+      if (!serverName) return undefined;
+      return { kind: "mcp", serverName, toolName: readString(source, "toolName") ?? null };
+    }
+    if (effectiveKind === "custom-tool") {
+      const toolName = readString(source, "toolName");
+      return toolName ? { kind: "custom-tool", toolName } : undefined;
+    }
+    return undefined;
+  }
 
-    // Build structured details from Copilot SDK fields per kind
-    // See: @github/copilot-sdk dist/generated/session-events.d.ts
-    const details: import("../../../../src/types/unified").PermissionDetail[] = [];
-    switch (req.kind) {
+  private buildPermissionDetails(
+    source: Record<string, unknown>,
+    sourceKind: string,
+  ): PermissionDetail[] {
+    const details: PermissionDetail[] = [];
+    switch (sourceKind) {
+      case "commands":
       case "shell": {
-        const cmd = typeof rawReq.fullCommandText === "string" ? rawReq.fullCommandText.trim()
-          : typeof rawReq.command === "string" ? rawReq.command.trim() : "";
-        if (cmd) details.push({ label: "Command", value: cmd, mono: true });
-        if (typeof rawReq.warning === "string" && rawReq.warning.trim()) {
-          details.push({ label: "Warning", value: rawReq.warning.trim() });
-        }
+        appendStringDetail(details, "Command", readString(source, "fullCommandText") ?? readString(source, "command"), true);
+        appendStringDetail(details, "Warning", readString(source, "warning"));
+        const commandIdentifiers = readCommandIdentifiers(source);
+        appendStringDetail(details, "Commands", commandIdentifiers.length > 0 ? commandIdentifiers.join(", ") : undefined, true);
         break;
       }
       case "write": {
-        const file = typeof rawReq.fileName === "string" ? rawReq.fileName.trim() : "";
-        if (file) details.push({ label: "File", value: file, mono: true });
+        appendStringDetail(details, "File", readString(source, "fileName"), true);
         break;
       }
       case "read": {
-        const path = typeof rawReq.path === "string" ? rawReq.path.trim() : "";
-        if (path) details.push({ label: "Path", value: path, mono: true });
+        appendStringDetail(details, "Path", readString(source, "path"), true);
         break;
       }
       case "url": {
-        if (typeof rawReq.url === "string" && rawReq.url.trim()) {
-          details.push({ label: "URL", value: rawReq.url.trim(), mono: true });
-        }
+        appendStringDetail(details, "URL", readString(source, "url"), true);
         break;
       }
       case "mcp": {
-        const toolTitle = typeof rawReq.toolTitle === "string" ? rawReq.toolTitle.trim() : "";
-        const server = typeof rawReq.serverName === "string" ? rawReq.serverName.trim() : "";
-        if (toolTitle) details.push({ label: "Tool", value: toolTitle });
-        if (server) details.push({ label: "Server", value: server });
+        appendStringDetail(details, "Tool", readString(source, "toolTitle") ?? readString(source, "toolName"));
+        appendStringDetail(details, "Server", readString(source, "serverName"));
+        break;
+      }
+      case "path": {
+        appendStringDetail(details, "Access", readString(source, "accessKind"));
+        const paths = readStringArray(source, "paths");
+        appendStringDetail(details, "Paths", paths.length > 0 ? paths.join(", ") : undefined, true);
         break;
       }
       case "memory": {
-        if (typeof rawReq.subject === "string" && rawReq.subject.trim()) {
-          details.push({ label: "Subject", value: rawReq.subject.trim() });
-        }
-        if (typeof rawReq.fact === "string" && rawReq.fact.trim()) {
-          details.push({ label: "Fact", value: rawReq.fact.trim() });
-        }
+        appendStringDetail(details, "Action", readString(source, "action"));
+        appendStringDetail(details, "Subject", readString(source, "subject"));
+        appendStringDetail(details, "Fact", readString(source, "fact"));
+        appendStringDetail(details, "Direction", readString(source, "direction"));
+        appendStringDetail(details, "Reason", readString(source, "reason"));
+        appendStringDetail(details, "Citations", readString(source, "citations"));
         break;
       }
       case "custom-tool": {
-        if (typeof rawReq.toolName === "string" && rawReq.toolName.trim()) {
-          details.push({ label: "Tool", value: rawReq.toolName.trim() });
-        }
-        if (typeof rawReq.toolDescription === "string" && rawReq.toolDescription.trim()) {
-          details.push({ label: "Description", value: rawReq.toolDescription.trim() });
-        }
+        appendStringDetail(details, "Tool", readString(source, "toolName"));
+        appendStringDetail(details, "Description", readString(source, "toolDescription"));
         break;
       }
       case "hook": {
-        if (typeof rawReq.toolName === "string" && rawReq.toolName.trim()) {
-          details.push({ label: "Tool", value: rawReq.toolName.trim() });
-        }
-        if (typeof rawReq.hookMessage === "string" && rawReq.hookMessage.trim()) {
-          details.push({ label: "Message", value: rawReq.hookMessage.trim() });
-        }
+        appendStringDetail(details, "Tool", readString(source, "toolName"));
+        appendStringDetail(details, "Message", readString(source, "hookMessage"));
         break;
       }
     }
+    return details;
+  }
 
-    const permission: UnifiedPermission = { id: permissionId, sessionId, engineType: this.engineType, toolCallId: req.toolCallId, toolName, title, kind, diff: req.diff, details, options };
+  private getPermissionToolName(
+    source: Record<string, unknown>,
+    sourceKind: string,
+    effectiveKind: string,
+  ): string | undefined {
+    if (sourceKind === "commands" || effectiveKind === "shell") return "shell";
+    if (effectiveKind === "url") return "web_fetch";
+    if (effectiveKind === "read") return "read";
+    if (effectiveKind === "write") return "edit";
+    if (effectiveKind === "mcp") return "mcp";
+    if (effectiveKind === "memory") return "memory";
+    if (effectiveKind === "custom-tool" || effectiveKind === "hook") {
+      return readString(source, "toolName") ?? effectiveKind;
+    }
+    return undefined;
+  }
+
+  private getPermissionTitle(
+    source: Record<string, unknown>,
+    sourceKind: string,
+    effectiveKind: string,
+  ): string {
+    const intention = readString(source, "intention");
+    if (intention) return intention;
+    if (sourceKind === "path") return "Path access permission requested";
+    if (sourceKind === "commands" || effectiveKind === "shell") return "Shell command permission requested";
+    return `${effectiveKind} permission requested`;
+  }
+
+  private buildUnifiedPermissionFromCopilotRequest(
+    permissionId: string,
+    sessionId: string,
+    req: CopilotPermissionRequest,
+    context?: PermissionPromptContext,
+  ): { permission: UnifiedPermission; sessionApproval?: CopilotPermissionSessionApproval } {
+    const sourceValue = context?.promptRequest ?? context?.permissionRequest ?? req;
+    const source = asRecord(sourceValue) ?? {};
+    const sourceKind = readString(source, "kind") ?? req.kind;
+    const effectiveKind = permissionPromptKindToSdkKind(sourceKind, readString(source, "accessKind"));
+    const kind: UnifiedPermission["kind"] =
+      effectiveKind === "read" ? "read" : effectiveKind === "write" || effectiveKind === "shell" ? "edit" : "other";
+    const canOfferSessionApproval =
+      readBoolean(source, "canOfferSessionApproval") ?? (effectiveKind === "shell" || effectiveKind === "write");
+    const sessionApproval = canOfferSessionApproval
+      ? this.buildSessionApproval(source, sourceKind, effectiveKind)
+      : undefined;
+
+    return {
+      permission: {
+        id: permissionId,
+        sessionId,
+        engineType: this.engineType,
+        toolCallId: readString(source, "toolCallId") ?? req.toolCallId,
+        toolName: this.getPermissionToolName(source, sourceKind, effectiveKind),
+        title: this.getPermissionTitle(source, sourceKind, effectiveKind),
+        kind,
+        diff: readString(source, "diff"),
+        details: this.buildPermissionDetails(source, sourceKind),
+        options: this.createPermissionOptions(canOfferSessionApproval && !!sessionApproval),
+        rawInput: req,
+      },
+      sessionApproval,
+    };
+  }
+
+  private handlePermissionRequest(req: CopilotPermissionRequest, ctx: { sessionId: string }): Promise<PermissionRequestResult> {
+    const sessionId = ctx.sessionId;
+    if ((this.sessionModes.get(sessionId) || "autopilot") === "autopilot") return Promise.resolve({ kind: "approve-once" });
+    if (this.allowedAlwaysKinds.get(sessionId)?.has(req.kind)) return Promise.resolve({ kind: "approve-once" });
+
+    const permissionId = timeId("perm");
 
     return new Promise<PermissionRequestResult>((resolve) => {
-      this.pendingPermissions.set(permissionId, { resolve, permission, sdkKind: req.kind });
-      this.emit("permission.asked", { permission });
+      queueMicrotask(() => {
+        const promptContext = this.consumePermissionPromptContext(sessionId, req);
+        const { permission, sessionApproval } = this.buildUnifiedPermissionFromCopilotRequest(
+          permissionId,
+          sessionId,
+          req,
+          promptContext,
+        );
+        this.pendingPermissions.set(permissionId, { resolve, permission, sdkKind: req.kind, sessionApproval });
+        this.emit("permission.asked", { permission });
+      });
     });
   }
 
@@ -1510,7 +1713,7 @@ export class CopilotSdkAdapter extends EngineAdapter {
   }
 
   private rejectAllPendingPermissions(_reason: string): void {
-    for (const [_id, pending] of this.pendingPermissions) pending.resolve({ kind: "denied-no-approval-rule-and-could-not-request-from-user" });
+    for (const [_id, pending] of this.pendingPermissions) pending.resolve({ kind: "user-not-available" });
     this.pendingPermissions.clear();
   }
 

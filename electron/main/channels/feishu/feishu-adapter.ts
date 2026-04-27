@@ -66,6 +66,10 @@ import {
   type ScopedLogger,
 } from "../../services/logger";
 
+function escapeMarkdownInline(value: string): string {
+  return value.replace(/[\\*`]/g, "\\$&");
+}
+
 interface WsStartupMonitor {
   readyPromise: Promise<void>;
   cancel: () => void;
@@ -887,7 +891,10 @@ export class FeishuAdapter extends ChannelAdapter {
     // Filter out default workspace — users should only pick real projects
     const projects = allProjects.filter(p => !p.isDefault);
     const text = buildProjectListText(projects);
-    await this.transport!.sendMessageTo(receiveId, receiveIdType, "text", JSON.stringify({ text }));
+    const card = JSON.stringify({
+      elements: [{ tag: "markdown", content: text }],
+    });
+    await this.transport!.sendMessageTo(receiveId, receiveIdType, "interactive", card);
 
     if (projects.length > 0) {
       const flatProjects = this.flattenProjectsByEngine(projects);
@@ -1235,7 +1242,11 @@ export class FeishuAdapter extends ChannelAdapter {
       if (p2pChatId) {
         await this.transport.sendMarkdown(
           p2pChatId,
-          `Session already has a group chat. Check your Feishu groups.`,
+          [
+            "**📋 群聊已存在**",
+            "",
+            "当前会话已经创建过飞书群聊，请在飞书群组列表中查看。",
+          ].join("\n"),
         );
       }
       this.channelLog.warn(`Conversation ${conversationId} already has group ${existingChatId}`);
@@ -1274,7 +1285,14 @@ export class FeishuAdapter extends ChannelAdapter {
       if (!newChatId) {
         this.channelLog.error("Failed to create group chat: no chat_id returned");
         if (p2pChatId) {
-          await this.transport.sendMarkdown(p2pChatId, "Failed to create group chat. Please try again.");
+          await this.transport.sendMarkdown(
+            p2pChatId,
+            [
+              "**📋 创建群聊失败**",
+              "",
+              "飞书没有返回群聊 ID，请稍后重试。",
+            ].join("\n"),
+          );
         }
         return;
       }
@@ -1301,7 +1319,12 @@ export class FeishuAdapter extends ChannelAdapter {
       if (p2pChatId) {
         await this.transport.sendMarkdown(
           p2pChatId,
-          `Group created for session. Check your Feishu groups for "${groupName}".`,
+          [
+            "**📋 群聊已创建**",
+            "",
+            `已为当前会话创建飞书群聊：**${escapeMarkdownInline(groupName)}**`,
+            "请在飞书群组列表中查看。",
+          ].join("\n"),
         );
       }
     } catch (err) {
@@ -1309,7 +1332,11 @@ export class FeishuAdapter extends ChannelAdapter {
       if (p2pChatId) {
         await this.transport.sendMarkdown(
           p2pChatId,
-          `Failed to create group: ${err instanceof Error ? err.message : String(err)}`,
+          [
+            "**📋 创建群聊失败**",
+            "",
+            err instanceof Error ? err.message : String(err),
+          ].join("\n"),
         );
       }
     } finally {

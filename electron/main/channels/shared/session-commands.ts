@@ -12,6 +12,10 @@ import type { EngineType } from "../../../../src/types/unified";
 import type { ParsedCommand } from "./command-types";
 import { buildHistoryEntries } from "./list-builders";
 
+function escapeMarkdownInline(value: string): string {
+  return value.replace(/[\\*`]/g, "\\$&");
+}
+
 /**
  * The minimal context a session-ops command needs. Channels build this from
  * their own state (P2P temp session, group binding, etc.) and pass it in.
@@ -82,7 +86,15 @@ export async function handleSessionOpsCommand(
 
     case "mode": {
       if (!command.args || command.args.length === 0) {
-        await args.sendText("📋 用法：`/mode <agent|plan|build>`");
+        await args.sendText([
+          "**📋 模式列表**",
+          "",
+          "- `agent` · 默认 Agent 模式",
+          "- `plan` · 规划模式",
+          "- `build` · 构建模式",
+          "",
+          "使用 `/mode agent`、`/mode plan` 或 `/mode build` 切换模式。",
+        ].join("\n"));
         return true;
       }
       await args.gatewayClient.setMode({
@@ -102,10 +114,15 @@ export async function handleSessionOpsCommand(
         const lines = ["**📋 模型列表**", ""];
         for (const m of result.models) {
           const current = m.modelId === result.currentModelId ? "（当前）" : "";
-          lines.push(`${m.name || m.modelId}${current}`);
+          const modelId = escapeMarkdownInline(m.modelId);
+          if (m.name && m.name !== m.modelId) {
+            lines.push(`- ${escapeMarkdownInline(m.name)} · \`${modelId}\`${current}`);
+          } else {
+            lines.push(`- \`${modelId}\`${current}`);
+          }
         }
         lines.push("");
-        lines.push("使用 `/model <model-id>` 切换模型。");
+        lines.push("使用 `/model model-id` 切换模型。");
         await args.sendText(lines.join("\n"));
       } else if (command.args && command.args.length > 0) {
         await args.gatewayClient.setModel({

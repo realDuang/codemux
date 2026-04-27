@@ -1196,7 +1196,7 @@ describe("FeishuAdapter", () => {
       a.sessionMapper.createGroupBinding(makeBinding({ conversationId: "conv-1" }));
       await a.createGroupForSession("u1", "conv-1", "claude", "/d", "p", "alpha", "p2p");
       expect(a.larkClient.im.chat.create).not.toHaveBeenCalled();
-      expect(a.transport.sendMarkdown.mock.calls[0][1]).toContain("Session already has a group");
+      expect(a.transport.sendMarkdown.mock.calls[0][1]).toContain("群聊已存在");
     });
 
     it("creates a group, registers binding, and sends welcome card", async () => {
@@ -1219,6 +1219,8 @@ describe("FeishuAdapter", () => {
       await a.createGroupForSession("u1", "conv-2", "claude", "/d", "p", "alpha", "p2p");
       expect(a.larkClient.im.chat.create).toHaveBeenCalled();
       expect(a.transport.sendRichContent).toHaveBeenCalled();
+      expect(a.transport.sendMarkdown.mock.calls.at(-1)[1]).toContain("群聊已创建");
+      expect(a.transport.sendMarkdown.mock.calls.at(-1)[1]).toContain("**[alpha] MyTitle**");
       expect(a.sessionMapper.getGroupBinding("new-g1")).toBeDefined();
     });
 
@@ -1228,7 +1230,7 @@ describe("FeishuAdapter", () => {
       a.gatewayClient = { getSession: vi.fn(async () => null) };
       a.transport = { sendText: vi.fn(async () => ""), sendMarkdown: vi.fn(async () => "") };
       await a.createGroupForSession("u1", "conv-3", "claude", "/d", "p", "alpha", "p2p");
-      expect(a.transport.sendMarkdown.mock.calls.at(-1)[1]).toContain("Failed to create group chat");
+      expect(a.transport.sendMarkdown.mock.calls.at(-1)[1]).toContain("创建群聊失败");
     });
 
     it("handles concurrent creation gracefully (markCreating returns false)", async () => {
@@ -1249,7 +1251,7 @@ describe("FeishuAdapter", () => {
       a.gatewayClient = { getSession: vi.fn(async () => null) };
       a.transport = { sendText: vi.fn(async () => ""), sendMarkdown: vi.fn(async () => "") };
       await a.createGroupForSession("u1", "conv-4", "claude", "/d", "p", "alpha", "p2p");
-      expect(a.transport.sendMarkdown.mock.calls.at(-1)[1]).toContain("Failed to create group");
+      expect(a.transport.sendMarkdown.mock.calls.at(-1)[1]).toContain("创建群聊失败");
     });
   });
 
@@ -1365,6 +1367,10 @@ describe("FeishuAdapter", () => {
         ]),
       };
       await a.showProjectListFromMenu("u1", undefined, "u1", "open_id");
+      expect(a.transport.sendMessageTo.mock.calls[0][2]).toBe("interactive");
+      const card = JSON.parse(a.transport.sendMessageTo.mock.calls[0][3]);
+      expect(card.elements[0]).toMatchObject({ tag: "markdown" });
+      expect(card.elements[0].content).toContain("**📋 项目列表**");
       const pending = a.sessionMapper.takePendingSelectionByOpenId("u1");
       expect(pending?.type).toBe("project");
     });
@@ -1379,6 +1385,7 @@ describe("FeishuAdapter", () => {
       };
       a.sessionMapper.getOrCreateP2PChat("c1", "u1");
       await a.showProjectListFromMenu("u1", "c1", "c1", "chat_id");
+      expect(a.transport.sendMessageTo.mock.calls[0][2]).toBe("interactive");
       expect(a.sessionMapper.getPendingSelection("c1")?.type).toBe("project");
     });
   });

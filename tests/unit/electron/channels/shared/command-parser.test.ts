@@ -78,8 +78,11 @@ describe("shared help-text builder", () => {
     expect(text).toContain("/switch");
     expect(text).toContain("/cancel");
     expect(text).toContain("/status");
-    expect(text).toContain("/mode");
-    expect(text).toContain("/model");
+    expect(text).toContain("/mode agent|plan|build");
+    expect(text).toContain("/model list");
+    expect(text).toContain("/model model-id");
+    expect(text).not.toContain("<agent");
+    expect(text).not.toContain("<id>");
     expect(text).toContain("/history");
     expect(text).toContain("/help");
   });

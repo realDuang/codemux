@@ -1,6 +1,7 @@
 // ============================================================================
 // Shared List/Question/History Builders — used by every channel for selection
-// menus and question display. Plain text only (consistent cross-platform).
+// menus and question display. Output is standard markdown (sent via
+// transport.sendMarkdown which handles platform-specific rendering).
 // ============================================================================
 
 import type {
@@ -9,24 +10,29 @@ import type {
   UnifiedSession,
 } from "../../../../src/types/unified";
 
-/** Build a numbered project list for text-based selection. */
+/** Escape markdown metacharacters in user-controlled strings. */
+function escapeMarkdownInline(value: string): string {
+  return value.replace(/[\\*`]/g, "\\$&");
+}
+
+/** Build a numbered project list for selection. */
 export function buildProjectListText(projects: UnifiedProject[]): string {
   if (projects.length === 0) {
     return [
-      "📋 暂无可用项目",
-      "─────────────────────────",
+      "**📋 暂无可用项目**",
+      "",
       "请先在 CodeMux 桌面端打开项目目录并启动会话，之后即可在此渠道中使用。",
       "",
-      "使用 /project 切换项目，/help 查看更多命令。",
+      "使用 `/project` 切换项目，`/help` 查看更多命令。",
     ].join("\n");
   }
-  const lines: string[] = ["📋 项目列表", "─────────────────────────"];
+  const lines: string[] = ["**📋 项目列表**", ""];
   for (let i = 0; i < projects.length; i++) {
     const p = projects[i];
-    const name = p.name || p.directory.split(/[\\/]/).pop() || p.directory;
-    lines.push(`  ${i + 1}. ${name}`);
+    const name = escapeMarkdownInline(p.name || p.directory.split(/[\\/]/).pop() || p.directory);
+    lines.push(`${i + 1}. ${name}`);
   }
-  lines.push("─────────────────────────");
+  lines.push("");
   lines.push("回复数字以选择项目。");
   return lines.join("\n");
 }
@@ -37,7 +43,9 @@ export function buildSessionNotification(
   engineType: string,
   sessionId: string,
 ): string {
-  return `📋 ${projectName}（${engineType}）· ${sessionId.slice(0, 8)}`;
+  const safeProjectName = escapeMarkdownInline(projectName);
+  const safeEngineType = escapeMarkdownInline(engineType);
+  return `📋 **${safeProjectName}**（${safeEngineType}）· \`${sessionId.slice(0, 8)}\``;
 }
 
 const SESSION_TITLE_MAX_LEN = 28;
@@ -123,11 +131,11 @@ export function buildSessionListText(
   const createHint =
     newHint === "keyword"
       ? '回复 "new" 创建新会话'
-      : "使用 /new 创建新会话";
+      : "使用 `/new` 创建新会话";
 
   const lines: string[] = [
-    `📋 会话列表 — ${projectName}`,
-    "─────────────────────────",
+    `**📋 会话列表 — ${escapeMarkdownInline(projectName)}**`,
+    "",
   ];
 
   if (sessions.length > 0) {
@@ -146,11 +154,11 @@ export function buildSessionListText(
       }
 
       const title = truncateTitle(s.title || `Session ${s.id.slice(0, 8)}`);
-      const engineLabel = s.engineType ? ` [${s.engineType}]` : "";
+      const engineLabel = s.engineType ? ` [${escapeMarkdownInline(s.engineType)}]` : "";
       const timeLabel = s.time?.updated ? ` (${relativeTimeZh(s.time.updated)})` : "";
-      lines.push(`  ${i + 1}. ${title}${engineLabel}${timeLabel}`);
+      lines.push(`${i + 1}. ${title}${engineLabel}${timeLabel}`);
     }
-    lines.push("─────────────────────────");
+    lines.push("");
     lines.push(`回复数字以打开会话，或${createHint}。`);
   } else {
     lines.push(`暂无已有会话。${createHint}。`);
@@ -165,15 +173,15 @@ export function buildQuestionText(
   options: Array<{ id: string; label: string }>,
 ): string {
   const lines: string[] = [
-    "📋 Agent 提问",
-    "─────────────────────────",
+    "**📋 Agent 提问**",
+    "",
     questionText,
-    "─────────────────────────",
+    "",
   ];
   for (let i = 0; i < options.length; i++) {
-    lines.push(`  ${i + 1}. ${options[i].label}`);
+    lines.push(`${i + 1}. ${options[i].label}`);
   }
-  lines.push("─────────────────────────");
+  lines.push("");
   lines.push("回复消息以回答（可直接输入自定义回复，或回复对应数字选择）。");
   return lines.join("\n");
 }

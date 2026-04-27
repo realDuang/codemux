@@ -76,7 +76,7 @@ describe("TelegramAdapter", () => {
     it("nulls transport / streamingController / gatewayClient and emits disconnected", async () => {
       const a = new TelegramAdapter() as any;
       a.status = "running";
-      a.transport = { sendText: vi.fn(), deleteWebhook: vi.fn(async () => true) };
+      a.transport = { sendText: vi.fn(), sendMarkdown: vi.fn(async () => ""), deleteWebhook: vi.fn(async () => true) };
       a.gatewayClient = { disconnect: vi.fn() };
       a.streamingController = {};
       const events: string[] = [];
@@ -284,7 +284,7 @@ describe("TelegramAdapter", () => {
   describe("handleTelegramMessage", () => {
     function makeBase() {
       const a = new TelegramAdapter() as any;
-      a.transport = { sendText: vi.fn(async () => "") };
+      a.transport = { sendText: vi.fn(async () => ""), sendMarkdown: vi.fn(async () => "") };
       a.gatewayClient = {};
       a.handleP2PMessage = vi.fn(async () => undefined);
       a.handleGroupMessage = vi.fn(async () => undefined);
@@ -445,7 +445,7 @@ describe("TelegramAdapter", () => {
   describe("handleP2PMessage dispatch", () => {
     function makeP2P() {
       const a = new TelegramAdapter() as any;
-      a.transport = { sendText: vi.fn(async () => "") };
+      a.transport = { sendText: vi.fn(async () => ""), sendMarkdown: vi.fn(async () => "") };
       a.gatewayClient = {
         replyQuestion: vi.fn(async () => undefined),
         listAllProjects: vi.fn(async () => []),
@@ -526,7 +526,7 @@ describe("TelegramAdapter", () => {
   describe("handleP2PCommand routing", () => {
     function makeCmd() {
       const a = new TelegramAdapter() as any;
-      a.transport = { sendText: vi.fn(async () => "") };
+      a.transport = { sendText: vi.fn(async () => ""), sendMarkdown: vi.fn(async () => "") };
       a.gatewayClient = null;
       return a;
     }
@@ -534,7 +534,7 @@ describe("TelegramAdapter", () => {
     it("returns when command is null", async () => {
       const a = makeCmd();
       await a.handleP2PCommand("c1", null);
-      expect(a.transport.sendText).not.toHaveBeenCalled();
+      expect(a.transport.sendMarkdown).not.toHaveBeenCalled();
     });
 
     it("returns when transport missing", async () => {
@@ -547,13 +547,13 @@ describe("TelegramAdapter", () => {
     it("/help sends help text", async () => {
       const a = makeCmd();
       await a.handleP2PCommand("c1", { command: "help", args: "" });
-      expect(a.transport.sendText).toHaveBeenCalled();
+      expect(a.transport.sendMarkdown).toHaveBeenCalled();
     });
 
     it("/start sends help text", async () => {
       const a = makeCmd();
       await a.handleP2PCommand("c1", { command: "start", args: "" });
-      expect(a.transport.sendText).toHaveBeenCalled();
+      expect(a.transport.sendMarkdown).toHaveBeenCalled();
     });
 
     it("/project calls showProjectList", async () => {
@@ -576,21 +576,21 @@ describe("TelegramAdapter", () => {
     it("falls through to unknown-command warning", async () => {
       const a = makeCmd();
       await a.handleP2PCommand("c1", { command: "foo", args: "" });
-      expect(a.transport.sendText.mock.calls.at(-1)[1]).toContain("未知命令");
+      expect(a.transport.sendMarkdown.mock.calls.at(-1)[1]).toContain("未知命令");
     });
   });
 
   describe("handleP2PNewCommand / handleP2PSwitchCommand guards", () => {
     it("handleP2PNewCommand prompts when no project selected", async () => {
       const a = new TelegramAdapter() as any;
-      a.transport = { sendText: vi.fn(async () => "") };
+      a.transport = { sendText: vi.fn(async () => ""), sendMarkdown: vi.fn(async () => "") };
       await a.handleP2PNewCommand("c1");
-      expect(a.transport.sendText.mock.calls[0][1]).toContain("/project");
+      expect(a.transport.sendMarkdown.mock.calls[0][1]).toContain("/project");
     });
 
     it("handleP2PNewCommand calls createNewSessionForProject when project known", async () => {
       const a = new TelegramAdapter() as any;
-      a.transport = { sendText: vi.fn(async () => "") };
+      a.transport = { sendText: vi.fn(async () => ""), sendMarkdown: vi.fn(async () => "") };
       a.sessionMapper.getOrCreateP2PChat("c1", "u1");
       a.sessionMapper.setP2PLastProject("c1", {
         directory: "/foo/x", engineType: "claude", projectId: "p",
@@ -602,7 +602,7 @@ describe("TelegramAdapter", () => {
 
     it("handleP2PNewCommand cleans up existing temp before create", async () => {
       const a = new TelegramAdapter() as any;
-      a.transport = { sendText: vi.fn(async () => "") };
+      a.transport = { sendText: vi.fn(async () => ""), sendMarkdown: vi.fn(async () => "") };
       a.sessionMapper.getOrCreateP2PChat("c1", "u1");
       a.sessionMapper.setP2PLastProject("c1", {
         directory: "/foo/x", engineType: "claude", projectId: "p",
@@ -619,14 +619,14 @@ describe("TelegramAdapter", () => {
 
     it("handleP2PSwitchCommand prompts when no project selected", async () => {
       const a = new TelegramAdapter() as any;
-      a.transport = { sendText: vi.fn(async () => "") };
+      a.transport = { sendText: vi.fn(async () => ""), sendMarkdown: vi.fn(async () => "") };
       await a.handleP2PSwitchCommand("c1");
-      expect(a.transport.sendText.mock.calls[0][1]).toContain("/project");
+      expect(a.transport.sendMarkdown.mock.calls[0][1]).toContain("/project");
     });
 
     it("handleP2PSwitchCommand calls showSessionListForProject", async () => {
       const a = new TelegramAdapter() as any;
-      a.transport = { sendText: vi.fn(async () => "") };
+      a.transport = { sendText: vi.fn(async () => ""), sendMarkdown: vi.fn(async () => "") };
       a.sessionMapper.getOrCreateP2PChat("c1", "u1");
       a.sessionMapper.setP2PLastProject("c1", {
         directory: "/foo/x", engineType: "claude", projectId: "p",
@@ -640,20 +640,20 @@ describe("TelegramAdapter", () => {
   describe("showProjectList / showSessionListForProject / showGroupProjectList", () => {
     it("showProjectList sends list and stores pending", async () => {
       const a = new TelegramAdapter() as any;
-      a.transport = { sendText: vi.fn(async () => "") };
+      a.transport = { sendText: vi.fn(async () => ""), sendMarkdown: vi.fn(async () => "") };
       a.gatewayClient = {
         listAllProjects: vi.fn(async () => [
           { id: "p1", name: "alpha", directory: "/a", engineType: "claude" },
         ]),
       };
       await a.showProjectList("c1");
-      expect(a.transport.sendText).toHaveBeenCalled();
+      expect(a.transport.sendMarkdown).toHaveBeenCalled();
       expect(a.sessionMapper.getPendingSelection("c1")?.type).toBe("project");
     });
 
     it("showProjectList does not store pending when list empty", async () => {
       const a = new TelegramAdapter() as any;
-      a.transport = { sendText: vi.fn(async () => "") };
+      a.transport = { sendText: vi.fn(async () => ""), sendMarkdown: vi.fn(async () => "") };
       a.gatewayClient = { listAllProjects: vi.fn(async () => []) };
       await a.showProjectList("c1");
       expect(a.sessionMapper.getPendingSelection("c1")).toEqual({ type: "project", projects: [] });
@@ -661,14 +661,14 @@ describe("TelegramAdapter", () => {
 
     it("showProjectList no-ops without gatewayClient", async () => {
       const a = new TelegramAdapter() as any;
-      a.transport = { sendText: vi.fn() };
+      a.transport = { sendText: vi.fn(), sendMarkdown: vi.fn(async () => "") };
       await a.showProjectList("c1");
-      expect(a.transport.sendText).not.toHaveBeenCalled();
+      expect(a.transport.sendMarkdown).not.toHaveBeenCalled();
     });
 
     it("showSessionListForProject filters by directory and stores pending", async () => {
       const a = new TelegramAdapter() as any;
-      a.transport = { sendText: vi.fn(async () => "") };
+      a.transport = { sendText: vi.fn(async () => ""), sendMarkdown: vi.fn(async () => "") };
       a.gatewayClient = {
         listAllSessions: vi.fn(async () => [
           { id: "s1", directory: "/a", engineType: "claude", title: "x", projectId: "p" },
@@ -687,7 +687,7 @@ describe("TelegramAdapter", () => {
 
     it("showGroupProjectList stores pending for group", async () => {
       const a = new TelegramAdapter() as any;
-      a.transport = { sendText: vi.fn(async () => "") };
+      a.transport = { sendText: vi.fn(async () => ""), sendMarkdown: vi.fn(async () => "") };
       a.gatewayClient = {
         listAllProjects: vi.fn(async () => [
           { id: "p1", name: "a", directory: "/a", engineType: "claude" },
@@ -701,7 +701,7 @@ describe("TelegramAdapter", () => {
   describe("createNewSessionForProject / createTempSessionAndSend / queue / cleanup", () => {
     it("createNewSessionForProject stores temp session", async () => {
       const a = new TelegramAdapter() as any;
-      a.transport = { sendText: vi.fn(async () => "") };
+      a.transport = { sendText: vi.fn(async () => ""), sendMarkdown: vi.fn(async () => "") };
       a.gatewayClient = {
         createSession: vi.fn(async () => ({ id: "s1", engineType: "claude" })),
       };
@@ -716,7 +716,7 @@ describe("TelegramAdapter", () => {
 
     it("createNewSessionForProject reports error", async () => {
       const a = new TelegramAdapter() as any;
-      a.transport = { sendText: vi.fn(async () => "") };
+      a.transport = { sendText: vi.fn(async () => ""), sendMarkdown: vi.fn(async () => "") };
       a.gatewayClient = {
         createSession: vi.fn(async () => { throw new Error("nope"); }),
       };
@@ -725,12 +725,12 @@ describe("TelegramAdapter", () => {
         { directory: "/d", projectId: "p" },
         "alpha",
       );
-      expect(a.transport.sendText.mock.calls.at(-1)[1]).toContain("创建会话失败");
+      expect(a.transport.sendMarkdown.mock.calls.at(-1)[1]).toContain("创建会话失败");
     });
 
     it("createTempSessionAndSend stores temp + enqueues message", async () => {
       const a = new TelegramAdapter() as any;
-      a.transport = { sendText: vi.fn(async () => "") };
+      a.transport = { sendText: vi.fn(async () => ""), sendMarkdown: vi.fn(async () => "") };
       a.gatewayClient = {
         createSession: vi.fn(async () => ({ id: "sess-2", engineType: "claude" })),
       };
@@ -747,7 +747,7 @@ describe("TelegramAdapter", () => {
 
     it("createTempSessionAndSend reports error on createSession failure", async () => {
       const a = new TelegramAdapter() as any;
-      a.transport = { sendText: vi.fn(async () => "") };
+      a.transport = { sendText: vi.fn(async () => ""), sendMarkdown: vi.fn(async () => "") };
       a.gatewayClient = {
         createSession: vi.fn(async () => { throw new Error("nope"); }),
       };
@@ -756,7 +756,7 @@ describe("TelegramAdapter", () => {
         { directory: "/d", projectId: "p" },
         "hi",
       );
-      expect(a.transport.sendText.mock.calls.at(-1)[1]).toContain("创建临时会话失败");
+      expect(a.transport.sendMarkdown.mock.calls.at(-1)[1]).toContain("创建临时会话失败");
     });
 
     it("enqueueP2PMessage no-ops without temp session", async () => {
@@ -844,7 +844,7 @@ describe("TelegramAdapter", () => {
   describe("handleProjectSelection / handleSessionSelection / handlePendingSelection", () => {
     it("handleProjectSelection returns false on non-numeric input", async () => {
       const a = new TelegramAdapter() as any;
-      a.transport = { sendText: vi.fn(async () => "") };
+      a.transport = { sendText: vi.fn(async () => ""), sendMarkdown: vi.fn(async () => "") };
       a.gatewayClient = { listAllSessions: vi.fn(async () => []) };
       const ok = await a.handleProjectSelection("c1", "abc", {
         type: "project",
@@ -855,7 +855,7 @@ describe("TelegramAdapter", () => {
 
     it("handleProjectSelection returns false on out-of-range index", async () => {
       const a = new TelegramAdapter() as any;
-      a.transport = { sendText: vi.fn(async () => "") };
+      a.transport = { sendText: vi.fn(async () => ""), sendMarkdown: vi.fn(async () => "") };
       a.gatewayClient = { listAllSessions: vi.fn(async () => []) };
       const ok = await a.handleProjectSelection("c1", "5", {
         type: "project",
@@ -866,7 +866,7 @@ describe("TelegramAdapter", () => {
 
     it("handleProjectSelection on valid index sets last project + shows sessions", async () => {
       const a = new TelegramAdapter() as any;
-      a.transport = { sendText: vi.fn(async () => "") };
+      a.transport = { sendText: vi.fn(async () => ""), sendMarkdown: vi.fn(async () => "") };
       a.gatewayClient = { listAllSessions: vi.fn(async () => []) };
       a.sessionMapper.getOrCreateP2PChat("c1", "u1");
       const ok = await a.handleProjectSelection("c1", "1", {
@@ -881,7 +881,7 @@ describe("TelegramAdapter", () => {
 
     it("handleSessionSelection returns false on non-numeric input", async () => {
       const a = new TelegramAdapter() as any;
-      a.transport = { sendText: vi.fn(async () => "") };
+      a.transport = { sendText: vi.fn(async () => ""), sendMarkdown: vi.fn(async () => "") };
       const ok = await a.handleSessionSelection("c1", "abc", {
         type: "session", directory: "/d", projectId: "p",
         sessions: [{ id: "s1", engineType: "claude" }],
@@ -891,7 +891,7 @@ describe("TelegramAdapter", () => {
 
     it("handleSessionSelection returns false when pending lacks directory or projectId", async () => {
       const a = new TelegramAdapter() as any;
-      a.transport = { sendText: vi.fn(async () => "") };
+      a.transport = { sendText: vi.fn(async () => ""), sendMarkdown: vi.fn(async () => "") };
       const ok = await a.handleSessionSelection("c1", "1", {
         type: "session",
         sessions: [{ id: "s1", engineType: "claude" }],
@@ -901,7 +901,7 @@ describe("TelegramAdapter", () => {
 
     it("handleSessionSelection on valid index binds temp session", async () => {
       const a = new TelegramAdapter() as any;
-      a.transport = { sendText: vi.fn(async () => "") };
+      a.transport = { sendText: vi.fn(async () => ""), sendMarkdown: vi.fn(async () => "") };
       a.sessionMapper.getOrCreateP2PChat("c1", "u1");
       const ok = await a.handleSessionSelection("c1", "1", {
         type: "session", directory: "/d", projectId: "p", projectName: "alpha",
@@ -913,7 +913,7 @@ describe("TelegramAdapter", () => {
 
     it("handlePendingSelection dispatches to project handler", async () => {
       const a = new TelegramAdapter() as any;
-      a.transport = { sendText: vi.fn(async () => "") };
+      a.transport = { sendText: vi.fn(async () => ""), sendMarkdown: vi.fn(async () => "") };
       a.gatewayClient = { listAllSessions: vi.fn(async () => []) };
       a.sessionMapper.getOrCreateP2PChat("c1", "u1");
       const ok = await a.handlePendingSelection("c1", "u1", "1", {
@@ -925,7 +925,7 @@ describe("TelegramAdapter", () => {
 
     it("handlePendingSelection dispatches to session handler", async () => {
       const a = new TelegramAdapter() as any;
-      a.transport = { sendText: vi.fn(async () => "") };
+      a.transport = { sendText: vi.fn(async () => ""), sendMarkdown: vi.fn(async () => "") };
       a.sessionMapper.getOrCreateP2PChat("c1", "u1");
       const ok = await a.handlePendingSelection("c1", "u1", "1", {
         type: "session", directory: "/d", projectId: "p",
@@ -944,21 +944,21 @@ describe("TelegramAdapter", () => {
   describe("handleGroupMessage / handleGroupCommand", () => {
     it("handleGroupMessage shows /bind hint when no binding and unknown text", async () => {
       const a = new TelegramAdapter() as any;
-      a.transport = { sendText: vi.fn(async () => "") };
+      a.transport = { sendText: vi.fn(async () => ""), sendMarkdown: vi.fn(async () => "") };
       await a.handleGroupMessage("g1", "hi");
-      expect(a.transport.sendText.mock.calls[0][1]).toContain("/bind");
+      expect(a.transport.sendMarkdown.mock.calls[0][1]).toContain("/bind");
     });
 
     it("handleGroupMessage /help (no binding) sends help text", async () => {
       const a = new TelegramAdapter() as any;
-      a.transport = { sendText: vi.fn(async () => "") };
+      a.transport = { sendText: vi.fn(async () => ""), sendMarkdown: vi.fn(async () => "") };
       await a.handleGroupMessage("g1", "/help");
-      expect(a.transport.sendText).toHaveBeenCalled();
+      expect(a.transport.sendMarkdown).toHaveBeenCalled();
     });
 
     it("handleGroupMessage /bind (no binding) calls showGroupProjectList", async () => {
       const a = new TelegramAdapter() as any;
-      a.transport = { sendText: vi.fn(async () => "") };
+      a.transport = { sendText: vi.fn(async () => ""), sendMarkdown: vi.fn(async () => "") };
       a.showGroupProjectList = vi.fn(async () => undefined);
       await a.handleGroupMessage("g1", "/bind");
       expect(a.showGroupProjectList).toHaveBeenCalledWith("g1");
@@ -966,7 +966,7 @@ describe("TelegramAdapter", () => {
 
     it("handleGroupMessage routes commands to handleGroupCommand when bound", async () => {
       const a = new TelegramAdapter() as any;
-      a.transport = { sendText: vi.fn(async () => "") };
+      a.transport = { sendText: vi.fn(async () => ""), sendMarkdown: vi.fn(async () => "") };
       a.sessionMapper.createGroupBinding({
         chatId: "g1", conversationId: "s1", engineType: "claude",
         directory: "/d", projectId: "p", ownerUserId: "u1",
@@ -979,7 +979,7 @@ describe("TelegramAdapter", () => {
 
     it("handleGroupMessage routes pending question reply", async () => {
       const a = new TelegramAdapter() as any;
-      a.transport = { sendText: vi.fn(async () => "") };
+      a.transport = { sendText: vi.fn(async () => ""), sendMarkdown: vi.fn(async () => "") };
       a.gatewayClient = { replyQuestion: vi.fn(async () => undefined) };
       a.sessionMapper.createGroupBinding({
         chatId: "g1", conversationId: "s1", engineType: "claude",
@@ -996,7 +996,7 @@ describe("TelegramAdapter", () => {
 
     it("handleGroupMessage routes plain text to sendToEngine", async () => {
       const a = new TelegramAdapter() as any;
-      a.transport = { sendText: vi.fn(async () => "") };
+      a.transport = { sendText: vi.fn(async () => ""), sendMarkdown: vi.fn(async () => "") };
       a.sessionMapper.createGroupBinding({
         chatId: "g1", conversationId: "s1", engineType: "claude",
         directory: "/d", projectId: "p", ownerUserId: "u1",
@@ -1009,7 +1009,7 @@ describe("TelegramAdapter", () => {
 
     it("handleGroupCommand /help sends help text", async () => {
       const a = new TelegramAdapter() as any;
-      a.transport = { sendText: vi.fn(async () => "") };
+      a.transport = { sendText: vi.fn(async () => ""), sendMarkdown: vi.fn(async () => "") };
       a.gatewayClient = {};
       const binding = {
         chatId: "g1", conversationId: "s1", engineType: "claude" as const,
@@ -1017,12 +1017,12 @@ describe("TelegramAdapter", () => {
         streamingSessions: new Map(), createdAt: Date.now(),
       };
       await a.handleGroupCommand("g1", binding, { command: "help", args: "" });
-      expect(a.transport.sendText).toHaveBeenCalled();
+      expect(a.transport.sendMarkdown).toHaveBeenCalled();
     });
 
     it("handleGroupCommand falls through to unknown-command warning", async () => {
       const a = new TelegramAdapter() as any;
-      a.transport = { sendText: vi.fn(async () => "") };
+      a.transport = { sendText: vi.fn(async () => ""), sendMarkdown: vi.fn(async () => "") };
       a.gatewayClient = {
         cancelMessage: vi.fn(),
         listMessages: vi.fn(async () => []),
@@ -1033,7 +1033,7 @@ describe("TelegramAdapter", () => {
         streamingSessions: new Map(), createdAt: Date.now(),
       };
       await a.handleGroupCommand("g1", binding, { command: "foo", args: "" });
-      expect(a.transport.sendText.mock.calls.at(-1)[1]).toContain("未知命令");
+      expect(a.transport.sendMarkdown.mock.calls.at(-1)[1]).toContain("未知命令");
     });
   });
 
@@ -1054,6 +1054,7 @@ describe("TelegramAdapter", () => {
       const a = new TelegramAdapter() as any;
       a.transport = {
         sendText: vi.fn(async () => ""),
+        sendMarkdown: vi.fn(async () => ""),
         sendMessageWithKeyboard: vi.fn(async () => undefined),
       };
       a.streamingController = { applyPart: vi.fn(), finalize: vi.fn() };
@@ -1190,7 +1191,7 @@ describe("TelegramAdapter", () => {
         lastActiveAt: Date.now(), messageQueue: [], processing: false,
       });
       a.handleQuestionAsked({ id: "q-1", sessionId: "conv-1", questions: [] });
-      expect(a.transport.sendText.mock.calls[0][1]).toContain("无选项");
+      expect(a.transport.sendMarkdown.mock.calls[0][1]).toContain("无选项");
     });
 
     it("handleSessionUpdated updates streaming session titles for bound group", () => {

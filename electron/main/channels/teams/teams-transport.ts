@@ -91,6 +91,11 @@ export class TeamsTransport implements MessageTransport {
     }
   }
 
+  /** Send a markdown-formatted message. Teams sendText already uses textFormat: "markdown". */
+  async sendMarkdown(chatId: string, markdown: string): Promise<string> {
+    return this.sendText(chatId, markdown);
+  }
+
   /**
    * Update an existing message with new text content.
    * The messageId format is "conversationId|activityId".

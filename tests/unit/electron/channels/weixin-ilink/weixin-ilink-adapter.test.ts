@@ -336,7 +336,7 @@ describe("WeixinIlinkAdapter", () => {
   describe("handleProjectSelection", () => {
     function makeAdapterWithTransport() {
       const adapter = new WeixinIlinkAdapter() as any;
-      adapter.transport = { sendText: vi.fn(async () => "id") };
+      adapter.transport = { sendText: vi.fn(async () => "id"), sendMarkdown: vi.fn(async () => "") };
       adapter.gatewayClient = {
         listSessions: vi.fn(async () => ({ items: [] })),
         listAllSessions: vi.fn(async () => []),
@@ -377,7 +377,7 @@ describe("WeixinIlinkAdapter", () => {
         engineType: "claude",
         projectId: "p1",
       });
-      expect(adapter.transport.sendText).toHaveBeenCalled();
+      expect(adapter.transport.sendMarkdown).toHaveBeenCalled();
     });
   });
 
@@ -397,7 +397,7 @@ describe("WeixinIlinkAdapter", () => {
 
     it("returns false when pending lacks directory or projectId", async () => {
       const adapter = new WeixinIlinkAdapter() as any;
-      adapter.transport = { sendText: vi.fn(async () => "") };
+      adapter.transport = { sendText: vi.fn(async () => ""), sendMarkdown: vi.fn(async () => "") };
       expect(
         await adapter.handleSessionSelection("c1", "1", {
           type: "session",
@@ -408,7 +408,7 @@ describe("WeixinIlinkAdapter", () => {
 
     it("returns false on out-of-range index", async () => {
       const adapter = new WeixinIlinkAdapter() as any;
-      adapter.transport = { sendText: vi.fn(async () => "") };
+      adapter.transport = { sendText: vi.fn(async () => ""), sendMarkdown: vi.fn(async () => "") };
       expect(
         await adapter.handleSessionSelection("c1", "5", {
           type: "session",
@@ -421,7 +421,7 @@ describe("WeixinIlinkAdapter", () => {
 
     it("on valid index, registers temp session and announces switch", async () => {
       const adapter = new WeixinIlinkAdapter() as any;
-      adapter.transport = { sendText: vi.fn(async () => "") };
+      adapter.transport = { sendText: vi.fn(async () => ""), sendMarkdown: vi.fn(async () => "") };
       adapter.sessionMapper.getOrCreateP2PChat("c1", "u1");
       const ok = await adapter.handleSessionSelection("c1", "1", {
         type: "session",
@@ -432,8 +432,8 @@ describe("WeixinIlinkAdapter", () => {
       expect(ok).toBe(true);
       const temp = adapter.sessionMapper.getTempSession("c1");
       expect(temp.conversationId).toBe("sess-ABCDEFGH");
-      expect(adapter.transport.sendText).toHaveBeenCalled();
-      const arg = adapter.transport.sendText.mock.calls[0][1] as string;
+      expect(adapter.transport.sendMarkdown).toHaveBeenCalled();
+      const arg = adapter.transport.sendMarkdown.mock.calls[0][1] as string;
       expect(arg).toContain("sess-ABC");
     });
   });
@@ -441,7 +441,7 @@ describe("WeixinIlinkAdapter", () => {
   describe("handlePendingSelection dispatch", () => {
     it("dispatches to project selection for type=project", async () => {
       const adapter = new WeixinIlinkAdapter() as any;
-      adapter.transport = { sendText: vi.fn(async () => "") };
+      adapter.transport = { sendText: vi.fn(async () => ""), sendMarkdown: vi.fn(async () => "") };
       adapter.sessionMapper.getOrCreateP2PChat("c1", "u1");
       const ok = await adapter.handlePendingSelection("c1", "1", {
         type: "project",
@@ -452,7 +452,7 @@ describe("WeixinIlinkAdapter", () => {
 
     it("dispatches to session selection for type=session", async () => {
       const adapter = new WeixinIlinkAdapter() as any;
-      adapter.transport = { sendText: vi.fn(async () => "") };
+      adapter.transport = { sendText: vi.fn(async () => ""), sendMarkdown: vi.fn(async () => "") };
       adapter.sessionMapper.getOrCreateP2PChat("c1", "u1");
       const ok = await adapter.handlePendingSelection("c1", "1", {
         type: "session",
@@ -473,7 +473,7 @@ describe("WeixinIlinkAdapter", () => {
   describe("handleInboundMessage", () => {
     function makeInboundAdapter() {
       const adapter = new WeixinIlinkAdapter() as any;
-      adapter.transport = { setContextToken: vi.fn(), sendText: vi.fn(async () => "") };
+      adapter.transport = { setContextToken: vi.fn(), sendText: vi.fn(async () => ""), sendMarkdown: vi.fn(async () => "") };
       adapter.gatewayClient = {
         replyQuestion: vi.fn(async () => undefined),
         listProjects: vi.fn(async () => []),
@@ -536,7 +536,7 @@ describe("WeixinIlinkAdapter", () => {
   describe("handleP2PMessage dispatch", () => {
     function makeP2P() {
       const adapter = new WeixinIlinkAdapter() as any;
-      adapter.transport = { sendText: vi.fn(async () => "") };
+      adapter.transport = { sendText: vi.fn(async () => ""), sendMarkdown: vi.fn(async () => "") };
       adapter.gatewayClient = {
         replyQuestion: vi.fn(async () => undefined),
         listAllProjects: vi.fn(async () => []),
@@ -606,7 +606,7 @@ describe("WeixinIlinkAdapter", () => {
   describe("handleP2PCommand routing", () => {
     function makeCmdAdapter() {
       const adapter = new WeixinIlinkAdapter() as any;
-      adapter.transport = { sendText: vi.fn(async () => "") };
+      adapter.transport = { sendText: vi.fn(async () => ""), sendMarkdown: vi.fn(async () => "") };
       adapter.gatewayClient = {
         cancelMessage: vi.fn(async () => undefined),
         setMode: vi.fn(async () => undefined),
@@ -631,7 +631,7 @@ describe("WeixinIlinkAdapter", () => {
       const a = makeCmdAdapter();
       a.gatewayClient = null; // skip session-ops shortcut
       await a.handleP2PCommand("c1", { command: "help", args: "" });
-      expect(a.transport.sendText).toHaveBeenCalled();
+      expect(a.transport.sendMarkdown).toHaveBeenCalled();
     });
 
     it("dispatches /project to showProjectList", async () => {
@@ -657,28 +657,28 @@ describe("WeixinIlinkAdapter", () => {
       const a = makeCmdAdapter();
       a.gatewayClient = null;
       await a.handleP2PCommand("c1", { command: "foo", args: "" });
-      expect(a.transport.sendText.mock.calls.at(-1)[1]).toContain("未知命令");
+      expect(a.transport.sendMarkdown.mock.calls.at(-1)[1]).toContain("未知命令");
     });
   });
 
   describe("handleNewCommand / handleSwitchCommand guards", () => {
     it("handleNewCommand prompts when no project is selected", async () => {
       const a = new WeixinIlinkAdapter() as any;
-      a.transport = { sendText: vi.fn(async () => "") };
+      a.transport = { sendText: vi.fn(async () => ""), sendMarkdown: vi.fn(async () => "") };
       await a.handleNewCommand("c1");
-      expect(a.transport.sendText.mock.calls[0][1]).toContain("/project");
+      expect(a.transport.sendMarkdown.mock.calls[0][1]).toContain("/project");
     });
 
     it("handleSwitchCommand prompts when no project is selected", async () => {
       const a = new WeixinIlinkAdapter() as any;
-      a.transport = { sendText: vi.fn(async () => "") };
+      a.transport = { sendText: vi.fn(async () => ""), sendMarkdown: vi.fn(async () => "") };
       await a.handleSwitchCommand("c1");
-      expect(a.transport.sendText.mock.calls[0][1]).toContain("/project");
+      expect(a.transport.sendMarkdown.mock.calls[0][1]).toContain("/project");
     });
 
     it("handleNewCommand creates a new session under the last project", async () => {
       const a = new WeixinIlinkAdapter() as any;
-      a.transport = { sendText: vi.fn(async () => "") };
+      a.transport = { sendText: vi.fn(async () => ""), sendMarkdown: vi.fn(async () => "") };
       a.sessionMapper.getOrCreateP2PChat("c1", "u1");
       a.sessionMapper.setP2PLastProject("c1", {
         directory: "/foo/x",
@@ -692,7 +692,7 @@ describe("WeixinIlinkAdapter", () => {
 
     it("handleSwitchCommand calls showSessionListForProject", async () => {
       const a = new WeixinIlinkAdapter() as any;
-      a.transport = { sendText: vi.fn(async () => "") };
+      a.transport = { sendText: vi.fn(async () => ""), sendMarkdown: vi.fn(async () => "") };
       a.sessionMapper.getOrCreateP2PChat("c1", "u1");
       a.sessionMapper.setP2PLastProject("c1", {
         directory: "/foo/x",
@@ -708,20 +708,20 @@ describe("WeixinIlinkAdapter", () => {
   describe("showProjectList / showSessionListForProject", () => {
     it("showProjectList sends list and stores pending selection", async () => {
       const a = new WeixinIlinkAdapter() as any;
-      a.transport = { sendText: vi.fn(async () => "") };
+      a.transport = { sendText: vi.fn(async () => ""), sendMarkdown: vi.fn(async () => "") };
       a.gatewayClient = {
         listAllProjects: vi.fn(async () => [
           { id: "p1", name: "alpha", directory: "/a", engineType: "claude" },
         ]),
       };
       await a.showProjectList("c1");
-      expect(a.transport.sendText).toHaveBeenCalled();
+      expect(a.transport.sendMarkdown).toHaveBeenCalled();
       expect(a.sessionMapper.getPendingSelection("c1")?.type).toBe("project");
     });
 
     it("showProjectList does not store pending when list is empty", async () => {
       const a = new WeixinIlinkAdapter() as any;
-      a.transport = { sendText: vi.fn(async () => "") };
+      a.transport = { sendText: vi.fn(async () => ""), sendMarkdown: vi.fn(async () => "") };
       a.gatewayClient = { listAllProjects: vi.fn(async () => []) };
       await a.showProjectList("c1");
       expect(a.sessionMapper.getPendingSelection("c1")).toEqual({ type: "project", projects: [] });
@@ -729,7 +729,7 @@ describe("WeixinIlinkAdapter", () => {
 
     it("showSessionListForProject filters sessions by directory and stores pending", async () => {
       const a = new WeixinIlinkAdapter() as any;
-      a.transport = { sendText: vi.fn(async () => "") };
+      a.transport = { sendText: vi.fn(async () => ""), sendMarkdown: vi.fn(async () => "") };
       a.gatewayClient = {
         listAllSessions: vi.fn(async () => [
           { id: "s1", directory: "/a", engineType: "claude", title: "x", projectId: "p" },
@@ -741,7 +741,7 @@ describe("WeixinIlinkAdapter", () => {
         { directory: "/a", engineType: "claude", projectId: "p" },
         "alpha",
       );
-      expect(a.transport.sendText).toHaveBeenCalled();
+      expect(a.transport.sendMarkdown).toHaveBeenCalled();
       const pending = a.sessionMapper.getPendingSelection("c1");
       expect(pending?.type).toBe("session");
       expect(pending?.sessions).toHaveLength(1);
@@ -751,7 +751,7 @@ describe("WeixinIlinkAdapter", () => {
   describe("createNewSessionForProject / createTempSessionAndSend", () => {
     it("createNewSessionForProject sets temp session and notifies user on success", async () => {
       const a = new WeixinIlinkAdapter() as any;
-      a.transport = { sendText: vi.fn(async () => "") };
+      a.transport = { sendText: vi.fn(async () => ""), sendMarkdown: vi.fn(async () => "") };
       a.gatewayClient = {
         createSession: vi.fn(async () => ({ id: "sess-1", engineType: "claude" })),
       };
@@ -763,12 +763,12 @@ describe("WeixinIlinkAdapter", () => {
       );
       const t = a.sessionMapper.getTempSession("c1");
       expect(t?.conversationId).toBe("sess-1");
-      expect(a.transport.sendText.mock.calls.at(-1)[1]).toContain("proj");
+      expect(a.transport.sendMarkdown.mock.calls.at(-1)[1]).toContain("proj");
     });
 
     it("createNewSessionForProject reports error message on failure", async () => {
       const a = new WeixinIlinkAdapter() as any;
-      a.transport = { sendText: vi.fn(async () => "") };
+      a.transport = { sendText: vi.fn(async () => ""), sendMarkdown: vi.fn(async () => "") };
       a.gatewayClient = {
         createSession: vi.fn(async () => {
           throw new Error("boom");
@@ -779,12 +779,12 @@ describe("WeixinIlinkAdapter", () => {
         { directory: "/d", projectId: "p" },
         "proj",
       );
-      expect(a.transport.sendText.mock.calls.at(-1)[1]).toContain("创建会话失败");
+      expect(a.transport.sendMarkdown.mock.calls.at(-1)[1]).toContain("创建会话失败");
     });
 
     it("createTempSessionAndSend stores temp + enqueues message", async () => {
       const a = new WeixinIlinkAdapter() as any;
-      a.transport = { sendText: vi.fn(async () => "") };
+      a.transport = { sendText: vi.fn(async () => ""), sendMarkdown: vi.fn(async () => "") };
       a.gatewayClient = {
         createSession: vi.fn(async () => ({ id: "sess-2", engineType: "claude" })),
       };
@@ -801,7 +801,7 @@ describe("WeixinIlinkAdapter", () => {
 
     it("createTempSessionAndSend reports error on createSession failure", async () => {
       const a = new WeixinIlinkAdapter() as any;
-      a.transport = { sendText: vi.fn(async () => "") };
+      a.transport = { sendText: vi.fn(async () => ""), sendMarkdown: vi.fn(async () => "") };
       a.gatewayClient = {
         createSession: vi.fn(async () => {
           throw new Error("nope");
@@ -812,7 +812,7 @@ describe("WeixinIlinkAdapter", () => {
         { directory: "/d", projectId: "p" },
         "hi",
       );
-      expect(a.transport.sendText.mock.calls.at(-1)[1]).toContain("创建临时会话失败");
+      expect(a.transport.sendMarkdown.mock.calls.at(-1)[1]).toContain("创建临时会话失败");
     });
   });
 
@@ -905,7 +905,7 @@ describe("WeixinIlinkAdapter", () => {
   describe("event handlers (gateway)", () => {
     function makeGwAdapter() {
       const a = new WeixinIlinkAdapter() as any;
-      a.transport = { sendText: vi.fn(async () => "") };
+      a.transport = { sendText: vi.fn(async () => ""), sendMarkdown: vi.fn(async () => "") };
       a.streamingController = {
         applyPart: vi.fn(),
         finalize: vi.fn(),
@@ -1013,8 +1013,8 @@ describe("WeixinIlinkAdapter", () => {
         title: "do it?",
         options: [{ id: "no", label: "Deny" }, { id: "yes", label: "OK" }],
       });
-      expect(a.transport.sendText).toHaveBeenCalled();
-      const sent = a.transport.sendText.mock.calls[0][1] as string;
+      expect(a.transport.sendMarkdown).toHaveBeenCalled();
+      const sent = a.transport.sendMarkdown.mock.calls[0][1] as string;
       expect(sent).toContain("权限请求");
       expect(sent).toContain("1.");
     });
@@ -1026,7 +1026,7 @@ describe("WeixinIlinkAdapter", () => {
         sessionId: "missing",
         options: [{ id: "ok" }],
       });
-      expect(a.transport.sendText).not.toHaveBeenCalled();
+      expect(a.transport.sendMarkdown).not.toHaveBeenCalled();
     });
   });
 });

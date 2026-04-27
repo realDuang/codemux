@@ -12,6 +12,10 @@ import type { EngineType } from "../../../../src/types/unified";
 import type { ParsedCommand } from "./command-types";
 import { buildHistoryEntries } from "./list-builders";
 
+function escapeMarkdownInline(value: string): string {
+  return value.replace(/[\\*`]/g, "\\$&");
+}
+
 /**
  * The minimal context a session-ops command needs. Channels build this from
  * their own state (P2P temp session, group binding, etc.) and pass it in.
@@ -59,7 +63,7 @@ export async function handleSessionOpsCommand(
 
   const ctx = args.getContext();
   if (!ctx) {
-    await args.sendText("📋 当前没有活动会话。使用 /project 选择项目，或 /new 创建会话。");
+    await args.sendText("📋 当前没有活动会话。使用 `/project` 选择项目，或 `/new` 创建会话。");
     return true;
   }
 
@@ -71,18 +75,26 @@ export async function handleSessionOpsCommand(
 
     case "status": {
       const projectName = ctx.directory?.split(/[\\/]/).pop();
-      const lines = ["📋 会话状态"];
+      const lines = ["**📋 会话状态**", ""];
       if (projectName) lines.push(`项目：${projectName}（${ctx.engineType}）`);
       else lines.push(`引擎：${ctx.engineType}`);
       if (ctx.title) lines.push(`标题：${ctx.title}`);
-      lines.push(`会话：${ctx.conversationId}`);
+      lines.push(`会话：\`${ctx.conversationId}\``);
       await args.sendText(lines.join("\n"));
       return true;
     }
 
     case "mode": {
       if (!command.args || command.args.length === 0) {
-        await args.sendText("📋 用法：/mode <agent|plan|build>");
+        await args.sendText([
+          "**📋 模式列表**",
+          "",
+          "- `agent` · 默认 Agent 模式",
+          "- `plan` · 规划模式",
+          "- `build` · 构建模式",
+          "",
+          "使用 `/mode agent`、`/mode plan` 或 `/mode build` 切换模式。",
+        ].join("\n"));
         return true;
       }
       await args.gatewayClient.setMode({
@@ -99,13 +111,18 @@ export async function handleSessionOpsCommand(
         (!subcommand && (!command.args || command.args.length === 0));
       if (isList) {
         const result = await args.gatewayClient.listModels(ctx.engineType);
-        const lines = ["📋 模型列表", "─────────────────────────"];
+        const lines = ["**📋 模型列表**", ""];
         for (const m of result.models) {
           const current = m.modelId === result.currentModelId ? "（当前）" : "";
-          lines.push(`  ${m.name || m.modelId}${current}`);
+          const modelId = escapeMarkdownInline(m.modelId);
+          if (m.name && m.name !== m.modelId) {
+            lines.push(`- ${escapeMarkdownInline(m.name)} · \`${modelId}\`${current}`);
+          } else {
+            lines.push(`- \`${modelId}\`${current}`);
+          }
         }
-        lines.push("─────────────────────────");
-        lines.push("使用 /model <model-id> 切换模型。");
+        lines.push("");
+        lines.push("使用 `/model model-id` 切换模型。");
         await args.sendText(lines.join("\n"));
       } else if (command.args && command.args.length > 0) {
         await args.gatewayClient.setModel({
@@ -123,7 +140,7 @@ export async function handleSessionOpsCommand(
       if (entries.length === 0) {
         await args.sendText("📋 暂无会话历史记录。");
       } else {
-        await args.sendText("📋 会话历史");
+        await args.sendText("**📋 会话历史**");
         for (const entry of entries) {
           await args.sendText(`${entry.emoji} ${entry.text}`);
         }

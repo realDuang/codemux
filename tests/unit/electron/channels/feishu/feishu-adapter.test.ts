@@ -134,7 +134,7 @@ describe("FeishuAdapter", () => {
     it("nulls transport / streamingController / gatewayClient and emits disconnected", async () => {
       const a = new FeishuAdapter() as any;
       a.status = "running";
-      a.transport = { sendText: vi.fn() };
+      a.transport = { sendText: vi.fn(), sendMarkdown: vi.fn(async () => "") };
       a.gatewayClient = { disconnect: vi.fn() };
       a.streamingController = {};
       a.wsClient = { close: vi.fn() };
@@ -322,7 +322,7 @@ describe("FeishuAdapter", () => {
   describe("handleFeishuMessage", () => {
     function make() {
       const a = new FeishuAdapter() as any;
-      a.transport = { sendText: vi.fn(async () => "") };
+      a.transport = { sendText: vi.fn(async () => ""), sendMarkdown: vi.fn(async () => "") };
       a.gatewayClient = {};
       a.handleP2PMessage = vi.fn(async () => undefined);
       a.handleGroupMessage = vi.fn(async () => undefined);
@@ -403,7 +403,7 @@ describe("FeishuAdapter", () => {
   describe("handleP2PMessage dispatch", () => {
     function makeP2P() {
       const a = new FeishuAdapter() as any;
-      a.transport = { sendText: vi.fn(async () => "mid") };
+      a.transport = { sendText: vi.fn(async () => "mid"), sendMarkdown: vi.fn(async () => "") };
       a.gatewayClient = {
         replyQuestion: vi.fn(async () => undefined),
         listAllProjects: vi.fn(async () => []),
@@ -495,7 +495,7 @@ describe("FeishuAdapter", () => {
   describe("handleP2PCommand routing", () => {
     function makeCmd() {
       const a = new FeishuAdapter() as any;
-      a.transport = { sendText: vi.fn(async () => "") };
+      a.transport = { sendText: vi.fn(async () => ""), sendMarkdown: vi.fn(async () => "") };
       a.gatewayClient = null;
       return a;
     }
@@ -511,7 +511,7 @@ describe("FeishuAdapter", () => {
     it("/help sends help text", async () => {
       const a = makeCmd();
       await a.handleP2PCommand("c1", { command: "help", args: [] });
-      expect(a.transport.sendText).toHaveBeenCalled();
+      expect(a.transport.sendMarkdown).toHaveBeenCalled();
     });
 
     it("/project calls showProjectList", async () => {
@@ -534,7 +534,7 @@ describe("FeishuAdapter", () => {
     it("falls through to unknown-command warning", async () => {
       const a = makeCmd();
       await a.handleP2PCommand("c1", { command: "foo", args: [] });
-      expect(a.transport.sendText.mock.calls.at(-1)[1]).toContain("未知命令");
+      expect(a.transport.sendMarkdown.mock.calls.at(-1)[1]).toContain("未知命令");
     });
   });
 
@@ -542,27 +542,27 @@ describe("FeishuAdapter", () => {
   describe("handleP2PNewCommand / handleP2PSwitchCommand guards", () => {
     it("handleP2PNewCommand prompts when no project selected", async () => {
       const a = new FeishuAdapter() as any;
-      a.transport = { sendText: vi.fn(async () => "") };
+      a.transport = { sendText: vi.fn(async () => ""), sendMarkdown: vi.fn(async () => "") };
       a.gatewayClient = {};
       await a.handleP2PNewCommand("c1");
-      expect(a.transport.sendText.mock.calls[0][1]).toContain("/project");
+      expect(a.transport.sendMarkdown.mock.calls[0][1]).toContain("/project");
     });
 
     it("handleP2PNewCommand prompts when openId missing", async () => {
       const a = new FeishuAdapter() as any;
-      a.transport = { sendText: vi.fn(async () => "") };
+      a.transport = { sendText: vi.fn(async () => ""), sendMarkdown: vi.fn(async () => "") };
       a.gatewayClient = {};
       a.sessionMapper.getOrCreateP2PChat("c1", "");
       a.sessionMapper.setP2PLastProject("c1", {
         directory: "/x", engineType: "claude", projectId: "p",
       });
       await a.handleP2PNewCommand("c1");
-      expect(a.transport.sendText.mock.calls[0][1]).toContain("用户身份");
+      expect(a.transport.sendMarkdown.mock.calls[0][1]).toContain("用户身份");
     });
 
     it("handleP2PNewCommand calls createNewSessionForProject when ready", async () => {
       const a = new FeishuAdapter() as any;
-      a.transport = { sendText: vi.fn(async () => "") };
+      a.transport = { sendText: vi.fn(async () => ""), sendMarkdown: vi.fn(async () => "") };
       a.gatewayClient = {};
       a.sessionMapper.getOrCreateP2PChat("c1", "u1");
       a.sessionMapper.setP2PLastProject("c1", {
@@ -575,14 +575,14 @@ describe("FeishuAdapter", () => {
 
     it("handleP2PSwitchCommand prompts when no project selected", async () => {
       const a = new FeishuAdapter() as any;
-      a.transport = { sendText: vi.fn(async () => "") };
+      a.transport = { sendText: vi.fn(async () => ""), sendMarkdown: vi.fn(async () => "") };
       await a.handleP2PSwitchCommand("c1");
-      expect(a.transport.sendText.mock.calls[0][1]).toContain("/project");
+      expect(a.transport.sendMarkdown.mock.calls[0][1]).toContain("/project");
     });
 
     it("handleP2PSwitchCommand calls showSessionListForProject", async () => {
       const a = new FeishuAdapter() as any;
-      a.transport = { sendText: vi.fn(async () => "") };
+      a.transport = { sendText: vi.fn(async () => ""), sendMarkdown: vi.fn(async () => "") };
       a.sessionMapper.getOrCreateP2PChat("c1", "u1");
       a.sessionMapper.setP2PLastProject("c1", {
         directory: "/foo/x", engineType: "claude", projectId: "p",
@@ -597,14 +597,14 @@ describe("FeishuAdapter", () => {
   describe("showProjectList / showSessionListForProject", () => {
     it("showProjectList sends list and stores pending when projects exist", async () => {
       const a = new FeishuAdapter() as any;
-      a.transport = { sendText: vi.fn(async () => "") };
+      a.transport = { sendText: vi.fn(async () => ""), sendMarkdown: vi.fn(async () => "") };
       a.gatewayClient = {
         listAllProjects: vi.fn(async () => [
           { id: "p1", name: "alpha", directory: "/a", engineType: "claude", isDefault: false },
         ]),
       };
       await a.showProjectList("c1");
-      expect(a.transport.sendText).toHaveBeenCalled();
+      expect(a.transport.sendMarkdown).toHaveBeenCalled();
       // Pending only stored if p2pChat state exists
       a.sessionMapper.getOrCreateP2PChat("c1", "u1");
       await a.showProjectList("c1");
@@ -613,7 +613,7 @@ describe("FeishuAdapter", () => {
 
     it("showProjectList auto-uses default workspace when no real projects", async () => {
       const a = new FeishuAdapter() as any;
-      a.transport = { sendText: vi.fn(async () => "") };
+      a.transport = { sendText: vi.fn(async () => ""), sendMarkdown: vi.fn(async () => "") };
       a.gatewayClient = {
         listAllProjects: vi.fn(async () => [
           { id: "def", directory: "/def", engineType: "claude", isDefault: true },
@@ -626,15 +626,15 @@ describe("FeishuAdapter", () => {
 
     it("showProjectList sends empty list message when no projects at all", async () => {
       const a = new FeishuAdapter() as any;
-      a.transport = { sendText: vi.fn(async () => "") };
+      a.transport = { sendText: vi.fn(async () => ""), sendMarkdown: vi.fn(async () => "") };
       a.gatewayClient = { listAllProjects: vi.fn(async () => []) };
       await a.showProjectList("c1");
-      expect(a.transport.sendText).toHaveBeenCalled();
+      expect(a.transport.sendMarkdown).toHaveBeenCalled();
     });
 
     it("showSessionListForProject filters by directory and stores pending", async () => {
       const a = new FeishuAdapter() as any;
-      a.transport = { sendText: vi.fn(async () => "") };
+      a.transport = { sendText: vi.fn(async () => ""), sendMarkdown: vi.fn(async () => "") };
       a.gatewayClient = {
         listAllSessions: vi.fn(async () => [
           { id: "s1", directory: "/a", engineType: "claude", title: "x", projectId: "p" },
@@ -657,7 +657,7 @@ describe("FeishuAdapter", () => {
   describe("createTempSessionAndSend / queue / cleanup", () => {
     it("createTempSessionAndSend stores temp + enqueues message", async () => {
       const a = new FeishuAdapter() as any;
-      a.transport = { sendText: vi.fn(async () => "") };
+      a.transport = { sendText: vi.fn(async () => ""), sendMarkdown: vi.fn(async () => "") };
       a.gatewayClient = {
         createSession: vi.fn(async () => ({ id: "sess-2", engineType: "claude" })),
       };
@@ -674,7 +674,7 @@ describe("FeishuAdapter", () => {
 
     it("createTempSessionAndSend reports error on createSession failure", async () => {
       const a = new FeishuAdapter() as any;
-      a.transport = { sendText: vi.fn(async () => "") };
+      a.transport = { sendText: vi.fn(async () => ""), sendMarkdown: vi.fn(async () => "") };
       a.gatewayClient = {
         createSession: vi.fn(async () => { throw new Error("nope"); }),
       };
@@ -683,7 +683,7 @@ describe("FeishuAdapter", () => {
         { directory: "/d", projectId: "p" },
         "hi",
       );
-      expect(a.transport.sendText.mock.calls.at(-1)[1]).toContain("创建临时会话失败");
+      expect(a.transport.sendMarkdown.mock.calls.at(-1)[1]).toContain("创建临时会话失败");
     });
 
     it("enqueueP2PMessage no-ops without temp session", async () => {
@@ -753,7 +753,7 @@ describe("FeishuAdapter", () => {
   describe("handleProjectSelection / handleSessionSelection", () => {
     it("handleProjectSelection returns false on non-numeric input", async () => {
       const a = new FeishuAdapter() as any;
-      a.transport = { sendText: vi.fn(async () => "") };
+      a.transport = { sendText: vi.fn(async () => ""), sendMarkdown: vi.fn(async () => "") };
       a.gatewayClient = { listAllSessions: vi.fn(async () => []) };
       const ok = await a.handleProjectSelection("c1", "abc", {
         type: "project",
@@ -764,7 +764,7 @@ describe("FeishuAdapter", () => {
 
     it("handleProjectSelection returns false on out-of-range index", async () => {
       const a = new FeishuAdapter() as any;
-      a.transport = { sendText: vi.fn(async () => "") };
+      a.transport = { sendText: vi.fn(async () => ""), sendMarkdown: vi.fn(async () => "") };
       a.gatewayClient = { listAllSessions: vi.fn(async () => []) };
       const ok = await a.handleProjectSelection("c1", "5", {
         type: "project",
@@ -775,7 +775,7 @@ describe("FeishuAdapter", () => {
 
     it("handleProjectSelection on valid index sets last project + shows sessions", async () => {
       const a = new FeishuAdapter() as any;
-      a.transport = { sendText: vi.fn(async () => "") };
+      a.transport = { sendText: vi.fn(async () => ""), sendMarkdown: vi.fn(async () => "") };
       a.gatewayClient = { listAllSessions: vi.fn(async () => []) };
       a.sessionMapper.getOrCreateP2PChat("c1", "u1");
       const ok = await a.handleProjectSelection("c1", "1", {
@@ -790,7 +790,7 @@ describe("FeishuAdapter", () => {
 
     it("handleSessionSelection returns false on non-numeric input", async () => {
       const a = new FeishuAdapter() as any;
-      a.transport = { sendText: vi.fn(async () => "") };
+      a.transport = { sendText: vi.fn(async () => ""), sendMarkdown: vi.fn(async () => "") };
       a.sessionMapper.getOrCreateP2PChat("c1", "u1");
       const ok = await a.handleSessionSelection("c1", "abc", {
         type: "session", directory: "/d", projectId: "p",
@@ -801,7 +801,7 @@ describe("FeishuAdapter", () => {
 
     it("handleSessionSelection returns false when openId missing", async () => {
       const a = new FeishuAdapter() as any;
-      a.transport = { sendText: vi.fn(async () => "") };
+      a.transport = { sendText: vi.fn(async () => ""), sendMarkdown: vi.fn(async () => "") };
       const ok = await a.handleSessionSelection("c1", "1", {
         type: "session", directory: "/d", projectId: "p",
         sessions: [{ id: "s1", engineType: "claude" }],
@@ -811,7 +811,7 @@ describe("FeishuAdapter", () => {
 
     it("handleSessionSelection short-circuits if session already has a group", async () => {
       const a = new FeishuAdapter() as any;
-      a.transport = { sendText: vi.fn(async () => "") };
+      a.transport = { sendText: vi.fn(async () => ""), sendMarkdown: vi.fn(async () => "") };
       a.sessionMapper.getOrCreateP2PChat("c1", "u1");
       a.sessionMapper.createGroupBinding(makeBinding({ chatId: "g1", conversationId: "s1" }));
       a.createGroupForSession = vi.fn(async () => undefined);
@@ -821,12 +821,12 @@ describe("FeishuAdapter", () => {
       });
       expect(ok).toBe(true);
       expect(a.createGroupForSession).not.toHaveBeenCalled();
-      expect(a.transport.sendText.mock.calls.at(-1)[1]).toContain("已有对应的群聊");
+      expect(a.transport.sendMarkdown.mock.calls.at(-1)[1]).toContain("已有对应的群聊");
     });
 
     it("handleSessionSelection on valid index calls createGroupForSession", async () => {
       const a = new FeishuAdapter() as any;
-      a.transport = { sendText: vi.fn(async () => "") };
+      a.transport = { sendText: vi.fn(async () => ""), sendMarkdown: vi.fn(async () => "") };
       a.sessionMapper.getOrCreateP2PChat("c1", "u1");
       a.createGroupForSession = vi.fn(async () => undefined);
       const ok = await a.handleSessionSelection("c1", "1", {
@@ -842,7 +842,7 @@ describe("FeishuAdapter", () => {
   describe("handlePendingSelection dispatch", () => {
     it("dispatches type=project to handleProjectSelection", async () => {
       const a = new FeishuAdapter() as any;
-      a.transport = { sendText: vi.fn(async () => "") };
+      a.transport = { sendText: vi.fn(async () => ""), sendMarkdown: vi.fn(async () => "") };
       a.gatewayClient = { listAllSessions: vi.fn(async () => []) };
       a.sessionMapper.getOrCreateP2PChat("c1", "u1");
       const ok = await a.handlePendingSelection("c1", "1", {
@@ -854,7 +854,7 @@ describe("FeishuAdapter", () => {
 
     it("dispatches type=session to handleSessionSelection", async () => {
       const a = new FeishuAdapter() as any;
-      a.transport = { sendText: vi.fn(async () => "") };
+      a.transport = { sendText: vi.fn(async () => ""), sendMarkdown: vi.fn(async () => "") };
       a.sessionMapper.getOrCreateP2PChat("c1", "u1");
       a.createGroupForSession = vi.fn(async () => undefined);
       const ok = await a.handlePendingSelection("c1", "1", {
@@ -875,14 +875,14 @@ describe("FeishuAdapter", () => {
   describe("handleGroupMessage / handleGroupCommand", () => {
     it("handleGroupMessage warns when no binding", async () => {
       const a = new FeishuAdapter() as any;
-      a.transport = { sendText: vi.fn(async () => "") };
+      a.transport = { sendText: vi.fn(async () => ""), sendMarkdown: vi.fn(async () => "") };
       await a.handleGroupMessage("g1", "hi");
-      expect(a.transport.sendText.mock.calls[0][1]).toContain("未绑定");
+      expect(a.transport.sendMarkdown.mock.calls[0][1]).toContain("未绑定");
     });
 
     it("handleGroupMessage routes commands to handleGroupCommand", async () => {
       const a = new FeishuAdapter() as any;
-      a.transport = { sendText: vi.fn(async () => "") };
+      a.transport = { sendText: vi.fn(async () => ""), sendMarkdown: vi.fn(async () => "") };
       a.sessionMapper.createGroupBinding(makeBinding());
       a.handleGroupCommand = vi.fn(async () => undefined);
       await a.handleGroupMessage("g1", "/help");
@@ -891,7 +891,7 @@ describe("FeishuAdapter", () => {
 
     it("handleGroupMessage routes pending question reply", async () => {
       const a = new FeishuAdapter() as any;
-      a.transport = { sendText: vi.fn(async () => "") };
+      a.transport = { sendText: vi.fn(async () => ""), sendMarkdown: vi.fn(async () => "") };
       a.gatewayClient = { replyQuestion: vi.fn(async () => undefined) };
       a.sessionMapper.createGroupBinding(makeBinding());
       a.sessionMapper.setPendingQuestion("g1", { questionId: "q-1", sessionId: "s1" });
@@ -904,7 +904,7 @@ describe("FeishuAdapter", () => {
 
     it("handleGroupMessage routes plain text to sendToEngine", async () => {
       const a = new FeishuAdapter() as any;
-      a.transport = { sendText: vi.fn(async () => "") };
+      a.transport = { sendText: vi.fn(async () => ""), sendMarkdown: vi.fn(async () => "") };
       a.sessionMapper.createGroupBinding(makeBinding());
       a.sendToEngine = vi.fn(async () => undefined);
       await a.handleGroupMessage("g1", "hello");
@@ -913,23 +913,23 @@ describe("FeishuAdapter", () => {
 
     it("handleGroupCommand /help sends help text", async () => {
       const a = new FeishuAdapter() as any;
-      a.transport = { sendText: vi.fn(async () => "") };
+      a.transport = { sendText: vi.fn(async () => ""), sendMarkdown: vi.fn(async () => "") };
       a.gatewayClient = {};
       const binding = makeBinding();
       await a.handleGroupCommand("g1", binding, { command: "help", args: [] });
-      expect(a.transport.sendText).toHaveBeenCalled();
+      expect(a.transport.sendMarkdown).toHaveBeenCalled();
     });
 
     it("handleGroupCommand falls through to unknown-command warning", async () => {
       const a = new FeishuAdapter() as any;
-      a.transport = { sendText: vi.fn(async () => "") };
+      a.transport = { sendText: vi.fn(async () => ""), sendMarkdown: vi.fn(async () => "") };
       a.gatewayClient = {
         cancelMessage: vi.fn(),
         listMessages: vi.fn(async () => []),
       };
       const binding = makeBinding();
       await a.handleGroupCommand("g1", binding, { command: "foo", args: [] });
-      expect(a.transport.sendText.mock.calls.at(-1)[1]).toContain("未知命令");
+      expect(a.transport.sendMarkdown.mock.calls.at(-1)[1]).toContain("未知命令");
     });
 
     it("handleGroupCommand returns when transport or gateway missing", async () => {
@@ -1003,7 +1003,7 @@ describe("FeishuAdapter", () => {
   describe("gateway event handlers", () => {
     function makeGw() {
       const a = new FeishuAdapter() as any;
-      a.transport = { sendText: vi.fn(async () => ""), sendMessageTo: vi.fn(async () => "") };
+      a.transport = { sendText: vi.fn(async () => ""), sendMarkdown: vi.fn(async () => ""), sendMessageTo: vi.fn(async () => "") };
       a.streamingController = {
         applyPart: vi.fn(),
         finalize: vi.fn(),
@@ -1114,7 +1114,7 @@ describe("FeishuAdapter", () => {
         id: "q-1", sessionId: "conv-1",
         questions: [{ question: "go?", options: [{ label: "yes" }, { label: "no" }] }],
       });
-      expect(a.transport.sendText).toHaveBeenCalled();
+      expect(a.transport.sendMarkdown).toHaveBeenCalled();
       expect(a.sessionMapper.getPendingQuestion("c1")?.questionId).toBe("q-1");
     });
 
@@ -1126,13 +1126,13 @@ describe("FeishuAdapter", () => {
         lastActiveAt: Date.now(), messageQueue: [], processing: false,
       });
       a.handleQuestionAsked({ id: "q-1", sessionId: "conv-1", questions: [] });
-      expect(a.transport.sendText.mock.calls[0][1]).toContain("无选项");
+      expect(a.transport.sendMarkdown.mock.calls[0][1]).toContain("无选项");
     });
 
     it("handleQuestionAsked early-returns when no chat target found", () => {
       const a = makeGw();
       a.handleQuestionAsked({ id: "q-1", sessionId: "missing", questions: [] });
-      expect(a.transport.sendText).not.toHaveBeenCalled();
+      expect(a.transport.sendMarkdown).not.toHaveBeenCalled();
     });
   });
 
@@ -1192,11 +1192,11 @@ describe("FeishuAdapter", () => {
       const a = new FeishuAdapter() as any;
       a.larkClient = { im: { chat: { create: vi.fn() } } };
       a.gatewayClient = {};
-      a.transport = { sendText: vi.fn(async () => "") };
+      a.transport = { sendText: vi.fn(async () => ""), sendMarkdown: vi.fn(async () => "") };
       a.sessionMapper.createGroupBinding(makeBinding({ conversationId: "conv-1" }));
       await a.createGroupForSession("u1", "conv-1", "claude", "/d", "p", "alpha", "p2p");
       expect(a.larkClient.im.chat.create).not.toHaveBeenCalled();
-      expect(a.transport.sendText.mock.calls[0][1]).toContain("Session already has a group");
+      expect(a.transport.sendMarkdown.mock.calls[0][1]).toContain("群聊已存在");
     });
 
     it("creates a group, registers binding, and sends welcome card", async () => {
@@ -1213,11 +1213,14 @@ describe("FeishuAdapter", () => {
       };
       a.transport = {
         sendText: vi.fn(async () => ""),
+        sendMarkdown: vi.fn(async () => ""),
         sendRichContent: vi.fn(async () => ""),
       };
       await a.createGroupForSession("u1", "conv-2", "claude", "/d", "p", "alpha", "p2p");
       expect(a.larkClient.im.chat.create).toHaveBeenCalled();
       expect(a.transport.sendRichContent).toHaveBeenCalled();
+      expect(a.transport.sendMarkdown.mock.calls.at(-1)[1]).toContain("群聊已创建");
+      expect(a.transport.sendMarkdown.mock.calls.at(-1)[1]).toContain("**[alpha] MyTitle**");
       expect(a.sessionMapper.getGroupBinding("new-g1")).toBeDefined();
     });
 
@@ -1225,16 +1228,16 @@ describe("FeishuAdapter", () => {
       const a = new FeishuAdapter() as any;
       a.larkClient = { im: { chat: { create: vi.fn(async () => ({ data: {} })) } } };
       a.gatewayClient = { getSession: vi.fn(async () => null) };
-      a.transport = { sendText: vi.fn(async () => "") };
+      a.transport = { sendText: vi.fn(async () => ""), sendMarkdown: vi.fn(async () => "") };
       await a.createGroupForSession("u1", "conv-3", "claude", "/d", "p", "alpha", "p2p");
-      expect(a.transport.sendText.mock.calls.at(-1)[1]).toContain("Failed to create group chat");
+      expect(a.transport.sendMarkdown.mock.calls.at(-1)[1]).toContain("创建群聊失败");
     });
 
     it("handles concurrent creation gracefully (markCreating returns false)", async () => {
       const a = new FeishuAdapter() as any;
       a.larkClient = { im: { chat: { create: vi.fn() } } };
       a.gatewayClient = {};
-      a.transport = { sendText: vi.fn(async () => "") };
+      a.transport = { sendText: vi.fn(async () => ""), sendMarkdown: vi.fn(async () => "") };
       a.sessionMapper.markCreating("conv-x");
       await a.createGroupForSession("u1", "conv-x", "claude", "/d", "p", "alpha", "p2p");
       expect(a.larkClient.im.chat.create).not.toHaveBeenCalled();
@@ -1246,9 +1249,9 @@ describe("FeishuAdapter", () => {
         im: { chat: { create: vi.fn(async () => { throw new Error("boom"); }) } },
       };
       a.gatewayClient = { getSession: vi.fn(async () => null) };
-      a.transport = { sendText: vi.fn(async () => "") };
+      a.transport = { sendText: vi.fn(async () => ""), sendMarkdown: vi.fn(async () => "") };
       await a.createGroupForSession("u1", "conv-4", "claude", "/d", "p", "alpha", "p2p");
-      expect(a.transport.sendText.mock.calls.at(-1)[1]).toContain("Failed to create group");
+      expect(a.transport.sendMarkdown.mock.calls.at(-1)[1]).toContain("创建群聊失败");
     });
   });
 
@@ -1258,6 +1261,7 @@ describe("FeishuAdapter", () => {
       const a = new FeishuAdapter() as any;
       a.transport = {
         sendText: vi.fn(async () => ""),
+        sendMarkdown: vi.fn(async () => ""),
         sendMessageTo: vi.fn(async () => ""),
       };
       a.gatewayClient = {
@@ -1363,6 +1367,10 @@ describe("FeishuAdapter", () => {
         ]),
       };
       await a.showProjectListFromMenu("u1", undefined, "u1", "open_id");
+      expect(a.transport.sendMessageTo.mock.calls[0][2]).toBe("interactive");
+      const card = JSON.parse(a.transport.sendMessageTo.mock.calls[0][3]);
+      expect(card.elements[0]).toMatchObject({ tag: "markdown" });
+      expect(card.elements[0].content).toContain("**📋 项目列表**");
       const pending = a.sessionMapper.takePendingSelectionByOpenId("u1");
       expect(pending?.type).toBe("project");
     });
@@ -1377,6 +1385,7 @@ describe("FeishuAdapter", () => {
       };
       a.sessionMapper.getOrCreateP2PChat("c1", "u1");
       await a.showProjectListFromMenu("u1", "c1", "c1", "chat_id");
+      expect(a.transport.sendMessageTo.mock.calls[0][2]).toBe("interactive");
       expect(a.sessionMapper.getPendingSelection("c1")?.type).toBe("project");
     });
   });

@@ -199,6 +199,7 @@ export function convertProviders(engineType: EngineType, response: ProviderListR
     if (!response.connected.includes(provider.id)) continue;
 
     for (const model of Object.values(provider.models)) {
+      const capabilities = model.capabilities;
       models.push({
         modelId: `${provider.id}/${model.id}`,
         name: model.name,
@@ -210,15 +211,15 @@ export function convertProviders(engineType: EngineType, response: ProviderListR
           input: model.cost.input,
           output: model.cost.output,
           cache: {
-            read: model.cost.cache_read ?? 0,
-            write: model.cost.cache_write ?? 0,
+            read: model.cost.cache.read ?? 0,
+            write: model.cost.cache.write ?? 0,
           },
         } : undefined,
         capabilities: {
-          temperature: model.temperature,
-          reasoning: model.reasoning,
-          attachment: model.attachment,
-          toolcall: model.tool_call,
+          temperature: capabilities?.temperature ?? false,
+          reasoning: capabilities?.reasoning ?? false,
+          attachment: capabilities?.attachment ?? false,
+          toolcall: capabilities?.toolcall ?? false,
         },
         meta: {
           status: model.status,

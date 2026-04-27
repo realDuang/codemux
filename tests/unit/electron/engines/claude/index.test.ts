@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { sep } from "node:path";
 import type { MessageBuffer } from "../../../../../electron/main/engines/engine-adapter";
 
 // ---------------------------------------------------------------------------
@@ -236,6 +237,36 @@ describe("ClaudeCodeAdapter", () => {
     it("returns a session with 'New Chat' as default title", async () => {
       const session = await adapter.createSession("/repo");
       expect(session.title).toBe("New Chat");
+    });
+  });
+
+  describe("Claude executable options", () => {
+    it("adds the resolved native executable path to SDK options", () => {
+      vi.spyOn(adapter as any, "resolveClaudeExecutablePath").mockReturnValue("/native/claude");
+
+      const options = (adapter as any).withClaudeExecutablePath({ model: "claude-sonnet" });
+
+      expect(options).toEqual({
+        model: "claude-sonnet",
+        pathToClaudeCodeExecutable: "/native/claude",
+      });
+    });
+
+    it("omits the executable path when the native package is unavailable", () => {
+      vi.spyOn(adapter as any, "resolveClaudeExecutablePath").mockReturnValue(undefined);
+
+      const options = (adapter as any).withClaudeExecutablePath({ model: "claude-sonnet" });
+
+      expect(options).toEqual({ model: "claude-sonnet" });
+      expect(JSON.stringify(options)).not.toContain("cli.js");
+    });
+
+    it("rewrites ASAR executable paths to the unpacked location", () => {
+      const input = ["", "App", "resources", "app.asar", "node_modules", "pkg", "claude"].join(sep);
+
+      expect((adapter as any).toUnpackedAsarPath(input)).toBe(
+        ["", "App", "resources", "app.asar.unpacked", "node_modules", "pkg", "claude"].join(sep),
+      );
     });
   });
 
@@ -2858,6 +2889,18 @@ describe("ClaudeCodeAdapter", () => {
       await (adapter as any).getOrCreateV2Session("cs_1", "/repo", {});
 
       expect(unstable_v2_createSessionMock).toHaveBeenCalled();
+    });
+
+    it("passes the native Claude executable path to created sessions", async () => {
+      seedSession(adapter, "cs_1");
+      vi.spyOn(adapter as any, "resolveClaudeExecutablePath").mockReturnValue("/native/claude");
+      unstable_v2_createSessionMock.mockReturnValue(makeMockV2Session());
+
+      await (adapter as any).getOrCreateV2Session("cs_1", "/repo", {});
+
+      const options = unstable_v2_createSessionMock.mock.calls[0][0];
+      expect(options.pathToClaudeCodeExecutable).toBe("/native/claude");
+      expect(options.pathToClaudeCodeExecutable).not.toContain("cli.js");
     });
 
     it("recreates session when transport is not ready", async () => {

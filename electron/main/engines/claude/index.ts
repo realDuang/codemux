@@ -280,8 +280,9 @@ export class ClaudeCodeAdapter extends EngineAdapter {
     claudeLog.info("Starting Claude Code adapter...");
 
     try {
-      // Claude Code CLI is available globally (installed via npm install -g @anthropic-ai/claude-code)
-      // The SDK will find it automatically, or we can specify pathToClaudeCodeExecutable.
+      // Claude Code is provided by the SDK's platform-specific optional binary
+      // package. We resolve it explicitly so Electron ASAR builds can point at
+      // the unpacked native executable.
       // No separate server process to manage — the SDK spawns CLI subprocesses per session.
 
       // Model is determined per-request via sendMessage's modelId parameter,
@@ -323,13 +324,12 @@ export class ClaudeCodeAdapter extends EngineAdapter {
 
       const q = sdkQuery({
         prompt: "",
-        options: {
+        options: this.withClaudeExecutablePath({
           model: this.currentModelId ?? "claude-sonnet-4-20250514",
           env: sdkEnv,
           abortController: new AbortController(),
-          pathToClaudeCodeExecutable: this.resolveCliPath(),
           stderr: this.stderrCallback,
-        } as any,
+        }) as any,
       });
 
       try {
@@ -1138,13 +1138,12 @@ export class ClaudeCodeAdapter extends EngineAdapter {
 
       const q = sdkQuery({
         prompt: "",
-        options: {
+        options: this.withClaudeExecutablePath({
           model: this.currentModelId ?? "claude-sonnet-4-20250514",
           env: sdkEnv,
           abortController: new AbortController(),
-          pathToClaudeCodeExecutable: this.resolveCliPath(),
           stderr: this.stderrCallback,
-        } as any,
+        }) as any,
       });
 
       try {
@@ -1724,30 +1723,74 @@ export class ClaudeCodeAdapter extends EngineAdapter {
   // ==========================================================================
 
   /**
-   * Resolve the SDK's cli.js path for child process spawning.
-   * In production Electron, the SDK is inside app.asar but child processes
-   * can't read from ASAR archives. Rewrite to the app.asar.unpacked path.
+   * Add the Claude Code executable path when the SDK's native binary package is
+   * installed. New SDK versions no longer ship cli.js in the main package.
    */
-  private resolveCliPath(): string | undefined {
-    try {
-      const _require = createRequire(import.meta.url);
-      // Resolve the SDK's main entry point (listed in package.json "exports"),
-      // then derive cli.js from the same directory. We can't require.resolve
-      // cli.js directly because the SDK's "exports" field doesn't list it.
-      const sdkMain = _require.resolve("@anthropic-ai/claude-agent-sdk");
-      const cliPath = join(dirname(sdkMain), "cli.js");
-      claudeLog.debug(`[Claude] resolveCliPath: raw=${cliPath}`);
-      const asarMarker = `app.asar${sep}`;
-      if (cliPath.includes(asarMarker)) {
-        const unpacked = cliPath.replace(asarMarker, `app.asar.unpacked${sep}`);
-        claudeLog.info(`[Claude] resolveCliPath: ASAR rewrite → ${unpacked}`);
-        return unpacked;
+  private withClaudeExecutablePath<T extends Record<string, unknown>>(options: T): T & { pathToClaudeCodeExecutable?: string } {
+    const executablePath = this.resolveClaudeExecutablePath();
+    return executablePath ? { ...options, pathToClaudeCodeExecutable: executablePath } : options;
+  }
+
+  private resolvedClaudeExecutablePath: string | undefined;
+  private didResolveClaudeExecutablePath = false;
+
+  private resolveClaudeExecutablePath(): string | undefined {
+    if (this.didResolveClaudeExecutablePath) return this.resolvedClaudeExecutablePath;
+
+    this.didResolveClaudeExecutablePath = true;
+    const _require = createRequire(import.meta.url);
+    const executableName = process.platform === "win32" ? "claude.exe" : "claude";
+
+    for (const packageName of this.getClaudeBinaryPackageCandidates()) {
+      try {
+        const packageJsonPath = _require.resolve(`${packageName}/package.json`);
+        const rawPath = join(dirname(packageJsonPath), executableName);
+        const executablePath = this.toUnpackedAsarPath(rawPath);
+        if (existsSync(executablePath)) {
+          this.resolvedClaudeExecutablePath = executablePath;
+          claudeLog.debug(`[Claude] Resolved native executable: ${executablePath}`);
+          return executablePath;
+        }
+        claudeLog.warn(`[Claude] Native executable package ${packageName} is missing ${executableName}`);
+      } catch (err) {
+        claudeLog.debug(`[Claude] Native executable package ${packageName} not resolved: ${err}`);
       }
-      return cliPath;
-    } catch (err) {
-      claudeLog.warn("[Claude] resolveCliPath: resolve failed:", err);
-      return undefined;
     }
+
+    claudeLog.warn(
+      `[Claude] Native executable for ${process.platform}-${process.arch} not found. ` +
+        "Reinstall @anthropic-ai/claude-agent-sdk with optional dependencies enabled.",
+    );
+    return undefined;
+  }
+
+  private getClaudeBinaryPackageCandidates(): string[] {
+    if (process.platform === "darwin" && (process.arch === "arm64" || process.arch === "x64")) {
+      return [`@anthropic-ai/claude-agent-sdk-darwin-${process.arch}`];
+    }
+    if (process.platform === "win32" && (process.arch === "arm64" || process.arch === "x64")) {
+      return [`@anthropic-ai/claude-agent-sdk-win32-${process.arch}`];
+    }
+    if (process.platform === "linux" && (process.arch === "arm64" || process.arch === "x64")) {
+      const base = `@anthropic-ai/claude-agent-sdk-linux-${process.arch}`;
+      return this.isLinuxMusl() ? [`${base}-musl`, base] : [base, `${base}-musl`];
+    }
+    return [];
+  }
+
+  private isLinuxMusl(): boolean {
+    if (process.platform !== "linux") return false;
+    const report = process.report?.getReport?.() as { header?: { glibcVersionRuntime?: string } } | undefined;
+    return !report?.header?.glibcVersionRuntime;
+  }
+
+  private toUnpackedAsarPath(filePath: string): string {
+    const asarMarker = `app.asar${sep}`;
+    if (!filePath.includes(asarMarker)) return filePath;
+
+    const unpacked = filePath.replace(asarMarker, `app.asar.unpacked${sep}`);
+    claudeLog.info(`[Claude] ASAR executable rewrite: ${unpacked}`);
+    return unpacked;
   }
 
   /**
@@ -1831,17 +1874,16 @@ export class ClaudeCodeAdapter extends EngineAdapter {
       promptAppend += `\n\nThe user has installed the following additional skills (invokable via the Skill tool): ${this.cachedSkillNames.join(", ")}. When the user's request matches one of these skills, use the Skill tool to invoke it.`;
     }
 
-    const sdkOptions: any = {
+    const sdkOptions: any = this.withClaudeExecutablePath({
       model: opts.model ?? this.currentModelId ?? "claude-sonnet-4-20250514",
       env,
       permissionMode: opts.permissionMode ?? "default",
       allowedTools: ["Read", "Write", "Edit", "Grep", "Glob", "Bash", "WebFetch", "WebSearch", "Task", "TodoWrite", "TodoRead", "NotebookEdit", "Skill"],
       canUseTool: this.createCanUseTool(sessionId),
       systemPrompt: { type: "preset" as const, preset: "claude_code" as const, append: promptAppend },
-      pathToClaudeCodeExecutable: this.resolveCliPath(),
       stderr: this.stderrCallback,
       maxThinkingTokens: 10240,
-    };
+    });
 
     // Apply reasoning effort level if set for this session
     const reasoningEffort = this.sessionReasoningEfforts.get(sessionId);
@@ -2062,14 +2104,13 @@ export class ClaudeCodeAdapter extends EngineAdapter {
 
     const q = sdkQuery({
       prompt: "",
-      options: {
+      options: this.withClaudeExecutablePath({
         model: "claude-sonnet-4-20250514",
         env,
         cwd,
         abortController: new AbortController(),
-        pathToClaudeCodeExecutable: this.resolveCliPath(),
         stderr: this.stderrCallback,
-      } as any,
+      }) as any,
     });
 
     try {

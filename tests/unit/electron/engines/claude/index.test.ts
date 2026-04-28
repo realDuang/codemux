@@ -3375,4 +3375,3 @@ describe("ClaudeCodeAdapter", () => {
     });
   });
 });
-

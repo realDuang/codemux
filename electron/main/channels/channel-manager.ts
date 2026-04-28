@@ -5,8 +5,8 @@
 
 import fs from "fs";
 import path from "path";
-import { app } from "electron";
 import { channelLog } from "../services/logger";
+import { getChannelConfigPath, getChannelsPath } from "../services/app-paths";
 import {
   ChannelAdapter,
   type ChannelConfig,
@@ -17,12 +17,11 @@ import type { WebhookServer } from "./webhook-server";
 // --- Config persistence helpers ---
 
 function getChannelConfigDir(): string {
-  return path.join(app.getPath("userData"), "channels");
+  return getChannelsPath();
 }
 
 function loadConfig(channelType: string): ChannelConfig | null {
-  const dir = getChannelConfigDir();
-  const filePath = path.join(dir, `${channelType}.json`);
+  const filePath = getChannelConfigPath(channelType);
   if (!fs.existsSync(filePath)) return null;
   try {
     const raw = fs.readFileSync(filePath, "utf-8");
@@ -37,7 +36,7 @@ function saveConfig(config: ChannelConfig): void {
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true });
   }
-  const filePath = path.join(dir, `${config.type}.json`);
+  const filePath = getChannelConfigPath(config.type);
   const tmpPath = `${filePath}.tmp`;
 
   // Exclude ephemeral runtime data (gatewayUrl) from persisted config

@@ -134,7 +134,7 @@ vi.mock("../../../electron/main/services/logger", () => ({
   saveSettings: mockSaveSettings,
 }));
 
-vi.mock("../../../electron/main/index", () => ({
+vi.mock("../../../electron/main/app-main", () => ({
   isStartupReady: mockIsStartupReady,
   channelManager: mockChannelManager,
 }));

@@ -7,9 +7,10 @@ import { productionServer } from "./services/production-server";
 import { updateManager } from "./services/update-manager";
 import { trayManager } from "./services/tray-manager";
 import { getLogFilePath, getFileLogLevel, setFileLogLevel, loadSettings, saveSettings } from "./services/logger";
-import { isStartupReady } from "./index";
-import { channelManager } from "./index";
+import { isStartupReady } from "./app-main";
+import { channelManager } from "./app-main";
 import { GATEWAY_PORT } from "../../shared/ports";
+import { getUserDataPath } from "./services/app-paths";
 import { getQrCode as ilinkGetQrCode, pollQrStatus as ilinkPollQrStatus } from "./channels/weixin-ilink/weixin-ilink-qr-flow";
 
 export function registerIpcHandlers(): void {
@@ -22,7 +23,7 @@ export function registerIpcHandlers(): void {
       platform: process.platform,
       arch: process.arch,
       version: app.getVersion(),
-      userDataPath: app.getPath("userData"),
+      userDataPath: getUserDataPath(),
       homePath: app.getPath("home"),
       isPackaged: app.isPackaged,
     };
@@ -199,7 +200,7 @@ export function registerIpcHandlers(): void {
   ipcMain.handle("gateway:getPort", async () => {
     // In packaged mode, GatewayServer attaches to the production HTTP server
     // at /ws path, so we must return the full WebSocket URL.
-    // In dev mode, GatewayServer listens on its own port (4200).
+    // In dev mode, GatewayServer listens on its configured standalone port.
     if (app.isPackaged && productionServer.isRunning()) {
       return `ws://127.0.0.1:${productionServer.getPort()}/ws`;
     }

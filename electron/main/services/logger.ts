@@ -3,6 +3,7 @@ import { app } from "electron";
 import path from "node:path";
 import fs from "node:fs";
 import type { LevelOption } from "electron-log";
+import { getLogsPath, getSettingsPath, isDevIsolatedMode } from "./app-paths";
 
 // Configure electron-log for the main process.
 // All logs (main + renderer forwarded via WebSocket) go to a single file.
@@ -11,8 +12,8 @@ import type { LevelOption } from "electron-log";
 log.transports.file.resolvePathFn = (variables) => {
   // Use Electron's standard logs directory when running as packaged app,
   // otherwise fallback to the default library directory.
-  const dir = app.isPackaged
-    ? app.getPath("logs")
+  const dir = app.isPackaged || isDevIsolatedMode()
+    ? getLogsPath()
     : variables.libraryDefaultDir;
   return path.join(dir, variables.fileName ?? "main.log");
 };
@@ -23,10 +24,6 @@ log.transports.file.maxSize = 5 * 1024 * 1024;
 // --- Persisted settings ---
 
 const VALID_LEVELS: LevelOption[] = ["error", "warn", "info", "verbose", "debug", "silly", false];
-
-function getSettingsPath(): string {
-  return path.join(app.getPath("userData"), "settings.json");
-}
 
 function loadSettings(): Record<string, unknown> {
   try {

@@ -4,6 +4,7 @@ import path from "path";
 import fs from "fs";
 import os from "os";
 import { tunnelLog } from "./logger";
+import { getCloudflaredConfigPath } from "./app-paths";
 
 export interface TunnelConfig {
   /** Custom hostname for named tunnel (e.g. "codemux.example.com") */
@@ -72,8 +73,7 @@ class TunnelManager {
    * ~/.cloudflared/config.yml with different ingress rules.
    */
   private writeNamedTunnelConfig(tunnelId: string, hostname: string, port: number): string {
-    const userDataPath = app.getPath("userData");
-    const configPath = path.join(userDataPath, "cloudflared-config.yml");
+    const configPath = getCloudflaredConfigPath();
     const credentialsPath = path.join(os.homedir(), ".cloudflared", `${tunnelId}.json`);
 
     const bareHostname = hostname.replace(/^https?:\/\//, "");

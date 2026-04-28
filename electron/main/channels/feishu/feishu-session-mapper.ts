@@ -7,8 +7,8 @@
 
 import fs from "fs";
 import path from "path";
-import { app } from "electron";
 import type { EngineType } from "../../../../src/types/unified";
+import { getChannelBindingsPath } from "../../services/app-paths";
 import type { GroupBinding, P2PChatState, PendingQuestion, PendingSelection, StreamingSession, TempSession } from "./feishu-types";
 import { feishuLog, type ScopedLogger } from "../../services/logger";
 
@@ -26,8 +26,7 @@ interface PersistedGroupBinding {
 }
 
 function getBindingsFilePath(): string {
-  const dir = path.join(app.getPath("userData"), "channels");
-  return path.join(dir, "feishu-bindings.json");
+  return getChannelBindingsPath("feishu");
 }
 
 export class FeishuSessionMapper {

@@ -1,4 +1,5 @@
 import { defineConfig, devices } from "@playwright/test";
+import { WEB_PORT } from "./shared/ports";
 
 export default defineConfig({
   testDir: "./tests/e2e/specs",
@@ -13,7 +14,7 @@ export default defineConfig({
   globalTeardown: "./tests/e2e/global-teardown.ts",
 
   use: {
-    baseURL: process.env.TEST_BASE_URL || "http://127.0.0.1:8233",
+    baseURL: process.env.TEST_BASE_URL || `http://127.0.0.1:${WEB_PORT}`,
     trace: "on-first-retry",
     screenshot: "only-on-failure",
   },

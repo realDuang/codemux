@@ -6,10 +6,10 @@
 
 import fs from "fs";
 import path from "path";
-import { app } from "electron";
 import type { EngineType, UnifiedProject, UnifiedSession } from "../../../src/types/unified";
 import type { StreamingSession } from "./streaming/streaming-types";
 import { channelLog } from "../services/logger";
+import { getChannelBindingsPath } from "../services/app-paths";
 
 // --- Base Types (platform-agnostic) ---
 
@@ -130,11 +130,9 @@ export class BaseSessionMapper<
 
   // --- Persistence ---
   private readonly channelType: string;
-  private readonly bindingsFileName: string;
 
   constructor(channelType: string, options?: { maxProcessedIds?: number }) {
     this.channelType = channelType;
-    this.bindingsFileName = `${channelType}-bindings.json`;
     this.maxProcessedIds = options?.maxProcessedIds ?? 1000;
   }
 
@@ -143,8 +141,7 @@ export class BaseSessionMapper<
   // =========================================================================
 
   private getBindingsFilePath(): string {
-    const dir = path.join(app.getPath("userData"), "channels");
-    return path.join(dir, this.bindingsFileName);
+    return getChannelBindingsPath(this.channelType);
   }
 
   /** Convert a persisted binding to a runtime binding. Override for custom fields. */

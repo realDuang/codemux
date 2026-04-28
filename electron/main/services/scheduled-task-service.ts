@@ -7,10 +7,11 @@
 
 import { EventEmitter } from "events";
 import { randomUUID } from "crypto";
-import { app, Notification } from "electron";
+import { Notification } from "electron";
 import path from "node:path";
 import fs from "node:fs";
 import { scheduledTaskLog } from "./logger";
+import { getScheduledTasksPath } from "./app-paths";
 import type { EngineManager } from "../gateway/engine-manager";
 import type {
   ScheduledTask,
@@ -498,7 +499,7 @@ export class ScheduledTaskService extends EventEmitter {
   // --- Persistence ----------------------------------------------------
 
   private getFilePath(): string {
-    return path.join(app.getPath("userData"), "scheduled-tasks.json");
+    return getScheduledTasksPath();
   }
 
   private loadFromDisk(): void {

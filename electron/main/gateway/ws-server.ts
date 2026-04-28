@@ -18,6 +18,7 @@ import log from "../services/logger";
 import { conversationStore } from "../services/conversation-store";
 import { scheduledTaskService } from "../services/scheduled-task-service";
 import { orchestratorService } from "../services/orchestrator-service";
+import { getSettingsPath } from "../services/app-paths";
 import {
   GatewayRequestType,
   GatewayNotificationType,
@@ -243,11 +244,7 @@ export class GatewayServer {
 
   private isWorktreeEnabled(): boolean {
     try {
-      const settingsPath = require("path").join(
-        require("electron").app.getPath("userData"),
-        "settings.json",
-      );
-      const raw = require("fs").readFileSync(settingsPath, "utf-8");
+      const raw = require("fs").readFileSync(getSettingsPath(), "utf-8");
       const settings = JSON.parse(raw);
       return settings.worktreeEnabled === true;
     } catch {

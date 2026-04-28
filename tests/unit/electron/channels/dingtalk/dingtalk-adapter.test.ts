@@ -20,7 +20,7 @@ vi.mock("../../../../../electron/main/services/logger", () => ({
 vi.mock("electron", () => ({
   app: {
     isPackaged: false,
-    getPath: vi.fn(() => "/mock/userData"),
+    getPath: vi.fn(() => process.env.RUNNER_TEMP ?? process.env.TMPDIR ?? process.cwd()),
   },
 }));
 

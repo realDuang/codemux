@@ -144,6 +144,7 @@ export interface LocaleDict {
     publicAccessDesc: string;
     starting: string;
     startFailed: string;
+    namedTunnelMissingCredentials: string;
     securityWarning: string;
     securityWarningDesc: string;
     accessPassword: string;
@@ -792,6 +793,7 @@ export const en: LocaleDict = {
     publicAccessDesc: "Access via Cloudflare tunnel from the internet",
     starting: "Starting tunnel, please wait...",
     startFailed: "Failed to start. Please ensure cloudflared is installed",
+    namedTunnelMissingCredentials: "Named Tunnel credentials were not found. Run the Cloudflare setup commands below before starting this custom domain.",
     securityWarning: "Security Warning:",
     securityWarningDesc: "Remote access allows full control of this device. Keep your access password safe and never share it with untrusted people.",
     accessPassword: "Access Password",

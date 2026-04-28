@@ -21,6 +21,7 @@ export interface TunnelInfo {
   status: "starting" | "running" | "stopped" | "error";
   startTime?: number;
   error?: string;
+  errorCode?: string;
 }
 
 export interface TunnelConfig {
@@ -243,9 +244,9 @@ export const devicesAPI = {
 
 // Tunnel API
 export const tunnelAPI = {
-  async start(port: number = WEB_STANDALONE_PORT): Promise<TunnelInfo | null> {
+  async start(port: number = WEB_STANDALONE_PORT, tunnelConfig?: TunnelConfig): Promise<TunnelInfo | null> {
     const api = getElectronAPI();
-    return api ? api.tunnel.start(port) : null;
+    return api ? api.tunnel.start(port, tunnelConfig) : null;
   },
 
   async stop(): Promise<void> {

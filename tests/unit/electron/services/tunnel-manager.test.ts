@@ -418,6 +418,26 @@ describe("TunnelManager", () => {
       expect(tunnelManager.getInfo().status).toBe("running");
       expect(tunnelManager.getInfo().url).toBe(infoBefore.url);
     });
+
+    it("ignores quick tunnel URLs in named tunnel output", async () => {
+      await tunnelManager.start(3000, { hostname: "codemux.example.com" });
+
+      mockProcess.stderr.emit(
+        "data",
+        Buffer.from("Visit https://random.trycloudflare.com for status"),
+      );
+
+      expect(tunnelManager.getInfo().url).toBe("https://codemux.example.com");
+      expect(tunnelManager.getInfo().status).toBe("starting");
+
+      mockProcess.stderr.emit(
+        "data",
+        Buffer.from("Registered tunnel connection https://random.trycloudflare.com"),
+      );
+
+      expect(tunnelManager.getInfo().url).toBe("https://codemux.example.com");
+      expect(tunnelManager.getInfo().status).toBe("running");
+    });
   });
 
   // -------------------------------------------------------------------------
@@ -476,36 +496,31 @@ describe("TunnelManager", () => {
   });
 
   // -------------------------------------------------------------------------
-  // start() — hostname but no credentials (fallback to quick tunnel)
+  // start() — hostname but no credentials
   // -------------------------------------------------------------------------
 
   describe("start() - hostname but no credentials", () => {
-    it("falls back to quick tunnel when no credentials found", async () => {
-      // detectTunnelId returns null
+    it("returns error when .cloudflared directory is missing", async () => {
       mockExistsSync.mockReturnValue(false);
 
-      await tunnelManager.start(3000, { hostname: "codemux.example.com" });
+      const info = await tunnelManager.start(3000, { hostname: "codemux.example.com" });
 
-      // Should use quick tunnel args, not named tunnel args
-      expect(mockSpawn).toHaveBeenCalledWith("cloudflared", [
-        "tunnel",
-        "--url",
-        "http://localhost:3000",
-      ]);
+      expect(info.status).toBe("error");
+      expect(info.errorCode).toBe("NAMED_TUNNEL_NO_CREDENTIALS");
+      expect(mockSpawn).not.toHaveBeenCalled();
       expect(mockWriteFileSync).not.toHaveBeenCalled();
     });
 
-    it("falls back to quick tunnel when .cloudflared dir exists but has no creds", async () => {
+    it("returns error when .cloudflared dir exists but has no creds", async () => {
       mockExistsSync.mockReturnValue(true);
       mockReaddirSync.mockReturnValue(["config.yml"]);
 
-      await tunnelManager.start(3000, { hostname: "codemux.example.com" });
+      const info = await tunnelManager.start(3000, { hostname: "codemux.example.com" });
 
-      expect(mockSpawn).toHaveBeenCalledWith("cloudflared", [
-        "tunnel",
-        "--url",
-        "http://localhost:3000",
-      ]);
+      expect(info.status).toBe("error");
+      expect(info.errorCode).toBe("NAMED_TUNNEL_NO_CREDENTIALS");
+      expect(mockSpawn).not.toHaveBeenCalled();
+      expect(mockWriteFileSync).not.toHaveBeenCalled();
     });
   });
 

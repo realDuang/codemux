@@ -138,5 +138,5 @@ Type `/help` in chat to see all available commands. Commands work in both P2P an
 - **Webhook Endpoint**: `/webhook/telegram` (POST)
 - **Webhook Auth**: Optional `X-Telegram-Bot-Api-Secret-Token` header verification
 - **Message Format**: MarkdownV2 with InlineKeyboardMarkup for interactive elements
-- **Persistence**: Session bindings saved to `~/.channels/telegram-bindings.json`
+- **Persistence**: Session bindings saved to Electron `userData/channels/telegram-bindings.json`
 - **Rate Limiting**: TokenBucket — 10 burst capacity, 30 tokens/sec refill

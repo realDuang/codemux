@@ -17,9 +17,6 @@ import type { WebhookServer } from "./webhook-server";
 // --- Config persistence helpers ---
 
 function getChannelConfigDir(): string {
-  if (!app.isPackaged) {
-    return path.join(process.cwd(), ".channels");
-  }
   return path.join(app.getPath("userData"), "channels");
 }
 

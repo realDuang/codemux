@@ -8,6 +8,7 @@ import { conversationStore } from "../services/conversation-store";
 import { getDefaultWorkspacePath } from "../services/default-workspace";
 import { engineManagerLog, getDefaultEngineFromSettings } from "../services/logger";
 import { timeId } from "../utils/id-gen";
+import { isDefaultTitle, isPromptFallbackTitle } from "../../../src/lib/session-utils";
 import type {
   EngineType,
   EngineInfo,
@@ -40,14 +41,25 @@ function normalizeDir(dir: string): string {
 }
 
 /** Compute the display title from a ConversationMeta — render-time priority. */
+function getUsableEngineTitle(conv: ConversationMeta): string | undefined {
+  const title = conv.engineTitle?.trim();
+  if (!title) return undefined;
+  if (isDefaultTitle(title)) return undefined;
+  if (isPromptFallbackTitle(title, conv.firstPrompt)) return undefined;
+  return title;
+}
+
+function getUsableEngineTitleCandidate(conv: ConversationMeta, title: string): string | undefined {
+  const trimmed = title.trim();
+  if (!trimmed) return undefined;
+  if (conv.customTitle?.trim() === trimmed) return undefined;
+  if (isDefaultTitle(trimmed)) return undefined;
+  if (isPromptFallbackTitle(trimmed, conv.firstPrompt)) return undefined;
+  return trimmed;
+}
+
 function computeDisplayTitle(conv: ConversationMeta): string {
-  return (
-    conv.customTitle ||
-    conv.engineTitle ||
-    conv.title || // legacy single-title field for pre-refactor data
-    conv.firstPrompt ||
-    "New Chat"
-  );
+  return conv.customTitle || getUsableEngineTitle(conv) || conv.firstPrompt || "New Chat";
 }
 
 /** Convert ConversationMeta → UnifiedSession for wire compatibility */
@@ -320,10 +332,10 @@ export class EngineManager extends EventEmitter {
       const convId = engineSessionId ? this.resolveConversationId(engineSessionId) : null;
 
       if (convId) {
-        // Persist engine-pushed title (no interception — render-time priority
-        // ensures customTitle wins over engineTitle when both are present)
-        if (data.session.title) {
-          conversationStore.setEngineTitle(convId, data.session.title);
+        const current = conversationStore.get(convId);
+        if (data.session.title && current) {
+          const title = getUsableEngineTitleCandidate(current, data.session.title);
+          if (title) conversationStore.setEngineTitle(convId, title);
         }
         // Persist engineMeta (e.g. ccSessionId for Claude Code session resumption)
         if (data.session.engineMeta) {
@@ -333,7 +345,10 @@ export class EngineManager extends EventEmitter {
             data.session.engineMeta as Record<string, unknown>,
           );
         }
-        this.emit("session.updated", this.rewriteSessionId(data as any, engineSessionId!, convId) as any);
+        const conv = conversationStore.get(convId);
+        if (conv) {
+          this.emit("session.updated", { session: convToSession(conv) });
+        }
       } else {
         this.emit("session.updated", data);
       }
@@ -584,7 +599,15 @@ export class EngineManager extends EventEmitter {
         parts,
       };
 
+      const hadFirstPrompt = !!conversationStore.get(conversationId)?.firstPrompt;
       await conversationStore.appendMessage(conversationId, convMessage);
+
+      if (!hadFirstPrompt) {
+        const updated = conversationStore.get(conversationId);
+        if (updated?.firstPrompt) {
+          this.emit("session.updated", { session: convToSession(updated) });
+        }
+      }
 
       engineManagerLog.debug(
         `Persisted user message ${msgId} to conversation ${conversationId}: ${parts.length} parts`,

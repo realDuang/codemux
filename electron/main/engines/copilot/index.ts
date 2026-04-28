@@ -8,6 +8,7 @@ import { tmpdir } from "os";
 
 import { timeId } from "../../utils/id-gen";
 import { CopilotClient, CopilotSession } from "@github/copilot-sdk";
+import { isPromptFallbackTitle } from "../../../../src/lib/session-utils";
 import type {
   SessionEvent,
   SessionConfig,
@@ -92,6 +93,12 @@ interface PendingQuestion {
 
 type CopilotReasoningEffort = NonNullable<SessionConfig["reasoningEffort"]>;
 
+const approvePermissionOnce = (): PermissionRequestResult => ({ kind: "approve-once" });
+const rejectPermission = (feedback?: string): PermissionRequestResult => (
+  feedback ? { kind: "reject", feedback } : { kind: "reject" }
+);
+const noPermissionResult = (): PermissionRequestResult => ({ kind: "no-result" });
+
 function buildCopilotSubprocessEnv(extraEnv?: Record<string, string>): NodeJS.ProcessEnv {
   const env = { ...process.env, ...extraEnv };
 
@@ -124,6 +131,7 @@ export class CopilotSdkAdapter extends EngineAdapter {
   private sessionModes = new Map<string, string>();
   private sessionReasoningEfforts = new Map<string, ReasoningEffort>();
   private sessionDirectories = new Map<string, string>();
+  private sessionTitles?: Map<string, string>;
 
   private sessionTodos = new Map<string, Map<string, { id: string; title: string; status: string }>>();
   private allowedAlwaysKinds = new Set<string>();
@@ -377,6 +385,17 @@ export class CopilotSdkAdapter extends EngineAdapter {
     this.sessionTodos.delete(sessionId);
   }
 
+  async renameSession(sessionId: string, title: string, directory?: string): Promise<void> {
+    const trimmed = title.trim();
+    if (!trimmed) return;
+    try {
+      const session = await this.ensureActiveSession(sessionId, directory);
+      await session.rpc.name.set({ name: trimmed.slice(0, 100) });
+    } catch (err) {
+      copilotLog.warn(`[Copilot][${sessionId}] renameSession failed:`, err);
+    }
+  }
+
   async sendMessage(
     sessionId: string,
     content: MessagePromptContent[],
@@ -589,7 +608,7 @@ export class CopilotSdkAdapter extends EngineAdapter {
     }
     for (const [id, pending] of this.pendingPermissions) {
       if (pending.permission.sessionId === sessionId) {
-        pending.resolve({ kind: "denied-interactively-by-user" });
+        pending.resolve(rejectPermission());
         this.pendingPermissions.delete(id);
       }
     }
@@ -632,7 +651,7 @@ export class CopilotSdkAdapter extends EngineAdapter {
       const config: ResumeSessionConfig = {
         streaming: true,
         workingDirectory: directory,
-        onPermissionRequest: () => ({ kind: "denied-interactively-by-user" as const }),
+        onPermissionRequest: noPermissionResult,
       };
       session = await this.client!.resumeSession(engineSessionId, config);
       const events = await session.getMessages();
@@ -740,7 +759,7 @@ export class CopilotSdkAdapter extends EngineAdapter {
       if (rawKind) this.allowedAlwaysKinds.add(rawKind);
     }
 
-    pending.resolve({ kind: isApproved ? "approved" : "denied-interactively-by-user" });
+    pending.resolve(isApproved ? approvePermissionOnce() : rejectPermission());
     this.pendingPermissions.delete(permissionId);
     this.emit("permission.replied", { permissionId, optionId });
   }
@@ -1241,10 +1260,37 @@ export class CopilotSdkAdapter extends EngineAdapter {
         this.pendingUserMessages.delete(sessionId);
       }
     }
+
+    void this.refreshSessionTitle(sessionId);
+  }
+
+  private getFirstUserPrompt(sessionId: string): string | undefined {
+    const firstUser = this.messageHistory.get(sessionId)?.find((message) => message.role === "user");
+    const textPart = firstUser?.parts.find((part): part is TextPart => part.type === "text");
+    return textPart?.text;
+  }
+
+  private async refreshSessionTitle(sessionId: string): Promise<void> {
+    if (!this.client) return;
+    try {
+      const meta = await this.client.getSessionMetadata(sessionId);
+      const title = meta?.summary?.trim();
+      if (!title || isPromptFallbackTitle(title, this.getFirstUserPrompt(sessionId))) return;
+      const cached = this.sessionTitles?.get(sessionId);
+      if (cached === title) return;
+      if (!this.sessionTitles) this.sessionTitles = new Map();
+      this.sessionTitles.set(sessionId, title);
+      this.emit("session.updated", {
+        session: { id: sessionId, engineType: this.engineType, title },
+      });
+    } catch (err) {
+      copilotLog.debug(`[Copilot][${sessionId}] refreshSessionTitle failed:`, err);
+    }
   }
 
   private handleTitleChanged(sessionId: string, data: { title?: string }): void {
-    if (data.title) this.emit("session.updated", { session: { id: sessionId, engineType: this.engineType, title: data.title } });
+    const title = data.title?.trim();
+    if (title) this.emit("session.updated", { session: { id: sessionId, engineType: this.engineType, title } });
   }
 
   private handleSessionError(sessionId: string, data: { message?: string }): void {
@@ -1315,8 +1361,8 @@ export class CopilotSdkAdapter extends EngineAdapter {
 
   private handlePermissionRequest(req: PermissionRequest, ctx: { sessionId: string }): Promise<PermissionRequestResult> {
     const sessionId = ctx.sessionId;
-    if ((this.sessionModes.get(sessionId) || "autopilot") === "autopilot") return Promise.resolve({ kind: "approved" });
-    if (this.allowedAlwaysKinds.has(req.kind)) return Promise.resolve({ kind: "approved" });
+    if ((this.sessionModes.get(sessionId) || "autopilot") === "autopilot") return Promise.resolve(approvePermissionOnce());
+    if (this.allowedAlwaysKinds.has(req.kind)) return Promise.resolve(approvePermissionOnce());
 
     const permissionId = timeId("perm");
     const kind: any = req.kind === "read" ? "read" : req.kind === "write" || req.kind === "shell" ? "edit" : "other";
@@ -1417,7 +1463,7 @@ export class CopilotSdkAdapter extends EngineAdapter {
   }
 
   private rejectAllPendingPermissions(_reason: string): void {
-    for (const [_id, pending] of this.pendingPermissions) pending.resolve({ kind: "denied-no-approval-rule-and-could-not-request-from-user" });
+    for (const [_id, pending] of this.pendingPermissions) pending.resolve(rejectPermission());
     this.pendingPermissions.clear();
   }
 

@@ -118,7 +118,6 @@ function makeMockConv(overrides: Record<string, any> = {}) {
     id: "conv1",
     engineType: "opencode" as EngineType,
     directory: "/dir",
-    title: "New session",
     engineSessionId: null,
     createdAt: 1000,
     updatedAt: 2000,
@@ -394,6 +393,131 @@ describe("EngineManager", () => {
       await engineManager.createSession(adapterA.engineType, "/dir");
       expect(emittedSessions).toHaveLength(1);
       expect(emittedSessions[0].session.id).toBe("conv6");
+    });
+
+    it("does not persist default engine placeholder titles", () => {
+      const conv = makeMockConv({
+        id: "conv-title",
+        firstPrompt: "Inspect this repository read-only…",
+      });
+      (conversationStore.findByEngineSession as any).mockReturnValue(conv);
+      (conversationStore.get as any).mockReturnValue(conv);
+
+      const emittedSessions: any[] = [];
+      engineManager.on("session.updated" as any, (data: any) => emittedSessions.push(data));
+      adapterA.emit("session.updated", {
+        session: {
+          id: "engine-title",
+          engineType: adapterA.engineType,
+          title: "New session - 2026-04-27T12:38:30.603Z",
+        },
+      });
+
+      expect(conversationStore.setEngineTitle).not.toHaveBeenCalled();
+      expect(emittedSessions[0].session.title).toBe("Inspect this repository read-only…");
+    });
+
+    it("does not persist prompt-derived engine summaries", () => {
+      const conv = makeMockConv({
+        id: "conv-title",
+        firstPrompt: "Read this repository metadata only: inspect package.json…",
+      });
+      (conversationStore.findByEngineSession as any).mockReturnValue(conv);
+      (conversationStore.get as any).mockReturnValue(conv);
+
+      adapterA.emit("session.updated", {
+        session: {
+          id: "engine-title",
+          engineType: adapterA.engineType,
+          title: "Read this repository metadata only: inspect package.json...",
+        },
+      });
+
+      expect(conversationStore.setEngineTitle).not.toHaveBeenCalled();
+    });
+
+    it("persists meaningful engine titles", () => {
+      const conv = makeMockConv({
+        id: "conv-title",
+        firstPrompt: "看看目前修改区，应该是加了 picgo 的支持…",
+      });
+      (conversationStore.findByEngineSession as any).mockReturnValue(conv);
+      (conversationStore.get as any).mockReturnValue(conv);
+
+      adapterA.emit("session.updated", {
+        session: {
+          id: "engine-title",
+          engineType: adapterA.engineType,
+          title: "  Review PicGo Integration  ",
+        },
+      });
+
+      expect(conversationStore.setEngineTitle).toHaveBeenCalledWith(
+        "conv-title",
+        "Review PicGo Integration",
+      );
+    });
+
+    it("displays engineTitle over firstPrompt", () => {
+      (conversationStore.list as any).mockReturnValue([
+        makeMockConv({
+          id: "conv-title",
+          firstPrompt: "看看目前修改区，应该是加了 picgo 的支持…",
+          engineTitle: "Review PicGo Integration",
+        }),
+      ]);
+
+      expect(engineManager.listAllSessions()[0].title).toBe("Review PicGo Integration");
+    });
+
+    it("displays customTitle over engineTitle", () => {
+      (conversationStore.list as any).mockReturnValue([
+        makeMockConv({
+          id: "conv-title",
+          firstPrompt: "看看目前修改区，应该是加了 picgo 的支持…",
+          engineTitle: "Review PicGo Integration",
+          customTitle: "My Manual Title",
+        }),
+      ]);
+
+      expect(engineManager.listAllSessions()[0].title).toBe("My Manual Title");
+    });
+
+    it("ignores stale stored title fields", () => {
+      (conversationStore.list as any).mockReturnValue([
+        {
+          ...makeMockConv({ id: "conv-title" }),
+          title: "Old Chat",
+        },
+      ]);
+
+      expect(engineManager.listAllSessions()[0].title).toBe("New Chat");
+    });
+
+    it("emits the resolved engineTitle after a meaningful engine update", () => {
+      const conv = makeMockConv({
+        id: "conv-title",
+        firstPrompt: "看看目前修改区，应该是加了 picgo 的支持…",
+      });
+      (conversationStore.findByEngineSession as any).mockReturnValue(conv);
+      (conversationStore.get as any)
+        .mockReturnValueOnce(conv)
+        .mockReturnValueOnce({
+          ...conv,
+          engineTitle: "Review PicGo Integration",
+        });
+      const emittedSessions: any[] = [];
+      engineManager.on("session.updated" as any, (data: any) => emittedSessions.push(data));
+
+      adapterA.emit("session.updated", {
+        session: {
+          id: "engine-title",
+          engineType: adapterA.engineType,
+          title: "Review PicGo Integration",
+        },
+      });
+
+      expect(emittedSessions[0].session.title).toBe("Review PicGo Integration");
     });
 
     it("retrieves and deletes sessions from store and engine", async () => {
@@ -980,7 +1104,7 @@ describe("EngineManager", () => {
     beforeEach(() => {
       engineManager.registerAdapter(adapterA);
       (conversationStore.findByEngineSession as any).mockReturnValue({ id: "conv1" });
-      (conversationStore.get as any).mockReturnValue(makeMockConv({ title: "New session" }));
+      (conversationStore.get as any).mockReturnValue(makeMockConv());
     });
 
     it("forwards message part updates for text and reasoning parts", () => {
@@ -1164,9 +1288,17 @@ describe("EngineManager", () => {
       expect(conversationStore.setEngineTitle).toHaveBeenCalledWith("conv1", "Engine Title");
     });
 
+    it("session.updated does not treat a customTitle echo as engineTitle", () => {
+      (conversationStore.get as any).mockReturnValue(makeMockConv({ customTitle: "My Custom Title" }));
+      adapterA.emit("session.updated", {
+        session: { id: "engine-s1", title: "My Custom Title", engineType: adapterA.engineType } as any,
+      });
+      expect(conversationStore.setEngineTitle).not.toHaveBeenCalled();
+    });
+
     it("session.updated persists engineMeta when provided", () => {
       (conversationStore.get as any).mockReturnValue(
-        makeMockConv({ title: "New session", engineSessionId: "eng-s" }),
+        makeMockConv({ engineSessionId: "eng-s" }),
       );
       adapterA.emit("session.updated", {
         session: {

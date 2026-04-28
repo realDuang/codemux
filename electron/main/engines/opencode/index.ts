@@ -550,6 +550,25 @@ export class OpenCodeAdapter extends EngineAdapter {
     for (const entry of entries) {
       entry.resolve(finalMessage);
     }
+
+    void this.refreshSessionTitle(sessionID);
+  }
+
+  private async refreshSessionTitle(sessionId: string): Promise<void> {
+    try {
+      const client = this.clientForSession(sessionId);
+      const result = await client.session.get({ sessionID: sessionId });
+      if (result.error || !result.data) return;
+      const sdkSession = result.data;
+      const cached = this.sessions.get(sessionId);
+      const session = convertSession(this.engineType, sdkSession);
+      if (session.title && session.title !== cached?.title) {
+        this.sessions.set(session.id, session);
+        this.emit("session.updated", { session });
+      }
+    } catch (err) {
+      openCodeLog.debug(`[OpenCode] refreshSessionTitle failed for ${sessionId}:`, err);
+    }
   }
 
   private handleSessionUpdated(sdkSession: SdkSession): void {

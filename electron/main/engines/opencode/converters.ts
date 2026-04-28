@@ -11,6 +11,7 @@ import type {
   ToolState as SdkToolState,
   ProviderListResponse,
 } from "@opencode-ai/sdk/v2";
+import { isDefaultTitle } from "../../../../src/lib/session-utils";
 import { normalizeToolName, inferToolKind } from "../../../../src/types/tool-mapping";
 import type {
   EngineType,
@@ -23,11 +24,13 @@ import type {
 } from "../../../../src/types/unified";
 
 export function convertSession(engineType: EngineType, sdk: SdkSession): UnifiedSession {
+  const title = sdk.title && !isDefaultTitle(sdk.title) ? sdk.title : undefined;
+
   return {
     id: sdk.id,
     engineType,
     directory: sdk.directory.replaceAll("\\", "/"),
-    title: sdk.title,
+    title,
     parentId: sdk.parentID,
     projectId: sdk.projectID,
     time: {

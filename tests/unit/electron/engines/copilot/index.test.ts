@@ -32,6 +32,7 @@ const {
     rpc: {
       model: { switchTo: vi.fn(async function() {}) },
       mode: { set: vi.fn(async function() {}) },
+      name: { set: vi.fn(async function() {}) },
       skills: { list: vi.fn(async function() { return { skills: [] }; }) },
       commands: { handlePendingCommand: vi.fn(async function() {}) },
     },
@@ -54,6 +55,7 @@ const {
     }),
     deleteSession: vi.fn(async function() {}),
     listModels: vi.fn(async function() { return []; }),
+    getSessionMetadata: vi.fn(async function() { return undefined; }),
     getState: vi.fn(function() { return "connected"; }),
   };
 
@@ -160,6 +162,7 @@ function makeMockSession(sessionId = "s1") {
     rpc: {
       model: { switchTo: vi.fn(async () => {}) },
       mode: { set: vi.fn(async () => {}) },
+      name: { set: vi.fn(async () => {}) },
       skills: { list: vi.fn(async () => ({ skills: [] })) },
       commands: { handlePendingCommand: vi.fn(async () => {}) },
     },
@@ -276,7 +279,7 @@ describe("CopilotSdkAdapter", () => {
       await adapter.stop();
 
       expect(resolve).toHaveBeenCalledWith({
-        kind: "denied-no-approval-rule-and-could-not-request-from-user",
+        kind: "reject",
       });
       expect((adapter as any).pendingPermissions.size).toBe(0);
     });
@@ -448,6 +451,30 @@ describe("CopilotSdkAdapter", () => {
     it("calls client.deleteSession even when the session is not active in memory", async () => {
       await adapter.deleteSession("ghost-session");
       expect(mockClientInstance.deleteSession).toHaveBeenCalledWith("ghost-session");
+    });
+  });
+
+  describe("renameSession()", () => {
+    beforeEach(async () => {
+      await adapter.start();
+    });
+
+    it("writes the trimmed title through Copilot's name RPC", async () => {
+      const sess = makeMockSession("s1");
+      (adapter as any).activeSessions.set("s1", sess);
+
+      await adapter.renameSession("s1", "  Manual Title  ");
+
+      expect(sess.rpc.name.set).toHaveBeenCalledWith({ name: "Manual Title" });
+    });
+
+    it("does not write empty titles", async () => {
+      const sess = makeMockSession("s1");
+      (adapter as any).activeSessions.set("s1", sess);
+
+      await adapter.renameSession("s1", "   ");
+
+      expect(sess.rpc.name.set).not.toHaveBeenCalled();
     });
   });
 
@@ -712,7 +739,7 @@ describe("CopilotSdkAdapter", () => {
 
       await adapter.cancelMessage("s1");
 
-      expect(resolve).toHaveBeenCalledWith({ kind: "denied-interactively-by-user" });
+      expect(resolve).toHaveBeenCalledWith({ kind: "reject" });
       expect((adapter as any).pendingPermissions.has("p1")).toBe(false);
     });
 
@@ -1058,6 +1085,51 @@ describe("CopilotSdkAdapter", () => {
     });
   });
 
+  describe("refreshSessionTitle()", () => {
+    beforeEach(async () => {
+      await adapter.start();
+    });
+
+    it("ignores metadata summaries that are just the first user prompt", async () => {
+      const updates: any[] = [];
+      adapter.on("session.updated", (e) => updates.push(e));
+      (adapter as any).messageHistory.set("s1", [{
+        id: "user-1",
+        sessionId: "s1",
+        role: "user",
+        time: { created: 1 },
+        parts: [{ id: "part-1", messageId: "user-1", sessionId: "s1", type: "text", text: "Read this repository metadata only: inspect package.json and tell me the package name." }],
+      }]);
+      mockClientInstance.getSessionMetadata.mockResolvedValueOnce({
+        summary: "Read this repository metadata only: inspect package.json...",
+      });
+
+      await (adapter as any).refreshSessionTitle("s1");
+
+      expect(updates).toHaveLength(0);
+    });
+
+    it("emits session.updated for meaningful metadata summaries", async () => {
+      const updates: any[] = [];
+      adapter.on("session.updated", (e) => updates.push(e));
+      (adapter as any).messageHistory.set("s1", [{
+        id: "user-1",
+        sessionId: "s1",
+        role: "user",
+        time: { created: 1 },
+        parts: [{ id: "part-1", messageId: "user-1", sessionId: "s1", type: "text", text: "看看目前修改区，应该是加了 picgo 的支持" }],
+      }]);
+      mockClientInstance.getSessionMetadata.mockResolvedValueOnce({
+        summary: "  Review PicGo Integration  ",
+      });
+
+      await (adapter as any).refreshSessionTitle("s1");
+
+      expect(updates).toEqual([{ session: { id: "s1", engineType: "copilot", title: "Review PicGo Integration" } }]);
+      expect((adapter as any).sessionTitles.get("s1")).toBe("Review PicGo Integration");
+    });
+  });
+
   // ============================================================================
   // E. Permission Handling
   // ============================================================================
@@ -1073,7 +1145,7 @@ describe("CopilotSdkAdapter", () => {
         { sessionId: "s1" },
       );
 
-      expect(result).toEqual({ kind: "approved" });
+      expect(result).toEqual({ kind: "approve-once" });
       expect(permEvents).toHaveLength(0);
     });
 
@@ -1086,7 +1158,7 @@ describe("CopilotSdkAdapter", () => {
         { sessionId: "s1" },
       );
 
-      expect(result).toEqual({ kind: "approved" });
+      expect(result).toEqual({ kind: "approve-once" });
     });
 
     it("emits permission.asked in non-autopilot mode and waits for reply", async () => {
@@ -1106,9 +1178,9 @@ describe("CopilotSdkAdapter", () => {
       expect(perm.options.map((o: any) => o.id)).toEqual(["allow_once", "allow_always", "reject_once"]);
 
       const pending = (adapter as any).pendingPermissions.get(perm.id);
-      pending.resolve({ kind: "approved" });
+      pending.resolve({ kind: "approve-once" });
 
-      await expect(requestPromise).resolves.toEqual({ kind: "approved" });
+      await expect(requestPromise).resolves.toEqual({ kind: "approve-once" });
     });
 
     it("maps 'read' kind to 'read', 'shell' to 'edit', unknown to 'other'", async () => {
@@ -1136,7 +1208,7 @@ describe("CopilotSdkAdapter", () => {
 
       await adapter.replyPermission("p1", { optionId: "allow_once" });
 
-      expect(resolve).toHaveBeenCalledWith({ kind: "approved" });
+      expect(resolve).toHaveBeenCalledWith({ kind: "approve-once" });
       expect((adapter as any).pendingPermissions.has("p1")).toBe(false);
     });
 
@@ -1149,7 +1221,7 @@ describe("CopilotSdkAdapter", () => {
 
       await adapter.replyPermission("p1", { optionId: "allow_always" });
 
-      expect(resolve).toHaveBeenCalledWith({ kind: "approved" });
+      expect(resolve).toHaveBeenCalledWith({ kind: "approve-once" });
       expect((adapter as any).allowedAlwaysKinds.has("shell")).toBe(true);
     });
 
@@ -1162,7 +1234,7 @@ describe("CopilotSdkAdapter", () => {
 
       await adapter.replyPermission("p1", { optionId: "reject_once" });
 
-      expect(resolve).toHaveBeenCalledWith({ kind: "denied-interactively-by-user" });
+      expect(resolve).toHaveBeenCalledWith({ kind: "reject" });
     });
 
     it("emits permission.replied with the correct optionId", async () => {

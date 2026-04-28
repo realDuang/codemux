@@ -60,6 +60,17 @@ describe('OpenCode Converters', () => {
       const unifiedUnix = convertSession(ENGINE_TYPE, unixSession as any);
       expect(unifiedUnix.directory).toBe('/home/user/project');
     });
+
+    it('does not expose default placeholder titles', () => {
+      const unified = convertSession(ENGINE_TYPE, {
+        id: 's1',
+        directory: '/project',
+        title: 'New session - 2026-04-27T12:38:30.603Z',
+        time: { created: 1, updated: 2 },
+      } as any);
+
+      expect(unified.title).toBeUndefined();
+    });
   });
 
   describe('convertMessage', () => {

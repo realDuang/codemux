@@ -85,8 +85,7 @@ describe("ConversationStore", () => {
   describe("Conversation CRUD", () => {
     it("creates conversations with metadata and handles retrieval", () => {
       // create() returns a ConversationMeta with correct fields.
-      // Titles are now derived at render time from customTitle/engineTitle/firstPrompt;
-      // the store no longer initializes a title in create().
+      // Titles are derived at render time from customTitle/engineTitle/firstPrompt.
       const conv = conversationStore.create({
         engineType: "claude",
         directory: "/projects/foo",
@@ -94,7 +93,7 @@ describe("ConversationStore", () => {
       expect(conv.id).toMatch(/^conv_/);
       expect(conv.engineType).toBe("claude");
       expect(conv.directory).toBe("/projects/foo");
-      expect(conv.title).toBeUndefined();
+      expect(conv).not.toHaveProperty("title");
       expect(conv.customTitle).toBeUndefined();
       expect(conv.engineTitle).toBeUndefined();
       expect(conv.createdAt).toBeLessThanOrEqual(Date.now());
@@ -323,17 +322,15 @@ describe("ConversationStore", () => {
 
   describe("Persistence & Recovery", () => {
     it("recovers state from disk and handles corruption or version mismatches", async () => {
-      // survives re-initialization (persistence check) — uses legacy title field
-      // to verify pre-refactor data is preserved across reloads.
       const conv = conversationStore.create({ engineType: "opencode", directory: "/persist" });
-      conversationStore.update(conv.id, { title: "Keep Me" });
+      conversationStore.update(conv.id, { customTitle: "Keep Me" });
       await conversationStore.flushAll();
       (conversationStore as any).initialized = false;
       (conversationStore as any).index = new Map();
       conversationStore.init();
       const recovered = conversationStore.get(conv.id);
       expect(recovered).not.toBeNull();
-      expect(recovered?.title).toBe("Keep Me");
+      expect(recovered?.customTitle).toBe("Keep Me");
 
       // handles corrupt index file gracefully
       const indexPath = path.join(tmpDir, "conversations", "index.json");

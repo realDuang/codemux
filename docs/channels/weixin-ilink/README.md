@@ -126,7 +126,7 @@ You'll need to click **Login** and rescan the QR code to bring the bot back.
 - **Session expiry signal**: `errcode == -14` or `ret == -14`
 - **Capabilities**: `supportsMessageUpdate=false`, `supportsMessageDelete=false`, `supportsRichContent=false`, `maxMessageBytes=4096` → `StreamingController` runs in batch mode
 - **Persistence**:
-  - Channel config: `~/Library/Application Support/codemux/channels/weixin-ilink.json` (or `.channels/weixin-ilink.json` in dev)
-  - Session bindings: `~/Library/Application Support/codemux/channels/weixin-ilink-bindings.json`
+  - Channel config: Electron `userData/channels/weixin-ilink.json`
+  - Session bindings: Electron `userData/channels/weixin-ilink-bindings.json`
 - **Temp session TTL**: 2 hours of inactivity, then garbage-collected
 - **Reference**: protocol verified against [hello-halo](https://github.com/) `ilink-api.ts`

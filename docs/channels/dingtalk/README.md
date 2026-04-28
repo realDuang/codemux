@@ -130,5 +130,5 @@ The ActionCard includes:
 - **Token Refresh**: Auto-refresh every 2 hours
 - **Message Format**: ActionCard (Markdown), plain text
 - **Group API**: Scene group creation via `POST /v1.0/im/interconnections/groups`
-- **Persistence**: Group bindings saved to `~/.channels/dingtalk-bindings.json`
+- **Persistence**: Group bindings saved to Electron `userData/channels/dingtalk-bindings.json`
 - **Rate Limiting**: TokenBucket — 5 burst capacity, ~0.33 tokens/sec (20/min)

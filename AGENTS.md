@@ -365,7 +365,7 @@ Feishu Bot (webhook)
           └─ WebSocket → GatewayServer (same protocol as UI)
 ```
 
-- `ChannelManager` manages channel lifecycle, config persistence (`.channels/` dir), and IPC handlers
+- `ChannelManager` manages channel lifecycle, config persistence (`userData/channels` dir), and IPC handlers
 - Each channel adapter extends `ChannelAdapter` base class
 - Channels connect to the gateway as internal WS clients, reusing the same protocol as the UI
 

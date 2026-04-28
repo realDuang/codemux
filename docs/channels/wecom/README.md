@@ -164,5 +164,5 @@ WeCom **does not support editing sent messages**. Because of this:
 - **Authentication**: Token verification + AES message decryption
 - **Message Format**: Markdown text (no ActionCards in current implementation)
 - **Group API**: Not used — WeCom requires ≥2 members for group chats, so P2P mode is used instead
-- **Persistence**: Session state saved to `~/.channels/wecom-bindings.json`
+- **Persistence**: Session state saved to Electron `userData/channels/wecom-bindings.json`
 - **Rate Limiting**: TokenBucket — 5 burst capacity, 0.5 tokens/sec (30/min)

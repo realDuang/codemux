@@ -61,8 +61,7 @@ describe("ChannelManager", () => {
 
   beforeEach(() => {
     tmpDir = fs.mkdtempSync(tmpDirBase);
-    channelConfigDir = path.join(tmpDir, ".channels");
-    vi.spyOn(process, "cwd").mockReturnValue(tmpDir);
+    channelConfigDir = path.join(tmpDir, "channels");
     manager = new ChannelManager();
     mockAdapter = new MockChannelAdapter("test-channel");
   });

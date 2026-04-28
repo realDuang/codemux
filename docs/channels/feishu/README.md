@@ -209,5 +209,5 @@ Update throttle is 1.5 seconds by default to stay within Feishu's API rate limit
 - **SDK**: `@larksuiteoapi/node-sdk` (official Lark Node.js SDK)
 - **Connection**: WebSocket (WSClient) — persistent connection from CodeMux to Feishu or Lark cloud
 - **Message Format**: Interactive Cards with Markdown content
-- **Persistence**: Group-session bindings saved to `~/.channels/feishu-bindings.json`
+- **Persistence**: Group-session bindings saved to Electron `userData/channels/feishu-bindings.json`
 - **Rate Limiting**: TokenBucket — 5 burst capacity, 5 tokens/sec refill

@@ -239,12 +239,13 @@ describe("BaseSessionMapper", () => {
       (app as any).isPackaged = false;
     });
 
-    it("uses cwd path when app.isPackaged is false", () => {
-      const cwdSpy = vi.spyOn(process, "cwd").mockReturnValue("/mock/cwd");
+    it("uses userData path when app.isPackaged is false", async () => {
+      const { app } = await import("electron");
+      (app as any).isPackaged = false;
+
       mapper.createGroupBinding(makeBinding("chat-y", "conv-y"));
 
-      expect(cwdSpy).toHaveBeenCalled();
-      cwdSpy.mockRestore();
+      expect(app.getPath).toHaveBeenCalledWith("userData");
     });
   });
 

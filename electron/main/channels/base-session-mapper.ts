@@ -143,9 +143,7 @@ export class BaseSessionMapper<
   // =========================================================================
 
   private getBindingsFilePath(): string {
-    const dir = app.isPackaged
-      ? path.join(app.getPath("userData"), "channels")
-      : path.join(process.cwd(), ".channels");
+    const dir = path.join(app.getPath("userData"), "channels");
     return path.join(dir, this.bindingsFileName);
   }
 

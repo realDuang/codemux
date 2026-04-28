@@ -58,6 +58,8 @@ interface ElectronAPI {
       startTime?: number;
       error?: string;
       errorCode?: string;
+      warning?: string;
+      warningCode?: string;
     } | null>;
     stop: () => Promise<void>;
     getStatus: () => Promise<{
@@ -66,6 +68,8 @@ interface ElectronAPI {
       startTime?: number;
       error?: string;
       errorCode?: string;
+      warning?: string;
+      warningCode?: string;
     } | null>;
     onDisconnected: (callback: () => void) => () => void;
   };

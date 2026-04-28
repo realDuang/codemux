@@ -22,6 +22,8 @@ export interface TunnelInfo {
   startTime?: number;
   error?: string;
   errorCode?: string;
+  warning?: string;
+  warningCode?: string;
 }
 
 export interface TunnelConfig {

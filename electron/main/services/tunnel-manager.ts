@@ -16,6 +16,8 @@ interface TunnelInfo {
   startTime?: number;
   error?: string;
   errorCode?: string;
+  warning?: string;
+  warningCode?: string;
 }
 
 class TunnelManager {
@@ -99,27 +101,25 @@ class TunnelManager {
 
     const hostname = config?.hostname?.trim();
     let tunnelId: string | null = null;
+    let warning: string | undefined;
+    let warningCode: string | undefined;
     if (hostname) {
       tunnelId = this.detectTunnelId();
       if (!tunnelId) {
-        const error = "Named Tunnel credentials not found. Run cloudflared tunnel login, create a tunnel, and route DNS for this domain first.";
-        tunnelLog.error(error);
-        this.info = {
-          url: "",
-          status: "error",
-          error,
-          errorCode: "NAMED_TUNNEL_NO_CREDENTIALS",
-        };
-        return this.info;
+        warning = "Named Tunnel credentials not found. Starting a temporary quick tunnel instead.";
+        warningCode = "NAMED_TUNNEL_NO_CREDENTIALS";
+        tunnelLog.warn(warning);
       }
     }
-    const isNamed = !!hostname;
+    const isNamed = !!(hostname && tunnelId);
 
     this.stoppedByUser = false;
     this.info = {
       url: "",
       status: "starting",
       startTime: Date.now(),
+      warning,
+      warningCode,
     };
 
     try {
@@ -166,6 +166,8 @@ class TunnelManager {
               url: urlMatch[0],
               status: "running",
               startTime: this.info.startTime,
+              warning: this.info.warning,
+              warningCode: this.info.warningCode,
             };
             tunnelLog.info("URL Ready:", this.info.url);
           }

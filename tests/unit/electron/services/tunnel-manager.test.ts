@@ -500,27 +500,50 @@ describe("TunnelManager", () => {
   // -------------------------------------------------------------------------
 
   describe("start() - hostname but no credentials", () => {
-    it("returns error when .cloudflared directory is missing", async () => {
+    it("falls back to quick tunnel with warning when .cloudflared directory is missing", async () => {
       mockExistsSync.mockReturnValue(false);
 
       const info = await tunnelManager.start(3000, { hostname: "codemux.example.com" });
 
-      expect(info.status).toBe("error");
-      expect(info.errorCode).toBe("NAMED_TUNNEL_NO_CREDENTIALS");
-      expect(mockSpawn).not.toHaveBeenCalled();
+      expect(info.status).toBe("starting");
+      expect(info.warningCode).toBe("NAMED_TUNNEL_NO_CREDENTIALS");
+      expect(mockSpawn).toHaveBeenCalledWith("cloudflared", [
+        "tunnel",
+        "--url",
+        "http://localhost:3000",
+      ]);
       expect(mockWriteFileSync).not.toHaveBeenCalled();
     });
 
-    it("returns error when .cloudflared dir exists but has no creds", async () => {
+    it("falls back to quick tunnel with warning when .cloudflared dir exists but has no creds", async () => {
       mockExistsSync.mockReturnValue(true);
       mockReaddirSync.mockReturnValue(["config.yml"]);
 
       const info = await tunnelManager.start(3000, { hostname: "codemux.example.com" });
 
-      expect(info.status).toBe("error");
-      expect(info.errorCode).toBe("NAMED_TUNNEL_NO_CREDENTIALS");
-      expect(mockSpawn).not.toHaveBeenCalled();
+      expect(info.status).toBe("starting");
+      expect(info.warningCode).toBe("NAMED_TUNNEL_NO_CREDENTIALS");
+      expect(mockSpawn).toHaveBeenCalledWith("cloudflared", [
+        "tunnel",
+        "--url",
+        "http://localhost:3000",
+      ]);
       expect(mockWriteFileSync).not.toHaveBeenCalled();
+    });
+
+    it("preserves missing credentials warning after quick tunnel URL is parsed", async () => {
+      mockExistsSync.mockReturnValue(false);
+
+      await tunnelManager.start(3000, { hostname: "codemux.example.com" });
+      mockProcess.stdout.emit(
+        "data",
+        Buffer.from("https://fallback.trycloudflare.com"),
+      );
+
+      const info = tunnelManager.getInfo();
+      expect(info.status).toBe("running");
+      expect(info.url).toBe("https://fallback.trycloudflare.com");
+      expect(info.warningCode).toBe("NAMED_TUNNEL_NO_CREDENTIALS");
     });
   });
 

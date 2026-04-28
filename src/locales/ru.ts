@@ -146,7 +146,7 @@ export const ru: LocaleDict = {
     publicAccessDesc: "Доступ через туннель Cloudflare из интернета",
     starting: "Запуск туннеля, подождите...",
     startFailed: "Не удалось запустить. Убедитесь, что cloudflared установлен",
-    namedTunnelMissingCredentials: "Учётные данные именованного Tunnel не найдены. Сначала выполните команды настройки Cloudflare ниже, затем запустите этот домен.",
+    namedTunnelMissingCredentials: "Учётные данные именованного Tunnel не найдены, поэтому CodeMux запустил временный quick tunnel. Выполните команды настройки Cloudflare ниже, чтобы использовать этот фиксированный домен.",
     securityWarning: "Предупреждение безопасности:",
     securityWarningDesc: "Удалённый доступ предоставляет полный контроль над этим устройством. Храните пароль в тайне и никому не передавайте.",
     accessPassword: "Пароль доступа",

@@ -57,9 +57,9 @@ export default function EntryPage() {
   const [namedTunnelHostname, setNamedTunnelHostname] = createSignal(savedTunnelConfig.hostname || "");
 
   const isNamedTunnel = () => !!namedTunnelHostname().trim();
-  const tunnelWarningMessage = () => tunnelInfo().warningCode === "NAMED_TUNNEL_NO_CREDENTIALS"
+  const tunnelErrorMessage = () => tunnelInfo().errorCode === "NAMED_TUNNEL_NO_CREDENTIALS"
     ? t().remote.namedTunnelMissingCredentials
-    : tunnelInfo().warning;
+    : tunnelInfo().error;
   const [localIp, setLocalIp] = createSignal("127.0.0.1");
   const [accessCode, setAccessCode] = createSignal("......");
   const [port, setPort] = createSignal(WEB_STANDALONE_PORT);
@@ -2005,20 +2005,11 @@ export default function EntryPage() {
                           </div>
                         </Show>
 
-                        <Show when={tunnelInfo().error}>
+                        <Show when={tunnelErrorMessage()}>
                           <div class="px-4 py-3 bg-red-50 dark:bg-red-900/10 border-t border-red-100 dark:border-red-900/30">
                             <p class="text-xs text-red-600 dark:text-red-400 flex items-center gap-2">
                               <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" x2="12" y1="8" y2="12"/><line x1="12" x2="12.01" y1="16" y2="16"/></svg>
-                              {tunnelInfo().error}
-                            </p>
-                          </div>
-                        </Show>
-
-                        <Show when={tunnelWarningMessage()}>
-                          <div class="px-4 py-3 bg-amber-50 dark:bg-amber-900/10 border-t border-amber-100 dark:border-amber-900/30">
-                            <p class="text-xs text-amber-700 dark:text-amber-400 flex items-center gap-2">
-                              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" x2="12" y1="8" y2="12"/><line x1="12" x2="12.01" y1="16" y2="16"/></svg>
-                              {tunnelWarningMessage()}
+                              {tunnelErrorMessage()}
                             </p>
                           </div>
                         </Show>
@@ -2056,7 +2047,7 @@ export default function EntryPage() {
                             />
                           </div>
 
-                          <Show when={!isNamedTunnel() || tunnelInfo().warningCode === "NAMED_TUNNEL_NO_CREDENTIALS"}>
+                          <Show when={!isNamedTunnel() || tunnelInfo().errorCode === "NAMED_TUNNEL_NO_CREDENTIALS"}>
                             <p class="mt-2 text-[11px] text-gray-400 dark:text-gray-500">{t().remote.namedTunnelSetupHint}</p>
                           </Show>
                           <Show when={isNamedTunnel()}>

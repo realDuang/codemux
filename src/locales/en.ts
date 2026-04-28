@@ -793,7 +793,7 @@ export const en: LocaleDict = {
     publicAccessDesc: "Access via Cloudflare tunnel from the internet",
     starting: "Starting tunnel, please wait...",
     startFailed: "Failed to start. Please ensure cloudflared is installed",
-    namedTunnelMissingCredentials: "Named Tunnel credentials were not found, so CodeMux started a temporary quick tunnel. Run the Cloudflare setup commands below to use this fixed domain.",
+    namedTunnelMissingCredentials: "Named Tunnel credentials were not found. CodeMux needs a ~/.cloudflared/<tunnel-id>.json credential file to start this fixed domain. Run the Cloudflare setup commands below, or clear the custom domain to use a temporary quick tunnel.",
     securityWarning: "Security Warning:",
     securityWarningDesc: "Remote access allows full control of this device. Keep your access password safe and never share it with untrusted people.",
     accessPassword: "Access Password",

@@ -145,7 +145,7 @@ export const zh: LocaleDict = {
     publicAccessDesc: "通过 Cloudflare 隧道从互联网访问",
     starting: "正在启动隧道，请稍候...",
     startFailed: "启动失败，请确保已安装 cloudflared",
-    namedTunnelMissingCredentials: "未找到命名 Tunnel 凭证，CodeMux 已改用临时 quick tunnel。要使用这个固定域名，请完成下方 Cloudflare 设置命令。",
+    namedTunnelMissingCredentials: "未找到命名 Tunnel 凭证。CodeMux 需要 ~/.cloudflared/<tunnel-id>.json 凭证文件才能启动这个固定域名。请完成下方 Cloudflare 设置命令，或清空自定义域名以使用临时 quick tunnel。",
     securityWarning: "安全提示：",
     securityWarningDesc: "远程访问允许完全控制此设备。请妥善保管访问密码，切勿分享给不信任的人。",
     accessPassword: "访问密码",

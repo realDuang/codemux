@@ -184,9 +184,10 @@ describe("FeishuTransport", () => {
       expect(callArgs.data.receive_id).toBe("chat-1");
       expect(callArgs.data.msg_type).toBe("interactive");
 
-      // The content should be JSON with elements containing markdown tag
+      // The content should be JSON with elements containing markdown tag and wide_screen_mode config
       const content = JSON.parse(callArgs.data.content);
       expect(content).toEqual({
+        config: { wide_screen_mode: true },
         elements: [{ tag: "markdown", content: "**bold** text" }],
       });
     });
@@ -227,6 +228,7 @@ describe("FeishuTransport", () => {
       const cardArg = spy.mock.calls[0][1];
       const parsed = JSON.parse(cardArg);
       expect(parsed).toEqual({
+        config: { wide_screen_mode: true },
         elements: [{ tag: "markdown", content: "hello" }],
       });
     });

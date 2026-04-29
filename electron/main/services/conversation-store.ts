@@ -32,6 +32,8 @@ import type {
   UnifiedPart,
   UnifiedProject,
   TextPart,
+  ReasoningEffort,
+  CodexServiceTier,
 } from "../../../src/types/unified";
 
 // Re-export for convenience
@@ -419,6 +421,59 @@ class ConversationStore {
       conv.engineMeta = { ...conv.engineMeta, ...meta };
     }
     this.scheduleIndexWrite();
+  }
+
+  updateSessionConfig(
+    id: string,
+    patch: {
+      mode?: string | null;
+      modelId?: string | null;
+      reasoningEffort?: ReasoningEffort | null;
+      serviceTier?: CodexServiceTier | null;
+    },
+  ): ConversationMeta | null {
+    const conv = this.index.get(id);
+    if (!conv) return null;
+
+    let changed = false;
+
+    if (Object.prototype.hasOwnProperty.call(patch, "mode")) {
+      const nextMode = patch.mode ?? undefined;
+      if (conv.mode !== nextMode) {
+        conv.mode = nextMode;
+        changed = true;
+      }
+    }
+
+    if (Object.prototype.hasOwnProperty.call(patch, "modelId")) {
+      const nextModelId = patch.modelId ?? undefined;
+      if (conv.modelId !== nextModelId) {
+        conv.modelId = nextModelId;
+        changed = true;
+      }
+    }
+
+    if (Object.prototype.hasOwnProperty.call(patch, "reasoningEffort")) {
+      const nextEffort = patch.reasoningEffort ?? undefined;
+      if (conv.reasoningEffort !== nextEffort) {
+        conv.reasoningEffort = nextEffort;
+        changed = true;
+      }
+    }
+
+    if (Object.prototype.hasOwnProperty.call(patch, "serviceTier")) {
+      const nextTier = patch.serviceTier ?? undefined;
+      if (conv.serviceTier !== nextTier) {
+        conv.serviceTier = nextTier;
+        changed = true;
+      }
+    }
+
+    if (changed) {
+      this.scheduleIndexWrite();
+    }
+
+    return conv;
   }
 
   clearEngineSession(id: string): void {

@@ -131,6 +131,27 @@ export function isCodexServiceTier(value: unknown): value is CodexServiceTier {
   return typeof value === "string" && (CODEX_SERVICE_TIER_VALUES as readonly string[]).includes(value);
 }
 
+export interface UnifiedSessionConfig {
+  mode?: string;
+  modelId?: string;
+  reasoningEffort?: ReasoningEffort;
+  serviceTier?: CodexServiceTier;
+}
+
+/**
+ * Patch shape for session config updates over the wire. Distinguishes between:
+ *   - missing key  → don't touch
+ *   - explicit null → clear the persisted override
+ *   - value         → set
+ *
+ * The base UnifiedSessionConfig has optional-but-never-null fields because that
+ * matches how config is stored. Patches need explicit null to express "clear",
+ * since `undefined` is dropped by JSON serialization on the wire.
+ */
+export type SessionConfigPatch = {
+  [K in keyof UnifiedSessionConfig]?: UnifiedSessionConfig[K] | null;
+};
+
 /** Result of listing models — includes which model is currently active */
 export interface ModelListResult {
   models: UnifiedModelInfo[];
@@ -139,7 +160,7 @@ export interface ModelListResult {
 
 // --- Conversation (self-owned persistence layer) ---
 
-export interface ConversationMeta {
+export interface ConversationMeta extends UnifiedSessionConfig {
   id: string;
   engineType: EngineType;
   directory: string;
@@ -164,6 +185,10 @@ export interface ConversationMessage {
   id: string;
   role: MessageRole;
   time: { created: number; completed?: number };
+  /** Timestamp when a queued message entered the queue (user clicked send) */
+  enqueuedAt?: number;
+  /** Timestamp when a queued message started being processed by the engine */
+  processedAt?: number;
   /** Content-only parts (text, file) — steps stored separately */
   parts: Array<TextPart | FilePart>;
   tokens?: {
@@ -201,7 +226,7 @@ export type StepPart =
 
 // --- Session ---
 
-export interface UnifiedSession {
+export interface UnifiedSession extends UnifiedSessionConfig {
   id: string;
   engineType: EngineType;
   directory: string;
@@ -232,6 +257,10 @@ export interface UnifiedMessage {
     created: number;
     completed?: number;
   };
+  /** Timestamp when a queued message entered the queue (user clicked send) */
+  enqueuedAt?: number;
+  /** Timestamp when a queued message started being processed by the engine */
+  processedAt?: number;
   parts: UnifiedPart[];
   /** Token usage */
   tokens?: {
@@ -675,6 +704,9 @@ export const GatewayRequestType = {
   MODEL_LIST: "model.list",
   MODEL_SET: "model.set",
 
+  // Session config (unified patch for mode, model, reasoning effort, service tier)
+  SESSION_CONFIG_UPDATE: "session.configUpdate",
+
   // Mode
   MODE_GET: "mode.get",
   MODE_SET: "mode.set",
@@ -838,6 +870,11 @@ export interface ProjectSetEngineRequest {
 export interface ModelSetRequest {
   sessionId: string;
   modelId: string;
+}
+
+export interface SessionConfigUpdateRequest {
+  sessionId: string;
+  config: SessionConfigPatch;
 }
 
 export interface ModeSetRequest {

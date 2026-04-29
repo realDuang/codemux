@@ -1,17 +1,33 @@
 import { createStore } from "solid-js/store";
-import type { EngineType, UnifiedProject, UnifiedWorktree } from "../types/unified";
+import type {
+  CodexServiceTier,
+  EngineType,
+  ImageAttachment,
+  ReasoningEffort,
+  UnifiedProject,
+  UnifiedWorktree,
+} from "../types/unified";
 
 export interface SessionInfo {
   id: string;
   engineType: EngineType;
   title: string;
   directory: string;
+  mode?: string;
+  modelId?: string;
+  reasoningEffort?: ReasoningEffort;
+  serviceTier?: CodexServiceTier;
   projectID?: string;
   worktreeId?: string;
   /** Team orchestration group ID — groups parent + child sessions together */
   teamId?: string;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface SessionInputDraft {
+  text: string;
+  images: ImageAttachment[];
 }
 
 export interface ProjectExpandState {
@@ -37,6 +53,8 @@ export const [sessionStore, setSessionStore] = createStore<{
   worktrees: Record<string, UnifiedWorktree[]>;
   /** Worktree expand/collapse state */
   worktreeExpanded: WorktreeExpandState;
+  /** Per-session prompt drafts kept while switching sessions */
+  inputDrafts: Record<string, SessionInputDraft>;
   /** Whether cross-engine team orchestration is enabled */
   teamOrchestrationEnabled: boolean;
 }>({
@@ -50,12 +68,38 @@ export const [sessionStore, setSessionStore] = createStore<{
   showDefaultWorkspace: true,
   worktrees: {},
   worktreeExpanded: {},
+  inputDrafts: {},
   teamOrchestrationEnabled: false,
 });
 
 /** Set the sending (streaming) state for a session. */
 export function setSendingFor(sessionId: string, value: boolean): void {
   setSessionStore("sendingMap", sessionId, value);
+}
+
+export function updateSessionInfo(sessionId: string, patch: Partial<SessionInfo>): void {
+  setSessionStore("list", (list) =>
+    list.map((session) => (session.id === sessionId ? { ...session, ...patch } : session)),
+  );
+}
+
+export function getInputDraft(sessionId: string): SessionInputDraft {
+  return sessionStore.inputDrafts[sessionId] ?? { text: "", images: [] };
+}
+
+export function setInputDraft(
+  sessionId: string,
+  patch: Partial<SessionInputDraft>,
+): void {
+  const current = getInputDraft(sessionId);
+  setSessionStore("inputDrafts", sessionId, {
+    text: patch.text ?? current.text,
+    images: patch.images ?? current.images,
+  });
+}
+
+export function clearInputDraft(sessionId: string): void {
+  setSessionStore("inputDrafts", sessionId, { text: "", images: [] });
 }
 
 export function getProjectName(project: UnifiedProject): string {

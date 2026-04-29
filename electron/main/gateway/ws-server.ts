@@ -29,6 +29,7 @@ import {
   type MessageSendRequest,
   type PermissionReplyRequest,
   type QuestionReplyRequest,
+  type PendingListRequest,
   type ProjectSetEngineRequest,
   type ModelSetRequest,
   type ModeSetRequest,
@@ -346,6 +347,11 @@ export class GatewayServer {
       case GatewayRequestType.QUESTION_REJECT: {
         const req = p as QuestionReplyRequest;
         return this.engineManager.rejectQuestion(req.questionId);
+      }
+
+      case GatewayRequestType.PENDING_LIST: {
+        const req = p as PendingListRequest;
+        return this.engineManager.getPending(req.sessionId);
       }
 
       // Project

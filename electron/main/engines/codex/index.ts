@@ -744,6 +744,18 @@ export class CodexAdapter extends EngineAdapter {
     }
   }
 
+  getPendingQuestions(sessionId?: string): UnifiedQuestion[] {
+    return CodexAdapter.filterPending(
+      this.pendingQuestions, sessionId, (p) => p.question, (p) => p.question.sessionId,
+    );
+  }
+
+  getPendingPermissions(sessionId?: string): UnifiedPermission[] {
+    return CodexAdapter.filterPending(
+      this.pendingPermissions, sessionId, (p) => p.permission, (p) => p.permission.sessionId,
+    );
+  }
+
   async listProjects(): Promise<UnifiedProject[]> {
     return [];
   }

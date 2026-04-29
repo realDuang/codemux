@@ -10,6 +10,7 @@ import { getLogFilePath, getFileLogLevel, setFileLogLevel, loadSettings, saveSet
 import { isStartupReady } from "./index";
 import { channelManager } from "./index";
 import { GATEWAY_PORT } from "../../shared/ports";
+import { getQrCode as ilinkGetQrCode, pollQrStatus as ilinkPollQrStatus } from "./channels/weixin-ilink/weixin-ilink-qr-flow";
 
 export function registerIpcHandlers(): void {
   // ===========================================================================
@@ -251,6 +252,26 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle("channel:getStatus", async (_, type: string) => {
     return channelManager.getStatus(type);
+  });
+
+  // ===========================================================================
+  // WeChat iLink QR auth (out-of-band, used by login modal)
+  // ===========================================================================
+
+  ipcMain.handle("channel:weixin-ilink:get-qrcode", async (_, baseUrl?: string) => {
+    return ilinkGetQrCode(baseUrl);
+  });
+
+  ipcMain.handle(
+    "channel:weixin-ilink:poll-qrcode-status",
+    async (_, qrcode: string, baseUrl?: string) => {
+      return ilinkPollQrStatus(qrcode, baseUrl);
+    },
+  );
+
+  ipcMain.handle("channel:weixin-ilink:logout", async () => {
+    await channelManager.logoutChannel("weixin-ilink");
+    return { success: true };
   });
 
   // ===========================================================================

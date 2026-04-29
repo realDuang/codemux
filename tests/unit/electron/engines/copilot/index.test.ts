@@ -268,7 +268,7 @@ describe("CopilotSdkAdapter", () => {
       expect(adapter.getStatus()).toBe("stopped");
     });
 
-    it("rejects all pending permissions with a system-deny result", async () => {
+    it("rejects all pending permissions with user-not-available", async () => {
       await adapter.start();
       const resolve = vi.fn();
       (adapter as any).pendingPermissions.set("p1", {
@@ -279,7 +279,7 @@ describe("CopilotSdkAdapter", () => {
       await adapter.stop();
 
       expect(resolve).toHaveBeenCalledWith({
-        kind: "reject",
+        kind: "user-not-available",
       });
       expect((adapter as any).pendingPermissions.size).toBe(0);
     });
@@ -728,7 +728,7 @@ describe("CopilotSdkAdapter", () => {
       expect(sess.abort).toHaveBeenCalledTimes(1);
     });
 
-    it("resolves pending permissions for the session with denied-interactively", async () => {
+    it("resolves pending permissions for the session with reject", async () => {
       const sess = makeMockSession("s1");
       (adapter as any).activeSessions.set("s1", sess);
       const resolve = vi.fn();
@@ -1151,7 +1151,7 @@ describe("CopilotSdkAdapter", () => {
 
     it("auto-approves for kinds in allowedAlwaysKinds", async () => {
       (adapter as any).sessionModes.set("s1", "interactive");
-      (adapter as any).allowedAlwaysKinds.add("read");
+      (adapter as any).allowedAlwaysKinds.set("s1", new Set(["read"]));
 
       const result = await (adapter as any).handlePermissionRequest(
         { kind: "read", toolCallId: "t1" },
@@ -1170,6 +1170,7 @@ describe("CopilotSdkAdapter", () => {
         { kind: "write", toolCallId: "t1", title: "Write to file" },
         { sessionId: "s1" },
       );
+      await Promise.resolve();
 
       expect(permEvents).toHaveLength(1);
       const perm = permEvents[0].permission;
@@ -1183,6 +1184,83 @@ describe("CopilotSdkAdapter", () => {
       await expect(requestPromise).resolves.toEqual({ kind: "approve-once" });
     });
 
+    it("uses PermissionPromptRequest details from permission.requested events", async () => {
+      const permEvents: any[] = [];
+      adapter.on("permission.asked", (e) => permEvents.push(e));
+      (adapter as any).sessionModes.set("s1", "interactive");
+
+      const requestPromise = (adapter as any).handlePermissionRequest(
+        { kind: "write", toolCallId: "tool-write-1" },
+        { sessionId: "s1" },
+      );
+      (adapter as any).handleSessionEvent("s1", {
+        type: "permission.requested",
+        data: {
+          requestId: "permission-request-1",
+          permissionRequest: { kind: "write", toolCallId: "tool-write-1" },
+          promptRequest: {
+            canOfferSessionApproval: true,
+            diff: "@@ -1 +1 @@\n-old\n+new",
+            fileName: "src/app.ts",
+            intention: "Update the app entry point",
+            kind: "write",
+            toolCallId: "tool-write-1",
+          },
+        },
+      });
+      await Promise.resolve();
+
+      expect(permEvents).toHaveLength(1);
+      const perm = permEvents[0].permission;
+      expect(perm.title).toBe("Update the app entry point");
+      expect(perm.kind).toBe("edit");
+      expect(perm.toolName).toBe("edit");
+      expect(perm.diff).toBe("@@ -1 +1 @@\n-old\n+new");
+      expect(perm.details).toEqual([{ label: "File", value: "src/app.ts", mono: true }]);
+      expect(perm.options.map((o: any) => o.id)).toEqual(["allow_once", "allow_always", "reject_once"]);
+
+      await adapter.replyPermission(perm.id, { optionId: "allow_always" });
+      await expect(requestPromise).resolves.toEqual({
+        kind: "approve-for-session",
+        approval: { kind: "write" },
+      });
+    });
+
+    it("omits allow_always when promptRequest cannot offer session approval", async () => {
+      const permEvents: any[] = [];
+      adapter.on("permission.asked", (e) => permEvents.push(e));
+      (adapter as any).sessionModes.set("s1", "interactive");
+
+      const requestPromise = (adapter as any).handlePermissionRequest(
+        { kind: "read", toolCallId: "tool-read-1" },
+        { sessionId: "s1" },
+      );
+      (adapter as any).handleSessionEvent("s1", {
+        type: "permission.requested",
+        data: {
+          requestId: "permission-request-2",
+          permissionRequest: { kind: "read", toolCallId: "tool-read-1" },
+          promptRequest: {
+            intention: "Inspect package metadata",
+            kind: "read",
+            path: "package.json",
+            toolCallId: "tool-read-1",
+          },
+        },
+      });
+      await Promise.resolve();
+
+      const perm = permEvents[0].permission;
+      expect(perm.title).toBe("Inspect package metadata");
+      expect(perm.kind).toBe("read");
+      expect(perm.details).toEqual([{ label: "Path", value: "package.json", mono: true }]);
+      expect(perm.options.map((o: any) => o.id)).toEqual(["allow_once", "reject_once"]);
+
+      const pending = (adapter as any).pendingPermissions.get(perm.id);
+      pending.resolve({ kind: "approve-once" });
+      await expect(requestPromise).resolves.toEqual({ kind: "approve-once" });
+    });
+
     it("maps 'read' kind to 'read', 'shell' to 'edit', unknown to 'other'", async () => {
       const permEvents: any[] = [];
       adapter.on("permission.asked", (e) => permEvents.push(e));
@@ -1191,6 +1269,7 @@ describe("CopilotSdkAdapter", () => {
       for (const [kind, expected] of [["read", "read"], ["shell", "edit"], ["unknown", "other"]] as const) {
         (adapter as any).handlePermissionRequest({ kind, toolCallId: `t-${kind}` }, { sessionId: "s1" });
       }
+      await Promise.resolve();
 
       expect(permEvents[0].permission.kind).toBe("read");
       expect(permEvents[1].permission.kind).toBe("edit");
@@ -1199,11 +1278,12 @@ describe("CopilotSdkAdapter", () => {
   });
 
   describe("replyPermission()", () => {
-    it("resolves with approved for allow_once", async () => {
+    it("resolves with approve-once for allow_once", async () => {
       const resolve = vi.fn();
       (adapter as any).pendingPermissions.set("p1", {
         resolve,
-        permission: { id: "p1", sessionId: "s1", rawInput: { kind: "write" } },
+        permission: { id: "p1", sessionId: "s1" },
+        sdkKind: "write",
       });
 
       await adapter.replyPermission("p1", { optionId: "allow_once" });
@@ -1212,24 +1292,26 @@ describe("CopilotSdkAdapter", () => {
       expect((adapter as any).pendingPermissions.has("p1")).toBe(false);
     });
 
-    it("resolves with approved AND persists kind to allowedAlwaysKinds for allow_always", async () => {
+    it("resolves with approve-once AND persists kind to allowedAlwaysKinds for fallback allow_always", async () => {
       const resolve = vi.fn();
       (adapter as any).pendingPermissions.set("p1", {
         resolve,
-        permission: { id: "p1", sessionId: "s1", rawInput: { kind: "shell" } },
+        permission: { id: "p1", sessionId: "s1" },
+        sdkKind: "shell",
       });
 
       await adapter.replyPermission("p1", { optionId: "allow_always" });
 
       expect(resolve).toHaveBeenCalledWith({ kind: "approve-once" });
-      expect((adapter as any).allowedAlwaysKinds.has("shell")).toBe(true);
+      expect((adapter as any).allowedAlwaysKinds.get("s1")?.has("shell")).toBe(true);
     });
 
-    it("resolves with denied-interactively for reject_once", async () => {
+    it("resolves with reject for reject_once", async () => {
       const resolve = vi.fn();
       (adapter as any).pendingPermissions.set("p1", {
         resolve,
-        permission: { id: "p1", sessionId: "s1", rawInput: { kind: "write" } },
+        permission: { id: "p1", sessionId: "s1" },
+        sdkKind: "write",
       });
 
       await adapter.replyPermission("p1", { optionId: "reject_once" });
@@ -1243,7 +1325,8 @@ describe("CopilotSdkAdapter", () => {
       const resolve = vi.fn();
       (adapter as any).pendingPermissions.set("p1", {
         resolve,
-        permission: { id: "p1", sessionId: "s1", rawInput: {} },
+        permission: { id: "p1", sessionId: "s1" },
+        sdkKind: "write",
       });
 
       await adapter.replyPermission("p1", { optionId: "allow_once" });

@@ -392,6 +392,13 @@ export interface ToolPart extends PartBase {
   locations?: Array<{ path: string }>;
   /** Diff preview content (from SDK's rawOutput.detailedContent or rawInput.diff) */
   diff?: string;
+  /**
+   * When true, the rendering layer hides this tool part from the message stream.
+   * Set by engine adapters for tool calls that have a dedicated UI surface
+   * elsewhere (e.g. Copilot's `ask_user` → Question Dock). Keeps engine-specific
+   * rendering decisions inside the adapter layer.
+   */
+  suppressInStream?: boolean;
 }
 
 export interface SystemNoticePart extends PartBase {
@@ -422,19 +429,36 @@ export interface PermissionOption {
   type: "accept_once" | "accept_always" | "reject" | "allow_once" | "allow_always" | "reject_once" | "reject_always";
 }
 
+/** A single display-ready detail for a permission request. Populated by engine adapters. */
+export interface PermissionDetail {
+  /** Human-readable label (already resolved, not an i18n key) */
+  label: string;
+  /** The value to display */
+  value: string;
+  /** If true, render in monospace (commands, paths, code) */
+  mono?: boolean;
+}
+
 export interface UnifiedPermission {
   id: string;
   sessionId: string;
   engineType: EngineType;
   /** Related tool call ID */
   toolCallId?: string;
+  /** Human-readable tool name for display (e.g. "web_fetch", "shell", "edit") */
+  toolName?: string;
   /** Permission title / description */
   title: string;
   /** Operation kind */
   kind: "read" | "edit" | "other";
   /** Diff preview for write operations */
   diff?: string;
-  /** Raw input for context */
+  /**
+   * Structured display details, populated by the adapter layer.
+   * Each item is a label/value pair ready for rendering — no frontend parsing needed.
+   */
+  details?: PermissionDetail[];
+  /** Raw input for context (legacy fallback) */
   rawInput?: unknown;
   /** Available response options (2 for Copilot/Claude, 3 for OpenCode) */
   options: PermissionOption[];
@@ -483,6 +507,15 @@ export interface QuestionReplyRequest {
   questionId: string;
   /** Each element is the selected labels for the corresponding question */
   answers: string[][];
+}
+
+export interface PendingListRequest {
+  sessionId: string;
+}
+
+export interface PendingListResponse {
+  questions: UnifiedQuestion[];
+  permissions: UnifiedPermission[];
 }
 
 // --- Project ---
@@ -657,6 +690,9 @@ export const GatewayRequestType = {
   // Question
   QUESTION_REPLY: "question.reply",
   QUESTION_REJECT: "question.reject",
+
+  // Pending state (resync after reconnect / session switch)
+  PENDING_LIST: "pending.list",
 
   // Project
   PROJECT_LIST: "project.list",

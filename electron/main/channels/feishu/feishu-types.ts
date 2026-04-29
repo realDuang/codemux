@@ -107,8 +107,6 @@ export interface TempSession {
   messageQueue: string[];
   /** Whether currently processing a message */
   processing: boolean;
-  /** Whether the usage hint has been shown for this temp session */
-  hintShown?: boolean;
 }
 
 /** Pending selection context for P2P text-based project/session selection */
@@ -134,17 +132,7 @@ export interface PendingQuestion {
 }
 
 // --- Command Parser Types ---
-
-export interface ParsedCommand {
-  /** Top-level command name (e.g., "project", "session", "engine") */
-  command: string;
-  /** Sub-command (e.g., "list", "new", "switch") */
-  subcommand?: string;
-  /** Remaining arguments */
-  args: string[];
-  /** Original raw text */
-  raw: string;
-}
+// (ParsedCommand moved to ../shared/command-types.ts)
 
 // --- Feishu Shared Types ---
 

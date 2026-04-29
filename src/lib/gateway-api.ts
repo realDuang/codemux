@@ -6,6 +6,7 @@
  */
 
 import { gatewayClient } from "./gateway-client";
+import { GatewayRequestType } from "../types/unified";
 import { logger } from "./logger";
 import type {
   EngineType,
@@ -320,6 +321,15 @@ class GatewayAPI {
 
   rejectQuestion(questionId: string): Promise<void> {
     return gatewayClient.rejectQuestion(questionId);
+  }
+
+  // --- Pending state (resync) ---
+
+  listPending(sessionId: string): Promise<{
+    questions: UnifiedQuestion[];
+    permissions: UnifiedPermission[];
+  }> {
+    return gatewayClient.request(GatewayRequestType.PENDING_LIST, { sessionId });
   }
 
   // --- Project ---

@@ -56,6 +56,8 @@ import type {
   EngineCommand,
   CommandInvokeResult,
   ReasoningEffort,
+  PermissionOption,
+  PermissionDetail,
 } from "../../../../src/types/unified";
 import { REASONING_EFFORT_VALUES, normalizeReasoningEfforts } from "../../../../src/types/unified";
 
@@ -124,6 +126,7 @@ interface PendingQuestion {
 const DEFAULT_MODES: AgentMode[] = [
   { id: "default", label: "Default", description: "Standard behavior, prompts for dangerous operations" },
   { id: "acceptEdits", label: "Auto-Accept", description: "Auto-accept file edit operations" },
+  { id: "autopilot", label: "Autopilot", description: "Fully autonomous, skip all permission prompts" },
   { id: "plan", label: "Plan", description: "Planning mode, no actual tool execution" },
 ];
 
@@ -281,8 +284,9 @@ export class ClaudeCodeAdapter extends EngineAdapter {
     claudeLog.info("Starting Claude Code adapter...");
 
     try {
-      // Claude Code CLI is available globally (installed via npm install -g @anthropic-ai/claude-code)
-      // The SDK will find it automatically, or we can specify pathToClaudeCodeExecutable.
+      // Claude Code is provided by the SDK's platform-specific optional binary
+      // package. We resolve it explicitly so Electron ASAR builds can point at
+      // the unpacked native executable.
       // No separate server process to manage — the SDK spawns CLI subprocesses per session.
 
       // Model is determined per-request via sendMessage's modelId parameter,
@@ -324,13 +328,12 @@ export class ClaudeCodeAdapter extends EngineAdapter {
 
       const q = sdkQuery({
         prompt: "",
-        options: {
+        options: this.withClaudeExecutablePath({
           model: this.currentModelId ?? "claude-sonnet-4-20250514",
           env: sdkEnv,
           abortController: new AbortController(),
-          pathToClaudeCodeExecutable: this.resolveCliPath(),
           stderr: this.stderrCallback,
-        } as any,
+        }) as any,
       });
 
       try {
@@ -805,8 +808,9 @@ export class ClaudeCodeAdapter extends EngineAdapter {
     this.emit("message.updated", { sessionId, message: assistantMessage });
 
     // Determine permission mode from mode option
+    // "autopilot" is handled in canUseTool; SDK uses "default" permissionMode
     const mode = options?.mode ?? this.sessionModes.get(sessionId) ?? "default";
-    const permissionMode = mode as "default" | "plan" | "acceptEdits" | "dontAsk";
+    const permissionMode = (mode === "autopilot" ? "default" : mode) as "default" | "plan" | "acceptEdits" | "dontAsk";
 
     // Apply reasoning effort if it changed (triggers session rebuild via getOrCreateV2Session)
     if (options?.reasoningEffort !== undefined) {
@@ -1168,13 +1172,12 @@ export class ClaudeCodeAdapter extends EngineAdapter {
 
       const q = sdkQuery({
         prompt: "",
-        options: {
+        options: this.withClaudeExecutablePath({
           model: this.currentModelId ?? "claude-sonnet-4-20250514",
           env: sdkEnv,
           abortController: new AbortController(),
-          pathToClaudeCodeExecutable: this.resolveCliPath(),
           stderr: this.stderrCallback,
-        } as any,
+        }) as any,
       });
 
       try {
@@ -1239,18 +1242,22 @@ export class ClaudeCodeAdapter extends EngineAdapter {
     this.sessionModes.set(sessionId, modeId);
     claudeLog.info(`[Claude][${sessionId}] Mode set to: ${modeId}`);
 
+    // Map codemux mode → SDK permissionMode
+    // "autopilot" is handled in canUseTool (auto-approve), SDK stays on "default"
+    const sdkPermissionMode = modeId === "autopilot" ? "default" : modeId;
+
     const v2Info = this.v2Sessions.get(sessionId);
     if (v2Info) {
       // Update tracked permissionMode
-      v2Info.permissionMode = modeId as any;
+      v2Info.permissionMode = sdkPermissionMode as any;
 
       // Use the internal Query API to switch permission mode at runtime
       // (same pattern as cancelMessage's interrupt() call)
       try {
         const query = (v2Info.session as any).query;
         if (query && typeof query.setPermissionMode === "function") {
-          await query.setPermissionMode(modeId);
-          claudeLog.info(`[Claude][${sessionId}] Permission mode switched to: ${modeId}`);
+          await query.setPermissionMode(sdkPermissionMode);
+          claudeLog.info(`[Claude][${sessionId}] Permission mode switched to: ${sdkPermissionMode}`);
         } else {
           claudeLog.warn(`[Claude][${sessionId}] setPermissionMode not available on query, will apply on next message`);
         }
@@ -1344,6 +1351,9 @@ export class ClaudeCodeAdapter extends EngineAdapter {
   /**
    * Create a canUseTool callback bound to a specific codemux session ID.
    * This callback is invoked by the SDK before each tool execution.
+   *
+   * - Autopilot mode: auto-approve everything
+   * - Default/acceptEdits: emit UnifiedPermission for user approval
    */
   private createCanUseTool(sessionId: string): CanUseTool {
     return async (
@@ -1354,18 +1364,117 @@ export class ClaudeCodeAdapter extends EngineAdapter {
         suggestions?: PermissionUpdate[];
         blockedPath?: string;
         decisionReason?: string;
+        title?: string;
+        displayName?: string;
+        description?: string;
         toolUseID: string;
         agentID?: string;
       },
     ): Promise<PermissionResult> => {
-      // --- ExitPlanMode: intercept and ask user for confirmation ---
+      // --- ExitPlanMode: always intercept regardless of mode ---
       if (toolName === "ExitPlanMode") {
         return this.handleExitPlanMode(sessionId, input, options);
       }
 
-      // --- All other tools: auto-approve ---
-      return { behavior: "allow", updatedInput: input };
+      // --- Autopilot: auto-approve all tools ---
+      const currentMode = this.sessionModes.get(sessionId) ?? "default";
+      if (currentMode === "autopilot") {
+        return { behavior: "allow", updatedInput: input };
+      }
+
+      // --- Default / acceptEdits: emit permission prompt ---
+      return this.handleToolPermission(sessionId, toolName, input, options);
     };
+  }
+
+  /**
+   * Emit a UnifiedPermission for a tool execution and block until the user responds.
+   */
+  private handleToolPermission(
+    sessionId: string,
+    toolName: string,
+    input: Record<string, unknown>,
+    options: {
+      signal: AbortSignal;
+      suggestions?: PermissionUpdate[];
+      blockedPath?: string;
+      decisionReason?: string;
+      title?: string;
+      displayName?: string;
+      description?: string;
+      toolUseID: string;
+    },
+  ): Promise<PermissionResult> {
+    const permissionId = timeId("perm");
+
+    const normalizedTool = normalizeToolName("claude", toolName);
+    const kind: "read" | "edit" | "other" = inferToolKind(undefined, normalizedTool);
+
+    const title = options.title
+      ?? options.displayName
+      ?? `${toolName} permission requested`;
+
+    // Build structured details from SDK-provided context
+    const details: PermissionDetail[] = [];
+    if (options.description) {
+      details.push({ label: "Description", value: options.description });
+    }
+    if (options.blockedPath) {
+      details.push({ label: "Path", value: options.blockedPath, mono: true });
+    }
+    if (options.decisionReason) {
+      details.push({ label: "Reason", value: options.decisionReason });
+    }
+    // Extract key tool arguments for display
+    if (typeof input.command === "string" && input.command.trim()) {
+      details.push({ label: "Command", value: input.command.trim(), mono: true });
+    }
+    if (typeof input.file_path === "string" && input.file_path.trim()) {
+      details.push({ label: "File", value: input.file_path.trim(), mono: true });
+    }
+    if (typeof input.url === "string" && input.url.trim()) {
+      details.push({ label: "URL", value: input.url.trim(), mono: true });
+    }
+    if (typeof input.pattern === "string" && input.pattern.trim()) {
+      details.push({ label: "Pattern", value: input.pattern.trim(), mono: true });
+    }
+
+    const permissionOptions: PermissionOption[] = [
+      { id: "allow_once", label: "Allow Once", type: "accept_once" },
+      { id: "allow_always", label: "Always Allow", type: "accept_always" },
+      { id: "reject", label: "Deny", type: "reject" },
+    ];
+
+    const permission: UnifiedPermission = {
+      id: permissionId,
+      sessionId,
+      engineType: this.engineType,
+      toolCallId: options.toolUseID,
+      toolName: normalizedTool,
+      title,
+      kind,
+      details,
+      rawInput: input,
+      options: permissionOptions,
+    };
+
+    return new Promise<PermissionResult>((resolve) => {
+      this.pendingPermissions.set(permissionId, {
+        resolve,
+        permission,
+        suggestions: options.suggestions,
+        input,
+      });
+      this.emit("permission.asked", { permission });
+
+      // Handle abort signal
+      options.signal.addEventListener("abort", () => {
+        if (this.pendingPermissions.has(permissionId)) {
+          this.pendingPermissions.delete(permissionId);
+          resolve({ behavior: "deny", message: "Aborted" });
+        }
+      });
+    });
   }
 
   /**
@@ -1598,6 +1707,18 @@ export class ClaudeCodeAdapter extends EngineAdapter {
     pending.resolve(""); // Empty answer = rejection
   }
 
+  getPendingQuestions(sessionId?: string): UnifiedQuestion[] {
+    return ClaudeCodeAdapter.filterPending(
+      this.pendingQuestions, sessionId, (p) => p.question, (p) => p.question.sessionId,
+    );
+  }
+
+  getPendingPermissions(sessionId?: string): UnifiedPermission[] {
+    return ClaudeCodeAdapter.filterPending(
+      this.pendingPermissions, sessionId, (p) => p.permission, (p) => p.permission.sessionId,
+    );
+  }
+
   // ==========================================================================
   // Projects
   // ==========================================================================
@@ -1742,30 +1863,74 @@ export class ClaudeCodeAdapter extends EngineAdapter {
   // ==========================================================================
 
   /**
-   * Resolve the SDK's cli.js path for child process spawning.
-   * In production Electron, the SDK is inside app.asar but child processes
-   * can't read from ASAR archives. Rewrite to the app.asar.unpacked path.
+   * Add the Claude Code executable path when the SDK's native binary package is
+   * installed. New SDK versions no longer ship cli.js in the main package.
    */
-  private resolveCliPath(): string | undefined {
-    try {
-      const _require = createRequire(import.meta.url);
-      // Resolve the SDK's main entry point (listed in package.json "exports"),
-      // then derive cli.js from the same directory. We can't require.resolve
-      // cli.js directly because the SDK's "exports" field doesn't list it.
-      const sdkMain = _require.resolve("@anthropic-ai/claude-agent-sdk");
-      const cliPath = join(dirname(sdkMain), "cli.js");
-      claudeLog.debug(`[Claude] resolveCliPath: raw=${cliPath}`);
-      const asarMarker = `app.asar${sep}`;
-      if (cliPath.includes(asarMarker)) {
-        const unpacked = cliPath.replace(asarMarker, `app.asar.unpacked${sep}`);
-        claudeLog.info(`[Claude] resolveCliPath: ASAR rewrite → ${unpacked}`);
-        return unpacked;
+  private withClaudeExecutablePath<T extends Record<string, unknown>>(options: T): T & { pathToClaudeCodeExecutable?: string } {
+    const executablePath = this.resolveClaudeExecutablePath();
+    return executablePath ? { ...options, pathToClaudeCodeExecutable: executablePath } : options;
+  }
+
+  private resolvedClaudeExecutablePath: string | undefined;
+  private didResolveClaudeExecutablePath = false;
+
+  private resolveClaudeExecutablePath(): string | undefined {
+    if (this.didResolveClaudeExecutablePath) return this.resolvedClaudeExecutablePath;
+
+    this.didResolveClaudeExecutablePath = true;
+    const _require = createRequire(import.meta.url);
+    const executableName = process.platform === "win32" ? "claude.exe" : "claude";
+
+    for (const packageName of this.getClaudeBinaryPackageCandidates()) {
+      try {
+        const packageJsonPath = _require.resolve(`${packageName}/package.json`);
+        const rawPath = join(dirname(packageJsonPath), executableName);
+        const executablePath = this.toUnpackedAsarPath(rawPath);
+        if (existsSync(executablePath)) {
+          this.resolvedClaudeExecutablePath = executablePath;
+          claudeLog.debug(`[Claude] Resolved native executable: ${executablePath}`);
+          return executablePath;
+        }
+        claudeLog.warn(`[Claude] Native executable package ${packageName} is missing ${executableName}`);
+      } catch (err) {
+        claudeLog.debug(`[Claude] Native executable package ${packageName} not resolved: ${err}`);
       }
-      return cliPath;
-    } catch (err) {
-      claudeLog.warn("[Claude] resolveCliPath: resolve failed:", err);
-      return undefined;
     }
+
+    claudeLog.warn(
+      `[Claude] Native executable for ${process.platform}-${process.arch} not found. ` +
+        "Reinstall @anthropic-ai/claude-agent-sdk with optional dependencies enabled.",
+    );
+    return undefined;
+  }
+
+  private getClaudeBinaryPackageCandidates(): string[] {
+    if (process.platform === "darwin" && (process.arch === "arm64" || process.arch === "x64")) {
+      return [`@anthropic-ai/claude-agent-sdk-darwin-${process.arch}`];
+    }
+    if (process.platform === "win32" && (process.arch === "arm64" || process.arch === "x64")) {
+      return [`@anthropic-ai/claude-agent-sdk-win32-${process.arch}`];
+    }
+    if (process.platform === "linux" && (process.arch === "arm64" || process.arch === "x64")) {
+      const base = `@anthropic-ai/claude-agent-sdk-linux-${process.arch}`;
+      return this.isLinuxMusl() ? [`${base}-musl`, base] : [base, `${base}-musl`];
+    }
+    return [];
+  }
+
+  private isLinuxMusl(): boolean {
+    if (process.platform !== "linux") return false;
+    const report = process.report?.getReport?.() as { header?: { glibcVersionRuntime?: string } } | undefined;
+    return !report?.header?.glibcVersionRuntime;
+  }
+
+  private toUnpackedAsarPath(filePath: string): string {
+    const asarMarker = `app.asar${sep}`;
+    if (!filePath.includes(asarMarker)) return filePath;
+
+    const unpacked = filePath.replace(asarMarker, `app.asar.unpacked${sep}`);
+    claudeLog.info(`[Claude] ASAR executable rewrite: ${unpacked}`);
+    return unpacked;
   }
 
   /**
@@ -1849,17 +2014,15 @@ export class ClaudeCodeAdapter extends EngineAdapter {
       promptAppend += `\n\nThe user has installed the following additional skills (invokable via the Skill tool): ${this.cachedSkillNames.join(", ")}. When the user's request matches one of these skills, use the Skill tool to invoke it.`;
     }
 
-    const sdkOptions: any = {
+    const sdkOptions: any = this.withClaudeExecutablePath({
       model: opts.model ?? this.currentModelId ?? "claude-sonnet-4-20250514",
       env,
       permissionMode: opts.permissionMode ?? "default",
-      allowedTools: ["Read", "Write", "Edit", "Grep", "Glob", "Bash", "WebFetch", "WebSearch", "Task", "TodoWrite", "TodoRead", "NotebookEdit", "Skill"],
       canUseTool: this.createCanUseTool(sessionId),
       systemPrompt: { type: "preset" as const, preset: "claude_code" as const, append: promptAppend },
-      pathToClaudeCodeExecutable: this.resolveCliPath(),
       stderr: this.stderrCallback,
       maxThinkingTokens: 10240,
-    };
+    });
 
     // Apply reasoning effort level if set for this session
     const reasoningEffort = this.sessionReasoningEfforts.get(sessionId);
@@ -2080,14 +2243,13 @@ export class ClaudeCodeAdapter extends EngineAdapter {
 
     const q = sdkQuery({
       prompt: "",
-      options: {
+      options: this.withClaudeExecutablePath({
         model: "claude-sonnet-4-20250514",
         env,
         cwd,
         abortController: new AbortController(),
-        pathToClaudeCodeExecutable: this.resolveCliPath(),
         stderr: this.stderrCallback,
-      } as any,
+      }) as any,
     });
 
     try {

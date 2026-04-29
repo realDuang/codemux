@@ -11,6 +11,7 @@ import type {
   ToolState as SdkToolState,
   ProviderListResponse,
 } from "@opencode-ai/sdk/v2";
+import { isDefaultTitle } from "../../../../src/lib/session-utils";
 import { normalizeToolName, inferToolKind } from "../../../../src/types/tool-mapping";
 import type {
   EngineType,
@@ -23,11 +24,13 @@ import type {
 } from "../../../../src/types/unified";
 
 export function convertSession(engineType: EngineType, sdk: SdkSession): UnifiedSession {
+  const title = sdk.title && !isDefaultTitle(sdk.title) ? sdk.title : undefined;
+
   return {
     id: sdk.id,
     engineType,
     directory: sdk.directory.replaceAll("\\", "/"),
-    title: sdk.title,
+    title,
     parentId: sdk.parentID,
     projectId: sdk.projectID,
     time: {
@@ -192,6 +195,28 @@ function convertToolState(sdkState: SdkToolState): ToolState {
   }
 }
 
+type OpenCodeModelCompat = {
+  capabilities?: {
+    temperature?: boolean;
+    reasoning?: boolean;
+    attachment?: boolean;
+    toolcall?: boolean;
+    tool_call?: boolean;
+  };
+  temperature?: boolean;
+  reasoning?: boolean;
+  attachment?: boolean;
+  toolcall?: boolean;
+  tool_call?: boolean;
+  cost?: {
+    input: number;
+    output: number;
+    cache?: { read?: number; write?: number };
+    cache_read?: number;
+    cache_write?: number;
+  };
+};
+
 export function convertProviders(engineType: EngineType, response: ProviderListResponse): UnifiedModelInfo[] {
   const models: UnifiedModelInfo[] = [];
   for (const provider of response.all) {
@@ -199,7 +224,9 @@ export function convertProviders(engineType: EngineType, response: ProviderListR
     if (!response.connected.includes(provider.id)) continue;
 
     for (const model of Object.values(provider.models)) {
-      const capabilities = model.capabilities;
+      const compat = model as typeof model & OpenCodeModelCompat;
+      const capabilities = compat.capabilities ?? compat;
+      const cost = compat.cost;
       models.push({
         modelId: `${provider.id}/${model.id}`,
         name: model.name,
@@ -207,19 +234,19 @@ export function convertProviders(engineType: EngineType, response: ProviderListR
         engineType,
         providerId: provider.id,
         providerName: provider.name,
-        cost: model.cost ? {
-          input: model.cost.input,
-          output: model.cost.output,
+        cost: cost ? {
+          input: cost.input,
+          output: cost.output,
           cache: {
-            read: model.cost.cache.read ?? 0,
-            write: model.cost.cache.write ?? 0,
+            read: cost.cache?.read ?? cost.cache_read ?? 0,
+            write: cost.cache?.write ?? cost.cache_write ?? 0,
           },
         } : undefined,
         capabilities: {
-          temperature: capabilities?.temperature ?? false,
-          reasoning: capabilities?.reasoning ?? false,
-          attachment: capabilities?.attachment ?? false,
-          toolcall: capabilities?.toolcall ?? false,
+          temperature: capabilities.temperature ?? false,
+          reasoning: capabilities.reasoning ?? false,
+          attachment: capabilities.attachment ?? false,
+          toolcall: capabilities.toolcall ?? capabilities.tool_call ?? false,
         },
         meta: {
           status: model.status,

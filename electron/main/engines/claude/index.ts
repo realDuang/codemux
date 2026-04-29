@@ -14,6 +14,7 @@ import {
   unstable_v2_resumeSession,
   listSessions as sdkListSessions,
   getSessionMessages as sdkGetSessionMessages,
+  renameSession as sdkRenameSession,
   query as sdkQuery,
 } from "@anthropic-ai/claude-agent-sdk";
 import type {
@@ -575,6 +576,35 @@ export class ClaudeCodeAdapter extends EngineAdapter {
 
   hasSession(sessionId: string): boolean {
     return this.v2Sessions.has(sessionId) || this.sessionDirectories.has(sessionId);
+  }
+
+  /**
+   * Rename a Claude session via SDK. The codemux session ID is opaque to the
+   * SDK; the real on-disk session is keyed by ccSessionId (captured during
+   * the system init message).
+   */
+  async renameSession(
+    sessionId: string,
+    title: string,
+    directory?: string,
+    engineMeta?: Record<string, unknown>,
+  ): Promise<void> {
+    const ccSessionId =
+      this.sessionCcIds.get(sessionId) ??
+      (typeof engineMeta?.ccSessionId === "string"
+        ? (engineMeta.ccSessionId as string)
+        : undefined);
+    if (!ccSessionId) {
+      claudeLog.debug(
+        `[Claude][${sessionId}] renameSession skipped — no ccSessionId yet`,
+      );
+      return;
+    }
+    try {
+      await sdkRenameSession(ccSessionId, title, directory ? { dir: directory } : undefined);
+    } catch (err) {
+      claudeLog.warn(`[Claude][${sessionId}] renameSession via SDK failed:`, err);
+    }
   }
 
   async getSession(sessionId: string): Promise<UnifiedSession | null> {
@@ -3412,8 +3442,6 @@ export class ClaudeCodeAdapter extends EngineAdapter {
 
     // Emit final message
     this.emit("message.updated", { sessionId: buffer.sessionId, message: finalMessage });
-
-    // Title updates are handled by EngineManager's applyTitleFallback()
 
     // Clean up
     this.messageBuffers.delete(sessionId);

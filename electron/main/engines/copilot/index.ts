@@ -8,6 +8,7 @@ import { tmpdir } from "os";
 
 import { timeId } from "../../utils/id-gen";
 import { CopilotClient, CopilotSession } from "@github/copilot-sdk";
+import { isPromptFallbackTitle } from "../../../../src/lib/session-utils";
 import type {
   SessionEvent,
   SessionConfig,
@@ -200,6 +201,7 @@ export class CopilotSdkAdapter extends EngineAdapter {
   private sessionModes = new Map<string, string>();
   private sessionReasoningEfforts = new Map<string, ReasoningEffort>();
   private sessionDirectories = new Map<string, string>();
+  private sessionTitles?: Map<string, string>;
 
   private sessionTodos = new Map<string, Map<string, { id: string; title: string; status: string }>>();
   // Fallback for permission prompts that still expose an "Always Allow" option but
@@ -455,6 +457,17 @@ export class CopilotSdkAdapter extends EngineAdapter {
     this.sessionDirectories.delete(sessionId);
     this.sessionTodos.delete(sessionId);
     this.allowedAlwaysKinds.delete(sessionId);
+  }
+
+  async renameSession(sessionId: string, title: string, directory?: string): Promise<void> {
+    const trimmed = title.trim();
+    if (!trimmed) return;
+    try {
+      const session = await this.ensureActiveSession(sessionId, directory);
+      await session.rpc.name.set({ name: trimmed.slice(0, 100) });
+    } catch (err) {
+      copilotLog.warn(`[Copilot][${sessionId}] renameSession failed:`, err);
+    }
   }
 
   async sendMessage(
@@ -1428,10 +1441,37 @@ export class CopilotSdkAdapter extends EngineAdapter {
         this.pendingUserMessages.delete(sessionId);
       }
     }
+
+    void this.refreshSessionTitle(sessionId);
+  }
+
+  private getFirstUserPrompt(sessionId: string): string | undefined {
+    const firstUser = this.messageHistory.get(sessionId)?.find((message) => message.role === "user");
+    const textPart = firstUser?.parts.find((part): part is TextPart => part.type === "text");
+    return textPart?.text;
+  }
+
+  private async refreshSessionTitle(sessionId: string): Promise<void> {
+    if (!this.client) return;
+    try {
+      const meta = await this.client.getSessionMetadata(sessionId);
+      const title = meta?.summary?.trim();
+      if (!title || isPromptFallbackTitle(title, this.getFirstUserPrompt(sessionId))) return;
+      const cached = this.sessionTitles?.get(sessionId);
+      if (cached === title) return;
+      if (!this.sessionTitles) this.sessionTitles = new Map();
+      this.sessionTitles.set(sessionId, title);
+      this.emit("session.updated", {
+        session: { id: sessionId, engineType: this.engineType, title },
+      });
+    } catch (err) {
+      copilotLog.debug(`[Copilot][${sessionId}] refreshSessionTitle failed:`, err);
+    }
   }
 
   private handleTitleChanged(sessionId: string, data: { title?: string }): void {
-    if (data.title) this.emit("session.updated", { session: { id: sessionId, engineType: this.engineType, title: data.title } });
+    const title = data.title?.trim();
+    if (title) this.emit("session.updated", { session: { id: sessionId, engineType: this.engineType, title } });
   }
 
   private handleSessionError(sessionId: string, data: { message?: string }): void {

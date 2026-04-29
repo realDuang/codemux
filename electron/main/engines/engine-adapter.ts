@@ -204,6 +204,23 @@ export abstract class EngineAdapter extends EventEmitter {
   /** Delete a session */
   abstract deleteSession(sessionId: string): Promise<void>;
 
+  /**
+   * Rename a session on the engine side. Default: no-op.
+   * Engines that persist titles (Claude SDK, Codex thread/name/set, OpenCode
+   * session.update) override this so codemux's local rename stays in sync
+   * with the engine's own session list.
+   *
+   * @param title Empty string clears any engine-side custom title.
+   */
+  async renameSession(
+    _sessionId: string,
+    _title: string,
+    _directory?: string,
+    _engineMeta?: Record<string, unknown>,
+  ): Promise<void> {
+    /* default: not supported */
+  }
+
   // --- Messages ---
 
   /**

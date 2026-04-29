@@ -32,6 +32,7 @@ const {
     rpc: {
       model: { switchTo: vi.fn(async function() {}) },
       mode: { set: vi.fn(async function() {}) },
+      name: { set: vi.fn(async function() {}) },
       skills: { list: vi.fn(async function() { return { skills: [] }; }) },
       commands: { handlePendingCommand: vi.fn(async function() {}) },
     },
@@ -54,6 +55,7 @@ const {
     }),
     deleteSession: vi.fn(async function() {}),
     listModels: vi.fn(async function() { return []; }),
+    getSessionMetadata: vi.fn(async function() { return undefined; }),
     getState: vi.fn(function() { return "connected"; }),
   };
 
@@ -160,6 +162,7 @@ function makeMockSession(sessionId = "s1") {
     rpc: {
       model: { switchTo: vi.fn(async () => {}) },
       mode: { set: vi.fn(async () => {}) },
+      name: { set: vi.fn(async () => {}) },
       skills: { list: vi.fn(async () => ({ skills: [] })) },
       commands: { handlePendingCommand: vi.fn(async () => {}) },
     },
@@ -448,6 +451,30 @@ describe("CopilotSdkAdapter", () => {
     it("calls client.deleteSession even when the session is not active in memory", async () => {
       await adapter.deleteSession("ghost-session");
       expect(mockClientInstance.deleteSession).toHaveBeenCalledWith("ghost-session");
+    });
+  });
+
+  describe("renameSession()", () => {
+    beforeEach(async () => {
+      await adapter.start();
+    });
+
+    it("writes the trimmed title through Copilot's name RPC", async () => {
+      const sess = makeMockSession("s1");
+      (adapter as any).activeSessions.set("s1", sess);
+
+      await adapter.renameSession("s1", "  Manual Title  ");
+
+      expect(sess.rpc.name.set).toHaveBeenCalledWith({ name: "Manual Title" });
+    });
+
+    it("does not write empty titles", async () => {
+      const sess = makeMockSession("s1");
+      (adapter as any).activeSessions.set("s1", sess);
+
+      await adapter.renameSession("s1", "   ");
+
+      expect(sess.rpc.name.set).not.toHaveBeenCalled();
     });
   });
 
@@ -1294,6 +1321,51 @@ describe("CopilotSdkAdapter", () => {
 
       // Second identical call should not emit a new update
       expect(partUpdates.length).toBe(countAfterFirst);
+    });
+  });
+
+  describe("refreshSessionTitle()", () => {
+    beforeEach(async () => {
+      await adapter.start();
+    });
+
+    it("ignores metadata summaries that are just the first user prompt", async () => {
+      const updates: any[] = [];
+      adapter.on("session.updated", (e) => updates.push(e));
+      (adapter as any).messageHistory.set("s1", [{
+        id: "user-1",
+        sessionId: "s1",
+        role: "user",
+        time: { created: 1 },
+        parts: [{ id: "part-1", messageId: "user-1", sessionId: "s1", type: "text", text: "Summarize mock project metadata: inspect the sample manifest and report the sample package name." }],
+      }]);
+      mockClientInstance.getSessionMetadata.mockResolvedValueOnce({
+        summary: "Summarize mock project metadata: inspect the sample manifest...",
+      });
+
+      await (adapter as any).refreshSessionTitle("s1");
+
+      expect(updates).toHaveLength(0);
+    });
+
+    it("emits session.updated for meaningful metadata summaries", async () => {
+      const updates: any[] = [];
+      adapter.on("session.updated", (e) => updates.push(e));
+      (adapter as any).messageHistory.set("s1", [{
+        id: "user-1",
+        sessionId: "s1",
+        role: "user",
+        time: { created: 1 },
+        parts: [{ id: "part-1", messageId: "user-1", sessionId: "s1", type: "text", text: "Please review the sample upload integration changes" }],
+      }]);
+      mockClientInstance.getSessionMetadata.mockResolvedValueOnce({
+        summary: "  Review Sample Upload Integration  ",
+      });
+
+      await (adapter as any).refreshSessionTitle("s1");
+
+      expect(updates).toEqual([{ session: { id: "s1", engineType: "copilot", title: "Review Sample Upload Integration" } }]);
+      expect((adapter as any).sessionTitles.get("s1")).toBe("Review Sample Upload Integration");
     });
   });
 

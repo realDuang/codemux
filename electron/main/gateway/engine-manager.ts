@@ -8,6 +8,7 @@ import { conversationStore } from "../services/conversation-store";
 import { getDefaultWorkspacePath } from "../services/default-workspace";
 import { engineManagerLog, getDefaultEngineFromSettings } from "../services/logger";
 import { timeId } from "../utils/id-gen";
+import { isDefaultTitle, isPromptFallbackTitle } from "../../../src/lib/session-utils";
 import type {
   EngineType,
   EngineInfo,
@@ -43,6 +44,28 @@ function normalizeDir(dir: string): string {
   return dir ? dir.replaceAll("\\", "/") : "";
 }
 
+/** Compute the display title from a ConversationMeta — render-time priority. */
+function getUsableEngineTitle(conv: ConversationMeta): string | undefined {
+  const title = conv.engineTitle?.trim();
+  if (!title) return undefined;
+  if (isDefaultTitle(title)) return undefined;
+  if (isPromptFallbackTitle(title, conv.firstPrompt)) return undefined;
+  return title;
+}
+
+function getUsableEngineTitleCandidate(conv: ConversationMeta, title: string): string | undefined {
+  const trimmed = title.trim();
+  if (!trimmed) return undefined;
+  if (conv.customTitle?.trim() === trimmed) return undefined;
+  if (isDefaultTitle(trimmed)) return undefined;
+  if (isPromptFallbackTitle(trimmed, conv.firstPrompt)) return undefined;
+  return trimmed;
+}
+
+function computeDisplayTitle(conv: ConversationMeta): string {
+  return conv.customTitle || getUsableEngineTitle(conv) || conv.firstPrompt || "New Chat";
+}
+
 /** Convert ConversationMeta → UnifiedSession for wire compatibility */
 function convToSession(conv: ConversationMeta): UnifiedSession {
   // For worktree sessions, resolve projectId from the parent repo directory
@@ -54,7 +77,7 @@ function convToSession(conv: ConversationMeta): UnifiedSession {
     id: conv.id,
     engineType: conv.engineType,
     directory: normalizeDir(conv.directory),
-    title: conv.title,
+    title: computeDisplayTitle(conv),
     mode: conv.mode,
     modelId: conv.modelId,
     reasoningEffort: conv.reasoningEffort,
@@ -327,12 +350,10 @@ export class EngineManager extends EventEmitter {
       const convId = engineSessionId ? this.resolveConversationId(engineSessionId) : null;
 
       if (convId) {
-        // Persist title changes
-        if (data.session.title) {
-          const conv = conversationStore.get(convId);
-          if (conv && this.isDefaultTitle(conv.title)) {
-            conversationStore.rename(convId, data.session.title);
-          }
+        const current = conversationStore.get(convId);
+        if (data.session.title && current) {
+          const title = getUsableEngineTitleCandidate(current, data.session.title);
+          if (title) conversationStore.setEngineTitle(convId, title);
         }
         // Persist engineMeta (e.g. ccSessionId for Claude Code session resumption)
         if (data.session.engineMeta) {
@@ -359,7 +380,10 @@ export class EngineManager extends EventEmitter {
               : {}),
           });
         }
-        this.emit("session.updated", this.rewriteSessionId(data as any, engineSessionId!, convId) as any);
+        const conv = conversationStore.get(convId);
+        if (conv) {
+          this.emit("session.updated", { session: convToSession(conv) });
+        }
       } else {
         this.emit("session.updated", data);
       }
@@ -637,7 +661,15 @@ export class EngineManager extends EventEmitter {
         parts,
       };
 
+      const hadFirstPrompt = !!conversationStore.get(conversationId)?.firstPrompt;
       await conversationStore.appendMessage(conversationId, convMessage);
+
+      if (!hadFirstPrompt) {
+        const updated = conversationStore.get(conversationId);
+        if (updated?.firstPrompt) {
+          this.emit("session.updated", { session: convToSession(updated) });
+        }
+      }
 
       if (trackQueuedTiming) {
         // Queue this ID only for sends known to be queued. Foreground sends do
@@ -891,7 +923,25 @@ export class EngineManager extends EventEmitter {
   }
 
   async renameSession(sessionId: string, title: string): Promise<{ success: boolean }> {
-    conversationStore.rename(sessionId, title);
+    const conv = conversationStore.get(sessionId);
+    if (!conv) return { success: false };
+
+    const trimmed = title.trim();
+    // Empty string clears the customTitle (revert to engineTitle/firstPrompt fallback)
+    conversationStore.setCustomTitle(sessionId, trimmed || undefined);
+
+    // Best-effort writeback to the engine so its own session list stays in sync.
+    // Adapters that don't support rename are no-ops by default.
+    if (conv.engineSessionId) {
+      try {
+        const adapter = this.adapters.get(conv.engineType);
+        await adapter?.renameSession(conv.engineSessionId, trimmed, conv.directory, conv.engineMeta);
+      } catch (err) {
+        engineManagerLog.warn(`Engine rename writeback failed for ${sessionId}:`, err);
+      }
+    }
+
+    this.emit("session.updated", { session: convToSession(conversationStore.get(sessionId)!) });
     return { success: true };
   }
 
@@ -985,14 +1035,6 @@ export class EngineManager extends EventEmitter {
       // Cache the engineSessionId → conversationId mapping
       this.engineToConvMap.set(engineSessionId, sessionId);
 
-      // Title fallback: derive title from first user message if still default.
-      // Run BEFORE persistUserMessage — appendMessage has its own auto-title
-      // logic that silently sets conv.title without emitting session.updated,
-      // which would cause applyTitleFallback to skip (title no longer default).
-      // Run BEFORE adapter.sendMessage so the sidebar updates immediately,
-      // not after the (potentially long-running) engine processing completes.
-      this.applyTitleFallback(sessionId, content);
-
       // Persist user message before sending to engine
       // (Some adapters like OpenCode don't emit user message events)
       await this.persistUserMessage(sessionId, content, trackQueuedTiming);
@@ -1050,38 +1092,6 @@ export class EngineManager extends EventEmitter {
         this.messageConvMap.delete(messageId);
       }
     }
-  }
-
-  /**
-   * If a conversation still has no meaningful title (empty, or matches default
-   * pattern), set it to the first user message text (truncated to 100 chars).
-   */
-  private applyTitleFallback(
-    sessionId: string,
-    content: MessagePromptContent[],
-  ): void {
-    const conv = conversationStore.get(sessionId);
-    if (!conv) return;
-
-    // Already has a real title — nothing to do
-    if (conv.title && !this.isDefaultTitle(conv.title)) return;
-
-    // Extract first text from the user prompt
-    const firstText = content.find((c) => c.type === "text" && c.text)?.text;
-    if (!firstText) return;
-
-    const maxLen = 100;
-    const title =
-      firstText.length > maxLen
-        ? firstText.slice(0, maxLen).trimEnd() + "…"
-        : firstText;
-    conversationStore.rename(sessionId, title);
-    this.emit("session.updated", { session: convToSession(conversationStore.get(sessionId)!) });
-  }
-
-  private isDefaultTitle(title: string): boolean {
-    // Match engine-generated default titles and ConversationStore's "Chat M-D HH:MM" format
-    return /^(New session|New Chat|Child session|Chat \d)/.test(title);
   }
 
   async listMessages(sessionId: string): Promise<UnifiedMessage[]> {
@@ -1157,7 +1167,6 @@ export class EngineManager extends EventEmitter {
 
       // Persist user command message
       const commandText = `/${commandName}${args ? ` ${args}` : ""}`;
-      this.applyTitleFallback(sessionId, [{ type: "text", text: commandText }]);
       await this.persistUserMessage(sessionId, [{ type: "text", text: commandText }], trackQueuedTiming);
 
       const resolvedOptions = this.resolveSessionOptions(conv, options);

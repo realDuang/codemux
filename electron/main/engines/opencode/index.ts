@@ -549,6 +549,25 @@ export class OpenCodeAdapter extends EngineAdapter {
     for (const entry of entries) {
       entry.resolve(finalMessage);
     }
+
+    void this.refreshSessionTitle(sessionID);
+  }
+
+  private async refreshSessionTitle(sessionId: string): Promise<void> {
+    try {
+      const client = this.clientForSession(sessionId);
+      const result = await client.session.get({ sessionID: sessionId });
+      if (result.error || !result.data) return;
+      const sdkSession = result.data;
+      const cached = this.sessions.get(sessionId);
+      const session = convertSession(this.engineType, sdkSession);
+      if (session.title && session.title !== cached?.title) {
+        this.sessions.set(session.id, session);
+        this.emit("session.updated", { session });
+      }
+    } catch (err) {
+      openCodeLog.debug(`[OpenCode] refreshSessionTitle failed for ${sessionId}:`, err);
+    }
   }
 
   private handleSessionUpdated(sdkSession: SdkSession): void {
@@ -910,6 +929,23 @@ export class OpenCodeAdapter extends EngineAdapter {
 
     // Clean up user message IDs for this session to prevent memory leak
     this.userMessageIds.delete(sessionId);
+  }
+
+  /** Push a renamed title to OpenCode via session.update. */
+  async renameSession(sessionId: string, title: string, directory?: string): Promise<void> {
+    const session = this.sessions.get(sessionId);
+    const dir = directory ?? session?.directory;
+    const client = dir ? this.createClient(dir) : this.ensureClient();
+    try {
+      await client.session.update({
+        sessionID: sessionId,
+        ...(dir ? { directory: dir } : {}),
+        title,
+      });
+    } catch (err) {
+      // Don't surface — local rename already succeeded
+      openCodeLog.warn(`session.update title failed for ${sessionId}:`, err);
+    }
   }
 
   // --- Messages ---

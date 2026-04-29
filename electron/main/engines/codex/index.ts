@@ -462,6 +462,25 @@ export class CodexAdapter extends EngineAdapter {
     this.clearSessionState(sessionId);
   }
 
+  /** Push a renamed title to the Codex app-server via thread/name/set RPC. */
+  async renameSession(sessionId: string, title: string): Promise<void> {
+    const threadId = this.sessionToThread.get(sessionId);
+    if (!threadId || !this.client?.running) return;
+    try {
+      await this.client.request("thread/name/set", {
+        threadId,
+        threadName: title,
+      });
+      const thread = this.threads.get(threadId);
+      if (thread) {
+        thread.title = title || undefined;
+        thread.updatedAt = Date.now();
+      }
+    } catch (error) {
+      codexLog.warn(`Failed to set Codex thread name for ${threadId}:`, error);
+    }
+  }
+
   async sendMessage(
     sessionId: string,
     content: MessagePromptContent[],

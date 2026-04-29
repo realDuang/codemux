@@ -164,7 +164,12 @@ export interface ConversationMeta extends UnifiedSessionConfig {
   id: string;
   engineType: EngineType;
   directory: string;
-  title: string;
+  /** User-set title (via rename). Highest priority in displayTitle resolution. */
+  customTitle?: string;
+  /** Engine-summarized title observed from adapter or engine updates. */
+  engineTitle?: string;
+  /** Truncated first user prompt — used as last-resort fallback for displayTitle. */
+  firstPrompt?: string;
   createdAt: number;
   updatedAt: number;
   messageCount: number;

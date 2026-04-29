@@ -13,7 +13,8 @@ vi.mock("../../../../electron/main/services/conversation-store", () => {
     list: vi.fn(() => []),
     create: vi.fn(),
     delete: vi.fn(),
-    rename: vi.fn(),
+    setCustomTitle: vi.fn(),
+    setEngineTitle: vi.fn(),
     update: vi.fn(),
     listMessages: vi.fn(() => Promise.resolve([])),
     appendMessage: vi.fn(),
@@ -120,7 +121,6 @@ function makeMockConv(overrides: Record<string, any> = {}) {
     id: "conv1",
     engineType: "opencode" as EngineType,
     directory: "/dir",
-    title: "New session",
     engineSessionId: null,
     createdAt: 1000,
     updatedAt: 2000,
@@ -398,6 +398,131 @@ describe("EngineManager", () => {
       expect(emittedSessions[0].session.id).toBe("conv6");
     });
 
+    it("does not persist default engine placeholder titles", () => {
+      const conv = makeMockConv({
+        id: "conv-title",
+        firstPrompt: "Inspect the mock workspace read-only…",
+      });
+      (conversationStore.findByEngineSession as any).mockReturnValue(conv);
+      (conversationStore.get as any).mockReturnValue(conv);
+
+      const emittedSessions: any[] = [];
+      engineManager.on("session.updated" as any, (data: any) => emittedSessions.push(data));
+      adapterA.emit("session.updated", {
+        session: {
+          id: "engine-title",
+          engineType: adapterA.engineType,
+          title: "New session - 2026-04-27T12:38:30.603Z",
+        },
+      });
+
+      expect(conversationStore.setEngineTitle).not.toHaveBeenCalled();
+      expect(emittedSessions[0].session.title).toBe("Inspect the mock workspace read-only…");
+    });
+
+    it("does not persist prompt-derived engine summaries", () => {
+      const conv = makeMockConv({
+        id: "conv-title",
+        firstPrompt: "Summarize mock project metadata: inspect the sample manifest…",
+      });
+      (conversationStore.findByEngineSession as any).mockReturnValue(conv);
+      (conversationStore.get as any).mockReturnValue(conv);
+
+      adapterA.emit("session.updated", {
+        session: {
+          id: "engine-title",
+          engineType: adapterA.engineType,
+          title: "Summarize mock project metadata: inspect the sample manifest...",
+        },
+      });
+
+      expect(conversationStore.setEngineTitle).not.toHaveBeenCalled();
+    });
+
+    it("persists meaningful engine titles", () => {
+      const conv = makeMockConv({
+        id: "conv-title",
+        firstPrompt: "Please review the sample upload integration changes…",
+      });
+      (conversationStore.findByEngineSession as any).mockReturnValue(conv);
+      (conversationStore.get as any).mockReturnValue(conv);
+
+      adapterA.emit("session.updated", {
+        session: {
+          id: "engine-title",
+          engineType: adapterA.engineType,
+          title: "  Review Sample Upload Integration  ",
+        },
+      });
+
+      expect(conversationStore.setEngineTitle).toHaveBeenCalledWith(
+        "conv-title",
+        "Review Sample Upload Integration",
+      );
+    });
+
+    it("displays engineTitle over firstPrompt", () => {
+      (conversationStore.list as any).mockReturnValue([
+        makeMockConv({
+          id: "conv-title",
+          firstPrompt: "Please review the sample upload integration changes…",
+          engineTitle: "Review Sample Upload Integration",
+        }),
+      ]);
+
+      expect(engineManager.listAllSessions()[0].title).toBe("Review Sample Upload Integration");
+    });
+
+    it("displays customTitle over engineTitle", () => {
+      (conversationStore.list as any).mockReturnValue([
+        makeMockConv({
+          id: "conv-title",
+          firstPrompt: "Please review the sample upload integration changes…",
+          engineTitle: "Review Sample Upload Integration",
+          customTitle: "My Manual Title",
+        }),
+      ]);
+
+      expect(engineManager.listAllSessions()[0].title).toBe("My Manual Title");
+    });
+
+    it("ignores stale stored title fields", () => {
+      (conversationStore.list as any).mockReturnValue([
+        {
+          ...makeMockConv({ id: "conv-title" }),
+          title: "Old Chat",
+        },
+      ]);
+
+      expect(engineManager.listAllSessions()[0].title).toBe("New Chat");
+    });
+
+    it("emits the resolved engineTitle after a meaningful engine update", () => {
+      const conv = makeMockConv({
+        id: "conv-title",
+        firstPrompt: "Please review the sample upload integration changes…",
+      });
+      (conversationStore.findByEngineSession as any).mockReturnValue(conv);
+      (conversationStore.get as any)
+        .mockReturnValueOnce(conv)
+        .mockReturnValueOnce({
+          ...conv,
+          engineTitle: "Review Sample Upload Integration",
+        });
+      const emittedSessions: any[] = [];
+      engineManager.on("session.updated" as any, (data: any) => emittedSessions.push(data));
+
+      adapterA.emit("session.updated", {
+        session: {
+          id: "engine-title",
+          engineType: adapterA.engineType,
+          title: "Review Sample Upload Integration",
+        },
+      });
+
+      expect(emittedSessions[0].session.title).toBe("Review Sample Upload Integration");
+    });
+
     it("retrieves and deletes sessions from store and engine", async () => {
       (conversationStore.get as any).mockReturnValue({ id: "conv1", engineType: adapterA.engineType });
       const session = await engineManager.getSession("conv1");
@@ -489,8 +614,10 @@ describe("EngineManager", () => {
       expect(adapterA.deleteSession).toHaveBeenCalledWith("es1");
       expect(conversationStore.delete).toHaveBeenCalledWith("c1");
 
+      // renameSession requires the conv to exist; mock get() to return one
+      (conversationStore.get as any).mockReturnValue(makeMockConv({ id: "conv1" }));
       await engineManager.renameSession("conv1", "New Title");
-      expect(conversationStore.rename).toHaveBeenCalledWith("conv1", "New Title");
+      expect(conversationStore.setCustomTitle).toHaveBeenCalledWith("conv1", "New Title");
     });
 
     it("deleteProject skips engine cleanup when no engineSessionId", async () => {
@@ -724,87 +851,6 @@ describe("EngineManager", () => {
       await engineManager.cancelMessage("conv1");
       // Verify by attempting to check buffers don't re-flush after cancel
       expect(adapterA.cancelMessage).toHaveBeenCalled();
-    });
-  });
-
-  // ===========================================================================
-  // applyTitleFallback and isDefaultTitle
-  // ===========================================================================
-
-  describe("applyTitleFallback and isDefaultTitle", () => {
-    beforeEach(() => {
-      engineManager.registerAdapter(adapterA);
-    });
-
-    const titleCases = [
-      ["New session", true],
-      ["New Chat", true],
-      ["Child session", true],
-      ["Chat 5", true],
-      ["My real title", false],
-      ["", false], // empty is falsy, isDefaultTitle checks the string
-    ] as const;
-
-    it.each(titleCases)("isDefaultTitle('%s') should be %s", (title, expected) => {
-      // Test indirectly: titles that are "default" should get replaced by sendMessage
-      const conv = makeMockConv({
-        title: title || undefined,
-        engineSessionId: "eng-s1",
-      });
-      (conversationStore.get as any).mockReturnValue(conv);
-      adapterA.hasSession.mockReturnValue(true);
-
-      const emittedUpdates: any[] = [];
-      engineManager.on("session.updated" as any, (data: any) => emittedUpdates.push(data));
-
-      engineManager["applyTitleFallback"]("conv1", [{ type: "text", text: "Hello world" }]);
-
-      if (!title || expected) {
-        // default or empty title → should be replaced
-        expect(conversationStore.rename).toHaveBeenCalledWith("conv1", "Hello world");
-      } else {
-        // real title → should NOT be replaced
-        expect(conversationStore.rename).not.toHaveBeenCalled();
-      }
-
-      vi.clearAllMocks();
-    });
-
-    it("applyTitleFallback returns early when conv not found", () => {
-      (conversationStore.get as any).mockReturnValue(null);
-      engineManager["applyTitleFallback"]("missing-conv", [{ type: "text", text: "hi" }]);
-      expect(conversationStore.rename).not.toHaveBeenCalled();
-    });
-
-    it("applyTitleFallback returns early when no text in content", () => {
-      (conversationStore.get as any).mockReturnValue(makeMockConv({ title: "New session" }));
-      engineManager["applyTitleFallback"]("conv1", [{ type: "image", data: "base64..." } as any]);
-      expect(conversationStore.rename).not.toHaveBeenCalled();
-    });
-
-    it("applyTitleFallback truncates long text to 100 chars with ellipsis", () => {
-      const longText = "A".repeat(150);
-      (conversationStore.get as any).mockReturnValue(makeMockConv({ title: "New session" }));
-      (conversationStore.get as any).mockReturnValueOnce(makeMockConv({ title: "New session" }))
-        .mockReturnValueOnce(makeMockConv({ title: "A".repeat(100) + "…" }));
-
-      engineManager["applyTitleFallback"]("conv1", [{ type: "text", text: longText }]);
-
-      const callArg = (conversationStore.rename as any).mock.calls[0][1];
-      expect(callArg).toHaveLength(101); // 100 chars + "…"
-      expect(callArg.endsWith("…")).toBe(true);
-    });
-
-    it("applyTitleFallback emits session.updated with truncated title", () => {
-      const longText = "B".repeat(200);
-      (conversationStore.get as any).mockReturnValue(makeMockConv({ title: "" }));
-
-      const emitted: any[] = [];
-      engineManager.on("session.updated" as any, (d: any) => emitted.push(d));
-
-      engineManager["applyTitleFallback"]("conv1", [{ type: "text", text: longText }]);
-
-      expect(emitted).toHaveLength(1);
     });
   });
 
@@ -1214,7 +1260,7 @@ describe("EngineManager", () => {
     beforeEach(() => {
       engineManager.registerAdapter(adapterA);
       (conversationStore.findByEngineSession as any).mockReturnValue({ id: "conv1" });
-      (conversationStore.get as any).mockReturnValue(makeMockConv({ title: "New session" }));
+      (conversationStore.get as any).mockReturnValue(makeMockConv());
     });
 
     it("forwards message part updates for text and reasoning parts", () => {
@@ -1422,7 +1468,8 @@ describe("EngineManager", () => {
       adapterA.emit("session.updated", {
         session: { id: "engine-s1", title: "Real Title", engineType: adapterA.engineType } as any,
       });
-      expect(conversationStore.rename).toHaveBeenCalledWith("conv1", "Real Title");
+      // session.updated now writes engineTitle directly without interception
+      expect(conversationStore.setEngineTitle).toHaveBeenCalledWith("conv1", "Real Title");
 
       adapterA.emit("permission.asked", {
         permission: {
@@ -1436,19 +1483,27 @@ describe("EngineManager", () => {
       });
     });
 
-    it("session.updated does NOT rename when title is not default", () => {
-      (conversationStore.get as any).mockReturnValue(makeMockConv({ title: "My Custom Title" }));
+    it("session.updated writes engineTitle even when conv has a customTitle", () => {
+      // Render-time displayTitle resolution gives customTitle precedence over engineTitle,
+      // so the store layer no longer guards against overwriting "real" titles.
+      (conversationStore.get as any).mockReturnValue(makeMockConv({ customTitle: "My Custom Title" }));
       adapterA.emit("session.updated", {
         session: { id: "engine-s1", title: "Engine Title", engineType: adapterA.engineType } as any,
       });
-      // conv.title is "My Custom Title" (not default), so rename should be called
-      // Wait - isDefaultTitle("My Custom Title") = false, so rename SHOULD NOT be called
-      expect(conversationStore.rename).not.toHaveBeenCalled();
+      expect(conversationStore.setEngineTitle).toHaveBeenCalledWith("conv1", "Engine Title");
+    });
+
+    it("session.updated does not treat a customTitle echo as engineTitle", () => {
+      (conversationStore.get as any).mockReturnValue(makeMockConv({ customTitle: "My Custom Title" }));
+      adapterA.emit("session.updated", {
+        session: { id: "engine-s1", title: "My Custom Title", engineType: adapterA.engineType } as any,
+      });
+      expect(conversationStore.setEngineTitle).not.toHaveBeenCalled();
     });
 
     it("session.updated persists engineMeta when provided", () => {
       (conversationStore.get as any).mockReturnValue(
-        makeMockConv({ title: "New session", engineSessionId: "eng-s" }),
+        makeMockConv({ engineSessionId: "eng-s" }),
       );
       adapterA.emit("session.updated", {
         session: {

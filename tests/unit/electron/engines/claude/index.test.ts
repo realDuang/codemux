@@ -408,6 +408,31 @@ describe("ClaudeCodeAdapter", () => {
       expect(mock.query.setPermissionMode).toHaveBeenCalledWith("acceptEdits");
     });
 
+    it("passes bypassPermissions through when the live V2 session allows skipping permissions", async () => {
+      const mock = makeMockV2Session();
+      seedV2Session(adapter, "cs_1", mock);
+      (adapter as any).v2Sessions.get("cs_1").allowDangerouslySkipPermissions = true;
+
+      await adapter.setMode("cs_1", "bypassPermissions");
+
+      expect(mock.query.setPermissionMode).toHaveBeenCalledWith("bypassPermissions");
+      expect((adapter as any).v2Sessions.get("cs_1").permissionMode).toBe("bypassPermissions");
+    });
+
+    it("recreates the V2 session when entering bypassPermissions without skip allowance", async () => {
+      const mock = makeMockV2Session();
+      seedV2Session(adapter, "cs_1", mock);
+      (adapter as any).v2Sessions.get("cs_1").capturedSessionId = "cc-prev";
+
+      await adapter.setMode("cs_1", "bypassPermissions");
+
+      expect(mock.query.setPermissionMode).not.toHaveBeenCalled();
+      expect(mock.close).toHaveBeenCalledTimes(1);
+      expect((adapter as any).v2Sessions.has("cs_1")).toBe(false);
+      expect((adapter as any).sessionCcIds.get("cs_1")).toBe("cc-prev");
+      expect((adapter as any).sessionModes.get("cs_1")).toBe("bypassPermissions");
+    });
+
     it("updates permissionMode on existing V2SessionInfo", async () => {
       const mock = makeMockV2Session();
       seedV2Session(adapter, "cs_1", mock);
@@ -1880,12 +1905,14 @@ describe("ClaudeCodeAdapter", () => {
   // =========================================================================
 
   describe("getModes()", () => {
-    it("returns the three default modes", () => {
+    it("returns Claude Code permission modes without Copilot autopilot", () => {
       const modes = adapter.getModes();
       const ids = modes.map((m) => m.id);
       expect(ids).toContain("default");
       expect(ids).toContain("plan");
       expect(ids).toContain("acceptEdits");
+      expect(ids).toContain("bypassPermissions");
+      expect(ids).not.toContain("autopilot");
     });
   });
 
@@ -2853,6 +2880,32 @@ describe("ClaudeCodeAdapter", () => {
       expect((adapter as any).v2Sessions.get("cs_1").permissionMode).toBe("plan");
     });
 
+    it("recreates an existing session before switching to bypassPermissions without skip allowance", async () => {
+      const oldSession = makeMockV2Session();
+      const newSession = makeMockV2Session();
+      seedV2Session(adapter, "cs_1", oldSession);
+      (adapter as any).v2Sessions.get("cs_1").permissionMode = "default";
+      (adapter as any).v2Sessions.get("cs_1").capturedSessionId = "cc-prev";
+      unstable_v2_resumeSessionMock.mockReturnValue(newSession);
+
+      const session = await (adapter as any).getOrCreateV2Session("cs_1", "/repo", {
+        permissionMode: "bypassPermissions",
+      });
+
+      expect(session).toBe(newSession);
+      expect(oldSession.query.setPermissionMode).not.toHaveBeenCalled();
+      expect(oldSession.close).toHaveBeenCalledTimes(1);
+      expect(unstable_v2_resumeSessionMock).toHaveBeenCalledWith(
+        "cc-prev",
+        expect.objectContaining({
+          permissionMode: "bypassPermissions",
+          allowDangerouslySkipPermissions: true,
+        }),
+      );
+      expect((adapter as any).v2Sessions.get("cs_1").permissionMode).toBe("bypassPermissions");
+      expect((adapter as any).v2Sessions.get("cs_1").allowDangerouslySkipPermissions).toBe(true);
+    });
+
     it("handles setPermissionMode failure gracefully", async () => {
       const mockSession = makeMockV2Session();
       mockSession.query.setPermissionMode.mockRejectedValue(new Error("setPermissionMode failed"));
@@ -2901,6 +2954,20 @@ describe("ClaudeCodeAdapter", () => {
       const options = unstable_v2_createSessionMock.mock.calls[0][0];
       expect(options.pathToClaudeCodeExecutable).toBe("/native/claude");
       expect(options.pathToClaudeCodeExecutable).not.toContain("cli.js");
+    });
+
+    it("passes Claude Code native bypass permission options when creating sessions", async () => {
+      seedSession(adapter, "cs_1");
+      unstable_v2_createSessionMock.mockReturnValue(makeMockV2Session());
+
+      await (adapter as any).getOrCreateV2Session("cs_1", "/repo", {
+        permissionMode: "bypassPermissions",
+      });
+
+      const options = unstable_v2_createSessionMock.mock.calls[0][0];
+      expect(options.permissionMode).toBe("bypassPermissions");
+      expect(options.allowDangerouslySkipPermissions).toBe(true);
+      expect((adapter as any).v2Sessions.get("cs_1").allowDangerouslySkipPermissions).toBe(true);
     });
 
     it("recreates session when transport is not ready", async () => {
@@ -2995,6 +3062,25 @@ describe("ClaudeCodeAdapter", () => {
         expect.any(String),
         expect.objectContaining({ permissionMode: "plan" }),
       );
+    });
+
+    it("applies bypassPermissions mode option through SDK permissionMode", async () => {
+      seedSession(adapter, "cs_1");
+      const mockV2 = makeMockV2Session([
+        { type: "result", subtype: "success" },
+      ]);
+      const getOrCreateSpy = vi.spyOn(adapter as any, "getOrCreateV2Session").mockResolvedValue(mockV2);
+
+      await adapter.sendMessage("cs_1", [{ type: "text", text: "Hello" }], {
+        mode: "bypassPermissions",
+      }).catch(() => {});
+
+      expect(getOrCreateSpy).toHaveBeenCalledWith(
+        "cs_1",
+        expect.any(String),
+        expect.objectContaining({ permissionMode: "bypassPermissions" }),
+      );
+      expect((adapter as any).sessionModes.get("cs_1")).toBe("bypassPermissions");
     });
 
     it("sends multimodal message when only image provided (no text)", async () => {

@@ -2492,7 +2492,7 @@ export default function Chat() {
                 const id = currentAgent().id;
                 if (id === "plan")
                   return "bg-cyan-100 text-cyan-700 dark:bg-cyan-900/30 dark:text-cyan-400";
-                if (id === "autopilot" || id === "acceptEdits")
+                if (id === "autopilot" || id === "bypassPermissions" || id === "acceptEdits")
                   return "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400";
                 return "bg-indigo-100 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-400";
               })()

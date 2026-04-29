@@ -401,7 +401,7 @@ describe("EngineManager", () => {
     it("does not persist default engine placeholder titles", () => {
       const conv = makeMockConv({
         id: "conv-title",
-        firstPrompt: "Inspect this repository read-only…",
+        firstPrompt: "Inspect the mock workspace read-only…",
       });
       (conversationStore.findByEngineSession as any).mockReturnValue(conv);
       (conversationStore.get as any).mockReturnValue(conv);
@@ -417,13 +417,13 @@ describe("EngineManager", () => {
       });
 
       expect(conversationStore.setEngineTitle).not.toHaveBeenCalled();
-      expect(emittedSessions[0].session.title).toBe("Inspect this repository read-only…");
+      expect(emittedSessions[0].session.title).toBe("Inspect the mock workspace read-only…");
     });
 
     it("does not persist prompt-derived engine summaries", () => {
       const conv = makeMockConv({
         id: "conv-title",
-        firstPrompt: "Read this repository metadata only: inspect package.json…",
+        firstPrompt: "Summarize mock project metadata: inspect the sample manifest…",
       });
       (conversationStore.findByEngineSession as any).mockReturnValue(conv);
       (conversationStore.get as any).mockReturnValue(conv);
@@ -432,7 +432,7 @@ describe("EngineManager", () => {
         session: {
           id: "engine-title",
           engineType: adapterA.engineType,
-          title: "Read this repository metadata only: inspect package.json...",
+          title: "Summarize mock project metadata: inspect the sample manifest...",
         },
       });
 
@@ -442,7 +442,7 @@ describe("EngineManager", () => {
     it("persists meaningful engine titles", () => {
       const conv = makeMockConv({
         id: "conv-title",
-        firstPrompt: "看看目前修改区，应该是加了 picgo 的支持…",
+        firstPrompt: "Please review the sample upload integration changes…",
       });
       (conversationStore.findByEngineSession as any).mockReturnValue(conv);
       (conversationStore.get as any).mockReturnValue(conv);
@@ -451,13 +451,13 @@ describe("EngineManager", () => {
         session: {
           id: "engine-title",
           engineType: adapterA.engineType,
-          title: "  Review PicGo Integration  ",
+          title: "  Review Sample Upload Integration  ",
         },
       });
 
       expect(conversationStore.setEngineTitle).toHaveBeenCalledWith(
         "conv-title",
-        "Review PicGo Integration",
+        "Review Sample Upload Integration",
       );
     });
 
@@ -465,20 +465,20 @@ describe("EngineManager", () => {
       (conversationStore.list as any).mockReturnValue([
         makeMockConv({
           id: "conv-title",
-          firstPrompt: "看看目前修改区，应该是加了 picgo 的支持…",
-          engineTitle: "Review PicGo Integration",
+          firstPrompt: "Please review the sample upload integration changes…",
+          engineTitle: "Review Sample Upload Integration",
         }),
       ]);
 
-      expect(engineManager.listAllSessions()[0].title).toBe("Review PicGo Integration");
+      expect(engineManager.listAllSessions()[0].title).toBe("Review Sample Upload Integration");
     });
 
     it("displays customTitle over engineTitle", () => {
       (conversationStore.list as any).mockReturnValue([
         makeMockConv({
           id: "conv-title",
-          firstPrompt: "看看目前修改区，应该是加了 picgo 的支持…",
-          engineTitle: "Review PicGo Integration",
+          firstPrompt: "Please review the sample upload integration changes…",
+          engineTitle: "Review Sample Upload Integration",
           customTitle: "My Manual Title",
         }),
       ]);
@@ -500,14 +500,14 @@ describe("EngineManager", () => {
     it("emits the resolved engineTitle after a meaningful engine update", () => {
       const conv = makeMockConv({
         id: "conv-title",
-        firstPrompt: "看看目前修改区，应该是加了 picgo 的支持…",
+        firstPrompt: "Please review the sample upload integration changes…",
       });
       (conversationStore.findByEngineSession as any).mockReturnValue(conv);
       (conversationStore.get as any)
         .mockReturnValueOnce(conv)
         .mockReturnValueOnce({
           ...conv,
-          engineTitle: "Review PicGo Integration",
+          engineTitle: "Review Sample Upload Integration",
         });
       const emittedSessions: any[] = [];
       engineManager.on("session.updated" as any, (data: any) => emittedSessions.push(data));
@@ -516,11 +516,11 @@ describe("EngineManager", () => {
         session: {
           id: "engine-title",
           engineType: adapterA.engineType,
-          title: "Review PicGo Integration",
+          title: "Review Sample Upload Integration",
         },
       });
 
-      expect(emittedSessions[0].session.title).toBe("Review PicGo Integration");
+      expect(emittedSessions[0].session.title).toBe("Review Sample Upload Integration");
     });
 
     it("retrieves and deletes sessions from store and engine", async () => {

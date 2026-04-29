@@ -21,12 +21,12 @@ describe('isDefaultTitle', () => {
 describe('isPromptFallbackTitle', () => {
   it.each([
     ['Explain Promise.all', 'Explain Promise.all', true],
-    ['Read this repository metadata only...', 'Read this repository metadata only: inspect package.json…', true],
-    ['Read this repository metadata only: inspect package.json', 'Read this repository metadata only: inspect package.json…', true],
-    ['Read this repository metadata only', 'Read this repository metadata only: inspect package.json…', false],
-    ['Fix bug', 'Fix bug in parser and add tests for the regression…', false],
-    ['Review PicGo Integration', '看看目前修改区，应该是加了 picgo 的支持…', false],
-    ['Retrieve Copilot Session Title', '你知道你的 copilot sdk 里如何获取到一个 session 的由 copilot引擎 summary 出来的标题吗', false],
+    ['Summarize mock project metadata...', 'Summarize mock project metadata: inspect the sample manifest…', true],
+    ['Summarize mock project metadata: inspect the sample manifest', 'Summarize mock project metadata: inspect the sample manifest…', true],
+    ['Summarize mock project metadata', 'Summarize mock project metadata: inspect the sample manifest…', false],
+    ['Fix sample parser', 'Fix sample parser and add tests for the regression…', false],
+    ['Review Sample Upload Integration', 'Please review the sample upload integration changes…', false],
+    ['Retrieve Mock Session Title', 'How can a mock engine expose a generated conversation title?', false],
     ['', 'First prompt', false],
     ['Title', undefined, false],
   ])('isPromptFallbackTitle("%s", "%s") returns %s', (title, firstPrompt, expected) => {

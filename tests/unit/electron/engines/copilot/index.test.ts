@@ -1337,10 +1337,10 @@ describe("CopilotSdkAdapter", () => {
         sessionId: "s1",
         role: "user",
         time: { created: 1 },
-        parts: [{ id: "part-1", messageId: "user-1", sessionId: "s1", type: "text", text: "Read this repository metadata only: inspect package.json and tell me the package name." }],
+        parts: [{ id: "part-1", messageId: "user-1", sessionId: "s1", type: "text", text: "Summarize mock project metadata: inspect the sample manifest and report the sample package name." }],
       }]);
       mockClientInstance.getSessionMetadata.mockResolvedValueOnce({
-        summary: "Read this repository metadata only: inspect package.json...",
+        summary: "Summarize mock project metadata: inspect the sample manifest...",
       });
 
       await (adapter as any).refreshSessionTitle("s1");
@@ -1356,16 +1356,16 @@ describe("CopilotSdkAdapter", () => {
         sessionId: "s1",
         role: "user",
         time: { created: 1 },
-        parts: [{ id: "part-1", messageId: "user-1", sessionId: "s1", type: "text", text: "看看目前修改区，应该是加了 picgo 的支持" }],
+        parts: [{ id: "part-1", messageId: "user-1", sessionId: "s1", type: "text", text: "Please review the sample upload integration changes" }],
       }]);
       mockClientInstance.getSessionMetadata.mockResolvedValueOnce({
-        summary: "  Review PicGo Integration  ",
+        summary: "  Review Sample Upload Integration  ",
       });
 
       await (adapter as any).refreshSessionTitle("s1");
 
-      expect(updates).toEqual([{ session: { id: "s1", engineType: "copilot", title: "Review PicGo Integration" } }]);
-      expect((adapter as any).sessionTitles.get("s1")).toBe("Review PicGo Integration");
+      expect(updates).toEqual([{ session: { id: "s1", engineType: "copilot", title: "Review Sample Upload Integration" } }]);
+      expect((adapter as any).sessionTitles.get("s1")).toBe("Review Sample Upload Integration");
     });
   });
 

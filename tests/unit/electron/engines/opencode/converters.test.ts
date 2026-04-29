@@ -310,6 +310,28 @@ describe('OpenCode Converters', () => {
         }
       });
 
+      const responseLegacySchema = {
+        all: [{
+          id: 'p1',
+          name: 'P1',
+          models: {
+            m1: {
+              id: 'm1',
+              name: 'M1',
+              cost: { input: 3, output: 4, cache: { read: 1, write: 2 } },
+              capabilities: { temperature: false, reasoning: true, attachment: false, toolcall: true },
+              release_date: '2023-01-01',
+              limit: {},
+            }
+          }
+        }],
+        connected: ['p1']
+      };
+      expect(convertProviders(ENGINE_TYPE, responseLegacySchema as any)[0]).toMatchObject({
+        cost: { input: 3, output: 4, cache: { read: 1, write: 2 } },
+        capabilities: { temperature: false, reasoning: true, attachment: false, toolcall: true },
+      });
+
       const responseNoCost = {
         all: [{ id: 'p1', name: 'P1', models: { 'm1': { id: 'm1', name: 'M1' } } }],
         connected: ['p1']

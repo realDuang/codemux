@@ -604,13 +604,40 @@ export class OpenCodeAdapter extends EngineAdapter {
       { id: "always", label: "Always allow", type: "accept_always" },
       { id: "reject", label: "Reject", type: "reject" },
     ];
+
+    // Build structured details from OpenCode metadata
+    const details: import("../../../../src/types/unified").PermissionDetail[] = [];
+    if (data.metadata && typeof data.metadata === "object") {
+      const meta = data.metadata as Record<string, unknown>;
+      if (typeof meta.command === "string" && meta.command.trim()) {
+        details.push({ label: "Command", value: meta.command.trim(), mono: true });
+      }
+      if (typeof meta.url === "string" && meta.url.trim()) {
+        details.push({ label: "URL", value: meta.url.trim(), mono: true });
+      }
+      if (typeof meta.path === "string" && meta.path.trim()) {
+        details.push({ label: "Path", value: meta.path.trim(), mono: true });
+      }
+      if (typeof meta.reason === "string" && meta.reason.trim()) {
+        details.push({ label: "Reason", value: meta.reason.trim() });
+      }
+    }
+
+    const permissionType = data.type ?? "";
+    const kind: "read" | "edit" | "other" =
+      permissionType === "read" ? "read"
+      : permissionType === "bash" || permissionType === "shell" || permissionType === "write" || permissionType === "edit" ? "edit"
+      : "other";
+
     return {
       id: data.id,
       sessionId: data.sessionID,
       engineType: this.engineType,
       toolCallId: data.callID,
+      toolName: data.type ?? undefined,
       title: data.title ?? data.type ?? "Permission request",
-      kind: "edit",
+      kind,
+      details,
       rawInput: data.metadata,
       options,
       permission: data.type,

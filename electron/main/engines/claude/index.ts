@@ -55,6 +55,8 @@ import type {
   EngineCommand,
   CommandInvokeResult,
   ReasoningEffort,
+  PermissionOption,
+  PermissionDetail,
 } from "../../../../src/types/unified";
 import { REASONING_EFFORT_VALUES, normalizeReasoningEfforts } from "../../../../src/types/unified";
 
@@ -123,6 +125,7 @@ interface PendingQuestion {
 const DEFAULT_MODES: AgentMode[] = [
   { id: "default", label: "Default", description: "Standard behavior, prompts for dangerous operations" },
   { id: "acceptEdits", label: "Auto-Accept", description: "Auto-accept file edit operations" },
+  { id: "autopilot", label: "Autopilot", description: "Fully autonomous, skip all permission prompts" },
   { id: "plan", label: "Plan", description: "Planning mode, no actual tool execution" },
 ];
 
@@ -775,8 +778,9 @@ export class ClaudeCodeAdapter extends EngineAdapter {
     this.emit("message.updated", { sessionId, message: assistantMessage });
 
     // Determine permission mode from mode option
+    // "autopilot" is handled in canUseTool; SDK uses "default" permissionMode
     const mode = options?.mode ?? this.sessionModes.get(sessionId) ?? "default";
-    const permissionMode = mode as "default" | "plan" | "acceptEdits" | "dontAsk";
+    const permissionMode = (mode === "autopilot" ? "default" : mode) as "default" | "plan" | "acceptEdits" | "dontAsk";
 
     // Apply reasoning effort if it changed (triggers session rebuild via getOrCreateV2Session)
     if (options?.reasoningEffort !== undefined) {
@@ -1208,18 +1212,22 @@ export class ClaudeCodeAdapter extends EngineAdapter {
     this.sessionModes.set(sessionId, modeId);
     claudeLog.info(`[Claude][${sessionId}] Mode set to: ${modeId}`);
 
+    // Map codemux mode → SDK permissionMode
+    // "autopilot" is handled in canUseTool (auto-approve), SDK stays on "default"
+    const sdkPermissionMode = modeId === "autopilot" ? "default" : modeId;
+
     const v2Info = this.v2Sessions.get(sessionId);
     if (v2Info) {
       // Update tracked permissionMode
-      v2Info.permissionMode = modeId as any;
+      v2Info.permissionMode = sdkPermissionMode as any;
 
       // Use the internal Query API to switch permission mode at runtime
       // (same pattern as cancelMessage's interrupt() call)
       try {
         const query = (v2Info.session as any).query;
         if (query && typeof query.setPermissionMode === "function") {
-          await query.setPermissionMode(modeId);
-          claudeLog.info(`[Claude][${sessionId}] Permission mode switched to: ${modeId}`);
+          await query.setPermissionMode(sdkPermissionMode);
+          claudeLog.info(`[Claude][${sessionId}] Permission mode switched to: ${sdkPermissionMode}`);
         } else {
           claudeLog.warn(`[Claude][${sessionId}] setPermissionMode not available on query, will apply on next message`);
         }
@@ -1313,6 +1321,9 @@ export class ClaudeCodeAdapter extends EngineAdapter {
   /**
    * Create a canUseTool callback bound to a specific codemux session ID.
    * This callback is invoked by the SDK before each tool execution.
+   *
+   * - Autopilot mode: auto-approve everything
+   * - Default/acceptEdits: emit UnifiedPermission for user approval
    */
   private createCanUseTool(sessionId: string): CanUseTool {
     return async (
@@ -1323,18 +1334,117 @@ export class ClaudeCodeAdapter extends EngineAdapter {
         suggestions?: PermissionUpdate[];
         blockedPath?: string;
         decisionReason?: string;
+        title?: string;
+        displayName?: string;
+        description?: string;
         toolUseID: string;
         agentID?: string;
       },
     ): Promise<PermissionResult> => {
-      // --- ExitPlanMode: intercept and ask user for confirmation ---
+      // --- ExitPlanMode: always intercept regardless of mode ---
       if (toolName === "ExitPlanMode") {
         return this.handleExitPlanMode(sessionId, input, options);
       }
 
-      // --- All other tools: auto-approve ---
-      return { behavior: "allow", updatedInput: input };
+      // --- Autopilot: auto-approve all tools ---
+      const currentMode = this.sessionModes.get(sessionId) ?? "default";
+      if (currentMode === "autopilot") {
+        return { behavior: "allow", updatedInput: input };
+      }
+
+      // --- Default / acceptEdits: emit permission prompt ---
+      return this.handleToolPermission(sessionId, toolName, input, options);
     };
+  }
+
+  /**
+   * Emit a UnifiedPermission for a tool execution and block until the user responds.
+   */
+  private handleToolPermission(
+    sessionId: string,
+    toolName: string,
+    input: Record<string, unknown>,
+    options: {
+      signal: AbortSignal;
+      suggestions?: PermissionUpdate[];
+      blockedPath?: string;
+      decisionReason?: string;
+      title?: string;
+      displayName?: string;
+      description?: string;
+      toolUseID: string;
+    },
+  ): Promise<PermissionResult> {
+    const permissionId = timeId("perm");
+
+    const normalizedTool = normalizeToolName("claude", toolName);
+    const kind: "read" | "edit" | "other" = inferToolKind(undefined, normalizedTool);
+
+    const title = options.title
+      ?? options.displayName
+      ?? `${toolName} permission requested`;
+
+    // Build structured details from SDK-provided context
+    const details: PermissionDetail[] = [];
+    if (options.description) {
+      details.push({ label: "Description", value: options.description });
+    }
+    if (options.blockedPath) {
+      details.push({ label: "Path", value: options.blockedPath, mono: true });
+    }
+    if (options.decisionReason) {
+      details.push({ label: "Reason", value: options.decisionReason });
+    }
+    // Extract key tool arguments for display
+    if (typeof input.command === "string" && input.command.trim()) {
+      details.push({ label: "Command", value: input.command.trim(), mono: true });
+    }
+    if (typeof input.file_path === "string" && input.file_path.trim()) {
+      details.push({ label: "File", value: input.file_path.trim(), mono: true });
+    }
+    if (typeof input.url === "string" && input.url.trim()) {
+      details.push({ label: "URL", value: input.url.trim(), mono: true });
+    }
+    if (typeof input.pattern === "string" && input.pattern.trim()) {
+      details.push({ label: "Pattern", value: input.pattern.trim(), mono: true });
+    }
+
+    const permissionOptions: PermissionOption[] = [
+      { id: "allow_once", label: "Allow Once", type: "accept_once" },
+      { id: "allow_always", label: "Always Allow", type: "accept_always" },
+      { id: "reject", label: "Deny", type: "reject" },
+    ];
+
+    const permission: UnifiedPermission = {
+      id: permissionId,
+      sessionId,
+      engineType: this.engineType,
+      toolCallId: options.toolUseID,
+      toolName: normalizedTool,
+      title,
+      kind,
+      details,
+      rawInput: input,
+      options: permissionOptions,
+    };
+
+    return new Promise<PermissionResult>((resolve) => {
+      this.pendingPermissions.set(permissionId, {
+        resolve,
+        permission,
+        suggestions: options.suggestions,
+        input,
+      });
+      this.emit("permission.asked", { permission });
+
+      // Handle abort signal
+      options.signal.addEventListener("abort", () => {
+        if (this.pendingPermissions.has(permissionId)) {
+          this.pendingPermissions.delete(permissionId);
+          resolve({ behavior: "deny", message: "Aborted" });
+        }
+      });
+    });
   }
 
   /**
@@ -1878,7 +1988,6 @@ export class ClaudeCodeAdapter extends EngineAdapter {
       model: opts.model ?? this.currentModelId ?? "claude-sonnet-4-20250514",
       env,
       permissionMode: opts.permissionMode ?? "default",
-      allowedTools: ["Read", "Write", "Edit", "Grep", "Glob", "Bash", "WebFetch", "WebSearch", "Task", "TodoWrite", "TodoRead", "NotebookEdit", "Skill"],
       canUseTool: this.createCanUseTool(sessionId),
       systemPrompt: { type: "preset" as const, preset: "claude_code" as const, append: promptAppend },
       stderr: this.stderrCallback,

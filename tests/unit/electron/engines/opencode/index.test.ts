@@ -346,7 +346,7 @@ describe("OpenCodeAdapter", () => {
     it("routes permission.asked to handlePermissionAsked", () => {
       const { adapter } = createAdapterWithClient();
       const spy = vi.spyOn(adapter as any, "handlePermissionAsked");
-      const props = { id: "perm-1", sessionID: "s-1", type: "write" };
+      const props = { id: "perm-1", sessionID: "s-1", permission: "write" };
 
       (adapter as any).handleSdkEvent({ type: "permission.asked", properties: props });
 
@@ -1281,7 +1281,7 @@ describe("OpenCodeAdapter", () => {
         callID: "call-1",
         title: "Write to file",
         metadata: { path: "/file.ts" },
-        pattern: "/repo/**",
+        pattern: ["/repo/**"],
       });
 
       expect(events).toHaveLength(1);

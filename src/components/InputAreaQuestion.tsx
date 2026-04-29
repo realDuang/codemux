@@ -1,6 +1,7 @@
 import { createSignal, createMemo, For, Show } from "solid-js";
 import type { UnifiedQuestion } from "../types/unified";
-import { useI18n } from "../lib/i18n";
+import { formatMessage, useI18n } from "../lib/i18n";
+import { getQuestionContext } from "./input-area-context";
 import styles from "./InputAreaQuestion.module.css";
 
 interface InputAreaQuestionProps {
@@ -119,6 +120,11 @@ export function InputAreaQuestion(props: InputAreaQuestionProps) {
   };
 
   const isLastPage = () => pageIndex() >= totalQuestions() - 1;
+  const questionContext = createMemo(() => getQuestionContext(props.question, pageIndex()));
+  const questionProgressLabel = createMemo(() => formatMessage(t().question.progress, {
+    current: questionContext().current,
+    total: questionContext().total,
+  }));
 
   return (
     <div class={styles.root}>
@@ -146,6 +152,12 @@ export function InputAreaQuestion(props: InputAreaQuestionProps) {
           </div>
         </Show>
       </div>
+
+      <Show when={questionContext().isMultiQuestion}>
+        <div class={styles.meta}>
+          <span class={styles.metaBadge}>{questionProgressLabel()}</span>
+        </div>
+      </Show>
 
       {/* Current question */}
       <Show when={currentQ()}>

@@ -7,6 +7,9 @@ interface ReasoningEffortSelectorProps {
   engineType: EngineType;
   models: () => UnifiedModelInfo[];
   selectedModelId: () => string;
+  currentEffort?: () => ReasoningEffort | null;
+  onSelect?: (effort: ReasoningEffort) => void;
+  compact?: boolean;
 }
 
 export function ReasoningEffortSelector(props: ReasoningEffortSelectorProps) {
@@ -21,10 +24,14 @@ export function ReasoningEffortSelector(props: ReasoningEffortSelectorProps) {
   );
 
   const currentEffort = createMemo(() =>
-    getEffectiveReasoningEffortForEngine(props.engineType),
+    props.currentEffort?.() ?? getEffectiveReasoningEffortForEngine(props.engineType),
   );
 
   const handleEffortSelect = (effort: ReasoningEffort) => {
+    if (props.onSelect) {
+      props.onSelect(effort);
+      return;
+    }
     saveReasoningEffort(props.engineType, effort);
   };
 
@@ -37,17 +44,21 @@ export function ReasoningEffortSelector(props: ReasoningEffortSelectorProps) {
 
   return (
     <Show when={supportedEfforts().length > 0}>
-      <div class="px-4 sm:px-6 pb-4 sm:pb-6 pt-0 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 sm:gap-4 -mt-2">
-        <div>
-          <h4 class="text-sm font-medium text-gray-700 dark:text-gray-300">
-            {t().engine.reasoningEffort}
-          </h4>
-          <p class="text-xs text-gray-400 dark:text-gray-500 mt-0.5">
-            {t().engine.reasoningEffortDesc}
-          </p>
-        </div>
+      <div class={props.compact
+        ? "flex items-center gap-2 flex-wrap"
+        : "px-4 sm:px-6 pb-4 sm:pb-6 pt-0 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 sm:gap-4 -mt-2"}>
+        <Show when={!props.compact}>
+          <div>
+            <h4 class="text-sm font-medium text-gray-700 dark:text-gray-300">
+              {t().engine.reasoningEffort}
+            </h4>
+            <p class="text-xs text-gray-400 dark:text-gray-500 mt-0.5">
+              {t().engine.reasoningEffortDesc}
+            </p>
+          </div>
+        </Show>
         <div
-          class="flex rounded-lg overflow-hidden border border-gray-300 dark:border-slate-600 flex-shrink-0"
+          class={`flex rounded-lg overflow-hidden border border-gray-300 dark:border-slate-600 flex-shrink-0 ${props.compact ? "bg-white/80 dark:bg-slate-800/80" : ""}`}
           role="group"
           aria-label={t().engine.reasoningEffort}
         >

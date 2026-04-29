@@ -204,8 +204,33 @@ bun run dev
 | 方式 | 配置 | 适用场景 |
 |------|------|---------|
 | **局域网浏览器** | 打开 `http://<你的IP>:8233`，输入 6 位访问码或扫描二维码 | 同一网络下从另一台设备快速访问 |
-| **公网** | 开启"公网访问" → 分享 `*.trycloudflare.com` URL | 从任何地方访问，无需端口转发 |
+| **公网** | 开启"公网访问" → 分享 `*.trycloudflare.com` URL，或在准备好命名隧道凭证后配置自定义域名 | 从任何地方访问，无需端口转发 |
 | **IM 机器人** | 在设置 → 渠道中配置机器人凭证 | 通过飞书、钉钉、Telegram、企业微信或 Teams 交互 |
+
+### Cloudflare 自定义域名
+
+CodeMux 默认使用 Cloudflare quick tunnel。quick tunnel 不需要 Cloudflare 账号配置，每次启动都会生成一个临时的 `*.trycloudflare.com` URL。
+
+自定义域名需要 Cloudflare named tunnel 以及本机的 tunnel credential 文件。CodeMux 会在 `~/.cloudflared/` 下查找以 UUID 命名的 JSON 文件，例如 `~/.cloudflared/<tunnel-id>.json`。如果配置了自定义域名但缺少这个 credential，CodeMux 会直接停止启动并显示缺少凭证错误，而不会静默回退到随机 quick tunnel URL。
+
+准备自定义域名的步骤：
+
+```bash
+# 登录 Cloudflare，并选择你的域名所在 zone。
+# 这会写入 ~/.cloudflared/cert.pem。
+cloudflared tunnel login
+
+# 如果 tunnel 已经存在，先找到它的名称和 UUID。
+cloudflared tunnel list
+
+# 下载/写入 CodeMux 可检测到的 connector credential。
+cloudflared tunnel token --cred-file ~/.cloudflared/<tunnel-id>.json <tunnel-name-or-id>
+
+# 如果域名还没有指向该 named tunnel，则创建 DNS route。
+cloudflared tunnel route dns <tunnel-name-or-id> <your-domain>
+```
+
+如果还没有 named tunnel，先运行 `cloudflared tunnel create <tunnel-name>` 创建；这个命令也会写入 credential JSON。`cert.pem` 和 `<tunnel-id>.json` 都是私密凭证，不要提交到仓库。
 
 ### 安全与设备管理
 

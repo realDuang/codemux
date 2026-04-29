@@ -565,6 +565,14 @@ describe("registerIpcHandlers", () => {
       expect(mockTunnelManager.start).toHaveBeenCalledWith(3000, { hostname: "custom.host.com" });
     });
 
+    it("prefers explicit tunnelConfig over settings", async () => {
+      mockApp.isPackaged = false;
+      mockLoadSettings.mockReturnValue({ tunnelConfig: { hostname: "old.host.com" } });
+      await getHandler("tunnel:start")(fakeEvent, 3000, { hostname: "new.host.com" });
+      expect(mockTunnelManager.start).toHaveBeenCalledWith(3000, { hostname: "new.host.com" });
+      expect(mockLoadSettings).not.toHaveBeenCalled();
+    });
+
     it("passes undefined tunnelConfig when settings has none", async () => {
       mockApp.isPackaged = false;
       mockLoadSettings.mockReturnValue({ otherSetting: true });

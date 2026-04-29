@@ -158,6 +158,7 @@ function createMockEngineManager() {
     listModels: vi.fn(async () => ({ models: [] })),
     setModel: vi.fn(async () => {}),
     setMode: vi.fn(async () => {}),
+    updateSessionConfig: vi.fn(async () => {}),
     replyPermission: vi.fn(async () => {}),
     replyQuestion: vi.fn(async () => {}),
     rejectQuestion: vi.fn(async () => {}),
@@ -941,6 +942,62 @@ describe("GatewayServer", () => {
       });
 
       expect(engineManager.setMode).toHaveBeenCalledWith("sess-1", "plan");
+    });
+
+    it("SESSION_CONFIG_UPDATE delegates with sessionId and config patch", async () => {
+      const { connect, sendMessage, engineManager } = createTestHarness();
+      const ws = connect();
+
+      await sendMessage(ws, {
+        type: GatewayRequestType.SESSION_CONFIG_UPDATE,
+        requestId: "r1",
+        payload: {
+          sessionId: "sess-1",
+          config: { reasoningEffort: "high", serviceTier: "fast" },
+        },
+      });
+
+      expect(engineManager.updateSessionConfig).toHaveBeenCalledWith("sess-1", {
+        reasoningEffort: "high",
+        serviceTier: "fast",
+      });
+    });
+
+    it("SESSION_CONFIG_UPDATE rejects invalid reasoning effort and service tier values", async () => {
+      const { connect, sendMessage, engineManager } = createTestHarness();
+      const ws = connect();
+
+      // Authenticate the connection so requests are processed
+      ws.authenticated = true;
+
+      // Invalid reasoningEffort
+      await sendMessage(ws, {
+        type: GatewayRequestType.SESSION_CONFIG_UPDATE,
+        requestId: "r2",
+        payload: {
+          sessionId: "sess-1",
+          config: { reasoningEffort: "bogus" },
+        },
+      });
+      expect(ws.send).toHaveBeenCalled();
+      const resp1 = JSON.parse(ws.send.mock.calls[ws.send.mock.calls.length - 1][0]);
+      expect(resp1.error?.code).toBe("INVALID_REASONING_EFFORT");
+      expect(engineManager.updateSessionConfig).not.toHaveBeenCalled();
+
+      ws.send.mockClear();
+
+      // Invalid serviceTier
+      await sendMessage(ws, {
+        type: GatewayRequestType.SESSION_CONFIG_UPDATE,
+        requestId: "r3",
+        payload: {
+          sessionId: "sess-1",
+          config: { serviceTier: "invalid" },
+        },
+      });
+      const resp2 = JSON.parse(ws.send.mock.calls[ws.send.mock.calls.length - 1][0]);
+      expect(resp2.error?.code).toBe("INVALID_SERVICE_TIER");
+      expect(engineManager.updateSessionConfig).not.toHaveBeenCalled();
     });
 
     it("PERMISSION_REPLY delegates with permissionId and optionId", async () => {

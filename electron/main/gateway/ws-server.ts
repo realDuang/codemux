@@ -32,6 +32,7 @@ import {
   type PendingListRequest,
   type ProjectSetEngineRequest,
   type ModelSetRequest,
+  type SessionConfigUpdateRequest,
   type ModeSetRequest,
   type SessionImportPreviewRequest,
   type SessionImportExecuteRequest,
@@ -43,7 +44,7 @@ import {
   type WorktreeMergeRequest,
   type WorktreeListBranchesRequest,
 } from "../../../src/types/unified";
-import { isCodexServiceTier } from "../../../src/types/unified";
+import { isCodexServiceTier, isReasoningEffort } from "../../../src/types/unified";
 
 interface ClientConnection {
   id: string;
@@ -318,6 +319,31 @@ export class GatewayServer {
       case GatewayRequestType.MODEL_SET: {
         const req = p as ModelSetRequest;
         return this.engineManager.setModel(req.sessionId, req.modelId);
+      }
+
+      case GatewayRequestType.SESSION_CONFIG_UPDATE: {
+        const req = p as SessionConfigUpdateRequest;
+        const config = req.config ?? {};
+        // Validate reasoning effort and service tier at the gateway boundary.
+        // Reject loud rather than silently dropping the field — silent drops
+        // make the RPC look successful while the value never persists.
+        if (Object.prototype.hasOwnProperty.call(config, "reasoningEffort") && config.reasoningEffort !== null) {
+          if (!isReasoningEffort(config.reasoningEffort)) {
+            throw Object.assign(
+              new Error(`Invalid reasoningEffort: ${JSON.stringify(config.reasoningEffort)}`),
+              { code: "INVALID_REASONING_EFFORT" },
+            );
+          }
+        }
+        if (Object.prototype.hasOwnProperty.call(config, "serviceTier") && config.serviceTier !== null) {
+          if (!isCodexServiceTier(config.serviceTier)) {
+            throw Object.assign(
+              new Error(`Invalid serviceTier: ${JSON.stringify(config.serviceTier)}`),
+              { code: "INVALID_SERVICE_TIER" },
+            );
+          }
+        }
+        return this.engineManager.updateSessionConfig(req.sessionId, config);
       }
 
       // Mode

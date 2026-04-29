@@ -39,7 +39,7 @@ const electronAPI = {
 
   // Tunnel API
   tunnel: {
-    start: (port: number) => ipcRenderer.invoke("tunnel:start", port),
+    start: (port: number, tunnelConfig?: { hostname?: string }) => ipcRenderer.invoke("tunnel:start", port, tunnelConfig),
     stop: () => ipcRenderer.invoke("tunnel:stop"),
     getStatus: () => ipcRenderer.invoke("tunnel:getStatus"),
     onDisconnected: (callback: () => void) => {

@@ -45,11 +45,11 @@ function getRendererCache(): Record<string, unknown> | null {
   return null;
 }
 
-function electronSave(patch: Record<string, unknown>): void {
+function electronSave(patch: Record<string, unknown>): Promise<void> {
   try {
-    (window as any).electronAPI?.settings?.save(patch);
+    return Promise.resolve((window as any).electronAPI?.settings?.save(patch)).then(() => {}, () => {});
   } catch {
-    // ignore — not in Electron
+    return Promise.resolve();
   }
 }
 
@@ -76,15 +76,16 @@ export function getSetting<T = unknown>(key: string): T | undefined {
 }
 
 /** Save a setting value. Async write to settings.json in Electron, localStorage in web. */
-export function saveSetting(key: string, value: unknown): void {
-  if (isElectron()) {
+export async function saveSetting(key: string, value: unknown): Promise<void> {
+  const savePromise = isElectron() ? (() => {
     // Update renderer-side cache immediately so subsequent reads see the new value
     const cache = getRendererCache();
     if (cache) {
       cache[key] = value;
     }
-    electronSave({ [key]: value });
-  }
+    return electronSave({ [key]: value });
+  })() : null;
+
   // Always write to localStorage as well for web mode and as immediate cache
   try {
     localStorage.setItem(`settings:${key}`, JSON.stringify(value));
@@ -108,6 +109,10 @@ export function saveSetting(key: string, value: unknown): void {
       // Best-effort — swallow errors
     }
   }
+
+  if (savePromise) {
+    await savePromise;
+  }
 }
 
 /** Read a nested setting (e.g. "engineModels.claude") */
@@ -127,11 +132,10 @@ export function getNestedSetting<T = unknown>(path: string): T | undefined {
 }
 
 /** Save a nested setting (e.g. "engineModels.claude", value) */
-export function saveNestedSetting(path: string, value: unknown): void {
+export function saveNestedSetting(path: string, value: unknown): Promise<void> {
   const parts = path.split(".");
   if (parts.length === 1) {
-    saveSetting(parts[0], value);
-    return;
+    return saveSetting(parts[0], value);
   }
 
   // Read root, merge nested, save entire root
@@ -144,7 +148,7 @@ export function saveNestedSetting(path: string, value: unknown): void {
     target = target[parts[i]] as Record<string, unknown>;
   }
   target[parts[parts.length - 1]] = value;
-  saveSetting(parts[0], root);
+  return saveSetting(parts[0], root);
 }
 
 // ---------------------------------------------------------------------------

@@ -237,8 +237,33 @@ After a browser has been approved, it can open **Settings → Channels** in the 
 | Method | Setup | Best For |
 |--------|-------|----------|
 | **LAN Browser** | Open `http://<your-ip>:8233`, enter 6-digit code or scan QR | Quick access from another device on the same network |
-| **Public Internet** | Toggle "Public Access" → share `*.trycloudflare.com` URL | Access from anywhere, no port forwarding needed |
+| **Public Internet** | Toggle "Public Access" → share `*.trycloudflare.com` URL, or configure a custom domain with named tunnel credentials | Access from anywhere, no port forwarding needed |
 | **IM Bot** | Configure bot credentials in Settings → Channels (desktop or approved web UI) | Interact from Feishu, DingTalk, Telegram, WeCom, or Teams |
+
+### Cloudflare Custom Domains
+
+CodeMux uses Cloudflare quick tunnels by default. Quick tunnels require no Cloudflare account setup and produce a temporary `*.trycloudflare.com` URL each time they start.
+
+A custom domain requires a Cloudflare named tunnel and a local tunnel credential file. CodeMux looks for a UUID-named JSON file in `~/.cloudflared/`, for example `~/.cloudflared/<tunnel-id>.json`. If a custom domain is configured but that credential is missing, CodeMux will stop startup with a missing-credentials error instead of silently falling back to a random quick tunnel URL.
+
+To prepare a custom domain:
+
+```bash
+# Sign in and choose the Cloudflare zone for your domain.
+# This writes ~/.cloudflared/cert.pem.
+cloudflared tunnel login
+
+# If the tunnel already exists, find its name and UUID.
+cloudflared tunnel list
+
+# Download/write the connector credential that CodeMux can detect.
+cloudflared tunnel token --cred-file ~/.cloudflared/<tunnel-id>.json <tunnel-name-or-id>
+
+# Route the hostname to that named tunnel, if it is not already routed.
+cloudflared tunnel route dns <tunnel-name-or-id> <your-domain>
+```
+
+If you do not already have a named tunnel, create one first with `cloudflared tunnel create <tunnel-name>`; that command also writes the credential JSON. Keep `cert.pem` and `<tunnel-id>.json` private and never commit them to the repository.
 
 ### Security & Device Management
 

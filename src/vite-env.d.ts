@@ -52,11 +52,12 @@ interface ElectronAPI {
   };
 
   tunnel: {
-    start: (port: number) => Promise<{
+    start: (port: number, tunnelConfig?: { hostname?: string }) => Promise<{
       url: string;
       status: "starting" | "running" | "stopped" | "error";
       startTime?: number;
       error?: string;
+      errorCode?: string;
     } | null>;
     stop: () => Promise<void>;
     getStatus: () => Promise<{
@@ -64,6 +65,7 @@ interface ElectronAPI {
       status: "starting" | "running" | "stopped" | "error";
       startTime?: number;
       error?: string;
+      errorCode?: string;
     } | null>;
     onDisconnected: (callback: () => void) => () => void;
   };

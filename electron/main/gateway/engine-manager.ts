@@ -111,8 +111,9 @@ export class EngineManager extends EventEmitter {
   private contentPartsBuffer = new Map<string, Array<TextPart | FilePart>>();
   /**
    * In-memory FIFO queue of persisted user message IDs awaiting timing patch.
-   * Populated by persistUserMessage at send time; drained by persistMessage
-   * when an adapter emits an enriched user message (enqueuedAt/processedAt).
+   * Populated only for sends that arrive while the session is already active;
+   * drained by persistMessage when an adapter emits an enriched queued user
+   * message (enqueuedAt/processedAt).
    * Avoids a full conversationStore.listMessages() scan per queued commit.
    * Single-process app (Electron requestSingleInstanceLock), so in-memory
    * state is authoritative.
@@ -130,8 +131,8 @@ export class EngineManager extends EventEmitter {
   private stepFlushTimer: ReturnType<typeof setTimeout> | null = null;
   private static readonly STEP_FLUSH_INTERVAL_MS = 2000;
 
-  /** Track which sessions have active sendMessage calls (for idle detection) */
-  private activeSessions = new Set<string>();
+  /** Track active sendMessage call counts per session (for idle/queue detection). */
+  private activeSessionCounts = new Map<string, number>();
 
   // --- Adapter Registration ---
 
@@ -425,10 +426,10 @@ export class EngineManager extends EventEmitter {
    */
   private async persistMessage(conversationId: string, message: UnifiedMessage): Promise<void> {
     if (message.role === "user") {
-      // Adapter-emitted user messages have a different ID than the one we wrote
-      // via persistUserMessage at send time. Track the FIFO order of pending
-      // writes in pendingUserMsgIdQueue so we can patch the right message by
-      // ID with one targeted updateMessage call — no full listMessages scan.
+      // Adapter-emitted queued user messages have a different ID than the one
+      // we wrote via persistUserMessage at send time. Track only queued sends in
+      // pendingUserMsgIdQueue so foreground messages cannot consume timing
+      // patches intended for later queued messages.
       if (message.enqueuedAt == null && message.processedAt == null) return;
       const queue = this.pendingUserMsgIdQueue.get(conversationId);
       const targetId = queue?.shift();
@@ -593,7 +594,11 @@ export class EngineManager extends EventEmitter {
    * Called before adapter.sendMessage() to ensure user messages are saved
    * even if the adapter doesn't emit user message events (e.g., OpenCode).
    */
-  private async persistUserMessage(conversationId: string, content: MessagePromptContent[]): Promise<void> {
+  private async persistUserMessage(
+    conversationId: string,
+    content: MessagePromptContent[],
+    trackQueuedTiming = false,
+  ): Promise<void> {
     try {
       const now = Date.now();
       const msgId = timeId("msg");
@@ -634,12 +639,13 @@ export class EngineManager extends EventEmitter {
 
       await conversationStore.appendMessage(conversationId, convMessage);
 
-      // Enqueue this message ID so a later adapter-emitted enriched user
-      // message (carrying enqueuedAt/processedAt) can patch it in O(1) without
-      // re-reading the entire conversation from disk.
-      const queue = this.pendingUserMsgIdQueue.get(conversationId) ?? [];
-      queue.push(msgId);
-      this.pendingUserMsgIdQueue.set(conversationId, queue);
+      if (trackQueuedTiming) {
+        // Queue this ID only for sends known to be queued. Foreground sends do
+        // not later emit timing patches and must not shift the FIFO.
+        const queue = this.pendingUserMsgIdQueue.get(conversationId) ?? [];
+        queue.push(msgId);
+        this.pendingUserMsgIdQueue.set(conversationId, queue);
+      }
 
       engineManagerLog.debug(
         `Persisted user message ${msgId} to conversation ${conversationId}: ${parts.length} parts`,
@@ -939,77 +945,92 @@ export class EngineManager extends EventEmitter {
 
   // --- Messages ---
 
+  private markSessionActive(sessionId: string): boolean {
+    const activeCount = this.activeSessionCounts.get(sessionId) ?? 0;
+    this.activeSessionCounts.set(sessionId, activeCount + 1);
+    return activeCount > 0;
+  }
+
+  private markSessionInactive(sessionId: string): void {
+    const activeCount = this.activeSessionCounts.get(sessionId) ?? 0;
+    if (activeCount <= 1) {
+      this.activeSessionCounts.delete(sessionId);
+      return;
+    }
+    this.activeSessionCounts.set(sessionId, activeCount - 1);
+  }
+
   async sendMessage(
     sessionId: string,
     content: MessagePromptContent[],
     options?: { mode?: string; modelId?: string; reasoningEffort?: ReasoningEffort | null; serviceTier?: CodexServiceTier | null },
   ): Promise<UnifiedMessage> {
-    this.activeSessions.add(sessionId);
+    const trackQueuedTiming = this.markSessionActive(sessionId);
     try {
-    const conv = conversationStore.get(sessionId);
-    if (!conv) throw new Error(`Conversation not found: ${sessionId}`);
+      const conv = conversationStore.get(sessionId);
+      if (!conv) throw new Error(`Conversation not found: ${sessionId}`);
 
-    const adapter = this.getAdapterForSession(sessionId);
+      const adapter = this.getAdapterForSession(sessionId);
 
-    // Lazy engine session creation: first sendMessage triggers adapter.createSession()
-    // Also re-create if the adapter lost track of the session (e.g. after app restart,
-    // the persisted engineSessionId refers to a cs_ ID that only existed in runtime memory).
-    let engineSessionId = conv.engineSessionId;
-    if (!engineSessionId || !adapter.hasSession(engineSessionId)) {
-      const engineSession = await adapter.createSession(conv.directory, conv.engineMeta);
-      engineSessionId = engineSession.id;
-      conversationStore.setEngineSession(sessionId, engineSessionId, engineSession.engineMeta);
-    }
+      // Lazy engine session creation: first sendMessage triggers adapter.createSession()
+      // Also re-create if the adapter lost track of the session (e.g. after app restart,
+      // the persisted engineSessionId refers to a cs_ ID that only existed in runtime memory).
+      let engineSessionId = conv.engineSessionId;
+      if (!engineSessionId || !adapter.hasSession(engineSessionId)) {
+        const engineSession = await adapter.createSession(conv.directory, conv.engineMeta);
+        engineSessionId = engineSession.id;
+        conversationStore.setEngineSession(sessionId, engineSessionId, engineSession.engineMeta);
+      }
 
-    // Cache the engineSessionId → conversationId mapping
-    this.engineToConvMap.set(engineSessionId, sessionId);
+      // Cache the engineSessionId → conversationId mapping
+      this.engineToConvMap.set(engineSessionId, sessionId);
 
-    // Title fallback: derive title from first user message if still default.
-    // Run BEFORE persistUserMessage — appendMessage has its own auto-title
-    // logic that silently sets conv.title without emitting session.updated,
-    // which would cause applyTitleFallback to skip (title no longer default).
-    // Run BEFORE adapter.sendMessage so the sidebar updates immediately,
-    // not after the (potentially long-running) engine processing completes.
-    this.applyTitleFallback(sessionId, content);
+      // Title fallback: derive title from first user message if still default.
+      // Run BEFORE persistUserMessage — appendMessage has its own auto-title
+      // logic that silently sets conv.title without emitting session.updated,
+      // which would cause applyTitleFallback to skip (title no longer default).
+      // Run BEFORE adapter.sendMessage so the sidebar updates immediately,
+      // not after the (potentially long-running) engine processing completes.
+      this.applyTitleFallback(sessionId, content);
 
-    // Persist user message before sending to engine
-    // (Some adapters like OpenCode don't emit user message events)
-    await this.persistUserMessage(sessionId, content);
+      // Persist user message before sending to engine
+      // (Some adapters like OpenCode don't emit user message events)
+      await this.persistUserMessage(sessionId, content, trackQueuedTiming);
 
-    const resolvedOptions = this.resolveSessionOptions(conv, options);
-    const result = await adapter.sendMessage(engineSessionId, content, {
-      ...resolvedOptions,
-      directory: conv.directory,
-    });
+      const resolvedOptions = this.resolveSessionOptions(conv, options);
+      const result = await adapter.sendMessage(engineSessionId, content, {
+        ...resolvedOptions,
+        directory: conv.directory,
+      });
 
-    // If the engine reported a stale session (no SSE response within timeout),
-    // clear the engineSessionId so the next attempt creates a fresh session.
-    if (result.staleSession) {
-      engineManagerLog.warn(`Stale session detected for ${sessionId}, clearing engineSessionId`);
-      conversationStore.clearEngineSession(sessionId);
-      this.engineToConvMap.delete(engineSessionId);
-    }
+      // If the engine reported a stale session (no SSE response within timeout),
+      // clear the engineSessionId so the next attempt creates a fresh session.
+      if (result.staleSession) {
+        engineManagerLog.warn(`Stale session detected for ${sessionId}, clearing engineSessionId`);
+        conversationStore.clearEngineSession(sessionId);
+        this.engineToConvMap.delete(engineSessionId);
+      }
 
-    // Ensure completed assistant messages always have time.completed.
-    // Some adapters (e.g. OpenCode) strip time.completed during multi-step loops
-    // and only restore it on session.idle — if that event is lost (e.g. WebSocket
-    // reconnect), the field stays undefined, causing the frontend timer to tick
-    // indefinitely on an already-finished message.
-    if (result.role === "assistant" && !result.time.completed) {
-      const finalized = { ...result, time: { ...result.time, completed: Date.now() } };
-      this.persistMessage(sessionId, finalized);
-      this.emit("message.updated", { sessionId, message: finalized });
-    }
+      // Ensure completed assistant messages always have time.completed.
+      // Some adapters (e.g. OpenCode) strip time.completed during multi-step loops
+      // and only restore it on session.idle — if that event is lost (e.g. WebSocket
+      // reconnect), the field stays undefined, causing the frontend timer to tick
+      // indefinitely on an already-finished message.
+      if (result.role === "assistant" && !result.time.completed) {
+        const finalized = { ...result, time: { ...result.time, completed: Date.now() } };
+        this.persistMessage(sessionId, finalized);
+        this.emit("message.updated", { sessionId, message: finalized });
+      }
 
-    return result;
+      return result;
     } finally {
-      this.activeSessions.delete(sessionId);
+      this.markSessionInactive(sessionId);
     }
   }
 
   /** Check if a session is idle (not actively processing a message) */
   isSessionIdle(sessionId: string): boolean {
-    return !this.activeSessions.has(sessionId);
+    return !this.activeSessionCounts.has(sessionId);
   }
 
   async cancelMessage(sessionId: string): Promise<void> {
@@ -1118,45 +1139,50 @@ export class EngineManager extends EventEmitter {
     args: string,
     options?: { mode?: string; modelId?: string; reasoningEffort?: ReasoningEffort | null; serviceTier?: CodexServiceTier | null },
   ): Promise<CommandInvokeResult> {
-    const conv = conversationStore.get(sessionId);
-    if (!conv) throw new Error(`Conversation not found: ${sessionId}`);
+    const trackQueuedTiming = this.markSessionActive(sessionId);
+    try {
+      const conv = conversationStore.get(sessionId);
+      if (!conv) throw new Error(`Conversation not found: ${sessionId}`);
 
-    const adapter = this.getAdapterForSession(sessionId);
+      const adapter = this.getAdapterForSession(sessionId);
 
-    // Lazy engine session creation (same pattern as sendMessage)
-    let engineSessionId = conv.engineSessionId;
-    if (!engineSessionId || !adapter.hasSession(engineSessionId)) {
-      const engineSession = await adapter.createSession(conv.directory, conv.engineMeta);
-      engineSessionId = engineSession.id;
-      conversationStore.setEngineSession(sessionId, engineSessionId, engineSession.engineMeta);
-    }
-    this.engineToConvMap.set(engineSessionId, sessionId);
+      // Lazy engine session creation (same pattern as sendMessage)
+      let engineSessionId = conv.engineSessionId;
+      if (!engineSessionId || !adapter.hasSession(engineSessionId)) {
+        const engineSession = await adapter.createSession(conv.directory, conv.engineMeta);
+        engineSessionId = engineSession.id;
+        conversationStore.setEngineSession(sessionId, engineSessionId, engineSession.engineMeta);
+      }
+      this.engineToConvMap.set(engineSessionId, sessionId);
 
-    // Persist user command message
-    const commandText = `/${commandName}${args ? ` ${args}` : ""}`;
-    this.applyTitleFallback(sessionId, [{ type: "text", text: commandText }]);
-    await this.persistUserMessage(sessionId, [{ type: "text", text: commandText }]);
+      // Persist user command message
+      const commandText = `/${commandName}${args ? ` ${args}` : ""}`;
+      this.applyTitleFallback(sessionId, [{ type: "text", text: commandText }]);
+      await this.persistUserMessage(sessionId, [{ type: "text", text: commandText }], trackQueuedTiming);
 
-    const resolvedOptions = this.resolveSessionOptions(conv, options);
+      const resolvedOptions = this.resolveSessionOptions(conv, options);
 
-    const result = await adapter.invokeCommand(
-      engineSessionId,
-      commandName,
-      args,
-      { ...resolvedOptions, directory: conv.directory },
-    );
-
-    // If the adapter couldn't handle it, fall back to sendMessage
-    if (!result.handledAsCommand) {
-      const message = await adapter.sendMessage(
+      const result = await adapter.invokeCommand(
         engineSessionId,
-        [{ type: "text", text: commandText }],
+        commandName,
+        args,
         { ...resolvedOptions, directory: conv.directory },
       );
-      return { handledAsCommand: false, message };
-    }
 
-    return result;
+      // If the adapter couldn't handle it, fall back to sendMessage
+      if (!result.handledAsCommand) {
+        const message = await adapter.sendMessage(
+          engineSessionId,
+          [{ type: "text", text: commandText }],
+          { ...resolvedOptions, directory: conv.directory },
+        );
+        return { handledAsCommand: false, message };
+      }
+
+      return result;
+    } finally {
+      this.markSessionInactive(sessionId);
+    }
   }
 
   // --- Models ---

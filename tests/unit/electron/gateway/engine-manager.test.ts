@@ -595,6 +595,33 @@ describe("EngineManager", () => {
       expect(conversationStore.clearEngineSession).toHaveBeenCalledWith("conv1");
     });
 
+    it("tracks timing patch IDs only for messages sent while the session is active", async () => {
+      let resolveFirst: (value: any) => void = () => {};
+      let resolveSecond: (value: any) => void = () => {};
+      adapterA.createSession.mockResolvedValue({ id: "eng-queued", engineMeta: {} } as any);
+      adapterA.sendMessage
+        .mockReturnValueOnce(new Promise((resolve) => { resolveFirst = resolve; }) as any)
+        .mockReturnValueOnce(new Promise((resolve) => { resolveSecond = resolve; }) as any);
+
+      const firstSend = engineManager.sendMessage("conv1", [{ type: "text", text: "foreground" }]);
+      await new Promise((r) => setTimeout(r, 0));
+
+      expect((engineManager as any).pendingUserMsgIdQueue.get("conv1")).toBeUndefined();
+
+      const queuedSend = engineManager.sendMessage("conv1", [{ type: "text", text: "queued" }]);
+      await new Promise((r) => setTimeout(r, 0));
+
+      expect((engineManager as any).pendingUserMsgIdQueue.get("conv1")).toHaveLength(1);
+
+      resolveFirst({ id: "first-done", role: "assistant", time: { created: 1, completed: 2 }, parts: [] });
+      await firstSend;
+      expect(engineManager.isSessionIdle("conv1")).toBe(false);
+
+      resolveSecond({ id: "second-done", role: "assistant", time: { created: 3, completed: 4 }, parts: [] });
+      await queuedSend;
+      expect(engineManager.isSessionIdle("conv1")).toBe(true);
+    });
+
     it("merges persisted session config into sendMessage options", async () => {
       (conversationStore.get as any).mockReturnValue(
         makeMockConv({
@@ -629,7 +656,7 @@ describe("EngineManager", () => {
       ).rejects.toThrow(/Conversation not found/);
     });
 
-    it("removes session from activeSessions even when sendMessage throws", async () => {
+    it("removes session from the active count even when sendMessage throws", async () => {
       adapterA.createSession.mockResolvedValue({ id: "eng-fail", engineMeta: {} } as any);
       adapterA.sendMessage.mockRejectedValue(new Error("Send failed"));
 
@@ -1049,6 +1076,34 @@ describe("EngineManager", () => {
       expect((result as any).message.id).toBe("fallback-msg");
     });
 
+    it("keeps the session active while a command is running so later sends track queued timing", async () => {
+      (conversationStore.get as any).mockReturnValue(
+        makeMockConv({ engineSessionId: "eng-s1" }),
+      );
+      adapterA.hasSession.mockReturnValue(true);
+
+      let resolveCommand: (value: any) => void = () => {};
+      adapterA.invokeCommand.mockReturnValue(
+        new Promise((resolve) => { resolveCommand = resolve; }) as any,
+      );
+
+      const commandPromise = engineManager.invokeCommand("conv1", "help", "");
+      await new Promise((r) => setTimeout(r, 0));
+
+      expect(engineManager.isSessionIdle("conv1")).toBe(false);
+      expect((engineManager as any).pendingUserMsgIdQueue.get("conv1")).toBeUndefined();
+
+      await engineManager.sendMessage("conv1", [{ type: "text", text: "queued after command" }]);
+
+      expect(engineManager.isSessionIdle("conv1")).toBe(false);
+      expect((engineManager as any).pendingUserMsgIdQueue.get("conv1")).toHaveLength(1);
+
+      resolveCommand({ handledAsCommand: true });
+      await commandPromise;
+
+      expect(engineManager.isSessionIdle("conv1")).toBe(true);
+    });
+
     it("formats command text without trailing space when args is empty", async () => {
       (conversationStore.get as any).mockReturnValue(
         makeMockConv({ engineSessionId: "eng-s2" }),
@@ -1305,10 +1360,10 @@ describe("EngineManager", () => {
       expect(conversationStore.updateMessage).not.toHaveBeenCalled();
     });
 
-    it("patches enqueuedAt/processedAt onto the FIFO-next persisted user message via in-memory queue", async () => {
-      // Simulate persistUserMessage having pushed 2 message IDs to the in-memory
-      // queue. Adapter commits trigger persistMessage which should shift the queue
-      // head and patch by ID — no full listMessages scan.
+    it("patches enqueuedAt/processedAt onto the FIFO-next queued user message via in-memory queue", async () => {
+      // Simulate queued persistUserMessage calls having pushed 2 message IDs to
+      // the in-memory queue. Adapter commits trigger persistMessage which should
+      // shift the queue head and patch by ID — no full listMessages scan.
       (engineManager as any).pendingUserMsgIdQueue.set("conv1", ["u1", "u2"]);
 
       const enrichedUserMsg = {
@@ -2335,7 +2390,7 @@ describe("EngineManager", () => {
   // ===========================================================================
 
   describe("isSessionIdle", () => {
-    it("returns true for sessions not in activeSessions", () => {
+    it("returns true for sessions with no active send count", () => {
       expect(engineManager.isSessionIdle("any-session")).toBe(true);
     });
   });

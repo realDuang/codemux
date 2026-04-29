@@ -454,6 +454,15 @@ describe('config store', () => {
       expect(getServiceTierForSession('codex', 'fast')).toBe('fast');
     });
 
+    it('keeps an explicit session flex tier when the engine default is fast', () => {
+      setConfigStore('engines', [
+        { type: 'codex', capabilities: { fastModeSupported: true } } as any,
+      ]);
+      setConfigStore('engineServiceTiers', 'codex', 'fast');
+
+      expect(getServiceTierForSession('codex', 'flex')).toBe('flex');
+    });
+
     it('falls back to the engine tier when no session tier is set', () => {
       setConfigStore('engines', [
         { type: 'codex', capabilities: { fastModeSupported: true } } as any,

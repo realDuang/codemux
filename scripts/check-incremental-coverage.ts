@@ -44,6 +44,8 @@ const EXCLUDE_PATTERNS = [
   /^shared\/ports\.ts$/,
   /^shared\/settings-keys\.ts$/,
   /^electron\/main\/index\.ts$/,
+  // Main-process lifecycle wiring requires a real Electron app; new path logic is covered separately.
+  /^electron\/main\/app-main\.ts$/,
   /^electron\/main\/engines\/identity-prompt\.ts$/,
   /^electron\/preload\//,
   /^src\/components\/file-icons\//,

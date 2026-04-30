@@ -23,6 +23,7 @@ import type {
   CanUseTool,
   PermissionResult,
   PermissionUpdate,
+  PermissionMode,
   ModelInfo as ClaudeModelInfo,
 } from "@anthropic-ai/claude-agent-sdk";
 
@@ -80,7 +81,8 @@ interface V2SessionInfo {
   createdAt: number;
   lastUsedAt: number;
   capturedSessionId?: string; // CC's internal session ID from system init message
-  permissionMode?: "default" | "plan" | "acceptEdits" | "dontAsk";
+  permissionMode?: PermissionMode;
+  allowDangerouslySkipPermissions?: boolean;
 }
 
 // ============================================================================
@@ -124,11 +126,27 @@ interface PendingQuestion {
 // ============================================================================
 
 const DEFAULT_MODES: AgentMode[] = [
+  { id: "bypassPermissions", label: "Bypass Permissions", description: "Bypass all permission checks" },
   { id: "default", label: "Default", description: "Standard behavior, prompts for dangerous operations" },
-  { id: "acceptEdits", label: "Auto-Accept", description: "Auto-accept file edit operations" },
-  { id: "autopilot", label: "Autopilot", description: "Fully autonomous, skip all permission prompts" },
   { id: "plan", label: "Plan", description: "Planning mode, no actual tool execution" },
 ];
+
+const CLAUDE_PERMISSION_MODES = new Set<PermissionMode>([
+  "default",
+  "bypassPermissions",
+  "plan",
+]);
+
+function toClaudePermissionMode(mode: string | undefined): PermissionMode {
+  if (!mode) return "bypassPermissions";
+  return CLAUDE_PERMISSION_MODES.has(mode as PermissionMode)
+    ? (mode as PermissionMode)
+    : "default";
+}
+
+function allowsDangerouslySkipPermissions(mode: PermissionMode): boolean {
+  return mode === "bypassPermissions";
+}
 
 function getDefaultClaudeReasoningEffort(
   supportedReasoningEfforts: ReasoningEffort[] | undefined,
@@ -212,7 +230,7 @@ export class ClaudeCodeAdapter extends EngineAdapter {
   private authMessage: string | undefined;
   private currentModelId: string | null = null;
   private cachedModels: UnifiedModelInfo[] = [];
-  private sessionModes = new Map<string, string>();
+  private sessionModes = new Map<string, PermissionMode>();
   private sessionReasoningEfforts = new Map<string, ReasoningEffort>();
 
   // --- Session directory cache (used instead of external store lookups) ---
@@ -807,10 +825,8 @@ export class ClaudeCodeAdapter extends EngineAdapter {
     };
     this.emit("message.updated", { sessionId, message: assistantMessage });
 
-    // Determine permission mode from mode option
-    // "autopilot" is handled in canUseTool; SDK uses "default" permissionMode
-    const mode = options?.mode ?? this.sessionModes.get(sessionId) ?? "default";
-    const permissionMode = (mode === "autopilot" ? "default" : mode) as "default" | "plan" | "acceptEdits" | "dontAsk";
+    const permissionMode = toClaudePermissionMode(options?.mode ?? this.sessionModes.get(sessionId));
+    this.sessionModes.set(sessionId, permissionMode);
 
     // Apply reasoning effort if it changed (triggers session rebuild via getOrCreateV2Session)
     if (options?.reasoningEffort !== undefined) {
@@ -1239,25 +1255,26 @@ export class ClaudeCodeAdapter extends EngineAdapter {
   }
 
   async setMode(sessionId: string, modeId: string): Promise<void> {
-    this.sessionModes.set(sessionId, modeId);
-    claudeLog.info(`[Claude][${sessionId}] Mode set to: ${modeId}`);
-
-    // Map codemux mode → SDK permissionMode
-    // "autopilot" is handled in canUseTool (auto-approve), SDK stays on "default"
-    const sdkPermissionMode = modeId === "autopilot" ? "default" : modeId;
+    const permissionMode = toClaudePermissionMode(modeId);
+    this.sessionModes.set(sessionId, permissionMode);
+    claudeLog.info(`[Claude][${sessionId}] Mode set to: ${permissionMode}`);
 
     const v2Info = this.v2Sessions.get(sessionId);
     if (v2Info) {
-      // Update tracked permissionMode
-      v2Info.permissionMode = sdkPermissionMode as any;
+      if (allowsDangerouslySkipPermissions(permissionMode) && !v2Info.allowDangerouslySkipPermissions) {
+        this.cleanupSession(sessionId, "permission mode changed to bypass permissions");
+        return;
+      }
+
+      v2Info.permissionMode = permissionMode;
 
       // Use the internal Query API to switch permission mode at runtime
       // (same pattern as cancelMessage's interrupt() call)
       try {
         const query = (v2Info.session as any).query;
         if (query && typeof query.setPermissionMode === "function") {
-          await query.setPermissionMode(sdkPermissionMode);
-          claudeLog.info(`[Claude][${sessionId}] Permission mode switched to: ${sdkPermissionMode}`);
+          await query.setPermissionMode(permissionMode);
+          claudeLog.info(`[Claude][${sessionId}] Permission mode switched to: ${permissionMode}`);
         } else {
           claudeLog.warn(`[Claude][${sessionId}] setPermissionMode not available on query, will apply on next message`);
         }
@@ -1350,10 +1367,7 @@ export class ClaudeCodeAdapter extends EngineAdapter {
 
   /**
    * Create a canUseTool callback bound to a specific codemux session ID.
-   * This callback is invoked by the SDK before each tool execution.
-   *
-   * - Autopilot mode: auto-approve everything
-   * - Default/acceptEdits: emit UnifiedPermission for user approval
+   * This callback is invoked by the SDK when Claude Code needs a permission reply.
    */
   private createCanUseTool(sessionId: string): CanUseTool {
     return async (
@@ -1376,13 +1390,6 @@ export class ClaudeCodeAdapter extends EngineAdapter {
         return this.handleExitPlanMode(sessionId, input, options);
       }
 
-      // --- Autopilot: auto-approve all tools ---
-      const currentMode = this.sessionModes.get(sessionId) ?? "default";
-      if (currentMode === "autopilot") {
-        return { behavior: "allow", updatedInput: input };
-      }
-
-      // --- Default / acceptEdits: emit permission prompt ---
       return this.handleToolPermission(sessionId, toolName, input, options);
     };
   }
@@ -1943,7 +1950,7 @@ export class ClaudeCodeAdapter extends EngineAdapter {
     directory: string,
     opts: {
       model?: string;
-      permissionMode?: "default" | "plan" | "acceptEdits" | "dontAsk";
+      permissionMode?: PermissionMode;
     },
   ): Promise<SDKSession> {
     const existing = this.v2Sessions.get(sessionId);
@@ -1957,29 +1964,36 @@ export class ClaudeCodeAdapter extends EngineAdapter {
         this.pendingResumeNotice.add(sessionId);
         // Fall through to create a new session (ccSessionId is preserved by cleanupSession)
       } else {
-        // Check if permissionMode changed — switch at runtime without destroying session
-        const requestedMode = opts.permissionMode ?? "default";
-        if (existing.permissionMode !== requestedMode) {
+        const requestedMode = opts.permissionMode ?? toClaudePermissionMode(undefined);
+        if (allowsDangerouslySkipPermissions(requestedMode) && !existing.allowDangerouslySkipPermissions) {
           claudeLog.info(
-            `[Claude][${sessionId}] permissionMode changed from ${existing.permissionMode} to ${requestedMode}, switching at runtime`,
+            `[Claude][${sessionId}] permissionMode changed to ${requestedMode}, recreating session with skip-permissions allowance`,
           );
-          existing.permissionMode = requestedMode;
-          try {
-            const query = (existing.session as any).query;
-            if (query && typeof query.setPermissionMode === "function") {
-              await query.setPermissionMode(requestedMode);
-              claudeLog.info(`[Claude][${sessionId}] Permission mode switched to: ${requestedMode}`);
-            } else {
-              claudeLog.warn(`[Claude][${sessionId}] setPermissionMode not available on query, will apply on next message`);
+          this.cleanupSession(sessionId, "permission mode changed to bypass permissions");
+        } else {
+          // Check if permissionMode changed — switch at runtime without destroying session
+          if (existing.permissionMode !== requestedMode) {
+            claudeLog.info(
+              `[Claude][${sessionId}] permissionMode changed from ${existing.permissionMode} to ${requestedMode}, switching at runtime`,
+            );
+            existing.permissionMode = requestedMode;
+            try {
+              const query = (existing.session as any).query;
+              if (query && typeof query.setPermissionMode === "function") {
+                await query.setPermissionMode(requestedMode);
+                claudeLog.info(`[Claude][${sessionId}] Permission mode switched to: ${requestedMode}`);
+              } else {
+                claudeLog.warn(`[Claude][${sessionId}] setPermissionMode not available on query, will apply on next message`);
+              }
+            } catch (err) {
+              claudeLog.warn(`[Claude][${sessionId}] Failed to set permission mode at runtime:`, err);
             }
-          } catch (err) {
-            claudeLog.warn(`[Claude][${sessionId}] Failed to set permission mode at runtime:`, err);
           }
-        }
 
-        // Session is ready — update usage timestamp and return
-        existing.lastUsedAt = Date.now();
-        return existing.session;
+          // Session is ready — update usage timestamp and return
+          existing.lastUsedAt = Date.now();
+          return existing.session;
+        }
       }
     }
 
@@ -2014,10 +2028,13 @@ export class ClaudeCodeAdapter extends EngineAdapter {
       promptAppend += `\n\nThe user has installed the following additional skills (invokable via the Skill tool): ${this.cachedSkillNames.join(", ")}. When the user's request matches one of these skills, use the Skill tool to invoke it.`;
     }
 
+    const permissionMode = opts.permissionMode ?? toClaudePermissionMode(undefined);
+    const allowDangerouslySkipPermissions = allowsDangerouslySkipPermissions(permissionMode);
     const sdkOptions: any = this.withClaudeExecutablePath({
       model: opts.model ?? this.currentModelId ?? "claude-sonnet-4-20250514",
       env,
-      permissionMode: opts.permissionMode ?? "default",
+      permissionMode,
+      ...(allowDangerouslySkipPermissions ? { allowDangerouslySkipPermissions: true } : {}),
       canUseTool: this.createCanUseTool(sessionId),
       systemPrompt: { type: "preset" as const, preset: "claude_code" as const, append: promptAppend },
       stderr: this.stderrCallback,
@@ -2087,7 +2104,8 @@ export class ClaudeCodeAdapter extends EngineAdapter {
       createdAt: Date.now(),
       lastUsedAt: Date.now(),
       capturedSessionId: ccSessionId,
-      permissionMode: opts.permissionMode ?? "default",
+      permissionMode,
+      allowDangerouslySkipPermissions,
     };
 
     this.v2Sessions.set(sessionId, info);

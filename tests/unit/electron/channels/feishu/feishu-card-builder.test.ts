@@ -56,8 +56,9 @@ describe('buildGroupWelcomeCard', () => {
     expect(content).toContain(`**引擎:** ${engineType}`);
     expect(content).toContain(`**会话:** ${sessionId}`);
     expect(content).toContain('/cancel');
-    expect(content).toContain('/mode agent|plan|build');
+    expect(content).toContain('/mode list / /mode mode-id');
     expect(content).toContain('/model list / /model model-id');
+    expect(content).toContain('/effort list / /effort low|medium|high|max');
     expect(content).toContain('/help');
   });
 });

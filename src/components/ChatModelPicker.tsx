@@ -19,6 +19,7 @@ interface ChatModelPickerProps {
   selectedModelId: string | null;
   customModelInput: boolean;
   disabled?: boolean;
+  fullWidth?: boolean;
   placeholder: string;
   ariaLabel: string;
   onChange: (modelId: string) => void;
@@ -158,14 +159,18 @@ export function ChatModelPicker(props: ChatModelPickerProps) {
 
   const dropdownId = "chat-model-picker-dropdown";
 
+  const pickerWidthClass = () => props.fullWidth
+    ? "w-full max-w-none"
+    : "w-[220px] max-w-[45vw]";
+
   return (
-    <div class="inline-flex min-w-0">
+    <div class={`inline-flex min-w-0 ${props.fullWidth ? "w-full" : ""}`}>
       <Show
         when={props.customModelInput}
         fallback={
           <button
             type="button"
-            class="flex h-7 w-[220px] max-w-[45vw] min-w-[140px] items-center justify-between gap-2 rounded-lg border-0 bg-transparent py-1 pl-2 pr-2 text-left text-[11px] text-slate-500 transition-colors hover:bg-slate-100 focus:outline-none focus:ring-1 focus:ring-slate-300 disabled:cursor-not-allowed disabled:opacity-60 dark:text-slate-400 dark:hover:bg-slate-700/50 dark:focus:ring-slate-600"
+            class={`flex h-7 min-w-[140px] ${pickerWidthClass()} items-center justify-between gap-2 rounded-lg border-0 bg-transparent py-1 pl-2 pr-2 text-left text-[11px] text-slate-500 transition-colors hover:bg-slate-100 focus:outline-none focus:ring-1 focus:ring-slate-300 disabled:cursor-not-allowed disabled:opacity-60 dark:text-slate-400 dark:hover:bg-slate-700/50 dark:focus:ring-slate-600`}
             disabled={isDisabled()}
             aria-label={props.ariaLabel}
             aria-haspopup="listbox"
@@ -209,7 +214,7 @@ export function ChatModelPicker(props: ChatModelPickerProps) {
           aria-autocomplete="list"
           aria-expanded={open() ? "true" : "false"}
           aria-controls={open() ? dropdownId : undefined}
-          class="h-7 w-[220px] max-w-[45vw] min-w-[140px] rounded-lg border-0 bg-transparent px-2 py-1 text-[11px] text-slate-500 transition-colors hover:bg-slate-100 focus:outline-none focus:ring-1 focus:ring-slate-300 disabled:cursor-not-allowed disabled:opacity-60 dark:text-slate-400 dark:hover:bg-slate-700/50 dark:focus:ring-slate-600"
+          class={`h-7 min-w-[140px] ${pickerWidthClass()} rounded-lg border-0 bg-transparent px-2 py-1 text-[11px] text-slate-500 transition-colors hover:bg-slate-100 focus:outline-none focus:ring-1 focus:ring-slate-300 disabled:cursor-not-allowed disabled:opacity-60 dark:text-slate-400 dark:hover:bg-slate-700/50 dark:focus:ring-slate-600`}
           onFocus={(e) => openDropdown(e.currentTarget)}
           onInput={(e) => {
             const value = e.currentTarget.value;

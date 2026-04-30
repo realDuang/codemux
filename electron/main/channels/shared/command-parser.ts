@@ -12,9 +12,15 @@ const COMMAND_PREFIX = "/";
 
 /** Sub-commands recognised for a given top-level command. */
 const SUBCOMMANDS: Record<string, Set<string>> = {
+  // /mode list  — list available modes
+  // /mode <id>  — switch mode (handled as args, not subcommand)
+  mode: new Set(["list"]),
   // /model list  — list available models
   // /model <id>  — switch model (handled as args, not subcommand)
   model: new Set(["list"]),
+  // /effort list  — list available reasoning efforts
+  // /effort <level>  — switch reasoning effort (handled as args, not subcommand)
+  effort: new Set(["list"]),
 };
 
 /**
@@ -22,8 +28,12 @@ const SUBCOMMANDS: Record<string, Set<string>> = {
  *
  *   "/help"            → { command: "help", args: [], raw: "/help" }
  *   "/help@MyBot"      → { command: "help", args: [], raw: "/help@MyBot" }
+ *   "/mode list"       → { command: "mode", subcommand: "list", args: [], raw: "..." }
+ *   "/mode plan"       → { command: "mode", args: ["plan"], raw: "..." }
  *   "/model list"      → { command: "model", subcommand: "list", args: [], raw: "..." }
  *   "/model gpt-4o"    → { command: "model", args: ["gpt-4o"], raw: "..." }
+ *   "/effort list"     → { command: "effort", subcommand: "list", args: [], raw: "..." }
+ *   "/effort high"     → { command: "effort", args: ["high"], raw: "..." }
  */
 export function parseCommand(text: string): ParsedCommand | null {
   const trimmed = text.trim();

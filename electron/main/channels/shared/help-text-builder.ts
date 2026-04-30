@@ -30,8 +30,9 @@ export function buildHelpText(
   if (capabilities.sessionOps) {
     lines.push("`/status` · 查看会话信息");
     lines.push("`/cancel` · 取消运行中的消息");
-    lines.push("`/mode agent|plan|build` · 切换模式");
-    lines.push("`/model list` / `/model model-id` · 切换模型");
+    lines.push("`/mode list` / `/mode mode-id` · 切换当前会话模式");
+    lines.push("`/model list` / `/model model-id` · 切换当前会话模型");
+    lines.push("`/effort list` / `/effort low|medium|high|max` · 切换当前会话推理级别");
     lines.push("`/history` · 查看历史");
   }
 

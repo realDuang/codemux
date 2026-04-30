@@ -58,6 +58,13 @@ export interface MessageBuffer {
   engineMeta?: Record<string, unknown>;
   /** Set to true once leading whitespace has been trimmed from textAccumulator */
   leadingTrimmed?: boolean;
+  /**
+   * Queued user message waiting to be emitted as the next turn's prompt.
+   * Set by Copilot's handleTurnEnd when there are queued messages; consumed
+   * by commitTurnTransition. Embedding it on the buffer rather than a parallel
+   * Map ensures cleanup happens automatically when the buffer is finalized.
+   */
+  pendingQueuedUserMsg?: UnifiedMessage;
 }
 
 // --- Adapter Events ---
@@ -197,6 +204,23 @@ export abstract class EngineAdapter extends EventEmitter {
   /** Delete a session */
   abstract deleteSession(sessionId: string): Promise<void>;
 
+  /**
+   * Rename a session on the engine side. Default: no-op.
+   * Engines that persist titles (Claude SDK, Codex thread/name/set, OpenCode
+   * session.update) override this so codemux's local rename stays in sync
+   * with the engine's own session list.
+   *
+   * @param title Empty string clears any engine-side custom title.
+   */
+  async renameSession(
+    _sessionId: string,
+    _title: string,
+    _directory?: string,
+    _engineMeta?: Record<string, unknown>,
+  ): Promise<void> {
+    /* default: not supported */
+  }
+
   // --- Messages ---
 
   /**
@@ -273,6 +297,16 @@ export abstract class EngineAdapter extends EventEmitter {
 
   /** Get the current reasoning effort level for a session */
   getReasoningEffort(_sessionId: string): ReasoningEffort | null {
+    return null;
+  }
+
+  // --- Service Tier ---
+
+  /** Set the service tier for a session (no-op by default) */
+  async setServiceTier(_sessionId: string, _tier: CodexServiceTier | null): Promise<void> {}
+
+  /** Get the current service tier for a session */
+  getServiceTier(_sessionId: string): CodexServiceTier | null {
     return null;
   }
 

@@ -27,6 +27,7 @@ import {
   type QuestionReplyRequest,
   type ProjectSetEngineRequest,
   type ModelSetRequest,
+  type SessionConfigUpdateRequest,
   type ModeSetRequest,
   type ImportableSession,
   type SessionImportPreviewRequest,
@@ -125,6 +126,11 @@ export class GatewayClient {
   private static readonly BATCHED_EVENTS = new Set([
     "message.part.updated",
     "message.updated",
+    // Keep in sync with the message.updated batch so wire order is preserved.
+    // Otherwise consumed fires immediately and clears the queued preview before
+    // the preceding `message.updated` (Turn N completed) is handled, which then
+    // sees an empty queue and incorrectly clears the `sending` state.
+    "message.queued.consumed",
   ]);
 
   get connected(): boolean {
@@ -462,6 +468,10 @@ export class GatewayClient {
 
   setModel(req: ModelSetRequest): Promise<void> {
     return this.request(GatewayRequestType.MODEL_SET, req);
+  }
+
+  updateSessionConfig(req: SessionConfigUpdateRequest): Promise<void> {
+    return this.request(GatewayRequestType.SESSION_CONFIG_UPDATE, req);
   }
 
   // --- Mode API ---

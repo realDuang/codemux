@@ -33,6 +33,13 @@ export const zh: LocaleDict = {
     allowOnce: "允许一次",
     allowAlways: "总是允许",
     waitingApproval: "等待批准",
+    kindRead: "读取文件",
+    kindEdit: "编辑文件",
+    kindOther: "权限请求",
+    kindShell: "执行命令",
+    kindUrlAccess: "访问 URL",
+    kindWebSearch: "网页搜索",
+    diffPreview: "变更预览",
   },
   // Question
   question: {
@@ -43,6 +50,7 @@ export const zh: LocaleDict = {
     selectMultiple: "可选择多个选项",
     back: "上一步",
     next: "下一步",
+    progress: "问题 {current} / {total}",
   },
 
   // Login page
@@ -80,6 +88,9 @@ export const zh: LocaleDict = {
     teamTask: "团队任务",
     teamTaskDesc: "描述你希望多个引擎协作完成的任务。",
     teamTaskDetail: "该任务将被拆解为多个子任务，并行分发给不同引擎执行。",
+    modelIdPlaceholder: "输入模型 ID...",
+    defaultModeLabel: "构建",
+    sessionScopeHint: "仅对当前会话生效。新建会话的默认值请在设置中配置。",
   },
 
   // Settings page
@@ -145,6 +156,7 @@ export const zh: LocaleDict = {
     publicAccessDesc: "通过 Cloudflare 隧道从互联网访问",
     starting: "正在启动隧道，请稍候...",
     startFailed: "启动失败，请确保已安装 cloudflared",
+    namedTunnelMissingCredentials: "未找到命名 Tunnel 凭证。CodeMux 需要 ~/.cloudflared/<tunnel-id>.json 凭证文件才能启动这个固定域名。请完成下方 Cloudflare 设置命令，或清空自定义域名以使用临时 quick tunnel。",
     securityWarning: "安全提示：",
     securityWarningDesc: "远程访问允许完全控制此设备。请妥善保管访问密码，切勿分享给不信任的人。",
     accessPassword: "访问密码",
@@ -385,6 +397,7 @@ export const zh: LocaleDict = {
     fastMode: "快速模式",
     fastModeDesc: "更快的推理速度，消耗 2 倍积分（仅限 Codex）",
     fastModeUnavailable: "快速模式需要 ChatGPT 认证",
+    sessionDefaultsHint: "这些设置仅对新建会话生效。已有会话保留各自的模型 / 模式 / 推理强度等覆盖项，请在聊天工具栏内调整。",
     noModelsAvailable: "暂无可用模型",
     modelInputPlaceholder: "输入模型 ID（如 claude-sonnet-4-20250514）",
     enabled: "已启用",

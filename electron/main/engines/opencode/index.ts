@@ -549,6 +549,25 @@ export class OpenCodeAdapter extends EngineAdapter {
     for (const entry of entries) {
       entry.resolve(finalMessage);
     }
+
+    void this.refreshSessionTitle(sessionID);
+  }
+
+  private async refreshSessionTitle(sessionId: string): Promise<void> {
+    try {
+      const client = this.clientForSession(sessionId);
+      const result = await client.session.get({ sessionID: sessionId });
+      if (result.error || !result.data) return;
+      const sdkSession = result.data;
+      const cached = this.sessions.get(sessionId);
+      const session = convertSession(this.engineType, sdkSession);
+      if (session.title && session.title !== cached?.title) {
+        this.sessions.set(session.id, session);
+        this.emit("session.updated", { session });
+      }
+    } catch (err) {
+      openCodeLog.debug(`[OpenCode] refreshSessionTitle failed for ${sessionId}:`, err);
+    }
   }
 
   private handleSessionUpdated(sdkSession: SdkSession): void {
@@ -604,13 +623,40 @@ export class OpenCodeAdapter extends EngineAdapter {
       { id: "always", label: "Always allow", type: "accept_always" },
       { id: "reject", label: "Reject", type: "reject" },
     ];
+
+    // Build structured details from OpenCode metadata
+    const details: import("../../../../src/types/unified").PermissionDetail[] = [];
+    if (data.metadata && typeof data.metadata === "object") {
+      const meta = data.metadata as Record<string, unknown>;
+      if (typeof meta.command === "string" && meta.command.trim()) {
+        details.push({ label: "Command", value: meta.command.trim(), mono: true });
+      }
+      if (typeof meta.url === "string" && meta.url.trim()) {
+        details.push({ label: "URL", value: meta.url.trim(), mono: true });
+      }
+      if (typeof meta.path === "string" && meta.path.trim()) {
+        details.push({ label: "Path", value: meta.path.trim(), mono: true });
+      }
+      if (typeof meta.reason === "string" && meta.reason.trim()) {
+        details.push({ label: "Reason", value: meta.reason.trim() });
+      }
+    }
+
+    const permissionType = data.type ?? "";
+    const kind: "read" | "edit" | "other" =
+      permissionType === "read" ? "read"
+      : permissionType === "bash" || permissionType === "shell" || permissionType === "write" || permissionType === "edit" ? "edit"
+      : "other";
+
     return {
       id: data.id,
       sessionId: data.sessionID,
       engineType: this.engineType,
       toolCallId: data.callID,
+      toolName: data.type ?? undefined,
       title: data.title ?? data.type ?? "Permission request",
-      kind: "edit",
+      kind,
+      details,
       rawInput: data.metadata,
       options,
       permission: data.type,
@@ -883,6 +929,23 @@ export class OpenCodeAdapter extends EngineAdapter {
 
     // Clean up user message IDs for this session to prevent memory leak
     this.userMessageIds.delete(sessionId);
+  }
+
+  /** Push a renamed title to OpenCode via session.update. */
+  async renameSession(sessionId: string, title: string, directory?: string): Promise<void> {
+    const session = this.sessions.get(sessionId);
+    const dir = directory ?? session?.directory;
+    const client = dir ? this.createClient(dir) : this.ensureClient();
+    try {
+      await client.session.update({
+        sessionID: sessionId,
+        ...(dir ? { directory: dir } : {}),
+        title,
+      });
+    } catch (err) {
+      // Don't surface — local rename already succeeded
+      openCodeLog.warn(`session.update title failed for ${sessionId}:`, err);
+    }
   }
 
   // --- Messages ---

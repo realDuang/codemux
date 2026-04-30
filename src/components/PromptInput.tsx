@@ -1,4 +1,4 @@
-import { createSignal, createEffect, createMemo, For, Show, onCleanup } from "solid-js";
+import { createSignal, createEffect, createMemo, For, Show, onCleanup, type JSX } from "solid-js";
 import { IconArrowUp } from "./icons";
 import { useI18n } from "../lib/i18n";
 import { notify } from "../lib/notifications";
@@ -7,11 +7,6 @@ import type { AgentMode, ImageAttachment, EngineCommand } from "../types/unified
 const ACCEPTED_IMAGE_TYPES = ["image/jpeg", "image/png", "image/gif", "image/webp"];
 const MAX_IMAGE_SIZE = 3 * 1024 * 1024; // 3MB per image — stays within WS payload limits after base64/JSON overhead
 const MAX_IMAGES = 4;
-
-const defaultModes: AgentMode[] = [
-  { id: "build", label: "Build" },
-  { id: "plan", label: "Plan" },
-];
 
 /**
  * Resolve a display name for a mode.
@@ -30,7 +25,7 @@ function getModeColor(mode: AgentMode, index: number): string {
   const label = getModeDisplayName(mode).toLowerCase();
   if (label === "default" || label === "interactive" || label === "build") return "bg-indigo-600";
   if (label === "plan") return "bg-cyan-600";
-  if (label === "autopilot" || label === "auto-accept") return "bg-emerald-600";
+  if (label === "autopilot" || label === "bypass permissions") return "bg-emerald-600";
   // Fallback by position
   const palette = ["bg-indigo-600", "bg-cyan-600", "bg-emerald-600"];
   if (index < palette.length) return palette[index];
@@ -52,7 +47,7 @@ function getModeAccentRing(mode: AgentMode, index: number): {
       border: "border-cyan-200/40 dark:border-cyan-600/30",
       bgHover: "bg-cyan-600 hover:bg-cyan-700",
     };
-  if (label === "autopilot" || label === "auto-accept")
+  if (label === "autopilot" || label === "bypass permissions")
     return {
       bg: "bg-emerald-50/60 dark:bg-slate-800/70 backdrop-blur-xl",
       ring: "focus-within:ring-emerald-500/40",
@@ -90,17 +85,10 @@ const MODE_ICONS: Array<() => any> = [
       <path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z" />
     </svg>
   ),
-  // 2 — zap / autopilot
+  // 2 — zap / autonomous
   () => (
     <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
       <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
-    </svg>
-  ),
-  // 3 — check-circle / auto-accept
-  () => (
-    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-      <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
-      <polyline points="22 4 12 14.01 9 11.01" />
     </svg>
   ),
 ];
@@ -109,8 +97,7 @@ function getModeIcon(mode: AgentMode, index: number) {
   const label = getModeDisplayName(mode).toLowerCase();
   if (label === "default" || label === "interactive" || label === "build") return MODE_ICONS[0]();
   if (label === "plan") return MODE_ICONS[1]();
-  if (label === "autopilot") return MODE_ICONS[2]();
-  if (label === "auto-accept") return MODE_ICONS[3]();
+  if (label === "autopilot" || label === "bypass permissions") return MODE_ICONS[2]();
   return MODE_ICONS[index % MODE_ICONS.length]();
 }
 
@@ -134,16 +121,48 @@ interface PromptInputProps {
   availableCommands?: EngineCommand[];
   /** Called when user invokes a slash command (instead of onSend) */
   onCommandInvoke?: (commandName: string, args: string, agent: AgentMode) => void;
+  /** Controlled text draft for the current session */
+  text?: string;
+  onTextChange?: (text: string) => void;
+  /** Controlled image draft for the current session */
+  images?: ImageAttachment[];
+  onImagesChange?: (images: ImageAttachment[]) => void;
+  /** Toolbar content rendered in the bottom bar (left of send button) */
+  toolbarContent?: JSX.Element;
 }
 
 export function PromptInput(props: PromptInputProps) {
   const { t } = useI18n();
-  const [text, setText] = createSignal("");
+  const [internalText, setInternalText] = createSignal("");
   const [textarea, setTextarea] = createSignal<HTMLTextAreaElement>();
-  const [images, setImages] = createSignal<ImageAttachment[]>([]);
+  const [internalImages, setInternalImages] = createSignal<ImageAttachment[]>([]);
   const [dragOver, setDragOver] = createSignal(false);
   let fileInputRef: HTMLInputElement | undefined;
   let pasteCounter = 0;
+
+  const text = createMemo(() => props.text ?? internalText());
+  const images = createMemo(() => props.images ?? internalImages());
+
+  const setTextValue = (value: string) => {
+    if (props.onTextChange) {
+      props.onTextChange(value);
+    }
+    if (props.text === undefined) {
+      setInternalText(value);
+    }
+  };
+
+  const setImagesValue = (
+    value: ImageAttachment[] | ((prev: ImageAttachment[]) => ImageAttachment[]),
+  ) => {
+    const next = typeof value === "function" ? value(images()) : value;
+    if (props.onImagesChange) {
+      props.onImagesChange(next);
+    }
+    if (props.images === undefined) {
+      setInternalImages(next);
+    }
+  };
 
   // --- Slash command autocomplete state ---
   const [showCommandMenu, setShowCommandMenu] = createSignal(false);
@@ -197,7 +216,7 @@ export function PromptInput(props: PromptInputProps) {
 
   /** Select a command from the autocomplete menu */
   const selectCommand = (cmd: EngineCommand) => {
-    setText(`/${cmd.name} `);
+    setTextValue(`/${cmd.name} `);
     setShowCommandMenu(false);
     textarea()?.focus();
   };
@@ -249,7 +268,7 @@ export function PromptInput(props: PromptInputProps) {
       const dataUrl = reader.result as string;
       const base64 = dataUrl.split(",")[1];
       if (!base64) return;
-      setImages((prev) => [
+      setImagesValue((prev) => [
         ...prev,
         {
           id: `img_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
@@ -264,7 +283,7 @@ export function PromptInput(props: PromptInputProps) {
   };
 
   const removeImage = (id: string) => {
-    setImages((prev) => prev.filter((img) => img.id !== id));
+    setImagesValue((prev) => prev.filter((img) => img.id !== id));
   };
 
   const handlePaste = (e: ClipboardEvent) => {
@@ -300,10 +319,13 @@ export function PromptInput(props: PromptInputProps) {
 
   const handleDragLeave = () => setDragOver(false);
 
-  const modes = createMemo(() =>
+  const modes = createMemo<AgentMode[]>(() =>
     props.availableModes && props.availableModes.length > 0
       ? props.availableModes
-      : defaultModes
+      : [
+          { id: "build", label: t().chat.defaultModeLabel },
+          { id: "plan", label: t().prompt.plan },
+        ]
   );
 
   // Default to first available mode
@@ -320,11 +342,14 @@ export function PromptInput(props: PromptInputProps) {
   };
 
   createEffect(() => {
-    // Reset height when text is cleared
+    text();
+    const el = textarea();
+    if (!el) return;
     if (!text()) {
-      const el = textarea();
-      if (el) el.style.height = "auto";
+      el.style.height = "auto";
+      return;
     }
+    adjustHeight();
   });
 
   // Sync agent with props when it changes externally
@@ -393,16 +418,16 @@ export function PromptInput(props: PromptInputProps) {
       const args = spaceIdx === -1 ? "" : trimmed.slice(spaceIdx + 1).trim();
       if (commandName) {
         props.onCommandInvoke(commandName, args, agent());
-        setText("");
-        setImages([]);
+        setTextValue("");
+        setImagesValue([]);
         return;
       }
     }
     // Normal send
     const imgs = images().length > 0 ? [...images()] : undefined;
     props.onSend(text(), agent(), imgs);
-    setText("");
-    setImages([]);
+    setTextValue("");
+    setImagesValue([]);
   };
 
   const handleSend = () => {
@@ -430,7 +455,7 @@ export function PromptInput(props: PromptInputProps) {
     }
     const label = getModeDisplayName(agent()).toLowerCase();
     if (label === "plan") return t().prompt.planPlaceholder;
-    if (label === "autopilot") return t().prompt.autopilotPlaceholder;
+    if (label === "autopilot" || label === "bypass permissions") return t().prompt.autopilotPlaceholder;
     if (label === "build" || label === "interactive" || label === "default") return t().prompt.buildPlaceholder;
     return t().prompt.placeholder;
   });
@@ -532,7 +557,7 @@ export function PromptInput(props: PromptInputProps) {
           ref={setTextarea}
           value={text()}
           onInput={(e) => {
-            setText(e.currentTarget.value);
+            setTextValue(e.currentTarget.value);
             adjustHeight();
           }}
           onKeyDown={handleKeyDown}
@@ -544,7 +569,7 @@ export function PromptInput(props: PromptInputProps) {
               : modePlaceholder()
           }
           rows={1}
-          class={`w-full px-3 sm:px-4 py-3 pr-16 sm:pr-20 bg-transparent resize-none focus:outline-none dark:text-white max-h-[120px] sm:max-h-[200px] overflow-y-auto text-sm placeholder:text-slate-400 dark:placeholder:text-slate-500 ${props.disabled ? "cursor-not-allowed opacity-50" : ""}`}
+          class={`w-full px-3 sm:px-4 py-3 bg-transparent resize-none focus:outline-none dark:text-white max-h-[120px] sm:max-h-[200px] overflow-y-auto text-sm placeholder:text-slate-400 dark:placeholder:text-slate-500 ${props.disabled ? "cursor-not-allowed opacity-50" : ""}`}
           style={{ "min-height": "52px" }}
         />
         {/* Hidden file input for image selection */}
@@ -560,63 +585,72 @@ export function PromptInput(props: PromptInputProps) {
             e.currentTarget.value = "";
           }}
         />
-        {/* Attachment button + 3-state send button */}
-        {(() => {
-          const isGenerating = props.isGenerating;
-          const hasContent = !!text().trim() || images().length > 0;
-          const showSendButton = !isGenerating || (isGenerating && props.canEnqueue && hasContent);
-          const showStopButton = isGenerating && !(props.canEnqueue && hasContent);
+        {/* Bottom toolbar: session config (left) + action buttons (right) */}
+        <div class="flex items-center justify-between px-2 pb-2 pt-0.5 gap-2">
+          {/* Left: toolbar content (model/effort/fast mode) */}
+          <div class="flex items-center gap-1.5 overflow-x-auto min-w-0">
+            {props.toolbarContent}
+          </div>
+          {/* Right: attachment + send/stop buttons */}
+          {(() => {
+            const isGenerating = props.isGenerating;
+            const hasContent = !!text().trim() || images().length > 0;
+            const showSendButton = !isGenerating || (isGenerating && props.canEnqueue && hasContent);
+            const showStopButton = isGenerating && !(props.canEnqueue && hasContent);
 
-          if (showSendButton) {
-            return (
-              <div class="absolute right-2.5 bottom-2.5 flex items-center gap-1">
-                <Show when={props.imageAttachmentEnabled}>
+            if (showSendButton) {
+              return (
+                <div class="flex items-center gap-1 flex-shrink-0">
+                  <Show when={props.imageAttachmentEnabled}>
+                    <button
+                      onClick={() => fileInputRef?.click()}
+                      disabled={props.disabled || images().length >= MAX_IMAGES}
+                      class="p-2 rounded-xl text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 transition-colors disabled:opacity-30"
+                      aria-label={t().prompt.attachImage}
+                      title={t().prompt.attachImage}
+                    >
+                      <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48" />
+                      </svg>
+                    </button>
+                  </Show>
                   <button
-                    onClick={() => fileInputRef?.click()}
-                    disabled={props.disabled || images().length >= MAX_IMAGES}
-                    class="p-2 rounded-xl text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 transition-colors disabled:opacity-30"
-                    aria-label={t().prompt.attachImage}
-                    title={t().prompt.attachImage}
+                    onClick={handleSend}
+                    disabled={!hasContent || props.disabled}
+                    class={`p-2 rounded-xl text-white transition-all disabled:bg-slate-200 dark:disabled:bg-slate-700 disabled:text-slate-400 dark:disabled:text-slate-500 shadow-md disabled:shadow-none ${activeAccent().bgHover}`}
+                    aria-label={t().prompt.send}
                   >
-                    <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                      <path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48" />
-                    </svg>
+                    <IconArrowUp width={20} height={20} />
                   </button>
-                </Show>
-                <button
-                  onClick={handleSend}
-                  disabled={!hasContent || props.disabled}
-                  class={`p-2 rounded-xl text-white transition-all disabled:bg-slate-200 dark:disabled:bg-slate-700 disabled:text-slate-400 dark:disabled:text-slate-500 shadow-md disabled:shadow-none ${activeAccent().bgHover}`}
-                  aria-label={t().prompt.send}
-                >
-                  <IconArrowUp width={20} height={20} />
-                </button>
-              </div>
-            );
-          }
+                </div>
+              );
+            }
 
-          if (showStopButton) {
-            return (
-              <button
-                onClick={() => props.onCancel?.()}
-                class="absolute right-2.5 bottom-2.5 p-2 rounded-xl bg-red-500 hover:bg-red-600 text-white transition-all shadow-md"
-                aria-label="Stop"
-              >
-                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
-                  <rect x="6" y="6" width="12" height="12" rx="2" />
-                </svg>
-                {/* Queue count badge */}
-                <Show when={(props.queueCount ?? 0) > 0}>
-                  <span class="absolute -top-1.5 -right-1.5 min-w-[18px] h-[18px] flex items-center justify-center px-1 text-[10px] font-bold bg-amber-500 text-white rounded-full shadow-sm">
-                    {props.queueCount}
-                  </span>
-                </Show>
-              </button>
-            );
-          }
+            if (showStopButton) {
+              return (
+                <div class="flex items-center flex-shrink-0 relative">
+                  <button
+                    onClick={() => props.onCancel?.()}
+                    class="p-2 rounded-xl bg-red-500 hover:bg-red-600 text-white transition-all shadow-md"
+                    aria-label="Stop"
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+                      <rect x="6" y="6" width="12" height="12" rx="2" />
+                    </svg>
+                    {/* Queue count badge */}
+                    <Show when={(props.queueCount ?? 0) > 0}>
+                      <span class="absolute -top-1.5 -right-1.5 min-w-[18px] h-[18px] flex items-center justify-center px-1 text-[10px] font-bold bg-amber-500 text-white rounded-full shadow-sm">
+                        {props.queueCount}
+                      </span>
+                    </Show>
+                  </button>
+                </div>
+              );
+            }
 
-          return null;
-        })()}
+            return null;
+          })()}
+        </div>
       </div>
     </div>
   );

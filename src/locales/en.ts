@@ -32,6 +32,13 @@ export interface LocaleDict {
     allowOnce: string;
     allowAlways: string;
     waitingApproval: string;
+    kindRead: string;
+    kindEdit: string;
+    kindOther: string;
+    kindShell: string;
+    kindUrlAccess: string;
+    kindWebSearch: string;
+    diffPreview: string;
   };
   // Question
   question: {
@@ -42,6 +49,7 @@ export interface LocaleDict {
     selectMultiple: string;
     back: string;
     next: string;
+    progress: string;
   };
 
   // Login page
@@ -79,6 +87,12 @@ export interface LocaleDict {
     teamTask: string;
     teamTaskDesc: string;
     teamTaskDetail: string;
+    /** Placeholder for the custom model ID input */
+    modelIdPlaceholder: string;
+    /** Default mode label fallback when an engine has no available modes */
+    defaultModeLabel: string;
+    /** Tooltip hint shown on the chat toolbar's model/mode controls */
+    sessionScopeHint: string;
   };
 
   // Settings page
@@ -144,6 +158,7 @@ export interface LocaleDict {
     publicAccessDesc: string;
     starting: string;
     startFailed: string;
+    namedTunnelMissingCredentials: string;
     securityWarning: string;
     securityWarningDesc: string;
     accessPassword: string;
@@ -385,6 +400,8 @@ export interface LocaleDict {
     fastMode: string;
     fastModeDesc: string;
     fastModeUnavailable: string;
+    /** Hint explaining that engine-level model/effort/fastMode are defaults for new sessions */
+    sessionDefaultsHint: string;
     noModelsAvailable: string;
     modelInputPlaceholder: string;
     enabled: string;
@@ -680,6 +697,13 @@ export const en: LocaleDict = {
     allowOnce: "Allow once",
     allowAlways: "Allow always",
     waitingApproval: "Waiting for approval",
+    kindRead: "File Read",
+    kindEdit: "File Edit",
+    kindOther: "Permission Request",
+    kindShell: "Shell Command",
+    kindUrlAccess: "URL Access",
+    kindWebSearch: "Web Search",
+    diffPreview: "Changes",
   },
   // Question
   question: {
@@ -690,6 +714,7 @@ export const en: LocaleDict = {
     selectMultiple: "Select multiple options",
     back: "Back",
     next: "Next",
+    progress: "Question {current} of {total}",
   },
 
   // Login page
@@ -727,6 +752,9 @@ export const en: LocaleDict = {
     teamTask: "Team Task",
     teamTaskDesc: "Describe the task you want multiple engines to collaborate on.",
     teamTaskDetail: "The task will be decomposed into subtasks and dispatched to different engines in parallel.",
+    modelIdPlaceholder: "Enter model ID...",
+    defaultModeLabel: "Build",
+    sessionScopeHint: "Applies to this session only. Defaults for new sessions live in Settings.",
   },
 
   // Settings page
@@ -792,6 +820,7 @@ export const en: LocaleDict = {
     publicAccessDesc: "Access via Cloudflare tunnel from the internet",
     starting: "Starting tunnel, please wait...",
     startFailed: "Failed to start. Please ensure cloudflared is installed",
+    namedTunnelMissingCredentials: "Named Tunnel credentials were not found. CodeMux needs a ~/.cloudflared/<tunnel-id>.json credential file to start this fixed domain. Run the Cloudflare setup commands below, or clear the custom domain to use a temporary quick tunnel.",
     securityWarning: "Security Warning:",
     securityWarningDesc: "Remote access allows full control of this device. Keep your access password safe and never share it with untrusted people.",
     accessPassword: "Access Password",
@@ -1030,6 +1059,7 @@ export const en: LocaleDict = {
     fastMode: "Fast Mode",
     fastModeDesc: "Higher speed inference at 2\u00d7 credit usage (Codex only)",
     fastModeUnavailable: "Fast mode requires ChatGPT authentication",
+    sessionDefaultsHint: "These settings apply only to newly created sessions. Existing sessions keep their own per-session model, mode, and effort overrides — adjust those from the chat toolbar.",
     noModelsAvailable: "No models available",
     modelInputPlaceholder: "Enter model ID (e.g. claude-sonnet-4-20250514)",
     enabled: "Enabled",

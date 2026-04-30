@@ -76,8 +76,9 @@ export function buildGroupWelcomeCard(
   const commands = [
     "/cancel — 取消当前正在运行的消息",
     "/status — 查看会话信息",
-    "/mode agent|plan|build — 切换模式",
-    "/model list / /model model-id — 切换模型",
+    "/mode list / /mode mode-id — 切换当前会话模式",
+    "/model list / /model model-id — 切换当前会话模型",
+    "/effort list / /effort low|medium|high|max — 切换当前会话推理级别",
     "/history — 查看会话历史记录",
     "/help — 显示可用命令",
   ].join("\n");

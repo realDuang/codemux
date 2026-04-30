@@ -13,7 +13,8 @@ vi.mock("../../../../electron/main/services/conversation-store", () => {
     list: vi.fn(() => []),
     create: vi.fn(),
     delete: vi.fn(),
-    rename: vi.fn(),
+    setCustomTitle: vi.fn(),
+    setEngineTitle: vi.fn(),
     update: vi.fn(),
     listMessages: vi.fn(() => Promise.resolve([])),
     appendMessage: vi.fn(),
@@ -23,6 +24,7 @@ vi.mock("../../../../electron/main/services/conversation-store", () => {
     saveSteps: vi.fn(),
     setEngineSession: vi.fn(),
     clearEngineSession: vi.fn(),
+    updateSessionConfig: vi.fn(),
     findByEngineSession: vi.fn(() => null),
     deriveProjects: vi.fn(() => []),
     flushAll: vi.fn(),
@@ -97,6 +99,8 @@ class MockEngineAdapter extends EngineAdapter {
   setMode = vi.fn(async () => {});
   setReasoningEffort = vi.fn(async () => {});
   getReasoningEffort = vi.fn(() => null);
+  setServiceTier = vi.fn(async () => {});
+  getServiceTier = vi.fn(() => null);
   replyPermission = vi.fn(async () => {});
   replyQuestion = vi.fn(async () => {});
   rejectQuestion = vi.fn(async () => {});
@@ -117,7 +121,6 @@ function makeMockConv(overrides: Record<string, any> = {}) {
     id: "conv1",
     engineType: "opencode" as EngineType,
     directory: "/dir",
-    title: "New session",
     engineSessionId: null,
     createdAt: 1000,
     updatedAt: 2000,
@@ -395,6 +398,131 @@ describe("EngineManager", () => {
       expect(emittedSessions[0].session.id).toBe("conv6");
     });
 
+    it("does not persist default engine placeholder titles", () => {
+      const conv = makeMockConv({
+        id: "conv-title",
+        firstPrompt: "Inspect the mock workspace read-only…",
+      });
+      (conversationStore.findByEngineSession as any).mockReturnValue(conv);
+      (conversationStore.get as any).mockReturnValue(conv);
+
+      const emittedSessions: any[] = [];
+      engineManager.on("session.updated" as any, (data: any) => emittedSessions.push(data));
+      adapterA.emit("session.updated", {
+        session: {
+          id: "engine-title",
+          engineType: adapterA.engineType,
+          title: "New session - 2026-04-27T12:38:30.603Z",
+        },
+      });
+
+      expect(conversationStore.setEngineTitle).not.toHaveBeenCalled();
+      expect(emittedSessions[0].session.title).toBe("Inspect the mock workspace read-only…");
+    });
+
+    it("does not persist prompt-derived engine summaries", () => {
+      const conv = makeMockConv({
+        id: "conv-title",
+        firstPrompt: "Summarize mock project metadata: inspect the sample manifest…",
+      });
+      (conversationStore.findByEngineSession as any).mockReturnValue(conv);
+      (conversationStore.get as any).mockReturnValue(conv);
+
+      adapterA.emit("session.updated", {
+        session: {
+          id: "engine-title",
+          engineType: adapterA.engineType,
+          title: "Summarize mock project metadata: inspect the sample manifest...",
+        },
+      });
+
+      expect(conversationStore.setEngineTitle).not.toHaveBeenCalled();
+    });
+
+    it("persists meaningful engine titles", () => {
+      const conv = makeMockConv({
+        id: "conv-title",
+        firstPrompt: "Please review the sample upload integration changes…",
+      });
+      (conversationStore.findByEngineSession as any).mockReturnValue(conv);
+      (conversationStore.get as any).mockReturnValue(conv);
+
+      adapterA.emit("session.updated", {
+        session: {
+          id: "engine-title",
+          engineType: adapterA.engineType,
+          title: "  Review Sample Upload Integration  ",
+        },
+      });
+
+      expect(conversationStore.setEngineTitle).toHaveBeenCalledWith(
+        "conv-title",
+        "Review Sample Upload Integration",
+      );
+    });
+
+    it("displays engineTitle over firstPrompt", () => {
+      (conversationStore.list as any).mockReturnValue([
+        makeMockConv({
+          id: "conv-title",
+          firstPrompt: "Please review the sample upload integration changes…",
+          engineTitle: "Review Sample Upload Integration",
+        }),
+      ]);
+
+      expect(engineManager.listAllSessions()[0].title).toBe("Review Sample Upload Integration");
+    });
+
+    it("displays customTitle over engineTitle", () => {
+      (conversationStore.list as any).mockReturnValue([
+        makeMockConv({
+          id: "conv-title",
+          firstPrompt: "Please review the sample upload integration changes…",
+          engineTitle: "Review Sample Upload Integration",
+          customTitle: "My Manual Title",
+        }),
+      ]);
+
+      expect(engineManager.listAllSessions()[0].title).toBe("My Manual Title");
+    });
+
+    it("ignores stale stored title fields", () => {
+      (conversationStore.list as any).mockReturnValue([
+        {
+          ...makeMockConv({ id: "conv-title" }),
+          title: "Old Chat",
+        },
+      ]);
+
+      expect(engineManager.listAllSessions()[0].title).toBe("New Chat");
+    });
+
+    it("emits the resolved engineTitle after a meaningful engine update", () => {
+      const conv = makeMockConv({
+        id: "conv-title",
+        firstPrompt: "Please review the sample upload integration changes…",
+      });
+      (conversationStore.findByEngineSession as any).mockReturnValue(conv);
+      (conversationStore.get as any)
+        .mockReturnValueOnce(conv)
+        .mockReturnValueOnce({
+          ...conv,
+          engineTitle: "Review Sample Upload Integration",
+        });
+      const emittedSessions: any[] = [];
+      engineManager.on("session.updated" as any, (data: any) => emittedSessions.push(data));
+
+      adapterA.emit("session.updated", {
+        session: {
+          id: "engine-title",
+          engineType: adapterA.engineType,
+          title: "Review Sample Upload Integration",
+        },
+      });
+
+      expect(emittedSessions[0].session.title).toBe("Review Sample Upload Integration");
+    });
+
     it("retrieves and deletes sessions from store and engine", async () => {
       (conversationStore.get as any).mockReturnValue({ id: "conv1", engineType: adapterA.engineType });
       const session = await engineManager.getSession("conv1");
@@ -486,8 +614,10 @@ describe("EngineManager", () => {
       expect(adapterA.deleteSession).toHaveBeenCalledWith("es1");
       expect(conversationStore.delete).toHaveBeenCalledWith("c1");
 
+      // renameSession requires the conv to exist; mock get() to return one
+      (conversationStore.get as any).mockReturnValue(makeMockConv({ id: "conv1" }));
       await engineManager.renameSession("conv1", "New Title");
-      expect(conversationStore.rename).toHaveBeenCalledWith("conv1", "New Title");
+      expect(conversationStore.setCustomTitle).toHaveBeenCalledWith("conv1", "New Title");
     });
 
     it("deleteProject skips engine cleanup when no engineSessionId", async () => {
@@ -592,6 +722,60 @@ describe("EngineManager", () => {
       expect(conversationStore.clearEngineSession).toHaveBeenCalledWith("conv1");
     });
 
+    it("tracks timing patch IDs only for messages sent while the session is active", async () => {
+      let resolveFirst: (value: any) => void = () => {};
+      let resolveSecond: (value: any) => void = () => {};
+      adapterA.createSession.mockResolvedValue({ id: "eng-queued", engineMeta: {} } as any);
+      adapterA.sendMessage
+        .mockReturnValueOnce(new Promise((resolve) => { resolveFirst = resolve; }) as any)
+        .mockReturnValueOnce(new Promise((resolve) => { resolveSecond = resolve; }) as any);
+
+      const firstSend = engineManager.sendMessage("conv1", [{ type: "text", text: "foreground" }]);
+      await new Promise((r) => setTimeout(r, 0));
+
+      expect((engineManager as any).pendingUserMsgIdQueue.get("conv1")).toBeUndefined();
+
+      const queuedSend = engineManager.sendMessage("conv1", [{ type: "text", text: "queued" }]);
+      await new Promise((r) => setTimeout(r, 0));
+
+      expect((engineManager as any).pendingUserMsgIdQueue.get("conv1")).toHaveLength(1);
+
+      resolveFirst({ id: "first-done", role: "assistant", time: { created: 1, completed: 2 }, parts: [] });
+      await firstSend;
+      expect(engineManager.isSessionIdle("conv1")).toBe(false);
+
+      resolveSecond({ id: "second-done", role: "assistant", time: { created: 3, completed: 4 }, parts: [] });
+      await queuedSend;
+      expect(engineManager.isSessionIdle("conv1")).toBe(true);
+    });
+
+    it("merges persisted session config into sendMessage options", async () => {
+      (conversationStore.get as any).mockReturnValue(
+        makeMockConv({
+          engineSessionId: "existing-s1",
+          mode: "plan",
+          modelId: "gpt-5.4",
+          reasoningEffort: "high",
+          serviceTier: "fast",
+        }),
+      );
+      adapterA.hasSession.mockReturnValue(true);
+
+      await engineManager.sendMessage("conv1", [{ type: "text", text: "hello" }]);
+
+      expect(adapterA.sendMessage).toHaveBeenCalledWith(
+        "existing-s1",
+        expect.any(Array),
+        expect.objectContaining({
+          directory: "/dir",
+          mode: "plan",
+          modelId: "gpt-5.4",
+          reasoningEffort: "high",
+          serviceTier: "fast",
+        }),
+      );
+    });
+
     it("throws when conversation not found in sendMessage", async () => {
       (conversationStore.get as any).mockReturnValue(null);
       await expect(
@@ -599,7 +783,7 @@ describe("EngineManager", () => {
       ).rejects.toThrow(/Conversation not found/);
     });
 
-    it("removes session from activeSessions even when sendMessage throws", async () => {
+    it("removes session from the active count even when sendMessage throws", async () => {
       adapterA.createSession.mockResolvedValue({ id: "eng-fail", engineMeta: {} } as any);
       adapterA.sendMessage.mockRejectedValue(new Error("Send failed"));
 
@@ -671,87 +855,6 @@ describe("EngineManager", () => {
   });
 
   // ===========================================================================
-  // applyTitleFallback and isDefaultTitle
-  // ===========================================================================
-
-  describe("applyTitleFallback and isDefaultTitle", () => {
-    beforeEach(() => {
-      engineManager.registerAdapter(adapterA);
-    });
-
-    const titleCases = [
-      ["New session", true],
-      ["New Chat", true],
-      ["Child session", true],
-      ["Chat 5", true],
-      ["My real title", false],
-      ["", false], // empty is falsy, isDefaultTitle checks the string
-    ] as const;
-
-    it.each(titleCases)("isDefaultTitle('%s') should be %s", (title, expected) => {
-      // Test indirectly: titles that are "default" should get replaced by sendMessage
-      const conv = makeMockConv({
-        title: title || undefined,
-        engineSessionId: "eng-s1",
-      });
-      (conversationStore.get as any).mockReturnValue(conv);
-      adapterA.hasSession.mockReturnValue(true);
-
-      const emittedUpdates: any[] = [];
-      engineManager.on("session.updated" as any, (data: any) => emittedUpdates.push(data));
-
-      engineManager["applyTitleFallback"]("conv1", [{ type: "text", text: "Hello world" }]);
-
-      if (!title || expected) {
-        // default or empty title → should be replaced
-        expect(conversationStore.rename).toHaveBeenCalledWith("conv1", "Hello world");
-      } else {
-        // real title → should NOT be replaced
-        expect(conversationStore.rename).not.toHaveBeenCalled();
-      }
-
-      vi.clearAllMocks();
-    });
-
-    it("applyTitleFallback returns early when conv not found", () => {
-      (conversationStore.get as any).mockReturnValue(null);
-      engineManager["applyTitleFallback"]("missing-conv", [{ type: "text", text: "hi" }]);
-      expect(conversationStore.rename).not.toHaveBeenCalled();
-    });
-
-    it("applyTitleFallback returns early when no text in content", () => {
-      (conversationStore.get as any).mockReturnValue(makeMockConv({ title: "New session" }));
-      engineManager["applyTitleFallback"]("conv1", [{ type: "image", data: "base64..." } as any]);
-      expect(conversationStore.rename).not.toHaveBeenCalled();
-    });
-
-    it("applyTitleFallback truncates long text to 100 chars with ellipsis", () => {
-      const longText = "A".repeat(150);
-      (conversationStore.get as any).mockReturnValue(makeMockConv({ title: "New session" }));
-      (conversationStore.get as any).mockReturnValueOnce(makeMockConv({ title: "New session" }))
-        .mockReturnValueOnce(makeMockConv({ title: "A".repeat(100) + "…" }));
-
-      engineManager["applyTitleFallback"]("conv1", [{ type: "text", text: longText }]);
-
-      const callArg = (conversationStore.rename as any).mock.calls[0][1];
-      expect(callArg).toHaveLength(101); // 100 chars + "…"
-      expect(callArg.endsWith("…")).toBe(true);
-    });
-
-    it("applyTitleFallback emits session.updated with truncated title", () => {
-      const longText = "B".repeat(200);
-      (conversationStore.get as any).mockReturnValue(makeMockConv({ title: "" }));
-
-      const emitted: any[] = [];
-      engineManager.on("session.updated" as any, (d: any) => emitted.push(d));
-
-      engineManager["applyTitleFallback"]("conv1", [{ type: "text", text: longText }]);
-
-      expect(emitted).toHaveLength(1);
-    });
-  });
-
-  // ===========================================================================
   // Models and Modes
   // ===========================================================================
 
@@ -759,33 +862,75 @@ describe("EngineManager", () => {
     beforeEach(() => {
       engineManager.registerAdapter(adapterA);
       (conversationStore.get as any).mockReturnValue(makeMockConv({ engineSessionId: "s1" }));
+      (conversationStore.updateSessionConfig as any).mockImplementation(
+        (_sessionId: string, patch: Record<string, unknown>) => makeMockConv({ engineSessionId: "s1", ...patch }),
+      );
     });
 
-    it("delegates model, mode, and reasoning effort operations to the adapter", async () => {
+    it("persists model, mode, reasoning effort, and service tier and delegates to live sessions", async () => {
       await engineManager.listModels(adapterA.engineType);
       expect(adapterA.listModels).toHaveBeenCalled();
 
       await engineManager.setModel("conv1", "gpt-4");
+      expect(conversationStore.updateSessionConfig).toHaveBeenCalledWith("conv1", { modelId: "gpt-4" });
       expect(adapterA.setModel).toHaveBeenCalledWith("s1", "gpt-4");
 
       engineManager.getModes(adapterA.engineType);
       expect(adapterA.getModes).toHaveBeenCalled();
 
       await engineManager.setMode("conv1", "fast");
+      expect(conversationStore.updateSessionConfig).toHaveBeenCalledWith("conv1", { mode: "fast" });
       expect(adapterA.setMode).toHaveBeenCalledWith("s1", "fast");
+
+      await engineManager.updateSessionConfig("conv1", { reasoningEffort: "high", serviceTier: "fast" });
+      expect(adapterA.setReasoningEffort).toHaveBeenCalledWith("s1", "high");
+      expect(adapterA.setServiceTier).toHaveBeenCalledWith("s1", "fast");
     });
 
-    it("throws setModel when no engineSessionId", async () => {
-      (conversationStore.get as any).mockReturnValue(makeMockConv({ engineSessionId: null }));
-      await expect(engineManager.setModel("conv1", "gpt-4")).rejects.toThrow(
-        /No engine session for conversation/,
+    it("updateSessionConfig persists and dispatches all fields in a single call", async () => {
+      await engineManager.updateSessionConfig("conv1", {
+        mode: "plan",
+        modelId: "gpt-5",
+        reasoningEffort: "medium",
+        serviceTier: "flex",
+      });
+
+      expect(conversationStore.updateSessionConfig).toHaveBeenCalledWith("conv1", {
+        mode: "plan",
+        modelId: "gpt-5",
+        reasoningEffort: "medium",
+        serviceTier: "flex",
+      });
+      expect(adapterA.setMode).toHaveBeenCalledWith("s1", "plan");
+      expect(adapterA.setModel).toHaveBeenCalledWith("s1", "gpt-5");
+      expect(adapterA.setReasoningEffort).toHaveBeenCalledWith("s1", "medium");
+      expect(adapterA.setServiceTier).toHaveBeenCalledWith("s1", "flex");
+    });
+
+    it("persists session config even when no engine session is active", async () => {
+      (conversationStore.updateSessionConfig as any).mockImplementation(
+        (_sessionId: string, patch: Record<string, unknown>) => makeMockConv({ engineSessionId: null, ...patch }),
       );
+
+      await expect(engineManager.setModel("conv1", "gpt-4")).resolves.toBeUndefined();
+      await expect(engineManager.setMode("conv1", "plan")).resolves.toBeUndefined();
+      await expect(
+        engineManager.updateSessionConfig("conv1", { reasoningEffort: "medium", serviceTier: null }),
+      ).resolves.toBeUndefined();
+
+      expect(conversationStore.updateSessionConfig).toHaveBeenCalledWith("conv1", { modelId: "gpt-4" });
+      expect(conversationStore.updateSessionConfig).toHaveBeenCalledWith("conv1", { mode: "plan" });
+      expect(adapterA.setModel).not.toHaveBeenCalled();
+      expect(adapterA.setMode).not.toHaveBeenCalled();
+      expect(adapterA.setReasoningEffort).not.toHaveBeenCalled();
+      expect(adapterA.setServiceTier).not.toHaveBeenCalled();
     });
 
-    it("throws setMode when no engineSessionId", async () => {
-      (conversationStore.get as any).mockReturnValue(makeMockConv({ engineSessionId: null }));
-      await expect(engineManager.setMode("conv1", "plan")).rejects.toThrow(
-        /No engine session for conversation/,
+    it("throws when persisting session config for an unknown conversation", async () => {
+      (conversationStore.updateSessionConfig as any).mockReturnValue(null);
+
+      await expect(engineManager.setModel("conv1", "gpt-4")).rejects.toThrow(
+        /Conversation not found/,
       );
     });
   });
@@ -977,6 +1122,34 @@ describe("EngineManager", () => {
       expect((result as any).message.id).toBe("fallback-msg");
     });
 
+    it("keeps the session active while a command is running so later sends track queued timing", async () => {
+      (conversationStore.get as any).mockReturnValue(
+        makeMockConv({ engineSessionId: "eng-s1" }),
+      );
+      adapterA.hasSession.mockReturnValue(true);
+
+      let resolveCommand: (value: any) => void = () => {};
+      adapterA.invokeCommand.mockReturnValue(
+        new Promise((resolve) => { resolveCommand = resolve; }) as any,
+      );
+
+      const commandPromise = engineManager.invokeCommand("conv1", "help", "");
+      await new Promise((r) => setTimeout(r, 0));
+
+      expect(engineManager.isSessionIdle("conv1")).toBe(false);
+      expect((engineManager as any).pendingUserMsgIdQueue.get("conv1")).toBeUndefined();
+
+      await engineManager.sendMessage("conv1", [{ type: "text", text: "queued after command" }]);
+
+      expect(engineManager.isSessionIdle("conv1")).toBe(false);
+      expect((engineManager as any).pendingUserMsgIdQueue.get("conv1")).toHaveLength(1);
+
+      resolveCommand({ handledAsCommand: true });
+      await commandPromise;
+
+      expect(engineManager.isSessionIdle("conv1")).toBe(true);
+    });
+
     it("formats command text without trailing space when args is empty", async () => {
       (conversationStore.get as any).mockReturnValue(
         makeMockConv({ engineSessionId: "eng-s2" }),
@@ -988,6 +1161,35 @@ describe("EngineManager", () => {
       await engineManager.invokeCommand("conv1", "help", "");
       const sendArgs = (adapterA.sendMessage as any).mock.calls[0][1];
       expect(sendArgs[0].text).toBe("/help");
+    });
+
+    it("merges persisted session config into invokeCommand options", async () => {
+      (conversationStore.get as any).mockReturnValue(
+        makeMockConv({
+          engineSessionId: "eng-s3",
+          mode: "plan",
+          modelId: "gpt-5.4",
+          reasoningEffort: "high",
+          serviceTier: "fast",
+        }),
+      );
+      adapterA.hasSession.mockReturnValue(true);
+      adapterA.invokeCommand.mockResolvedValue({ handledAsCommand: true } as any);
+
+      await engineManager.invokeCommand("conv1", "help", "topic");
+
+      expect(adapterA.invokeCommand).toHaveBeenCalledWith(
+        "eng-s3",
+        "help",
+        "topic",
+        expect.objectContaining({
+          directory: "/dir",
+          mode: "plan",
+          modelId: "gpt-5.4",
+          reasoningEffort: "high",
+          serviceTier: "fast",
+        }),
+      );
     });
   });
 
@@ -1058,7 +1260,7 @@ describe("EngineManager", () => {
     beforeEach(() => {
       engineManager.registerAdapter(adapterA);
       (conversationStore.findByEngineSession as any).mockReturnValue({ id: "conv1" });
-      (conversationStore.get as any).mockReturnValue(makeMockConv({ title: "New session" }));
+      (conversationStore.get as any).mockReturnValue(makeMockConv());
     });
 
     it("forwards message part updates for text and reasoning parts", () => {
@@ -1185,7 +1387,7 @@ describe("EngineManager", () => {
       );
     });
 
-    it("skips persisting user messages from message.updated event", async () => {
+    it("skips persisting user messages without queue timing fields", async () => {
       const userMessage = {
         id: "user-m1",
         sessionId: "engine-s1",
@@ -1195,11 +1397,60 @@ describe("EngineManager", () => {
       } as any;
       adapterA.emit("message.updated", { sessionId: "engine-s1", message: userMessage });
       await new Promise((r) => setTimeout(r, 0));
-      // user messages should be skipped by persistMessage
+      // user messages without enqueuedAt/processedAt should be skipped — they're
+      // already persisted via persistUserMessage() at send time.
       expect(conversationStore.appendMessage).not.toHaveBeenCalledWith(
         "conv1",
         expect.objectContaining({ id: "user-m1" }),
       );
+      expect(conversationStore.updateMessage).not.toHaveBeenCalled();
+    });
+
+    it("patches enqueuedAt/processedAt onto the FIFO-next queued user message via in-memory queue", async () => {
+      // Simulate queued persistUserMessage calls having pushed 2 message IDs to
+      // the in-memory queue. Adapter commits trigger persistMessage which should
+      // shift the queue head and patch by ID — no full listMessages scan.
+      (engineManager as any).pendingUserMsgIdQueue.set("conv1", ["u1", "u2"]);
+
+      const enrichedUserMsg = {
+        id: "internal-uid-from-adapter",
+        sessionId: "engine-s1",
+        role: "user",
+        time: { created: 200, completed: 200 },
+        enqueuedAt: 200,
+        processedAt: 1500,
+        parts: [],
+      } as any;
+      adapterA.emit("message.updated", { sessionId: "engine-s1", message: enrichedUserMsg });
+      await new Promise((r) => setTimeout(r, 0));
+
+      // First call: targets u1 (FIFO head) with partial timing patch
+      expect(conversationStore.updateMessage).toHaveBeenCalledTimes(1);
+      const [convId, msgId, patch] = (conversationStore.updateMessage as any).mock.calls[0];
+      expect(convId).toBe("conv1");
+      expect(msgId).toBe("u1");
+      expect(patch).toEqual({ enqueuedAt: 200, processedAt: 1500 });
+      // listMessages must NOT be called — that was the optimization point
+      expect(conversationStore.listMessages).not.toHaveBeenCalled();
+      // Queue head was consumed — u2 remains
+      expect((engineManager as any).pendingUserMsgIdQueue.get("conv1")).toEqual(["u2"]);
+    });
+
+    it("returns silently when no pending queue entry exists (duplicate emit)", async () => {
+      // No queue entry — simulates a duplicate adapter emit after the queue was drained
+      (engineManager as any).pendingUserMsgIdQueue.delete("conv1");
+
+      const enrichedUserMsg = {
+        id: "internal", sessionId: "engine-s1", role: "user",
+        time: { created: 100, completed: 100 },
+        enqueuedAt: 100, processedAt: 150, parts: [],
+      } as any;
+      adapterA.emit("message.updated", { sessionId: "engine-s1", message: enrichedUserMsg });
+      await new Promise((r) => setTimeout(r, 0));
+
+      // Nothing to patch — no DB calls
+      expect(conversationStore.updateMessage).not.toHaveBeenCalled();
+      expect(conversationStore.listMessages).not.toHaveBeenCalled();
     });
 
     it("emits message.updated as-is when convId cannot be resolved", () => {
@@ -1217,7 +1468,8 @@ describe("EngineManager", () => {
       adapterA.emit("session.updated", {
         session: { id: "engine-s1", title: "Real Title", engineType: adapterA.engineType } as any,
       });
-      expect(conversationStore.rename).toHaveBeenCalledWith("conv1", "Real Title");
+      // session.updated now writes engineTitle directly without interception
+      expect(conversationStore.setEngineTitle).toHaveBeenCalledWith("conv1", "Real Title");
 
       adapterA.emit("permission.asked", {
         permission: {
@@ -1231,19 +1483,27 @@ describe("EngineManager", () => {
       });
     });
 
-    it("session.updated does NOT rename when title is not default", () => {
-      (conversationStore.get as any).mockReturnValue(makeMockConv({ title: "My Custom Title" }));
+    it("session.updated writes engineTitle even when conv has a customTitle", () => {
+      // Render-time displayTitle resolution gives customTitle precedence over engineTitle,
+      // so the store layer no longer guards against overwriting "real" titles.
+      (conversationStore.get as any).mockReturnValue(makeMockConv({ customTitle: "My Custom Title" }));
       adapterA.emit("session.updated", {
         session: { id: "engine-s1", title: "Engine Title", engineType: adapterA.engineType } as any,
       });
-      // conv.title is "My Custom Title" (not default), so rename should be called
-      // Wait - isDefaultTitle("My Custom Title") = false, so rename SHOULD NOT be called
-      expect(conversationStore.rename).not.toHaveBeenCalled();
+      expect(conversationStore.setEngineTitle).toHaveBeenCalledWith("conv1", "Engine Title");
+    });
+
+    it("session.updated does not treat a customTitle echo as engineTitle", () => {
+      (conversationStore.get as any).mockReturnValue(makeMockConv({ customTitle: "My Custom Title" }));
+      adapterA.emit("session.updated", {
+        session: { id: "engine-s1", title: "My Custom Title", engineType: adapterA.engineType } as any,
+      });
+      expect(conversationStore.setEngineTitle).not.toHaveBeenCalled();
     });
 
     it("session.updated persists engineMeta when provided", () => {
       (conversationStore.get as any).mockReturnValue(
-        makeMockConv({ title: "New session", engineSessionId: "eng-s" }),
+        makeMockConv({ engineSessionId: "eng-s" }),
       );
       adapterA.emit("session.updated", {
         session: {
@@ -2185,7 +2445,7 @@ describe("EngineManager", () => {
   // ===========================================================================
 
   describe("isSessionIdle", () => {
-    it("returns true for sessions not in activeSessions", () => {
+    it("returns true for sessions with no active send count", () => {
       expect(engineManager.isSessionIdle("any-session")).toBe(true);
     });
   });

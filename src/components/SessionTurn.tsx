@@ -605,7 +605,10 @@ export function SessionTurn(props: SessionTurnProps) {
   });
 
   const duration = createMemo(() => {
-    const startTime = props.userMessage.time.created;
+    // For queued messages, processedAt marks when the engine actually started
+    // processing (excludes queue wait time). Falls back to time.created.
+    const msg = props.userMessage;
+    const startTime = msg?.processedAt ?? msg?.time.created ?? Date.now();
     const endTime = finalEndTime();
     if (endTime) return formatDuration(startTime, endTime);
     const _ = tick(); // subscribe to tick signal for live updates

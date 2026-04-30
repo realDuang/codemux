@@ -60,6 +60,17 @@ describe('OpenCode Converters', () => {
       const unifiedUnix = convertSession(ENGINE_TYPE, unixSession as any);
       expect(unifiedUnix.directory).toBe('/home/user/project');
     });
+
+    it('does not expose default placeholder titles', () => {
+      const unified = convertSession(ENGINE_TYPE, {
+        id: 's1',
+        directory: '/project',
+        title: 'New session - 2026-04-27T12:38:30.603Z',
+        time: { created: 1, updated: 2 },
+      } as any);
+
+      expect(unified.title).toBeUndefined();
+    });
   });
 
   describe('convertMessage', () => {
@@ -251,16 +262,11 @@ describe('OpenCode Converters', () => {
                 id: 'm1',
                 name: 'Model 1',
                 family: 'GPT',
-                cost: { input: 1, output: 2, cache: { read: 0.5, write: 0.8 } },
-                capabilities: {
-                  temperature: true,
-                  reasoning: false,
-                  attachment: true,
-                  toolcall: true,
-                  input: { text: true, audio: false, image: true, video: false, pdf: false },
-                  output: { text: true, audio: false, image: false, video: false, pdf: false },
-                  interleaved: false,
-                },
+                cost: { input: 1, output: 2, cache_read: 0.5, cache_write: 0.8 },
+                temperature: true,
+                reasoning: false,
+                attachment: true,
+                tool_call: true,
                 status: 'online',
                 release_date: '2023-01-01',
                 limit: { tpd: 1000 }
@@ -302,6 +308,28 @@ describe('OpenCode Converters', () => {
           releaseDate: '2023-01-01',
           limits: { tpd: 1000 }
         }
+      });
+
+      const responseLegacySchema = {
+        all: [{
+          id: 'p1',
+          name: 'P1',
+          models: {
+            m1: {
+              id: 'm1',
+              name: 'M1',
+              cost: { input: 3, output: 4, cache: { read: 1, write: 2 } },
+              capabilities: { temperature: false, reasoning: true, attachment: false, toolcall: true },
+              release_date: '2023-01-01',
+              limit: {},
+            }
+          }
+        }],
+        connected: ['p1']
+      };
+      expect(convertProviders(ENGINE_TYPE, responseLegacySchema as any)[0]).toMatchObject({
+        cost: { input: 3, output: 4, cache: { read: 1, write: 2 } },
+        capabilities: { temperature: false, reasoning: true, attachment: false, toolcall: true },
       });
 
       const responseNoCost = {

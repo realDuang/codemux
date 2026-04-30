@@ -21,7 +21,7 @@ export interface ParsedCommand {
 export interface CommandCapabilities {
   /** Class A: project/session navigation (only meaningful in P2P). */
   navigation: boolean;
-  /** Class B: current-session ops (cancel/status/mode/model/history). */
+  /** Class B: current-session ops (cancel/status/mode/model/effort/history). */
   sessionOps: boolean;
   /** Class C: help/start are always true; included for symmetry. */
   general: boolean;
@@ -52,6 +52,7 @@ export const KNOWN_COMMANDS = [
   "status",
   "mode",
   "model",
+  "effort",
   "history",
   // Class C — general
   "help",

@@ -131,6 +131,27 @@ export function isCodexServiceTier(value: unknown): value is CodexServiceTier {
   return typeof value === "string" && (CODEX_SERVICE_TIER_VALUES as readonly string[]).includes(value);
 }
 
+export interface UnifiedSessionConfig {
+  mode?: string;
+  modelId?: string;
+  reasoningEffort?: ReasoningEffort;
+  serviceTier?: CodexServiceTier;
+}
+
+/**
+ * Patch shape for session config updates over the wire. Distinguishes between:
+ *   - missing key  → don't touch
+ *   - explicit null → clear the persisted override
+ *   - value         → set
+ *
+ * The base UnifiedSessionConfig has optional-but-never-null fields because that
+ * matches how config is stored. Patches need explicit null to express "clear",
+ * since `undefined` is dropped by JSON serialization on the wire.
+ */
+export type SessionConfigPatch = {
+  [K in keyof UnifiedSessionConfig]?: UnifiedSessionConfig[K] | null;
+};
+
 /** Result of listing models — includes which model is currently active */
 export interface ModelListResult {
   models: UnifiedModelInfo[];
@@ -139,11 +160,16 @@ export interface ModelListResult {
 
 // --- Conversation (self-owned persistence layer) ---
 
-export interface ConversationMeta {
+export interface ConversationMeta extends UnifiedSessionConfig {
   id: string;
   engineType: EngineType;
   directory: string;
-  title: string;
+  /** User-set title (via rename). Highest priority in displayTitle resolution. */
+  customTitle?: string;
+  /** Engine-summarized title observed from adapter or engine updates. */
+  engineTitle?: string;
+  /** Truncated first user prompt — used as last-resort fallback for displayTitle. */
+  firstPrompt?: string;
   createdAt: number;
   updatedAt: number;
   messageCount: number;
@@ -164,6 +190,10 @@ export interface ConversationMessage {
   id: string;
   role: MessageRole;
   time: { created: number; completed?: number };
+  /** Timestamp when a queued message entered the queue (user clicked send) */
+  enqueuedAt?: number;
+  /** Timestamp when a queued message started being processed by the engine */
+  processedAt?: number;
   /** Content-only parts (text, file) — steps stored separately */
   parts: Array<TextPart | FilePart>;
   tokens?: {
@@ -201,7 +231,7 @@ export type StepPart =
 
 // --- Session ---
 
-export interface UnifiedSession {
+export interface UnifiedSession extends UnifiedSessionConfig {
   id: string;
   engineType: EngineType;
   directory: string;
@@ -232,6 +262,10 @@ export interface UnifiedMessage {
     created: number;
     completed?: number;
   };
+  /** Timestamp when a queued message entered the queue (user clicked send) */
+  enqueuedAt?: number;
+  /** Timestamp when a queued message started being processed by the engine */
+  processedAt?: number;
   parts: UnifiedPart[];
   /** Token usage */
   tokens?: {
@@ -424,19 +458,36 @@ export interface PermissionOption {
   type: "accept_once" | "accept_always" | "reject" | "allow_once" | "allow_always" | "reject_once" | "reject_always";
 }
 
+/** A single display-ready detail for a permission request. Populated by engine adapters. */
+export interface PermissionDetail {
+  /** Human-readable label (already resolved, not an i18n key) */
+  label: string;
+  /** The value to display */
+  value: string;
+  /** If true, render in monospace (commands, paths, code) */
+  mono?: boolean;
+}
+
 export interface UnifiedPermission {
   id: string;
   sessionId: string;
   engineType: EngineType;
   /** Related tool call ID */
   toolCallId?: string;
+  /** Human-readable tool name for display (e.g. "web_fetch", "shell", "edit") */
+  toolName?: string;
   /** Permission title / description */
   title: string;
   /** Operation kind */
   kind: "read" | "edit" | "other";
   /** Diff preview for write operations */
   diff?: string;
-  /** Raw input for context */
+  /**
+   * Structured display details, populated by the adapter layer.
+   * Each item is a label/value pair ready for rendering — no frontend parsing needed.
+   */
+  details?: PermissionDetail[];
+  /** Raw input for context (legacy fallback) */
   rawInput?: unknown;
   /** Available response options (2 for Copilot/Claude, 3 for OpenCode) */
   options: PermissionOption[];
@@ -658,6 +709,9 @@ export const GatewayRequestType = {
   MODEL_LIST: "model.list",
   MODEL_SET: "model.set",
 
+  // Session config (unified patch for mode, model, reasoning effort, service tier)
+  SESSION_CONFIG_UPDATE: "session.configUpdate",
+
   // Mode
   MODE_GET: "mode.get",
   MODE_SET: "mode.set",
@@ -821,6 +875,11 @@ export interface ProjectSetEngineRequest {
 export interface ModelSetRequest {
   sessionId: string;
   modelId: string;
+}
+
+export interface SessionConfigUpdateRequest {
+  sessionId: string;
+  config: SessionConfigPatch;
 }
 
 export interface ModeSetRequest {

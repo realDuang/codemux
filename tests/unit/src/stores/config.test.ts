@@ -48,6 +48,7 @@ vi.mock('solid-js/store', () => ({
 // Import AFTER mocks are set up (vi.mock is hoisted, so this is fine)
 import {
   getSelectedModelForEngine,
+  getSelectedModelForSession,
   getDefaultEngineType,
   isEngineEnabled,
   loadEngineModelSelection,
@@ -55,11 +56,13 @@ import {
   saveReasoningEffort,
   loadReasoningEffort,
   getEffectiveReasoningEffortForEngine,
+  getEffectiveReasoningEffortForSession,
   restoreReasoningEfforts,
   saveServiceTier,
   loadServiceTier,
   clearServiceTier,
   getServiceTierForEngine,
+  getServiceTierForSession,
   isFastModeActive,
   restoreServiceTiers,
   configStore,
@@ -123,6 +126,20 @@ describe('config store', () => {
       setConfigStore('engineModels', {});
       setConfigStore('models', []);
       expect(getSelectedModelForEngine('opencode')).toBeUndefined();
+    });
+
+    it('prefers the session model override when it is valid for the engine', () => {
+      setConfigStore('engineModels', 'opencode', [{ modelId: 'first' }, { modelId: 'session-model' }]);
+      setConfigStore('engineModelSelections', 'opencode', { providerID: 'p1', modelID: 'first' });
+
+      expect(getSelectedModelForSession('opencode', 'session-model')).toBe('session-model');
+    });
+
+    it('falls back to engine selection when the session model override is stale', () => {
+      setConfigStore('engineModels', 'opencode', [{ modelId: 'first' }]);
+      setConfigStore('engineModelSelections', 'opencode', { providerID: 'p1', modelID: 'first' });
+
+      expect(getSelectedModelForSession('opencode', 'stale-model')).toBe('first');
     });
   });
 
@@ -309,6 +326,40 @@ describe('config store', () => {
       expect(loadReasoningEffort('copilot')).toBeNull();
       expect(getEffectiveReasoningEffortForEngine('copilot')).toBeNull();
     });
+
+    it('prefers the session reasoning effort when it is supported by the session model', () => {
+      setConfigStore('engineModels', 'copilot', [
+        {
+          modelId: 'gpt-5.4',
+          capabilities: {
+            supportedReasoningEfforts: ['low', 'medium', 'high'],
+            defaultReasoningEffort: 'medium',
+          },
+        },
+      ]);
+      setConfigStore('engineReasoningEfforts', 'copilot', 'low');
+
+      expect(
+        getEffectiveReasoningEffortForSession('copilot', 'gpt-5.4', 'high'),
+      ).toBe('high');
+    });
+
+    it('falls back to the engine default effort when the session effort is unsupported', () => {
+      setConfigStore('engineModels', 'copilot', [
+        {
+          modelId: 'gpt-5.4',
+          capabilities: {
+            supportedReasoningEfforts: ['low', 'medium'],
+            defaultReasoningEffort: 'medium',
+          },
+        },
+      ]);
+      setConfigStore('engineReasoningEfforts', 'copilot', 'low');
+
+      expect(
+        getEffectiveReasoningEffortForSession('copilot', 'gpt-5.4', 'high'),
+      ).toBe('medium');
+    });
   });
 
   describe('service tier persistence', () => {
@@ -392,6 +443,33 @@ describe('config store', () => {
       restoreServiceTiers();
       expect(configStore.engineServiceTiers['codex']).toBe('fast');
       expect(configStore.engineServiceTiers['opencode']).toBeUndefined();
+    });
+
+    it('prefers the session service tier when the engine supports fast mode', () => {
+      setConfigStore('engines', [
+        { type: 'codex', capabilities: { fastModeSupported: true } } as any,
+      ]);
+      setConfigStore('engineServiceTiers', 'codex', 'flex');
+
+      expect(getServiceTierForSession('codex', 'fast')).toBe('fast');
+    });
+
+    it('keeps an explicit session flex tier when the engine default is fast', () => {
+      setConfigStore('engines', [
+        { type: 'codex', capabilities: { fastModeSupported: true } } as any,
+      ]);
+      setConfigStore('engineServiceTiers', 'codex', 'fast');
+
+      expect(getServiceTierForSession('codex', 'flex')).toBe('flex');
+    });
+
+    it('falls back to the engine tier when no session tier is set', () => {
+      setConfigStore('engines', [
+        { type: 'codex', capabilities: { fastModeSupported: true } } as any,
+      ]);
+      setConfigStore('engineServiceTiers', 'codex', 'fast');
+
+      expect(getServiceTierForSession('codex')).toBe('fast');
     });
   });
 });

@@ -32,6 +32,7 @@ const {
     rpc: {
       model: { switchTo: vi.fn(async function() {}) },
       mode: { set: vi.fn(async function() {}) },
+      name: { set: vi.fn(async function() {}) },
       skills: { list: vi.fn(async function() { return { skills: [] }; }) },
       commands: { handlePendingCommand: vi.fn(async function() {}) },
     },
@@ -54,6 +55,7 @@ const {
     }),
     deleteSession: vi.fn(async function() {}),
     listModels: vi.fn(async function() { return []; }),
+    getSessionMetadata: vi.fn(async function() { return undefined; }),
     getState: vi.fn(function() { return "connected"; }),
   };
 
@@ -160,6 +162,7 @@ function makeMockSession(sessionId = "s1") {
     rpc: {
       model: { switchTo: vi.fn(async () => {}) },
       mode: { set: vi.fn(async () => {}) },
+      name: { set: vi.fn(async () => {}) },
       skills: { list: vi.fn(async () => ({ skills: [] })) },
       commands: { handlePendingCommand: vi.fn(async () => {}) },
     },
@@ -265,7 +268,7 @@ describe("CopilotSdkAdapter", () => {
       expect(adapter.getStatus()).toBe("stopped");
     });
 
-    it("rejects all pending permissions with a reject result", async () => {
+    it("rejects all pending permissions with user-not-available", async () => {
       await adapter.start();
       const resolve = vi.fn();
       (adapter as any).pendingPermissions.set("p1", {
@@ -275,7 +278,9 @@ describe("CopilotSdkAdapter", () => {
 
       await adapter.stop();
 
-      expect(resolve).toHaveBeenCalledWith({ kind: "reject" });
+      expect(resolve).toHaveBeenCalledWith({
+        kind: "user-not-available",
+      });
       expect((adapter as any).pendingPermissions.size).toBe(0);
     });
 
@@ -446,6 +451,30 @@ describe("CopilotSdkAdapter", () => {
     it("calls client.deleteSession even when the session is not active in memory", async () => {
       await adapter.deleteSession("ghost-session");
       expect(mockClientInstance.deleteSession).toHaveBeenCalledWith("ghost-session");
+    });
+  });
+
+  describe("renameSession()", () => {
+    beforeEach(async () => {
+      await adapter.start();
+    });
+
+    it("writes the trimmed title through Copilot's name RPC", async () => {
+      const sess = makeMockSession("s1");
+      (adapter as any).activeSessions.set("s1", sess);
+
+      await adapter.renameSession("s1", "  Manual Title  ");
+
+      expect(sess.rpc.name.set).toHaveBeenCalledWith({ name: "Manual Title" });
+    });
+
+    it("does not write empty titles", async () => {
+      const sess = makeMockSession("s1");
+      (adapter as any).activeSessions.set("s1", sess);
+
+      await adapter.renameSession("s1", "   ");
+
+      expect(sess.rpc.name.set).not.toHaveBeenCalled();
     });
   });
 
@@ -843,7 +872,7 @@ describe("CopilotSdkAdapter", () => {
   });
 
   describe("handleAssistantMessage()", () => {
-    it("is a no-op when a buffer already exists (streaming takes precedence)", () => {
+    it("updates existing buffer with content from assistant.message", () => {
       const partUpdates: any[] = [];
       adapter.on("message.part.updated", (e) => partUpdates.push(e));
       (adapter as any).messageBuffers.set("s1", makeBuffer("s1", {
@@ -853,7 +882,10 @@ describe("CopilotSdkAdapter", () => {
 
       (adapter as any).handleAssistantMessage("s1", { content: "non-streaming" });
 
-      expect(partUpdates).toHaveLength(0);
+      // Content should be processed — sets new content on the buffer
+      expect(partUpdates.length).toBeGreaterThanOrEqual(1);
+      const buf = (adapter as any).messageBuffers.get("s1");
+      expect(buf.textAccumulator).toBe("non-streaming");
     });
 
     it("creates a buffer and sets content when no buffer exists", () => {
@@ -1054,6 +1086,287 @@ describe("CopilotSdkAdapter", () => {
       expect(r2).toHaveBeenCalledTimes(1);
       expect(r1.mock.calls[0][0]).toEqual(r2.mock.calls[0][0]);
     });
+
+    it("commits a pending turn transition as fallback when user.message echo is missing", () => {
+      // Simulates: turn_end set up a pending transition, but the SDK never
+      // echoes user.message — session.idle must commit the transition so the
+      // queued user message and Turn N response both get surfaced.
+      const updates: any[] = [];
+      const consumed: any[] = [];
+      const r1 = vi.fn();
+      const r2 = vi.fn();
+      adapter.on("message.updated", (e) => updates.push(e));
+      adapter.on("message.queued.consumed", (e) => consumed.push(e));
+
+      (adapter as any).messageBuffers.set("s1", makeBuffer("s1", {
+        messageId: "asst-turn-1",
+        textAccumulator: "turn 1 final",
+        textPartId: "tp1",
+      }));
+      (adapter as any).idleResolvers.set("s1", [r1, r2]);
+      // Embed pending queued msg directly on the buffer (new design)
+      const buf1 = (adapter as any).messageBuffers.get("s1");
+      buf1.pendingQueuedUserMsg = { id: "queued-u1", role: "user", sessionId: "s1", time: { created: 1000 }, parts: [] };
+
+      (adapter as any).handleSessionIdle("s1");
+
+      // Turn 1 resolver got the assistant message
+      expect(r1).toHaveBeenCalledTimes(1);
+      expect(r1.mock.calls[0][0].id).toBe("asst-turn-1");
+      // Turn 2 resolver also resolved (final finalizeBuffer or fallback)
+      expect(r2).toHaveBeenCalledTimes(1);
+      // Queued user message surfaced with timing
+      expect(consumed.some((e) => e.messageId === "queued-u1")).toBe(true);
+      const queuedUpdate = updates.find((e: any) => e.message?.id === "queued-u1");
+      expect(queuedUpdate?.message.enqueuedAt).toBe(1000);
+      expect(queuedUpdate?.message.processedAt).toBeGreaterThanOrEqual(1000);
+      // Cleanup: buffer (and its embedded pendingQueuedUserMsg) cleared
+      expect((adapter as any).messageBuffers.has("s1")).toBe(false);
+    });
+  });
+
+  describe("handleTurnEnd()", () => {
+    /**
+     * Integration test that replays the exact Copilot SDK event sequence observed
+     * in real queued-message sessions (from JSONL event files).
+     *
+     * Real SDK event flow for "分析open的issue" + queued "以及PR":
+     *
+     *   user.message("分析open的issue")
+     *   turn_start(0) → assistant.message(empty) → tool(report_intent) → tool(powershell) → turn_end(0)
+     *   turn_start(1) → assistant.message(empty) → tool(powershell) → turn_end(1)
+     *   ...more tool turns...
+     *   turn_start(6) → assistant.message(CONTENT="issue分析") → turn_end(6)
+     *   user.message("以及PR")     ← queued message echo
+     *   turn_start(0) → assistant.message(empty) → tool(report_intent) → tool(powershell) → turn_end(0)
+     *   ...more tool turns...
+     *   turn_start(2) → assistant.message(CONTENT="PR分析") → turn_end(2)
+     *   session.idle
+     *
+     * Expected behavior:
+     *   - Turn 1 assistant message contains "issue分析" text
+     *   - Turn 2 assistant message contains "PR分析" text
+     *   - user.message echo triggers the buffer split
+     */
+    it("queued message: all Turn 1 content (tools + text) stays in Turn 1 buffer", () => {
+      const updates: any[] = [];
+      const partUpdates: any[] = [];
+      const consumed: any[] = [];
+      const r1 = vi.fn(); // resolver for Turn 1
+      const r2 = vi.fn(); // resolver for Turn 2
+
+      adapter.on("message.updated", (e) => updates.push(e));
+      adapter.on("message.part.updated", (e) => partUpdates.push(e));
+      adapter.on("message.queued.consumed", (e) => consumed.push(e));
+
+      // Set up initial state: buffer exists (normal sendMessage path created it)
+      // and there's a queued user message waiting
+      (adapter as any).messageBuffers.set("s1", makeBuffer("s1", {
+        messageId: "asst-msg-1",
+      }));
+      (adapter as any).idleResolvers.set("s1", [r1, r2]);
+      (adapter as any).pendingUserMessages.set("s1", [
+        { id: "user-msg-2", role: "user", sessionId: "s1", time: { created: 2000 }, parts: [] },
+      ]);
+
+      // === Replay SDK event sequence for Turn 1 ===
+
+      // turn_start(0): tool turn
+      (adapter as any).handleTurnStart("s1", { turnId: "0" });
+      // assistant.message (no content)
+      (adapter as any).handleAssistantMessage("s1", { messageId: "sdk-msg-1" });
+      // tool calls
+      (adapter as any).handleToolStart("s1", { toolCallId: "tc1", toolName: "report_intent", arguments: { intent: "test" } });
+      (adapter as any).handleToolComplete("s1", { toolCallId: "tc1", success: true, result: { content: "ok" } });
+      (adapter as any).handleToolStart("s1", { toolCallId: "tc2", toolName: "powershell", arguments: { command: "git status" } });
+      (adapter as any).handleToolComplete("s1", { toolCallId: "tc2", success: true, result: { content: "clean" } });
+
+      // turn_end(0) — queued user exists → sets PENDING_TRANSITION
+      (adapter as any).handleTurnEnd("s1", { turnId: "0" });
+
+      // Verify: transition is pending (embedded on buffer), nothing resolved yet
+      expect((adapter as any).messageBuffers.get("s1").pendingQueuedUserMsg).toBeDefined();
+      expect(r1).not.toHaveBeenCalled();
+      expect(consumed).toHaveLength(0);
+      // Buffer still alive — belongs to Turn 1
+      expect((adapter as any).messageBuffers.has("s1")).toBe(true);
+      const bufAfterFirstTurnEnd = (adapter as any).messageBuffers.get("s1");
+      expect(bufAfterFirstTurnEnd.messageId).toBe("asst-msg-1");
+
+      // turn_start(1): more tool turns (still Turn 1's work — skipped due to PENDING)
+      (adapter as any).handleTurnStart("s1", { turnId: "1" });
+      // assistant.message (no content)
+      (adapter as any).handleAssistantMessage("s1", { messageId: "sdk-msg-2" });
+      // more tool calls — should still go to Turn 1 buffer
+      (adapter as any).handleToolStart("s1", { toolCallId: "tc3", toolName: "powershell", arguments: { command: "ls" } });
+      (adapter as any).handleToolComplete("s1", { toolCallId: "tc3", success: true, result: { content: "files" } });
+      // turn_end(1)
+      (adapter as any).handleTurnEnd("s1", { turnId: "1" });
+
+      // Verify: still in Turn 1 buffer, tool parts accumulated there
+      expect((adapter as any).messageBuffers.get("s1").messageId).toBe("asst-msg-1");
+      const turn1ToolParts = (adapter as any).messageBuffers.get("s1").parts.filter((p: any) => p.type === "tool");
+      expect(turn1ToolParts.length).toBeGreaterThanOrEqual(2); // at least tc1 and tc3
+
+      // turn_start(6): text turn — assistant.message WITH CONTENT
+      (adapter as any).handleTurnStart("s1", { turnId: "6" });
+      (adapter as any).handleAssistantMessage("s1", { messageId: "sdk-msg-final", content: "Issue分析结果：共9个issue" });
+      // turn_end(6)
+      (adapter as any).handleTurnEnd("s1", { turnId: "6" });
+
+      // Content is in buffer but transition not committed yet (waiting for user.message echo)
+      expect((adapter as any).messageBuffers.get("s1").pendingQueuedUserMsg).toBeDefined();
+      expect(r1).not.toHaveBeenCalled();
+
+      // user.message echo → commits the transition
+      const tBeforeCommit = Date.now();
+      (adapter as any).commitTurnTransition("s1");
+      const tAfterCommit = Date.now();
+
+      // Turn 1 finalized with all content
+      expect(r1).toHaveBeenCalledTimes(1);
+      const turn1Message = r1.mock.calls[0][0];
+      expect(turn1Message.id).toBe("asst-msg-1");
+      // Turn 1 message should have text part with the issue analysis
+      const turn1TextParts = turn1Message.parts.filter((p: any) => p.type === "text");
+      expect(turn1TextParts.length).toBe(1);
+      expect(turn1TextParts[0].text).toBe("Issue分析结果：共9个issue");
+      // Turn 1 message should also have tool parts
+      const turn1FinalToolParts = turn1Message.parts.filter((p: any) => p.type === "tool");
+      expect(turn1FinalToolParts.length).toBeGreaterThanOrEqual(2);
+
+      // User message emitted with timing fields populated correctly
+      expect(consumed).toHaveLength(1);
+      const userUpdate = updates.find((e: any) => e.message?.role === "user");
+      expect(userUpdate?.message.id).toBe("user-msg-2");
+      // enqueuedAt = original creation time; processedAt MUST be captured at
+      // commit time, not at handleTurnEnd time. We bound it to the actual
+      // commit window to catch regressions where processedAt is set too early.
+      expect(userUpdate?.message.enqueuedAt).toBe(2000);
+      expect(userUpdate?.message.processedAt).toBeGreaterThanOrEqual(tBeforeCommit);
+      expect(userUpdate?.message.processedAt).toBeLessThanOrEqual(tAfterCommit);
+
+      // New buffer created for Turn 2
+      const newBuf = (adapter as any).messageBuffers.get("s1");
+      expect(newBuf).toBeDefined();
+      expect(newBuf.messageId).not.toBe("asst-msg-1");
+
+      // Persistence: enqueuedAt/processedAt must be written to messageHistory
+      // so reloads (which read from disk) preserve queue timing context.
+      const history: any[] = (adapter as any).messageHistory.get("s1") || [];
+      const persistedQueued = history.find((m) => m.id === "user-msg-2");
+      expect(persistedQueued).toBeDefined();
+      expect(persistedQueued.enqueuedAt).toBe(2000);
+      expect(persistedQueued.processedAt).toBeGreaterThanOrEqual(tBeforeCommit);
+      expect(persistedQueued.processedAt).toBeLessThanOrEqual(tAfterCommit);
+
+      // === Turn 2 events ===
+      // assistant.message (no content) + tools
+      (adapter as any).handleAssistantMessage("s1", { messageId: "sdk-msg-t2" });
+      (adapter as any).handleToolStart("s1", { toolCallId: "tc4", toolName: "powershell", arguments: { command: "gh pr list" } });
+      (adapter as any).handleToolComplete("s1", { toolCallId: "tc4", success: true, result: { content: "PRs" } });
+
+      // assistant.message WITH content for Turn 2
+      (adapter as any).handleAssistantMessage("s1", { messageId: "sdk-msg-t2-final", content: "PR分析结果：共6个PR" });
+
+      // session.idle → finalizes Turn 2
+      (adapter as any).handleSessionIdle("s1");
+
+      // Turn 2 resolved
+      expect(r2).toHaveBeenCalledTimes(1);
+      const turn2Message = r2.mock.calls[0][0];
+      // Turn 2 message should have its own text
+      const turn2TextParts = turn2Message.parts.filter((p: any) => p.type === "text");
+      expect(turn2TextParts.length).toBe(1);
+      expect(turn2TextParts[0].text).toBe("PR分析结果：共6个PR");
+      // Turn 2 text should NOT contain Turn 1's text
+      expect(turn2TextParts[0].text).not.toContain("Issue分析");
+    });
+
+    it("abort during pending turn transition surfaces the queued user message", () => {
+      const updates: any[] = [];
+      const consumed: any[] = [];
+      adapter.on("message.updated", (e) => updates.push(e));
+      adapter.on("message.queued.consumed", (e) => consumed.push(e));
+
+      // Set up a pending transition (as if turn_end already shifted a queued msg)
+      const buf = makeBuffer("s1", { messageId: "asst-1" }) as any;
+      buf.pendingQueuedUserMsg = { id: "u-queued", role: "user", sessionId: "s1", time: { created: 1000 }, parts: [] };
+      (adapter as any).messageBuffers.set("s1", buf);
+      (adapter as any).pendingUserMessages.set("s1", [
+        { id: "u-also-queued", role: "user", sessionId: "s1", time: { created: 1500 }, parts: [] },
+      ]);
+
+      (adapter as any).handleAbort("s1", {});
+
+      // Both the pending-transition message and the still-queued one are surfaced
+      const userIds = consumed.map((e) => e.messageId).sort();
+      expect(userIds).toEqual(["u-also-queued", "u-queued"]);
+      const queuedUpdate = updates.find((e: any) => e.message?.id === "u-queued");
+      expect(queuedUpdate?.message.enqueuedAt).toBe(1000);
+      expect(queuedUpdate?.message.processedAt).toBeGreaterThanOrEqual(1000);
+
+      // State cleaned up: buffer (with embedded pendingQueuedUserMsg) deleted
+      expect((adapter as any).pendingUserMessages.has("s1")).toBe(false);
+      expect((adapter as any).messageBuffers.has("s1")).toBe(false);
+    });
+
+    it("handleAssistantMessage is idempotent for repeated identical content", () => {
+      const partUpdates: any[] = [];
+      adapter.on("message.part.updated", (e) => partUpdates.push(e));
+
+      (adapter as any).handleAssistantMessage("s1", { content: "hello" });
+      const countAfterFirst = partUpdates.length;
+      (adapter as any).handleAssistantMessage("s1", { content: "hello" });
+
+      // Second identical call should not emit a new update
+      expect(partUpdates.length).toBe(countAfterFirst);
+    });
+  });
+
+  describe("refreshSessionTitle()", () => {
+    beforeEach(async () => {
+      await adapter.start();
+    });
+
+    it("ignores metadata summaries that are just the first user prompt", async () => {
+      const updates: any[] = [];
+      adapter.on("session.updated", (e) => updates.push(e));
+      (adapter as any).messageHistory.set("s1", [{
+        id: "user-1",
+        sessionId: "s1",
+        role: "user",
+        time: { created: 1 },
+        parts: [{ id: "part-1", messageId: "user-1", sessionId: "s1", type: "text", text: "Summarize mock project metadata: inspect the sample manifest and report the sample package name." }],
+      }]);
+      mockClientInstance.getSessionMetadata.mockResolvedValueOnce({
+        summary: "Summarize mock project metadata: inspect the sample manifest...",
+      });
+
+      await (adapter as any).refreshSessionTitle("s1");
+
+      expect(updates).toHaveLength(0);
+    });
+
+    it("emits session.updated for meaningful metadata summaries", async () => {
+      const updates: any[] = [];
+      adapter.on("session.updated", (e) => updates.push(e));
+      (adapter as any).messageHistory.set("s1", [{
+        id: "user-1",
+        sessionId: "s1",
+        role: "user",
+        time: { created: 1 },
+        parts: [{ id: "part-1", messageId: "user-1", sessionId: "s1", type: "text", text: "Please review the sample upload integration changes" }],
+      }]);
+      mockClientInstance.getSessionMetadata.mockResolvedValueOnce({
+        summary: "  Review Sample Upload Integration  ",
+      });
+
+      await (adapter as any).refreshSessionTitle("s1");
+
+      expect(updates).toEqual([{ session: { id: "s1", engineType: "copilot", title: "Review Sample Upload Integration" } }]);
+      expect((adapter as any).sessionTitles.get("s1")).toBe("Review Sample Upload Integration");
+    });
   });
 
   // ============================================================================
@@ -1077,7 +1390,7 @@ describe("CopilotSdkAdapter", () => {
 
     it("auto-approves for kinds in allowedAlwaysKinds", async () => {
       (adapter as any).sessionModes.set("s1", "interactive");
-      (adapter as any).allowedAlwaysKinds.add("read");
+      (adapter as any).allowedAlwaysKinds.set("s1", new Set(["read"]));
 
       const result = await (adapter as any).handlePermissionRequest(
         { kind: "read", toolCallId: "t1" },
@@ -1096,6 +1409,7 @@ describe("CopilotSdkAdapter", () => {
         { kind: "write", toolCallId: "t1", title: "Write to file" },
         { sessionId: "s1" },
       );
+      await Promise.resolve();
 
       expect(permEvents).toHaveLength(1);
       const perm = permEvents[0].permission;
@@ -1109,6 +1423,83 @@ describe("CopilotSdkAdapter", () => {
       await expect(requestPromise).resolves.toEqual({ kind: "approve-once" });
     });
 
+    it("uses PermissionPromptRequest details from permission.requested events", async () => {
+      const permEvents: any[] = [];
+      adapter.on("permission.asked", (e) => permEvents.push(e));
+      (adapter as any).sessionModes.set("s1", "interactive");
+
+      const requestPromise = (adapter as any).handlePermissionRequest(
+        { kind: "write", toolCallId: "tool-write-1" },
+        { sessionId: "s1" },
+      );
+      (adapter as any).handleSessionEvent("s1", {
+        type: "permission.requested",
+        data: {
+          requestId: "permission-request-1",
+          permissionRequest: { kind: "write", toolCallId: "tool-write-1" },
+          promptRequest: {
+            canOfferSessionApproval: true,
+            diff: "@@ -1 +1 @@\n-old\n+new",
+            fileName: "src/app.ts",
+            intention: "Update the app entry point",
+            kind: "write",
+            toolCallId: "tool-write-1",
+          },
+        },
+      });
+      await Promise.resolve();
+
+      expect(permEvents).toHaveLength(1);
+      const perm = permEvents[0].permission;
+      expect(perm.title).toBe("Update the app entry point");
+      expect(perm.kind).toBe("edit");
+      expect(perm.toolName).toBe("edit");
+      expect(perm.diff).toBe("@@ -1 +1 @@\n-old\n+new");
+      expect(perm.details).toEqual([{ label: "File", value: "src/app.ts", mono: true }]);
+      expect(perm.options.map((o: any) => o.id)).toEqual(["allow_once", "allow_always", "reject_once"]);
+
+      await adapter.replyPermission(perm.id, { optionId: "allow_always" });
+      await expect(requestPromise).resolves.toEqual({
+        kind: "approve-for-session",
+        approval: { kind: "write" },
+      });
+    });
+
+    it("omits allow_always when promptRequest cannot offer session approval", async () => {
+      const permEvents: any[] = [];
+      adapter.on("permission.asked", (e) => permEvents.push(e));
+      (adapter as any).sessionModes.set("s1", "interactive");
+
+      const requestPromise = (adapter as any).handlePermissionRequest(
+        { kind: "read", toolCallId: "tool-read-1" },
+        { sessionId: "s1" },
+      );
+      (adapter as any).handleSessionEvent("s1", {
+        type: "permission.requested",
+        data: {
+          requestId: "permission-request-2",
+          permissionRequest: { kind: "read", toolCallId: "tool-read-1" },
+          promptRequest: {
+            intention: "Inspect package metadata",
+            kind: "read",
+            path: "package.json",
+            toolCallId: "tool-read-1",
+          },
+        },
+      });
+      await Promise.resolve();
+
+      const perm = permEvents[0].permission;
+      expect(perm.title).toBe("Inspect package metadata");
+      expect(perm.kind).toBe("read");
+      expect(perm.details).toEqual([{ label: "Path", value: "package.json", mono: true }]);
+      expect(perm.options.map((o: any) => o.id)).toEqual(["allow_once", "reject_once"]);
+
+      const pending = (adapter as any).pendingPermissions.get(perm.id);
+      pending.resolve({ kind: "approve-once" });
+      await expect(requestPromise).resolves.toEqual({ kind: "approve-once" });
+    });
+
     it("maps 'read' kind to 'read', 'shell' to 'edit', unknown to 'other'", async () => {
       const permEvents: any[] = [];
       adapter.on("permission.asked", (e) => permEvents.push(e));
@@ -1117,6 +1508,7 @@ describe("CopilotSdkAdapter", () => {
       for (const [kind, expected] of [["read", "read"], ["shell", "edit"], ["unknown", "other"]] as const) {
         (adapter as any).handlePermissionRequest({ kind, toolCallId: `t-${kind}` }, { sessionId: "s1" });
       }
+      await Promise.resolve();
 
       expect(permEvents[0].permission.kind).toBe("read");
       expect(permEvents[1].permission.kind).toBe("edit");
@@ -1129,7 +1521,8 @@ describe("CopilotSdkAdapter", () => {
       const resolve = vi.fn();
       (adapter as any).pendingPermissions.set("p1", {
         resolve,
-        permission: { id: "p1", sessionId: "s1", rawInput: { kind: "write" } },
+        permission: { id: "p1", sessionId: "s1" },
+        sdkKind: "write",
       });
 
       await adapter.replyPermission("p1", { optionId: "allow_once" });
@@ -1138,24 +1531,26 @@ describe("CopilotSdkAdapter", () => {
       expect((adapter as any).pendingPermissions.has("p1")).toBe(false);
     });
 
-    it("resolves with approve-once AND persists kind to allowedAlwaysKinds for allow_always", async () => {
+    it("resolves with approve-once AND persists kind to allowedAlwaysKinds for fallback allow_always", async () => {
       const resolve = vi.fn();
       (adapter as any).pendingPermissions.set("p1", {
         resolve,
-        permission: { id: "p1", sessionId: "s1", rawInput: { kind: "shell" } },
+        permission: { id: "p1", sessionId: "s1" },
+        sdkKind: "shell",
       });
 
       await adapter.replyPermission("p1", { optionId: "allow_always" });
 
       expect(resolve).toHaveBeenCalledWith({ kind: "approve-once" });
-      expect((adapter as any).allowedAlwaysKinds.has("shell")).toBe(true);
+      expect((adapter as any).allowedAlwaysKinds.get("s1")?.has("shell")).toBe(true);
     });
 
     it("resolves with reject for reject_once", async () => {
       const resolve = vi.fn();
       (adapter as any).pendingPermissions.set("p1", {
         resolve,
-        permission: { id: "p1", sessionId: "s1", rawInput: { kind: "write" } },
+        permission: { id: "p1", sessionId: "s1" },
+        sdkKind: "write",
       });
 
       await adapter.replyPermission("p1", { optionId: "reject_once" });
@@ -1169,7 +1564,8 @@ describe("CopilotSdkAdapter", () => {
       const resolve = vi.fn();
       (adapter as any).pendingPermissions.set("p1", {
         resolve,
-        permission: { id: "p1", sessionId: "s1", rawInput: {} },
+        permission: { id: "p1", sessionId: "s1" },
+        sdkKind: "write",
       });
 
       await adapter.replyPermission("p1", { optionId: "allow_once" });

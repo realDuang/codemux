@@ -13,6 +13,8 @@
 
   [data-slot="markdown"] {
     display: -webkit-box;
+    min-width: 0;
+    max-width: 100%;
     -webkit-box-orient: vertical;
     -webkit-line-clamp: 3;
     line-clamp: 3;
@@ -164,6 +166,7 @@
     table {
       border-collapse: collapse;
       width: 100%;
+      max-width: 100%;
       display: block;
       overflow-x: auto;
       -webkit-overflow-scrolling: touch;
@@ -182,6 +185,8 @@
       border: 1px solid var(--sl-color-border);
       padding: 0.5rem 0.75rem;
       text-align: left;
+      overflow-wrap: anywhere;
+      word-break: break-word;
     }
 
     th {

@@ -32,6 +32,8 @@ import type {
   UnifiedPart,
   UnifiedProject,
   TextPart,
+  ReasoningEffort,
+  CodexServiceTier,
 } from "../../../src/types/unified";
 
 // Re-export for convenience
@@ -132,7 +134,6 @@ class ConversationStore {
   create(params: {
     engineType: EngineType;
     directory: string;
-    title?: string;
     worktreeId?: string;
     parentDirectory?: string;
   }): ConversationMeta {
@@ -143,7 +144,6 @@ class ConversationStore {
       id: timeId("conv"),
       engineType: params.engineType,
       directory: params.directory,
-      title: params.title || this.generateTitle(),
       createdAt: now,
       updatedAt: now,
       messageCount: 0,
@@ -198,8 +198,15 @@ class ConversationStore {
     conversationStoreLog.info(`Deleted conversation ${id}`);
   }
 
-  rename(id: string, title: string): void {
-    this.update(id, { title });
+  setCustomTitle(id: string, title?: string): void {
+    this.update(id, { customTitle: title });
+  }
+
+  setEngineTitle(id: string, title?: string): void {
+    if (!title) return;
+    const conv = this.index.get(id);
+    if (!conv || conv.engineTitle === title) return;
+    this.update(id, { engineTitle: title });
   }
 
   // -------------------------------------------------------------------------
@@ -256,15 +263,19 @@ class ConversationStore {
           }
         }
 
-        // Auto-title from first user message
-        if (messages.length === 1 && msg.role === "user") {
+        // Capture first user prompt for displayTitle fallback
+        if (
+          messages.length === 1 &&
+          msg.role === "user" &&
+          !conv.firstPrompt
+        ) {
           const textPart = msg.parts.find(
             (p): p is TextPart => p.type === "text",
           );
           if (textPart) {
-            conv.title =
-              textPart.text.slice(0, 50) +
-              (textPart.text.length > 50 ? "..." : "");
+            conv.firstPrompt =
+              textPart.text.slice(0, 100) +
+              (textPart.text.length > 100 ? "…" : "");
           }
         }
 
@@ -421,6 +432,59 @@ class ConversationStore {
     this.scheduleIndexWrite();
   }
 
+  updateSessionConfig(
+    id: string,
+    patch: {
+      mode?: string | null;
+      modelId?: string | null;
+      reasoningEffort?: ReasoningEffort | null;
+      serviceTier?: CodexServiceTier | null;
+    },
+  ): ConversationMeta | null {
+    const conv = this.index.get(id);
+    if (!conv) return null;
+
+    let changed = false;
+
+    if (Object.prototype.hasOwnProperty.call(patch, "mode")) {
+      const nextMode = patch.mode ?? undefined;
+      if (conv.mode !== nextMode) {
+        conv.mode = nextMode;
+        changed = true;
+      }
+    }
+
+    if (Object.prototype.hasOwnProperty.call(patch, "modelId")) {
+      const nextModelId = patch.modelId ?? undefined;
+      if (conv.modelId !== nextModelId) {
+        conv.modelId = nextModelId;
+        changed = true;
+      }
+    }
+
+    if (Object.prototype.hasOwnProperty.call(patch, "reasoningEffort")) {
+      const nextEffort = patch.reasoningEffort ?? undefined;
+      if (conv.reasoningEffort !== nextEffort) {
+        conv.reasoningEffort = nextEffort;
+        changed = true;
+      }
+    }
+
+    if (Object.prototype.hasOwnProperty.call(patch, "serviceTier")) {
+      const nextTier = patch.serviceTier ?? undefined;
+      if (conv.serviceTier !== nextTier) {
+        conv.serviceTier = nextTier;
+        changed = true;
+      }
+    }
+
+    if (changed) {
+      this.scheduleIndexWrite();
+    }
+
+    return conv;
+  }
+
   clearEngineSession(id: string): void {
     const conv = this.index.get(id);
     if (!conv) return;
@@ -479,7 +543,7 @@ class ConversationStore {
       id: convId,
       engineType: params.engineType,
       directory: params.directory,
-      title: params.title,
+      engineTitle: params.title,
       createdAt: params.createdAt,
       updatedAt: params.updatedAt,
       messageCount: params.messages.length,
@@ -502,6 +566,17 @@ class ConversationStore {
       if (textPart) {
         conv.preview = textPart.text.slice(0, PREVIEW_LENGTH);
         if (textPart.text.length > PREVIEW_LENGTH) conv.preview += "...";
+        break;
+      }
+    }
+
+    // Capture first user prompt for displayTitle fallback
+    for (const m of rewrittenMessages) {
+      if (m.role !== "user") continue;
+      const tp = m.parts.find((p): p is TextPart => p.type === "text");
+      if (tp) {
+        conv.firstPrompt =
+          tp.text.slice(0, 100) + (tp.text.length > 100 ? "…" : "");
         break;
       }
     }
@@ -760,15 +835,6 @@ class ConversationStore {
         /* ignore */
       }
     }
-  }
-
-  private generateTitle(): string {
-    const now = new Date();
-    const month = now.getMonth() + 1;
-    const day = now.getDate();
-    const hour = now.getHours();
-    const minute = now.getMinutes();
-    return `Chat ${month}-${day} ${hour}:${minute.toString().padStart(2, "0")}`;
   }
 }
 

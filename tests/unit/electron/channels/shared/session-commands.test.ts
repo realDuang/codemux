@@ -16,8 +16,11 @@ interface Harness {
   sendText: ReturnType<typeof vi.fn>;
   gatewayClient: {
     cancelMessage: ReturnType<typeof vi.fn>;
+    listModes: ReturnType<typeof vi.fn>;
     setMode: ReturnType<typeof vi.fn>;
     setModel: ReturnType<typeof vi.fn>;
+    updateSessionConfig: ReturnType<typeof vi.fn>;
+    getSession: ReturnType<typeof vi.fn>;
     listModels: ReturnType<typeof vi.fn>;
     listMessages: ReturnType<typeof vi.fn>;
   };
@@ -29,12 +32,33 @@ function makeHarness(context: SessionContext | null = defaultContext()): Harness
     sendText: vi.fn(async () => undefined),
     gatewayClient: {
       cancelMessage: vi.fn(async () => undefined),
+      listModes: vi.fn(async () => [
+        { id: "bypassPermissions", label: "Bypass Permissions" },
+        { id: "default", label: "Default" },
+        { id: "plan", label: "Plan" },
+      ]),
       setMode: vi.fn(async () => undefined),
       setModel: vi.fn(async () => undefined),
+      updateSessionConfig: vi.fn(async () => undefined),
+      getSession: vi.fn(async () => ({ id: "conv-1", engineType: "claude", directory: "/repo", mode: "plan", modelId: "m2" })),
       listModels: vi.fn(async () => ({
         models: [
-          { modelId: "m1", name: "Model One" },
-          { modelId: "m2", name: "Model Two" },
+          {
+            modelId: "m1",
+            name: "Model One",
+            capabilities: {
+              supportedReasoningEfforts: ["low", "medium"],
+              defaultReasoningEffort: "medium",
+            },
+          },
+          {
+            modelId: "m2",
+            name: "Model Two",
+            capabilities: {
+              supportedReasoningEfforts: ["low", "medium", "high"],
+              defaultReasoningEffort: "high",
+            },
+          },
         ],
         currentModelId: "m1",
       })),
@@ -102,36 +126,49 @@ describe("handleSessionOpsCommand", () => {
     expect(h.sendText.mock.calls[0][0]).toContain("引擎：codex");
   });
 
-  it("/mode without args shows available modes", async () => {
+  it("/mode with no args lists modes and marks the current session mode", async () => {
     expect(await invoke(h, cmd("mode"))).toBe(true);
+    expect(h.gatewayClient.listModes).toHaveBeenCalledWith("claude");
+    expect(h.gatewayClient.getSession).toHaveBeenCalledWith("conv-1");
     const out = h.sendText.mock.calls[0][0];
-    expect(out).toContain("模式列表");
-    expect(out).toContain("`agent`");
-    expect(out).toContain("`plan`");
-    expect(out).toContain("`build`");
-    expect(out).toContain("/mode agent");
-    expect(out).not.toContain("<agent");
-    expect(h.gatewayClient.setMode).not.toHaveBeenCalled();
+    expect(out).toContain("Default");
+    expect(out).toContain("`default`");
+    expect(out).toContain("Bypass Permissions");
+    expect(out).toContain("Plan");
+    expect(out).toContain("`plan`（当前会话）");
+    expect(out).toContain("/mode mode-id");
   });
 
-  it("/mode plan calls setMode and confirms", async () => {
-    expect(await invoke(h, cmd("mode", { args: ["plan"] }))).toBe(true);
+  it("/mode list (subcommand) lists modes", async () => {
+    expect(await invoke(h, cmd("mode", { subcommand: "list" }))).toBe(true);
+    expect(h.gatewayClient.listModes).toHaveBeenCalledWith("claude");
+  });
+
+  it("/mode <id> calls setMode for the current session", async () => {
+    expect(await invoke(h, cmd("mode", { args: ["bypassPermissions"] }))).toBe(true);
     expect(h.gatewayClient.setMode).toHaveBeenCalledWith({
       sessionId: "conv-1",
-      modeId: "plan",
+      modeId: "bypassPermissions",
     });
-    expect(h.sendText.mock.calls[0][0]).toContain("plan");
+    expect(h.sendText.mock.calls[0][0]).toContain("bypassPermissions");
   });
 
-  it("/model with no args lists models", async () => {
+  it("/mode rejects modes not exposed by the current engine", async () => {
+    expect(await invoke(h, cmd("mode", { args: ["autopilot"] }))).toBe(true);
+    expect(h.gatewayClient.setMode).not.toHaveBeenCalled();
+    expect(h.sendText.mock.calls[0][0]).toContain("当前引擎支持的模式");
+  });
+
+  it("/model with no args lists models and marks the current session model", async () => {
     expect(await invoke(h, cmd("model"))).toBe(true);
     expect(h.gatewayClient.listModels).toHaveBeenCalledWith("claude");
+    expect(h.gatewayClient.getSession).toHaveBeenCalledWith("conv-1");
     const out = h.sendText.mock.calls[0][0];
     expect(out).toContain("Model One");
     expect(out).toContain("`m1`");
-    expect(out).toContain("（当前）");
     expect(out).toContain("Model Two");
-    expect(out).toContain("`m2`");
+    expect(out).toContain("`m2`（当前会话）");
+    expect(out).not.toContain("`m1`（当前会话）");
     expect(out).toContain("/model model-id");
   });
 
@@ -140,13 +177,89 @@ describe("handleSessionOpsCommand", () => {
     expect(h.gatewayClient.listModels).toHaveBeenCalled();
   });
 
-  it("/model <id> calls setModel", async () => {
-    expect(await invoke(h, cmd("model", { args: ["gpt-4o"] }))).toBe(true);
-    expect(h.gatewayClient.setModel).toHaveBeenCalledWith({
-      sessionId: "conv-1",
-      modelId: "gpt-4o",
+  it("/model <id> updates the current session and recalibrates unsupported effort", async () => {
+    h.gatewayClient.getSession.mockResolvedValueOnce({
+      id: "conv-1",
+      engineType: "claude",
+      directory: "/repo",
+      modelId: "m2",
+      reasoningEffort: "high",
     });
-    expect(h.sendText.mock.calls[0][0]).toContain("gpt-4o");
+
+    expect(await invoke(h, cmd("model", { args: ["m1"] }))).toBe(true);
+    expect(h.gatewayClient.setModel).not.toHaveBeenCalled();
+    expect(h.gatewayClient.updateSessionConfig).toHaveBeenCalledWith("conv-1", {
+      modelId: "m1",
+      reasoningEffort: "medium",
+    });
+    expect(h.sendText.mock.calls[0][0]).toContain("m1");
+  });
+
+  it("/model <id> preserves compatible current session effort", async () => {
+    h.gatewayClient.getSession.mockResolvedValueOnce({
+      id: "conv-1",
+      engineType: "claude",
+      directory: "/repo",
+      modelId: "m2",
+      reasoningEffort: "medium",
+    });
+
+    expect(await invoke(h, cmd("model", { args: ["m1"] }))).toBe(true);
+    expect(h.gatewayClient.updateSessionConfig).toHaveBeenCalledWith("conv-1", {
+      modelId: "m1",
+      reasoningEffort: "medium",
+    });
+  });
+
+  it("/model <id> clears effort when the target model has no effort support", async () => {
+    h.gatewayClient.getSession.mockResolvedValueOnce({
+      id: "conv-1",
+      engineType: "claude",
+      directory: "/repo",
+      modelId: "m2",
+      reasoningEffort: "high",
+    });
+    h.gatewayClient.listModels.mockResolvedValueOnce({
+      models: [{ modelId: "m3", name: "Model Three" }],
+      currentModelId: "m1",
+    });
+
+    expect(await invoke(h, cmd("model", { args: ["m3"] }))).toBe(true);
+    expect(h.gatewayClient.updateSessionConfig).toHaveBeenCalledWith("conv-1", {
+      modelId: "m3",
+      reasoningEffort: null,
+    });
+  });
+
+  it("/effort with no args lists efforts for the current session model", async () => {
+    expect(await invoke(h, cmd("effort"))).toBe(true);
+    expect(h.gatewayClient.listModels).toHaveBeenCalledWith("claude");
+    expect(h.gatewayClient.getSession).toHaveBeenCalledWith("conv-1");
+    const out = h.sendText.mock.calls[0][0];
+    expect(out).toContain("当前模型：`m2`");
+    expect(out).toContain("`low` · 低");
+    expect(out).toContain("`medium` · 中");
+    expect(out).toContain("`high` · 高（当前会话）");
+    expect(out).toContain("/effort low|medium|high|max");
+  });
+
+  it("/effort list (subcommand) lists efforts", async () => {
+    expect(await invoke(h, cmd("effort", { subcommand: "list" }))).toBe(true);
+    expect(h.gatewayClient.listModels).toHaveBeenCalled();
+  });
+
+  it("/effort <level> updates the current session config", async () => {
+    expect(await invoke(h, cmd("effort", { args: ["medium"] }))).toBe(true);
+    expect(h.gatewayClient.updateSessionConfig).toHaveBeenCalledWith("conv-1", {
+      reasoningEffort: "medium",
+    });
+    expect(h.sendText.mock.calls[0][0]).toContain("medium");
+  });
+
+  it("/effort rejects unsupported levels for the current model", async () => {
+    expect(await invoke(h, cmd("effort", { args: ["max"] }))).toBe(true);
+    expect(h.gatewayClient.updateSessionConfig).not.toHaveBeenCalled();
+    expect(h.sendText.mock.calls[0][0]).toContain("当前模型支持的推理级别");
   });
 
   it("/history with no messages sends empty notice", async () => {

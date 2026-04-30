@@ -301,6 +301,13 @@ class GatewayAPI {
     return gatewayClient.setModel({ sessionId, modelId });
   }
 
+  updateSessionConfig(
+    sessionId: string,
+    config: import("../types/unified").SessionConfigPatch,
+  ): Promise<void> {
+    return gatewayClient.updateSessionConfig({ sessionId, config });
+  }
+
   // --- Mode ---
 
   setMode(sessionId: string, modeId: string): Promise<void> {

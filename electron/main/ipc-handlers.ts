@@ -151,17 +151,14 @@ export function registerIpcHandlers(): void {
   // Tunnel Management
   // ===========================================================================
 
-  ipcMain.handle("tunnel:start", async (_, port: number) => {
+  ipcMain.handle("tunnel:start", async (_, port: number, tunnelConfig?: { hostname?: string }) => {
     // In production, use the production server port if available
     const actualPort = app.isPackaged && productionServer.isRunning()
       ? productionServer.getPort()
       : port;
 
-    // Read tunnel config from settings
-    const settings = loadSettings();
-    const tunnelConfig = settings.tunnelConfig as { hostname?: string } | undefined;
-
-    return tunnelManager.start(actualPort, tunnelConfig);
+    const config = tunnelConfig ?? (loadSettings().tunnelConfig as { hostname?: string } | undefined);
+    return tunnelManager.start(actualPort, config);
   });
 
   ipcMain.handle("tunnel:stop", async () => {

@@ -33,6 +33,13 @@ export const ru: LocaleDict = {
     allowOnce: "Разрешить один раз",
     allowAlways: "Всегда разрешать",
     waitingApproval: "Ожидание подтверждения",
+    kindRead: "Чтение файла",
+    kindEdit: "Редактирование файла",
+    kindOther: "Запрос разрешения",
+    kindShell: "Команда оболочки",
+    kindUrlAccess: "Доступ к URL",
+    kindWebSearch: "Веб-поиск",
+    diffPreview: "Изменения",
   },
 
   // Question
@@ -44,6 +51,7 @@ export const ru: LocaleDict = {
     selectMultiple: "Можно выбрать несколько вариантов",
     back: "Назад",
     next: "Далее",
+    progress: "Вопрос {current} из {total}",
   },
 
   // Login page
@@ -81,6 +89,9 @@ export const ru: LocaleDict = {
     teamTask: "Командная задача",
     teamTaskDesc: "Опишите задачу, над которой будут совместно работать несколько движков.",
     teamTaskDetail: "Задача будет разложена на подзадачи и параллельно распределена между разными движками.",
+    modelIdPlaceholder: "Введите ID модели...",
+    defaultModeLabel: "Сборка",
+    sessionScopeHint: "Применяется только к этой сессии. Значения по умолчанию для новых сессий настраиваются в настройках.",
   },
 
   // Settings page
@@ -146,6 +157,7 @@ export const ru: LocaleDict = {
     publicAccessDesc: "Доступ через туннель Cloudflare из интернета",
     starting: "Запуск туннеля, подождите...",
     startFailed: "Не удалось запустить. Убедитесь, что cloudflared установлен",
+    namedTunnelMissingCredentials: "Учётные данные именованного Tunnel не найдены. CodeMux нужен файл ~/.cloudflared/<tunnel-id>.json, чтобы запустить этот фиксированный домен. Выполните команды настройки Cloudflare ниже или очистите домен, чтобы использовать временный quick tunnel.",
     securityWarning: "Предупреждение безопасности:",
     securityWarningDesc: "Удалённый доступ предоставляет полный контроль над этим устройством. Храните пароль в тайне и никому не передавайте.",
     accessPassword: "Пароль доступа",
@@ -386,6 +398,7 @@ export const ru: LocaleDict = {
     fastMode: "Быстрый режим",
     fastModeDesc: "Ускоренный вывод с удвоенным расходом кредитов (только Codex)",
     fastModeUnavailable: "Быстрый режим требует аутентификации ChatGPT",
+    sessionDefaultsHint: "Эти настройки применяются только к новым сессиям. Существующие сессии сохраняют собственные переопределения модели/режима/уровня рассуждений — изменяйте их через панель инструментов чата.",
     noModelsAvailable: "Нет доступных моделей",
     modelInputPlaceholder: "Введите ID модели (например, claude-sonnet-4-20250514)",
     enabled: "Включён",

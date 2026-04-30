@@ -1033,8 +1033,9 @@ export class DingTalkAdapter extends ChannelAdapter {
         "发送消息即可开始对话。可用命令：",
         "`/cancel` — 取消当前正在运行的消息",
         "`/status` — 查看会话信息",
-        "`/mode` — 切换模式",
-        "`/model` — 切换模型",
+        "`/mode` — 切换当前会话模式",
+        "`/model` — 切换当前会话模型",
+        "`/effort` — 切换当前会话推理级别",
         "`/history` — 查看会话历史记录",
         "`/help` — 显示可用命令",
       ].join("\n");

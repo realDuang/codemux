@@ -8,12 +8,47 @@
 // ============================================================================
 
 import type { GatewayWsClient } from "../gateway-ws-client";
-import type { EngineType } from "../../../../src/types/unified";
+import {
+  isReasoningEffort,
+  type EngineType,
+  type ReasoningEffort,
+  type UnifiedModelInfo,
+} from "../../../../src/types/unified";
 import type { ParsedCommand } from "./command-types";
 import { buildHistoryEntries } from "./list-builders";
 
 function escapeMarkdownInline(value: string): string {
   return value.replace(/[\\*`]/g, "\\$&");
+}
+
+const effortLabels: Record<ReasoningEffort, string> = {
+  low: "低",
+  medium: "中",
+  high: "高",
+  max: "最大",
+};
+
+function getModelEfforts(models: UnifiedModelInfo[], modelId: string | undefined): ReasoningEffort[] {
+  if (!modelId) return [];
+  return models.find((model) => model.modelId === modelId)?.capabilities?.supportedReasoningEfforts ?? [];
+}
+
+function getModelDefaultEffort(models: UnifiedModelInfo[], modelId: string | undefined): ReasoningEffort | undefined {
+  if (!modelId) return undefined;
+  return models.find((model) => model.modelId === modelId)?.capabilities?.defaultReasoningEffort;
+}
+
+function resolveEffortForModelChange(
+  models: UnifiedModelInfo[],
+  modelId: string,
+  currentEffort: ReasoningEffort | undefined,
+): ReasoningEffort | null | undefined {
+  const model = models.find((item) => item.modelId === modelId);
+  if (!model) return undefined;
+  const supportedEfforts = model.capabilities?.supportedReasoningEfforts ?? [];
+  if (supportedEfforts.length === 0) return null;
+  if (currentEffort && supportedEfforts.includes(currentEffort)) return currentEffort;
+  return model.capabilities?.defaultReasoningEffort ?? null;
 }
 
 /**
@@ -55,6 +90,7 @@ export async function handleSessionOpsCommand(
     case "status":
     case "mode":
     case "model":
+    case "effort":
     case "history":
       break;
     default:
@@ -85,23 +121,46 @@ export async function handleSessionOpsCommand(
     }
 
     case "mode": {
-      if (!command.args || command.args.length === 0) {
-        await args.sendText([
-          "**📋 模式列表**",
-          "",
-          "- `agent` · 默认 Agent 模式",
-          "- `plan` · 规划模式",
-          "- `build` · 构建模式",
-          "",
-          "使用 `/mode agent`、`/mode plan` 或 `/mode build` 切换模式。",
-        ].join("\n"));
+      const modes = await args.gatewayClient.listModes(ctx.engineType);
+      if (modes.length === 0) {
+        await args.sendText("📋 当前引擎不支持模式切换。");
         return true;
       }
+
+      const isList =
+        subcommand === "list" ||
+        (!subcommand && (!command.args || command.args.length === 0));
+      if (isList) {
+        const session = await args.gatewayClient.getSession(ctx.conversationId);
+        const currentModeId = session.mode ?? modes[0]?.id;
+        const lines = ["**📋 模式列表**", ""];
+        for (const mode of modes) {
+          const current = mode.id === currentModeId ? "（当前会话）" : "";
+          const modeId = escapeMarkdownInline(mode.id);
+          const label = escapeMarkdownInline(mode.label || mode.id);
+          if (mode.description) {
+            lines.push(`- ${label} · \`${modeId}\`${current} — ${escapeMarkdownInline(mode.description)}`);
+          } else {
+            lines.push(`- ${label} · \`${modeId}\`${current}`);
+          }
+        }
+        lines.push("");
+        lines.push("使用 `/mode mode-id` 切换当前会话模式。");
+        await args.sendText(lines.join("\n"));
+        return true;
+      }
+
+      const modeId = command.args?.[0];
+      if (!modeId || !modes.some((mode) => mode.id === modeId)) {
+        await args.sendText(`📋 当前引擎支持的模式：${modes.map((mode) => `\`${escapeMarkdownInline(mode.id)}\``).join("、")}`);
+        return true;
+      }
+
       await args.gatewayClient.setMode({
         sessionId: ctx.conversationId,
-        modeId: command.args[0],
+        modeId,
       });
-      await args.sendText(`📋 模式已切换为：${command.args[0]}`);
+      await args.sendText(`📋 当前会话模式已切换为：${modeId}`);
       return true;
     }
 
@@ -110,10 +169,16 @@ export async function handleSessionOpsCommand(
         subcommand === "list" ||
         (!subcommand && (!command.args || command.args.length === 0));
       if (isList) {
-        const result = await args.gatewayClient.listModels(ctx.engineType);
+        const [result, session] = await Promise.all([
+          args.gatewayClient.listModels(ctx.engineType),
+          args.gatewayClient.getSession(ctx.conversationId),
+        ]);
+        const currentModelId = session.modelId ?? result.currentModelId;
+        let currentMarked = false;
         const lines = ["**📋 模型列表**", ""];
         for (const m of result.models) {
-          const current = m.modelId === result.currentModelId ? "（当前）" : "";
+          const current = m.modelId === currentModelId ? "（当前会话）" : "";
+          if (current) currentMarked = true;
           const modelId = escapeMarkdownInline(m.modelId);
           if (m.name && m.name !== m.modelId) {
             lines.push(`- ${escapeMarkdownInline(m.name)} · \`${modelId}\`${current}`);
@@ -121,16 +186,68 @@ export async function handleSessionOpsCommand(
             lines.push(`- \`${modelId}\`${current}`);
           }
         }
+        if (currentModelId && !currentMarked) {
+          lines.push(`- \`${escapeMarkdownInline(currentModelId)}\`（当前会话）`);
+        }
         lines.push("");
-        lines.push("使用 `/model model-id` 切换模型。");
+        lines.push("使用 `/model model-id` 切换当前会话模型。");
         await args.sendText(lines.join("\n"));
       } else if (command.args && command.args.length > 0) {
-        await args.gatewayClient.setModel({
-          sessionId: ctx.conversationId,
-          modelId: command.args[0],
-        });
-        await args.sendText(`📋 模型已切换为：${command.args[0]}`);
+        const modelId = command.args[0];
+        const [result, session] = await Promise.all([
+          args.gatewayClient.listModels(ctx.engineType),
+          args.gatewayClient.getSession(ctx.conversationId),
+        ]);
+        const nextEffort = resolveEffortForModelChange(result.models, modelId, session.reasoningEffort);
+        const config = nextEffort === undefined
+          ? { modelId }
+          : { modelId, reasoningEffort: nextEffort };
+        await args.gatewayClient.updateSessionConfig(ctx.conversationId, config);
+        await args.sendText(`📋 当前会话模型已切换为：${modelId}`);
       }
+      return true;
+    }
+
+    case "effort": {
+      const [result, session] = await Promise.all([
+        args.gatewayClient.listModels(ctx.engineType),
+        args.gatewayClient.getSession(ctx.conversationId),
+      ]);
+      const currentModelId = session.modelId ?? result.currentModelId;
+      const supportedEfforts = getModelEfforts(result.models, currentModelId);
+      if (supportedEfforts.length === 0) {
+        await args.sendText("📋 当前模型不支持推理级别设置。");
+        return true;
+      }
+
+      const currentEffort = session.reasoningEffort && supportedEfforts.includes(session.reasoningEffort)
+        ? session.reasoningEffort
+        : getModelDefaultEffort(result.models, currentModelId);
+      const isList =
+        subcommand === "list" ||
+        (!subcommand && (!command.args || command.args.length === 0));
+
+      if (isList) {
+        const lines = ["**📋 推理级别**", ""];
+        if (currentModelId) lines.push(`当前模型：\`${escapeMarkdownInline(currentModelId)}\``);
+        for (const effort of supportedEfforts) {
+          const current = effort === currentEffort ? "（当前会话）" : "";
+          lines.push(`- \`${effort}\` · ${effortLabels[effort]}${current}`);
+        }
+        lines.push("");
+        lines.push("使用 `/effort low|medium|high|max` 切换当前会话推理级别。");
+        await args.sendText(lines.join("\n"));
+        return true;
+      }
+
+      const nextEffort = command.args?.[0];
+      if (!isReasoningEffort(nextEffort) || !supportedEfforts.includes(nextEffort)) {
+        await args.sendText(`📋 当前模型支持的推理级别：${supportedEfforts.map((effort) => `\`${effort}\``).join("、")}`);
+        return true;
+      }
+
+      await args.gatewayClient.updateSessionConfig(ctx.conversationId, { reasoningEffort: nextEffort });
+      await args.sendText(`📋 当前会话推理级别已切换为：${effortLabels[nextEffort]}（${nextEffort}）`);
       return true;
     }
 

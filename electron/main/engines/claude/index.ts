@@ -125,23 +125,20 @@ interface PendingQuestion {
 // ============================================================================
 
 const DEFAULT_MODES: AgentMode[] = [
-  { id: "default", label: "Default", description: "Standard behavior, prompts for dangerous operations" },
-  { id: "acceptEdits", label: "Auto-Accept", description: "Auto-accept file edit operations" },
   { id: "bypassPermissions", label: "Bypass Permissions", description: "Bypass all permission checks" },
+  { id: "default", label: "Default", description: "Standard behavior, prompts for dangerous operations" },
   { id: "plan", label: "Plan", description: "Planning mode, no actual tool execution" },
 ];
 
 const CLAUDE_PERMISSION_MODES = new Set<PermissionMode>([
   "default",
-  "acceptEdits",
   "bypassPermissions",
   "plan",
-  "dontAsk",
-  "auto",
 ]);
 
 function toClaudePermissionMode(mode: string | undefined): PermissionMode {
-  return mode && CLAUDE_PERMISSION_MODES.has(mode as PermissionMode)
+  if (!mode) return "bypassPermissions";
+  return CLAUDE_PERMISSION_MODES.has(mode as PermissionMode)
     ? (mode as PermissionMode)
     : "default";
 }
@@ -2017,7 +2014,7 @@ export class ClaudeCodeAdapter extends EngineAdapter {
       promptAppend += `\n\nThe user has installed the following additional skills (invokable via the Skill tool): ${this.cachedSkillNames.join(", ")}. When the user's request matches one of these skills, use the Skill tool to invoke it.`;
     }
 
-    const permissionMode = opts.permissionMode ?? "default";
+    const permissionMode = opts.permissionMode ?? toClaudePermissionMode(undefined);
     const allowDangerouslySkipPermissions = allowsDangerouslySkipPermissions(permissionMode);
     const sdkOptions: any = this.withClaudeExecutablePath({
       model: opts.model ?? this.currentModelId ?? "claude-sonnet-4-20250514",

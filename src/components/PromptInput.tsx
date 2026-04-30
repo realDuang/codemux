@@ -25,7 +25,7 @@ function getModeColor(mode: AgentMode, index: number): string {
   const label = getModeDisplayName(mode).toLowerCase();
   if (label === "default" || label === "interactive" || label === "build") return "bg-indigo-600";
   if (label === "plan") return "bg-cyan-600";
-  if (label === "autopilot" || label === "bypass permissions" || label === "auto-accept") return "bg-emerald-600";
+  if (label === "autopilot" || label === "bypass permissions") return "bg-emerald-600";
   // Fallback by position
   const palette = ["bg-indigo-600", "bg-cyan-600", "bg-emerald-600"];
   if (index < palette.length) return palette[index];
@@ -47,7 +47,7 @@ function getModeAccentRing(mode: AgentMode, index: number): {
       border: "border-cyan-200/40 dark:border-cyan-600/30",
       bgHover: "bg-cyan-600 hover:bg-cyan-700",
     };
-  if (label === "autopilot" || label === "bypass permissions" || label === "auto-accept")
+  if (label === "autopilot" || label === "bypass permissions")
     return {
       bg: "bg-emerald-50/60 dark:bg-slate-800/70 backdrop-blur-xl",
       ring: "focus-within:ring-emerald-500/40",
@@ -91,13 +91,6 @@ const MODE_ICONS: Array<() => any> = [
       <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
     </svg>
   ),
-  // 3 — check-circle / auto-accept
-  () => (
-    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-      <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
-      <polyline points="22 4 12 14.01 9 11.01" />
-    </svg>
-  ),
 ];
 
 function getModeIcon(mode: AgentMode, index: number) {
@@ -105,7 +98,6 @@ function getModeIcon(mode: AgentMode, index: number) {
   if (label === "default" || label === "interactive" || label === "build") return MODE_ICONS[0]();
   if (label === "plan") return MODE_ICONS[1]();
   if (label === "autopilot" || label === "bypass permissions") return MODE_ICONS[2]();
-  if (label === "auto-accept") return MODE_ICONS[3]();
   return MODE_ICONS[index % MODE_ICONS.length]();
 }
 

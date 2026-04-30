@@ -42,10 +42,26 @@ describe("shared command parser", () => {
     });
 
     it("captures positional args", () => {
+      expect(parseCommand("/echo hello world")).toMatchObject({
+        command: "echo",
+        args: ["hello", "world"],
+      });
+    });
+
+    it("recognises /mode list as a subcommand", () => {
+      expect(parseCommand("/mode list")).toMatchObject({
+        command: "mode",
+        subcommand: "list",
+        args: [],
+      });
+    });
+
+    it("treats /mode <id> as args, not subcommand", () => {
       expect(parseCommand("/mode plan")).toMatchObject({
         command: "mode",
         args: ["plan"],
       });
+      expect(parseCommand("/mode plan")?.subcommand).toBeUndefined();
     });
 
     it("recognises /model list as a subcommand", () => {
@@ -61,7 +77,23 @@ describe("shared command parser", () => {
         command: "model",
         args: ["gpt-4o"],
       });
-      expect(parseCommand("/model gpt-4o").subcommand).toBeUndefined();
+      expect(parseCommand("/model gpt-4o")?.subcommand).toBeUndefined();
+    });
+
+    it("recognises /effort list as a subcommand", () => {
+      expect(parseCommand("/effort list")).toMatchObject({
+        command: "effort",
+        subcommand: "list",
+        args: [],
+      });
+    });
+
+    it("treats /effort <level> as args, not subcommand", () => {
+      expect(parseCommand("/effort high")).toMatchObject({
+        command: "effort",
+        args: ["high"],
+      });
+      expect(parseCommand("/effort high")?.subcommand).toBeUndefined();
     });
 
     it("trims whitespace", () => {
@@ -78,9 +110,12 @@ describe("shared help-text builder", () => {
     expect(text).toContain("/switch");
     expect(text).toContain("/cancel");
     expect(text).toContain("/status");
-    expect(text).toContain("/mode agent|plan|build");
+    expect(text).toContain("/mode list");
+    expect(text).toContain("/mode mode-id");
     expect(text).toContain("/model list");
     expect(text).toContain("/model model-id");
+    expect(text).toContain("/effort list");
+    expect(text).toContain("/effort low|medium|high|max");
     expect(text).not.toContain("<agent");
     expect(text).not.toContain("<id>");
     expect(text).toContain("/history");

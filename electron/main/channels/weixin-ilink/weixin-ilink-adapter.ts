@@ -545,7 +545,7 @@ export class WeixinIlinkAdapter extends ChannelAdapter {
   ): Promise<void> {
     if (!command || !this.transport) return;
 
-    // Try shared Class-B session-ops first (cancel/status/mode/model/history)
+    // Try shared Class-B session-ops first (cancel/status/mode/model/effort/history)
     if (this.gatewayClient) {
       const handled = await handleSessionOpsCommand(command, {
         sendText: (text) => this.transport!.sendMarkdown(chatId, text),

@@ -11,7 +11,6 @@ import {
   Suspense,
   untrack,
 } from "solid-js";
-import { Portal } from "solid-js/web";
 import { Auth } from "../lib/auth";
 import { useNavigate } from "@solidjs/router";
 import { gateway } from "../lib/gateway-api";
@@ -35,7 +34,7 @@ import {
 } from "../stores/message";
 import { MessageList } from "../components/MessageList";
 import { PromptInput } from "../components/PromptInput";
-import { ChatModelPicker } from "../components/ChatModelPicker";
+import { SessionControls } from "../components/SessionControls";
 import { SessionSidebar } from "../components/SessionSidebar";
 import { HideProjectModal } from "../components/HideProjectModal";
 import { AddProjectModal } from "../components/AddProjectModal";
@@ -489,12 +488,6 @@ export default function Chat() {
 
   const handleSessionModelChange = (modelId: string) =>
     handleSessionConfigChange({ modelId });
-
-  const [sessionScopeTooltipPos, setSessionScopeTooltipPos] = createSignal<{ left: number; top: number } | null>(null);
-  const showSessionScopeTooltip = (target: HTMLElement) => {
-    const r = target.getBoundingClientRect();
-    setSessionScopeTooltipPos({ left: r.left + r.width / 2, top: r.top });
-  };
 
   const handleSessionReasoningEffortChange = (effort: ReasoningEffort) =>
     handleSessionConfigChange({ reasoningEffort: effort });
@@ -2492,7 +2485,7 @@ export default function Chat() {
                 const id = currentAgent().id;
                 if (id === "plan")
                   return "bg-cyan-100 text-cyan-700 dark:bg-cyan-900/30 dark:text-cyan-400";
-                if (id === "autopilot" || id === "bypassPermissions" || id === "acceptEdits")
+                if (id === "autopilot" || id === "bypassPermissions")
                   return "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400";
                 return "bg-indigo-100 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-400";
               })()
@@ -2884,90 +2877,22 @@ export default function Chat() {
                       onImagesChange={(images) => updateCurrentDraft({ images })}
                       toolbarContent={
                         <Show when={sessionStore.current}>
-                          <span
-                            class="inline-flex items-center gap-1"
-                          >
-                            <button
-                              type="button"
-                              class="inline-flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-semibold text-slate-400 dark:text-slate-500 border border-slate-200 dark:border-slate-700 cursor-help select-none hover:text-slate-600 hover:border-slate-300 focus:outline-none focus:ring-1 focus:ring-slate-300 dark:hover:text-slate-300 dark:hover:border-slate-600 dark:focus:ring-slate-600"
-                              aria-label={t().chat.sessionScopeHint}
-                              aria-describedby={sessionScopeTooltipPos() ? "session-scope-tooltip" : undefined}
-                              aria-expanded={sessionScopeTooltipPos() ? "true" : "false"}
-                              onMouseEnter={(e) => showSessionScopeTooltip(e.currentTarget)}
-                              onMouseLeave={() => setSessionScopeTooltipPos(null)}
-                              onFocus={(e) => showSessionScopeTooltip(e.currentTarget)}
-                              onBlur={() => setSessionScopeTooltipPos(null)}
-                              onClick={(e) => {
-                                e.preventDefault();
-                                showSessionScopeTooltip(e.currentTarget);
-                              }}
-                            >
-                              i
-                            </button>
-                            <Show when={sessionScopeTooltipPos()}>
-                              <Portal>
-                                <div
-                                  id="session-scope-tooltip"
-                                  role="tooltip"
-                                  style={{
-                                    left: `${sessionScopeTooltipPos()!.left}px`,
-                                    top: `${sessionScopeTooltipPos()!.top - 8}px`,
-                                  }}
-                                  class="fixed z-[9999] max-w-[260px] -translate-x-1/2 -translate-y-full rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 py-2 text-[11px] leading-relaxed text-slate-600 dark:text-slate-300 shadow-lg pointer-events-none"
-                                >
-                                  {t().chat.sessionScopeHint}
-                                </div>
-                              </Portal>
-                            </Show>
-                            {/* Model selector */}
-                            <ChatModelPicker
-                              models={currentSessionModels()}
-                              selectedModelId={currentSessionModelId() ?? null}
-                              customModelInput={currentEngineInfo()?.capabilities?.customModelInput === true}
-                              disabled={currentEngineInfo()?.capabilities?.modelSwitchable === false}
-                              placeholder={t().chat.modelIdPlaceholder}
-                              ariaLabel={t().engine.defaultModel}
-                              onChange={handleSessionModelChange}
-                            />
-                            {/* Reasoning effort dropdown */}
-                            <Show when={currentSupportedEfforts().length > 0}>
-                              <span class="text-slate-300 dark:text-slate-600 select-none">·</span>
-                              <select
-                                value={currentSessionReasoningEffort() ?? ""}
-                                onChange={(e) => handleSessionReasoningEffortChange(e.currentTarget.value as ReasoningEffort)}
-                                class="pl-2 pr-6 py-1 text-[11px] rounded-lg border-0 bg-transparent text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700/50 cursor-pointer focus:ring-1 focus:ring-slate-300 dark:focus:ring-slate-600 appearance-none"
-                                style={{ "background-image": "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E\")", "background-repeat": "no-repeat", "background-position": "right 6px center" }}
-                                aria-label={t().engine.reasoningEffort}
-                              >
-                                <For each={currentSupportedEfforts()}>
-                                  {(effort) => (
-                                    <option value={effort}>
-                                      {effort === "low" ? t().prompt.reasoningEffortLow
-                                        : effort === "medium" ? t().prompt.reasoningEffortMedium
-                                        : effort === "high" ? t().prompt.reasoningEffortHigh
-                                        : effort === "max" ? t().prompt.reasoningEffortMax
-                                        : effort}
-                                    </option>
-                                  )}
-                                </For>
-                              </select>
-                            </Show>
-                            {/* Fast mode toggle */}
-                            <Show when={currentFastModeSupported()}>
-                              <span class="text-slate-300 dark:text-slate-600 select-none">·</span>
-                              <button
-                                onClick={() => handleSessionFastModeToggle(currentSessionServiceTier() !== "fast")}
-                                class={`px-2 py-1 text-[11px] rounded-lg transition-colors ${
-                                  currentSessionServiceTier() === "fast"
-                                    ? "text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/30"
-                                    : "text-slate-400 dark:text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-700/50"
-                                }`}
-                                title={t().engine.fastModeDesc}
-                              >
-                                ⚡ {t().engine.fastMode}
-                              </button>
-                            </Show>
-                          </span>
+                          <SessionControls
+                            models={currentSessionModels()}
+                            selectedModelId={currentSessionModelId() ?? null}
+                            customModelInput={currentEngineInfo()?.capabilities?.customModelInput === true}
+                            modelDisabled={currentEngineInfo()?.capabilities?.modelSwitchable === false}
+                            modelPlaceholder={t().chat.modelIdPlaceholder}
+                            modelAriaLabel={t().engine.defaultModel}
+                            supportedEfforts={currentSupportedEfforts()}
+                            selectedEffort={currentSessionReasoningEffort() ?? null}
+                            fastModeSupported={currentFastModeSupported()}
+                            serviceTier={currentSessionServiceTier()}
+                            scopeHint={t().chat.sessionScopeHint}
+                            onModelChange={handleSessionModelChange}
+                            onReasoningEffortChange={handleSessionReasoningEffortChange}
+                            onFastModeToggle={handleSessionFastModeToggle}
+                          />
                         </Show>
                       }
                     />

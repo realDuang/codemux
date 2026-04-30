@@ -404,8 +404,8 @@ describe("ClaudeCodeAdapter", () => {
     it("calls setPermissionMode on live V2 session query", async () => {
       const mock = makeMockV2Session();
       seedV2Session(adapter, "cs_1", mock);
-      await adapter.setMode("cs_1", "acceptEdits");
-      expect(mock.query.setPermissionMode).toHaveBeenCalledWith("acceptEdits");
+      await adapter.setMode("cs_1", "plan");
+      expect(mock.query.setPermissionMode).toHaveBeenCalledWith("plan");
     });
 
     it("passes bypassPermissions through when the live V2 session allows skipping permissions", async () => {
@@ -1905,13 +1905,10 @@ describe("ClaudeCodeAdapter", () => {
   // =========================================================================
 
   describe("getModes()", () => {
-    it("returns Claude Code permission modes without Copilot autopilot", () => {
+    it("returns Claude modes that mirror Copilot autopilot without exposing Copilot-only modes", () => {
       const modes = adapter.getModes();
       const ids = modes.map((m) => m.id);
-      expect(ids).toContain("default");
-      expect(ids).toContain("plan");
-      expect(ids).toContain("acceptEdits");
-      expect(ids).toContain("bypassPermissions");
+      expect(ids).toEqual(["bypassPermissions", "default", "plan"]);
       expect(ids).not.toContain("autopilot");
     });
   });
@@ -2934,14 +2931,16 @@ describe("ClaudeCodeAdapter", () => {
       );
     });
 
-    it("creates new session via createSession when no ccSessionId", async () => {
+    it("creates new sessions with bypassPermissions by default", async () => {
       seedSession(adapter, "cs_1");
 
       unstable_v2_createSessionMock.mockReturnValue(makeMockV2Session());
 
       await (adapter as any).getOrCreateV2Session("cs_1", "/repo", {});
 
-      expect(unstable_v2_createSessionMock).toHaveBeenCalled();
+      const options = unstable_v2_createSessionMock.mock.calls[0][0];
+      expect(options.permissionMode).toBe("bypassPermissions");
+      expect(options.allowDangerouslySkipPermissions).toBe(true);
     });
 
     it("passes the native Claude executable path to created sessions", async () => {

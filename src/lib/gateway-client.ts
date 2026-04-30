@@ -171,13 +171,13 @@ export class GatewayClient {
     } else if (!this.wsUrl) {
       if (isElectron()) {
         // In Electron: get full WS URL from main process via IPC
-        // Dev mode: ws://127.0.0.1:4200
-        // Packaged mode: ws://127.0.0.1:${WEB_PORT}/ws (attached to production server)
+        // Dev mode uses the configured standalone Gateway port.
+        // Packaged mode attaches Gateway to the production server at /ws.
         this.wsUrl = await gatewayAPI.getWsUrl();
       } else {
         // In remote browser: derive WS URL from current page location
         // Production (Cloudflare Tunnel): wss://tunnel-host/ws
-        // Dev fallback: ws://localhost:4200
+        // Dev fallback uses the current Vite host.
         const loc = window.location;
         const wsProtocol = loc.protocol === "https:" ? "wss:" : "ws:";
         this.wsUrl = `${wsProtocol}//${loc.host}/ws`;

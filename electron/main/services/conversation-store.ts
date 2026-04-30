@@ -21,8 +21,8 @@
 import fs from "fs";
 import fsp from "fs/promises";
 import path from "path";
-import { app } from "electron";
 import { conversationStoreLog } from "./logger";
+import { getConversationsPath } from "./app-paths";
 import { timeId } from "../utils/id-gen";
 import type {
   EngineType,
@@ -84,7 +84,7 @@ class ConversationStore {
   init(): void {
     if (this.initialized) return;
 
-    this.basePath = path.join(app.getPath("userData"), "conversations");
+    this.basePath = getConversationsPath();
     this.ensureDirSync(this.basePath);
     this.loadIndex();
     this.initialized = true;

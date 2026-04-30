@@ -11,6 +11,7 @@
   "main": "out/main/index.mjs",
   "scripts": {
     "dev": "electron-vite dev",
+    "dev:isolated": "cross-env CODEMUX_DEV_ISOLATED=1 bun scripts/dev-isolated.ts",
     "build": "electron-vite build",
     "preview": "electron-vite preview",
     "pack": "electron-builder --dir",
@@ -79,6 +80,7 @@
     "@types/ws": "^8.18.1",
     "@vitest/coverage-v8": "4.0.18",
     "bun-types": "latest",
+    "cross-env": "^10.1.0",
     "electron": "^40.6.1",
     "electron-builder": "^26.0.0",
     "electron-vite": "^3.1.0",

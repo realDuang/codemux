@@ -1,8 +1,7 @@
 import { EventEmitter } from "node:events";
-import path from "node:path";
 import fs from "node:fs";
-import { app } from "electron";
 import log from "electron-log/main";
+import { getOrchestrationsPath } from "./app-paths";
 import type { EngineManager } from "../gateway/engine-manager";
 import type { OrchestrationRun, OrchestrationSubtask, EngineType, RoleEngineMapping } from "../../../src/types/unified";
 
@@ -494,7 +493,7 @@ Respond with ONLY the JSON array, no markdown fencing, no explanation.`;
 
   private getStorePath(): string {
     if (!this.persistPath) {
-      this.persistPath = path.join(app.getPath("userData"), "orchestrations.json");
+      this.persistPath = getOrchestrationsPath();
     }
     return this.persistPath;
   }

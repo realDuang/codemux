@@ -7,8 +7,8 @@ import { execFile } from "node:child_process";
 import fs from "node:fs";
 import fsp from "node:fs/promises";
 import path from "node:path";
-import { app } from "electron";
 import log from "electron-log/main";
+import { getWorktreesPath } from "./app-paths";
 import { createSlug, slugify } from "./slug";
 import { worktreeStore, type WorktreeInfo } from "./worktree-store";
 
@@ -67,7 +67,7 @@ class WorktreeManager {
 
   private ensureInit(): void {
     if (this.initialized) return;
-    this.worktreeBase = path.join(app.getPath("userData"), "worktrees");
+    this.worktreeBase = getWorktreesPath();
     if (!fs.existsSync(this.worktreeBase)) {
       fs.mkdirSync(this.worktreeBase, { recursive: true });
     }

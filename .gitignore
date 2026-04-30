@@ -57,6 +57,7 @@ playwright-report/
 coverage/
 
 .channels/
+.codemux-dev/
 
 continuous-analysis/
 .settings.json

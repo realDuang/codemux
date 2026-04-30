@@ -1232,15 +1232,7 @@ export class ClaudeCodeAdapter extends EngineAdapter {
     const v2Info = this.v2Sessions.get(sessionId);
     if (v2Info) {
       if (allowsDangerouslySkipPermissions(permissionMode) && !v2Info.allowDangerouslySkipPermissions) {
-        if (v2Info.capturedSessionId) {
-          this.sessionCcIds.set(sessionId, v2Info.capturedSessionId);
-        }
-        try {
-          v2Info.session.close();
-        } catch {
-          // Ignore
-        }
-        this.v2Sessions.delete(sessionId);
+        this.cleanupSession(sessionId, "permission mode changed to bypass permissions");
         return;
       }
 
@@ -1947,15 +1939,7 @@ export class ClaudeCodeAdapter extends EngineAdapter {
           claudeLog.info(
             `[Claude][${sessionId}] permissionMode changed to ${requestedMode}, recreating session with skip-permissions allowance`,
           );
-          if (existing.capturedSessionId) {
-            this.sessionCcIds.set(sessionId, existing.capturedSessionId);
-          }
-          try {
-            existing.session.close();
-          } catch {
-            // Ignore
-          }
-          this.v2Sessions.delete(sessionId);
+          this.cleanupSession(sessionId, "permission mode changed to bypass permissions");
         } else {
           // Check if permissionMode changed — switch at runtime without destroying session
           if (existing.permissionMode !== requestedMode) {

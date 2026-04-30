@@ -112,21 +112,31 @@ export function SessionControls(props: SessionControlsProps) {
   createEffect(() => {
     if (!open()) return;
 
+    const closePopover = () => {
+      setOpen(false);
+      setPosition(null);
+    };
+
     const handlePointerDown = (event: MouseEvent) => {
       const target = event.target;
       if (!(target instanceof Element)) return;
       if (triggerRef?.contains(target) || panelRef?.contains(target)) return;
       if (target.closest("#chat-model-picker-dropdown")) return;
-      setOpen(false);
-      setPosition(null);
+      closePopover();
+    };
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") closePopover();
     };
 
     const handleResize = () => updatePosition();
 
     document.addEventListener("mousedown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
     window.addEventListener("resize", handleResize);
     onCleanup(() => {
       document.removeEventListener("mousedown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
       window.removeEventListener("resize", handleResize);
     });
   });

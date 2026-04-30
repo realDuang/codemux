@@ -1934,7 +1934,7 @@ export class ClaudeCodeAdapter extends EngineAdapter {
         this.pendingResumeNotice.add(sessionId);
         // Fall through to create a new session (ccSessionId is preserved by cleanupSession)
       } else {
-        const requestedMode = opts.permissionMode ?? "default";
+        const requestedMode = opts.permissionMode ?? toClaudePermissionMode(undefined);
         if (allowsDangerouslySkipPermissions(requestedMode) && !existing.allowDangerouslySkipPermissions) {
           claudeLog.info(
             `[Claude][${sessionId}] permissionMode changed to ${requestedMode}, recreating session with skip-permissions allowance`,

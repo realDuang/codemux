@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import fs from "node:fs";
 import net from "node:net";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -10,12 +11,14 @@ import {
   DEFAULT_WEBHOOK_PORT,
   DEFAULT_WEB_PORT,
   DEFAULT_WEB_STANDALONE_PORT,
+  MAX_PORT_OFFSET,
 } from "../shared/ports";
 
 const DEV_ISOLATED_DIR = ".codemux-dev";
 const PORTS_FILE = "ports.json";
 const OFFSET_STEP = 100;
-const MAX_OFFSET_ATTEMPTS = 100;
+const MAX_OFFSET_ATTEMPTS = Math.floor(MAX_PORT_OFFSET / OFFSET_STEP);
+const LOCK_DIR = path.join(os.tmpdir(), "codemux-dev-isolated-port-locks");
 const isWindows = process.platform === "win32";
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -31,21 +34,63 @@ interface PortPlan {
   };
 }
 
+interface PortReservation {
+  plan: PortPlan;
+  release(): void;
+}
+
+const PORT_LABELS: Record<keyof PortPlan["ports"], string> = {
+  web: "CODEMUX_WEB_PORT",
+  webStandalone: "CODEMUX_WEB_STANDALONE_PORT",
+  gateway: "CODEMUX_GATEWAY_PORT",
+  opencode: "CODEMUX_OPENCODE_PORT",
+  authApi: "CODEMUX_AUTH_API_PORT",
+  webhook: "CODEMUX_WEBHOOK_PORT",
+};
+
 function readNumberEnv(name: string, env: NodeJS.ProcessEnv): number | undefined {
   const value = env[name];
   if (!value) return undefined;
   const parsed = Number(value);
-  return Number.isInteger(parsed) ? parsed : undefined;
+  if (!Number.isInteger(parsed)) {
+    throw new Error(`${name} must be an integer`);
+  }
+  return parsed;
 }
 
 function resolvePort(envName: string, fallback: number, env: NodeJS.ProcessEnv): number {
   const override = readNumberEnv(envName, env);
-  if (override === undefined || override < 1 || override > 65_535) return fallback;
-  return override;
+  return override ?? fallback;
+}
+
+function validatePortPlan(plan: PortPlan): void {
+  const seen = new Map<number, keyof PortPlan["ports"]>();
+
+  for (const [key, port] of Object.entries(plan.ports) as Array<[keyof PortPlan["ports"], number]>) {
+    if (port < 1 || port > 65_535) {
+      throw new Error(
+        `${PORT_LABELS[key]} resolved to invalid port ${port}. `
+        + `Check CODEMUX_PORT_OFFSET=${plan.portOffset} or override ${PORT_LABELS[key]} explicitly.`,
+      );
+    }
+
+    const duplicate = seen.get(port);
+    if (duplicate) {
+      throw new Error(
+        `${PORT_LABELS[key]} and ${PORT_LABELS[duplicate]} both resolve to port ${port}. `
+        + "Set distinct CODEMUX_* port overrides.",
+      );
+    }
+    seen.set(port, key);
+  }
 }
 
 export function buildPortPlan(portOffset: number, env: NodeJS.ProcessEnv = process.env): PortPlan {
-  return {
+  if (portOffset < 0 || portOffset > MAX_PORT_OFFSET) {
+    throw new Error(`CODEMUX_PORT_OFFSET must be between 0 and ${MAX_PORT_OFFSET}, got ${portOffset}`);
+  }
+
+  const plan = {
     portOffset,
     ports: {
       web: resolvePort("CODEMUX_WEB_PORT", DEFAULT_WEB_PORT + portOffset, env),
@@ -56,10 +101,13 @@ export function buildPortPlan(portOffset: number, env: NodeJS.ProcessEnv = proce
       webhook: resolvePort("CODEMUX_WEBHOOK_PORT", DEFAULT_WEBHOOK_PORT + portOffset, env),
     },
   };
+
+  validatePortPlan(plan);
+  return plan;
 }
 
-function uniquePorts(plan: PortPlan): number[] {
-  return Array.from(new Set(Object.values(plan.ports)));
+function allPorts(plan: PortPlan): number[] {
+  return Object.values(plan.ports);
 }
 
 function isPortAvailable(port: number): Promise<boolean> {
@@ -75,7 +123,7 @@ function isPortAvailable(port: number): Promise<boolean> {
 
 async function unavailablePorts(plan: PortPlan): Promise<number[]> {
   const checks = await Promise.all(
-    uniquePorts(plan).map(async (port) => ({ port, available: await isPortAvailable(port) })),
+    allPorts(plan).map(async (port) => ({ port, available: await isPortAvailable(port) })),
   );
   return checks.filter((check) => !check.available).map((check) => check.port);
 }
@@ -91,42 +139,129 @@ function readSavedOffset(devRoot: string): number | undefined {
 }
 
 function candidateOffsets(): number[] {
-  return Array.from({ length: MAX_OFFSET_ATTEMPTS }, (_, index) => (index + 1) * OFFSET_STEP);
+  const offsets = Array.from({ length: MAX_OFFSET_ATTEMPTS }, (_, index) => (index + 1) * OFFSET_STEP);
+  for (let i = offsets.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [offsets[i], offsets[j]] = [offsets[j], offsets[i]];
+  }
+  return offsets;
 }
 
-export async function allocatePortPlan(devRoot: string, env: NodeJS.ProcessEnv = process.env): Promise<PortPlan> {
+function isProcessAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function removeStaleLock(lockPath: string): boolean {
+  try {
+    const data = JSON.parse(fs.readFileSync(lockPath, "utf-8")) as { pid?: unknown };
+    if (typeof data.pid === "number" && isProcessAlive(data.pid)) return false;
+    fs.unlinkSync(lockPath);
+    return true;
+  } catch {
+    try {
+      fs.unlinkSync(lockPath);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+}
+
+function reservePlan(plan: PortPlan): PortReservation | null {
+  fs.mkdirSync(LOCK_DIR, { recursive: true });
+  const lockPath = path.join(LOCK_DIR, `${plan.portOffset}.json`);
+
+  let fd: number;
+  try {
+    fd = fs.openSync(lockPath, "wx");
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "EEXIST" && removeStaleLock(lockPath)) {
+      fd = fs.openSync(lockPath, "wx");
+    } else {
+      return null;
+    }
+  }
+
+  fs.writeFileSync(fd, JSON.stringify({ pid: process.pid, cwd: projectRoot, plan }, null, 2));
+
+  let released = false;
+  return {
+    plan,
+    release() {
+      if (released) return;
+      released = true;
+      try {
+        fs.closeSync(fd);
+      } catch {
+        // ignore
+      }
+      try {
+        fs.unlinkSync(lockPath);
+      } catch {
+        // ignore
+      }
+    },
+  };
+}
+
+async function validateReservedPorts(reservation: PortReservation): Promise<void> {
+  const unavailable = await unavailablePorts(reservation.plan);
+  if (unavailable.length > 0) {
+    reservation.release();
+    throw new Error(`Port offset ${reservation.plan.portOffset} conflicts on ports: ${unavailable.join(", ")}`);
+  }
+}
+
+async function reserveCheckedPlan(plan: PortPlan): Promise<PortReservation | null> {
+  const reservation = reservePlan(plan);
+  if (!reservation) return null;
+  await validateReservedPorts(reservation);
+  return reservation;
+}
+
+export async function allocatePortReservation(devRoot: string, env: NodeJS.ProcessEnv = process.env): Promise<PortReservation> {
   const explicitOffset = readNumberEnv("CODEMUX_PORT_OFFSET", env);
   if (explicitOffset !== undefined) {
-    if (explicitOffset < 0) {
-      throw new Error(`CODEMUX_PORT_OFFSET must be >= 0, got ${explicitOffset}`);
-    }
     const plan = buildPortPlan(explicitOffset, env);
-    const unavailable = await unavailablePorts(plan);
-    if (unavailable.length > 0) {
-      throw new Error(`CODEMUX_PORT_OFFSET=${explicitOffset} conflicts on ports: ${unavailable.join(", ")}`);
+    const reservation = await reserveCheckedPlan(plan);
+    if (!reservation) {
+      throw new Error(`CODEMUX_PORT_OFFSET=${explicitOffset} is already reserved by another isolated dev startup`);
     }
-    return plan;
+    return reservation;
   }
 
   const savedOffset = readSavedOffset(devRoot);
   if (savedOffset !== undefined) {
     const plan = buildPortPlan(savedOffset, env);
-    const unavailable = await unavailablePorts(plan);
-    if (unavailable.length === 0) return plan;
+    const reservation = await reserveCheckedPlan(plan);
+    if (reservation) return reservation;
     throw new Error(
-      `Saved isolated port offset ${savedOffset} conflicts on ports: ${unavailable.join(", ")}. `
-      + "This worktree may already have a running isolated dev instance.",
+      `Saved isolated port offset ${savedOffset} is already reserved. `
+      + "Stop the existing isolated instance, delete .codemux-dev/ports.json to reallocate, or set CODEMUX_PORT_OFFSET explicitly.",
     );
   }
 
   for (const offset of candidateOffsets()) {
-    const plan = buildPortPlan(offset, env);
-    if ((await unavailablePorts(plan)).length === 0) {
-      return plan;
+    try {
+      const reservation = await reserveCheckedPlan(buildPortPlan(offset, env));
+      if (reservation) return reservation;
+    } catch {
+      // Try the next candidate.
     }
   }
 
   throw new Error(`No available CodeMux isolated port offset found after ${MAX_OFFSET_ATTEMPTS} attempts`);
+}
+
+export async function allocatePortPlan(devRoot: string, env: NodeJS.ProcessEnv = process.env): Promise<PortPlan> {
+  const reservation = await allocatePortReservation(devRoot, env);
+  reservation.release();
+  return reservation.plan;
 }
 
 function writePortsFile(devRoot: string, plan: PortPlan): void {
@@ -142,8 +277,11 @@ function writePortsFile(devRoot: string, plan: PortPlan): void {
 
 async function main(): Promise<void> {
   const devRoot = path.join(projectRoot, DEV_ISOLATED_DIR);
-  const plan = await allocatePortPlan(devRoot);
+  const reservation = await allocatePortReservation(devRoot);
+  const { plan } = reservation;
   writePortsFile(devRoot, plan);
+
+  process.on("exit", () => reservation.release());
 
   console.log(`CodeMux isolated dev data: ${devRoot}`);
   console.log(`CodeMux port offset: ${plan.portOffset}`);
@@ -165,10 +303,12 @@ async function main(): Promise<void> {
   }
 
   child.on("close", (code) => {
+    reservation.release();
     process.exit(code ?? 1);
   });
 
   child.on("error", (error) => {
+    reservation.release();
     console.error(error);
     process.exit(1);
   });

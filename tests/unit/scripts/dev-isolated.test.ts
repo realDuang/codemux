@@ -28,4 +28,15 @@ describe("dev-isolated script", () => {
     expect(plan.ports.opencode).toBe(9101);
     expect(plan.ports.gateway).toBe(4400);
   });
+
+  it("throws for offsets that would create invalid default ports", () => {
+    expect(() => buildPortPlan(60_000, {})).toThrow("CODEMUX_PORT_OFFSET must be between 0");
+  });
+
+  it("throws when an explicit override duplicates another service port", () => {
+    expect(() => buildPortPlan(200, {
+      CODEMUX_WEB_PORT: "9100",
+      CODEMUX_GATEWAY_PORT: "9100",
+    })).toThrow("CODEMUX_GATEWAY_PORT and CODEMUX_WEB_PORT both resolve to port 9100");
+  });
 });

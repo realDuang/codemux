@@ -187,6 +187,36 @@ bun run update:cloudflared
 bun run dev
 ```
 
+### Isolated Electron Dev Instances
+
+Use isolated dev mode when you want to debug CodeMux from a separate git worktree without interrupting your normal running app session:
+
+```bash
+bun run dev:isolated
+```
+
+This keeps `bun run dev` unchanged. The isolated command writes all Electron app state for that worktree under a gitignored `.codemux-dev/` directory:
+
+```text
+.codemux-dev/
+  userData/
+  sessionData/
+  logs/
+  ports.json
+```
+
+Each worktree can have its own `.codemux-dev/` directory and port allocation. The first run automatically reserves a non-default port offset and stores it in `.codemux-dev/ports.json`; later runs reuse that saved offset so the same worktree stays stable. If the saved ports become stale or conflict with another process, stop the existing isolated instance, delete `.codemux-dev/ports.json` to reallocate, or set an explicit `CODEMUX_PORT_OFFSET`.
+
+Supported port overrides:
+
+- `CODEMUX_PORT_OFFSET`
+- `CODEMUX_WEB_PORT`
+- `CODEMUX_WEB_STANDALONE_PORT`
+- `CODEMUX_GATEWAY_PORT`
+- `CODEMUX_OPENCODE_PORT`
+- `CODEMUX_AUTH_API_PORT`
+- `CODEMUX_WEBHOOK_PORT`
+
 ### Linux Server / Headless Dev
 
 On headless Linux hosts, `bun run dev` may exit early because Electron needs a virtual display, a DBus session, and a correctly configured `chrome-sandbox` helper. This repo includes Linux server helpers for that workflow:

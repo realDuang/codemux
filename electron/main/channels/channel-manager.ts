@@ -4,7 +4,6 @@
 // ============================================================================
 
 import fs from "fs";
-import path from "path";
 import { channelLog } from "../services/logger";
 import { getChannelConfigPath, getChannelsPath } from "../services/app-paths";
 import {

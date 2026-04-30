@@ -71,15 +71,20 @@ describe("shared ports", () => {
     expect(ports.OPENCODE_PORT).toBe(4196);
   });
 
-  it("ignores invalid numeric values", async () => {
-    const ports = await importPorts({
-      CODEMUX_PORT_OFFSET: "abc",
-      CODEMUX_WEB_PORT: "70000",
-      CODEMUX_GATEWAY_PORT: "0",
-    });
+  it("throws for invalid numeric values", async () => {
+    await expect(importPorts({ CODEMUX_PORT_OFFSET: "abc" })).rejects.toThrow("CODEMUX_PORT_OFFSET must be an integer");
+    await expect(importPorts({ CODEMUX_WEB_PORT: "70000" })).rejects.toThrow("CODEMUX_WEB_PORT must be between 1 and 65535");
+    await expect(importPorts({ CODEMUX_GATEWAY_PORT: "0" })).rejects.toThrow("CODEMUX_GATEWAY_PORT must be between 1 and 65535");
+  });
 
-    expect(ports.PORT_OFFSET).toBe(0);
-    expect(ports.WEB_PORT).toBe(8233);
-    expect(ports.GATEWAY_PORT).toBe(4200);
+  it("throws when CODEMUX_PORT_OFFSET would push defaults beyond valid TCP ports", async () => {
+    await expect(importPorts({ CODEMUX_PORT_OFFSET: "60000" })).rejects.toThrow("CODEMUX_PORT_OFFSET must be between 0");
+  });
+
+  it("throws when explicit overrides duplicate another service port", async () => {
+    await expect(importPorts({
+      CODEMUX_WEB_PORT: "9001",
+      CODEMUX_GATEWAY_PORT: "9001",
+    })).rejects.toThrow("GATEWAY_PORT and WEB_PORT both resolve to port 9001");
   });
 });

@@ -46,7 +46,11 @@ function resolveEffortForModelChange(
   const model = models.find((item) => item.modelId === modelId);
   if (!model) return undefined;
   const supportedEfforts = model.capabilities?.supportedReasoningEfforts ?? [];
-  if (supportedEfforts.length === 0) return null;
+  // Treat 0 or 1 supported levels as "no real choice" — the model variant
+  // either doesn't expose effort at all or bakes a single fixed value into
+  // its ID (e.g. claude-opus-4.7-xhigh). Returning null clears any cached
+  // session effort so the wire payload omits the field entirely.
+  if (supportedEfforts.length <= 1) return null;
   if (currentEffort && supportedEfforts.includes(currentEffort)) return currentEffort;
   return model.capabilities?.defaultReasoningEffort ?? null;
 }
@@ -215,7 +219,10 @@ export async function handleSessionOpsCommand(
       ]);
       const currentModelId = session.modelId ?? result.currentModelId;
       const supportedEfforts = getModelEfforts(result.models, currentModelId);
-      if (supportedEfforts.length === 0) {
+      // Single-value support lists (e.g. claude-opus-4.7-xhigh → ["max"])
+      // mean the variant has no real choice — surface the same message as
+      // "unsupported" so callers don't try to set a value the API will reject.
+      if (supportedEfforts.length <= 1) {
         await args.sendText("📋 当前模型不支持推理级别设置。");
         return true;
       }

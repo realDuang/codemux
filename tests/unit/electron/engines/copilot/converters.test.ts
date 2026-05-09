@@ -822,6 +822,25 @@ describe('copilot-converters', () => {
       expect(unified.capabilities?.defaultReasoningEffort).toBeUndefined();
     });
 
+    it('passes single-value SDK metadata through unchanged (no suffix logic)', () => {
+      // Real-world case: Copilot returns `claude-opus-4.7-xhigh` with
+      // supportedReasoningEfforts=["xhigh"]. The converter must not invent
+      // anything — it just normalizes xhigh → max and trusts the SDK. The
+      // "don't transmit when there's no choice" decision happens later, in
+      // the engine adapter / UI gating, not here.
+      const sdkModel = {
+        id: 'claude-opus-4.7-xhigh',
+        name: 'Claude Opus 4.7 (xhigh)',
+        capabilities: { supports: { vision: false, reasoningEffort: true } as any, limits: {} },
+        supportedReasoningEfforts: ['xhigh'] as any,
+        defaultReasoningEffort: 'xhigh' as any,
+      } as any;
+
+      const unified = sdkModelToUnified('copilot', sdkModel);
+      expect(unified.capabilities?.supportedReasoningEfforts).toEqual(['max']);
+      expect(unified.capabilities?.defaultReasoningEffort).toBe('max');
+    });
+
     // --- Branch coverage additions ---
 
     it('handles model without any capabilities object', () => {

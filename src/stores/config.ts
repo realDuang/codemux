@@ -246,7 +246,14 @@ function resolveReasoningEffort(
   }
 
   const supported = model.capabilities?.supportedReasoningEfforts;
-  if (preferredEffort && supported?.includes(preferredEffort)) {
+  // Models with 0 or 1 supported levels offer no real choice (single-value
+  // variants like `claude-opus-4.7-xhigh` bake the effort into the model
+  // ID). Return null so the caller doesn't attach an effort field to its
+  // wire payload — the server will infer the correct value from the modelId.
+  if (!supported || supported.length <= 1) {
+    return null;
+  }
+  if (preferredEffort && supported.includes(preferredEffort)) {
     return preferredEffort;
   }
 

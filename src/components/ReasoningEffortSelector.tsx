@@ -43,7 +43,7 @@ export function ReasoningEffortSelector(props: ReasoningEffortSelectorProps) {
   };
 
   return (
-    <Show when={supportedEfforts().length > 0}>
+    <Show when={supportedEfforts().length > 1}>
       <div class={props.compact
         ? "flex items-center gap-2 flex-wrap"
         : "px-4 sm:px-6 pb-4 sm:pb-6 pt-0 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 sm:gap-4 -mt-2"}>

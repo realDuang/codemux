@@ -535,6 +535,16 @@ describe("CopilotSdkAdapter", () => {
     });
 
     it("includes reasoning effort in the resume config when set", async () => {
+      (adapter as any).cachedModels.push({
+        modelId: "gpt-4o",
+        name: "gpt-4o",
+        engineType: "copilot",
+        capabilities: {
+          attachment: false,
+          reasoning: true,
+          supportedReasoningEfforts: ["low", "medium", "high", "max"],
+        },
+      });
       (adapter as any).sessionReasoningEfforts.set("s1", "max");
       (adapter as any).currentModelId = "gpt-4o";
 
@@ -682,6 +692,16 @@ describe("CopilotSdkAdapter", () => {
     });
 
     it("updates reasoning effort and switches model config when effort changes", async () => {
+      (adapter as any).cachedModels.push({
+        modelId: "gpt-4o",
+        name: "gpt-4o",
+        engineType: "copilot",
+        capabilities: {
+          attachment: false,
+          reasoning: true,
+          supportedReasoningEfforts: ["low", "medium", "high", "max"],
+        },
+      });
       (adapter as any).currentModelId = "gpt-4o";
 
       const sendPromise = adapter.sendMessage(
@@ -698,6 +718,16 @@ describe("CopilotSdkAdapter", () => {
     });
 
     it("clears reasoning effort when null is passed", async () => {
+      (adapter as any).cachedModels.push({
+        modelId: "gpt-4o",
+        name: "gpt-4o",
+        engineType: "copilot",
+        capabilities: {
+          attachment: false,
+          reasoning: true,
+          supportedReasoningEfforts: ["low", "medium", "high", "max"],
+        },
+      });
       (adapter as any).currentModelId = "gpt-4o";
       (adapter as any).sessionReasoningEfforts.set("s1", "high");
 
@@ -1910,19 +1940,73 @@ describe("CopilotSdkAdapter", () => {
   });
 
   describe("buildModelSwitchConfig()", () => {
-    it("includes reasoningEffort in xhigh form when session has 'max' effort", () => {
+    // Helper: stuff a synthetic model entry into the adapter's cache so the
+    // engine knows what efforts the model supports. Without this, every
+    // model is treated as "unknown / no choice" and effort is omitted.
+    const seedModel = (modelId: string, supported: string[] | undefined, defaultEffort?: string) => {
+      const cached = (adapter as any).cachedModels as any[];
+      cached.push({
+        modelId,
+        name: modelId,
+        engineType: "copilot",
+        capabilities: {
+          attachment: false,
+          reasoning: !!supported,
+          supportedReasoningEfforts: supported,
+          defaultReasoningEffort: defaultEffort,
+        },
+      });
+    };
+
+    it("includes reasoningEffort in xhigh form when the model offers a real choice", () => {
+      seedModel("gpt-4o", ["low", "medium", "high", "max"]);
       (adapter as any).sessionReasoningEfforts.set("s1", "max");
       const config = (adapter as any).buildModelSwitchConfig("s1", "gpt-4o");
       expect(config).toEqual({ modelId: "gpt-4o", reasoningEffort: "xhigh" });
     });
 
-    it("omits reasoningEffort when session has no effort configured", () => {
+    it("omits reasoningEffort when cached effort isn't supported (never invent a value)", () => {
+      // Old behavior fell back to defaultReasoningEffort here, but that
+      // silently overrides the user's intent — and worse, the SDK's reported
+      // default is sometimes wrong (e.g. claude-opus-4.7-xhigh ships with
+      // default="medium" despite only accepting "xhigh"). Safer policy:
+      // omit the field and let the server use its own default.
+      seedModel("gpt-4o", ["low", "medium", "high"], "medium");
+      (adapter as any).sessionReasoningEfforts.set("s1", "max");
       const config = (adapter as any).buildModelSwitchConfig("s1", "gpt-4o");
       expect(config).toEqual({ modelId: "gpt-4o" });
       expect("reasoningEffort" in config).toBe(false);
     });
 
+    it("forces the single supported value into switchTo even when cache disagrees", () => {
+      // Real-world bug: the Copilot CLI persists the last reasoning_effort
+      // it saw on the session record. If the user previously cached "medium"
+      // (e.g. via a sibling model or stale conv state) and then activates
+      // claude-opus-4.7-xhigh — which only accepts "xhigh" — omitting the
+      // field would let the stale "medium" stick and the API would reject
+      // it. We must explicitly overwrite with the model's one allowed value.
+      seedModel("claude-opus-4.7-xhigh", ["max"], "max");
+      (adapter as any).sessionReasoningEfforts.set("s1", "medium");
+      const config = (adapter as any).buildModelSwitchConfig("s1", "claude-opus-4.7-xhigh");
+      expect(config).toEqual({ modelId: "claude-opus-4.7-xhigh", reasoningEffort: "xhigh" });
+    });
+
+    it("omits reasoningEffort when the model isn't yet in the cache", () => {
+      // Defensive: don't guess. If we don't know what the model supports we
+      // can't safely send any value — sending something the server rejects is
+      // strictly worse than sending nothing and letting it use the default.
+      const config = (adapter as any).buildModelSwitchConfig("s1", "unseen-model");
+      expect(config).toEqual({ modelId: "unseen-model" });
+    });
+
+    it("omits reasoningEffort when the model has no supportedReasoningEfforts", () => {
+      seedModel("gpt-no-reasoning", undefined);
+      const config = (adapter as any).buildModelSwitchConfig("s1", "gpt-no-reasoning");
+      expect(config).toEqual({ modelId: "gpt-no-reasoning" });
+    });
+
     it("passes through 'high' effort without transformation", () => {
+      seedModel("gpt-4o", ["low", "medium", "high"]);
       (adapter as any).sessionReasoningEfforts.set("s1", "high");
       const config = (adapter as any).buildModelSwitchConfig("s1", "gpt-4o");
       expect(config.reasoningEffort).toBe("high");
@@ -1930,11 +2014,27 @@ describe("CopilotSdkAdapter", () => {
   });
 
   describe("setReasoningEffort()", () => {
+    const seedModel = (modelId: string, supported: string[] | undefined, defaultEffort?: string) => {
+      const cached = (adapter as any).cachedModels as any[];
+      cached.push({
+        modelId,
+        name: modelId,
+        engineType: "copilot",
+        capabilities: {
+          attachment: false,
+          reasoning: !!supported,
+          supportedReasoningEfforts: supported,
+          defaultReasoningEffort: defaultEffort,
+        },
+      });
+    };
+
     beforeEach(async () => {
       await adapter.start();
     });
 
     it("stores reasoning effort and calls model.switchTo on active session", async () => {
+      seedModel("gpt-4o", ["low", "medium", "high", "max"]);
       (adapter as any).currentModelId = "gpt-4o";
       const sess = makeMockSession("s1");
       (adapter as any).activeSessions.set("s1", sess);
@@ -1946,6 +2046,7 @@ describe("CopilotSdkAdapter", () => {
     });
 
     it("clears effort and removes reasoningEffort from switch config when set to null", async () => {
+      seedModel("gpt-4o", ["low", "medium", "high", "max"]);
       (adapter as any).currentModelId = "gpt-4o";
       (adapter as any).sessionReasoningEfforts.set("s1", "max");
       const sess = makeMockSession("s1");
@@ -1965,6 +2066,41 @@ describe("CopilotSdkAdapter", () => {
       await adapter.setReasoningEffort("s1", "medium");
 
       expect(sess.rpc.model.switchTo).not.toHaveBeenCalled();
+    });
+
+    it("drops the requested effort but forces the supported value into switchTo for single-value variants", () => {
+      // Real-world bug source: the frontend sometimes forwards an effort
+      // (often 'max', sometimes a stale 'medium' from a sibling model) when
+      // switching into a single-value variant like claude-opus-4.7-xhigh.
+      // Caching it would make a later RPC payload contradict the model's
+      // baked-in effort. The cache stays empty, but we *must* explicitly
+      // re-send the model's one allowed value via switchTo — the Copilot
+      // CLI persists the last effort it saw on the session record, so any
+      // stale "medium" already there would otherwise be reused.
+      seedModel("claude-opus-4.7-xhigh", ["max"], "max");
+      (adapter as any).currentModelId = "claude-opus-4.7-xhigh";
+      const sess = makeMockSession("s1");
+      (adapter as any).activeSessions.set("s1", sess);
+      return adapter.setReasoningEffort("s1", "medium").then(() => {
+        expect((adapter as any).sessionReasoningEfforts.has("s1")).toBe(false);
+        expect(sess.rpc.model.switchTo).toHaveBeenCalledWith({
+          modelId: "claude-opus-4.7-xhigh",
+          reasoningEffort: "xhigh",
+        });
+      });
+    });
+
+    it("drops the requested effort when the active model isn't in the cache", async () => {
+      // Defensive: until listModels populates the cache we can't validate
+      // anything, so don't keep state we can't reason about.
+      (adapter as any).currentModelId = "unseen-model";
+      const sess = makeMockSession("s1");
+      (adapter as any).activeSessions.set("s1", sess);
+
+      await adapter.setReasoningEffort("s1", "max");
+
+      expect((adapter as any).sessionReasoningEfforts.has("s1")).toBe(false);
+      expect(sess.rpc.model.switchTo).toHaveBeenCalledWith({ modelId: "unseen-model" });
     });
   });
 

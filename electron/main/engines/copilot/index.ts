@@ -383,26 +383,10 @@ export class CopilotSdkAdapter extends EngineAdapter {
     const normalizedDir = directory.replaceAll("\\", "/");
     const mode = "autopilot";
 
-    // Ensure model metadata is in cache before deciding the create-time effort.
-    // Without this, getModelSupportedEfforts() returns undefined and the
-    // single-value override for variants like claude-opus-4.7-xhigh is skipped,
-    // letting the CLI default to "medium" — which the API then rejects.
-    if (this.cachedModels.length === 0) {
-      try { await this.listModels(); } catch {}
-    }
-
-    // Single-value reasoning variants (e.g. claude-opus-4.7-xhigh) reject any
-    // effort value other than the one they enforce. The Copilot CLI defaults
-    // unspecified `reasoningEffort` to "medium" on session create, so without
-    // pinning the legal value here the very first send fails with
-    // `not supported by model … supported values: [xhigh]`.
-    const sdkEffort = this.getSdkReasoningEffortForModel("__pre_create__", this.currentModelId);
-
     const config: SessionConfig = {
       workingDirectory: directory,
       streaming: true,
       model: this.currentModelId ?? undefined,
-      ...(sdkEffort ? { reasoningEffort: sdkEffort } : {}),
       onPermissionRequest: (req, ctx) => this.handlePermissionRequest(req, ctx),
       onUserInputRequest: (req, ctx) => this.handleUserInputRequest(req as any, ctx),
       systemMessage: { mode: "append" as const, content: CODEMUX_IDENTITY_PROMPT },
@@ -494,14 +478,6 @@ export class CopilotSdkAdapter extends EngineAdapter {
     const session = await this.ensureActiveSession(sessionId, options?.directory);
     const now = Date.now();
 
-    // Make sure model metadata is loaded before any effort decision below.
-    // Otherwise getModelSupportedEfforts() returns undefined and the
-    // single-value override path (forced switchTo for variants like
-    // claude-opus-4.7-xhigh) is silently skipped.
-    if (this.cachedModels.length === 0) {
-      try { await this.listModels(); } catch {}
-    }
-
     if (options?.modelId && options.modelId !== this.currentModelId) {
       this.currentModelId = options.modelId;
       try {
@@ -511,59 +487,18 @@ export class CopilotSdkAdapter extends EngineAdapter {
 
     // Apply reasoning effort if it changed (same pattern as modelId)
     if (options?.reasoningEffort !== undefined) {
-      // Mirror setReasoningEffort: only honor the requested effort when the
-      // active model genuinely offers a choice and the value is one of the
-      // supported levels. Otherwise drop it on the floor — the cache must
-      // never carry a value that would later leak into an RPC payload and be
-      // rejected by the server.
-      const supported = this.getModelSupportedEfforts(this.currentModelId);
-      const isChoiceModel = !!supported && supported.length > 1;
-      const validEffort = options.reasoningEffort && supported?.includes(options.reasoningEffort)
-        ? options.reasoningEffort
-        : null;
-      const targetEffort = isChoiceModel ? validEffort : null;
-
-      copilotLog.debug(
-        `[Copilot][effort] sendMessage apply: sessionId=${sessionId} requested=${options.reasoningEffort ?? "<clear>"} ` +
-          `modelId=${this.currentModelId ?? "<none>"} supported=${supported ? JSON.stringify(supported) : "<unknown>"} ` +
-          `target=${targetEffort ?? "<none>"}`,
-      );
-
       const current = this.sessionReasoningEfforts.get(sessionId) ?? null;
-      const cacheChanged = targetEffort !== current;
-
-      if (cacheChanged) {
-        if (targetEffort) {
-          this.sessionReasoningEfforts.set(sessionId, targetEffort);
+      if (options.reasoningEffort !== current) {
+        if (options.reasoningEffort) {
+          this.sessionReasoningEfforts.set(sessionId, options.reasoningEffort);
         } else {
           this.sessionReasoningEfforts.delete(sessionId);
         }
-      }
-
-      if (cacheChanged && this.currentModelId) {
-        try {
-          await session.rpc.model.switchTo(this.buildModelSwitchConfig(sessionId, this.currentModelId));
-        } catch (err) {}
-      }
-    }
-
-    // Single-value variants need a forced re-switch every send: the Copilot
-    // CLI persists the last reasoning_effort it received on the session
-    // record (e.g. a stale "medium" carried over from when the session was
-    // attached to a different model), and only an explicit switchTo with
-    // the model's one allowed value will overwrite it. We do this OUTSIDE
-    // the `options.reasoningEffort` guard above because:
-    //   - On a brand-new conversation with no persisted reasoningEffort, the
-    //     gateway calls sendMessage WITHOUT a reasoningEffort field, so the
-    //     guard never runs and the CLI's default ("medium") leaks through.
-    //   - The cost is a single switchTo RPC per send when the model has
-    //     exactly one supported value, which is fine.
-    if (this.currentModelId) {
-      const supportedForCurrent = this.getModelSupportedEfforts(this.currentModelId);
-      if (supportedForCurrent && supportedForCurrent.length === 1) {
-        try {
-          await session.rpc.model.switchTo(this.buildModelSwitchConfig(sessionId, this.currentModelId));
-        } catch (err) {}
+        if (this.currentModelId) {
+          try {
+            await session.rpc.model.switchTo(this.buildModelSwitchConfig(sessionId, this.currentModelId));
+          } catch (err) {}
+        }
       }
     }
 
@@ -853,27 +788,11 @@ export class CopilotSdkAdapter extends EngineAdapter {
   // --- Reasoning Effort ---
 
   override async setReasoningEffort(sessionId: string, effort: ReasoningEffort | null): Promise<void> {
-    // If the active model doesn't actually offer a choice (no support, or
-    // only a single fixed value), refuse to cache anything — otherwise the
-    // stale value would leak into a later RPC payload and the API would
-    // reject it (a model variant whose ID names the effort still rejects an
-    // effort field that disagrees with the variant).
-    const supported = this.getModelSupportedEfforts(this.currentModelId);
-    const isChoiceModel = !!supported && supported.length > 1;
-    const validEffort = effort && supported?.includes(effort) ? effort : null;
-
-    copilotLog.debug(
-      `[Copilot][effort] setReasoningEffort: sessionId=${sessionId} requested=${effort ?? "<clear>"} ` +
-        `modelId=${this.currentModelId ?? "<none>"} supported=${supported ? JSON.stringify(supported) : "<unknown>"} ` +
-        `accepted=${isChoiceModel ? validEffort ?? "<dropped>" : "<ignored:no-choice>"}`,
-    );
-
-    if (isChoiceModel && validEffort) {
-      this.sessionReasoningEfforts.set(sessionId, validEffort);
+    if (effort) {
+      this.sessionReasoningEfforts.set(sessionId, effort);
     } else {
       this.sessionReasoningEfforts.delete(sessionId);
     }
-
     const session = this.activeSessions.get(sessionId);
     if (session && this.currentModelId) {
       try {
@@ -890,7 +809,7 @@ export class CopilotSdkAdapter extends EngineAdapter {
     modelId: string;
     reasoningEffort?: CopilotReasoningEffort;
   } {
-    const sdkEffort = this.getSdkReasoningEffortForModel(sessionId, modelId);
+    const sdkEffort = this.getSdkReasoningEffort(sessionId);
     return sdkEffort ? { modelId, reasoningEffort: sdkEffort } : { modelId };
   }
 
@@ -899,76 +818,9 @@ export class CopilotSdkAdapter extends EngineAdapter {
     return effort === "max" ? "xhigh" : effort;
   }
 
-  /**
-   * The user-selectable reasoning efforts for a given model, sourced from the
-   * SDK's `listModels()` metadata. Returns `undefined` when the model isn't in
-   * the cache yet (caller should fall back to the cached session effort).
-   */
-  private getModelSupportedEfforts(modelId: string | null | undefined): ReasoningEffort[] | undefined {
-    if (!modelId) return undefined;
-    const model = this.cachedModels.find((m) => m.modelId === modelId);
-    return model?.capabilities?.supportedReasoningEfforts;
-  }
-
-  /**
-   * Decide which reasoning effort to send to the SDK for `modelId`.
-   *
-   * The Copilot CLI persists the last reasoning effort it saw on the session
-   * metadata (e.g. once "medium" lands there, every later request reuses it
-   * unless we explicitly overwrite). That makes "omit the field" the wrong
-   * default for single-value variants like `claude-opus-4.7-xhigh` — the
-   * stale stored value would be reused and the API would reject it because
-   * the model only accepts the one effort baked into its ID.
-   *
-   * Rules:
-   *   - No `supportedReasoningEfforts` reported → omit (the model doesn't
-   *     understand the field at all).
-   *   - Exactly one supported value → always send that one value, so we
-   *     overwrite any stale entry with the model's only legal choice.
-   *   - Multiple supported values → send the cached session effort if it's
-   *     valid; otherwise omit and let the server use the model's default.
-   *     Never invent a value out of the supported list.
-   */
-  private getSdkReasoningEffortForModel(
-    sessionId: string,
-    modelId: string | null | undefined,
-  ): CopilotReasoningEffort | undefined {
-    const supported = this.getModelSupportedEfforts(modelId);
-    const cached = this.sessionReasoningEfforts.get(sessionId);
-
-    if (!supported || supported.length === 0) {
-      copilotLog.debug(
-        `[Copilot][effort] omit: sessionId=${sessionId} modelId=${modelId ?? "<none>"} ` +
-          `supported=${supported ? "[]" : "<unknown>"} cached=${cached ?? "<none>"} ` +
-          `reason=no-support`,
-      );
-      return undefined;
-    }
-
-    if (supported.length === 1) {
-      const only = supported[0];
-      copilotLog.debug(
-        `[Copilot][effort] send: sessionId=${sessionId} modelId=${modelId} ` +
-          `supported=${JSON.stringify(supported)} cached=${cached ?? "<none>"} chosen=${only} ` +
-          `reason=single-value-override`,
-      );
-      return this.toSdkReasoningEffort(only);
-    }
-
-    if (!cached || !supported.includes(cached)) {
-      copilotLog.debug(
-        `[Copilot][effort] omit: sessionId=${sessionId} modelId=${modelId} ` +
-          `supported=${JSON.stringify(supported)} cached=${cached ?? "<none>"} ` +
-          `reason=${cached ? "cached-not-supported" : "no-cached"}`,
-      );
-      return undefined;
-    }
-
-    copilotLog.debug(
-      `[Copilot][effort] send: sessionId=${sessionId} modelId=${modelId} ` +
-        `supported=${JSON.stringify(supported)} cached=${cached} chosen=${cached}`,
-    );
-    return this.toSdkReasoningEffort(cached);
+  private getSdkReasoningEffort(sessionId: string): CopilotReasoningEffort | undefined {
+    const effort = this.sessionReasoningEfforts.get(sessionId);
+    return effort ? this.toSdkReasoningEffort(effort) : undefined;
   }
 
   async replyPermission(permissionId: string, reply: PermissionReply, _sessionId?: string): Promise<void> {
@@ -1247,14 +1099,8 @@ export class CopilotSdkAdapter extends EngineAdapter {
     if (existing) return existing;
     this.ensureClient();
 
-    // Same reason as createSession/sendMessage: cachedModels must be populated
-    // before the effort decision, otherwise single-value variants get omitted.
-    if (this.cachedModels.length === 0) {
-      try { await this.listModels(); } catch {}
-    }
-
     const workingDirectory = directory || this.sessionDirectories.get(sessionId);
-    const sdkReasoningEffort = this.getSdkReasoningEffortForModel(sessionId, this.currentModelId);
+    const sdkReasoningEffort = this.getSdkReasoningEffort(sessionId);
     const config: ResumeSessionConfig = {
       streaming: true,
       workingDirectory,

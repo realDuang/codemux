@@ -653,7 +653,7 @@ export class ClaudeCodeAdapter extends EngineAdapter {
     }
     for (const [id, pending] of this.pendingQuestions) {
       if (pending.question.sessionId === sessionId) {
-        pending.resolve([["Session deleted"]]);
+        pending.resolve([]);
         this.pendingQuestions.delete(id);
       }
     }
@@ -1658,6 +1658,15 @@ export class ClaudeCodeAdapter extends EngineAdapter {
       // Store pending question with a resolver that converts to PermissionResult
       this.pendingQuestions.set(questionId, {
         resolve: (perQuestion: string[][]) => {
+          // Empty array = cancellation/rejection (cleanup paths, abort, dismiss).
+          // Treat as a denial so the SDK doesn't get a malformed empty tool result.
+          const hasAnyAnswer = perQuestion.some((a) =>
+            (a ?? []).some((s) => s && s.length > 0),
+          );
+          if (!hasAnyAnswer) {
+            resolve({ behavior: "deny", message: "Question cancelled by user" });
+            return;
+          }
           // SDK contract (AskUserQuestionOutput.answers): keyed by question text,
           // value is the answer string (multi-select joined by ", ").
           const answersObj: Record<string, string> = {};

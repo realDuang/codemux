@@ -327,7 +327,7 @@ describe("ClaudeCodeAdapter", () => {
       expect((adapter as any).pendingPermissions.has("perm-1")).toBe(false);
     });
 
-    it("resolves pending questions with empty string", async () => {
+    it("resolves pending questions with empty array", async () => {
       seedSession(adapter, "cs_1");
       const resolve = vi.fn();
       (adapter as any).pendingQuestions.set("q-1", {
@@ -336,7 +336,7 @@ describe("ClaudeCodeAdapter", () => {
       });
 
       await adapter.deleteSession("cs_1");
-      expect(resolve).toHaveBeenCalledWith("Session deleted");
+      expect(resolve).toHaveBeenCalledWith([]);
       expect((adapter as any).pendingQuestions.has("q-1")).toBe(false);
     });
 
@@ -1434,10 +1434,10 @@ describe("ClaudeCodeAdapter", () => {
       return resolve;
     }
 
-    it("resolves question with joined first answer array", async () => {
+    it("forwards the full per-question answers array to the resolver", async () => {
       const resolve = seedPendingQuestion(adapter, "q-1");
       await adapter.replyQuestion("q-1", [["Approve", "extra note"]]);
-      expect(resolve).toHaveBeenCalledWith("Approve\nextra note");
+      expect(resolve).toHaveBeenCalledWith([["Approve", "extra note"]]);
     });
 
     it("removes question from pending map after reply", async () => {
@@ -1460,14 +1460,14 @@ describe("ClaudeCodeAdapter", () => {
   });
 
   describe("rejectQuestion()", () => {
-    it("resolves question with empty string", async () => {
+    it("resolves question with empty array", async () => {
       const resolve = vi.fn();
       (adapter as any).pendingQuestions.set("q-1", {
         resolve,
         question: { id: "q-1", sessionId: "cs_1" },
       });
       await adapter.rejectQuestion("q-1");
-      expect(resolve).toHaveBeenCalledWith("");
+      expect(resolve).toHaveBeenCalledWith([]);
       expect((adapter as any).pendingQuestions.has("q-1")).toBe(false);
     });
 
@@ -1493,7 +1493,7 @@ describe("ClaudeCodeAdapter", () => {
 
       // Get the question ID and reply
       const qId = [...(adapter as any).pendingQuestions.keys()][0];
-      (adapter as any).pendingQuestions.get(qId)!.resolve("approve");
+      (adapter as any).pendingQuestions.get(qId)!.resolve([["approve"]]);
 
       const result = await p;
       expect(result.behavior).toBe("allow");
@@ -1505,7 +1505,7 @@ describe("ClaudeCodeAdapter", () => {
       const p = (adapter as any).handleExitPlanMode("cs_1", {}, opts) as Promise<any>;
 
       const qId = [...(adapter as any).pendingQuestions.keys()][0];
-      (adapter as any).pendingQuestions.get(qId)!.resolve("同意");
+      (adapter as any).pendingQuestions.get(qId)!.resolve([["同意"]]);
 
       const result = await p;
       expect(result.behavior).toBe("allow");
@@ -1517,7 +1517,7 @@ describe("ClaudeCodeAdapter", () => {
       const p = (adapter as any).handleExitPlanMode("cs_1", {}, opts) as Promise<any>;
 
       const qId = [...(adapter as any).pendingQuestions.keys()][0];
-      (adapter as any).pendingQuestions.get(qId)!.resolve("1");
+      (adapter as any).pendingQuestions.get(qId)!.resolve([["1"]]);
 
       const result = await p;
       expect(result.behavior).toBe("allow");
@@ -1529,7 +1529,7 @@ describe("ClaudeCodeAdapter", () => {
       const p = (adapter as any).handleExitPlanMode("cs_1", {}, opts) as Promise<any>;
 
       const qId = [...(adapter as any).pendingQuestions.keys()][0];
-      (adapter as any).pendingQuestions.get(qId)!.resolve("0");
+      (adapter as any).pendingQuestions.get(qId)!.resolve([["0"]]);
 
       const result = await p;
       expect(result.behavior).toBe("allow");
@@ -1541,7 +1541,7 @@ describe("ClaudeCodeAdapter", () => {
       const p = (adapter as any).handleExitPlanMode("cs_1", {}, opts) as Promise<any>;
 
       const qId = [...(adapter as any).pendingQuestions.keys()][0];
-      (adapter as any).pendingQuestions.get(qId)!.resolve("reject, needs more work");
+      (adapter as any).pendingQuestions.get(qId)!.resolve([["reject, needs more work"]]);
 
       const result = await p;
       expect(result.behavior).toBe("deny");
@@ -1557,7 +1557,7 @@ describe("ClaudeCodeAdapter", () => {
       const p = (adapter as any).handleExitPlanMode("cs_1", {}, opts) as Promise<any>;
 
       const qId = [...(adapter as any).pendingQuestions.keys()][0];
-      (adapter as any).pendingQuestions.get(qId)!.resolve("approve");
+      (adapter as any).pendingQuestions.get(qId)!.resolve([["approve"]]);
       await p;
 
       expect(asked).toHaveLength(1);
@@ -3157,7 +3157,7 @@ describe("ClaudeCodeAdapter", () => {
 
       await adapter.cancelMessage("cs_1");
 
-      expect(resolveQ).toHaveBeenCalledWith("");
+      expect(resolveQ).toHaveBeenCalledWith([]);
       expect((adapter as any).pendingQuestions.has("q-cancel")).toBe(false);
     });
 

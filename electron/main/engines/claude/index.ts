@@ -117,7 +117,7 @@ interface PendingPermission {
 }
 
 interface PendingQuestion {
-  resolve: (answer: string) => void;
+  resolve: (answers: string[][]) => void;
   question: UnifiedQuestion;
 }
 
@@ -653,7 +653,7 @@ export class ClaudeCodeAdapter extends EngineAdapter {
     }
     for (const [id, pending] of this.pendingQuestions) {
       if (pending.question.sessionId === sessionId) {
-        pending.resolve("Session deleted");
+        pending.resolve([["Session deleted"]]);
         this.pendingQuestions.delete(id);
       }
     }
@@ -956,7 +956,7 @@ export class ClaudeCodeAdapter extends EngineAdapter {
     // Reject pending questions/permissions for this session so the UI unblocks
     for (const [id, pending] of this.pendingQuestions) {
       if (pending.question.sessionId === sessionId) {
-        pending.resolve("");
+        pending.resolve([]);
         this.pendingQuestions.delete(id);
       }
     }
@@ -1390,6 +1390,11 @@ export class ClaudeCodeAdapter extends EngineAdapter {
         return this.handleExitPlanMode(sessionId, input, options);
       }
 
+      // --- AskUserQuestion: route through the question UI, not permission UI ---
+      if (toolName === "AskUserQuestion") {
+        return this.handleAskUserQuestion(sessionId, input, options);
+      }
+
       return this.handleToolPermission(sessionId, toolName, input, options);
     };
   }
@@ -1539,7 +1544,8 @@ export class ClaudeCodeAdapter extends EngineAdapter {
 
     return new Promise<PermissionResult>((resolve) => {
       this.pendingQuestions.set(questionId, {
-        resolve: (answer: string) => {
+        resolve: (perQuestion: string[][]) => {
+          const answer = (perQuestion[0] ?? []).filter((s) => s && s.length > 0).join("\n");
           const trimmed = answer.trim();
           const lower = trimmed.toLowerCase();
           const approved =
@@ -1651,11 +1657,17 @@ export class ClaudeCodeAdapter extends EngineAdapter {
     return new Promise<PermissionResult>((resolve) => {
       // Store pending question with a resolver that converts to PermissionResult
       this.pendingQuestions.set(questionId, {
-        resolve: (answer: string) => {
-          // Convert answer back to updatedInput with answers field
+        resolve: (perQuestion: string[][]) => {
+          // SDK contract (AskUserQuestionOutput.answers): keyed by question text,
+          // value is the answer string (multi-select joined by ", ").
+          const answersObj: Record<string, string> = {};
+          rawQuestions.forEach((q, i) => {
+            const parts = (perQuestion[i] ?? []).filter((s) => s && s.length > 0);
+            answersObj[q.question] = parts.join(", ");
+          });
           resolve({
             behavior: "allow",
-            updatedInput: { ...input, answers: { "0": answer } },
+            updatedInput: { ...input, answers: answersObj },
           });
         },
         question,
@@ -1699,9 +1711,7 @@ export class ClaudeCodeAdapter extends EngineAdapter {
 
     this.pendingQuestions.delete(questionId);
 
-    // Combine all answers (selected options + custom text) into one string
-    const answer = (answers[0] ?? []).join("\n") || "";
-    pending.resolve(answer);
+    pending.resolve(answers);
 
     this.emit("question.replied", { questionId, answers });
   }
@@ -1711,7 +1721,7 @@ export class ClaudeCodeAdapter extends EngineAdapter {
     if (!pending) return;
 
     this.pendingQuestions.delete(questionId);
-    pending.resolve(""); // Empty answer = rejection
+    pending.resolve([]); // Empty answers = rejection
   }
 
   getPendingQuestions(sessionId?: string): UnifiedQuestion[] {
@@ -3552,7 +3562,7 @@ export class ClaudeCodeAdapter extends EngineAdapter {
 
   private rejectAllPendingQuestions(reason: string): void {
     for (const [_id, pending] of this.pendingQuestions) {
-      pending.resolve("");
+      pending.resolve([]);
     }
     this.pendingQuestions.clear();
   }

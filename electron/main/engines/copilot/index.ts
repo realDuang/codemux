@@ -8,6 +8,7 @@ import { tmpdir } from "os";
 
 import { timeId } from "../../utils/id-gen";
 import { CopilotClient, CopilotSession } from "@github/copilot-sdk";
+import { isPromptFallbackTitle } from "../../../../src/lib/session-utils";
 import type {
   SessionEvent,
   SessionConfig,
@@ -38,6 +39,7 @@ import type {
   ReasoningEffort,
   ToolPart,
   TextPart,
+  PermissionDetail,
   PermissionOption,
   EngineCommand,
   CommandInvokeResult,
@@ -73,22 +75,40 @@ interface UserInputResponse {
   wasFreeform: boolean;
 }
 
-/** Equivalent to SDK's PermissionRequest */
-interface PermissionRequest {
-  kind: string;
-  toolCallId: string;
-  [key: string]: any;
+type CopilotPermissionHandler = NonNullable<SessionConfig["onPermissionRequest"]>;
+type CopilotPermissionRequest = Parameters<CopilotPermissionHandler>[0];
+type CopilotPermissionRequestedEvent = Extract<SessionEvent, { type: "permission.requested" }>;
+type CopilotPermissionRequestedData = CopilotPermissionRequestedEvent["data"];
+type CopilotPermissionPromptRequest = NonNullable<CopilotPermissionRequestedData["promptRequest"]>;
+type CopilotPermissionSessionApproval = Extract<
+  Exclude<PermissionRequestResult, { kind: "no-result" }>,
+  { kind: "approve-for-session" }
+>["approval"];
+
+interface PermissionPromptContext {
+  requestId: string;
+  permissionRequest: CopilotPermissionRequestedData["permissionRequest"];
+  promptRequest?: CopilotPermissionPromptRequest;
 }
 
 interface PendingPermission {
   resolve: (result: PermissionRequestResult) => void;
   permission: UnifiedPermission;
+  /** Original SDK kind (e.g. "shell", "url", "read") for always-approve tracking */
+  sdkKind: string;
+  sessionApproval?: CopilotPermissionSessionApproval;
 }
 
 interface PendingQuestion {
   resolve: (response: UserInputResponse) => void;
   question: UnifiedQuestion;
 }
+
+const approvePermissionOnce = (): PermissionRequestResult => ({ kind: "approve-once" });
+const rejectPermission = (feedback?: string): PermissionRequestResult => (
+  feedback ? { kind: "reject", feedback } : { kind: "reject" }
+);
+const userNotAvailablePermission = (): PermissionRequestResult => ({ kind: "user-not-available" });
 
 type CopilotReasoningEffort = NonNullable<SessionConfig["reasoningEffort"]>;
 
@@ -107,6 +127,63 @@ function buildCopilotSubprocessEnv(extraEnv?: Record<string, string>): NodeJS.Pr
 
   return env;
 }
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
+
+function readString(source: Record<string, unknown>, key: string): string | undefined {
+  const value = source[key];
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  return trimmed || undefined;
+}
+
+function readBoolean(source: Record<string, unknown>, key: string): boolean | undefined {
+  const value = source[key];
+  return typeof value === "boolean" ? value : undefined;
+}
+
+function readStringArray(source: Record<string, unknown>, key: string): string[] {
+  const value = source[key];
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter((item): item is string => typeof item === "string")
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function readCommandIdentifiers(source: Record<string, unknown>): string[] {
+  const direct = readStringArray(source, "commandIdentifiers");
+  if (direct.length > 0) return direct;
+
+  const commands = source.commands;
+  if (!Array.isArray(commands)) return [];
+
+  return commands
+    .map((command) => asRecord(command))
+    .map((command) => command ? readString(command, "identifier") : undefined)
+    .filter((identifier): identifier is string => !!identifier);
+}
+
+function appendStringDetail(
+  details: PermissionDetail[],
+  label: string,
+  value: string | undefined,
+  mono = false,
+): void {
+  if (!value) return;
+  details.push({ label, value, ...(mono ? { mono: true } : {}) });
+}
+
+function permissionPromptKindToSdkKind(kind: string, accessKind?: string): string {
+  if (kind === "commands") return "shell";
+  if (kind === "path") return accessKind || "read";
+  return kind;
+}
+
 export class CopilotSdkAdapter extends EngineAdapter {
   readonly engineType: EngineType = "copilot";
 
@@ -124,9 +201,12 @@ export class CopilotSdkAdapter extends EngineAdapter {
   private sessionModes = new Map<string, string>();
   private sessionReasoningEfforts = new Map<string, ReasoningEffort>();
   private sessionDirectories = new Map<string, string>();
+  private sessionTitles?: Map<string, string>;
 
   private sessionTodos = new Map<string, Map<string, { id: string; title: string; status: string }>>();
-  private allowedAlwaysKinds = new Set<string>();
+  // Fallback for permission prompts that still expose an "Always Allow" option but
+  // cannot be mapped to the SDK's native approve-for-session payload.
+  private allowedAlwaysKinds = new Map<string, Set<string>>();
   private cachedCommands: EngineCommand[] = [];
   /** Custom system prompt per session (e.g. orchestration instructions for agent team) */
   private sessionSystemPrompts = new Map<string, string>();
@@ -136,6 +216,7 @@ export class CopilotSdkAdapter extends EngineAdapter {
 
   private pendingPermissions = new Map<string, PendingPermission>();
   private pendingQuestions = new Map<string, PendingQuestion>();
+  private permissionPromptContexts = new Map<string, PermissionPromptContext[]>();
 
   private idleResolvers = new Map<string, Array<(msg: UnifiedMessage) => void>>();
   // Queued user messages (deferred emit) — emitted only when the engine
@@ -314,7 +395,7 @@ export class CopilotSdkAdapter extends EngineAdapter {
       workingDirectory: directory,
       streaming: true,
       model: this.currentModelId ?? undefined,
-      onPermissionRequest: (req, ctx) => this.handlePermissionRequest(req as any, ctx),
+      onPermissionRequest: (req, ctx) => this.handlePermissionRequest(req, ctx),
       onUserInputRequest: (req, ctx) => this.handleUserInputRequest(req as any, ctx),
       systemMessage: { mode: "append" as const, content: systemContent },
     };
@@ -387,6 +468,18 @@ export class CopilotSdkAdapter extends EngineAdapter {
     this.sessionDirectories.delete(sessionId);
     this.sessionTodos.delete(sessionId);
     this.sessionSystemPrompts.delete(sessionId);
+    this.allowedAlwaysKinds.delete(sessionId);
+  }
+
+  async renameSession(sessionId: string, title: string, directory?: string): Promise<void> {
+    const trimmed = title.trim();
+    if (!trimmed) return;
+    try {
+      const session = await this.ensureActiveSession(sessionId, directory);
+      await session.rpc.name.set({ name: trimmed.slice(0, 100) });
+    } catch (err) {
+      copilotLog.warn(`[Copilot][${sessionId}] renameSession failed:`, err);
+    }
   }
 
   async sendMessage(
@@ -601,7 +694,7 @@ export class CopilotSdkAdapter extends EngineAdapter {
     }
     for (const [id, pending] of this.pendingPermissions) {
       if (pending.permission.sessionId === sessionId) {
-        pending.resolve({ kind: "denied-interactively-by-user" });
+        pending.resolve(rejectPermission());
         this.pendingPermissions.delete(id);
       }
     }
@@ -617,6 +710,8 @@ export class CopilotSdkAdapter extends EngineAdapter {
       for (const r of resolvers) r(finalMessage);
     }
     this.pendingUserMessages.delete(sessionId);
+    // pendingQueuedUserMsg lives on messageBuffers; finalizeBuffer above
+    // already cleaned it up.
   }
 
   async listMessages(sessionId: string): Promise<UnifiedMessage[]> {
@@ -644,7 +739,7 @@ export class CopilotSdkAdapter extends EngineAdapter {
       const config: ResumeSessionConfig = {
         streaming: true,
         workingDirectory: directory,
-        onPermissionRequest: () => ({ kind: "denied-interactively-by-user" as const }),
+        onPermissionRequest: userNotAvailablePermission,
       };
       session = await this.client!.resumeSession(engineSessionId, config);
       const events = await session.getMessages();
@@ -746,13 +841,17 @@ export class CopilotSdkAdapter extends EngineAdapter {
 
     const optionId = reply.optionId;
     const isApproved = optionId === "allow_once" || optionId === "allow_always";
+    let result: PermissionRequestResult = isApproved ? { kind: "approve-once" } : { kind: "reject" };
 
-    if (optionId === "allow_always" && pending.permission.rawInput) {
-      const rawKind = (pending.permission.rawInput as any).kind;
-      if (rawKind) this.allowedAlwaysKinds.add(rawKind);
+    if (optionId === "allow_always" && pending.sessionApproval) {
+      result = { kind: "approve-for-session", approval: pending.sessionApproval };
+    } else if (optionId === "allow_always") {
+      const sid = pending.permission.sessionId;
+      if (!this.allowedAlwaysKinds.has(sid)) this.allowedAlwaysKinds.set(sid, new Set());
+      this.allowedAlwaysKinds.get(sid)!.add(pending.sdkKind);
     }
 
-    pending.resolve({ kind: isApproved ? "approved" : "denied-interactively-by-user" });
+    pending.resolve(result);
     this.pendingPermissions.delete(permissionId);
     this.emit("permission.replied", { permissionId, optionId });
   }
@@ -777,6 +876,18 @@ export class CopilotSdkAdapter extends EngineAdapter {
     if (!pending) return;
     pending.resolve({ answer: "", wasFreeform: true });
     this.pendingQuestions.delete(questionId);
+  }
+
+  getPendingQuestions(sessionId?: string): UnifiedQuestion[] {
+    return CopilotSdkAdapter.filterPending(
+      this.pendingQuestions, sessionId, (p) => p.question, (p) => p.question.sessionId,
+    );
+  }
+
+  getPendingPermissions(sessionId?: string): UnifiedPermission[] {
+    return CopilotSdkAdapter.filterPending(
+      this.pendingPermissions, sessionId, (p) => p.permission, (p) => p.permission.sessionId,
+    );
   }
 
   async listProjects(): Promise<UnifiedProject[]> { return []; }
@@ -1062,6 +1173,9 @@ export class CopilotSdkAdapter extends EngineAdapter {
         case "assistant.message_delta": this.handleMessageDelta(sessionId, event.data as any); break;
         case "assistant.reasoning_delta": this.handleReasoningDelta(sessionId, event.data as any); break;
         case "assistant.message": this.handleAssistantMessage(sessionId, event.data as any); break;
+        // user.message echo signals SDK has moved on to the next prompt;
+        // commits any deferred turn transition (no-op if none pending).
+        case "user.message": this.commitTurnTransition(sessionId); break;
         case "tool.execution_start": this.handleToolStart(sessionId, event.data as any); break;
         case "tool.execution_complete": this.handleToolComplete(sessionId, event.data as any); break;
         case "tool.execution_partial_result": this.handleToolPartialResult(sessionId, event.data as any); break;
@@ -1074,6 +1188,7 @@ export class CopilotSdkAdapter extends EngineAdapter {
         case "session.mode_changed": this.handleModeChanged(sessionId, event.data as any); break;
         case "assistant.usage": this.handleUsage(sessionId, event.data as any); break;
         case "abort": this.handleAbort(sessionId, event.data as any); break;
+        case "permission.requested": this.rememberPermissionPromptContext(sessionId, event.data as CopilotPermissionRequestedData); break;
         case "subagent.started": this.handleSubagentStarted(sessionId, event.data as any); break;
         case "subagent.completed": this.handleSubagentCompleted(sessionId, event.data as any); break;
 
@@ -1128,15 +1243,18 @@ export class CopilotSdkAdapter extends EngineAdapter {
   }
 
   private handleAssistantMessage(sessionId: string, data: { content?: string }): void {
-    const buffer = this.messageBuffers.get(sessionId);
-    if (!buffer && data.content) {
-      const newBuffer = this.getOrCreateBuffer(sessionId);
-      newBuffer.textAccumulator = data.content;
-      if (!newBuffer.textPartId) newBuffer.textPartId = timeId("part");
-      const textPart: TextPart = { id: newBuffer.textPartId, messageId: newBuffer.messageId, sessionId, type: "text", text: data.content };
-      upsertPart(newBuffer.parts, textPart);
-      this.emit("message.part.updated", { sessionId, messageId: newBuffer.messageId, part: textPart });
-    }
+    if (!data.content) return;
+
+    const buffer = this.getOrCreateBuffer(sessionId);
+    // Idempotent: SDK may resend the same final content; avoid emitting noise.
+    if (buffer.textAccumulator === data.content && buffer.textPartId) return;
+
+    buffer.textAccumulator = data.content;
+    buffer.leadingTrimmed = true;
+    if (!buffer.textPartId) buffer.textPartId = timeId("part");
+    const textPart: TextPart = { id: buffer.textPartId, messageId: buffer.messageId, sessionId, type: "text", text: data.content };
+    upsertPart(buffer.parts, textPart);
+    this.emit("message.part.updated", { sessionId, messageId: buffer.messageId, part: textPart });
   }
 
   private handleToolStart(sessionId: string, data: { toolCallId: string; toolName: string; arguments?: any }): void {
@@ -1179,6 +1297,9 @@ export class CopilotSdkAdapter extends EngineAdapter {
         input: normalizedTool === "todo" ? normalizeTodoInput(data.arguments) : (data.arguments || {}),
         time: { start: Date.now() },
       },
+      // ask_user is surfaced via the Question Dock (InputAreaQuestion); hide the
+      // redundant tool card in the message stream.
+      suppressInStream: data.toolName === "ask_user",
     };
     this.toolCallParts.set(data.toolCallId, toolPart);
     buffer.parts.push(toolPart);
@@ -1216,7 +1337,23 @@ export class CopilotSdkAdapter extends EngineAdapter {
     if (toolPart) this.emit("message.part.updated", { sessionId, messageId: toolPart.messageId, part: toolPart });
   }
 
+  /**
+   * Whether a deferred turn transition is pending for this session — i.e. the
+   * SDK has emitted turn_end for the previous turn (with queued messages),
+   * but we haven't yet seen the user.message echo (or session.idle fallback)
+   * that actually commits the transition. While pending, intermediate
+   * step-start/step-finish boundaries are suppressed because all SDK turns
+   * up to the commit belong to the same logical assistant message.
+   */
+  private hasPendingTransition(sessionId: string): boolean {
+    return this.messageBuffers.get(sessionId)?.pendingQueuedUserMsg != null;
+  }
+
   private handleTurnStart(sessionId: string, _data: any): void {
+    if (this.hasPendingTransition(sessionId)) {
+      return;
+    }
+
     const buffer = this.getOrCreateBuffer(sessionId);
     const stepStartPart: any = { id: timeId("part"), messageId: buffer.messageId, sessionId, type: "step-start" };
     buffer.parts.push(stepStartPart);
@@ -1224,43 +1361,133 @@ export class CopilotSdkAdapter extends EngineAdapter {
   }
 
   private handleTurnEnd(sessionId: string, _data: any): void {
+    if (this.hasPendingTransition(sessionId)) {
+      const buffer = this.getOrCreateBuffer(sessionId);
+      this.flushTextAccumulator(buffer, sessionId);
+      return;
+    }
+
     const buffer = this.getOrCreateBuffer(sessionId);
     this.flushTextAccumulator(buffer, sessionId);
     const stepFinishPart: any = { id: timeId("part"), messageId: buffer.messageId, sessionId, type: "step-finish" };
     buffer.parts.push(stepFinishPart);
     this.emit("message.part.updated", { sessionId, messageId: buffer.messageId, part: stepFinishPart });
+
+    const pendingUsers = this.pendingUserMessages.get(sessionId);
+    if (pendingUsers && pendingUsers.length > 0) {
+      const userMsg = pendingUsers.shift()!;
+      if (pendingUsers.length === 0) {
+        this.pendingUserMessages.delete(sessionId);
+      }
+      // Embed on the buffer so it's automatically cleaned up on finalization.
+      buffer.pendingQueuedUserMsg = userMsg;
+    }
+  }
+
+  /**
+   * Commit a deferred turn transition: finalize the previous buffer (including
+   * any late text/tool content), resolve the idle resolver, emit the queued
+   * user message, and create a fresh buffer for the new turn.
+   */
+  private commitTurnTransition(sessionId: string): void {
+    const buffer = this.messageBuffers.get(sessionId);
+    const queuedUserMsg = buffer?.pendingQueuedUserMsg;
+    if (!queuedUserMsg) return;
+
+    // finalizeBuffer deletes the buffer (including pendingQueuedUserMsg) — we've
+    // already captured the queued msg in the local variable above.
+    const previousTurn = this.finalizeBuffer(sessionId);
+
+    if (previousTurn) {
+      const resolvers = this.idleResolvers.get(sessionId);
+      if (resolvers && resolvers.length > 0) {
+        const first = resolvers.shift()!;
+        first(previousTurn);
+        if (resolvers.length === 0) {
+          this.idleResolvers.delete(sessionId);
+        }
+      }
+    }
+
+    // processedAt is captured here, NOT at handleTurnEnd time. The SDK keeps
+    // emitting late Turn-1 events after turn_end, and only signals the actual
+    // start of the next prompt by echoing user.message (which triggers commit).
+    const enriched = {
+      ...queuedUserMsg,
+      enqueuedAt: queuedUserMsg.time.created,
+      processedAt: Date.now(),
+    };
+    // Persist the enriched user message so reloads preserve enqueuedAt/processedAt
+    // (the original userMsg pushed to history at enqueue time lacks these fields).
+    this.appendMessageToHistory(sessionId, enriched);
+    this.emit("message.queued.consumed", { sessionId, messageId: enriched.id });
+    this.emit("message.updated", { sessionId, message: enriched });
+
+    const newBuffer = this.getOrCreateBuffer(sessionId);
+    const stepStartPart: any = { id: timeId("part"), messageId: newBuffer.messageId, sessionId, type: "step-start" };
+    newBuffer.parts.push(stepStartPart);
+    this.emit("message.part.updated", { sessionId, messageId: newBuffer.messageId, part: stepStartPart });
   }
 
   private handleSessionIdle(sessionId: string): void {
+    this.commitTurnTransition(sessionId);
+
     const finalMessage = this.finalizeBuffer(sessionId);
     if (finalMessage) {
       const resolvers = this.idleResolvers.get(sessionId);
       if (resolvers && resolvers.length > 0) {
-        // Copilot CLI processes all enqueued messages in a single turn —
-        // session.idle fires only ONCE after all are done. Resolve ALL resolvers
-        // with the final message (the combined response).
         this.idleResolvers.delete(sessionId);
         for (const r of resolvers) r(finalMessage);
 
-        // Clear all deferred user messages and emit queued.consumed for each
-        // remaining queued item so the frontend clears its queue preview.
-        // Also emit message.updated for each deferred user message so the frontend
-        // creates the user bubble (the enqueue path doesn't create an optimistic
-        // temp message — it stores the text in a preview queue instead).
         const pendingUsers = this.pendingUserMessages.get(sessionId);
         if (pendingUsers && pendingUsers.length > 0) {
+          const now = Date.now();
           for (const userMsg of pendingUsers) {
-            this.emit("message.queued.consumed", { sessionId, messageId: userMsg.id });
-            this.emit("message.updated", { sessionId, message: userMsg });
+            // Fallback path: SDK never echoed user.message for these queued msgs,
+            // so we don't have an exact processing-start time. Best-effort: stamp
+            // enqueuedAt from creation time so the frontend at least preserves
+            // the queue context across reloads.
+            const created = userMsg.time?.created ?? now;
+            const enriched = { ...userMsg, enqueuedAt: created, processedAt: now };
+            this.appendMessageToHistory(sessionId, enriched);
+            this.emit("message.queued.consumed", { sessionId, messageId: enriched.id });
+            this.emit("message.updated", { sessionId, message: enriched });
           }
         }
         this.pendingUserMessages.delete(sessionId);
       }
     }
+
+    void this.refreshSessionTitle(sessionId);
+  }
+
+  private getFirstUserPrompt(sessionId: string): string | undefined {
+    const firstUser = this.messageHistory.get(sessionId)?.find((message) => message.role === "user");
+    const textPart = firstUser?.parts.find((part): part is TextPart => part.type === "text");
+    return textPart?.text;
+  }
+
+  private async refreshSessionTitle(sessionId: string): Promise<void> {
+    if (!this.client) return;
+    try {
+      const meta = await this.client.getSessionMetadata(sessionId);
+      const title = meta?.summary?.trim();
+      if (!title || isPromptFallbackTitle(title, this.getFirstUserPrompt(sessionId))) return;
+      const cached = this.sessionTitles?.get(sessionId);
+      if (cached === title) return;
+      if (!this.sessionTitles) this.sessionTitles = new Map();
+      this.sessionTitles.set(sessionId, title);
+      this.emit("session.updated", {
+        session: { id: sessionId, engineType: this.engineType, title },
+      });
+    } catch (err) {
+      copilotLog.debug(`[Copilot][${sessionId}] refreshSessionTitle failed:`, err);
+    }
   }
 
   private handleTitleChanged(sessionId: string, data: { title?: string }): void {
-    if (data.title) this.emit("session.updated", { session: { id: sessionId, engineType: this.engineType, title: data.title } });
+    const title = data.title?.trim();
+    if (title) this.emit("session.updated", { session: { id: sessionId, engineType: this.engineType, title } });
   }
 
   private handleSessionError(sessionId: string, data: { message?: string }): void {
@@ -1274,6 +1501,7 @@ export class CopilotSdkAdapter extends EngineAdapter {
       }
     }
     this.pendingUserMessages.delete(sessionId);
+    // pendingQueuedUserMsg lives on messageBuffers; finalizeBuffer cleaned it.
   }
 
   private handleModelChange(sessionId: string, data: { newModel?: string }): void { if (data.newModel) this.currentModelId = data.newModel; }
@@ -1296,10 +1524,38 @@ export class CopilotSdkAdapter extends EngineAdapter {
   }
 
   private handleAbort(sessionId: string, _data: any): void {
+    // If a turn transition was pending, surface the queued user message so the
+    // frontend doesn't silently drop it. Then finalize whatever was buffered.
+    const buffer = this.messageBuffers.get(sessionId);
+    const queuedUserMsg = buffer?.pendingQueuedUserMsg;
+    if (queuedUserMsg) {
+      const enriched = {
+        ...queuedUserMsg,
+        enqueuedAt: queuedUserMsg.time.created,
+        processedAt: Date.now(),
+      };
+      this.appendMessageToHistory(sessionId, enriched);
+      this.emit("message.queued.consumed", { sessionId, messageId: enriched.id });
+      this.emit("message.updated", { sessionId, message: enriched });
+    }
+
     const finalMessage = this.finalizeBuffer(sessionId);
     if (finalMessage) {
       const resolver = this.idleResolvers.get(sessionId);
       if (resolver) { this.idleResolvers.delete(sessionId); for (const r of resolver) r(finalMessage); }
+    }
+
+    // Surface any other still-queued user messages so the UI can clear them.
+    const remainingUsers = this.pendingUserMessages.get(sessionId);
+    if (remainingUsers && remainingUsers.length > 0) {
+      const now = Date.now();
+      for (const userMsg of remainingUsers) {
+        const created = userMsg.time?.created ?? now;
+        const enriched = { ...userMsg, enqueuedAt: created, processedAt: now };
+        this.appendMessageToHistory(sessionId, enriched);
+        this.emit("message.queued.consumed", { sessionId, messageId: enriched.id });
+        this.emit("message.updated", { sessionId, message: enriched });
+      }
     }
     this.pendingUserMessages.delete(sessionId);
   }
@@ -1329,24 +1585,226 @@ export class CopilotSdkAdapter extends EngineAdapter {
     this.toolCallParts.delete(data.toolCallId);
   }
 
-  private handlePermissionRequest(req: PermissionRequest, ctx: { sessionId: string }): Promise<PermissionRequestResult> {
-    const sessionId = ctx.sessionId;
-    if ((this.sessionModes.get(sessionId) || "autopilot") === "autopilot") return Promise.resolve({ kind: "approved" });
-    if (this.allowedAlwaysKinds.has(req.kind)) return Promise.resolve({ kind: "approved" });
+  private getPermissionPromptContextKey(
+    sessionId: string,
+    request: { kind: string; toolCallId?: string },
+  ): string {
+    return `${sessionId}:${request.toolCallId || request.kind}`;
+  }
 
-    const permissionId = timeId("perm");
-    const kind: any = req.kind === "read" ? "read" : req.kind === "write" || req.kind === "shell" ? "edit" : "other";
+  private rememberPermissionPromptContext(
+    sessionId: string,
+    data: CopilotPermissionRequestedData,
+  ): void {
+    if (data.resolvedByHook) return;
+
+    const context: PermissionPromptContext = {
+      requestId: data.requestId,
+      permissionRequest: data.permissionRequest,
+      promptRequest: data.promptRequest,
+    };
+    const key = this.getPermissionPromptContextKey(sessionId, data.permissionRequest);
+    const contexts = this.permissionPromptContexts.get(key) ?? [];
+    contexts.push(context);
+    this.permissionPromptContexts.set(key, contexts);
+  }
+
+  private consumePermissionPromptContext(
+    sessionId: string,
+    request: CopilotPermissionRequest,
+  ): PermissionPromptContext | undefined {
+    const key = this.getPermissionPromptContextKey(sessionId, request);
+    const contexts = this.permissionPromptContexts.get(key);
+    if (!contexts || contexts.length === 0) return undefined;
+
+    const context = contexts.shift();
+    if (contexts.length === 0) {
+      this.permissionPromptContexts.delete(key);
+    }
+    return context;
+  }
+
+  private createPermissionOptions(canOfferSessionApproval: boolean): PermissionOption[] {
     const options: PermissionOption[] = [
       { id: "allow_once", label: "Allow Once", type: "allow_once" },
-      { id: "allow_always", label: "Always Allow", type: "allow_always" },
-      { id: "reject_once", label: "Deny", type: "reject_once" },
     ];
+    if (canOfferSessionApproval) {
+      options.push({ id: "allow_always", label: "Always Allow", type: "allow_always" });
+    }
+    options.push({ id: "reject_once", label: "Deny", type: "reject_once" });
+    return options;
+  }
 
-    const permission: UnifiedPermission = { id: permissionId, sessionId, engineType: this.engineType, toolCallId: req.toolCallId, title: req.title || `${req.kind} permission requested`, kind, diff: req.diff, rawInput: { ...req }, options };
+  private buildSessionApproval(
+    source: Record<string, unknown>,
+    sourceKind: string,
+    effectiveKind: string,
+  ): CopilotPermissionSessionApproval | undefined {
+    if (sourceKind === "commands" || effectiveKind === "shell") {
+      const commandIdentifiers = readCommandIdentifiers(source);
+      return commandIdentifiers.length > 0
+        ? { kind: "commands", commandIdentifiers }
+        : undefined;
+    }
+    if (effectiveKind === "write") return { kind: "write" };
+    if (effectiveKind === "read") return { kind: "read" };
+    if (effectiveKind === "memory") return { kind: "memory" };
+    if (effectiveKind === "mcp") {
+      const serverName = readString(source, "serverName");
+      if (!serverName) return undefined;
+      return { kind: "mcp", serverName, toolName: readString(source, "toolName") ?? null };
+    }
+    if (effectiveKind === "custom-tool") {
+      const toolName = readString(source, "toolName");
+      return toolName ? { kind: "custom-tool", toolName } : undefined;
+    }
+    return undefined;
+  }
+
+  private buildPermissionDetails(
+    source: Record<string, unknown>,
+    sourceKind: string,
+  ): PermissionDetail[] {
+    const details: PermissionDetail[] = [];
+    switch (sourceKind) {
+      case "commands":
+      case "shell": {
+        appendStringDetail(details, "Command", readString(source, "fullCommandText") ?? readString(source, "command"), true);
+        appendStringDetail(details, "Warning", readString(source, "warning"));
+        const commandIdentifiers = readCommandIdentifiers(source);
+        appendStringDetail(details, "Commands", commandIdentifiers.length > 0 ? commandIdentifiers.join(", ") : undefined, true);
+        break;
+      }
+      case "write": {
+        appendStringDetail(details, "File", readString(source, "fileName"), true);
+        break;
+      }
+      case "read": {
+        appendStringDetail(details, "Path", readString(source, "path"), true);
+        break;
+      }
+      case "url": {
+        appendStringDetail(details, "URL", readString(source, "url"), true);
+        break;
+      }
+      case "mcp": {
+        appendStringDetail(details, "Tool", readString(source, "toolTitle") ?? readString(source, "toolName"));
+        appendStringDetail(details, "Server", readString(source, "serverName"));
+        break;
+      }
+      case "path": {
+        appendStringDetail(details, "Access", readString(source, "accessKind"));
+        const paths = readStringArray(source, "paths");
+        appendStringDetail(details, "Paths", paths.length > 0 ? paths.join(", ") : undefined, true);
+        break;
+      }
+      case "memory": {
+        appendStringDetail(details, "Action", readString(source, "action"));
+        appendStringDetail(details, "Subject", readString(source, "subject"));
+        appendStringDetail(details, "Fact", readString(source, "fact"));
+        appendStringDetail(details, "Direction", readString(source, "direction"));
+        appendStringDetail(details, "Reason", readString(source, "reason"));
+        appendStringDetail(details, "Citations", readString(source, "citations"));
+        break;
+      }
+      case "custom-tool": {
+        appendStringDetail(details, "Tool", readString(source, "toolName"));
+        appendStringDetail(details, "Description", readString(source, "toolDescription"));
+        break;
+      }
+      case "hook": {
+        appendStringDetail(details, "Tool", readString(source, "toolName"));
+        appendStringDetail(details, "Message", readString(source, "hookMessage"));
+        break;
+      }
+    }
+    return details;
+  }
+
+  private getPermissionToolName(
+    source: Record<string, unknown>,
+    sourceKind: string,
+    effectiveKind: string,
+  ): string | undefined {
+    if (sourceKind === "commands" || effectiveKind === "shell") return "shell";
+    if (effectiveKind === "url") return "web_fetch";
+    if (effectiveKind === "read") return "read";
+    if (effectiveKind === "write") return "edit";
+    if (effectiveKind === "mcp") return "mcp";
+    if (effectiveKind === "memory") return "memory";
+    if (effectiveKind === "custom-tool" || effectiveKind === "hook") {
+      return readString(source, "toolName") ?? effectiveKind;
+    }
+    return undefined;
+  }
+
+  private getPermissionTitle(
+    source: Record<string, unknown>,
+    sourceKind: string,
+    effectiveKind: string,
+  ): string {
+    const intention = readString(source, "intention");
+    if (intention) return intention;
+    if (sourceKind === "path") return "Path access permission requested";
+    if (sourceKind === "commands" || effectiveKind === "shell") return "Shell command permission requested";
+    return `${effectiveKind} permission requested`;
+  }
+
+  private buildUnifiedPermissionFromCopilotRequest(
+    permissionId: string,
+    sessionId: string,
+    req: CopilotPermissionRequest,
+    context?: PermissionPromptContext,
+  ): { permission: UnifiedPermission; sessionApproval?: CopilotPermissionSessionApproval } {
+    const sourceValue = context?.promptRequest ?? context?.permissionRequest ?? req;
+    const source = asRecord(sourceValue) ?? {};
+    const sourceKind = readString(source, "kind") ?? req.kind;
+    const effectiveKind = permissionPromptKindToSdkKind(sourceKind, readString(source, "accessKind"));
+    const kind: UnifiedPermission["kind"] =
+      effectiveKind === "read" ? "read" : effectiveKind === "write" || effectiveKind === "shell" ? "edit" : "other";
+    const canOfferSessionApproval =
+      readBoolean(source, "canOfferSessionApproval") ?? (effectiveKind === "shell" || effectiveKind === "write");
+    const sessionApproval = canOfferSessionApproval
+      ? this.buildSessionApproval(source, sourceKind, effectiveKind)
+      : undefined;
+
+    return {
+      permission: {
+        id: permissionId,
+        sessionId,
+        engineType: this.engineType,
+        toolCallId: readString(source, "toolCallId") ?? req.toolCallId,
+        toolName: this.getPermissionToolName(source, sourceKind, effectiveKind),
+        title: this.getPermissionTitle(source, sourceKind, effectiveKind),
+        kind,
+        diff: readString(source, "diff"),
+        details: this.buildPermissionDetails(source, sourceKind),
+        options: this.createPermissionOptions(canOfferSessionApproval && !!sessionApproval),
+        rawInput: req,
+      },
+      sessionApproval,
+    };
+  }
+
+  private handlePermissionRequest(req: CopilotPermissionRequest, ctx: { sessionId: string }): Promise<PermissionRequestResult> {
+    const sessionId = ctx.sessionId;
+    if ((this.sessionModes.get(sessionId) || "autopilot") === "autopilot") return Promise.resolve(approvePermissionOnce());
+    if (this.allowedAlwaysKinds.get(sessionId)?.has(req.kind)) return Promise.resolve(approvePermissionOnce());
+
+    const permissionId = timeId("perm");
 
     return new Promise<PermissionRequestResult>((resolve) => {
-      this.pendingPermissions.set(permissionId, { resolve, permission });
-      this.emit("permission.asked", { permission });
+      queueMicrotask(() => {
+        const promptContext = this.consumePermissionPromptContext(sessionId, req);
+        const { permission, sessionApproval } = this.buildUnifiedPermissionFromCopilotRequest(
+          permissionId,
+          sessionId,
+          req,
+          promptContext,
+        );
+        this.pendingPermissions.set(permissionId, { resolve, permission, sdkKind: req.kind, sessionApproval });
+        this.emit("permission.asked", { permission });
+      });
     });
   }
 
@@ -1433,7 +1891,7 @@ export class CopilotSdkAdapter extends EngineAdapter {
   }
 
   private rejectAllPendingPermissions(_reason: string): void {
-    for (const [_id, pending] of this.pendingPermissions) pending.resolve({ kind: "denied-no-approval-rule-and-could-not-request-from-user" });
+    for (const [_id, pending] of this.pendingPermissions) pending.resolve(userNotAvailablePermission());
     this.pendingPermissions.clear();
   }
 

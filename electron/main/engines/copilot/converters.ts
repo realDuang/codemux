@@ -209,6 +209,7 @@ export function convertEventsToMessages(
             input: (tData.arguments ?? {}) as any,
             time: { start: currentEventTs },
           },
+          suppressInStream: tData.toolName === "ask_user",
         };
 
         replayToolParts.set(tData.toolCallId, toolPart);

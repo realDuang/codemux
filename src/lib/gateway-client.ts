@@ -27,6 +27,7 @@ import {
   type QuestionReplyRequest,
   type ProjectSetEngineRequest,
   type ModelSetRequest,
+  type SessionConfigUpdateRequest,
   type ModeSetRequest,
   type ImportableSession,
   type SessionImportPreviewRequest,
@@ -129,6 +130,11 @@ export class GatewayClient {
   private static readonly BATCHED_EVENTS = new Set([
     "message.part.updated",
     "message.updated",
+    // Keep in sync with the message.updated batch so wire order is preserved.
+    // Otherwise consumed fires immediately and clears the queued preview before
+    // the preceding `message.updated` (Turn N completed) is handled, which then
+    // sees an empty queue and incorrectly clears the `sending` state.
+    "message.queued.consumed",
   ]);
 
   get connected(): boolean {
@@ -169,13 +175,13 @@ export class GatewayClient {
     } else if (!this.wsUrl) {
       if (isElectron()) {
         // In Electron: get full WS URL from main process via IPC
-        // Dev mode: ws://127.0.0.1:4200
-        // Packaged mode: ws://127.0.0.1:${WEB_PORT}/ws (attached to production server)
+        // Dev mode uses the configured standalone Gateway port.
+        // Packaged mode attaches Gateway to the production server at /ws.
         this.wsUrl = await gatewayAPI.getWsUrl();
       } else {
         // In remote browser: derive WS URL from current page location
         // Production (Cloudflare Tunnel): wss://tunnel-host/ws
-        // Dev fallback: ws://localhost:4200
+        // Dev fallback uses the current Vite host.
         const loc = window.location;
         const wsProtocol = loc.protocol === "https:" ? "wss:" : "ws:";
         this.wsUrl = `${wsProtocol}//${loc.host}/ws`;
@@ -466,6 +472,10 @@ export class GatewayClient {
 
   setModel(req: ModelSetRequest): Promise<void> {
     return this.request(GatewayRequestType.MODEL_SET, req);
+  }
+
+  updateSessionConfig(req: SessionConfigUpdateRequest): Promise<void> {
+    return this.request(GatewayRequestType.SESSION_CONFIG_UPDATE, req);
   }
 
   // --- Mode API ---

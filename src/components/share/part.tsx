@@ -91,6 +91,16 @@ export function Part(props: PartProps) {
     return <SystemNotice part={props.part as SystemNoticePart} />;
   }
 
+  // Tool parts can opt out of stream rendering (e.g. when they have a dedicated
+  // UI surface like Copilot's `ask_user` → Question Dock). The adapter layer
+  // owns this decision; the renderer stays engine-agnostic.
+  if (
+    props.part.type === "tool" &&
+    (props.part as ToolPart).suppressInStream
+  ) {
+    return null;
+  }
+
   return (
     <div
       class={styles.root}

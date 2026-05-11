@@ -21,6 +21,7 @@ export interface TunnelInfo {
   status: "starting" | "running" | "stopped" | "error";
   startTime?: number;
   error?: string;
+  errorCode?: string;
 }
 
 export interface TunnelConfig {
@@ -243,9 +244,9 @@ export const devicesAPI = {
 
 // Tunnel API
 export const tunnelAPI = {
-  async start(port: number = WEB_STANDALONE_PORT): Promise<TunnelInfo | null> {
+  async start(port: number = WEB_STANDALONE_PORT, tunnelConfig?: TunnelConfig): Promise<TunnelInfo | null> {
     const api = getElectronAPI();
-    return api ? api.tunnel.start(port) : null;
+    return api ? api.tunnel.start(port, tunnelConfig) : null;
   },
 
   async stop(): Promise<void> {
@@ -455,6 +456,41 @@ export const autostartAPI = {
   async setEnabled(enabled: boolean): Promise<void> {
     const api = getAutostartAPI();
     if (api) await api.setEnabled(enabled);
+  },
+};
+
+// WeChat iLink QR auth API (Electron only — uses main-process HTTP client)
+export interface IlinkQrCode {
+  qrcode: string;
+  qrcodeImgContent: string;
+  baseUrl: string;
+}
+
+export interface IlinkQrStatus {
+  status: "wait" | "scanned" | "confirmed" | "expired";
+  botToken?: string;
+  accountId?: string;
+  baseUrl?: string;
+  userId?: string;
+}
+
+function getWeixinIlinkAPI(): any {
+  const api = getElectronAPI();
+  return (api as any)?.weixinIlink ?? null;
+}
+
+export const weixinIlinkAPI = {
+  async getQrCode(baseUrl?: string): Promise<IlinkQrCode | null> {
+    const api = getWeixinIlinkAPI();
+    return api ? api.getQrCode(baseUrl) : null;
+  },
+  async pollQrCodeStatus(qrcode: string, baseUrl?: string): Promise<IlinkQrStatus | null> {
+    const api = getWeixinIlinkAPI();
+    return api ? api.pollQrCodeStatus(qrcode, baseUrl) : null;
+  },
+  async logout(): Promise<{ success: boolean } | null> {
+    const api = getWeixinIlinkAPI();
+    return api ? api.logout() : null;
   },
 };
 

@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { sep } from "node:path";
 import type { MessageBuffer } from "../../../../../electron/main/engines/engine-adapter";
 
 // ---------------------------------------------------------------------------
@@ -239,6 +240,36 @@ describe("ClaudeCodeAdapter", () => {
     });
   });
 
+  describe("Claude executable options", () => {
+    it("adds the resolved native executable path to SDK options", () => {
+      vi.spyOn(adapter as any, "resolveClaudeExecutablePath").mockReturnValue("/native/claude");
+
+      const options = (adapter as any).withClaudeExecutablePath({ model: "claude-sonnet" });
+
+      expect(options).toEqual({
+        model: "claude-sonnet",
+        pathToClaudeCodeExecutable: "/native/claude",
+      });
+    });
+
+    it("omits the executable path when the native package is unavailable", () => {
+      vi.spyOn(adapter as any, "resolveClaudeExecutablePath").mockReturnValue(undefined);
+
+      const options = (adapter as any).withClaudeExecutablePath({ model: "claude-sonnet" });
+
+      expect(options).toEqual({ model: "claude-sonnet" });
+      expect(JSON.stringify(options)).not.toContain("cli.js");
+    });
+
+    it("rewrites ASAR executable paths to the unpacked location", () => {
+      const input = ["", "App", "resources", "app.asar", "node_modules", "pkg", "claude"].join(sep);
+
+      expect((adapter as any).toUnpackedAsarPath(input)).toBe(
+        ["", "App", "resources", "app.asar.unpacked", "node_modules", "pkg", "claude"].join(sep),
+      );
+    });
+  });
+
   describe("hasSession()", () => {
     it("returns true when session is in v2Sessions", () => {
       const mock = makeMockV2Session();
@@ -296,7 +327,7 @@ describe("ClaudeCodeAdapter", () => {
       expect((adapter as any).pendingPermissions.has("perm-1")).toBe(false);
     });
 
-    it("resolves pending questions with empty string", async () => {
+    it("resolves pending questions with empty array", async () => {
       seedSession(adapter, "cs_1");
       const resolve = vi.fn();
       (adapter as any).pendingQuestions.set("q-1", {
@@ -305,7 +336,7 @@ describe("ClaudeCodeAdapter", () => {
       });
 
       await adapter.deleteSession("cs_1");
-      expect(resolve).toHaveBeenCalledWith("Session deleted");
+      expect(resolve).toHaveBeenCalledWith([]);
       expect((adapter as any).pendingQuestions.has("q-1")).toBe(false);
     });
 
@@ -373,8 +404,33 @@ describe("ClaudeCodeAdapter", () => {
     it("calls setPermissionMode on live V2 session query", async () => {
       const mock = makeMockV2Session();
       seedV2Session(adapter, "cs_1", mock);
-      await adapter.setMode("cs_1", "acceptEdits");
-      expect(mock.query.setPermissionMode).toHaveBeenCalledWith("acceptEdits");
+      await adapter.setMode("cs_1", "plan");
+      expect(mock.query.setPermissionMode).toHaveBeenCalledWith("plan");
+    });
+
+    it("passes bypassPermissions through when the live V2 session allows skipping permissions", async () => {
+      const mock = makeMockV2Session();
+      seedV2Session(adapter, "cs_1", mock);
+      (adapter as any).v2Sessions.get("cs_1").allowDangerouslySkipPermissions = true;
+
+      await adapter.setMode("cs_1", "bypassPermissions");
+
+      expect(mock.query.setPermissionMode).toHaveBeenCalledWith("bypassPermissions");
+      expect((adapter as any).v2Sessions.get("cs_1").permissionMode).toBe("bypassPermissions");
+    });
+
+    it("recreates the V2 session when entering bypassPermissions without skip allowance", async () => {
+      const mock = makeMockV2Session();
+      seedV2Session(adapter, "cs_1", mock);
+      (adapter as any).v2Sessions.get("cs_1").capturedSessionId = "cc-prev";
+
+      await adapter.setMode("cs_1", "bypassPermissions");
+
+      expect(mock.query.setPermissionMode).not.toHaveBeenCalled();
+      expect(mock.close).toHaveBeenCalledTimes(1);
+      expect((adapter as any).v2Sessions.has("cs_1")).toBe(false);
+      expect((adapter as any).sessionCcIds.get("cs_1")).toBe("cc-prev");
+      expect((adapter as any).sessionModes.get("cs_1")).toBe("bypassPermissions");
     });
 
     it("updates permissionMode on existing V2SessionInfo", async () => {
@@ -1378,10 +1434,10 @@ describe("ClaudeCodeAdapter", () => {
       return resolve;
     }
 
-    it("resolves question with joined first answer array", async () => {
+    it("forwards the full per-question answers array to the resolver", async () => {
       const resolve = seedPendingQuestion(adapter, "q-1");
       await adapter.replyQuestion("q-1", [["Approve", "extra note"]]);
-      expect(resolve).toHaveBeenCalledWith("Approve\nextra note");
+      expect(resolve).toHaveBeenCalledWith([["Approve", "extra note"]]);
     });
 
     it("removes question from pending map after reply", async () => {
@@ -1404,14 +1460,14 @@ describe("ClaudeCodeAdapter", () => {
   });
 
   describe("rejectQuestion()", () => {
-    it("resolves question with empty string", async () => {
+    it("resolves question with empty array", async () => {
       const resolve = vi.fn();
       (adapter as any).pendingQuestions.set("q-1", {
         resolve,
         question: { id: "q-1", sessionId: "cs_1" },
       });
       await adapter.rejectQuestion("q-1");
-      expect(resolve).toHaveBeenCalledWith("");
+      expect(resolve).toHaveBeenCalledWith([]);
       expect((adapter as any).pendingQuestions.has("q-1")).toBe(false);
     });
 
@@ -1437,7 +1493,7 @@ describe("ClaudeCodeAdapter", () => {
 
       // Get the question ID and reply
       const qId = [...(adapter as any).pendingQuestions.keys()][0];
-      (adapter as any).pendingQuestions.get(qId)!.resolve("approve");
+      (adapter as any).pendingQuestions.get(qId)!.resolve([["approve"]]);
 
       const result = await p;
       expect(result.behavior).toBe("allow");
@@ -1449,7 +1505,7 @@ describe("ClaudeCodeAdapter", () => {
       const p = (adapter as any).handleExitPlanMode("cs_1", {}, opts) as Promise<any>;
 
       const qId = [...(adapter as any).pendingQuestions.keys()][0];
-      (adapter as any).pendingQuestions.get(qId)!.resolve("同意");
+      (adapter as any).pendingQuestions.get(qId)!.resolve([["同意"]]);
 
       const result = await p;
       expect(result.behavior).toBe("allow");
@@ -1461,7 +1517,7 @@ describe("ClaudeCodeAdapter", () => {
       const p = (adapter as any).handleExitPlanMode("cs_1", {}, opts) as Promise<any>;
 
       const qId = [...(adapter as any).pendingQuestions.keys()][0];
-      (adapter as any).pendingQuestions.get(qId)!.resolve("1");
+      (adapter as any).pendingQuestions.get(qId)!.resolve([["1"]]);
 
       const result = await p;
       expect(result.behavior).toBe("allow");
@@ -1473,7 +1529,7 @@ describe("ClaudeCodeAdapter", () => {
       const p = (adapter as any).handleExitPlanMode("cs_1", {}, opts) as Promise<any>;
 
       const qId = [...(adapter as any).pendingQuestions.keys()][0];
-      (adapter as any).pendingQuestions.get(qId)!.resolve("0");
+      (adapter as any).pendingQuestions.get(qId)!.resolve([["0"]]);
 
       const result = await p;
       expect(result.behavior).toBe("allow");
@@ -1485,7 +1541,7 @@ describe("ClaudeCodeAdapter", () => {
       const p = (adapter as any).handleExitPlanMode("cs_1", {}, opts) as Promise<any>;
 
       const qId = [...(adapter as any).pendingQuestions.keys()][0];
-      (adapter as any).pendingQuestions.get(qId)!.resolve("reject, needs more work");
+      (adapter as any).pendingQuestions.get(qId)!.resolve([["reject, needs more work"]]);
 
       const result = await p;
       expect(result.behavior).toBe("deny");
@@ -1501,7 +1557,7 @@ describe("ClaudeCodeAdapter", () => {
       const p = (adapter as any).handleExitPlanMode("cs_1", {}, opts) as Promise<any>;
 
       const qId = [...(adapter as any).pendingQuestions.keys()][0];
-      (adapter as any).pendingQuestions.get(qId)!.resolve("approve");
+      (adapter as any).pendingQuestions.get(qId)!.resolve([["approve"]]);
       await p;
 
       expect(asked).toHaveLength(1);
@@ -1849,12 +1905,11 @@ describe("ClaudeCodeAdapter", () => {
   // =========================================================================
 
   describe("getModes()", () => {
-    it("returns the three default modes", () => {
+    it("returns Claude modes that mirror Copilot autopilot without exposing Copilot-only modes", () => {
       const modes = adapter.getModes();
       const ids = modes.map((m) => m.id);
-      expect(ids).toContain("default");
-      expect(ids).toContain("plan");
-      expect(ids).toContain("acceptEdits");
+      expect(ids).toEqual(["bypassPermissions", "default", "plan"]);
+      expect(ids).not.toContain("autopilot");
     });
   });
 
@@ -2822,6 +2877,32 @@ describe("ClaudeCodeAdapter", () => {
       expect((adapter as any).v2Sessions.get("cs_1").permissionMode).toBe("plan");
     });
 
+    it("recreates an existing session before switching to bypassPermissions without skip allowance", async () => {
+      const oldSession = makeMockV2Session();
+      const newSession = makeMockV2Session();
+      seedV2Session(adapter, "cs_1", oldSession);
+      (adapter as any).v2Sessions.get("cs_1").permissionMode = "default";
+      (adapter as any).v2Sessions.get("cs_1").capturedSessionId = "cc-prev";
+      unstable_v2_resumeSessionMock.mockReturnValue(newSession);
+
+      const session = await (adapter as any).getOrCreateV2Session("cs_1", "/repo", {
+        permissionMode: "bypassPermissions",
+      });
+
+      expect(session).toBe(newSession);
+      expect(oldSession.query.setPermissionMode).not.toHaveBeenCalled();
+      expect(oldSession.close).toHaveBeenCalledTimes(1);
+      expect(unstable_v2_resumeSessionMock).toHaveBeenCalledWith(
+        "cc-prev",
+        expect.objectContaining({
+          permissionMode: "bypassPermissions",
+          allowDangerouslySkipPermissions: true,
+        }),
+      );
+      expect((adapter as any).v2Sessions.get("cs_1").permissionMode).toBe("bypassPermissions");
+      expect((adapter as any).v2Sessions.get("cs_1").allowDangerouslySkipPermissions).toBe(true);
+    });
+
     it("handles setPermissionMode failure gracefully", async () => {
       const mockSession = makeMockV2Session();
       mockSession.query.setPermissionMode.mockRejectedValue(new Error("setPermissionMode failed"));
@@ -2850,14 +2931,42 @@ describe("ClaudeCodeAdapter", () => {
       );
     });
 
-    it("creates new session via createSession when no ccSessionId", async () => {
+    it("creates new sessions with bypassPermissions by default", async () => {
       seedSession(adapter, "cs_1");
 
       unstable_v2_createSessionMock.mockReturnValue(makeMockV2Session());
 
       await (adapter as any).getOrCreateV2Session("cs_1", "/repo", {});
 
-      expect(unstable_v2_createSessionMock).toHaveBeenCalled();
+      const options = unstable_v2_createSessionMock.mock.calls[0][0];
+      expect(options.permissionMode).toBe("bypassPermissions");
+      expect(options.allowDangerouslySkipPermissions).toBe(true);
+    });
+
+    it("passes the native Claude executable path to created sessions", async () => {
+      seedSession(adapter, "cs_1");
+      vi.spyOn(adapter as any, "resolveClaudeExecutablePath").mockReturnValue("/native/claude");
+      unstable_v2_createSessionMock.mockReturnValue(makeMockV2Session());
+
+      await (adapter as any).getOrCreateV2Session("cs_1", "/repo", {});
+
+      const options = unstable_v2_createSessionMock.mock.calls[0][0];
+      expect(options.pathToClaudeCodeExecutable).toBe("/native/claude");
+      expect(options.pathToClaudeCodeExecutable).not.toContain("cli.js");
+    });
+
+    it("passes Claude Code native bypass permission options when creating sessions", async () => {
+      seedSession(adapter, "cs_1");
+      unstable_v2_createSessionMock.mockReturnValue(makeMockV2Session());
+
+      await (adapter as any).getOrCreateV2Session("cs_1", "/repo", {
+        permissionMode: "bypassPermissions",
+      });
+
+      const options = unstable_v2_createSessionMock.mock.calls[0][0];
+      expect(options.permissionMode).toBe("bypassPermissions");
+      expect(options.allowDangerouslySkipPermissions).toBe(true);
+      expect((adapter as any).v2Sessions.get("cs_1").allowDangerouslySkipPermissions).toBe(true);
     });
 
     it("recreates session when transport is not ready", async () => {
@@ -2954,6 +3063,25 @@ describe("ClaudeCodeAdapter", () => {
       );
     });
 
+    it("applies bypassPermissions mode option through SDK permissionMode", async () => {
+      seedSession(adapter, "cs_1");
+      const mockV2 = makeMockV2Session([
+        { type: "result", subtype: "success" },
+      ]);
+      const getOrCreateSpy = vi.spyOn(adapter as any, "getOrCreateV2Session").mockResolvedValue(mockV2);
+
+      await adapter.sendMessage("cs_1", [{ type: "text", text: "Hello" }], {
+        mode: "bypassPermissions",
+      }).catch(() => {});
+
+      expect(getOrCreateSpy).toHaveBeenCalledWith(
+        "cs_1",
+        expect.any(String),
+        expect.objectContaining({ permissionMode: "bypassPermissions" }),
+      );
+      expect((adapter as any).sessionModes.get("cs_1")).toBe("bypassPermissions");
+    });
+
     it("sends multimodal message when only image provided (no text)", async () => {
       seedSession(adapter, "cs_1");
       const mockV2 = makeMockV2Session([
@@ -3029,7 +3157,7 @@ describe("ClaudeCodeAdapter", () => {
 
       await adapter.cancelMessage("cs_1");
 
-      expect(resolveQ).toHaveBeenCalledWith("");
+      expect(resolveQ).toHaveBeenCalledWith([]);
       expect((adapter as any).pendingQuestions.has("q-cancel")).toBe(false);
     });
 

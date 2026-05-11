@@ -4,9 +4,8 @@
 // ============================================================================
 
 import fs from "fs";
-import path from "path";
-import { app } from "electron";
 import { channelLog } from "../services/logger";
+import { getChannelConfigPath, getChannelsPath } from "../services/app-paths";
 import {
   ChannelAdapter,
   type ChannelConfig,
@@ -17,15 +16,11 @@ import type { WebhookServer } from "./webhook-server";
 // --- Config persistence helpers ---
 
 function getChannelConfigDir(): string {
-  if (!app.isPackaged) {
-    return path.join(process.cwd(), ".channels");
-  }
-  return path.join(app.getPath("userData"), "channels");
+  return getChannelsPath();
 }
 
 function loadConfig(channelType: string): ChannelConfig | null {
-  const dir = getChannelConfigDir();
-  const filePath = path.join(dir, `${channelType}.json`);
+  const filePath = getChannelConfigPath(channelType);
   if (!fs.existsSync(filePath)) return null;
   try {
     const raw = fs.readFileSync(filePath, "utf-8");
@@ -40,7 +35,7 @@ function saveConfig(config: ChannelConfig): void {
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true });
   }
-  const filePath = path.join(dir, `${config.type}.json`);
+  const filePath = getChannelConfigPath(config.type);
   const tmpPath = `${filePath}.tmp`;
 
   // Exclude ephemeral runtime data (gatewayUrl) from persisted config
@@ -103,7 +98,27 @@ export class ChannelManager {
     if (this.webhookServer) {
       this.injectWebhookServer(adapter);
     }
+    // When a platform invalidates our auth, persist the credential wipe and
+    // mark the channel disabled so it doesn't auto-restart on next launch.
+    adapter.on("auth.expired", (payload) => {
+      void this.handleAuthExpired(type, payload?.clearOptions);
+    });
     channelLog.info(`Registered channel adapter: ${type}`);
+  }
+
+  private async handleAuthExpired(
+    type: string,
+    clearOptions?: Record<string, unknown>,
+  ): Promise<void> {
+    try {
+      await this.updateConfig(type, {
+        enabled: false,
+        options: clearOptions ?? {},
+      });
+      channelLog.info(`Persisted auth-expired wipe for channel: ${type}`);
+    } catch (err) {
+      channelLog.error(`Failed to persist auth-expired wipe for '${type}':`, err);
+    }
   }
 
   /** Inject WebhookServer into adapters that have a setWebhookServer method */
@@ -264,6 +279,33 @@ export class ChannelManager {
     const info = adapter.getInfo();
     info.webhookMeta = adapter.getWebhookMeta();
     return info;
+  }
+
+  /**
+   * Log out of a channel that supports it (currently WeChat iLink). Drops
+   * persisted bindings, wipes the credential fields advertised by the adapter,
+   * and marks the channel disabled. Throws if the adapter doesn't expose a
+   * `logout()` method.
+   */
+  async logoutChannel(type: string): Promise<void> {
+    const adapter = this.adapters.get(type);
+    if (!adapter) {
+      throw new Error(`Channel adapter '${type}' not found`);
+    }
+    const logoutFn = (adapter as unknown as { logout?: () => Promise<void> }).logout;
+    if (typeof logoutFn !== "function") {
+      throw new Error(`Channel '${type}' does not support logout`);
+    }
+
+    channelLog.info(`Logging out channel: ${type}`);
+    await logoutFn.call(adapter);
+
+    // Persist the cleared credentials. Adapters expose the wipe shape via a
+    // static CLEARED_CREDENTIALS field; fall back to {} if absent.
+    const clearOptions =
+      (adapter.constructor as { CLEARED_CREDENTIALS?: Record<string, unknown> })
+        .CLEARED_CREDENTIALS ?? {};
+    await this.updateConfig(type, { enabled: false, options: clearOptions });
   }
 
   /** Stop all channels (for app shutdown) */

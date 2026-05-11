@@ -159,17 +159,19 @@ When a user clicks a menu item, Feishu sends an `application.bot.menu_v6` event 
 
 ```
 P2P Chat (Entry Point)
-  ├─ /project list → Show available projects
-  ├─ Select project → Choose or create session
-  └─ Group created → Redirected to group chat
+  ├─ /project → Show project list (reply with a number to switch)
+  ├─ /new → Create a new session in the current project (auto-creates a group)
+  ├─ /switch → Show existing sessions for the current project
+  └─ /help → Show all commands
 
 Group Chat (Session)
   ├─ Send message → AI engine processes and responds
   ├─ /cancel → Stop current request
-  ├─ /mode agent|plan → Switch agent mode
-  ├─ /model list → Show available models
-  ├─ /status → Show session info
-  └─ /history → View recent messages
+  ├─ /status → Show current session info
+  ├─ /mode <agent|plan|build> → Switch agent mode
+  ├─ /model [list|<id>] → List or switch model
+  ├─ /history → View recent messages
+  └─ /help → Show all commands
 ```
 
 ### Streaming
@@ -207,5 +209,5 @@ Update throttle is 1.5 seconds by default to stay within Feishu's API rate limit
 - **SDK**: `@larksuiteoapi/node-sdk` (official Lark Node.js SDK)
 - **Connection**: WebSocket (WSClient) — persistent connection from CodeMux to Feishu or Lark cloud
 - **Message Format**: Interactive Cards with Markdown content
-- **Persistence**: Group-session bindings saved to `~/.channels/feishu-bindings.json`
+- **Persistence**: Group-session bindings saved to Electron `userData/channels/feishu-bindings.json`
 - **Rate Limiting**: TokenBucket — 5 burst capacity, 5 tokens/sec refill

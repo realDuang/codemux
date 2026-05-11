@@ -64,6 +64,16 @@ export function ContentDiff(props: Props) {
     return unifiedLines
   })
 
+  // Fallback to preformatted text when diff cannot be parsed
+  if (lines().length === 0 && props.diff) {
+    return (
+      <div class={styles.root}>
+        <CopyButton text={() => props.diff || ""} />
+        <pre style={{ margin: 0, "white-space": "pre-wrap", "font-size": "12px", padding: "8px" }}>{props.diff}</pre>
+      </div>
+    )
+  }
+
   return (
     <div class={styles.root}>
       <CopyButton text={() => props.diff || ""} />

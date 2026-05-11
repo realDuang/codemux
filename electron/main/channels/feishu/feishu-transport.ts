@@ -34,6 +34,15 @@ export class FeishuTransport implements MessageTransport {
     }
   }
 
+  /** Send markdown wrapped in a Feishu Interactive Card with mobile-friendly configuration. */
+  async sendMarkdown(chatId: string, markdown: string): Promise<string> {
+    const card = JSON.stringify({
+      config: { wide_screen_mode: true },
+      elements: [{ tag: "markdown", content: markdown }],
+    });
+    return this.sendRichContent(chatId, card);
+  }
+
   async updateText(messageId: string, text: string): Promise<void> {
     if (!messageId) return;
 

@@ -7,9 +7,11 @@ import { productionServer } from "./services/production-server";
 import { updateManager } from "./services/update-manager";
 import { trayManager } from "./services/tray-manager";
 import { getLogFilePath, getFileLogLevel, setFileLogLevel, loadSettings, saveSettings } from "./services/logger";
-import { isStartupReady } from "./index";
-import { channelManager } from "./index";
+import { isStartupReady } from "./app-main";
+import { channelManager } from "./app-main";
 import { GATEWAY_PORT } from "../../shared/ports";
+import { getUserDataPath } from "./services/app-paths";
+import { getQrCode as ilinkGetQrCode, pollQrStatus as ilinkPollQrStatus } from "./channels/weixin-ilink/weixin-ilink-qr-flow";
 
 export function registerIpcHandlers(): void {
   // ===========================================================================
@@ -21,7 +23,7 @@ export function registerIpcHandlers(): void {
       platform: process.platform,
       arch: process.arch,
       version: app.getVersion(),
-      userDataPath: app.getPath("userData"),
+      userDataPath: getUserDataPath(),
       homePath: app.getPath("home"),
       isPackaged: app.isPackaged,
     };
@@ -149,17 +151,14 @@ export function registerIpcHandlers(): void {
   // Tunnel Management
   // ===========================================================================
 
-  ipcMain.handle("tunnel:start", async (_, port: number) => {
+  ipcMain.handle("tunnel:start", async (_, port: number, tunnelConfig?: { hostname?: string }) => {
     // In production, use the production server port if available
     const actualPort = app.isPackaged && productionServer.isRunning()
       ? productionServer.getPort()
       : port;
 
-    // Read tunnel config from settings
-    const settings = loadSettings();
-    const tunnelConfig = settings.tunnelConfig as { hostname?: string } | undefined;
-
-    return tunnelManager.start(actualPort, tunnelConfig);
+    const config = tunnelConfig ?? (loadSettings().tunnelConfig as { hostname?: string } | undefined);
+    return tunnelManager.start(actualPort, config);
   });
 
   ipcMain.handle("tunnel:stop", async () => {
@@ -198,7 +197,7 @@ export function registerIpcHandlers(): void {
   ipcMain.handle("gateway:getPort", async () => {
     // In packaged mode, GatewayServer attaches to the production HTTP server
     // at /ws path, so we must return the full WebSocket URL.
-    // In dev mode, GatewayServer listens on its own port (4200).
+    // In dev mode, GatewayServer listens on its configured standalone port.
     if (app.isPackaged && productionServer.isRunning()) {
       return `ws://127.0.0.1:${productionServer.getPort()}/ws`;
     }
@@ -251,6 +250,26 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle("channel:getStatus", async (_, type: string) => {
     return channelManager.getStatus(type);
+  });
+
+  // ===========================================================================
+  // WeChat iLink QR auth (out-of-band, used by login modal)
+  // ===========================================================================
+
+  ipcMain.handle("channel:weixin-ilink:get-qrcode", async (_, baseUrl?: string) => {
+    return ilinkGetQrCode(baseUrl);
+  });
+
+  ipcMain.handle(
+    "channel:weixin-ilink:poll-qrcode-status",
+    async (_, qrcode: string, baseUrl?: string) => {
+      return ilinkPollQrStatus(qrcode, baseUrl);
+    },
+  );
+
+  ipcMain.handle("channel:weixin-ilink:logout", async () => {
+    await channelManager.logoutChannel("weixin-ilink");
+    return { success: true };
   });
 
   // ===========================================================================

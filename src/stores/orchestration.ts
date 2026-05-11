@@ -72,6 +72,7 @@ export function associateChildSession(teamId: string, sessionId: string): void {
   setOrchestrationStore("sessionToTeam", sessionId, teamId);
 }
 
+
 /** Get the teamId for a session (parent or child) */
 export function getTeamId(sessionId: string): string | undefined {
   return orchestrationStore.sessionToTeam[sessionId];

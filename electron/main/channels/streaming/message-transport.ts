@@ -17,6 +17,9 @@ export interface MessageTransport {
   /** Send a plain text message. Returns platform message ID, or empty string on failure. */
   sendText(chatId: string, text: string): Promise<string>;
 
+  /** Send a markdown-formatted message. Returns platform message ID, or empty string on failure. */
+  sendMarkdown(chatId: string, markdown: string): Promise<string>;
+
   /** Update an existing message with new text content. */
   updateText(messageId: string, text: string): Promise<void>;
 

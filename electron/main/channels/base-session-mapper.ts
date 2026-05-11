@@ -6,10 +6,10 @@
 
 import fs from "fs";
 import path from "path";
-import { app } from "electron";
 import type { EngineType, UnifiedProject, UnifiedSession } from "../../../src/types/unified";
 import type { StreamingSession } from "./streaming/streaming-types";
 import { channelLog } from "../services/logger";
+import { getChannelBindingsPath } from "../services/app-paths";
 
 // --- Base Types (platform-agnostic) ---
 
@@ -130,11 +130,9 @@ export class BaseSessionMapper<
 
   // --- Persistence ---
   private readonly channelType: string;
-  private readonly bindingsFileName: string;
 
   constructor(channelType: string, options?: { maxProcessedIds?: number }) {
     this.channelType = channelType;
-    this.bindingsFileName = `${channelType}-bindings.json`;
     this.maxProcessedIds = options?.maxProcessedIds ?? 1000;
   }
 
@@ -143,10 +141,7 @@ export class BaseSessionMapper<
   // =========================================================================
 
   private getBindingsFilePath(): string {
-    const dir = app.isPackaged
-      ? path.join(app.getPath("userData"), "channels")
-      : path.join(process.cwd(), ".channels");
-    return path.join(dir, this.bindingsFileName);
+    return getChannelBindingsPath(this.channelType);
   }
 
   /** Convert a persisted binding to a runtime binding. Override for custom fields. */
@@ -444,5 +439,26 @@ export class BaseSessionMapper<
         state.tempSession.streamingSession.patchTimer = null;
       }
     }
+  }
+
+  /**
+   * Drop all in-memory state AND wipe the persisted bindings file.
+   * Use when the channel needs to fully forget its tenant — e.g. iLink logout
+   * or token-expiry auto-cleanup. Pending streaming timers are cleared first
+   * to avoid leaks, then the bindings JSON is overwritten with an empty list.
+   */
+  clearAllBindings(): void {
+    this.cleanup();
+    this.groupBindings.clear();
+    this.conversationToGroupIndex.clear();
+    this.p2pChats.clear();
+    this.userIdToChatIndex.clear();
+    this.tempConversationToChat.clear();
+    this.processedMessageIds.clear();
+    this.creatingGroups.clear();
+    this.pendingQuestions.clear();
+    this.standalonePendingSelections.clear();
+    this.saveBindings();
+    channelLog.info(`[${this.channelType}] Cleared all bindings (memory + disk)`);
   }
 }

@@ -10,13 +10,14 @@ import type { DeviceInfo } from "./shared/device-store-types";
 import { sendJson, parseBody, extractBearerToken, getClientIp, isLocalhost, getLocalIp } from "./shared/http-utils";
 import { handleAuthRoutes, handleSettingsRoutes } from "./shared/auth-route-handlers";
 import { loadSettings as loadStandaloneSettings, saveSettings as saveStandaloneSettings } from "./scripts/settings-store";
+import { GATEWAY_PORT, OPENCODE_PORT, WEBHOOK_PORT, WEB_STANDALONE_PORT } from "./shared/ports";
 
 // ============================================================================
 // Helper Functions
 // ============================================================================
 
 function parseUrl(req: IncomingMessage): URL {
-  return new URL(req.url || "", `http://localhost:8234`);
+  return new URL(req.url || "", `http://localhost:${WEB_STANDALONE_PORT}`);
 }
 
 const localAuthOptions = {
@@ -112,7 +113,7 @@ export default defineConfig({
         // GET/PATCH /api/settings/shared
         // ====================================================================
         server.middlewares.use(async (req, res, next) => {
-          const reqUrl = new URL(req.url || "", `http://localhost:8234`);
+          const reqUrl = new URL(req.url || "", `http://localhost:${WEB_STANDALONE_PORT}`);
           const pathname = reqUrl.pathname;
           if (!pathname.startsWith("/api/settings/")) {
             next();
@@ -139,7 +140,7 @@ export default defineConfig({
 
           sendJson(res, {
             localIp: getLocalIp(),
-            port: 8234,
+            port: WEB_STANDALONE_PORT,
           });
         });
 
@@ -170,7 +171,7 @@ export default defineConfig({
 
           try {
             if (req.url === "/api/tunnel/start" && req.method === "POST") {
-              const info = await tunnelManager.start(8234);
+              const info = await tunnelManager.start(WEB_STANDALONE_PORT);
               sendJson(res, info);
               return;
             }
@@ -197,32 +198,32 @@ export default defineConfig({
     },
   ],
   server: {
-    port: 8234,
+    port: WEB_STANDALONE_PORT,
     host: true,
     allowedHosts: true,
     proxy: {
       "/ws": {
-        target: "http://localhost:4200",
+        target: `http://localhost:${GATEWAY_PORT}`,
         ws: true,
       },
       "/opencode-api/global/event": {
-        target: "http://localhost:4096",
+        target: `http://localhost:${OPENCODE_PORT}`,
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/opencode-api/, ""),
         timeout: 0,
       },
       "/opencode-api": {
-        target: "http://localhost:4096",
+        target: `http://localhost:${OPENCODE_PORT}`,
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/opencode-api/, ""),
       },
       // Proxy webhook endpoints to the WebhookServer
       "/api/messages": {
-        target: "http://localhost:4098",
+        target: `http://localhost:${WEBHOOK_PORT}`,
         changeOrigin: true,
       },
       "/webhook": {
-        target: "http://localhost:4098",
+        target: `http://localhost:${WEBHOOK_PORT}`,
         changeOrigin: true,
       },
     },

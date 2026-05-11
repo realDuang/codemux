@@ -353,6 +353,28 @@ export async function startTestServer(
         return { success: true };
       }
 
+      // Unified session-config patch (mode, model, reasoning effort, service tier).
+      // Test server delegates to the relevant adapter setters; mock adapter only
+      // implements setMode/setModel, the others are no-ops on the base class.
+      case GatewayRequestType.SESSION_CONFIG_UPDATE: {
+        const req = p as { sessionId: string; config: Record<string, unknown> };
+        const adapter = getAdapterForSession(req.sessionId);
+        const config = req.config ?? {};
+        if (Object.prototype.hasOwnProperty.call(config, "mode") && config.mode) {
+          await adapter.setMode(req.sessionId, config.mode as string);
+        }
+        if (Object.prototype.hasOwnProperty.call(config, "modelId") && config.modelId) {
+          await adapter.setModel(req.sessionId, config.modelId as string);
+        }
+        if (Object.prototype.hasOwnProperty.call(config, "reasoningEffort")) {
+          await adapter.setReasoningEffort(req.sessionId, (config.reasoningEffort ?? null) as any);
+        }
+        if (Object.prototype.hasOwnProperty.call(config, "serviceTier")) {
+          await adapter.setServiceTier(req.sessionId, (config.serviceTier ?? null) as any);
+        }
+        return { success: true };
+      }
+
       // --- Session Rename ---
       case GatewayRequestType.SESSION_RENAME: {
         const adapter = getAdapterForSession(p.sessionId);

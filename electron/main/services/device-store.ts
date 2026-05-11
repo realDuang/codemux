@@ -1,6 +1,5 @@
-import path from "path";
-import { app } from "electron";
 import { DeviceStoreBase } from "../../../shared/device-store-base";
+import { getDevicesPath, usesSharedDevDeviceStorePath } from "./app-paths";
 
 // Re-export shared types for existing consumers
 export type { DeviceInfo, PendingRequest, DeviceStoreData } from "../../../shared/device-store-types";
@@ -13,12 +12,7 @@ class ElectronDeviceStore extends DeviceStoreBase {
   private initialized = false;
 
   protected getFilePath(): string {
-    // In development, share .devices.json with scripts/ Vite plugin
-    if (!app.isPackaged) {
-      return path.join(process.cwd(), ".devices.json");
-    }
-    // In production, use standard user data directory
-    return path.join(app.getPath("userData"), "devices.json");
+    return getDevicesPath();
   }
 
   /**
@@ -38,7 +32,7 @@ class ElectronDeviceStore extends DeviceStoreBase {
    * immediately to the running auth API server.
    */
   protected override beforeRead(): void {
-    if (!this.initialized || app.isPackaged) return;
+    if (!this.initialized || !usesSharedDevDeviceStorePath()) return;
     this.loadData();
   }
 

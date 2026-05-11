@@ -75,6 +75,16 @@ function getEngineCapabilities(engineType: string) {
   return configStore.engines.find((e) => e.type === engineType)?.capabilities;
 }
 
+function resolvePreferredModelId(engineType: string, preferredModelId?: string | null): string | undefined {
+  if (!preferredModelId) return undefined;
+  const models = configStore.engineModels[engineType];
+  const caps = getEngineCapabilities(engineType);
+  if (caps?.customModelInput || !models || models.length === 0 || models.some((m) => m.modelId === preferredModelId)) {
+    return preferredModelId;
+  }
+  return undefined;
+}
+
 /**
  * Get the model ID to use for a given engine type.
  * Priority: user selection > engine-reported currentModelID > first model in list.
@@ -82,14 +92,9 @@ function getEngineCapabilities(engineType: string) {
 export function getSelectedModelForEngine(engineType: string): string | undefined {
   // User selection (from Settings)
   const selection = configStore.engineModelSelections[engineType];
-  if (selection?.modelID) {
-    const models = configStore.engineModels[engineType];
-    const caps = getEngineCapabilities(engineType);
-    // Engines with customModelInput allow arbitrary model IDs — skip validation
-    // For others: validate against model list when available; trust manual input when list is empty
-    if (caps?.customModelInput || !models || models.length === 0 || models.some(m => m.modelId === selection.modelID)) {
-      return selection.modelID;
-    }
+  const preferredModelId = resolvePreferredModelId(engineType, selection?.modelID);
+  if (preferredModelId) {
+    return preferredModelId;
   }
   // Engine-reported current model as fallback (e.g. Copilot default)
   if (configStore.currentModelID && configStore.currentEngineType === engineType) {
@@ -98,6 +103,13 @@ export function getSelectedModelForEngine(engineType: string): string | undefine
   // Fallback to first model
   const models = configStore.engineModels[engineType] || configStore.models;
   return models[0]?.modelId;
+}
+
+export function getSelectedModelForSession(
+  engineType: string,
+  sessionModelId?: string | null,
+): string | undefined {
+  return resolvePreferredModelId(engineType, sessionModelId) ?? getSelectedModelForEngine(engineType);
 }
 
 /**
@@ -218,19 +230,39 @@ export function loadReasoningEffort(engineType: string): ReasoningEffort | null 
 export function getEffectiveReasoningEffortForEngine(engineType: string): ReasoningEffort | null {
   const saved = configStore.engineReasoningEfforts[engineType] ?? null;
   const modelId = getSelectedModelForEngine(engineType);
+  return resolveReasoningEffort(engineType, modelId, saved);
+}
+
+function resolveReasoningEffort(
+  engineType: string,
+  modelId: string | undefined,
+  preferredEffort: ReasoningEffort | null,
+): ReasoningEffort | null {
   const models = configStore.engineModels[engineType] || configStore.models;
   const model = modelId ? models.find((m) => m.modelId === modelId) : undefined;
 
   if (!model) {
-    return saved ?? null;
+    return preferredEffort ?? null;
   }
 
   const supported = model.capabilities?.supportedReasoningEfforts;
-  if (saved && supported?.includes(saved)) {
-    return saved;
+  if (preferredEffort && supported?.includes(preferredEffort)) {
+    return preferredEffort;
   }
 
   return model.capabilities?.defaultReasoningEffort ?? null;
+}
+
+export function getEffectiveReasoningEffortForSession(
+  engineType: string,
+  sessionModelId?: string | null,
+  sessionEffort?: ReasoningEffort | null,
+): ReasoningEffort | null {
+  return resolveReasoningEffort(
+    engineType,
+    getSelectedModelForSession(engineType, sessionModelId),
+    sessionEffort ?? configStore.engineReasoningEfforts[engineType] ?? null,
+  );
 }
 
 /** Restore persisted reasoning efforts for all known engines into the store. */
@@ -272,13 +304,29 @@ export function loadServiceTier(engineType: string): CodexServiceTier | null {
 
 /** Get the effective service tier for an engine, checking capabilities. */
 export function getServiceTierForEngine(engineType: string): CodexServiceTier | null {
-  const saved = configStore.engineServiceTiers[engineType] ?? null;
-  if (!saved) return null;
+  return resolveServiceTier(engineType, configStore.engineServiceTiers[engineType] ?? null);
+}
+
+function resolveServiceTier(
+  engineType: string,
+  preferredTier: CodexServiceTier | null,
+): CodexServiceTier | null {
+  if (!preferredTier) return null;
 
   const engine = configStore.engines.find((e) => e.type === engineType);
   if (!engine?.capabilities.fastModeSupported) return null;
 
-  return saved;
+  return preferredTier;
+}
+
+export function getServiceTierForSession(
+  engineType: string,
+  sessionTier?: CodexServiceTier | null,
+): CodexServiceTier | null {
+  return resolveServiceTier(
+    engineType,
+    sessionTier ?? configStore.engineServiceTiers[engineType] ?? null,
+  );
 }
 
 /** Check if fast mode is active for an engine. */

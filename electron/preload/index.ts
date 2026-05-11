@@ -39,7 +39,7 @@ const electronAPI = {
 
   // Tunnel API
   tunnel: {
-    start: (port: number) => ipcRenderer.invoke("tunnel:start", port),
+    start: (port: number, tunnelConfig?: { hostname?: string }) => ipcRenderer.invoke("tunnel:start", port, tunnelConfig),
     stop: () => ipcRenderer.invoke("tunnel:stop"),
     getStatus: () => ipcRenderer.invoke("tunnel:getStatus"),
     onDisconnected: (callback: () => void) => {
@@ -76,6 +76,15 @@ const electronAPI = {
     start: (type: string) => ipcRenderer.invoke("channel:start", type),
     stop: (type: string) => ipcRenderer.invoke("channel:stop", type),
     getStatus: (type: string) => ipcRenderer.invoke("channel:getStatus", type),
+  },
+
+  // WeChat iLink QR auth
+  weixinIlink: {
+    getQrCode: (baseUrl?: string) =>
+      ipcRenderer.invoke("channel:weixin-ilink:get-qrcode", baseUrl),
+    pollQrCodeStatus: (qrcode: string, baseUrl?: string) =>
+      ipcRenderer.invoke("channel:weixin-ilink:poll-qrcode-status", qrcode, baseUrl),
+    logout: () => ipcRenderer.invoke("channel:weixin-ilink:logout"),
   },
 
   // Settings API (persisted to settings.json)

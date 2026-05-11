@@ -1,6 +1,8 @@
 import { For, Show } from "solid-js";
-import type { UnifiedPermission } from "../types/unified";
+import type { UnifiedPermission, PermissionDetail } from "../types/unified";
 import { useI18n } from "../lib/i18n";
+import { getKindIconPath } from "./icons/permission-icons";
+import { ContentDiff } from "./share/content-diff";
 import styles from "./InputAreaPermission.module.css";
 
 interface InputAreaPermissionProps {
@@ -10,8 +12,8 @@ interface InputAreaPermissionProps {
 
 /**
  * InputAreaPermission — Permission prompt displayed in the input area.
- * Replaces the inline Tailwind permission cards in Chat.tsx with a
- * dedicated CSS Modules component.
+ * Renders adapter-provided `details[]` for structured display and
+ * uses `ContentDiff` for syntax-highlighted diff previews.
  */
 export function InputAreaPermission(props: InputAreaPermissionProps) {
   const { t } = useI18n();
@@ -20,14 +22,12 @@ export function InputAreaPermission(props: InputAreaPermissionProps) {
     props.onRespond(props.permission.sessionId, props.permission.id, reply);
   };
 
-  // Map option type to variant for styling
   const getVariant = (type: string) => {
     if (type.includes("reject")) return "reject";
     if (type.includes("always")) return "always";
     return "once";
   };
 
-  // Display label
   const getLabel = (opt: { label: string; type: string }) => {
     if (opt.label) return opt.label;
     if (opt.type.includes("reject")) return t().permission.deny;
@@ -35,7 +35,6 @@ export function InputAreaPermission(props: InputAreaPermissionProps) {
     return t().permission.allowOnce;
   };
 
-  // Use agent-provided options or fallback defaults
   const options = () => {
     return props.permission.options?.length > 0
       ? props.permission.options
@@ -45,6 +44,24 @@ export function InputAreaPermission(props: InputAreaPermissionProps) {
           { id: "once", label: t().permission.allowOnce, type: "accept_once" },
         ];
   };
+
+  const TOOL_KIND_LABELS: Record<string, () => string> = {
+    web_fetch: () => t().permission.kindUrlAccess,
+    web_search: () => t().permission.kindWebSearch,
+    shell: () => t().permission.kindShell,
+  };
+
+  const kindLabel = () => {
+    const toolName = props.permission.toolName;
+    if (toolName && TOOL_KIND_LABELS[toolName]) return TOOL_KIND_LABELS[toolName]();
+    switch (props.permission.kind) {
+      case "read": return t().permission.kindRead;
+      case "edit": return t().permission.kindEdit;
+      default: return t().permission.kindOther;
+    }
+  };
+
+  const details = () => props.permission.details ?? [];
 
   return (
     <div class={styles.root}>
@@ -57,10 +74,44 @@ export function InputAreaPermission(props: InputAreaPermissionProps) {
         <span class={styles.headerLabel}>{t().permission.waitingApproval}</span>
       </div>
 
+      <div class={styles.meta}>
+        <span class={styles.metaBadge}>
+          <svg class={styles.kindIcon} xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d={getKindIconPath(props.permission.kind, props.permission.toolName)} />
+          </svg>
+          {kindLabel()}
+        </span>
+      </div>
+
       <p class={styles.title}>{props.permission.title}</p>
 
-      <Show when={props.permission.patterns && props.permission.patterns.length > 0}>
-        <p class={styles.patterns}>{props.permission.patterns?.join(", ")}</p>
+      <Show when={details().length > 0}>
+        <div class={styles.contextSection}>
+          <For each={details()}>
+            {(detail: PermissionDetail) => (
+              <div class={styles.detailRow}>
+                <div class={styles.detailLabel}>{detail.label}</div>
+                <div
+                  class={styles.detailValue}
+                  classList={{ [styles.detailMono]: !!detail.mono }}
+                >
+                  {detail.value}
+                </div>
+              </div>
+            )}
+          </For>
+        </div>
+      </Show>
+
+      <Show when={props.permission.diff}>
+        {(diff) => (
+          <div class={styles.contextSection}>
+            <div class={styles.contextLabel}>{t().permission.diffPreview}</div>
+            <div class={styles.diffContainer}>
+              <ContentDiff diff={diff()} />
+            </div>
+          </div>
+        )}
       </Show>
 
       <div class={styles.actions}>

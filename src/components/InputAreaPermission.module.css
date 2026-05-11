@@ -41,27 +41,126 @@
   color: rgba(253, 224, 71, 0.85);
 }
 
+.meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.metaBadge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  border: 1px solid rgba(245, 158, 11, 0.18);
+  background: rgba(255, 255, 255, 0.55);
+  color: rgba(146, 64, 14, 0.9);
+  font-size: 0.6875rem;
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+:global(.dark) .metaBadge {
+  border-color: rgba(251, 191, 36, 0.18);
+  background: rgba(120, 53, 15, 0.2);
+  color: rgba(253, 224, 71, 0.85);
+}
+
+.metaMono {
+  font-family: var(--font-mono, monospace);
+  word-break: break-all;
+  font-weight: 500;
+}
+
+.kindIcon {
+  flex-shrink: 0;
+}
+
 /* ── Permission info ── */
 .title {
   font-size: 0.8125rem;
+  font-weight: 500;
   color: rgba(120, 53, 15, 0.85);
-  margin-bottom: 2px;
+  margin-bottom: 8px;
 }
 
 :global(.dark) .title {
   color: rgba(252, 211, 77, 0.85);
 }
 
-.patterns {
-  font-size: 0.75rem;
-  color: rgba(180, 83, 9, 0.6);
-  font-family: var(--font-mono, monospace);
-  margin-bottom: 8px;
-  word-break: break-all;
+.contextSection {
+  margin-top: 8px;
 }
 
-:global(.dark) .patterns {
-  color: rgba(251, 191, 36, 0.5);
+.contextLabel {
+  font-size: 0.6875rem;
+  font-weight: 600;
+  color: rgba(180, 83, 9, 0.75);
+  margin-bottom: 6px;
+}
+
+:global(.dark) .contextLabel {
+  color: rgba(251, 191, 36, 0.68);
+}
+
+/* ── Structured detail rows ── */
+.detailRow {
+  margin-bottom: 6px;
+}
+
+.detailRow:last-child {
+  margin-bottom: 0;
+}
+
+.detailLabel {
+  font-size: 0.6875rem;
+  font-weight: 600;
+  color: rgba(180, 83, 9, 0.75);
+  margin-bottom: 2px;
+}
+
+:global(.dark) .detailLabel {
+  color: rgba(251, 191, 36, 0.68);
+}
+
+.detailValue {
+  font-size: 0.75rem;
+  line-height: 1.4;
+  color: rgba(120, 53, 15, 0.85);
+  word-break: break-word;
+  white-space: pre-wrap;
+}
+
+:global(.dark) .detailValue {
+  color: rgba(253, 224, 71, 0.82);
+}
+
+.detailMono {
+  font-family: var(--font-mono, monospace);
+  padding: 3px 6px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.5);
+  border: 1px solid rgba(245, 158, 11, 0.12);
+  display: inline-block;
+}
+
+:global(.dark) .detailMono {
+  background: rgba(120, 53, 15, 0.18);
+  border-color: rgba(251, 191, 36, 0.12);
+}
+
+/* ── Diff container ── */
+.diffContainer {
+  border-radius: 8px;
+  border: 1px solid rgba(245, 158, 11, 0.14);
+  overflow: auto;
+  max-height: 200px;
+}
+
+:global(.dark) .diffContainer {
+  border-color: rgba(251, 191, 36, 0.14);
 }
 
 /* ── Action buttons ── */

@@ -70,12 +70,42 @@ describe('settings', () => {
       };
 
       expect(getSetting('theme')).toBe('light');
-      
+
       saveSetting('theme', 'system');
       expect(saveMock).toHaveBeenCalledWith({ theme: 'system' });
       expect(getSetting('theme')).toBe('system');
       // Also saved to localStorage as secondary cache
       expect(localStorage.getItem('settings:theme')).toBe(JSON.stringify('system'));
+    });
+
+    it('waits for Electron settings save before resolving', async () => {
+      vi.mocked(isElectron).mockReturnValue(true);
+      let resolveSave!: () => void;
+      const savePromise = new Promise<{ success: boolean }>((resolve) => {
+        resolveSave = () => resolve({ success: true });
+      });
+      const saveMock = vi.fn(() => savePromise);
+      (window as any).electronAPI = {
+        settings: {
+          cache: {},
+          save: saveMock,
+        },
+      };
+
+      let resolved = false;
+      const promise = saveSetting('tunnelConfig', { hostname: 'codemux.example.com' }).then(() => {
+        resolved = true;
+      });
+
+      expect(saveMock).toHaveBeenCalledWith({ tunnelConfig: { hostname: 'codemux.example.com' } });
+      expect(localStorage.getItem('settings:tunnelConfig')).toBe(JSON.stringify({ hostname: 'codemux.example.com' }));
+
+      await Promise.resolve();
+      expect(resolved).toBe(false);
+
+      resolveSave();
+      await promise;
+      expect(resolved).toBe(true);
     });
   });
 

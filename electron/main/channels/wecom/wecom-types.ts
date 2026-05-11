@@ -68,14 +68,5 @@ export interface WeComIncomingMessage {
 }
 
 // --- Command Parser Types ---
+// (ParsedCommand moved to ../shared/command-types.ts)
 
-export interface ParsedCommand {
-  /** Top-level command name (e.g., "project", "cancel") */
-  command: string;
-  /** Sub-command (e.g., "list", "new") */
-  subcommand?: string;
-  /** Remaining arguments */
-  args: string[];
-  /** Original raw text */
-  raw: string;
-}

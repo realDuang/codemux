@@ -16,6 +16,7 @@ import {
   type EngineType,
   type EngineInfo,
   type EngineCapabilities,
+  type AgentMode,
   type UnifiedSession,
   type UnifiedMessage,
   type ModelListResult,
@@ -30,6 +31,8 @@ import {
   type ProjectSetEngineRequest,
   type ModelSetRequest,
   type ModeSetRequest,
+  type SessionConfigPatch,
+  type SessionConfigUpdateRequest,
 } from "../../../src/types/unified";
 import { channelLog } from "../services/logger";
 
@@ -321,7 +324,17 @@ export class GatewayWsClient {
     return this.request(GatewayRequestType.MODEL_SET, req);
   }
 
+  updateSessionConfig(sessionId: string, config: SessionConfigPatch): Promise<void> {
+    const req: SessionConfigUpdateRequest = { sessionId, config };
+    return this.request(GatewayRequestType.SESSION_CONFIG_UPDATE, req);
+  }
+
   // --- Mode API ---
+
+  async listModes(engineType: EngineType): Promise<AgentMode[]> {
+    const engines = await this.listEngines();
+    return engines.find((engine) => engine.type === engineType)?.capabilities.availableModes ?? [];
+  }
 
   setMode(req: ModeSetRequest): Promise<void> {
     return this.request(GatewayRequestType.MODE_SET, req);

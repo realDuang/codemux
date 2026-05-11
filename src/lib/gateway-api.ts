@@ -6,6 +6,7 @@
  */
 
 import { gatewayClient } from "./gateway-client";
+import { GatewayRequestType } from "../types/unified";
 import { logger } from "./logger";
 import type {
   EngineType,
@@ -306,6 +307,13 @@ class GatewayAPI {
     return gatewayClient.setModel({ sessionId, modelId });
   }
 
+  updateSessionConfig(
+    sessionId: string,
+    config: import("../types/unified").SessionConfigPatch,
+  ): Promise<void> {
+    return gatewayClient.updateSessionConfig({ sessionId, config });
+  }
+
   // --- Mode ---
 
   setMode(sessionId: string, modeId: string): Promise<void> {
@@ -326,6 +334,15 @@ class GatewayAPI {
 
   rejectQuestion(questionId: string): Promise<void> {
     return gatewayClient.rejectQuestion(questionId);
+  }
+
+  // --- Pending state (resync) ---
+
+  listPending(sessionId: string): Promise<{
+    questions: UnifiedQuestion[];
+    permissions: UnifiedPermission[];
+  }> {
+    return gatewayClient.request(GatewayRequestType.PENDING_LIST, { sessionId });
   }
 
   // --- Project ---

@@ -12,6 +12,7 @@ files:
   - out/**/*
   - package.json
 asarUnpack:
+  - node_modules/@anthropic-ai/claude-agent-sdk*/**
   - node_modules/@github/copilot-*/**
   - node_modules/@parcel/watcher*/**
 extraMetadata:

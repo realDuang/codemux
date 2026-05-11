@@ -146,17 +146,7 @@ export interface DingTalkMessageEvent {
 }
 
 // --- Command Parser Types ---
-
-export interface ParsedCommand {
-  /** Top-level command name (e.g., "project", "session", "engine") */
-  command: string;
-  /** Sub-command (e.g., "list", "new", "switch") */
-  subcommand?: string;
-  /** Remaining arguments */
-  args: string[];
-  /** Original raw text */
-  raw: string;
-}
+// (ParsedCommand moved to ../shared/command-types.ts)
 
 // --- Pending Question State ---
 

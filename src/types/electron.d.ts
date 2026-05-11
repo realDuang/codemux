@@ -62,11 +62,12 @@ interface ElectronAPI {
   };
 
   tunnel: {
-    start: (port: number) => Promise<{
+    start: (port: number, tunnelConfig?: { hostname?: string }) => Promise<{
       url: string;
       status: "starting" | "running" | "stopped" | "error";
       startTime?: number;
       error?: string;
+      errorCode?: string;
     }>;
     stop: () => Promise<void>;
     getStatus: () => Promise<{
@@ -74,6 +75,7 @@ interface ElectronAPI {
       status: "starting" | "running" | "stopped" | "error";
       startTime?: number;
       error?: string;
+      errorCode?: string;
     }>;
     onDisconnected: (callback: () => void) => () => void;
   };
@@ -94,6 +96,17 @@ interface ElectronAPI {
     start: (type: string) => Promise<void>;
     stop: (type: string) => Promise<void>;
     getStatus: (type: string) => Promise<{ type: string; name: string; status: "stopped" | "starting" | "running" | "error"; error?: string; webhookMeta?: { path: string; platformConfigGuide: string } | null } | null>;
+  };
+
+  weixinIlink?: {
+    getQrCode: (baseUrl?: string) => Promise<{ qrcode: string; qrcodeImgContent: string; baseUrl: string }>;
+    pollQrCodeStatus: (qrcode: string, baseUrl?: string) => Promise<{
+      status: "wait" | "scanned" | "confirmed" | "expired";
+      botToken?: string;
+      accountId?: string;
+      baseUrl?: string;
+      userId?: string;
+    }>;
   };
 
   update?: {

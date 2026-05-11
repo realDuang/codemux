@@ -71,6 +71,13 @@ export interface ChannelAdapterEvents {
   "error": (err: Error) => void;
   /** Status changed */
   "status.changed": (status: ChannelStatus) => void;
+  /**
+   * The platform invalidated our auth (token expired, revoked, etc.). The
+   * adapter has already cleaned up its own runtime state; the manager should
+   * persist any wipe of credentials. Payload carries a human-readable reason
+   * for surfacing in the UI.
+   */
+  "auth.expired": (payload: { reason: string; clearOptions?: Record<string, unknown> }) => void;
 }
 
 // Type-safe event emitter

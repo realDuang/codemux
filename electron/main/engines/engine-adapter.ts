@@ -58,6 +58,13 @@ export interface MessageBuffer {
   engineMeta?: Record<string, unknown>;
   /** Set to true once leading whitespace has been trimmed from textAccumulator */
   leadingTrimmed?: boolean;
+  /**
+   * Queued user message waiting to be emitted as the next turn's prompt.
+   * Set by Copilot's handleTurnEnd when there are queued messages; consumed
+   * by commitTurnTransition. Embedding it on the buffer rather than a parallel
+   * Map ensures cleanup happens automatically when the buffer is finalized.
+   */
+  pendingQueuedUserMsg?: UnifiedMessage;
 }
 
 // --- Adapter Events ---
@@ -197,6 +204,23 @@ export abstract class EngineAdapter extends EventEmitter {
   /** Delete a session */
   abstract deleteSession(sessionId: string): Promise<void>;
 
+  /**
+   * Rename a session on the engine side. Default: no-op.
+   * Engines that persist titles (Claude SDK, Codex thread/name/set, OpenCode
+   * session.update) override this so codemux's local rename stays in sync
+   * with the engine's own session list.
+   *
+   * @param title Empty string clears any engine-side custom title.
+   */
+  async renameSession(
+    _sessionId: string,
+    _title: string,
+    _directory?: string,
+    _engineMeta?: Record<string, unknown>,
+  ): Promise<void> {
+    /* default: not supported */
+  }
+
   // --- Messages ---
 
   /**
@@ -276,6 +300,16 @@ export abstract class EngineAdapter extends EventEmitter {
     return null;
   }
 
+  // --- Service Tier ---
+
+  /** Set the service tier for a session (no-op by default) */
+  async setServiceTier(_sessionId: string, _tier: CodexServiceTier | null): Promise<void> {}
+
+  /** Get the current service tier for a session */
+  getServiceTier(_sessionId: string): CodexServiceTier | null {
+    return null;
+  }
+
   // --- Permissions ---
 
   /** Reply to a permission request */
@@ -284,6 +318,17 @@ export abstract class EngineAdapter extends EventEmitter {
     reply: PermissionReply,
     sessionId?: string,
   ): Promise<void>;
+
+  /**
+   * List pending permission requests (not yet replied to).
+   * Optionally filter by sessionId.
+   * Default: returns empty array (engines without permission support).
+   * Async so adapters backed by a remote authoritative server (OpenCode) can
+   * query it directly instead of maintaining a drift-prone local mirror.
+   */
+  getPendingPermissions(_sessionId?: string): Promise<UnifiedPermission[]> | UnifiedPermission[] {
+    return [];
+  }
 
   // --- Questions ---
 
@@ -299,6 +344,36 @@ export abstract class EngineAdapter extends EventEmitter {
     questionId: string,
     sessionId?: string,
   ): Promise<void>;
+
+  /**
+   * List pending question requests (not yet answered).
+   * Optionally filter by sessionId.
+   * Default: returns empty array (engines without question support).
+   */
+  getPendingQuestions(_sessionId?: string): Promise<UnifiedQuestion[]> | UnifiedQuestion[] {
+    return [];
+  }
+
+  /**
+   * Filter a Map of pending entries by engine-side sessionId. Shared helper
+   * used by Copilot/Claude/Codex whose pending Maps hold `{ ...; question }`
+   * or `{ ...; permission }` value shapes — each knows how to project out the
+   * UnifiedQuestion/UnifiedPermission. When `sessionId` is undefined we still
+   * must not match entries with a nullish session id on either side (that
+   * would bypass filtering); callers already avoid passing undefined.
+   */
+  protected static filterPending<V, R>(
+    map: Map<string, V>,
+    sessionId: string | undefined,
+    project: (v: V) => R,
+    getSessionId: (v: V) => string | undefined,
+  ): R[] {
+    const out: R[] = [];
+    for (const v of map.values()) {
+      if (!sessionId || getSessionId(v) === sessionId) out.push(project(v));
+    }
+    return out;
+  }
 
   // --- Projects ---
 

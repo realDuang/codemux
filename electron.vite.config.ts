@@ -6,6 +6,7 @@ import { resolve } from 'path';
 import { createLogger } from 'vite';
 import { createAuthProxyPlugin } from './scripts/auth-proxy-plugin';
 import { tunnelManager } from './scripts/tunnel-manager';
+import { GATEWAY_PORT, OPENCODE_PORT, WEBHOOK_PORT, WEB_PORT } from './shared/ports';
 
 // Custom logger that suppresses proxy errors during startup
 const logger = createLogger();
@@ -70,7 +71,7 @@ export default defineConfig({
       // Proxy auth/device API requests to Electron's internal Auth API server
       createAuthProxyPlugin({
         tunnelManager,
-        defaultPort: 8233,
+        defaultPort: WEB_PORT,
       }),
     ],
     resolve: {
@@ -81,17 +82,17 @@ export default defineConfig({
     server: {
       hmr: false,
       host: true,
-      port: 8233,
+      port: WEB_PORT,
       allowedHosts: true,
       proxy: {
         // Proxy Gateway WebSocket to the Gateway server
         '/ws': {
-          target: 'http://localhost:4200',
+          target: `http://localhost:${GATEWAY_PORT}`,
           ws: true,
         },
         // Proxy OpenCode API requests to the OpenCode server
         '/opencode-api': {
-          target: 'http://localhost:4096',
+          target: `http://localhost:${OPENCODE_PORT}`,
           changeOrigin: true,
           rewrite: (path) => path.replace(/^\/opencode-api/, ''),
           // Handle SSE connections properly
@@ -99,11 +100,11 @@ export default defineConfig({
         },
         // Proxy webhook endpoints to the WebhookServer
         '/api/messages': {
-          target: 'http://localhost:4098',
+          target: `http://localhost:${WEBHOOK_PORT}`,
           changeOrigin: true,
         },
         '/webhook': {
-          target: 'http://localhost:4098',
+          target: `http://localhost:${WEBHOOK_PORT}`,
           changeOrigin: true,
         },
       },

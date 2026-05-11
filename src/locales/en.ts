@@ -32,6 +32,13 @@ export interface LocaleDict {
     allowOnce: string;
     allowAlways: string;
     waitingApproval: string;
+    kindRead: string;
+    kindEdit: string;
+    kindOther: string;
+    kindShell: string;
+    kindUrlAccess: string;
+    kindWebSearch: string;
+    diffPreview: string;
   };
   // Question
   question: {
@@ -42,6 +49,7 @@ export interface LocaleDict {
     selectMultiple: string;
     back: string;
     next: string;
+    progress: string;
   };
 
   // Login page
@@ -93,6 +101,17 @@ export interface LocaleDict {
     orchestrationSubtaskEngine: string;
     orchestrationSubtaskWorktree: string;
     orchestrationSubtaskOpenSession: string;
+    dashboardTab: string;
+    chatTab: string;
+    teamTask: string;
+    teamTaskDesc: string;
+    teamTaskDetail: string;
+    /** Placeholder for the custom model ID input */
+    modelIdPlaceholder: string;
+    /** Default mode label fallback when an engine has no available modes */
+    defaultModeLabel: string;
+    /** Tooltip hint shown on the chat toolbar's model/mode controls */
+    sessionScopeHint: string;
   };
 
   // Settings page
@@ -158,6 +177,7 @@ export interface LocaleDict {
     publicAccessDesc: string;
     starting: string;
     startFailed: string;
+    namedTunnelMissingCredentials: string;
     securityWarning: string;
     securityWarningDesc: string;
     accessPassword: string;
@@ -402,6 +422,8 @@ export interface LocaleDict {
     fastMode: string;
     fastModeDesc: string;
     fastModeUnavailable: string;
+    /** Hint explaining that engine-level model/effort/fastMode are defaults for new sessions */
+    sessionDefaultsHint: string;
     noModelsAvailable: string;
     modelInputPlaceholder: string;
     enabled: string;
@@ -426,6 +448,22 @@ export interface LocaleDict {
     wecomBotDesc: string;
     teamsBot: string;
     teamsBotDesc: string;
+    weixinIlinkBot: string;
+    weixinIlinkBotDesc: string;
+    weixinIlinkLoginTitle: string;
+    weixinIlinkLoading: string;
+    weixinIlinkScanPrompt: string;
+    weixinIlinkScanedPrompt: string;
+    weixinIlinkConfirmedPrompt: string;
+    weixinIlinkExpired: string;
+    weixinIlinkRefresh: string;
+    weixinIlinkError: string;
+    weixinIlinkRetry: string;
+    weixinIlinkAlreadyConfigured: string;
+    weixinIlinkLogout: string;
+    weixinIlinkLogoutConfirm: string;
+    weixinIlinkLoginRequiredHint: string;
+    weixinIlinkSessionExpired: string;
     appId: string;
     appIdPlaceholder: string;
     appSecret: string;
@@ -468,6 +506,7 @@ export interface LocaleDict {
     streamingThrottleDesc: string;
     ms: string;
     configure: string;
+    login: string;
     configRequired: string;
     secretConfiguredHint: string;
     save: string;
@@ -481,7 +520,6 @@ export interface LocaleDict {
     teamsWebhookGuide: string;
     wecomWebhookGuide: string;
     webhookEndpoint: string;
-    teamsInstallHint: string;
   };
 
   // Token Usage
@@ -684,6 +722,13 @@ export const en: LocaleDict = {
     allowOnce: "Allow once",
     allowAlways: "Allow always",
     waitingApproval: "Waiting for approval",
+    kindRead: "File Read",
+    kindEdit: "File Edit",
+    kindOther: "Permission Request",
+    kindShell: "Shell Command",
+    kindUrlAccess: "URL Access",
+    kindWebSearch: "Web Search",
+    diffPreview: "Changes",
   },
   // Question
   question: {
@@ -694,6 +739,7 @@ export const en: LocaleDict = {
     selectMultiple: "Select multiple options",
     back: "Back",
     next: "Next",
+    progress: "Question {current} of {total}",
   },
 
   // Login page
@@ -745,6 +791,14 @@ export const en: LocaleDict = {
     orchestrationSubtaskEngine: "Engine: {engine}",
     orchestrationSubtaskWorktree: "Worktree: {name}",
     orchestrationSubtaskOpenSession: "Open session",
+    dashboardTab: "Dashboard",
+    chatTab: "Chat",
+    teamTask: "Team Task",
+    teamTaskDesc: "Describe the task you want multiple engines to collaborate on.",
+    teamTaskDetail: "The task will be decomposed into subtasks and dispatched to different engines in parallel.",
+    modelIdPlaceholder: "Enter model ID...",
+    defaultModeLabel: "Build",
+    sessionScopeHint: "Applies to this session only. Defaults for new sessions live in Settings.",
   },
 
   // Settings page
@@ -810,6 +864,7 @@ export const en: LocaleDict = {
     publicAccessDesc: "Access via Cloudflare tunnel from the internet",
     starting: "Starting tunnel, please wait...",
     startFailed: "Failed to start. Please ensure cloudflared is installed",
+    namedTunnelMissingCredentials: "Named Tunnel credentials were not found. CodeMux needs a ~/.cloudflared/<tunnel-id>.json credential file to start this fixed domain. Run the Cloudflare setup commands below, or clear the custom domain to use a temporary quick tunnel.",
     securityWarning: "Security Warning:",
     securityWarningDesc: "Remote access allows full control of this device. Keep your access password safe and never share it with untrusted people.",
     accessPassword: "Access Password",
@@ -1051,6 +1106,7 @@ export const en: LocaleDict = {
     fastMode: "Fast Mode",
     fastModeDesc: "Higher speed inference at 2\u00d7 credit usage (Codex only)",
     fastModeUnavailable: "Fast mode requires ChatGPT authentication",
+    sessionDefaultsHint: "These settings apply only to newly created sessions. Existing sessions keep their own per-session model, mode, and effort overrides — adjust those from the chat toolbar.",
     noModelsAvailable: "No models available",
     modelInputPlaceholder: "Enter model ID (e.g. claude-sonnet-4-20250514)",
     enabled: "Enabled",
@@ -1073,6 +1129,22 @@ export const en: LocaleDict = {
     wecomBotDesc: "Connect to WeCom (WeChat Work) to use CodeMux via app messages",
     teamsBot: "Teams Bot",
     teamsBotDesc: "Connect to Microsoft Teams to use CodeMux via bot messages",
+    weixinIlinkBot: "WeChat Personal (iLink)",
+    weixinIlinkBotDesc: "Connect to WeChat personal account via iLink (QR-scan login)",
+    weixinIlinkLoginTitle: "WeChat iLink Login",
+    weixinIlinkLoading: "Fetching QR code...",
+    weixinIlinkScanPrompt: "Open WeChat on your phone and scan the QR code.",
+    weixinIlinkScanedPrompt: "Scanned. Confirm login on your phone...",
+    weixinIlinkConfirmedPrompt: "Login confirmed, saving...",
+    weixinIlinkExpired: "QR code expired.",
+    weixinIlinkRefresh: "Refresh QR code",
+    weixinIlinkError: "Failed to fetch QR code.",
+    weixinIlinkRetry: "Retry",
+    weixinIlinkAlreadyConfigured: "A bot is already configured. Scanning will replace it.",
+    weixinIlinkLogout: "Logout",
+    weixinIlinkLogoutConfirm: "Log out the current WeChat account? This stops the bot and clears all saved session bindings on this device. The remote WeChat session may stay valid until it expires server-side.",
+    weixinIlinkLoginRequiredHint: "Click Login and scan the QR code first.",
+    weixinIlinkSessionExpired: "WeChat session expired — please scan the QR code again to re-login.",
     appId: "App ID",
     appIdPlaceholder: "Enter Feishu / Lark App ID",
     appSecret: "App Secret",
@@ -1115,6 +1187,7 @@ export const en: LocaleDict = {
     streamingThrottleDesc: "Minimum interval between Feishu / Lark message updates",
     ms: "ms",
     configure: "Configure",
+    login: "Login",
     configRequired: "App ID and App Secret are required to enable the bot",
     secretConfiguredHint: "Configured — leave empty to keep current",
     save: "Save",
@@ -1128,7 +1201,6 @@ export const en: LocaleDict = {
     teamsWebhookGuide: "Configure this URL as Messaging Endpoint in Azure Bot Service → Settings",
     wecomWebhookGuide: "Configure this URL as callback URL in WeCom Admin Console → App → Receive Messages",
     webhookEndpoint: "Endpoint",
-    teamsInstallHint: "Install the bot in Teams: Apps → Manage your apps → Upload a custom app → select the generated teams-app.zip (in project .channels/ folder or app data directory)",
   },
 
   // Token Usage

@@ -4,6 +4,7 @@ import path from "path";
 import fs from "fs";
 import os from "os";
 import { tunnelLog } from "./logger";
+import { getCloudflaredConfigPath } from "./app-paths";
 
 export interface TunnelConfig {
   /** Custom hostname for named tunnel (e.g. "codemux.example.com") */
@@ -15,6 +16,7 @@ interface TunnelInfo {
   status: "starting" | "running" | "stopped" | "error";
   startTime?: number;
   error?: string;
+  errorCode?: string;
 }
 
 class TunnelManager {
@@ -72,8 +74,7 @@ class TunnelManager {
    * ~/.cloudflared/config.yml with different ingress rules.
    */
   private writeNamedTunnelConfig(tunnelId: string, hostname: string, port: number): string {
-    const userDataPath = app.getPath("userData");
-    const configPath = path.join(userDataPath, "cloudflared-config.yml");
+    const configPath = getCloudflaredConfigPath();
     const credentialsPath = path.join(os.homedir(), ".cloudflared", `${tunnelId}.json`);
 
     const bareHostname = hostname.replace(/^https?:\/\//, "");
@@ -101,10 +102,18 @@ class TunnelManager {
     if (hostname) {
       tunnelId = this.detectTunnelId();
       if (!tunnelId) {
-        tunnelLog.warn("Named tunnel hostname configured but no tunnel credentials found in ~/.cloudflared/");
+        const error = "Named Tunnel credentials not found. CodeMux needs a ~/.cloudflared/<tunnel-id>.json credential file to start this fixed custom domain. Run cloudflared tunnel login, cloudflared tunnel create <name>, and cloudflared tunnel route dns <name> <domain>; or clear the custom domain to use a temporary quick tunnel.";
+        tunnelLog.error(error);
+        this.info = {
+          url: "",
+          status: "error",
+          error,
+          errorCode: "NAMED_TUNNEL_NO_CREDENTIALS",
+        };
+        return this.info;
       }
     }
-    const isNamed = !!(hostname && tunnelId);
+    const isNamed = !!hostname;
 
     this.stoppedByUser = false;
     this.info = {

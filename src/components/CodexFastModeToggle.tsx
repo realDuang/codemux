@@ -5,6 +5,9 @@ import type { EngineType } from "../types/unified";
 
 interface CodexFastModeToggleProps {
   engineType: EngineType;
+  active?: () => boolean;
+  onToggle?: (nextActive: boolean) => void;
+  compact?: boolean;
 }
 
 export function CodexFastModeToggle(props: CodexFastModeToggleProps) {
@@ -19,10 +22,14 @@ export function CodexFastModeToggle(props: CodexFastModeToggleProps) {
   );
 
   const active = createMemo(() =>
-    isFastModeActive(props.engineType),
+    props.active?.() ?? isFastModeActive(props.engineType),
   );
 
   const handleToggle = () => {
+    if (props.onToggle) {
+      props.onToggle(!active());
+      return;
+    }
     if (active()) {
       clearServiceTier(props.engineType);
     } else {
@@ -32,15 +39,19 @@ export function CodexFastModeToggle(props: CodexFastModeToggleProps) {
 
   return (
     <Show when={supported()}>
-      <div class="px-4 sm:px-6 pb-4 sm:pb-6 pt-0 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 sm:gap-4 -mt-2">
-        <div>
-          <h4 class="text-sm font-medium text-gray-700 dark:text-gray-300">
-            {t().engine.fastMode}
-          </h4>
-          <p class="text-xs text-gray-400 dark:text-gray-500 mt-0.5">
-            {t().engine.fastModeDesc}
-          </p>
-        </div>
+      <div class={props.compact
+        ? "flex items-center gap-2"
+        : "px-4 sm:px-6 pb-4 sm:pb-6 pt-0 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 sm:gap-4 -mt-2"}>
+        <Show when={!props.compact}>
+          <div>
+            <h4 class="text-sm font-medium text-gray-700 dark:text-gray-300">
+              {t().engine.fastMode}
+            </h4>
+            <p class="text-xs text-gray-400 dark:text-gray-500 mt-0.5">
+              {t().engine.fastModeDesc}
+            </p>
+          </div>
+        </Show>
         <button
           onClick={handleToggle}
           class={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors flex-shrink-0 ${

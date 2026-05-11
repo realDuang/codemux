@@ -134,7 +134,7 @@ vi.mock("../../../electron/main/services/logger", () => ({
   saveSettings: mockSaveSettings,
 }));
 
-vi.mock("../../../electron/main/index", () => ({
+vi.mock("../../../electron/main/app-main", () => ({
   isStartupReady: mockIsStartupReady,
   channelManager: mockChannelManager,
 }));
@@ -563,6 +563,14 @@ describe("registerIpcHandlers", () => {
       mockLoadSettings.mockReturnValue({ tunnelConfig: { hostname: "custom.host.com" } });
       await getHandler("tunnel:start")(fakeEvent, 3000);
       expect(mockTunnelManager.start).toHaveBeenCalledWith(3000, { hostname: "custom.host.com" });
+    });
+
+    it("prefers explicit tunnelConfig over settings", async () => {
+      mockApp.isPackaged = false;
+      mockLoadSettings.mockReturnValue({ tunnelConfig: { hostname: "old.host.com" } });
+      await getHandler("tunnel:start")(fakeEvent, 3000, { hostname: "new.host.com" });
+      expect(mockTunnelManager.start).toHaveBeenCalledWith(3000, { hostname: "new.host.com" });
+      expect(mockLoadSettings).not.toHaveBeenCalled();
     });
 
     it("passes undefined tunnelConfig when settings has none", async () => {

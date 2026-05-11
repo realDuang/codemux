@@ -36,12 +36,13 @@ Still in BotFather, run these commands:
 
 Send `/setcommands`, select your bot, then paste:
 ```
-project - Manage projects
-session - Manage sessions
+project - Switch project
+new - Create a new session in the current project
+switch - Switch to another session in the current project
 cancel - Cancel current request
 status - Show session status
-mode - Change agent mode
-model - Change AI model
+mode - Switch agent mode (agent|plan|build)
+model - List or switch AI model
 history - View message history
 help - Show help
 ```
@@ -137,5 +138,5 @@ Type `/help` in chat to see all available commands. Commands work in both P2P an
 - **Webhook Endpoint**: `/webhook/telegram` (POST)
 - **Webhook Auth**: Optional `X-Telegram-Bot-Api-Secret-Token` header verification
 - **Message Format**: MarkdownV2 with InlineKeyboardMarkup for interactive elements
-- **Persistence**: Session bindings saved to `~/.channels/telegram-bindings.json`
+- **Persistence**: Session bindings saved to Electron `userData/channels/telegram-bindings.json`
 - **Rate Limiting**: TokenBucket — 10 burst capacity, 30 tokens/sec refill

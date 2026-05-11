@@ -2,6 +2,7 @@ import { timeId } from "../../utils/id-gen";
 import { inferToolKind, normalizeToolName } from "../../../../src/types/tool-mapping";
 import type {
   NormalizedToolName,
+  PermissionDetail,
   PermissionOption,
   ReasoningEffort,
   ReasoningPart,
@@ -384,13 +385,18 @@ export function convertApprovalToPermission(
 
   if (method === "item/commandExecution/requestApproval") {
     const command = typeof data.command === "string" ? data.command : "";
+    const details: PermissionDetail[] = [];
+    if (command) details.push({ label: "Command", value: command, mono: true });
+    if (typeof data.reason === "string" && data.reason) details.push({ label: "Reason", value: data.reason });
     return {
       id: String(requestId),
       sessionId,
       engineType: "codex",
       toolCallId: typeof data.itemId === "string" ? data.itemId : undefined,
+      toolName: "shell",
       title: command ? `Approve command: ${truncate(command, 96)}` : "Approve command execution",
       kind: "other",
+      details,
       rawInput: params,
       options,
       metadata: typeof data.reason === "string" && data.reason ? { reason: data.reason } : undefined,
@@ -398,13 +404,18 @@ export function convertApprovalToPermission(
   }
 
   if (method === "item/fileChange/requestApproval") {
+    const details: PermissionDetail[] = [];
+    if (typeof data.grantRoot === "string" && data.grantRoot) details.push({ label: "Path", value: data.grantRoot, mono: true });
+    if (typeof data.reason === "string" && data.reason) details.push({ label: "Reason", value: data.reason });
     return {
       id: String(requestId),
       sessionId,
       engineType: "codex",
       toolCallId: typeof data.itemId === "string" ? data.itemId : undefined,
+      toolName: "edit",
       title: typeof data.reason === "string" && data.reason ? data.reason : "Approve file changes",
       kind: "edit",
+      details,
       rawInput: params,
       options,
       metadata: typeof data.grantRoot === "string" && data.grantRoot ? { grantRoot: data.grantRoot } : undefined,
@@ -416,6 +427,10 @@ export function convertApprovalToPermission(
     const fileSystem = asRecord(permissions.fileSystem);
     const hasWrite = Array.isArray(fileSystem.write) && fileSystem.write.length > 0;
     const hasRead = Array.isArray(fileSystem.read) && fileSystem.read.length > 0;
+    const details: PermissionDetail[] = [];
+    if (hasRead && Array.isArray(fileSystem.read)) details.push({ label: "Read", value: fileSystem.read.filter((v): v is string => typeof v === "string").join(", "), mono: true });
+    if (hasWrite && Array.isArray(fileSystem.write)) details.push({ label: "Write", value: fileSystem.write.filter((v): v is string => typeof v === "string").join(", "), mono: true });
+    if (typeof data.reason === "string" && data.reason) details.push({ label: "Reason", value: data.reason });
 
     return {
       id: String(requestId),
@@ -424,6 +439,7 @@ export function convertApprovalToPermission(
       toolCallId: typeof data.itemId === "string" ? data.itemId : undefined,
       title: typeof data.reason === "string" && data.reason ? data.reason : "Approve additional permissions",
       kind: hasWrite ? "edit" : hasRead ? "read" : "other",
+      details,
       rawInput: params,
       options,
     };
@@ -433,14 +449,19 @@ export function convertApprovalToPermission(
     const command = Array.isArray(data.command)
       ? data.command.filter((value): value is string => typeof value === "string").join(" ")
       : "";
+    const details: PermissionDetail[] = [];
+    if (command) details.push({ label: "Command", value: command, mono: true });
+    if (typeof data.reason === "string" && data.reason) details.push({ label: "Reason", value: data.reason });
 
     return {
       id: String(requestId),
       sessionId,
       engineType: "codex",
       toolCallId: typeof data.callId === "string" ? data.callId : undefined,
+      toolName: "shell",
       title: command ? `Approve command: ${truncate(command, 96)}` : "Approve command execution",
       kind: "other",
+      details,
       rawInput: params,
       options: [
         { id: "allow_once", label: "Allow", type: "allow_once" },
@@ -458,15 +479,21 @@ export function convertApprovalToPermission(
       .map((change) => typeof change.diff === "string" ? change.diff : "")
       .filter(Boolean)
       .join("\n");
+    const details: PermissionDetail[] = [];
+    const changedFiles = Object.keys(fileChanges).filter(Boolean);
+    if (changedFiles.length > 0) details.push({ label: "Files", value: changedFiles.join(", "), mono: true });
+    if (typeof data.reason === "string" && data.reason) details.push({ label: "Reason", value: data.reason });
 
     return {
       id: String(requestId),
       sessionId,
       engineType: "codex",
       toolCallId: typeof data.callId === "string" ? data.callId : undefined,
+      toolName: "edit",
       title: typeof data.reason === "string" && data.reason ? data.reason : "Approve file changes",
       kind: "edit",
       diff: diff || undefined,
+      details,
       rawInput: params,
       options: [
         { id: "allow_once", label: "Allow", type: "allow_once" },
@@ -482,6 +509,7 @@ export function convertApprovalToPermission(
     engineType: "codex",
     title: "Approve Codex action",
     kind: "other",
+    details: [],
     rawInput: params,
     options: [
       { id: "allow_once", label: "Allow", type: "allow_once" },

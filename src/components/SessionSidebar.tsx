@@ -1606,17 +1606,21 @@ export function SessionSidebar(props: SessionSidebarProps) {
                                                       setSessionStore("worktrees", projDir, wts.filter(wt => wt.name !== wtGroup.worktree.name));
                                                     }
                                                   }
-                                                  // Clean up orchestration store
-                                                  for (const [sid, tid] of Object.entries(orchestrationStore.sessionToTeam)) {
-                                                    const teamInfo = orchestrationStore.teams[tid];
-                                                    if (teamInfo?.worktreeInfo?.name === wtGroup.worktree.name) {
-                                                      setOrchestrationStore("sessionToTeam", sid, undefined as any);
-                                                    }
-                                                  }
-                                                  for (const [tid, info] of Object.entries(orchestrationStore.teams)) {
-                                                    if (info?.worktreeInfo?.name === wtGroup.worktree.name) {
-                                                      setOrchestrationStore("teams", tid, undefined as any);
-                                                    }
+                                                  // Clean up orchestration store: remove keys (don't leave undefined)
+                                                  const deletedTeamIds = new Set(
+                                                    Object.entries(orchestrationStore.teams)
+                                                      .filter(([, info]) => info?.worktreeInfo?.name === wtGroup.worktree.name)
+                                                      .map(([tid]) => tid)
+                                                  );
+                                                  if (deletedTeamIds.size > 0) {
+                                                    const nextTeams = Object.fromEntries(
+                                                      Object.entries(orchestrationStore.teams).filter(([tid]) => !deletedTeamIds.has(tid))
+                                                    );
+                                                    const nextSessionToTeam = Object.fromEntries(
+                                                      Object.entries(orchestrationStore.sessionToTeam).filter(([, tid]) => !deletedTeamIds.has(tid))
+                                                    );
+                                                    setOrchestrationStore("teams", nextTeams);
+                                                    setOrchestrationStore("sessionToTeam", nextSessionToTeam);
                                                   }
                                                   setPendingDeleteId(null);
                                                 }}

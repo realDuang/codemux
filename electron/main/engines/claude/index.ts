@@ -14,6 +14,7 @@ import {
   unstable_v2_resumeSession,
   listSessions as sdkListSessions,
   getSessionMessages as sdkGetSessionMessages,
+  renameSession as sdkRenameSession,
   query as sdkQuery,
 } from "@anthropic-ai/claude-agent-sdk";
 import type {
@@ -22,6 +23,7 @@ import type {
   CanUseTool,
   PermissionResult,
   PermissionUpdate,
+  PermissionMode,
   ModelInfo as ClaudeModelInfo,
 } from "@anthropic-ai/claude-agent-sdk";
 
@@ -55,6 +57,8 @@ import type {
   EngineCommand,
   CommandInvokeResult,
   ReasoningEffort,
+  PermissionOption,
+  PermissionDetail,
 } from "../../../../src/types/unified";
 import { REASONING_EFFORT_VALUES, normalizeReasoningEfforts } from "../../../../src/types/unified";
 
@@ -77,7 +81,8 @@ interface V2SessionInfo {
   createdAt: number;
   lastUsedAt: number;
   capturedSessionId?: string; // CC's internal session ID from system init message
-  permissionMode?: "default" | "plan" | "acceptEdits" | "dontAsk";
+  permissionMode?: PermissionMode;
+  allowDangerouslySkipPermissions?: boolean;
 }
 
 // ============================================================================
@@ -112,7 +117,7 @@ interface PendingPermission {
 }
 
 interface PendingQuestion {
-  resolve: (answer: string) => void;
+  resolve: (answers: string[][]) => void;
   question: UnifiedQuestion;
 }
 
@@ -121,10 +126,27 @@ interface PendingQuestion {
 // ============================================================================
 
 const DEFAULT_MODES: AgentMode[] = [
+  { id: "bypassPermissions", label: "Bypass Permissions", description: "Bypass all permission checks" },
   { id: "default", label: "Default", description: "Standard behavior, prompts for dangerous operations" },
-  { id: "acceptEdits", label: "Auto-Accept", description: "Auto-accept file edit operations" },
   { id: "plan", label: "Plan", description: "Planning mode, no actual tool execution" },
 ];
+
+const CLAUDE_PERMISSION_MODES = new Set<PermissionMode>([
+  "default",
+  "bypassPermissions",
+  "plan",
+]);
+
+function toClaudePermissionMode(mode: string | undefined): PermissionMode {
+  if (!mode) return "bypassPermissions";
+  return CLAUDE_PERMISSION_MODES.has(mode as PermissionMode)
+    ? (mode as PermissionMode)
+    : "default";
+}
+
+function allowsDangerouslySkipPermissions(mode: PermissionMode): boolean {
+  return mode === "bypassPermissions";
+}
 
 function getDefaultClaudeReasoningEffort(
   supportedReasoningEfforts: ReasoningEffort[] | undefined,
@@ -208,7 +230,7 @@ export class ClaudeCodeAdapter extends EngineAdapter {
   private authMessage: string | undefined;
   private currentModelId: string | null = null;
   private cachedModels: UnifiedModelInfo[] = [];
-  private sessionModes = new Map<string, string>();
+  private sessionModes = new Map<string, PermissionMode>();
   private sessionReasoningEfforts = new Map<string, ReasoningEffort>();
 
   // --- Session directory cache (used instead of external store lookups) ---
@@ -282,8 +304,9 @@ export class ClaudeCodeAdapter extends EngineAdapter {
     claudeLog.info("Starting Claude Code adapter...");
 
     try {
-      // Claude Code CLI is available globally (installed via npm install -g @anthropic-ai/claude-code)
-      // The SDK will find it automatically, or we can specify pathToClaudeCodeExecutable.
+      // Claude Code is provided by the SDK's platform-specific optional binary
+      // package. We resolve it explicitly so Electron ASAR builds can point at
+      // the unpacked native executable.
       // No separate server process to manage — the SDK spawns CLI subprocesses per session.
 
       // Model is determined per-request via sendMessage's modelId parameter,
@@ -325,13 +348,12 @@ export class ClaudeCodeAdapter extends EngineAdapter {
 
       const q = sdkQuery({
         prompt: "",
-        options: {
+        options: this.withClaudeExecutablePath({
           model: this.currentModelId ?? "claude-sonnet-4-20250514",
           env: sdkEnv,
           abortController: new AbortController(),
-          pathToClaudeCodeExecutable: this.resolveCliPath(),
           stderr: this.stderrCallback,
-        } as any,
+        }) as any,
       });
 
       try {
@@ -579,6 +601,35 @@ export class ClaudeCodeAdapter extends EngineAdapter {
     return this.v2Sessions.has(sessionId) || this.sessionDirectories.has(sessionId);
   }
 
+  /**
+   * Rename a Claude session via SDK. The codemux session ID is opaque to the
+   * SDK; the real on-disk session is keyed by ccSessionId (captured during
+   * the system init message).
+   */
+  async renameSession(
+    sessionId: string,
+    title: string,
+    directory?: string,
+    engineMeta?: Record<string, unknown>,
+  ): Promise<void> {
+    const ccSessionId =
+      this.sessionCcIds.get(sessionId) ??
+      (typeof engineMeta?.ccSessionId === "string"
+        ? (engineMeta.ccSessionId as string)
+        : undefined);
+    if (!ccSessionId) {
+      claudeLog.debug(
+        `[Claude][${sessionId}] renameSession skipped — no ccSessionId yet`,
+      );
+      return;
+    }
+    try {
+      await sdkRenameSession(ccSessionId, title, directory ? { dir: directory } : undefined);
+    } catch (err) {
+      claudeLog.warn(`[Claude][${sessionId}] renameSession via SDK failed:`, err);
+    }
+  }
+
   async getSession(sessionId: string): Promise<UnifiedSession | null> {
     return null;
   }
@@ -607,7 +658,7 @@ export class ClaudeCodeAdapter extends EngineAdapter {
     }
     for (const [id, pending] of this.pendingQuestions) {
       if (pending.question.sessionId === sessionId) {
-        pending.resolve("Session deleted");
+        pending.resolve([]);
         this.pendingQuestions.delete(id);
       }
     }
@@ -780,9 +831,8 @@ export class ClaudeCodeAdapter extends EngineAdapter {
     };
     this.emit("message.updated", { sessionId, message: assistantMessage });
 
-    // Determine permission mode from mode option
-    const mode = options?.mode ?? this.sessionModes.get(sessionId) ?? "default";
-    const permissionMode = mode as "default" | "plan" | "acceptEdits" | "dontAsk";
+    const permissionMode = toClaudePermissionMode(options?.mode ?? this.sessionModes.get(sessionId));
+    this.sessionModes.set(sessionId, permissionMode);
 
     // Apply reasoning effort if it changed (triggers session rebuild via getOrCreateV2Session)
     if (options?.reasoningEffort !== undefined) {
@@ -912,7 +962,7 @@ export class ClaudeCodeAdapter extends EngineAdapter {
     // Reject pending questions/permissions for this session so the UI unblocks
     for (const [id, pending] of this.pendingQuestions) {
       if (pending.question.sessionId === sessionId) {
-        pending.resolve("");
+        pending.resolve([]);
         this.pendingQuestions.delete(id);
       }
     }
@@ -1144,13 +1194,12 @@ export class ClaudeCodeAdapter extends EngineAdapter {
 
       const q = sdkQuery({
         prompt: "",
-        options: {
+        options: this.withClaudeExecutablePath({
           model: this.currentModelId ?? "claude-sonnet-4-20250514",
           env: sdkEnv,
           abortController: new AbortController(),
-          pathToClaudeCodeExecutable: this.resolveCliPath(),
           stderr: this.stderrCallback,
-        } as any,
+        }) as any,
       });
 
       try {
@@ -1212,21 +1261,26 @@ export class ClaudeCodeAdapter extends EngineAdapter {
   }
 
   async setMode(sessionId: string, modeId: string): Promise<void> {
-    this.sessionModes.set(sessionId, modeId);
-    claudeLog.info(`[Claude][${sessionId}] Mode set to: ${modeId}`);
+    const permissionMode = toClaudePermissionMode(modeId);
+    this.sessionModes.set(sessionId, permissionMode);
+    claudeLog.info(`[Claude][${sessionId}] Mode set to: ${permissionMode}`);
 
     const v2Info = this.v2Sessions.get(sessionId);
     if (v2Info) {
-      // Update tracked permissionMode
-      v2Info.permissionMode = modeId as any;
+      if (allowsDangerouslySkipPermissions(permissionMode) && !v2Info.allowDangerouslySkipPermissions) {
+        this.cleanupSession(sessionId, "permission mode changed to bypass permissions");
+        return;
+      }
+
+      v2Info.permissionMode = permissionMode;
 
       // Use the internal Query API to switch permission mode at runtime
       // (same pattern as cancelMessage's interrupt() call)
       try {
         const query = (v2Info.session as any).query;
         if (query && typeof query.setPermissionMode === "function") {
-          await query.setPermissionMode(modeId);
-          claudeLog.info(`[Claude][${sessionId}] Permission mode switched to: ${modeId}`);
+          await query.setPermissionMode(permissionMode);
+          claudeLog.info(`[Claude][${sessionId}] Permission mode switched to: ${permissionMode}`);
         } else {
           claudeLog.warn(`[Claude][${sessionId}] setPermissionMode not available on query, will apply on next message`);
         }
@@ -1319,7 +1373,7 @@ export class ClaudeCodeAdapter extends EngineAdapter {
 
   /**
    * Create a canUseTool callback bound to a specific codemux session ID.
-   * This callback is invoked by the SDK before each tool execution.
+   * This callback is invoked by the SDK when Claude Code needs a permission reply.
    */
   private createCanUseTool(sessionId: string): CanUseTool {
     return async (
@@ -1330,18 +1384,115 @@ export class ClaudeCodeAdapter extends EngineAdapter {
         suggestions?: PermissionUpdate[];
         blockedPath?: string;
         decisionReason?: string;
+        title?: string;
+        displayName?: string;
+        description?: string;
         toolUseID: string;
         agentID?: string;
       },
     ): Promise<PermissionResult> => {
-      // --- ExitPlanMode: intercept and ask user for confirmation ---
+      // --- ExitPlanMode: always intercept regardless of mode ---
       if (toolName === "ExitPlanMode") {
         return this.handleExitPlanMode(sessionId, input, options);
       }
 
-      // --- All other tools: auto-approve ---
-      return { behavior: "allow", updatedInput: input };
+      // --- AskUserQuestion: route through the question UI, not permission UI ---
+      if (toolName === "AskUserQuestion") {
+        return this.handleAskUserQuestion(sessionId, input, options);
+      }
+
+      return this.handleToolPermission(sessionId, toolName, input, options);
     };
+  }
+
+  /**
+   * Emit a UnifiedPermission for a tool execution and block until the user responds.
+   */
+  private handleToolPermission(
+    sessionId: string,
+    toolName: string,
+    input: Record<string, unknown>,
+    options: {
+      signal: AbortSignal;
+      suggestions?: PermissionUpdate[];
+      blockedPath?: string;
+      decisionReason?: string;
+      title?: string;
+      displayName?: string;
+      description?: string;
+      toolUseID: string;
+    },
+  ): Promise<PermissionResult> {
+    const permissionId = timeId("perm");
+
+    const normalizedTool = normalizeToolName("claude", toolName);
+    const kind: "read" | "edit" | "other" = inferToolKind(undefined, normalizedTool);
+
+    const title = options.title
+      ?? options.displayName
+      ?? `${toolName} permission requested`;
+
+    // Build structured details from SDK-provided context
+    const details: PermissionDetail[] = [];
+    if (options.description) {
+      details.push({ label: "Description", value: options.description });
+    }
+    if (options.blockedPath) {
+      details.push({ label: "Path", value: options.blockedPath, mono: true });
+    }
+    if (options.decisionReason) {
+      details.push({ label: "Reason", value: options.decisionReason });
+    }
+    // Extract key tool arguments for display
+    if (typeof input.command === "string" && input.command.trim()) {
+      details.push({ label: "Command", value: input.command.trim(), mono: true });
+    }
+    if (typeof input.file_path === "string" && input.file_path.trim()) {
+      details.push({ label: "File", value: input.file_path.trim(), mono: true });
+    }
+    if (typeof input.url === "string" && input.url.trim()) {
+      details.push({ label: "URL", value: input.url.trim(), mono: true });
+    }
+    if (typeof input.pattern === "string" && input.pattern.trim()) {
+      details.push({ label: "Pattern", value: input.pattern.trim(), mono: true });
+    }
+
+    const permissionOptions: PermissionOption[] = [
+      { id: "allow_once", label: "Allow Once", type: "accept_once" },
+      { id: "allow_always", label: "Always Allow", type: "accept_always" },
+      { id: "reject", label: "Deny", type: "reject" },
+    ];
+
+    const permission: UnifiedPermission = {
+      id: permissionId,
+      sessionId,
+      engineType: this.engineType,
+      toolCallId: options.toolUseID,
+      toolName: normalizedTool,
+      title,
+      kind,
+      details,
+      rawInput: input,
+      options: permissionOptions,
+    };
+
+    return new Promise<PermissionResult>((resolve) => {
+      this.pendingPermissions.set(permissionId, {
+        resolve,
+        permission,
+        suggestions: options.suggestions,
+        input,
+      });
+      this.emit("permission.asked", { permission });
+
+      // Handle abort signal
+      options.signal.addEventListener("abort", () => {
+        if (this.pendingPermissions.has(permissionId)) {
+          this.pendingPermissions.delete(permissionId);
+          resolve({ behavior: "deny", message: "Aborted" });
+        }
+      });
+    });
   }
 
   /**
@@ -1399,7 +1550,8 @@ export class ClaudeCodeAdapter extends EngineAdapter {
 
     return new Promise<PermissionResult>((resolve) => {
       this.pendingQuestions.set(questionId, {
-        resolve: (answer: string) => {
+        resolve: (perQuestion: string[][]) => {
+          const answer = (perQuestion[0] ?? []).filter((s) => s && s.length > 0).join("\n");
           const trimmed = answer.trim();
           const lower = trimmed.toLowerCase();
           const approved =
@@ -1511,11 +1663,26 @@ export class ClaudeCodeAdapter extends EngineAdapter {
     return new Promise<PermissionResult>((resolve) => {
       // Store pending question with a resolver that converts to PermissionResult
       this.pendingQuestions.set(questionId, {
-        resolve: (answer: string) => {
-          // Convert answer back to updatedInput with answers field
+        resolve: (perQuestion: string[][]) => {
+          // Empty array = cancellation/rejection (cleanup paths, abort, dismiss).
+          // Treat as a denial so the SDK doesn't get a malformed empty tool result.
+          const hasAnyAnswer = perQuestion.some((a) =>
+            (a ?? []).some((s) => s && s.length > 0),
+          );
+          if (!hasAnyAnswer) {
+            resolve({ behavior: "deny", message: "Question cancelled by user" });
+            return;
+          }
+          // SDK contract (AskUserQuestionOutput.answers): keyed by question text,
+          // value is the answer string (multi-select joined by ", ").
+          const answersObj: Record<string, string> = {};
+          rawQuestions.forEach((q, i) => {
+            const parts = (perQuestion[i] ?? []).filter((s) => s && s.length > 0);
+            answersObj[q.question] = parts.join(", ");
+          });
           resolve({
             behavior: "allow",
-            updatedInput: { ...input, answers: { "0": answer } },
+            updatedInput: { ...input, answers: answersObj },
           });
         },
         question,
@@ -1559,9 +1726,7 @@ export class ClaudeCodeAdapter extends EngineAdapter {
 
     this.pendingQuestions.delete(questionId);
 
-    // Combine all answers (selected options + custom text) into one string
-    const answer = (answers[0] ?? []).join("\n") || "";
-    pending.resolve(answer);
+    pending.resolve(answers);
 
     this.emit("question.replied", { questionId, answers });
   }
@@ -1571,7 +1736,19 @@ export class ClaudeCodeAdapter extends EngineAdapter {
     if (!pending) return;
 
     this.pendingQuestions.delete(questionId);
-    pending.resolve(""); // Empty answer = rejection
+    pending.resolve([]); // Empty answers = rejection
+  }
+
+  getPendingQuestions(sessionId?: string): UnifiedQuestion[] {
+    return ClaudeCodeAdapter.filterPending(
+      this.pendingQuestions, sessionId, (p) => p.question, (p) => p.question.sessionId,
+    );
+  }
+
+  getPendingPermissions(sessionId?: string): UnifiedPermission[] {
+    return ClaudeCodeAdapter.filterPending(
+      this.pendingPermissions, sessionId, (p) => p.permission, (p) => p.permission.sessionId,
+    );
   }
 
   // ==========================================================================
@@ -1718,30 +1895,74 @@ export class ClaudeCodeAdapter extends EngineAdapter {
   // ==========================================================================
 
   /**
-   * Resolve the SDK's cli.js path for child process spawning.
-   * In production Electron, the SDK is inside app.asar but child processes
-   * can't read from ASAR archives. Rewrite to the app.asar.unpacked path.
+   * Add the Claude Code executable path when the SDK's native binary package is
+   * installed. New SDK versions no longer ship cli.js in the main package.
    */
-  private resolveCliPath(): string | undefined {
-    try {
-      const _require = createRequire(import.meta.url);
-      // Resolve the SDK's main entry point (listed in package.json "exports"),
-      // then derive cli.js from the same directory. We can't require.resolve
-      // cli.js directly because the SDK's "exports" field doesn't list it.
-      const sdkMain = _require.resolve("@anthropic-ai/claude-agent-sdk");
-      const cliPath = join(dirname(sdkMain), "cli.js");
-      claudeLog.debug(`[Claude] resolveCliPath: raw=${cliPath}`);
-      const asarMarker = `app.asar${sep}`;
-      if (cliPath.includes(asarMarker)) {
-        const unpacked = cliPath.replace(asarMarker, `app.asar.unpacked${sep}`);
-        claudeLog.info(`[Claude] resolveCliPath: ASAR rewrite → ${unpacked}`);
-        return unpacked;
+  private withClaudeExecutablePath<T extends Record<string, unknown>>(options: T): T & { pathToClaudeCodeExecutable?: string } {
+    const executablePath = this.resolveClaudeExecutablePath();
+    return executablePath ? { ...options, pathToClaudeCodeExecutable: executablePath } : options;
+  }
+
+  private resolvedClaudeExecutablePath: string | undefined;
+  private didResolveClaudeExecutablePath = false;
+
+  private resolveClaudeExecutablePath(): string | undefined {
+    if (this.didResolveClaudeExecutablePath) return this.resolvedClaudeExecutablePath;
+
+    this.didResolveClaudeExecutablePath = true;
+    const _require = createRequire(import.meta.url);
+    const executableName = process.platform === "win32" ? "claude.exe" : "claude";
+
+    for (const packageName of this.getClaudeBinaryPackageCandidates()) {
+      try {
+        const packageJsonPath = _require.resolve(`${packageName}/package.json`);
+        const rawPath = join(dirname(packageJsonPath), executableName);
+        const executablePath = this.toUnpackedAsarPath(rawPath);
+        if (existsSync(executablePath)) {
+          this.resolvedClaudeExecutablePath = executablePath;
+          claudeLog.debug(`[Claude] Resolved native executable: ${executablePath}`);
+          return executablePath;
+        }
+        claudeLog.warn(`[Claude] Native executable package ${packageName} is missing ${executableName}`);
+      } catch (err) {
+        claudeLog.debug(`[Claude] Native executable package ${packageName} not resolved: ${err}`);
       }
-      return cliPath;
-    } catch (err) {
-      claudeLog.warn("[Claude] resolveCliPath: resolve failed:", err);
-      return undefined;
     }
+
+    claudeLog.warn(
+      `[Claude] Native executable for ${process.platform}-${process.arch} not found. ` +
+        "Reinstall @anthropic-ai/claude-agent-sdk with optional dependencies enabled.",
+    );
+    return undefined;
+  }
+
+  private getClaudeBinaryPackageCandidates(): string[] {
+    if (process.platform === "darwin" && (process.arch === "arm64" || process.arch === "x64")) {
+      return [`@anthropic-ai/claude-agent-sdk-darwin-${process.arch}`];
+    }
+    if (process.platform === "win32" && (process.arch === "arm64" || process.arch === "x64")) {
+      return [`@anthropic-ai/claude-agent-sdk-win32-${process.arch}`];
+    }
+    if (process.platform === "linux" && (process.arch === "arm64" || process.arch === "x64")) {
+      const base = `@anthropic-ai/claude-agent-sdk-linux-${process.arch}`;
+      return this.isLinuxMusl() ? [`${base}-musl`, base] : [base, `${base}-musl`];
+    }
+    return [];
+  }
+
+  private isLinuxMusl(): boolean {
+    if (process.platform !== "linux") return false;
+    const report = process.report?.getReport?.() as { header?: { glibcVersionRuntime?: string } } | undefined;
+    return !report?.header?.glibcVersionRuntime;
+  }
+
+  private toUnpackedAsarPath(filePath: string): string {
+    const asarMarker = `app.asar${sep}`;
+    if (!filePath.includes(asarMarker)) return filePath;
+
+    const unpacked = filePath.replace(asarMarker, `app.asar.unpacked${sep}`);
+    claudeLog.info(`[Claude] ASAR executable rewrite: ${unpacked}`);
+    return unpacked;
   }
 
   /**
@@ -1754,7 +1975,7 @@ export class ClaudeCodeAdapter extends EngineAdapter {
     directory: string,
     opts: {
       model?: string;
-      permissionMode?: "default" | "plan" | "acceptEdits" | "dontAsk";
+      permissionMode?: PermissionMode;
     },
   ): Promise<SDKSession> {
     const existing = this.v2Sessions.get(sessionId);
@@ -1768,29 +1989,36 @@ export class ClaudeCodeAdapter extends EngineAdapter {
         this.pendingResumeNotice.add(sessionId);
         // Fall through to create a new session (ccSessionId is preserved by cleanupSession)
       } else {
-        // Check if permissionMode changed — switch at runtime without destroying session
-        const requestedMode = opts.permissionMode ?? "default";
-        if (existing.permissionMode !== requestedMode) {
+        const requestedMode = opts.permissionMode ?? toClaudePermissionMode(undefined);
+        if (allowsDangerouslySkipPermissions(requestedMode) && !existing.allowDangerouslySkipPermissions) {
           claudeLog.info(
-            `[Claude][${sessionId}] permissionMode changed from ${existing.permissionMode} to ${requestedMode}, switching at runtime`,
+            `[Claude][${sessionId}] permissionMode changed to ${requestedMode}, recreating session with skip-permissions allowance`,
           );
-          existing.permissionMode = requestedMode;
-          try {
-            const query = (existing.session as any).query;
-            if (query && typeof query.setPermissionMode === "function") {
-              await query.setPermissionMode(requestedMode);
-              claudeLog.info(`[Claude][${sessionId}] Permission mode switched to: ${requestedMode}`);
-            } else {
-              claudeLog.warn(`[Claude][${sessionId}] setPermissionMode not available on query, will apply on next message`);
+          this.cleanupSession(sessionId, "permission mode changed to bypass permissions");
+        } else {
+          // Check if permissionMode changed — switch at runtime without destroying session
+          if (existing.permissionMode !== requestedMode) {
+            claudeLog.info(
+              `[Claude][${sessionId}] permissionMode changed from ${existing.permissionMode} to ${requestedMode}, switching at runtime`,
+            );
+            existing.permissionMode = requestedMode;
+            try {
+              const query = (existing.session as any).query;
+              if (query && typeof query.setPermissionMode === "function") {
+                await query.setPermissionMode(requestedMode);
+                claudeLog.info(`[Claude][${sessionId}] Permission mode switched to: ${requestedMode}`);
+              } else {
+                claudeLog.warn(`[Claude][${sessionId}] setPermissionMode not available on query, will apply on next message`);
+              }
+            } catch (err) {
+              claudeLog.warn(`[Claude][${sessionId}] Failed to set permission mode at runtime:`, err);
             }
-          } catch (err) {
-            claudeLog.warn(`[Claude][${sessionId}] Failed to set permission mode at runtime:`, err);
           }
-        }
 
-        // Session is ready — update usage timestamp and return
-        existing.lastUsedAt = Date.now();
-        return existing.session;
+          // Session is ready — update usage timestamp and return
+          existing.lastUsedAt = Date.now();
+          return existing.session;
+        }
       }
     }
 
@@ -1829,17 +2057,18 @@ export class ClaudeCodeAdapter extends EngineAdapter {
       promptAppend += "\n\n" + customSystemPrompt;
     }
 
-    const sdkOptions: any = {
+    const permissionMode = opts.permissionMode ?? toClaudePermissionMode(undefined);
+    const allowDangerouslySkipPermissions = allowsDangerouslySkipPermissions(permissionMode);
+    const sdkOptions: any = this.withClaudeExecutablePath({
       model: opts.model ?? this.currentModelId ?? "claude-sonnet-4-20250514",
       env,
-      permissionMode: opts.permissionMode ?? "default",
-      allowedTools: ["Read", "Write", "Edit", "Grep", "Glob", "Bash", "WebFetch", "WebSearch", "Task", "TodoWrite", "TodoRead", "NotebookEdit", "Skill"],
+      permissionMode,
+      ...(allowDangerouslySkipPermissions ? { allowDangerouslySkipPermissions: true } : {}),
       canUseTool: this.createCanUseTool(sessionId),
       systemPrompt: { type: "preset" as const, preset: "claude_code" as const, append: promptAppend },
-      pathToClaudeCodeExecutable: this.resolveCliPath(),
       stderr: this.stderrCallback,
       maxThinkingTokens: 10240,
-    };
+    });
 
     // Apply reasoning effort level if set for this session
     const reasoningEffort = this.sessionReasoningEfforts.get(sessionId);
@@ -1904,7 +2133,8 @@ export class ClaudeCodeAdapter extends EngineAdapter {
       createdAt: Date.now(),
       lastUsedAt: Date.now(),
       capturedSessionId: ccSessionId,
-      permissionMode: opts.permissionMode ?? "default",
+      permissionMode,
+      allowDangerouslySkipPermissions,
     };
 
     this.v2Sessions.set(sessionId, info);
@@ -2060,14 +2290,13 @@ export class ClaudeCodeAdapter extends EngineAdapter {
 
     const q = sdkQuery({
       prompt: "",
-      options: {
+      options: this.withClaudeExecutablePath({
         model: "claude-sonnet-4-20250514",
         env,
         cwd,
         abortController: new AbortController(),
-        pathToClaudeCodeExecutable: this.resolveCliPath(),
         stderr: this.stderrCallback,
-      } as any,
+      }) as any,
     });
 
     try {
@@ -3261,8 +3490,6 @@ export class ClaudeCodeAdapter extends EngineAdapter {
     // Emit final message
     this.emit("message.updated", { sessionId: buffer.sessionId, message: finalMessage });
 
-    // Title updates are handled by EngineManager's applyTitleFallback()
-
     // Clean up
     this.messageBuffers.delete(sessionId);
     for (const [key, part] of this.toolCallParts) {
@@ -3354,7 +3581,7 @@ export class ClaudeCodeAdapter extends EngineAdapter {
 
   private rejectAllPendingQuestions(reason: string): void {
     for (const [_id, pending] of this.pendingQuestions) {
-      pending.resolve("");
+      pending.resolve([]);
     }
     this.pendingQuestions.clear();
   }

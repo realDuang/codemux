@@ -12,17 +12,20 @@ test.describe("Theme & Language", () => {
     await page.getByRole("button", { name: /Settings/i }).click();
     await page.waitForTimeout(500);
 
-    // Default theme is "system" which resolves to "light" in headless Chromium (no dark class)
-    const htmlBefore = await page.locator("html").getAttribute("class") ?? "";
-    expect(htmlBefore).not.toContain("dark");
-
-    // Open the theme dropdown — ThemeSwitcher button shows current theme label
+    // Normalize starting state to Light so the toggle assertion is deterministic
+    // regardless of the app's default theme.
     const themeToggle = page.getByRole("button", { name: /Light|Dark|System|亮色|暗色|跟随系统/i });
     await themeToggle.click();
     await page.waitForTimeout(300);
+    const lightOption = page.getByRole("button", { name: /^(Light|亮色)$/i });
+    await lightOption.click();
+    await page.waitForTimeout(300);
+    await expect(page.locator("html")).not.toHaveClass(/dark/, { timeout: 5_000 });
 
-    // Click the "Dark" option in the dropdown
-    const darkOption = page.getByRole("button", { name: /Dark|暗色/i });
+    // Open the theme dropdown again and switch to Dark
+    await themeToggle.click();
+    await page.waitForTimeout(300);
+    const darkOption = page.getByRole("button", { name: /^(Dark|暗色)$/i });
     await darkOption.click();
     await page.waitForTimeout(300);
 

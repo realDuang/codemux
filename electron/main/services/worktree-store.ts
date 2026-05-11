@@ -6,8 +6,8 @@
 import fs from "fs";
 import fsp from "fs/promises";
 import path from "path";
-import { app } from "electron";
 import log from "electron-log/main";
+import { getWorktreesPath } from "./app-paths";
 
 const worktreeStoreLog = log.scope("WorktreeStore");
 
@@ -40,7 +40,7 @@ export class WorktreeStore {
 
   init(): void {
     if (this.initialized) return;
-    this.basePath = path.join(app.getPath("userData"), "worktrees");
+    this.basePath = getWorktreesPath();
     this.ensureDirSync(this.basePath);
     this.initialized = true;
     worktreeStoreLog.info(`Initialized at ${this.basePath}`);

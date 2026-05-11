@@ -49,49 +49,8 @@ function serverStateBase(): string {
   return path.join(xdg, "codemux-server");
 }
 
-function projectStateRoot(): string {
+function serverStateDir(): string {
   return path.join(serverStateBase(), projectSlug());
-}
-
-function sanitizeInstanceName(raw: string): string {
-  const cleaned = raw
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9._-]+/g, "-")
-    .replace(/^-+|-+$/g, "");
-  return cleaned || "default";
-}
-
-function detectGitBranch(): string | null {
-  try {
-    const result = spawnSync("git", ["-C", PROJECT_ROOT, "branch", "--show-current"], {
-      encoding: "utf8",
-    });
-    if (result.status !== 0) return null;
-    const branch = result.stdout.trim();
-    return branch.length > 0 ? branch : null;
-  } catch {
-    return null;
-  }
-}
-
-function defaultInstanceName(): string {
-  const branch = detectGitBranch();
-  return sanitizeInstanceName(branch ?? "default");
-}
-
-function serverStateDir(name: string): string {
-  return path.join(projectStateRoot(), name);
-}
-
-function listInstances(): string[] {
-  const root = projectStateRoot();
-  if (!fs.existsSync(root)) return [];
-  return fs
-    .readdirSync(root, { withFileTypes: true })
-    .filter((entry) => entry.isDirectory())
-    .map((entry) => entry.name)
-    .sort();
 }
 
 function readPortOffsetFile(stateDir: string): number | null {
@@ -125,34 +84,33 @@ function buildPortEnv(offset: number): Record<string, string> {
   return env;
 }
 
-function devRootFor(name: string): string {
-  return path.join(PROJECT_ROOT, DEV_ISOLATED_DIR, name);
+function devRoot(): string {
+  return path.join(PROJECT_ROOT, DEV_ISOLATED_DIR);
 }
 
-function devicesFileFor(name: string, isolated: boolean): string {
+function devicesFile(isolated: boolean): string {
   if (isolated) {
-    return path.join(devRootFor(name), "userData", "devices.json");
+    return path.join(devRoot(), "userData", "devices.json");
   }
   return path.join(PROJECT_ROOT, ".devices.json");
 }
 
-function writeIsolatedPortsFile(reservation: PortReservation, name: string): void {
-  const devRoot = devRootFor(name);
-  fs.mkdirSync(devRoot, { recursive: true });
+function writeIsolatedPortsFile(reservation: PortReservation): void {
+  const root = devRoot();
+  fs.mkdirSync(root, { recursive: true });
   const data = {
     devIsolated: true,
-    instance: name,
     updatedAt: new Date().toISOString(),
     portOffset: reservation.plan.portOffset,
     ports: reservation.plan.ports,
   };
-  fs.writeFileSync(path.join(devRoot, "ports.json"), `${JSON.stringify(data, null, 2)}\n`, "utf8");
+  fs.writeFileSync(path.join(root, "ports.json"), `${JSON.stringify(data, null, 2)}\n`, "utf8");
 }
 
-async function reserveIsolatedPorts(name: string): Promise<PortReservation> {
-  const devRoot = devRootFor(name);
-  fs.mkdirSync(devRoot, { recursive: true });
-  return allocatePortReservation(devRoot);
+async function reserveIsolatedPorts(): Promise<PortReservation> {
+  const root = devRoot();
+  fs.mkdirSync(root, { recursive: true });
+  return allocatePortReservation(root);
 }
 
 function spawnSyncPassthrough(
@@ -215,37 +173,17 @@ function envWithServerStateDir(stateDir: string, extra: NodeJS.ProcessEnv = {}):
 interface ParsedFlags {
   flags: Set<string>;
   positionals: string[];
-  options: Map<string, string>;
 }
 
 function parseFlags(args: string[]): ParsedFlags {
   const flags = new Set<string>();
   const positionals: string[] = [];
-  const options = new Map<string, string>();
-  for (let i = 0; i < args.length; i++) {
-    const arg = args[i];
+  for (const arg of args) {
     if (!arg) continue;
-    if (arg.startsWith("--") && arg.includes("=")) {
-      const idx = arg.indexOf("=");
-      options.set(arg.slice(0, idx), arg.slice(idx + 1));
-    } else if (arg === "--name") {
-      const next = args[i + 1];
-      if (next != null && !next.startsWith("--")) {
-        options.set("--name", next);
-        i++;
-      }
-    } else if (arg.startsWith("--")) {
-      flags.add(arg);
-    } else {
-      positionals.push(arg);
-    }
+    if (arg.startsWith("--")) flags.add(arg);
+    else positionals.push(arg);
   }
-  return { flags, positionals, options };
-}
-
-function takeName(parsed: ParsedFlags): string {
-  const explicit = parsed.options.get("--name");
-  return explicit ? sanitizeInstanceName(explicit) : defaultInstanceName();
+  return { flags, positionals };
 }
 
 function helpText(): string {
@@ -261,18 +199,17 @@ Development modes:
   codemux dev --server --isolated        Headless foreground server, isolated
 
 Daemonized server lifecycle:
-  codemux server start [--replace] [--tunnel] [--isolated] [--name <name>]
-  codemux server stop [--name <name>]
-  codemux server restart [--name <name>]
-  codemux server status [--name <name>]
-  codemux server logs [app|tunnel] [--name <name>]
-  codemux server list                    List all server instances in this repo
+  codemux server start [--replace] [--tunnel] [--isolated]
+  codemux server stop
+  codemux server restart
+  codemux server status
+  codemux server logs [app|tunnel]
   codemux server init                    Bootstrap Linux server dependencies
 
 Auth admin (against the running instance):
-  codemux auth access-code [--plain] [--name <name>]
-  codemux auth access-requests [--count] [--name <name>]
-  codemux auth status [--name <name>]
+  codemux auth access-code [--plain]
+  codemux auth access-requests [--count]
+  codemux auth status
 
 Maintenance:
   codemux setup                          Interactive engine/runtime setup
@@ -280,12 +217,12 @@ Maintenance:
   codemux app restart                    Kill+respawn the local Electron dev app
   codemux test web-api                   Web-only API smoke test
 
-Server state is per-project + per-instance-name. The instance name
-defaults to the current git branch (sanitized) so different branches
-in the same folder run as separate instances. Override with --name
-or set CODEMUX_INSTANCE. Within an instance only one server can run
-at a time. Use --isolated to pick a free port offset and run alongside
-other instances/folders.
+Server state is per-folder (sha1 of the repo path). Within a single
+folder only one server can run at a time. To run multiple instances
+in parallel, create separate worktrees with \`git worktree add\` so
+each instance lives in its own folder. Use --isolated to pick a free
+port offset and run alongside a non-isolated instance from another
+folder.
 `;
 }
 
@@ -294,7 +231,6 @@ async function runDev(args: string[]): Promise<number> {
   const isolated = parsed.flags.has("--isolated");
   const web = parsed.flags.has("--web");
   const server = parsed.flags.has("--server");
-  const name = takeName(parsed);
 
   if (web && server) {
     console.error("--web and --server are mutually exclusive");
@@ -304,7 +240,6 @@ async function runDev(args: string[]): Promise<number> {
   if (server) {
     const serverArgs = ["start", "--foreground"];
     if (isolated) serverArgs.push("--isolated");
-    serverArgs.push("--name", name);
     return runServer(serverArgs);
   }
 
@@ -317,18 +252,16 @@ async function runDev(args: string[]): Promise<number> {
   }
 
   if (isolated) {
-    const reservation = await reserveIsolatedPorts(name);
-    writeIsolatedPortsFile(reservation, name);
+    const reservation = await reserveIsolatedPorts();
+    writeIsolatedPortsFile(reservation);
     process.on("exit", () => reservation.release());
-    console.log(`CodeMux isolated dev instance: ${name}`);
-    console.log(`CodeMux isolated dev data: ${devRootFor(name)}`);
+    console.log(`CodeMux isolated dev data: ${devRoot()}`);
     console.log(`CodeMux port offset: ${reservation.plan.portOffset}`);
     console.log(`CodeMux web port: ${reservation.plan.ports.web}`);
     const env = {
       ...process.env,
       ...buildPortEnv(reservation.plan.portOffset),
       CODEMUX_DEV_ISOLATED: "1",
-      CODEMUX_INSTANCE: name,
     } as NodeJS.ProcessEnv;
     const code = await spawnLongRunning(bunCommand(), ["x", "electron-vite", "dev"], env);
     reservation.release();
@@ -349,98 +282,58 @@ async function runServer(args: string[]): Promise<number> {
     return spawnSyncPassthrough(bashCommand(), [SERVER_INIT_SH, ...args.slice(1)]);
   }
 
-  if (command === "list") {
-    const instances = listInstances();
-    if (instances.length === 0) {
-      console.log(`No server instances for this repo (${projectStateRoot()})`);
-      return 0;
-    }
-    const current = defaultInstanceName();
-    console.log(`Server instances for ${PROJECT_ROOT}:`);
-    for (const name of instances) {
-      const dir = serverStateDir(name);
-      const pidFile = path.join(dir, "dev.pid");
-      let status = "stopped";
-      let pid: string | null = null;
-      if (fs.existsSync(pidFile)) {
-        pid = fs.readFileSync(pidFile, "utf8").trim();
-        try {
-          process.kill(Number(pid), 0);
-          status = "running";
-        } catch {
-          status = "stale";
-        }
-      }
-      const offset = readPortOffsetFile(dir);
-      const offsetStr = offset != null ? ` offset=${offset}` : "";
-      const marker = name === current ? " (default for current branch)" : "";
-      const pidStr = pid ? ` pid=${pid}` : "";
-      console.log(`  ${name.padEnd(24)} ${status}${pidStr}${offsetStr}${marker}`);
-    }
-    return 0;
-  }
-
-  const parsed = parseFlags(args.slice(1));
-  const name = process.env.CODEMUX_INSTANCE
-    ? sanitizeInstanceName(process.env.CODEMUX_INSTANCE)
-    : takeName(parsed);
-  const stateDir = serverStateDir(name);
+  const stateDir = serverStateDir();
   fs.mkdirSync(stateDir, { recursive: true });
 
-  const restArgs: string[] = [];
-  for (let i = 0; i < parsed.positionals.length; i++) restArgs.push(parsed.positionals[i]!);
-  for (const flag of parsed.flags) restArgs.push(flag);
-
   if (command === "start") {
-    const isolatedIdx = restArgs.indexOf("--isolated");
+    const rest = args.slice(1);
+    const isolatedIdx = rest.indexOf("--isolated");
     const isolated = isolatedIdx >= 0;
-    if (isolated) restArgs.splice(isolatedIdx, 1);
+    if (isolated) rest.splice(isolatedIdx, 1);
 
     let portEnv: Record<string, string> = {};
     let releaseLock: (() => void) | null = null;
     if (isolated) {
-      const reservation = await reserveIsolatedPorts(name);
-      writeIsolatedPortsFile(reservation, name);
+      const reservation = await reserveIsolatedPorts();
+      writeIsolatedPortsFile(reservation);
       writePortOffsetFile(stateDir, reservation.plan.portOffset);
       portEnv = {
         ...buildPortEnv(reservation.plan.portOffset),
         CODEMUX_DEV_ISOLATED: "1",
       };
       releaseLock = reservation.release;
-      console.log(`CodeMux isolated server [${name}]: port offset ${reservation.plan.portOffset}, web port ${reservation.plan.ports.web}`);
+      console.log(`CodeMux isolated server: port offset ${reservation.plan.portOffset}, web port ${reservation.plan.ports.web}`);
     } else {
-      // Reuse stored offset if a previous --isolated start of this instance
-      // is being re-invoked without the flag (preserve idempotency).
+      // Reuse stored offset if a previous --isolated start is being
+      // re-invoked without the flag (preserve idempotency).
       const stored = readPortOffsetFile(stateDir);
       if (stored != null && stored !== 0) {
         portEnv = { ...buildPortEnv(stored), CODEMUX_DEV_ISOLATED: "1" };
-        console.log(`CodeMux server [${name}]: reusing stored port offset ${stored}`);
+        console.log(`CodeMux server: reusing stored port offset ${stored}`);
       } else {
         clearPortOffsetFile(stateDir);
       }
     }
 
-    console.log(`CodeMux server instance: ${name}`);
-    const env = envWithServerStateDir(stateDir, { ...portEnv, CODEMUX_INSTANCE: name });
-    const code = await spawnLongRunning(bashCommand(), [SERVER_DEV_SH, "start", ...restArgs], env);
+    const env = envWithServerStateDir(stateDir, portEnv);
+    const code = await spawnLongRunning(bashCommand(), [SERVER_DEV_SH, "start", ...rest], env);
     if (releaseLock) releaseLock();
     return code;
   }
 
+  // For stop/restart/status/logs, restore offset env from state if present so
+  // subprocess auth checks/health probes hit the right ports.
   const offset = readPortOffsetFile(stateDir);
-  const env = envWithServerStateDir(stateDir, {
-    ...(offset != null ? buildPortEnv(offset) : {}),
-    CODEMUX_INSTANCE: name,
-  });
+  const env = envWithServerStateDir(stateDir, offset != null ? buildPortEnv(offset) : {});
 
   if (command === "stop") {
-    const code = await spawnLongRunning(bashCommand(), [SERVER_DEV_SH, "stop", ...restArgs], env);
+    const code = await spawnLongRunning(bashCommand(), [SERVER_DEV_SH, "stop", ...args.slice(1)], env);
     if (offset != null) clearPortOffsetFile(stateDir);
     return code;
   }
 
   if (command === "restart" || command === "status" || command === "logs") {
-    return spawnLongRunning(bashCommand(), [SERVER_DEV_SH, command, ...restArgs], env);
+    return spawnLongRunning(bashCommand(), [SERVER_DEV_SH, command, ...args.slice(1)], env);
   }
 
   console.error(`Unknown server subcommand: ${command}`);
@@ -453,27 +346,20 @@ function runAuth(args: string[]): number {
     console.error("codemux auth requires a subcommand (access-code, access-requests, status)");
     return 2;
   }
-  // Strip --name from args before forwarding so server-auth.ts doesn't see it.
-  const parsed = parseFlags(args.slice(1));
-  const name = process.env.CODEMUX_INSTANCE
-    ? sanitizeInstanceName(process.env.CODEMUX_INSTANCE)
-    : takeName(parsed);
-  const stateDir = serverStateDir(name);
+  // Point server-auth.ts at the right devices.json based on the running
+  // server's isolation state (so isolated servers' auth state is reachable
+  // without the user knowing the path).
+  const stateDir = serverStateDir();
   const offset = readPortOffsetFile(stateDir);
   const isolated = offset != null && offset !== 0;
   const env: NodeJS.ProcessEnv = {
     ...process.env,
-    CODEMUX_INSTANCE: name,
-    CODEMUX_DEVICES_FILE: devicesFileFor(name, isolated),
+    CODEMUX_DEVICES_FILE: devicesFile(isolated),
   };
   if (isolated) {
     Object.assign(env, buildPortEnv(offset));
   }
-  // Reconstruct args without --name=value pair.
-  const cleanArgs: string[] = [command];
-  for (let i = 0; i < parsed.positionals.length; i++) cleanArgs.push(parsed.positionals[i]!);
-  for (const flag of parsed.flags) cleanArgs.push(flag);
-  return spawnSyncPassthrough(bunCommand(), [SERVER_AUTH_TS, ...cleanArgs], env);
+  return spawnSyncPassthrough(bunCommand(), [SERVER_AUTH_TS, ...args], env);
 }
 
 function runSetup(args: string[]): number {

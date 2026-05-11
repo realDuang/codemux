@@ -195,18 +195,17 @@ Use isolated dev mode when you want to debug CodeMux from a separate git worktre
 codemux dev --isolated
 ```
 
-This keeps `codemux dev` unchanged. The isolated command writes all Electron app state for that instance under a gitignored `.codemux-dev/<instance>/` directory (instance defaults to the current git branch, sanitized; override with `--name` or `CODEMUX_INSTANCE`):
+This keeps `codemux dev` unchanged. The isolated command writes all Electron app state for that worktree under a gitignored `.codemux-dev/` directory:
 
 ```text
 .codemux-dev/
-  <instance>/
-    userData/
-    sessionData/
-    logs/
-    ports.json
+  userData/
+  sessionData/
+  logs/
+  ports.json
 ```
 
-Each worktree (and each instance within a folder) gets its own subdirectory and port allocation. The first run automatically reserves a non-default port offset and stores it in `.codemux-dev/<instance>/ports.json`; later runs reuse that saved offset so the same instance stays stable. If the saved ports become stale or conflict with another process, stop the existing isolated instance, delete `.codemux-dev/<instance>/ports.json` to reallocate, or set an explicit `CODEMUX_PORT_OFFSET`.
+Each worktree gets its own `.codemux-dev/` directory and port allocation. To run multiple instances in parallel, create separate worktrees with `git worktree add ../codemux-feature feature` — each folder runs independently. Within a single folder only one server can run at a time. The first run automatically reserves a non-default port offset and stores it in `.codemux-dev/ports.json`; later runs reuse that saved offset so the same worktree stays stable. If the saved ports become stale or conflict with another process, stop the existing isolated instance, delete `.codemux-dev/ports.json` to reallocate, or set an explicit `CODEMUX_PORT_OFFSET`.
 
 Supported port overrides:
 

@@ -23,7 +23,6 @@ import {
   getChannelsPath,
   getDevicesPath,
   getSettingsPath,
-  INSTANCE_ENV,
   isDevIsolatedMode,
   usesSharedDevDeviceStorePath,
 } from "../../../../electron/main/services/app-paths";
@@ -37,7 +36,6 @@ function setUserDataPath(userDataPath: string): void {
 describe("app-paths", () => {
   beforeEach(() => {
     delete process.env[DEV_ISOLATED_ENV];
-    delete process.env[INSTANCE_ENV];
     mockApp.isPackaged = false;
     mockApp.getPath.mockClear();
     mockApp.setPath.mockClear();
@@ -47,7 +45,6 @@ describe("app-paths", () => {
 
   afterEach(() => {
     delete process.env[DEV_ISOLATED_ENV];
-    delete process.env[INSTANCE_ENV];
     for (const dir of tmpDirs) {
       fs.rmSync(dir, { recursive: true, force: true });
     }
@@ -61,33 +58,20 @@ describe("app-paths", () => {
     expect(mockApp.setPath).not.toHaveBeenCalled();
   });
 
-  it("configures userData, sessionData, and logs under .codemux-dev/<instance> in isolated dev mode", () => {
+  it("configures userData, sessionData, and logs under .codemux-dev in isolated dev mode", () => {
     process.env[DEV_ISOLATED_ENV] = "1";
     const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "codemux-app-paths-"));
     tmpDirs.push(cwd);
 
     configureDevIsolatedAppPaths(cwd);
 
-    const root = path.join(cwd, ".codemux-dev", "default");
+    const root = path.join(cwd, ".codemux-dev");
     expect(mockApp.setPath).toHaveBeenCalledWith("userData", path.join(root, "userData"));
     expect(mockApp.setPath).toHaveBeenCalledWith("sessionData", path.join(root, "sessionData"));
     expect(mockApp.setPath).toHaveBeenCalledWith("logs", path.join(root, "logs"));
     expect(fs.existsSync(path.join(root, "userData"))).toBe(true);
     expect(fs.existsSync(path.join(root, "sessionData"))).toBe(true);
     expect(fs.existsSync(path.join(root, "logs"))).toBe(true);
-  });
-
-  it("uses CODEMUX_INSTANCE for the isolated subdirectory name", () => {
-    process.env[DEV_ISOLATED_ENV] = "1";
-    process.env[INSTANCE_ENV] = "Feature/Branch X";
-    const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "codemux-app-paths-"));
-    tmpDirs.push(cwd);
-
-    configureDevIsolatedAppPaths(cwd);
-
-    const root = path.join(cwd, ".codemux-dev", "feature-branch-x");
-    expect(mockApp.setPath).toHaveBeenCalledWith("userData", path.join(root, "userData"));
-    expect(fs.existsSync(path.join(root, "userData"))).toBe(true);
   });
 
   it("keeps normal dev devices in the repo file and isolates them when requested", () => {

@@ -35,13 +35,22 @@ function projectHash(): string {
   return createHash("sha1").update(PROJECT_ROOT).digest("hex").slice(0, 12);
 }
 
+function projectSlug(): string {
+  const base = path.basename(PROJECT_ROOT)
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    || "repo";
+  return `${base}-${projectHash()}`;
+}
+
 function serverStateBase(): string {
   const xdg = process.env.XDG_STATE_HOME ?? path.join(os.homedir(), ".local", "state");
   return path.join(xdg, "codemux-server");
 }
 
 function projectStateRoot(): string {
-  return path.join(serverStateBase(), projectHash());
+  return path.join(serverStateBase(), projectSlug());
 }
 
 function sanitizeInstanceName(raw: string): string {

@@ -12,7 +12,12 @@ if [ -n "${CODEMUX_SERVER_STATE_DIR:-}" ]; then
 else
   STATE_BASE="${XDG_STATE_HOME:-$HOME/.local/state}/codemux-server"
   REPO_HASH=$(printf '%s' "$REPO_DIR" | { sha1sum 2>/dev/null || shasum; } | awk '{print substr($1,1,12)}')
-  STATE_DIR="$STATE_BASE/$REPO_HASH"
+  REPO_BASE=$(printf '%s' "$(basename "$REPO_DIR")" | tr '[:upper:]' '[:lower:]' | sed -e 's/[^a-z0-9._-]\+/-/g' -e 's/^-\+\|-\+$//g')
+  [ -z "$REPO_BASE" ] && REPO_BASE="repo"
+  REPO_SLUG="${REPO_BASE}-${REPO_HASH}"
+  INSTANCE_NAME=$(printf '%s' "${CODEMUX_INSTANCE:-default}" | tr '[:upper:]' '[:lower:]' | sed -e 's/[^a-z0-9._-]\+/-/g' -e 's/^-\+\|-\+$//g')
+  [ -z "$INSTANCE_NAME" ] && INSTANCE_NAME="default"
+  STATE_DIR="$STATE_BASE/$REPO_SLUG/$INSTANCE_NAME"
 fi
 
 APP_LOG="$STATE_DIR/dev.log"

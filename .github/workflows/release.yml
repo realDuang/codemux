@@ -86,7 +86,7 @@ jobs:
         run: bun install --frozen-lockfile
 
       - name: Download Cloudflared binary
-        run: bun run update:cloudflared
+        run: bun codemux update cloudflared
         env:
           TARGET_ARCH: ${{ matrix.arch }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -151,7 +151,7 @@ jobs:
         run: bun install --frozen-lockfile
 
       - name: Download Cloudflared binary
-        run: bun run update:cloudflared
+        run: bun codemux update cloudflared
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 

@@ -181,7 +181,7 @@ cd codemux
 bun install
 
 # Скачайте бинарник cloudflared (для удалённого доступа)
-bun run update:cloudflared
+codemux update cloudflared
 
 # Запустите сервер разработки (Electron + Vite HMR)
 bun run dev
@@ -270,7 +270,7 @@ bun run dist:mac:arm64   # macOS Apple Silicon
 bun run dist:mac:x64     # macOS Intel
 bun run dist:win         # Windows NSIS-установщик
 bun run typecheck        # Проверка типов
-bun run update:cloudflared  # Обновить бинарник Cloudflare Tunnel
+codemux update cloudflared  # Обновить бинарник Cloudflare Tunnel
 ```
 
 ### Структура проекта

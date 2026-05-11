@@ -22,7 +22,7 @@ const LOCK_DIR = path.join(os.tmpdir(), "codemux-dev-isolated-port-locks");
 const isWindows = process.platform === "win32";
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
-interface PortPlan {
+export interface PortPlan {
   portOffset: number;
   ports: {
     web: number;
@@ -34,7 +34,7 @@ interface PortPlan {
   };
 }
 
-interface PortReservation {
+export interface PortReservation {
   plan: PortPlan;
   release(): void;
 }
@@ -287,7 +287,7 @@ async function main(): Promise<void> {
   console.log(`CodeMux port offset: ${plan.portOffset}`);
   console.log(`CodeMux web port: ${plan.ports.web}`);
 
-  const child = spawn("bun", ["run", "dev"], {
+  const child = spawn("bun", ["x", "electron-vite", "dev"], {
     cwd: projectRoot,
     env: {
       ...process.env,

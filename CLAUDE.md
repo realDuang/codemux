@@ -138,11 +138,11 @@ All engines support image attachments via a unified pipeline:
 bun install
 
 # Start dev server (with Electron window)
-npm run dev
+codemux dev
 
 # Start dev server (web-only, for browser testing)
 # Uses vite.config.ts with full API middleware
-bun run start
+codemux dev --web
 
 # Type check
 npm run typecheck

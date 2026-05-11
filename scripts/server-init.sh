@@ -14,7 +14,7 @@ Prepare a Debian/Ubuntu-style Linux server for CodeMux development:
   - install Bun if it is missing
   - install repository dependencies with bun install
   - fix chrome-sandbox permissions for Electron
-  - optionally run the interactive bun run setup flow
+  - optionally run the interactive `codemux setup` flow
 EOF
 }
 
@@ -142,19 +142,19 @@ main() {
 
   if [ "$RUN_SETUP" -eq 1 ]; then
     info "Running interactive CodeMux setup..."
-    bun run setup
+    bun "$REPO_DIR/scripts/setup.ts"
   else
-    warn "Skipped bun run setup. Run it later to install engine dependencies."
+    warn "Skipped interactive setup. Run \`codemux setup\` later to install engine dependencies."
   fi
 
   cat <<'EOF'
 
 Next steps:
-  bun run server:dev      # foreground headless Electron dev
-  bun run server:up       # background headless Electron dev
-  bun run server:tunnel   # background headless Electron dev + quick tunnel
-  bun run server:restart  # restart app only, preserving managed tunnel when possible
-  bun run start           # web-only standalone server
+  codemux dev --server                # foreground headless Electron dev
+  codemux server start                # background headless Electron dev
+  codemux server start --tunnel       # background headless Electron dev + quick tunnel
+  codemux server restart              # restart app only, preserving managed tunnel when possible
+  codemux dev --web                   # web-only standalone server
 EOF
 }
 

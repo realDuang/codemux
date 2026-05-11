@@ -181,7 +181,7 @@ cd codemux
 bun install
 
 # Download cloudflared binary (for remote access)
-bun run update:cloudflared
+codemux update cloudflared
 
 # Start development server (Electron + Vite HMR)
 bun run dev
@@ -192,7 +192,7 @@ bun run dev
 Use isolated dev mode when you want to debug CodeMux from a separate git worktree without interrupting your normal running app session:
 
 ```bash
-bun run dev:isolated
+codemux dev --isolated
 ```
 
 This keeps `bun run dev` unchanged. The isolated command writes all Electron app state for that worktree under a gitignored `.codemux-dev/` directory:
@@ -226,30 +226,30 @@ On headless Linux hosts, `bun run dev` may exit early because Electron needs a v
 ./scripts/server-init.sh
 
 # Run the full Electron dev stack in the foreground with Xvfb + DBus
-bun run server:dev
+codemux dev --server
 
 # Run the same headless dev stack in the background
-bun run server:up
-bun run server:status
-bun run server:restart
-bun run server:down
+codemux server start
+codemux server status
+codemux server restart
+codemux server stop
 
 # Run the headless dev stack and start a Cloudflare quick tunnel
-bun run server:tunnel
+codemux server start --tunnel
 
 # Show the 6-digit access code from the terminal
-bun run server:access-code
+codemux auth access-code
 
 # Review or approve pending device requests from the terminal
-bun run server:access-requests
+codemux auth access-requests
 ```
 
-`bun run start` is still the lightest option for a web-only standalone server. The desktop app's "Public Access" toggle manages Cloudflare inside the packaged app; on a headless dev server, `bun run server:tunnel` provides the equivalent quick-tunnel workflow from the shell.
+`codemux dev --web` is still the lightest option for a web-only standalone server. The desktop app's "Public Access" toggle manages Cloudflare inside the packaged app; on a headless dev server, `codemux server start --tunnel` provides the equivalent quick-tunnel workflow from the shell.
 
-If you want to restart CodeMux itself without rotating the current quick-tunnel URL, use `bun run server:restart`. It restarts the managed app process and keeps the existing `cloudflared` process alive whenever possible, so remote browsers can usually stay on the same public origin.
+If you want to restart CodeMux itself without rotating the current quick-tunnel URL, use `codemux server restart`. It restarts the managed app process and keeps the existing `cloudflared` process alive whenever possible, so remote browsers can usually stay on the same public origin.
 
 
-`bun run server:tunnel` now prints the access code after startup. When a remote browser submits that code, you can stay entirely in SSH and run `bun run server:access-requests` to review and interactively approve or deny pending requests. If you started CodeMux with `bun run server:dev`, open a second SSH session and run `bun run server:access-code` / `bun run server:access-requests`.
+`codemux server start --tunnel` now prints the access code after startup. When a remote browser submits that code, you can stay entirely in SSH and run `codemux auth access-requests` to review and interactively approve or deny pending requests. If you started CodeMux with `codemux dev --server`, open a second SSH session and run `codemux auth access-code` / `codemux auth access-requests`.
 
 After a browser has been approved, it can open **Settings → Channels** in the web UI to configure or toggle IM channels directly from server mode; you no longer need the Electron-only host page for that workflow.
 
@@ -356,20 +356,20 @@ All access methods — desktop app, remote browser, and IM bots — connect thro
 ```bash
 ./scripts/server-init.sh  # Bootstrap a Linux server before Bun is installed
 bun run dev                # Electron + Vite HMR
-bun run server:dev         # Foreground headless Electron dev
-bun run server:up          # Background headless Electron dev
-bun run server:tunnel      # Background headless Electron dev + quick tunnel
-bun run server:restart     # Restart app only; preserve managed quick tunnel when possible
-bun run server:access-code # Print the current 6-digit access code
-bun run server:access-requests # Interactively review pending remote access requests
-bun run server:down        # Stop background headless Electron dev
-bun run server:status      # Show background headless Electron dev status
+codemux dev --server         # Foreground headless Electron dev
+codemux server start          # Background headless Electron dev
+codemux server start --tunnel      # Background headless Electron dev + quick tunnel
+codemux server restart     # Restart app only; preserve managed quick tunnel when possible
+codemux auth access-code # Print the current 6-digit access code
+codemux auth access-requests # Interactively review pending remote access requests
+codemux server stop        # Stop background headless Electron dev
+codemux server status      # Show background headless Electron dev status
 bun run build              # Production build
 bun run dist:mac:arm64     # macOS Apple Silicon
 bun run dist:mac:x64       # macOS Intel
 bun run dist:win           # Windows NSIS installer
 bun run typecheck          # Type checking
-bun run update:cloudflared # Update Cloudflare Tunnel binary
+codemux update cloudflared # Update Cloudflare Tunnel binary
 ```
 
 ### Project Structure

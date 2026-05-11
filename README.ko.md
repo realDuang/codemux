@@ -179,7 +179,7 @@ cd codemux
 bun install
 
 # cloudflared 바이너리 다운로드 (원격 접속용)
-bun run update:cloudflared
+codemux update cloudflared
 
 # 개발 서버 시작 (Electron + Vite HMR)
 bun run dev
@@ -267,7 +267,7 @@ bun run dist:mac:arm64   # macOS Apple Silicon
 bun run dist:mac:x64     # macOS Intel
 bun run dist:win         # Windows NSIS 설치 프로그램
 bun run typecheck        # 타입 검사
-bun run update:cloudflared  # Cloudflare Tunnel 바이너리 업데이트
+codemux update cloudflared  # Cloudflare Tunnel 바이너리 업데이트
 ```
 
 ### 프로젝트 구조

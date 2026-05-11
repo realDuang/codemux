@@ -181,7 +181,7 @@ cd codemux
 bun install
 
 # 下载 cloudflared 二进制文件（用于远程访问）
-bun run update:cloudflared
+codemux update cloudflared
 
 # 启动开发服务器（Electron + Vite HMR）
 bun run dev
@@ -294,7 +294,7 @@ bun run dist:mac:arm64   # macOS Apple Silicon
 bun run dist:mac:x64     # macOS Intel
 bun run dist:win         # Windows NSIS 安装程序
 bun run typecheck        # 类型检查
-bun run update:cloudflared  # 更新 Cloudflare Tunnel 二进制文件
+codemux update cloudflared  # 更新 Cloudflare Tunnel 二进制文件
 ```
 
 ### 项目结构

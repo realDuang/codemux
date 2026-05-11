@@ -2,7 +2,7 @@
  * CodeMux - External Dependencies Setup Script
  * Supports Windows / macOS / Linux
  *
- * Usage: bun run setup
+ * Usage: codemux setup
  */
 
 import { spawn, spawnSync } from "child_process";
@@ -428,7 +428,7 @@ async function main() {
   // Final message
   console.log("\n" + "=".repeat(60));
   if (hasAuthProvider()) {
-    logSuccess("Setup complete! Run `bun run start` to start the project.");
+    logSuccess("Setup complete! Run `codemux dev --web` to start the project.");
   } else {
     logWarning("Setup complete, but no auth provider configured.");
     log("  Run `opencode auth login` to add a provider later.", colors.yellow);

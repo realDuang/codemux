@@ -87,7 +87,7 @@ validateDistinctPorts(resolvedPorts);
 /** Electron-Vite dev server / Production HTTP server */
 export const WEB_PORT = resolvedPorts.WEB_PORT;
 
-/** Standalone Vite dev server (npm run dev:web) */
+/** Standalone Vite dev server (codemux dev --web) */
 export const WEB_STANDALONE_PORT = resolvedPorts.WEB_STANDALONE_PORT;
 
 /** Gateway WebSocket server */

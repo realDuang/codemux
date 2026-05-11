@@ -12,7 +12,7 @@ const SOURCE_SCRIPT = path.join(process.cwd(), "scripts", "server-dev.sh");
 const FAKE_BUN = `#!/usr/bin/env bash
 set -euo pipefail
 
-if [ "\${1:-}" = "run" ] && [ "\${2:-}" = "dev" ]; then
+if [ "\${1:-}" = "x" ] && [ "\${2:-}" = "electron-vite" ] && [ "\${3:-}" = "dev" ]; then
   echo "http://localhost:8233/"
   trap 'exit 0' TERM INT
   while true; do
@@ -128,6 +128,7 @@ async function createTestRepo(): Promise<TestRepo> {
       HOME: home,
       PATH: `${bunBin}:${process.env.PATH ?? ""}`,
       XDG_STATE_HOME: path.join(root, "state"),
+      CODEMUX_SERVER_STATE_DIR: stateDir,
       CODEMUX_SERVER_START_TIMEOUT: "10",
     },
     root,

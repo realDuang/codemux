@@ -44,7 +44,7 @@ async function main() {
     // Verify again after download
     if (!existsSync(expectedBinary)) {
       console.error(`\n❌ Cloudflared binary still not found after download: ${expectedBinary}`);
-      console.error("   Please run manually: bun run update:cloudflared");
+      console.error("   Please run manually: codemux update cloudflared");
       process.exit(1);
     }
     console.log(`\n✅ Cloudflared binary downloaded successfully.`);

@@ -59,7 +59,7 @@ async function checkDependencies(): Promise<boolean> {
         // Re-check (PATH may need to be reloaded in some cases)
         if (!commandExists("opencode")) {
           console.log(`${colors.yellow}[!] Installation completed, but you may need to restart your terminal for PATH to take effect${colors.reset}`);
-          console.log(`${colors.yellow}    Please restart your terminal and run bun run start again${colors.reset}`);
+          console.log(`${colors.yellow}    Please restart your terminal and run codemux dev --web again${colors.reset}`);
           return false;
         }
       } else {
@@ -73,7 +73,7 @@ async function checkDependencies(): Promise<boolean> {
       }
     } else {
       console.log(`${colors.yellow}[!] OpenCode CLI is a required dependency${colors.reset}`);
-      console.log(`${colors.yellow}    Run bun run setup to install all dependencies${colors.reset}`);
+      console.log(`${colors.yellow}    Run codemux setup to install all dependencies${colors.reset}`);
       return false;
     }
   } else {
@@ -83,7 +83,7 @@ async function checkDependencies(): Promise<boolean> {
   // Hint about cloudflared (optional)
   if (!commandExists("cloudflared")) {
     console.log(`${colors.yellow}[!] Cloudflared is not installed (optional, for public access feature)${colors.reset}`);
-    console.log(`${colors.yellow}    Run bun run setup to install${colors.reset}`);
+    console.log(`${colors.yellow}    Run codemux setup to install${colors.reset}`);
   } else {
     console.log(`${colors.green}[ok] Cloudflared is installed${colors.reset}`);
   }

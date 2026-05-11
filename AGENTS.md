@@ -469,10 +469,10 @@ import { useI18n, formatMessage } from "../lib/i18n";
 bun install
 
 # Start dev server (with Electron window)
-npm run dev
+codemux dev
 
 # Start dev server (web-only, for browser testing)
-bun run start
+codemux dev --web
 
 # Type check
 npm run typecheck
@@ -497,7 +497,7 @@ npm run dist:mac   # macOS DMG
 - `/opencode-api` → `http://localhost:4096` (OpenCode REST, prefix stripped)
 - Auth requests proxied via `createAuthProxyPlugin` to internal auth server
 
-### Web-Only Mode (`bun run start`)
+### Web-Only Mode (`codemux dev --web`)
 
 Uses `scripts/start.ts` + `vite.config.ts`:
 

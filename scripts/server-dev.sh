@@ -3,13 +3,25 @@ set -euo pipefail
 
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 REPO_DIR=$(cd -- "${SCRIPT_DIR}/.." && pwd)
-STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/codemux-server"
+
+# State dir is per project root so multiple worktrees don't collide.
+# The wrapping `codemux` CLI normally sets CODEMUX_SERVER_STATE_DIR; fall back
+# to a hash-derived path when the script is invoked directly.
+if [ -n "${CODEMUX_SERVER_STATE_DIR:-}" ]; then
+  STATE_DIR="$CODEMUX_SERVER_STATE_DIR"
+else
+  STATE_BASE="${XDG_STATE_HOME:-$HOME/.local/state}/codemux-server"
+  REPO_HASH=$(printf '%s' "$REPO_DIR" | { sha1sum 2>/dev/null || shasum; } | awk '{print substr($1,1,12)}')
+  STATE_DIR="$STATE_BASE/$REPO_HASH"
+fi
+
 APP_LOG="$STATE_DIR/dev.log"
 TUNNEL_LOG="$STATE_DIR/tunnel.log"
 APP_PID_FILE="$STATE_DIR/dev.pid"
 TUNNEL_PID_FILE="$STATE_DIR/tunnel.pid"
 LOCAL_URL_FILE="$STATE_DIR/local-url"
 TUNNEL_URL_FILE="$STATE_DIR/tunnel-url"
+PORT_OFFSET_FILE="$STATE_DIR/port-offset"
 XVFB_SCREEN="${CODEMUX_XVFB_SCREEN:-1280x720x24}"
 DEFAULT_TIMEOUT="${CODEMUX_SERVER_START_TIMEOUT:-90}"
 STARTED_LOCAL_URL=""
@@ -25,11 +37,7 @@ Usage:
   ./scripts/server-dev.sh status
   ./scripts/server-dev.sh logs [app|tunnel]
 
-Examples:
-  ./scripts/server-dev.sh start --foreground
-  ./scripts/server-dev.sh start --replace --tunnel
-  ./scripts/server-dev.sh restart
-  ./scripts/server-dev.sh status
+Note: prefer the `codemux server …` CLI; this script is the internal helper.
 EOF
 }
 
@@ -167,7 +175,7 @@ ensure_repo_ready() {
   ensure_command bun
   ensure_command dbus-run-session
   ensure_command xvfb-run
-  [ -d "$REPO_DIR/node_modules" ] || fail "node_modules is missing. Run bun install or ./scripts/server-init.sh first."
+  [ -d "$REPO_DIR/node_modules" ] || fail "node_modules is missing. Run bun install or codemux server init first."
 }
 
 ensure_clean_start() {
@@ -263,7 +271,7 @@ print_auth_status() {
     printf '  Pending requests: %s
 ' "$pending_count"
     if [ "$pending_count" -gt 0 ] 2>/dev/null; then
-      printf '  Review pending requests: bun run server:access-requests
+      printf '  Review pending requests: codemux auth access-requests
 '
     fi
   fi
@@ -273,13 +281,13 @@ start_foreground() {
   info "Starting CodeMux headless dev in the foreground..."
   printf '  Open another SSH session when you need:
 '
-  printf '    bun run server:access-code
+  printf '    codemux auth access-code
 '
-  printf '    bun run server:access-requests
+  printf '    codemux auth access-requests
 '
   cd "$REPO_DIR"
   exec env CODEMUX_DISABLE_COPILOT_DBUS=1 CODEMUX_SERVER_MODE=1 \
-    dbus-run-session -- xvfb-run --auto-servernum --server-args="-screen 0 $XVFB_SCREEN" bun run dev
+    dbus-run-session -- xvfb-run --auto-servernum --server-args="-screen 0 $XVFB_SCREEN" bun x electron-vite dev
 }
 
 start_managed_app_background() {
@@ -288,7 +296,7 @@ start_managed_app_background() {
   rm -f "$LOCAL_URL_FILE"
   : > "$APP_LOG"
 
-  setsid bash -lc "export PATH=\"$HOME/.bun/bin:$HOME/.opencode/bin:\$PATH\"; export CODEMUX_DISABLE_COPILOT_DBUS=1; export CODEMUX_SERVER_MODE=1; cd \"$REPO_DIR\"; exec dbus-run-session -- xvfb-run --auto-servernum --server-args='-screen 0 $XVFB_SCREEN' bun run dev" > "$APP_LOG" 2>&1 &
+  setsid bash -lc "export PATH=\"$HOME/.bun/bin:$HOME/.opencode/bin:\$PATH\"; export CODEMUX_DISABLE_COPILOT_DBUS=1; export CODEMUX_SERVER_MODE=1; cd \"$REPO_DIR\"; exec dbus-run-session -- xvfb-run --auto-servernum --server-args='-screen 0 $XVFB_SCREEN' bun x electron-vite dev" > "$APP_LOG" 2>&1 &
   local app_pid=$!
   printf '%s
 ' "$app_pid" > "$APP_PID_FILE"
@@ -335,7 +343,7 @@ start_background() {
     fi
     printf '  Tunnel log: %s
 ' "$TUNNEL_LOG"
-    printf '  Review access requests from this terminal: bun run server:access-requests
+    printf '  Review access requests from this terminal: codemux auth access-requests
 '
   fi
 }
@@ -353,7 +361,7 @@ restart_app() {
 
   if [ -z "$app_pid" ]; then
     if [ -n "$repo_pids" ]; then
-      fail "Found CodeMux dev processes without managed state. Run bun run server:down first."
+      fail "Found CodeMux dev processes without managed state. Run codemux server stop first."
     fi
     warn "No managed CodeMux app process was running. Starting a fresh instance instead."
   else
@@ -379,7 +387,7 @@ restart_app() {
     printf '  Tunnel log: %s\n' "$TUNNEL_LOG"
     if [ -n "$previous_local_url" ] && [ "$previous_local_url" != "$restarted_local_url" ]; then
       warn "App restarted on $restarted_local_url, but the preserved tunnel still targets $previous_local_url."
-      printf '  Recreate the tunnel if remote access stops working: bun run server:down && bun run server:tunnel\n'
+      printf '  Recreate the tunnel if remote access stops working: codemux server stop && codemux server start --tunnel\n'
     else
       printf '  Public URL should stay the same while the existing tunnel process remains healthy.\n'
     fi
@@ -533,7 +541,7 @@ main() {
 
       if [ "$foreground" -eq 1 ]; then
         if [ "$with_tunnel" -eq 1 ]; then
-          fail "--tunnel is only supported for detached starts. Use bun run server:tunnel instead."
+          fail "--tunnel is only supported for detached starts. Use codemux server start --tunnel instead."
         fi
         start_foreground
       else

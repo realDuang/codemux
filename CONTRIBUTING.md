@@ -13,10 +13,10 @@ cd codemux
 bun install
 
 # 3. Download Cloudflare Tunnel binary (optional, for remote access)
-bun run update:cloudflared
+codemux update cloudflared
 
 # 4. Start the development server
-npm run dev
+codemux dev
 ```
 
 ### Prerequisites
@@ -29,8 +29,8 @@ npm run dev
 
 | Command | Purpose |
 |---------|---------|
-| `npm run dev` | Start Electron app with hot reload |
-| `bun run start` | Start web-only mode (no Electron) |
+| `codemux dev` | Start Electron app with hot reload |
+| `codemux dev --web` | Start web-only mode (no Electron) |
 | `npm run typecheck` | TypeScript type checking |
 | `bun run test:unit` | Run unit tests |
 | `npm run build` | Production build |

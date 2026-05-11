@@ -8,7 +8,8 @@ export type { DeviceInfo, PendingRequest, DeviceStoreData } from "../shared/devi
 // Scripts DeviceStore — eager init, reloads from disk before every read
 // =============================================================================
 
-const DEVICES_FILE = path.join(process.cwd(), ".devices.json");
+const DEVICES_FILE = process.env.CODEMUX_DEVICES_FILE
+  ?? path.join(process.cwd(), ".devices.json");
 
 class ScriptsDeviceStore extends DeviceStoreBase {
   constructor() {

@@ -182,7 +182,7 @@ bun install
 codemux update cloudflared
 
 # 개발 서버 시작 (Electron + Vite HMR)
-bun run dev
+codemux dev
 ```
 
 > **엔진 사전 요구 사항**: 모든 엔진은 별도로 설치하여 PATH에 등록해야 하는 외부 의존성입니다:
@@ -261,7 +261,7 @@ bun run dev
 ### 명령어
 
 ```bash
-bun run dev              # Electron + Vite HMR
+codemux dev              # Electron + Vite HMR
 bun run build            # 프로덕션 빌드
 bun run dist:mac:arm64   # macOS Apple Silicon
 bun run dist:mac:x64     # macOS Intel

@@ -184,7 +184,7 @@ bun install
 codemux update cloudflared
 
 # Запустите сервер разработки (Electron + Vite HMR)
-bun run dev
+codemux dev
 ```
 
 > **Требования к движкам**: Все движки — это внешние зависимости, которые нужно установить и добавить в PATH:
@@ -264,7 +264,7 @@ bun run dev
 ### Команды
 
 ```bash
-bun run dev              # Electron + Vite HMR
+codemux dev              # Electron + Vite HMR
 bun run build            # Продакшен-сборка
 bun run dist:mac:arm64   # macOS Apple Silicon
 bun run dist:mac:x64     # macOS Intel

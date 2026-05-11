@@ -184,7 +184,7 @@ bun install
 codemux update cloudflared
 
 # 启动开发服务器（Electron + Vite HMR）
-bun run dev
+codemux dev
 ```
 
 > **引擎前置条件**：所有引擎都是外部依赖，需要安装并添加到 PATH 中：
@@ -288,7 +288,7 @@ cloudflared tunnel route dns <tunnel-name-or-id> <your-domain>
 ### 命令
 
 ```bash
-bun run dev              # Electron + Vite HMR
+codemux dev              # Electron + Vite HMR
 bun run build            # 生产构建
 bun run dist:mac:arm64   # macOS Apple Silicon
 bun run dist:mac:x64     # macOS Intel

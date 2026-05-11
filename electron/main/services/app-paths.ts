@@ -4,15 +4,27 @@ import path from "node:path";
 
 export const DEV_ISOLATED_ENV = "CODEMUX_DEV_ISOLATED";
 export const DEV_ISOLATED_DIR = ".codemux-dev";
+export const INSTANCE_ENV = "CODEMUX_INSTANCE";
 
 export function isDevIsolatedMode(): boolean {
   return !app.isPackaged && process.env[DEV_ISOLATED_ENV] === "1";
 }
 
+function instanceName(): string {
+  const raw = process.env[INSTANCE_ENV];
+  if (!raw) return "default";
+  const cleaned = raw
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return cleaned || "default";
+}
+
 export function configureDevIsolatedAppPaths(cwd = process.cwd()): void {
   if (!isDevIsolatedMode()) return;
 
-  const root = path.join(cwd, DEV_ISOLATED_DIR);
+  const root = path.join(cwd, DEV_ISOLATED_DIR, instanceName());
   const userData = path.join(root, "userData");
   const sessionData = path.join(root, "sessionData");
   const logs = path.join(root, "logs");

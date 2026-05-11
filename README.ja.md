@@ -182,7 +182,7 @@ bun install
 codemux update cloudflared
 
 # 開発サーバーを起動（Electron + Vite HMR）
-bun run dev
+codemux dev
 ```
 
 > **エンジンの前提条件**: すべてのエンジンは外部依存関係であり、インストールしてPATHで利用可能にする必要があります：
@@ -261,7 +261,7 @@ bun run dev
 ### コマンド
 
 ```bash
-bun run dev              # Electron + Vite HMR
+codemux dev              # Electron + Vite HMR
 bun run build            # プロダクションビルド
 bun run dist:mac:arm64   # macOS Apple Silicon
 bun run dist:mac:x64     # macOS Intel

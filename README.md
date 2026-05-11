@@ -184,7 +184,7 @@ bun install
 codemux update cloudflared
 
 # Start development server (Electron + Vite HMR)
-bun run dev
+codemux dev
 ```
 
 ### Isolated Electron Dev Instances
@@ -195,17 +195,18 @@ Use isolated dev mode when you want to debug CodeMux from a separate git worktre
 codemux dev --isolated
 ```
 
-This keeps `bun run dev` unchanged. The isolated command writes all Electron app state for that worktree under a gitignored `.codemux-dev/` directory:
+This keeps `codemux dev` unchanged. The isolated command writes all Electron app state for that instance under a gitignored `.codemux-dev/<instance>/` directory (instance defaults to the current git branch, sanitized; override with `--name` or `CODEMUX_INSTANCE`):
 
 ```text
 .codemux-dev/
-  userData/
-  sessionData/
-  logs/
-  ports.json
+  <instance>/
+    userData/
+    sessionData/
+    logs/
+    ports.json
 ```
 
-Each worktree can have its own `.codemux-dev/` directory and port allocation. The first run automatically reserves a non-default port offset and stores it in `.codemux-dev/ports.json`; later runs reuse that saved offset so the same worktree stays stable. If the saved ports become stale or conflict with another process, stop the existing isolated instance, delete `.codemux-dev/ports.json` to reallocate, or set an explicit `CODEMUX_PORT_OFFSET`.
+Each worktree (and each instance within a folder) gets its own subdirectory and port allocation. The first run automatically reserves a non-default port offset and stores it in `.codemux-dev/<instance>/ports.json`; later runs reuse that saved offset so the same instance stays stable. If the saved ports become stale or conflict with another process, stop the existing isolated instance, delete `.codemux-dev/<instance>/ports.json` to reallocate, or set an explicit `CODEMUX_PORT_OFFSET`.
 
 Supported port overrides:
 
@@ -219,7 +220,7 @@ Supported port overrides:
 
 ### Linux Server / Headless Dev
 
-On headless Linux hosts, `bun run dev` may exit early because Electron needs a virtual display, a DBus session, and a correctly configured `chrome-sandbox` helper. This repo includes Linux server helpers for that workflow:
+On headless Linux hosts, `codemux dev` may exit early because Electron needs a virtual display, a DBus session, and a correctly configured `chrome-sandbox` helper. This repo includes Linux server helpers for that workflow:
 
 ```bash
 # First-time bootstrap on a Linux server (installs Bun if needed)
@@ -355,7 +356,7 @@ All access methods — desktop app, remote browser, and IM bots — connect thro
 
 ```bash
 ./scripts/server-init.sh  # Bootstrap a Linux server before Bun is installed
-bun run dev                # Electron + Vite HMR
+codemux dev                # Electron + Vite HMR
 codemux dev --server         # Foreground headless Electron dev
 codemux server start          # Background headless Electron dev
 codemux server start --tunnel      # Background headless Electron dev + quick tunnel

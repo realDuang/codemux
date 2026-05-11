@@ -81,7 +81,7 @@ export function SessionControls(props: SessionControlsProps) {
   const summary = createMemo(() => {
     const parts = [modelLabel()];
     const effort = effortLabel();
-    if (effort && props.supportedEfforts.length > 0) parts.push(effort);
+    if (effort && props.supportedEfforts.length > 1) parts.push(effort);
     if (props.fastModeSupported && fastActive()) parts.push(t().engine.fastMode);
     return parts.join(" · ");
   });
@@ -200,7 +200,7 @@ export function SessionControls(props: SessionControlsProps) {
                 />
               </SettingRow>
 
-              <Show when={props.supportedEfforts.length > 0}>
+              <Show when={props.supportedEfforts.length > 1}>
                 <SettingRow label={t().engine.reasoningEffort} description={t().engine.reasoningEffortDesc}>
                   <div class="flex gap-1 overflow-x-auto rounded-xl bg-slate-100 p-1 dark:bg-slate-800">
                     <For each={props.supportedEfforts}>

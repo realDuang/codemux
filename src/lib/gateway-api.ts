@@ -36,7 +36,8 @@ import type {
   OrchestrationRun,
   OrchestrationSubtask,
   OrchestrationCreateRequest,
-  OrchestrationConfirmRequest,
+  OrchestrationConfirmPlanRequest,
+  RoleEngineMapping,
 } from "../types/unified";
 
 // --- Notification callback types ---
@@ -60,6 +61,7 @@ export interface GatewayNotificationHandlers {
   onScheduledTaskFailed?: (taskId: string, error: string) => void;
   onScheduledTasksChanged?: (tasks: ScheduledTask[]) => void;
   onOrchestrationUpdated?: (run: OrchestrationRun) => void;
+  onOrchestrationSubtaskUpdated?: (runId: string, subtask: OrchestrationSubtask) => void;
   onConnected?: () => void;
   onDisconnected?: (reason: string) => void;
 }
@@ -217,6 +219,10 @@ class GatewayAPI {
 
     this.bind("orchestration.updated", (data) => {
       this.handlers.onOrchestrationUpdated?.(data.run);
+    });
+
+    this.bind("orchestration.subtask.updated", (data) => {
+      this.handlers.onOrchestrationSubtaskUpdated?.(data.runId, data.subtask);
     });
   }
 
@@ -500,26 +506,38 @@ class GatewayAPI {
     return gatewayClient.request("worktree.listBranches", { directory });
   }
 
-  // --- Orchestration ---
+  // --- Orchestration (unified Light/Heavy brain + role-based plan confirmation) ---
 
   async createOrchestration(req: OrchestrationCreateRequest): Promise<OrchestrationRun> {
-    return gatewayClient.request("orchestration.create", req);
-  }
-
-  async decomposeOrchestration(runId: string): Promise<{ ok: boolean }> {
-    return gatewayClient.request("orchestration.decompose", { runId });
-  }
-
-  async confirmOrchestration(req: OrchestrationConfirmRequest): Promise<{ ok: boolean }> {
-    return gatewayClient.request("orchestration.confirm", req);
+    return gatewayClient.createOrchestrationRun(req);
   }
 
   async cancelOrchestration(runId: string): Promise<void> {
-    return gatewayClient.request("orchestration.cancel", { runId });
+    return gatewayClient.cancelOrchestrationRun(runId);
+  }
+
+  async sendOrchestrationMessage(runId: string, text: string): Promise<void> {
+    return gatewayClient.sendOrchestrationMessage(runId, text);
   }
 
   async listOrchestrations(): Promise<OrchestrationRun[]> {
-    return gatewayClient.request("orchestration.list", {});
+    return gatewayClient.listOrchestrationRuns();
+  }
+
+  async getOrchestration(runId: string): Promise<OrchestrationRun | null> {
+    return gatewayClient.getOrchestrationRun(runId);
+  }
+
+  async confirmOrchestrationPlan(req: OrchestrationConfirmPlanRequest): Promise<{ ok: boolean }> {
+    return gatewayClient.confirmOrchestrationPlan(req.runId, req.subtasks);
+  }
+
+  async getOrchestrationRoleMappings(): Promise<{ mappings: RoleEngineMapping[] }> {
+    return gatewayClient.getOrchestrationRoleMappings();
+  }
+
+  async updateOrchestrationRoleMappings(mappings: RoleEngineMapping[]): Promise<{ mappings: RoleEngineMapping[] }> {
+    return gatewayClient.updateOrchestrationRoleMappings(mappings);
   }
 }
 

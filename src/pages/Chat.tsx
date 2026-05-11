@@ -91,9 +91,9 @@ import {
 } from "../stores/config";
 import { scheduledTaskStore, setScheduledTaskStore } from "../stores/scheduled-task";
 import { computeActiveSessions } from "../lib/active-sessions";
-import { orchestrationStore, updateRun, setCurrentRunId, generateTeamId, registerTeam, associateRunWithTeam, getTeamId, isTeamParentSession, getRunForTeam, restoreFromRuns, autoDetectTeams, getRoleMappings } from "../stores/orchestration";
+import { orchestrationStore, updateRun, setCurrentRunId, generateTeamId, registerTeam, associateRunWithTeam, associateChildSession, getTeamId, isTeamParentSession, getRunForTeam, restoreFromRuns, autoDetectTeams, getRoleMappings } from "../stores/orchestration";
 import { OrchestrationCards } from "../components/orchestration/OrchestrationCards";
-import type { OrchestrationRun } from "../types/unified";
+import type { OrchestrationRun, OrchestrationSubtask } from "../types/unified";
 
 // Binary search helper (consistent with opencode desktop)
 function binarySearch<T>(
@@ -959,7 +959,7 @@ export default function Chat() {
                 if (parentSession) {
                   setSessionStore("list", (list) => [...list, {
                     id: task.sessionId!,
-                    engineType: task.engineType,
+                    engineType: task.engineType ?? parentSession.engineType,
                     title: task.description,
                     directory: parentSession.directory,
                     projectID: parentSession.projectID,
@@ -971,6 +971,15 @@ export default function Chat() {
                 }
               }
             }
+          }
+        },
+        onOrchestrationSubtaskUpdated: (runId: string, subtask: OrchestrationSubtask) => {
+          // Keep sidebar bridge in sync when a subtask gets its child sessionId
+          const run = orchestrationStore.runs[runId];
+          if (!run || !run.parentSessionId) return;
+          const teamId = getTeamId(run.parentSessionId) ?? run.id;
+          if (subtask.sessionId) {
+            associateChildSession(teamId, subtask.sessionId);
           }
         },
       };
@@ -1350,7 +1359,7 @@ export default function Chat() {
     return run?.id ?? null;
   };
 
-  const handleTeamSend = async (sessionId: string, prompt: string) => {
+  const handleOrchestrationSend = async (sessionId: string, prompt: string, mode: "light" | "heavy" = "light") => {
     const teamId = getTeamId(sessionId);
     if (!teamId) return;
 
@@ -1377,29 +1386,37 @@ export default function Chat() {
       const dir = session?.directory || ".";
       const runningEngines = configStore.engines.filter(e => e.status === "running" && isEngineEnabled(e.type));
 
+      // For worktree sessions, resolve the parent project directory so the
+      // orchestration run correctly groups child sessions under the same project.
+      const parentProject = session?.projectID
+        ? sessionStore.projects.find(p => p.id === session.projectID)
+        : undefined;
+      const parentDirectory = session?.worktreeId && parentProject
+        ? parentProject.directory
+        : undefined;
+
       // Pass worktree info from team registration to the run
       const teamInfo = orchestrationStore.teams[teamId];
       const run = await gateway.createOrchestration({
-        parentSessionId: sessionId,
+        sessionId,
         directory: dir,
         prompt,
+        mode,
+        engineType: currentEngineType(),
         engineTypes: runningEngines.map(e => e.type),
         roleMappings: getRoleMappings(),
-        worktreeInfo: teamInfo?.worktreeInfo,
+        teamWorktreeInfo: teamInfo?.worktreeInfo,
+        worktreeId: session?.worktreeId,
+        parentDirectory,
+        requirePlanConfirmation: true,
       });
 
       updateRun(run);
       associateRunWithTeam(teamId, run.id);
       setCurrentRunId(run.id);
       setOrchestratorView("dashboard");
-
-      gateway.decomposeOrchestration(run.id).catch((err) => {
-        logger.error("[TeamTask] Decomposition failed:", err);
-        notify("Task decomposition failed");
-        setSendingFor(sessionId, false);
-      });
     } catch (error) {
-      logger.error("[TeamTask] Failed to start team orchestration:", error);
+      logger.error("[Orchestration] Failed to start:", error);
       notify(t().notification.messageSendFailed);
       setSendingFor(sessionId, false);
     }
@@ -2242,13 +2259,93 @@ export default function Chat() {
     }
   };
 
+  // --- Orchestration relay (Heavy Brain user message forwarding) ---
+  const activeHeavyRelayRun = createMemo(() => {
+    const sid = sessionStore.current;
+    if (!sid) return undefined;
+    return Object.values(orchestrationStore.runs).find(
+      (r) =>
+        r.mode === "heavy" &&
+        r.parentSessionId === sid &&
+        (r.status === "running" || r.status === "decomposing"),
+    );
+  });
+
+  const appendOptimisticUserText = (sessionId: string, text: string): string => {
+    const nonce = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const tempMessageId = `msg-temp-${nonce}`;
+    const tempPartId = `part-temp-${nonce}`;
+
+    const tempMessageInfo: UnifiedMessage = {
+      id: tempMessageId,
+      sessionId,
+      role: "user",
+      time: {
+        created: Date.now(),
+      },
+      parts: [],
+    };
+
+    const tempPart: UnifiedPart = {
+      id: tempPartId,
+      messageId: tempMessageId,
+      sessionId,
+      type: "text",
+      text,
+    } as UnifiedPart;
+
+    const messages = messageStore.message[sessionId] || [];
+    const tempExists = messages.some((m) => m.id === tempMessageId);
+    if (!tempExists) {
+      setMessageStore("message", sessionId, (draft) => [...draft, tempMessageInfo]);
+    }
+
+    setMessageStore("part", tempMessageId, [tempPart]);
+    setUserScrolledUp(false);
+    setTimeout(() => scrollToBottom(), 0);
+
+    return tempMessageId;
+  };
+
+  const removeOptimisticMessage = (sessionId: string, messageId: string) => {
+    setMessageStore("message", sessionId, (draft) =>
+      draft.filter((m) => m.id !== messageId),
+    );
+    setMessageStore("part", messageId, undefined as any);
+  };
+
   const handleSendMessage = async (text: string, agent: AgentMode, images?: import("../types/unified").ImageAttachment[]) => {
     const sessionId = sessionStore.current;
     if (!sessionId) return;
 
-    // Team session interception: route to orchestration flow instead of normal send
+    // PR #117 team session interception: route to orchestration flow
     if (isTeamParentSession(sessionId)) {
-      await handleTeamSend(sessionId, text);
+      await handleOrchestrationSend(sessionId, text);
+      return;
+    }
+
+    // fridayliu Heavy Brain relay: forward user message to active orchestrator
+    const relayRun = activeHeavyRelayRun();
+    if (relayRun) {
+      if (images && images.length > 0) {
+        showSendError(t().prompt.orchestrationRelayImageUnsupported);
+        return;
+      }
+
+      const tempMessageId = appendOptimisticUserText(sessionId, text);
+      try {
+        await gateway.sendOrchestrationMessage(relayRun.id, text);
+      } catch (error) {
+        logger.error("[TeamRun] Failed to relay message:", error);
+        notify(
+          formatMessage(t().notification.orchestrationMessageRelayFailed, {
+            message: error instanceof Error ? error.message : String(error),
+          }),
+          "error",
+          5000,
+        );
+        removeOptimisticMessage(sessionId, tempMessageId);
+      }
       return;
     }
 
@@ -2272,7 +2369,6 @@ export default function Chat() {
     const reasoningEffort = currentSessionReasoningEffort();
     const serviceTier = currentSessionServiceTier();
     const tempMessageId = `msg-temp-${Date.now()}`;
-    const tempPartId = `part-temp-${Date.now()}`;
 
     // --- Enqueue path: fire-and-forget ---
     // When the engine is busy and supports enqueue, we must NOT await the RPC.
@@ -2314,38 +2410,7 @@ export default function Chat() {
     }
 
     // --- Normal path: create temp user message and await the RPC ---
-    const tempMessageInfo: UnifiedMessage = {
-      id: tempMessageId,
-      sessionId: sessionId,
-      role: "user",
-      time: {
-        created: Date.now(),
-      },
-      parts: [],
-    };
-
-    const tempPart: UnifiedPart = {
-      id: tempPartId,
-      messageId: tempMessageId,
-      sessionId: sessionId,
-      type: "text",
-      text,
-    } as UnifiedPart;
-
-    const messages = messageStore.message[sessionId] || [];
-
-    // User temp messages are always the newest — append to end.
-    // Don't use binarySearch here: engine message IDs (e.g. UUID from OpenCode)
-    // may sort before "msg-temp-" in lexicographic order, causing the user message
-    // to land after all assistant messages and breaking turn grouping.
-    const tempExists = messages.some(m => m.id === tempMessageId);
-    if (!tempExists) {
-      setMessageStore("message", sessionId, (draft) => [...draft, tempMessageInfo]);
-    }
-
-    setMessageStore("part", tempMessageId, [tempPart]);
-    setUserScrolledUp(false);
-    setTimeout(() => scrollToBottom(), 0);
+    const optimisticMessageId = appendOptimisticUserText(sessionId, text);
 
     try {
       await gateway.sendMessage(sessionId, text, {
@@ -2372,10 +2437,7 @@ export default function Chat() {
       logger.error("[SendMessage] Failed to send message:", error);
       notify(t().notification.messageSendFailed);
       // Remove the optimistic temp message on failure
-      setMessageStore("message", sessionId, (draft) =>
-        draft.filter((m) => m.id !== tempMessageId),
-      );
-      setMessageStore("part", tempMessageId, undefined as any);
+      removeOptimisticMessage(sessionId, optimisticMessageId);
       setSendingFor(sessionId, false);
     }
   };
@@ -2868,9 +2930,20 @@ export default function Chat() {
                       onAgentChange={handleAgentChange}
                       availableModes={currentAvailableModes()}
                       disabled={!sessionStore.current}
-                      imageAttachmentEnabled={currentEngineInfo()?.capabilities?.imageAttachment ?? false}
+                      imageAttachmentEnabled={
+                        (currentEngineInfo()?.capabilities?.imageAttachment ?? false)
+                        && !activeHeavyRelayRun()
+                      }
                       availableCommands={availableCommands()}
                       onCommandInvoke={handleCommandInvoke}
+                      onTeamSend={(() => {
+                        const sid = sessionStore.current;
+                        if (!sid || !isTeamParentSession(sid)) return undefined;
+                        const teamId = getTeamId(sid);
+                        if (teamId && getRunForTeam(teamId)) return undefined;
+                        return (text: string, mode: "light" | "heavy") => handleOrchestrationSend(sid, text, mode);
+                      })()}
+                      relayToOrchestrator={!!activeHeavyRelayRun()}
                       text={currentDraft().text}
                       onTextChange={(text) => updateCurrentDraft({ text })}
                       images={currentDraft().images}

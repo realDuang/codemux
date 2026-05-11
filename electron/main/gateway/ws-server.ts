@@ -17,7 +17,7 @@ import { gatewayLog } from "../services/logger";
 import log from "../services/logger";
 import { conversationStore } from "../services/conversation-store";
 import { scheduledTaskService } from "../services/scheduled-task-service";
-import { orchestratorService } from "../services/orchestrator-service";
+import { orchestrationService } from "../services/orchestration";
 import { getSettingsPath } from "../services/app-paths";
 import {
   GatewayRequestType,
@@ -44,6 +44,12 @@ import {
   type WorktreeRemoveRequest,
   type WorktreeMergeRequest,
   type WorktreeListBranchesRequest,
+  type OrchestrationCreateRequest,
+  type OrchestrationCancelRequest,
+  type OrchestrationGetRequest,
+  type OrchestrationSendMessageRequest,
+  type OrchestrationConfirmPlanRequest,
+  type OrchestrationUpdateRoleMappingsRequest,
 } from "../../../src/types/unified";
 import { isCodexServiceTier, isReasoningEffort } from "../../../src/types/unified";
 
@@ -68,7 +74,6 @@ export class GatewayServer {
   ) {
     this.engineManager = engineManager;
     this.authValidator = options?.authValidator;
-    orchestratorService.init(engineManager);
     this.subscribeToEngineEvents();
 
     onFileChange((event) => {
@@ -534,25 +539,50 @@ export class GatewayServer {
         return worktreeManager.listBranches(req.directory);
       }
 
-      // Orchestration
-      case GatewayRequestType.ORCHESTRATION_CREATE:
-        return orchestratorService.createRun(p.parentSessionId, p.directory, p.prompt, p.engineTypes, p.roleMappings, p.worktreeInfo);
-      case GatewayRequestType.ORCHESTRATION_DECOMPOSE:
-        // Fire-and-forget: return ack immediately, progress via orchestration.updated events
-        orchestratorService.decomposeTask(p.runId).catch((err) => {
-          gatewayLog.error("[Orchestration] decompose failed:", err);
-        });
+      // Orchestration (unified Light/Heavy brain + role-based plan confirmation)
+      case GatewayRequestType.ORCHESTRATION_CREATE: {
+        const req = p as OrchestrationCreateRequest;
+        return orchestrationService.createRun(req);
+      }
+
+      case GatewayRequestType.ORCHESTRATION_DECOMPOSE: {
+        // Legacy frontend hint — decomposition is started automatically by createRun;
+        // this handler exists for backward compatibility and is a no-op.
         return { ok: true };
-      case GatewayRequestType.ORCHESTRATION_CONFIRM:
-        // Fire-and-forget: execution is long-running, progress via events
-        orchestratorService.confirmAndExecute(p.runId, p.subtasks).catch((err) => {
-          gatewayLog.error("[Orchestration] confirm+execute failed:", err);
-        });
+      }
+
+      case GatewayRequestType.ORCHESTRATION_CONFIRM: {
+        const req = p as OrchestrationConfirmPlanRequest;
+        orchestrationService.confirmPlan(req.runId, req.subtasks);
         return { ok: true };
-      case GatewayRequestType.ORCHESTRATION_CANCEL:
-        return orchestratorService.cancelRun(p.runId);
+      }
+
+      case GatewayRequestType.ORCHESTRATION_CANCEL: {
+        const req = p as OrchestrationCancelRequest;
+        return orchestrationService.cancelRun(req.runId);
+      }
+
       case GatewayRequestType.ORCHESTRATION_LIST:
-        return orchestratorService.listRuns();
+        return orchestrationService.listRuns();
+
+      case GatewayRequestType.ORCHESTRATION_GET: {
+        const req = p as OrchestrationGetRequest;
+        return orchestrationService.getRun(req.runId);
+      }
+
+      case GatewayRequestType.ORCHESTRATION_SEND_MESSAGE: {
+        const req = p as OrchestrationSendMessageRequest;
+        orchestrationService.sendMessageToRun(req.runId, req.text);
+        return;
+      }
+
+      case GatewayRequestType.ORCHESTRATION_GET_ROLE_MAPPINGS:
+        return { mappings: orchestrationService.getRoleMappings() };
+
+      case GatewayRequestType.ORCHESTRATION_UPDATE_ROLE_MAPPINGS: {
+        const req = p as OrchestrationUpdateRoleMappingsRequest;
+        return { mappings: orchestrationService.updateRoleMappings(req.mappings) };
+      }
 
       default:
         throw Object.assign(
@@ -679,8 +709,14 @@ export class GatewayServer {
     });
 
     // Orchestration events
-    orchestratorService.on("orchestration.updated", (data) => {
+    orchestrationService.on("orchestration.updated", (data) => {
       this.broadcast({ type: GatewayNotificationType.ORCHESTRATION_UPDATED, payload: data });
+    });
+    orchestrationService.on("orchestration.subtask.updated", (data) => {
+      this.broadcast({
+        type: GatewayNotificationType.ORCHESTRATION_SUBTASK_UPDATED,
+        payload: data,
+      });
     });
   }
 

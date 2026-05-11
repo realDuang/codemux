@@ -157,6 +157,9 @@ export class EngineManager extends EventEmitter {
   /** Track active sendMessage call counts per session (for idle/queue detection). */
   private activeSessionCounts = new Map<string, number>();
 
+  /** Engine session IDs with pending internal sends — suppress user message.updated events */
+  private internalSendSessions = new Set<string>();
+
   // --- Adapter Registration ---
 
   registerAdapter(adapter: EngineAdapter): void {
@@ -331,6 +334,13 @@ export class EngineManager extends EventEmitter {
     adapter.on("message.updated", (data) => {
       const { sessionId: engineSessionId, message } = data;
       const convId = this.resolveConversationId(engineSessionId);
+
+      // Suppress user message events from internal sends (e.g. orchestration relay).
+      // The user message was already persisted with internal: true by persistUserMessage;
+      // the engine re-emitting it without the flag would show it as user input.
+      if (message.role === "user" && this.internalSendSessions.has(engineSessionId)) {
+        return;
+      }
 
       if (convId) {
         // Persist the message
@@ -621,8 +631,10 @@ export class EngineManager extends EventEmitter {
   private async persistUserMessage(
     conversationId: string,
     content: MessagePromptContent[],
-    trackQueuedTiming = false,
+    options?: { internal?: boolean; trackQueuedTiming?: boolean },
   ): Promise<void> {
+    const internal = options?.internal;
+    const trackQueuedTiming = options?.trackQueuedTiming ?? false;
     try {
       const now = Date.now();
       const msgId = timeId("msg");
@@ -659,6 +671,7 @@ export class EngineManager extends EventEmitter {
         role: "user",
         time: { created: now, completed: now },
         parts,
+        ...(internal ? { internal: true } : {}),
       };
 
       const hadFirstPrompt = !!conversationStore.get(conversationId)?.firstPrompt;
@@ -792,6 +805,7 @@ export class EngineManager extends EventEmitter {
     engineType: EngineType | undefined,
     directory: string,
     worktreeId?: string,
+    meta?: Record<string, unknown>,
   ): Promise<UnifiedSession> {
     const resolvedType = engineType || this.getDefaultEngineType();
     const adapter = this.getAdapterOrThrow(resolvedType); // Validate engine exists
@@ -821,7 +835,8 @@ export class EngineManager extends EventEmitter {
     // or Claude V2 session init) happens at session creation time, so features
     // like slash command autocomplete work before the user sends a message.
     try {
-      const engineSession = await adapter.createSession(conv.directory, conv.engineMeta);
+      const adapterMeta = { ...conv.engineMeta, ...meta };
+      const engineSession = await adapter.createSession(conv.directory, adapterMeta);
       conversationStore.setEngineSession(conv.id, engineSession.id, engineSession.engineMeta);
       this.engineToConvMap.set(engineSession.id, conv.id);
     } catch (err) {
@@ -1013,7 +1028,7 @@ export class EngineManager extends EventEmitter {
   async sendMessage(
     sessionId: string,
     content: MessagePromptContent[],
-    options?: { mode?: string; modelId?: string; reasoningEffort?: ReasoningEffort | null; serviceTier?: CodexServiceTier | null },
+    options?: { mode?: string; modelId?: string; reasoningEffort?: ReasoningEffort | null; serviceTier?: CodexServiceTier | null; internal?: boolean },
   ): Promise<UnifiedMessage> {
     const trackQueuedTiming = this.markSessionActive(sessionId);
     try {
@@ -1037,13 +1052,27 @@ export class EngineManager extends EventEmitter {
 
       // Persist user message before sending to engine
       // (Some adapters like OpenCode don't emit user message events)
-      await this.persistUserMessage(sessionId, content, trackQueuedTiming);
+      // Internal messages (e.g. orchestration relay) are persisted but marked
+      // so the frontend can hide the user bubble while keeping the turn intact.
+      await this.persistUserMessage(sessionId, content, {
+        internal: options?.internal,
+        trackQueuedTiming,
+      });
+
+      // Mark session to suppress user message.updated events from the engine
+      // for internal sends — the user message is already persisted with internal: true.
+      if (options?.internal) {
+        this.internalSendSessions.add(engineSessionId);
+      }
 
       const resolvedOptions = this.resolveSessionOptions(conv, options);
       const result = await adapter.sendMessage(engineSessionId, content, {
         ...resolvedOptions,
         directory: conv.directory,
       });
+
+      // Clear the internal send suppression flag after the send completes
+      this.internalSendSessions.delete(engineSessionId);
 
       // If the engine reported a stale session (no SSE response within timeout),
       // clear the engineSessionId so the next attempt creates a fresh session.
@@ -1062,6 +1091,23 @@ export class EngineManager extends EventEmitter {
         const finalized = { ...result, time: { ...result.time, completed: Date.now() } };
         this.persistMessage(sessionId, finalized);
         this.emit("message.updated", { sessionId, message: finalized });
+      }
+
+      // Merge buffered content parts into the returned message.
+      // Adapters stream text/file content via message.part.updated events which
+      // are buffered in contentPartsBuffer but NOT included in the message
+      // returned by adapter.sendMessage(). Callers that read result.parts
+      // (e.g. AgentTeamService) would otherwise see an empty parts array.
+      const bufferedContent = this.contentPartsBuffer.get(result.id);
+      if (bufferedContent && bufferedContent.length > 0) {
+        const existingIds = new Set((result.parts || []).map((p) => p.id));
+        const merged = [...(result.parts || [])];
+        for (const bp of bufferedContent) {
+          if (!existingIds.has(bp.id)) {
+            merged.push(bp);
+          }
+        }
+        result.parts = merged;
       }
 
       return result;
@@ -1121,6 +1167,7 @@ export class EngineManager extends EventEmitter {
         modelId: msg.modelId,
         reasoningEffort: msg.reasoningEffort,
         error: msg.error,
+        internal: msg.internal,
       };
     });
   }
@@ -1167,7 +1214,7 @@ export class EngineManager extends EventEmitter {
 
       // Persist user command message
       const commandText = `/${commandName}${args ? ` ${args}` : ""}`;
-      await this.persistUserMessage(sessionId, [{ type: "text", text: commandText }], trackQueuedTiming);
+      await this.persistUserMessage(sessionId, [{ type: "text", text: commandText }], { trackQueuedTiming });
 
       const resolvedOptions = this.resolveSessionOptions(conv, options);
 

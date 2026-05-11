@@ -153,6 +153,7 @@ Next steps:
   bun run server:dev      # foreground headless Electron dev
   bun run server:up       # background headless Electron dev
   bun run server:tunnel   # background headless Electron dev + quick tunnel
+  bun run server:restart  # restart app only, preserving managed tunnel when possible
   bun run start           # web-only standalone server
 EOF
 }

@@ -43,6 +43,11 @@ const mockGatewayClient = {
   updateScheduledTask: vi.fn().mockResolvedValue({ id: 't1' }),
   deleteScheduledTask: vi.fn().mockResolvedValue({ success: true }),
   runScheduledTaskNow: vi.fn().mockResolvedValue({ success: true }),
+  createOrchestrationRun: vi.fn().mockResolvedValue({ id: 'team-1' }),
+  cancelOrchestrationRun: vi.fn().mockResolvedValue(undefined),
+  sendOrchestrationMessage: vi.fn().mockResolvedValue(undefined),
+  listOrchestrationRuns: vi.fn().mockResolvedValue([]),
+  getOrchestrationRun: vi.fn().mockResolvedValue(null),
   request: vi.fn().mockResolvedValue({}),
   on: vi.fn(),
   off: vi.fn(),
@@ -417,5 +422,66 @@ describe('GatewayAPI', () => {
   it('listBranches delegates via request', async () => {
     await gateway.listBranches('/dir');
     expect(mockGatewayClient.request).toHaveBeenCalledWith('worktree.listBranches', { directory: '/dir' });
+  });
+
+  // --- Orchestration ---
+
+  it('createOrchestration delegates', async () => {
+    const req = {
+      sessionId: 'sess-1',
+      prompt: 'Investigate issue',
+      mode: 'heavy',
+      directory: '/repo',
+      engineType: 'claude',
+    } as any;
+
+    await gateway.createOrchestration(req);
+
+    expect(mockGatewayClient.createOrchestrationRun).toHaveBeenCalledWith(req);
+  });
+
+  it('cancelOrchestration delegates', async () => {
+    await gateway.cancelOrchestration('team-1');
+    expect(mockGatewayClient.cancelOrchestrationRun).toHaveBeenCalledWith('team-1');
+  });
+
+  it('sendOrchestrationMessage delegates', async () => {
+    await gateway.sendOrchestrationMessage('team-1', 'Need a tighter plan');
+    expect(mockGatewayClient.sendOrchestrationMessage).toHaveBeenCalledWith('team-1', 'Need a tighter plan');
+  });
+
+  it('listOrchestrations delegates', async () => {
+    await gateway.listOrchestrations();
+    expect(mockGatewayClient.listOrchestrationRuns).toHaveBeenCalled();
+  });
+
+  it('getOrchestration delegates', async () => {
+    await gateway.getOrchestration('team-1');
+    expect(mockGatewayClient.getOrchestrationRun).toHaveBeenCalledWith('team-1');
+  });
+
+  it('binds orchestration notifications to the provided handlers', async () => {
+    const onOrchestrationUpdated = vi.fn();
+    const onOrchestrationSubtaskUpdated = vi.fn();
+    const run = { id: 'team-1' } as any;
+    const subtask = { id: 'task-1' } as any;
+
+    await gateway.init({ onOrchestrationUpdated, onOrchestrationSubtaskUpdated });
+
+    const runHandler = mockGatewayClient.on.mock.calls.find(
+      ([event]) => event === 'orchestration.updated',
+    )?.[1];
+    const subtaskHandler = mockGatewayClient.on.mock.calls.find(
+      ([event]) => event === 'orchestration.subtask.updated',
+    )?.[1];
+
+    expect(runHandler).toBeTypeOf('function');
+    expect(subtaskHandler).toBeTypeOf('function');
+
+    runHandler?.({ run });
+    subtaskHandler?.({ runId: 'team-1', subtask });
+
+    expect(onOrchestrationUpdated).toHaveBeenCalledWith(run);
+    expect(onOrchestrationSubtaskUpdated).toHaveBeenCalledWith('team-1', subtask);
   });
 });

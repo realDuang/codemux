@@ -208,6 +208,8 @@ export interface ConversationMessage {
   modelId?: string;
   reasoningEffort?: ReasoningEffort;
   error?: string;
+  /** True when this is an internal/system message (e.g. orchestration relay) that should be hidden in the UI */
+  internal?: boolean;
 }
 
 export interface StepsFile {
@@ -292,6 +294,8 @@ export interface UnifiedMessage {
   engineMeta?: Record<string, unknown>;
   /** Number of step parts (tool, reasoning, etc.) — used for lazy loading */
   stepCount?: number;
+  /** True when this is an internal/system message (e.g. orchestration relay) that should be hidden in the UI */
+  internal?: boolean;
 }
 
 // --- Part (discriminated union) ---
@@ -593,59 +597,181 @@ export interface RoleEngineMapping {
   readOnly?: boolean;
 }
 
-export type OrchestrationStatus = "setup" | "decomposing" | "confirming" | "dispatching" | "running" | "aggregating" | "completed" | "failed" | "cancelled";
-export type SubtaskStatus = "blocked" | "pending" | "running" | "completed" | "failed";
+/**
+ * Orchestration run status.
+ * - setup: created, not started
+ * - decomposing: planner LLM call in progress (Light Brain planning phase)
+ * - confirming: awaiting user plan confirmation before execution
+ * - dispatching: (optional) creating subtask sessions
+ * - running: DAG executing
+ * - aggregating: relaying final result back to parent session
+ * - completed / failed / cancelled: terminal
+ */
+export type OrchestrationStatus =
+  | "setup"
+  | "decomposing"
+  | "confirming"
+  | "dispatching"
+  | "running"
+  | "aggregating"
+  | "completed"
+  | "failed"
+  | "cancelled";
+export type SubtaskStatus = "blocked" | "pending" | "running" | "completed" | "failed" | "cancelled";
 
+/** Orchestration execution mode. */
+export type OrchestrationMode = "light" | "heavy";
+
+/** A single subtask in the orchestration DAG. */
 export interface OrchestrationSubtask {
   id: string;
+  /** Human-readable description of this subtask */
   description: string;
-  engineType: EngineType;
+  /** The prompt to send to the child session */
+  prompt: string;
+  /** Which engine to run this task on — when unset, resolved from role or run default */
+  engineType?: EngineType;
+  /** Optional model override (resolved from role when unset) */
   modelId?: string;
+  /** Role this subtask maps to; resolves engineType/modelId via RoleEngineMapping */
   role?: OrchestratorRole;
+  /** IDs of subtasks that must complete before this one starts */
   dependsOn: string[];
-  sessionId?: string;
-  worktreeId?: string;
-  worktreeName?: string;
-  needsWorktree: boolean;
+  /** Current execution status */
   status: SubtaskStatus;
+  /** ConversationId of the child session (set when task starts running) */
+  sessionId?: string;
+  /** Optional worktree identifier for file-isolation */
+  worktreeId?: string;
+  /** Optional worktree display name (for UI cleanup actions) */
+  worktreeName?: string;
+  /** Whether this subtask writes files — read-only roles/tasks skip team worktree */
+  needsWorktree?: boolean;
+  /** Text result summary extracted from the completed message */
   resultSummary?: string;
+  /** Error message if failed */
   error?: string;
+  /** Duration in seconds (set on completion) */
   duration?: number;
+  /** Optional tool-use counter for display */
   toolUses?: number;
+  /** Timing */
+  time?: { started?: number; completed?: number };
 }
 
+/** Represents a complete orchestration run (unified Light/Heavy brain + PR #117 model). */
 export interface OrchestrationRun {
   id: string;
+  /** Parent session that initiated this run */
   parentSessionId: string;
+  /** Directory of the initiating session (may be a worktree path) */
   directory: string;
-  status: OrchestrationStatus;
+  /** Parent repo directory when the initiating session lives in a worktree */
+  parentDirectory?: string;
+  /** User's original request */
   prompt: string;
+  /** Execution mode — Light (one-shot planner + DAG) or Heavy (persistent orchestrator) */
+  mode: OrchestrationMode;
+  /** Current overall status */
+  status: OrchestrationStatus;
+  /** Engines allowed for subtask dispatch */
   engineTypes: EngineType[];
+  /** All subtasks in the DAG */
   subtasks: OrchestrationSubtask[];
-  /** Worktree directory used by all subtasks (isolated from original repo) */
-  teamWorktreeDir?: string;
-  /** Worktree name (for display / cleanup) */
+  /** Default worktree for child sessions */
+  worktreeId?: string;
+  /**
+   * Team-scoped worktree shared by all write-capable subtasks.
+   * When set, write subtasks run in this worktree while read-only subtasks
+   * stay in the run's primary directory.
+   */
   teamWorktreeName?: string;
-  /** Role → engine mapping for this run */
+  teamWorktreeDir?: string;
+  /** Role → engine mapping snapshot captured at run creation */
   roleMappings?: RoleEngineMapping[];
+  /** Orchestrator session ID (Heavy Brain only — persistent session that drives dispatch) */
+  orchestratorSessionId?: string;
+  /** Final aggregated result (synthesized from completed subtasks) */
   resultSummary?: string;
-  createdAt: number;
-  completedAt?: number;
+  /** Timing */
+  time: { created: number; completed?: number };
+  /** Whether this run paused for user plan confirmation before execution */
+  requirePlanConfirmation?: boolean;
+  /**
+   * Whether to relay the aggregated result back to the parent session as a
+   * user message so the parent engine can summarize for the user.
+   * Defaults to true when parentSessionId is set.
+   */
+  aggregateToParent?: boolean;
 }
+
+// --- Orchestration Gateway types ---
 
 export interface OrchestrationCreateRequest {
-  parentSessionId: string;
-  directory: string;
+  /** Parent session initiating the orchestration */
+  sessionId: string;
+  /** User's task description */
   prompt: string;
-  engineTypes: EngineType[];
+  /** Execution mode — Light or Heavy */
+  mode: OrchestrationMode;
+  /** Engine for the planner (light) or orchestrator (heavy) */
+  engineType?: EngineType;
+  /** Engines allowed for subtask dispatch (optional — defaults to available engines) */
+  engineTypes?: EngineType[];
+  /** Working directory of the initiating session */
+  directory: string;
+  /** Parent repo directory when the initiating session belongs to a worktree */
+  parentDirectory?: string;
+  /** Default worktree for child sessions */
+  worktreeId?: string;
+  /** Role → engine mapping snapshot for this run */
   roleMappings?: RoleEngineMapping[];
-  worktreeInfo?: { name: string; directory: string };
+  /**
+   * Pre-allocated team worktree (typically created by the frontend) so all
+   * write subtasks share one worktree.
+   */
+  teamWorktreeInfo?: { name: string; directory: string };
+  /**
+   * Whether the user wants to confirm the plan before execution.
+   * Defaults to true for Light mode, false for Heavy mode.
+   */
+  requirePlanConfirmation?: boolean;
+  /**
+   * Whether to relay the aggregated result back to the parent session after
+   * the run completes. Defaults to true when a parent session exists.
+   */
+  aggregateToParent?: boolean;
 }
 
-export interface OrchestrationConfirmRequest {
+export interface OrchestrationCancelRequest {
   runId: string;
+}
+
+export interface OrchestrationGetRequest {
+  runId: string;
+}
+
+export interface OrchestrationSendMessageRequest {
+  /** Active Heavy mode run receiving the relayed follow-up */
+  runId: string;
+  /** Follow-up text forwarded to the Heavy mode orchestrator */
+  text: string;
+}
+
+export interface OrchestrationConfirmPlanRequest {
+  runId: string;
+  /** Edited / approved subtask list from the user */
   subtasks: OrchestrationSubtask[];
 }
+
+export interface OrchestrationUpdateRoleMappingsRequest {
+  mappings: RoleEngineMapping[];
+}
+
+export interface OrchestrationGetRoleMappingsResponse {
+  mappings: RoleEngineMapping[];
+}
+
 
 // ============================================================================
 // WebSocket Gateway Protocol Types
@@ -777,12 +903,16 @@ export const GatewayRequestType = {
   WORKTREE_MERGE: "worktree.merge",
   WORKTREE_LIST_BRANCHES: "worktree.listBranches",
 
-  // Orchestration
+  // Orchestration (unified Light/Heavy brain + role-based plan confirmation)
   ORCHESTRATION_CREATE: "orchestration.create",
   ORCHESTRATION_DECOMPOSE: "orchestration.decompose",
   ORCHESTRATION_CONFIRM: "orchestration.confirm",
   ORCHESTRATION_CANCEL: "orchestration.cancel",
   ORCHESTRATION_LIST: "orchestration.list",
+  ORCHESTRATION_GET: "orchestration.get",
+  ORCHESTRATION_SEND_MESSAGE: "orchestration.sendMessage",
+  ORCHESTRATION_GET_ROLE_MAPPINGS: "orchestration.getRoleMappings",
+  ORCHESTRATION_UPDATE_ROLE_MAPPINGS: "orchestration.updateRoleMappings",
 } as const;
 
 // --- Notification type constants ---
@@ -820,6 +950,7 @@ export const GatewayNotificationType = {
 
   // Orchestration
   ORCHESTRATION_UPDATED: "orchestration.updated",
+  ORCHESTRATION_SUBTASK_UPDATED: "orchestration.subtask.updated",
 } as const;
 
 // --- Request / Response payload types ---
@@ -1111,3 +1242,4 @@ export interface ScheduledTaskRunResult {
   taskId: string;
   conversationId: string;
 }
+

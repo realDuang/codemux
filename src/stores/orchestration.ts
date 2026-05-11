@@ -1,6 +1,7 @@
 import { createStore } from "solid-js/store";
 import type { OrchestrationRun, RoleEngineMapping, OrchestratorRole, EngineType } from "../types/unified";
 import { getSetting, saveSetting } from "../lib/settings";
+import { gateway } from "../lib/gateway-api";
 
 /** Default role → engine mapping (inspired by oh-my-opencode-slim agent roles) */
 export const DEFAULT_ROLE_MAPPINGS: RoleEngineMapping[] = [
@@ -61,6 +62,16 @@ export function registerTeam(teamId: string, parentSessionId: string, worktreeIn
 export function associateRunWithTeam(teamId: string, runId: string): void {
   setOrchestrationStore("teams", teamId, "runId", runId);
 }
+
+/**
+ * Associate a child session with a team for sidebar grouping.
+ * Used by the AgentTeamService-driven flow to mirror PR #117's sidebar
+ * grouping semantics.
+ */
+export function associateChildSession(teamId: string, sessionId: string): void {
+  setOrchestrationStore("sessionToTeam", sessionId, teamId);
+}
+
 
 /** Get the teamId for a session (parent or child) */
 export function getTeamId(sessionId: string): string | undefined {
@@ -182,10 +193,25 @@ export function autoDetectTeams(sessions: { id: string; worktreeId?: string }[])
   return result;
 }
 
-/** Update the role → engine mapping and persist */
+/** Update the role → engine mapping and persist.
+ *
+ * Writes to three places:
+ * - orchestrationStore (reactive frontend state)
+ * - saveSetting("orchestration.roleMapping", ...) (localStorage/settings.json
+ *   fallback)
+ * - gateway.updateOrchestrationRoleMappings(...) (persists to settings.json
+ *   under orchestration.roleMappings so OrchestrationService picks up the
+ *   same edits)
+ *
+ * The gateway call is best-effort — UI state is updated regardless of RPC
+ * failure.
+ */
 export function updateRoleMappings(mappings: RoleEngineMapping[]): void {
   setOrchestrationStore("roleMappings", mappings);
   saveSetting("orchestration.roleMapping", mappings);
+  void gateway.updateOrchestrationRoleMappings(mappings).catch((err: unknown) => {
+    console.warn("[Orchestration] Failed to sync role mappings:", err);
+  });
 }
 
 /** Get the engine type for a given role */

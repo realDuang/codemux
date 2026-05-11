@@ -93,6 +93,9 @@ export class OpenCodeAdapter extends EngineAdapter {
   // final message when session.status: idle arrives (see resolveSessionIdle).
   private lastEmittedMessage = new Map<string, UnifiedMessage>();
 
+  /** Custom system prompts per session (e.g. orchestration instructions for agent team) */
+  private sessionSystemPrompts = new Map<string, string>();
+
   // Track primary (first) user message IDs per session to avoid false-positive
   // queued.consumed emissions when the primary user message.updated arrives late.
   private primaryUserMsgIds = new Map<string, string>();
@@ -116,6 +119,15 @@ export class OpenCodeAdapter extends EngineAdapter {
   constructor(options?: { port?: number }) {
     super();
     this.port = options?.port ?? OPENCODE_PORT;
+  }
+
+  /** Get the system prompt for a session, composing identity + custom system prompt */
+  private getSystemPrompt(sessionId?: string): string {
+    if (sessionId) {
+      const custom = this.sessionSystemPrompts.get(sessionId);
+      if (custom) return CODEMUX_IDENTITY_PROMPT + "\n\n" + custom;
+    }
+    return CODEMUX_IDENTITY_PROMPT;
   }
 
   private get baseUrl(): string {
@@ -839,7 +851,7 @@ export class OpenCodeAdapter extends EngineAdapter {
 
   // --- Sessions ---
 
-  async createSession(directory: string): Promise<UnifiedSession> {
+  async createSession(directory: string, meta?: Record<string, unknown>): Promise<UnifiedSession> {
     this.switchDirectory(directory);
 
     const client = this.ensureClient();
@@ -850,6 +862,9 @@ export class OpenCodeAdapter extends EngineAdapter {
 
     const session = convertSession(this.engineType, result.data);
     this.sessions.set(session.id, session);
+    if (meta?.systemPrompt && typeof meta.systemPrompt === "string") {
+      this.sessionSystemPrompts.set(session.id, meta.systemPrompt);
+    }
     return session;
   }
 
@@ -929,6 +944,7 @@ export class OpenCodeAdapter extends EngineAdapter {
 
     // Clean up user message IDs for this session to prevent memory leak
     this.userMessageIds.delete(sessionId);
+    this.sessionSystemPrompts.delete(sessionId);
   }
 
   /** Push a renamed title to OpenCode via session.update. */
@@ -1004,7 +1020,7 @@ export class OpenCodeAdapter extends EngineAdapter {
         parts,
         agent: options?.mode,
         model,
-        system: CODEMUX_IDENTITY_PROMPT,
+        system: this.getSystemPrompt(sessionId),
       });
 
       const promptError = (promptResult as any).error;

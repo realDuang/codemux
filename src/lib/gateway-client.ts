@@ -49,6 +49,9 @@ import {
   type ScheduledTaskUpdateRequest,
   type ScheduledTaskRunResult,
   type OrchestrationRun,
+  type OrchestrationSubtask,
+  type OrchestrationCreateRequest,
+  type RoleEngineMapping,
 } from "../types/unified";
 
 // --- Event types emitted by GatewayClient ---
@@ -88,6 +91,7 @@ export interface GatewayClientEvents {
 
   /** Orchestration push notifications */
   "orchestration.updated": (data: { run: OrchestrationRun }) => void;
+  "orchestration.subtask.updated": (data: { runId: string; subtask: OrchestrationSubtask }) => void;
 }
 
 // --- Pending request tracking ---
@@ -614,6 +618,40 @@ export class GatewayClient {
 
   runScheduledTaskNow(id: string): Promise<ScheduledTaskRunResult> {
     return this.request(GatewayRequestType.SCHEDULED_TASK_RUN_NOW, { id });
+  }
+
+  // --- Orchestration API ---
+
+  createOrchestrationRun(req: OrchestrationCreateRequest): Promise<OrchestrationRun> {
+    return this.request(GatewayRequestType.ORCHESTRATION_CREATE, req);
+  }
+
+  cancelOrchestrationRun(runId: string): Promise<void> {
+    return this.request(GatewayRequestType.ORCHESTRATION_CANCEL, { runId });
+  }
+
+  sendOrchestrationMessage(runId: string, text: string): Promise<void> {
+    return this.request(GatewayRequestType.ORCHESTRATION_SEND_MESSAGE, { runId, text });
+  }
+
+  listOrchestrationRuns(): Promise<OrchestrationRun[]> {
+    return this.request(GatewayRequestType.ORCHESTRATION_LIST);
+  }
+
+  getOrchestrationRun(runId: string): Promise<OrchestrationRun | null> {
+    return this.request(GatewayRequestType.ORCHESTRATION_GET, { runId });
+  }
+
+  confirmOrchestrationPlan(runId: string, subtasks: OrchestrationSubtask[]): Promise<{ ok: boolean }> {
+    return this.request(GatewayRequestType.ORCHESTRATION_CONFIRM, { runId, subtasks });
+  }
+
+  getOrchestrationRoleMappings(): Promise<{ mappings: RoleEngineMapping[] }> {
+    return this.request(GatewayRequestType.ORCHESTRATION_GET_ROLE_MAPPINGS, {});
+  }
+
+  updateOrchestrationRoleMappings(mappings: RoleEngineMapping[]): Promise<{ mappings: RoleEngineMapping[] }> {
+    return this.request(GatewayRequestType.ORCHESTRATION_UPDATE_ROLE_MAPPINGS, { mappings });
   }
 
   // --- Log forwarding (fire-and-forget, no response expected) ---

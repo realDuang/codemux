@@ -208,6 +208,8 @@ export class CopilotSdkAdapter extends EngineAdapter {
   // cannot be mapped to the SDK's native approve-for-session payload.
   private allowedAlwaysKinds = new Map<string, Set<string>>();
   private cachedCommands: EngineCommand[] = [];
+  /** Custom system prompt per session (e.g. orchestration instructions for agent team) */
+  private sessionSystemPrompts = new Map<string, string>();
 
   private messageBuffers = new Map<string, MessageBuffer>();
   private messageHistory = new Map<string, UnifiedMessage[]>();
@@ -378,10 +380,16 @@ export class CopilotSdkAdapter extends EngineAdapter {
     }
   }
 
-  async createSession(directory: string): Promise<UnifiedSession> {
+  async createSession(directory: string, meta?: Record<string, unknown>): Promise<UnifiedSession> {
     this.ensureClient();
     const normalizedDir = directory.replaceAll("\\", "/");
     const mode = "autopilot";
+
+    // Build system message: identity prompt + optional custom system prompt (e.g. orchestration instructions)
+    let systemContent = CODEMUX_IDENTITY_PROMPT;
+    if (meta?.systemPrompt && typeof meta.systemPrompt === "string") {
+      systemContent += "\n\n" + meta.systemPrompt;
+    }
 
     const config: SessionConfig = {
       workingDirectory: directory,
@@ -389,7 +397,7 @@ export class CopilotSdkAdapter extends EngineAdapter {
       model: this.currentModelId ?? undefined,
       onPermissionRequest: (req, ctx) => this.handlePermissionRequest(req, ctx),
       onUserInputRequest: (req, ctx) => this.handleUserInputRequest(req as any, ctx),
-      systemMessage: { mode: "append" as const, content: CODEMUX_IDENTITY_PROMPT },
+      systemMessage: { mode: "append" as const, content: systemContent },
     };
 
     const sdkSession = await this.client!.createSession(config);
@@ -399,6 +407,9 @@ export class CopilotSdkAdapter extends EngineAdapter {
     this.activeSessions.set(sessionId, sdkSession);
     this.sessionModes.set(sessionId, mode);
     this.sessionDirectories.set(sessionId, directory);
+    if (meta?.systemPrompt && typeof meta.systemPrompt === "string") {
+      this.sessionSystemPrompts.set(sessionId, meta.systemPrompt);
+    }
 
     const now = Date.now();
     const session: UnifiedSession = {
@@ -456,6 +467,7 @@ export class CopilotSdkAdapter extends EngineAdapter {
     this.sessionModes.delete(sessionId);
     this.sessionDirectories.delete(sessionId);
     this.sessionTodos.delete(sessionId);
+    this.sessionSystemPrompts.delete(sessionId);
     this.allowedAlwaysKinds.delete(sessionId);
   }
 
@@ -1101,13 +1113,17 @@ export class CopilotSdkAdapter extends EngineAdapter {
 
     const workingDirectory = directory || this.sessionDirectories.get(sessionId);
     const sdkReasoningEffort = this.getSdkReasoningEffort(sessionId);
+    const customSystemPrompt = this.sessionSystemPrompts.get(sessionId);
+    const systemContent = customSystemPrompt
+      ? CODEMUX_IDENTITY_PROMPT + "\n\n" + customSystemPrompt
+      : CODEMUX_IDENTITY_PROMPT;
     const config: ResumeSessionConfig = {
       streaming: true,
       workingDirectory,
       model: this.currentModelId ?? undefined,
       ...(sdkReasoningEffort ? { reasoningEffort: sdkReasoningEffort } : {}),
-      systemMessage: { mode: "append" as const, content: CODEMUX_IDENTITY_PROMPT },
-      onPermissionRequest: (req, ctx) => this.handlePermissionRequest(req, ctx),
+      systemMessage: { mode: "append" as const, content: systemContent },
+      onPermissionRequest: (req, ctx) => this.handlePermissionRequest(req as any, ctx),
       onUserInputRequest: (req, ctx) => this.handleUserInputRequest(req as any, ctx),
     };
 
@@ -1128,8 +1144,8 @@ export class CopilotSdkAdapter extends EngineAdapter {
           workingDirectory,
           model: this.currentModelId ?? undefined,
           ...(sdkReasoningEffort ? { reasoningEffort: sdkReasoningEffort } : {}),
-          systemMessage: { mode: "append" as const, content: CODEMUX_IDENTITY_PROMPT },
-          onPermissionRequest: (req, ctx) => this.handlePermissionRequest(req, ctx),
+          systemMessage: { mode: "append" as const, content: systemContent },
+          onPermissionRequest: (req, ctx) => this.handlePermissionRequest(req as any, ctx),
           onUserInputRequest: (req, ctx) => this.handleUserInputRequest(req as any, ctx),
         };
         const newSession = await this.client!.createSession(newConfig);

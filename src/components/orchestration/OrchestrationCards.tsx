@@ -19,7 +19,7 @@ export function OrchestrationCards(props: OrchestrationCardsProps) {
   const handleConfirm = async (subtasks: OrchestrationSubtask[]) => {
     const r = run();
     if (!r) return;
-    await gateway.confirmOrchestration({ runId: r.id, subtasks });
+    await gateway.confirmOrchestrationPlan({ runId: r.id, subtasks });
   };
 
   const handleCancel = async () => {

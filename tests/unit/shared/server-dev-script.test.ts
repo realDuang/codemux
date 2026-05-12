@@ -207,7 +207,7 @@ async function cleanupRepo(repo: TestRepo): Promise<void> {
   await rm(repo.root, { recursive: true, force: true });
 }
 
-describe("scripts/server-dev.sh", () => {
+describe.skipIf(process.platform !== "linux")("scripts/server-dev.sh", () => {
   it(
     "restarts the managed app without rotating the managed quick tunnel",
     async () => {

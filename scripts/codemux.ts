@@ -274,7 +274,7 @@ async function runDev(args: string[]): Promise<number> {
 async function runServer(args: string[]): Promise<number> {
   const command = args[0];
   if (!command) {
-    console.error("codemux server requires a subcommand (start, stop, restart, status, logs, list, init)");
+    console.error("codemux server requires a subcommand (start, stop, restart, status, logs, init)");
     return 2;
   }
 

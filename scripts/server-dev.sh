@@ -23,7 +23,6 @@ APP_PID_FILE="$STATE_DIR/dev.pid"
 TUNNEL_PID_FILE="$STATE_DIR/tunnel.pid"
 LOCAL_URL_FILE="$STATE_DIR/local-url"
 TUNNEL_URL_FILE="$STATE_DIR/tunnel-url"
-PORT_OFFSET_FILE="$STATE_DIR/port-offset"
 XVFB_SCREEN="${CODEMUX_XVFB_SCREEN:-1280x720x24}"
 DEFAULT_TIMEOUT="${CODEMUX_SERVER_START_TIMEOUT:-90}"
 STARTED_LOCAL_URL=""
@@ -262,14 +261,18 @@ wait_for_tunnel_url() {
 }
 
 print_auth_status() {
-  local access_code pending_count
+  local access_code pending_count devices_file
+  devices_file="$REPO_DIR/.devices.json"
+  if [ "${CODEMUX_DEV_ISOLATED:-0}" = "1" ]; then
+    devices_file="$REPO_DIR/.codemux-dev/userData/devices.json"
+  fi
 
-  if access_code=$(bun scripts/server-auth.ts access-code --plain 2>/dev/null); then
+  if access_code=$(CODEMUX_DEVICES_FILE="$devices_file" bun "$REPO_DIR/scripts/server-auth.ts" access-code --plain 2>/dev/null); then
     printf '  Access code: %s
 ' "$access_code"
   fi
 
-  if pending_count=$(bun scripts/server-auth.ts access-requests --count 2>/dev/null); then
+  if pending_count=$(CODEMUX_DEVICES_FILE="$devices_file" bun "$REPO_DIR/scripts/server-auth.ts" access-requests --count 2>/dev/null); then
     printf '  Pending requests: %s
 ' "$pending_count"
     if [ "$pending_count" -gt 0 ] 2>/dev/null; then

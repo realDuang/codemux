@@ -142,7 +142,7 @@ main() {
 
   if [ "$RUN_SETUP" -eq 1 ]; then
     info "Running interactive CodeMux setup..."
-    bun "$REPO_DIR/scripts/setup.ts"
+    bun "$REPO_DIR/scripts/codemux.ts" setup
   else
     warn "Skipped interactive setup. Run \`codemux setup\` later to install engine dependencies."
   fi

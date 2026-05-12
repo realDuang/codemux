@@ -61,3 +61,6 @@ coverage/
 
 continuous-analysis/
 .settings.json
+
+# Test artifacts from channels mappers when TMPDIR is unset
+/channels/*-bindings.json

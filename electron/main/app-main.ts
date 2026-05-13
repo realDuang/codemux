@@ -56,6 +56,7 @@ import { updateManager } from "./services/update-manager";
 import { trayManager } from "./services/tray-manager";
 import { scheduledTaskService } from "./services/scheduled-task-service";
 import { ensureDefaultWorkspace } from "./services/default-workspace";
+import { getTerminalService } from "./services/terminal-service";
 import { GATEWAY_PORT, OPENCODE_PORT, WEBHOOK_PORT, WEB_PORT } from "../../shared/ports";
 
 // --- Gateway singleton instances ---
@@ -271,6 +272,9 @@ if (!gotTheLock) {
       trayManager.destroy();
       await conversationStore.flushAll();
       await scheduledTaskService.shutdown();
+      // Kill any remaining PTYs synchronously so child shells don't outlive
+      // the app bundle swap during an update.
+      getTerminalService().destroyAll();
       gatewayServer.stop();
       return;
     }
@@ -283,6 +287,11 @@ if (!gotTheLock) {
       // Stop native file watchers early — @parcel/watcher uses NAPI threadsafe
       // functions that must be torn down before Node.js module cleanup begins.
       unwatchAll();
+
+      // Tear down PTY child processes before the rest of the cleanup. This
+      // keeps node-pty's native cleanup off the critical path of the engine
+      // shutdown, and prevents orphan shells if engineManager.stopAll() hangs.
+      getTerminalService().destroyAll();
 
       // Flush conversation store before quit
       await conversationStore.flushAll();

@@ -674,3 +674,69 @@ describe("file-service (controlled git repo)", () => {
     });
   });
 });
+
+// =============================================================================
+// fileExists — used by the terminal link provider
+// =============================================================================
+
+import { fileExists, _resetFileExistsCache } from "../../../../electron/main/services/file-service";
+
+describe("fileExists", () => {
+  const FE_DIR = join(tmpdir(), `codemux-file-exists-${Date.now()}`);
+  const FE_FILE = join(FE_DIR, "real.txt");
+  const FE_SUBDIR = join(FE_DIR, "subdir");
+
+  beforeAll(() => {
+    mkdirSync(FE_DIR, { recursive: true });
+    mkdirSync(FE_SUBDIR, { recursive: true });
+    writeFileSync(FE_FILE, "hello");
+  });
+
+  afterAll(() => {
+    rmSync(FE_DIR, { recursive: true, force: true });
+  });
+
+  it("reports an existing regular file", async () => {
+    _resetFileExistsCache();
+    const r = await fileExists(FE_FILE);
+    expect(r.exists).toBe(true);
+    expect(r.isFile).toBe(true);
+    expect(r.isDirectory).toBe(false);
+    expect(r.absolutePath).toBe(FE_FILE);
+  });
+
+  it("reports a directory with isFile=false, isDirectory=true", async () => {
+    _resetFileExistsCache();
+    const r = await fileExists(FE_SUBDIR);
+    expect(r.exists).toBe(true);
+    expect(r.isFile).toBe(false);
+    expect(r.isDirectory).toBe(true);
+  });
+
+  it("reports a non-existent path with all flags false", async () => {
+    _resetFileExistsCache();
+    const r = await fileExists(join(FE_DIR, "ghost.txt"));
+    expect(r.exists).toBe(false);
+    expect(r.isFile).toBe(false);
+    expect(r.isDirectory).toBe(false);
+  });
+
+  it("resolves relative paths against the supplied cwd", async () => {
+    _resetFileExistsCache();
+    const r = await fileExists("real.txt", FE_DIR);
+    expect(r.exists).toBe(true);
+    expect(r.absolutePath).toBe(FE_FILE);
+  });
+
+  it("uses the cache for repeated lookups within the TTL", async () => {
+    _resetFileExistsCache();
+    const tempPath = join(FE_DIR, "cache-target.txt");
+    writeFileSync(tempPath, "v1");
+    const first = await fileExists(tempPath);
+    expect(first.exists).toBe(true);
+    // Delete the file — but the cache should still report it as existing.
+    rmSync(tempPath);
+    const second = await fileExists(tempPath);
+    expect(second.exists).toBe(true);
+  });
+});

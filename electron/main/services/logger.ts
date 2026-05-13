@@ -147,6 +147,7 @@ export const wecomLog = log.scope("wecom");
 export const teamsLog = log.scope("teams");
 export const codexLog = log.scope("codex");
 export const scheduledTaskLog = log.scope("sched-task");
+export const terminalLog = log.scope("terminal");
 
 export type ScopedLogger = Pick<
   typeof feishuLog,

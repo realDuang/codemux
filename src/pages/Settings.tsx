@@ -6,6 +6,7 @@ import { ThemeSwitcher } from "../components/ThemeSwitcher";
 import ImportHistoryModal from "../components/ImportHistoryModal";
 import { ensureGatewayInitialized, refreshEngineConfigState } from "../lib/engine-bootstrap";
 import { ChannelManagementSettings } from "../components/ChannelManagementSettings";
+import { TerminalSettingsSection } from "../components/TerminalSettingsSection";
 import { useI18n } from "../lib/i18n";
 import { logger } from "../lib/logger";
 import { useAuthGuard } from "../lib/useAuthGuard";
@@ -309,6 +310,11 @@ export default function Settings() {
                 </button>
               </li>
             </Show>
+            <li>
+              <button onClick={() => document.getElementById("section-terminal")?.scrollIntoView({ behavior: "smooth" })} class="w-full text-left block px-3 py-2 text-[13px] font-medium text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-slate-800 rounded-lg transition-colors">
+                {t().terminal.settingsSectionTitle}
+              </button>
+            </li>
             <li>
               <button onClick={() => document.getElementById("section-features")?.scrollIntoView({ behavior: "smooth" })} class="w-full text-left block px-3 py-2 text-[13px] font-medium text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-slate-800 rounded-lg transition-colors">
                 {t().settings.features}
@@ -763,6 +769,9 @@ export default function Settings() {
                 </div>
               </section>
             </Show>
+
+            {/* Terminal Section */}
+            <TerminalSettingsSection />
 
             {/* Features Section */}
             <section id="section-features">

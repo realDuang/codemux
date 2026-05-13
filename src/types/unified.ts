@@ -783,6 +783,17 @@ export const GatewayRequestType = {
   ORCHESTRATION_CONFIRM: "orchestration.confirm",
   ORCHESTRATION_CANCEL: "orchestration.cancel",
   ORCHESTRATION_LIST: "orchestration.list",
+
+  // Integrated Terminal (PTY over Gateway)
+  TERMINAL_CREATE: "terminal.create",
+  TERMINAL_WRITE: "terminal.write",
+  TERMINAL_RESIZE: "terminal.resize",
+  TERMINAL_DESTROY: "terminal.destroy",
+  TERMINAL_LIST: "terminal.list",
+  TERMINAL_PROFILES_LIST: "terminal.profiles.list",
+
+  // Filesystem helpers (used by terminal link provider, etc.)
+  FILE_EXISTS: "file.exists",
 } as const;
 
 // --- Notification type constants ---
@@ -820,6 +831,10 @@ export const GatewayNotificationType = {
 
   // Orchestration
   ORCHESTRATION_UPDATED: "orchestration.updated",
+
+  // Integrated Terminal
+  TERMINAL_DATA: "terminal.data",
+  TERMINAL_EXIT: "terminal.exit",
 } as const;
 
 // --- Request / Response payload types ---
@@ -1110,4 +1125,135 @@ export interface ScheduledTaskUpdateRequest {
 export interface ScheduledTaskRunResult {
   taskId: string;
   conversationId: string;
+}
+
+// --- Integrated Terminal (PTY) ---
+
+/**
+ * Request to spawn a new PTY-backed terminal on the host.
+ * The terminal is owned by the WebSocket client that creates it; the gateway
+ * scopes data/exit notifications to the owner only and tears down owned PTYs
+ * when the client disconnects.
+ */
+export interface TerminalCreateRequest {
+  /** Working directory for the spawned shell. Must exist on the host. */
+  cwd: string;
+  /** Initial column count. */
+  cols: number;
+  /** Initial row count. */
+  rows: number;
+  /** Optional session ID this terminal is associated with (for per-session limits). */
+  sessionId?: string;
+  /**
+   * Optional shell profile to launch. When omitted, the server uses its
+   * configured default profile (or the platform default shell as a final
+   * fallback). Profiles are discovered via `terminal.profiles.list`.
+   */
+  profileId?: string;
+}
+
+export interface TerminalCreateResponse {
+  terminalId: string;
+}
+
+export interface TerminalWriteRequest {
+  terminalId: string;
+  /** UTF-8 string of bytes to write to the PTY (typically keyboard input). */
+  data: string;
+}
+
+export interface TerminalResizeRequest {
+  terminalId: string;
+  cols: number;
+  rows: number;
+}
+
+export interface TerminalDestroyRequest {
+  terminalId: string;
+}
+
+export interface TerminalListRequest {
+  /** Optional: only list terminals belonging to this session. */
+  sessionId?: string;
+}
+
+export interface TerminalInfo {
+  terminalId: string;
+  sessionId?: string;
+  cwd: string;
+  cols: number;
+  rows: number;
+  pid?: number;
+  shell: string;
+  createdAt: number;
+}
+
+export interface TerminalListResponse {
+  terminals: TerminalInfo[];
+}
+
+/** Push notification: PTY emitted output. */
+export interface TerminalDataNotification {
+  terminalId: string;
+  /** Raw output chunk (string-encoded; xterm.js handles ANSI). */
+  data: string;
+}
+
+/** Push notification: PTY exited. */
+export interface TerminalExitNotification {
+  terminalId: string;
+  exitCode?: number;
+  signal?: number;
+}
+
+// --- Shell profiles ---
+
+/**
+ * A discovered or user-defined shell profile (powershell, pwsh, cmd, bash,
+ * zsh, WSL distros, etc.). Mirrors VS Code's terminal profile concept.
+ */
+export interface TerminalProfile {
+  /** Stable identifier. Built-ins use a kebab-case shell name; custom uses `custom-<n>`. */
+  id: string;
+  /** Display name shown in UI dropdowns. */
+  name: string;
+  /** Absolute path to the shell executable. */
+  path: string;
+  /** Optional command-line arguments passed at spawn. */
+  args?: string[];
+  /** Optional extra environment variables (merged on top of inherited env). */
+  env?: Record<string, string>;
+  /** Optional icon hint (e.g. `"terminal"`, `"powershell"`). */
+  icon?: string;
+  /** True for user-defined profiles in settings.json (not auto-detected). */
+  custom?: boolean;
+}
+
+export interface TerminalProfilesListRequest {
+  /** When true, refresh the cache before listing. Default: use cached results. */
+  refresh?: boolean;
+}
+
+export interface TerminalProfilesListResponse {
+  profiles: TerminalProfile[];
+  /** ID of the profile spawned by `terminal.create` when no `profileId` is given. */
+  defaultProfileId: string | null;
+}
+
+// --- Filesystem helpers ---
+
+export interface FileExistsRequest {
+  /** Absolute or working-directory-relative path to check. */
+  path: string;
+  /** Optional cwd used to resolve relative `path`. Defaults to process cwd. */
+  cwd?: string;
+}
+
+export interface FileExistsResponse {
+  /** Resolved absolute path used for the check. */
+  absolutePath: string;
+  exists: boolean;
+  /** True only when the path resolves to a regular file (not a directory). */
+  isFile: boolean;
+  isDirectory: boolean;
 }

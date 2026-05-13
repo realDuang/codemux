@@ -633,3 +633,94 @@ export function unwatchAll(): void {
   }
   subscriptions.clear();
 }
+
+// ─── File existence cache (used by terminal link provider) ───────────────────
+
+import { resolve as resolvePath, isAbsolute as isAbsolutePath } from "node:path";
+
+interface FileExistsCacheEntry {
+  isFile: boolean;
+  isDirectory: boolean;
+  exists: boolean;
+  expiresAt: number;
+}
+
+const FILE_EXISTS_CACHE_TTL_MS = 5_000;
+const FILE_EXISTS_CACHE_MAX = 256;
+const fileExistsCache = new Map<string, FileExistsCacheEntry>();
+
+function lruGet(key: string): FileExistsCacheEntry | undefined {
+  const entry = fileExistsCache.get(key);
+  if (!entry) return undefined;
+  if (entry.expiresAt < Date.now()) {
+    fileExistsCache.delete(key);
+    return undefined;
+  }
+  // Refresh recency by re-inserting (Map preserves insertion order).
+  fileExistsCache.delete(key);
+  fileExistsCache.set(key, entry);
+  return entry;
+}
+
+function lruSet(key: string, entry: FileExistsCacheEntry): void {
+  fileExistsCache.set(key, entry);
+  if (fileExistsCache.size > FILE_EXISTS_CACHE_MAX) {
+    const oldestKey = fileExistsCache.keys().next().value;
+    if (oldestKey !== undefined) fileExistsCache.delete(oldestKey);
+  }
+}
+
+/**
+ * Check whether a path resolves to a regular file (or directory). Used by
+ * the terminal's link provider to decide whether output text like
+ * `src/foo.ts` should be made clickable.
+ *
+ * Resolves relative paths against `cwd` (defaults to `process.cwd()`) so the
+ * caller doesn't have to pre-resolve. Results are cached for 5 s with a
+ * 256-entry LRU to keep terminal scroll/render loops responsive.
+ */
+export async function fileExists(
+  inputPath: string,
+  cwd?: string,
+): Promise<{ absolutePath: string; exists: boolean; isFile: boolean; isDirectory: boolean }> {
+  const base = cwd && cwd.length > 0 ? cwd : process.cwd();
+  const absolutePath = isAbsolutePath(inputPath)
+    ? resolvePath(inputPath)
+    : resolvePath(base, inputPath);
+
+  const cached = lruGet(absolutePath);
+  if (cached) {
+    return {
+      absolutePath,
+      exists: cached.exists,
+      isFile: cached.isFile,
+      isDirectory: cached.isDirectory,
+    };
+  }
+
+  let isFile = false;
+  let isDirectory = false;
+  let exists = false;
+  try {
+    const s = await stat(absolutePath);
+    exists = true;
+    isFile = s.isFile();
+    isDirectory = s.isDirectory();
+  } catch {
+    // ENOENT / permission denied — treat as non-existent.
+  }
+
+  lruSet(absolutePath, {
+    exists,
+    isFile,
+    isDirectory,
+    expiresAt: Date.now() + FILE_EXISTS_CACHE_TTL_MS,
+  });
+
+  return { absolutePath, exists, isFile, isDirectory };
+}
+
+/** Test helper: drop the in-memory cache. */
+export function _resetFileExistsCache(): void {
+  fileExistsCache.clear();
+}

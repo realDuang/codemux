@@ -578,6 +578,45 @@ export interface LocaleDict {
     openInExplorer: string;
   };
 
+  // Integrated Terminal
+  terminal: {
+    togglePanel: string;
+    newTab: string;
+    closeTab: string;
+    closePanel: string;
+    tabLabel: string;
+    exitedBadge: string;
+    notConnected: string;
+    // Search overlay
+    searchTitle: string;
+    searchPlaceholder: string;
+    searchPrev: string;
+    searchNext: string;
+    searchClose: string;
+    searchCaseSensitive: string;
+    searchWholeWord: string;
+    searchRegex: string;
+    searchMatchCount: string;
+    searchNoMatch: string;
+    // Profile menu
+    profileMenuTitle: string;
+    profileNewWith: string;
+    profileSelectDefault: string;
+    profileNoneFound: string;
+    // Settings page
+    settingsSectionTitle: string;
+    settingsSectionDesc: string;
+    settingsDefaultProfile: string;
+    settingsDefaultProfileDesc: string;
+    settingsGpuMode: string;
+    settingsGpuModeDesc: string;
+    settingsGpuAuto: string;
+    settingsGpuCanvas: string;
+    settingsGpuDom: string;
+    // File link
+    openFileLink: string;
+  };
+
   // Scheduled Tasks
   scheduledTask: {
     title: string;
@@ -1232,6 +1271,40 @@ export const en: LocaleDict = {
     noResults: "No results",
     matchCount: "{current} of {total}",
     openInExplorer: "Open in file explorer",
+  },
+
+  terminal: {
+    togglePanel: "Toggle terminal (Ctrl+`)",
+    newTab: "New terminal (Ctrl+Shift+`)",
+    closeTab: "Close terminal (Ctrl+Shift+W)",
+    closePanel: "Hide terminal panel",
+    tabLabel: "Terminal {n}",
+    exitedBadge: "Exited",
+    notConnected: "Not connected to gateway",
+    searchTitle: "Find in terminal (Ctrl+F)",
+    searchPlaceholder: "Find",
+    searchPrev: "Previous match (Shift+Enter)",
+    searchNext: "Next match (Enter)",
+    searchClose: "Close (Esc)",
+    searchCaseSensitive: "Match case",
+    searchWholeWord: "Match whole word",
+    searchRegex: "Use regular expression",
+    searchMatchCount: "{current} of {total}",
+    searchNoMatch: "No results",
+    profileMenuTitle: "Select profile",
+    profileNewWith: "New terminal with profile",
+    profileSelectDefault: "Select default profile",
+    profileNoneFound: "No shells detected",
+    settingsSectionTitle: "Terminal",
+    settingsSectionDesc: "Configure shell profiles and renderer for the integrated terminal.",
+    settingsDefaultProfile: "Default profile",
+    settingsDefaultProfileDesc: "Used when opening new terminals without specifying a profile.",
+    settingsGpuMode: "GPU acceleration",
+    settingsGpuModeDesc: "Auto = WebGL with Canvas/DOM fallback. Change if you see rendering glitches.",
+    settingsGpuAuto: "Auto (WebGL)",
+    settingsGpuCanvas: "Canvas",
+    settingsGpuDom: "DOM",
+    openFileLink: "Open {path}",
   },
 
   scheduledTask: {

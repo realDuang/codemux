@@ -77,6 +77,19 @@ const FileExplorer = lazy(() =>
   })),
 );
 import { ResizeHandle } from "../components/ResizeHandle";
+import { TerminalPanel } from "../components/TerminalPanel";
+import {
+  isTerminalOpen,
+  toggleTerminal,
+  closeTerminal,
+  setTerminalHeight,
+  terminalHeight,
+  registerTerminalActions,
+  newTerminalTab,
+  closeActiveTerminalTab,
+  switchTerminalTab,
+  TERMINAL_PANEL_DEFAULTS,
+} from "../stores/terminal";
 import { fileStore, togglePanel, setPanelWidth, closePanel } from "../stores/file";
 import { handleFileChanged, refreshGitStatus } from "../stores/file";
 
@@ -748,6 +761,58 @@ export default function Chat() {
     };
     window.addEventListener('resize', handleResize);
     onCleanup(() => window.removeEventListener('resize', handleResize));
+
+    // Global Ctrl+` shortcut to toggle the integrated terminal panel
+    // (matches VS Code's binding on every platform — Cmd+` on macOS is taken
+    // by the OS for window cycling, so Ctrl+` is correct everywhere).
+    //
+    // Uses `e.code === 'Backquote'` so the shortcut works on layouts where
+    // the backtick is not on the unshifted key (e.g. AZERTY). Capture phase
+    // ensures we intercept before xterm's textarea consumes the keystroke.
+    const handleTerminalShortcut = (e: KeyboardEvent) => {
+      if (!sessionStore.current) return;
+      const sid = sessionStore.current;
+      const noOtherMods = !e.metaKey && !e.altKey;
+
+      // Ctrl+`  → toggle panel
+      if (e.code === 'Backquote' && e.ctrlKey && !e.shiftKey && noOtherMods) {
+        e.preventDefault();
+        e.stopPropagation();
+        toggleTerminal(sid);
+        return;
+      }
+      // Ctrl+Shift+`  → new tab
+      if (e.code === 'Backquote' && e.ctrlKey && e.shiftKey && noOtherMods) {
+        e.preventDefault();
+        e.stopPropagation();
+        newTerminalTab(sid);
+        return;
+      }
+      // Ctrl+Shift+W  → close active tab (only when terminal panel is open)
+      if (e.code === 'KeyW' && e.ctrlKey && e.shiftKey && noOtherMods && isTerminalOpen(sid)) {
+        e.preventDefault();
+        e.stopPropagation();
+        closeActiveTerminalTab(sid);
+        return;
+      }
+      // Ctrl+PageUp / Ctrl+PageDown → switch tab (only when terminal panel is open)
+      if (e.ctrlKey && !e.shiftKey && noOtherMods && isTerminalOpen(sid)) {
+        if (e.code === 'PageUp') {
+          e.preventDefault();
+          e.stopPropagation();
+          switchTerminalTab(sid, -1);
+          return;
+        }
+        if (e.code === 'PageDown') {
+          e.preventDefault();
+          e.stopPropagation();
+          switchTerminalTab(sid, 1);
+          return;
+        }
+      }
+    };
+    window.addEventListener('keydown', handleTerminalShortcut, true);
+    onCleanup(() => window.removeEventListener('keydown', handleTerminalShortcut, true));
   });
 
   // Load messages for specific session from disk.
@@ -2400,6 +2465,27 @@ export default function Chat() {
     return session?.title || "";
   });
 
+  // ─── Integrated terminal panel state ────────────────────────────────────────
+  // Panel UI state (per-session open flag, height) is owned by
+  // `src/stores/terminal.ts`. Chat.tsx only:
+  //   - derives `currentSessionDir` from the session store
+  //   - registers/unregisters its `ensureFirstTab` callback ref
+  //   - wires the toggle / close / resize handlers to the current session
+  const currentSessionDir = createMemo(() => {
+    const sid = sessionStore.current;
+    if (!sid) return ".";
+    const session = sessionStore.list.find((s) => s.id === sid);
+    return session?.directory || ".";
+  });
+
+  const terminalOpenForCurrent = () => isTerminalOpen(sessionStore.current);
+  const handleToggleTerminal = () => toggleTerminal(sessionStore.current);
+  const handleCloseTerminal = () => closeTerminal(sessionStore.current);
+
+  onCleanup(() => {
+    registerTerminalActions(undefined);
+  });
+
   createEffect(() => {
     initializeSession();
 
@@ -2495,8 +2581,24 @@ export default function Chat() {
           </Show>
         </div>
 
-        {/* Right: File explorer toggle + connection status */}
+        {/* Right: Terminal toggle + File explorer toggle + connection status */}
         <div class="flex items-center gap-1.5 electron-no-drag flex-shrink-0">
+          <Show when={sessionStore.current}>
+            <button
+              onClick={handleToggleTerminal}
+              class={`hidden md:inline-flex p-1.5 rounded-md transition-colors ${
+                terminalOpenForCurrent()
+                  ? "bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400"
+                  : "text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-slate-800"
+              }`}
+              title={t().terminal.togglePanel}
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="4 17 10 11 4 5" />
+                <line x1="12" x2="20" y1="19" y2="19" />
+              </svg>
+            </button>
+          </Show>
           <Show when={sessionStore.current}>
             <button
               onClick={togglePanel}
@@ -2524,7 +2626,7 @@ export default function Chat() {
         </div>
       </div>
 
-      <div class="flex flex-1 overflow-hidden">
+      <div class="flex flex-1 min-h-0 overflow-hidden">
 
       {/* Mobile Sidebar Overlay */}
       <Show when={isMobile() && isSidebarOpen()}>
@@ -2634,8 +2736,11 @@ export default function Chat() {
         </div>
       </aside>
 
-      {/* Main Chat Area */}
-      <div class="flex-1 flex overflow-hidden min-w-0">
+      {/* Right side: chat + file explorer + terminal stacked vertically */}
+      <div class="flex-1 flex flex-col overflow-hidden min-w-0 min-h-0">
+
+      {/* Top row: chat area + file explorer */}
+      <div class="flex-1 flex overflow-hidden min-w-0 min-h-0">
       <div class="flex-1 flex flex-col overflow-hidden min-w-0 bg-white dark:bg-slate-900">
 
 
@@ -2955,6 +3060,39 @@ export default function Chat() {
           );
         })()}
       </Show>
+      </div>
+
+      {/* Integrated terminal panel — kept mounted so PTY output keeps
+          streaming when switching tabs/sessions. Height is collapsed to 0
+          when closed so the resize handle / xterm don't paint anything. */}
+      <div
+        class="relative flex-shrink-0 overflow-hidden"
+        style={{
+          height: terminalOpenForCurrent() ? `${terminalHeight()}px` : "0px",
+          display: terminalOpenForCurrent() ? "block" : "none",
+        }}
+      >
+        <ResizeHandle
+          direction="vertical"
+          edge="start"
+          size={terminalHeight()}
+          min={TERMINAL_PANEL_DEFAULTS.minHeight}
+          max={Math.floor(window.innerHeight * TERMINAL_PANEL_DEFAULTS.maxHeightRatio)}
+          collapseThreshold={70}
+          onResize={setTerminalHeight}
+          onCollapse={handleCloseTerminal}
+        />
+        <TerminalPanel
+          sessionId={sessionStore.current ?? ""}
+          cwd={currentSessionDir()}
+          visible={terminalOpenForCurrent() && !!sessionStore.current}
+          onClose={handleCloseTerminal}
+          onReady={(actions) => {
+            registerTerminalActions(actions);
+          }}
+        />
+      </div>
+
       </div>
       </div>
 

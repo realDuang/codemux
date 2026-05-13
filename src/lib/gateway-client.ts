@@ -49,6 +49,10 @@ import {
   type ScheduledTaskUpdateRequest,
   type ScheduledTaskRunResult,
   type OrchestrationRun,
+  type TerminalCreateRequest,
+  type TerminalCreateResponse,
+  type TerminalListRequest,
+  type TerminalListResponse,
 } from "../types/unified";
 
 // --- Event types emitted by GatewayClient ---
@@ -88,6 +92,10 @@ export interface GatewayClientEvents {
 
   /** Orchestration push notifications */
   "orchestration.updated": (data: { run: OrchestrationRun }) => void;
+
+  /** Integrated terminal (PTY) push streams — owner-scoped on the server */
+  "terminal.data": (data: { terminalId: string; data: string }) => void;
+  "terminal.exit": (data: { terminalId: string; exitCode?: number; signal?: number }) => void;
 }
 
 // --- Pending request tracking ---
@@ -614,6 +622,35 @@ export class GatewayClient {
 
   runScheduledTaskNow(id: string): Promise<ScheduledTaskRunResult> {
     return this.request(GatewayRequestType.SCHEDULED_TASK_RUN_NOW, { id });
+  }
+
+  // --- Integrated Terminal (PTY) API ---
+
+  createTerminal(req: TerminalCreateRequest): Promise<TerminalCreateResponse> {
+    return this.request(GatewayRequestType.TERMINAL_CREATE, req);
+  }
+
+  writeTerminal(terminalId: string, data: string): Promise<void> {
+    // Fire-and-forget semantics with a short timeout so a stuck terminal
+    // doesn't pile up promises. We still wait for the ack so back-pressure
+    // can propagate up to the caller.
+    return this.request(GatewayRequestType.TERMINAL_WRITE, { terminalId, data }, 10_000);
+  }
+
+  resizeTerminal(terminalId: string, cols: number, rows: number): Promise<void> {
+    return this.request(
+      GatewayRequestType.TERMINAL_RESIZE,
+      { terminalId, cols, rows },
+      10_000,
+    );
+  }
+
+  destroyTerminal(terminalId: string): Promise<void> {
+    return this.request(GatewayRequestType.TERMINAL_DESTROY, { terminalId }, 10_000);
+  }
+
+  listTerminals(req: TerminalListRequest = {}): Promise<TerminalListResponse> {
+    return this.request(GatewayRequestType.TERMINAL_LIST, req);
   }
 
   // --- Log forwarding (fire-and-forget, no response expected) ---

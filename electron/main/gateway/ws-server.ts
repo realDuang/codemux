@@ -18,6 +18,7 @@ import log from "../services/logger";
 import { conversationStore } from "../services/conversation-store";
 import { scheduledTaskService } from "../services/scheduled-task-service";
 import { orchestratorService } from "../services/orchestrator-service";
+import { getTerminalService } from "../services/terminal-service";
 import { getSettingsPath } from "../services/app-paths";
 import {
   GatewayRequestType,
@@ -44,6 +45,13 @@ import {
   type WorktreeRemoveRequest,
   type WorktreeMergeRequest,
   type WorktreeListBranchesRequest,
+  type TerminalCreateRequest,
+  type TerminalWriteRequest,
+  type TerminalResizeRequest,
+  type TerminalDestroyRequest,
+  type TerminalListRequest,
+  type TerminalProfilesListRequest,
+  type FileExistsRequest,
 } from "../../../src/types/unified";
 import { isCodexServiceTier, isReasoningEffort } from "../../../src/types/unified";
 
@@ -166,6 +174,13 @@ export class GatewayServer {
     ws.on("message", (data) => this.handleMessage(client, data));
     ws.on("close", () => {
       this.clients.delete(clientId);
+      // Tear down any PTY processes spawned by this client so the host
+      // doesn't leak orphan shell processes after a disconnect.
+      try {
+        getTerminalService().destroyByOwner(clientId);
+      } catch (err) {
+        gatewayLog.error(`Terminal cleanup failed for ${clientId}:`, err);
+      }
       gatewayLog.info(`Client disconnected: ${clientId}`);
     });
     ws.on("error", (err) => {
@@ -222,7 +237,7 @@ export class GatewayServer {
     }
 
     try {
-      const result = await this.routeRequest(request);
+      const result = await this.routeRequest(request, client);
       this.sendToClient(client, {
         type: "response",
         requestId: request.requestId,
@@ -253,7 +268,10 @@ export class GatewayServer {
     }
   }
 
-  private async routeRequest(request: GatewayRequest): Promise<unknown> {
+  private async routeRequest(
+    request: GatewayRequest,
+    client: ClientConnection,
+  ): Promise<unknown> {
     const { type, payload } = request;
     const p = payload as any;
 
@@ -554,6 +572,55 @@ export class GatewayServer {
       case GatewayRequestType.ORCHESTRATION_LIST:
         return orchestratorService.listRuns();
 
+      // Integrated Terminal (PTY)
+      case GatewayRequestType.TERMINAL_CREATE: {
+        const req = p as TerminalCreateRequest;
+        const terminalService = getTerminalService();
+        const info = terminalService.create({
+          ownerClientId: client.id,
+          cwd: req.cwd,
+          cols: req.cols,
+          rows: req.rows,
+          sessionId: req.sessionId,
+          profileId: req.profileId,
+        });
+        return { terminalId: info.terminalId, info };
+      }
+
+      case GatewayRequestType.TERMINAL_WRITE: {
+        const req = p as TerminalWriteRequest;
+        getTerminalService().write(req.terminalId, req.data, client.id);
+        return { success: true };
+      }
+
+      case GatewayRequestType.TERMINAL_RESIZE: {
+        const req = p as TerminalResizeRequest;
+        getTerminalService().resize(req.terminalId, req.cols, req.rows, client.id);
+        return { success: true };
+      }
+
+      case GatewayRequestType.TERMINAL_DESTROY: {
+        const req = p as TerminalDestroyRequest;
+        getTerminalService().destroy(req.terminalId, client.id);
+        return { success: true };
+      }
+
+      case GatewayRequestType.TERMINAL_LIST: {
+        const req = p as TerminalListRequest;
+        return { terminals: getTerminalService().list(client.id, req?.sessionId) };
+      }
+
+      case GatewayRequestType.TERMINAL_PROFILES_LIST: {
+        const req = (p ?? {}) as TerminalProfilesListRequest;
+        const { listTerminalProfiles } = await import("../services/terminal-profiles");
+        return listTerminalProfiles({ refresh: req.refresh });
+      }
+
+      case GatewayRequestType.FILE_EXISTS: {
+        const req = p as FileExistsRequest;
+        return await fileService.fileExists(req.path, req.cwd);
+      }
+
       default:
         throw Object.assign(
           new Error(`Unknown request type: ${type}`),
@@ -682,6 +749,33 @@ export class GatewayServer {
     orchestratorService.on("orchestration.updated", (data) => {
       this.broadcast({ type: GatewayNotificationType.ORCHESTRATION_UPDATED, payload: data });
     });
+
+    // Terminal events — scoped to owner client only (private streams).
+    const terminalService = getTerminalService();
+    terminalService.on("data", ({ terminalId, ownerClientId, data }) => {
+      this.sendToOwner(ownerClientId, {
+        type: GatewayNotificationType.TERMINAL_DATA,
+        payload: { terminalId, data },
+      });
+    });
+    terminalService.on("exit", ({ terminalId, ownerClientId, exitCode, signal }) => {
+      this.sendToOwner(ownerClientId, {
+        type: GatewayNotificationType.TERMINAL_EXIT,
+        payload: { terminalId, exitCode, signal },
+      });
+    });
+  }
+
+  /**
+   * Send a notification to a single client (used for owner-scoped streams
+   * like terminal data). No-op if the client is gone — stale terminals are
+   * cleaned up by destroyByOwner on disconnect.
+   */
+  private sendToOwner(clientId: string, notification: GatewayNotification): void {
+    const client = this.clients.get(clientId);
+    if (!client || !client.authenticated) return;
+    if (client.ws.readyState !== WebSocket.OPEN) return;
+    client.ws.send(JSON.stringify(notification));
   }
 
   private broadcast(notification: GatewayNotification): void {

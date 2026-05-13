@@ -37,6 +37,11 @@ import type {
   OrchestrationSubtask,
   OrchestrationCreateRequest,
   OrchestrationConfirmRequest,
+  TerminalCreateRequest,
+  TerminalCreateResponse,
+  TerminalListResponse,
+  TerminalProfilesListResponse,
+  FileExistsResponse,
 } from "../types/unified";
 
 // --- Notification callback types ---
@@ -520,6 +525,70 @@ class GatewayAPI {
 
   async listOrchestrations(): Promise<OrchestrationRun[]> {
     return gatewayClient.request("orchestration.list", {});
+  }
+
+  // --- Integrated Terminal (PTY) ---
+
+  createTerminal(req: TerminalCreateRequest): Promise<TerminalCreateResponse> {
+    return gatewayClient.createTerminal(req);
+  }
+
+  writeTerminal(terminalId: string, data: string): Promise<void> {
+    return gatewayClient.writeTerminal(terminalId, data);
+  }
+
+  resizeTerminal(terminalId: string, cols: number, rows: number): Promise<void> {
+    return gatewayClient.resizeTerminal(terminalId, cols, rows);
+  }
+
+  destroyTerminal(terminalId: string): Promise<void> {
+    return gatewayClient.destroyTerminal(terminalId);
+  }
+
+  listTerminals(sessionId?: string): Promise<TerminalListResponse> {
+    return gatewayClient.listTerminals({ sessionId });
+  }
+
+  /**
+   * Subscribe to PTY output for a specific terminal. Returns an unsubscribe
+   * function. The server only forwards data for terminals owned by this
+   * client connection, so the filter inside the handler is just a safety net.
+   */
+  onTerminalData(
+    terminalId: string,
+    callback: (data: string) => void,
+  ): () => void {
+    const handler = (payload: { terminalId: string; data: string }) => {
+      if (payload.terminalId === terminalId) callback(payload.data);
+    };
+    gatewayClient.on("terminal.data", handler);
+    return () => gatewayClient.off("terminal.data", handler);
+  }
+
+  /** Subscribe to PTY exit notifications for a specific terminal. */
+  onTerminalExit(
+    terminalId: string,
+    callback: (exitCode: number | undefined, signal: number | undefined) => void,
+  ): () => void {
+    const handler = (payload: {
+      terminalId: string;
+      exitCode?: number;
+      signal?: number;
+    }) => {
+      if (payload.terminalId === terminalId) callback(payload.exitCode, payload.signal);
+    };
+    gatewayClient.on("terminal.exit", handler);
+    return () => gatewayClient.off("terminal.exit", handler);
+  }
+
+  /** List discovered shell profiles plus the resolved default profile ID. */
+  listTerminalProfiles(refresh = false): Promise<TerminalProfilesListResponse> {
+    return gatewayClient.request("terminal.profiles.list", { refresh });
+  }
+
+  /** Check whether a path exists on the host (used by terminal link provider). */
+  checkFileExists(filePath: string, cwd?: string): Promise<FileExistsResponse> {
+    return gatewayClient.request("file.exists", { path: filePath, cwd });
   }
 }
 

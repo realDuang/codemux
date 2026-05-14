@@ -8,6 +8,7 @@
 import { gatewayClient } from "./gateway-client";
 import { GatewayRequestType } from "../types/unified";
 import { logger } from "./logger";
+import { createSignal } from "solid-js";
 import type {
   EngineType,
   EngineInfo,
@@ -43,6 +44,21 @@ import type {
   TerminalProfilesListResponse,
   FileExistsResponse,
 } from "../types/unified";
+
+// --- Reactive connection signal ---
+//
+// `gatewayClient.connected` is a plain class getter, so reading it inside a
+// SolidJS effect does not establish reactivity. This module-level signal
+// mirrors the underlying boolean and is updated from the gateway's
+// `connected`/`disconnected` events bound in `bindEvents()`. Use this in any
+// component that needs to react to reconnect (e.g. terminal panel re-running
+// initialization once the WebSocket comes back).
+const [_gatewayConnected, _setGatewayConnected] = createSignal(
+  gatewayClient.connected,
+);
+
+/** Reactive accessor reflecting `gatewayClient.connected`. */
+export const gatewayConnected = _gatewayConnected;
 
 // --- Notification callback types ---
 
@@ -145,10 +161,12 @@ class GatewayAPI {
 
   private bindEvents(): void {
     this.bind("connected", () => {
+      _setGatewayConnected(true);
       this.handlers.onConnected?.();
     });
 
     this.bind("disconnected", (reason) => {
+      _setGatewayConnected(false);
       this.handlers.onDisconnected?.(reason);
     });
 

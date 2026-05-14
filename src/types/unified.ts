@@ -1154,6 +1154,8 @@ export interface TerminalCreateRequest {
 
 export interface TerminalCreateResponse {
   terminalId: string;
+  /** Full terminal metadata (cwd, cols, rows, pid, shell, createdAt). */
+  info: TerminalInfo;
 }
 
 export interface TerminalWriteRequest {

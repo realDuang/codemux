@@ -8,8 +8,7 @@ import { CanvasAddon } from "@xterm/addon-canvas";
 import { SearchAddon } from "@xterm/addon-search";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { Unicode11Addon } from "@xterm/addon-unicode11";
-import { gateway } from "../lib/gateway-api";
-import { gatewayClient } from "../lib/gateway-client";
+import { gateway, gatewayConnected } from "../lib/gateway-api";
 import { useI18n, formatMessage } from "../lib/i18n";
 import { logger } from "../lib/logger";
 import { getNestedSetting } from "../lib/settings";
@@ -216,7 +215,7 @@ export function TerminalPanel(props: TerminalPanelProps) {
   const [profileMenuOpen, setProfileMenuOpen] = createSignal(false);
 
   async function refreshProfiles() {
-    if (!gatewayClient.connected) return;
+    if (!gatewayConnected()) return;
     try {
       const res = await gateway.listTerminalProfiles();
       setProfiles(res.profiles);
@@ -226,9 +225,12 @@ export function TerminalPanel(props: TerminalPanelProps) {
     }
   }
 
-  // Lazy-load profiles when the panel first becomes visible.
+  // Lazy-load profiles when the panel first becomes visible. Tracks
+  // `gatewayConnected()` so the fetch retries automatically once the gateway
+  // reconnects after a transient drop — otherwise the dropdown would stay
+  // empty until the user manually re-opens the panel.
   createEffect(() => {
-    if (props.visible && profiles().length === 0) {
+    if (props.visible && gatewayConnected() && profiles().length === 0) {
       void refreshProfiles();
     }
   });
@@ -432,16 +434,68 @@ export function TerminalPanel(props: TerminalPanelProps) {
     }
   }
 
-  async function initTab(tabId: string, sessionId: string, el: HTMLDivElement) {
-    if (instances.has(tabId)) return;
-    if (!gatewayClient.connected) {
-      logger.warn("[Terminal] gateway not connected, skipping tab init");
-      return;
-    }
+  /**
+   * Start the PTY for an already-initialised xterm tab.
+   *
+   * Split out from `initTab` so it can be retried independently when the
+   * gateway reconnects after a disconnect (see the reconnect effect below).
+   * Idempotent: bails if the tab no longer exists, or if the PTY has
+   * already been created, or if the gateway is still offline.
+   */
+  async function startPtyForTab(tabId: string, sessionId: string) {
+    const inst = instances.get(tabId);
+    if (!inst || inst.terminalId) return;
+    if (!gatewayConnected()) return;
 
     const tabEntry = allTabs().find((t) => t.id === tabId);
     const cwd = tabEntry?.cwd ?? props.cwd;
     const profileId = tabEntry?.profileId;
+
+    try {
+      const { terminalId } = await gateway.createTerminal({
+        cwd,
+        cols: inst.xterm.cols,
+        rows: inst.xterm.rows,
+        sessionId,
+        profileId,
+      });
+      // Tab may have been closed while the create call was pending.
+      if (!instances.has(tabId)) {
+        gateway.destroyTerminal(terminalId).catch(() => {});
+        return;
+      }
+      inst.terminalId = terminalId;
+
+      inst.cleanupData = gateway.onTerminalData(terminalId, (data) => {
+        inst.xterm.write(data);
+      });
+      inst.cleanupExit = gateway.onTerminalExit(terminalId, () => {
+        setAllTabs((prev) =>
+          prev.map((tab) => (tab.id === tabId ? { ...tab, exited: true } : tab)),
+        );
+      });
+
+      // Drain any keystrokes captured before the PTY ID was known.
+      if (inst.pendingWrites.length > 0) {
+        for (const data of inst.pendingWrites) {
+          gateway.writeTerminal(terminalId, data).catch(() => {});
+        }
+        inst.pendingWrites.length = 0;
+      }
+    } catch (err) {
+      const message =
+        err instanceof Error ? err.message : t().terminal.startFailed;
+      inst.xterm.write(`\r\n\x1b[31m${message}\x1b[0m\r\n`);
+      logger.error("[Terminal] create failed:", err);
+    }
+  }
+
+  async function initTab(tabId: string, sessionId: string, el: HTMLDivElement) {
+    if (instances.has(tabId)) return;
+
+    const tabEntry = allTabs().find((t) => t.id === tabId);
+    // Used by the file-link provider below for resolving relative paths.
+    const cwd = tabEntry?.cwd ?? props.cwd;
 
     const xterm = new XTerm({
       cursorBlink: true,
@@ -605,45 +659,31 @@ export function TerminalPanel(props: TerminalPanelProps) {
       }
       (document.activeElement as HTMLElement | null)?.blur?.();
 
-      try {
-        const { terminalId } = await gateway.createTerminal({
-          cwd,
-          cols: xterm.cols,
-          rows: xterm.rows,
-          sessionId,
-          profileId,
-        });
-        // Tab may have been closed while the create call was pending.
-        if (!instances.has(tabId)) {
-          gateway.destroyTerminal(terminalId).catch(() => {});
-          return;
-        }
-        inst.terminalId = terminalId;
-
-        inst.cleanupData = gateway.onTerminalData(terminalId, (data) => {
-          xterm.write(data);
-        });
-        inst.cleanupExit = gateway.onTerminalExit(terminalId, () => {
-          setAllTabs((prev) =>
-            prev.map((tab) => (tab.id === tabId ? { ...tab, exited: true } : tab)),
-          );
-        });
-
-        // Drain any keystrokes captured before the PTY ID was known.
-        if (inst.pendingWrites.length > 0) {
-          for (const data of inst.pendingWrites) {
-            gateway.writeTerminal(terminalId, data).catch(() => {});
-          }
-          inst.pendingWrites.length = 0;
-        }
-      } catch (err) {
-        const message =
-          err instanceof Error ? err.message : "Failed to start terminal";
-        xterm.write(`\r\n\x1b[31m${message}\x1b[0m\r\n`);
-        logger.error("[Terminal] create failed:", err);
+      if (gatewayConnected()) {
+        await startPtyForTab(tabId, sessionId);
+      } else {
+        // Surface a hint and rely on the reconnect effect to retry once the
+        // gateway comes back online; keystrokes are buffered in pendingWrites.
+        xterm.write(
+          `\r\n\x1b[33m${t().terminal.waitingForGateway}\x1b[0m\r\n`,
+        );
       }
     });
   }
+
+  // Retry PTY creation for any tabs that were initialised while the gateway
+  // was disconnected (or whose PTY was never created for any other reason).
+  // Without this, opening a tab during a transient gateway drop would leave
+  // it permanently blank even after reconnect.
+  createEffect(() => {
+    if (!gatewayConnected()) return;
+    for (const [tabId, inst] of instances) {
+      if (!inst.terminalId) {
+        const tab = allTabs().find((t) => t.id === tabId);
+        if (tab) void startPtyForTab(tabId, tab.sessionId);
+      }
+    }
+  });
 
   // When the panel becomes visible or the active session changes, ensure the
   // active tab is fitted to the current container size.
@@ -812,7 +852,7 @@ export function TerminalPanel(props: TerminalPanelProps) {
                           <span class="truncate">{profile.name}</span>
                           <Show when={profile.id === defaultProfileId()}>
                             <span class="text-[9px] text-blue-500 dark:text-blue-400 uppercase tracking-wide">
-                              default
+                              {t().terminal.profileDefaultBadge}
                             </span>
                           </Show>
                         </button>

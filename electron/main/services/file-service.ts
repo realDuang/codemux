@@ -1,6 +1,13 @@
 import { readdir, readFile as fsReadFile, stat } from "node:fs/promises";
 import { realpathSync, createReadStream } from "node:fs";
-import { join, sep, extname, basename } from "node:path";
+import {
+  join,
+  sep,
+  extname,
+  basename,
+  resolve as resolvePath,
+  isAbsolute as isAbsolutePath,
+} from "node:path";
 import { execFile } from "node:child_process";
 import type * as ParcelWatcher from "@parcel/watcher";
 import type {
@@ -635,8 +642,6 @@ export function unwatchAll(): void {
 }
 
 // ─── File existence cache (used by terminal link provider) ───────────────────
-
-import { resolve as resolvePath, isAbsolute as isAbsolutePath } from "node:path";
 
 interface FileExistsCacheEntry {
   isFile: boolean;

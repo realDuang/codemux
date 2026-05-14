@@ -1,6 +1,5 @@
 import { createSignal, createEffect, For, onMount, Show } from "solid-js";
-import { gateway } from "../lib/gateway-api";
-import { gatewayClient } from "../lib/gateway-client";
+import { gateway, gatewayConnected } from "../lib/gateway-api";
 import { useI18n } from "../lib/i18n";
 import { logger } from "../lib/logger";
 import { getNestedSetting, saveNestedSetting } from "../lib/settings";
@@ -28,7 +27,7 @@ export function TerminalSettingsSection() {
   const [loading, setLoading] = createSignal(false);
 
   async function loadProfiles(refresh = false) {
-    if (!gatewayClient.connected) return;
+    if (!gatewayConnected()) return;
     setLoading(true);
     try {
       const res = await gateway.listTerminalProfiles(refresh);
@@ -50,14 +49,21 @@ export function TerminalSettingsSection() {
 
   // Re-fetch when gateway reconnects.
   createEffect(() => {
-    if (gatewayClient.connected && profiles().length === 0) {
+    if (gatewayConnected() && profiles().length === 0) {
       void loadProfiles();
     }
   });
 
-  function handleDefaultChange(value: string) {
+  async function handleDefaultChange(value: string) {
     setDefaultId(value);
-    void saveNestedSetting("terminal.defaultProfile", value);
+    // Await the persist before refreshing so the server's next list call is
+    // guaranteed to see the new default. Without the await, the cached value
+    // could be stale if `loadProfiles(true)` races ahead of the disk write.
+    try {
+      await saveNestedSetting("terminal.defaultProfile", value);
+    } catch (err) {
+      logger.warn("[TerminalSettings] save default failed:", err);
+    }
     // Server caches the default for ~5 min; refresh to force pickup on next list.
     void loadProfiles(true);
   }

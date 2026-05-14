@@ -603,6 +603,10 @@ export interface LocaleDict {
     profileNewWith: string;
     profileSelectDefault: string;
     profileNoneFound: string;
+    profileDefaultBadge: string;
+    // Status / errors
+    waitingForGateway: string;
+    startFailed: string;
     // Settings page
     settingsSectionTitle: string;
     settingsSectionDesc: string;
@@ -1295,6 +1299,9 @@ export const en: LocaleDict = {
     profileNewWith: "New terminal with profile",
     profileSelectDefault: "Select default profile",
     profileNoneFound: "No shells detected",
+    profileDefaultBadge: "default",
+    waitingForGateway: "Waiting for gateway connection…",
+    startFailed: "Failed to start terminal",
     settingsSectionTitle: "Terminal",
     settingsSectionDesc: "Configure shell profiles and renderer for the integrated terminal.",
     settingsDefaultProfile: "Default profile",

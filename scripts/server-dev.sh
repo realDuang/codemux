@@ -385,6 +385,10 @@ restart_app() {
     fi
   else
     warn "No managed Cloudflare tunnel was running. Restart completed without public tunnel."
+    rm -f "$TUNNEL_URL_FILE"
+    if [ -f "$TUNNEL_LOG" ]; then
+      : > "$TUNNEL_LOG"
+    fi
   fi
 }
 

@@ -58,6 +58,31 @@ vi.mock("child_process", () => ({
   execFileSync: vi.fn(() => ""),
 }));
 
+// Force the `path` module to use Windows-style joins when
+// `process.platform === "win32"` is set in a test, regardless of the host
+// OS. Without this, `path.join("C:\\Windows", "System32")` returns
+// `"C:\\Windows/System32"` on Linux/macOS CI runners and breaks the
+// exact-string lookups in `mockFs`.
+vi.mock("path", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("path")>();
+  const pick = () =>
+    process.platform === "win32" ? actual.win32 : actual.posix;
+  return {
+    ...actual,
+    join: (...args: string[]) => pick().join(...args),
+    basename: (p: string, ext?: string) => pick().basename(p, ext),
+    resolve: (...args: string[]) => pick().resolve(...args),
+    normalize: (p: string) => pick().normalize(p),
+    dirname: (p: string) => pick().dirname(p),
+    extname: (p: string) => pick().extname(p),
+    isAbsolute: (p: string) => pick().isAbsolute(p),
+    relative: (from: string, to: string) => pick().relative(from, to),
+    get sep() {
+      return pick().sep;
+    },
+  };
+});
+
 vi.mock("../../../../electron/main/services/logger", () => ({
   loadSettings: vi.fn(() => ({})),
 }));

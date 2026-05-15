@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "comment": "Tracks repos and conversations under cooldown. Updated by the agent after each draft. Manual edits welcome.",
+  "repo_cooldowns": {
+    "coleam00/Archon": {
+      "reason": "outreach draft created",
+      "last_url": "https://github.com/coleam00/Archon/discussions/1565",
+      "expires_at": "2026-05-18T17:27:54Z"
+    }
+  },
+  "conversation_cooldowns": {
+    "https://github.com/coleam00/Archon/discussions/1565": {
+      "last_draft_at": "2026-05-11T17:27:54Z",
+      "rounds": 1
+    }
+  }
+}

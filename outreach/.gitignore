@@ -1,0 +1,7 @@
+# Runtime data — ignored only at the outreach/ root, so templates/ stays tracked
+/inbox/
+/archived/
+/state.json
+/cooldown.json
+/posted-comments.jsonl
+*.body.md

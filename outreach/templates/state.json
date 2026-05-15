@@ -1,0 +1,15 @@
+{
+  "version": 2,
+  "last_run_at": null,
+  "last_outreach_search_at": null,
+  "last_followup_check_at": null,
+  "stats": {
+    "total_runs": 0,
+    "total_drafts_created": 0,
+    "total_followups_drafted": 0,
+    "total_posted": 0,
+    "total_send_failures": 0,
+    "total_skipped_low_relevance": 0,
+    "total_skipped_cooldown": 0
+  }
+}

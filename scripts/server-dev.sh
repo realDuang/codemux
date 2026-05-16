@@ -371,24 +371,32 @@ start_background() {
 
   local local_url="$STARTED_LOCAL_URL"
   if [ "$with_tunnel" -eq 1 ]; then
-    : > "$TUNNEL_LOG"
-    setsid bash -lc "exec cloudflared tunnel --url '$local_url'" > "$TUNNEL_LOG" 2>&1 &
-    local tunnel_pid=$!
-    printf '%s
+    spawn_managed_tunnel "$local_url"
+  fi
+}
+
+# Spawn a fresh managed cloudflared quick tunnel pointed at $local_url.
+# Truncates the tunnel log, writes a new pid file, waits for the URL.
+spawn_managed_tunnel() {
+  local local_url="$1"
+
+  : > "$TUNNEL_LOG"
+  setsid bash -lc "exec cloudflared tunnel --url '$local_url'" > "$TUNNEL_LOG" 2>&1 &
+  local tunnel_pid=$!
+  printf '%s
 ' "$tunnel_pid" > "$TUNNEL_PID_FILE"
 
-    info "Starting Cloudflare quick tunnel..."
-    local tunnel_url
-    if tunnel_url=$(wait_for_tunnel_url "$tunnel_pid"); then
-      success "Tunnel is ready: $tunnel_url"
-    else
-      warn "Tunnel started, but the quick-tunnel URL was not detected yet."
-    fi
-    printf '  Tunnel log: %s
-' "$TUNNEL_LOG"
-    printf '  Review access requests from this terminal: bun run server:access-requests
-'
+  info "Starting Cloudflare quick tunnel..."
+  local tunnel_url
+  if tunnel_url=$(wait_for_tunnel_url "$tunnel_pid"); then
+    success "Tunnel is ready: $tunnel_url"
+  else
+    warn "Tunnel started, but the quick-tunnel URL was not detected yet."
   fi
+  printf '  Tunnel log: %s
+' "$TUNNEL_LOG"
+  printf '  Review access requests from this terminal: bun run server:access-requests
+'
 }
 
 restart_app() {
@@ -425,13 +433,21 @@ restart_app() {
 
   local restarted_local_url="$STARTED_LOCAL_URL"
   if [ -n "$tunnel_pid" ] && is_process_group_running "$tunnel_pid"; then
-    success "Preserved managed Cloudflare tunnel."
-    [ -n "$tunnel_url" ] && printf '  Tunnel URL: %s\n' "$tunnel_url"
-    printf '  Tunnel log: %s\n' "$TUNNEL_LOG"
     if [ -n "$previous_local_url" ] && [ "$previous_local_url" != "$restarted_local_url" ]; then
-      warn "App restarted on $restarted_local_url, but the preserved tunnel still targets $previous_local_url."
-      printf '  Recreate the tunnel if remote access stops working: bun run server:down && bun run server:tunnel\n'
+      # The whole point of `restart` is URL stability, but cloudflared can't
+      # be repointed without restart. Soft-warn-and-succeed leaves the user
+      # with a fresh app and a stale tunnel mapping to a dead port — the
+      # bookmarked public URL silently 502s. Loudly rotate instead: tear the
+      # stale tunnel down and spawn a fresh one against the new local port.
+      warn "App restarted on $restarted_local_url, but the preserved tunnel targets $previous_local_url."
+      info "Rotating Cloudflare quick tunnel to follow the new local URL (public URL will change)..."
+      kill_process_group_from_file "$TUNNEL_PID_FILE"
+      rm -f "$TUNNEL_URL_FILE"
+      spawn_managed_tunnel "$restarted_local_url"
     else
+      success "Preserved managed Cloudflare tunnel."
+      [ -n "$tunnel_url" ] && printf '  Tunnel URL: %s\n' "$tunnel_url"
+      printf '  Tunnel log: %s\n' "$TUNNEL_LOG"
       printf '  Public URL should stay the same while the existing tunnel process remains healthy.\n'
     fi
   else

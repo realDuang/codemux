@@ -4,10 +4,15 @@ import { existsSync } from "node:fs";
 import { execFile } from "node:child_process";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
-const SOURCE_SCRIPT = path.join(process.cwd(), "scripts", "server-dev.sh");
+// Anchor to the test file's own location so the test still finds the script
+// when vitest is invoked from a subdirectory, an IDE, or a wrapper.
+const SOURCE_SCRIPT = fileURLToPath(
+  new URL("../../../scripts/server-dev.sh", import.meta.url),
+);
 
 const FAKE_BUN = `#!/usr/bin/env bash
 set -euo pipefail
@@ -263,6 +268,50 @@ describe.skipIf(process.platform !== "linux")("scripts/server-dev.sh", () => {
         expect(restartResult.stdout).toContain("No managed Cloudflare tunnel was running.");
         expect(restartedAppPid).not.toBe(initialAppPid);
         expect(isPidRunning(restartedAppPid)).toBe(true);
+      } finally {
+        await cleanupRepo(repo);
+      }
+    },
+    20_000,
+  );
+
+  it(
+    "rotates the managed tunnel when the app comes back on a different local URL",
+    async () => {
+      const repo = await createTestRepo();
+      try {
+        const startResult = await runServerScript(repo, "start", "--replace", "--tunnel");
+        expect(startResult.stdout).toContain("Tunnel is ready: https://same-tunnel.trycloudflare.com");
+
+        const initialAppPid = await readStateFile(repo, "dev.pid");
+        const initialTunnelPid = await readStateFile(repo, "tunnel.pid");
+        expect(isPidRunning(initialAppPid)).toBe(true);
+        expect(isPidRunning(initialTunnelPid)).toBe(true);
+
+        // Simulate the previous app having bound to a different local port.
+        // restart_app reads $LOCAL_URL_FILE before deleting it, so overriding
+        // it here is enough to trigger the URL-mismatch branch when the new
+        // app comes back on the fake bun's hardcoded http://localhost:8233/.
+        await writeFile(
+          path.join(repo.stateDir, "local-url"),
+          "http://localhost:9999\n",
+          "utf8",
+        );
+
+        const restartResult = await runServerScript(repo, "restart");
+        const restartedAppPid = await readStateFile(repo, "dev.pid");
+        const restartedTunnelPid = await readStateFile(repo, "tunnel.pid");
+
+        expect(restartResult.stdout).toContain(
+          "but the preserved tunnel targets http://localhost:9999",
+        );
+        expect(restartResult.stdout).toContain("Rotating Cloudflare quick tunnel");
+        expect(restartResult.stdout).not.toContain("Preserved managed Cloudflare tunnel.");
+        expect(restartedAppPid).not.toBe(initialAppPid);
+        expect(restartedTunnelPid).not.toBe(initialTunnelPid);
+        expect(isPidRunning(restartedAppPid)).toBe(true);
+        expect(isPidRunning(restartedTunnelPid)).toBe(true);
+        expect(isPidRunning(initialTunnelPid)).toBe(false);
       } finally {
         await cleanupRepo(repo);
       }

@@ -14,6 +14,10 @@ set -euo pipefail
 
 if [ "\${1:-}" = "run" ] && [ "\${2:-}" = "dev" ]; then
   echo "http://localhost:8233/"
+  # Mimic the Electron main process log line that server-dev.sh greps for.
+  # The script reads \$APP_LOG (dev.log), which is the stdout/stderr capture
+  # of this fake bun, so emitting the line here is sufficient.
+  echo "12:34:56.000 [info]  (main)         > Gateway server started on port 4200"
   trap 'exit 0' TERM INT
   while true; do
     sleep 1

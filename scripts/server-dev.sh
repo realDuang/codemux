@@ -119,7 +119,12 @@ stop_tunnel_via_api() {
   curl -fsS -X POST "$local_url/api/tunnel/stop" >/dev/null 2>&1 || true
 }
 find_repo_processes() {
+  # Exclude this very awk invocation: its argv literally contains
+  # `awk -v repo=$REPO_DIR`, which would otherwise match itself. Filter on
+  # the command-line shape rather than $$ or argv[0] so the check is robust
+  # across awk distributions (gawk/mawk, /usr/bin/awk vs bare awk).
   ps -eo pid=,args= | awk -v repo="$REPO_DIR" '''
+    $0 ~ /awk -v repo=/ { next }
     index($0, repo) > 0 && ($0 ~ /electron-vite dev/ || $0 ~ /node_modules\/electron\/dist\/electron/ || $0 ~ /bun run dev/) {
       print $1
     }
@@ -225,6 +230,43 @@ wait_for_local_url() {
   return 1
 }
 
+# Vite prints its renderer URL before Electron main finishes booting, so getting
+# the URL alone does not guarantee the Electron main process (and the Gateway it
+# hosts) is healthy. Wait for the gateway-ready log line, or bail out early when
+# main logs a fatal startup error or the process group dies.
+#
+# Budget: a smaller cap than wait_for_local_url so the worst-case total wait
+# stays close to DEFAULT_TIMEOUT. Gateway init is fast once main is running.
+wait_for_electron_main_ready() {
+  local pid="$1"
+  local attempts=$(( DEFAULT_TIMEOUT / 6 ))
+  [ "$attempts" -ge 5 ] || attempts=5
+
+  # Fatal-startup patterns we know about. Match the real electron-log format
+  # (`[error] (main) › Failed to start <Auth|Production|Gateway> server`) plus
+  # the Chromium `:FATAL:` marker just in case Electron itself crashes early.
+  local fatal_pattern='\[error\][ ]+\(main\)[^›]*›[ ]+(Failed to start (Auth API|Production|Gateway) server|Failed to initialize channels)|:FATAL:'
+
+  while [ "$attempts" -gt 0 ]; do
+    if [ -f "$APP_LOG" ] && grep -qE 'Gateway server started on port|Gateway server attached to production server' "$APP_LOG" 2>/dev/null; then
+      return 0
+    fi
+
+    if [ -f "$APP_LOG" ] && grep -qE "$fatal_pattern" "$APP_LOG" 2>/dev/null; then
+      return 1
+    fi
+
+    if ! is_process_group_running "$pid"; then
+      return 1
+    fi
+
+    sleep 2
+    attempts=$(( attempts - 1 ))
+  done
+
+  return 1
+}
+
 wait_for_tunnel_url() {
   local pid="$1"
   local attempts=$(( DEFAULT_TIMEOUT / 2 ))
@@ -299,6 +341,15 @@ start_managed_app_background() {
     rm -f "$APP_PID_FILE" "$LOCAL_URL_FILE"
     warn "CodeMux exited before the renderer URL was detected. Recent logs:"
     tail -n 40 "$APP_LOG" || true
+    return 1
+  fi
+
+  info "Renderer URL detected ($local_url); waiting for the Electron main process to come up..."
+  if ! wait_for_electron_main_ready "$app_pid"; then
+    kill_process_group_from_file "$APP_PID_FILE"
+    rm -f "$LOCAL_URL_FILE"
+    warn "CodeMux Electron main process did not become ready. Recent logs:"
+    tail -n 60 "$APP_LOG" || true
     return 1
   fi
 

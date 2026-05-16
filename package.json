@@ -25,6 +25,7 @@
     "start": "bun scripts/start.ts",
     "server:init": "bash ./scripts/server-init.sh",
     "server:dev": "bash ./scripts/server-dev.sh start --foreground",
+    "server:dev:isolated": "cross-env CODEMUX_DEV_ISOLATED=1 bun scripts/dev-isolated.ts --server",
     "server:up": "bash ./scripts/server-dev.sh start --replace",
     "server:tunnel": "bash ./scripts/server-dev.sh start --replace --tunnel",
     "server:down": "bash ./scripts/server-dev.sh stop",

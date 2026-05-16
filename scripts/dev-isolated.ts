@@ -275,6 +275,34 @@ function writePortsFile(devRoot: string, plan: PortPlan): void {
   fs.writeFileSync(path.join(devRoot, PORTS_FILE), `${JSON.stringify(data, null, 2)}\n`, "utf-8");
 }
 
+export interface SpawnTarget {
+  cmd: string;
+  args: string[];
+}
+
+/**
+ * Decide which child command to spawn under the isolated port reservation.
+ *
+ * - `--server`: spawn the headless server wrapper (`scripts/server-dev.sh
+ *   start --foreground`), which inherits `CODEMUX_DEV_ISOLATED=1` +
+ *   `CODEMUX_PORT_OFFSET=<N>` from us and feeds them into `bun run dev`. This
+ *   is what `server:dev:isolated` ships.
+ * - default: spawn `bun run dev` directly. This is the original `dev:isolated`
+ *   behaviour for the Electron desktop loop.
+ *
+ * Kept as a pure function so the dispatch logic is unit-testable without
+ * actually spawning a child.
+ */
+export function resolveSpawnTarget(args: readonly string[], projectRootPath: string): SpawnTarget {
+  if (args.includes("--server")) {
+    return {
+      cmd: "bash",
+      args: [path.join(projectRootPath, "scripts/server-dev.sh"), "start", "--foreground"],
+    };
+  }
+  return { cmd: "bun", args: ["run", "dev"] };
+}
+
 async function main(): Promise<void> {
   const devRoot = path.join(projectRoot, DEV_ISOLATED_DIR);
   const reservation = await allocatePortReservation(devRoot);
@@ -283,11 +311,17 @@ async function main(): Promise<void> {
 
   process.on("exit", () => reservation.release());
 
+  const target = resolveSpawnTarget(process.argv.slice(2), projectRoot);
+  const isServerMode = target.cmd === "bash";
+
   console.log(`CodeMux isolated dev data: ${devRoot}`);
   console.log(`CodeMux port offset: ${plan.portOffset}`);
   console.log(`CodeMux web port: ${plan.ports.web}`);
+  if (isServerMode) {
+    console.log(`CodeMux mode: headless server (via ${target.args[0]})`);
+  }
 
-  const child = spawn("bun", ["run", "dev"], {
+  const child = spawn(target.cmd, target.args, {
     cwd: projectRoot,
     env: {
       ...process.env,

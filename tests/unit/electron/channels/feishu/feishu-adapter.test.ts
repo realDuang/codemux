@@ -347,9 +347,20 @@ describe("FeishuAdapter", () => {
       };
     }
 
-    it("ignores non-text messages", async () => {
+    it("ignores non-text messages without content", async () => {
       const a = make();
-      await a.handleFeishuMessage(ev({ message: { message_type: "image" } }));
+      // image type with no image_key → parser yields empty parts → routing skipped
+      await a.handleFeishuMessage(
+        ev({ message: { message_type: "image", content: JSON.stringify({}) } }),
+      );
+      expect(a.handleP2PMessage).not.toHaveBeenCalled();
+    });
+
+    it("ignores unsupported message types", async () => {
+      const a = make();
+      await a.handleFeishuMessage(
+        ev({ message: { message_type: "sticker", content: JSON.stringify({}) } }),
+      );
       expect(a.handleP2PMessage).not.toHaveBeenCalled();
     });
 
@@ -363,7 +374,9 @@ describe("FeishuAdapter", () => {
     it("falls back to raw content when JSON.parse fails", async () => {
       const a = make();
       await a.handleFeishuMessage(ev({ message: { content: "raw plain" } }));
-      expect(a.handleP2PMessage).toHaveBeenCalledWith("c1", "raw plain");
+      expect(a.handleP2PMessage).toHaveBeenCalledWith("c1", "raw plain", "m1", [
+        { type: "text", text: "raw plain" },
+      ]);
     });
 
     it("strips @_user_N mentions and skips empty text", async () => {
@@ -377,7 +390,9 @@ describe("FeishuAdapter", () => {
     it("routes p2p chat to handleP2PMessage and registers openId mapping", async () => {
       const a = make();
       await a.handleFeishuMessage(ev());
-      expect(a.handleP2PMessage).toHaveBeenCalledWith("c1", "hi");
+      expect(a.handleP2PMessage).toHaveBeenCalledWith("c1", "hi", "m1", [
+        { type: "text", text: "hi" },
+      ]);
       expect(a.sessionMapper.getChatIdByOpenId("u1")).toBe("c1");
     });
 
@@ -388,6 +403,21 @@ describe("FeishuAdapter", () => {
       expect(a.sessionMapper.getPendingSelection("c1")?.type).toBe("project");
     });
 
+    it("routes image messages to handleP2PMessage with image-key parts", async () => {
+      const a = make();
+      await a.handleFeishuMessage(
+        ev({
+          message: {
+            message_type: "image",
+            content: JSON.stringify({ image_key: "img_abc" }),
+          },
+        }),
+      );
+      expect(a.handleP2PMessage).toHaveBeenCalledWith("c1", "", "m1", [
+        { type: "image-key", imageKey: "img_abc" },
+      ]);
+    });
+
     it("routes group chats to handleGroupMessage", async () => {
       const a = make();
       await a.handleFeishuMessage(
@@ -395,7 +425,9 @@ describe("FeishuAdapter", () => {
           message: { chat_id: "g1", chat_type: "group" },
         }),
       );
-      expect(a.handleGroupMessage).toHaveBeenCalledWith("g1", "hi");
+      expect(a.handleGroupMessage).toHaveBeenCalledWith("g1", "hi", "m1", [
+        { type: "text", text: "hi" },
+      ]);
     });
   });
 
@@ -417,7 +449,7 @@ describe("FeishuAdapter", () => {
       a.sessionMapper.getOrCreateP2PChat("c1", "u1");
       a.sessionMapper.setPendingSelection("c1", { type: "project", projects: [] });
       a.handleP2PCommand = vi.fn(async () => undefined);
-      await a.handleP2PMessage("c1", "/help");
+      await a.handleP2PMessage("c1", "/help", "m1", [{ type: "text", text: "/help" }]);
       expect(a.handleP2PCommand).toHaveBeenCalled();
       expect(a.sessionMapper.getPendingSelection("c1")).toBeUndefined();
     });
@@ -425,7 +457,7 @@ describe("FeishuAdapter", () => {
     it("freeform answer routes to pending question", async () => {
       const a = makeP2P();
       a.sessionMapper.setPendingQuestion("c1", { questionId: "q-1", sessionId: "s1" });
-      await a.handleP2PMessage("c1", "my answer");
+      await a.handleP2PMessage("c1", "my answer", "m1", [{ type: "text", text: "my answer" }]);
       expect(a.gatewayClient.replyQuestion).toHaveBeenCalledWith({
         questionId: "q-1",
         answers: [["my answer"]],
@@ -435,7 +467,7 @@ describe("FeishuAdapter", () => {
     it("falls back to showProjectList when nothing selected and no default project", async () => {
       const a = makeP2P();
       a.showProjectList = vi.fn(async () => undefined);
-      await a.handleP2PMessage("c1", "hi");
+      await a.handleP2PMessage("c1", "hi", "m1", [{ type: "text", text: "hi" }]);
       expect(a.showProjectList).toHaveBeenCalledWith("c1");
     });
 
@@ -445,7 +477,7 @@ describe("FeishuAdapter", () => {
         { id: "def", directory: "/def", engineType: "claude", isDefault: true },
       ]);
       a.createTempSessionAndSend = vi.fn(async () => undefined);
-      await a.handleP2PMessage("c1", "hi");
+      await a.handleP2PMessage("c1", "hi", "m1", [{ type: "text", text: "hi" }]);
       expect(a.createTempSessionAndSend).toHaveBeenCalled();
     });
 
@@ -457,8 +489,11 @@ describe("FeishuAdapter", () => {
         lastActiveAt: Date.now(), messageQueue: [], processing: true,
       });
       a.enqueueP2PMessage = vi.fn(async () => undefined);
-      await a.handleP2PMessage("c1", "hi");
-      expect(a.enqueueP2PMessage).toHaveBeenCalledWith("c1", "hi");
+      await a.handleP2PMessage("c1", "hi", "m1", [{ type: "text", text: "hi" }]);
+      expect(a.enqueueP2PMessage).toHaveBeenCalledWith("c1", {
+        text: "hi",
+        content: [{ type: "text", text: "hi" }],
+      });
     });
 
     it("creates temp session if last project selected and no temp exists", async () => {
@@ -468,7 +503,7 @@ describe("FeishuAdapter", () => {
         directory: "/d", engineType: "claude", projectId: "p",
       });
       a.createTempSessionAndSend = vi.fn(async () => undefined);
-      await a.handleP2PMessage("c1", "hi");
+      await a.handleP2PMessage("c1", "hi", "m1", [{ type: "text", text: "hi" }]);
       expect(a.createTempSessionAndSend).toHaveBeenCalled();
     });
 
@@ -485,7 +520,7 @@ describe("FeishuAdapter", () => {
       });
       a.cleanupExpiredTempSession = vi.fn(async () => undefined);
       a.createTempSessionAndSend = vi.fn(async () => undefined);
-      await a.handleP2PMessage("c1", "hi");
+      await a.handleP2PMessage("c1", "hi", "m1", [{ type: "text", text: "hi" }]);
       expect(a.cleanupExpiredTempSession).toHaveBeenCalledWith("c1");
       expect(a.createTempSessionAndSend).toHaveBeenCalled();
     });
@@ -876,7 +911,7 @@ describe("FeishuAdapter", () => {
     it("handleGroupMessage warns when no binding", async () => {
       const a = new FeishuAdapter() as any;
       a.transport = { sendText: vi.fn(async () => ""), sendMarkdown: vi.fn(async () => "") };
-      await a.handleGroupMessage("g1", "hi");
+      await a.handleGroupMessage("g1", "hi", "m1", [{ type: "text", text: "hi" }]);
       expect(a.transport.sendMarkdown.mock.calls[0][1]).toContain("未绑定");
     });
 
@@ -885,7 +920,7 @@ describe("FeishuAdapter", () => {
       a.transport = { sendText: vi.fn(async () => ""), sendMarkdown: vi.fn(async () => "") };
       a.sessionMapper.createGroupBinding(makeBinding());
       a.handleGroupCommand = vi.fn(async () => undefined);
-      await a.handleGroupMessage("g1", "/help");
+      await a.handleGroupMessage("g1", "/help", "m1", [{ type: "text", text: "/help" }]);
       expect(a.handleGroupCommand).toHaveBeenCalled();
     });
 
@@ -895,7 +930,7 @@ describe("FeishuAdapter", () => {
       a.gatewayClient = { replyQuestion: vi.fn(async () => undefined) };
       a.sessionMapper.createGroupBinding(makeBinding());
       a.sessionMapper.setPendingQuestion("g1", { questionId: "q-1", sessionId: "s1" });
-      await a.handleGroupMessage("g1", "an answer");
+      await a.handleGroupMessage("g1", "an answer", "m1", [{ type: "text", text: "an answer" }]);
       expect(a.gatewayClient.replyQuestion).toHaveBeenCalledWith({
         questionId: "q-1",
         answers: [["an answer"]],
@@ -907,7 +942,7 @@ describe("FeishuAdapter", () => {
       a.transport = { sendText: vi.fn(async () => ""), sendMarkdown: vi.fn(async () => "") };
       a.sessionMapper.createGroupBinding(makeBinding());
       a.sendToEngine = vi.fn(async () => undefined);
-      await a.handleGroupMessage("g1", "hello");
+      await a.handleGroupMessage("g1", "hello", "m1", [{ type: "text", text: "hello" }]);
       expect(a.sendToEngine).toHaveBeenCalled();
     });
 
@@ -1387,6 +1422,153 @@ describe("FeishuAdapter", () => {
       await a.showProjectListFromMenu("u1", "c1", "c1", "chat_id");
       expect(a.transport.sendMessageTo.mock.calls[0][2]).toBe("interactive");
       expect(a.sessionMapper.getPendingSelection("c1")?.type).toBe("project");
+    });
+  });
+
+  // ---------------------------------------------------------------------
+  describe("image attachment pipeline", () => {
+    const PNG_HEADER = Buffer.from([
+      0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0xde, 0xad, 0xbe, 0xef,
+    ]);
+    const JPEG_HEADER = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0xaa]);
+
+    it("downloadImagesForParts downloads each image and detects MIME", async () => {
+      const a = new FeishuAdapter() as any;
+      a.transport = {
+        downloadMessageImage: vi.fn(async (_m: string, key: string) =>
+          key === "k1" ? PNG_HEADER : JPEG_HEADER,
+        ),
+      };
+      const map = await a.downloadImagesForParts("msg-1", [
+        { type: "image-key", imageKey: "k1" },
+        { type: "image-key", imageKey: "k2" },
+      ]);
+      expect(map.get("k1")).toEqual({
+        data: PNG_HEADER.toString("base64"),
+        mimeType: "image/png",
+      });
+      expect(map.get("k2")).toEqual({
+        data: JPEG_HEADER.toString("base64"),
+        mimeType: "image/jpeg",
+      });
+    });
+
+    it("downloadImagesForParts deduplicates by image key", async () => {
+      const a = new FeishuAdapter() as any;
+      a.transport = {
+        downloadMessageImage: vi.fn(async () => PNG_HEADER),
+      };
+      await a.downloadImagesForParts("msg-1", [
+        { type: "image-key", imageKey: "same" },
+        { type: "image-key", imageKey: "same" },
+        { type: "image-key", imageKey: "same" },
+      ]);
+      expect(a.transport.downloadMessageImage).toHaveBeenCalledTimes(1);
+    });
+
+    it("downloadImagesForParts caps at MAX_FEISHU_IMAGES_PER_MESSAGE (4)", async () => {
+      const a = new FeishuAdapter() as any;
+      a.transport = {
+        downloadMessageImage: vi.fn(async () => PNG_HEADER),
+      };
+      const parts = Array.from({ length: 6 }, (_, i) => ({
+        type: "image-key" as const,
+        imageKey: `k${i}`,
+      }));
+      const map = await a.downloadImagesForParts("msg-1", parts);
+      expect(map.size).toBe(4);
+      expect(a.transport.downloadMessageImage).toHaveBeenCalledTimes(4);
+    });
+
+    it("downloadImagesForParts skips images with unknown MIME", async () => {
+      const a = new FeishuAdapter() as any;
+      a.transport = {
+        downloadMessageImage: vi.fn(async () => Buffer.from([0x00, 0x01, 0x02, 0x03])),
+      };
+      const map = await a.downloadImagesForParts("msg-1", [
+        { type: "image-key", imageKey: "k1" },
+      ]);
+      expect(map.size).toBe(0);
+    });
+
+    it("downloadImagesForParts skips images whose download returned null", async () => {
+      const a = new FeishuAdapter() as any;
+      a.transport = {
+        downloadMessageImage: vi.fn(async () => null),
+      };
+      const map = await a.downloadImagesForParts("msg-1", [
+        { type: "image-key", imageKey: "k1" },
+      ]);
+      expect(map.size).toBe(0);
+    });
+
+    it("downloadImagesForParts ignores non-image-key parts", async () => {
+      const a = new FeishuAdapter() as any;
+      a.transport = {
+        downloadMessageImage: vi.fn(async () => PNG_HEADER),
+      };
+      const map = await a.downloadImagesForParts("msg-1", [
+        { type: "text", text: "hi" },
+      ]);
+      expect(map.size).toBe(0);
+      expect(a.transport.downloadMessageImage).not.toHaveBeenCalled();
+    });
+
+    it("buildEngineContent fast-path returns text-only when no image keys", async () => {
+      const a = new FeishuAdapter() as any;
+      a.transport = { downloadMessageImage: vi.fn() };
+      const content = await a.buildEngineContent("msg", "hello", [
+        { type: "text", text: "hello" },
+      ]);
+      expect(content).toEqual([{ type: "text", text: "hello" }]);
+      expect(a.transport.downloadMessageImage).not.toHaveBeenCalled();
+    });
+
+    it("buildEngineContent returns empty when text empty and no image parts", async () => {
+      const a = new FeishuAdapter() as any;
+      a.transport = { downloadMessageImage: vi.fn() };
+      const content = await a.buildEngineContent("msg", "", []);
+      expect(content).toEqual([]);
+    });
+
+    it("buildEngineContent preserves order text→image→text", async () => {
+      const a = new FeishuAdapter() as any;
+      a.transport = {
+        downloadMessageImage: vi.fn(async () => PNG_HEADER),
+      };
+      const content = await a.buildEngineContent("msg", "before\nafter", [
+        { type: "text", text: "before" },
+        { type: "image-key", imageKey: "k1" },
+        { type: "text", text: "after" },
+      ]);
+      expect(content).toEqual([
+        { type: "text", text: "before" },
+        { type: "image", data: PNG_HEADER.toString("base64"), mimeType: "image/png" },
+        { type: "text", text: "after" },
+      ]);
+    });
+
+    it("buildEngineContent falls back to text-only when every image download fails", async () => {
+      const a = new FeishuAdapter() as any;
+      a.transport = {
+        downloadMessageImage: vi.fn(async () => null),
+      };
+      const content = await a.buildEngineContent("msg", "hi", [
+        { type: "text", text: "hi" },
+        { type: "image-key", imageKey: "k1" },
+      ]);
+      expect(content).toEqual([{ type: "text", text: "hi" }]);
+    });
+
+    it("buildEngineContent returns empty when image-only message has no successful downloads", async () => {
+      const a = new FeishuAdapter() as any;
+      a.transport = {
+        downloadMessageImage: vi.fn(async () => null),
+      };
+      const content = await a.buildEngineContent("msg", "", [
+        { type: "image-key", imageKey: "k1" },
+      ]);
+      expect(content).toEqual([]);
     });
   });
 });

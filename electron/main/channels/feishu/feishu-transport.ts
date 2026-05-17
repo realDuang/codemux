@@ -113,4 +113,46 @@ export class FeishuTransport implements MessageTransport {
       return "";
     }
   }
+
+  /**
+   * Download an image resource from a Feishu message and return the raw bytes.
+   * Aborts and returns null if the response stream exceeds `maxBytes` to guard
+   * against very large attachments. Returns null on any download error.
+   *
+   * The Lark SDK's `im.messageResource.get` returns a wrapper exposing
+   * `getReadableStream()` over the underlying HTTP stream.
+   */
+  async downloadMessageImage(
+    messageId: string,
+    fileKey: string,
+    maxBytes: number,
+  ): Promise<Buffer | null> {
+    try {
+      await this.rateLimiter.consume();
+      const res = await this.larkClient.im.messageResource.get({
+        params: { type: "image" },
+        path: { message_id: messageId, file_key: fileKey },
+      });
+      const stream = (res as any).getReadableStream();
+      const chunks: Buffer[] = [];
+      let total = 0;
+      for await (const raw of stream) {
+        const chunk = Buffer.isBuffer(raw) ? raw : Buffer.from(raw as ArrayBuffer);
+        total += chunk.length;
+        if (total > maxBytes) {
+          // Best-effort: drain remaining stream so the underlying socket can recycle.
+          try { stream.destroy?.(); } catch { /* ignore */ }
+          this.log.warn(
+            `Image ${fileKey} for message ${messageId} exceeds ${maxBytes} bytes — skipped`,
+          );
+          return null;
+        }
+        chunks.push(chunk);
+      }
+      return Buffer.concat(chunks, total);
+    } catch (err) {
+      this.log.error(`Failed to download image ${fileKey} for message ${messageId}:`, err);
+      return null;
+    }
+  }
 }

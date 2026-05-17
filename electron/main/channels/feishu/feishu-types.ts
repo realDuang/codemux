@@ -4,7 +4,7 @@
 // Architecture: One Group Chat = One CodeMux Session
 // ============================================================================
 
-import type { EngineType, UnifiedProject, UnifiedSession } from "../../../../src/types/unified";
+import type { EngineType, MessagePromptContent, UnifiedProject, UnifiedSession } from "../../../../src/types/unified";
 import type { StreamingSession } from "../streaming/streaming-types";
 import { GATEWAY_PORT } from "../../../../shared/ports";
 
@@ -42,6 +42,12 @@ export const DEFAULT_FEISHU_CONFIG: FeishuConfig = {
 
 /** TTL for temporary P2P sessions (2 hours in ms) */
 export const TEMP_SESSION_TTL_MS = 2 * 60 * 60 * 1000;
+
+/** Per-image size cap for Feishu image downloads (mirrors frontend constraint). */
+export const MAX_FEISHU_IMAGE_BYTES = 3 * 1024 * 1024;
+
+/** Per-message cap on image attachments forwarded to engines. */
+export const MAX_FEISHU_IMAGES_PER_MESSAGE = 4;
 
 // --- Streaming State ---
 
@@ -104,9 +110,17 @@ export interface TempSession {
   /** Current streaming session (if any) */
   streamingSession?: StreamingSession;
   /** Message queue for serial processing */
-  messageQueue: string[];
+  messageQueue: QueuedFeishuMessage[];
   /** Whether currently processing a message */
   processing: boolean;
+}
+
+/** A queued Feishu user message awaiting engine dispatch. */
+export interface QueuedFeishuMessage {
+  /** Plain-text representation, used only for logging. */
+  text: string;
+  /** Ordered prompt content (text + image parts) sent to the engine. */
+  content: MessagePromptContent[];
 }
 
 /** Pending selection context for P2P text-based project/session selection */

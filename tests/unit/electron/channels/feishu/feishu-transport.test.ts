@@ -233,4 +233,86 @@ describe("FeishuTransport", () => {
       });
     });
   });
+
+  describe("downloadMessageImage", () => {
+    function attachMessageResource(client: any, stream: AsyncIterable<unknown>): void {
+      client.im.messageResource = {
+        get: vi.fn().mockResolvedValue({
+          getReadableStream: () => stream,
+        }),
+      };
+    }
+
+    async function* streamOf(chunks: Buffer[]) {
+      for (const c of chunks) yield c;
+    }
+
+    it("returns concatenated buffer for a valid download", async () => {
+      const data = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+      attachMessageResource(larkClient, streamOf([data.subarray(0, 4), data.subarray(4)]));
+      const result = await transport.downloadMessageImage("m1", "img_1", 1024);
+      expect(result?.equals(data)).toBe(true);
+    });
+
+    it("passes correct params and path to the SDK", async () => {
+      attachMessageResource(larkClient, streamOf([Buffer.from([0])]));
+      await transport.downloadMessageImage("msg-x", "key-y", 999);
+      expect(larkClient.im.messageResource.get).toHaveBeenCalledWith({
+        params: { type: "image" },
+        path: { message_id: "msg-x", file_key: "key-y" },
+      });
+    });
+
+    it("returns null and warns when the stream exceeds maxBytes", async () => {
+      const big = Buffer.alloc(100, 1);
+      attachMessageResource(larkClient, streamOf([big]));
+      const result = await transport.downloadMessageImage("m1", "img_big", 10);
+      expect(result).toBeNull();
+      expect(mockLogger.warn).toHaveBeenCalled();
+      const msg = mockLogger.warn.mock.calls[0][0] as string;
+      expect(msg).toContain("img_big");
+      expect(msg).toContain("10");
+    });
+
+    it("destroys the stream when oversized", async () => {
+      const destroy = vi.fn();
+      const stream: any = (async function* () {
+        yield Buffer.alloc(100, 1);
+      })();
+      stream.destroy = destroy;
+      larkClient.im.messageResource = {
+        get: vi.fn().mockResolvedValue({ getReadableStream: () => stream }),
+      };
+      await transport.downloadMessageImage("m1", "k", 5);
+      expect(destroy).toHaveBeenCalled();
+    });
+
+    it("converts ArrayBuffer chunks to Buffer", async () => {
+      const arrBuf = new Uint8Array([1, 2, 3]).buffer;
+      attachMessageResource(larkClient, streamOf([arrBuf as any]));
+      const result = await transport.downloadMessageImage("m1", "img", 100);
+      expect(result?.equals(Buffer.from([1, 2, 3]))).toBe(true);
+    });
+
+    it("returns null and logs error when SDK throws", async () => {
+      larkClient.im.messageResource = {
+        get: vi.fn().mockRejectedValue(new Error("network down")),
+      };
+      const result = await transport.downloadMessageImage("m1", "k", 100);
+      expect(result).toBeNull();
+      expect(mockLogger.error).toHaveBeenCalled();
+    });
+
+    it("consumes a rate limiter token before downloading", async () => {
+      attachMessageResource(larkClient, streamOf([Buffer.from([0])]));
+      await transport.downloadMessageImage("m1", "k", 100);
+      expect(rateLimiter.consume).toHaveBeenCalledTimes(1);
+    });
+
+    it("returns empty buffer when stream yields nothing", async () => {
+      attachMessageResource(larkClient, streamOf([]));
+      const result = await transport.downloadMessageImage("m1", "k", 100);
+      expect(result?.length).toBe(0);
+    });
+  });
 });

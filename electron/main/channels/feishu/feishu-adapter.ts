@@ -40,8 +40,11 @@ import {
 import {
   DEFAULT_FEISHU_CONFIG,
   TEMP_SESSION_TTL_MS,
+  MAX_FEISHU_IMAGE_BYTES,
+  MAX_FEISHU_IMAGES_PER_MESSAGE,
   type FeishuConfig,
   type GroupBinding,
+  type QueuedFeishuMessage,
   type TempSession,
   type FeishuMessageEvent,
   type FeishuBotMenuEvent,
@@ -54,8 +57,15 @@ import {
   getLarkDomain,
   normalizeFeishuPlatform,
 } from "./feishu-platform";
+import {
+  buildPromptContent,
+  detectImageMime,
+  parseFeishuMessageContent,
+  type ParsedContentPart,
+} from "./feishu-content-parser";
 import type {
   EngineType,
+  MessagePromptContent,
   UnifiedPart,
   UnifiedMessage,
   UnifiedPermission,
@@ -571,13 +581,16 @@ export class FeishuAdapter extends ChannelAdapter {
   // Feishu Message Handling (P2P vs Group routing)
   // ============================================================================
 
+  // Message types from `im.message.receive_v1` that may carry user-visible content.
+  // Text / image / post (rich text) are the cases we route to the engine.
+  private static readonly SUPPORTED_MESSAGE_TYPES = new Set(["text", "image", "post"]);
+
   private async handleFeishuMessage(event: FeishuMessageEvent): Promise<void> {
     const { message, sender } = event;
     const { chat_id, chat_type, content, message_id, message_type } = message;
 
-    // Skip non-text messages
-    if (message_type !== "text") {
-      this.channelLog.verbose(`Ignoring non-text message type: ${message_type}`);
+    if (!FeishuAdapter.SUPPORTED_MESSAGE_TYPES.has(message_type)) {
+      this.channelLog.verbose(`Ignoring unsupported message type: ${message_type}`);
       return;
     }
 
@@ -587,20 +600,17 @@ export class FeishuAdapter extends ChannelAdapter {
       return;
     }
 
-    // Parse content JSON
-    let text: string;
-    try {
-      const parsed = JSON.parse(content);
-      text = parsed.text || "";
-    } catch {
-      text = content;
-    }
+    // Parse into ordered parts (text + image-key references). No network yet.
+    const parsed = parseFeishuMessageContent(message_type, content);
+    if (!parsed.text && parsed.parts.length === 0) return;
 
-    // Strip @mentions from text (Feishu includes @_user_1 style placeholders)
-    text = text.replace(/@_user_\d+/g, "").trim();
-    if (!text) return;
-
-    this.channelLog.info(`Message from ${chat_type} chat ${chat_id}: ${text.slice(0, 100)}`);
+    const imageCount = parsed.parts.reduce(
+      (n, p) => n + (p.type === "image-key" ? 1 : 0),
+      0,
+    );
+    this.channelLog.info(
+      `Message from ${chat_type} chat ${chat_id} (type=${message_type}, images=${imageCount}): ${parsed.text.slice(0, 100)}`,
+    );
 
     if (chat_type === "p2p") {
       // Record open_id → chat_id mapping for bot menu events
@@ -615,29 +625,108 @@ export class FeishuAdapter extends ChannelAdapter {
           this.channelLog.info(`Transferred pending selection from openId=${sender.sender_id.open_id} to chat=${chat_id}`);
         }
       }
-      await this.handleP2PMessage(chat_id, text);
+      await this.handleP2PMessage(chat_id, parsed.text, message_id, parsed.parts);
     } else if (chat_type === "group") {
       // No @mention requirement — bot-owned group, all messages are for bot
-      await this.handleGroupMessage(chat_id, text);
+      await this.handleGroupMessage(chat_id, parsed.text, message_id, parsed.parts);
     }
+  }
+
+  // ============================================================================
+  // Image Download Helpers (Engine-bound content building)
+  // ============================================================================
+
+  /**
+   * Download all image attachments referenced by `parts` and return a map from
+   * image_key to base64 data + detected MIME type. Caps the number of images
+   * at MAX_FEISHU_IMAGES_PER_MESSAGE and each download at MAX_FEISHU_IMAGE_BYTES.
+   * Images that fail to download, exceed the size limit, or have unknown
+   * formats are skipped (with a log entry).
+   */
+  private async downloadImagesForParts(
+    messageId: string,
+    parts: ParsedContentPart[],
+  ): Promise<Map<string, { data: string; mimeType: string }>> {
+    const map = new Map<string, { data: string; mimeType: string }>();
+    if (!this.transport) return map;
+
+    const seen = new Set<string>();
+    for (const p of parts) {
+      if (p.type !== "image-key") continue;
+      if (seen.has(p.imageKey)) continue;
+      seen.add(p.imageKey);
+
+      if (map.size >= MAX_FEISHU_IMAGES_PER_MESSAGE) {
+        this.channelLog.warn(
+          `Dropping image ${p.imageKey} for message ${messageId} (max ${MAX_FEISHU_IMAGES_PER_MESSAGE} per message)`,
+        );
+        continue;
+      }
+
+      const buf = await this.transport.downloadMessageImage(
+        messageId,
+        p.imageKey,
+        MAX_FEISHU_IMAGE_BYTES,
+      );
+      if (!buf) continue;
+
+      const mimeType = detectImageMime(buf);
+      if (!mimeType) {
+        this.channelLog.warn(
+          `Dropping image ${p.imageKey} for message ${messageId} (unrecognized format)`,
+        );
+        continue;
+      }
+
+      map.set(p.imageKey, { data: buf.toString("base64"), mimeType });
+    }
+    return map;
+  }
+
+  /**
+   * Build a MessagePromptContent[] payload for the engine. Downloads any
+   * referenced images. If no images are referenced, takes a fast text-only path.
+   * Falls back to text-only if every image download fails but text is present.
+   */
+  private async buildEngineContent(
+    messageId: string,
+    text: string,
+    parts: ParsedContentPart[],
+  ): Promise<MessagePromptContent[]> {
+    const hasImageKeys = parts.some(p => p.type === "image-key");
+    if (!hasImageKeys) {
+      return text ? [{ type: "text", text }] : [];
+    }
+
+    const images = await this.downloadImagesForParts(messageId, parts);
+    const content = buildPromptContent(parts, images);
+    if (content.length === 0 && text) {
+      return [{ type: "text", text }];
+    }
+    return content;
   }
 
   // ============================================================================
   // P2P Message Handling (Entry Point Only)
   // ============================================================================
 
-  private async handleP2PMessage(chatId: string, text: string): Promise<void> {
-    // 1. Check for slash commands first
-    const command = parseCommand(text);
+  private async handleP2PMessage(
+    chatId: string,
+    text: string,
+    messageId: string,
+    parts: ParsedContentPart[],
+  ): Promise<void> {
+    // 1. Slash commands — require text
+    const command = text ? parseCommand(text) : null;
     if (command) {
       this.sessionMapper.clearPendingSelection(chatId);
       await this.handleP2PCommand(chatId, command);
       return;
     }
 
-    // 2. Check for pending question — treat any reply as a freeform answer
+    // 2. Pending question — reply with text only (image-only falls through to engine)
     const pendingQ = this.sessionMapper.getPendingQuestion(chatId);
-    if (pendingQ && this.gatewayClient) {
+    if (pendingQ && text && this.gatewayClient) {
       this.sessionMapper.clearPendingQuestion(chatId);
       await this.gatewayClient.replyQuestion({
         questionId: pendingQ.questionId,
@@ -647,17 +736,23 @@ export class FeishuAdapter extends ChannelAdapter {
       return;
     }
 
-    // 3. Check for pending selection (number reply or "new")
+    // 3. Pending selection (number reply) — text only
     const pending = this.sessionMapper.getPendingSelection(chatId);
-    if (pending) {
+    if (pending && text) {
       const handled = await this.handlePendingSelection(chatId, text, pending);
       if (handled) return;
     }
 
+    // Build engine-bound content (downloads any images now). If nothing remains
+    // (e.g. all images failed and no text), drop the message.
+    const content = await this.buildEngineContent(messageId, text, parts);
+    if (content.length === 0) return;
+    const queued: QueuedFeishuMessage = { text, content };
+
     // 4. Active temp session (not expired)? → send to engine
     const tempSession = this.sessionMapper.getTempSession(chatId);
     if (tempSession && !this.isTempSessionExpired(tempSession)) {
-      await this.enqueueP2PMessage(chatId, text);
+      await this.enqueueP2PMessage(chatId, queued);
       return;
     }
 
@@ -668,7 +763,7 @@ export class FeishuAdapter extends ChannelAdapter {
       if (tempSession) {
         await this.cleanupExpiredTempSession(chatId);
       }
-      await this.createTempSessionAndSend(chatId, p2pState.lastSelectedProject, text);
+      await this.createTempSessionAndSend(chatId, p2pState.lastSelectedProject, queued);
       return;
     }
 
@@ -686,7 +781,7 @@ export class FeishuAdapter extends ChannelAdapter {
           engineType: defaultProject.engineType,
           projectId: defaultProject.id,
         };
-        await this.createTempSessionAndSend(chatId, defaultRef, text, "默认工作区");
+        await this.createTempSessionAndSend(chatId, defaultRef, queued, "默认工作区");
         return;
       }
     }
@@ -920,7 +1015,7 @@ export class FeishuAdapter extends ChannelAdapter {
   private async createTempSessionAndSend(
     chatId: string,
     project: { directory: string; engineType?: EngineType; projectId: string },
-    text: string,
+    queued: QueuedFeishuMessage,
     projectName?: string,
   ): Promise<void> {
     if (!this.gatewayClient) return;
@@ -944,7 +1039,7 @@ export class FeishuAdapter extends ChannelAdapter {
       this.sessionMapper.setTempSession(chatId, tempSession);
       const name = projectName || project.directory.split(/[\\/]/).pop() || project.directory;
       await this.transport!.sendMarkdown(chatId, buildSessionNotification(name, session.engineType, session.id));
-      await this.enqueueP2PMessage(chatId, text);
+      await this.enqueueP2PMessage(chatId, queued);
     } catch (err) {
       await this.transport!.sendMarkdown(
         chatId,
@@ -954,11 +1049,11 @@ export class FeishuAdapter extends ChannelAdapter {
   }
 
   /** Enqueue a message for serial processing in the P2P temp session */
-  private async enqueueP2PMessage(chatId: string, text: string): Promise<void> {
+  private async enqueueP2PMessage(chatId: string, queued: QueuedFeishuMessage): Promise<void> {
     const temp = this.sessionMapper.getTempSession(chatId);
     if (!temp) return;
 
-    temp.messageQueue.push(text);
+    temp.messageQueue.push(queued);
     if (!temp.processing) {
       await this.processP2PQueue(chatId);
     }
@@ -973,15 +1068,15 @@ export class FeishuAdapter extends ChannelAdapter {
     }
 
     temp.processing = true;
-    const text = temp.messageQueue.shift()!;
-    await this.sendToEngineP2P(chatId, temp, text);
+    const queued = temp.messageQueue.shift()!;
+    await this.sendToEngineP2P(chatId, temp, queued);
   }
 
   /** Send a message to the engine via a P2P temp session (no group) */
   private async sendToEngineP2P(
     chatId: string,
     tempSession: TempSession,
-    text: string,
+    queued: QueuedFeishuMessage,
   ): Promise<void> {
     if (!this.gatewayClient || !this.transport || !this.streamingController) {
       tempSession.processing = false;
@@ -1008,7 +1103,7 @@ export class FeishuAdapter extends ChannelAdapter {
 
     const sendPromise = this.gatewayClient.sendMessage({
       sessionId: tempSession.conversationId,
-      content: [{ type: "text", text }],
+      content: queued.content,
     });
 
     sendPromise
@@ -1158,22 +1253,27 @@ export class FeishuAdapter extends ChannelAdapter {
   // Group Message Handling (Session Interaction)
   // ============================================================================
 
-  private async handleGroupMessage(groupChatId: string, text: string): Promise<void> {
+  private async handleGroupMessage(
+    groupChatId: string,
+    text: string,
+    messageId: string,
+    parts: ParsedContentPart[],
+  ): Promise<void> {
     const binding = this.sessionMapper.getGroupBinding(groupChatId);
     if (!binding) {
       await this.transport!.sendMarkdown(groupChatId, "📋 此群聊未绑定到 CodeMux 会话。");
       return;
     }
 
-    const command = parseCommand(text);
+    const command = text ? parseCommand(text) : null;
     if (command) {
       await this.handleGroupCommand(groupChatId, binding, command);
       return;
     }
 
-    // Check for pending question — treat any reply as a freeform answer
+    // Pending question — reply with text only (image-only falls through to engine)
     const pendingQ = this.sessionMapper.getPendingQuestion(groupChatId);
-    if (pendingQ && this.gatewayClient) {
+    if (pendingQ && text && this.gatewayClient) {
       this.sessionMapper.clearPendingQuestion(groupChatId);
       await this.gatewayClient.replyQuestion({
         questionId: pendingQ.questionId,
@@ -1183,8 +1283,10 @@ export class FeishuAdapter extends ChannelAdapter {
       return;
     }
 
-    // Regular message → send to engine
-    await this.sendToEngine(groupChatId, binding, text);
+    const content = await this.buildEngineContent(messageId, text, parts);
+    if (content.length === 0) return;
+
+    await this.sendToEngine(groupChatId, binding, { text, content });
   }
 
   private async handleGroupCommand(
@@ -1460,7 +1562,7 @@ export class FeishuAdapter extends ChannelAdapter {
   private async sendToEngine(
     groupChatId: string,
     binding: GroupBinding,
-    text: string,
+    queued: QueuedFeishuMessage,
   ): Promise<void> {
     if (!this.gatewayClient || !this.transport || !this.streamingController) return;
 
@@ -1484,7 +1586,7 @@ export class FeishuAdapter extends ChannelAdapter {
     // Send message to engine via Gateway (non-blocking)
     const sendPromise = this.gatewayClient.sendMessage({
       sessionId: binding.conversationId,
-      content: [{ type: "text", text }],
+      content: queued.content,
     });
 
     sendPromise

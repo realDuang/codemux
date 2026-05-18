@@ -5,7 +5,7 @@
 // Group chats are supported when bot is added by user — bot cannot create groups.
 // ============================================================================
 
-import type { EngineType, UnifiedProject, UnifiedSession } from "../../../../src/types/unified";
+import type { EngineType, MessagePromptContent, UnifiedProject, UnifiedSession } from "../../../../src/types/unified";
 import type { BaseGroupBinding } from "../base-session-mapper";
 
 // Re-export shared streaming types for convenience
@@ -44,6 +44,26 @@ export const DEFAULT_TELEGRAM_CONFIG: TelegramConfig = {
 
 /** TTL for temporary P2P sessions (2 hours in ms) */
 export const TEMP_SESSION_TTL_MS = 2 * 60 * 60 * 1000;
+
+// Image limits are sourced from the shared module so frontend, channels, and
+// the gateway-side persistence path stay in sync.
+export {
+  MAX_IMAGE_SIZE_BYTES as MAX_TELEGRAM_IMAGE_BYTES,
+  MAX_IMAGES_PER_MESSAGE as MAX_TELEGRAM_IMAGES_PER_MESSAGE,
+  MAX_TOTAL_IMAGE_BYTES as MAX_TELEGRAM_TOTAL_IMAGE_BYTES,
+} from "../../../../shared/image-limits";
+
+/**
+ * A queued Telegram user message awaiting engine dispatch. Carries
+ * already-built MessagePromptContent so the queue worker can call
+ * sendMessage directly without re-downloading images.
+ */
+export interface QueuedTelegramMessage {
+  /** Plain-text preview for logging only. */
+  text: string;
+  /** Ordered prompt content (text + image parts) sent to the engine. */
+  content: MessagePromptContent[];
+}
 
 // --- Group Binding ---
 
@@ -91,7 +111,7 @@ export interface TelegramTempSession {
   /** Current streaming session (if any) */
   streamingSession?: import("../streaming/streaming-types").StreamingSession;
   /** Message queue for serial processing */
-  messageQueue: string[];
+  messageQueue: QueuedTelegramMessage[];
   /** Whether currently processing a message */
   processing: boolean;
 }
@@ -133,6 +153,31 @@ export interface TelegramMessage {
   };
   date: number;
   text?: string;
+  /** Caption present when the message is a photo/document carrying a description. */
+  caption?: string;
+  /**
+   * Photo sizes (smallest → largest). We use the largest entry for fidelity.
+   * Empty array when the message is not a photo.
+   */
+  photo?: Array<{
+    file_id: string;
+    file_unique_id: string;
+    width: number;
+    height: number;
+    file_size?: number;
+  }>;
+  /**
+   * Document attachment — Telegram delivers images as `document` when the
+   * sender opts out of recompression (e.g. PNG with transparency). We only
+   * accept ones whose `mime_type` starts with `image/`.
+   */
+  document?: {
+    file_id: string;
+    file_unique_id: string;
+    file_name?: string;
+    mime_type?: string;
+    file_size?: number;
+  };
   entities?: Array<{
     type: string;
     offset: number;

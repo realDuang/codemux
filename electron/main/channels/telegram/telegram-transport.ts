@@ -398,6 +398,37 @@ export class TelegramTransport implements MessageTransport {
       msgId: compoundId.slice(colonIdx + 1),
     };
   }
+
+  // =========================================================================
+  // File Download (for inbound images)
+  // =========================================================================
+
+  /**
+   * Download a file by Telegram file_id. Calls `getFile` to retrieve the
+   * relative file_path, then fetches the binary from the file CDN. Aborts
+   * when the body exceeds `maxBytes` to keep memory bounded.
+   */
+  async downloadFile(fileId: string, maxBytes: number): Promise<Buffer | null> {
+    try {
+      const meta = await this.callApi("getFile", { file_id: fileId });
+      const filePath = (meta?.result as { file_path?: string } | undefined)?.file_path;
+      if (!filePath) {
+        return null;
+      }
+      const fileUrl = `https://api.telegram.org/file/bot${this.botToken}/${filePath}`;
+      const res = await fetch(fileUrl);
+      if (!res.ok) return null;
+      const contentLength = res.headers.get("content-length");
+      if (contentLength && parseInt(contentLength, 10) > maxBytes) {
+        return null;
+      }
+      const ab = await res.arrayBuffer();
+      if (ab.byteLength > maxBytes) return null;
+      return Buffer.from(ab);
+    } catch {
+      return null;
+    }
+  }
 }
 
 // ============================================================================

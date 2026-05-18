@@ -26,7 +26,7 @@ import {
 import { GatewayWsClient } from "../gateway-ws-client";
 import { StreamingController } from "../streaming/streaming-controller";
 import { TokenBucket } from "../streaming/rate-limiter";
-import { BaseSessionMapper } from "../base-session-mapper";
+import { BaseSessionMapper, type BaseP2PChatState } from "../base-session-mapper";
 import { createStreamingSession, type StreamingSession } from "../streaming/streaming-types";
 import { TelegramTransport } from "./telegram-transport";
 import { TelegramRenderer } from "./telegram-renderer";
@@ -45,6 +45,8 @@ import { handleSessionOpsCommand, type SessionContext } from "../shared/session-
 import {
   DEFAULT_TELEGRAM_CONFIG,
   TEMP_SESSION_TTL_MS,
+  MAX_TELEGRAM_IMAGE_BYTES,
+  MAX_TELEGRAM_TOTAL_IMAGE_BYTES,
   type TelegramConfig,
   type TelegramGroupBinding,
   type TelegramTempSession,
@@ -52,15 +54,18 @@ import {
   type TelegramUpdate,
   type TelegramMessage,
   type TelegramCallbackQuery,
+  type QueuedTelegramMessage,
 } from "./telegram-types";
 import type {
   EngineType,
+  MessagePromptContent,
   UnifiedPart,
   UnifiedMessage,
   UnifiedPermission,
   UnifiedQuestion,
 } from "../../../../src/types/unified";
 import { channelLog } from "../../services/logger";
+import { detectImageMime } from "../shared/image-detector";
 import type { WebhookServer, WebhookRequest, WebhookResponse } from "../webhook-server";
 
 const LOG_PREFIX = "[Telegram]";
@@ -69,7 +74,11 @@ const LOG_PREFIX = "[Telegram]";
 // Telegram Session Mapper (uses BaseSessionMapper with TelegramGroupBinding)
 // ============================================================================
 
-class TelegramSessionMapper extends BaseSessionMapper<TelegramGroupBinding> {
+class TelegramSessionMapper extends BaseSessionMapper<
+  TelegramGroupBinding,
+  BaseP2PChatState,
+  TelegramTempSession
+> {
   constructor() {
     super("telegram");
   }
@@ -442,10 +451,16 @@ export class TelegramAdapter extends ChannelAdapter {
   }
 
   private async handleTelegramMessage(message: TelegramMessage): Promise<void> {
-    const { message_id, from, chat, text } = message;
+    const { message_id, from, chat, text, caption, photo, document } = message;
 
-    // Skip messages without text or from bots
-    if (!text || !from || from.is_bot) return;
+    // Skip messages from bots
+    if (!from || from.is_bot) return;
+
+    // Determine if this message carries an image attachment we accept.
+    const isImageDocument = Boolean(document?.mime_type?.startsWith("image/"));
+    const hasImage = Boolean((photo && photo.length > 0) || isImageDocument);
+    const textOrCaption = (text ?? caption ?? "").trim();
+    if (!textOrCaption && !hasImage) return;
 
     // Deduplication
     const dedupKey = `${chat.id}:${message_id}`;
@@ -460,7 +475,7 @@ export class TelegramAdapter extends ChannelAdapter {
 
     channelLog.info(
       `${LOG_PREFIX} Message from ${chat.type} ` +
-      `(${displayName}): ${text.slice(0, 100)}`,
+      `(${displayName}): ${textOrCaption.slice(0, 100)}${hasImage ? " [+image]" : ""}`,
     );
 
     if (chat.type === "private") {
@@ -468,14 +483,64 @@ export class TelegramAdapter extends ChannelAdapter {
       const p2p = this.sessionMapper.getOrCreateP2PChat(chatId, userId);
       (p2p as any).displayName = displayName;
       this.sessionMapper.setUserIdMapping(userId, chatId);
-      await this.handleP2PMessage(chatId, userId, text);
+
+      const content = await this.buildEngineContent(chatId, textOrCaption, message);
+      if (content.length === 0) return;
+      await this.handleP2PMessage(chatId, userId, textOrCaption, content);
     } else if (chat.type === "group" || chat.type === "supergroup") {
-      // Group message — only process if bot is mentioned or it's a command
-      if (this.isBotMentioned(message) || text.startsWith("/")) {
-        const content = this.stripBotMention(text);
-        await this.handleGroupMessage(chatId, content);
+      // Group message — only process if bot is mentioned or it's a command.
+      // For images, we still require a caption that mentions the bot (or a
+      // reply chain TODO) to avoid noise; otherwise text-only mention rules.
+      if (this.isBotMentioned(message) || textOrCaption.startsWith("/")) {
+        const stripped = this.stripBotMention(textOrCaption);
+        const content = await this.buildEngineContent(chatId, stripped, message);
+        if (content.length === 0) return;
+        await this.handleGroupMessage(chatId, stripped, content);
       }
     }
+  }
+
+  /**
+   * Build a MessagePromptContent[] payload from a Telegram message.
+   * Downloads the largest photo size (or document image) and applies
+   * size/MIME/total-bytes limits. Plain-text messages take the fast path.
+   */
+  private async buildEngineContent(
+    chatId: string,
+    text: string,
+    message: TelegramMessage,
+  ): Promise<MessagePromptContent[]> {
+    const out: MessagePromptContent[] = [];
+    if (text) out.push({ type: "text", text });
+
+    if (!this.transport) return out;
+
+    // Prefer the highest-resolution photo; fall back to a document image.
+    let fileId: string | undefined;
+    if (message.photo && message.photo.length > 0) {
+      // Telegram orders photos smallest → largest; pick the last entry.
+      fileId = message.photo[message.photo.length - 1].file_id;
+    } else if (message.document?.mime_type?.startsWith("image/")) {
+      fileId = message.document.file_id;
+    }
+    if (!fileId) return out;
+
+    const buf = await this.transport.downloadFile(fileId, MAX_TELEGRAM_IMAGE_BYTES);
+    if (!buf) {
+      await this.transport.sendText(chatId, "⚠️ 图片下载失败或超过大小限制");
+      return out;
+    }
+    if (buf.length > MAX_TELEGRAM_TOTAL_IMAGE_BYTES) {
+      await this.transport.sendText(chatId, "⚠️ 图片总大小超过限制");
+      return out;
+    }
+    const mimeType = detectImageMime(buf);
+    if (!mimeType) {
+      await this.transport.sendText(chatId, "⚠️ 不支持的图片格式");
+      return out;
+    }
+    out.push({ type: "image", data: buf.toString("base64"), mimeType });
+    return out;
   }
 
   /**
@@ -594,7 +659,12 @@ export class TelegramAdapter extends ChannelAdapter {
   // P2P Message Handling (Primary Interaction Mode)
   // ============================================================================
 
-  private async handleP2PMessage(chatId: string, userId: string, text: string): Promise<void> {
+  private async handleP2PMessage(
+    chatId: string,
+    userId: string,
+    text: string,
+    content: MessagePromptContent[],
+  ): Promise<void> {
     // 1. Check for slash commands first
     const command = parseCommand(text);
     if (command) {
@@ -625,7 +695,7 @@ export class TelegramAdapter extends ChannelAdapter {
     // 4. Active temp session (not expired)? → send to engine
     const tempSession = this.sessionMapper.getTempSession(chatId);
     if (tempSession && !this.isTempSessionExpired(tempSession)) {
-      await this.enqueueP2PMessage(chatId, text);
+      await this.enqueueP2PMessage(chatId, text, content);
       return;
     }
 
@@ -635,7 +705,7 @@ export class TelegramAdapter extends ChannelAdapter {
       if (tempSession) {
         await this.cleanupExpiredTempSession(chatId);
       }
-      await this.createTempSessionAndSend(chatId, p2pState.lastSelectedProject, text);
+      await this.createTempSessionAndSend(chatId, p2pState.lastSelectedProject, text, undefined, content);
       return;
     }
 
@@ -652,7 +722,7 @@ export class TelegramAdapter extends ChannelAdapter {
           engineType: defaultProject.engineType,
           projectId: defaultProject.id,
         };
-        await this.createTempSessionAndSend(chatId, defaultRef, text, "默认工作区");
+        await this.createTempSessionAndSend(chatId, defaultRef, text, "默认工作区", content);
         return;
       }
     }
@@ -852,6 +922,7 @@ export class TelegramAdapter extends ChannelAdapter {
     project: { directory: string; engineType?: EngineType; projectId: string },
     text: string,
     projectName?: string,
+    content?: MessagePromptContent[],
   ): Promise<void> {
     if (!this.gatewayClient) return;
 
@@ -876,7 +947,7 @@ export class TelegramAdapter extends ChannelAdapter {
       const name = projectName || project.directory.split(/[\\/]/).pop() || project.directory;
       await this.transport!.sendMarkdown(chatId, buildSessionNotification(name, session.engineType, session.id));
 
-      await this.enqueueP2PMessage(chatId, text);
+      await this.enqueueP2PMessage(chatId, text, content ?? [{ type: "text", text }]);
     } catch (err) {
       await this.transport!.sendMarkdown(
         chatId,
@@ -886,11 +957,15 @@ export class TelegramAdapter extends ChannelAdapter {
   }
 
   /** Enqueue a message for serial processing in the P2P temp session */
-  private async enqueueP2PMessage(chatId: string, text: string): Promise<void> {
+  private async enqueueP2PMessage(
+    chatId: string,
+    text: string,
+    content: MessagePromptContent[],
+  ): Promise<void> {
     const temp = this.sessionMapper.getTempSession(chatId);
     if (!temp) return;
 
-    temp.messageQueue.push(text);
+    temp.messageQueue.push({ text, content });
     if (!temp.processing) {
       await this.processP2PQueue(chatId);
     }
@@ -905,15 +980,15 @@ export class TelegramAdapter extends ChannelAdapter {
     }
 
     temp.processing = true;
-    const text = temp.messageQueue.shift()!;
-    await this.sendToEngineP2P(chatId, temp, text);
+    const queued = temp.messageQueue.shift()!;
+    await this.sendToEngineP2P(chatId, temp, queued);
   }
 
   /** Send a message to the engine via a P2P temp session */
   private async sendToEngineP2P(
     chatId: string,
     tempSession: TelegramTempSession,
-    text: string,
+    queued: QueuedTelegramMessage,
   ): Promise<void> {
     if (!this.gatewayClient || !this.transport || !this.streamingController) {
       tempSession.processing = false;
@@ -936,7 +1011,7 @@ export class TelegramAdapter extends ChannelAdapter {
 
     const sendPromise = this.gatewayClient.sendMessage({
       sessionId: tempSession.conversationId,
-      content: [{ type: "text", text }],
+      content: queued.content,
     });
 
     sendPromise
@@ -1073,7 +1148,11 @@ export class TelegramAdapter extends ChannelAdapter {
   // Group Message Handling
   // ============================================================================
 
-  private async handleGroupMessage(groupChatId: string, text: string): Promise<void> {
+  private async handleGroupMessage(
+    groupChatId: string,
+    text: string,
+    content: MessagePromptContent[],
+  ): Promise<void> {
     const binding = this.sessionMapper.getGroupBinding(groupChatId);
 
     if (!binding) {
@@ -1115,7 +1194,7 @@ export class TelegramAdapter extends ChannelAdapter {
     }
 
     // Regular message → send to engine
-    await this.sendToEngine(groupChatId, binding, text);
+    await this.sendToEngine(groupChatId, binding, content);
   }
 
   /** Show project list for group binding selection */
@@ -1177,7 +1256,7 @@ export class TelegramAdapter extends ChannelAdapter {
   private async sendToEngine(
     groupChatId: string,
     binding: TelegramGroupBinding,
-    text: string,
+    content: MessagePromptContent[],
   ): Promise<void> {
     if (!this.gatewayClient || !this.transport || !this.streamingController) return;
 
@@ -1202,7 +1281,7 @@ export class TelegramAdapter extends ChannelAdapter {
     // Send message to engine via Gateway (non-blocking)
     const sendPromise = this.gatewayClient.sendMessage({
       sessionId: binding.conversationId,
-      content: [{ type: "text", text }],
+      content,
     });
 
     sendPromise

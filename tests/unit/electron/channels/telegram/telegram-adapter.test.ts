@@ -337,7 +337,7 @@ describe("TelegramAdapter", () => {
         date: 0,
         text: "hi",
       });
-      expect(a.handleP2PMessage).toHaveBeenCalledWith("100", "1", "hi");
+      expect(a.handleP2PMessage).toHaveBeenCalledWith("100", "1", "hi", [{ type: "text", text: "hi" }]);
       expect(a.sessionMapper.getP2PChat("100")).toBeDefined();
     });
 
@@ -493,8 +493,8 @@ describe("TelegramAdapter", () => {
         processing: true,
       });
       a.enqueueP2PMessage = vi.fn(async () => undefined);
-      await a.handleP2PMessage("c1", "u1", "hi");
-      expect(a.enqueueP2PMessage).toHaveBeenCalledWith("c1", "hi");
+      await a.handleP2PMessage("c1", "u1", "hi", [{ type: "text", text: "hi" }]);
+      expect(a.enqueueP2PMessage).toHaveBeenCalledWith("c1", "hi", [{ type: "text", text: "hi" }]);
     });
 
     it("creates temp session if last project selected and no temp exists", async () => {
@@ -506,7 +506,7 @@ describe("TelegramAdapter", () => {
         projectId: "p",
       });
       a.createTempSessionAndSend = vi.fn(async () => undefined);
-      await a.handleP2PMessage("c1", "u1", "hi");
+      await a.handleP2PMessage("c1", "u1", "hi", [{ type: "text", text: "hi" }]);
       expect(a.createTempSessionAndSend).toHaveBeenCalled();
     });
 
@@ -742,7 +742,7 @@ describe("TelegramAdapter", () => {
         "hi",
       );
       expect(a.sessionMapper.getTempSession("c1")?.conversationId).toBe("sess-2");
-      expect(a.enqueueP2PMessage).toHaveBeenCalledWith("c1", "hi");
+      expect(a.enqueueP2PMessage).toHaveBeenCalledWith("c1", "hi", [{ type: "text", text: "hi" }]);
     });
 
     it("createTempSessionAndSend reports error on createSession failure", async () => {

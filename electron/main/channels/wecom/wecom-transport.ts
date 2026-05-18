@@ -215,4 +215,40 @@ export class WeComTransport implements MessageTransport {
     // Default to user target
     return { type: "user", id: target };
   }
+
+  // =========================================================================
+  // Image Download
+  // =========================================================================
+
+  /**
+   * Download an image directly from its PicUrl. WeCom serves these via a
+   * public CDN (no token required) but the URL is short-lived.
+   *
+   * Aborts when the body exceeds `maxBytes` to keep memory bounded.
+   */
+  async downloadImageFromUrl(picUrl: string, maxBytes: number): Promise<Buffer | null> {
+    try {
+      const res = await fetch(picUrl);
+      if (!res.ok) {
+        channelLog.error(`[WeCom] Image fetch failed: ${res.status}`);
+        return null;
+      }
+      const contentLength = res.headers.get("content-length");
+      if (contentLength && parseInt(contentLength, 10) > maxBytes) {
+        channelLog.warn(
+          `[WeCom] Image content-length ${contentLength} > ${maxBytes}, skipping`,
+        );
+        return null;
+      }
+      const ab = await res.arrayBuffer();
+      if (ab.byteLength > maxBytes) {
+        channelLog.warn(`[WeCom] Image body ${ab.byteLength} > ${maxBytes}, skipping`);
+        return null;
+      }
+      return Buffer.from(ab);
+    } catch (err) {
+      channelLog.error("[WeCom] Failed to download image:", err);
+      return null;
+    }
+  }
 }

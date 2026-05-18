@@ -227,7 +227,7 @@ describe("WeComAdapter", () => {
         toUserName: "corp", fromUserName: "u1", createTime: 0,
         msgType: "text", content: "hi", msgId: "m1", agentId: 1,
       });
-      expect(a.handleP2PMessage).toHaveBeenCalledWith("user:u1", "u1", "hi");
+      expect(a.handleP2PMessage).toHaveBeenCalledWith("user:u1", "u1", "hi", [{ type: "text", text: "hi" }]);
       expect(a.sessionMapper.getP2PChat("user:u1")).toBeDefined();
     });
   });
@@ -395,7 +395,7 @@ describe("WeComAdapter", () => {
     it("falls back to showProjectList when nothing selected", async () => {
       const a = makeP2P();
       a.showProjectList = vi.fn(async () => undefined);
-      await a.handleP2PMessage("c1", "u1", "hi");
+      await a.handleP2PMessage("c1", "u1", "hi", [{ type: "text", text: "hi" }]);
       expect(a.showProjectList).toHaveBeenCalledWith("c1");
     });
 
@@ -407,8 +407,8 @@ describe("WeComAdapter", () => {
         lastActiveAt: Date.now(), messageQueue: [], processing: true,
       });
       a.enqueueP2PMessage = vi.fn(async () => undefined);
-      await a.handleP2PMessage("c1", "u1", "hi");
-      expect(a.enqueueP2PMessage).toHaveBeenCalledWith("c1", "hi");
+      await a.handleP2PMessage("c1", "u1", "hi", [{ type: "text", text: "hi" }]);
+      expect(a.enqueueP2PMessage).toHaveBeenCalledWith("c1", "hi", [{ type: "text", text: "hi" }]);
     });
 
     it("creates temp session when last project selected and no temp exists", async () => {
@@ -418,7 +418,7 @@ describe("WeComAdapter", () => {
         directory: "/d", engineType: "claude", projectId: "p",
       });
       a.createTempSessionAndSend = vi.fn(async () => undefined);
-      await a.handleP2PMessage("c1", "u1", "hi");
+      await a.handleP2PMessage("c1", "u1", "hi", [{ type: "text", text: "hi" }]);
       expect(a.createTempSessionAndSend).toHaveBeenCalled();
     });
   });
@@ -624,7 +624,7 @@ describe("WeComAdapter", () => {
         "hi",
       );
       expect(a.sessionMapper.getTempSession("c1")?.conversationId).toBe("s2");
-      expect(a.enqueueP2PMessage).toHaveBeenCalledWith("c1", "hi");
+      expect(a.enqueueP2PMessage).toHaveBeenCalledWith("c1", "hi", [{ type: "text", text: "hi" }]);
     });
 
     it("createTempSessionAndSend reports error on failure", async () => {

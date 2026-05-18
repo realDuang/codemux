@@ -24,7 +24,7 @@ import { StreamingController } from "../streaming/streaming-controller";
 import { TokenManager } from "../streaming/token-manager";
 import { TokenBucket } from "../streaming/rate-limiter";
 import { createStreamingSession, type StreamingSession } from "../streaming/streaming-types";
-import { BaseSessionMapper, type BaseGroupBinding, type BaseTempSession, type BasePendingSelection, type PersistedBinding } from "../base-session-mapper";
+import { BaseSessionMapper, type BaseGroupBinding, type BaseP2PChatState, type BaseTempSession, type BasePendingSelection, type PersistedBinding } from "../base-session-mapper";
 import { didConfigValuesChange, mergeDefinedConfig } from "../config-utils";
 import type { WebhookServer, WebhookRequest, WebhookResponse } from "../webhook-server";
 import { WeComCrypto } from "./wecom-crypto";
@@ -44,18 +44,23 @@ import { handleSessionOpsCommand, type SessionContext } from "../shared/session-
 import {
   DEFAULT_WECOM_CONFIG,
   TEMP_SESSION_TTL_MS,
+  MAX_WECOM_IMAGE_BYTES,
+  MAX_WECOM_TOTAL_IMAGE_BYTES,
   type WeComConfig,
   type WeComGroupBinding,
   type WeComIncomingMessage,
+  type QueuedWeComMessage,
 } from "./wecom-types";
 import type {
   EngineType,
+  MessagePromptContent,
   UnifiedPart,
   UnifiedMessage,
   UnifiedPermission,
   UnifiedQuestion,
 } from "../../../../src/types/unified";
 import { channelLog } from "../../services/logger";
+import { detectImageMime } from "../shared/image-detector";
 
 // ============================================================================
 // XML Parsing Helper
@@ -85,7 +90,11 @@ interface WeComPersistedBinding extends PersistedBinding {
   ownerUserId: string;
 }
 
-class WeComSessionMapper extends BaseSessionMapper<WeComGroupBinding> {
+class WeComSessionMapper extends BaseSessionMapper<
+  WeComGroupBinding,
+  BaseP2PChatState,
+  BaseTempSession<QueuedWeComMessage>
+> {
   protected override deserializeBinding(item: PersistedBinding): WeComGroupBinding {
     const base = super.deserializeBinding(item);
     return {
@@ -451,6 +460,8 @@ export class WeComAdapter extends ChannelAdapter {
       content: fields["Content"],
       msgId: fields["MsgId"] ?? "",
       agentId: parseInt(fields["AgentID"] ?? "0", 10),
+      picUrl: fields["PicUrl"],
+      mediaId: fields["MediaId"],
     };
 
     // Process asynchronously, respond immediately to WeCom
@@ -466,9 +477,9 @@ export class WeComAdapter extends ChannelAdapter {
   // =========================================================================
 
   private async processIncomingMessage(msg: WeComIncomingMessage): Promise<void> {
-    // Skip non-text messages
-    if (msg.msgType !== "text") {
-      channelLog.verbose(`[WeCom] Ignoring non-text message type: ${msg.msgType}`);
+    // Accept text and image; everything else (voice/video/...) is dropped.
+    if (msg.msgType !== "text" && msg.msgType !== "image") {
+      channelLog.verbose(`[WeCom] Ignoring non-text/image message type: ${msg.msgType}`);
       return;
     }
 
@@ -480,29 +491,68 @@ export class WeComAdapter extends ChannelAdapter {
 
     const userId = msg.fromUserName;
     const text = (msg.content ?? "").trim();
-    if (!text) return;
+    const hasImage = msg.msgType === "image" && Boolean(msg.picUrl);
+    if (!text && !hasImage) return;
 
-    channelLog.info(`[WeCom] Message from ${userId}: ${text.slice(0, 100)}`);
+    channelLog.info(
+      `[WeCom] Message from ${userId}: ${text.slice(0, 100)}${hasImage ? " [+image]" : ""}`,
+    );
 
-    // WeCom doesn't have native P2P vs group distinction in callback;
-    // we use our userId-based P2P state to determine routing.
-    // If the userId matches a known group binding member, route to group handling.
-    // Otherwise, treat as P2P message.
     const chatId = `user:${userId}`;
-
-    // Check if user has an active group context
-    // For WeCom, all callback messages come to the same endpoint.
-    // We always treat callback messages as P2P (user→bot direct messages).
-    // Group chat interactions happen when the bot sends to a group.
     this.sessionMapper.getOrCreateP2PChat(chatId, userId);
-    await this.handleP2PMessage(chatId, userId, text);
+
+    // Build engine content once at entry — WeCom delivers a single image per
+    // event, so we don't need queue/loop machinery here.
+    const content = await this.buildEngineContent(chatId, text, msg);
+    if (content.length === 0) return;
+
+    await this.handleP2PMessage(chatId, userId, text, content);
+  }
+
+  /**
+   * Build a MessagePromptContent[] payload from a WeCom event. Downloads the
+   * image (when present) and applies size/MIME/total-bytes limits. Plain-text
+   * messages take the fast path with no async work.
+   */
+  private async buildEngineContent(
+    chatId: string,
+    text: string,
+    msg: WeComIncomingMessage,
+  ): Promise<MessagePromptContent[]> {
+    const out: MessagePromptContent[] = [];
+    if (text) out.push({ type: "text", text });
+
+    if (msg.msgType !== "image" || !msg.picUrl) return out;
+    if (!this.transport) return out;
+
+    const buf = await this.transport.downloadImageFromUrl(msg.picUrl, MAX_WECOM_IMAGE_BYTES);
+    if (!buf) {
+      await this.transport.sendText(chatId, "⚠️ 图片下载失败");
+      return out;
+    }
+    if (buf.length > MAX_WECOM_TOTAL_IMAGE_BYTES) {
+      await this.transport.sendText(chatId, "⚠️ 图片总大小超过限制");
+      return out;
+    }
+    const mimeType = detectImageMime(buf);
+    if (!mimeType) {
+      await this.transport.sendText(chatId, "⚠️ 不支持的图片格式");
+      return out;
+    }
+    out.push({ type: "image", data: buf.toString("base64"), mimeType });
+    return out;
   }
 
   // =========================================================================
   // P2P Message Handling
   // =========================================================================
 
-  private async handleP2PMessage(chatId: string, userId: string, text: string): Promise<void> {
+  private async handleP2PMessage(
+    chatId: string,
+    userId: string,
+    text: string,
+    content: MessagePromptContent[],
+  ): Promise<void> {
     // 1. Check for slash commands
     const command = parseCommand(text);
     if (command) {
@@ -533,7 +583,7 @@ export class WeComAdapter extends ChannelAdapter {
     // 4. Active temp session?
     const tempSession = this.sessionMapper.getTempSession(chatId);
     if (tempSession && !this.isTempSessionExpired(tempSession)) {
-      await this.enqueueP2PMessage(chatId, text);
+      await this.enqueueP2PMessage(chatId, text, content);
       return;
     }
 
@@ -543,7 +593,7 @@ export class WeComAdapter extends ChannelAdapter {
       if (tempSession) {
         await this.cleanupExpiredTempSession(chatId);
       }
-      await this.createTempSessionAndSend(chatId, p2pState.lastSelectedProject, text);
+      await this.createTempSessionAndSend(chatId, p2pState.lastSelectedProject, text, undefined, content);
       return;
     }
 
@@ -560,7 +610,7 @@ export class WeComAdapter extends ChannelAdapter {
           engineType: defaultProject.engineType,
           projectId: defaultProject.id,
         };
-        await this.createTempSessionAndSend(chatId, defaultRef, text, "默认工作区");
+        await this.createTempSessionAndSend(chatId, defaultRef, text, "默认工作区", content);
         return;
       }
     }
@@ -722,7 +772,7 @@ export class WeComAdapter extends ChannelAdapter {
       // WeCom's appchat/create API requires at least 2 members, so we cannot
       // create a 1-on-1 group chat like Feishu.  Instead, use P2P temp session
       // mode: messages are exchanged directly in the user↔bot chat.
-      const tempSession: BaseTempSession = {
+      const tempSession: BaseTempSession<QueuedWeComMessage> = {
         conversationId: session.id,
         engineType: session.engineType,
         directory: project.directory,
@@ -822,7 +872,7 @@ export class WeComAdapter extends ChannelAdapter {
     }
 
     // Use P2P temp session instead of group chat (WeCom requires ≥2 members for groups)
-    const tempSession: BaseTempSession = {
+    const tempSession: BaseTempSession<QueuedWeComMessage> = {
       conversationId: session.id,
       engineType: session.engineType,
       directory: pending.directory,
@@ -846,7 +896,7 @@ export class WeComAdapter extends ChannelAdapter {
   // P2P Temp Session Methods
   // =========================================================================
 
-  private isTempSessionExpired(temp: BaseTempSession): boolean {
+  private isTempSessionExpired(temp: BaseTempSession<QueuedWeComMessage>): boolean {
     return Date.now() - temp.lastActiveAt > TEMP_SESSION_TTL_MS;
   }
 
@@ -855,6 +905,7 @@ export class WeComAdapter extends ChannelAdapter {
     project: { directory: string; engineType?: EngineType; projectId: string },
     text: string,
     projectName?: string,
+    content?: MessagePromptContent[],
   ): Promise<void> {
     if (!this.gatewayClient) return;
 
@@ -864,7 +915,7 @@ export class WeComAdapter extends ChannelAdapter {
         directory: project.directory,
       });
 
-      const tempSession: BaseTempSession = {
+      const tempSession: BaseTempSession<QueuedWeComMessage> = {
         conversationId: session.id,
         engineType: session.engineType,
         directory: project.directory,
@@ -879,7 +930,7 @@ export class WeComAdapter extends ChannelAdapter {
       const name = projectName || project.directory.split(/[\\/]/).pop() || project.directory;
       await this.transport!.sendMarkdown(chatId, buildSessionNotification(name, session.engineType, session.id));
 
-      await this.enqueueP2PMessage(chatId, text);
+      await this.enqueueP2PMessage(chatId, text, content ?? [{ type: "text", text }]);
     } catch (err) {
       await this.transport!.sendMarkdown(
         chatId,
@@ -888,11 +939,15 @@ export class WeComAdapter extends ChannelAdapter {
     }
   }
 
-  private async enqueueP2PMessage(chatId: string, text: string): Promise<void> {
+  private async enqueueP2PMessage(
+    chatId: string,
+    text: string,
+    content: MessagePromptContent[],
+  ): Promise<void> {
     const temp = this.sessionMapper.getTempSession(chatId);
     if (!temp) return;
 
-    temp.messageQueue.push(text);
+    temp.messageQueue.push({ text, content });
     if (!temp.processing) {
       await this.processP2PQueue(chatId);
     }
@@ -906,14 +961,14 @@ export class WeComAdapter extends ChannelAdapter {
     }
 
     temp.processing = true;
-    const text = temp.messageQueue.shift()!;
-    await this.sendToEngineP2P(chatId, temp, text);
+    const queued = temp.messageQueue.shift()!;
+    await this.sendToEngineP2P(chatId, temp, queued);
   }
 
   private async sendToEngineP2P(
     chatId: string,
-    tempSession: BaseTempSession,
-    text: string,
+    tempSession: BaseTempSession<QueuedWeComMessage>,
+    queued: QueuedWeComMessage,
   ): Promise<void> {
     if (!this.gatewayClient || !this.transport || !this.streamingController) {
       tempSession.processing = false;
@@ -932,7 +987,7 @@ export class WeComAdapter extends ChannelAdapter {
 
     const sendPromise = this.gatewayClient.sendMessage({
       sessionId: tempSession.conversationId,
-      content: [{ type: "text", text }],
+      content: queued.content,
     });
 
     sendPromise
@@ -1007,7 +1062,7 @@ export class WeComAdapter extends ChannelAdapter {
     }
 
     // Regular message → send to engine
-    await this.sendToEngine(`group:${groupChatId}`, binding, text);
+    await this.sendToEngine(`group:${groupChatId}`, binding, [{ type: "text", text }]);
   }
 
   private async handleGroupCommand(
@@ -1154,7 +1209,7 @@ export class WeComAdapter extends ChannelAdapter {
   private async sendToEngine(
     chatTarget: string,
     binding: WeComGroupBinding,
-    text: string,
+    content: MessagePromptContent[],
   ): Promise<void> {
     if (!this.gatewayClient || !this.transport || !this.streamingController) return;
 
@@ -1168,7 +1223,7 @@ export class WeComAdapter extends ChannelAdapter {
 
     const sendPromise = this.gatewayClient.sendMessage({
       sessionId: binding.conversationId,
-      content: [{ type: "text", text }],
+      content,
     });
 
     sendPromise

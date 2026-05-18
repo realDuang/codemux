@@ -5,6 +5,7 @@
 // ============================================================================
 
 import type { BaseGroupBinding } from "../base-session-mapper";
+import type { MessagePromptContent } from "../../../../src/types/unified";
 import { GATEWAY_PORT } from "../../../../shared/ports";
 
 // --- WeCom Configuration ---
@@ -39,6 +40,26 @@ export const DEFAULT_WECOM_CONFIG: WeComConfig = {
 /** TTL for temporary P2P sessions (2 hours in ms) */
 export const TEMP_SESSION_TTL_MS = 2 * 60 * 60 * 1000;
 
+// Image limits are sourced from the shared module so frontend, channels, and
+// the gateway-side persistence path stay in sync.
+export {
+  MAX_IMAGE_SIZE_BYTES as MAX_WECOM_IMAGE_BYTES,
+  MAX_IMAGES_PER_MESSAGE as MAX_WECOM_IMAGES_PER_MESSAGE,
+  MAX_TOTAL_IMAGE_BYTES as MAX_WECOM_TOTAL_IMAGE_BYTES,
+} from "../../../../shared/image-limits";
+
+/**
+ * A queued WeCom user message awaiting engine dispatch. Carries already-built
+ * MessagePromptContent so the queue worker can call sendMessage directly
+ * without re-downloading images.
+ */
+export interface QueuedWeComMessage {
+  /** Plain-text representation, used only for logging. */
+  text: string;
+  /** Ordered prompt content (text + image parts) sent to the engine. */
+  content: MessagePromptContent[];
+}
+
 // --- Group Binding ---
 
 /** Binding between a WeCom group chat and a CodeMux session */
@@ -65,6 +86,10 @@ export interface WeComIncomingMessage {
   msgId: string;
   /** Application AgentId */
   agentId: number;
+  /** Image direct URL (only for msgType=image, served by WeCom CDN, no auth) */
+  picUrl?: string;
+  /** Media ID (only for msgType=image; alternative download path) */
+  mediaId?: string;
 }
 
 // --- Command Parser Types ---

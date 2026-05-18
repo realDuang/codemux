@@ -431,9 +431,22 @@ export class WeixinIlinkAdapter extends ChannelAdapter {
     }
 
     const text = this.extractText(msg);
-    if (!text) {
+    const hasImage = (msg.item_list ?? []).some((it) => it.type === 2);
+    if (!text && !hasImage) {
       channelLog.verbose(`${LOG_PREFIX} Inbound msg from ${userId} had no text`);
       return;
+    }
+
+    if (hasImage) {
+      // iLink is a private protocol — no public download API for inbound images.
+      // Inform the sender so they switch to the WebUI for screenshots.
+      if (this.transport) {
+        await this.transport.sendText(
+          userId,
+          "⚠️ 微信渠道暂不支持图片转发，请在 WebUI 中上传图片",
+        );
+      }
+      if (!text) return;
     }
 
     channelLog.info(`${LOG_PREFIX} Inbound from ${userId}: ${text.slice(0, 100)}`);
@@ -456,7 +469,8 @@ export class WeixinIlinkAdapter extends ChannelAdapter {
           if (item.text_item?.text) parts.push(item.text_item.text);
           break;
         case 2:
-          parts.push("[Image]");
+          // Image — handled separately with an "unsupported" notice in the
+          // inbound dispatcher; do not insert a placeholder here.
           break;
         case 3:
           if (item.voice_item?.text) parts.push(item.voice_item.text);

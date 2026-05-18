@@ -261,7 +261,7 @@ describe("WeixinIlinkAdapter", () => {
       expect(out).toBe("hello");
     });
 
-    it("renders [Image] / [Voice] / [File] / [Video] for non-text types", () => {
+    it("renders [Voice] / [File] / [Video] for non-text types and omits image", () => {
       const adapter = new WeixinIlinkAdapter() as any;
       const out = adapter.extractText({
         item_list: [
@@ -271,7 +271,7 @@ describe("WeixinIlinkAdapter", () => {
           { type: 5 },
         ],
       });
-      expect(out).toContain("[Image]");
+      expect(out).not.toContain("[Image]");
       expect(out).toContain("[Voice]");
       expect(out).toContain("[File: doc.pdf]");
       expect(out).toContain("[Video]");

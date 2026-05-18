@@ -28,7 +28,7 @@ import {
 import { GatewayWsClient } from "../gateway-ws-client";
 import { StreamingController } from "../streaming/streaming-controller";
 import { TokenBucket } from "../streaming/rate-limiter";
-import { BaseSessionMapper, type PersistedBinding } from "../base-session-mapper";
+import { BaseSessionMapper, type BaseP2PChatState, type PersistedBinding } from "../base-session-mapper";
 import { createStreamingSession, type StreamingSession } from "../streaming/streaming-types";
 import { didConfigValuesChange, mergeDefinedConfig } from "../config-utils";
 import { TeamsTransport } from "./teams-transport";
@@ -49,7 +49,11 @@ import {
 } from "../shared/session-commands";
 import {
   DEFAULT_TEAMS_CONFIG,
+  MAX_TEAMS_IMAGE_BYTES,
+  MAX_TEAMS_IMAGES_PER_MESSAGE,
+  MAX_TEAMS_TOTAL_IMAGE_BYTES,
   TEMP_SESSION_TTL_MS,
+  type QueuedTeamsMessage,
   type TeamsConfig,
   type TeamsGroupBinding,
   type TeamsTempSession,
@@ -60,11 +64,13 @@ import {
 } from "./teams-types";
 import type {
   EngineType,
+  MessagePromptContent,
   UnifiedPart,
   UnifiedMessage,
   UnifiedPermission,
   UnifiedQuestion,
 } from "../../../../src/types/unified";
+import { detectImageMime } from "../shared/image-detector";
 import { channelLog } from "../../services/logger";
 import type { WebhookServer, WebhookRequest, WebhookResponse } from "../webhook-server";
 
@@ -74,7 +80,11 @@ const LOG_PREFIX = "[Teams]";
 // Teams Session Mapper (extends BaseSessionMapper with TeamsGroupBinding)
 // ============================================================================
 
-class TeamsSessionMapper extends BaseSessionMapper<TeamsGroupBinding> {
+class TeamsSessionMapper extends BaseSessionMapper<
+  TeamsGroupBinding,
+  BaseP2PChatState,
+  TeamsTempSession
+> {
   constructor() {
     super("teams");
   }
@@ -393,9 +403,18 @@ export class TeamsAdapter extends ChannelAdapter {
   private async handleMessage(activity: TeamsActivity): Promise<void> {
     const { from, conversation, text } = activity;
 
-    // Skip messages without text or from the bot itself
-    if (!text || !from) return;
+    // Skip messages from the bot itself
+    if (!from) return;
     if (from.id === activity.recipient?.id) return;
+
+    // Detect inbound image attachments (Teams sends images as attachments with
+    // an image/* contentType plus a Bearer-protected contentUrl).
+    const imageAttachments = (activity.attachments || []).filter(
+      (a) => a.contentType?.startsWith("image/") && a.contentUrl,
+    );
+    const hasImage = imageAttachments.length > 0;
+    const textOrEmpty = (text ?? "").trim();
+    if (!textOrEmpty && !hasImage) return;
 
     // Deduplication
     const dedupKey = `${conversation.id}:${activity.id}`;
@@ -411,7 +430,7 @@ export class TeamsAdapter extends ChannelAdapter {
 
     channelLog.info(
       `${LOG_PREFIX} Message from ${convType} ` +
-      `(${displayName}): ${text.slice(0, 100)}`,
+      `(${displayName}): ${textOrEmpty.slice(0, 100)}${hasImage ? ` [+${imageAttachments.length} image]` : ""}`,
     );
 
     if (convType === "personal") {
@@ -419,20 +438,72 @@ export class TeamsAdapter extends ChannelAdapter {
       const p2p = this.sessionMapper.getOrCreateP2PChat(chatId, userId);
       (p2p as any).displayName = displayName;
       this.sessionMapper.setUserIdMapping(userId, chatId);
-      await this.handleP2PMessage(chatId, userId, text);
+
+      const promptContent = await this.buildEngineContent(chatId, textOrEmpty, imageAttachments);
+      if (promptContent.length === 0) return;
+      await this.handleP2PMessage(chatId, userId, textOrEmpty, promptContent);
     } else {
       // Group or channel message
       const botId = activity.recipient?.id || this.config.microsoftAppId;
       const hasMention = this.isBotMentioned(activity, botId);
-      const isCommand = text.trim().startsWith("/");
+      const isCommand = textOrEmpty.startsWith("/");
       const hasPending = !!this.sessionMapper.getPendingSelection(chatId);
       const hasPendingQuestion = !!this.sessionMapper.getPendingQuestion(chatId);
 
       if (hasMention || isCommand || hasPending || hasPendingQuestion) {
-        const content = this.stripMentions(text);
-        await this.handleGroupMessage(chatId, content, activity.serviceUrl);
+        const stripped = this.stripMentions(textOrEmpty);
+        const promptContent = await this.buildEngineContent(chatId, stripped, imageAttachments, activity.serviceUrl);
+        if (promptContent.length === 0) return;
+        await this.handleGroupMessage(chatId, stripped, promptContent, activity.serviceUrl);
       }
     }
+  }
+
+  /**
+   * Build a MessagePromptContent[] payload from a Teams activity by downloading
+   * each image attachment via the Bot Framework Bearer token. Enforces
+   * per-image, per-message-count, and total-byte limits.
+   */
+  private async buildEngineContent(
+    chatId: string,
+    text: string,
+    attachments: Array<{ contentType: string; contentUrl?: string; name?: string }>,
+    serviceUrl?: string,
+  ): Promise<MessagePromptContent[]> {
+    const out: MessagePromptContent[] = [];
+    if (text) out.push({ type: "text", text });
+
+    if (!this.transport || attachments.length === 0) return out;
+
+    // Cap number of images per message.
+    const selected = attachments.slice(0, MAX_TEAMS_IMAGES_PER_MESSAGE);
+    if (attachments.length > MAX_TEAMS_IMAGES_PER_MESSAGE) {
+      await this.transport.sendText(
+        chatId,
+        `⚠️ 一次最多接受 ${MAX_TEAMS_IMAGES_PER_MESSAGE} 张图片，已忽略多余部分`,
+      );
+    }
+
+    if (serviceUrl) this.transport.setServiceUrl(chatId, serviceUrl);
+
+    let totalBytes = 0;
+    for (const att of selected) {
+      if (!att.contentUrl) continue;
+      const buf = await this.transport.downloadFromUrl(att.contentUrl, MAX_TEAMS_IMAGE_BYTES);
+      if (!buf) {
+        await this.transport.sendText(chatId, `⚠️ 图片下载失败：${att.name || "image"}`);
+        continue;
+      }
+      if (totalBytes + buf.length > MAX_TEAMS_TOTAL_IMAGE_BYTES) {
+        await this.transport.sendText(chatId, "⚠️ 图片总大小超过限制");
+        break;
+      }
+      const mimeType = detectImageMime(buf) || att.contentType || "image/png";
+      out.push({ type: "image", data: buf.toString("base64"), mimeType });
+      totalBytes += buf.length;
+    }
+
+    return out;
   }
 
   /**
@@ -571,6 +642,7 @@ export class TeamsAdapter extends ChannelAdapter {
     chatId: string,
     userId: string,
     text: string,
+    content: MessagePromptContent[],
   ): Promise<void> {
     // 1. Check for slash commands first
     const command = parseCommand(text);
@@ -609,7 +681,7 @@ export class TeamsAdapter extends ChannelAdapter {
     // 4. Active temp session (not expired)? → send to engine
     const tempSession = this.sessionMapper.getTempSession(chatId);
     if (tempSession && !this.isTempSessionExpired(tempSession)) {
-      await this.enqueueP2PMessage(chatId, text);
+      await this.enqueueP2PMessage(chatId, text, content);
       return;
     }
 
@@ -623,6 +695,8 @@ export class TeamsAdapter extends ChannelAdapter {
         chatId,
         p2pState.lastSelectedProject,
         text,
+        undefined,
+        content,
       );
       return;
     }
@@ -640,7 +714,7 @@ export class TeamsAdapter extends ChannelAdapter {
           engineType: defaultProject.engineType,
           projectId: defaultProject.id,
         };
-        await this.createTempSessionAndSend(chatId, defaultRef, text, "默认工作区");
+        await this.createTempSessionAndSend(chatId, defaultRef, text, "默认工作区", content);
         return;
       }
     }
@@ -857,6 +931,7 @@ export class TeamsAdapter extends ChannelAdapter {
     },
     text: string,
     projectName?: string,
+    content?: MessagePromptContent[],
   ): Promise<void> {
     if (!this.gatewayClient) return;
 
@@ -879,7 +954,7 @@ export class TeamsAdapter extends ChannelAdapter {
       this.sessionMapper.setTempSession(chatId, tempSession);
       const name = projectName || project.directory.split(/[\\/]/).pop() || project.directory;
       await this.transport!.sendMarkdown(chatId, buildSessionNotification(name, session.engineType, session.id));
-      await this.enqueueP2PMessage(chatId, text);
+      await this.enqueueP2PMessage(chatId, text, content ?? [{ type: "text", text }]);
     } catch (err) {
       await this.transport!.sendMarkdown(
         chatId,
@@ -892,11 +967,12 @@ export class TeamsAdapter extends ChannelAdapter {
   private async enqueueP2PMessage(
     chatId: string,
     text: string,
+    content: MessagePromptContent[],
   ): Promise<void> {
     const temp = this.sessionMapper.getTempSession(chatId);
     if (!temp) return;
 
-    temp.messageQueue.push(text);
+    temp.messageQueue.push({ text, content });
     if (!temp.processing) {
       await this.processP2PQueue(chatId);
     }
@@ -911,15 +987,15 @@ export class TeamsAdapter extends ChannelAdapter {
     }
 
     temp.processing = true;
-    const text = temp.messageQueue.shift()!;
-    await this.sendToEngineP2P(chatId, temp, text);
+    const queued = temp.messageQueue.shift()!;
+    await this.sendToEngineP2P(chatId, temp, queued);
   }
 
   /** Send a message to the engine via a P2P temp session */
   private async sendToEngineP2P(
     chatId: string,
     tempSession: TeamsTempSession,
-    text: string,
+    queued: QueuedTeamsMessage,
   ): Promise<void> {
     if (
       !this.gatewayClient ||
@@ -949,7 +1025,7 @@ export class TeamsAdapter extends ChannelAdapter {
 
     const sendPromise = this.gatewayClient.sendMessage({
       sessionId: tempSession.conversationId,
-      content: [{ type: "text", text }],
+      content: queued.content,
     });
 
     sendPromise
@@ -1101,6 +1177,7 @@ export class TeamsAdapter extends ChannelAdapter {
   private async handleGroupMessage(
     groupChatId: string,
     text: string,
+    content: MessagePromptContent[],
     serviceUrl: string,
   ): Promise<void> {
     const binding = this.sessionMapper.getGroupBinding(groupChatId);
@@ -1158,7 +1235,7 @@ export class TeamsAdapter extends ChannelAdapter {
     }
 
     // Regular message → send to engine
-    await this.sendToEngine(groupChatId, binding, text);
+    await this.sendToEngine(groupChatId, binding, content);
   }
 
   /** Show project list for group binding selection */
@@ -1377,7 +1454,7 @@ export class TeamsAdapter extends ChannelAdapter {
   private async sendToEngine(
     groupChatId: string,
     binding: TeamsGroupBinding,
-    text: string,
+    content: MessagePromptContent[],
   ): Promise<void> {
     if (
       !this.gatewayClient ||
@@ -1412,7 +1489,7 @@ export class TeamsAdapter extends ChannelAdapter {
     // Send message to engine via Gateway (non-blocking)
     const sendPromise = this.gatewayClient.sendMessage({
       sessionId: binding.conversationId,
-      content: [{ type: "text", text }],
+      content,
     });
 
     sendPromise

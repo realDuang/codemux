@@ -42,6 +42,7 @@ import {
   TEMP_SESSION_TTL_MS,
   MAX_FEISHU_IMAGE_BYTES,
   MAX_FEISHU_IMAGES_PER_MESSAGE,
+  MAX_FEISHU_TOTAL_IMAGE_BYTES,
   type FeishuConfig,
   type GroupBinding,
   type QueuedFeishuMessage,
@@ -59,10 +60,10 @@ import {
 } from "./feishu-platform";
 import {
   buildPromptContent,
-  detectImageMime,
   parseFeishuMessageContent,
   type ParsedContentPart,
 } from "./feishu-content-parser";
+import { detectImageMime } from "../shared/image-detector";
 import type {
   EngineType,
   MessagePromptContent,
@@ -651,6 +652,7 @@ export class FeishuAdapter extends ChannelAdapter {
     if (!this.transport) return map;
 
     const seen = new Set<string>();
+    let totalBytes = 0;
     for (const p of parts) {
       if (p.type !== "image-key") continue;
       if (seen.has(p.imageKey)) continue;
@@ -670,6 +672,13 @@ export class FeishuAdapter extends ChannelAdapter {
       );
       if (!buf) continue;
 
+      if (totalBytes + buf.length > MAX_FEISHU_TOTAL_IMAGE_BYTES) {
+        this.channelLog.warn(
+          `Dropping image ${p.imageKey} for message ${messageId} (total > ${MAX_FEISHU_TOTAL_IMAGE_BYTES} bytes)`,
+        );
+        continue;
+      }
+
       const mimeType = detectImageMime(buf);
       if (!mimeType) {
         this.channelLog.warn(
@@ -678,6 +687,7 @@ export class FeishuAdapter extends ChannelAdapter {
         continue;
       }
 
+      totalBytes += buf.length;
       map.set(p.imageKey, { data: buf.toString("base64"), mimeType });
     }
     return map;

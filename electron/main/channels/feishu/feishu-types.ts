@@ -43,11 +43,13 @@ export const DEFAULT_FEISHU_CONFIG: FeishuConfig = {
 /** TTL for temporary P2P sessions (2 hours in ms) */
 export const TEMP_SESSION_TTL_MS = 2 * 60 * 60 * 1000;
 
-/** Per-image size cap for Feishu image downloads (mirrors frontend constraint). */
-export const MAX_FEISHU_IMAGE_BYTES = 3 * 1024 * 1024;
-
-/** Per-message cap on image attachments forwarded to engines. */
-export const MAX_FEISHU_IMAGES_PER_MESSAGE = 4;
+// Image limits are sourced from the shared module so frontend, channels, and
+// the gateway-side persistence path stay in sync.
+export {
+  MAX_IMAGE_SIZE_BYTES as MAX_FEISHU_IMAGE_BYTES,
+  MAX_IMAGES_PER_MESSAGE as MAX_FEISHU_IMAGES_PER_MESSAGE,
+  MAX_TOTAL_IMAGE_BYTES as MAX_FEISHU_TOTAL_IMAGE_BYTES,
+} from "../../../../shared/image-limits";
 
 // --- Streaming State ---
 

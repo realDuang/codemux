@@ -8,8 +8,13 @@
 // Auth: Azure AD App Registration (App ID + App Password).
 // ============================================================================
 
-import type { EngineType, UnifiedProject, UnifiedSession } from "../../../../src/types/unified";
+import type { EngineType, MessagePromptContent, UnifiedProject, UnifiedSession } from "../../../../src/types/unified";
 import type { BaseGroupBinding } from "../base-session-mapper";
+import {
+  MAX_IMAGE_SIZE_BYTES,
+  MAX_IMAGES_PER_MESSAGE,
+  MAX_TOTAL_IMAGE_BYTES,
+} from "../../../../shared/image-limits";
 
 // Re-export shared streaming types for convenience
 export type { StreamingSession } from "../streaming/streaming-types";
@@ -47,6 +52,18 @@ export const DEFAULT_TEAMS_CONFIG: TeamsConfig = {
 
 /** TTL for temporary P2P sessions (2 hours in ms) */
 export const TEMP_SESSION_TTL_MS = 2 * 60 * 60 * 1000;
+
+// --- Image attachment limits (shared with frontend) ---
+
+export const MAX_TEAMS_IMAGE_BYTES = MAX_IMAGE_SIZE_BYTES;
+export const MAX_TEAMS_IMAGES_PER_MESSAGE = MAX_IMAGES_PER_MESSAGE;
+export const MAX_TEAMS_TOTAL_IMAGE_BYTES = MAX_TOTAL_IMAGE_BYTES;
+
+/** A queued P2P message carrying both text and any decoded attachments. */
+export interface QueuedTeamsMessage {
+  text: string;
+  content: MessagePromptContent[];
+}
 
 // --- Group Binding ---
 
@@ -95,7 +112,7 @@ export interface TeamsTempSession {
   /** Current streaming session (if any) */
   streamingSession?: import("../streaming/streaming-types").StreamingSession;
   /** Message queue for serial processing */
-  messageQueue: string[];
+  messageQueue: QueuedTeamsMessage[];
   /** Whether currently processing a message */
   processing: boolean;
 }
@@ -143,8 +160,13 @@ export interface TeamsActivity {
   text?: string;
   /** Text format (e.g., "plain", "markdown") */
   textFormat?: string;
-  /** Attachments (e.g., Adaptive Cards) */
-  attachments?: Array<{ contentType: string; content: unknown }>;
+  /** Attachments (e.g., Adaptive Cards, files, images) */
+  attachments?: Array<{
+    contentType: string;
+    content?: unknown;
+    contentUrl?: string;
+    name?: string;
+  }>;
   /** Entities (e.g., @mentions) */
   entities?: Array<{
     type: string;

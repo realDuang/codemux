@@ -316,4 +316,43 @@ export class TeamsTransport implements MessageTransport {
 
     return res.json();
   }
+
+  /**
+   * Download a binary asset by URL. Teams attachment contentUrls usually
+   * require a Bearer token (same one used to call the Bot Framework API).
+   * If the unauthenticated request succeeds (e.g. public CDN) we use that;
+   * otherwise we retry with the token. Returns null on failure or when the
+   * payload exceeds maxBytes.
+   */
+  async downloadFromUrl(url: string, maxBytes: number): Promise<Buffer | null> {
+    if (!url) return null;
+    try {
+      // Try without auth first (some Teams URLs are short-lived public links).
+      let res = await fetch(url);
+      if (res.status === 401 || res.status === 403) {
+        const token = await this.tokenManager.getToken();
+        res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+      }
+      if (!res.ok) {
+        channelLog.warn(`${LOG_PREFIX} downloadFromUrl ${res.status} for ${url}`);
+        return null;
+      }
+
+      const len = res.headers.get("content-length");
+      if (len && Number(len) > maxBytes) {
+        channelLog.warn(`${LOG_PREFIX} downloadFromUrl exceeds limit (${len} > ${maxBytes})`);
+        return null;
+      }
+
+      const buf = Buffer.from(await res.arrayBuffer());
+      if (buf.length > maxBytes) {
+        channelLog.warn(`${LOG_PREFIX} downloadFromUrl actual size exceeds limit (${buf.length})`);
+        return null;
+      }
+      return buf;
+    } catch (err) {
+      channelLog.error(`${LOG_PREFIX} downloadFromUrl failed:`, err);
+      return null;
+    }
+  }
 }

@@ -329,7 +329,7 @@ describe("TeamsAdapter", () => {
         recipient: { id: "bot" },
         text: "hi",
       });
-      expect(a.handleP2PMessage).toHaveBeenCalledWith("c1", "aad1", "hi");
+      expect(a.handleP2PMessage).toHaveBeenCalledWith("c1", "aad1", "hi", [{ type: "text", text: "hi" }]);
     });
 
     it("routes group with mention to handleGroupMessage", async () => {
@@ -500,7 +500,7 @@ describe("TeamsAdapter", () => {
     it("falls back to showProjectList when nothing selected", async () => {
       const a = makeP2P();
       a.showProjectList = vi.fn(async () => undefined);
-      await a.handleP2PMessage("c1", "u1", "hi");
+      await a.handleP2PMessage("c1", "u1", "hi", [{ type: "text", text: "hi" }]);
       expect(a.showProjectList).toHaveBeenCalledWith("c1");
     });
 
@@ -512,8 +512,8 @@ describe("TeamsAdapter", () => {
         lastActiveAt: Date.now(), messageQueue: [], processing: true,
       });
       a.enqueueP2PMessage = vi.fn(async () => undefined);
-      await a.handleP2PMessage("c1", "u1", "hi");
-      expect(a.enqueueP2PMessage).toHaveBeenCalledWith("c1", "hi");
+      await a.handleP2PMessage("c1", "u1", "hi", [{ type: "text", text: "hi" }]);
+      expect(a.enqueueP2PMessage).toHaveBeenCalledWith("c1", "hi", [{ type: "text", text: "hi" }]);
     });
 
     it("creates temp session if last project selected and no temp exists", async () => {
@@ -523,7 +523,7 @@ describe("TeamsAdapter", () => {
         directory: "/d", engineType: "claude", projectId: "p",
       });
       a.createTempSessionAndSend = vi.fn(async () => undefined);
-      await a.handleP2PMessage("c1", "u1", "hi");
+      await a.handleP2PMessage("c1", "u1", "hi", [{ type: "text", text: "hi" }]);
       expect(a.createTempSessionAndSend).toHaveBeenCalled();
     });
 
@@ -535,7 +535,7 @@ describe("TeamsAdapter", () => {
         projects: [{ id: "p1", name: "alpha", directory: "/a", engineType: "claude" }],
       });
       a.showSessionListForProject = vi.fn(async () => undefined);
-      await a.handleP2PMessage("c1", "u1", "1");
+      await a.handleP2PMessage("c1", "u1", "1", [{ type: "text", text: "1" }]);
       expect(a.showSessionListForProject).toHaveBeenCalled();
     });
   });
@@ -744,7 +744,7 @@ describe("TeamsAdapter", () => {
         "hi",
       );
       expect(a.sessionMapper.getTempSession("c1")?.conversationId).toBe("sess-2");
-      expect(a.enqueueP2PMessage).toHaveBeenCalledWith("c1", "hi");
+      expect(a.enqueueP2PMessage).toHaveBeenCalledWith("c1", "hi", [{ type: "text", text: "hi" }]);
     });
 
     it("createTempSessionAndSend reports error on failure", async () => {

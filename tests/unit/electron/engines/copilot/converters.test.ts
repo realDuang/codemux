@@ -551,6 +551,50 @@ describe('copilot-converters', () => {
       expect(msg.parts[0].type).toBe('text');
       expect((msg.parts[0] as TextPart).text).toBe('hello');
     });
+
+    it('emits a FilePart per image with a data: URL', () => {
+      const msg = createUserMessage(sessionId, 'caption', tsMs, [
+        { data: 'AAA', mimeType: 'image/png' },
+        { data: 'BBB', mimeType: 'image/jpeg' },
+      ]);
+      expect(msg.parts).toHaveLength(3);
+      expect(msg.parts[0].type).toBe('text');
+      expect((msg.parts[0] as TextPart).text).toBe('caption');
+      const fp1 = msg.parts[1] as any;
+      expect(fp1.type).toBe('file');
+      expect(fp1.mime).toBe('image/png');
+      expect(fp1.url).toBe('data:image/png;base64,AAA');
+      expect(fp1.filename).toBe('image.png');
+      const fp2 = msg.parts[2] as any;
+      expect(fp2.type).toBe('file');
+      expect(fp2.mime).toBe('image/jpeg');
+      expect(fp2.url).toBe('data:image/jpeg;base64,BBB');
+      expect(fp2.filename).toBe('image.jpeg');
+    });
+
+    it('emits only image FileParts when text is empty', () => {
+      const msg = createUserMessage(sessionId, '', tsMs, [
+        { data: 'AAA', mimeType: 'image/gif' },
+      ]);
+      expect(msg.parts).toHaveLength(1);
+      expect((msg.parts[0] as any).type).toBe('file');
+      expect((msg.parts[0] as any).mime).toBe('image/gif');
+    });
+
+    it('falls back to a single empty TextPart when both text and images are missing', () => {
+      const msg = createUserMessage(sessionId, '', tsMs);
+      expect(msg.parts).toHaveLength(1);
+      expect(msg.parts[0].type).toBe('text');
+      expect((msg.parts[0] as TextPart).text).toBe('');
+    });
+
+    it('defaults mimeType to image/png when missing', () => {
+      const msg = createUserMessage(sessionId, '', tsMs, [
+        { data: 'AAA', mimeType: '' as any },
+      ]);
+      expect((msg.parts[0] as any).mime).toBe('image/png');
+      expect((msg.parts[0] as any).url).toBe('data:image/png;base64,AAA');
+    });
   });
 
   describe('buildToolTitle', () => {

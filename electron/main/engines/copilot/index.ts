@@ -560,7 +560,15 @@ export class CopilotSdkAdapter extends EngineAdapter {
       // Create user message but DON'T emit yet — defer until handleSessionIdle
       // starts processing this queued turn. Emitting immediately would create
       // a user bubble while the engine is still working on the previous turn.
-      const userMessage = createUserMessage(sessionId, promptText, now);
+      const userMessage = createUserMessage(
+        sessionId,
+        promptText,
+        now,
+        imageContents.map((c) => ({
+          data: (c as { data: string }).data,
+          mimeType: (c as { mimeType?: string }).mimeType ?? "image/png",
+        })),
+      );
       this.appendMessageToHistory(sessionId, userMessage);
 
       // Store for deferred emit
@@ -607,7 +615,15 @@ export class CopilotSdkAdapter extends EngineAdapter {
 
     // --- Normal path: session is idle ---
 
-    const userMessage = createUserMessage(sessionId, promptText, now);
+    const userMessage = createUserMessage(
+      sessionId,
+      promptText,
+      now,
+      imageContents.map((c) => ({
+        data: (c as { data: string }).data,
+        mimeType: (c as { mimeType?: string }).mimeType ?? "image/png",
+      })),
+    );
     this.appendMessageToHistory(sessionId, userMessage);
     this.emit("message.updated", { sessionId, message: userMessage });
 

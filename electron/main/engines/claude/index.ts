@@ -49,6 +49,7 @@ import type {
   PermissionReply,
   ToolPart,
   TextPart,
+  FilePart,
   ReasoningPart,
   StepStartPart,
   StepFinishPart,
@@ -199,6 +200,57 @@ function readClaudeSettingsEnv(): Record<string, string> {
 // ============================================================================
 
 const SESSION_IDLE_TIMEOUT_MS = 30 * 60 * 1000;
+
+/**
+ * Build user message parts including any image attachments as FileParts so
+ * the frontend can render the same images the user sent (e.g. via channels
+ * like Feishu or the browser UI). Images are emitted as data: URLs.
+ */
+function buildUserMessageParts(
+  messageId: string,
+  sessionId: string,
+  text: string,
+  images: MessagePromptContent[],
+): Array<TextPart | FilePart> {
+  const parts: Array<TextPart | FilePart> = [];
+
+  if (text) {
+    parts.push({
+      id: timeId("pt"),
+      messageId,
+      sessionId,
+      type: "text",
+      text,
+    });
+  }
+
+  for (const c of images) {
+    if (c.type !== "image" || !c.data) continue;
+    const mime = c.mimeType || "image/png";
+    const ext = mime.split("/")[1] || "png";
+    parts.push({
+      id: timeId("pt"),
+      messageId,
+      sessionId,
+      type: "file",
+      mime,
+      filename: `image.${ext}`,
+      url: `data:${mime};base64,${c.data}`,
+    });
+  }
+
+  if (parts.length === 0) {
+    parts.push({
+      id: timeId("pt"),
+      messageId,
+      sessionId,
+      type: "text",
+      text: "",
+    });
+  }
+
+  return parts;
+}
 
 // ============================================================================
 // ClaudeCodeAdapter
@@ -748,7 +800,7 @@ export class ClaudeCodeAdapter extends EngineAdapter {
         sessionId,
         role: "user",
         time: { created: Date.now() },
-        parts: [{ type: "text", text: textContent, id: timeId("pt"), messageId: userMsgId, sessionId } as TextPart],
+        parts: buildUserMessageParts(userMsgId, sessionId, textContent, imageContents),
       };
 
       const history = this.messageHistory.get(sessionId) ?? [];
@@ -790,7 +842,7 @@ export class ClaudeCodeAdapter extends EngineAdapter {
       sessionId,
       role: "user",
       time: { created: Date.now() },
-      parts: [{ type: "text", text: textContent, id: timeId("pt"), messageId: userMsgId, sessionId } as TextPart],
+      parts: buildUserMessageParts(userMsgId, sessionId, textContent, imageContents),
     };
 
     // Emit user message

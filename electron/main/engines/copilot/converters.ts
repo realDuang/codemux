@@ -16,6 +16,7 @@ import {
   type NormalizedToolName,
   type ToolPart,
   type TextPart,
+  type FilePart,
   type ReasoningPart,
 } from "../../../../src/types/unified";
 import { homedir } from "os";
@@ -314,21 +315,56 @@ export function convertEventsToMessages(
   return messages;
 }
 
+export interface UserMessageImage {
+  data: string;
+  mimeType: string;
+}
+
 export function createUserMessage(
   sessionId: string,
   text: string,
   timestamp: number,
+  images?: UserMessageImage[],
 ): UnifiedMessage {
   const messageId = timeId("msg");
-  const partId = timeId("part");
+  const parts: Array<TextPart | FilePart> = [];
 
-  const textPart: TextPart = {
-    id: partId,
-    messageId,
-    sessionId,
-    type: "text",
-    text,
-  };
+  if (text) {
+    parts.push({
+      id: timeId("part"),
+      messageId,
+      sessionId,
+      type: "text",
+      text,
+    });
+  }
+
+  if (images && images.length > 0) {
+    for (const img of images) {
+      const mime = img.mimeType || "image/png";
+      const ext = mime.split("/")[1] || "png";
+      parts.push({
+        id: timeId("part"),
+        messageId,
+        sessionId,
+        type: "file",
+        mime,
+        filename: `image.${ext}`,
+        url: `data:${mime};base64,${img.data}`,
+      });
+    }
+  }
+
+  // Always keep at least one part so the bubble renders.
+  if (parts.length === 0) {
+    parts.push({
+      id: timeId("part"),
+      messageId,
+      sessionId,
+      type: "text",
+      text: "",
+    });
+  }
 
   return {
     id: messageId,
@@ -338,7 +374,7 @@ export function createUserMessage(
       created: timestamp,
       completed: timestamp,
     },
-    parts: [textPart],
+    parts,
   };
 }
 

@@ -2389,13 +2389,39 @@ export default function Chat() {
       parts: [],
     };
 
-    const tempPart: UnifiedPart = {
-      id: tempPartId,
-      messageId: tempMessageId,
-      sessionId: sessionId,
-      type: "text",
-      text,
-    } as UnifiedPart;
+    const tempParts: UnifiedPart[] = [];
+    if (text) {
+      tempParts.push({
+        id: tempPartId,
+        messageId: tempMessageId,
+        sessionId: sessionId,
+        type: "text",
+        text,
+      } as UnifiedPart);
+    }
+    if (images && images.length > 0) {
+      for (let i = 0; i < images.length; i++) {
+        const img = images[i];
+        tempParts.push({
+          id: `${tempPartId}-img-${i}`,
+          messageId: tempMessageId,
+          sessionId: sessionId,
+          type: "file",
+          mime: img.mimeType,
+          filename: img.name,
+          url: `data:${img.mimeType};base64,${img.data}`,
+        } as UnifiedPart);
+      }
+    }
+    if (tempParts.length === 0) {
+      tempParts.push({
+        id: tempPartId,
+        messageId: tempMessageId,
+        sessionId: sessionId,
+        type: "text",
+        text: "",
+      } as UnifiedPart);
+    }
 
     const messages = messageStore.message[sessionId] || [];
 
@@ -2408,7 +2434,7 @@ export default function Chat() {
       setMessageStore("message", sessionId, (draft) => [...draft, tempMessageInfo]);
     }
 
-    setMessageStore("part", tempMessageId, [tempPart]);
+    setMessageStore("part", tempMessageId, tempParts);
     setUserScrolledUp(false);
     setTimeout(() => scrollToBottom(), 0);
 

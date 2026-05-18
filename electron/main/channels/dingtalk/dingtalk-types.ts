@@ -4,7 +4,7 @@
 // Architecture: One Group Chat = One CodeMux Session (same as Feishu adapter)
 // ============================================================================
 
-import type { EngineType, UnifiedProject, UnifiedSession } from "../../../../src/types/unified";
+import type { EngineType, MessagePromptContent, UnifiedProject, UnifiedSession } from "../../../../src/types/unified";
 import type { BaseGroupBinding } from "../base-session-mapper";
 
 // Re-export shared streaming types for convenience
@@ -43,6 +43,26 @@ export const DEFAULT_DINGTALK_CONFIG: DingTalkConfig = {
 
 /** TTL for temporary P2P sessions (2 hours in ms) */
 export const TEMP_SESSION_TTL_MS = 2 * 60 * 60 * 1000;
+
+// Image limits are sourced from the shared module so frontend, channels, and
+// the gateway-side persistence path stay in sync.
+export {
+  MAX_IMAGE_SIZE_BYTES as MAX_DINGTALK_IMAGE_BYTES,
+  MAX_IMAGES_PER_MESSAGE as MAX_DINGTALK_IMAGES_PER_MESSAGE,
+  MAX_TOTAL_IMAGE_BYTES as MAX_DINGTALK_TOTAL_IMAGE_BYTES,
+} from "../../../../shared/image-limits";
+
+/**
+ * A queued DingTalk message awaiting engine dispatch. Carries already-built
+ * MessagePromptContent so the queue worker can call sendMessage directly
+ * without re-downloading images.
+ */
+export interface QueuedDingTalkMessage {
+  /** Plain-text preview (for logging only). */
+  text: string;
+  /** Engine-ready prompt content (text + images). */
+  content: MessagePromptContent[];
+}
 
 // --- Group Binding (One Group = One Session) ---
 
@@ -88,7 +108,7 @@ export interface DingTalkTempSession {
   /** Current streaming session (if any) */
   streamingSession?: import("../streaming/streaming-types").StreamingSession;
   /** Message queue for serial processing */
-  messageQueue: string[];
+  messageQueue: QueuedDingTalkMessage[];
   /** Whether currently processing a message */
   processing: boolean;
 }
@@ -141,8 +161,13 @@ export interface DingTalkMessageEvent {
   isInAtList?: boolean;
   /** Text content of the message */
   text: { content: string };
-  /** Message type (e.g., "text") */
+  /** Message type (e.g., "text", "picture") */
   msgtype: string;
+  /**
+   * Picture payload (present when msgtype="picture"). The `downloadCode` is
+   * exchanged for a presigned URL via the `robot/messageFiles/download` API.
+   */
+  picture?: { downloadCode: string };
 }
 
 // --- Command Parser Types ---

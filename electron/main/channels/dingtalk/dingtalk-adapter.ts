@@ -27,7 +27,7 @@ import { GatewayWsClient } from "../gateway-ws-client";
 import { StreamingController } from "../streaming/streaming-controller";
 import { TokenManager } from "../streaming/token-manager";
 import { TokenBucket } from "../streaming/rate-limiter";
-import { BaseSessionMapper, type PersistedBinding } from "../base-session-mapper";
+import { BaseSessionMapper, type BaseP2PChatState, type PersistedBinding } from "../base-session-mapper";
 import { createStreamingSession, type StreamingSession } from "../streaming/streaming-types";
 import { didConfigValuesChange, mergeDefinedConfig } from "../config-utils";
 import { DingTalkTransport } from "./dingtalk-transport";
@@ -49,26 +49,36 @@ import {
 import {
   DEFAULT_DINGTALK_CONFIG,
   TEMP_SESSION_TTL_MS,
+  MAX_DINGTALK_IMAGE_BYTES,
+  MAX_DINGTALK_IMAGES_PER_MESSAGE,
+  MAX_DINGTALK_TOTAL_IMAGE_BYTES,
   type DingTalkConfig,
   type DingTalkGroupBinding,
   type DingTalkTempSession,
   type DingTalkPendingSelection,
   type DingTalkMessageEvent,
+  type QueuedDingTalkMessage,
 } from "./dingtalk-types";
 import type {
   EngineType,
+  MessagePromptContent,
   UnifiedPart,
   UnifiedMessage,
   UnifiedPermission,
   UnifiedQuestion,
 } from "../../../../src/types/unified";
 import { dingtalkLog } from "../../services/logger";
+import { detectImageMime } from "../shared/image-detector";
 
 // ============================================================================
 // DingTalk Session Mapper (extends BaseSessionMapper with ownerUserId)
 // ============================================================================
 
-class DingTalkSessionMapper extends BaseSessionMapper<DingTalkGroupBinding> {
+class DingTalkSessionMapper extends BaseSessionMapper<
+  DingTalkGroupBinding,
+  BaseP2PChatState,
+  DingTalkTempSession
+> {
   constructor() {
     super("dingtalk");
   }
@@ -334,9 +344,9 @@ export class DingTalkAdapter extends ChannelAdapter {
   async handleDingTalkMessage(event: DingTalkMessageEvent): Promise<void> {
     const { msgId, conversationType, text, senderStaffId, chatId, senderNick } = event;
 
-    // Skip non-text messages
-    if (event.msgtype !== "text") {
-      dingtalkLog.verbose(`Ignoring non-text message type: ${event.msgtype}`);
+    // Accept text and picture; everything else (file/audio/...) is dropped.
+    if (event.msgtype !== "text" && event.msgtype !== "picture") {
+      dingtalkLog.verbose(`Ignoring non-text/picture message type: ${event.msgtype}`);
       return;
     }
 
@@ -346,27 +356,88 @@ export class DingTalkAdapter extends ChannelAdapter {
       return;
     }
 
-    // Extract text content and strip @mentions
-    let content = (text?.content || "").trim();
-    if (!content) return;
+    // Extract text content (picture messages may carry an empty text field).
+    const textContent = (text?.content || "").trim();
+    const hasImage = event.msgtype === "picture" && Boolean(event.picture?.downloadCode);
+    if (!textContent && !hasImage) return;
 
     const senderId = senderStaffId || event.chatbotUserId;
 
     dingtalkLog.info(
       `Message from ${conversationType === "1" ? "P2P" : "group"} ` +
-      `(${senderNick}): ${content.slice(0, 100)}`,
+      `(${senderNick}): ${textContent.slice(0, 100)}${hasImage ? " [+image]" : ""}`,
     );
+
+    // Build engine content once at the entry point (single image per DingTalk
+    // event — DingTalk does not deliver multi-image messages). Download
+    // failures are logged but do not block plain-text delivery.
+    const replyChatId =
+      conversationType === "1" ? event.conversationId : (chatId ?? event.conversationId);
+    const content = await this.buildEngineContent(replyChatId, textContent, event);
+
+    if (content.length === 0) {
+      // Nothing to send — image download failed and there was no text.
+      return;
+    }
 
     if (conversationType === "1") {
       // Individual (P2P) message
-      // For P2P, use the DingTalk conversationId as the chat identifier
       const p2pChatId = event.conversationId;
       this.sessionMapper.getOrCreateP2PChat(p2pChatId, senderId);
-      await this.handleP2PMessage(p2pChatId, senderId, content);
+      await this.handleP2PMessage(p2pChatId, senderId, textContent, content);
     } else if (conversationType === "2" && chatId) {
       // Group message — chatId is the openConversationId
-      await this.handleGroupMessage(chatId, content);
+      await this.handleGroupMessage(chatId, textContent, content);
     }
+  }
+
+  /**
+   * Build a MessagePromptContent[] payload from a DingTalk event. Downloads
+   * the picture (when present) and applies size/MIME/total-bytes limits.
+   * Plain-text messages take the fast path with no async work.
+   */
+  private async buildEngineContent(
+    replyChatId: string,
+    text: string,
+    event: DingTalkMessageEvent,
+  ): Promise<MessagePromptContent[]> {
+    const out: MessagePromptContent[] = [];
+    if (text) out.push({ type: "text", text });
+
+    if (event.msgtype !== "picture" || !event.picture?.downloadCode) {
+      return out;
+    }
+    if (!this.transport) return out;
+
+    try {
+      const buf = await this.transport.downloadByCode(event.picture.downloadCode);
+      if (buf.length > MAX_DINGTALK_IMAGE_BYTES) {
+        await this.transport.sendText(
+          replyChatId,
+          `⚠️ 图片超过 ${Math.floor(MAX_DINGTALK_IMAGE_BYTES / (1024 * 1024))}MB 已忽略`,
+        );
+        return out;
+      }
+      if (buf.length > MAX_DINGTALK_TOTAL_IMAGE_BYTES) {
+        // Defensive — single-image case mirrors per-image cap; included for symmetry.
+        await this.transport.sendText(replyChatId, "⚠️ 图片总大小超过限制");
+        return out;
+      }
+      // MAX_DINGTALK_IMAGES_PER_MESSAGE is informational here since DingTalk
+      // events carry one image; included to keep the cap surface consistent.
+      void MAX_DINGTALK_IMAGES_PER_MESSAGE;
+
+      const mimeType = detectImageMime(buf);
+      if (!mimeType) {
+        await this.transport.sendText(replyChatId, "⚠️ 不支持的图片格式");
+        return out;
+      }
+      out.push({ type: "image", data: buf.toString("base64"), mimeType });
+    } catch (err) {
+      dingtalkLog.error("Failed to download DingTalk image:", err);
+      await this.transport.sendText(replyChatId, "⚠️ 图片下载失败");
+    }
+    return out;
   }
 
   // ============================================================================
@@ -406,7 +477,12 @@ export class DingTalkAdapter extends ChannelAdapter {
   // P2P Message Handling (Entry Point Only)
   // ============================================================================
 
-  private async handleP2PMessage(chatId: string, senderId: string, text: string): Promise<void> {
+  private async handleP2PMessage(
+    chatId: string,
+    senderId: string,
+    text: string,
+    content: MessagePromptContent[],
+  ): Promise<void> {
     // 1. Check for slash commands first
     const command = parseCommand(text);
     if (command) {
@@ -437,7 +513,7 @@ export class DingTalkAdapter extends ChannelAdapter {
     // 4. Active temp session (not expired)? → send to engine
     const tempSession = this.sessionMapper.getTempSession(chatId);
     if (tempSession && !this.isTempSessionExpired(tempSession)) {
-      await this.enqueueP2PMessage(chatId, text);
+      await this.enqueueP2PMessage(chatId, text, content);
       return;
     }
 
@@ -447,7 +523,7 @@ export class DingTalkAdapter extends ChannelAdapter {
       if (tempSession) {
         await this.cleanupExpiredTempSession(chatId);
       }
-      await this.createTempSessionAndSend(chatId, p2pState.lastSelectedProject, text);
+      await this.createTempSessionAndSend(chatId, p2pState.lastSelectedProject, text, undefined, content);
       return;
     }
 
@@ -464,7 +540,7 @@ export class DingTalkAdapter extends ChannelAdapter {
           engineType: defaultProject.engineType,
           projectId: defaultProject.id,
         };
-        await this.createTempSessionAndSend(chatId, defaultRef, text, "默认工作区");
+        await this.createTempSessionAndSend(chatId, defaultRef, text, "默认工作区", content);
         return;
       }
     }
@@ -666,6 +742,7 @@ export class DingTalkAdapter extends ChannelAdapter {
     project: { directory: string; engineType?: EngineType; projectId: string },
     text: string,
     projectName?: string,
+    content?: MessagePromptContent[],
   ): Promise<void> {
     if (!this.gatewayClient) return;
 
@@ -688,7 +765,7 @@ export class DingTalkAdapter extends ChannelAdapter {
       this.sessionMapper.setTempSession(chatId, tempSession);
       const name = projectName || project.directory.split(/[\\/]/).pop() || project.directory;
       await this.transport!.sendMarkdown(chatId, buildSessionNotification(name, session.engineType, session.id));
-      await this.enqueueP2PMessage(chatId, text);
+      await this.enqueueP2PMessage(chatId, text, content ?? [{ type: "text", text }]);
     } catch (err) {
       await this.transport!.sendMarkdown(
         chatId,
@@ -698,11 +775,15 @@ export class DingTalkAdapter extends ChannelAdapter {
   }
 
   /** Enqueue a message for serial processing in the P2P temp session */
-  private async enqueueP2PMessage(chatId: string, text: string): Promise<void> {
+  private async enqueueP2PMessage(
+    chatId: string,
+    text: string,
+    content: MessagePromptContent[],
+  ): Promise<void> {
     const temp = this.sessionMapper.getTempSession(chatId);
     if (!temp) return;
 
-    temp.messageQueue.push(text);
+    temp.messageQueue.push({ text, content });
     if (!temp.processing) {
       await this.processP2PQueue(chatId);
     }
@@ -717,15 +798,15 @@ export class DingTalkAdapter extends ChannelAdapter {
     }
 
     temp.processing = true;
-    const text = temp.messageQueue.shift()!;
-    await this.sendToEngineP2P(chatId, temp, text);
+    const queued = temp.messageQueue.shift()!;
+    await this.sendToEngineP2P(chatId, temp, queued);
   }
 
   /** Send a message to the engine via a P2P temp session */
   private async sendToEngineP2P(
     chatId: string,
     tempSession: DingTalkTempSession,
-    text: string,
+    queued: QueuedDingTalkMessage,
   ): Promise<void> {
     if (!this.gatewayClient || !this.transport || !this.streamingController) {
       tempSession.processing = false;
@@ -742,7 +823,7 @@ export class DingTalkAdapter extends ChannelAdapter {
 
     const sendPromise = this.gatewayClient.sendMessage({
       sessionId: tempSession.conversationId,
-      content: [{ type: "text", text }],
+      content: queued.content,
     });
 
     sendPromise
@@ -880,7 +961,11 @@ export class DingTalkAdapter extends ChannelAdapter {
   // Group Message Handling (Session Interaction)
   // ============================================================================
 
-  private async handleGroupMessage(groupChatId: string, text: string): Promise<void> {
+  private async handleGroupMessage(
+    groupChatId: string,
+    text: string,
+    content: MessagePromptContent[],
+  ): Promise<void> {
     const binding = this.sessionMapper.getGroupBinding(groupChatId);
     if (!binding) {
       await this.transport!.sendMarkdown(groupChatId, "📋 此群聊未绑定到 CodeMux 会话。");
@@ -906,7 +991,7 @@ export class DingTalkAdapter extends ChannelAdapter {
     }
 
     // Regular message → send to engine
-    await this.sendToEngine(groupChatId, binding, text);
+    await this.sendToEngine(groupChatId, binding, content);
   }
 
   private async handleGroupCommand(
@@ -1068,7 +1153,7 @@ export class DingTalkAdapter extends ChannelAdapter {
   private async sendToEngine(
     groupChatId: string,
     binding: DingTalkGroupBinding,
-    text: string,
+    content: MessagePromptContent[],
   ): Promise<void> {
     if (!this.gatewayClient || !this.transport || !this.streamingController) return;
 
@@ -1081,7 +1166,7 @@ export class DingTalkAdapter extends ChannelAdapter {
     // Send message to engine via Gateway (non-blocking)
     const sendPromise = this.gatewayClient.sendMessage({
       sessionId: binding.conversationId,
-      content: [{ type: "text", text }],
+      content,
     });
 
     sendPromise

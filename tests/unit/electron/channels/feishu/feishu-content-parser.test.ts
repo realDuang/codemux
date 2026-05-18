@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
   buildPromptContent,
-  detectImageMime,
   parseFeishuMessageContent,
   stripFeishuMentions,
   type ParsedContentPart,
 } from "../../../../../electron/main/channels/feishu/feishu-content-parser";
+import { detectImageMime } from "../../../../../electron/main/channels/shared/image-detector";
 
 describe("stripFeishuMentions", () => {
   it.each([

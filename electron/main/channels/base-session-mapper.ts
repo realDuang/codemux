@@ -49,14 +49,14 @@ export interface BaseP2PChatState {
 }
 
 /** Temporary session bound to P2P chat */
-export interface BaseTempSession {
+export interface BaseTempSession<TQueueItem = unknown> {
   conversationId: string;
   engineType: EngineType;
   directory: string;
   projectId: string;
   lastActiveAt: number;
   streamingSession?: StreamingSession;
-  messageQueue: string[];
+  messageQueue: TQueueItem[];
   processing: boolean;
 }
 
@@ -103,6 +103,7 @@ export interface PersistedBinding {
 export class BaseSessionMapper<
   B extends BaseGroupBinding = BaseGroupBinding,
   P extends BaseP2PChatState = BaseP2PChatState,
+  T extends BaseTempSession = BaseTempSession,
 > {
   // --- Group Bindings ---
   protected groupBindings = new Map<string, B>();
@@ -359,7 +360,7 @@ export class BaseSessionMapper<
   // Temp Sessions
   // =========================================================================
 
-  setTempSession(chatId: string, tempSession: BaseTempSession): void {
+  setTempSession(chatId: string, tempSession: T): void {
     const state = this.p2pChats.get(chatId);
     if (state) {
       if (state.tempSession) {
@@ -370,8 +371,8 @@ export class BaseSessionMapper<
     }
   }
 
-  getTempSession(chatId: string): BaseTempSession | undefined {
-    return this.p2pChats.get(chatId)?.tempSession;
+  getTempSession(chatId: string): T | undefined {
+    return this.p2pChats.get(chatId)?.tempSession as T | undefined;
   }
 
   clearTempSession(chatId: string): void {

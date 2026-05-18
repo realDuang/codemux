@@ -403,4 +403,39 @@ export class DingTalkTransport implements MessageTransport {
         return "sampleText";
     }
   }
+
+  // =========================================================================
+  // Image / File Download
+  // =========================================================================
+
+  /**
+   * Resolve a DingTalk `downloadCode` (from picture/file events) to a byte
+   * buffer. The `robot/messageFiles/download` endpoint returns a short-lived
+   * presigned URL which we immediately fetch.
+   */
+  async downloadByCode(downloadCode: string): Promise<Buffer> {
+    const token = await this.tokenManager.getToken();
+    const res = await fetch(`${API_BASE}/robot/messageFiles/download`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-acs-dingtalk-access-token": token,
+      },
+      body: JSON.stringify({
+        downloadCode,
+        robotCode: this.robotCode,
+      }),
+    });
+    if (!res.ok) {
+      throw new Error(`messageFiles/download status ${res.status}: ${await res.text()}`);
+    }
+    const data = (await res.json()) as { downloadUrl?: string };
+    if (!data.downloadUrl) throw new Error("messageFiles/download: missing downloadUrl");
+    const fileRes = await fetch(data.downloadUrl);
+    if (!fileRes.ok) {
+      throw new Error(`download status ${fileRes.status}`);
+    }
+    const ab = await fileRes.arrayBuffer();
+    return Buffer.from(ab);
+  }
 }

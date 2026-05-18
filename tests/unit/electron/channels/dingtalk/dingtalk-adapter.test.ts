@@ -220,7 +220,7 @@ describe("DingTalkAdapter", () => {
         senderNick: "alice",
         conversationId: "c1",
       });
-      expect(a.handleP2PMessage).toHaveBeenCalledWith("c1", "u1", "hi");
+      expect(a.handleP2PMessage).toHaveBeenCalledWith("c1", "u1", "hi", [{ type: "text", text: "hi" }]);
       expect(a.sessionMapper.getP2PChat("c1")).toBeDefined();
     });
 
@@ -237,7 +237,7 @@ describe("DingTalkAdapter", () => {
         conversationId: "c1",
         chatId: "g1",
       });
-      expect(a.handleGroupMessage).toHaveBeenCalledWith("g1", "hi");
+      expect(a.handleGroupMessage).toHaveBeenCalledWith("g1", "hi", [{ type: "text", text: "hi" }]);
     });
   });
 
@@ -275,7 +275,7 @@ describe("DingTalkAdapter", () => {
     it("falls back to showProjectList when nothing selected", async () => {
       const a = makeP2P();
       a.showProjectList = vi.fn(async () => undefined);
-      await a.handleP2PMessage("c1", "u1", "hi");
+      await a.handleP2PMessage("c1", "u1", "hi", [{ type: "text", text: "hi" }]);
       expect(a.showProjectList).toHaveBeenCalledWith("c1");
     });
 
@@ -292,8 +292,8 @@ describe("DingTalkAdapter", () => {
         processing: true,
       });
       a.enqueueP2PMessage = vi.fn(async () => undefined);
-      await a.handleP2PMessage("c1", "u1", "hi");
-      expect(a.enqueueP2PMessage).toHaveBeenCalledWith("c1", "hi");
+      await a.handleP2PMessage("c1", "u1", "hi", [{ type: "text", text: "hi" }]);
+      expect(a.enqueueP2PMessage).toHaveBeenCalledWith("c1", "hi", [{ type: "text", text: "hi" }]);
     });
 
     it("creates temp session if last project selected and no temp exists", async () => {
@@ -305,7 +305,7 @@ describe("DingTalkAdapter", () => {
         projectId: "p",
       });
       a.createTempSessionAndSend = vi.fn(async () => undefined);
-      await a.handleP2PMessage("c1", "u1", "hi");
+      await a.handleP2PMessage("c1", "u1", "hi", [{ type: "text", text: "hi" }]);
       expect(a.createTempSessionAndSend).toHaveBeenCalled();
     });
   });
@@ -467,7 +467,7 @@ describe("DingTalkAdapter", () => {
         "hi",
       );
       expect(a.sessionMapper.getTempSession("c1")?.conversationId).toBe("sess-2");
-      expect(a.enqueueP2PMessage).toHaveBeenCalledWith("c1", "hi");
+      expect(a.enqueueP2PMessage).toHaveBeenCalledWith("c1", "hi", [{ type: "text", text: "hi" }]);
     });
 
     it("createTempSessionAndSend reports error on createSession failure", async () => {

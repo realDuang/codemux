@@ -3,10 +3,12 @@ import { IconArrowUp } from "./icons";
 import { useI18n } from "../lib/i18n";
 import { notify } from "../lib/notifications";
 import type { AgentMode, ImageAttachment, EngineCommand } from "../types/unified";
-
-const ACCEPTED_IMAGE_TYPES = ["image/jpeg", "image/png", "image/gif", "image/webp"];
-const MAX_IMAGE_SIZE = 3 * 1024 * 1024; // 3MB per image — stays within WS payload limits after base64/JSON overhead
-const MAX_IMAGES = 4;
+import {
+  ACCEPTED_IMAGE_MIME_TYPES,
+  MAX_IMAGES_PER_MESSAGE,
+  MAX_IMAGE_SIZE_BYTES,
+  validateImageAddition,
+} from "../../shared/image-limits";
 
 /**
  * Resolve a display name for a mode.
@@ -250,16 +252,20 @@ export function PromptInput(props: PromptInputProps) {
   onCleanup(() => document.removeEventListener("mousedown", handleClickOutside));
 
   const addImageFromFile = (file: File) => {
-    if (!ACCEPTED_IMAGE_TYPES.includes(file.type)) {
-      notify(t().prompt.imageUnsupportedType, "warning", 3000);
-      return;
-    }
-    if (file.size > MAX_IMAGE_SIZE) {
-      notify(t().prompt.imageTooLarge, "warning", 3000);
-      return;
-    }
-    if (images().length >= MAX_IMAGES) {
-      notify(t().prompt.imageLimitReached, "warning", 3000);
+    const validation = validateImageAddition(
+      images().map((img) => ({ size: img.size, mimeType: img.mimeType })),
+      { size: file.size, mimeType: file.type },
+    );
+    if (!validation.ok) {
+      const key =
+        validation.reason === "mime"
+          ? "imageUnsupportedType"
+          : validation.reason === "size"
+            ? "imageTooLarge"
+            : validation.reason === "count"
+              ? "imageLimitReached"
+              : "imageTotalTooLarge";
+      notify(t().prompt[key], "warning", 3000);
       return;
     }
 
@@ -604,7 +610,7 @@ export function PromptInput(props: PromptInputProps) {
                   <Show when={props.imageAttachmentEnabled}>
                     <button
                       onClick={() => fileInputRef?.click()}
-                      disabled={props.disabled || images().length >= MAX_IMAGES}
+                      disabled={props.disabled || images().length >= MAX_IMAGES_PER_MESSAGE}
                       class="p-2 rounded-xl text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 transition-colors disabled:opacity-30"
                       aria-label={t().prompt.attachImage}
                       title={t().prompt.attachImage}

@@ -265,6 +265,7 @@ export interface LocaleDict {
     imageTooLarge: string;
     imageUnsupportedType: string;
     imageLimitReached: string;
+    imageTotalTooLarge: string;
     removeImage: string;
     /** Slash command autocomplete: no matching commands */
     noCommandsFound: string;
@@ -970,6 +971,7 @@ export const en: LocaleDict = {
     imageTooLarge: "Image too large (max 3MB)",
     imageUnsupportedType: "Unsupported image type",
     imageLimitReached: "Maximum 4 images per message",
+    imageTotalTooLarge: "Total image size too large (max 12MB)",
     removeImage: "Remove image",
     noCommandsFound: "No commands found",
     reasoningEffortLow: "Low",

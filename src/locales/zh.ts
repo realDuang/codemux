@@ -263,6 +263,7 @@ export const zh: LocaleDict = {
     imageTooLarge: "图片过大（最大 3MB）",
     imageUnsupportedType: "不支持的图片格式",
     imageLimitReached: "每条消息最多 4 张图片",
+    imageTotalTooLarge: "图片总大小过大（最大 12MB）",
     removeImage: "移除图片",
     noCommandsFound: "未找到匹配的命令",
     reasoningEffortLow: "低",

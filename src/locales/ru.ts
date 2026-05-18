@@ -264,6 +264,7 @@ export const ru: LocaleDict = {
     imageTooLarge: "Изображение слишком большое (максимум 3 МБ)",
     imageUnsupportedType: "Неподдерживаемый формат изображения",
     imageLimitReached: "Максимум 4 изображения на сообщение",
+    imageTotalTooLarge: "Общий размер изображений слишком велик (максимум 12 МБ)",
     removeImage: "Удалить изображение",
     noCommandsFound: "Команды не найдены",
     reasoningEffortLow: "Низкий",

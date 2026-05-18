@@ -1959,7 +1959,7 @@ describe("EngineManager", () => {
       adapterA.createSession.mockResolvedValue({ id: "eng-pum", engineMeta: {} } as any);
     });
 
-    it("persists image content as text placeholder", async () => {
+    it("persists image content as a FilePart with inline data URL", async () => {
       await engineManager.sendMessage("conv1", [
         { type: "image", data: "base64abc", mimeType: "image/png" } as any,
       ]);
@@ -1969,11 +1969,14 @@ describe("EngineManager", () => {
       );
       expect(appendCall).toBeDefined();
       const msg = appendCall[1];
-      expect(msg.parts[0].text).toContain("[Image:");
-      expect(msg.parts[0].text).toContain("image/png");
+      const part = msg.parts[0];
+      expect(part.type).toBe("file");
+      expect(part.mime).toBe("image/png");
+      expect(part.filename).toBe("image-1.png");
+      expect(part.url).toBe("data:image/png;base64,base64abc");
     });
 
-    it("uses 'image' as fallback when mimeType is absent", async () => {
+    it("uses 'image/png' as fallback when mimeType is absent", async () => {
       await engineManager.sendMessage("conv1", [
         { type: "image", data: "base64abc" } as any,
       ]);
@@ -1981,7 +1984,35 @@ describe("EngineManager", () => {
       const appendCall = (conversationStore.appendMessage as any).mock.calls.find(
         (c: any[]) => c[0] === "conv1",
       );
-      expect(appendCall[1].parts[0].text).toContain("[Image: image]");
+      const part = appendCall[1].parts[0];
+      expect(part.type).toBe("file");
+      expect(part.mime).toBe("image/png");
+      expect(part.filename).toBe("image-1.png");
+      expect(part.url).toBe("data:image/png;base64,base64abc");
+    });
+
+    it("persists mixed text and multiple images preserving order and indexing image filenames", async () => {
+      await engineManager.sendMessage("conv1", [
+        { type: "text", text: "hi" } as any,
+        { type: "image", data: "AAA", mimeType: "image/jpeg" } as any,
+        { type: "image", data: "BBB", mimeType: "image/webp" } as any,
+      ]);
+
+      const appendCall = (conversationStore.appendMessage as any).mock.calls.find(
+        (c: any[]) => c[0] === "conv1",
+      );
+      const parts = appendCall[1].parts;
+      expect(parts).toHaveLength(3);
+      expect(parts[0].type).toBe("text");
+      expect(parts[0].text).toBe("hi");
+      expect(parts[1].type).toBe("file");
+      expect(parts[1].mime).toBe("image/jpeg");
+      expect(parts[1].filename).toBe("image-1.jpeg");
+      expect(parts[1].url).toBe("data:image/jpeg;base64,AAA");
+      expect(parts[2].type).toBe("file");
+      expect(parts[2].mime).toBe("image/webp");
+      expect(parts[2].filename).toBe("image-2.webp");
+      expect(parts[2].url).toBe("data:image/webp;base64,BBB");
     });
 
     it("does NOT persist when parts array would be empty", async () => {

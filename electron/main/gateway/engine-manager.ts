@@ -627,9 +627,14 @@ export class EngineManager extends EventEmitter {
       const now = Date.now();
       const msgId = timeId("msg");
 
-      // Build parts from prompt content (text + image placeholders)
-      const parts: Array<TextPart> = [];
+      // Build parts from prompt content. Images are persisted inline as
+      // data: URLs inside a FilePart so the webui can render them after
+      // session reload. Per-image size is already bounded upstream
+      // (frontend & Feishu both cap individual images at 3MB), so the
+      // resulting JSON growth is acceptable.
+      const parts: Array<TextPart | FilePart> = [];
       let partIdx = 0;
+      let imageIdx = 0;
       for (const c of content) {
         if (c.type === "text" && c.text) {
           parts.push({
@@ -640,14 +645,16 @@ export class EngineManager extends EventEmitter {
             text: c.text,
           });
         } else if (c.type === "image" && c.data) {
-          // Store image as a text placeholder — base64 data is not persisted
-          // to avoid bloating conversation files
+          const mime = c.mimeType ?? "image/png";
+          const ext = mime.split("/")[1]?.split(/[;+]/)[0] || "png";
           parts.push({
-            type: "text" as const,
+            type: "file" as const,
             id: `${msgId}_p${partIdx++}`,
             messageId: msgId,
             sessionId: conversationId,
-            text: `[Image: ${c.mimeType ?? "image"}]`,
+            mime,
+            filename: `image-${++imageIdx}.${ext}`,
+            url: `data:${mime};base64,${c.data}`,
           });
         }
       }

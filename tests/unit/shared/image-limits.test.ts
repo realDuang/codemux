@@ -106,4 +106,18 @@ describe("mimeToFileExtension", () => {
       expect(mimeToFileExtension(mime)).toBe(expected);
     },
   );
+
+  it.each([
+    "image/..\\..\\secret",
+    "image/../../etc/passwd",
+    "image/png/../evil",
+    "image/png evil",
+    "image/<script>",
+  ])("falls back to png for path-unsafe subtype %j", (mime) => {
+    expect(mimeToFileExtension(mime)).toBe("png");
+  });
+
+  it("normalizes uppercase subtypes (image/PNG → png)", () => {
+    expect(mimeToFileExtension("image/PNG")).toBe("png");
+  });
 });

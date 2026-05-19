@@ -78,11 +78,14 @@ export function isAcceptedImageMime(mime: string): mime is AcceptedImageMimeType
  *
  * Strips compound suffixes (`image/svg+xml` → `svg`) and any media-type
  * parameters (`image/png; q=0.9` → `png`). Falls back to `"png"` when the
- * subtype is missing or empty so callers always have a renderable name.
+ * subtype is missing, empty, or contains characters outside the safe set
+ * `[A-Za-z0-9]` so callers can safely join the result into a filesystem
+ * path without risking path traversal from a malformed MIME string.
  *
  * Single source of truth for the engine adapters and the gateway-side
  * persistence path that materialize image attachments as `FilePart`s.
  */
 export function mimeToFileExtension(mime: string): string {
-  return mime.split("/")[1]?.split(/[;+]/)[0] || "png";
+  const raw = mime.split("/")[1]?.split(/[;+]/)[0]?.trim().toLowerCase() ?? "";
+  return /^[a-z0-9]+$/.test(raw) ? raw : "png";
 }

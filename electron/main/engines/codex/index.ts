@@ -2,6 +2,7 @@ import { mkdtempSync, rmSync, writeFileSync, readFileSync, existsSync } from "fs
 import { tmpdir, homedir } from "os";
 import { join } from "path";
 
+import { mimeToFileExtension } from "../../../../shared/image-limits";
 import type {
   AgentMode,
   AuthMethod,
@@ -493,7 +494,7 @@ export class CodexAdapter extends EngineAdapter {
     },
   ): Promise<UnifiedMessage> {
     const prepared = this.buildPromptInput(content);
-    const userMessage = createUserMessage(sessionId, prepared.displayText);
+    const userMessage = createUserMessage(sessionId, prepared.displayText, Date.now(), prepared.images);
     const directory = normalizeDirectory(options?.directory ?? this.sessionDirectories.get(sessionId) ?? this.threads.get(this.sessionToThread.get(sessionId) ?? "")?.directory ?? "");
     if (!directory) {
       this.cleanupTempDirs(prepared.tempDirs);
@@ -1549,7 +1550,7 @@ export class CodexAdapter extends EngineAdapter {
     return this.threadToSession.get(threadId) ?? toEngineSessionId(threadId);
   }
 
-  private buildPromptInput(content: MessagePromptContent[]): { input: CodexTurnInput[]; tempDirs: string[]; displayText: string } {
+  private buildPromptInput(content: MessagePromptContent[]): { input: CodexTurnInput[]; tempDirs: string[]; displayText: string; images: MessagePromptContent[] } {
     const text = content
       .filter((item): item is { type: "text"; text: string } => item.type === "text" && typeof item.text === "string")
       .map((item) => item.text)
@@ -1578,7 +1579,7 @@ export class CodexAdapter extends EngineAdapter {
         let tempDir: string | null = null;
         try {
           tempDir = mkdtempSync(join(tmpdir(), "codemux-codex-img-"));
-          const extension = imageFileExtensionFromMimeType(image.mimeType);
+          const extension = mimeToFileExtension(image.mimeType ?? "image/png");
           const tempPath = join(tempDir, `image.${extension}`);
           writeFileSync(tempPath, decoded);
           tempDirs.push(tempDir);
@@ -1595,7 +1596,8 @@ export class CodexAdapter extends EngineAdapter {
       return {
         input,
         tempDirs,
-        displayText: text || "(image)",
+        displayText: text,
+        images,
       };
     } catch (error) {
       this.cleanupTempDirs(tempDirs);
@@ -2386,22 +2388,4 @@ function toMillis(value: unknown, fallback: number): number {
     if (Number.isFinite(parsed)) return parsed;
   }
   return fallback;
-}
-
-function imageFileExtensionFromMimeType(mimeType?: string): string {
-  if (typeof mimeType !== "string") return "png";
-
-  const normalized = mimeType.trim().toLowerCase().split(";", 1)[0] ?? "";
-  const subtype = normalized.split("/", 2)[1] ?? "";
-
-  switch (subtype) {
-    case "png":
-    case "jpg":
-    case "jpeg":
-    case "webp":
-    case "gif":
-      return subtype;
-    default:
-      return "png";
-  }
 }

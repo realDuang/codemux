@@ -72,3 +72,17 @@ export function validateImageAddition(
 export function isAcceptedImageMime(mime: string): mime is AcceptedImageMimeType {
   return (ACCEPTED_IMAGE_MIME_TYPES as readonly string[]).includes(mime);
 }
+
+/**
+ * Derive a filename extension from an image MIME type string.
+ *
+ * Strips compound suffixes (`image/svg+xml` → `svg`) and any media-type
+ * parameters (`image/png; q=0.9` → `png`). Falls back to `"png"` when the
+ * subtype is missing or empty so callers always have a renderable name.
+ *
+ * Single source of truth for the engine adapters and the gateway-side
+ * persistence path that materialize image attachments as `FilePart`s.
+ */
+export function mimeToFileExtension(mime: string): string {
+  return mime.split("/")[1]?.split(/[;+]/)[0] || "png";
+}

@@ -9,6 +9,7 @@ import { getDefaultWorkspacePath } from "../services/default-workspace";
 import { engineManagerLog, getDefaultEngineFromSettings } from "../services/logger";
 import { timeId } from "../utils/id-gen";
 import { isDefaultTitle, isPromptFallbackTitle } from "../../../src/lib/session-utils";
+import { mimeToFileExtension } from "../../../shared/image-limits";
 import type {
   EngineType,
   EngineInfo,
@@ -646,7 +647,7 @@ export class EngineManager extends EventEmitter {
           });
         } else if (c.type === "image" && c.data) {
           const mime = c.mimeType ?? "image/png";
-          const ext = mime.split("/")[1]?.split(/[;+]/)[0] || "png";
+          const ext = mimeToFileExtension(mime);
           parts.push({
             type: "file" as const,
             id: `${msgId}_p${partIdx++}`,

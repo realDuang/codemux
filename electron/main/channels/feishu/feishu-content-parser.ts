@@ -51,7 +51,7 @@ export function parseFeishuMessageContent(
 }
 
 function parseTextMessage(contentJson: string): ParsedFeishuMessage {
-  let rawText = "";
+  let rawText: string;
   try {
     const parsed = JSON.parse(contentJson);
     rawText = typeof parsed?.text === "string" ? parsed.text : "";
@@ -84,7 +84,7 @@ interface PostElement {
 }
 
 function parsePostMessage(contentJson: string): ParsedFeishuMessage {
-  let post: { title?: unknown; content?: unknown } | null = null;
+  let post: { title?: unknown; content?: unknown };
   try {
     post = JSON.parse(contentJson) as { title?: unknown; content?: unknown };
   } catch {

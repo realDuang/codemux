@@ -41,7 +41,7 @@ describe("getGlobalServerStateRoot", () => {
 describe("getIsolatedServerStateDir", () => {
   it("composes <repoDir>/.codemux-dev/server", () => {
     expect(getIsolatedServerStateDir("/home/dev/codemux")).toBe(
-      path.join("/home/dev/codemux", ".codemux-dev", "server"),
+      path.join(path.resolve("/home/dev/codemux"), ".codemux-dev", "server"),
     );
   });
 
@@ -53,7 +53,7 @@ describe("getIsolatedServerStateDir", () => {
 
   it("keeps the basename of the repo dir verbatim — no slugging", () => {
     const dir = getIsolatedServerStateDir("/tmp/CodeMux Worktree/X");
-    expect(dir).toBe(path.join("/tmp/CodeMux Worktree/X", ".codemux-dev", "server"));
+    expect(dir).toBe(path.join(path.resolve("/tmp/CodeMux Worktree/X"), ".codemux-dev", "server"));
   });
 });
 
@@ -73,7 +73,7 @@ describe("resolveServerStateDir", () => {
   it("returns the per-repo isolated dir when isolated is true", () => {
     expect(
       resolveServerStateDir({ repoDir: "/home/dev/codemux", isolated: true, env: { XDG_STATE_HOME: "/state" } }),
-    ).toBe(path.join("/home/dev/codemux", ".codemux-dev", "server"));
+    ).toBe(path.join(path.resolve("/home/dev/codemux"), ".codemux-dev", "server"));
   });
 
   it("ignores XDG_STATE_HOME when isolated is true — the dir lives in the repo", () => {

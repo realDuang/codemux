@@ -1,4 +1,5 @@
 import { timeId } from "../../utils/id-gen";
+import { mimeToFileExtension } from "../../../../shared/image-limits";
 import type {
   SessionEvent,
   SessionMetadata,
@@ -342,7 +343,7 @@ export function createUserMessage(
   if (images && images.length > 0) {
     for (const img of images) {
       const mime = img.mimeType || "image/png";
-      const ext = mime.split("/")[1] || "png";
+      const ext = mimeToFileExtension(mime);
       parts.push({
         id: timeId("part"),
         messageId,

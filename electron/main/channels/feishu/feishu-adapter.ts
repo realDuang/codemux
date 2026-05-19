@@ -746,17 +746,37 @@ export class FeishuAdapter extends ChannelAdapter {
       return;
     }
 
-    // 3. Pending selection (number reply) — text only
+    // 3. Pending selection (number reply) — text only.
+    //
+    // The pending state can only be consumed by a *text* reply (the user typing
+    // a number). An image-only message means the user has moved past the
+    // selection prompt without answering it, so clear the stale state to avoid
+    // misinterpreting a later unrelated numeric message as the deferred answer.
     const pending = this.sessionMapper.getPendingSelection(chatId);
-    if (pending && text) {
-      const handled = await this.handlePendingSelection(chatId, text, pending);
-      if (handled) return;
+    if (pending) {
+      if (text) {
+        const handled = await this.handlePendingSelection(chatId, text, pending);
+        if (handled) return;
+      } else {
+        this.sessionMapper.clearPendingSelection(chatId);
+      }
     }
 
     // Build engine-bound content (downloads any images now). If nothing remains
-    // (e.g. all images failed and no text), drop the message.
+    // (e.g. all images failed and no text), notify the user instead of silently
+    // dropping the message — mirroring the user-visible notices the DingTalk,
+    // WeCom, Telegram, and Teams adapters emit on image-rejection paths.
     const content = await this.buildEngineContent(messageId, text, parts);
-    if (content.length === 0) return;
+    if (content.length === 0) {
+      const hadImageOnly = !text && parts.some(p => p.type === "image-key");
+      if (hadImageOnly && this.transport) {
+        await this.transport.sendText(
+          chatId,
+          "⚠️ 图片处理失败，未送达。请检查图片格式（jpeg/png/gif/webp）和大小（单张 ≤ 3 MB，总量 ≤ 12 MB）后重试。",
+        );
+      }
+      return;
+    }
     const queued: QueuedFeishuMessage = { text, content };
 
     // 4. Active temp session (not expired)? → send to engine

@@ -5,6 +5,7 @@ import {
   MAX_IMAGE_SIZE_BYTES,
   MAX_TOTAL_IMAGE_BYTES,
   isAcceptedImageMime,
+  mimeToFileExtension,
   validateImageAddition,
   type ImageCandidate,
 } from "../../../shared/image-limits";
@@ -79,4 +80,30 @@ describe("validateImageAddition", () => {
       expect(validateImageAddition(existing, png(fit))).toEqual({ ok: true });
     }
   });
+});
+
+describe("mimeToFileExtension", () => {
+  it.each([
+    ["image/png", "png"],
+    ["image/jpeg", "jpeg"],
+    ["image/gif", "gif"],
+    ["image/webp", "webp"],
+  ])("returns the subtype for plain MIME %s", (mime, expected) => {
+    expect(mimeToFileExtension(mime)).toBe(expected);
+  });
+
+  it("strips compound suffix (image/svg+xml → svg)", () => {
+    expect(mimeToFileExtension("image/svg+xml")).toBe("svg");
+  });
+
+  it("strips media-type parameters (image/png; q=0.9 → png)", () => {
+    expect(mimeToFileExtension("image/png; q=0.9")).toBe("png");
+  });
+
+  it.each([["png", "png"], ["", "png"], ["image", "png"], ["image/", "png"]])(
+    "falls back to png for malformed input %j",
+    (mime, expected) => {
+      expect(mimeToFileExtension(mime)).toBe(expected);
+    },
+  );
 });

@@ -524,6 +524,46 @@ describe("FeishuAdapter", () => {
       expect(a.cleanupExpiredTempSession).toHaveBeenCalledWith("c1");
       expect(a.createTempSessionAndSend).toHaveBeenCalled();
     });
+
+    it("clears stale pending selection when an image-only message arrives", async () => {
+      const a = makeP2P();
+      a.sessionMapper.getOrCreateP2PChat("c1", "u1");
+      a.sessionMapper.setPendingSelection("c1", { type: "project", projects: [] });
+      a.sessionMapper.setP2PLastProject("c1", {
+        directory: "/d", engineType: "claude", projectId: "p",
+      });
+      a.createTempSessionAndSend = vi.fn(async () => undefined);
+      a.downloadImagesForParts = vi.fn(async () =>
+        new Map([["k1", { data: "AAA", mimeType: "image/png" }]]),
+      );
+      a.handlePendingSelection = vi.fn(async () => true);
+      await a.handleP2PMessage("c1", "", "m1", [{ type: "image-key", imageKey: "k1" }]);
+      expect(a.handlePendingSelection).not.toHaveBeenCalled();
+      expect(a.sessionMapper.getPendingSelection("c1")).toBeUndefined();
+      expect(a.createTempSessionAndSend).toHaveBeenCalled();
+    });
+
+    it("notifies the user when an image-only message has zero successful downloads", async () => {
+      const a = makeP2P();
+      a.sessionMapper.getOrCreateP2PChat("c1", "u1");
+      a.downloadImagesForParts = vi.fn(async () => new Map());
+      a.createTempSessionAndSend = vi.fn(async () => undefined);
+      a.enqueueP2PMessage = vi.fn(async () => undefined);
+      await a.handleP2PMessage("c1", "", "m1", [{ type: "image-key", imageKey: "k1" }]);
+      expect(a.transport.sendText).toHaveBeenCalledWith(
+        "c1",
+        expect.stringContaining("图片处理失败"),
+      );
+      expect(a.createTempSessionAndSend).not.toHaveBeenCalled();
+      expect(a.enqueueP2PMessage).not.toHaveBeenCalled();
+    });
+
+    it("does NOT notify when the empty-content drop is due to an empty text-only message", async () => {
+      const a = makeP2P();
+      a.sessionMapper.getOrCreateP2PChat("c1", "u1");
+      await a.handleP2PMessage("c1", "", "m1", []);
+      expect(a.transport.sendText).not.toHaveBeenCalled();
+    });
   });
 
   // ---------------------------------------------------------------------

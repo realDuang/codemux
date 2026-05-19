@@ -1,6 +1,9 @@
 import { timeId } from "../../utils/id-gen";
 import { inferToolKind, normalizeToolName } from "../../../../src/types/tool-mapping";
+import { mimeToFileExtension } from "../../../../shared/image-limits";
 import type {
+  FilePart,
+  MessagePromptContent,
   NormalizedToolName,
   PermissionDetail,
   PermissionOption,
@@ -660,22 +663,54 @@ export function createUserMessage(
   sessionId: string,
   text: string,
   createdAt = Date.now(),
+  images: MessagePromptContent[] = [],
 ): UnifiedMessage {
   const messageId = timeId("msg");
-  const partId = timeId("part");
+  const parts: Array<TextPart | FilePart> = [];
+  let partIdx = 0;
+  let imageIdx = 0;
+
+  if (text) {
+    parts.push({
+      id: `${messageId}_p${partIdx++}`,
+      messageId,
+      sessionId,
+      type: "text",
+      text,
+    });
+  }
+
+  for (const c of images) {
+    if (c.type !== "image" || !c.data) continue;
+    const mime = c.mimeType || "image/png";
+    const ext = mimeToFileExtension(mime);
+    parts.push({
+      id: `${messageId}_p${partIdx++}`,
+      messageId,
+      sessionId,
+      type: "file",
+      mime,
+      filename: `image-${++imageIdx}.${ext}`,
+      url: `data:${mime};base64,${c.data}`,
+    });
+  }
+
+  if (parts.length === 0) {
+    parts.push({
+      id: `${messageId}_p${partIdx}`,
+      messageId,
+      sessionId,
+      type: "text",
+      text: "",
+    });
+  }
 
   return {
     id: messageId,
     sessionId,
     role: "user",
     time: { created: createdAt, completed: createdAt },
-    parts: [{
-      id: partId,
-      messageId,
-      sessionId,
-      type: "text",
-      text,
-    }],
+    parts,
   };
 }
 

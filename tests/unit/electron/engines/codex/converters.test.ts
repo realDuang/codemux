@@ -2022,6 +2022,55 @@ describe("createUserMessage - default timestamp", () => {
     expect(msg.time.created).toBeGreaterThanOrEqual(before);
     expect(msg.time.created).toBeLessThanOrEqual(after);
   });
+
+  it("renders image attachments as FileParts after the text part", () => {
+    const msg = createUserMessage("sess", "look at this", 1000, [
+      { type: "image", data: "AAAA", mimeType: "image/png" },
+      { type: "image", data: "BBBB", mimeType: "image/jpeg" },
+    ]);
+    expect(msg.parts).toHaveLength(3);
+    expect(msg.parts[0]).toMatchObject({ type: "text", text: "look at this" });
+    expect(msg.parts[1]).toMatchObject({
+      type: "file",
+      mime: "image/png",
+      filename: "image-1.png",
+      url: "data:image/png;base64,AAAA",
+    });
+    expect(msg.parts[2]).toMatchObject({
+      type: "file",
+      mime: "image/jpeg",
+      filename: "image-2.jpeg",
+      url: "data:image/jpeg;base64,BBBB",
+    });
+  });
+
+  it("emits only FileParts for an image-only user message", () => {
+    const msg = createUserMessage("sess", "", 1000, [
+      { type: "image", data: "AAAA", mimeType: "image/webp" },
+    ]);
+    expect(msg.parts).toHaveLength(1);
+    expect(msg.parts[0]).toMatchObject({
+      type: "file",
+      mime: "image/webp",
+      filename: "image-1.webp",
+      url: "data:image/webp;base64,AAAA",
+    });
+  });
+
+  it("falls back to empty text part when text and images are both empty", () => {
+    const msg = createUserMessage("sess", "", 1000, []);
+    expect(msg.parts).toHaveLength(1);
+    expect(msg.parts[0]).toMatchObject({ type: "text", text: "" });
+  });
+
+  it("skips invalid image entries without data", () => {
+    const msg = createUserMessage("sess", "x", 1000, [
+      { type: "image", data: "", mimeType: "image/png" },
+      { type: "text", text: "ignored" },
+    ]);
+    expect(msg.parts).toHaveLength(1);
+    expect(msg.parts[0]).toMatchObject({ type: "text", text: "x" });
+  });
 });
 
 describe("applyHistoricalToolTiming - error status branch", () => {

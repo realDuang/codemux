@@ -29,18 +29,21 @@ LOCAL_URL_FILE="$STATE_DIR/local-url"
 TUNNEL_URL_FILE="$STATE_DIR/tunnel-url"
 XVFB_SCREEN="${CODEMUX_XVFB_SCREEN:-1280x720x24}"
 DEFAULT_TIMEOUT="${CODEMUX_SERVER_START_TIMEOUT:-90}"
+STARTED_LOCAL_URL=""
 
 usage() {
   cat <<'EOF'
 Usage:
   ./scripts/server-dev.sh start [--foreground] [--replace] [--tunnel]
   ./scripts/server-dev.sh stop
+  ./scripts/server-dev.sh restart
   ./scripts/server-dev.sh status
   ./scripts/server-dev.sh logs [app|tunnel]
 
 Examples:
   ./scripts/server-dev.sh start --foreground
   ./scripts/server-dev.sh start --replace --tunnel
+  ./scripts/server-dev.sh restart
   ./scripts/server-dev.sh status
 EOF
 }
@@ -131,7 +134,12 @@ stop_tunnel_via_api() {
   curl -fsS -X POST "$local_url/api/tunnel/stop" >/dev/null 2>&1 || true
 }
 find_repo_processes() {
+  # Exclude this very awk invocation: its argv literally contains
+  # `awk -v repo=$REPO_DIR`, which would otherwise match itself. Filter on
+  # the command-line shape rather than $$ or argv[0] so the check is robust
+  # across awk distributions (gawk/mawk, /usr/bin/awk vs bare awk).
   ps -eo pid=,args= | awk -v repo="$REPO_DIR" '''
+    $0 ~ /awk -v repo=/ { next }
     index($0, repo) > 0 && ($0 ~ /electron-vite dev/ || $0 ~ /node_modules\/electron\/dist\/electron/ || $0 ~ /bun run dev/) {
       print $1
     }
@@ -237,6 +245,43 @@ wait_for_local_url() {
   return 1
 }
 
+# Vite prints its renderer URL before Electron main finishes booting, so getting
+# the URL alone does not guarantee the Electron main process (and the Gateway it
+# hosts) is healthy. Wait for the gateway-ready log line, or bail out early when
+# main logs a fatal startup error or the process group dies.
+#
+# Budget: a smaller cap than wait_for_local_url so the worst-case total wait
+# stays close to DEFAULT_TIMEOUT. Gateway init is fast once main is running.
+wait_for_electron_main_ready() {
+  local pid="$1"
+  local attempts=$(( DEFAULT_TIMEOUT / 6 ))
+  [ "$attempts" -ge 5 ] || attempts=5
+
+  # Fatal-startup patterns we know about. Match the real electron-log format
+  # (`[error] (main) › Failed to start <Auth|Production|Gateway> server`) plus
+  # the Chromium `:FATAL:` marker just in case Electron itself crashes early.
+  local fatal_pattern='\[error\][ ]+\(main\)[^›]*›[ ]+(Failed to start (Auth API|Production|Gateway) server|Failed to initialize channels)|:FATAL:'
+
+  while [ "$attempts" -gt 0 ]; do
+    if [ -f "$APP_LOG" ] && grep -qE 'Gateway server started on port|Gateway server attached to production server' "$APP_LOG" 2>/dev/null; then
+      return 0
+    fi
+
+    if [ -f "$APP_LOG" ] && grep -qE "$fatal_pattern" "$APP_LOG" 2>/dev/null; then
+      return 1
+    fi
+
+    if ! is_process_group_running "$pid"; then
+      return 1
+    fi
+
+    sleep 2
+    attempts=$(( attempts - 1 ))
+  done
+
+  return 1
+}
+
 wait_for_tunnel_url() {
   local pid="$1"
   local attempts=$(( DEFAULT_TIMEOUT / 2 ))
@@ -294,11 +339,10 @@ start_foreground() {
     dbus-run-session -- xvfb-run --auto-servernum --server-args="-screen 0 $XVFB_SCREEN" bun run dev
 }
 
-start_background() {
-  local with_tunnel="$1"
-
+start_managed_app_background() {
   mkdir -p "$STATE_DIR"
-  rm -f "$LOCAL_URL_FILE" "$TUNNEL_URL_FILE"
+  STARTED_LOCAL_URL=""
+  rm -f "$LOCAL_URL_FILE"
   : > "$APP_LOG"
 
   setsid bash -lc "export PATH=\"$HOME/.bun/bin:$HOME/.opencode/bin:\$PATH\"; export CODEMUX_DISABLE_COPILOT_DBUS=1; export CODEMUX_SERVER_MODE=1; export CODEMUX_SERVER_STATE_DIR=\"$STATE_DIR\"; cd \"$REPO_DIR\"; exec dbus-run-session -- xvfb-run --auto-servernum --server-args='-screen 0 $XVFB_SCREEN' bun run dev" > "$APP_LOG" 2>&1 &
@@ -309,34 +353,124 @@ start_background() {
   info "Started CodeMux headless dev (PID $app_pid); waiting for the renderer URL..."
   local local_url
   if ! local_url=$(wait_for_local_url "$app_pid"); then
+    rm -f "$APP_PID_FILE" "$LOCAL_URL_FILE"
     warn "CodeMux exited before the renderer URL was detected. Recent logs:"
     tail -n 40 "$APP_LOG" || true
-    exit 1
+    return 1
   fi
 
+  info "Renderer URL detected ($local_url); waiting for the Electron main process to come up..."
+  if ! wait_for_electron_main_ready "$app_pid"; then
+    kill_process_group_from_file "$APP_PID_FILE"
+    rm -f "$LOCAL_URL_FILE"
+    warn "CodeMux Electron main process did not become ready. Recent logs:"
+    tail -n 60 "$APP_LOG" || true
+    return 1
+  fi
+
+  STARTED_LOCAL_URL="$local_url"
   success "CodeMux dev is ready: $local_url"
   printf '  App log: %s
 ' "$APP_LOG"
   print_auth_status
+}
 
+start_background() {
+  local with_tunnel="$1"
+
+  rm -f "$TUNNEL_URL_FILE"
+
+  if ! start_managed_app_background; then
+    exit 1
+  fi
+
+  local local_url="$STARTED_LOCAL_URL"
   if [ "$with_tunnel" -eq 1 ]; then
-    : > "$TUNNEL_LOG"
-    setsid bash -lc "exec cloudflared tunnel --url '$local_url'" > "$TUNNEL_LOG" 2>&1 &
-    local tunnel_pid=$!
-    printf '%s
+    spawn_managed_tunnel "$local_url"
+  fi
+}
+
+# Spawn a fresh managed cloudflared quick tunnel pointed at $local_url.
+# Truncates the tunnel log, writes a new pid file, waits for the URL.
+spawn_managed_tunnel() {
+  local local_url="$1"
+
+  : > "$TUNNEL_LOG"
+  setsid bash -lc "exec cloudflared tunnel --url '$local_url'" > "$TUNNEL_LOG" 2>&1 &
+  local tunnel_pid=$!
+  printf '%s
 ' "$tunnel_pid" > "$TUNNEL_PID_FILE"
 
-    info "Starting Cloudflare quick tunnel..."
-    local tunnel_url
-    if tunnel_url=$(wait_for_tunnel_url "$tunnel_pid"); then
-      success "Tunnel is ready: $tunnel_url"
-    else
-      warn "Tunnel started, but the quick-tunnel URL was not detected yet."
-    fi
-    printf '  Tunnel log: %s
+  info "Starting Cloudflare quick tunnel..."
+  local tunnel_url
+  if tunnel_url=$(wait_for_tunnel_url "$tunnel_pid"); then
+    success "Tunnel is ready: $tunnel_url"
+  else
+    warn "Tunnel started, but the quick-tunnel URL was not detected yet."
+  fi
+  printf '  Tunnel log: %s
 ' "$TUNNEL_LOG"
-    printf '  Review access requests from this terminal: bun run server:access-requests
+  printf '  Review access requests from this terminal: bun run server:access-requests
 '
+}
+
+restart_app() {
+  cleanup_stale_pid_file "$APP_PID_FILE"
+  cleanup_stale_pid_file "$TUNNEL_PID_FILE"
+
+  local app_pid tunnel_pid previous_local_url tunnel_url repo_pids
+  app_pid=$(read_pid_file "$APP_PID_FILE" 2>/dev/null || true)
+  tunnel_pid=$(read_pid_file "$TUNNEL_PID_FILE" 2>/dev/null || true)
+  previous_local_url=$(read_local_url 2>/dev/null || true)
+  tunnel_url=$(read_tunnel_url 2>/dev/null || true)
+  repo_pids=$(find_repo_processes || true)
+
+  if [ -z "$app_pid" ]; then
+    if [ -n "$repo_pids" ]; then
+      fail "Found CodeMux dev processes without managed state. Run bun run server:down first."
+    fi
+    warn "No managed CodeMux app process was running. Starting a fresh instance instead."
+  else
+    info "Restarting CodeMux headless dev (PID $app_pid)..."
+    kill_process_group_from_file "$APP_PID_FILE"
+  fi
+
+  rm -f "$LOCAL_URL_FILE"
+
+  if ! start_managed_app_background; then
+    if [ -n "$tunnel_pid" ] && is_process_group_running "$tunnel_pid"; then
+      warn "Managed Cloudflare tunnel is still running."
+      [ -n "$tunnel_url" ] && printf '  Tunnel URL: %s\n' "$tunnel_url"
+      printf '  Tunnel log: %s\n' "$TUNNEL_LOG"
+    fi
+    exit 1
+  fi
+
+  local restarted_local_url="$STARTED_LOCAL_URL"
+  if [ -n "$tunnel_pid" ] && is_process_group_running "$tunnel_pid"; then
+    if [ -n "$previous_local_url" ] && [ "$previous_local_url" != "$restarted_local_url" ]; then
+      # The whole point of `restart` is URL stability, but cloudflared can't
+      # be repointed without restart. Soft-warn-and-succeed leaves the user
+      # with a fresh app and a stale tunnel mapping to a dead port — the
+      # bookmarked public URL silently 502s. Loudly rotate instead: tear the
+      # stale tunnel down and spawn a fresh one against the new local port.
+      warn "App restarted on $restarted_local_url, but the preserved tunnel targets $previous_local_url."
+      info "Rotating Cloudflare quick tunnel to follow the new local URL (public URL will change)..."
+      kill_process_group_from_file "$TUNNEL_PID_FILE"
+      rm -f "$TUNNEL_URL_FILE"
+      spawn_managed_tunnel "$restarted_local_url"
+    else
+      success "Preserved managed Cloudflare tunnel."
+      [ -n "$tunnel_url" ] && printf '  Tunnel URL: %s\n' "$tunnel_url"
+      printf '  Tunnel log: %s\n' "$TUNNEL_LOG"
+      printf '  Public URL should stay the same while the existing tunnel process remains healthy.\n'
+    fi
+  else
+    warn "No managed Cloudflare tunnel was running. Restart completed without public tunnel."
+    rm -f "$TUNNEL_URL_FILE"
+    if [ -f "$TUNNEL_LOG" ]; then
+      : > "$TUNNEL_LOG"
+    fi
   fi
 }
 
@@ -495,6 +629,11 @@ main() {
     stop)
       [ "$#" -eq 0 ] || fail "stop does not accept extra arguments"
       stop_all
+      ;;
+    restart)
+      [ "$#" -eq 0 ] || fail "restart does not accept extra arguments"
+      ensure_repo_ready
+      restart_app
       ;;
     status)
       [ "$#" -eq 0 ] || fail "status does not accept extra arguments"

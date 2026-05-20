@@ -1,7 +1,7 @@
 import { spawn, ChildProcess } from "child_process";
 import fs from "fs";
-import os from "os";
 import path from "path";
+import { resolveServerStateDir } from "./state-dir";
 
 interface TunnelInfo {
   url: string;
@@ -21,9 +21,25 @@ class TunnelManager {
     url: "",
     status: "stopped",
   };
+  private loggedStateDir = false;
 
   private getStateDir(): string {
-    return path.join(process.env.XDG_STATE_HOME || path.join(os.homedir(), ".local", "state"), "codemux-server");
+    const envOverride = process.env.CODEMUX_SERVER_STATE_DIR;
+    if (envOverride && envOverride.length > 0) {
+      this.logStateDirOnce(envOverride, "CODEMUX_SERVER_STATE_DIR");
+      return envOverride;
+    }
+
+    const isolated = process.env.CODEMUX_DEV_ISOLATED === "1";
+    const dir = resolveServerStateDir({ repoDir: process.cwd(), isolated });
+    this.logStateDirOnce(dir, isolated ? "isolated <cwd>/.codemux-dev/server" : "global <XDG_STATE_HOME>/codemux-server");
+    return dir;
+  }
+
+  private logStateDirOnce(dir: string, source: string): void {
+    if (this.loggedStateDir) return;
+    this.loggedStateDir = true;
+    console.log(`[Tunnel] External tunnel state dir resolved to ${dir} (via ${source})`);
   }
 
   private getExternalTunnelPidFile(): string {

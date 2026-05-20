@@ -3,7 +3,24 @@ set -euo pipefail
 
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 REPO_DIR=$(cd -- "${SCRIPT_DIR}/.." && pwd)
-STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/codemux-server"
+
+export PATH="$HOME/.bun/bin:$HOME/.opencode/bin:$PATH"
+
+# State dir is resolved by scripts/state-dir.ts so this script,
+# scripts/tunnel-manager.ts, and any future consumer share one implementation.
+#
+# Two modes, decided by `CODEMUX_DEV_ISOLATED`:
+#   - unset / "0": machine-global single-instance dir
+#     (`<XDG_STATE_HOME>/codemux-server/`). Starting `server:up` in worktree A
+#     and checking `server:status` from worktree B both see the same server.
+#   - "1": per-repo isolated dir (`<repoDir>/.codemux-dev/server/`). Mirrors
+#     `dev:isolated`'s semantics — used by the `server:dev:isolated` script,
+#     which spawns this wrapper after allocating a port offset.
+command -v bun >/dev/null 2>&1 || {
+  printf '[31m[x][0m Missing required command: bun\n' >&2
+  exit 1
+}
+STATE_DIR=$(bun "$SCRIPT_DIR/state-dir.ts" "$REPO_DIR")
 APP_LOG="$STATE_DIR/dev.log"
 TUNNEL_LOG="$STATE_DIR/tunnel.log"
 APP_PID_FILE="$STATE_DIR/dev.pid"
@@ -12,8 +29,6 @@ LOCAL_URL_FILE="$STATE_DIR/local-url"
 TUNNEL_URL_FILE="$STATE_DIR/tunnel-url"
 XVFB_SCREEN="${CODEMUX_XVFB_SCREEN:-1280x720x24}"
 DEFAULT_TIMEOUT="${CODEMUX_SERVER_START_TIMEOUT:-90}"
-
-export PATH="$HOME/.bun/bin:$HOME/.opencode/bin:$PATH"
 
 usage() {
   cat <<'EOF'
@@ -275,7 +290,7 @@ start_foreground() {
   printf '    bun run server:access-requests
 '
   cd "$REPO_DIR"
-  exec env CODEMUX_DISABLE_COPILOT_DBUS=1 CODEMUX_SERVER_MODE=1 \
+  exec env CODEMUX_DISABLE_COPILOT_DBUS=1 CODEMUX_SERVER_MODE=1 CODEMUX_SERVER_STATE_DIR="$STATE_DIR" \
     dbus-run-session -- xvfb-run --auto-servernum --server-args="-screen 0 $XVFB_SCREEN" bun run dev
 }
 
@@ -286,7 +301,7 @@ start_background() {
   rm -f "$LOCAL_URL_FILE" "$TUNNEL_URL_FILE"
   : > "$APP_LOG"
 
-  setsid bash -lc "export PATH=\"$HOME/.bun/bin:$HOME/.opencode/bin:\$PATH\"; export CODEMUX_DISABLE_COPILOT_DBUS=1; export CODEMUX_SERVER_MODE=1; cd \"$REPO_DIR\"; exec dbus-run-session -- xvfb-run --auto-servernum --server-args='-screen 0 $XVFB_SCREEN' bun run dev" > "$APP_LOG" 2>&1 &
+  setsid bash -lc "export PATH=\"$HOME/.bun/bin:$HOME/.opencode/bin:\$PATH\"; export CODEMUX_DISABLE_COPILOT_DBUS=1; export CODEMUX_SERVER_MODE=1; export CODEMUX_SERVER_STATE_DIR=\"$STATE_DIR\"; cd \"$REPO_DIR\"; exec dbus-run-session -- xvfb-run --auto-servernum --server-args='-screen 0 $XVFB_SCREEN' bun run dev" > "$APP_LOG" 2>&1 &
   local app_pid=$!
   printf '%s
 ' "$app_pid" > "$APP_PID_FILE"

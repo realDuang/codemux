@@ -39,6 +39,13 @@ elif [ "\${1:-}" = "scripts/server-auth.ts" ] && [ "\${2:-}" = "access-requests"
   else
     echo "[!] No pending requests."
   fi
+elif [[ "\${1:-}" == */state-dir.ts ]]; then
+  # Mirror getGlobalServerStateRoot() in scripts/state-dir.ts for the
+  # non-isolated path that server-dev.sh uses. Keep this in sync with the
+  # production implementation: XDG_STATE_HOME wins, otherwise fall back to
+  # \$HOME/.local/state, with "codemux-server" appended.
+  base="\${XDG_STATE_HOME:-\${HOME}/.local/state}"
+  printf '%s/codemux-server' "\$base"
 else
   echo "Unexpected bun args: $*" >&2
   exit 1

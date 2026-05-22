@@ -146,10 +146,25 @@ function proxyToWebhook(
   });
 }
 
+interface ChannelManagerLike {
+  listChannels(): unknown[];
+  getConfig(type: string): unknown | undefined;
+  updateConfig(type: string, updates: Record<string, unknown>): Promise<void>;
+  startChannel(type: string): Promise<void>;
+  stopChannel(type: string): Promise<void>;
+  getStatus(type: string): unknown | undefined;
+}
+
 class ProductionServer {
   private server: http.Server | null = null;
   private port: number = WEB_PORT;
   private staticRoot: string = "";
+  private channelManager: ChannelManagerLike | null = null;
+
+  /** Inject the ChannelManager so /api/channels/* routes work from web clients. */
+  setChannelManager(channelManager: ChannelManagerLike): void {
+    this.channelManager = channelManager;
+  }
 
   getPort(): number {
     return this.port;
@@ -305,6 +320,25 @@ class ProductionServer {
     // ========================================================================
     if (pathname === "/api/messages" || pathname.startsWith("/webhook/")) {
       proxyToWebhook(req, res, pathname + url.search);
+      return;
+    }
+
+    // ========================================================================
+    // Channel API Routes (auth-required) — required for web/remote clients
+    // that can't use Electron IPC.
+    // ========================================================================
+    if (pathname === "/api/channels" || pathname.startsWith("/api/channels/")) {
+      if (this.channelManager) {
+        const handled = await handleChannelRoutes(
+          req,
+          res,
+          pathname,
+          deviceStore,
+          this.channelManager,
+        );
+        if (handled) return;
+      }
+      sendJson(res, { error: "Not found" }, 404);
       return;
     }
 

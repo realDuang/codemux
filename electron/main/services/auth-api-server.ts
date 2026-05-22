@@ -6,6 +6,18 @@ import { handleAuthRoutes, handleLogRoutes, handleSettingsRoutes } from "../../.
 import { handleChannelRoutes } from "../../../shared/channel-route-handlers";
 import { AUTH_API_PORT } from "../../../shared/ports";
 
+// Minimal interface so we don't tie this module to the concrete ChannelManager
+// class (avoids circular imports). Matches the shape required by
+// handleChannelRoutes.
+interface ChannelManagerLike {
+  listChannels(): unknown[];
+  getConfig(type: string): unknown | undefined;
+  updateConfig(type: string, updates: Record<string, unknown>): Promise<void>;
+  startChannel(type: string): Promise<void>;
+  stopChannel(type: string): Promise<void>;
+  getStatus(type: string): unknown | undefined;
+}
+
 // ============================================================================
 // Internal Auth API Server
 // This server handles all device/auth related API requests.
@@ -15,6 +27,12 @@ import { AUTH_API_PORT } from "../../../shared/ports";
 
 class AuthApiServer {
   private server: http.Server | null = null;
+  private channelManager: ChannelManagerLike | null = null;
+
+  /** Inject the ChannelManager so /api/channels/* routes work from web clients. */
+  setChannelManager(channelManager: ChannelManagerLike): void {
+    this.channelManager = channelManager;
+  }
 
   start(): Promise<void> {
     return new Promise((resolve, reject) => {
@@ -90,6 +108,19 @@ class AuthApiServer {
       saveSettings,
     });
     if (settingsHandled) return;
+
+    // Channel routes (auth-required) — required for web/remote clients that
+    // can't use Electron IPC.
+    if (this.channelManager) {
+      const channelHandled = await handleChannelRoutes(
+        req,
+        res,
+        pathname,
+        deviceStore,
+        this.channelManager,
+      );
+      if (channelHandled) return;
+    }
 
     // Not found
     sendJson(res, { error: "Not found" }, 404);

@@ -3,20 +3,8 @@ import { deviceStore } from "./device-store";
 import { authLog, getLogFilePath, getFileLogLevel, setFileLogLevel, loadSettings, saveSettings } from "./logger";
 import { sendJson } from "../../../shared/http-utils";
 import { handleAuthRoutes, handleLogRoutes, handleSettingsRoutes } from "../../../shared/auth-route-handlers";
-import { handleChannelRoutes } from "../../../shared/channel-route-handlers";
+import { handleChannelRoutes, type ChannelManagerRoutes } from "../../../shared/channel-route-handlers";
 import { AUTH_API_PORT } from "../../../shared/ports";
-
-// Minimal interface so we don't tie this module to the concrete ChannelManager
-// class (avoids circular imports). Matches the shape required by
-// handleChannelRoutes.
-interface ChannelManagerLike {
-  listChannels(): unknown[];
-  getConfig(type: string): unknown | undefined;
-  updateConfig(type: string, updates: Record<string, unknown>): Promise<void>;
-  startChannel(type: string): Promise<void>;
-  stopChannel(type: string): Promise<void>;
-  getStatus(type: string): unknown | undefined;
-}
 
 // ============================================================================
 // Internal Auth API Server
@@ -27,10 +15,10 @@ interface ChannelManagerLike {
 
 class AuthApiServer {
   private server: http.Server | null = null;
-  private channelManager: ChannelManagerLike | null = null;
+  private channelManager: ChannelManagerRoutes | null = null;
 
   /** Inject the ChannelManager so /api/channels/* routes work from web clients. */
-  setChannelManager(channelManager: ChannelManagerLike): void {
+  setChannelManager(channelManager: ChannelManagerRoutes): void {
     this.channelManager = channelManager;
   }
 
@@ -111,7 +99,15 @@ class AuthApiServer {
 
     // Channel routes (auth-required) — required for web/remote clients that
     // can't use Electron IPC.
-    if (this.channelManager) {
+    if (pathname === "/api/channels" || pathname.startsWith("/api/channels/")) {
+      if (!this.channelManager) {
+        sendJson(
+          res,
+          { error: "ChannelManager not configured on auth-api server" },
+          503,
+        );
+        return;
+      }
       const channelHandled = await handleChannelRoutes(
         req,
         res,

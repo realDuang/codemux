@@ -46,7 +46,7 @@ export function FeishuConfigModal(props: FeishuConfigModalProps) {
       props.onClose();
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      setSaveError(message || "Save failed");
+      setSaveError(message || t().channel.saveFailed);
     } finally {
       setSaving(false);
     }

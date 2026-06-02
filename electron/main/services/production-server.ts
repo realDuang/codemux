@@ -6,7 +6,7 @@ import { deviceStore } from "./device-store";
 import { prodServerLog, getLogFilePath, getFileLogLevel, setFileLogLevel, loadSettings, saveSettings } from "./logger";
 import { sendJson, getClientIp, isLocalhost, getLocalIp } from "../../../shared/http-utils";
 import { handleAuthRoutes, handleLogRoutes, handleSettingsRoutes } from "../../../shared/auth-route-handlers";
-import { handleChannelRoutes } from "../../../shared/channel-route-handlers";
+import { handleChannelRoutes, type ChannelManagerRoutes } from "../../../shared/channel-route-handlers";
 import { WEB_PORT, OPENCODE_PORT, WEBHOOK_PORT } from "../../../shared/ports";
 
 // ============================================================================
@@ -146,23 +146,14 @@ function proxyToWebhook(
   });
 }
 
-interface ChannelManagerLike {
-  listChannels(): unknown[];
-  getConfig(type: string): unknown | undefined;
-  updateConfig(type: string, updates: Record<string, unknown>): Promise<void>;
-  startChannel(type: string): Promise<void>;
-  stopChannel(type: string): Promise<void>;
-  getStatus(type: string): unknown | undefined;
-}
-
 class ProductionServer {
   private server: http.Server | null = null;
   private port: number = WEB_PORT;
   private staticRoot: string = "";
-  private channelManager: ChannelManagerLike | null = null;
+  private channelManager: ChannelManagerRoutes | null = null;
 
   /** Inject the ChannelManager so /api/channels/* routes work from web clients. */
-  setChannelManager(channelManager: ChannelManagerLike): void {
+  setChannelManager(channelManager: ChannelManagerRoutes): void {
     this.channelManager = channelManager;
   }
 
@@ -328,16 +319,22 @@ class ProductionServer {
     // that can't use Electron IPC.
     // ========================================================================
     if (pathname === "/api/channels" || pathname.startsWith("/api/channels/")) {
-      if (this.channelManager) {
-        const handled = await handleChannelRoutes(
-          req,
+      if (!this.channelManager) {
+        sendJson(
           res,
-          pathname,
-          deviceStore,
-          this.channelManager,
+          { error: "ChannelManager not configured on production server" },
+          503,
         );
-        if (handled) return;
+        return;
       }
+      const handled = await handleChannelRoutes(
+        req,
+        res,
+        pathname,
+        deviceStore,
+        this.channelManager,
+      );
+      if (handled) return;
       sendJson(res, { error: "Not found" }, 404);
       return;
     }

@@ -484,6 +484,7 @@ export const zh: LocaleDict = {
     secretConfiguredHint: "已配置 — 留空保持不变",
     save: "保存",
     saving: "保存中...",
+    saveFailed: "保存失败",
     directConnect: "直连",
     directConnectBadge: "出站连接",
     webhookConnect: "需要公网访问",

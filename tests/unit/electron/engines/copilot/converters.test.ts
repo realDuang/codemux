@@ -967,7 +967,7 @@ describe('copilot-converters', () => {
         modifiedTime: new Date('2025-01-01T01:00:00Z'),
         isRemote: false,
         context: {
-          cwd: 'C:\\Users\\test\\project',
+          workingDirectory: 'C:\\Users\\test\\project',
           repository: 'repo',
           branch: 'main',
           gitRoot: '/git',
@@ -994,10 +994,10 @@ describe('copilot-converters', () => {
 
     // --- Branch coverage additions ---
 
-    it('falls back to homedir when context has no cwd property', () => {
+    it('falls back to homedir when context has no workingDirectory property', () => {
       const meta = {
         sessionId: 's3',
-        summary: 'No cwd',
+        summary: 'No workingDirectory',
         startTime: new Date('2025-03-01'),
         modifiedTime: new Date('2025-03-02'),
         isRemote: true,
@@ -1026,14 +1026,14 @@ describe('copilot-converters', () => {
       expect(session.engineMeta?.gitRoot).toBeUndefined();
     });
 
-    it('normalizes Windows backslash paths in cwd to forward slashes', () => {
+    it('normalizes Windows backslash paths in workingDirectory to forward slashes', () => {
       const meta = {
         sessionId: 's5',
         summary: 'Windows path',
         startTime: new Date('2025-05-01'),
         modifiedTime: new Date('2025-05-02'),
         isRemote: false,
-        context: { cwd: 'D:\\Projects\\my-app\\src' },
+        context: { workingDirectory: 'D:\\Projects\\my-app\\src' },
       } as any;
       const session = metadataToSession('copilot', meta);
       expect(session.directory).toBe('D:/Projects/my-app/src');

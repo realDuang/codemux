@@ -506,8 +506,8 @@ export function sdkModelToUnified(engineType: EngineType, model: ModelInfo): Uni
 }
 
 export function metadataToSession(engineType: EngineType, meta: SessionMetadata): UnifiedSession {
-  const directory = meta.context?.cwd
-    ? meta.context.cwd.replaceAll("\\", "/")
+  const directory = meta.context?.workingDirectory
+    ? meta.context.workingDirectory.replaceAll("\\", "/")
     : homedir().replaceAll("\\", "/");
 
   return {

@@ -7,7 +7,7 @@ import { join } from "path";
 import { tmpdir } from "os";
 
 import { timeId } from "../../utils/id-gen";
-import { CopilotClient, CopilotSession } from "@github/copilot-sdk";
+import { CopilotClient, CopilotSession, RuntimeConnection } from "@github/copilot-sdk";
 import { isPromptFallbackTitle } from "../../../../src/lib/session-utils";
 import type {
   SessionEvent,
@@ -246,10 +246,7 @@ export class CopilotSdkAdapter extends EngineAdapter {
       const env = buildCopilotSubprocessEnv(this.options?.env);
 
       this.client = new CopilotClient({
-        useStdio: true,
-        autoRestart: true,
-        autoStart: true,
-        cliPath,
+        connection: RuntimeConnection.forStdio({ path: cliPath }),
         env,
       });
 
@@ -390,6 +387,12 @@ export class CopilotSdkAdapter extends EngineAdapter {
       onPermissionRequest: (req, ctx) => this.handlePermissionRequest(req, ctx),
       onUserInputRequest: (req, ctx) => this.handleUserInputRequest(req as any, ctx),
       systemMessage: { mode: "append" as const, content: CODEMUX_IDENTITY_PROMPT },
+      // Enable skill loading from disk (~/.copilot/skills, ~/.agents/skills,
+      // ~/.claude/skills, plus project-level .copilot/skills via discovery).
+      // SDK 1.0 defaults both to false, which would hide all user-installed
+      // skills from the slash command list.
+      enableSkills: true,
+      enableConfigDiscovery: true,
     };
 
     const sdkSession = await this.client!.createSession(config);
@@ -410,13 +413,13 @@ export class CopilotSdkAdapter extends EngineAdapter {
 
     this.emit("session.created", { session });
 
-    // Fetch initial skills/commands for slash command support.
-    // Await the fetch to ensure cachedCommands is populated before
+    // Fetch initial commands (builtins + skills + client) for slash command
+    // support. Await the fetch to ensure cachedCommands is populated before
     // the frontend calls listCommands() shortly after session creation.
     try {
-      await this.fetchSkills(sdkSession);
+      await this.fetchCommands(sdkSession);
     } catch (err) {
-      copilotLog.warn(`Failed to fetch initial skills for session ${sessionId}:`, err);
+      copilotLog.warn(`Failed to fetch initial commands for session ${sessionId}:`, err);
     }
 
     return session;
@@ -473,7 +476,20 @@ export class CopilotSdkAdapter extends EngineAdapter {
   async sendMessage(
     sessionId: string,
     content: MessagePromptContent[],
-    options?: { mode?: string; modelId?: string; reasoningEffort?: ReasoningEffort | null; directory?: string },
+    options?: {
+      mode?: string;
+      modelId?: string;
+      reasoningEffort?: ReasoningEffort | null;
+      directory?: string;
+      /**
+       * Internal flag: when true, skip creating and emitting the user message
+       * for this send. Used by invokeCommand to avoid duplicate user bubbles
+       * when a skill expands into an agent-prompt that is dispatched via
+       * sendMessage but whose original "/cmd args" was already persisted by
+       * engine-manager.
+       */
+      _internalSuppressUserEmit?: boolean;
+    },
   ): Promise<UnifiedMessage> {
     const session = await this.ensureActiveSession(sessionId, options?.directory);
     const now = Date.now();
@@ -615,17 +631,19 @@ export class CopilotSdkAdapter extends EngineAdapter {
 
     // --- Normal path: session is idle ---
 
-    const userMessage = createUserMessage(
-      sessionId,
-      promptText,
-      now,
-      imageContents.map((c) => ({
-        data: (c as { data: string }).data,
-        mimeType: (c as { mimeType?: string }).mimeType ?? "image/png",
-      })),
-    );
-    this.appendMessageToHistory(sessionId, userMessage);
-    this.emit("message.updated", { sessionId, message: userMessage });
+    if (!options?._internalSuppressUserEmit) {
+      const userMessage = createUserMessage(
+        sessionId,
+        promptText,
+        now,
+        imageContents.map((c) => ({
+          data: (c as { data: string }).data,
+          mimeType: (c as { mimeType?: string }).mimeType ?? "image/png",
+        })),
+      );
+      this.appendMessageToHistory(sessionId, userMessage);
+      this.emit("message.updated", { sessionId, message: userMessage });
+    }
 
     const messageId = timeId("msg");
     const buffer: MessageBuffer = {
@@ -724,7 +742,7 @@ export class CopilotSdkAdapter extends EngineAdapter {
 
     try {
       const session = await this.ensureActiveSession(sessionId);
-      const events = await session.getMessages();
+      const events = await session.getEvents();
       const messages = convertEventsToMessages(sessionId, events);
       this.messageHistory.set(sessionId, messages);
       return messages;
@@ -746,7 +764,7 @@ export class CopilotSdkAdapter extends EngineAdapter {
         onPermissionRequest: userNotAvailablePermission,
       };
       session = await this.client!.resumeSession(engineSessionId, config);
-      const events = await session.getMessages();
+      const events = await session.getEvents();
       copilotLog.info(
         `[Copilot] getHistoricalMessages(${engineSessionId}): ${events.length} events`,
       );
@@ -898,31 +916,60 @@ export class CopilotSdkAdapter extends EngineAdapter {
 
   // --- Slash Commands / Skills ---
 
-  private async fetchSkills(session: CopilotSession): Promise<void> {
+  /**
+   * Fetch the full list of slash commands (builtins, skills, client commands)
+   * from the active session and cache them. Falls back to merging
+   * `skills.list()` for any user-installed skill that `commands.list()` may
+   * not have surfaced (e.g. disabled / non-user-invocable).
+   */
+  private async fetchCommands(session: CopilotSession): Promise<void> {
     try {
-      copilotLog.debug(`[Copilot] fetchSkills: calling session.rpc.skills.list()...`);
-      const result = await session.rpc.skills.list();
-      copilotLog.debug(`[Copilot] fetchSkills: received ${Array.isArray((result as any)?.skills ?? result) ? ((result as any)?.skills ?? result).length : 0} skills`);
-      const skills = (result as any)?.skills ?? (result as any) ?? [];
-      if (Array.isArray(skills)) {
-        this.cachedCommands = skills
-          .filter((s: any) => s.userInvocable !== false)
-          .map((s: any) => ({
-            name: s.name,
-            description: s.description ?? "",
-            source: s.source,
-            userInvocable: s.userInvocable,
-          }));
-        copilotLog.info(`[Copilot] fetchSkills: cached ${this.cachedCommands.length} commands: ${this.cachedCommands.map(c => c.name).join(", ")}`);
-        this.emit("commands.changed", {
-          engineType: this.engineType,
-          commands: this.cachedCommands,
-        });
-      } else {
-        copilotLog.warn(`[Copilot] fetchSkills: skills is not an array: ${typeof skills}`);
+      try {
+        await session.rpc.skills.ensureLoaded();
+      } catch (err) {
+        copilotLog.debug(`[Copilot] skills.ensureLoaded failed (continuing):`, err);
       }
+
+      const result = await session.rpc.commands.list({
+        includeBuiltins: true,
+        includeSkills: true,
+        includeClientCommands: true,
+      });
+      const commands = result?.commands ?? [];
+      const merged = new Map<string, EngineCommand>();
+      for (const cmd of commands) {
+        merged.set(cmd.name, {
+          name: cmd.name,
+          description: cmd.description ?? "",
+          argumentHint: cmd.input?.hint,
+        });
+      }
+
+      try {
+        const skillResult = await session.rpc.skills.list();
+        const skills = skillResult?.skills ?? [];
+        for (const skill of skills) {
+          if (skill.source === "builtin") continue;
+          if (merged.has(skill.name)) continue;
+          merged.set(skill.name, {
+            name: skill.name,
+            description: skill.description ?? "",
+          });
+        }
+      } catch (err) {
+        copilotLog.debug(`[Copilot] skills.list fallback failed:`, err);
+      }
+
+      this.cachedCommands = Array.from(merged.values());
+      copilotLog.info(
+        `[Copilot] fetchCommands: cached ${this.cachedCommands.length} commands`,
+      );
+      this.emit("commands.changed", {
+        engineType: this.engineType,
+        commands: this.cachedCommands,
+      });
     } catch (err) {
-      copilotLog.warn(`[Copilot] fetchSkills FAILED:`, err);
+      copilotLog.warn(`[Copilot] fetchCommands FAILED:`, err);
     }
   }
 
@@ -937,13 +984,13 @@ export class CopilotSdkAdapter extends EngineAdapter {
     if (sessionId) {
       let session = this.activeSessions.get(sessionId);
       if (!session) {
-        // Session not active yet — try to activate it so we can fetch skills.
+        // Session not active yet — try to activate it so we can fetch commands.
         // Use the directory passed from engine-manager (from conversationStore),
         // falling back to the in-memory sessionDirectories map.
         const dir = directory || this.sessionDirectories.get(sessionId);
         if (dir) {
           try {
-            copilotLog.info(`[Copilot] listCommands: activating session ${sessionId} to fetch skills`);
+            copilotLog.info(`[Copilot] listCommands: activating session ${sessionId} to fetch commands`);
             session = await this.ensureActiveSession(sessionId, dir);
           } catch (err) {
             copilotLog.warn(`[Copilot] listCommands: failed to activate session:`, err);
@@ -952,9 +999,9 @@ export class CopilotSdkAdapter extends EngineAdapter {
       }
       if (session) {
         try {
-          await this.fetchSkills(session);
+          await this.fetchCommands(session);
         } catch (err) {
-          copilotLog.warn(`[Copilot] Failed to fetch skills on listCommands:`, err);
+          copilotLog.warn(`[Copilot] Failed to fetch commands on listCommands:`, err);
         }
       }
     } else {
@@ -962,9 +1009,9 @@ export class CopilotSdkAdapter extends EngineAdapter {
       const firstSession = this.activeSessions.values().next().value;
       if (firstSession) {
         try {
-          await this.fetchSkills(firstSession);
+          await this.fetchCommands(firstSession);
         } catch (err) {
-          copilotLog.warn(`[Copilot] Failed to fetch skills on listCommands (fallback):`, err);
+          copilotLog.warn(`[Copilot] Failed to fetch commands on listCommands (fallback):`, err);
         }
       }
     }
@@ -978,16 +1025,109 @@ export class CopilotSdkAdapter extends EngineAdapter {
     args: string,
     options?: { mode?: string; modelId?: string; directory?: string },
   ): Promise<CommandInvokeResult> {
-    // Send the command as text — Copilot CLI intercepts /command prefix.
-    // The CLI emits a command.execute event which we acknowledge via
-    // handlePendingCommand() in handleCommandExecute().
-    const commandText = `/${commandName}${args ? ` ${args}` : ""}`;
-    const message = await this.sendMessage(
+    const session = await this.ensureActiveSession(sessionId, options?.directory);
+
+    const tryInvoke = async () =>
+      session.rpc.commands.invoke({
+        name: commandName,
+        input: args ? args : undefined,
+      });
+
+    let result;
+    try {
+      result = await tryInvoke();
+    } catch (err) {
+      copilotLog.warn(
+        `[Copilot][${sessionId}] commands.invoke failed for /${commandName}:`,
+        err,
+      );
+      // If the skill exists but is disabled, SDK 1.0 rejects invoke().
+      // The user explicitly typed /command-name, so treat it as an implicit
+      // session-scoped enable and retry once.
+      let enabledForRetry = false;
+      try {
+        await session.rpc.skills.enable({ name: commandName });
+        enabledForRetry = true;
+      } catch (enableErr) {
+        copilotLog.debug(
+          `[Copilot][${sessionId}] auto-enable of ${commandName} failed:`,
+          enableErr,
+        );
+      }
+      if (enabledForRetry) {
+        try {
+          result = await tryInvoke();
+        } catch (retryErr) {
+          copilotLog.warn(
+            `[Copilot][${sessionId}] commands.invoke retry failed for /${commandName}:`,
+            retryErr,
+          );
+          return { handledAsCommand: false };
+        }
+      } else {
+        return { handledAsCommand: false };
+      }
+    }
+
+    copilotLog.debug(`[Copilot][${sessionId}] commands.invoke /${commandName} → ${result.kind}`);
+
+    switch (result.kind) {
+      case "text":
+      case "completed": {
+        // SDK fully handled the command — emit an assistant message displaying
+        // the textual output without going through the agent loop.
+        const text = result.kind === "text" ? result.text : (result.message ?? "");
+        const message = this.emitLocalAssistantMessage(sessionId, text);
+        return { handledAsCommand: true, message };
+      }
+      case "agent-prompt": {
+        // Skill expanded into a prompt for the agent. Send the expanded prompt
+        // through the normal turn flow but suppress the duplicated user
+        // message — engine-manager already persisted the original "/cmd args".
+        const message = await this.sendMessage(
+          sessionId,
+          [{ type: "text", text: result.prompt }],
+          { ...options, _internalSuppressUserEmit: true } as any,
+        );
+        return { handledAsCommand: true, message };
+      }
+      case "select-subcommand": {
+        // Multi-step selection — surface the options as a plain assistant
+        // message so the user can re-invoke with the chosen subcommand.
+        const lines = [result.title, "", ...result.options.map((o) => `- /${commandName} ${o.name}${o.description ? ` — ${o.description}` : ""}`)];
+        const message = this.emitLocalAssistantMessage(sessionId, lines.join("\n"));
+        return { handledAsCommand: true, message };
+      }
+      default:
+        return { handledAsCommand: false };
+    }
+  }
+
+  /**
+   * Emit a synthetic assistant message containing the given text. Used for
+   * slash commands whose output the SDK returns directly (no agent turn).
+   */
+  private emitLocalAssistantMessage(sessionId: string, text: string): UnifiedMessage {
+    const now = Date.now();
+    const messageId = timeId("msg");
+    const message: UnifiedMessage = {
+      id: messageId,
       sessionId,
-      [{ type: "text", text: commandText }],
-      options,
-    );
-    return { handledAsCommand: true, message };
+      role: "assistant",
+      time: { created: now, completed: now },
+      parts: [
+        {
+          id: timeId("part"),
+          messageId,
+          sessionId,
+          type: "text",
+          text,
+        },
+      ],
+    };
+    this.appendMessageToHistory(sessionId, message);
+    this.emit("message.updated", { sessionId, message });
+    return message;
   }
 
   /**
@@ -999,7 +1139,7 @@ export class CopilotSdkAdapter extends EngineAdapter {
     sessionId: string,
     data: { requestId: string; command: string; commandName: string; args: string },
   ): Promise<void> {
-    copilotLog.info(
+    copilotLog.debug(
       `[Copilot][${sessionId}] command.execute: /${data.commandName} ${data.args} (requestId=${data.requestId})`,
     );
     try {
@@ -1015,53 +1155,56 @@ export class CopilotSdkAdapter extends EngineAdapter {
   }
 
   /**
-   * Handle commands.changed event — refresh the cached command list.
+   * Handle command.queued event — the SDK runtime emits this when a slash
+   * command is enqueued (e.g. when the user types "/cmd" directly into the
+   * message input rather than invoking via the SDK command API). We respond
+   * with `handled: false` so the runtime executes the command itself
+   * (running skills, builtins, etc.) rather than waiting indefinitely.
    */
-  private handleCommandsChanged(
+  private async handleCommandQueued(
     sessionId: string,
-    data: { commands: Array<{ name: string; description?: string }> },
-  ): void {
-    if (Array.isArray(data?.commands)) {
-      this.cachedCommands = data.commands.map(cmd => ({
-        name: cmd.name,
-        description: cmd.description ?? "",
-      }));
-      this.emit("commands.changed", {
-        engineType: this.engineType,
-        commands: this.cachedCommands,
-      });
-      copilotLog.info(
-        `[Copilot][${sessionId}] Commands updated: ${this.cachedCommands.length} commands`,
-      );
+    data: { requestId: string; command: string },
+  ): Promise<void> {
+    copilotLog.debug(
+      `[Copilot][${sessionId}] command.queued: ${data.command} (requestId=${data.requestId}) → responding handled=false`,
+    );
+    try {
+      const session = this.activeSessions.get(sessionId);
+      if (session) {
+        await session.rpc.commands.respondToQueuedCommand({
+          requestId: data.requestId,
+          result: { handled: false },
+        });
+      }
+    } catch (err) {
+      copilotLog.warn(`[Copilot][${sessionId}] Failed to respond to queued command:`, err);
     }
   }
 
   /**
-   * Handle session.skills_loaded event — the Copilot CLI emits this when
-   * skills are loaded or reloaded from disk. Update cached commands from
-   * the skills data.
+   * Handle commands.changed event — the SDK runtime emits this when the set
+   * of available commands changes (e.g. skills enabled/disabled, plugins
+   * loaded, client commands re-registered). The event payload only includes
+   * SDK-registered commands, so we re-query the full command list rather
+   * than blindly overwriting the cache.
    */
-  private handleSkillsLoaded(
-    sessionId: string,
-    data: { skills: Array<{ name: string; description?: string; userInvocable?: boolean; source?: string }> },
-  ): void {
-    if (Array.isArray(data?.skills)) {
-      this.cachedCommands = data.skills
-        .filter((s) => s.userInvocable !== false)
-        .map((s) => ({
-          name: s.name,
-          description: s.description ?? "",
-          source: s.source,
-          userInvocable: s.userInvocable,
-        }));
-      this.emit("commands.changed", {
-        engineType: this.engineType,
-        commands: this.cachedCommands,
-      });
-      copilotLog.info(
-        `[Copilot][${sessionId}] Skills loaded: ${this.cachedCommands.length} skills`,
-      );
-    }
+  private async handleCommandsChanged(sessionId: string): Promise<void> {
+    const session = this.activeSessions.get(sessionId);
+    if (!session) return;
+    copilotLog.debug(`[Copilot][${sessionId}] commands.changed → refreshing command list`);
+    await this.fetchCommands(session);
+  }
+
+  /**
+   * Handle session.skills_loaded event — the Copilot CLI emits this when
+   * skills are loaded or reloaded from disk. Refresh the cached command
+   * list so newly discovered skills become invocable.
+   */
+  private async handleSkillsLoaded(sessionId: string): Promise<void> {
+    const session = this.activeSessions.get(sessionId);
+    if (!session) return;
+    copilotLog.debug(`[Copilot][${sessionId}] session.skills_loaded → refreshing command list`);
+    await this.fetchCommands(session);
   }
 
   private setStatus(status: EngineStatus, error?: string): void {
@@ -1104,11 +1247,15 @@ export class CopilotSdkAdapter extends EngineAdapter {
   }
 
   private async ensureActiveSession(sessionId: string, directory?: string): Promise<CopilotSession> {
-    // If client reconnected (e.g. CLI restarted), cached sessions are stale
-    const clientState = this.client?.getState?.();
-    if (clientState && clientState !== "connected") {
-      copilotLog.warn(`Client state is "${clientState}", clearing all cached sessions`);
-      this.evictAllSessions();
+    // If client reconnected (e.g. CLI restarted), cached sessions are stale.
+    // Probe with ping; on failure clear cached sessions before continuing.
+    if (this.client) {
+      try {
+        await this.client.ping();
+      } catch (err) {
+        copilotLog.warn(`Client ping failed, clearing all cached sessions:`, err);
+        this.evictAllSessions();
+      }
     }
 
     const existing = this.activeSessions.get(sessionId);
@@ -1125,6 +1272,8 @@ export class CopilotSdkAdapter extends EngineAdapter {
       systemMessage: { mode: "append" as const, content: CODEMUX_IDENTITY_PROMPT },
       onPermissionRequest: (req, ctx) => this.handlePermissionRequest(req, ctx),
       onUserInputRequest: (req, ctx) => this.handleUserInputRequest(req as any, ctx),
+      enableSkills: true,
+      enableConfigDiscovery: true,
     };
 
     copilotLog.info(`Resuming session ${sessionId}...`);
@@ -1147,6 +1296,8 @@ export class CopilotSdkAdapter extends EngineAdapter {
           systemMessage: { mode: "append" as const, content: CODEMUX_IDENTITY_PROMPT },
           onPermissionRequest: (req, ctx) => this.handlePermissionRequest(req, ctx),
           onUserInputRequest: (req, ctx) => this.handleUserInputRequest(req as any, ctx),
+          enableSkills: true,
+          enableConfigDiscovery: true,
         };
         const newSession = await this.client!.createSession(newConfig);
         this.subscribeToSessionEvents(newSession);
@@ -1196,16 +1347,18 @@ export class CopilotSdkAdapter extends EngineAdapter {
         case "command.execute":
           this.handleCommandExecute(sessionId, event.data as any);
           break;
+        case "command.queued":
+          this.handleCommandQueued(sessionId, event.data as any);
+          break;
         case "command.completed":
-          // Command completed — no action needed on our side
-          copilotLog.info(`[Copilot][${sessionId}] Command completed: requestId=${(event.data as any)?.requestId}`);
+          copilotLog.debug(`[Copilot][${sessionId}] Command completed: requestId=${(event.data as any)?.requestId}`);
           break;
         case "commands.changed":
-          this.handleCommandsChanged(sessionId, event.data as any);
+          this.handleCommandsChanged(sessionId);
           break;
         case "session.skills_loaded":
-          // Skills loaded/reloaded — refresh command list from the event data
-          this.handleSkillsLoaded(sessionId, event.data as any);
+          // Skills loaded/reloaded — refresh command list from the SDK.
+          this.handleSkillsLoaded(sessionId);
           break;
       }
     } catch (err) {

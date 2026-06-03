@@ -15,6 +15,7 @@ const {
   mockClientInstance,
   mockSessionBase,
   CopilotClientConstructor,
+  RuntimeConnectionMock,
 } = vi.hoisted(() => {
   let _idCounter = 0;
 
@@ -28,13 +29,23 @@ const {
     send: vi.fn(async function() {}),
     abort: vi.fn(async function() {}),
     disconnect: vi.fn(async function() {}),
-    getMessages: vi.fn(async function() { return []; }),
+    getEvents: vi.fn(async function() { return []; }),
     rpc: {
       model: { switchTo: vi.fn(async function() {}) },
       mode: { set: vi.fn(async function() {}) },
       name: { set: vi.fn(async function() {}) },
-      skills: { list: vi.fn(async function() { return { skills: [] }; }) },
-      commands: { handlePendingCommand: vi.fn(async function() {}) },
+      commands: {
+        list: vi.fn(async function() { return { commands: [] }; }),
+        invoke: vi.fn(async function() { return { kind: "completed" }; }),
+        handlePendingCommand: vi.fn(async function() {}),
+        respondToQueuedCommand: vi.fn(async function() {}),
+      },
+      skills: {
+        ensureLoaded: vi.fn(async function() {}),
+        list: vi.fn(async function() { return { skills: [] }; }),
+        enable: vi.fn(async function() {}),
+        disable: vi.fn(async function() {}),
+      },
     },
   };
 
@@ -56,11 +67,16 @@ const {
     deleteSession: vi.fn(async function() {}),
     listModels: vi.fn(async function() { return []; }),
     getSessionMetadata: vi.fn(async function() { return undefined; }),
-    getState: vi.fn(function() { return "connected"; }),
   };
 
   // Must use function() (not arrow) so it can be called with `new`.
   const CopilotClientConstructor = vi.fn(function() { return mockClientInstance; });
+
+  const RuntimeConnectionMock = {
+    forStdio: vi.fn((opts?: { path?: string }) => ({ kind: "stdio" as const, path: opts?.path })),
+    forTcp: vi.fn((opts?: { port?: number }) => ({ kind: "tcp" as const, port: opts?.port })),
+    forUri: vi.fn((url: string) => ({ kind: "uri" as const, url })),
+  };
 
   return {
     writeFileSyncMock: vi.fn(),
@@ -73,6 +89,7 @@ const {
     mockClientInstance,
     mockSessionBase,
     CopilotClientConstructor,
+    RuntimeConnectionMock,
   };
 });
 
@@ -117,6 +134,7 @@ vi.mock("../../../../../electron/main/utils/id-gen", () => ({
 vi.mock("@github/copilot-sdk", () => ({
   CopilotClient: CopilotClientConstructor,
   CopilotSession: vi.fn(),
+  RuntimeConnection: RuntimeConnectionMock,
 }));
 
 // ============================================================================
@@ -158,13 +176,23 @@ function makeMockSession(sessionId = "s1") {
     send: vi.fn(async () => {}),
     abort: vi.fn(async () => {}),
     disconnect: vi.fn(async () => {}),
-    getMessages: vi.fn(async () => []),
+    getEvents: vi.fn(async () => []),
     rpc: {
       model: { switchTo: vi.fn(async () => {}) },
       mode: { set: vi.fn(async () => {}) },
       name: { set: vi.fn(async () => {}) },
-      skills: { list: vi.fn(async () => ({ skills: [] })) },
-      commands: { handlePendingCommand: vi.fn(async () => {}) },
+      commands: {
+        list: vi.fn(async () => ({ commands: [] })),
+        invoke: vi.fn(async () => ({ kind: "completed" })),
+        handlePendingCommand: vi.fn(async () => {}),
+        respondToQueuedCommand: vi.fn(async () => {}),
+      },
+      skills: {
+        ensureLoaded: vi.fn(async () => {}),
+        list: vi.fn(async () => ({ skills: [] })),
+        enable: vi.fn(async () => {}),
+        disable: vi.fn(async () => {}),
+      },
     },
   };
 }
@@ -394,6 +422,16 @@ describe("CopilotSdkAdapter", () => {
       );
     });
 
+    it("enables skill loading and config discovery so user-installed skills are discovered", async () => {
+      await adapter.createSession("/repo");
+      expect(mockClientInstance.createSession).toHaveBeenCalledWith(
+        expect.objectContaining({
+          enableSkills: true,
+          enableConfigDiscovery: true,
+        }),
+      );
+    });
+
     it("subscribes to session events after creation", async () => {
       const newSess = { ...mockSessionBase, sessionId: "s-new", on: vi.fn(() => vi.fn()) };
       mockClientInstance.createSession.mockResolvedValueOnce(newSess);
@@ -403,8 +441,8 @@ describe("CopilotSdkAdapter", () => {
       expect(newSess.on).toHaveBeenCalledTimes(1);
     });
 
-    it("fetches initial skills to populate cachedCommands before returning", async () => {
-      const fetchSpy = vi.spyOn(adapter as any, "fetchSkills").mockResolvedValue(undefined);
+    it("fetches initial commands to populate cachedCommands before returning", async () => {
+      const fetchSpy = vi.spyOn(adapter as any, "fetchCommands").mockResolvedValue(undefined);
       await adapter.createSession("/repo");
       expect(fetchSpy).toHaveBeenCalledTimes(1);
     });
@@ -524,8 +562,8 @@ describe("CopilotSdkAdapter", () => {
       await expect((adapter as any).ensureActiveSession("s1", "/repo")).rejects.toThrow("network error");
     });
 
-    it("evicts all cached sessions when client state is not 'connected'", async () => {
-      mockClientInstance.getState.mockReturnValueOnce("disconnected");
+    it("evicts all cached sessions when client.ping fails (CLI disconnected)", async () => {
+      mockClientInstance.ping.mockRejectedValueOnce(new Error("not connected"));
       const evictSpy = vi.spyOn(adapter as any, "evictAllSessions");
       (adapter as any).activeSessions.set("s1", makeMockSession("s1"));
 
@@ -1983,58 +2021,128 @@ describe("CopilotSdkAdapter", () => {
   // I. Commands & Skills
   // ============================================================================
 
-  describe("fetchSkills()", () => {
-    it("caches user-invocable commands and emits commands.changed", async () => {
+  describe("fetchCommands()", () => {
+    it("caches commands from commands.list and emits commands.changed", async () => {
       const commandEvents: any[] = [];
       adapter.on("commands.changed", (e) => commandEvents.push(e));
-      const sess = {
-        rpc: {
-          skills: {
-            list: vi.fn(async () => ({
-              skills: [
-                { name: "fix", description: "Fix issues", userInvocable: true, source: "project" },
-                { name: "internal", description: "Internal", userInvocable: false },
-              ],
-            })),
-          },
-        },
-      };
+      const sess = makeMockSession("s1");
+      sess.rpc.commands.list.mockResolvedValueOnce({
+        commands: [
+          { name: "fix", description: "Fix issues", input: { hint: "<file>" } },
+          { name: "test", description: "Run tests" },
+        ],
+      });
 
-      await (adapter as any).fetchSkills(sess);
+      await (adapter as any).fetchCommands(sess);
 
-      // userInvocable: false filtered out (source code: filter s.userInvocable !== false)
-      // Actually re-reading: .filter((s: any) => s.userInvocable !== false) keeps userInvocable:true and undefined
-      // "internal" has userInvocable:false so it is filtered OUT
+      expect(sess.rpc.commands.list).toHaveBeenCalledWith({
+        includeBuiltins: true,
+        includeSkills: true,
+        includeClientCommands: true,
+      });
       const cached = (adapter as any).cachedCommands;
-      expect(cached.find((c: any) => c.name === "fix")).toBeDefined();
-      expect(cached.find((c: any) => c.name === "internal")).toBeUndefined();
+      expect(cached).toHaveLength(2);
+      expect(cached.find((c: any) => c.name === "fix")).toMatchObject({
+        name: "fix",
+        description: "Fix issues",
+        argumentHint: "<file>",
+      });
       expect(commandEvents).toHaveLength(1);
       expect(commandEvents[0].engineType).toBe("copilot");
     });
 
-    it("handles skills returned as a flat array (not wrapped in {skills})", async () => {
-      const sess = {
-        rpc: {
-          skills: {
-            list: vi.fn(async () => [{ name: "cmd1", description: "Cmd 1" }]),
-          },
-        },
-      };
+    it("calls skills.ensureLoaded so disk-installed skills are registered before listing", async () => {
+      const sess = makeMockSession("s1");
 
-      await (adapter as any).fetchSkills(sess);
+      await (adapter as any).fetchCommands(sess);
 
-      expect((adapter as any).cachedCommands).toHaveLength(1);
-      expect((adapter as any).cachedCommands[0].name).toBe("cmd1");
+      expect(sess.rpc.skills.ensureLoaded).toHaveBeenCalledTimes(1);
+    });
+
+    it("merges non-builtin skills from skills.list that commands.list omits, regardless of userInvocable flag", async () => {
+      const sess = makeMockSession("s1");
+      sess.rpc.commands.list.mockResolvedValueOnce({
+        commands: [{ name: "fix", description: "Builtin fix" }],
+      });
+      sess.rpc.skills.list.mockResolvedValueOnce({
+        skills: [
+          { name: "deploy", description: "Custom deploy skill", userInvocable: true, enabled: true, source: "personal-copilot" },
+          { name: "fix", description: "Skill fix variant", userInvocable: true, enabled: true, source: "project" },
+          // userInvocable=false should STILL appear so user-installed
+          // agent-targeted skills remain accessible via slash commands.
+          { name: "agent-helper", description: "Agent-only helper", userInvocable: false, enabled: true, source: "project" },
+          // builtin skills are skipped (already covered by commands.list).
+          { name: "builtin-skill", description: "Internal builtin", userInvocable: false, enabled: true, source: "builtin" },
+        ],
+      });
+
+      await (adapter as any).fetchCommands(sess);
+
+      const cached = (adapter as any).cachedCommands;
+      const names = cached.map((c: any) => c.name);
+      expect(names).toContain("fix");
+      expect(names).toContain("deploy");
+      expect(names).toContain("agent-helper");
+      expect(names).not.toContain("builtin-skill");
+      // skills.list entry duplicates of an existing command name must not overwrite
+      expect(cached.find((c: any) => c.name === "fix").description).toBe("Builtin fix");
+    });
+
+    it("includes skills even when commands.list returns only builtins", async () => {
+      const sess = makeMockSession("s1");
+      sess.rpc.commands.list.mockResolvedValueOnce({
+        commands: [{ name: "help", description: "Built-in help" }],
+      });
+      sess.rpc.skills.list.mockResolvedValueOnce({
+        skills: [
+          { name: "my-skill", description: "User skill", userInvocable: true, enabled: true, source: "personal-copilot" },
+        ],
+      });
+
+      await (adapter as any).fetchCommands(sess);
+
+      const names = (adapter as any).cachedCommands.map((c: any) => c.name);
+      expect(names).toEqual(expect.arrayContaining(["help", "my-skill"]));
+    });
+
+    it("continues when skills.ensureLoaded fails", async () => {
+      const sess = makeMockSession("s1");
+      sess.rpc.skills.ensureLoaded.mockRejectedValueOnce(new Error("ensureLoaded failed"));
+      sess.rpc.commands.list.mockResolvedValueOnce({
+        commands: [{ name: "ok", description: "" }],
+      });
+
+      await (adapter as any).fetchCommands(sess);
+
+      expect((adapter as any).cachedCommands.map((c: any) => c.name)).toEqual(["ok"]);
+    });
+
+    it("continues when skills.list fallback fails", async () => {
+      const sess = makeMockSession("s1");
+      sess.rpc.commands.list.mockResolvedValueOnce({
+        commands: [{ name: "ok", description: "" }],
+      });
+      sess.rpc.skills.list.mockRejectedValueOnce(new Error("skills.list failed"));
+
+      await (adapter as any).fetchCommands(sess);
+
+      expect((adapter as any).cachedCommands.map((c: any) => c.name)).toEqual(["ok"]);
+    });
+
+    it("treats missing commands array as empty list", async () => {
+      const sess = makeMockSession("s1");
+      sess.rpc.commands.list.mockResolvedValueOnce({} as any);
+
+      await (adapter as any).fetchCommands(sess);
+
+      expect((adapter as any).cachedCommands).toEqual([]);
     });
 
     it("swallows errors and logs a warning", async () => {
-      const sess = {
-        rpc: {
-          skills: { list: vi.fn(async () => { throw new Error("RPC failed"); }) },
-        },
-      };
+      const sess = makeMockSession("s1");
+      sess.rpc.commands.list.mockRejectedValueOnce(new Error("RPC failed"));
 
-      await expect((adapter as any).fetchSkills(sess)).resolves.toBeUndefined();
+      await expect((adapter as any).fetchCommands(sess)).resolves.toBeUndefined();
     });
   });
 
@@ -2048,17 +2156,12 @@ describe("CopilotSdkAdapter", () => {
       expect(result[0].name).toBe("fix");
     });
 
-    it("fetches skills from active session when cache is empty", async () => {
+    it("fetches commands from active session when cache is empty", async () => {
       await adapter.start();
-      const sess = {
-        rpc: {
-          skills: {
-            list: vi.fn(async () => ({
-              skills: [{ name: "cmd", description: "Cmd", userInvocable: true }],
-            })),
-          },
-        },
-      };
+      const sess = makeMockSession("s1");
+      sess.rpc.commands.list.mockResolvedValueOnce({
+        commands: [{ name: "cmd", description: "Cmd" }],
+      });
       (adapter as any).activeSessions.set("s1", sess);
 
       const result = await adapter.listCommands("s1");
@@ -2069,18 +2172,13 @@ describe("CopilotSdkAdapter", () => {
 
     it("uses the first active session when no sessionId is provided", async () => {
       await adapter.start();
-      const sess = {
-        rpc: {
-          skills: {
-            list: vi.fn(async () => ({
-              skills: [{ name: "fallback-cmd", description: "" }],
-            })),
-          },
-        },
-      };
+      const sess = makeMockSession("s1");
+      sess.rpc.commands.list.mockResolvedValueOnce({
+        commands: [{ name: "fallback-cmd", description: "" }],
+      });
       (adapter as any).activeSessions.set("s1", sess);
 
-      await adapter.listCommands(); // no sessionId
+      await adapter.listCommands();
 
       expect((adapter as any).cachedCommands[0].name).toBe("fallback-cmd");
     });
@@ -2119,55 +2217,236 @@ describe("CopilotSdkAdapter", () => {
     });
   });
 
-  describe("handleCommandsChanged()", () => {
-    it("updates cachedCommands and emits commands.changed", () => {
-      const events: any[] = [];
-      adapter.on("commands.changed", (e) => events.push(e));
+  describe("handleCommandQueued()", () => {
+    it("responds to the queued command with handled=false so runtime executes it", async () => {
+      await adapter.start();
+      const sess = makeMockSession("s1");
+      (adapter as any).activeSessions.set("s1", sess);
 
-      (adapter as any).handleCommandsChanged("s1", {
-        commands: [
-          { name: "fix", description: "Fix" },
-          { name: "test", description: "Test" },
-        ],
+      await (adapter as any).handleCommandQueued("s1", {
+        requestId: "req-q1",
+        command: "/fix",
       });
 
-      expect((adapter as any).cachedCommands).toHaveLength(2);
-      expect(events).toHaveLength(1);
-      expect(events[0].commands.map((c: any) => c.name)).toEqual(["fix", "test"]);
+      expect(sess.rpc.commands.respondToQueuedCommand).toHaveBeenCalledWith({
+        requestId: "req-q1",
+        result: { handled: false },
+      });
     });
 
-    it("is a no-op when commands data is not an array", () => {
+    it("is a no-op when the session is not active", async () => {
+      await adapter.start();
+      const sess = makeMockSession("missing");
+
+      await (adapter as any).handleCommandQueued("missing", {
+        requestId: "req-q2",
+        command: "/x",
+      });
+
+      expect(sess.rpc.commands.respondToQueuedCommand).not.toHaveBeenCalled();
+    });
+
+    it("swallows errors when respondToQueuedCommand fails", async () => {
+      await adapter.start();
+      const sess = makeMockSession("s1");
+      sess.rpc.commands.respondToQueuedCommand.mockRejectedValue(new Error("rpc error"));
+      (adapter as any).activeSessions.set("s1", sess);
+
+      await expect(
+        (adapter as any).handleCommandQueued("s1", { requestId: "req-q3", command: "/fix" }),
+      ).resolves.toBeUndefined();
+    });
+  });
+
+  describe("invokeCommand()", () => {
+    it("returns handledAsCommand=true with assistant message for kind=text", async () => {
+      await adapter.start();
+      const sess = makeMockSession("s1");
+      sess.rpc.commands.invoke.mockResolvedValueOnce({ kind: "text", text: "hello" });
+      (adapter as any).activeSessions.set("s1", sess);
+      (adapter as any).sessionDirectories.set("s1", "/repo");
+
+      const result = await adapter.invokeCommand("s1", "fix", "");
+
+      expect(sess.rpc.commands.invoke).toHaveBeenCalledWith({ name: "fix", input: undefined });
+      expect(result.handledAsCommand).toBe(true);
+      expect(result.message?.parts?.[0]).toMatchObject({ type: "text", text: "hello" });
+    });
+
+    it("returns handledAsCommand=true with completed.message for kind=completed", async () => {
+      await adapter.start();
+      const sess = makeMockSession("s1");
+      sess.rpc.commands.invoke.mockResolvedValueOnce({ kind: "completed", message: "done" });
+      (adapter as any).activeSessions.set("s1", sess);
+      (adapter as any).sessionDirectories.set("s1", "/repo");
+
+      const result = await adapter.invokeCommand("s1", "fix", "arg1");
+
+      expect(sess.rpc.commands.invoke).toHaveBeenCalledWith({ name: "fix", input: "arg1" });
+      expect(result.handledAsCommand).toBe(true);
+      expect(result.message?.parts?.[0]).toMatchObject({ type: "text", text: "done" });
+    });
+
+    it("forwards agent-prompt result through sendMessage and suppresses duplicate user emit", async () => {
+      await adapter.start();
+      const sess = makeMockSession("s1");
+      sess.rpc.commands.invoke.mockResolvedValueOnce({
+        kind: "agent-prompt",
+        prompt: "Please refactor the auth module",
+      });
+      (adapter as any).activeSessions.set("s1", sess);
+      (adapter as any).sessionDirectories.set("s1", "/repo");
+
+      const sendSpy = vi
+        .spyOn(adapter as any, "sendMessage")
+        .mockResolvedValue({ id: "msg-1", role: "assistant", parts: [], time: { created: 0 } });
+
+      const result = await adapter.invokeCommand("s1", "refactor", "");
+
+      expect(sendSpy).toHaveBeenCalledTimes(1);
+      const [, parts, opts] = sendSpy.mock.calls[0];
+      expect(parts).toEqual([{ type: "text", text: "Please refactor the auth module" }]);
+      expect(opts).toMatchObject({ _internalSuppressUserEmit: true });
+      expect(result.handledAsCommand).toBe(true);
+    });
+
+    it("returns kind=select-subcommand options as an assistant message listing choices", async () => {
+      await adapter.start();
+      const sess = makeMockSession("s1");
+      sess.rpc.commands.invoke.mockResolvedValueOnce({
+        kind: "select-subcommand",
+        title: "Pick a subcommand",
+        options: [
+          { name: "fast", description: "Quick run" },
+          { name: "thorough", description: "Slow but careful" },
+        ],
+      });
+      (adapter as any).activeSessions.set("s1", sess);
+      (adapter as any).sessionDirectories.set("s1", "/repo");
+
+      const result = await adapter.invokeCommand("s1", "run", "");
+
+      expect(result.handledAsCommand).toBe(true);
+      const text = (result.message?.parts?.[0] as any).text as string;
+      expect(text).toContain("Pick a subcommand");
+      expect(text).toContain("/run fast");
+      expect(text).toContain("/run thorough");
+    });
+
+    it("auto-enables a disabled skill and retries when the first invoke fails", async () => {
+      await adapter.start();
+      const sess = makeMockSession("s1");
+      sess.rpc.commands.invoke
+        .mockRejectedValueOnce(new Error("skill is disabled"))
+        .mockResolvedValueOnce({ kind: "text", text: "now works" });
+      (adapter as any).activeSessions.set("s1", sess);
+      (adapter as any).sessionDirectories.set("s1", "/repo");
+
+      const result = await adapter.invokeCommand("s1", "my-skill", "");
+
+      expect(sess.rpc.skills.enable).toHaveBeenCalledWith({ name: "my-skill" });
+      expect(sess.rpc.commands.invoke).toHaveBeenCalledTimes(2);
+      expect(result.handledAsCommand).toBe(true);
+      expect(result.message?.parts?.[0]).toMatchObject({ type: "text", text: "now works" });
+    });
+
+    it("returns handledAsCommand=false when both initial invoke and auto-enable retry fail", async () => {
+      await adapter.start();
+      const sess = makeMockSession("s1");
+      sess.rpc.commands.invoke.mockRejectedValue(new Error("nope"));
+      (adapter as any).activeSessions.set("s1", sess);
+      (adapter as any).sessionDirectories.set("s1", "/repo");
+
+      const result = await adapter.invokeCommand("s1", "broken", "");
+
+      expect(result.handledAsCommand).toBe(false);
+    });
+
+    it("returns handledAsCommand=false when invoke fails and skill cannot be enabled", async () => {
+      await adapter.start();
+      const sess = makeMockSession("s1");
+      sess.rpc.commands.invoke.mockRejectedValueOnce(new Error("not a skill"));
+      sess.rpc.skills.enable.mockRejectedValueOnce(new Error("unknown skill"));
+      (adapter as any).activeSessions.set("s1", sess);
+      (adapter as any).sessionDirectories.set("s1", "/repo");
+
+      const result = await adapter.invokeCommand("s1", "noexist", "");
+
+      expect(result.handledAsCommand).toBe(false);
+      // invoke should not be retried when enable fails
+      expect(sess.rpc.commands.invoke).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe("handleCommandsChanged()", () => {
+    it("refreshes the cached command list via fetchCommands", async () => {
+      await adapter.start();
+      const sess = makeMockSession("s1");
+      sess.rpc.commands.list.mockResolvedValueOnce({
+        commands: [{ name: "deploy", description: "Deploy" }],
+      });
+      (adapter as any).activeSessions.set("s1", sess);
+
+      await (adapter as any).handleCommandsChanged("s1");
+
+      expect(sess.rpc.commands.list).toHaveBeenCalledWith({
+        includeBuiltins: true,
+        includeSkills: true,
+        includeClientCommands: true,
+      });
+      expect((adapter as any).cachedCommands.map((c: any) => c.name)).toEqual(["deploy"]);
+    });
+
+    it("is a no-op when the session is not active", async () => {
       const events: any[] = [];
       adapter.on("commands.changed", (e) => events.push(e));
 
-      (adapter as any).handleCommandsChanged("s1", { commands: null });
+      await (adapter as any).handleCommandsChanged("missing");
 
       expect(events).toHaveLength(0);
     });
   });
 
   describe("handleSkillsLoaded()", () => {
-    it("updates cachedCommands filtering out non-user-invocable skills", () => {
-      (adapter as any).handleSkillsLoaded("s1", {
-        skills: [
-          { name: "fix", description: "Fix", userInvocable: true, source: "project" },
-          { name: "internal", description: "Internal", userInvocable: false },
+    it("refreshes the cached command list via fetchCommands", async () => {
+      await adapter.start();
+      const sess = makeMockSession("s1");
+      sess.rpc.commands.list.mockResolvedValueOnce({
+        commands: [
+          { name: "fix", description: "Fix" },
+          { name: "lint", description: "Lint" },
         ],
       });
+      (adapter as any).activeSessions.set("s1", sess);
 
-      const commands = (adapter as any).cachedCommands;
-      expect(commands.map((c: any) => c.name)).toEqual(["fix"]);
+      await (adapter as any).handleSkillsLoaded("s1");
+
+      expect((adapter as any).cachedCommands.map((c: any) => c.name)).toEqual(["fix", "lint"]);
     });
 
-    it("emits commands.changed after updating", () => {
+    it("emits commands.changed after refreshing", async () => {
+      await adapter.start();
+      const sess = makeMockSession("s1");
+      sess.rpc.commands.list.mockResolvedValueOnce({
+        commands: [{ name: "deploy", description: "Deploy" }],
+      });
+      (adapter as any).activeSessions.set("s1", sess);
+
       const events: any[] = [];
       adapter.on("commands.changed", (e) => events.push(e));
 
-      (adapter as any).handleSkillsLoaded("s1", {
-        skills: [{ name: "deploy", description: "Deploy", userInvocable: true }],
-      });
+      await (adapter as any).handleSkillsLoaded("s1");
 
       expect(events).toHaveLength(1);
+    });
+
+    it("is a no-op when the session is not active", async () => {
+      const events: any[] = [];
+      adapter.on("commands.changed", (e) => events.push(e));
+
+      await (adapter as any).handleSkillsLoaded("missing");
+
+      expect(events).toHaveLength(0);
     });
   });
 

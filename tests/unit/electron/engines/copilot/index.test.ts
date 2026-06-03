@@ -531,6 +531,32 @@ describe("CopilotSdkAdapter", () => {
       expect(mockClientInstance.resumeSession).not.toHaveBeenCalled();
     });
 
+    it("does not call client.ping on cache hit (zero latency overhead on hot paths)", async () => {
+      const existing = makeMockSession("s1");
+      (adapter as any).activeSessions.set("s1", existing);
+      mockClientInstance.ping.mockClear();
+
+      await (adapter as any).ensureActiveSession("s1");
+
+      expect(mockClientInstance.ping).not.toHaveBeenCalled();
+    });
+
+    it("falls back to createSession with the original sessionId for event routing", async () => {
+      mockClientInstance.resumeSession.mockRejectedValueOnce(new Error("Session not found"));
+      const onSpy = vi.fn(() => vi.fn());
+      const created = { ...mockSessionBase, sessionId: "s-different-id", on: onSpy };
+      mockClientInstance.createSession.mockResolvedValueOnce(created);
+
+      const result = await (adapter as any).ensureActiveSession("s1", "/repo");
+
+      expect(result).toBe(created);
+      // activeSessions and sessionUnsubscribers must be keyed under the
+      // *original* sessionId so event routing keeps working after fallback.
+      expect((adapter as any).activeSessions.get("s1")).toBe(created);
+      expect((adapter as any).sessionUnsubscribers.has("s1")).toBe(true);
+      expect((adapter as any).activeSessions.has("s-different-id")).toBe(false);
+    });
+
     it("resumes session from SDK when not in activeSessions", async () => {
       const resumed = { ...mockSessionBase, sessionId: "s1" };
       mockClientInstance.resumeSession.mockResolvedValueOnce(resumed);
@@ -563,13 +589,17 @@ describe("CopilotSdkAdapter", () => {
     });
 
     it("evicts all cached sessions when client.ping fails (CLI disconnected)", async () => {
+      // Pre-populate cache with a stale unrelated session so the request for
+      // "s1" hits the cache-miss path and triggers the ping probe.
+      (adapter as any).activeSessions.set("stale-id", makeMockSession("stale-id"));
+      (adapter as any).sessionUnsubscribers.set("stale-id", vi.fn());
       mockClientInstance.ping.mockRejectedValueOnce(new Error("not connected"));
       const evictSpy = vi.spyOn(adapter as any, "evictAllSessions");
-      (adapter as any).activeSessions.set("s1", makeMockSession("s1"));
 
       await (adapter as any).ensureActiveSession("s1", "/repo");
 
       expect(evictSpy).toHaveBeenCalledTimes(1);
+      expect((adapter as any).activeSessions.has("stale-id")).toBe(false);
     });
 
     it("includes reasoning effort in the resume config when set", async () => {

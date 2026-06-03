@@ -1087,7 +1087,7 @@ export class CopilotSdkAdapter extends EngineAdapter {
         const message = await this.sendMessage(
           sessionId,
           [{ type: "text", text: result.prompt }],
-          { ...options, _internalSuppressUserEmit: true } as any,
+          { ...options, _internalSuppressUserEmit: true },
         );
         return { handledAsCommand: true, message };
       }
@@ -1247,8 +1247,14 @@ export class CopilotSdkAdapter extends EngineAdapter {
   }
 
   private async ensureActiveSession(sessionId: string, directory?: string): Promise<CopilotSession> {
-    // If client reconnected (e.g. CLI restarted), cached sessions are stale.
-    // Probe with ping; on failure clear cached sessions before continuing.
+    const existing = this.activeSessions.get(sessionId);
+    if (existing) return existing;
+    this.ensureClient();
+
+    // Cache miss — probe client health before resume/create. If the client
+    // reconnected (e.g. CLI restarted) the cached session map is stale and
+    // any stragglers must be evicted before we resume/create. Probing only
+    // on miss keeps hot paths like sendMessage at zero ping overhead.
     if (this.client) {
       try {
         await this.client.ping();
@@ -1257,10 +1263,6 @@ export class CopilotSdkAdapter extends EngineAdapter {
         this.evictAllSessions();
       }
     }
-
-    const existing = this.activeSessions.get(sessionId);
-    if (existing) return existing;
-    this.ensureClient();
 
     const workingDirectory = directory || this.sessionDirectories.get(sessionId);
     const sdkReasoningEffort = this.getSdkReasoningEffort(sessionId);
@@ -1300,7 +1302,7 @@ export class CopilotSdkAdapter extends EngineAdapter {
           enableConfigDiscovery: true,
         };
         const newSession = await this.client!.createSession(newConfig);
-        this.subscribeToSessionEvents(newSession);
+        this.subscribeToSessionEvents(newSession, sessionId);
         this.activeSessions.set(sessionId, newSession);
         if (workingDirectory) this.sessionDirectories.set(sessionId, workingDirectory);
         return newSession;

@@ -29,9 +29,9 @@ API 키를 바꿔 끼우는 채팅 래퍼가 아닙니다. CodeMux는 **프로�
 | 엔진 | 프로토콜 | 상태 |
 |--------|----------|--------|
 | **[OpenCode](https://opencode.ai)** | HTTP REST + SSE | ✅ 안정 |
-| **[GitHub Copilot CLI](https://docs.github.com/en/copilot/using-github-copilot/using-github-copilot-coding-agent-in-cli)** | JSON-RPC/stdio | ✅ 안정 |
+| **[GitHub Copilot CLI](https://docs.github.com/en/copilot/concepts/agents/about-copilot-cli)** | JSON-RPC/stdio | ✅ 안정 |
 | **[Claude Code](https://claude.ai/code)** | SDK (stdio) | ✅ 안정 |
-| **Codex** | JSON-RPC/stdio (app-server) | ⚠️ 실험적 |
+| **[Codex](https://github.com/openai/codex)** | JSON-RPC/stdio (app-server) | ⚠️ 실험적 |
 
 > 💡 CodeMux는 **Copilot CLI를 위한 최초이자 현재 유일한 오픈소스 GUI**이기도 합니다. 프로토콜 수준(JSON-RPC over stdio)에서 직접 연결하여, Copilot의 완전한 에이전트 코딩 경험을 시각적 인터페이스로 제공합니다.
 >
@@ -79,11 +79,19 @@ CodeMux는 채팅을 넘어 — 개발 워크플로를 인터페이스에서 직
 
 - **스케줄 작업**: 반복적인 에이전트 작업을 자동화 — 매일 아침 코드 리뷰, 인터벌 기반 보고서 생성, 주간 이슈 일괄 처리. 수동 트리거, 인터벌(5분~12시간), 일간, 주간 스케줄링을 지원하며, 앱 재시작 시 놓친 실행을 자동 보완합니다.
 
+<img src="https://raw.githubusercontent.com/realDuang/codemux/main/assets/screenshots/scheduled-task.jpg" alt="CodeMux - 스케줄 작업" width="700" />
+
 - **Git Worktree 병렬 세션**: `git stash` 없이 여러 브랜치에서 동시 작업이 가능합니다. 사이드바에서 격리된 워크트리를 생성하면, 각각 독립된 디렉토리, 브랜치, AI 세션을 갖습니다. merge, squash, rebase 중 선택하여 머지 — UI를 벗어나지 않고 모든 작업을 완료합니다.
 
 - **파일 탐색기 & Git 변경 모니터링**: 접을 수 있는 트리로 프로젝트 파일을 탐색하고, 구문 강조 지원 코드 미리보기, Git 변경 사항을 실시간 추적합니다. "변경" 탭에서 라인 수준 추가/삭제 카운트와 함께 수정된 파일을 보여주며, 인라인 diff 뷰어로 CodeMux를 벗어나지 않고 모든 변경을 검토할 수 있습니다.
 
+<img src="https://raw.githubusercontent.com/realDuang/codemux/main/assets/screenshots/project-preview.jpg" alt="CodeMux - 파일 탐색기" width="700" />
+
 - **슬래시 명령 & 엔진 스킬**: 입력창에서 `/`를 입력하면 자동완성으로 엔진 네이티브 명령과 스킬을 호출할 수 있습니다 — `/cancel`, `/status`, `/mode`, `/model` 등. 각 엔진은 고유 명령을 노출합니다; Copilot은 프로젝트 및 개인 스킬을, Claude Code는 사용자 설치 스킬을, OpenCode는 SDK 명령을 전달하고, Codex는 app-server 스킬을 노출합니다 — 모두 통합된 자동완성 UI로 조작합니다.
+
+- **통합 터미널**: 채팅 바로 아래에 VS Code 스타일 터미널을 내장 — `` Ctrl+` `` 로 토글합니다. 여러 탭에서 실제 셸을 실행하며(Windows에서는 PowerShell / pwsh / cmd / Git Bash / WSL 자동 감지, Unix에서는 `$SHELL` 및 `/etc/shells` 읽기, 사용자 정의 프로필도 지원), 검색 오버레이(`Ctrl+F`), 클릭 가능한 파일 경로(CodeMux 내장 파일 패널에서 열림), 선택 가능한 GPU 렌더링(WebGL → Canvas → DOM)을 제공합니다. 동일한 Gateway WebSocket을 통해 스트리밍되므로 터미널은 **원격에서도 작동** — LAN이든 Cloudflare Tunnel이든 — 로컬 데스크톱에만 국한되지 않습니다.
+
+<img src="https://raw.githubusercontent.com/realDuang/codemux/main/assets/screenshots/terminal.jpg" alt="CodeMux - 통합 터미널" width="700" />
 
 ### 더 많은 기능
 
@@ -187,9 +195,9 @@ bun run dev
 
 > **엔진 사전 요구 사항**: 모든 엔진은 별도로 설치하여 PATH에 등록해야 하는 외부 의존성입니다:
 > - **OpenCode**: [opencode.ai](https://opencode.ai)에서 설치 — `curl -fsSL https://opencode.ai/install.sh | bash` (Unix) 또는 `irm https://opencode.ai/install.ps1 | iex` (Windows)
-> - **Copilot CLI**: [GitHub Copilot CLI](https://docs.github.com/en/copilot/using-github-copilot/using-github-copilot-coding-agent-in-cli)를 별도로 설치
+> - **Copilot CLI**: [GitHub Copilot CLI](https://docs.github.com/en/copilot/concepts/agents/about-copilot-cli)를 별도로 설치
 > - **Claude Code**: `npm install -g @anthropic-ai/claude-code`로 설치하고 `ANTHROPIC_API_KEY` 설정
-> - **Codex**: `codex` CLI를 별도로 설치하고 `codex`가 PATH에 있는지 확인하세요. CodeMux는 Codex의 기존 OpenAI 로그인 또는 API 키 구성을 재사용합니다. 현재 experimental/unstable 상태입니다.
+> - **Codex**: [`codex` CLI](https://github.com/openai/codex)를 별도로 설치하고 `codex`가 PATH에 있는지 확인하세요. CodeMux는 Codex의 기존 OpenAI 로그인 또는 API 키 구성을 재사용합니다. 현재 experimental/unstable 상태입니다.
 >
 > CodeMux는 시작 시 설치된 엔진을 자동으로 감지합니다.
 
@@ -326,8 +334,9 @@ codemux/
 - [로드맵](https://github.com/realDuang/codemux/discussions/61) — 개발 로드맵 및 마일스톤 추적
 - [이슈](https://github.com/realDuang/codemux/issues) — 버그 리포트
 - [OpenCode](https://opencode.ai) — 지원 엔진
-- [GitHub Copilot CLI](https://docs.github.com/en/copilot/using-github-copilot/using-github-copilot-coding-agent-in-cli) — 지원 엔진
+- [GitHub Copilot CLI](https://docs.github.com/en/copilot/concepts/agents/about-copilot-cli) — 지원 엔진
 - [Claude Code](https://docs.anthropic.com/en/docs/claude-code) — 지원 엔진
+- [Codex](https://github.com/openai/codex) — 지원 엔진
 - [Feishu 개방 플랫폼](https://open.feishu.cn/) — Feishu 봇 채널
 - [DingTalk 개방 플랫폼](https://open.dingtalk.com/) — DingTalk 봇 채널
 - [Telegram Bot API](https://core.telegram.org/bots/api) — Telegram 봇 채널

@@ -26,12 +26,12 @@
 
 在同一个界面中切换引擎，每个引擎都保持完整能力 —— 文件编辑、Shell 访问、会话历史、项目上下文 —— CodeMux 只是为它们提供了一个统一的入口。
 
-| 引擎 | 协议 | 状态 |
-|--------|----------|--------|
-| **[OpenCode](https://opencode.ai)** | HTTP REST + SSE | ✅ 稳定 |
-| **[GitHub Copilot CLI](https://docs.github.com/en/copilot/using-github-copilot/using-github-copilot-coding-agent-in-cli)** | JSON-RPC/stdio | ✅ 稳定 |
-| **[Claude Code](https://claude.ai/code)** | SDK (stdio) | ✅ 稳定 |
-| **Codex** | JSON-RPC/stdio（app-server） | ⚠️ 实验性 |
+| 引擎                                                                                           | 协议                         | 状态     |
+| ---------------------------------------------------------------------------------------------- | ---------------------------- | -------- |
+| **[OpenCode](https://opencode.ai)**                                                            | HTTP REST + SSE              | ✅ 稳定   |
+| **[GitHub Copilot CLI](https://docs.github.com/en/copilot/concepts/agents/about-copilot-cli)** | JSON-RPC/stdio               | ✅ 稳定   |
+| **[Claude Code](https://claude.ai/code)**                                                      | SDK (stdio)                  | ✅ 稳定   |
+| **[Codex](https://github.com/openai/codex)**                                                   | JSON-RPC/stdio（app-server） | ⚠️ 实验性 |
 
 > 💡 CodeMux 同时也是**首个 —— 也是目前唯一的 —— Copilot CLI 开源图形界面**，在协议层面连接（JSON-RPC over stdio），让你在可视化界面中获得 Copilot 完整的 Agent 编程体验。
 >
@@ -51,15 +51,15 @@
 
 **CodeMux 弥合了这一差距。** 无论你从浏览器还是 IM 平台访问，都能获得完整的 Agent 体验和结构化流式传输：
 
-| 能力 | CodeMux | 基于文本的助手 |
-|------|---------|--------------|
-| 流式输出 | ✅ Token 级实时流式传输 | ⚠️ 完整回复或分块文本 |
-| 思考步骤 | ✅ 每个工具调用渲染为可展开的步骤 | ❌ 仅有最终答案 |
-| 文件差异 | ✅ 带语法高亮的内联 diff 查看器 | ❌ 纯文本或无 |
-| Shell 命令 | ✅ 命令 + 输出实时渲染 | ❌ 充其量是文本摘要 |
-| 多引擎 | ✅ 在 OpenCode / Copilot / Claude Code / Codex 间切换 | ❌ 单一模型/提供商 |
-| 编程上下文 | ✅ 项目感知的会话，完整工具访问 | ⚠️ 通用助手上下文 |
-| 图片输入 | ✅ 粘贴/拖拽图片，所有引擎均可分析 | ❌ 仅支持文本输入 |
+| 能力       | CodeMux                                              | 基于文本的助手       |
+| ---------- | ---------------------------------------------------- | -------------------- |
+| 流式输出   | ✅ Token 级实时流式传输                               | ⚠️ 完整回复或分块文本 |
+| 思考步骤   | ✅ 每个工具调用渲染为可展开的步骤                     | ❌ 仅有最终答案       |
+| 文件差异   | ✅ 带语法高亮的内联 diff 查看器                       | ❌ 纯文本或无         |
+| Shell 命令 | ✅ 命令 + 输出实时渲染                                | ❌ 充其量是文本摘要   |
+| 多引擎     | ✅ 在 OpenCode / Copilot / Claude Code / Codex 间切换 | ❌ 单一模型/提供商    |
+| 编程上下文 | ✅ 项目感知的会话，完整工具访问                       | ⚠️ 通用助手上下文     |
+| 图片输入   | ✅ 粘贴/拖拽图片，所有引擎均可分析                    | ❌ 仅支持文本输入     |
 
 ### 4. 多模态支持
 
@@ -79,11 +79,19 @@ CodeMux 不只是聊天 —— 它提供集成工具，让你直接在界面中�
 
 - **定时任务**：自动化定期执行的 Agent 任务 —— 每天早上跑代码审查、按间隔生成报告、每周批量处理 Issue。支持手动触发、间隔（5 分钟 – 12 小时）、每日和每周调度，应用重启时自动补执行错过的任务。
 
+<img src="https://raw.githubusercontent.com/realDuang/codemux/main/assets/screenshots/scheduled-task.jpg" alt="CodeMux - 定时任务" width="700" />
+
 - **Git Worktree 并行会话**：无需 `git stash` 即可同时在多个分支上工作。从侧边栏创建隔离的 Worktree，每个都有独立的目录、分支和 AI 会话。支持 merge、squash 或 rebase 三种方式合并回主分支 —— 全程不离开界面。
 
 - **文件浏览器与 Git 变更监听**：通过可折叠的文件树浏览项目文件，带语法高亮的代码预览，实时追踪 Git 变更。"变更"标签页展示修改文件及逐行增删统计，内联 diff 查看器让你无需离开 CodeMux 即可检视每一处改动。
 
+<img src="https://raw.githubusercontent.com/realDuang/codemux/main/assets/screenshots/project-preview.jpg" alt="CodeMux - 文件浏览器" width="700" />
+
 - **斜杠命令与引擎技能**：在输入框中键入 `/` 即可通过自动补全调用引擎原生命令和技能 —— `/cancel`、`/status`、`/mode`、`/model` 等。每个引擎暴露各自的命令；Copilot 提供项目级和个人技能，Claude Code 提供用户安装的技能，OpenCode 透传 SDK 命令，Codex 暴露 app-server 技能 —— 全部通过统一的自动补全界面操作。
+
+- **集成终端**：聊天界面正下方内置 VS Code 风格终端 —— 用 `` Ctrl+` `` 即可开关。可开多个标签页运行真实 Shell（Windows 上自动检测 PowerShell / pwsh / cmd / Git Bash / WSL，Unix 上读取 `$SHELL` 与 `/etc/shells`，并支持自定义 profile），配备搜索浮层（`Ctrl+F`）、可点击的文件路径（在 CodeMux 内置文件面板中打开）以及可选的 GPU 渲染（WebGL → Canvas → DOM）。由于终端通过同一条 Gateway WebSocket 流式传输，它在**远程访问下同样可用** —— 无论局域网还是 Cloudflare Tunnel —— 而不只是本地桌面端。
+
+<img src="https://raw.githubusercontent.com/realDuang/codemux/main/assets/screenshots/terminal.jpg" alt="CodeMux - 集成终端" width="700" />
 
 ### 更多特性
 
@@ -108,13 +116,13 @@ CodeMux 不只是聊天 —— 它提供集成工具，让你直接在界面中�
 
 ##### 支持平台
 
-| 平台 | 事件接收 | 流式输出 | 创建群组 | 富文本内容 |
-|------|---------|---------|---------|-----------|
-| [飞书](https://open.feishu.cn/) | WebSocket（长连接） | ✅ 编辑更新 | ✅ 自动建群 | 互动卡片 |
-| [钉钉](https://open.dingtalk.com/) | Stream 模式（WS） | ✅ AI 卡片 | ✅ 场景群 | ActionCard / Markdown |
-| [Telegram](https://core.telegram.org/bots/api) | Webhook / 长轮询 | ✅ sendMessageDraft | ❌ 仅私聊 | MarkdownV2 + 内联键盘 |
-| [企业微信](https://developer.work.weixin.qq.com/) | HTTP 回调（AES XML） | ❌ 批量模式 | ✅ 应用群聊 | Markdown / 模板卡片 |
-| [Microsoft Teams](https://learn.microsoft.com/en-us/microsoftteams/platform/bots/) | Bot Framework HTTP | ✅ 编辑更新 | ❌ 仅私聊 | Adaptive Cards v1.5 |
+| 平台                                                                               | 事件接收             | 流式输出           | 创建群组   | 富文本内容            |
+| ---------------------------------------------------------------------------------- | -------------------- | ------------------ | ---------- | --------------------- |
+| [飞书](https://open.feishu.cn/)                                                    | WebSocket（长连接）  | ✅ 编辑更新         | ✅ 自动建群 | 互动卡片              |
+| [钉钉](https://open.dingtalk.com/)                                                 | Stream 模式（WS）    | ✅ AI 卡片          | ✅ 场景群   | ActionCard / Markdown |
+| [Telegram](https://core.telegram.org/bots/api)                                     | Webhook / 长轮询     | ✅ sendMessageDraft | ❌ 仅私聊   | MarkdownV2 + 内联键盘 |
+| [企业微信](https://developer.work.weixin.qq.com/)                                  | HTTP 回调（AES XML） | ❌ 批量模式         | ✅ 应用群聊 | Markdown / 模板卡片   |
+| [Microsoft Teams](https://learn.microsoft.com/en-us/microsoftteams/platform/bots/) | Bot Framework HTTP   | ✅ 编辑更新         | ❌ 仅私聊   | Adaptive Cards v1.5   |
 
 ##### 通用功能
 
@@ -135,13 +143,13 @@ CodeMux 不只是聊天 —— 它提供集成工具，让你直接在界面中�
 
 📖 **[详细配置指南 →](docs/channels/README.md)** — 包含各平台的完整步骤、权限配置、Webhook 设置及常见问题排查。
 
-| 平台 | 需要的凭证 | 开发者门户 |
-|------|-----------|-----------|
-| 飞书 | App ID、App Secret | [open.feishu.cn](https://open.feishu.cn/) |
-| 钉钉 | App Key、App Secret、Robot Code | [open.dingtalk.com](https://open.dingtalk.com/) |
-| Telegram | Bot Token（来自 @BotFather） | [core.telegram.org](https://core.telegram.org/bots) |
-| 企业微信 | 企业 ID、应用密钥、Agent ID、回调 Token、加密密钥 | [developer.work.weixin.qq.com](https://developer.work.weixin.qq.com/) |
-| Teams | Microsoft App ID、应用密码、Tenant ID | [Azure Portal](https://portal.azure.com/) + [Teams 开发者门户](https://dev.teams.microsoft.com/) |
+| 平台     | 需要的凭证                                        | 开发者门户                                                                                       |
+| -------- | ------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| 飞书     | App ID、App Secret                                | [open.feishu.cn](https://open.feishu.cn/)                                                        |
+| 钉钉     | App Key、App Secret、Robot Code                   | [open.dingtalk.com](https://open.dingtalk.com/)                                                  |
+| Telegram | Bot Token（来自 @BotFather）                      | [core.telegram.org](https://core.telegram.org/bots)                                              |
+| 企业微信 | 企业 ID、应用密钥、Agent ID、回调 Token、加密密钥 | [developer.work.weixin.qq.com](https://developer.work.weixin.qq.com/)                            |
+| Teams    | Microsoft App ID、应用密码、Tenant ID             | [Azure Portal](https://portal.azure.com/) + [Teams 开发者门户](https://dev.teams.microsoft.com/) |
 
 ---
 
@@ -189,9 +197,9 @@ bun run dev
 
 > **引擎前置条件**：所有引擎都是外部依赖，需要安装并添加到 PATH 中：
 > - **OpenCode**：从 [opencode.ai](https://opencode.ai) 安装 —— `curl -fsSL https://opencode.ai/install.sh | bash`（Unix）或 `irm https://opencode.ai/install.ps1 | iex`（Windows）
-> - **Copilot CLI**：单独安装 [GitHub Copilot CLI](https://docs.github.com/en/copilot/using-github-copilot/using-github-copilot-coding-agent-in-cli)
+> - **Copilot CLI**：单独安装 [GitHub Copilot CLI](https://docs.github.com/en/copilot/concepts/agents/about-copilot-cli)
 > - **Claude Code**：通过 `npm install -g @anthropic-ai/claude-code` 安装，并设置 `ANTHROPIC_API_KEY`
-> - **Codex**：单独安装 `codex` CLI，并确保 `codex` 已加入 PATH。CodeMux 会复用 Codex 现有的 OpenAI 登录或 API Key 配置。当前为实验性/unstable 支持。
+> - **Codex**：单独安装 [`codex` CLI](https://github.com/openai/codex)，并确保 `codex` 已加入 PATH。CodeMux 会复用 Codex 现有的 OpenAI 登录或 API Key 配置。当前为实验性/unstable 支持。
 >
 > CodeMux 启动时会自动检测已安装的引擎。
 
@@ -201,11 +209,11 @@ bun run dev
 
 ### 连接方式
 
-| 方式 | 配置 | 适用场景 |
-|------|------|---------|
-| **局域网浏览器** | 打开 `http://<你的IP>:8233`，输入 6 位访问码或扫描二维码 | 同一网络下从另一台设备快速访问 |
-| **公网** | 开启"公网访问" → 分享 `*.trycloudflare.com` URL，或在准备好命名隧道凭证后配置自定义域名 | 从任何地方访问，无需端口转发 |
-| **IM 机器人** | 在设置 → 渠道中配置机器人凭证 | 通过飞书、钉钉、Telegram、企业微信或 Teams 交互 |
+| 方式             | 配置                                                                                    | 适用场景                                        |
+| ---------------- | --------------------------------------------------------------------------------------- | ----------------------------------------------- |
+| **局域网浏览器** | 打开 `http://<你的IP>:8233`，输入 6 位访问码或扫描二维码                                | 同一网络下从另一台设备快速访问                  |
+| **公网**         | 开启"公网访问" → 分享 `*.trycloudflare.com` URL，或在准备好命名隧道凭证后配置自定义域名 | 从任何地方访问，无需端口转发                    |
+| **IM 机器人**    | 在设置 → 渠道中配置机器人凭证                                                           | 通过飞书、钉钉、Telegram、企业微信或 Teams 交互 |
 
 ### Cloudflare 自定义域名
 
@@ -234,12 +242,12 @@ cloudflared tunnel route dns <tunnel-name-or-id> <your-domain>
 
 ### 安全与设备管理
 
-| 层级 | 保护措施 |
-|-------|------------|
-| **设备授权** | 新设备需要通过 6 位验证码审批 |
-| **JWT 令牌** | 按设备存储的安全令牌 |
-| **HTTPS** | 公网隧道通过 Cloudflare 自动使用 HTTPS |
-| **临时 URL** | 隧道 URL 每次重启时更换 |
+| 层级         | 保护措施                               |
+| ------------ | -------------------------------------- |
+| **设备授权** | 新设备需要通过 6 位验证码审批          |
+| **JWT 令牌** | 按设备存储的安全令牌                   |
+| **HTTPS**    | 公网隧道通过 Cloudflare 自动使用 HTTPS |
+| **临时 URL** | 隧道 URL 每次重启时更换                |
 
 在设备管理页面管理已连接的设备 —— 查看最后访问时间、重命名以便识别，或按设备撤销访问权限。
 
@@ -353,8 +361,9 @@ codemux/
 - [路线图](https://github.com/realDuang/codemux/discussions/61) — 开发路线图与里程碑追踪
 - [问题反馈](https://github.com/realDuang/codemux/issues) — Bug 报告
 - [OpenCode](https://opencode.ai) — 支持的引擎
-- [GitHub Copilot CLI](https://docs.github.com/en/copilot/using-github-copilot/using-github-copilot-coding-agent-in-cli) — 支持的引擎
+- [GitHub Copilot CLI](https://docs.github.com/en/copilot/concepts/agents/about-copilot-cli) — 支持的引擎
 - [Claude Code](https://docs.anthropic.com/en/docs/claude-code) — 支持的引擎
+- [Codex](https://github.com/openai/codex) — 支持的引擎
 - [飞书开放平台](https://open.feishu.cn/) — 飞书机器人渠道
 - [钉钉开放平台](https://open.dingtalk.com/) — 钉钉机器人渠道
 - [Telegram Bot API](https://core.telegram.org/bots/api) — Telegram 机器人渠道

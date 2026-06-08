@@ -29,9 +29,9 @@ Switch between engines from a single interface. Each keeps its full power — fi
 | Engine | Protocol | Status |
 |--------|----------|--------|
 | **[OpenCode](https://opencode.ai)** | HTTP REST + SSE | ✅ Stable |
-| **[GitHub Copilot CLI](https://docs.github.com/en/copilot/using-github-copilot/using-github-copilot-coding-agent-in-cli)** | JSON-RPC/stdio | ✅ Stable |
+| **[GitHub Copilot CLI](https://docs.github.com/en/copilot/concepts/agents/about-copilot-cli)** | JSON-RPC/stdio | ✅ Stable |
 | **[Claude Code](https://claude.ai/code)** | SDK (stdio) | ✅ Stable |
-| **Codex** | JSON-RPC/stdio (app-server) | ⚠️ Experimental |
+| **[Codex](https://github.com/openai/codex)** | JSON-RPC/stdio (app-server) | ⚠️ Experimental |
 
 > 💡 CodeMux is also the **first — and currently only — open-source GUI for GitHub Copilot CLI**, connecting at the protocol level (JSON-RPC over stdio) to deliver Copilot's complete agentic coding experience in a visual interface.
 >
@@ -79,11 +79,19 @@ CodeMux goes beyond chat — it provides integrated tools to manage your develop
 
 - **Scheduled Tasks**: Automate recurring agent tasks — run code reviews every morning, generate reports on an interval, or batch-process issues weekly. Supports manual trigger, interval (5 min – 12 hours), daily, and weekly scheduling with missed-run catch-up when the app restarts.
 
+<img src="https://raw.githubusercontent.com/realDuang/codemux/main/assets/screenshots/scheduled-task.jpg" alt="CodeMux - Scheduled Tasks" width="700" />
+
 - **Git Worktree Parallel Sessions**: Work on multiple branches simultaneously without `git stash`. Create isolated worktrees from the sidebar, each with its own directory, branch, and AI sessions. Merge back with your choice of merge, squash, or rebase — all without leaving the UI.
 
 - **File Explorer & Git Monitoring**: Browse project files with a collapsible tree, preview code with syntax highlighting, and track git changes in real time. A "Changes" tab shows modified files with line-level add/remove counts, and an inline diff viewer lets you inspect every change without leaving CodeMux.
 
+<img src="https://raw.githubusercontent.com/realDuang/codemux/main/assets/screenshots/project-preview.jpg" alt="CodeMux - File Explorer" width="700" />
+
 - **Slash Commands & Engine Skills**: Type `/` in the input to invoke engine-native commands and skills with autocomplete — `/cancel`, `/status`, `/mode`, `/model`, and more. Each engine exposes its own commands; Copilot surfaces project-level and personal skills, Claude Code surfaces user-installed skills, OpenCode passes through its SDK commands, and Codex surfaces app-server skills — all through a unified autocomplete UI.
+
+- **Integrated Terminal**: A built-in VS Code-style terminal lives right under the chat — toggle it with `` Ctrl+` ``. Open multiple tabs running real shells (auto-detected PowerShell / pwsh / cmd / Git Bash / WSL on Windows; `$SHELL` and `/etc/shells` on Unix; plus custom profiles), with a search overlay (`Ctrl+F`), clickable file paths that open in CodeMux's built-in file panel, and selectable GPU rendering (WebGL → Canvas → DOM). Because it streams over the same Gateway WebSocket, the terminal works **remotely too** — over LAN or Cloudflare Tunnel — not just on the local desktop.
+
+<img src="https://raw.githubusercontent.com/realDuang/codemux/main/assets/screenshots/terminal.jpg" alt="CodeMux - Integrated Terminal" width="700" />
 
 ### And More
 
@@ -255,9 +263,9 @@ After a browser has been approved, it can open **Settings → Channels** in the 
 
 > **Engine Prerequisites**: All engines are external dependencies that must be installed and available in your PATH:
 > - **OpenCode**: Install from [opencode.ai](https://opencode.ai) — `curl -fsSL https://opencode.ai/install | bash` (Unix) or `irm https://opencode.ai/install.ps1 | iex` (Windows)
-> - **Copilot CLI**: Install [GitHub Copilot CLI](https://docs.github.com/en/copilot/using-github-copilot/using-github-copilot-coding-agent-in-cli) separately
+> - **Copilot CLI**: Install [GitHub Copilot CLI](https://docs.github.com/en/copilot/concepts/agents/about-copilot-cli) separately
 > - **Claude Code**: Install via `npm install -g @anthropic-ai/claude-code` and set your `ANTHROPIC_API_KEY`
-> - **Codex**: Install the `codex` CLI separately and ensure `codex` is in PATH. CodeMux reuses Codex's existing OpenAI login or API key configuration. Experimental/unstable.
+> - **Codex**: Install the [`codex` CLI](https://github.com/openai/codex) separately and ensure `codex` is in PATH. CodeMux reuses Codex's existing OpenAI login or API key configuration. Experimental/unstable.
 >
 > CodeMux auto-detects installed engines on startup.
 
@@ -428,8 +436,9 @@ Contributions are welcome! See [CONTRIBUTING.md](CONTRIBUTING.md) for detailed g
 - [Roadmap](https://github.com/realDuang/codemux/discussions/61) — Development roadmap and milestone tracking
 - [Issues](https://github.com/realDuang/codemux/issues) — Bug reports
 - [OpenCode](https://opencode.ai) — Supported engine
-- [GitHub Copilot CLI](https://docs.github.com/en/copilot/using-github-copilot/using-github-copilot-coding-agent-in-cli) — Supported engine
+- [GitHub Copilot CLI](https://docs.github.com/en/copilot/concepts/agents/about-copilot-cli) — Supported engine
 - [Claude Code](https://docs.anthropic.com/en/docs/claude-code) — Supported engine
+- [Codex](https://github.com/openai/codex) — Supported engine
 - [Feishu Open Platform](https://open.feishu.cn/) — Feishu bot channel
 - [DingTalk Open Platform](https://open.dingtalk.com/) — DingTalk bot channel
 - [Telegram Bot API](https://core.telegram.org/bots/api) — Telegram bot channel

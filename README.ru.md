@@ -29,9 +29,9 @@
 | Движок | Протокол | Статус |
 |--------|----------|--------|
 | **[OpenCode](https://opencode.ai)** | HTTP REST + SSE | ✅ Стабильный |
-| **[GitHub Copilot CLI](https://docs.github.com/en/copilot/using-github-copilot/using-github-copilot-coding-agent-in-cli)** | JSON-RPC/stdio | ✅ Стабильный |
+| **[GitHub Copilot CLI](https://docs.github.com/en/copilot/concepts/agents/about-copilot-cli)** | JSON-RPC/stdio | ✅ Стабильный |
 | **[Claude Code](https://claude.ai/code)** | SDK (stdio) | ✅ Стабильный |
-| **Codex** | JSON-RPC/stdio (app-server) | ⚠️ Экспериментальный |
+| **[Codex](https://github.com/openai/codex)** | JSON-RPC/stdio (app-server) | ⚠️ Экспериментальный |
 
 > 💡 CodeMux — это также **первый и на данный момент единственный GUI с открытым кодом для GitHub Copilot CLI**, подключающийся на уровне протокола (JSON-RPC через stdio) для предоставления полноценного агентного опыта Copilot в визуальном интерфейсе.
 >
@@ -79,11 +79,19 @@ CodeMux выходит за рамки чата — предоставляет �
 
 - **Запланированные задачи**: Автоматизируйте регулярные задачи агентов — ежедневные обзоры кода, генерация отчётов по интервалу, еженедельная пакетная обработка задач. Поддерживаются ручной запуск, интервал (5 мин – 12 часов), ежедневное и еженедельное расписание с автоматическим выполнением пропущенных запусков при перезапуске приложения.
 
+<img src="https://raw.githubusercontent.com/realDuang/codemux/main/assets/screenshots/scheduled-task.jpg" alt="CodeMux - Запланированные задачи" width="700" />
+
 - **Параллельные сессии Git Worktree**: Работайте над несколькими ветками одновременно без `git stash`. Создавайте изолированные рабочие деревья прямо из боковой панели, каждое со своим каталогом, веткой и AI-сессиями. Слияние обратно с выбором стратегии: merge, squash или rebase — не покидая интерфейса.
 
 - **Проводник файлов и мониторинг Git**: Просматривайте файлы проекта в сворачиваемом дереве, предпросмотр кода с подсветкой синтаксиса и отслеживание изменений Git в реальном времени. Вкладка «Изменения» показывает модифицированные файлы с построчными счётчиками добавлений/удалений, а встроенный просмотрщик diff позволяет проверять каждое изменение, не покидая CodeMux.
 
+<img src="https://raw.githubusercontent.com/realDuang/codemux/main/assets/screenshots/project-preview.jpg" alt="CodeMux - Проводник файлов" width="700" />
+
 - **Слеш-команды и навыки движков**: Введите `/` в поле ввода для вызова нативных команд и навыков движков с автодополнением — `/cancel`, `/status`, `/mode`, `/model` и другие. Каждый движок предоставляет собственные команды; Copilot — навыки проекта и персональные, Claude Code — пользовательские навыки, OpenCode — команды SDK, а Codex — навыки app-server — всё через единый интерфейс автодополнения.
+
+- **Встроенный терминал**: Прямо под чатом располагается терминал в стиле VS Code — переключается по `` Ctrl+` ``. Открывайте несколько вкладок с настоящими шеллами (автоопределение PowerShell / pwsh / cmd / Git Bash / WSL в Windows; `$SHELL` и `/etc/shells` в Unix; плюс пользовательские профили), с оверлеем поиска (`Ctrl+F`), кликабельными путями к файлам (открываются во встроенной файловой панели CodeMux) и выбираемым GPU-рендерингом (WebGL → Canvas → DOM). Поскольку терминал передаётся через тот же Gateway WebSocket, он работает **и удалённо** — по локальной сети или через Cloudflare Tunnel — а не только на локальном рабочем столе.
+
+<img src="https://raw.githubusercontent.com/realDuang/codemux/main/assets/screenshots/terminal.jpg" alt="CodeMux - Встроенный терминал" width="700" />
 
 ### Дополнительные возможности
 
@@ -189,9 +197,9 @@ bun run dev
 
 > **Требования к движкам**: Все движки — это внешние зависимости, которые нужно установить и добавить в PATH:
 > - **OpenCode**: Установите с [opencode.ai](https://opencode.ai) — `curl -fsSL https://opencode.ai/install.sh | bash` (Unix) или `irm https://opencode.ai/install.ps1 | iex` (Windows)
-> - **Copilot CLI**: Установите [GitHub Copilot CLI](https://docs.github.com/en/copilot/using-github-copilot/using-github-copilot-coding-agent-in-cli) отдельно
+> - **Copilot CLI**: Установите [GitHub Copilot CLI](https://docs.github.com/en/copilot/concepts/agents/about-copilot-cli) отдельно
 > - **Claude Code**: Установите через `npm install -g @anthropic-ai/claude-code` и задайте `ANTHROPIC_API_KEY`
-> - **Codex**: Установите `codex` CLI отдельно и убедитесь, что `codex` доступен в PATH. CodeMux переиспользует уже настроенный вход OpenAI или API-ключ Codex. Сейчас это experimental/unstable интеграция.
+> - **Codex**: Установите [`codex` CLI](https://github.com/openai/codex) отдельно и убедитесь, что `codex` доступен в PATH. CodeMux переиспользует уже настроенный вход OpenAI или API-ключ Codex. Сейчас это experimental/unstable интеграция.
 >
 > CodeMux автоматически обнаруживает установленные движки при запуске.
 

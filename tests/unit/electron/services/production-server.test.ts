@@ -233,20 +233,41 @@ describe("ProductionServer", () => {
   });
 
   describe("setChannelManager + /api/channels/* dispatch", () => {
-    it("returns 503 when /api/channels is requested before the manager is injected", async () => {
+    it("returns 401 when /api/channels is requested before the manager is injected by an unauthenticated caller", async () => {
       (productionServer as unknown as { channelManager: unknown }).channelManager = null;
 
       const res = await request(port, "/api/channels");
+      expect(res.status).toBe(401);
+      expect(res.body.error).toBe("Unauthorized");
+    });
+
+    it("returns a generic 503 when /api/channels is requested before the manager is injected", async () => {
+      (productionServer as unknown as { channelManager: unknown }).channelManager = null;
+      (deviceStore.verifyToken as ReturnType<typeof vi.fn>).mockReturnValueOnce({
+        valid: true,
+        deviceId: "dev-1",
+      });
+
+      const res = await request(port, "/api/channels", {
+        headers: { authorization: "Bearer good-token" },
+      });
       expect(res.status).toBe(503);
-      expect(res.body.error).toMatch(/ChannelManager not configured/i);
+      expect(res.body.error).toBe("Channel service temporarily unavailable");
     });
 
     it("returns 503 for nested /api/channels/<type>/start when manager missing", async () => {
       (productionServer as unknown as { channelManager: unknown }).channelManager = null;
+      (deviceStore.verifyToken as ReturnType<typeof vi.fn>).mockReturnValueOnce({
+        valid: true,
+        deviceId: "dev-1",
+      });
 
-      const res = await request(port, "/api/channels/feishu/start", { method: "POST" });
+      const res = await request(port, "/api/channels/feishu/start", {
+        method: "POST",
+        headers: { authorization: "Bearer good-token" },
+      });
       expect(res.status).toBe(503);
-      expect(res.body.error).toMatch(/ChannelManager not configured/i);
+      expect(res.body.error).toBe("Channel service temporarily unavailable");
     });
 
     it("delegates to handleChannelRoutes when manager is injected", async () => {

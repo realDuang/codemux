@@ -1,7 +1,7 @@
 import http from "http";
 import { deviceStore } from "./device-store";
 import { authLog, getLogFilePath, getFileLogLevel, setFileLogLevel, loadSettings, saveSettings } from "./logger";
-import { sendJson } from "../../../shared/http-utils";
+import { requireAuth, sendJson } from "../../../shared/http-utils";
 import { handleAuthRoutes, handleLogRoutes, handleSettingsRoutes } from "../../../shared/auth-route-handlers";
 import { handleChannelRoutes, type ChannelManagerRoutes } from "../../../shared/channel-route-handlers";
 import { AUTH_API_PORT } from "../../../shared/ports";
@@ -12,6 +12,8 @@ import { AUTH_API_PORT } from "../../../shared/ports";
 // In development, Vite proxies requests here. In production, Electron handles
 // everything via IPC, so this server is only used in development.
 // ============================================================================
+
+const CHANNEL_SERVICE_UNAVAILABLE_ERROR = "Channel service temporarily unavailable";
 
 class AuthApiServer {
   private server: http.Server | null = null;
@@ -101,9 +103,11 @@ class AuthApiServer {
     // can't use Electron IPC.
     if (pathname === "/api/channels" || pathname.startsWith("/api/channels/")) {
       if (!this.channelManager) {
+        if (!requireAuth(req, res, deviceStore)) return;
+        authLog.warn("ChannelManager not configured; unable to handle channel route:", pathname);
         sendJson(
           res,
-          { error: "ChannelManager not configured on auth-api server" },
+          { error: CHANNEL_SERVICE_UNAVAILABLE_ERROR },
           503,
         );
         return;

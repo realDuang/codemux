@@ -4,7 +4,7 @@ import path from "path";
 import { app } from "electron";
 import { deviceStore } from "./device-store";
 import { prodServerLog, getLogFilePath, getFileLogLevel, setFileLogLevel, loadSettings, saveSettings } from "./logger";
-import { sendJson, getClientIp, isLocalhost, getLocalIp } from "../../../shared/http-utils";
+import { sendJson, requireAuth, getClientIp, isLocalhost, getLocalIp } from "../../../shared/http-utils";
 import { handleAuthRoutes, handleLogRoutes, handleSettingsRoutes } from "../../../shared/auth-route-handlers";
 import { handleChannelRoutes, type ChannelManagerRoutes } from "../../../shared/channel-route-handlers";
 import { WEB_PORT, OPENCODE_PORT, WEBHOOK_PORT } from "../../../shared/ports";
@@ -14,6 +14,8 @@ import { WEB_PORT, OPENCODE_PORT, WEBHOOK_PORT } from "../../../shared/ports";
 // Serves static files and proxies API requests when running in packaged mode.
 // This is required for Cloudflare Tunnel to work - it needs an HTTP server.
 // ============================================================================
+
+const CHANNEL_SERVICE_UNAVAILABLE_ERROR = "Channel service temporarily unavailable";
 
 // MIME types for static file serving
 const MIME_TYPES: Record<string, string> = {
@@ -320,9 +322,11 @@ class ProductionServer {
     // ========================================================================
     if (pathname === "/api/channels" || pathname.startsWith("/api/channels/")) {
       if (!this.channelManager) {
+        if (!requireAuth(req, res, deviceStore)) return;
+        prodServerLog.warn("ChannelManager not configured; unable to handle channel route:", pathname);
         sendJson(
           res,
-          { error: "ChannelManager not configured on production server" },
+          { error: CHANNEL_SERVICE_UNAVAILABLE_ERROR },
           503,
         );
         return;

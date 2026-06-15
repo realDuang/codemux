@@ -490,6 +490,7 @@ export interface LocaleDict {
     secretConfiguredHint: string;
     save: string;
     saving: string;
+    saveFailed: string;
     directConnect: string;
     directConnectBadge: string;
     webhookConnect: string;
@@ -1190,6 +1191,7 @@ export const en: LocaleDict = {
     secretConfiguredHint: "Configured — leave empty to keep current",
     save: "Save",
     saving: "Saving...",
+    saveFailed: "Save failed",
     directConnect: "Direct",
     directConnectBadge: "Outbound",
     webhookConnect: "Requires Public Access",

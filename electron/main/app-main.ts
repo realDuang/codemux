@@ -141,6 +141,7 @@ if (!gotTheLock) {
     // Vite middleware will proxy requests to this server
     if (!app.isPackaged) {
       try {
+        authApiServer.setChannelManager(channelManager);
         await authApiServer.start();
       } catch (err) {
         mainLog.error("Failed to start Auth API server:", err);
@@ -149,6 +150,7 @@ if (!gotTheLock) {
       // In production mode, start the production HTTP server
       // This is required for Cloudflare Tunnel to work
       try {
+        productionServer.setChannelManager(channelManager);
         const port = await productionServer.start(WEB_PORT);
         mainLog.info(`Production server started on port ${port}`);
       } catch (err) {

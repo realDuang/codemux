@@ -4,9 +4,9 @@ import path from "path";
 import { app } from "electron";
 import { deviceStore } from "./device-store";
 import { prodServerLog, getLogFilePath, getFileLogLevel, setFileLogLevel, loadSettings, saveSettings } from "./logger";
-import { sendJson, getClientIp, isLocalhost, getLocalIp } from "../../../shared/http-utils";
+import { sendJson, requireAuth, getClientIp, isLocalhost, getLocalIp } from "../../../shared/http-utils";
 import { handleAuthRoutes, handleLogRoutes, handleSettingsRoutes } from "../../../shared/auth-route-handlers";
-import { handleChannelRoutes } from "../../../shared/channel-route-handlers";
+import { handleChannelRoutes, type ChannelManagerRoutes } from "../../../shared/channel-route-handlers";
 import { WEB_PORT, OPENCODE_PORT, WEBHOOK_PORT } from "../../../shared/ports";
 
 // ============================================================================
@@ -14,6 +14,8 @@ import { WEB_PORT, OPENCODE_PORT, WEBHOOK_PORT } from "../../../shared/ports";
 // Serves static files and proxies API requests when running in packaged mode.
 // This is required for Cloudflare Tunnel to work - it needs an HTTP server.
 // ============================================================================
+
+const CHANNEL_SERVICE_UNAVAILABLE_ERROR = "Channel service temporarily unavailable";
 
 // MIME types for static file serving
 const MIME_TYPES: Record<string, string> = {
@@ -150,6 +152,12 @@ class ProductionServer {
   private server: http.Server | null = null;
   private port: number = WEB_PORT;
   private staticRoot: string = "";
+  private channelManager: ChannelManagerRoutes | null = null;
+
+  /** Inject the ChannelManager so /api/channels/* routes work from web clients. */
+  setChannelManager(channelManager: ChannelManagerRoutes): void {
+    this.channelManager = channelManager;
+  }
 
   getPort(): number {
     return this.port;
@@ -305,6 +313,33 @@ class ProductionServer {
     // ========================================================================
     if (pathname === "/api/messages" || pathname.startsWith("/webhook/")) {
       proxyToWebhook(req, res, pathname + url.search);
+      return;
+    }
+
+    // ========================================================================
+    // Channel API Routes (auth-required) — required for web/remote clients
+    // that can't use Electron IPC.
+    // ========================================================================
+    if (pathname === "/api/channels" || pathname.startsWith("/api/channels/")) {
+      if (!this.channelManager) {
+        if (!requireAuth(req, res, deviceStore)) return;
+        prodServerLog.warn("ChannelManager not configured; unable to handle channel route:", pathname);
+        sendJson(
+          res,
+          { error: CHANNEL_SERVICE_UNAVAILABLE_ERROR },
+          503,
+        );
+        return;
+      }
+      const handled = await handleChannelRoutes(
+        req,
+        res,
+        pathname,
+        deviceStore,
+        this.channelManager,
+      );
+      if (handled) return;
+      sendJson(res, { error: "Not found" }, 404);
       return;
     }
 

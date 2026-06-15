@@ -26,10 +26,12 @@ export function ChannelConfigModal(props: ChannelConfigModalProps) {
   const { t } = useI18n();
   const [config, setConfig] = createSignal<Record<string, unknown>>({ ...props.initialConfig });
   const [saving, setSaving] = createSignal(false);
+  const [saveError, setSaveError] = createSignal<string | null>(null);
 
   createEffect(() => {
     if (props.isOpen) {
       setConfig({ ...props.initialConfig });
+      setSaveError(null);
     }
   });
 
@@ -47,11 +49,13 @@ export function ChannelConfigModal(props: ChannelConfigModalProps) {
 
   const handleSave = async () => {
     setSaving(true);
+    setSaveError(null);
     try {
       await props.onSave(config());
       props.onClose();
-    } catch {
-      // Error handled by parent
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      setSaveError(message || t().channel.saveFailed);
     } finally {
       setSaving(false);
     }
@@ -171,6 +175,12 @@ export function ChannelConfigModal(props: ChannelConfigModalProps) {
               <p class="text-xs text-gray-400 dark:text-gray-500">
                 {t().channel.configRequired}
               </p>
+            </Show>
+
+            <Show when={saveError()}>
+              <div class="rounded-lg border border-red-200 dark:border-red-900/40 bg-red-50 dark:bg-red-900/20 p-3">
+                <p class="text-xs text-red-700 dark:text-red-300 break-words">{saveError()}</p>
+              </div>
             </Show>
           </div>
 

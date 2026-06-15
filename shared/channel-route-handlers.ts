@@ -1,7 +1,7 @@
 import type { IncomingMessage, ServerResponse } from "http";
 import { parseBody, sendJson, requireAuth } from "./http-utils";
 
-interface ChannelManagerRoutes {
+export interface ChannelManagerRoutes {
   listChannels(): unknown[];
   getConfig(type: string): unknown | undefined;
   updateConfig(type: string, updates: Record<string, unknown>): Promise<void>;

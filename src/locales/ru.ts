@@ -487,6 +487,7 @@ export const ru: LocaleDict = {
     secretConfiguredHint: "Настроено — оставьте пустым, чтобы сохранить текущее значение",
     save: "Сохранить",
     saving: "Сохранение...",
+    saveFailed: "Не удалось сохранить",
     directConnect: "Прямое подключение",
     directConnectBadge: "Исходящее соединение",
     webhookConnect: "Требуется публичный доступ",

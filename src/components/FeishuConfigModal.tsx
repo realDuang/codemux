@@ -22,6 +22,7 @@ export function FeishuConfigModal(props: FeishuConfigModalProps) {
   const { t } = useI18n();
   const [config, setConfig] = createSignal<FeishuConfig>({ ...props.initialConfig });
   const [saving, setSaving] = createSignal(false);
+  const [saveError, setSaveError] = createSignal<string | null>(null);
 
   const isSecretSatisfied = (key: string) => {
     const val = config()[key as keyof FeishuConfig];
@@ -33,16 +34,19 @@ export function FeishuConfigModal(props: FeishuConfigModalProps) {
   createEffect(() => {
     if (props.isOpen) {
       setConfig({ ...props.initialConfig });
+      setSaveError(null);
     }
   });
 
   const handleSave = async () => {
     setSaving(true);
+    setSaveError(null);
     try {
       await props.onSave(config());
       props.onClose();
-    } catch {
-      // Error handled by parent
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      setSaveError(message || t().channel.saveFailed);
     } finally {
       setSaving(false);
     }
@@ -165,6 +169,13 @@ export function FeishuConfigModal(props: FeishuConfigModalProps) {
               <p class="text-xs text-gray-400 dark:text-gray-500">
                 {t().channel.configRequired}
               </p>
+            </Show>
+
+            {/* Save error */}
+            <Show when={saveError()}>
+              <div class="rounded-lg border border-red-200 dark:border-red-900/40 bg-red-50 dark:bg-red-900/20 p-3">
+                <p class="text-xs text-red-700 dark:text-red-300 break-words">{saveError()}</p>
+              </div>
             </Show>
           </div>
 

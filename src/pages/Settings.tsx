@@ -7,7 +7,7 @@ import ImportHistoryModal from "../components/ImportHistoryModal";
 import { ensureGatewayInitialized, refreshEngineConfigState } from "../lib/engine-bootstrap";
 import { ChannelManagementSettings } from "../components/ChannelManagementSettings";
 import { TerminalSettingsSection } from "../components/TerminalSettingsSection";
-import { useI18n } from "../lib/i18n";
+import { useI18n, formatMessage } from "../lib/i18n";
 import { logger } from "../lib/logger";
 import { useAuthGuard } from "../lib/useAuthGuard";
 import { isElectron } from "../lib/platform";
@@ -38,6 +38,7 @@ export default function Settings() {
   // Update section state
   const [appVersion, setAppVersion] = createSignal("");
   const [updateCheckStatus, setUpdateCheckStatus] = createSignal<"idle" | "checking" | "up-to-date" | "available" | "error">("idle");
+  const [latestVersion, setLatestVersion] = createSignal("");
   const [autoCheckEnabled, setAutoCheckEnabled] = createSignal(true);
   const [launchAtLoginEnabled, setLaunchAtLoginEnabled] = createSignal(false);
 
@@ -226,6 +227,7 @@ export default function Settings() {
       return;
     }
     if (result.status === "available" || result.status === "downloading" || result.status === "downloaded") {
+      setLatestVersion(result.version ?? "");
       setUpdateCheckStatus("available");
     } else if (result.status === "error") {
       setUpdateCheckStatus("error");
@@ -986,7 +988,7 @@ export default function Settings() {
                       </Show>
                       <Show when={updateCheckStatus() === "available"}>
                         <p class="text-xs text-blue-600 dark:text-blue-400 mt-1">
-                          {t().update.available}
+                          {formatMessage(t().update.available, { version: latestVersion() })}
                         </p>
                       </Show>
                       <Show when={updateCheckStatus() === "error"}>

@@ -103,5 +103,8 @@
     "vite-plugin-icons-spritesheet": "^3.0.1",
     "vite-plugin-solid": "^2.10.0",
     "vitest": "^4.0.18"
+  },
+  "overrides": {
+    "node-gyp": "^12.1.0"
   }
 }

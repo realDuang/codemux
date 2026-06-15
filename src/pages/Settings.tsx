@@ -8,6 +8,7 @@ import { ensureGatewayInitialized, refreshEngineConfigState } from "../lib/engin
 import { ChannelManagementSettings } from "../components/ChannelManagementSettings";
 import { TerminalSettingsSection } from "../components/TerminalSettingsSection";
 import { useI18n } from "../lib/i18n";
+import { formatUpdateAvailableMessage, hasUpdateVersion } from "../lib/update-message";
 import { logger } from "../lib/logger";
 import { useAuthGuard } from "../lib/useAuthGuard";
 import { isElectron } from "../lib/platform";
@@ -37,6 +38,7 @@ export default function Settings() {
 
   // Update section state
   const [appVersion, setAppVersion] = createSignal("");
+  const [availableUpdateVersion, setAvailableUpdateVersion] = createSignal("");
   const [updateCheckStatus, setUpdateCheckStatus] = createSignal<"idle" | "checking" | "up-to-date" | "available" | "error">("idle");
   const [autoCheckEnabled, setAutoCheckEnabled] = createSignal(true);
   const [launchAtLoginEnabled, setLaunchAtLoginEnabled] = createSignal(false);
@@ -220,13 +222,20 @@ export default function Settings() {
 
   const handleCheckForUpdates = async () => {
     setUpdateCheckStatus("checking");
+    setAvailableUpdateVersion("");
     const result = await updateAPI.checkForUpdates();
     if (!result) {
       setUpdateCheckStatus("idle");
       return;
     }
     if (result.status === "available" || result.status === "downloading" || result.status === "downloaded") {
-      setUpdateCheckStatus("available");
+      if (hasUpdateVersion(result.version)) {
+        setAvailableUpdateVersion(result.version.trim());
+        setUpdateCheckStatus("available");
+      } else {
+        setUpdateCheckStatus("error");
+        setTimeout(() => setUpdateCheckStatus("idle"), 3000);
+      }
     } else if (result.status === "error") {
       setUpdateCheckStatus("error");
       // Reset after 3 seconds
@@ -986,7 +995,10 @@ export default function Settings() {
                       </Show>
                       <Show when={updateCheckStatus() === "available"}>
                         <p class="text-xs text-blue-600 dark:text-blue-400 mt-1">
-                          {t().update.available}
+                          {formatUpdateAvailableMessage(
+                            t().update.available,
+                            availableUpdateVersion(),
+                          )}
                         </p>
                       </Show>
                       <Show when={updateCheckStatus() === "error"}>

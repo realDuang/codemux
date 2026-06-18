@@ -16,6 +16,7 @@ import {
 import { openCodeLog } from "../../services/logger";
 import { CODEMUX_IDENTITY_PROMPT } from "../identity-prompt";
 import { EngineAdapter } from "../engine-adapter";
+import type { SkillProjectionProvider } from "../../services/skill-projection-service";
 import {
   convertSession,
   convertMessage,
@@ -113,13 +114,27 @@ export class OpenCodeAdapter extends EngineAdapter {
     return this.modelPricing.get(`${sdk.providerID}/${sdk.modelID}`);
   }
 
-  constructor(options?: { port?: number }) {
+  constructor(private options?: { port?: number; skillProjection?: SkillProjectionProvider }) {
     super();
     this.port = options?.port ?? OPENCODE_PORT;
   }
 
   private get baseUrl(): string {
     return `http://127.0.0.1:${this.port}`;
+  }
+
+  private async prepareSkillsForDirectory(directory: string): Promise<void> {
+    if (!this.options?.skillProjection) return;
+    try {
+      const projection = await this.options.skillProjection.prepareForEngine(this.engineType, directory);
+      if (projection.conflicts.length > 0) {
+        openCodeLog.warn(
+          `Skill projection for ${directory} completed with ${projection.conflicts.length} conflict(s)`,
+        );
+      }
+    } catch (error) {
+      openCodeLog.warn(`Failed to prepare skills for ${directory}:`, error);
+    }
   }
 
   // --- SDK client management ---
@@ -840,6 +855,7 @@ export class OpenCodeAdapter extends EngineAdapter {
   // --- Sessions ---
 
   async createSession(directory: string): Promise<UnifiedSession> {
+    await this.prepareSkillsForDirectory(directory);
     this.switchDirectory(directory);
 
     const client = this.ensureClient();
@@ -989,6 +1005,7 @@ export class OpenCodeAdapter extends EngineAdapter {
     }
 
     const dir = session?.directory ?? options?.directory ?? this.currentDirectory ?? undefined;
+    if (dir) await this.prepareSkillsForDirectory(dir);
 
     // --- Enqueue path: engine is already processing this session ---
     const existingEntries = this.pendingMessages.get(sessionId);
@@ -1366,11 +1383,12 @@ export class OpenCodeAdapter extends EngineAdapter {
 
   // --- Slash Commands ---
 
-  private async fetchCommands(): Promise<void> {
+  private async fetchCommands(directory = this.currentDirectory ?? undefined): Promise<void> {
     try {
+      if (directory) await this.prepareSkillsForDirectory(directory);
       const client = this.ensureClient();
       const result = await client.command.list({
-        directory: this.currentDirectory ?? undefined,
+        directory,
       });
       const commands = result.data ?? [];
       if (Array.isArray(commands)) {
@@ -1389,7 +1407,10 @@ export class OpenCodeAdapter extends EngineAdapter {
     }
   }
 
-  override async listCommands(_sessionId?: string): Promise<EngineCommand[]> {
+  override async listCommands(_sessionId?: string, directory?: string): Promise<EngineCommand[]> {
+    if (directory || this.currentDirectory) {
+      await this.fetchCommands(directory ?? this.currentDirectory ?? undefined);
+    }
     return this.cachedCommands;
   }
 
@@ -1401,6 +1422,7 @@ export class OpenCodeAdapter extends EngineAdapter {
   ): Promise<CommandInvokeResult> {
     const session = this.sessions.get(sessionId);
     const dir = session?.directory ?? options?.directory ?? this.currentDirectory ?? undefined;
+    if (dir) await this.prepareSkillsForDirectory(dir);
     const client = dir ? this.createClient(dir) : this.ensureClient();
 
     // Build model spec if provided

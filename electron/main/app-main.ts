@@ -57,6 +57,7 @@ import { trayManager } from "./services/tray-manager";
 import { scheduledTaskService } from "./services/scheduled-task-service";
 import { ensureDefaultWorkspace } from "./services/default-workspace";
 import { getTerminalService } from "./services/terminal-service";
+import { skillProjectionService } from "./services/skill-projection-service";
 import { GATEWAY_PORT, OPENCODE_PORT, WEBHOOK_PORT, WEB_PORT } from "../../shared/ports";
 
 // --- Gateway singleton instances ---
@@ -64,10 +65,10 @@ const engineManager = new EngineManager();
 const gatewayServer = new GatewayServer(engineManager);
 
 // Register engine adapters
-const openCodeAdapter = new OpenCodeAdapter({ port: OPENCODE_PORT });
-const copilotAdapter = new CopilotSdkAdapter();
-const claudeAdapter = new ClaudeCodeAdapter();
-const codexAdapter = new CodexAdapter();
+const openCodeAdapter = new OpenCodeAdapter({ port: OPENCODE_PORT, skillProjection: skillProjectionService });
+const copilotAdapter = new CopilotSdkAdapter({ skillProjection: skillProjectionService });
+const claudeAdapter = new ClaudeCodeAdapter({ skillProjection: skillProjectionService });
+const codexAdapter = new CodexAdapter({ skillProjection: skillProjectionService });
 engineManager.registerAdapter(openCodeAdapter);
 engineManager.registerAdapter(copilotAdapter);
 engineManager.registerAdapter(claudeAdapter);

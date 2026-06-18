@@ -19,6 +19,7 @@ import type {
 import { EngineAdapter, MessageBuffer } from "../engine-adapter";
 import { CODEMUX_IDENTITY_PROMPT } from "../identity-prompt";
 import { copilotLog } from "../../services/logger";
+import type { SkillProjectionProvider } from "../../services/skill-projection-service";
 import { inferToolKind, normalizeToolName } from "../../../../src/types/tool-mapping";
 import type {
   EngineType,
@@ -223,7 +224,7 @@ export class CopilotSdkAdapter extends EngineAdapter {
   private toolCallParts = new Map<string, ToolPart>();
   private taskCompleteCallIds = new Set<string>();
 
-  constructor(private options?: { cliPath?: string; env?: Record<string, string> }) {
+  constructor(private options?: { cliPath?: string; env?: Record<string, string>; skillProjection?: SkillProjectionProvider }) {
     super();
   }
 
@@ -379,8 +380,9 @@ export class CopilotSdkAdapter extends EngineAdapter {
     this.ensureClient();
     const normalizedDir = directory.replaceAll("\\", "/");
     const mode = "autopilot";
+    const skillDirectories = await this.getSkillDirectories(directory);
 
-    const config: SessionConfig = {
+    const config: SessionConfig & { skillDirectories?: string[] } = {
       workingDirectory: directory,
       streaming: true,
       model: this.currentModelId ?? undefined,
@@ -393,6 +395,7 @@ export class CopilotSdkAdapter extends EngineAdapter {
       // skills from the slash command list.
       enableSkills: true,
       enableConfigDiscovery: true,
+      ...(skillDirectories ? { skillDirectories } : {}),
     };
 
     const sdkSession = await this.client!.createSession(config);
@@ -423,6 +426,22 @@ export class CopilotSdkAdapter extends EngineAdapter {
     }
 
     return session;
+  }
+
+  private async getSkillDirectories(directory: string | undefined): Promise<string[] | undefined> {
+    if (!directory || !this.options?.skillProjection) return undefined;
+    try {
+      const projection = await this.options.skillProjection.prepareForEngine(this.engineType, directory);
+      if (projection.conflicts.length > 0) {
+        copilotLog.warn(
+          `Skill projection for ${directory} completed with ${projection.conflicts.length} conflict(s)`,
+        );
+      }
+      return projection.effectiveRoot ? [projection.effectiveRoot] : undefined;
+    } catch (error) {
+      copilotLog.warn(`Failed to prepare skills for ${directory}:`, error);
+      return undefined;
+    }
   }
 
   hasSession(sessionId: string): boolean {
@@ -1266,7 +1285,8 @@ export class CopilotSdkAdapter extends EngineAdapter {
 
     const workingDirectory = directory || this.sessionDirectories.get(sessionId);
     const sdkReasoningEffort = this.getSdkReasoningEffort(sessionId);
-    const config: ResumeSessionConfig = {
+    const skillDirectories = await this.getSkillDirectories(workingDirectory);
+    const config: ResumeSessionConfig & { skillDirectories?: string[] } = {
       streaming: true,
       workingDirectory,
       model: this.currentModelId ?? undefined,
@@ -1276,6 +1296,7 @@ export class CopilotSdkAdapter extends EngineAdapter {
       onUserInputRequest: (req, ctx) => this.handleUserInputRequest(req as any, ctx),
       enableSkills: true,
       enableConfigDiscovery: true,
+      ...(skillDirectories ? { skillDirectories } : {}),
     };
 
     copilotLog.info(`Resuming session ${sessionId}...`);
@@ -1290,7 +1311,7 @@ export class CopilotSdkAdapter extends EngineAdapter {
       const msg = String(err?.message || err);
       if (msg.includes("not found") || msg.includes("Not found") || msg.includes("no such session")) {
         copilotLog.warn(`Session ${sessionId} not found on resume, creating new session`);
-        const newConfig: SessionConfig = {
+        const newConfig: SessionConfig & { skillDirectories?: string[] } = {
           streaming: true,
           workingDirectory,
           model: this.currentModelId ?? undefined,
@@ -1300,6 +1321,7 @@ export class CopilotSdkAdapter extends EngineAdapter {
           onUserInputRequest: (req, ctx) => this.handleUserInputRequest(req as any, ctx),
           enableSkills: true,
           enableConfigDiscovery: true,
+          ...(skillDirectories ? { skillDirectories } : {}),
         };
         const newSession = await this.client!.createSession(newConfig);
         this.subscribeToSessionEvents(newSession, sessionId);

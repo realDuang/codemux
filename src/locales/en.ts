@@ -170,10 +170,26 @@ export interface LocaleDict {
     scopeProject: string;
     scopeGlobal: string;
     scopeBuiltin: string;
+    scopeProjectDesc: string;
+    scopeGlobalDesc: string;
+    scopeBuiltinDesc: string;
+    effective: string;
+    enableSkill: string;
+    disableSkill: string;
     enabled: string;
     disabled: string;
+    overridden: string;
     disabledAt: string;
     effectiveScope: string;
+    cardDetails: string;
+    detailsTitle: string;
+    selectedScope: string;
+    otherScopes: string;
+    sourcePath: string;
+    noSkillsInScope: string;
+    noOtherScopes: string;
+    shadowed: string;
+    notEffective: string;
     noDescription: string;
     enableForProject: string;
     disableForProject: string;
@@ -922,17 +938,33 @@ export const en: LocaleDict = {
     scopeProject: "Project",
     scopeGlobal: "Global",
     scopeBuiltin: "Builtin",
+    scopeProjectDesc: "Skills stored in this workspace. They override matching global and builtin skills.",
+    scopeGlobalDesc: "Reusable skills available to every workspace unless a project overrides or disables them.",
+    scopeBuiltinDesc: "Packaged read-only skills shipped with CodeMux.",
+    effective: "Effective",
+    enableSkill: "Enable",
+    disableSkill: "Disable",
     enabled: "Enabled",
     disabled: "Disabled",
+    overridden: "Overridden",
     disabledAt: "Disabled at {scopes}",
     effectiveScope: "Effective: {scope}",
+    cardDetails: "View details",
+    detailsTitle: "Skill details",
+    selectedScope: "Card scope",
+    otherScopes: "Other scopes",
+    sourcePath: "Source path",
+    noSkillsInScope: "No skills in this scope",
+    noOtherScopes: "No other scopes for this skill",
+    shadowed: "Shadowed",
+    notEffective: "Not effective",
     noDescription: "No description",
     enableForProject: "Enable for this project",
     disableForProject: "Disable for this project",
     enableGlobally: "Enable globally",
     disableGlobally: "Disable globally",
     deleteSkill: "Delete skill",
-    deleteConfirm: "Delete skill \"{name}\"? This removes all project/global skill files for this skill. Builtin skills cannot be deleted.",
+    deleteConfirm: "Delete skill \"{name}\"? This removes only the selected project/global skill files. Builtin skills cannot be deleted.",
     shadowedBy: "Shadowed by {scope}",
     shadows: "Shadows {scopes}",
   },

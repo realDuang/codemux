@@ -34,8 +34,8 @@ export default function Skills() {
         <div class="flex-1" />
       </div>
 
-      <main class="flex-1 overflow-y-auto px-3 sm:px-6 pb-8 pt-6">
-        <div class="max-w-5xl mx-auto">
+      <main class="flex-1 overflow-y-auto px-3 sm:px-6 xl:px-10 pb-8 pt-6">
+        <div class="w-full max-w-[1800px] mx-auto">
           <SkillSettingsSection />
         </div>
       </main>

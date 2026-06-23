@@ -207,7 +207,7 @@ export class SkillRegistryService {
     const disabled = await this.loadDisabledSkillSets(resolvedWorkspace);
 
     const allSkills = await this.listSkills(resolvedWorkspace);
-    const selected = this.selectEffectiveSkills(allSkills, disabled.combined);
+    const selected = this.selectEffectiveSkills(allSkills, disabled);
     const effectiveRoot = this.getEffectiveRoot(resolvedWorkspace);
     const conflicts: SkillConflict[] = [];
 
@@ -312,7 +312,7 @@ export class SkillRegistryService {
     const disabled = await this.loadDisabledSkillSets(resolvedWorkspace);
     const allSkills = await this.listSkills(resolvedWorkspace);
     const selectedByName = new Map(
-      this.selectEffectiveSkills(allSkills, disabled.combined).map((skill) => [skill.name, skill]),
+      this.selectEffectiveSkills(allSkills, disabled).map((skill) => [skill.name, skill]),
     );
     const skillsByName = new Map<string, SkillRecord[]>();
     for (const skill of allSkills) {
@@ -334,15 +334,22 @@ export class SkillRegistryService {
           const instance: SkillScopedInstance = {
             scope: record.scope,
             description: record.description,
+            path: record.skillPath,
           };
           if (effective && record.scope === effective.scope) {
             const shadows = records
-              .filter((candidate) => SKILL_SCOPE_PRIORITY[candidate.scope] < SKILL_SCOPE_PRIORITY[record.scope])
+              .filter((candidate) =>
+                !this.isDisabledSkillRecord(candidate, disabled)
+                && SKILL_SCOPE_PRIORITY[candidate.scope] < SKILL_SCOPE_PRIORITY[record.scope])
               .map((candidate) => candidate.scope);
             if (shadows.length > 0) {
               instance.shadows = shadows;
             }
-          } else if (effective && SKILL_SCOPE_PRIORITY[effective.scope] > SKILL_SCOPE_PRIORITY[record.scope]) {
+          } else if (
+            effective
+            && !this.isDisabledSkillRecord(record, disabled)
+            && SKILL_SCOPE_PRIORITY[effective.scope] > SKILL_SCOPE_PRIORITY[record.scope]
+          ) {
             instance.shadowedBy = effective.scope;
           }
           return instance;
@@ -351,7 +358,7 @@ export class SkillRegistryService {
         const summary: SkillSummary = {
           name,
           description: effective?.description ?? records.find((record) => record.description)?.description,
-          enabled: disabledAt.length === 0,
+          enabled: !!effective,
           effectiveScope: effective?.scope ?? null,
           scopes,
         };
@@ -405,10 +412,13 @@ export class SkillRegistryService {
     return skills;
   }
 
-  private selectEffectiveSkills(skills: SkillRecord[], disabled: Set<string>): SkillRecord[] {
+  private selectEffectiveSkills(
+    skills: SkillRecord[],
+    disabled: { global: Set<string>; project: Set<string> },
+  ): SkillRecord[] {
     const selected = new Map<string, SkillRecord>();
     for (const skill of skills) {
-      if (disabled.has(skill.name)) continue;
+      if (this.isDisabledSkillRecord(skill, disabled)) continue;
       const existing = selected.get(skill.name);
       if (!existing || SKILL_SCOPE_PRIORITY[skill.scope] > SKILL_SCOPE_PRIORITY[existing.scope]) {
         selected.set(skill.name, skill);
@@ -417,10 +427,22 @@ export class SkillRegistryService {
     return [...selected.values()].sort((a, b) => a.name.localeCompare(b.name));
   }
 
+  private isDisabledSkillRecord(
+    skill: SkillRecord,
+    disabled: { global: Set<string>; project: Set<string> },
+  ): boolean {
+    if (skill.scope === "project") {
+      return disabled.project.has(skill.name);
+    }
+    if (skill.scope === "global") {
+      return disabled.global.has(skill.name);
+    }
+    return false;
+  }
+
   private async loadDisabledSkillSets(workspaceDirectory: string): Promise<{
     global: Set<string>;
     project: Set<string>;
-    combined: Set<string>;
   }> {
     const global = readDisabledSkills(this.settingsLoader());
     const projectSettings = await readJsonFile(path.join(workspaceDirectory, ...PROJECT_SKILLS_CONFIG_RELATIVE_PATH), this.logger);
@@ -428,7 +450,6 @@ export class SkillRegistryService {
     return {
       global,
       project,
-      combined: new Set([...global, ...project]),
     };
   }
 

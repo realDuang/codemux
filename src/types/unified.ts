@@ -659,6 +659,7 @@ export interface SkillDisabledAt {
 export interface SkillScopedInstance {
   scope: SkillScope;
   description?: string;
+  path?: string;
   shadows?: SkillScope[];
   shadowedBy?: SkillScope;
 }

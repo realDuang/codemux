@@ -127,8 +127,9 @@ describe("skill services", () => {
       expect(await pathExists(path.join(effective.effectiveRoot, "alpha"))).toBe(false);
     });
 
-    it("reads disabled skills from the project skills config", async () => {
-      await createSkill(globalRoot, "alpha");
+    it("falls back to global skills when project skills are disabled", async () => {
+      const globalSkill = await createSkill(globalRoot, "alpha", "global");
+      await createSkill(path.join(workspace, ".codemux", "skills"), "alpha", "project");
       await fs.mkdir(path.join(workspace, ".codemux"), { recursive: true });
       await fs.writeFile(
         path.join(workspace, ".codemux", "skills.json"),
@@ -138,7 +139,19 @@ describe("skill services", () => {
 
       const effective = await createRegistry().buildEffectiveSkillSet(workspace);
 
-      expect(effective.skills).toEqual([]);
+      expect(effective.skills.map((skill) => `${skill.name}:${skill.scope}`)).toEqual(["alpha:global"]);
+      expect(normalize(await readResolvedLink(path.join(effective.effectiveRoot, "alpha")))).toBe(normalize(globalSkill));
+    });
+
+    it("falls back to builtin skills when global skills are disabled", async () => {
+      const builtinSkill = await createSkill(builtinRoot, "alpha", "builtin");
+      await createSkill(globalRoot, "alpha", "global");
+      settings = { skills: { disabled: ["alpha"] } };
+
+      const effective = await createRegistry().buildEffectiveSkillSet(workspace);
+
+      expect(effective.skills.map((skill) => `${skill.name}:${skill.scope}`)).toEqual(["alpha:builtin"]);
+      expect(normalize(await readResolvedLink(path.join(effective.effectiveRoot, "alpha")))).toBe(normalize(builtinSkill));
     });
 
     it("deletes only the selected real skill scope", async () => {
@@ -157,9 +170,9 @@ describe("skill services", () => {
 
   describe("SkillRegistryService.listSkillSummaries", () => {
     it("returns logical skill state without projection details", async () => {
-      await createSkill(builtinRoot, "alpha", "builtin");
-      await createSkill(globalRoot, "alpha", "global");
-      await createSkill(path.join(workspace, ".codemux", "skills"), "alpha", "project");
+      const builtinSkill = await createSkill(builtinRoot, "alpha", "builtin");
+      const globalSkill = await createSkill(globalRoot, "alpha", "global");
+      const projectSkill = await createSkill(path.join(workspace, ".codemux", "skills"), "alpha", "project");
 
       const snapshot = await createRegistry().listSkillSummaries(workspace);
 
@@ -170,9 +183,9 @@ describe("skill services", () => {
           enabled: true,
           effectiveScope: "project",
           scopes: [
-            { scope: "project", description: "alpha", shadows: ["global", "builtin"] },
-            { scope: "global", description: "alpha", shadowedBy: "project" },
-            { scope: "builtin", description: "alpha", shadowedBy: "project" },
+            { scope: "project", description: "alpha", path: projectSkill, shadows: ["global", "builtin"] },
+            { scope: "global", description: "alpha", path: globalSkill, shadowedBy: "project" },
+            { scope: "builtin", description: "alpha", path: builtinSkill, shadowedBy: "project" },
           ],
         },
       ]);
@@ -201,6 +214,35 @@ describe("skill services", () => {
         enabled: true,
         effectiveScope: "global",
       });
+    });
+
+    it("reports global skills as effective when a shadowing project skill is disabled", async () => {
+      const builtinSkill = await createSkill(builtinRoot, "alpha", "builtin");
+      const globalSkill = await createSkill(globalRoot, "alpha", "global");
+      const projectSkill = await createSkill(path.join(workspace, ".codemux", "skills"), "alpha", "project");
+      await fs.mkdir(path.join(workspace, ".codemux"), { recursive: true });
+      await fs.writeFile(
+        path.join(workspace, ".codemux", "skills.json"),
+        JSON.stringify({ disabled: ["alpha"] }),
+        "utf8",
+      );
+
+      const snapshot = await createRegistry().listSkillSummaries(workspace);
+
+      expect(snapshot.skills).toEqual([
+        {
+          name: "alpha",
+          description: "alpha",
+          enabled: true,
+          effectiveScope: "global",
+          disabledAt: [{ scope: "project" }],
+          scopes: [
+            { scope: "project", description: "alpha", path: projectSkill },
+            { scope: "global", description: "alpha", path: globalSkill, shadows: ["builtin"] },
+            { scope: "builtin", description: "alpha", path: builtinSkill, shadowedBy: "global" },
+          ],
+        },
+      ]);
     });
   });
 

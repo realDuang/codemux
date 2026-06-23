@@ -775,6 +775,21 @@ export class EngineManager extends EventEmitter {
     return this.getAdapterOrThrow(engineType).getInfo();
   }
 
+  async refreshSkillsForDirectory(
+    directory: string,
+    engineTypes: EngineType[] = Array.from(this.adapters.keys()),
+  ): Promise<void> {
+    await Promise.all([...new Set(engineTypes)].map(async (engineType) => {
+      const adapter = this.adapters.get(engineType);
+      if (!adapter) return;
+      try {
+        await adapter.refreshSkillsForDirectory(directory);
+      } catch (error) {
+        engineManagerLog.warn(`Failed to refresh skills for ${engineType} in ${directory}:`, error);
+      }
+    }));
+  }
+
   // --- Sessions (backed by ConversationStore) ---
 
   async listSessions(engineTypeOrDirectory: string): Promise<UnifiedSession[]> {

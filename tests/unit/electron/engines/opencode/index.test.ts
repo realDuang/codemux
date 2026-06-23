@@ -80,6 +80,9 @@ function createMockClient() {
     command: {
       list: vi.fn().mockResolvedValue({ data: [], error: null }),
     },
+    app: {
+      skills: vi.fn().mockResolvedValue({ data: [], error: null }),
+    },
     global: {
       event: vi.fn().mockResolvedValue({ stream: (async function* () {})() }),
       health: vi.fn().mockResolvedValue({ data: true }),
@@ -1821,6 +1824,29 @@ describe("OpenCodeAdapter", () => {
       await (adapter as any).fetchCommands();
 
       expect(client.command.list).toHaveBeenCalledWith({ directory: "/my-project" });
+    });
+
+    it("refreshSkillsForDirectory merges OpenCode skills into the command cache", async () => {
+      const { adapter } = createAdapterWithClient();
+      const scopedClient = createMockClient();
+      scopedClient.command.list.mockResolvedValue({
+        data: [{ name: "help", description: "Help", template: "topic" }],
+        error: null,
+      });
+      scopedClient.app.skills.mockResolvedValue({
+        data: [{ name: "hot-skill", description: "Hot reloaded", location: "project" }],
+        error: null,
+      });
+      mockCreateOpencodeClient.mockReturnValue(scopedClient);
+
+      await adapter.refreshSkillsForDirectory("/repo");
+
+      expect(scopedClient.command.list).toHaveBeenCalledWith({ directory: "/repo" });
+      expect(scopedClient.app.skills).toHaveBeenCalledWith({ directory: "/repo" });
+      expect((adapter as any).cachedCommands).toEqual([
+        { name: "help", description: "Help", argumentHint: "<topic>" },
+        { name: "hot-skill", description: "Hot reloaded", source: "project" },
+      ]);
     });
 
     it("listCommands returns cached commands without making any API call", async () => {

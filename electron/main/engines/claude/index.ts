@@ -88,6 +88,18 @@ interface V2SessionInfo {
   allowDangerouslySkipPermissions?: boolean;
 }
 
+interface ClaudeReloadPluginsResponse {
+  commands?: Array<{ name: string; description?: string; argumentHint?: string }>;
+  error_count?: number;
+}
+
+interface ClaudeReloadableSession {
+  reloadPlugins?: () => Promise<ClaudeReloadPluginsResponse>;
+  query?: {
+    reloadPlugins?: () => Promise<ClaudeReloadPluginsResponse>;
+  };
+}
+
 // ============================================================================
 // Streaming block tracking for content_block_delta accumulation
 // ============================================================================
@@ -1842,6 +1854,16 @@ export class ClaudeCodeAdapter extends EngineAdapter {
     ];
   }
 
+  override async refreshSkillsForDirectory(directory: string): Promise<void> {
+    this.resetCommandCacheForDirectory(directory, true);
+    await this.prepareSkillsForDirectory(directory);
+    await this.reloadPluginsForDirectory(directory);
+    this.triggerWarmup(directory);
+    if (this.warmupPromise) {
+      await this.warmupPromise;
+    }
+  }
+
   /**
    * Trigger a warmup if one isn't already in progress and commands haven't
    * been populated yet. Safe to call multiple times — deduplicates via
@@ -1860,12 +1882,79 @@ export class ClaudeCodeAdapter extends EngineAdapter {
     return directory.replaceAll("\\", "/");
   }
 
-  private resetCommandCacheForDirectory(directory: string): void {
+  private resetCommandCacheForDirectory(directory: string, force = false): void {
     const key = this.commandDirectoryKey(directory);
-    if (!this.availableCommandsDirectory || this.availableCommandsDirectory === key) return;
+    if (!force && (!this.availableCommandsDirectory || this.availableCommandsDirectory === key)) return;
     this.availableCommands = [];
     this.cachedSkillNames = [];
     this.availableCommandsDirectory = undefined;
+  }
+
+  private async reloadPluginsForDirectory(directory: string): Promise<void> {
+    const key = this.commandDirectoryKey(directory);
+    for (const [sessionId, info] of this.v2Sessions) {
+      if (this.commandDirectoryKey(info.directory) !== key) continue;
+
+      try {
+        const reloadable = info.session as unknown as ClaudeReloadableSession;
+        const result = reloadable.reloadPlugins
+          ? await reloadable.reloadPlugins()
+          : reloadable.query?.reloadPlugins
+            ? await reloadable.query.reloadPlugins()
+            : undefined;
+        if (!result) continue;
+
+        this.updateCommandCacheFromClaudeCommands(
+          result.commands ?? [],
+          directory,
+          `reloadPlugins(${sessionId})`,
+        );
+        if ((result.error_count ?? 0) > 0) {
+          claudeLog.warn(`[Claude][${sessionId}] reloadPlugins completed with ${result.error_count} error(s)`);
+        }
+      } catch (error) {
+        claudeLog.warn(`[Claude][${sessionId}] reloadPlugins failed during skill refresh:`, error);
+      }
+    }
+  }
+
+  private updateCommandCacheFromClaudeCommands(
+    commands: Array<{ name: string; description?: string; argumentHint?: string }>,
+    directory: string,
+    source: string,
+  ): void {
+    const nextCommands: EngineCommand[] = commands.map((cmd) => ({
+      name: cmd.name,
+      description: cmd.description || "",
+      argumentHint: cmd.argumentHint || undefined,
+    }));
+
+    const existingNames = new Set(nextCommands.map((c) => c.name));
+    const cwd = directory.replaceAll("/", process.platform === "win32" ? "\\" : "/");
+    for (const dir of [join(homedir(), ".claude", "skills"), join(cwd, ".claude", "skills")]) {
+      for (const skill of ClaudeCodeAdapter.scanSkillsDir(dir)) {
+        if (!existingNames.has(skill.name)) {
+          existingNames.add(skill.name);
+          nextCommands.push(skill);
+        }
+      }
+    }
+
+    this.availableCommands = nextCommands;
+    this.cachedSkillNames = this.availableCommands
+      .filter((cmd) => !this.isBuiltInCommand(cmd.name))
+      .map((cmd) => cmd.name);
+    this.availableCommandsDirectory = this.commandDirectoryKey(directory);
+
+    this.emit("commands.changed", {
+      engineType: this.engineType,
+      commands: this.availableCommands,
+    });
+
+    claudeLog.info(
+      `[Claude] ${source}: cached ${this.availableCommands.length} commands ` +
+        `(${this.cachedSkillNames.length} user skills: ${this.cachedSkillNames.join(", ")})`,
+    );
   }
 
   private async prepareSkillsForDirectory(directory: string): Promise<void> {
@@ -2379,38 +2468,7 @@ export class ClaudeCodeAdapter extends EngineAdapter {
 
     try {
       const commands = await q.supportedCommands();
-      this.availableCommands = commands.map((cmd: { name: string; description: string; argumentHint: string }) => ({
-        name: cmd.name,
-        description: cmd.description || "",
-        argumentHint: cmd.argumentHint || undefined,
-      }));
-
-      // Supplement with user-defined skills from .claude/skills/ directories.
-      // The CC CLI's supportedCommands() API may not include these.
-      const existingNames = new Set(this.availableCommands.map((c) => c.name));
-      const userSkillDirs = [
-        join(homedir(), ".claude", "skills"),
-        join(cwd, ".claude", "skills"),
-      ];
-      for (const dir of userSkillDirs) {
-        for (const skill of ClaudeCodeAdapter.scanSkillsDir(dir)) {
-          if (!existingNames.has(skill.name)) {
-            existingNames.add(skill.name);
-            this.availableCommands.push(skill);
-          }
-        }
-      }
-
-      // Cache skill names (non-built-in commands) for system prompt injection
-      this.cachedSkillNames = this.availableCommands
-        .filter((cmd) => !this.isBuiltInCommand(cmd.name))
-        .map((cmd) => cmd.name);
-      this.availableCommandsDirectory = commandDirectoryKey;
-
-      this.emit("commands.changed", {
-        engineType: this.engineType,
-        commands: this.availableCommands,
-      });
+      this.updateCommandCacheFromClaudeCommands(commands, directory, `supportedCommands(${sessionId})`);
 
       claudeLog.info(
         `[Claude][${sessionId}] Warmup complete via supportedCommands(): ${this.availableCommands.length} commands (${this.cachedSkillNames.length} user skills: ${this.cachedSkillNames.join(", ")})`,

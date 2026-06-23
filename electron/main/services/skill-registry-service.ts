@@ -5,9 +5,15 @@ import {
   getGlobalSkillsPath,
   getSkillEffectiveRootsPath,
 } from "./app-paths";
-import { loadSettings, skillLog, type ScopedLogger } from "./logger";
+import { loadSettings, saveSettings, skillLog, type ScopedLogger } from "./logger";
+import type {
+  SkillMutableScope,
+  SkillScope as UnifiedSkillScope,
+  SkillScopedInstance,
+  SkillSummary,
+} from "../../../src/types/unified";
 
-export type SkillScope = "builtin" | "global" | "project";
+export type SkillScope = UnifiedSkillScope;
 
 export interface SkillRecord {
   name: string;
@@ -15,6 +21,7 @@ export interface SkillRecord {
   rootPath: string;
   skillPath: string;
   skillFilePath: string;
+  description?: string;
 }
 
 export interface EffectiveSkillRecord extends SkillRecord {
@@ -39,12 +46,19 @@ export interface SkillRegistryServiceOptions {
   globalSkillsRoot?: string;
   effectiveRootsRoot?: string;
   loadSettings?: () => Record<string, unknown>;
+  saveSettings?: (patch: Record<string, unknown>) => void;
   logger?: ScopedLogger;
 }
 
 const PROJECT_SKILLS_RELATIVE_PATH = [".codemux", "skills"];
 const PROJECT_SKILLS_CONFIG_RELATIVE_PATH = [".codemux", "skills.json"];
 const SKILL_FILE_NAME = "SKILL.md";
+const SKILL_SCOPE_PRIORITY: Record<SkillScope, number> = {
+  builtin: 0,
+  global: 1,
+  project: 2,
+};
+const SKILL_SCOPE_DISPLAY_ORDER: SkillScope[] = ["project", "global", "builtin"];
 
 function workspaceKey(directory: string): string {
   const normalized = path.resolve(directory);
@@ -57,11 +71,27 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value);
 }
 
+function addDisabledSkillNames(value: unknown, disabled: Set<string>): void {
+  if (!Array.isArray(value)) return;
+  for (const name of value) {
+    if (typeof name === "string" && name.length > 0) {
+      disabled.add(name);
+    }
+  }
+}
+
 function readDisabledSkills(settings: Record<string, unknown>): Set<string> {
   const skillsSettings = isRecord(settings.skills) ? settings.skills : {};
-  const disabled = settings.disabled ?? settings.disabledSkills ?? skillsSettings.disabled ?? skillsSettings.disabledSkills;
-  if (!Array.isArray(disabled)) return new Set();
-  return new Set(disabled.filter((name): name is string => typeof name === "string" && name.length > 0));
+  const disabled = new Set<string>();
+  addDisabledSkillNames(settings.disabled, disabled);
+  addDisabledSkillNames(settings.disabledSkills, disabled);
+  addDisabledSkillNames(skillsSettings.disabled, disabled);
+  addDisabledSkillNames(skillsSettings.disabledSkills, disabled);
+  return disabled;
+}
+
+function sortedSkillNames(names: Iterable<string>): string[] {
+  return [...names].sort((a, b) => a.localeCompare(b));
 }
 
 async function pathExists(filePath: string): Promise<boolean> {
@@ -87,6 +117,35 @@ async function readJsonFile(filePath: string, logger: ScopedLogger): Promise<Rec
   }
 }
 
+async function writeJsonFile(filePath: string, value: Record<string, unknown>): Promise<void> {
+  await fs.mkdir(path.dirname(filePath), { recursive: true });
+  const tmpPath = `${filePath}.tmp`;
+  await fs.writeFile(tmpPath, JSON.stringify(value, null, 2), "utf8");
+  await fs.rename(tmpPath, filePath);
+}
+
+function parseYamlScalar(value: string): string {
+  const trimmed = value.trim();
+  if ((trimmed.startsWith("\"") && trimmed.endsWith("\""))
+      || (trimmed.startsWith("'") && trimmed.endsWith("'"))) {
+    return trimmed.slice(1, -1);
+  }
+  return trimmed;
+}
+
+async function readSkillDescription(skillFilePath: string, logger: ScopedLogger): Promise<string | undefined> {
+  try {
+    const raw = await fs.readFile(skillFilePath, "utf8");
+    const frontmatter = raw.match(/^---\r?\n([\s\S]*?)\r?\n---/);
+    const description = frontmatter?.[1].match(/^description:\s*(.+)$/m);
+    return description ? parseYamlScalar(description[1]) : undefined;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    logger.warn(`Failed to read skill description ${skillFilePath}: ${message}`);
+    return undefined;
+  }
+}
+
 function linkType(): "dir" | "junction" {
   return process.platform === "win32" ? "junction" : "dir";
 }
@@ -96,6 +155,7 @@ export class SkillRegistryService {
   private readonly globalSkillsRoot: string;
   private readonly effectiveRootsRoot: string;
   private readonly settingsLoader: () => Record<string, unknown>;
+  private readonly settingsSaver: (patch: Record<string, unknown>) => void;
   private readonly logger: ScopedLogger;
 
   constructor(options: SkillRegistryServiceOptions = {}) {
@@ -103,6 +163,7 @@ export class SkillRegistryService {
     this.globalSkillsRoot = options.globalSkillsRoot ?? getGlobalSkillsPath();
     this.effectiveRootsRoot = options.effectiveRootsRoot ?? getSkillEffectiveRootsPath();
     this.settingsLoader = options.loadSettings ?? loadSettings;
+    this.settingsSaver = options.saveSettings ?? saveSettings;
     this.logger = options.logger ?? skillLog;
   }
 
@@ -143,14 +204,10 @@ export class SkillRegistryService {
 
   async buildEffectiveSkillSet(workspaceDirectory: string): Promise<EffectiveSkillSet> {
     const resolvedWorkspace = path.resolve(workspaceDirectory);
-    const settings = this.settingsLoader();
-    const disabled = readDisabledSkills(settings);
-    const projectSettings = await readJsonFile(path.join(resolvedWorkspace, ...PROJECT_SKILLS_CONFIG_RELATIVE_PATH), this.logger);
-    const projectDisabled = readDisabledSkills(projectSettings);
-    for (const name of projectDisabled) disabled.add(name);
+    const disabled = await this.loadDisabledSkillSets(resolvedWorkspace);
 
     const allSkills = await this.listSkills(resolvedWorkspace);
-    const selected = this.selectEffectiveSkills(allSkills, disabled);
+    const selected = this.selectEffectiveSkills(allSkills, disabled.combined);
     const effectiveRoot = this.getEffectiveRoot(resolvedWorkspace);
     const conflicts: SkillConflict[] = [];
 
@@ -179,10 +236,136 @@ export class SkillRegistryService {
     };
   }
 
-  async deleteSkill(scope: Exclude<SkillScope, "builtin">, name: string, workspaceDirectory?: string): Promise<void> {
+  async deleteSkill(scope: SkillScope, name: string, workspaceDirectory?: string): Promise<void> {
     this.validateSkillName(name);
+    if (scope === "builtin") {
+      throw Object.assign(new Error("Builtin skills cannot be deleted"), { code: "BUILTIN_SKILL_READONLY" });
+    }
+    if (scope === "project" && !workspaceDirectory) {
+      throw new Error("workspaceDirectory is required for project-scoped skills");
+    }
     const root = this.getRootPath(scope, workspaceDirectory);
     await fs.rm(path.join(root, name), { recursive: true, force: true });
+  }
+
+  async setSkillEnabled(
+    scope: SkillMutableScope,
+    name: string,
+    enabled: boolean,
+    workspaceDirectory?: string,
+  ): Promise<void> {
+    this.validateSkillName(name);
+    if (scope !== "global" && scope !== "project") {
+      throw Object.assign(new Error(`Invalid mutable skill scope: ${scope}`), { code: "INVALID_SKILL_SCOPE" });
+    }
+    if (scope === "project" && !workspaceDirectory) {
+      throw new Error("workspaceDirectory is required for project skill settings");
+    }
+
+    if (scope === "global") {
+      const settings = this.settingsLoader();
+      const disabled = readDisabledSkills(settings);
+      if (enabled) {
+        disabled.delete(name);
+      } else {
+        disabled.add(name);
+      }
+      const disabledNames = sortedSkillNames(disabled);
+      this.settingsSaver({
+        disabled: disabledNames,
+        disabledSkills: disabledNames,
+        skills: {
+          disabled: disabledNames,
+          disabledSkills: disabledNames,
+        },
+      });
+      return;
+    }
+
+    const configPath = path.join(path.resolve(workspaceDirectory!), ...PROJECT_SKILLS_CONFIG_RELATIVE_PATH);
+    const config = await readJsonFile(configPath, this.logger);
+    const disabled = readDisabledSkills(config);
+    if (enabled) {
+      disabled.delete(name);
+    } else {
+      disabled.add(name);
+    }
+    const disabledNames = sortedSkillNames(disabled);
+    await writeJsonFile(configPath, {
+      ...config,
+      disabled: disabledNames,
+      disabledSkills: disabledNames,
+      skills: {
+        ...(isRecord(config.skills) ? config.skills : {}),
+        disabled: disabledNames,
+        disabledSkills: disabledNames,
+      },
+    });
+  }
+
+  async listSkillSummaries(workspaceDirectory: string): Promise<{
+    workspaceDirectory: string;
+    effectiveRoot: string;
+    skills: SkillSummary[];
+  }> {
+    const resolvedWorkspace = path.resolve(workspaceDirectory);
+    const disabled = await this.loadDisabledSkillSets(resolvedWorkspace);
+    const allSkills = await this.listSkills(resolvedWorkspace);
+    const selectedByName = new Map(
+      this.selectEffectiveSkills(allSkills, disabled.combined).map((skill) => [skill.name, skill]),
+    );
+    const skillsByName = new Map<string, SkillRecord[]>();
+    for (const skill of allSkills) {
+      const existing = skillsByName.get(skill.name) ?? [];
+      existing.push(skill);
+      skillsByName.set(skill.name, existing);
+    }
+
+    const skills = [...skillsByName.entries()]
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([name, records]) => {
+        records.sort((a, b) => SKILL_SCOPE_DISPLAY_ORDER.indexOf(a.scope) - SKILL_SCOPE_DISPLAY_ORDER.indexOf(b.scope));
+        const effective = selectedByName.get(name);
+        const disabledAt = [
+          disabled.project.has(name) ? { scope: "project" as const } : undefined,
+          disabled.global.has(name) ? { scope: "global" as const } : undefined,
+        ].filter((entry): entry is { scope: SkillMutableScope } => !!entry);
+        const scopes: SkillScopedInstance[] = records.map((record) => {
+          const instance: SkillScopedInstance = {
+            scope: record.scope,
+            description: record.description,
+          };
+          if (effective && record.scope === effective.scope) {
+            const shadows = records
+              .filter((candidate) => SKILL_SCOPE_PRIORITY[candidate.scope] < SKILL_SCOPE_PRIORITY[record.scope])
+              .map((candidate) => candidate.scope);
+            if (shadows.length > 0) {
+              instance.shadows = shadows;
+            }
+          } else if (effective && SKILL_SCOPE_PRIORITY[effective.scope] > SKILL_SCOPE_PRIORITY[record.scope]) {
+            instance.shadowedBy = effective.scope;
+          }
+          return instance;
+        });
+
+        const summary: SkillSummary = {
+          name,
+          description: effective?.description ?? records.find((record) => record.description)?.description,
+          enabled: disabledAt.length === 0,
+          effectiveScope: effective?.scope ?? null,
+          scopes,
+        };
+        if (disabledAt.length > 0) {
+          summary.disabledAt = disabledAt;
+        }
+        return summary;
+      });
+
+    return {
+      workspaceDirectory: resolvedWorkspace,
+      effectiveRoot: this.getEffectiveRoot(resolvedWorkspace),
+      skills,
+    };
   }
 
   private async scanRoot(scope: SkillScope, rootPath: string): Promise<SkillRecord[]> {
@@ -216,26 +399,37 @@ export class SkillRegistryService {
         rootPath,
         skillPath,
         skillFilePath,
+        description: await readSkillDescription(skillFilePath, this.logger),
       });
     }
     return skills;
   }
 
   private selectEffectiveSkills(skills: SkillRecord[], disabled: Set<string>): SkillRecord[] {
-    const priority: Record<SkillScope, number> = {
-      builtin: 0,
-      global: 1,
-      project: 2,
-    };
     const selected = new Map<string, SkillRecord>();
     for (const skill of skills) {
       if (disabled.has(skill.name)) continue;
       const existing = selected.get(skill.name);
-      if (!existing || priority[skill.scope] > priority[existing.scope]) {
+      if (!existing || SKILL_SCOPE_PRIORITY[skill.scope] > SKILL_SCOPE_PRIORITY[existing.scope]) {
         selected.set(skill.name, skill);
       }
     }
     return [...selected.values()].sort((a, b) => a.name.localeCompare(b.name));
+  }
+
+  private async loadDisabledSkillSets(workspaceDirectory: string): Promise<{
+    global: Set<string>;
+    project: Set<string>;
+    combined: Set<string>;
+  }> {
+    const global = readDisabledSkills(this.settingsLoader());
+    const projectSettings = await readJsonFile(path.join(workspaceDirectory, ...PROJECT_SKILLS_CONFIG_RELATIVE_PATH), this.logger);
+    const project = readDisabledSkills(projectSettings);
+    return {
+      global,
+      project,
+      combined: new Set([...global, ...project]),
+    };
   }
 
   private validateSkillName(name: string): void {

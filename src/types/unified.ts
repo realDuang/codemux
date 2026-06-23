@@ -647,6 +647,83 @@ export interface OrchestrationConfirmRequest {
   subtasks: OrchestrationSubtask[];
 }
 
+// --- Skills ---
+
+export type SkillScope = "builtin" | "global" | "project";
+export type SkillMutableScope = Exclude<SkillScope, "builtin">;
+
+export interface SkillDisabledAt {
+  scope: SkillMutableScope;
+}
+
+export interface SkillScopedInstance {
+  scope: SkillScope;
+  description?: string;
+  shadows?: SkillScope[];
+  shadowedBy?: SkillScope;
+}
+
+export interface SkillSummary {
+  name: string;
+  description?: string;
+  enabled: boolean;
+  effectiveScope: SkillScope | null;
+  disabledAt?: SkillDisabledAt[];
+  scopes: SkillScopedInstance[];
+}
+
+export type SkillDiagnosticSeverity = "info" | "warning" | "error";
+
+export type SkillDiagnosticCode =
+  | "exposure-conflict"
+  | "invalid-skill"
+  | "skill-shadowed"
+  | "engine-exposure-failed";
+
+export interface SkillDiagnosticAction {
+  label: string;
+  kind: "open-path" | "refresh" | "delete-conflict";
+  path?: string;
+}
+
+export interface SkillDiagnostic {
+  severity: SkillDiagnosticSeverity;
+  code: SkillDiagnosticCode;
+  message: string;
+  skillName?: string;
+  engineType?: EngineType;
+  action?: SkillDiagnosticAction;
+}
+
+export interface SkillListRequest {
+  workspaceDirectory: string;
+}
+
+export interface SkillSetEnabledRequest {
+  workspaceDirectory: string;
+  name: string;
+  scope: SkillMutableScope;
+  enabled: boolean;
+}
+
+export interface SkillDeleteRequest {
+  workspaceDirectory: string;
+  name: string;
+  scope: SkillMutableScope;
+}
+
+export interface SkillRefreshRequest {
+  workspaceDirectory: string;
+  engineTypes?: EngineType[];
+}
+
+export interface SkillListResponse {
+  workspaceDirectory: string;
+  effectiveRoot: string;
+  skills: SkillSummary[];
+  diagnostics: SkillDiagnostic[];
+}
+
 // ============================================================================
 // WebSocket Gateway Protocol Types
 // ============================================================================
@@ -756,6 +833,12 @@ export const GatewayRequestType = {
   // Slash Commands
   COMMAND_LIST: "command.list",
   COMMAND_INVOKE: "command.invoke",
+
+  // Skills
+  SKILL_LIST: "skill.list",
+  SKILL_SET_ENABLED: "skill.setEnabled",
+  SKILL_DELETE: "skill.delete",
+  SKILL_REFRESH: "skill.refresh",
 
   // Cron / Scheduled Tasks
   CRON_CREATE: "cron.create",

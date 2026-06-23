@@ -43,6 +43,8 @@ import type {
   TerminalListResponse,
   TerminalProfilesListResponse,
   FileExistsResponse,
+  SkillListResponse,
+  SkillMutableScope,
 } from "../types/unified";
 
 // --- Reactive connection signal ---
@@ -430,6 +432,33 @@ class GatewayAPI {
     options?: { mode?: string; modelId?: string; reasoningEffort?: import("../types/unified").ReasoningEffort | null; serviceTier?: import("../types/unified").CodexServiceTier | null },
   ): Promise<CommandInvokeResult> {
     return gatewayClient.invokeCommand({ sessionId, commandName, args, ...options });
+  }
+
+  // --- Skills ---
+
+  listSkills(workspaceDirectory: string): Promise<SkillListResponse> {
+    return gatewayClient.listSkills({ workspaceDirectory });
+  }
+
+  setSkillEnabled(
+    workspaceDirectory: string,
+    name: string,
+    scope: SkillMutableScope,
+    enabled: boolean,
+  ): Promise<SkillListResponse> {
+    return gatewayClient.setSkillEnabled({ workspaceDirectory, name, scope, enabled });
+  }
+
+  deleteSkill(
+    workspaceDirectory: string,
+    name: string,
+    scope: SkillMutableScope,
+  ): Promise<SkillListResponse> {
+    return gatewayClient.deleteSkill({ workspaceDirectory, name, scope });
+  }
+
+  refreshSkills(workspaceDirectory: string): Promise<SkillListResponse> {
+    return gatewayClient.refreshSkills({ workspaceDirectory });
   }
 
   // --- File Explorer ---

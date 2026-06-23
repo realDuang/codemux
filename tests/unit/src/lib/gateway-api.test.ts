@@ -30,6 +30,10 @@ const mockGatewayClient = {
   importExecute: vi.fn().mockResolvedValue({ imported: 0 }),
   listCommands: vi.fn().mockResolvedValue([]),
   invokeCommand: vi.fn().mockResolvedValue({ result: 'ok' }),
+  listSkills: vi.fn().mockResolvedValue({ skills: [], diagnostics: [], workspaceDirectory: '/repo', effectiveRoot: '/effective' }),
+  setSkillEnabled: vi.fn().mockResolvedValue({ skills: [], diagnostics: [], workspaceDirectory: '/repo', effectiveRoot: '/effective' }),
+  deleteSkill: vi.fn().mockResolvedValue({ skills: [], diagnostics: [], workspaceDirectory: '/repo', effectiveRoot: '/effective' }),
+  refreshSkills: vi.fn().mockResolvedValue({ skills: [], diagnostics: [], workspaceDirectory: '/repo', effectiveRoot: '/effective' }),
   listFiles: vi.fn().mockResolvedValue([]),
   readFile: vi.fn().mockResolvedValue({ content: '' }),
   getGitStatus: vi.fn().mockResolvedValue([]),
@@ -305,6 +309,37 @@ describe('GatewayAPI', () => {
   it('listCommands delegates', async () => {
     await gateway.listCommands('claude' as any, 's1');
     expect(mockGatewayClient.listCommands).toHaveBeenCalledWith({ engineType: 'claude', sessionId: 's1' });
+  });
+
+  // --- Skills ---
+
+  it('listSkills delegates', async () => {
+    await gateway.listSkills('/repo');
+    expect(mockGatewayClient.listSkills).toHaveBeenCalledWith({ workspaceDirectory: '/repo' });
+  });
+
+  it('setSkillEnabled delegates', async () => {
+    await gateway.setSkillEnabled('/repo', 'alpha', 'project', false);
+    expect(mockGatewayClient.setSkillEnabled).toHaveBeenCalledWith({
+      workspaceDirectory: '/repo',
+      name: 'alpha',
+      scope: 'project',
+      enabled: false,
+    });
+  });
+
+  it('deleteSkill delegates', async () => {
+    await gateway.deleteSkill('/repo', 'alpha', 'global');
+    expect(mockGatewayClient.deleteSkill).toHaveBeenCalledWith({
+      workspaceDirectory: '/repo',
+      name: 'alpha',
+      scope: 'global',
+    });
+  });
+
+  it('refreshSkills delegates', async () => {
+    await gateway.refreshSkills('/repo');
+    expect(mockGatewayClient.refreshSkills).toHaveBeenCalledWith({ workspaceDirectory: '/repo' });
   });
 
   // --- File explorer ---

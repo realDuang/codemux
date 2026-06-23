@@ -151,6 +151,51 @@ export interface LocaleDict {
     roleCoder: string;
   };
 
+  // Skills settings
+  skill: {
+    title: string;
+    description: string;
+    workspace: string;
+    workspaceDesc: string;
+    defaultWorkspace: string;
+    currentSessionWorkspace: string;
+    noWorkspace: string;
+    searchPlaceholder: string;
+    noSearchResults: string;
+    refresh: string;
+    refreshing: string;
+    empty: string;
+    diagnostic: string;
+    openPath: string;
+    scopeProject: string;
+    scopeGlobal: string;
+    scopeBuiltin: string;
+    enabled: string;
+    disabled: string;
+    disabledAt: string;
+    effectiveScope: string;
+    noDescription: string;
+    enableForProject: string;
+    disableForProject: string;
+    enableGlobally: string;
+    disableGlobally: string;
+    deleteSkill: string;
+    deleteConfirm: string;
+    shadowedBy: string;
+    shadows: string;
+  };
+
+  // Harness configuration surfaces
+  harness: {
+    title: string;
+    skills: string;
+    agents: string;
+    mcp: string;
+    comingSoon: string;
+    agentsComingSoon: string;
+    mcpComingSoon: string;
+  };
+
   // Remote Access page
   remote: {
     title: string;
@@ -856,6 +901,51 @@ export const en: LocaleDict = {
     roleReviewer: "Reviewer",
     roleDesigner: "Designer",
     roleCoder: "Coder",
+  },
+
+  // Skills settings
+  skill: {
+    title: "Skills",
+    description: "Manage CodeMux skills for the selected workspace. Project settings affect only this workspace; global settings affect all workspaces.",
+    workspace: "Workspace",
+    workspaceDesc: "Skill state and project-level disable rules are evaluated for this selected workspace.",
+    defaultWorkspace: "Default",
+    currentSessionWorkspace: "Current session workspace",
+    noWorkspace: "No workspace available",
+    searchPlaceholder: "Search skills...",
+    noSearchResults: "No skills match your search",
+    refresh: "Refresh",
+    refreshing: "Refreshing...",
+    empty: "No skills found for this workspace",
+    diagnostic: "Diagnostic",
+    openPath: "Open path",
+    scopeProject: "Project",
+    scopeGlobal: "Global",
+    scopeBuiltin: "Builtin",
+    enabled: "Enabled",
+    disabled: "Disabled",
+    disabledAt: "Disabled at {scopes}",
+    effectiveScope: "Effective: {scope}",
+    noDescription: "No description",
+    enableForProject: "Enable for this project",
+    disableForProject: "Disable for this project",
+    enableGlobally: "Enable globally",
+    disableGlobally: "Disable globally",
+    deleteSkill: "Delete skill",
+    deleteConfirm: "Delete skill \"{name}\"? This removes all project/global skill files for this skill. Builtin skills cannot be deleted.",
+    shadowedBy: "Shadowed by {scope}",
+    shadows: "Shadows {scopes}",
+  },
+
+  // Harness configuration surfaces
+  harness: {
+    title: "Harnesses",
+    skills: "Skills",
+    agents: "Agents",
+    mcp: "MCP",
+    comingSoon: "Soon",
+    agentsComingSoon: "Agents configuration is coming soon",
+    mcpComingSoon: "MCP configuration is coming soon",
   },
 
   // Remote Access page

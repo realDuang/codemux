@@ -53,6 +53,11 @@ import {
   type TerminalCreateResponse,
   type TerminalListRequest,
   type TerminalListResponse,
+  type SkillDeleteRequest,
+  type SkillListRequest,
+  type SkillListResponse,
+  type SkillRefreshRequest,
+  type SkillSetEnabledRequest,
 } from "../types/unified";
 
 // --- Event types emitted by GatewayClient ---
@@ -553,6 +558,24 @@ export class GatewayClient {
 
   invokeCommand(req: CommandInvokeRequest): Promise<CommandInvokeResult> {
     return this.request(GatewayRequestType.COMMAND_INVOKE, req, 0); // No timeout, same as sendMessage
+  }
+
+  // --- Skill API ---
+
+  listSkills(req: SkillListRequest): Promise<SkillListResponse> {
+    return this.request(GatewayRequestType.SKILL_LIST, req);
+  }
+
+  setSkillEnabled(req: SkillSetEnabledRequest): Promise<SkillListResponse> {
+    return this.request(GatewayRequestType.SKILL_SET_ENABLED, req);
+  }
+
+  deleteSkill(req: SkillDeleteRequest): Promise<SkillListResponse> {
+    return this.request(GatewayRequestType.SKILL_DELETE, req);
+  }
+
+  refreshSkills(req: SkillRefreshRequest): Promise<SkillListResponse> {
+    return this.request(GatewayRequestType.SKILL_REFRESH, req);
   }
 
   // --- Cron / Scheduled Tasks API ---

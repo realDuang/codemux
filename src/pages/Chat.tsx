@@ -625,6 +625,7 @@ export default function Chat() {
   const [isMobile, setIsMobile] = createSignal(window.innerWidth < 768);
   // Desktop sidebar collapse (icon-only mode)
   const [isSidebarCollapsed, setIsSidebarCollapsed] = createSignal(false);
+  const [isHarnessNavOpen, setIsHarnessNavOpen] = createSignal(true);
   const [refreshingSessions, setRefreshingSessions] = createSignal(false);
 
   // Send validation error (auto-clears after 3s)
@@ -2739,6 +2740,69 @@ export default function Chat() {
               </Show>
             </button>
           </Show>
+          <div class="space-y-1">
+            <button
+              onClick={() => setIsHarnessNavOpen((open) => !open)}
+              class={`w-full flex items-center ${isSidebarCollapsed() && !isMobile() ? "justify-center p-2" : "gap-3 px-3 py-2"} text-sm font-medium text-gray-600 dark:text-gray-400 hover:bg-white dark:hover:bg-slate-800 hover:text-gray-900 dark:hover:text-white rounded-lg transition-all shadow-xs hover:shadow-sm`}
+              title={t().harness.title}
+              aria-expanded={isHarnessNavOpen()}
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v18" /><path d="M3 8h18" /><path d="M3 16h18" /><path d="M7 3v18" /><path d="M17 3v18" /></svg>
+              <Show when={!isSidebarCollapsed() || isMobile()}>
+                <span class="flex-1 text-left">{t().harness.title}</span>
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  width="14"
+                  height="14"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  class={`transition-transform ${isHarnessNavOpen() ? "rotate-90" : ""}`}
+                >
+                  <path d="m9 18 6-6-6-6" />
+                </svg>
+              </Show>
+            </button>
+            <Show when={isHarnessNavOpen()}>
+              <div class={`${isSidebarCollapsed() && !isMobile() ? "space-y-1" : "ml-3 pl-3 border-l border-gray-200 dark:border-slate-800 space-y-1"}`}>
+                <button
+                  onClick={() => navigate("/skills")}
+                  class={`w-full flex items-center ${isSidebarCollapsed() && !isMobile() ? "justify-center p-2" : "gap-3 px-3 py-2"} text-sm font-medium text-gray-600 dark:text-gray-400 hover:bg-white dark:hover:bg-slate-800 hover:text-gray-900 dark:hover:text-white rounded-lg transition-all`}
+                  title={t().harness.skills}
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6" /><path d="M10 22h4" /><path d="M8.5 14.5A6 6 0 1 1 15.5 14.5c-.7.43-1.1 1.13-1.1 1.9v.1H9.6v-.1c0-.77-.4-1.47-1.1-1.9Z" /></svg>
+                  <Show when={!isSidebarCollapsed() || isMobile()}>
+                    {t().harness.skills}
+                  </Show>
+                </button>
+                <button
+                  disabled
+                  class={`w-full flex items-center ${isSidebarCollapsed() && !isMobile() ? "justify-center p-2" : "gap-3 px-3 py-2"} text-sm font-medium text-gray-400 dark:text-gray-600 rounded-lg cursor-not-allowed`}
+                  title={t().harness.agentsComingSoon}
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8V4H8" /><rect width="16" height="12" x="4" y="8" rx="2" /><path d="M2 14h2" /><path d="M20 14h2" /><path d="M15 13v2" /><path d="M9 13v2" /></svg>
+                  <Show when={!isSidebarCollapsed() || isMobile()}>
+                    <span class="flex-1 text-left">{t().harness.agents}</span>
+                    <span class="text-[10px] uppercase tracking-wide">{t().harness.comingSoon}</span>
+                  </Show>
+                </button>
+                <button
+                  disabled
+                  class={`w-full flex items-center ${isSidebarCollapsed() && !isMobile() ? "justify-center p-2" : "gap-3 px-3 py-2"} text-sm font-medium text-gray-400 dark:text-gray-600 rounded-lg cursor-not-allowed`}
+                  title={t().harness.mcpComingSoon}
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l1.92-1.92a5 5 0 0 0-7.07-7.07L11 5.93" /><path d="M14 11a5 5 0 0 0-7.54-.54l-1.92 1.92a5 5 0 0 0 7.07 7.07L13 18.07" /></svg>
+                  <Show when={!isSidebarCollapsed() || isMobile()}>
+                    <span class="flex-1 text-left">{t().harness.mcp}</span>
+                    <span class="text-[10px] uppercase tracking-wide">{t().harness.comingSoon}</span>
+                  </Show>
+                </button>
+              </div>
+            </Show>
+          </div>
           <button
             onClick={() => navigate("/settings")}
             class={`w-full flex items-center ${isSidebarCollapsed() && !isMobile() ? "justify-center p-2" : "gap-3 px-3 py-2"} text-sm font-medium text-gray-600 dark:text-gray-400 hover:bg-white dark:hover:bg-slate-800 hover:text-gray-900 dark:hover:text-white rounded-lg transition-all shadow-xs hover:shadow-sm`}

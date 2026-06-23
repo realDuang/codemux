@@ -150,6 +150,51 @@ export const ru: LocaleDict = {
     roleCoder: "Программист",
   },
 
+  // Skills settings
+  skill: {
+    title: "Skills",
+    description: "Управление навыками CodeMux для выбранной рабочей области. Настройки проекта влияют только на эту рабочую область; глобальные настройки влияют на все рабочие области.",
+    workspace: "Рабочая область",
+    workspaceDesc: "Состояние навыков и проектные правила отключения вычисляются для выбранной рабочей области.",
+    defaultWorkspace: "По умолчанию",
+    currentSessionWorkspace: "Рабочая область текущей сессии",
+    noWorkspace: "Нет доступной рабочей области",
+    searchPlaceholder: "Поиск навыков...",
+    noSearchResults: "Навыки по запросу не найдены",
+    refresh: "Обновить",
+    refreshing: "Обновление...",
+    empty: "В этой рабочей области навыки не найдены",
+    diagnostic: "Диагностика",
+    openPath: "Открыть путь",
+    scopeProject: "Проект",
+    scopeGlobal: "Глобально",
+    scopeBuiltin: "Встроенный",
+    enabled: "Включено",
+    disabled: "Отключено",
+    disabledAt: "Отключено в {scopes}",
+    effectiveScope: "Активно: {scope}",
+    noDescription: "Нет описания",
+    enableForProject: "Включить для этого проекта",
+    disableForProject: "Отключить для этого проекта",
+    enableGlobally: "Включить глобально",
+    disableGlobally: "Отключить глобально",
+    deleteSkill: "Удалить навык",
+    deleteConfirm: "Удалить навык \"{name}\"? Это удалит все проектные/глобальные файлы этого навыка. Встроенные навыки удалить нельзя.",
+    shadowedBy: "Перекрыто {scope}",
+    shadows: "Перекрывает {scopes}",
+  },
+
+  // Harness configuration surfaces
+  harness: {
+    title: "Среды",
+    skills: "Skills",
+    agents: "Agents",
+    mcp: "MCP",
+    comingSoon: "Скоро",
+    agentsComingSoon: "Настройка Agents скоро появится",
+    mcpComingSoon: "Настройка MCP скоро появится",
+  },
+
   // Remote Access page
   remote: {
     title: "Удалённый доступ",

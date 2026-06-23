@@ -12,6 +12,7 @@ vi.mock("electron", () => ({
 
 vi.mock("../../../../electron/main/services/logger", () => ({
   loadSettings: vi.fn(() => ({})),
+  saveSettings: vi.fn(),
   skillLog: {
     error: vi.fn(),
     warn: vi.fn(),
@@ -24,6 +25,7 @@ vi.mock("../../../../electron/main/services/logger", () => ({
 
 import { SkillRegistryService } from "../../../../electron/main/services/skill-registry-service";
 import { SkillProjectionService } from "../../../../electron/main/services/skill-projection-service";
+import { SkillApiService } from "../../../../electron/main/services/skill-api-service";
 
 async function pathExists(filePath: string): Promise<boolean> {
   try {
@@ -81,6 +83,16 @@ describe("skill services", () => {
       globalSkillsRoot: globalRoot,
       effectiveRootsRoot: effectiveRoot,
       loadSettings: () => settings,
+      saveSettings: (patch) => {
+        settings = {
+          ...settings,
+          ...patch,
+          skills: {
+            ...(typeof settings.skills === "object" && settings.skills ? settings.skills : {}),
+            ...(typeof patch.skills === "object" && patch.skills ? patch.skills : {}),
+          },
+        };
+      },
       logger: {
         error: vi.fn(),
         warn: vi.fn(),
@@ -143,8 +155,57 @@ describe("skill services", () => {
     });
   });
 
+  describe("SkillRegistryService.listSkillSummaries", () => {
+    it("returns logical skill state without projection details", async () => {
+      await createSkill(builtinRoot, "alpha", "builtin");
+      await createSkill(globalRoot, "alpha", "global");
+      await createSkill(path.join(workspace, ".codemux", "skills"), "alpha", "project");
+
+      const snapshot = await createRegistry().listSkillSummaries(workspace);
+
+      expect(snapshot.skills).toEqual([
+        {
+          name: "alpha",
+          description: "alpha",
+          enabled: true,
+          effectiveScope: "project",
+          scopes: [
+            { scope: "project", description: "alpha", shadows: ["global", "builtin"] },
+            { scope: "global", description: "alpha", shadowedBy: "project" },
+            { scope: "builtin", description: "alpha", shadowedBy: "project" },
+          ],
+        },
+      ]);
+    });
+
+    it("updates global disabled state without deleting real skill files", async () => {
+      const registry = createRegistry();
+      const realSkill = await createSkill(globalRoot, "alpha");
+
+      await registry.setSkillEnabled("global", "alpha", false, workspace);
+      const disabled = await registry.listSkillSummaries(workspace);
+
+      expect(disabled.skills[0]).toMatchObject({
+        name: "alpha",
+        enabled: false,
+        effectiveScope: null,
+        disabledAt: [{ scope: "global" }],
+      });
+      expect(await pathExists(realSkill)).toBe(true);
+
+      await registry.setSkillEnabled("global", "alpha", true, workspace);
+      const enabled = await registry.listSkillSummaries(workspace);
+
+      expect(enabled.skills[0]).toMatchObject({
+        name: "alpha",
+        enabled: true,
+        effectiveScope: "global",
+      });
+    });
+  });
+
   describe("SkillProjectionService.prepareForEngine", () => {
-    it("returns an effective root for engines that accept custom skill roots", async () => {
+    it("returns the effective root for Copilot custom skill directories", async () => {
       await createSkill(globalRoot, "alpha");
       const projection = new SkillProjectionService({
         registry: createRegistry(),
@@ -157,6 +218,24 @@ describe("skill services", () => {
       expect(result.effectiveRoot).toBeTruthy();
       expect(result.projectedRoot).toBeNull();
       expect(result.skillNames).toEqual(["alpha"]);
+      expect(result.skillDirectories).toEqual([result.effectiveRoot]);
+      expect(await pathExists(path.join(result.effectiveRoot!, "alpha"))).toBe(true);
+    });
+
+    it("returns the effective root for Codex standalone skill roots", async () => {
+      await createSkill(globalRoot, "alpha");
+      const projection = new SkillProjectionService({
+        registry: createRegistry(),
+        manifestsRoot,
+      });
+
+      const result = await projection.prepareForEngine("codex", workspace);
+
+      expect(result.strategy).toBe("pass-root-directory");
+      expect(result.effectiveRoot).toBeTruthy();
+      expect(result.projectedRoot).toBeNull();
+      expect(result.skillNames).toEqual(["alpha"]);
+      expect(result.skillDirectories).toEqual([result.effectiveRoot]);
       expect(await pathExists(path.join(result.effectiveRoot!, "alpha"))).toBe(true);
     });
 
@@ -218,6 +297,42 @@ describe("skill services", () => {
 
       const disabledExclude = await fs.readFile(excludePath, "utf8");
       expect(disabledExclude).not.toContain("/.opencode/skills/alpha");
+    });
+  });
+
+  describe("SkillApiService.refreshSkills", () => {
+    it("returns projection problems as separate diagnostics", async () => {
+      await createSkill(globalRoot, "alpha");
+      const conflictPath = path.join(workspace, ".opencode", "skills", "alpha");
+      await fs.mkdir(conflictPath, { recursive: true });
+      const registry = createRegistry();
+      const projection = new SkillProjectionService({
+        registry,
+        manifestsRoot,
+      });
+      const api = new SkillApiService({ registry, projection });
+
+      const response = await api.refreshSkills({ workspaceDirectory: workspace }, ["opencode"]);
+
+      expect(response.skills).toEqual([
+        expect.objectContaining({
+          name: "alpha",
+          enabled: true,
+          effectiveScope: "global",
+        }),
+      ]);
+      expect(response.diagnostics).toEqual([
+        expect.objectContaining({
+          severity: "warning",
+          code: "exposure-conflict",
+          skillName: "alpha",
+          engineType: "opencode",
+          action: expect.objectContaining({
+            kind: "open-path",
+            path: conflictPath,
+          }),
+        }),
+      ]);
     });
   });
 });

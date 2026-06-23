@@ -23,6 +23,7 @@ export interface SkillProjectionResult {
   workspaceDirectory: string;
   strategy: SkillLoadStrategy;
   effectiveRoot: string | null;
+  skillDirectories: string[];
   projectedRoot: string | null;
   skillNames: string[];
   conflicts: SkillConflict[];
@@ -70,6 +71,17 @@ function manifestKey(engineType: EngineType, workspaceDirectory: string): string
 
 function linkType(): "dir" | "junction" {
   return process.platform === "win32" ? "junction" : "dir";
+}
+
+function getLoadDirectories(engineType: EngineType, effectiveSet: EffectiveSkillSet): string[] {
+  if (effectiveSet.skills.length === 0) return [];
+  switch (engineType) {
+    case "copilot":
+    case "codex":
+      return [effectiveSet.effectiveRoot];
+    default:
+      return [];
+  }
 }
 
 async function pathExists(filePath: string): Promise<boolean> {
@@ -126,6 +138,7 @@ export class SkillProjectionService implements SkillProjectionProvider {
         workspaceDirectory: path.resolve(workspaceDirectory),
         strategy,
         effectiveRoot: null,
+        skillDirectories: [],
         projectedRoot: null,
         skillNames: [],
         conflicts: [],
@@ -139,6 +152,7 @@ export class SkillProjectionService implements SkillProjectionProvider {
         workspaceDirectory: effectiveSet.workspaceDirectory,
         strategy,
         effectiveRoot: effectiveSet.effectiveRoot,
+        skillDirectories: getLoadDirectories(engineType, effectiveSet),
         projectedRoot: null,
         skillNames: effectiveSet.skills.map((skill) => skill.name),
         conflicts: effectiveSet.conflicts,
@@ -152,6 +166,7 @@ export class SkillProjectionService implements SkillProjectionProvider {
       workspaceDirectory: effectiveSet.workspaceDirectory,
       strategy,
       effectiveRoot: effectiveSet.effectiveRoot,
+      skillDirectories: [],
       projectedRoot,
       skillNames: effectiveSet.skills.map((skill) => skill.name),
       conflicts: [...effectiveSet.conflicts, ...bridgeConflicts],

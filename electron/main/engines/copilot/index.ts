@@ -3,7 +3,7 @@
 // ============================================================================
 
 import { writeFileSync, unlinkSync, mkdtempSync, rmdirSync } from "fs";
-import { join } from "path";
+import { join, resolve } from "path";
 import { tmpdir } from "os";
 
 import { timeId } from "../../utils/id-gen";
@@ -437,10 +437,55 @@ export class CopilotSdkAdapter extends EngineAdapter {
           `Skill projection for ${directory} completed with ${projection.conflicts.length} conflict(s)`,
         );
       }
-      return projection.effectiveRoot ? [projection.effectiveRoot] : undefined;
+      const skillDirectories = projection.skillDirectories.length > 0 ? projection.skillDirectories : undefined;
+      copilotLog.info(
+        `[Copilot] prepared ${projection.skillNames.length} skill(s) for ${directory}: ` +
+          `${projection.skillNames.join(", ") || "none"}; ` +
+          `skillDirectories=${skillDirectories?.join(", ") ?? "none"}`,
+      );
+      return skillDirectories;
     } catch (error) {
       copilotLog.warn(`Failed to prepare skills for ${directory}:`, error);
       return undefined;
+    }
+  }
+
+  override async refreshSkillsForDirectory(directory: string): Promise<void> {
+    const targetDirectory = this.directoryKey(directory);
+    if (!targetDirectory) return;
+
+    await this.getSkillDirectories(directory);
+    this.cachedCommands = [];
+
+    const matchingSessionIds = [...this.sessionDirectories.entries()]
+      .filter(([, sessionDirectory]) => this.directoryKey(sessionDirectory) === targetDirectory)
+      .map(([sessionId]) => sessionId);
+
+    for (const sessionId of matchingSessionIds) {
+      const existing = this.activeSessions.get(sessionId);
+      if (existing) {
+        try {
+          await existing.rpc.skills.reload();
+          await this.fetchCommands(existing);
+          continue;
+        } catch (error) {
+          copilotLog.warn(`[Copilot][${sessionId}] skills.reload failed, recreating session:`, error);
+          this.evictStaleSession(sessionId);
+          try {
+            await existing.disconnect();
+          } catch (disconnectError) {
+            copilotLog.debug(`[Copilot][${sessionId}] Failed to disconnect after skill reload failure:`, disconnectError);
+          }
+        }
+      }
+
+      try {
+        const session = await this.ensureActiveSession(sessionId, directory);
+        await session.rpc.skills.reload();
+        await this.fetchCommands(session);
+      } catch (error) {
+        copilotLog.warn(`[Copilot][${sessionId}] Failed to refresh skills for ${directory}:`, error);
+      }
     }
   }
 
@@ -956,6 +1001,7 @@ export class CopilotSdkAdapter extends EngineAdapter {
       });
       const commands = result?.commands ?? [];
       const merged = new Map<string, EngineCommand>();
+      const listedSkillNames: string[] = [];
       for (const cmd of commands) {
         merged.set(cmd.name, {
           name: cmd.name,
@@ -968,6 +1014,7 @@ export class CopilotSdkAdapter extends EngineAdapter {
         const skillResult = await session.rpc.skills.list();
         const skills = skillResult?.skills ?? [];
         for (const skill of skills) {
+          listedSkillNames.push(`${skill.name}:${skill.source ?? "unknown"}`);
           if (skill.source === "builtin") continue;
           if (merged.has(skill.name)) continue;
           merged.set(skill.name, {
@@ -981,7 +1028,8 @@ export class CopilotSdkAdapter extends EngineAdapter {
 
       this.cachedCommands = Array.from(merged.values());
       copilotLog.info(
-        `[Copilot] fetchCommands: cached ${this.cachedCommands.length} commands`,
+        `[Copilot] fetchCommands: cached ${this.cachedCommands.length} commands; ` +
+          `skills=${listedSkillNames.join(", ") || "none"}`,
       );
       this.emit("commands.changed", {
         engineType: this.engineType,
@@ -1259,6 +1307,12 @@ export class CopilotSdkAdapter extends EngineAdapter {
     }
     this.activeSessions.clear();
     this.sessionUnsubscribers.clear();
+  }
+
+  private directoryKey(directory: string | undefined): string | null {
+    if (!directory) return null;
+    const resolved = resolve(directory);
+    return process.platform === "win32" ? resolved.toLowerCase() : resolved;
   }
 
   private ensureClient(): void {

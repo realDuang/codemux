@@ -224,7 +224,7 @@ export class CodexAdapter extends EngineAdapter {
 
   private skillsByDirectory = new Map<string, EngineCommand[]>();
   private skillEntriesByDirectory = new Map<string, Map<string, SkillEntry>>();
-  private skillExtraRootsByDirectory = new Map<string, string>();
+  private skillExtraRootsByDirectory = new Map<string, string[]>();
   private skillReloadDirectories = new Set<string>();
 
   private cleanupIntervalId: ReturnType<typeof setInterval> | null = null;
@@ -790,6 +790,13 @@ export class CodexAdapter extends EngineAdapter {
     }
   }
 
+  override async refreshSkillsForDirectory(directory: string): Promise<void> {
+    const normalizedDirectory = normalizeDirectory(directory);
+    if (!normalizedDirectory) return;
+    this.skillReloadDirectories.add(normalizedDirectory);
+    await this.refreshCommandsForDirectory(normalizedDirectory);
+  }
+
   override async invokeCommand(
     sessionId: string,
     commandName: string,
@@ -1119,14 +1126,15 @@ export class CodexAdapter extends EngineAdapter {
         );
       }
 
-      const previousRoot = this.skillExtraRootsByDirectory.get(directory);
-      if (projection.effectiveRoot) {
-        this.skillExtraRootsByDirectory.set(directory, projection.effectiveRoot);
+      const previousRoots = this.skillExtraRootsByDirectory.get(directory) ?? [];
+      const nextRoots = projection.skillDirectories.slice().sort();
+      if (nextRoots.length > 0) {
+        this.skillExtraRootsByDirectory.set(directory, nextRoots);
       } else {
         this.skillExtraRootsByDirectory.delete(directory);
       }
 
-      if (previousRoot !== projection.effectiveRoot) {
+      if (JSON.stringify(previousRoots) !== JSON.stringify(nextRoots)) {
         await this.syncCodexSkillExtraRoots();
         this.skillReloadDirectories.add(directory);
       }
@@ -1137,7 +1145,7 @@ export class CodexAdapter extends EngineAdapter {
 
   private async syncCodexSkillExtraRoots(): Promise<void> {
     if (!this.client?.running) return;
-    const extraRoots = [...new Set(this.skillExtraRootsByDirectory.values())].sort();
+    const extraRoots = [...new Set([...this.skillExtraRootsByDirectory.values()].flat())].sort();
     try {
       await this.client.request("skills/extraRoots/set", { extraRoots });
     } catch (error) {
@@ -1529,6 +1537,7 @@ export class CodexAdapter extends EngineAdapter {
 
   private handleSkillsChanged(): void {
     for (const directory of this.skillsByDirectory.keys()) {
+      this.skillReloadDirectories.add(directory);
       this.refreshCommandsForDirectory(directory).catch((error) => {
         codexLog.warn(`Failed to refresh skills for ${directory}:`, error);
       });

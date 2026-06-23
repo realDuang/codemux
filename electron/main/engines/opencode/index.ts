@@ -1386,22 +1386,44 @@ export class OpenCodeAdapter extends EngineAdapter {
   private async fetchCommands(directory = this.currentDirectory ?? undefined): Promise<void> {
     try {
       if (directory) await this.prepareSkillsForDirectory(directory);
-      const client = this.ensureClient();
+      const client = directory ? this.createClient(directory) : this.ensureClient();
       const result = await client.command.list({
         directory,
       });
       const commands = result.data ?? [];
+      const merged = new Map<string, EngineCommand>();
       if (Array.isArray(commands)) {
-        this.cachedCommands = commands.map((cmd) => ({
-          name: cmd.name,
-          description: cmd.description ?? "",
-          argumentHint: cmd.template ? `<${cmd.template}>` : undefined,
-        }));
-        this.emit("commands.changed", {
-          engineType: this.engineType,
-          commands: this.cachedCommands,
-        });
+        for (const cmd of commands) {
+          merged.set(cmd.name, {
+            name: cmd.name,
+            description: cmd.description ?? "",
+            argumentHint: cmd.template ? `<${cmd.template}>` : undefined,
+          });
+        }
       }
+
+      try {
+        const skillResult = await client.app.skills({ directory });
+        const skills = skillResult.data ?? [];
+        if (Array.isArray(skills)) {
+          for (const skill of skills) {
+            if (!skill.name || merged.has(skill.name)) continue;
+            merged.set(skill.name, {
+              name: skill.name,
+              description: skill.description ?? "",
+              source: skill.location,
+            });
+          }
+        }
+      } catch (skillError) {
+        openCodeLog.warn("Failed to list OpenCode skills:", skillError);
+      }
+
+      this.cachedCommands = Array.from(merged.values());
+      this.emit("commands.changed", {
+        engineType: this.engineType,
+        commands: this.cachedCommands,
+      });
     } catch (err) {
       openCodeLog.warn("Failed to list commands:", err);
     }
@@ -1412,6 +1434,11 @@ export class OpenCodeAdapter extends EngineAdapter {
       await this.fetchCommands(directory ?? this.currentDirectory ?? undefined);
     }
     return this.cachedCommands;
+  }
+
+  override async refreshSkillsForDirectory(directory: string): Promise<void> {
+    this.cachedCommands = [];
+    await this.fetchCommands(directory);
   }
 
   override async invokeCommand(

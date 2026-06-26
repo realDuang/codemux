@@ -44,6 +44,7 @@ import type {
   EngineCommand,
   CommandInvokeResult,
 } from "../../../../src/types/unified";
+import { isReasoningEffort } from "../../../../src/types/unified";
 
 import {
   convertEventsToMessages,
@@ -375,15 +376,25 @@ export class CopilotSdkAdapter extends EngineAdapter {
     }
   }
 
-  async createSession(directory: string): Promise<UnifiedSession> {
+  async createSession(directory: string, meta?: Record<string, unknown>): Promise<UnifiedSession> {
     this.ensureClient();
     const normalizedDir = directory.replaceAll("\\", "/");
     const mode = "autopilot";
+    const initialModelId = typeof meta?.codemuxInitialModelId === "string"
+      ? meta.codemuxInitialModelId
+      : this.currentModelId;
+    const initialReasoningEffort = isReasoningEffort(meta?.codemuxInitialReasoningEffort)
+      ? meta.codemuxInitialReasoningEffort
+      : undefined;
+    const sdkReasoningEffort = initialReasoningEffort
+      ? this.toSdkReasoningEffort(initialReasoningEffort)
+      : undefined;
 
     const config: SessionConfig = {
       workingDirectory: directory,
       streaming: true,
-      model: this.currentModelId ?? undefined,
+      model: initialModelId ?? undefined,
+      ...(sdkReasoningEffort ? { reasoningEffort: sdkReasoningEffort } : {}),
       onPermissionRequest: (req, ctx) => this.handlePermissionRequest(req, ctx),
       onUserInputRequest: (req, ctx) => this.handleUserInputRequest(req as any, ctx),
       systemMessage: { mode: "append" as const, content: CODEMUX_IDENTITY_PROMPT },
@@ -402,6 +413,8 @@ export class CopilotSdkAdapter extends EngineAdapter {
     this.activeSessions.set(sessionId, sdkSession);
     this.sessionModes.set(sessionId, mode);
     this.sessionDirectories.set(sessionId, directory);
+    if (initialModelId) this.currentModelId = initialModelId;
+    if (initialReasoningEffort) this.sessionReasoningEfforts.set(sessionId, initialReasoningEffort);
 
     const now = Date.now();
     const session: UnifiedSession = {

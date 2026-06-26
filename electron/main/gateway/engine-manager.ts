@@ -984,6 +984,23 @@ export class EngineManager extends EventEmitter {
     };
   }
 
+  private buildInitialEngineMeta(
+    meta: Record<string, unknown> | undefined,
+    options: {
+      mode?: string;
+      modelId?: string;
+      reasoningEffort?: ReasoningEffort | null;
+      serviceTier?: CodexServiceTier | null;
+    },
+  ): Record<string, unknown> | undefined {
+    const initialMeta: Record<string, unknown> = { ...(meta ?? {}) };
+    if (options.mode) initialMeta.codemuxInitialMode = options.mode;
+    if (options.modelId) initialMeta.codemuxInitialModelId = options.modelId;
+    if (options.reasoningEffort) initialMeta.codemuxInitialReasoningEffort = options.reasoningEffort;
+    if (options.serviceTier) initialMeta.codemuxInitialServiceTier = options.serviceTier;
+    return Object.keys(initialMeta).length > 0 ? initialMeta : undefined;
+  }
+
   private updateStoredSessionConfig(
     sessionId: string,
     patch: {
@@ -1029,13 +1046,17 @@ export class EngineManager extends EventEmitter {
       if (!conv) throw new Error(`Conversation not found: ${sessionId}`);
 
       const adapter = this.getAdapterForSession(sessionId);
+      const resolvedOptions = this.resolveSessionOptions(conv, options);
 
       // Lazy engine session creation: first sendMessage triggers adapter.createSession()
       // Also re-create if the adapter lost track of the session (e.g. after app restart,
       // the persisted engineSessionId refers to a cs_ ID that only existed in runtime memory).
       let engineSessionId = conv.engineSessionId;
       if (!engineSessionId || !adapter.hasSession(engineSessionId)) {
-        const engineSession = await adapter.createSession(conv.directory, conv.engineMeta);
+        const engineSession = await adapter.createSession(
+          conv.directory,
+          this.buildInitialEngineMeta(conv.engineMeta, resolvedOptions),
+        );
         engineSessionId = engineSession.id;
         conversationStore.setEngineSession(sessionId, engineSessionId, engineSession.engineMeta);
       }
@@ -1047,7 +1068,6 @@ export class EngineManager extends EventEmitter {
       // (Some adapters like OpenCode don't emit user message events)
       await this.persistUserMessage(sessionId, content, trackQueuedTiming);
 
-      const resolvedOptions = this.resolveSessionOptions(conv, options);
       const result = await adapter.sendMessage(engineSessionId, content, {
         ...resolvedOptions,
         directory: conv.directory,
@@ -1163,11 +1183,15 @@ export class EngineManager extends EventEmitter {
       if (!conv) throw new Error(`Conversation not found: ${sessionId}`);
 
       const adapter = this.getAdapterForSession(sessionId);
+      const resolvedOptions = this.resolveSessionOptions(conv, options);
 
       // Lazy engine session creation (same pattern as sendMessage)
       let engineSessionId = conv.engineSessionId;
       if (!engineSessionId || !adapter.hasSession(engineSessionId)) {
-        const engineSession = await adapter.createSession(conv.directory, conv.engineMeta);
+        const engineSession = await adapter.createSession(
+          conv.directory,
+          this.buildInitialEngineMeta(conv.engineMeta, resolvedOptions),
+        );
         engineSessionId = engineSession.id;
         conversationStore.setEngineSession(sessionId, engineSessionId, engineSession.engineMeta);
       }
@@ -1176,8 +1200,6 @@ export class EngineManager extends EventEmitter {
       // Persist user command message
       const commandText = `/${commandName}${args ? ` ${args}` : ""}`;
       await this.persistUserMessage(sessionId, [{ type: "text", text: commandText }], trackQueuedTiming);
-
-      const resolvedOptions = this.resolveSessionOptions(conv, options);
 
       const result = await adapter.invokeCommand(
         engineSessionId,

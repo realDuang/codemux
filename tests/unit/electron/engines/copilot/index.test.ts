@@ -432,6 +432,20 @@ describe("CopilotSdkAdapter", () => {
       );
     });
 
+    it("disables config discovery when the initial model is Gemini", async () => {
+      await adapter.createSession("/repo", {
+        codemuxInitialModelId: "gemini-3.1-pro-preview",
+      });
+
+      expect(mockClientInstance.createSession).toHaveBeenCalledWith(
+        expect.objectContaining({
+          model: "gemini-3.1-pro-preview",
+          enableSkills: true,
+          enableConfigDiscovery: false,
+        }),
+      );
+    });
+
     it("subscribes to session events after creation", async () => {
       const newSess = { ...mockSessionBase, sessionId: "s-new", on: vi.fn(() => vi.fn()) };
       mockClientInstance.createSession.mockResolvedValueOnce(newSess);
@@ -732,6 +746,34 @@ describe("CopilotSdkAdapter", () => {
       expect(sess.rpc.model.switchTo).toHaveBeenCalledWith(
         expect.objectContaining({ modelId: "new-model" }),
       );
+    });
+
+    it("reopens the session when switching across the Gemini config discovery boundary", async () => {
+      (adapter as any).currentModelId = "gpt-4o";
+      const resumed = makeMockSession("s1");
+      mockClientInstance.resumeSession.mockResolvedValueOnce(resumed);
+
+      const sendPromise = adapter.sendMessage(
+        "s1",
+        [{ type: "text", text: "hi" }],
+        { modelId: "gemini-3.1-pro-preview", reasoningEffort: "high" },
+      );
+      await flushMicrotasks();
+      (adapter as any).handleSessionIdle("s1");
+      await sendPromise;
+
+      expect(sess.disconnect).toHaveBeenCalledTimes(1);
+      expect(sess.rpc.model.switchTo).not.toHaveBeenCalled();
+      expect(mockClientInstance.resumeSession).toHaveBeenCalledTimes(1);
+      expect(mockClientInstance.resumeSession).toHaveBeenCalledWith(
+        "s1",
+        expect.objectContaining({
+          model: "gemini-3.1-pro-preview",
+          reasoningEffort: "high",
+          enableConfigDiscovery: false,
+        }),
+      );
+      expect(resumed.send).toHaveBeenCalledWith(expect.objectContaining({ prompt: "hi" }));
     });
 
     it("sets the session mode via rpc when mode changes", async () => {
@@ -2033,6 +2075,25 @@ describe("CopilotSdkAdapter", () => {
       await adapter.setReasoningEffort("s1", "medium");
 
       expect(sess.rpc.model.switchTo).not.toHaveBeenCalled();
+    });
+
+    it("reopens Gemini sessions when reasoning effort changes", async () => {
+      (adapter as any).currentModelId = "gemini-3.1-pro-preview";
+      const sess = makeMockSession("s1");
+      (adapter as any).activeSessions.set("s1", sess);
+
+      await adapter.setReasoningEffort("s1", "max");
+
+      expect(sess.disconnect).toHaveBeenCalledTimes(1);
+      expect(sess.rpc.model.switchTo).not.toHaveBeenCalled();
+      expect(mockClientInstance.resumeSession).toHaveBeenCalledWith(
+        "s1",
+        expect.objectContaining({
+          model: "gemini-3.1-pro-preview",
+          reasoningEffort: "xhigh",
+          enableConfigDiscovery: false,
+        }),
+      );
     });
   });
 

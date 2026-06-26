@@ -403,7 +403,7 @@ export class CopilotSdkAdapter extends EngineAdapter {
       // SDK 1.0 defaults both to false, which would hide all user-installed
       // skills from the slash command list.
       enableSkills: true,
-      enableConfigDiscovery: true,
+      enableConfigDiscovery: this.shouldEnableConfigDiscovery(initialModelId),
     };
 
     const sdkSession = await this.client!.createSession(config);
@@ -504,14 +504,26 @@ export class CopilotSdkAdapter extends EngineAdapter {
       _internalSuppressUserEmit?: boolean;
     },
   ): Promise<UnifiedMessage> {
-    const session = await this.ensureActiveSession(sessionId, options?.directory);
+    let session = await this.ensureActiveSession(sessionId, options?.directory);
     const now = Date.now();
 
     if (options?.modelId && options.modelId !== this.currentModelId) {
+      const previousModelId = this.currentModelId;
+      if (options.reasoningEffort !== undefined) {
+        if (options.reasoningEffort) {
+          this.sessionReasoningEfforts.set(sessionId, options.reasoningEffort);
+        } else {
+          this.sessionReasoningEfforts.delete(sessionId);
+        }
+      }
       this.currentModelId = options.modelId;
-      try {
-        await session.rpc.model.switchTo(this.buildModelSwitchConfig(sessionId, options.modelId));
-      } catch (err) {}
+      if (this.shouldReopenForConfigDiscovery(previousModelId, options.modelId)) {
+        session = await this.reopenActiveSession(sessionId, options.directory);
+      } else {
+        try {
+          await session.rpc.model.switchTo(this.buildModelSwitchConfig(sessionId, options.modelId));
+        } catch (err) {}
+      }
     }
 
     // Apply reasoning effort if it changed (same pattern as modelId)
@@ -524,9 +536,13 @@ export class CopilotSdkAdapter extends EngineAdapter {
           this.sessionReasoningEfforts.delete(sessionId);
         }
         if (this.currentModelId) {
-          try {
-            await session.rpc.model.switchTo(this.buildModelSwitchConfig(sessionId, this.currentModelId));
-          } catch (err) {}
+          if (this.isGeminiModel(this.currentModelId)) {
+            session = await this.reopenActiveSession(sessionId, options.directory);
+          } else {
+            try {
+              await session.rpc.model.switchTo(this.buildModelSwitchConfig(sessionId, this.currentModelId));
+            } catch (err) {}
+          }
         }
       }
     }
@@ -810,12 +826,17 @@ export class CopilotSdkAdapter extends EngineAdapter {
   }
 
   async setModel(sessionId: string, modelId: string): Promise<void> {
+    const previousModelId = this.currentModelId;
     this.currentModelId = modelId;
     const session = this.activeSessions.get(sessionId);
     if (session) {
-      try {
-        await session.rpc.model.switchTo(this.buildModelSwitchConfig(sessionId, modelId));
-      } catch (err) {}
+      if (this.shouldReopenForConfigDiscovery(previousModelId, modelId)) {
+        await this.reopenActiveSession(sessionId);
+      } else {
+        try {
+          await session.rpc.model.switchTo(this.buildModelSwitchConfig(sessionId, modelId));
+        } catch (err) {}
+      }
     }
   }
 
@@ -842,9 +863,13 @@ export class CopilotSdkAdapter extends EngineAdapter {
     }
     const session = this.activeSessions.get(sessionId);
     if (session && this.currentModelId) {
-      try {
-        await session.rpc.model.switchTo(this.buildModelSwitchConfig(sessionId, this.currentModelId));
-      } catch (err) {}
+      if (this.isGeminiModel(this.currentModelId)) {
+        await this.reopenActiveSession(sessionId);
+      } else {
+        try {
+          await session.rpc.model.switchTo(this.buildModelSwitchConfig(sessionId, this.currentModelId));
+        } catch (err) {}
+      }
     }
   }
 
@@ -868,6 +893,23 @@ export class CopilotSdkAdapter extends EngineAdapter {
   private getSdkReasoningEffort(sessionId: string): CopilotReasoningEffort | undefined {
     const effort = this.sessionReasoningEfforts.get(sessionId);
     return effort ? this.toSdkReasoningEffort(effort) : undefined;
+  }
+
+  private isGeminiModel(modelId: string | null | undefined): boolean {
+    return typeof modelId === "string" && modelId.startsWith("gemini-");
+  }
+
+  private shouldEnableConfigDiscovery(modelId: string | null | undefined): boolean {
+    // Gemini requests fail in Copilot SDK 1.0 when config discovery expands
+    // project instructions/skills before slash-command agent prompts.
+    return !this.isGeminiModel(modelId);
+  }
+
+  private shouldReopenForConfigDiscovery(
+    previousModelId: string | null | undefined,
+    nextModelId: string | null | undefined,
+  ): boolean {
+    return this.shouldEnableConfigDiscovery(previousModelId) !== this.shouldEnableConfigDiscovery(nextModelId);
   }
 
   async replyPermission(permissionId: string, reply: PermissionReply, _sessionId?: string): Promise<void> {
@@ -1259,6 +1301,19 @@ export class CopilotSdkAdapter extends EngineAdapter {
     if (!this.client || this.status !== "running") throw new Error("Copilot SDK adapter is not running");
   }
 
+  private async reopenActiveSession(sessionId: string, directory?: string): Promise<CopilotSession> {
+    const existing = this.activeSessions.get(sessionId);
+    if (existing) {
+      this.activeSessions.delete(sessionId);
+      try {
+        await existing.disconnect();
+      } catch (err) {
+        copilotLog.debug(`[Copilot][${sessionId}] disconnect before session reconfigure failed:`, err);
+      }
+    }
+    return this.ensureActiveSession(sessionId, directory);
+  }
+
   private async ensureActiveSession(sessionId: string, directory?: string): Promise<CopilotSession> {
     const existing = this.activeSessions.get(sessionId);
     if (existing) return existing;
@@ -1288,7 +1343,7 @@ export class CopilotSdkAdapter extends EngineAdapter {
       onPermissionRequest: (req, ctx) => this.handlePermissionRequest(req, ctx),
       onUserInputRequest: (req, ctx) => this.handleUserInputRequest(req as any, ctx),
       enableSkills: true,
-      enableConfigDiscovery: true,
+      enableConfigDiscovery: this.shouldEnableConfigDiscovery(this.currentModelId),
     };
 
     copilotLog.info(`Resuming session ${sessionId}...`);
@@ -1312,7 +1367,7 @@ export class CopilotSdkAdapter extends EngineAdapter {
           onPermissionRequest: (req, ctx) => this.handlePermissionRequest(req, ctx),
           onUserInputRequest: (req, ctx) => this.handleUserInputRequest(req as any, ctx),
           enableSkills: true,
-          enableConfigDiscovery: true,
+          enableConfigDiscovery: this.shouldEnableConfigDiscovery(this.currentModelId),
         };
         const newSession = await this.client!.createSession(newConfig);
         this.subscribeToSessionEvents(newSession, sessionId);

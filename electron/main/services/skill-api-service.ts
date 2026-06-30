@@ -96,7 +96,7 @@ export class SkillApiService implements SkillApiProvider {
     for (const engineType of targetEngineTypes) {
       const result = await this.projection.prepareForEngine(engineType, workspaceDirectory);
       for (const diagnostic of this.diagnosticsFromConflicts(result.conflicts, engineType)) {
-        const key = `${diagnostic.engineType ?? ""}:${diagnostic.skillName ?? ""}:${diagnostic.code}:${diagnostic.message}`;
+        const key = `${diagnostic.engineType ?? ""}:${diagnostic.skillName ?? ""}:${diagnostic.code}:${JSON.stringify(diagnostic.params ?? {})}`;
         if (seenDiagnostics.has(key)) continue;
         seenDiagnostics.add(key);
         diagnostics.push(diagnostic);
@@ -121,16 +121,18 @@ export class SkillApiService implements SkillApiProvider {
     conflicts: SkillConflict[],
     engineType?: EngineType,
   ): SkillDiagnostic[] {
-    return conflicts.map((conflict) => {
+    return conflicts.map((conflict): SkillDiagnostic => {
       if (isDiscoveryConflict(conflict)) {
         return {
           severity: "warning",
           code: "exposure-conflict",
           skillName: conflict.name,
           engineType,
-          message: `Skill "${conflict.name}" could not be exposed because ${conflict.path} already exists and is not managed by CodeMux.`,
+          params: {
+            name: conflict.name,
+            path: conflict.path,
+          },
           action: {
-            label: "Open conflicting path",
             kind: "open-path",
             path: conflict.path,
           },
@@ -141,7 +143,10 @@ export class SkillApiService implements SkillApiProvider {
         severity: "error",
         code: "engine-exposure-failed",
         skillName: conflict.name,
-        message: `Skill "${conflict.name}" could not be exposed: ${conflict.reason}.`,
+        params: {
+          name: conflict.name,
+          reason: conflict.reason,
+        },
       };
     });
   }

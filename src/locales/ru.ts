@@ -198,6 +198,10 @@ export const ru: LocaleDict = {
     deleteConfirm: "Удалить навык \"{name}\"? Это удалит только файлы выбранной проектной/глобальной области. Встроенные навыки удалить нельзя.",
     shadowedBy: "Перекрыто {scope}",
     shadows: "Перекрывает {scopes}",
+    diagnosticExposureConflict: "Навык \"{name}\" не удалось открыть, потому что путь {path} уже существует и не управляется CodeMux.",
+    diagnosticEngineExposureFailed: "Навык \"{name}\" не удалось открыть: {reason}.",
+    diagnosticInvalidSkill: "Навык \"{name}\" недействителен: {reason}.",
+    diagnosticSkillShadowed: "Навык \"{name}\" перекрыт {scope}.",
   },
 
   // Harness configuration surfaces

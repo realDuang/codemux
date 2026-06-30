@@ -199,6 +199,10 @@ export interface LocaleDict {
     deleteConfirm: string;
     shadowedBy: string;
     shadows: string;
+    diagnosticExposureConflict: string;
+    diagnosticEngineExposureFailed: string;
+    diagnosticInvalidSkill: string;
+    diagnosticSkillShadowed: string;
   };
 
   // Harness configuration surfaces
@@ -967,6 +971,10 @@ export const en: LocaleDict = {
     deleteConfirm: "Delete skill \"{name}\"? This removes only the selected project/global skill files. Builtin skills cannot be deleted.",
     shadowedBy: "Shadowed by {scope}",
     shadows: "Shadows {scopes}",
+    diagnosticExposureConflict: "Skill \"{name}\" could not be exposed because {path} already exists and is not managed by CodeMux.",
+    diagnosticEngineExposureFailed: "Skill \"{name}\" could not be exposed: {reason}.",
+    diagnosticInvalidSkill: "Skill \"{name}\" is invalid: {reason}.",
+    diagnosticSkillShadowed: "Skill \"{name}\" is shadowed by {scope}.",
   },
 
   // Harness configuration surfaces

@@ -45,6 +45,11 @@ function normalizeDir(dir: string): string {
   return dir ? dir.replaceAll("\\", "/") : "";
 }
 
+function skillRefreshKey(directory: string): string {
+  const normalized = normalizeDir(directory);
+  return process.platform === "win32" ? normalized.toLowerCase() : normalized;
+}
+
 /** Compute the display title from a ConversationMeta — render-time priority. */
 function getUsableEngineTitle(conv: ConversationMeta): string | undefined {
   const title = conv.engineTitle?.trim();
@@ -157,6 +162,7 @@ export class EngineManager extends EventEmitter {
 
   /** Track active sendMessage call counts per session (for idle/queue detection). */
   private activeSessionCounts = new Map<string, number>();
+  private skillRefreshQueues = new Map<string, Promise<void>>();
 
   // --- Adapter Registration ---
 
@@ -779,15 +785,32 @@ export class EngineManager extends EventEmitter {
     directory: string,
     engineTypes: EngineType[] = Array.from(this.adapters.keys()),
   ): Promise<void> {
-    await Promise.all([...new Set(engineTypes)].map(async (engineType) => {
-      const adapter = this.adapters.get(engineType);
-      if (!adapter) return;
-      try {
-        await adapter.refreshSkillsForDirectory(directory);
-      } catch (error) {
-        engineManagerLog.warn(`Failed to refresh skills for ${engineType} in ${directory}:`, error);
+    const key = skillRefreshKey(directory);
+    const previous = this.skillRefreshQueues.get(key) ?? Promise.resolve();
+    let release!: () => void;
+    const current = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const next = previous.catch(() => undefined).then(() => current);
+    this.skillRefreshQueues.set(key, next);
+
+    await previous.catch(() => undefined);
+    try {
+      for (const engineType of [...new Set(engineTypes)]) {
+        const adapter = this.adapters.get(engineType);
+        if (!adapter) continue;
+        try {
+          await adapter.refreshSkillsForDirectory(directory);
+        } catch (error) {
+          engineManagerLog.warn(`Failed to refresh skills for ${engineType} in ${directory}:`, error);
+        }
       }
-    }));
+    } finally {
+      release();
+      if (this.skillRefreshQueues.get(key) === next) {
+        this.skillRefreshQueues.delete(key);
+      }
+    }
   }
 
   // --- Sessions (backed by ConversationStore) ---

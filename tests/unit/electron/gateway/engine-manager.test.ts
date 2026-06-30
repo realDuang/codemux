@@ -107,6 +107,7 @@ class MockEngineAdapter extends EngineAdapter {
   listProjects = vi.fn(async () => []);
   listHistoricalSessions = vi.fn(async () => []);
   getHistoricalMessages = vi.fn(async () => []);
+  refreshSkillsForDirectory = vi.fn(async () => {});
   listCommands = vi.fn(async () => []);
   invokeCommand = vi.fn(async () => ({ handledAsCommand: true }) as any);
 }
@@ -237,6 +238,51 @@ describe("EngineManager", () => {
     it("throws when starting or stopping unknown engine", async () => {
       await expect(engineManager.startEngine("unknown" as any)).rejects.toThrow(/No adapter registered/);
       await expect(engineManager.stopEngine("unknown" as any)).rejects.toThrow(/No adapter registered/);
+    });
+  });
+
+  // ===========================================================================
+  // Skills
+  // ===========================================================================
+
+  describe("Skills", () => {
+    beforeEach(() => {
+      engineManager.registerAdapter(adapterA);
+      engineManager.registerAdapter(adapterB);
+    });
+
+    it("serializes skill refreshes for the same directory", async () => {
+      const events: string[] = [];
+      let resolveStarted!: () => void;
+      let resolveRefresh!: () => void;
+      const started = new Promise<void>((resolve) => {
+        resolveStarted = resolve;
+      });
+      const refreshCanFinish = new Promise<void>((resolve) => {
+        resolveRefresh = resolve;
+      });
+
+      adapterA.refreshSkillsForDirectory.mockImplementationOnce(async () => {
+        events.push("a:start");
+        resolveStarted();
+        await refreshCanFinish;
+        events.push("a:end");
+      });
+      adapterB.refreshSkillsForDirectory.mockImplementationOnce(async () => {
+        events.push("b:start");
+      });
+
+      const firstRefresh = engineManager.refreshSkillsForDirectory("/repo", [adapterA.engineType]);
+      await started;
+      const secondRefresh = engineManager.refreshSkillsForDirectory("/repo", [adapterB.engineType]);
+      await Promise.resolve();
+
+      expect(events).toEqual(["a:start"]);
+
+      resolveRefresh();
+      await Promise.all([firstRefresh, secondRefresh]);
+
+      expect(events).toEqual(["a:start", "a:end", "b:start"]);
     });
   });
 

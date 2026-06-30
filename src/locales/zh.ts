@@ -197,6 +197,10 @@ export const zh: LocaleDict = {
     deleteConfirm: "删除 skill \"{name}\"？这只会移除当前选中 scope 的项目/全局真实文件。内置 skill 不会被删除。",
     shadowedBy: "被 {scope} 覆盖",
     shadows: "覆盖 {scopes}",
+    diagnosticExposureConflict: "Skill \"{name}\" 无法暴露，因为 {path} 已存在且不由 CodeMux 管理。",
+    diagnosticEngineExposureFailed: "Skill \"{name}\" 无法暴露：{reason}。",
+    diagnosticInvalidSkill: "Skill \"{name}\" 无效：{reason}。",
+    diagnosticSkillShadowed: "Skill \"{name}\" 被 {scope} 覆盖。",
   },
 
   // Harness configuration surfaces

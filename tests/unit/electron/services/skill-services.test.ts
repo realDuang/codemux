@@ -281,6 +281,20 @@ describe("skill services", () => {
       expect(await pathExists(path.join(result.effectiveRoot!, "alpha"))).toBe(true);
     });
 
+    it("returns a stable effective root even before Copilot skills exist", async () => {
+      const projection = new SkillProjectionService({
+        registry: createRegistry(),
+        manifestsRoot,
+      });
+
+      const result = await projection.prepareForEngine("copilot", workspace);
+
+      expect(result.skillNames).toEqual([]);
+      expect(result.effectiveRoot).toBeTruthy();
+      expect(result.skillDirectories).toEqual([result.effectiveRoot]);
+      expect(await pathExists(result.effectiveRoot!)).toBe(true);
+    });
+
     it("does not overwrite unmanaged discovery-directory conflicts", async () => {
       await createSkill(globalRoot, "alpha");
       const conflictPath = path.join(workspace, ".opencode", "skills", "alpha");
@@ -369,6 +383,10 @@ describe("skill services", () => {
           code: "exposure-conflict",
           skillName: "alpha",
           engineType: "opencode",
+          params: {
+            name: "alpha",
+            path: conflictPath,
+          },
           action: expect.objectContaining({
             kind: "open-path",
             path: conflictPath,

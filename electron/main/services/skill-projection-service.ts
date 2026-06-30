@@ -65,7 +65,8 @@ function samePath(a: string, b: string): boolean {
 
 function manifestKey(engineType: EngineType, workspaceDirectory: string): string {
   const normalized = path.resolve(workspaceDirectory);
-  const hash = createHash("sha256").update(`${engineType}:${normalized.toLowerCase()}`).digest("hex").slice(0, 16);
+  const hashPath = process.platform === "win32" ? normalized.toLowerCase() : normalized;
+  const hash = createHash("sha256").update(`${engineType}:${hashPath}`).digest("hex").slice(0, 16);
   return `${engineType}-${hash}.json`;
 }
 
@@ -74,7 +75,6 @@ function linkType(): "dir" | "junction" {
 }
 
 function getLoadDirectories(engineType: EngineType, effectiveSet: EffectiveSkillSet): string[] {
-  if (effectiveSet.skills.length === 0) return [];
   switch (engineType) {
     case "copilot":
     case "codex":

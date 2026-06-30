@@ -62,7 +62,8 @@ const SKILL_SCOPE_DISPLAY_ORDER: SkillScope[] = ["project", "global", "builtin"]
 
 function workspaceKey(directory: string): string {
   const normalized = path.resolve(directory);
-  const hash = createHash("sha256").update(normalized.toLowerCase()).digest("hex").slice(0, 12);
+  const hashInput = process.platform === "win32" ? normalized.toLowerCase() : normalized;
+  const hash = createHash("sha256").update(hashInput).digest("hex").slice(0, 12);
   const baseName = path.basename(normalized).replace(/[^a-zA-Z0-9._-]/g, "-") || "workspace";
   return `${baseName}-${hash}`;
 }
@@ -150,6 +151,11 @@ function linkType(): "dir" | "junction" {
   return process.platform === "win32" ? "junction" : "dir";
 }
 
+function normalizePathForCompare(filePath: string): string {
+  const resolved = path.resolve(filePath);
+  return process.platform === "win32" ? resolved.toLowerCase() : resolved;
+}
+
 export class SkillRegistryService {
   private readonly builtinSkillsRoot: string;
   private readonly globalSkillsRoot: string;
@@ -157,6 +163,7 @@ export class SkillRegistryService {
   private readonly settingsLoader: () => Record<string, unknown>;
   private readonly settingsSaver: (patch: Record<string, unknown>) => void;
   private readonly logger: ScopedLogger;
+  private readonly effectiveBuildQueues = new Map<string, Promise<void>>();
 
   constructor(options: SkillRegistryServiceOptions = {}) {
     this.builtinSkillsRoot = options.builtinSkillsRoot ?? path.join(process.resourcesPath ?? process.cwd(), "skills");
@@ -204,6 +211,31 @@ export class SkillRegistryService {
 
   async buildEffectiveSkillSet(workspaceDirectory: string): Promise<EffectiveSkillSet> {
     const resolvedWorkspace = path.resolve(workspaceDirectory);
+    return this.withEffectiveBuildQueue(resolvedWorkspace, () => this.buildEffectiveSkillSetUnlocked(resolvedWorkspace));
+  }
+
+  private async withEffectiveBuildQueue<T>(workspaceDirectory: string, build: () => Promise<T>): Promise<T> {
+    const key = workspaceKey(workspaceDirectory);
+    const previous = this.effectiveBuildQueues.get(key) ?? Promise.resolve();
+    let release!: () => void;
+    const current = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const next = previous.catch(() => undefined).then(() => current);
+    this.effectiveBuildQueues.set(key, next);
+
+    await previous.catch(() => undefined);
+    try {
+      return await build();
+    } finally {
+      release();
+      if (this.effectiveBuildQueues.get(key) === next) {
+        this.effectiveBuildQueues.delete(key);
+      }
+    }
+  }
+
+  private async buildEffectiveSkillSetUnlocked(resolvedWorkspace: string): Promise<EffectiveSkillSet> {
     const disabled = await this.loadDisabledSkillSets(resolvedWorkspace);
 
     const allSkills = await this.listSkills(resolvedWorkspace);
@@ -211,15 +243,15 @@ export class SkillRegistryService {
     const effectiveRoot = this.getEffectiveRoot(resolvedWorkspace);
     const conflicts: SkillConflict[] = [];
 
-    await fs.rm(effectiveRoot, { recursive: true, force: true });
     await fs.mkdir(effectiveRoot, { recursive: true });
     await fs.writeFile(path.join(effectiveRoot, ".codemux-managed"), "This directory is managed by CodeMux.\n", "utf8");
 
     const effectiveSkills: EffectiveSkillRecord[] = [];
+    const selectedNames = new Set(selected.map((skill) => skill.name));
     for (const skill of selected) {
       const linkPath = path.join(effectiveRoot, skill.name);
       try {
-        await fs.symlink(path.resolve(skill.skillPath), linkPath, linkType());
+        await this.ensureEffectiveLink(skill, linkPath);
         effectiveSkills.push({ ...skill, linkPath });
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
@@ -227,6 +259,7 @@ export class SkillRegistryService {
         conflicts.push({ name: skill.name, path: linkPath, reason: `link-failed: ${message}` });
       }
     }
+    await this.removeStaleEffectiveLinks(effectiveRoot, selectedNames);
 
     return {
       workspaceDirectory: resolvedWorkspace,
@@ -234,6 +267,37 @@ export class SkillRegistryService {
       skills: effectiveSkills,
       conflicts,
     };
+  }
+
+  private async ensureEffectiveLink(skill: SkillRecord, linkPath: string): Promise<void> {
+    const targetPath = path.resolve(skill.skillPath);
+    const existingTarget = await this.readLinkTarget(linkPath);
+    if (existingTarget && normalizePathForCompare(existingTarget) === normalizePathForCompare(targetPath)) {
+      return;
+    }
+
+    await fs.rm(linkPath, { recursive: true, force: true });
+    await fs.symlink(targetPath, linkPath, linkType());
+  }
+
+  private async readLinkTarget(linkPath: string): Promise<string | null> {
+    try {
+      const stat = await fs.lstat(linkPath);
+      if (!stat.isSymbolicLink()) return null;
+      const rawTarget = await fs.readlink(linkPath);
+      return path.isAbsolute(rawTarget) ? rawTarget : path.resolve(path.dirname(linkPath), rawTarget);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+      throw error;
+    }
+  }
+
+  private async removeStaleEffectiveLinks(effectiveRoot: string, selectedNames: Set<string>): Promise<void> {
+    const entries = await fs.readdir(effectiveRoot, { withFileTypes: true });
+    await Promise.all(entries.map(async (entry) => {
+      if (entry.name === ".codemux-managed" || selectedNames.has(entry.name)) return;
+      await fs.rm(path.join(effectiveRoot, entry.name), { recursive: true, force: true });
+    }));
   }
 
   async deleteSkill(scope: SkillScope, name: string, workspaceDirectory?: string): Promise<void> {

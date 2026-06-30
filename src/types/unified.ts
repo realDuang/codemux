@@ -682,7 +682,6 @@ export type SkillDiagnosticCode =
   | "engine-exposure-failed";
 
 export interface SkillDiagnosticAction {
-  label: string;
   kind: "open-path" | "refresh" | "delete-conflict";
   path?: string;
 }
@@ -690,7 +689,7 @@ export interface SkillDiagnosticAction {
 export interface SkillDiagnostic {
   severity: SkillDiagnosticSeverity;
   code: SkillDiagnosticCode;
-  message: string;
+  params?: Record<string, string>;
   skillName?: string;
   engineType?: EngineType;
   action?: SkillDiagnosticAction;

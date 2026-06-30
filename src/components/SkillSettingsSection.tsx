@@ -80,7 +80,6 @@ function getDisabledAt(skill: SkillSummary, scope: SkillMutableScope): boolean {
 export function SkillSettingsSection() {
   const { t } = useI18n();
   const [workspaceProjects, setWorkspaceProjects] = createSignal<UnifiedProject[]>([]);
-  const [referenceWorkspace, setReferenceWorkspace] = createSignal("");
   const [selectedWorkspace, setSelectedWorkspace] = createSignal("");
   const [searchQuery, setSearchQuery] = createSignal("");
   const [loadingWorkspaces, setLoadingWorkspaces] = createSignal(true);
@@ -88,6 +87,26 @@ export function SkillSettingsSection() {
   const [actionLoading, setActionLoading] = createSignal<string | null>(null);
   const [actionError, setActionError] = createSignal<string | null>(null);
   const [selectedSkillRef, setSelectedSkillRef] = createSignal<SelectedSkillReference | null>(null);
+
+  const formatDiagnosticMessage = (diagnostic: SkillDiagnostic): string => {
+    const params = diagnostic.params ?? {};
+    const values = {
+      name: params.name ?? diagnostic.skillName ?? "",
+      path: params.path ?? "",
+      reason: params.reason ?? diagnostic.code,
+      scope: params.scope ?? "",
+    };
+    switch (diagnostic.code) {
+      case "exposure-conflict":
+        return formatMessage(t().skill.diagnosticExposureConflict, values);
+      case "engine-exposure-failed":
+        return formatMessage(t().skill.diagnosticEngineExposureFailed, values);
+      case "invalid-skill":
+        return formatMessage(t().skill.diagnosticInvalidSkill, values);
+      case "skill-shadowed":
+        return formatMessage(t().skill.diagnosticSkillShadowed, values);
+    }
+  };
 
   const currentSessionDirectory = createMemo(() => {
     const currentId = sessionStore.current;
@@ -123,7 +142,7 @@ export function SkillSettingsSection() {
   };
 
   const [scopeSkillResponse, { mutate: setScopeSkillResponse }] = createResource(
-    referenceWorkspace,
+    selectedWorkspace,
     fetchSkillResponse,
   );
 
@@ -170,9 +189,6 @@ export function SkillSettingsSection() {
       options.find((option) => option.directory === currentDirectory)
       ?? options.find((option) => option.directory === defaultProject?.directory)
       ?? options[0];
-    if (!referenceWorkspace()) {
-      setReferenceWorkspace(preferred.directory);
-    }
     if (!selectedWorkspace()) {
       setSelectedWorkspace(preferred.directory);
     }
@@ -197,37 +213,22 @@ export function SkillSettingsSection() {
     workspaceDirectory: string,
     response: SkillListResponse,
   ) => {
-    const scopeWorkspace = referenceWorkspace();
-    const projectWorkspace = selectedWorkspace();
-    if (scopeWorkspace) {
-      setScopeSkillResponse(scopeWorkspace === workspaceDirectory
-        ? response
-        : await gateway.listSkills(scopeWorkspace));
-    }
-    if (projectWorkspace) {
-      setProjectSkillResponse(projectWorkspace === workspaceDirectory
-        ? response
-        : await gateway.listSkills(projectWorkspace));
-    }
+    const visibleWorkspace = selectedWorkspace();
+    if (!visibleWorkspace) return;
+    const visibleResponse = visibleWorkspace === workspaceDirectory
+      ? response
+      : await gateway.listSkills(visibleWorkspace);
+    setScopeSkillResponse(visibleResponse);
+    setProjectSkillResponse(visibleResponse);
   };
 
   const handleRefresh = () => {
-    const projectWorkspace = selectedWorkspace();
-    const scopeWorkspace = referenceWorkspace();
-    if (!projectWorkspace && !scopeWorkspace) return;
+    const workspaceDirectory = selectedWorkspace();
+    if (!workspaceDirectory) return;
     void runAction("refresh", async () => {
-      let scopeResponse: SkillListResponse | null = null;
-      if (scopeWorkspace) {
-        scopeResponse = await gateway.refreshSkills(scopeWorkspace);
-        setScopeSkillResponse(scopeResponse);
-      }
-      if (projectWorkspace) {
-        if (projectWorkspace === scopeWorkspace) {
-          setProjectSkillResponse(scopeResponse ?? await gateway.listSkills(projectWorkspace));
-        } else {
-          setProjectSkillResponse(await gateway.refreshSkills(projectWorkspace));
-        }
-      }
+      const response = await gateway.refreshSkills(workspaceDirectory);
+      setScopeSkillResponse(response);
+      setProjectSkillResponse(response);
     });
   };
 
@@ -236,9 +237,7 @@ export function SkillSettingsSection() {
     scope: SkillMutableScope,
     enabled: boolean,
   ) => {
-    const workspaceDirectory = scope === "project"
-      ? selectedWorkspace()
-      : referenceWorkspace() || selectedWorkspace();
+    const workspaceDirectory = selectedWorkspace();
     if (!workspaceDirectory) return;
     void runAction(
       `${scope}:${skillName}:${enabled ? "enable" : "disable"}`,
@@ -250,9 +249,7 @@ export function SkillSettingsSection() {
   };
 
   const handleDelete = (skill: SkillSummary, scope: SkillMutableScope) => {
-    const workspaceDirectory = scope === "project"
-      ? selectedWorkspace()
-      : referenceWorkspace() || selectedWorkspace();
+    const workspaceDirectory = selectedWorkspace();
     if (!workspaceDirectory) return;
     if (!confirm(formatMessage(t().skill.deleteConfirm, {
       name: `${skill.name} (${scopeLabel(scope)})`,
@@ -270,8 +267,12 @@ export function SkillSettingsSection() {
 
   const handleOpenPath = async (filePath?: string) => {
     if (!filePath) return;
+    setActionError(null);
     try {
-      await systemAPI.openPath(filePath);
+      const openError = await systemAPI.openPath(filePath);
+      if (openError) {
+        setActionError(openError);
+      }
     } catch (error) {
       setActionError(error instanceof Error ? error.message : String(error));
     }
@@ -436,7 +437,7 @@ export function SkillSettingsSection() {
       ...(scopeSkillResponse()?.diagnostics ?? []),
       ...(projectSkillResponse()?.diagnostics ?? []),
     ]) {
-      const key = `${diagnostic.severity}:${diagnostic.code}:${diagnostic.skillName ?? ""}:${diagnostic.message}`;
+      const key = `${diagnostic.severity}:${diagnostic.code}:${diagnostic.skillName ?? ""}:${JSON.stringify(diagnostic.params ?? {})}`;
       if (seen.has(key)) continue;
       seen.add(key);
       items.push(diagnostic);
@@ -480,7 +481,7 @@ export function SkillSettingsSection() {
           />
           <button
             onClick={handleRefresh}
-            disabled={(!selectedWorkspace() && !referenceWorkspace()) || actionLoading() === "refresh" || skillsLoading()}
+            disabled={!selectedWorkspace() || actionLoading() === "refresh" || skillsLoading()}
             class="px-3 py-1.5 text-xs font-medium rounded-lg border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
           >
             <Show when={actionLoading() === "refresh"} fallback={t().skill.refresh}>
@@ -511,7 +512,7 @@ export function SkillSettingsSection() {
                   <div class="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-2">
                     <p class="text-xs break-words">
                       <span class="font-medium">{t().skill.diagnostic}: </span>
-                      {diagnostic.message}
+                      {formatDiagnosticMessage(diagnostic)}
                     </p>
                     <Show when={diagnostic.action?.path}>
                       <button
@@ -541,7 +542,7 @@ export function SkillSettingsSection() {
             when={hasVisibleSkills()}
             fallback={
               <div class="p-6 text-center text-sm text-slate-400 dark:text-slate-500">
-                {referenceWorkspace() || selectedWorkspace()
+                {selectedWorkspace()
                   ? searchQuery().trim()
                     ? t().skill.noSearchResults
                     : t().skill.empty
@@ -864,7 +865,7 @@ export function SkillSettingsSection() {
                             {(diagnostic) => (
                               <div class={`rounded-lg border p-3 ${diagnosticClass(diagnostic)}`}>
                                 <div class="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-2">
-                                  <p class="text-xs break-words">{diagnostic.message}</p>
+                                  <p class="text-xs break-words">{formatDiagnosticMessage(diagnostic)}</p>
                                   <Show when={diagnostic.action?.path}>
                                     <button
                                       type="button"

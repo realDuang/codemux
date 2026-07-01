@@ -141,12 +141,7 @@ export function SkillSettingsSection() {
     return gateway.listSkills(workspaceDirectory);
   };
 
-  const [scopeSkillResponse, { mutate: setScopeSkillResponse }] = createResource(
-    selectedWorkspace,
-    fetchSkillResponse,
-  );
-
-  const [projectSkillResponse, { mutate: setProjectSkillResponse }] = createResource(
+  const [skillResponse, { mutate: setSkillResponse }] = createResource(
     selectedWorkspace,
     fetchSkillResponse,
   );
@@ -218,8 +213,7 @@ export function SkillSettingsSection() {
     const visibleResponse = visibleWorkspace === workspaceDirectory
       ? response
       : await gateway.listSkills(visibleWorkspace);
-    setScopeSkillResponse(visibleResponse);
-    setProjectSkillResponse(visibleResponse);
+    setSkillResponse(visibleResponse);
   };
 
   const handleRefresh = () => {
@@ -227,8 +221,7 @@ export function SkillSettingsSection() {
     if (!workspaceDirectory) return;
     void runAction("refresh", async () => {
       const response = await gateway.refreshSkills(workspaceDirectory);
-      setScopeSkillResponse(response);
-      setProjectSkillResponse(response);
+      setSkillResponse(response);
     });
   };
 
@@ -359,8 +352,7 @@ export function SkillSettingsSection() {
     );
   };
 
-  const scopeSkills = createMemo(() => (scopeSkillResponse()?.skills ?? []).filter(matchesSearch));
-  const projectSkills = createMemo(() => (projectSkillResponse()?.skills ?? []).filter(matchesSearch));
+  const visibleSkills = createMemo(() => (skillResponse()?.skills ?? []).filter(matchesSearch));
 
   const scopeDefinitions = createMemo(() => [
     {
@@ -383,7 +375,7 @@ export function SkillSettingsSection() {
   const groupedSkills = createMemo<ScopeGroup[]>(() =>
     scopeDefinitions().map((definition) => ({
       ...definition,
-      skills: (definition.scope === "project" ? projectSkills() : scopeSkills())
+      skills: visibleSkills()
         .map((skill) => ({
           skill,
           instance: skill.scopes.find((instance) => instance.scope === definition.scope),
@@ -395,8 +387,7 @@ export function SkillSettingsSection() {
   const selectedSkill = createMemo(() => {
     const selected = selectedSkillRef();
     if (!selected) return null;
-    const response = selected.scope === "project" ? projectSkillResponse() : scopeSkillResponse();
-    return response?.skills.find((skill) => skill.name === selected.name) ?? null;
+    return skillResponse()?.skills.find((skill) => skill.name === selected.name) ?? null;
   });
 
   const selectedInstance = createMemo(() => {
@@ -422,30 +413,16 @@ export function SkillSettingsSection() {
     const selected = selectedSkillRef();
     const skill = selectedSkill();
     if (!selected || !skill) return [];
-    const response = selected.scope === "project" ? projectSkillResponse() : scopeSkillResponse();
-    return (response?.diagnostics ?? []).filter((diagnostic) => diagnostic.skillName === skill.name);
+    return (skillResponse()?.diagnostics ?? []).filter((diagnostic) => diagnostic.skillName === skill.name);
   });
 
   const selectedHasBodyContent = createMemo(() =>
     selectedOtherScopes().length > 0 || selectedDiagnostics().length > 0,
   );
 
-  const diagnostics = createMemo(() => {
-    const seen = new Set<string>();
-    const items: SkillDiagnostic[] = [];
-    for (const diagnostic of [
-      ...(scopeSkillResponse()?.diagnostics ?? []),
-      ...(projectSkillResponse()?.diagnostics ?? []),
-    ]) {
-      const key = `${diagnostic.severity}:${diagnostic.code}:${diagnostic.skillName ?? ""}:${JSON.stringify(diagnostic.params ?? {})}`;
-      if (seen.has(key)) continue;
-      seen.add(key);
-      items.push(diagnostic);
-    }
-    return items;
-  });
+  const diagnostics = createMemo(() => skillResponse()?.diagnostics ?? []);
 
-  const skillsLoading = createMemo(() => scopeSkillResponse.loading || projectSkillResponse.loading);
+  const skillsLoading = createMemo(() => skillResponse.loading);
   const hasVisibleSkills = createMemo(() => groupedSkills().some((group) => group.skills.length > 0));
 
   const selectedProjectWorkspaceLabel = createMemo(() =>
@@ -454,7 +431,7 @@ export function SkillSettingsSection() {
 
   createEffect(() => {
     const selected = selectedSkillRef();
-    const response = selected?.scope === "project" ? projectSkillResponse() : scopeSkillResponse();
+    const response = skillResponse();
     if (selected && response && !response.skills.some((skill) => skill.name === selected.name)) {
       setSelectedSkillRef(null);
     }

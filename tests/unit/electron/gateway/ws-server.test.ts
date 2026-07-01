@@ -807,6 +807,25 @@ describe("GatewayServer", () => {
       expect(engineManager.refreshSkillsForDirectory).toHaveBeenCalledWith("/repo", ["claude"]);
     });
 
+    it("SKILL_REFRESH refreshes only requested engines", async () => {
+      const skillApi = {
+        refreshSkills: vi.fn(async () => ({ skills: [], diagnostics: [], effectiveRoot: "/effective", workspaceDirectory: "/repo" })),
+      };
+      const { connect, sendMessage, engineManager } = createTestHarness({ skillApi });
+      engineManager.listEngines.mockReturnValue([{ type: "claude" }, { type: "opencode" }]);
+      const ws = connect();
+
+      const payload = { workspaceDirectory: "/repo", engineTypes: ["opencode"] };
+      await sendMessage(ws, {
+        type: GatewayRequestType.SKILL_REFRESH,
+        requestId: "r1",
+        payload,
+      });
+
+      expect(skillApi.refreshSkills).toHaveBeenCalledWith(payload, ["claude", "opencode"]);
+      expect(engineManager.refreshSkillsForDirectory).toHaveBeenCalledWith("/repo", ["opencode"]);
+    });
+
     it("SESSION_CREATE delegates with correct params", async () => {
       const { connect, sendMessage, engineManager } = createTestHarness();
       const ws = connect();

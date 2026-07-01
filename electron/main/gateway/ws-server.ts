@@ -515,12 +515,14 @@ export class GatewayServer {
       }
 
       case GatewayRequestType.SKILL_REFRESH: {
-        const engineTypes = this.getRegisteredEngineTypes();
+        const request = p as SkillRefreshRequest;
+        const registeredEngineTypes = this.getRegisteredEngineTypes();
+        const targetEngineTypes = request.engineTypes ?? registeredEngineTypes;
         const response = await this.requireSkillApi().refreshSkills(
-          p as SkillRefreshRequest,
-          engineTypes,
+          request,
+          registeredEngineTypes,
         );
-        await this.engineManager.refreshSkillsForDirectory(response.workspaceDirectory, engineTypes);
+        await this.engineManager.refreshSkillsForDirectory(response.workspaceDirectory, targetEngineTypes);
         return response;
       }
 

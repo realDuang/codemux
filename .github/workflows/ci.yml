@@ -33,7 +33,7 @@ jobs:
           cache-dependency-path: bun.lock
 
       - name: Install dependencies
-        run: bun install --frozen-lockfile
+        run: bun scripts/ci-install.ts
 
       - name: Audit for critical vulnerabilities
         run: bun pm audit 2>&1 || true
@@ -55,7 +55,7 @@ jobs:
           cache-dependency-path: bun.lock
 
       - name: Install dependencies
-        run: bun install --frozen-lockfile
+        run: bun scripts/ci-install.ts
 
       - name: Run ESLint
         run: bun run lint
@@ -76,7 +76,7 @@ jobs:
           cache-dependency-path: bun.lock
 
       - name: Install dependencies
-        run: bun install --frozen-lockfile
+        run: bun scripts/ci-install.ts
 
       - name: Run type check
         run: bun run typecheck
@@ -105,7 +105,7 @@ jobs:
           cache-dependency-path: bun.lock
 
       - name: Install dependencies
-        run: bun install --frozen-lockfile
+        run: bun scripts/ci-install.ts
 
       - name: Ensure Electron binary
         run: bun scripts/ensure-electron.ts
@@ -164,7 +164,7 @@ jobs:
           cache-dependency-path: bun.lock
 
       - name: Install dependencies
-        run: bun install --frozen-lockfile
+        run: bun scripts/ci-install.ts
 
       - name: Ensure Electron binary
         run: bun scripts/ensure-electron.ts
@@ -208,7 +208,7 @@ jobs:
           cache-dependency-path: bun.lock
 
       - name: Install dependencies
-        run: bun install --frozen-lockfile
+        run: bun scripts/ci-install.ts
 
       - name: Run web API tests
         run: bun run test:web-api
@@ -229,7 +229,7 @@ jobs:
           cache-dependency-path: bun.lock
 
       - name: Install dependencies
-        run: bun install --frozen-lockfile
+        run: bun scripts/ci-install.ts
 
       # Find the latest successful workflow run on main to download its baseline artifact
       - name: Find baseline run ID

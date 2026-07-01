@@ -854,6 +854,10 @@ describe("CodexAdapter", () => {
     (adapter as any).handleSkillsChanged();
     await flushMicrotasks();
 
+    const skillListCalls = client.request.mock.calls.filter((call) => call[0] === "skills/list");
+    expect(skillListCalls[0][1]).toEqual({ cwds: ["/repo"], forceReload: false });
+    expect(skillListCalls[1][1]).toEqual({ cwds: ["/repo"], forceReload: true });
+
     expect(commandEvents).toEqual([
       ["fix:true", "plan:false"],
       ["fix:true"],

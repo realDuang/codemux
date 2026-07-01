@@ -3,7 +3,7 @@
 // ============================================================================
 
 import { writeFileSync, unlinkSync, mkdtempSync, rmdirSync } from "fs";
-import { join } from "path";
+import { join, resolve } from "path";
 import { tmpdir } from "os";
 
 import { timeId } from "../../utils/id-gen";
@@ -19,6 +19,7 @@ import type {
 import { EngineAdapter, MessageBuffer } from "../engine-adapter";
 import { CODEMUX_IDENTITY_PROMPT } from "../identity-prompt";
 import { copilotLog } from "../../services/logger";
+import type { SkillProjectionProvider } from "../../services/skill-projection-service";
 import { inferToolKind, normalizeToolName } from "../../../../src/types/tool-mapping";
 import type {
   EngineType,
@@ -223,7 +224,7 @@ export class CopilotSdkAdapter extends EngineAdapter {
   private toolCallParts = new Map<string, ToolPart>();
   private taskCompleteCallIds = new Set<string>();
 
-  constructor(private options?: { cliPath?: string; env?: Record<string, string> }) {
+  constructor(private options?: { cliPath?: string; env?: Record<string, string>; skillProjection?: SkillProjectionProvider }) {
     super();
   }
 
@@ -379,8 +380,9 @@ export class CopilotSdkAdapter extends EngineAdapter {
     this.ensureClient();
     const normalizedDir = directory.replaceAll("\\", "/");
     const mode = "autopilot";
+    const skillDirectories = await this.getSkillDirectories(directory);
 
-    const config: SessionConfig = {
+    const config: SessionConfig & { skillDirectories?: string[] } = {
       workingDirectory: directory,
       streaming: true,
       model: this.currentModelId ?? undefined,
@@ -393,6 +395,7 @@ export class CopilotSdkAdapter extends EngineAdapter {
       // skills from the slash command list.
       enableSkills: true,
       enableConfigDiscovery: true,
+      ...(skillDirectories ? { skillDirectories } : {}),
     };
 
     const sdkSession = await this.client!.createSession(config);
@@ -423,6 +426,67 @@ export class CopilotSdkAdapter extends EngineAdapter {
     }
 
     return session;
+  }
+
+  private async getSkillDirectories(directory: string | undefined): Promise<string[] | undefined> {
+    if (!directory || !this.options?.skillProjection) return undefined;
+    try {
+      const projection = await this.options.skillProjection.prepareForEngine(this.engineType, directory);
+      if (projection.conflicts.length > 0) {
+        copilotLog.warn(
+          `Skill projection for ${directory} completed with ${projection.conflicts.length} conflict(s)`,
+        );
+      }
+      const skillDirectories = projection.skillDirectories.length > 0 ? projection.skillDirectories : undefined;
+      copilotLog.info(
+        `[Copilot] prepared ${projection.skillNames.length} skill(s) for ${directory}: ` +
+          `${projection.skillNames.join(", ") || "none"}; ` +
+          `skillDirectories=${skillDirectories?.join(", ") ?? "none"}`,
+      );
+      return skillDirectories;
+    } catch (error) {
+      copilotLog.warn(`Failed to prepare skills for ${directory}:`, error);
+      return undefined;
+    }
+  }
+
+  override async refreshSkillsForDirectory(directory: string): Promise<void> {
+    const targetDirectory = this.directoryKey(directory);
+    if (!targetDirectory) return;
+
+    await this.getSkillDirectories(directory);
+    this.cachedCommands = [];
+
+    const matchingSessionIds = [...this.sessionDirectories.entries()]
+      .filter(([, sessionDirectory]) => this.directoryKey(sessionDirectory) === targetDirectory)
+      .map(([sessionId]) => sessionId);
+
+    for (const sessionId of matchingSessionIds) {
+      const existing = this.activeSessions.get(sessionId);
+      if (existing) {
+        try {
+          await existing.rpc.skills.reload();
+          await this.fetchCommands(existing);
+          continue;
+        } catch (error) {
+          copilotLog.warn(`[Copilot][${sessionId}] skills.reload failed, recreating session:`, error);
+          this.evictStaleSession(sessionId);
+          try {
+            await existing.disconnect();
+          } catch (disconnectError) {
+            copilotLog.debug(`[Copilot][${sessionId}] Failed to disconnect after skill reload failure:`, disconnectError);
+          }
+        }
+      }
+
+      try {
+        const session = await this.ensureActiveSession(sessionId, directory);
+        await session.rpc.skills.reload();
+        await this.fetchCommands(session);
+      } catch (error) {
+        copilotLog.warn(`[Copilot][${sessionId}] Failed to refresh skills for ${directory}:`, error);
+      }
+    }
   }
 
   hasSession(sessionId: string): boolean {
@@ -937,6 +1001,7 @@ export class CopilotSdkAdapter extends EngineAdapter {
       });
       const commands = result?.commands ?? [];
       const merged = new Map<string, EngineCommand>();
+      const listedSkillNames: string[] = [];
       for (const cmd of commands) {
         merged.set(cmd.name, {
           name: cmd.name,
@@ -949,6 +1014,7 @@ export class CopilotSdkAdapter extends EngineAdapter {
         const skillResult = await session.rpc.skills.list();
         const skills = skillResult?.skills ?? [];
         for (const skill of skills) {
+          listedSkillNames.push(`${skill.name}:${skill.source ?? "unknown"}`);
           if (skill.source === "builtin") continue;
           if (merged.has(skill.name)) continue;
           merged.set(skill.name, {
@@ -962,7 +1028,8 @@ export class CopilotSdkAdapter extends EngineAdapter {
 
       this.cachedCommands = Array.from(merged.values());
       copilotLog.info(
-        `[Copilot] fetchCommands: cached ${this.cachedCommands.length} commands`,
+        `[Copilot] fetchCommands: cached ${this.cachedCommands.length} commands; ` +
+          `skills=${listedSkillNames.join(", ") || "none"}`,
       );
       this.emit("commands.changed", {
         engineType: this.engineType,
@@ -1242,6 +1309,12 @@ export class CopilotSdkAdapter extends EngineAdapter {
     this.sessionUnsubscribers.clear();
   }
 
+  private directoryKey(directory: string | undefined): string | null {
+    if (!directory) return null;
+    const resolved = resolve(directory);
+    return process.platform === "win32" ? resolved.toLowerCase() : resolved;
+  }
+
   private ensureClient(): void {
     if (!this.client || this.status !== "running") throw new Error("Copilot SDK adapter is not running");
   }
@@ -1266,7 +1339,8 @@ export class CopilotSdkAdapter extends EngineAdapter {
 
     const workingDirectory = directory || this.sessionDirectories.get(sessionId);
     const sdkReasoningEffort = this.getSdkReasoningEffort(sessionId);
-    const config: ResumeSessionConfig = {
+    const skillDirectories = await this.getSkillDirectories(workingDirectory);
+    const config: ResumeSessionConfig & { skillDirectories?: string[] } = {
       streaming: true,
       workingDirectory,
       model: this.currentModelId ?? undefined,
@@ -1276,6 +1350,7 @@ export class CopilotSdkAdapter extends EngineAdapter {
       onUserInputRequest: (req, ctx) => this.handleUserInputRequest(req as any, ctx),
       enableSkills: true,
       enableConfigDiscovery: true,
+      ...(skillDirectories ? { skillDirectories } : {}),
     };
 
     copilotLog.info(`Resuming session ${sessionId}...`);
@@ -1290,7 +1365,7 @@ export class CopilotSdkAdapter extends EngineAdapter {
       const msg = String(err?.message || err);
       if (msg.includes("not found") || msg.includes("Not found") || msg.includes("no such session")) {
         copilotLog.warn(`Session ${sessionId} not found on resume, creating new session`);
-        const newConfig: SessionConfig = {
+        const newConfig: SessionConfig & { skillDirectories?: string[] } = {
           streaming: true,
           workingDirectory,
           model: this.currentModelId ?? undefined,
@@ -1300,6 +1375,7 @@ export class CopilotSdkAdapter extends EngineAdapter {
           onUserInputRequest: (req, ctx) => this.handleUserInputRequest(req as any, ctx),
           enableSkills: true,
           enableConfigDiscovery: true,
+          ...(skillDirectories ? { skillDirectories } : {}),
         };
         const newSession = await this.client!.createSession(newConfig);
         this.subscribeToSessionEvents(newSession, sessionId);

@@ -52,8 +52,13 @@ import {
   type TerminalListRequest,
   type TerminalProfilesListRequest,
   type FileExistsRequest,
+  type SkillDeleteRequest,
+  type SkillListRequest,
+  type SkillRefreshRequest,
+  type SkillSetEnabledRequest,
 } from "../../../src/types/unified";
 import { isCodexServiceTier, isReasoningEffort } from "../../../src/types/unified";
+import type { SkillApiProvider } from "../services/skill-api-service";
 
 interface ClientConnection {
   id: string;
@@ -65,6 +70,7 @@ export class GatewayServer {
   private wss: WebSocketServer | null = null;
   private clients = new Map<string, ClientConnection>();
   private engineManager: EngineManager;
+  private skillApi?: SkillApiProvider;
   private authValidator?: (token: string) => boolean;
   private pingInterval: ReturnType<typeof setInterval> | null = null;
 
@@ -72,9 +78,11 @@ export class GatewayServer {
     engineManager: EngineManager,
     options?: {
       authValidator?: (token: string) => boolean;
+      skillApi?: SkillApiProvider;
     },
   ) {
     this.engineManager = engineManager;
+    this.skillApi = options?.skillApi;
     this.authValidator = options?.authValidator;
     orchestratorService.init(engineManager);
     this.subscribeToEngineEvents();
@@ -481,6 +489,43 @@ export class GatewayServer {
         });
       }
 
+      // Skills
+      case GatewayRequestType.SKILL_LIST: {
+        return this.requireSkillApi().listSkills(p as SkillListRequest);
+      }
+
+      case GatewayRequestType.SKILL_SET_ENABLED: {
+        const engineTypes = this.getRegisteredEngineTypes();
+        const response = await this.requireSkillApi().setSkillEnabled(
+          p as SkillSetEnabledRequest,
+          engineTypes,
+        );
+        await this.engineManager.refreshSkillsForDirectory(response.workspaceDirectory, engineTypes);
+        return response;
+      }
+
+      case GatewayRequestType.SKILL_DELETE: {
+        const engineTypes = this.getRegisteredEngineTypes();
+        const response = await this.requireSkillApi().deleteSkill(
+          p as SkillDeleteRequest,
+          engineTypes,
+        );
+        await this.engineManager.refreshSkillsForDirectory(response.workspaceDirectory, engineTypes);
+        return response;
+      }
+
+      case GatewayRequestType.SKILL_REFRESH: {
+        const request = p as SkillRefreshRequest;
+        const registeredEngineTypes = this.getRegisteredEngineTypes();
+        const targetEngineTypes = request.engineTypes ?? registeredEngineTypes;
+        const response = await this.requireSkillApi().refreshSkills(
+          request,
+          registeredEngineTypes,
+        );
+        await this.engineManager.refreshSkillsForDirectory(response.workspaceDirectory, targetEngineTypes);
+        return response;
+      }
+
       // Scheduled Tasks
       case GatewayRequestType.SCHEDULED_TASK_LIST:
         return scheduledTaskService.list();
@@ -627,6 +672,17 @@ export class GatewayServer {
           { code: "UNKNOWN_REQUEST" },
         );
     }
+  }
+
+  private requireSkillApi(): SkillApiProvider {
+    if (!this.skillApi) {
+      throw Object.assign(new Error("Skill API is not available"), { code: "SKILL_API_UNAVAILABLE" });
+    }
+    return this.skillApi;
+  }
+
+  private getRegisteredEngineTypes(): EngineType[] {
+    return this.engineManager.listEngines().map((engine) => engine.type);
   }
 
   // --- Notification Broadcasting ---

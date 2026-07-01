@@ -151,6 +151,71 @@ export interface LocaleDict {
     roleCoder: string;
   };
 
+  // Skills settings
+  skill: {
+    title: string;
+    description: string;
+    workspace: string;
+    workspaceDesc: string;
+    defaultWorkspace: string;
+    currentSessionWorkspace: string;
+    noWorkspace: string;
+    searchPlaceholder: string;
+    noSearchResults: string;
+    refresh: string;
+    refreshing: string;
+    empty: string;
+    diagnostic: string;
+    openPath: string;
+    scopeProject: string;
+    scopeGlobal: string;
+    scopeBuiltin: string;
+    scopeProjectDesc: string;
+    scopeGlobalDesc: string;
+    scopeBuiltinDesc: string;
+    effective: string;
+    enableSkill: string;
+    disableSkill: string;
+    enabled: string;
+    disabled: string;
+    overridden: string;
+    disabledAt: string;
+    effectiveScope: string;
+    cardDetails: string;
+    detailsTitle: string;
+    selectedScope: string;
+    otherScopes: string;
+    sourcePath: string;
+    noSkillsInScope: string;
+    noOtherScopes: string;
+    shadowed: string;
+    notEffective: string;
+    noDescription: string;
+    enableForProject: string;
+    disableForProject: string;
+    enableGlobally: string;
+    disableGlobally: string;
+    deleteSkill: string;
+    deleteConfirm: string;
+    shadowedBy: string;
+    shadows: string;
+    diagnosticExposureConflict: string;
+    diagnosticEngineExposureFailed: string;
+    diagnosticInvalidSkill: string;
+    diagnosticSkillShadowed: string;
+  };
+
+  // Harness configuration surfaces
+  harness: {
+    title: string;
+    skills: string;
+    agents: string;
+    mcp: string;
+    comingSoon: string;
+    agentsComingSoon: string;
+    mcpComingSoon: string;
+  };
+
   // Remote Access page
   remote: {
     title: string;
@@ -856,6 +921,71 @@ export const en: LocaleDict = {
     roleReviewer: "Reviewer",
     roleDesigner: "Designer",
     roleCoder: "Coder",
+  },
+
+  // Skills settings
+  skill: {
+    title: "Skills",
+    description: "Manage CodeMux skills for the selected workspace. Project settings affect only this workspace; global settings affect all workspaces.",
+    workspace: "Workspace",
+    workspaceDesc: "Skill state and project-level disable rules are evaluated for this selected workspace.",
+    defaultWorkspace: "Default",
+    currentSessionWorkspace: "Current session workspace",
+    noWorkspace: "No workspace available",
+    searchPlaceholder: "Search skills...",
+    noSearchResults: "No skills match your search",
+    refresh: "Refresh",
+    refreshing: "Refreshing...",
+    empty: "No skills found for this workspace",
+    diagnostic: "Diagnostic",
+    openPath: "Open path",
+    scopeProject: "Project",
+    scopeGlobal: "Global",
+    scopeBuiltin: "Builtin",
+    scopeProjectDesc: "Skills stored in this workspace. They override matching global and builtin skills.",
+    scopeGlobalDesc: "Reusable skills available to every workspace unless a project overrides or disables them.",
+    scopeBuiltinDesc: "Packaged read-only skills shipped with CodeMux.",
+    effective: "Effective",
+    enableSkill: "Enable",
+    disableSkill: "Disable",
+    enabled: "Enabled",
+    disabled: "Disabled",
+    overridden: "Overridden",
+    disabledAt: "Disabled at {scopes}",
+    effectiveScope: "Effective: {scope}",
+    cardDetails: "View details",
+    detailsTitle: "Skill details",
+    selectedScope: "Card scope",
+    otherScopes: "Other scopes",
+    sourcePath: "Source path",
+    noSkillsInScope: "No skills in this scope",
+    noOtherScopes: "No other scopes for this skill",
+    shadowed: "Shadowed",
+    notEffective: "Not effective",
+    noDescription: "No description",
+    enableForProject: "Enable for this project",
+    disableForProject: "Disable for this project",
+    enableGlobally: "Enable globally",
+    disableGlobally: "Disable globally",
+    deleteSkill: "Delete skill",
+    deleteConfirm: "Delete skill \"{name}\"? This removes only the selected project/global skill files. Builtin skills cannot be deleted.",
+    shadowedBy: "Shadowed by {scope}",
+    shadows: "Shadows {scopes}",
+    diagnosticExposureConflict: "Skill \"{name}\" could not be exposed because {path} already exists and is not managed by CodeMux.",
+    diagnosticEngineExposureFailed: "Skill \"{name}\" could not be exposed: {reason}.",
+    diagnosticInvalidSkill: "Skill \"{name}\" is invalid: {reason}.",
+    diagnosticSkillShadowed: "Skill \"{name}\" is shadowed by {scope}.",
+  },
+
+  // Harness configuration surfaces
+  harness: {
+    title: "Harnesses",
+    skills: "Skills",
+    agents: "Agents",
+    mcp: "MCP",
+    comingSoon: "Soon",
+    agentsComingSoon: "Agents configuration is coming soon",
+    mcpComingSoon: "MCP configuration is coming soon",
   },
 
   // Remote Access page

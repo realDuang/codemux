@@ -43,6 +43,7 @@ const {
       skills: {
         ensureLoaded: vi.fn(async function() {}),
         list: vi.fn(async function() { return { skills: [] }; }),
+        reload: vi.fn(async function() {}),
         enable: vi.fn(async function() {}),
         disable: vi.fn(async function() {}),
       },
@@ -190,6 +191,7 @@ function makeMockSession(sessionId = "s1") {
       skills: {
         ensureLoaded: vi.fn(async () => {}),
         list: vi.fn(async () => ({ skills: [] })),
+        reload: vi.fn(async () => {}),
         enable: vi.fn(async () => {}),
         disable: vi.fn(async () => {}),
       },
@@ -2173,6 +2175,38 @@ describe("CopilotSdkAdapter", () => {
       sess.rpc.commands.list.mockRejectedValueOnce(new Error("RPC failed"));
 
       await expect((adapter as any).fetchCommands(sess)).resolves.toBeUndefined();
+    });
+  });
+
+  describe("refreshSkillsForDirectory()", () => {
+    it("reloads skills in matching active sessions and refreshes the command cache", async () => {
+      const skillProjection = {
+        prepareForEngine: vi.fn(async () => ({
+          skillDirectories: ["/effective-root"],
+          skillNames: ["hot-skill"],
+          conflicts: [],
+        })),
+      };
+      adapter = new CopilotSdkAdapter({
+        cliPath: "/usr/local/bin/copilot",
+        skillProjection: skillProjection as any,
+      });
+      const sess = makeMockSession("s1");
+      sess.rpc.skills.list.mockResolvedValueOnce({
+        skills: [{ name: "hot-skill", description: "Hot reloaded", source: "project" }],
+      });
+      (adapter as any).activeSessions.set("s1", sess);
+      (adapter as any).sessionDirectories.set("s1", "/repo");
+      (adapter as any).cachedCommands = [{ name: "stale", description: "Stale" }];
+
+      await adapter.refreshSkillsForDirectory("/repo");
+
+      expect(skillProjection.prepareForEngine).toHaveBeenCalledWith("copilot", "/repo");
+      expect(sess.rpc.skills.reload).toHaveBeenCalledTimes(1);
+      expect(sess.disconnect).not.toHaveBeenCalled();
+      expect((adapter as any).cachedCommands).toEqual([
+        { name: "hot-skill", description: "Hot reloaded" },
+      ]);
     });
   });
 

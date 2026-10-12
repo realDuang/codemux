@@ -143,6 +143,7 @@ jobs:
   e2e-test:
     name: E2E Tests (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
     needs: typecheck
     strategy:
       fail-fast: false
@@ -167,6 +168,10 @@ jobs:
         run: bun run build
 
       - name: Install Playwright browsers
+        # Bound the entire install; Playwright's socket timeout does not cover extraction.
+        timeout-minutes: 15
+        env:
+          PLAYWRIGHT_DOWNLOAD_CONNECTION_TIMEOUT: "60000"
         run: bunx playwright install --with-deps chromium
 
       # Linux needs xvfb for headless Electron

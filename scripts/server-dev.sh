@@ -89,6 +89,13 @@ is_process_group_running() {
   [ -n "$pgid" ] && kill -0 -- "-$pgid" 2>/dev/null
 }
 
+is_managed_process_running() {
+  local pid="${1:-}"
+  # A backgrounded setsid process can be alive before it creates its process
+  # group. After launch, the group also covers surviving child processes.
+  is_pid_running "$pid" || is_process_group_running "$pid"
+}
+
 cleanup_stale_pid_file() {
   local file="$1"
   local pid
@@ -234,7 +241,7 @@ wait_for_local_url() {
       return 0
     fi
 
-    if ! is_process_group_running "$pid"; then
+    if ! is_managed_process_running "$pid"; then
       return 1
     fi
 
@@ -271,7 +278,7 @@ wait_for_electron_main_ready() {
       return 1
     fi
 
-    if ! is_process_group_running "$pid"; then
+    if ! is_managed_process_running "$pid"; then
       return 1
     fi
 
@@ -297,7 +304,7 @@ wait_for_tunnel_url() {
       return 0
     fi
 
-    if ! is_process_group_running "$pid"; then
+    if ! is_managed_process_running "$pid"; then
       return 1
     fi
 

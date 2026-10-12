@@ -112,12 +112,16 @@ interface TestRepo {
   stateDir: string;
 }
 
+interface TestRepoOptions {
+  delaySetsid?: boolean;
+}
+
 async function writeExecutable(filePath: string, content: string): Promise<void> {
   await writeFile(filePath, content, "utf8");
   await chmod(filePath, 0o755);
 }
 
-async function createTestRepo(): Promise<TestRepo> {
+async function createTestRepo(options: TestRepoOptions = {}): Promise<TestRepo> {
   const root = await mkdtemp(path.join(tmpdir(), "codemux-server-dev-"));
   const home = path.join(root, "home");
   const bunBin = path.join(home, ".bun", "bin");
@@ -137,6 +141,14 @@ async function createTestRepo(): Promise<TestRepo> {
   await writeExecutable(path.join(bunBin, "xvfb-run"), FAKE_XVFB_RUN);
   await writeExecutable(path.join(bunBin, "cloudflared"), FAKE_CLOUDFLARED);
   await writeExecutable(path.join(bunBin, "curl"), FAKE_CURL);
+
+  if (options.delaySetsid) {
+    const { stdout } = await execFileAsync("bash", ["-c", "command -v setsid"]);
+    await writeExecutable(
+      path.join(bunBin, "setsid"),
+      `#!/usr/bin/env bash\nset -euo pipefail\nsleep 0.25\nexec "${stdout.trim()}" "$@"\n`,
+    );
+  }
 
   return {
     env: {
@@ -226,7 +238,9 @@ describe.skipIf(process.platform !== "linux")("scripts/server-dev.sh", () => {
   it(
     "restarts the managed app without rotating the managed quick tunnel",
     async () => {
-      const repo = await createTestRepo();
+      // Force the launched PID to exist before its process group so startup
+      // cannot depend on how quickly setsid is scheduled by the CI runner.
+      const repo = await createTestRepo({ delaySetsid: true });
       try {
         const startResult = await runServerScript(repo, "start", "--replace", "--tunnel");
         expect(startResult.stdout).toContain("Tunnel is ready: https://same-tunnel.trycloudflare.com");

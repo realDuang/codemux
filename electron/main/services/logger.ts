@@ -146,6 +146,7 @@ export const telegramLog = log.scope("telegram");
 export const wecomLog = log.scope("wecom");
 export const teamsLog = log.scope("teams");
 export const codexLog = log.scope("codex");
+export const skillLog = log.scope("skill");
 export const scheduledTaskLog = log.scope("sched-task");
 export const terminalLog = log.scope("terminal");
 

@@ -34,15 +34,15 @@ test.describe("Theme & Language", () => {
   });
 
   test("should switch language", async ({ page }) => {
-    // Look for language switcher (LanguageSwitcher component)
-    const langSwitcher = page
-      .getByRole("button", { name: /language|lang|中文|english|EN|ZH/i })
-      .or(page.locator("[class*='language'], [class*='lang']").first());
+    await page.getByRole("button", { name: /Settings|设置|Настройки/i }).click();
+    await page.waitForTimeout(500);
 
-    if (await langSwitcher.isVisible({ timeout: 5_000 }).catch(() => false)) {
-      await langSwitcher.click();
-      await page.waitForTimeout(300);
-      // After switching, UI text should change (verified by not crashing)
-    }
+    const langSwitcher = page.getByRole("button", { name: /English|简体中文|Русский/i }).first();
+    await expect(langSwitcher).toBeVisible({ timeout: 5_000 });
+
+    await langSwitcher.click();
+    await page.getByRole("button", { name: /简体中文/i }).click();
+
+    await expect(page.getByRole("button", { name: /简体中文/i }).first()).toBeVisible({ timeout: 5_000 });
   });
 });

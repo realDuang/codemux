@@ -171,6 +171,7 @@ function createMockEngineManager() {
     importExecute: vi.fn(async () => ({ imported: 0 })),
     listCommands: vi.fn(async () => []),
     invokeCommand: vi.fn(async () => ({})),
+    refreshSkillsForDirectory: vi.fn(async () => {}),
   };
 }
 
@@ -209,6 +210,7 @@ interface TestHarness {
  */
 function createTestHarness(options?: {
   authValidator?: (token: string) => boolean;
+  skillApi?: any;
 }): TestHarness {
   const engineManager = createMockEngineManager();
   const server = new GatewayServer(engineManager as any, options);
@@ -749,6 +751,79 @@ describe("GatewayServer", () => {
       expect(engineManager.getEngineInfo).toHaveBeenCalledWith("claude");
       const response = JSON.parse(ws.send.mock.calls[0][0]);
       expect(response.payload).toEqual({ imageAttachment: true });
+    });
+
+    it("SKILL_LIST delegates to the skill API", async () => {
+      const skillApi = {
+        listSkills: vi.fn(async () => ({ skills: [], diagnostics: [], effectiveRoot: "/effective", workspaceDirectory: "/repo" })),
+      };
+      const { connect, sendMessage } = createTestHarness({ skillApi });
+      const ws = connect();
+
+      await sendMessage(ws, {
+        type: GatewayRequestType.SKILL_LIST,
+        requestId: "r1",
+        payload: { workspaceDirectory: "/repo" },
+      });
+
+      expect(skillApi.listSkills).toHaveBeenCalledWith({ workspaceDirectory: "/repo" });
+      const response = JSON.parse(ws.send.mock.calls[0][0]);
+      expect(response.payload).toEqual({
+        skills: [],
+        diagnostics: [],
+        effectiveRoot: "/effective",
+        workspaceDirectory: "/repo",
+      });
+    });
+
+    it("SKILL_SET_ENABLED delegates with registered engine types", async () => {
+      const skillApi = {
+        setSkillEnabled: vi.fn(async () => ({ skills: [], diagnostics: [], effectiveRoot: "/effective", workspaceDirectory: "/repo" })),
+      };
+      const { connect, sendMessage, engineManager } = createTestHarness({ skillApi });
+      const ws = connect();
+
+      await sendMessage(ws, {
+        type: GatewayRequestType.SKILL_SET_ENABLED,
+        requestId: "r1",
+        payload: {
+          workspaceDirectory: "/repo",
+          name: "alpha",
+          scope: "project",
+          enabled: false,
+        },
+      });
+
+      expect(engineManager.listEngines).toHaveBeenCalled();
+      expect(skillApi.setSkillEnabled).toHaveBeenCalledWith(
+        {
+          workspaceDirectory: "/repo",
+          name: "alpha",
+          scope: "project",
+          enabled: false,
+        },
+        ["claude"],
+      );
+      expect(engineManager.refreshSkillsForDirectory).toHaveBeenCalledWith("/repo", ["claude"]);
+    });
+
+    it("SKILL_REFRESH refreshes only requested engines", async () => {
+      const skillApi = {
+        refreshSkills: vi.fn(async () => ({ skills: [], diagnostics: [], effectiveRoot: "/effective", workspaceDirectory: "/repo" })),
+      };
+      const { connect, sendMessage, engineManager } = createTestHarness({ skillApi });
+      engineManager.listEngines.mockReturnValue([{ type: "claude" }, { type: "opencode" }]);
+      const ws = connect();
+
+      const payload = { workspaceDirectory: "/repo", engineTypes: ["opencode"] };
+      await sendMessage(ws, {
+        type: GatewayRequestType.SKILL_REFRESH,
+        requestId: "r1",
+        payload,
+      });
+
+      expect(skillApi.refreshSkills).toHaveBeenCalledWith(payload, ["claude", "opencode"]);
+      expect(engineManager.refreshSkillsForDirectory).toHaveBeenCalledWith("/repo", ["opencode"]);
     });
 
     it("SESSION_CREATE delegates with correct params", async () => {

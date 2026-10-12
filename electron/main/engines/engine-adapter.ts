@@ -393,6 +393,14 @@ export abstract class EngineAdapter extends EventEmitter {
   }
 
   /**
+   * Refresh engine-visible skill state for a workspace after CodeMux changes
+   * the effective skill set. Engines that cache skill discovery override this.
+   */
+  async refreshSkillsForDirectory(_directory: string): Promise<void> {
+    /* default: no-op */
+  }
+
+  /**
    * Invoke a slash command. Returns a result indicating whether the command
    * was handled natively or should fall through to sendMessage.
    *

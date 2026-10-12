@@ -53,6 +53,18 @@ export function getConversationsPath(): string {
   return path.join(getUserDataPath(), "conversations");
 }
 
+export function getGlobalSkillsPath(): string {
+  return path.join(getUserDataPath(), "skills");
+}
+
+export function getSkillEffectiveRootsPath(): string {
+  return path.join(getUserDataPath(), "skill-effective-roots");
+}
+
+export function getSkillProjectionManifestsPath(): string {
+  return path.join(getUserDataPath(), "skill-projection-manifests");
+}
+
 export function getWorktreesPath(): string {
   return path.join(getUserDataPath(), "worktrees");
 }

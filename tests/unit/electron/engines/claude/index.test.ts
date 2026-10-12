@@ -1602,6 +1602,28 @@ describe("ClaudeCodeAdapter", () => {
     });
   });
 
+  describe("refreshSkillsForDirectory()", () => {
+    it("reloads plugins for matching active sessions and updates commands", async () => {
+      const mock = makeMockV2Session();
+      mock.reloadPlugins = vi.fn().mockResolvedValue({
+        commands: [{ name: "hot-skill", description: "Hot reloaded", argumentHint: "<arg>" }],
+        error_count: 0,
+      });
+      const scanSpy = vi.spyOn(ClaudeCodeAdapter as any, "scanSkillsDir").mockReturnValue([]);
+      const warmupSpy = vi.spyOn(adapter as any, "warmupV2Session");
+      seedV2Session(adapter, "cs_1", mock, "/repo");
+
+      await adapter.refreshSkillsForDirectory("/repo");
+
+      expect(mock.reloadPlugins).toHaveBeenCalledTimes(1);
+      expect(warmupSpy).not.toHaveBeenCalled();
+      expect((adapter as any).availableCommands).toEqual([
+        { name: "hot-skill", description: "Hot reloaded", argumentHint: "<arg>" },
+      ]);
+      scanSpy.mockRestore();
+    });
+  });
+
   describe("isBuiltInCommand()", () => {
     it("returns true for built-in commands", () => {
       expect((adapter as any).isBuiltInCommand("compact")).toBe(true);

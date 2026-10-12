@@ -20,9 +20,11 @@ const PageFallback = () => (
 
 const SettingsLazy = lazy(() => import("./pages/Settings"));
 const DevicesLazy = lazy(() => import("./pages/Devices"));
+const SkillsLazy = lazy(() => import("./pages/Skills"));
 
 const Settings = () => <Suspense fallback={<PageFallback />}><SettingsLazy /></Suspense>;
 const Devices = () => <Suspense fallback={<PageFallback />}><DevicesLazy /></Suspense>;
+const Skills = () => <Suspense fallback={<PageFallback />}><SkillsLazy /></Suspense>;
 
 // Use HashRouter for Electron (file:// protocol) and regular Router for web
 // HashRouter uses URL hashes (#/path) which work with file:// protocol
@@ -243,6 +245,7 @@ function App() {
           <Route path="/remote" component={RemoteRedirect} />
           <Route path="/settings" component={Settings} />
           <Route path="/devices" component={Devices} />
+          <Route path="/skills" component={Skills} />
           <Route path="/chat" component={ChatRoute} />
         </AppRouter>
       </Show>

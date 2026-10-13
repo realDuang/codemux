@@ -1,4 +1,5 @@
 import { EventEmitter } from "node:events";
+import path from "path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
@@ -79,17 +80,19 @@ describe("TunnelManager", () => {
 
   it("passes the saved hostname through an isolated named-tunnel config to cloudflared", async () => {
     const credential = "12345678-1234-1234-1234-123456789abc.json";
-    mocks.existsSync.mockImplementation(file => file === "/test-home/.cloudflared");
+    const credentialsDir = path.join(mocks.homedir(), ".cloudflared");
+    const configPath = path.join("/test-state", "cloudflared-config.yml");
+    mocks.existsSync.mockImplementation(file => file === credentialsDir);
     mocks.readdirSync.mockReturnValue([credential]);
     const proc = fakeProcess();
     mocks.spawn.mockReturnValue(proc);
     const manager = new TunnelManager();
     const info = await manager.start(9000, { hostname: "codemux.example.test" });
     expect(mocks.spawn).toHaveBeenCalledWith("cloudflared", [
-      "tunnel", "--config", "/test-state/cloudflared-config.yml", "run",
+      "tunnel", "--config", configPath, "run",
     ]);
-    expect(mocks.writeFileSync).toHaveBeenCalledWith("/test-state/cloudflared-config.yml", expect.stringContaining('hostname: "codemux.example.test"'));
-    expect(mocks.writeFileSync).toHaveBeenCalledWith("/test-state/cloudflared-config.yml", expect.stringContaining("service: http://localhost:9000"));
+    expect(mocks.writeFileSync).toHaveBeenCalledWith(configPath, expect.stringContaining('hostname: "codemux.example.test"'));
+    expect(mocks.writeFileSync).toHaveBeenCalledWith(configPath, expect.stringContaining("service: http://localhost:9000"));
     expect(info).toMatchObject({ status: "starting", url: "https://codemux.example.test" });
     proc.stderr.emit("data", Buffer.from("Registered tunnel connection"));
     expect(manager.getInfo()).toMatchObject({ status: "running", url: "https://codemux.example.test" });

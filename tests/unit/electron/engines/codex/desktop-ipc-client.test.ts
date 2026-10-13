@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { randomUUID } from "node:crypto";
 import { chmod, mkdtemp, rm } from "node:fs/promises";
 import { createServer, type Server, type Socket } from "node:net";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CodexDesktopIpcClient, type DesktopFollowerMethod, type DesktopThreadStream } from "../../../../../electron/main/engines/codex/desktop-ipc-client";
 
@@ -34,8 +36,10 @@ function encode(message: Message): Buffer {
 }
 
 async function fixture(options: { requestTimeoutMs?: number; maxFrameBytes?: number } = {}): Promise<Fixture> {
-  const directory = await mkdtemp("/tmp/codemux-ipc-");
-  const socketPath = join(directory, "router.sock");
+  const directory = await mkdtemp(join(tmpdir(), "codemux-ipc-"));
+  const socketPath = process.platform === "win32"
+    ? `\\\\.\\pipe\\codemux-test-${randomUUID()}`
+    : join(directory, "router.sock");
   const messages: Message[] = [];
   const sockets = new Set<Socket>();
   let currentSocket: Socket;
@@ -72,7 +76,7 @@ async function fixture(options: { requestTimeoutMs?: number; maxFrameBytes?: num
     });
   });
   await new Promise<void>((resolve, reject) => { server.once("error", reject); server.listen(socketPath, resolve); });
-  await chmod(socketPath, 0o600);
+  if (process.platform !== "win32") await chmod(socketPath, 0o600);
   cleanup.push(async () => {
     client.close();
     for (const socket of sockets) socket.destroy();
@@ -104,18 +108,19 @@ describe("CodexDesktopIpcClient.connect", () => {
     await vi.waitFor(() => expect(f.messages.at(-1)).toMatchObject({ type: "client-discovery-response", requestId: "foreign-request", response: { canHandle: false } }));
   });
 
-  it("rejects an endpoint readable by other users", async () => {
+  it.skipIf(process.platform === "win32")("rejects an endpoint readable by other users", async () => {
     const f = await fixture();
     await chmod(f.socketPath, 0o666);
     await expect(f.client.connect()).rejects.toMatchObject({ code: "unsafe-endpoint" });
     expect(f.messages).toHaveLength(0);
   });
 
-  it("does not open a socket after being closed during endpoint inspection", async () => {
+  it("does not initialize after being closed during connection setup", async () => {
     const f = await fixture();
     const connecting = f.client.connect();
     f.client.close();
-    await expect(connecting).rejects.toMatchObject({ code: "client-closed" });
+    // Unix waits for endpoint inspection; named pipes start connecting immediately.
+    await expect(connecting).rejects.toMatchObject({ code: process.platform === "win32" ? "connection-closed" : "client-closed" });
     expect(f.client.connected).toBe(false);
     expect(f.messages).toHaveLength(0);
   });

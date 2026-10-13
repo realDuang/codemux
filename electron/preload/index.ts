@@ -1,4 +1,5 @@
 import { contextBridge, ipcRenderer } from "electron";
+import type { RemoteAccessUpdate } from "../../shared/remote-access";
 
 // Pre-load settings synchronously so renderer can read them immediately at module init
 // (needed for theme/locale which must be applied before first paint)
@@ -35,6 +36,11 @@ const electronAPI = {
     rename: (deviceId: string, name: string) => ipcRenderer.invoke("devices:rename", deviceId, name),
     getCurrentDeviceId: () => ipcRenderer.invoke("devices:getCurrentDeviceId"),
     revokeOthers: (currentDeviceId: string) => ipcRenderer.invoke("devices:revokeOthers", currentDeviceId),
+  },
+
+  remoteAccess: {
+    getStatus: () => ipcRenderer.invoke("remoteAccess:getStatus"),
+    update: (patch: RemoteAccessUpdate) => ipcRenderer.invoke("remoteAccess:update", patch),
   },
 
   // Tunnel API

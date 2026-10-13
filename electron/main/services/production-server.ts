@@ -4,10 +4,13 @@ import path from "path";
 import { app } from "electron";
 import { deviceStore } from "./device-store";
 import { prodServerLog, getLogFilePath, getFileLogLevel, setFileLogLevel, loadSettings, saveSettings } from "./logger";
-import { sendJson, requireAuth, getClientIp, isLocalhost, getLocalIp } from "../../../shared/http-utils";
+import { sendJson, requireAuth, isLocalRequest, getLocalIp } from "../../../shared/http-utils";
 import { handleAuthRoutes, handleLogRoutes, handleSettingsRoutes } from "../../../shared/auth-route-handlers";
 import { handleChannelRoutes, type ChannelManagerRoutes } from "../../../shared/channel-route-handlers";
-import { WEB_PORT, OPENCODE_PORT, WEBHOOK_PORT } from "../../../shared/ports";
+import { WEB_PORT, WEBHOOK_PORT } from "../../../shared/ports";
+import { proxyToOpenCode } from "./opencode-proxy";
+import { remoteAccessManager } from "./remote-access-manager";
+import { handleRemoteAccessRoutes } from "./remote-access-routes";
 
 // ============================================================================
 // Production HTTP Server
@@ -41,53 +44,6 @@ function getMimeType(filePath: string): string {
   return MIME_TYPES[ext] || "application/octet-stream";
 }
 
-/**
- * Proxy a request to OpenCode server
- */
-function proxyToOpenCode(
-  req: http.IncomingMessage,
-  res: http.ServerResponse,
-  targetPath: string
-): void {
-  let body: Buffer[] = [];
-  
-  req.on("data", (chunk) => body.push(chunk));
-  req.on("end", () => {
-    const bodyBuffer = Buffer.concat(body);
-    
-    const options: http.RequestOptions = {
-      hostname: "127.0.0.1",
-      port: OPENCODE_PORT,
-      path: targetPath,
-      method: req.method,
-      headers: {
-        ...req.headers,
-        host: `127.0.0.1:${OPENCODE_PORT}`,
-      },
-    };
-
-    const proxyReq = http.request(options, (proxyRes) => {
-      // Copy status and headers
-      res.writeHead(proxyRes.statusCode || 500, proxyRes.headers);
-      proxyRes.pipe(res);
-    });
-
-    proxyReq.on("error", (err) => {
-      prodServerLog.error("Proxy to OpenCode failed:", err.message);
-      sendJson(res, { error: "OpenCode service unavailable", details: err.message }, 503);
-    });
-
-    if (bodyBuffer.length > 0) {
-      proxyReq.write(bodyBuffer);
-    }
-    proxyReq.end();
-  });
-
-  req.on("error", (err) => {
-    prodServerLog.error("Request error:", err);
-    sendJson(res, { error: "Request failed" }, 500);
-  });
-}
 
 /**
  * Proxy a request to the shared WebhookServer (for channel webhooks)
@@ -225,6 +181,12 @@ class ProductionServer {
     const url = new URL(req.url || "/", `http://localhost:${this.port}`);
     const pathname = url.pathname;
 
+    if (await handleRemoteAccessRoutes(req, res, pathname)) return;
+    if (!remoteAccessManager.isRequestAllowed(req)) {
+      sendJson(res, { error: "Remote access is disabled for this entry point." }, 403);
+      return;
+    }
+
     // Handle CORS preflight
     if (req.method === "OPTIONS") {
       res.writeHead(204, {
@@ -241,6 +203,7 @@ class ProductionServer {
     // API Routes: Proxy /opencode-api/* to OpenCode server
     // ========================================================================
     if (pathname.startsWith("/opencode-api")) {
+      if (!requireAuth(req, res, deviceStore)) return;
       const targetPath = pathname.replace(/^\/opencode-api/, "") + url.search;
       proxyToOpenCode(req, res, targetPath || "/");
       return;
@@ -269,6 +232,7 @@ class ProductionServer {
       const handled = await handleSettingsRoutes(req, res, pathname, deviceStore, {
         loadSettings,
         saveSettings,
+        getRemoteAccessStatus: () => remoteAccessManager.getStatus(),
       });
       if (handled) return;
       sendJson(res, { error: "Not found" }, 404);
@@ -287,8 +251,7 @@ class ProductionServer {
 
 
     if (pathname === "/api/system/is-local" && req.method === "GET") {
-      const clientIp = getClientIp(req);
-      sendJson(res, { isLocal: isLocalhost(clientIp) });
+      sendJson(res, { isLocal: isLocalRequest(req) });
       return;
     }
 

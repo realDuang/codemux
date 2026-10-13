@@ -1,3 +1,5 @@
+import { normalizeAccessUrl } from "./access-url";
+
 /**
  * Settings keys that are safe to share between the host and authenticated
  * web clients.  Used by both the server (auth-route-handlers) and the
@@ -13,6 +15,7 @@ export const SHARED_SETTINGS_KEYS = [
   "worktreeEnabled",
   "engineReasoningEfforts",
   "engineServiceTiers",
+  "customAccessUrl",
 ] as const;
 
 export type SharedSettingsKey = (typeof SHARED_SETTINGS_KEYS)[number];
@@ -42,6 +45,13 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
  */
 export function isValidSharedSettingValue(key: SharedSettingsKey, value: unknown): boolean {
   switch (key) {
+    case "customAccessUrl":
+      if (typeof value !== "string") return false;
+      try {
+        return normalizeAccessUrl(value) === value;
+      } catch {
+        return false;
+      }
     case "theme":
       return typeof value === "string" && VALID_THEMES.has(value);
     case "locale":

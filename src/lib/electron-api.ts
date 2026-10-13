@@ -5,6 +5,8 @@
 
 import { isElectron } from "./platform";
 import { WEB_PORT, WEB_STANDALONE_PORT, GATEWAY_PORT } from "../../shared/ports";
+import type { RemoteAccessStatus, RemoteAccessUpdate } from "../../shared/remote-access";
+export type { RemoteAccessStatus, RemoteAccessUpdate, RemoteAccessMode } from "../../shared/remote-access";
 
 // Type definitions
 interface SystemInfo {
@@ -239,6 +241,19 @@ export const devicesAPI = {
     const api = getElectronAPI();
     if (!api) return { success: false };
     return api.devices.revokeOthers(currentDeviceId);
+  },
+};
+
+export const remoteAccessAPI = {
+  async getStatus(): Promise<RemoteAccessStatus> {
+    const api = getElectronAPI();
+    return api ? api.remoteAccess.getStatus() : browserAuthedRequest<RemoteAccessStatus>("/api/remote-access");
+  },
+  async update(patch: RemoteAccessUpdate): Promise<RemoteAccessStatus> {
+    const api = getElectronAPI();
+    return api ? api.remoteAccess.update(patch) : browserAuthedRequest<RemoteAccessStatus>("/api/remote-access", {
+      method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(patch),
+    });
   },
 };
 

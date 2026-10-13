@@ -1,7 +1,12 @@
-import { createSignal, onMount, onCleanup, Show, createEffect, Switch, Match } from "solid-js";
+import { createSignal, onMount, onCleanup, Show, Switch, Match } from "solid-js";
 import { useNavigate } from "@solidjs/router";
 import { Auth } from "../lib/auth";
 import { useI18n } from "../lib/i18n";
+import { copyTextToClipboard } from "../lib/clipboard";
+import { AccessQRCode } from "../components/AccessQRCode";
+import { RemoteAccessSettings } from "../components/RemoteAccessSettings";
+import { readCustomAccessUrl } from "../../shared/remote-access";
+import type { RemoteAccessStatus } from "../../shared/remote-access";
 import { LanguageSwitcher } from "../components/LanguageSwitcher";
 import { FeishuConfigModal } from "../components/FeishuConfigModal";
 import { ChannelConfigModal } from "../components/ChannelConfigModal";
@@ -9,8 +14,8 @@ import { WeixinIlinkLoginModal } from "../components/WeixinIlinkLoginModal";
 import { logger } from "../lib/logger";
 import { WEB_PORT, WEB_STANDALONE_PORT } from "../../shared/ports";
 import { isElectron } from "../lib/platform";
-import { systemAPI, tunnelAPI, channelAPI, weixinIlinkAPI, type ChannelInfo, type TunnelInfo, type TunnelConfig } from "../lib/electron-api";
-import { getSetting, saveSetting, bootstrapHostSettings } from "../lib/settings";
+import { systemAPI, remoteAccessAPI, channelAPI, weixinIlinkAPI, type ChannelInfo } from "../lib/electron-api";
+import { getSetting, bootstrapHostSettings } from "../lib/settings";
 import { refreshThemeFromSettings } from "../lib/theme";
 import { refreshLocaleFromSettings } from "../lib/i18n";
 
@@ -45,28 +50,18 @@ export default function EntryPage() {
   };
 
   // Local mode states (remote access config)
-  const [tunnelEnabled, setTunnelEnabled] = createSignal(false);
-  const [tunnelInfo, setTunnelInfo] = createSignal<TunnelInfo>({
-    url: "",
-    status: "stopped",
+  const [remoteStatus, setRemoteStatus] = createSignal<RemoteAccessStatus>({
+    mode: "off", customAccessUrl: readCustomAccessUrl({ customAccessUrl: getSetting("customAccessUrl") }),
+    url: "", tunnel: { url: "", status: "stopped" }, tunnelConfig: {}, cloudflareAvailable: true,
   });
-  const [tunnelLoading, setTunnelLoading] = createSignal(false);
-
-  // Named Tunnel config
-  const savedTunnelConfig = getSetting<TunnelConfig>("tunnelConfig") || {};
-  const [namedTunnelHostname, setNamedTunnelHostname] = createSignal(savedTunnelConfig.hostname || "");
-
-  const isNamedTunnel = () => !!namedTunnelHostname().trim();
-  const tunnelErrorMessage = () => tunnelInfo().errorCode === "NAMED_TUNNEL_NO_CREDENTIALS"
-    ? t().remote.namedTunnelMissingCredentials
-    : tunnelInfo().error;
-  const [localIp, setLocalIp] = createSignal("127.0.0.1");
+  const customAccessUrl = () => remoteStatus().mode === "custom" ? remoteStatus().url : "";
+  const tunnelInfo = () => remoteStatus().tunnel;
+  const accessUrl = () => remoteStatus().url;
   const [accessCode, setAccessCode] = createSignal("......");
   const [port, setPort] = createSignal(WEB_STANDALONE_PORT);
   const [showPassword, setShowPassword] = createSignal(false);
-  const [activeQrTab, setActiveQrTab] = createSignal<"lan" | "public">("lan");
   const [enteringChat, setEnteringChat] = createSignal(false);
-  const [activeTab, setActiveTab] = createSignal<"webApp" | "channels" | "publicAccess">("channels");
+  const [activeTab, setActiveTab] = createSignal<"webApp" | "channels" | "publicAccess">(isElectron() ? "channels" : "webApp");
 
   // Feishu channel states
   const [feishuStatus, setFeishuStatus] = createSignal<ChannelInfo | null>(null);
@@ -196,15 +191,6 @@ export default function EntryPage() {
     }
   });
 
-  // Listen for unexpected tunnel disconnects (cloudflared process crash)
-  const unsubTunnel = tunnelAPI.onDisconnected(() => {
-    logger.warn("[EntryPage] Tunnel disconnected unexpectedly");
-    setTunnelInfo({ url: "", status: "stopped" });
-    setTunnelEnabled(false);
-    setTunnelLoading(false);
-  });
-  onCleanup(() => unsubTunnel?.());
-
   // Re-poll channel statuses after startup:ready so we pick up channels
   // that were auto-started by initFromConfig after the initial mount poll.
   const api = isElectron() ? window.electronAPI : null;
@@ -224,9 +210,6 @@ export default function EntryPage() {
     try {
       if (isElectron()) {
         // Electron: use IPC APIs for local IP
-        const localIpResult = await systemAPI.getLocalIp();
-        if (localIpResult) setLocalIp(localIpResult);
-
         // For port, use the current window's port in dev mode
         // In production (file:// protocol), use default port WEB_PORT
         const currentPort = window.location.port;
@@ -240,7 +223,6 @@ export default function EntryPage() {
         // Browser: use HTTP API
         const res = await fetch("/api/system/info");
         const data = await res.json();
-        if (data.localIp) setLocalIp(data.localIp);
         if (data.port) setPort(data.port);
       }
     } catch (err) {
@@ -255,6 +237,9 @@ export default function EntryPage() {
         logger.error("[EntryPage] Local auth failed:", authResult.error);
       }
     }
+
+    await applyHostSettingsIfNeeded();
+
 
     // Now we can get the access code
     const code = await Auth.getAccessCode();
@@ -273,34 +258,9 @@ export default function EntryPage() {
   };
 
   const checkTunnelStatus = async () => {
-    try {
-      if (isElectron()) {
-        // Electron: use IPC API
-        const info = await tunnelAPI.getStatus();
-        if (info) {
-          setTunnelInfo(info);
-          setTunnelEnabled(info.status === "running");
-        }
-      } else {
-        // Browser: use HTTP API
-        const res = await fetch("/api/tunnel/status");
-        const info = await res.json();
-        setTunnelInfo(info);
-        setTunnelEnabled(info.status === "running");
-      }
-    } catch (error) {
-      logger.error("[EntryPage] Failed to check tunnel status:", error);
-    }
+    try { setRemoteStatus(await remoteAccessAPI.getStatus()); }
+    catch (error) { logger.error("[EntryPage] Failed to load remote access:", error); }
   };
-
-  // Auto switch QR tab when tunnel status changes
-  createEffect(() => {
-    if (tunnelInfo().status === "running") {
-      setActiveQrTab("public");
-    } else {
-      setActiveQrTab("lan");
-    }
-  });
 
   // =========================================================================
   // Remote login handlers
@@ -374,92 +334,6 @@ export default function EntryPage() {
   // =========================================================================
   // Local mode handlers
   // =========================================================================
-
-  const handleTunnelToggle = () => tunnelEnabled() ? stopTunnel() : startTunnel();
-
-  const startTunnel = async () => {
-    setTunnelLoading(true);
-    try {
-      await saveNamedTunnelConfig();
-      let info: TunnelInfo;
-      const hostname = namedTunnelHostname().trim();
-      const tunnelConfig = hostname ? { hostname } : undefined;
-
-      if (isElectron()) {
-        // Electron: use IPC API
-        const result = await tunnelAPI.start(port(), tunnelConfig);
-        info = result || { url: "", status: "error", error: t().remote.startFailed };
-      } else {
-        // Browser: use HTTP API
-        const res = await fetch("/api/tunnel/start", { method: "POST" });
-        info = await res.json();
-      }
-
-      setTunnelInfo(info);
-      setTunnelEnabled(info.status === "starting" || info.status === "running");
-
-      if (info.status === "starting") {
-        const pollInterval = setInterval(async () => {
-          let statusInfo: TunnelInfo;
-          if (isElectron()) {
-            const result = await tunnelAPI.getStatus();
-            statusInfo = result || { url: "", status: "stopped" };
-          } else {
-            const statusRes = await fetch("/api/tunnel/status");
-            statusInfo = await statusRes.json();
-          }
-          setTunnelInfo(statusInfo);
-
-          if (statusInfo.status === "running" || statusInfo.status === "error") {
-            clearInterval(pollInterval);
-            setTunnelLoading(false);
-          }
-        }, 1000);
-
-        setTimeout(() => {
-          clearInterval(pollInterval);
-          setTunnelLoading(false);
-        }, 30000);
-      } else {
-        setTunnelLoading(false);
-      }
-    } catch (error) {
-      logger.error("[EntryPage] Failed to start tunnel:", error);
-      setTunnelInfo({
-        url: "",
-        status: "error",
-        error: t().remote.startFailed,
-      });
-      setTunnelLoading(false);
-    }
-  };
-
-  const stopTunnel = async () => {
-    setTunnelLoading(true);
-    try {
-      if (isElectron()) {
-        await tunnelAPI.stop();
-      } else {
-        await fetch("/api/tunnel/stop", { method: "POST" });
-      }
-      setTunnelInfo({ url: "", status: "stopped" });
-      setTunnelEnabled(false);
-    } catch (error) {
-      logger.error("[EntryPage] Failed to stop tunnel:", error);
-    } finally {
-      setTunnelLoading(false);
-    }
-  };
-
-  const saveNamedTunnelConfig = async () => {
-    const hostname = namedTunnelHostname().trim();
-    if (hostname) {
-      await saveSetting("tunnelConfig", { hostname });
-    } else {
-      // Clear the config entirely when hostname is removed
-      await saveSetting("tunnelConfig", undefined);
-    }
-  };
 
   // =========================================================================
   // Feishu channel handlers
@@ -970,15 +844,12 @@ export default function EntryPage() {
     }
   };
 
-  const copyToClipboard = (text: string) => {
-    navigator.clipboard.writeText(text);
+  const copyToClipboard = async (text: string) => {
+    if (!await copyTextToClipboard(text)) {
+      logger.warn("[EntryPage] Could not copy to the clipboard.");
+    }
   };
 
-  const generateQRCode = (url: string) => {
-    return `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(url)}`;
-  };
-
-  const getLanUrl = () => `http://${localIp()}:${port()}`;
   const getLocalUrl = () => `http://localhost:${port()}`;
 
   // =========================================================================
@@ -1188,6 +1059,7 @@ export default function EntryPage() {
                   </Show>
                   <button
                     onClick={() => setActiveTab("webApp")}
+                    aria-label={t().remote.webApp}
                     class={`flex items-center gap-2 md:gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all text-left whitespace-nowrap ${
                       activeTab() === "webApp"
                         ? "bg-white dark:bg-slate-800 text-blue-600 dark:text-blue-400 shadow-xs"
@@ -1197,25 +1069,24 @@ export default function EntryPage() {
                     <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="shrink-0"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18"/><path d="M9 21V9"/></svg>
                     <span class="hidden md:inline">{t().remote.webApp}</span>
                   </button>
-                  <Show when={isElectron()}>
-                    <button
-                      onClick={() => setActiveTab("publicAccess")}
-                      class={`flex items-center gap-2 md:gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all text-left relative whitespace-nowrap ${
-                        activeTab() === "publicAccess"
-                          ? "bg-white dark:bg-slate-800 text-blue-600 dark:text-blue-400 shadow-xs"
-                          : "text-gray-600 dark:text-gray-400 hover:bg-white/60 dark:hover:bg-slate-800/60 hover:text-gray-900 dark:hover:text-gray-200"
-                      }`}
-                    >
-                      <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="shrink-0"><circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><path d="M2 12h20"/></svg>
-                      <span class="hidden md:inline">{t().remote.publicAccessTab}</span>
-                      <Show when={tunnelInfo().status === "running"}>
-                        <span class="absolute right-2.5 top-1/2 -translate-y-1/2 inline-flex h-1.5 w-1.5 rounded-full bg-green-500"></span>
-                      </Show>
-                      <Show when={tunnelInfo().status === "starting"}>
-                        <span class="absolute right-2.5 top-1/2 -translate-y-1/2 inline-flex h-1.5 w-1.5 rounded-full bg-yellow-400 animate-pulse"></span>
-                      </Show>
-                    </button>
-                  </Show>
+                  <button
+                    onClick={() => setActiveTab("publicAccess")}
+                    aria-label={t().remote.publicAccessTab}
+                    class={`flex items-center gap-2 md:gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all text-left relative whitespace-nowrap ${
+                      activeTab() === "publicAccess"
+                        ? "bg-white dark:bg-slate-800 text-blue-600 dark:text-blue-400 shadow-xs"
+                        : "text-gray-600 dark:text-gray-400 hover:bg-white/60 dark:hover:bg-slate-800/60 hover:text-gray-900 dark:hover:text-gray-200"
+                    }`}
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="shrink-0"><circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><path d="M2 12h20"/></svg>
+                    <span class="hidden md:inline">{t().remote.publicAccessTab}</span>
+                    <Show when={accessUrl()}>
+                      <span class="absolute right-2.5 top-1/2 -translate-y-1/2 inline-flex h-1.5 w-1.5 rounded-full bg-green-500"></span>
+                    </Show>
+                    <Show when={tunnelInfo().status === "starting"}>
+                      <span class="absolute right-2.5 top-1/2 -translate-y-1/2 inline-flex h-1.5 w-1.5 rounded-full bg-yellow-400 animate-pulse"></span>
+                    </Show>
+                  </button>
                 </nav>
 
                 {/* Right: Tab Content (bottom on mobile) */}
@@ -1260,7 +1131,8 @@ export default function EntryPage() {
                                 <button
                                   onClick={() => copyToClipboard(accessCode())}
                                   class="p-1.5 text-blue-600 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300 transition-colors rounded-md hover:bg-blue-50 dark:hover:bg-blue-900/30"
-                                  title="Copy"
+                                  title={t().remote.copyAccessCode}
+                                  aria-label={t().remote.copyAccessCode}
                                 >
                                   <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
                                 </button>
@@ -1274,6 +1146,23 @@ export default function EntryPage() {
                               <h3 class="text-sm font-medium text-gray-500 dark:text-gray-400">{t().remote.connectionAddress}</h3>
                             </div>
                             <div class="divide-y divide-gray-100 dark:divide-slate-800/50">
+
+                              <Show when={customAccessUrl()}>
+                                <div class="p-3 flex items-center justify-between group hover:bg-gray-50 dark:hover:bg-slate-800/50 transition-colors">
+                                  <div class="min-w-0 flex-1 mr-3">
+                                    <span class="text-xs font-medium text-gray-500">{t().remote.customAccessUrl}</span>
+                                    <p class="font-mono text-sm text-green-700 dark:text-green-400 truncate select-all mt-1">{customAccessUrl()}</p>
+                                  </div>
+                                  <button
+                                    onClick={() => copyToClipboard(customAccessUrl())}
+                                    aria-label={t().remote.copyAddress}
+                                    title={t().remote.copyAddress}
+                                    class="p-2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 transition-colors"
+                                  >
+                                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
+                                  </button>
+                                </div>
+                              </Show>
 
                               {/* Public Address */}
                               <Show when={tunnelInfo().status === "running"}>
@@ -1289,31 +1178,14 @@ export default function EntryPage() {
                                   </div>
                                   <button
                                     onClick={() => copyToClipboard(tunnelInfo().url)}
+                                    aria-label={t().remote.copyAddress}
+                                    title={t().remote.copyAddress}
                                     class="p-2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 opacity-0 group-hover:opacity-100 transition-all"
                                   >
                                     <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
                                   </button>
                                 </div>
                               </Show>
-
-                              {/* LAN Address */}
-                              <div class="p-3 flex items-center justify-between group hover:bg-gray-50 dark:hover:bg-slate-800/50 transition-colors">
-                                <div class="min-w-0 flex-1 mr-3">
-                                  <div class="flex items-center gap-2 mb-1">
-                                    <span class="inline-flex items-center justify-center w-5 h-5 rounded bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400">
-                                      <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.55a11 11 0 0 1 14.08 0"/><path d="M1.42 9a16 16 0 0 1 21.16 0"/><path d="M8.53 16.11a6 6 0 0 1 6.95 0"/><line x1="12" x2="12.01" y1="20" y2="20"/></svg>
-                                    </span>
-                                    <span class="text-xs font-medium text-gray-500">{t().remote.lanAddress}</span>
-                                  </div>
-                                  <p class="font-mono text-sm text-gray-700 dark:text-gray-300 truncate select-all">{getLanUrl()}</p>
-                                </div>
-                                <button
-                                  onClick={() => copyToClipboard(getLanUrl())}
-                                  class="p-2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 opacity-0 group-hover:opacity-100 transition-all"
-                                >
-                                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
-                                </button>
-                              </div>
 
                               {/* Local Address */}
                               <div class="p-3 flex items-center justify-between group hover:bg-gray-50 dark:hover:bg-slate-800/50 transition-colors">
@@ -1328,6 +1200,8 @@ export default function EntryPage() {
                                 </div>
                                 <button
                                   onClick={() => copyToClipboard(getLocalUrl())}
+                                  aria-label={t().remote.copyAddress}
+                                  title={t().remote.copyAddress}
                                   class="p-2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 opacity-0 group-hover:opacity-100 transition-all"
                                 >
                                   <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
@@ -1337,98 +1211,51 @@ export default function EntryPage() {
                           </div>
                         </div>
 
-                        {/* Right Column: QR Code */}
                         <div class="rounded-lg border border-gray-200 dark:border-slate-800 p-5 flex flex-col items-center justify-center min-h-[280px]">
-
-                          <div class="w-full flex justify-center mb-5">
-                            <div class="inline-flex bg-gray-100 dark:bg-slate-800 p-1 rounded-lg">
-                              <button
-                                onClick={() => setActiveQrTab("lan")}
-                                class={`px-4 py-1.5 rounded-md text-sm font-medium transition-all ${activeQrTab() === "lan" ? 'bg-white dark:bg-slate-700 shadow-xs text-gray-900 dark:text-white' : 'text-gray-500 hover:text-gray-700 dark:hover:text-gray-300'}`}
-                              >
-                                {t().remote.lan}
-                              </button>
-                              <button
-                                disabled={tunnelInfo().status !== "running"}
-                                onClick={() => setActiveQrTab("public")}
-                                class={`px-4 py-1.5 rounded-md text-sm font-medium transition-all ${activeQrTab() === "public" ? 'bg-white dark:bg-slate-700 shadow-xs text-green-700 dark:text-green-400' : 'text-gray-500 hover:text-gray-700 dark:hover:text-gray-300'} ${tunnelInfo().status !== "running" ? 'opacity-50 cursor-not-allowed' : ''}`}
-                              >
-                                {t().remote.public}
-                              </button>
-                            </div>
-                          </div>
-
-                          <div class="bg-white p-4 rounded-xl shadow-xs border border-gray-100">
-                            <Switch>
-                              <Match when={activeQrTab() === "public" && tunnelInfo().status === "running"}>
-                                <img
-                                  src={generateQRCode(tunnelInfo().url)}
-                                  alt="Public QR Code"
-                                  class="w-44 h-44 object-contain"
-                                />
-                              </Match>
-                              <Match when={activeQrTab() === "public"}>
-                                <div class="w-44 h-44 flex items-center justify-center bg-gray-50 text-gray-400 text-sm">
-                                  {t().remote.notConnected}
-                                </div>
-                              </Match>
-                              <Match when={activeQrTab() === "lan"}>
-                                <img
-                                  src={generateQRCode(getLanUrl())}
-                                  alt="LAN QR Code"
-                                  class="w-44 h-44 object-contain"
-                                />
-                              </Match>
-                            </Switch>
-                          </div>
-
-                          <div class="mt-4 text-center space-y-1">
-                            <h4 class="font-medium text-sm text-gray-900 dark:text-white">
-                              {activeQrTab() === "public" ? t().remote.publicQrScan : t().remote.lanQrScan}
-                            </h4>
-                            <p class="text-xs text-gray-500 dark:text-gray-400 max-w-[200px]">
-                              {activeQrTab() === "public" ? t().remote.publicQrDesc : t().remote.lanQrDesc}
-                            </p>
-                          </div>
+                          <Show when={accessUrl()} fallback={
+                            <div class="py-10 text-center text-sm text-gray-500 dark:text-gray-400">{t().remote.accessOffDescription}</div>
+                          }>
+                            <AccessQRCode url={accessUrl()} />
+                            <h4 class="mt-4 text-sm font-medium">{t().remote.customQrScan}</h4>
+                            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">{t().remote.customQrDesc}</p>
+                          </Show>
                         </div>
                       </div>
 
                       {/* Public Access Link Banner */}
-                      <Show when={isElectron()}>
-                        <div
-                          onClick={() => setActiveTab("publicAccess")}
-                          class="rounded-lg border border-gray-200 dark:border-slate-800 p-4 flex items-center justify-between cursor-pointer hover:bg-gray-50 dark:hover:bg-slate-800/50 transition-colors"
-                        >
-                          <div class="flex items-center gap-3">
-                            <div class={`w-9 h-9 rounded-lg flex items-center justify-center ${
-                              tunnelInfo().status === "running"
-                                ? "bg-green-100 dark:bg-green-900/30"
-                                : "bg-gray-100 dark:bg-slate-800"
-                            }`}>
-                              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class={tunnelInfo().status === "running" ? "text-green-600 dark:text-green-400" : "text-gray-400 dark:text-gray-500"}>
-                                <circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><path d="M2 12h20"/>
-                              </svg>
-                            </div>
-                            <div>
-                              <h3 class="text-sm font-medium text-gray-900 dark:text-white">
-                                {t().remote.publicAccessTab}
-                              </h3>
-                              <p class="text-xs text-gray-500 dark:text-gray-400 mt-0.5 flex items-center gap-1.5">
-                                <Show when={tunnelInfo().status === "running"}>
-                                  <span class="inline-flex h-1.5 w-1.5 rounded-full bg-green-500"></span>
-                                  {t().remote.publicAccessEnabled}
-                                </Show>
-                                <Show when={tunnelInfo().status !== "running"}>
-                                  {t().remote.publicAccessDisabled}
-                                </Show>
-                              </p>
-                            </div>
+                      <div
+                        onClick={() => setActiveTab("publicAccess")}
+                        class="rounded-lg border border-gray-200 dark:border-slate-800 p-4 flex items-center justify-between cursor-pointer hover:bg-gray-50 dark:hover:bg-slate-800/50 transition-colors"
+                      >
+                        <div class="flex items-center gap-3">
+                          <div class={`w-9 h-9 rounded-lg flex items-center justify-center ${
+                            accessUrl()
+                              ? "bg-green-100 dark:bg-green-900/30"
+                              : "bg-gray-100 dark:bg-slate-800"
+                          }`}>
+                            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class={accessUrl() ? "text-green-600 dark:text-green-400" : "text-gray-400 dark:text-gray-500"}>
+                              <circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><path d="M2 12h20"/>
+                            </svg>
                           </div>
-                          <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-gray-400">
-                            <path d="m9 18 6-6-6-6"/>
-                          </svg>
+                          <div>
+                            <h3 class="text-sm font-medium text-gray-900 dark:text-white">
+                              {t().remote.publicAccessTab}
+                            </h3>
+                            <p class="text-xs text-gray-500 dark:text-gray-400 mt-0.5 flex items-center gap-1.5">
+                              <Show when={accessUrl()}>
+                                <span class="inline-flex h-1.5 w-1.5 rounded-full bg-green-500"></span>
+                                <Show when={customAccessUrl()} fallback={t().remote.publicAccessEnabled}>{t().remote.customAccessConfigured}</Show>
+                              </Show>
+                              <Show when={!accessUrl()}>
+                                {t().remote.publicAccessDisabled}
+                              </Show>
+                            </p>
+                          </div>
                         </div>
-                      </Show>
+                        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-gray-400">
+                          <path d="m9 18 6-6-6-6"/>
+                        </svg>
+                      </div>
 
                       {/* Authorized Devices Card */}
                       <div
@@ -1764,8 +1591,8 @@ export default function EntryPage() {
                           <div class="flex-1 h-px bg-gray-100 dark:bg-slate-800"></div>
                         </div>
 
-                        {/* Tunnel required banner when tunnel is not running */}
-                        <Show when={tunnelInfo().status !== "running"}>
+                        {/* An access address is required for webhook callbacks */}
+                        <Show when={!accessUrl()}>
                           <div
                             onClick={() => setActiveTab("publicAccess")}
                             class="rounded-lg border border-amber-200 dark:border-amber-900/30 bg-amber-50 dark:bg-amber-900/10 p-3 flex items-center justify-between cursor-pointer hover:bg-amber-100 dark:hover:bg-amber-900/20 transition-colors mb-3"
@@ -1773,15 +1600,19 @@ export default function EntryPage() {
                             <div class="flex items-center gap-2.5">
                               <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-amber-600 dark:text-amber-400 shrink-0"><circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><path d="M2 12h20"/></svg>
                               <div>
-                                <span class="text-xs font-medium text-amber-700 dark:text-amber-400">{t().channel.tunnelRequired}</span>
-                                <span class="text-xs text-amber-600 dark:text-amber-400/70 ml-1">— {t().channel.tunnelRequiredDesc}</span>
+                                <span class="text-xs font-medium text-amber-700 dark:text-amber-400">{t().channel.accessUrlRequired}</span>
+                                <span class="text-xs text-amber-600 dark:text-amber-400/70 ml-1">— {t().channel.accessUrlRequiredDesc}</span>
                               </div>
                             </div>
                             <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-amber-400 shrink-0"><path d="m9 18 6-6-6-6"/></svg>
                           </div>
                         </Show>
 
-                        <div class={`space-y-3 ${tunnelInfo().status !== "running" ? "opacity-55" : ""}`}>
+                        <Show when={accessUrl()}>
+                          <p class="text-xs text-gray-500 dark:text-gray-400 mb-3">{t().channel.webhookReachabilityHint}</p>
+                        </Show>
+
+                        <div class={`space-y-3 ${!accessUrl() ? "opacity-55" : ""}`}>
                           {/* Teams Bot Row */}
                           <div class="rounded-lg border border-gray-200 dark:border-slate-800 overflow-hidden">
                             <div class="p-4 flex items-center justify-between">
@@ -1819,10 +1650,10 @@ export default function EntryPage() {
                                 </button>
                                 <button
                                   onClick={handleTeamsToggle}
-                                  disabled={teamsLoading() || tunnelInfo().status !== "running"}
+                                  disabled={teamsLoading() || (!accessUrl() && teamsStatus()?.status !== "running")}
                                   class={`relative inline-flex h-7 w-12 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:ring-offset-2 ${
                                     teamsStatus()?.status === "running" ? "bg-blue-600" : "bg-gray-200 dark:bg-slate-700"
-                                  } ${teamsLoading() || tunnelInfo().status !== "running" ? "opacity-50 cursor-not-allowed" : ""}`}
+                                  } ${teamsLoading() || (!accessUrl() && teamsStatus()?.status !== "running") ? "opacity-50 cursor-not-allowed" : ""}`}
                                 >
                                   <span class="sr-only">Toggle Teams Bot</span>
                                   <span
@@ -1843,13 +1674,13 @@ export default function EntryPage() {
                               </div>
                             </Show>
 
-                            {/* Webhook endpoint info when tunnel is running and channel is active */}
-                            <Show when={tunnelInfo().status === "running" && teamsStatus()?.status === "running"}>
+                            {/* Webhook endpoint info when an access address is configured and the channel is active */}
+                            <Show when={accessUrl() && teamsStatus()?.status === "running"}>
                               <div class="px-4 py-2.5 bg-blue-50 dark:bg-blue-900/5 border-t border-blue-100 dark:border-blue-900/20 flex items-start gap-2">
                                 <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-blue-500 dark:text-blue-400 shrink-0 mt-0.5"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
                                 <div class="text-xs text-gray-600 dark:text-gray-400 leading-relaxed">
                                   <span class="text-gray-500 dark:text-gray-500">{t().channel.webhookEndpoint}:</span>{" "}
-                                  <code class="text-[11px] font-mono bg-gray-100 dark:bg-slate-800 px-1.5 py-0.5 rounded text-blue-600 dark:text-blue-400 border border-gray-200 dark:border-slate-700">{tunnelInfo().url}/api/messages</code>
+                                  <code class="text-[11px] font-mono bg-gray-100 dark:bg-slate-800 px-1.5 py-0.5 rounded text-blue-600 dark:text-blue-400 border border-gray-200 dark:border-slate-700">{accessUrl()}/api/messages</code>
                                   <br/>
                                   <span class="text-gray-400 dark:text-gray-500">{t().channel.teamsWebhookGuide}</span>
                                 </div>
@@ -1894,10 +1725,10 @@ export default function EntryPage() {
                                 </button>
                                 <button
                                   onClick={handleWecomToggle}
-                                  disabled={wecomLoading() || tunnelInfo().status !== "running"}
+                                  disabled={wecomLoading() || (!accessUrl() && wecomStatus()?.status !== "running")}
                                   class={`relative inline-flex h-7 w-12 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:ring-offset-2 ${
                                     wecomStatus()?.status === "running" ? "bg-blue-600" : "bg-gray-200 dark:bg-slate-700"
-                                  } ${wecomLoading() || tunnelInfo().status !== "running" ? "opacity-50 cursor-not-allowed" : ""}`}
+                                  } ${wecomLoading() || (!accessUrl() && wecomStatus()?.status !== "running") ? "opacity-50 cursor-not-allowed" : ""}`}
                                 >
                                   <span class="sr-only">Toggle WeCom Bot</span>
                                   <span
@@ -1918,13 +1749,13 @@ export default function EntryPage() {
                               </div>
                             </Show>
 
-                            {/* Webhook endpoint info when tunnel is running and channel is active */}
-                            <Show when={tunnelInfo().status === "running" && wecomStatus()?.status === "running"}>
+                            {/* Webhook endpoint info when an access address is configured and the channel is active */}
+                            <Show when={accessUrl() && wecomStatus()?.status === "running"}>
                               <div class="px-4 py-2.5 bg-blue-50 dark:bg-blue-900/5 border-t border-blue-100 dark:border-blue-900/20 flex items-start gap-2">
                                 <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-blue-500 dark:text-blue-400 shrink-0 mt-0.5"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
                                 <div class="text-xs text-gray-600 dark:text-gray-400 leading-relaxed">
                                   <span class="text-gray-500 dark:text-gray-500">{t().channel.webhookEndpoint}:</span>{" "}
-                                  <code class="text-[11px] font-mono bg-gray-100 dark:bg-slate-800 px-1.5 py-0.5 rounded text-blue-600 dark:text-blue-400 border border-gray-200 dark:border-slate-700">{tunnelInfo().url}/webhook/wecom</code>
+                                  <code class="text-[11px] font-mono bg-gray-100 dark:bg-slate-800 px-1.5 py-0.5 rounded text-blue-600 dark:text-blue-400 border border-gray-200 dark:border-slate-700">{accessUrl()}/webhook/wecom</code>
                                   <br/>
                                   <span class="text-gray-400 dark:text-gray-500">{t().channel.wecomWebhookGuide}</span>
                                 </div>
@@ -1944,166 +1775,7 @@ export default function EntryPage() {
                         <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">{t().remote.publicAccessTabDesc}</p>
                       </div>
 
-                      {/* Tunnel Toggle Card */}
-                      <div class="rounded-lg border border-gray-200 dark:border-slate-800 overflow-hidden">
-                        <div class="p-4 flex items-center justify-between">
-                          <div class="flex items-center gap-3">
-                            <div class={`w-9 h-9 rounded-lg flex items-center justify-center ${
-                              tunnelInfo().status === "running"
-                                ? "bg-blue-100 dark:bg-blue-900/30"
-                                : "bg-gray-100 dark:bg-slate-800"
-                            }`}>
-                              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class={tunnelInfo().status === "running" ? "text-blue-600 dark:text-blue-400" : "text-gray-400 dark:text-gray-500"}>
-                                <circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><path d="M2 12h20"/>
-                              </svg>
-                            </div>
-                            <div>
-                              <h3 class="text-sm font-medium text-gray-900 dark:text-white flex items-center gap-2">
-                                Cloudflare Tunnel
-                                <Show when={tunnelLoading() || tunnelInfo().status === "starting"}>
-                                  <span class="inline-flex h-2 w-2 rounded-full bg-yellow-400 animate-pulse"></span>
-                                </Show>
-                                <Show when={!tunnelLoading() && tunnelInfo().status === "running"}>
-                                  <span class="inline-flex h-2 w-2 rounded-full bg-green-500"></span>
-                                </Show>
-                              </h3>
-                              <p class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
-                                {tunnelInfo().status === "running" ? t().remote.tunnelRunning : t().remote.tunnelStopped}
-                              </p>
-                            </div>
-                          </div>
-                          <button
-                            onClick={handleTunnelToggle}
-                            disabled={tunnelLoading()}
-                            class={`relative inline-flex h-7 w-12 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:ring-offset-2 ${
-                              tunnelEnabled() ? "bg-blue-600" : "bg-gray-200 dark:bg-slate-700"
-                            } ${tunnelLoading() ? "opacity-50 cursor-not-allowed" : ""}`}
-                          >
-                            <span class="sr-only">Toggle Tunnel</span>
-                            <span
-                              class={`pointer-events-none inline-block h-6 w-6 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
-                                tunnelEnabled() ? "translate-x-5" : "translate-x-0"
-                              }`}
-                            />
-                          </button>
-                        </div>
-
-                        <Show when={tunnelInfo().status === "running" && tunnelInfo().url}>
-                          <div class="px-4 py-3 border-t border-gray-100 dark:border-slate-800">
-                            <div class="flex items-center justify-between bg-gray-50 dark:bg-slate-950 rounded-lg border border-gray-200 dark:border-slate-800 px-3 py-2">
-                              <span class="font-mono text-xs text-blue-600 dark:text-blue-400 truncate">{tunnelInfo().url}</span>
-                              <button
-                                onClick={() => {
-                                  navigator.clipboard.writeText(tunnelInfo().url);
-                                }}
-                                class="shrink-0 ml-2 p-1 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors rounded hover:bg-gray-200 dark:hover:bg-slate-800"
-                                title={t().common.copied}
-                              >
-                                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
-                              </button>
-                            </div>
-                          </div>
-                        </Show>
-
-                        <Show when={tunnelErrorMessage()}>
-                          <div class="px-4 py-3 bg-red-50 dark:bg-red-900/10 border-t border-red-100 dark:border-red-900/30">
-                            <p class="text-xs text-red-600 dark:text-red-400 flex items-center gap-2">
-                              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" x2="12" y1="8" y2="12"/><line x1="12" x2="12.01" y1="16" y2="16"/></svg>
-                              {tunnelErrorMessage()}
-                            </p>
-                          </div>
-                        </Show>
-
-                        <Show when={tunnelEnabled() && tunnelInfo().status === "starting"}>
-                          <div class="px-4 py-3 bg-blue-50 dark:bg-blue-900/10 border-t border-blue-100 dark:border-blue-900/30">
-                            <p class="text-xs text-blue-600 dark:text-blue-400 flex items-center gap-2">
-                              <svg class="animate-spin" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
-                              {t().remote.starting}
-                            </p>
-                          </div>
-                        </Show>
-                      </div>
-
-                      {/* Named Tunnel Configuration */}
-                      <div class="rounded-lg border border-gray-200 dark:border-slate-800 overflow-hidden">
-                        <div class="p-4">
-                          <h3 class="text-sm font-medium text-gray-900 dark:text-white flex items-center gap-2">
-                            {t().remote.namedTunnel}
-                            <Show when={isNamedTunnel()}>
-                              <span class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400">✓</span>
-                            </Show>
-                          </h3>
-                          <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">{t().remote.namedTunnelDesc}</p>
-
-                          <div class="mt-3">
-                            <label class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">{t().remote.tunnelHostname}</label>
-                            <input
-                              type="text"
-                              value={namedTunnelHostname()}
-                              onInput={(e) => setNamedTunnelHostname(e.currentTarget.value)}
-                              onBlur={() => { void saveNamedTunnelConfig(); }}
-                              placeholder={t().remote.tunnelHostnamePlaceholder}
-                              class="w-full px-3 py-1.5 text-sm rounded-md border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                            />
-                          </div>
-
-                          <Show when={!isNamedTunnel() || tunnelInfo().errorCode === "NAMED_TUNNEL_NO_CREDENTIALS"}>
-                            <p class="mt-2 text-[11px] text-gray-400 dark:text-gray-500">{t().remote.namedTunnelSetupHint}</p>
-                          </Show>
-                          <Show when={isNamedTunnel()}>
-                            <p class="mt-2 text-[11px] text-green-600 dark:text-green-400">{t().remote.namedTunnelActive}</p>
-                          </Show>
-                        </div>
-                      </div>
-
-                      {/* Notes */}
-                      <div>
-                        <h3 class="text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider mb-3">{t().remote.notes}</h3>
-                        <div class="space-y-2">
-                          <div class="rounded-lg border border-gray-200 dark:border-slate-800 p-3.5 flex items-start gap-3">
-                            <div class={`w-7 h-7 rounded-md flex items-center justify-center shrink-0 ${
-                              isNamedTunnel()
-                                ? "bg-green-100 dark:bg-green-900/30"
-                                : "bg-amber-100 dark:bg-amber-900/30"
-                            }`}>
-                              <Show when={isNamedTunnel()} fallback={
-                                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-amber-600 dark:text-amber-400"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
-                              }>
-                                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-green-600 dark:text-green-400"><polyline points="20 6 9 17 4 12"/></svg>
-                              </Show>
-                            </div>
-                            <div>
-                              <Show when={isNamedTunnel()} fallback={
-                                <>
-                                  <div class="text-sm font-medium text-gray-900 dark:text-white">{t().remote.noteUrlChanges}</div>
-                                  <div class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">{t().remote.noteUrlChangesDesc}</div>
-                                </>
-                              }>
-                                <div class="text-sm font-medium text-gray-900 dark:text-white">{t().remote.namedTunnel}</div>
-                                <div class="text-xs text-green-600 dark:text-green-400 mt-0.5">{t().remote.noteUrlFixedDomain}</div>
-                              </Show>
-                            </div>
-                          </div>
-                          <div class="rounded-lg border border-gray-200 dark:border-slate-800 p-3.5 flex items-start gap-3">
-                            <div class="w-7 h-7 rounded-md bg-green-100 dark:bg-green-900/30 flex items-center justify-center shrink-0">
-                              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-green-600 dark:text-green-400"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
-                            </div>
-                            <div>
-                              <div class="text-sm font-medium text-gray-900 dark:text-white">{t().remote.noteSecurity}</div>
-                              <div class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">{t().remote.noteSecurityDesc}</div>
-                            </div>
-                          </div>
-                          <div class="rounded-lg border border-gray-200 dark:border-slate-800 p-3.5 flex items-start gap-3">
-                            <div class="w-7 h-7 rounded-md bg-blue-100 dark:bg-blue-900/30 flex items-center justify-center shrink-0">
-                              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-blue-600 dark:text-blue-400"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
-                            </div>
-                            <div>
-                              <div class="text-sm font-medium text-gray-900 dark:text-white">{t().remote.noteKeepRunning}</div>
-                              <div class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">{t().remote.noteKeepRunningDesc}</div>
-                            </div>
-                          </div>
-                        </div>
-                      </div>
+                      <RemoteAccessSettings status={remoteStatus()} onChanged={setRemoteStatus} />
                     </div>
                   </Show>
                 </div>

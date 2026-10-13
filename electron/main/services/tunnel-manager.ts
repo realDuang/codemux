@@ -141,7 +141,8 @@ class TunnelManager {
         args = ["tunnel", "--url", `http://localhost:${port}`];
       }
 
-      this.process = spawn(cloudflaredPath, args);
+      const proc = spawn(cloudflaredPath, args);
+      this.process = proc;
 
       // For named tunnels, URL is known in advance but keep "starting" until
       // cloudflared confirms it's connected (observed via stdout/stderr output)
@@ -155,6 +156,7 @@ class TunnelManager {
       }
 
       const handleOutput = (data: Buffer) => {
+        if (this.process !== proc || this.stoppedByUser) return;
         const output = data.toString();
         tunnelLog.info(output);
 
@@ -178,10 +180,11 @@ class TunnelManager {
         }
       };
 
-      this.process.stdout?.on("data", handleOutput);
-      this.process.stderr?.on("data", handleOutput);
+      proc.stdout?.on("data", handleOutput);
+      proc.stderr?.on("data", handleOutput);
 
-      this.process.on("close", () => {
+      proc.on("close", () => {
+        if (this.process !== proc) return;
         const wasRunning = this.info.status === "running" || this.info.status === "starting";
         this.info = { url: "", status: "stopped" };
         this.process = null;
@@ -192,7 +195,8 @@ class TunnelManager {
         }
       });
 
-      this.process.on("error", (err) => {
+      proc.on("error", (err) => {
+        if (this.process !== proc) return;
         tunnelLog.error("Process error:", err);
         this.info = { url: "", status: "error", error: err.message };
         this.process = null;
@@ -214,24 +218,51 @@ class TunnelManager {
       return;
     }
 
-    this.process = null;
-
-    // Send SIGTERM for graceful shutdown
-    try {
-      proc.kill("SIGTERM");
-    } catch {
-      // Process may already be dead
-      return;
-    }
-
-    // Wait for process to exit with timeout
-    await Promise.race([
-      new Promise<void>((resolve) => {
-        proc.once("close", resolve);
-        proc.once("error", resolve);
-      }),
-      new Promise<void>((resolve) => setTimeout(resolve, 5000)),
-    ]);
+    await new Promise<void>((resolve, reject) => {
+      let settled = false;
+      const hasExited = () => proc.exitCode !== null && proc.exitCode !== undefined ||
+        proc.signalCode !== null && proc.signalCode !== undefined;
+      const clear = () => {
+        clearTimeout(terminateTimeout);
+        clearTimeout(killTimeout);
+        proc.off("close", finish);
+        proc.off("error", handleError);
+      };
+      const finish = () => {
+        if (settled) return;
+        settled = true;
+        clear();
+        if (this.process === proc) this.process = null;
+        resolve();
+      };
+      const fail = (error: unknown) => {
+        if (settled) return;
+        settled = true;
+        clear();
+        this.info = { url: "", status: "error", error: error instanceof Error ? error.message : String(error) };
+        // Retain ownership so a failed stop cannot authorize a second connector.
+        this.process = proc;
+        reject(error);
+      };
+      const signal = (value: "SIGTERM" | "SIGKILL") => {
+        try {
+          if (!proc.kill(value) && hasExited()) finish();
+        } catch (error) {
+          if (hasExited()) finish();
+          else fail(error);
+        }
+      };
+      const handleError = (error: Error) => {
+        if (hasExited()) finish();
+        else fail(error);
+      };
+      const terminateTimeout = setTimeout(() => signal("SIGKILL"), 5000);
+      const killTimeout = setTimeout(() => fail(new Error("Cloudflare Tunnel did not stop.")), 10_000);
+      proc.once("close", finish);
+      proc.once("error", handleError);
+      if (hasExited()) finish();
+      else signal("SIGTERM");
+    });
   }
 
   getInfo(): TunnelInfo {

@@ -1,6 +1,7 @@
-import { describe, it, expect, vi, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from "vitest";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
+import type { RemoteAccessTunnelInfo } from "../../../../shared/remote-access";
 
 // ---------------------------------------------------------------------------
 // Hoisted mocks
@@ -46,6 +47,34 @@ vi.mock("../../../../electron/main/services/device-store", () => ({
   },
 }));
 
+const remoteAccessFixture = vi.hoisted(() => ({
+  settings: {} as Record<string, unknown>,
+  tunnelInfo: { status: "stopped", url: "" } as RemoteAccessTunnelInfo,
+}));
+
+// Exercise the real controller, routes, and admission checks without reading
+// the user's settings or starting a cloudflared child process.
+vi.mock("../../../../electron/main/services/remote-access-manager", async () => {
+  const { RemoteAccessController } = await vi.importActual<typeof import("../../../../shared/remote-access-controller")>(
+    "../../../../shared/remote-access-controller",
+  );
+  return {
+    remoteAccessManager: new RemoteAccessController({
+      loadSettings: () => remoteAccessFixture.settings,
+      saveSettings: patch => { remoteAccessFixture.settings = { ...remoteAccessFixture.settings, ...patch }; },
+      getPort: () => 8233,
+      tunnel: {
+        getInfo: () => remoteAccessFixture.tunnelInfo,
+        stop: async () => { remoteAccessFixture.tunnelInfo = { status: "stopped", url: "" }; },
+        start: async (_port, config) => {
+          remoteAccessFixture.tunnelInfo = { status: "running", url: `https://${config?.hostname || "test.trycloudflare.com"}` };
+          return remoteAccessFixture.tunnelInfo;
+        },
+      },
+    }),
+  };
+});
+
 // Point the proxy targets at ports that are guaranteed to be closed so the
 // fall-back branches in proxyToOpenCode/proxyToWebhook are exercised
 // deterministically (otherwise a local OpenCode instance on the default port
@@ -67,6 +96,7 @@ vi.mock("../../../../shared/ports", async () => {
 
 import { productionServer } from "../../../../electron/main/services/production-server";
 import { deviceStore } from "../../../../electron/main/services/device-store";
+import { remoteAccessManager } from "../../../../electron/main/services/remote-access-manager";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -188,10 +218,115 @@ describe("ProductionServer", () => {
       expect(res.body.isLocal).toBe(true);
     });
 
-    it("GET /api/tunnel/anything returns 400 (IPC-only)", async () => {
+    it("rejects an unsupported method on tunnel controls", async () => {
       const res = await request(port, "/api/tunnel/start");
+      expect(res.status).toBe(404);
+      expect(res.body.error).toBe("Not found");
+    });
+  });
+
+  describe("Remote access controls and admission", () => {
+    const customUrl = "http://192.168.31.123:18233";
+    const remoteHeaders = { host: "192.168.31.123:18233", "x-forwarded-for": "192.168.31.2" };
+
+    beforeEach(async () => {
+      await remoteAccessManager.update({ mode: "off", customAccessUrl: "", tunnelConfig: { hostname: "" } });
+    });
+
+    it("exposes only the current mode remotely while retaining complete configuration for the local host", async () => {
+      await remoteAccessManager.update({ mode: "custom", customAccessUrl: customUrl, tunnelConfig: { hostname: "codemux.example.com" } });
+
+      const publicStatus = await request(port, "/api/remote-access/status", { headers: remoteHeaders });
+      expect(publicStatus.status).toBe(200);
+      expect(publicStatus.body).toEqual({ mode: "custom" });
+
+      const remoteConfig = await request(port, "/api/remote-access", { headers: remoteHeaders });
+      expect(remoteConfig.status).toBe(403);
+      expect(remoteConfig.body).toEqual({ error: "Local access only" });
+
+      const localConfig = await request(port, "/api/remote-access");
+      expect(localConfig.status).toBe(200);
+      expect(localConfig.body).toMatchObject({
+        mode: "custom", customAccessUrl: customUrl, url: customUrl,
+        tunnelConfig: { hostname: "codemux.example.com" },
+        tunnel: { status: "stopped", url: "" },
+      });
+    });
+
+    it("rejects an approved remote device that forges a localhost Host when reading or mutating access controls", async () => {
+      await remoteAccessManager.update({ mode: "custom", customAccessUrl: customUrl });
+      vi.mocked(deviceStore.verifyToken).mockReturnValue({ valid: true, deviceId: "approved-device" });
+      const headers = {
+        host: `localhost:${port}`,
+        "x-forwarded-for": "192.168.31.2",
+        authorization: "Bearer approved-device-token",
+        "content-type": "application/json",
+      };
+
+      for (const path of ["/api/remote-access", "/api/tunnel/status"]) {
+        const res = await request(port, path, { headers });
+        expect(res.status).toBe(403);
+        expect(res.body).toEqual({ error: "Local access only" });
+      }
+      const update = await request(port, "/api/remote-access", { method: "PATCH", headers, body: JSON.stringify({ mode: "off" }) });
+      expect(update.status).toBe(403);
+      expect(update.body).toEqual({ error: "Local access only" });
+      expect(remoteAccessManager.getStatus()).toMatchObject({ mode: "custom", url: customUrl });
+      expect(remoteAccessFixture.settings.remoteAccessMode).toBe("custom");
+    });
+
+    it("enables and withdraws remote HTTP admission through the local PATCH endpoint", async () => {
+      const blocked = await request(port, "/api/system/info", { headers: remoteHeaders });
+      expect(blocked.status).toBe(403);
+
+      const enabled = await request(port, "/api/remote-access", {
+        method: "PATCH", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ mode: "custom", customAccessUrl: customUrl }),
+      });
+      expect(enabled.status).toBe(200);
+      expect(enabled.body).toMatchObject({ mode: "custom", url: customUrl });
+      expect((await request(port, "/api/system/info", { headers: remoteHeaders })).status).toBe(200);
+
+      const disabled = await request(port, "/api/remote-access", {
+        method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ mode: "off" }),
+      });
+      expect(disabled.status).toBe(200);
+      expect(disabled.body).toMatchObject({ mode: "off", url: "", customAccessUrl: customUrl });
+      expect((await request(port, "/api/system/info", { headers: remoteHeaders })).status).toBe(403);
+      expect((await request(port, "/api/remote-access/status", { headers: remoteHeaders })).body).toEqual({ mode: "off" });
+      expect((await request(port, "/api/system/info")).status).toBe(200);
+    });
+
+    it("returns a failed update without changing a working custom entry", async () => {
+      await remoteAccessManager.update({ mode: "custom", customAccessUrl: customUrl });
+      const res = await request(port, "/api/remote-access", {
+        method: "PATCH", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ mode: "custom", customAccessUrl: "https://codemux.example.com/path" }),
+      });
+
       expect(res.status).toBe(400);
-      expect(res.body.error).toMatch(/IPC/);
+      expect(typeof res.body.error).toBe("string");
+      expect(remoteAccessManager.getStatus()).toMatchObject({ mode: "custom", url: customUrl });
+      expect((await request(port, "/api/system/info", { headers: remoteHeaders })).status).toBe(200);
+    });
+
+    it("routes legacy tunnel start and stop through the same mutually exclusive access mode", async () => {
+      await remoteAccessManager.update({ mode: "custom", customAccessUrl: customUrl });
+      const started = await request(port, "/api/tunnel/start", {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ tunnelConfig: { hostname: "codemux.example.com" } }),
+      });
+      expect(started.status).toBe(200);
+      expect(started.body).toMatchObject({ status: "running", url: "https://codemux.example.com" });
+      expect(remoteAccessManager.getStatus()).toMatchObject({ mode: "cloudflare", customAccessUrl: customUrl });
+      expect((await request(port, "/api/system/info", { headers: remoteHeaders })).status).toBe(403);
+      expect((await request(port, "/api/system/info", { headers: { host: "codemux.example.com", origin: "https://codemux.example.com" } })).status).toBe(200);
+
+      const stopped = await request(port, "/api/tunnel/stop", { method: "POST" });
+      expect(stopped.status).toBe(200);
+      expect(stopped.body).toEqual({ success: true });
+      expect(remoteAccessManager.getStatus()).toMatchObject({ mode: "off", customAccessUrl: customUrl, tunnel: { status: "stopped" } });
+      expect((await request(port, "/api/system/info", { headers: { host: "codemux.example.com" } })).status).toBe(403);
     });
   });
 
@@ -211,8 +346,16 @@ describe("ProductionServer", () => {
   });
 
   describe("Proxy fall-back when upstreams are down", () => {
-    it("GET /opencode-api/health returns 503 when OpenCode is not running", async () => {
+    it("rejects unauthenticated access to the engine proxy", async () => {
       const res = await request(port, "/opencode-api/health");
+      expect(res.status).toBe(401);
+    });
+
+    it("GET /opencode-api/health returns 503 when OpenCode is not running", async () => {
+      vi.mocked(deviceStore.verifyToken).mockReturnValueOnce({ valid: true, deviceId: "approved-device" });
+      const res = await request(port, "/opencode-api/health", {
+        headers: { Authorization: "Bearer approved-device-token" },
+      });
       expect(res.status).toBe(503);
       expect(res.body.error).toMatch(/OpenCode/i);
     });

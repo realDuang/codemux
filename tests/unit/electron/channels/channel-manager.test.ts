@@ -216,6 +216,18 @@ describe("ChannelManager", () => {
   });
 
   describe("Runtime Options", () => {
+    it("keeps internal gateway credentials out of public config without changing the running adapter", async () => {
+      manager.registerAdapter(mockAdapter);
+      const gatewayUrl = "ws://127.0.0.1:4200/ws?token=internal-secret";
+      manager.setRuntimeOptions({ gatewayUrl });
+      await manager.startChannel("test-channel");
+
+      expect(manager.getConfig("test-channel")?.options.gatewayUrl).toBe("ws://127.0.0.1:4200/ws");
+      expect(mockAdapter.start).toHaveBeenCalledWith(expect.objectContaining({
+        options: expect.objectContaining({ gatewayUrl }),
+      }));
+    });
+
     it("applies runtime gatewayUrl to newly created configs after startup", async () => {
       manager.registerAdapter(mockAdapter);
 

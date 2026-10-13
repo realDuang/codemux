@@ -277,13 +277,14 @@ After a browser has been approved, it can open **Settings → Channels** in the 
 
 | Method | Setup | Best For |
 |--------|-------|----------|
-| **LAN Browser** | Open `http://<your-ip>:8233`, enter 6-digit code or scan QR | Quick access from another device on the same network |
-| **Public Internet** | Toggle "Public Access" → share `*.trycloudflare.com` URL, or configure a custom domain with named tunnel credentials | Access from anywhere, no port forwarding needed |
+| **LAN Browser** | Select Custom entry, save `http://<your-ip>:8233`, and enable Remote Access | Quick access from another device on the same network |
+| **Custom IP / Domain** | Select Custom entry, save an existing reachable address, and enable Remote Access | Reuse your own network route or reverse proxy; [setup guide](docs/custom-access.md) |
+| **Public Internet** | Select Cloudflare Tunnel and enable Remote Access → share the tunnel URL | Access from anywhere, no port forwarding needed |
 | **IM Bot** | Configure bot credentials in Settings → Channels (desktop or approved web UI) | Interact from Feishu, DingTalk, Telegram, WeCom, or Teams |
 
 ### Cloudflare Custom Domains
 
-CodeMux uses Cloudflare quick tunnels by default. Quick tunnels require no Cloudflare account setup and produce a temporary `*.trycloudflare.com` URL each time they start.
+Remote access is off by default. Custom entry and Cloudflare Tunnel are mutually exclusive. Cloudflare quick tunnels require no Cloudflare account setup and produce a temporary `*.trycloudflare.com` URL each time they start.
 
 A custom domain requires a Cloudflare named tunnel and a local tunnel credential file. CodeMux looks for a UUID-named JSON file in `~/.cloudflared/`, for example `~/.cloudflared/<tunnel-id>.json`. If a custom domain is configured but that credential is missing, CodeMux will stop startup with a missing-credentials error instead of silently falling back to a random quick tunnel URL.
 

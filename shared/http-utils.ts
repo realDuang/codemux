@@ -1,4 +1,5 @@
 import type { IncomingMessage, ServerResponse } from "http";
+import { isIP } from "net";
 import os from "os";
 import { WEB_PORT, WEB_STANDALONE_PORT } from "./ports";
 
@@ -118,13 +119,14 @@ export function extractBearerToken(req: IncomingMessage): string | null {
 }
 
 /**
- * Get the client IP address from the request,
- * checking X-Forwarded-For header first for proxied requests.
+ * Get a client IP for display or logging. Only loopback proxies may supply XFF.
+ * Authentication must use isLocalRequest instead of this reported address.
  */
 export function getClientIp(req: IncomingMessage): string {
   const forwarded = req.headers["x-forwarded-for"];
-  if (typeof forwarded === "string") {
-    return forwarded.split(",")[0].trim();
+  if (isLoopbackIp(req.socket?.remoteAddress || "") && typeof forwarded === "string") {
+    const clientIp = forwarded.split(",")[0].trim();
+    if (clientIp) return clientIp;
   }
   return req.socket?.remoteAddress || "unknown";
 }
@@ -135,6 +137,80 @@ export function getClientIp(req: IncomingMessage): string {
 export function isLocalhost(ip: string): boolean {
   const normalized = ip.replace(/^::ffff:/, "");
   return normalized === "127.0.0.1" || normalized === "::1" || normalized === "localhost";
+}
+
+function isLoopbackIp(ip: string): boolean {
+  return isIP(ip) !== 0 && isLocalhost(ip);
+}
+
+function isLocalAuthority(value: string): boolean {
+  const match = /^(\[[^\]]+\]|[^:\s/?#@\\]+)(?::(\d+))?$/.exec(value);
+  if (!match || (match[2] !== undefined && Number(match[2]) > 65535)) return false;
+  const host = match[1].toLowerCase();
+  if (host.startsWith("[")) {
+    const ip = host.slice(1, -1);
+    return isIP(ip) === 6 && isLoopbackIp(ip);
+  }
+  return isLocalhost(host);
+}
+
+function everyHeaderValue(
+  value: string | string[] | undefined,
+  predicate: (value: string) => boolean,
+): boolean {
+  if (value === undefined) return true;
+  const values = Array.isArray(value) ? value : [value];
+  return values.length > 0 && values.every(entry => entry.split(",").every(part => predicate(part.trim())));
+}
+
+function isLocalForwardedEntry(entry: string): boolean {
+  let hasIdentity = false;
+  const names = new Set<string>();
+  const valid = entry.split(";").every(parameter => {
+    const match = /^\s*([a-z-]+)=(?:"([^"\\]*)"|([^"\s]+))\s*$/i.exec(parameter);
+    if (!match) return false;
+    const name = match[1].toLowerCase();
+    if (names.has(name)) return false;
+    names.add(name);
+    const value = match[2] ?? match[3];
+    if (name === "host") {
+      hasIdentity = true;
+      return isLocalAuthority(value);
+    }
+    if (name === "for") {
+      hasIdentity = true;
+      return isLoopbackIp(value) || (value.startsWith("[") && isLocalAuthority(value));
+    }
+    return true;
+  });
+  return valid && hasIdentity;
+}
+
+/**
+ * Allow host access only through an unambiguous loopback endpoint. Forwarded
+ * headers can deny local access, but cannot make a remote socket local.
+ * A trusted loopback tunnel that strips remote identity is still a local endpoint.
+ */
+export function isLocalRequest(req: IncomingMessage): boolean {
+  if (!isLoopbackIp(req.socket?.remoteAddress || "")) return false;
+  const host = req.headers.host;
+  if (typeof host !== "string" || !isLocalAuthority(host)) return false;
+  const origin = req.headers.origin;
+  if (origin !== undefined) {
+    try {
+      const parsed = new URL(origin);
+      if (!["http:", "https:"].includes(parsed.protocol) || parsed.host.toLowerCase() !== host.toLowerCase()) return false;
+    } catch {
+      return false;
+    }
+  }
+  const hostCount = req.rawHeaders?.filter((value, index) => index % 2 === 0 && value.toLowerCase() === "host").length;
+  if (hostCount !== undefined && hostCount > 1) return false;
+
+  return everyHeaderValue(req.headers["x-forwarded-for"], isLoopbackIp)
+    && everyHeaderValue(req.headers["x-real-ip"], isLoopbackIp)
+    && everyHeaderValue(req.headers["x-forwarded-host"], isLocalAuthority)
+    && everyHeaderValue(req.headers.forwarded, isLocalForwardedEntry);
 }
 
 // ---------------------------------------------------------------------------
@@ -166,4 +242,3 @@ export function requireAuth(
   }
   return { deviceId: result.deviceId };
 }
-

@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import type { IncomingMessage } from "node:http";
 
 // ---------------------------------------------------------------------------
 // Hoisted mock variables
@@ -124,6 +125,8 @@ import {
   GatewayNotificationType,
 } from "../../../../src/types/unified";
 import { WebSocket } from "ws";
+import type { RemoteAccessStatus } from "../../../../shared/remote-access";
+import { isLocalGatewayRequest, isRemoteAccessRequestAllowed } from "../../../../shared/remote-access-policy";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -207,9 +210,7 @@ interface TestHarness {
  * Create a fully-mocked GatewayServer ready for testing.
  * Starts the server so the WSS connection handler is wired up.
  */
-function createTestHarness(options?: {
-  authValidator?: (token: string) => boolean;
-}): TestHarness {
+function createTestHarness(options?: ConstructorParameters<typeof GatewayServer>[1]): TestHarness {
   const engineManager = createMockEngineManager();
   const server = new GatewayServer(engineManager as any, options);
 
@@ -558,11 +559,255 @@ describe("GatewayServer", () => {
     });
   });
 
+  describe("remote access policy", () => {
+    function request(host: string, origin?: string, remoteAddress = "192.168.31.2"): IncomingMessage {
+      return {
+        url: "/ws",
+        headers: { host, ...(origin !== undefined ? { origin } : {}) },
+        rawHeaders: ["Host", host, ...(origin !== undefined ? ["Origin", origin] : [])],
+        socket: { remoteAddress },
+      } as IncomingMessage;
+    }
+
+    const remoteRequest = () => request("codemux.example:18233", "http://codemux.example:18233");
+    const localRequest = () => request("127.0.0.1:4200", "http://localhost:8233", "127.0.0.1");
+
+    function verifyUpgrade(req: IncomingMessage): boolean {
+      const done = vi.fn();
+      lastWssConstructorArgs.verifyClient({ req }, done);
+      return done.mock.calls[0]?.[0] === true;
+    }
+
+    it("rejects disabled remote upgrades before authentication on both listeners", () => {
+      const engineManager = createMockEngineManager();
+      const authValidator = vi.fn(() => true);
+      const server = new GatewayServer(engineManager as any, {
+        authValidator,
+        requestValidator: (req) => isRemoteAccessRequestAllowed(req, { mode: "off", url: "" }, true),
+      });
+      for (const options of [{ port: 0 }, { server: {} as any, path: "/ws" }]) {
+        server.start(options);
+        const rejected = vi.fn();
+        lastWssConstructorArgs.verifyClient({ req: remoteRequest() }, rejected);
+        expect(rejected).toHaveBeenCalledWith(false, 403, "Remote access disabled");
+        expect(verifyUpgrade(localRequest())).toBe(true);
+        expect(authValidator).not.toHaveBeenCalled();
+        server.stop();
+      }
+    });
+
+    it("fails closed when the admission validator throws", () => {
+      const { connect } = createTestHarness({ requestValidator: () => { throw new Error("Unavailable policy"); } });
+      expect(verifyUpgrade(remoteRequest())).toBe(false);
+      const ws = connect(remoteRequest());
+      expect(ws.close).toHaveBeenCalledWith(4003, "Remote access disabled");
+      expect(ws.on).not.toHaveBeenCalled();
+    });
+
+    it("immediately withdraws authenticated and unauthenticated remote sockets while preserving local clients", async () => {
+      let status: Pick<RemoteAccessStatus, "mode" | "url"> = { mode: "custom", url: "http://codemux.example:18233" };
+      const { server, connect, sendMessage, engineManager } = createTestHarness({
+        authValidator: (token) => token === "device-token",
+        requestValidator: (req) => isRemoteAccessRequestAllowed(req, status, true),
+      });
+      const remote = connect(remoteRequest());
+      await sendMessage(remote, { type: "auth", token: "device-token", requestId: "auth" });
+      mockRandomUUID.mockReturnValueOnce("remote-pending");
+      const pending = connect(remoteRequest());
+      mockRandomUUID.mockReturnValueOnce("local-client");
+      const local = connect(localRequest());
+      await sendMessage(local, { type: "auth", token: "device-token", requestId: "auth" });
+      remote.send.mockClear();
+      status = { mode: "off", url: "" };
+
+      server.revalidateClients();
+      expect(remote.close).toHaveBeenCalledWith(4003, "Remote access disabled");
+      expect(pending.close).toHaveBeenCalledWith(4003, "Remote access disabled");
+      expect(local.close).not.toHaveBeenCalled();
+      await sendMessage(remote, { type: GatewayRequestType.ENGINE_LIST, requestId: "remote", payload: {} });
+      expect(engineManager.listEngines).not.toHaveBeenCalled();
+      expect(remote.send).not.toHaveBeenCalled();
+      await sendMessage(local, { type: GatewayRequestType.ENGINE_LIST, requestId: "local", payload: {} });
+      expect(engineManager.listEngines).toHaveBeenCalledOnce();
+    });
+
+    it("disconnects the previous entry when switching providers or changing the custom origin", () => {
+      let status: Pick<RemoteAccessStatus, "mode" | "url"> = { mode: "custom", url: "http://codemux.example:18233" };
+      const { server, connect } = createTestHarness({ requestValidator: (req) => isRemoteAccessRequestAllowed(req, status, true) });
+      const remote = connect(remoteRequest());
+      status = { mode: "cloudflare", url: "https://codemux.trycloudflare.com" };
+      server.revalidateClients();
+      expect(remote.close).toHaveBeenCalledWith(4003, "Remote access disabled");
+      expect(verifyUpgrade(remoteRequest())).toBe(false);
+      expect(verifyUpgrade(request("codemux.trycloudflare.com", "https://codemux.trycloudflare.com"))).toBe(true);
+      status = { mode: "custom", url: "http://new.example:18233" };
+      expect(verifyUpgrade(remoteRequest())).toBe(false);
+    });
+
+    it("rechecks policy before auth frames, broadcasts, and idle keepalive", async () => {
+      let allowed = true;
+      const validator = vi.fn(() => true);
+      const { connect, sendMessage, engineManager } = createTestHarness({ authValidator: validator, requestValidator: () => allowed });
+      const remote = connect(remoteRequest());
+      await sendMessage(remote, { type: "auth", token: "device-token", requestId: "auth" });
+      mockRandomUUID.mockReturnValueOnce("waiting-client");
+      const waiting = connect(remoteRequest());
+      remote.send.mockClear();
+      validator.mockClear();
+      allowed = false;
+      await sendMessage(waiting, { type: "auth", token: "device-token", requestId: "auth" });
+      expect(validator).not.toHaveBeenCalled();
+      expect(waiting.send).not.toHaveBeenCalled();
+      engineManager.emit("message.updated", { sessionId: "s1", message: { id: "m1" } });
+      expect(remote.send).not.toHaveBeenCalled();
+      vi.advanceTimersByTime(30_000);
+      expect(remote.ping).not.toHaveBeenCalled();
+      expect(waiting.ping).not.toHaveBeenCalled();
+      expect(remote.close).toHaveBeenCalledWith(4003, "Remote access disabled");
+      expect(waiting.close).toHaveBeenCalledWith(4003, "Remote access disabled");
+    });
+
+    it("drops a pending response when access is disabled before completion", async () => {
+      let allowed = true;
+      const { connect, sendMessage, engineManager } = createTestHarness({ requestValidator: () => allowed });
+      const remote = connect(remoteRequest());
+      let finish!: (message: { id: string }) => void;
+      engineManager.sendMessage.mockReturnValueOnce(new Promise((resolve) => { finish = resolve; }));
+      const pending = sendMessage(remote, {
+        type: GatewayRequestType.MESSAGE_SEND,
+        requestId: "r1",
+        payload: { sessionId: "s1", content: [{ type: "text", text: "hello" }] },
+      });
+      allowed = false;
+      finish({ id: "result" });
+      await pending;
+      expect(remote.send).not.toHaveBeenCalled();
+      expect(remote.close).toHaveBeenCalledWith(4003, "Remote access disabled");
+    });
+
+    it("provides the original handshake request when validating private channel tokens", async () => {
+      const { connect, sendMessage } = createTestHarness({
+        authValidator: (token, req) => token === "internal-token" && req.headers.origin === undefined && isLocalGatewayRequest(req),
+      });
+      const internalReq = request("127.0.0.1:4200", undefined, "127.0.0.1");
+      internalReq.url = "/ws?token=internal-token";
+      const channel = connect(internalReq);
+      await sendMessage(channel, { type: GatewayRequestType.ENGINE_LIST, requestId: "r1", payload: {} });
+      expect(channel.send).toHaveBeenCalled();
+      mockRandomUUID.mockReturnValueOnce("local-browser");
+      const browser = connect(localRequest());
+      await sendMessage(browser, { type: "auth", token: "internal-token", requestId: "auth" });
+      expect(browser.close).toHaveBeenCalledWith(4001, "Unauthorized");
+      mockRandomUUID.mockReturnValueOnce("remote-channel");
+      const remote = connect(request("codemux.example:18233"));
+      await sendMessage(remote, { type: "auth", token: "internal-token", requestId: "auth" });
+      expect(remote.close).toHaveBeenCalledWith(4001, "Unauthorized");
+    });
+  });
+
   // =========================================================================
   // handleMessage - auth flow
   // =========================================================================
 
   describe("handleMessage - auth flow", () => {
+    it("acknowledges the client handshake when authentication is explicitly disabled", async () => {
+      const { connect, sendMessage } = createTestHarness();
+      const ws = connect();
+      await sendMessage(ws, { type: "auth", token: "test-token", requestId: "auth-1" });
+      expect(ws.send).toHaveBeenCalledWith(JSON.stringify({
+        type: "response", requestId: "auth-1", payload: { authenticated: true },
+      }));
+      expect(ws.close).not.toHaveBeenCalled();
+    });
+
+    it("rejects commands after a query-authenticated device is revoked", async () => {
+      let authorized = true;
+      const { connect, sendMessage, engineManager } = createTestHarness({
+        authValidator: (token) => authorized && token === "device-token",
+      });
+      const ws = connect({ url: "/ws?token=device-token" });
+      authorized = false;
+
+      await sendMessage(ws, { type: GatewayRequestType.ENGINE_LIST, requestId: "r1", payload: {} });
+
+      expect(engineManager.listEngines).not.toHaveBeenCalled();
+      expect(ws.send).not.toHaveBeenCalled();
+      expect(ws.close).toHaveBeenCalledWith(4001, "Unauthorized");
+    });
+
+    it("rejects broadcasts after a first-frame authenticated device is revoked", async () => {
+      let authorized = true;
+      const { connect, sendMessage, engineManager } = createTestHarness({
+        authValidator: (token) => authorized && token === "device-token",
+      });
+      const ws = connect();
+      await sendMessage(ws, { type: "auth", token: "device-token", requestId: "auth" });
+      ws.send.mockClear();
+      authorized = false;
+
+      engineManager.emit("message.updated", { sessionId: "s1", message: { id: "m1" } });
+
+      expect(ws.send).not.toHaveBeenCalled();
+      expect(ws.close).toHaveBeenCalledWith(4001, "Unauthorized");
+    });
+
+    it("drops a pending command response if its device is revoked before completion", async () => {
+      let authorized = true;
+      const { connect, sendMessage, engineManager } = createTestHarness({ authValidator: () => authorized });
+      const ws = connect({ url: "/ws?token=device-token" });
+      let finish!: (message: { id: string }) => void;
+      engineManager.sendMessage.mockReturnValueOnce(new Promise((resolve) => { finish = resolve; }));
+      const pending = sendMessage(ws, {
+        type: GatewayRequestType.MESSAGE_SEND,
+        requestId: "r1",
+        payload: { sessionId: "s1", content: [{ type: "text", text: "hello" }] },
+      });
+      authorized = false;
+      finish({ id: "result" });
+      await pending;
+
+      expect(ws.send).not.toHaveBeenCalled();
+      expect(ws.close).toHaveBeenCalledWith(4001, "Unauthorized");
+    });
+
+    it("closes revoked idle devices during the keepalive check", () => {
+      let authorized = true;
+      const { connect } = createTestHarness({ authValidator: () => authorized });
+      const ws = connect({ url: "/ws?token=device-token" });
+      authorized = false;
+
+      vi.advanceTimersByTime(30_000);
+
+      expect(ws.ping).not.toHaveBeenCalled();
+      expect(ws.close).toHaveBeenCalledWith(4001, "Unauthorized");
+    });
+
+    it("blocks private terminal output after device revocation", async () => {
+      let authorized = true;
+      const { connect } = createTestHarness({ authValidator: () => authorized });
+      const ws = connect({ url: "/ws?token=device-token" });
+      authorized = false;
+      const { getTerminalService } = await import("../../../../electron/main/services/terminal-service");
+
+      getTerminalService().emit("data", { terminalId: "term-1", ownerClientId: "test-client-id", data: "private output" });
+
+      expect(ws.send).not.toHaveBeenCalled();
+      expect(ws.close).toHaveBeenCalledWith(4001, "Unauthorized");
+    });
+
+    it("fails closed when token validation throws", async () => {
+      const { connect, sendMessage, engineManager } = createTestHarness({
+        authValidator: () => { throw new Error("Store unavailable"); },
+      });
+      const ws = connect({ url: "/ws?token=device-token" });
+
+      await sendMessage(ws, { type: "auth", token: "device-token" });
+
+      expect(engineManager.listEngines).not.toHaveBeenCalled();
+      expect(ws.send).not.toHaveBeenCalled();
+      expect(ws.close).toHaveBeenCalledWith(4001, "Unauthorized");
+    });
+
     it("authenticates via auth message with valid token", async () => {
       const validator = vi.fn((token: string) => token === "secret");
       const { connect, sendMessage } = createTestHarness({

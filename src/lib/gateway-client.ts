@@ -5,6 +5,7 @@
 
 import { gatewayAPI } from "./electron-api";
 import { isElectron } from "./platform";
+import { Auth } from "./auth";
 import {
   GatewayRequestType,
   type GatewayRequest,
@@ -192,17 +193,27 @@ export class GatewayClient {
       }
     }
 
+    const endpoint = new URL(this.wsUrl!);
+    const token = Auth.getToken() || endpoint.searchParams.get("token");
+    if (!token) throw new Error("Gateway authentication required");
+    // Authenticate in the first frame so device credentials stay out of URLs.
+    endpoint.searchParams.delete("token");
+
     return new Promise<void>((resolve, reject) => {
-      const ws = new WebSocket(this.wsUrl!);
+      const ws = new WebSocket(endpoint.toString());
+      const authRequestId = `auth_${++this.requestCounter}`;
+      let authTimer: ReturnType<typeof setTimeout> | undefined;
 
       ws.onopen = () => {
-        this._connected = true;
-        this.reconnectAttempt = 0;
-        this.emit("connected");
-        resolve();
+        authTimer = setTimeout(() => {
+          reject(new Error("Gateway authentication timed out"));
+          ws.close(4000, "Authentication timed out");
+        }, 10_000);
+        ws.send(JSON.stringify({ type: "auth", requestId: authRequestId, token }));
       };
 
       ws.onclose = (ev) => {
+        if (authTimer) clearTimeout(authTimer);
         const wasConnected = this._connected;
         this._connected = false;
         this.ws = null;
@@ -213,7 +224,7 @@ export class GatewayClient {
           reject(new Error("Failed to connect to gateway"));
         }
 
-        if (!this.manualClose) {
+        if (!this.manualClose && ev.code !== 4001) {
           this.scheduleReconnect();
         }
       };
@@ -224,6 +235,28 @@ export class GatewayClient {
       };
 
       ws.onmessage = (ev) => {
+        if (!this._connected) {
+          let response: GatewayResponse;
+          try {
+            response = JSON.parse(ev.data as string);
+          } catch {
+            return;
+          }
+          if (response?.type !== "response" || response.requestId !== authRequestId) return;
+          if (authTimer) clearTimeout(authTimer);
+          const payload = response.payload;
+          if (response.error || !payload || typeof payload !== "object"
+            || !("authenticated" in payload) || payload.authenticated !== true) {
+            reject(new Error("Gateway authentication failed"));
+            ws.close(4001, "Unauthorized");
+            return;
+          }
+          this._connected = true;
+          this.reconnectAttempt = 0;
+          this.emit("connected");
+          resolve();
+          return;
+        }
         this.handleMessage(ev.data as string);
       };
 

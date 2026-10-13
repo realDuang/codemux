@@ -112,7 +112,7 @@ async function main() {
   console.log("Starting OpenCode Server...");
   const opencodeProcess = spawn(
     "opencode",
-    ["serve", "--hostname", "0.0.0.0", "--port", String(OPENCODE_PORT), "--cors"],
+    ["serve", "--hostname", "127.0.0.1", "--port", String(OPENCODE_PORT), "--cors"],
     {
       stdio: "inherit",
       shell: isWindows,

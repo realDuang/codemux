@@ -1,4 +1,5 @@
 import { app, BrowserWindow } from "electron";
+import { randomBytes } from "node:crypto";
 import { shellEnvSync } from "shell-env";
 import { mainLog } from "./services/logger";
 import { unwatchAll } from "./services/file-service";
@@ -38,6 +39,8 @@ import { deviceStore } from "./services/device-store";
 import { conversationStore } from "./services/conversation-store";
 import { authApiServer } from "./services/auth-api-server";
 import { productionServer } from "./services/production-server";
+import { remoteAccessManager, setRemoteAccessPort, stopRemoteAccessTunnel } from "./services/remote-access-manager";
+import { isLocalGatewayRequest } from "../../shared/remote-access-policy";
 import { EngineManager } from "./gateway/engine-manager";
 import { GatewayServer } from "./gateway/ws-server";
 import { OpenCodeAdapter } from "./engines/opencode";
@@ -61,7 +64,14 @@ import { GATEWAY_PORT, OPENCODE_PORT, WEBHOOK_PORT, WEB_PORT } from "../../share
 
 // --- Gateway singleton instances ---
 const engineManager = new EngineManager();
-const gatewayServer = new GatewayServer(engineManager);
+const internalGatewayToken = randomBytes(32).toString("hex");
+const gatewayServer = new GatewayServer(engineManager, {
+  authValidator: (token, req) => token === internalGatewayToken
+    ? req.headers.origin === undefined && isLocalGatewayRequest(req)
+    : deviceStore.verifyToken(token).valid,
+  requestValidator: (req) => remoteAccessManager.isRequestAllowed(req, true),
+});
+remoteAccessManager.subscribe(() => gatewayServer.revalidateClients());
 
 // Register engine adapters
 const openCodeAdapter = new OpenCodeAdapter({ port: OPENCODE_PORT });
@@ -152,11 +162,16 @@ if (!gotTheLock) {
       try {
         productionServer.setChannelManager(channelManager);
         const port = await productionServer.start(WEB_PORT);
+        setRemoteAccessPort(port);
         mainLog.info(`Production server started on port ${port}`);
       } catch (err) {
         mainLog.error("Failed to start Production server:", err);
       }
     }
+
+    await remoteAccessManager.initialize().catch(error => {
+      mainLog.error("Failed to initialize remote access:", error);
+    });
 
     // Start Gateway WebSocket server
     try {
@@ -211,9 +226,12 @@ if (!gotTheLock) {
     Promise.allSettled(enginePromises).then(async () => {
       mainLog.info("All engines settled");
 
-      const gatewayUrl = app.isPackaged && productionServer.isRunning()
-        ? `ws://127.0.0.1:${WEB_PORT}/ws`
+      const gatewayBaseUrl = app.isPackaged && productionServer.isRunning()
+        ? `ws://127.0.0.1:${productionServer.getPort()}/ws`
         : `ws://127.0.0.1:${GATEWAY_PORT}`;
+      const internalGatewayUrl = new URL(gatewayBaseUrl);
+      internalGatewayUrl.searchParams.set("token", internalGatewayToken);
+      const gatewayUrl = internalGatewayUrl.toString();
 
       channelManager.setRuntimeOptions({ gatewayUrl });
 
@@ -278,6 +296,7 @@ if (!gotTheLock) {
       // the app bundle swap during an update.
       getTerminalService().destroyAll();
       gatewayServer.stop();
+      await stopRemoteAccessTunnel();
       return;
     }
 
@@ -298,7 +317,10 @@ if (!gotTheLock) {
       // Flush conversation store before quit
       await conversationStore.flushAll();
 
+      // HTTP server.close waits for upgraded WebSockets to disconnect.
+      gatewayServer.stop();
       await Promise.all([
+        stopRemoteAccessTunnel(),
         authApiServer.stop(),
         channelManager.stopAll(),
         webhookServer.stop(),
@@ -306,8 +328,6 @@ if (!gotTheLock) {
         productionServer.stop(),
         scheduledTaskService.shutdown(),
       ]);
-
-      gatewayServer.stop();
     } catch (err) {
       mainLog.error("Cleanup error:", err);
     }

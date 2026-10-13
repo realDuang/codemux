@@ -4,9 +4,8 @@ import tailwindcss from '@tailwindcss/vite';
 
 import { resolve } from 'path';
 import { createLogger } from 'vite';
-import { createAuthProxyPlugin } from './scripts/auth-proxy-plugin';
-import { tunnelManager } from './scripts/tunnel-manager';
-import { GATEWAY_PORT, OPENCODE_PORT, WEBHOOK_PORT, WEB_PORT } from './shared/ports';
+import { createAuthProxyPlugin, isElectronRemoteRequestAllowed, preserveProxyRequestIdentity } from './scripts/auth-proxy-plugin';
+import { GATEWAY_PORT, WEBHOOK_PORT, WEB_PORT } from './shared/ports';
 
 // Custom logger that suppresses proxy errors during startup
 const logger = createLogger();
@@ -70,7 +69,6 @@ export default defineConfig({
       solid(),
       // Proxy auth/device API requests to Electron's internal Auth API server
       createAuthProxyPlugin({
-        tunnelManager,
         defaultPort: WEB_PORT,
       }),
     ],
@@ -89,14 +87,12 @@ export default defineConfig({
         '/ws': {
           target: `http://localhost:${GATEWAY_PORT}`,
           ws: true,
-        },
-        // Proxy OpenCode API requests to the OpenCode server
-        '/opencode-api': {
-          target: `http://localhost:${OPENCODE_PORT}`,
-          changeOrigin: true,
-          rewrite: (path) => path.replace(/^\/opencode-api/, ''),
-          // Handle SSE connections properly
-          ws: false,
+          // Vite awaits this hook before handing upgrades to its WS proxy.
+          bypass: async req => await isElectronRemoteRequestAllowed(req, true) ? undefined : false,
+          configure: proxy => {
+            proxy.on('proxyReq', preserveProxyRequestIdentity);
+            proxy.on('proxyReqWs', preserveProxyRequestIdentity);
+          },
         },
         // Proxy webhook endpoints to the WebhookServer
         '/api/messages': {

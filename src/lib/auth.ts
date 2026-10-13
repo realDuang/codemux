@@ -164,8 +164,8 @@ export class Auth {
   // -------------------------------------------------------------------------
 
   /**
-   * Check if current device token is still valid
-   * Returns true if valid, false if not (should show login)
+   * Return false only when the saved device token is missing or confirmed invalid.
+   * Disabled access and unavailable servers must preserve the device approval.
    */
   static async checkDeviceToken(): Promise<boolean> {
     const token = this.getToken();
@@ -188,18 +188,24 @@ export class Auth {
         headers: { Authorization: `Bearer ${token}` },
       });
 
-      if (response.ok) {
-        const data: ValidateResponse = await response.json();
-        if (data.valid && data.deviceId) {
-          // Update local device ID if needed
-          this.saveDeviceId(data.deviceId);
-          return true;
-        }
+      if (response.status === 401) {
+        this.clearAuth();
+        return false;
       }
+      // Access policy can return 403 while the device token remains valid.
+      // Other failed responses cannot establish that its approval was revoked.
+      if (!response.ok) return true;
 
-      // Token invalid - clear it
-      this.clearAuth();
-      return false;
+      const data: ValidateResponse = await response.json();
+      if (data.valid === false) {
+        this.clearAuth();
+        return false;
+      }
+      if (data.valid && data.deviceId) {
+        // Update local device ID if needed
+        this.saveDeviceId(data.deviceId);
+      }
+      return true;
     } catch (err) {
       logger.error("Token validation error:", err);
       // Network error - assume token might still be valid

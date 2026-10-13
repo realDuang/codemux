@@ -11,6 +11,16 @@ interface ImportMeta {
 
 // Electron API type declarations for renderer process
 interface ElectronAPI {
+  remoteAccess: {
+    getStatus: () => Promise<import("../shared/remote-access").RemoteAccessStatus>;
+    update: (patch: import("../shared/remote-access").RemoteAccessUpdate) => Promise<import("../shared/remote-access").RemoteAccessStatus>;
+  };
+  settings: {
+    cache: Record<string, unknown>;
+    load: () => Promise<Record<string, unknown>>;
+    save: (patch: Record<string, unknown>) => Promise<{ success: boolean }>;
+  };
+
   system: {
     getInfo: () => Promise<{
       platform: string;

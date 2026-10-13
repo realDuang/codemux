@@ -6,6 +6,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import type { RemoteAccessStatus, RemoteAccessUpdate } from "../../../shared/remote-access";
 
 // ─── Hoisted mocks (must be created before any imports) ──────────────────────
 
@@ -46,10 +47,21 @@ const mockDeviceStore = vi.hoisted(() => ({
 }));
 
 const mockTunnelManager = vi.hoisted(() => ({
-  start: vi.fn().mockResolvedValue({ status: "starting", url: "" }),
-  stop: vi.fn().mockResolvedValue(undefined),
   getInfo: vi.fn(() => ({ status: "stopped", url: "" })),
-  setOnUnexpectedExit: vi.fn(),
+}));
+
+const mockRemoteAccessStatus = vi.hoisted((): RemoteAccessStatus => ({
+  mode: "off",
+  customAccessUrl: "",
+  url: "",
+  tunnel: { status: "stopped", url: "" },
+  tunnelConfig: {},
+  cloudflareAvailable: true,
+}));
+
+const mockRemoteAccessManager = vi.hoisted(() => ({
+  getStatus: vi.fn((): RemoteAccessStatus => mockRemoteAccessStatus),
+  update: vi.fn(async (_patch: RemoteAccessUpdate): Promise<RemoteAccessStatus> => mockRemoteAccessStatus),
 }));
 
 const mockProductionServer = vi.hoisted(() => ({
@@ -114,6 +126,10 @@ vi.mock("../../../electron/main/services/tunnel-manager", () => ({
   tunnelManager: mockTunnelManager,
 }));
 
+vi.mock("../../../electron/main/services/remote-access-manager", () => ({
+  remoteAccessManager: mockRemoteAccessManager,
+}));
+
 vi.mock("../../../electron/main/services/production-server", () => ({
   productionServer: mockProductionServer,
 }));
@@ -174,6 +190,8 @@ describe("registerIpcHandlers", () => {
     vi.clearAllMocks();
     mockApp.isPackaged = false;
     mockProductionServer.isRunning.mockReturnValue(false);
+    mockRemoteAccessManager.getStatus.mockReturnValue(mockRemoteAccessStatus);
+    mockRemoteAccessManager.update.mockResolvedValue(mockRemoteAccessStatus);
     registerIpcHandlers();
   });
 
@@ -534,57 +552,42 @@ describe("registerIpcHandlers", () => {
   // ===========================================================================
 
   describe("tunnel:start", () => {
-    it("passes the given port directly in dev mode (not packaged)", async () => {
-      mockApp.isPackaged = false;
-      mockLoadSettings.mockReturnValue({});
-      await getHandler("tunnel:start")(fakeEvent, 3000);
-      expect(mockTunnelManager.start).toHaveBeenCalledWith(3000, undefined);
-    });
-
-    it("uses production server port when packaged AND production server is running", async () => {
-      mockApp.isPackaged = true;
-      mockProductionServer.isRunning.mockReturnValue(true);
-      mockProductionServer.getPort.mockReturnValue(8080);
-      mockLoadSettings.mockReturnValue({});
-      await getHandler("tunnel:start")(fakeEvent, 3000);
-      expect(mockTunnelManager.start).toHaveBeenCalledWith(8080, undefined);
-    });
-
-    it("uses given port when packaged but production server is NOT running", async () => {
-      mockApp.isPackaged = true;
-      mockProductionServer.isRunning.mockReturnValue(false);
-      mockLoadSettings.mockReturnValue({});
-      await getHandler("tunnel:start")(fakeEvent, 5000);
-      expect(mockTunnelManager.start).toHaveBeenCalledWith(5000, undefined);
-    });
-
-    it("passes tunnelConfig from settings to tunnelManager.start", async () => {
-      mockApp.isPackaged = false;
-      mockLoadSettings.mockReturnValue({ tunnelConfig: { hostname: "custom.host.com" } });
-      await getHandler("tunnel:start")(fakeEvent, 3000);
-      expect(mockTunnelManager.start).toHaveBeenCalledWith(3000, { hostname: "custom.host.com" });
-    });
-
-    it("prefers explicit tunnelConfig over settings", async () => {
-      mockApp.isPackaged = false;
-      mockLoadSettings.mockReturnValue({ tunnelConfig: { hostname: "old.host.com" } });
-      await getHandler("tunnel:start")(fakeEvent, 3000, { hostname: "new.host.com" });
-      expect(mockTunnelManager.start).toHaveBeenCalledWith(3000, { hostname: "new.host.com" });
+    it("activates Cloudflare through the authoritative manager and returns its tunnel status", async () => {
+      const tunnel = { status: "running" as const, url: "https://codemux.example" };
+      mockRemoteAccessManager.update.mockResolvedValueOnce({ ...mockRemoteAccessStatus, mode: "cloudflare", url: tunnel.url, tunnel });
+      const result = await getHandler("tunnel:start")(fakeEvent, 3000);
+      expect(mockRemoteAccessManager.update).toHaveBeenCalledWith({ mode: "cloudflare" });
       expect(mockLoadSettings).not.toHaveBeenCalled();
+      expect(result).toEqual(tunnel);
     });
 
-    it("passes undefined tunnelConfig when settings has none", async () => {
-      mockApp.isPackaged = false;
-      mockLoadSettings.mockReturnValue({ otherSetting: true });
-      await getHandler("tunnel:start")(fakeEvent, 3000);
-      expect(mockTunnelManager.start).toHaveBeenCalledWith(3000, undefined);
+    it("passes explicit hostname configuration with the mode change", async () => {
+      await getHandler("tunnel:start")(fakeEvent, 3000, { hostname: "custom.host.com" });
+      expect(mockRemoteAccessManager.update).toHaveBeenCalledWith({ mode: "cloudflare", tunnelConfig: { hostname: "custom.host.com" } });
+    });
+
+    it("preserves an explicit empty configuration to reset a saved hostname", async () => {
+      await getHandler("tunnel:start")(fakeEvent, 3000, {});
+      expect(mockRemoteAccessManager.update).toHaveBeenCalledWith({ mode: "cloudflare", tunnelConfig: {} });
+    });
+
+    it("propagates a failed transition without reporting a successful tunnel", async () => {
+      mockRemoteAccessManager.update.mockRejectedValueOnce(new Error("Tunnel failed to start"));
+      await expect(getHandler("tunnel:start")(fakeEvent, 3000)).rejects.toThrow("Tunnel failed to start");
     });
   });
 
   describe("tunnel:stop", () => {
-    it("delegates to tunnelManager.stop", async () => {
+    it("disables the active Cloudflare mode through the manager", async () => {
+      mockRemoteAccessManager.getStatus.mockReturnValueOnce({ ...mockRemoteAccessStatus, mode: "cloudflare" });
       await getHandler("tunnel:stop")(fakeEvent);
-      expect(mockTunnelManager.stop).toHaveBeenCalled();
+      expect(mockRemoteAccessManager.update).toHaveBeenCalledWith({ mode: "off" });
+    });
+
+    it.each(["off", "custom"] as const)("preserves the %s access mode when a legacy stop is requested", async mode => {
+      mockRemoteAccessManager.getStatus.mockReturnValueOnce({ ...mockRemoteAccessStatus, mode });
+      await getHandler("tunnel:stop")(fakeEvent);
+      expect(mockRemoteAccessManager.update).not.toHaveBeenCalled();
     });
   });
 
@@ -596,50 +599,28 @@ describe("registerIpcHandlers", () => {
     });
   });
 
-  describe("tunnelManager.setOnUnexpectedExit callback", () => {
-    it("sends 'tunnel:disconnected' to non-destroyed windows", () => {
-      const sendFn = vi.fn();
-      const mockWin = {
-        isDestroyed: () => false,
-        webContents: { send: sendFn },
-      };
-      mockBrowserWindow.getAllWindows.mockReturnValue([mockWin]);
+  describe("remoteAccess:getStatus", () => {
+    it("returns the authoritative access status", async () => {
+      const status = { ...mockRemoteAccessStatus, mode: "custom" as const, customAccessUrl: "http://192.168.31.123:18233", url: "http://192.168.31.123:18233" };
+      mockRemoteAccessManager.getStatus.mockReturnValueOnce(status);
+      expect(await getHandler("remoteAccess:getStatus")(fakeEvent)).toEqual(status);
+    });
+  });
 
-      // Extract callback that was passed to setOnUnexpectedExit
-      expect(mockTunnelManager.setOnUnexpectedExit).toHaveBeenCalled();
-      const [callback] = mockTunnelManager.setOnUnexpectedExit.mock.calls[0];
-      callback();
-
-      expect(sendFn).toHaveBeenCalledWith("tunnel:disconnected");
+  describe("remoteAccess:update", () => {
+    it("applies an access patch through the manager and returns the resulting status", async () => {
+      const patch = { mode: "custom" as const, customAccessUrl: "http://192.168.31.123:18233" };
+      const status = { ...mockRemoteAccessStatus, ...patch, url: patch.customAccessUrl };
+      mockRemoteAccessManager.update.mockResolvedValueOnce(status);
+      expect(await getHandler("remoteAccess:update")(fakeEvent, patch)).toEqual(status);
+      expect(mockRemoteAccessManager.update).toHaveBeenCalledWith(patch);
+      expect(mockSaveSettings).not.toHaveBeenCalled();
     });
 
-    it("does NOT send to destroyed windows", () => {
-      const sendFn = vi.fn();
-      const mockWin = {
-        isDestroyed: () => true,
-        webContents: { send: sendFn },
-      };
-      mockBrowserWindow.getAllWindows.mockReturnValue([mockWin]);
-
-      const [callback] = mockTunnelManager.setOnUnexpectedExit.mock.calls[0];
-      callback();
-
-      expect(sendFn).not.toHaveBeenCalled();
-    });
-
-    it("handles a mix of destroyed and non-destroyed windows", () => {
-      const sendFn1 = vi.fn();
-      const sendFn2 = vi.fn();
-      mockBrowserWindow.getAllWindows.mockReturnValue([
-        { isDestroyed: () => true, webContents: { send: sendFn1 } },
-        { isDestroyed: () => false, webContents: { send: sendFn2 } },
-      ]);
-
-      const [callback] = mockTunnelManager.setOnUnexpectedExit.mock.calls[0];
-      callback();
-
-      expect(sendFn1).not.toHaveBeenCalled();
-      expect(sendFn2).toHaveBeenCalledWith("tunnel:disconnected");
+    it("propagates rejected patches without a settings write", async () => {
+      mockRemoteAccessManager.update.mockRejectedValueOnce(new Error("Invalid access URL"));
+      await expect(getHandler("remoteAccess:update")(fakeEvent, { mode: "custom", customAccessUrl: "invalid" })).rejects.toThrow("Invalid access URL");
+      expect(mockSaveSettings).not.toHaveBeenCalled();
     });
   });
 
@@ -804,6 +785,17 @@ describe("registerIpcHandlers", () => {
       const result = await getHandler("settings:save")(fakeEvent, { theme: "light" });
       expect(mockSaveSettings).toHaveBeenCalledWith({ theme: "light" });
       expect(result).toEqual({ success: true });
+    });
+
+    it.each([
+      { remoteAccessMode: "custom" },
+      { customAccessUrl: "http://192.168.31.123:18233" },
+      { tunnelConfig: { hostname: "custom.host.com" } },
+      { theme: "dark", remoteAccessMode: "off" },
+    ])("rejects connection settings outside the access controls: %j", async patch => {
+      await expect(getHandler("settings:save")(fakeEvent, patch)).rejects.toThrow("Use remote access controls to change connection settings.");
+      expect(mockSaveSettings).not.toHaveBeenCalled();
+      expect(mockRemoteAccessManager.update).not.toHaveBeenCalled();
     });
   });
 

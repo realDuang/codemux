@@ -105,7 +105,11 @@ describe("verifyCodexRolloutPath", () => {
     FILENAME.replace("T12-34-56", "T24-00-00"), FILENAME.replace("T12-34-56", "T12-60-00"),
     FILENAME.replace("T12-34-56", "T12-34-60"),
   ])("rejects an invalid rollout filename %s", async (filename) => {
-    expect(await verify(await file(join(home, "archived_sessions", filename)))).toBeUndefined();
+    // Invalid names must be rejected before filesystem access, including names
+    // that Windows itself cannot create (for example, a colon in the time).
+    vi.mocked(filesystem.realpath).mockClear();
+    expect(await verify(join(home, "archived_sessions", filename))).toBeUndefined();
+    expect(filesystem.realpath).not.toHaveBeenCalled();
   });
 
   it("recognizes leap-day timestamps and rejects inconsistent active directory dates", async () => {
@@ -160,6 +164,15 @@ describe("verifyCodexRolloutPath", () => {
   });
 
   it("rejects a canonical filename with a trailing newline reached through a clean symlink", async () => {
+    if (process.platform === "win32") {
+      // NTFS rejects control characters in filenames; simulate the canonical
+      // resolution to exercise the same validation without an impossible file.
+      const canonicalHome = await realpath(home);
+      vi.mocked(filesystem.realpath).mockResolvedValueOnce(canonicalHome)
+        .mockResolvedValueOnce(`${activePath()}\n`);
+      expect(await verify(activePath())).toBeUndefined();
+      return;
+    }
     const target = await file(`${activePath()}\n`);
     await symlink(target, activePath(), "file");
     expect(await verify(activePath())).toBeUndefined();

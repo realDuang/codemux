@@ -176,6 +176,8 @@ export default mergeConfig(webConfig, defineConfig({
   ],
   server: {
     port: WEB_STANDALONE_PORT,
+    // Keep the advertised access URL and the tunnel target on the same port.
+    strictPort: true,
     host: true,
     allowedHosts: true,
     proxy: {

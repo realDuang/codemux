@@ -81,6 +81,8 @@ export default defineConfig({
       hmr: false,
       host: true,
       port: WEB_PORT,
+      // The host's tunnel targets this configured port; never silently move it.
+      strictPort: true,
       allowedHosts: true,
       proxy: {
         // Proxy Gateway WebSocket to the Gateway server

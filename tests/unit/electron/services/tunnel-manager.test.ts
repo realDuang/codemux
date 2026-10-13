@@ -66,8 +66,10 @@ import { tunnelManager } from "../../../../electron/main/services/tunnel-manager
 class MockChildProcess extends EventEmitter {
   stdout = new EventEmitter();
   stderr = new EventEmitter();
-  kill = vi.fn();
+  kill = vi.fn(() => true);
   pid = 12345;
+  exitCode: number | null = null;
+  signalCode: string | null = null;
 }
 
 function createMockProcess(): MockChildProcess {
@@ -98,6 +100,7 @@ describe("TunnelManager", () => {
   });
 
   afterEach(() => {
+    vi.useRealTimers();
     vi.restoreAllMocks();
   });
 
@@ -597,11 +600,9 @@ describe("TunnelManager", () => {
       );
 
       // Stop sets stoppedByUser = true before the close event fires
-      await tunnelManager.stop();
-
-      // The close event may fire from proc.once("close", resolve) in stop(),
-      // but onUnexpectedExit should NOT be called because stoppedByUser is true
+      const stopping = tunnelManager.stop();
       mockProcess.emit("close");
+      await stopping;
 
       expect(unexpectedExitCb).not.toHaveBeenCalled();
     });
@@ -691,6 +692,7 @@ describe("TunnelManager", () => {
 
     it("resolves even if kill throws (process already dead)", async () => {
       await tunnelManager.start(3000);
+      mockProcess.exitCode = 0;
 
       mockProcess.kill.mockImplementation(() => {
         throw new Error("Process already killed");
@@ -700,21 +702,58 @@ describe("TunnelManager", () => {
       await expect(tunnelManager.stop()).resolves.toBeUndefined();
     });
 
-    it("resolves via timeout if process never closes", async () => {
+    it("escalates shutdown and waits for close instead of resolving on timeout", async () => {
       vi.useFakeTimers();
 
       await tunnelManager.start(3000);
 
       const stopPromise = tunnelManager.stop();
+      let stopped = false;
+      void stopPromise.then(() => { stopped = true; });
 
       // Advance past the 5000ms timeout
       await vi.advanceTimersByTimeAsync(5000);
+      expect(mockProcess.kill).toHaveBeenCalledWith("SIGKILL");
+      expect(stopped).toBe(false);
+      mockProcess.emit("close");
       await stopPromise;
 
       // Should have resolved without error
       expect(tunnelManager.getInfo().status).toBe("stopped");
 
       vi.useRealTimers();
+    });
+
+    it("rejects unconfirmed shutdown and retains ownership of the connector", async () => {
+      vi.useFakeTimers();
+      await tunnelManager.start(3000);
+      const stopPromise = tunnelManager.stop();
+      const rejected = expect(stopPromise).rejects.toThrow("Cloudflare Tunnel did not stop.");
+      await vi.advanceTimersByTimeAsync(10_000);
+      await rejected;
+      expect((tunnelManager as any).process).toBe(mockProcess);
+      expect(tunnelManager.getInfo().status).toBe("error");
+      mockSpawn.mockClear();
+      await tunnelManager.start(4000);
+      expect(mockSpawn).not.toHaveBeenCalled();
+    });
+
+    it("ignores output and close events from the retired connector", async () => {
+      const callback = vi.fn();
+      tunnelManager.setOnUnexpectedExit(callback);
+      await tunnelManager.start(3000);
+      const retired = mockProcess;
+      const stopPromise = tunnelManager.stop();
+      retired.emit("close");
+      await stopPromise;
+      mockProcess = createMockProcess();
+      mockSpawn.mockReturnValue(mockProcess);
+      await tunnelManager.start(4000);
+      mockProcess.stdout.emit("data", Buffer.from("https://new.trycloudflare.com"));
+      retired.stdout.emit("data", Buffer.from("https://old.trycloudflare.com"));
+      retired.emit("close");
+      expect(tunnelManager.getInfo().url).toBe("https://new.trycloudflare.com");
+      expect(callback).not.toHaveBeenCalled();
     });
   });
 

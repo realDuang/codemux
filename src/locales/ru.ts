@@ -1,6 +1,22 @@
 import { LocaleDict } from "./en";
 
 export const ru: LocaleDict = {
+  pwa: {
+    install: "Установить",
+    installDescription: "Открывайте CodeMux с главного экрана.",
+    installTitle: "Добавьте CodeMux на главный экран",
+    installIos: "Откройте меню «Поделиться», выберите «На экран Домой», затем нажмите «Добавить».",
+    installIosBrowser: "Если этого пункта нет, откройте этот адрес в Safari.",
+    done: "Понятно",
+    dismiss: "Скрыть",
+    offline: "Нет сети. Подключитесь, чтобы отправлять сообщения и получать обновления.",
+    updateAvailable: "Доступна новая версия CodeMux.",
+    update: "Обновить",
+    updateImages: "Отправьте или удалите изображения из черновиков перед обновлением.",
+    updateUnsaved: "Черновик не сохранён. Скопируйте текст перед обновлением страницы вручную.",
+    updateBusy: "Ответ формируется. Обновите страницу после завершения.",
+    updateFailed: "Не удалось обновить. Попробуйте снова.",
+  },
   // Common
   common: {
     loading: "Загрузка...",
@@ -153,7 +169,7 @@ export const ru: LocaleDict = {
   // Remote Access page
   remote: {
     title: "Удалённый доступ",
-    publicAccess: "Публичный удалённый доступ",
+    publicAccess: "Cloudflare Tunnel",
     publicAccessDesc: "Доступ через туннель Cloudflare из интернета",
     starting: "Запуск туннеля, подождите...",
     startFailed: "Не удалось запустить. Убедитесь, что cloudflared установлен",
@@ -174,8 +190,34 @@ export const ru: LocaleDict = {
     lanQrDesc: "Убедитесь, что телефон и компьютер в одной Wi-Fi сети",
     webApp: "Веб-приложение",
     devicesDesc: "Управление устройствами, имеющими доступ к этому серверу",
-    publicAccessTab: "Публичный доступ",
-    publicAccessTabDesc: "Открыть локальный сервис в интернет через Cloudflare Tunnel для удалённого доступа и приёма Webhook-сообщений",
+    publicAccessTab: "Удалённый доступ",
+    publicAccessTabDesc: "Используйте свой IP-адрес или домен либо включите Cloudflare Tunnel для доступа через браузер и Webhook-вызовов.",
+    accessOffDescription: "Удалённый доступ выключен. Локальный доступ остаётся доступен.",
+    accessOnDescription: "Удалённый доступ включён выбранным способом.",
+    accessMethod: "Способ доступа",
+    accessCustomMethod: "Используйте свой IP, домен или сетевой маршрут.",
+    accessCloudflare: "Cloudflare Tunnel",
+    accessCloudflareMethod: "CodeMux запускает и управляет туннелем Cloudflare.",
+    accessExclusive: "Активен только один способ. Переключение отключает удалённых клиентов.",
+    accessSwitching: "Обновление удалённого доступа…",
+    accessUpdateFailed: "Не удалось обновить доступ. Проверьте соединение и настройки.",
+    accessUrlRequired: "Сначала сохраните свой адрес ниже.",
+    customAccessTitle: "Свой адрес доступа",
+    customAccessDesc: "Укажите адрес, уже ведущий к этому серверу CodeMux. Настройте сетевой доступ и HTTPS отдельно; сохранение адреса не создаёт туннель.",
+    customAccessUrl: "Свой URL доступа",
+    customAccessUrlPlaceholder: "http://192.168.1.20:8233 или https://codemux.example.com",
+    customAccessInvalid: "Введите HTTP- или HTTPS-адрес с необязательным портом. Путь, параметры запроса, фрагменты и учётные данные не поддерживаются.",
+    customAccessSaved: "Адрес доступа сохранён.",
+    customAccessSaveFailed: "Не удалось сохранить адрес доступа. Попробуйте ещё раз.",
+    customAccessClear: "Очистить",
+    customAccessConfigured: "Свой адрес доступа настроен",
+    custom: "Свой адрес",
+    customQrScan: "Сканировать QR для своего адреса",
+    customQrDesc: "Устройство должно иметь доступ к указанному IP-адресу или домену.",
+    copyAddress: "Копировать адрес",
+    copyAccessCode: "Копировать код доступа",
+    accessQrAlt: "QR-код доступа к CodeMux",
+    accessQrError: "Не удалось создать QR-код.",
     tunnelRunning: "Работает",
     tunnelStopped: "Остановлен",
     noteUrlChanges: "URL меняется при перезапуске",
@@ -190,11 +232,11 @@ export const ru: LocaleDict = {
     noteSecurity: "Безопасность доступа",
     noteSecurityDesc: "Для веб-доступа требуется 6-значный пароль. Webhook-точки проверяются соответствующими SDK каналов.",
     noteKeepRunning: "Держите приложение запущенным",
-    noteKeepRunningDesc: "Tunnel зависит от процесса CodeMux на этом компьютере. Закрытие приложения или переход в режим сна прерывает публичный доступ.",
+    noteKeepRunningDesc: "CodeMux должен работать на этом компьютере. Закрытие приложения или переход в режим сна прерывает удалённый доступ.",
     notes: "Примечания",
     publicAccessEnabled: "Публичный доступ включён — Cloudflare Tunnel работает",
-    publicAccessDisabled: "Публичный доступ отключён — включите Tunnel",
-    goToPublicAccess: "Перейти к публичному доступу",
+    publicAccessDisabled: "Настройте свой адрес или Cloudflare Tunnel",
+    goToPublicAccess: "Настроить удалённый доступ",
   },
 
   // Session Sidebar
@@ -248,6 +290,8 @@ export const ru: LocaleDict = {
 
   // Prompt Input
   prompt: {
+    draftSaveFailed: "Не удалось сохранить черновик на этом устройстве. Не закрывайте страницу или скопируйте текст.",
+    draftImagesNotSaved: "Изображения не сохраняются в черновиках. Добавьте их снова после открытия страницы.",
     buildMode: "Режим Build — выполнение изменений кода и команд",
     build: "Build",
     planMode: "Режим Plan — анализ и планирование только для чтения",
@@ -494,6 +538,9 @@ export const ru: LocaleDict = {
     webhookConnectBadge: "Webhook",
     tunnelRequired: "Публичный доступ не включён",
     tunnelRequiredDesc: "Перейдите на страницу публичного доступа и включите Tunnel для использования Webhook-каналов",
+    accessUrlRequired: "Адрес доступа не настроен",
+    accessUrlRequiredDesc: "Настройте свой адрес или запустите Cloudflare Tunnel на странице удалённого доступа.",
+    webhookReachabilityHint: "Адрес должен быть доступен провайдеру канала. Частный адрес или адрес локальной сети может не поддерживать Webhook-вызовы.",
     teamsWebhookGuide: "Укажите этот URL в Azure Bot Service → Settings → Messaging Endpoint",
     wecomWebhookGuide: "Укажите этот URL в консоли администратора WeCom → Приложение → Получение сообщений → URL обратного вызова",
     webhookEndpoint: "Endpoint",
@@ -538,6 +585,7 @@ export const ru: LocaleDict = {
   // Notifications
   notification: {
     messageSendFailed: "Не удалось отправить сообщение. Повторите попытку.",
+    messageSendInterrupted: "Отправка прервалась. Проверьте переписку перед повторной отправкой.",
     sessionCreateFailed: "Не удалось создать сессию.",
     sessionDeleteFailed: "Не удалось удалить сессию.",
     gatewayDisconnected: "Соединение прервано, переподключение...",

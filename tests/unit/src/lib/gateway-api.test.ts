@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import type { UnifiedMessage, UnifiedPart } from '../../../../src/types/unified';
 
 const mockGatewayClient = {
   connect: vi.fn().mockResolvedValue(undefined),
@@ -57,7 +58,28 @@ vi.mock('../../../../src/lib/logger', () => ({
 }));
 
 // Import after mocks are set up
-const { gateway } = await import('../../../../src/lib/gateway-api');
+const { gateway, gatewayConnected } = await import('../../../../src/lib/gateway-api');
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason: Error) => void;
+  const promise = new Promise<T>((res, rej) => { resolve = res; reject = rej; });
+  return { promise, resolve, reject };
+}
+
+function emit(event: string, payload?: unknown) {
+  const binding = mockGatewayClient.on.mock.calls.find(([name]) => name === event);
+  expect(binding).toBeDefined();
+  (binding![1] as (value?: unknown) => void)(payload);
+}
+
+function message(id: string, sessionId = 's1', parts: UnifiedPart[] = []): UnifiedMessage {
+  return { id, sessionId, role: 'assistant', time: { created: 1 }, parts };
+}
+
+function part(id: string, text: string, messageId = 'm1', sessionId = 's1'): UnifiedPart {
+  return { id, sessionId, messageId, type: 'text', text };
+}
 
 describe('GatewayAPI', () => {
   beforeEach(() => {
@@ -109,9 +131,12 @@ describe('GatewayAPI', () => {
 
   it('destroy resets initialized and disconnects', async () => {
     await gateway.init();
+    emit('connected');
+    expect(gatewayConnected()).toBe(true);
     vi.clearAllMocks();
     gateway.destroy();
     expect(gateway.isInitialized).toBe(false);
+    expect(gatewayConnected()).toBe(false);
     expect(mockGatewayClient.disconnect).toHaveBeenCalledOnce();
   });
 
@@ -175,6 +200,80 @@ describe('GatewayAPI', () => {
   it('listMessages delegates', async () => {
     await gateway.listMessages('s1');
     expect(mockGatewayClient.listMessages).toHaveBeenCalledWith('s1');
+  });
+
+  describe('listMessages', () => {
+    it('merges live part batches and message completion into an older snapshot', async () => {
+      const onPartsBatch = vi.fn();
+      await gateway.init({ onPartsBatch });
+      const pending = deferred<UnifiedMessage[]>();
+      mockGatewayClient.listMessages.mockReturnValueOnce(pending.promise);
+      const loading = gateway.listMessages('s1');
+
+      emit('message.part.updated', { sessionId: 's1', part: part('p1', 'live') });
+      const batch = [part('p1', 'latest'), part('p2', 'new tool output')];
+      emit('message.parts.batch', { sessionId: 's1', messageId: 'm1', parts: batch });
+      emit('message.updated', {
+        sessionId: 's1',
+        message: { ...message('m1'), time: { created: 1, completed: 10 } },
+      });
+      pending.resolve([message('m1', 's1', [part('p1', 'old'), part('disk-only', 'retained')])]);
+
+      const result = await loading;
+      expect(result).toHaveLength(1);
+      expect(result[0].time.completed).toBe(10);
+      expect(result[0].parts).toEqual([
+        part('p1', 'latest'), part('disk-only', 'retained'), part('p2', 'new tool output'),
+      ]);
+      expect(onPartsBatch).toHaveBeenCalledExactlyOnceWith('s1', 'm1', batch);
+    });
+
+    it('retains new messages and part-only placeholders without mixing sessions', async () => {
+      await gateway.init();
+      const pending = deferred<UnifiedMessage[]>();
+      mockGatewayClient.listMessages.mockReturnValueOnce(pending.promise);
+      const loading = gateway.listMessages('s1');
+      const live = { ...message('new'), time: { created: 2 } };
+      emit('message.updated', { sessionId: 's1', message: live });
+      emit('message.part.updated', { sessionId: 's1', part: part('new-part', 'live text', 'part-only') });
+      emit('message.updated', { sessionId: 'other', message: message('excluded', 'other') });
+      pending.resolve([message('older')]);
+
+      const result = await loading;
+      expect(result.map((item) => item.id)).toEqual(['older', 'new', 'part-only']);
+      expect(result[2]).toMatchObject({
+        sessionId: 's1', role: 'assistant', parts: [part('new-part', 'live text', 'part-only')],
+      });
+    });
+
+    it('keeps concurrent snapshot buffers independent', async () => {
+      await gateway.init();
+      const first = deferred<UnifiedMessage[]>();
+      const second = deferred<UnifiedMessage[]>();
+      mockGatewayClient.listMessages.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
+      const firstLoad = gateway.listMessages('s1');
+      const secondLoad = gateway.listMessages('s1');
+      emit('message.part.updated', { sessionId: 's1', part: part('p1', 'first event') });
+      first.resolve([message('m1')]);
+      expect((await firstLoad)[0].parts).toEqual([part('p1', 'first event')]);
+
+      emit('message.part.updated', { sessionId: 's1', part: part('p1', 'second event') });
+      second.resolve([message('m1')]);
+      expect((await secondLoad)[0].parts).toEqual([part('p1', 'second event')]);
+    });
+
+    it('discards failed snapshot updates before the next request', async () => {
+      await gateway.init();
+      const pending = deferred<UnifiedMessage[]>();
+      mockGatewayClient.listMessages.mockReturnValueOnce(pending.promise);
+      const loading = gateway.listMessages('s1');
+      emit('message.updated', { sessionId: 's1', message: message('failed-request-event') });
+      pending.reject(new Error('Connection interrupted'));
+      await expect(loading).rejects.toThrow('Connection interrupted');
+
+      mockGatewayClient.listMessages.mockResolvedValueOnce([message('fresh')]);
+      expect((await gateway.listMessages('s1')).map((item) => item.id)).toEqual(['fresh']);
+    });
   });
 
   it('getMessageSteps delegates', async () => {

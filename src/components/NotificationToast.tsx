@@ -22,7 +22,7 @@ const typeIcons: Record<NotificationType, string> = {
 export function NotificationToast() {
   const { t } = useI18n();
   return (
-    <div class="fixed bottom-4 right-4 z-[10000] flex flex-col gap-2 max-w-sm pointer-events-none">
+    <div data-component="notification-toasts" class="fixed bottom-4 right-4 z-[10000] flex flex-col gap-2 max-w-sm pointer-events-none">
       <For each={notifications()}>
         {(n) => (
           <div

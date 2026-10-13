@@ -277,13 +277,14 @@ After a browser has been approved, it can open **Settings → Channels** in the 
 
 | Method | Setup | Best For |
 |--------|-------|----------|
-| **LAN Browser** | Open `http://<your-ip>:8233`, enter 6-digit code or scan QR | Quick access from another device on the same network |
-| **Public Internet** | Toggle "Public Access" → share `*.trycloudflare.com` URL, or configure a custom domain with named tunnel credentials | Access from anywhere, no port forwarding needed |
+| **LAN Browser** | Select Custom entry, save `http://<your-ip>:8233`, and enable Remote Access | Quick access from another device on the same network |
+| **Custom IP / Domain** | Select Custom entry, save an existing reachable address, and enable Remote Access | Reuse your own network route or reverse proxy; [setup guide](docs/custom-access.md) |
+| **Public Internet** | Select Cloudflare Tunnel and enable Remote Access → share the tunnel URL | Access from anywhere, no port forwarding needed |
 | **IM Bot** | Configure bot credentials in Settings → Channels (desktop or approved web UI) | Interact from Feishu, DingTalk, Telegram, WeCom, or Teams |
 
 ### Cloudflare Custom Domains
 
-CodeMux uses Cloudflare quick tunnels by default. Quick tunnels require no Cloudflare account setup and produce a temporary `*.trycloudflare.com` URL each time they start.
+Remote access is off by default. Custom entry and Cloudflare Tunnel are mutually exclusive. Cloudflare quick tunnels require no Cloudflare account setup and produce a temporary `*.trycloudflare.com` URL each time they start.
 
 A custom domain requires a Cloudflare named tunnel and a local tunnel credential file. CodeMux looks for a UUID-named JSON file in `~/.cloudflared/`, for example `~/.cloudflared/<tunnel-id>.json`. If a custom domain is configured but that credential is missing, CodeMux will stop startup with a missing-credentials error instead of silently falling back to a random quick tunnel URL.
 
@@ -372,7 +373,9 @@ bun run server:access-code # Print the current 6-digit access code
 bun run server:access-requests # Interactively review pending remote access requests
 bun run server:down        # Stop background headless Electron dev
 bun run server:status      # Show background headless Electron dev status
-bun run build              # Production build
+bun run build              # Build Electron and Web/PWA clients
+bun run build:desktop      # Electron renderer, main, and preload only
+bun run build:web          # Independent Web/PWA client in out/web
 bun run dist:mac:arm64     # macOS Apple Silicon
 bun run dist:mac:x64       # macOS Intel
 bun run dist:win           # Windows NSIS installer
@@ -381,6 +384,8 @@ bun run update:cloudflared # Update Cloudflare Tunnel binary
 ```
 
 ### Project Structure
+
+See [Web and mobile PWA](docs/web-pwa.md) for build boundaries, mobile installation, caching, and validation.
 
 ```
 codemux/

@@ -809,6 +809,26 @@ describe("EngineManager", () => {
       expect(engineManager.isSessionIdle("conv1")).toBe(true);
     });
 
+    it("getSession reports running before the first assistant reply and idle after completion", async () => {
+      let completeReply: (message: UnifiedMessage) => void = () => {};
+      adapterA.sendMessage.mockReturnValue(new Promise<UnifiedMessage>((resolve) => { completeReply = resolve; }));
+
+      const sendPromise = engineManager.sendMessage("conv1", [{ type: "text", text: "hi" }]);
+      expect(await engineManager.getSession("conv1")).toMatchObject({ activityStatus: "running" });
+      expect(conversationStore.listMessages).not.toHaveBeenCalled();
+      expect(conversationStore.updateMessage).not.toHaveBeenCalled();
+
+      completeReply({
+        id: "completed-reply",
+        sessionId: "engine-session-1",
+        role: "assistant",
+        time: { created: 1000, completed: 2000 },
+        parts: [],
+      });
+      await sendPromise;
+      expect(await engineManager.getSession("conv1")).toMatchObject({ activityStatus: "idle" });
+    });
+
     it("cancels messages and retrieves message history or steps", async () => {
       (conversationStore.get as any).mockReturnValue(
         makeMockConv({ id: "conv1", engineSessionId: "engine-s1" }),

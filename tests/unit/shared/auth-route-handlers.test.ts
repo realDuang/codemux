@@ -50,7 +50,7 @@ describe('auth-route-handlers', () => {
     const req = new EventEmitter() as any;
     req.url = urlStr;
     req.method = method;
-    req.headers = {};
+    req.headers = { host: 'localhost:8233' };
     req.socket = { remoteAddress: '127.0.0.1' };
     if (body) {
       setTimeout(() => {
@@ -178,7 +178,7 @@ describe('auth-route-handlers', () => {
   });
 
   describe('POST /api/auth/local-auth', () => {
-    it('handles local authentication successfully or rejects it', async () => {
+    it('creates a host token for a loopback endpoint', async () => {
       const pathname = '/api/auth/local-auth';
       const url = getUrlParams(pathname);
       const req = createMockReq(pathname, 'POST', { device: { name: 'Local' } });
@@ -188,9 +188,24 @@ describe('auth-route-handlers', () => {
       // Success
       expect(await handleAuthRoutes(req, mockRes, pathname, url, mockStore, mockOptions)).toBe(true);
       expect(mockRes.end).toHaveBeenCalledWith(expect.stringContaining('local-token'));
+      expect(mockStore.addDevice).toHaveBeenCalledWith(expect.objectContaining({ id: 'd-local', isHost: true }));
+    });
 
-      // 403 Non-localhost (simulated by mocking getClientIp indirectly via isLocalhost behavior)
-      // Actually we'd need to mock the socket or the helper. But in this test environment, localhost is default.
+    it.each([
+      { peer: '192.168.1.20', headers: { host: 'localhost:8233', 'x-forwarded-for': '127.0.0.1' } },
+      { peer: '127.0.0.1', headers: { host: 'public.example' } },
+      { peer: '127.0.0.1', headers: { host: 'localhost:8233', 'x-forwarded-for': '127.0.0.1, 203.0.113.7' } },
+      { peer: '127.0.0.1', headers: { host: 'localhost:8233', 'x-forwarded-host': 'public.example' } },
+    ])('denies local authentication without creating credentials for %j', async ({ peer, headers }) => {
+      const pathname = '/api/auth/local-auth';
+      const req = createMockReq(pathname, 'POST', { device: { name: 'Remote' } });
+      req.headers = headers;
+      Object.defineProperty(req.socket, 'remoteAddress', { value: peer });
+
+      expect(await handleAuthRoutes(req, mockRes, pathname, getUrlParams(pathname), mockStore, mockOptions)).toBe(true);
+      expect(mockRes.writeHead).toHaveBeenCalledWith(403, expect.any(Object));
+      expect(mockStore.generateToken).not.toHaveBeenCalled();
+      expect(mockStore.addDevice).not.toHaveBeenCalled();
     });
   });
 
@@ -285,6 +300,16 @@ describe('auth-route-handlers', () => {
   });
 
   describe('handleLogRoutes', () => {
+    it('denies host log access through a public reverse proxy', async () => {
+      const pathname = '/api/system/log/path';
+      const req = createMockReq(pathname);
+      req.headers.host = 'public.example';
+
+      expect(await handleLogRoutes(req, mockRes, pathname, mockLogFns)).toBe(true);
+      expect(mockRes.writeHead).toHaveBeenCalledWith(403, expect.any(Object));
+      expect(mockLogFns.getLogFilePath).not.toHaveBeenCalled();
+    });
+
     it('manages log routes: path, get level, and set level', async () => {
       const pathnamePath = '/api/system/log/path';
       const reqPath = createMockReq(pathnamePath);
@@ -546,6 +571,37 @@ describe('auth-route-handlers', () => {
       expect(await handleSettingsRoutes(req, mockRes, pathname, mockStore, mockSettingsFns)).toBe(true);
       expect(mockRes.writeHead).toHaveBeenCalledWith(400, expect.any(Object));
       expect(mockSettingsFns.saveSettings).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      { customAccessUrl: 'https://codemux.example.com' },
+      { remoteAccessMode: 'custom' },
+      { theme: 'light', customAccessUrl: '' },
+      { theme: 'light', remoteAccessMode: 'off' },
+    ])('PATCH rejects remote access changes atomically from an authenticated remote device: %j', async (patch) => {
+      const pathname = '/api/settings/shared';
+      const req = createMockReq(pathname, 'PATCH', patch);
+      req.headers.host = 'codemux.example.com';
+      req.headers.authorization = 'Bearer valid-token';
+      Object.defineProperty(req, 'socket', { value: { remoteAddress: '192.168.31.2' } });
+      mockStore.verifyToken.mockReturnValue({ valid: true, deviceId: 'remote-device' });
+
+      expect(await handleSettingsRoutes(req, mockRes, pathname, mockStore, mockSettingsFns)).toBe(true);
+      expect(mockRes.writeHead).toHaveBeenCalledWith(400, expect.any(Object));
+      expect(mockSettingsFns.saveSettings).not.toHaveBeenCalled();
+    });
+
+    it('PATCH keeps ordinary preferences available to an authenticated remote device', async () => {
+      const pathname = '/api/settings/shared';
+      const req = createMockReq(pathname, 'PATCH', { theme: 'light' });
+      req.headers.host = 'codemux.example.com';
+      req.headers.authorization = 'Bearer valid-token';
+      Object.defineProperty(req, 'socket', { value: { remoteAddress: '192.168.31.2' } });
+      mockStore.verifyToken.mockReturnValue({ valid: true, deviceId: 'remote-device' });
+
+      expect(await handleSettingsRoutes(req, mockRes, pathname, mockStore, mockSettingsFns)).toBe(true);
+      expect(mockRes.writeHead).toHaveBeenCalledWith(200, expect.any(Object));
+      expect(mockSettingsFns.saveSettings).toHaveBeenCalledWith({ theme: 'light' });
     });
   });
 });

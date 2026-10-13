@@ -6,7 +6,7 @@
 
 import { WebSocketServer, WebSocket } from "ws";
 import { randomUUID } from "crypto";
-import type { Server } from "http";
+import type { IncomingMessage, Server } from "http";
 import { EngineManager } from "./engine-manager";
 import * as fileService from "../services/file-service";
 import {
@@ -58,24 +58,31 @@ import { isCodexServiceTier, isReasoningEffort } from "../../../src/types/unifie
 interface ClientConnection {
   id: string;
   ws: WebSocket;
+  request: IncomingMessage;
   authenticated: boolean;
+  authToken?: string;
+}
+
+interface GatewayServerOptions {
+  authValidator?: (token: string, req: IncomingMessage) => boolean;
+  requestValidator?: (req: IncomingMessage) => boolean;
 }
 
 export class GatewayServer {
   private wss: WebSocketServer | null = null;
   private clients = new Map<string, ClientConnection>();
   private engineManager: EngineManager;
-  private authValidator?: (token: string) => boolean;
+  private authValidator?: GatewayServerOptions["authValidator"];
+  private requestValidator?: GatewayServerOptions["requestValidator"];
   private pingInterval: ReturnType<typeof setInterval> | null = null;
 
   constructor(
     engineManager: EngineManager,
-    options?: {
-      authValidator?: (token: string) => boolean;
-    },
+    options?: GatewayServerOptions,
   ) {
     this.engineManager = engineManager;
     this.authValidator = options?.authValidator;
+    this.requestValidator = options?.requestValidator;
     orchestratorService.init(engineManager);
     this.subscribeToEngineEvents();
 
@@ -99,11 +106,15 @@ export class GatewayServer {
     }
 
     const WS_MAX_PAYLOAD = 20 * 1024 * 1024; // 20MB — image attachments can be large
+    const verifyClient = (info: { req: IncomingMessage }, done: (allowed: boolean, code?: number, message?: string) => void) => {
+      if (this.isRequestAllowed(info.req)) done(true);
+      else done(false, 403, "Remote access disabled");
+    };
 
     if ("server" in options) {
-      this.wss = new WebSocketServer({ server: options.server, path: options.path, maxPayload: WS_MAX_PAYLOAD });
+      this.wss = new WebSocketServer({ server: options.server, path: options.path, maxPayload: WS_MAX_PAYLOAD, verifyClient });
     } else {
-      this.wss = new WebSocketServer({ port: options.port, maxPayload: WS_MAX_PAYLOAD });
+      this.wss = new WebSocketServer({ port: options.port, maxPayload: WS_MAX_PAYLOAD, verifyClient });
     }
     this.wss.on("connection", (ws, req) => this.handleConnection(ws, req));
     this.wss.on("error", (err) => {
@@ -113,6 +124,8 @@ export class GatewayServer {
     // Ping all clients every 30s to keep connections alive through proxies
     this.pingInterval = setInterval(() => {
       for (const client of this.clients.values()) {
+        if (!this.isClientAccessAllowed(client)) continue;
+        if (client.authenticated && !this.isClientAuthorized(client)) continue;
         if (client.ws.readyState === WebSocket.OPEN) {
           client.ws.ping();
         }
@@ -149,13 +162,26 @@ export class GatewayServer {
     return undefined;
   }
 
+  /** Withdraw existing remote connections immediately when access policy changes. */
+  revalidateClients(): void {
+    for (const client of this.clients.values()) {
+      if (!this.isClientAccessAllowed(client)) continue;
+      if (client.authenticated) this.isClientAuthorized(client);
+    }
+  }
+
   // --- Connection Handling ---
 
-  private handleConnection(ws: WebSocket, req: any): void {
+  private handleConnection(ws: WebSocket, req: IncomingMessage): void {
+    if (!this.isRequestAllowed(req)) {
+      ws.close(4003, "Remote access disabled");
+      return;
+    }
     const clientId = randomUUID();
     const client: ClientConnection = {
       id: clientId,
       ws,
+      request: req,
       authenticated: !this.authValidator, // No validator = auto-authenticated
     };
 
@@ -163,8 +189,9 @@ export class GatewayServer {
     if (this.authValidator) {
       const url = new URL(req.url ?? "", "http://localhost");
       const token = url.searchParams.get("token");
-      if (token && this.authValidator(token)) {
+      if (this.isValidToken(token, req)) {
         client.authenticated = true;
+        client.authToken = token;
       }
     }
 
@@ -189,12 +216,15 @@ export class GatewayServer {
   }
 
   private async handleMessage(client: ClientConnection, data: any): Promise<void> {
+    if (!this.isClientAccessAllowed(client)) return;
+    if (client.authenticated && !this.isClientAuthorized(client)) return;
     if (!client.authenticated) {
       // First message can be auth token
       try {
         const msg = JSON.parse(data.toString());
-        if (msg.type === "auth" && this.authValidator?.(msg.token)) {
+        if (msg.type === "auth" && this.isValidToken(msg.token, client.request)) {
           client.authenticated = true;
+          client.authToken = msg.token;
           this.sendToClient(client, {
             type: "response",
             requestId: msg.requestId ?? "",
@@ -218,6 +248,16 @@ export class GatewayServer {
         requestId: "",
         payload: null,
         error: { code: "PARSE_ERROR", message: "Invalid JSON" },
+      });
+      return;
+    }
+
+    // Explicitly unauthenticated test servers still acknowledge the client handshake.
+    if (!this.authValidator && (request.type as string) === "auth") {
+      this.sendToClient(client, {
+        type: "response",
+        requestId: request.requestId,
+        payload: { authenticated: true },
       });
       return;
     }
@@ -254,6 +294,42 @@ export class GatewayServer {
         },
       });
     }
+  }
+
+  private isValidToken(token: unknown, req: IncomingMessage): token is string {
+    if (typeof token !== "string" || !token || !this.authValidator) return false;
+    try {
+      return this.authValidator(token, req);
+    } catch {
+      return false;
+    }
+  }
+
+  private isRequestAllowed(req: IncomingMessage): boolean {
+    if (!this.requestValidator) return true;
+    try {
+      return this.requestValidator(req);
+    } catch {
+      return false;
+    }
+  }
+
+  private isClientAccessAllowed(client: ClientConnection): boolean {
+    if (this.isRequestAllowed(client.request)) return true;
+    client.authenticated = false;
+    client.authToken = undefined;
+    client.ws.close(4003, "Remote access disabled");
+    return false;
+  }
+
+  private isClientAuthorized(client: ClientConnection): boolean {
+    if (!this.isClientAccessAllowed(client)) return false;
+    if (!client.authenticated) return false;
+    if (!this.authValidator || this.isValidToken(client.authToken, client.request)) return true;
+    client.authenticated = false;
+    client.authToken = undefined;
+    client.ws.close(4001, "Unauthorized");
+    return false;
   }
 
   // --- Request Routing ---
@@ -773,7 +849,7 @@ export class GatewayServer {
    */
   private sendToOwner(clientId: string, notification: GatewayNotification): void {
     const client = this.clients.get(clientId);
-    if (!client || !client.authenticated) return;
+    if (!client || !this.isClientAuthorized(client)) return;
     if (client.ws.readyState !== WebSocket.OPEN) return;
     client.ws.send(JSON.stringify(notification));
   }
@@ -781,7 +857,7 @@ export class GatewayServer {
   private broadcast(notification: GatewayNotification): void {
     const msg = JSON.stringify(notification);
     for (const client of this.clients.values()) {
-      if (client.authenticated && client.ws.readyState === WebSocket.OPEN) {
+      if (this.isClientAuthorized(client) && client.ws.readyState === WebSocket.OPEN) {
         client.ws.send(msg);
       }
     }
@@ -791,7 +867,7 @@ export class GatewayServer {
     client: ClientConnection,
     response: GatewayResponse,
   ): void {
-    if (client.ws.readyState === WebSocket.OPEN) {
+    if (this.isClientAuthorized(client) && client.ws.readyState === WebSocket.OPEN) {
       client.ws.send(JSON.stringify(response));
     }
   }

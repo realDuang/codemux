@@ -4,10 +4,13 @@ import path from "path";
 import { app } from "electron";
 import { deviceStore } from "./device-store";
 import { prodServerLog, getLogFilePath, getFileLogLevel, setFileLogLevel, loadSettings, saveSettings } from "./logger";
-import { sendJson, requireAuth, getClientIp, isLocalhost, getLocalIp } from "../../../shared/http-utils";
+import { sendJson, requireAuth, isLocalRequest, getLocalIp } from "../../../shared/http-utils";
 import { handleAuthRoutes, handleLogRoutes, handleSettingsRoutes } from "../../../shared/auth-route-handlers";
 import { handleChannelRoutes, type ChannelManagerRoutes } from "../../../shared/channel-route-handlers";
-import { WEB_PORT, OPENCODE_PORT, WEBHOOK_PORT } from "../../../shared/ports";
+import { WEB_PORT, WEBHOOK_PORT } from "../../../shared/ports";
+import { proxyToOpenCode } from "./opencode-proxy";
+import { remoteAccessManager } from "./remote-access-manager";
+import { handleRemoteAccessRoutes } from "./remote-access-routes";
 
 // ============================================================================
 // Production HTTP Server
@@ -23,6 +26,8 @@ const MIME_TYPES: Record<string, string> = {
   ".js": "application/javascript",
   ".css": "text/css",
   ".json": "application/json",
+  ".webmanifest": "application/manifest+json",
+  ".wasm": "application/wasm",
   ".png": "image/png",
   ".jpg": "image/jpeg",
   ".jpeg": "image/jpeg",
@@ -41,53 +46,22 @@ function getMimeType(filePath: string): string {
   return MIME_TYPES[ext] || "application/octet-stream";
 }
 
-/**
- * Proxy a request to OpenCode server
- */
-function proxyToOpenCode(
-  req: http.IncomingMessage,
-  res: http.ServerResponse,
-  targetPath: string
-): void {
-  let body: Buffer[] = [];
-  
-  req.on("data", (chunk) => body.push(chunk));
-  req.on("end", () => {
-    const bodyBuffer = Buffer.concat(body);
-    
-    const options: http.RequestOptions = {
-      hostname: "127.0.0.1",
-      port: OPENCODE_PORT,
-      path: targetPath,
-      method: req.method,
-      headers: {
-        ...req.headers,
-        host: `127.0.0.1:${OPENCODE_PORT}`,
-      },
-    };
+const WEB_ROUTES = new Set(["/", "/login", "/remote", "/settings", "/devices", "/chat"]);
 
-    const proxyReq = http.request(options, (proxyRes) => {
-      // Copy status and headers
-      res.writeHead(proxyRes.statusCode || 500, proxyRes.headers);
-      proxyRes.pipe(res);
-    });
-
-    proxyReq.on("error", (err) => {
-      prodServerLog.error("Proxy to OpenCode failed:", err.message);
-      sendJson(res, { error: "OpenCode service unavailable", details: err.message }, 503);
-    });
-
-    if (bodyBuffer.length > 0) {
-      proxyReq.write(bodyBuffer);
-    }
-    proxyReq.end();
-  });
-
-  req.on("error", (err) => {
-    prodServerLog.error("Request error:", err);
-    sendJson(res, { error: "Request failed" }, 500);
-  });
+function isWithinDirectory(directory: string, filePath: string): boolean {
+  const relativePath = path.relative(directory, filePath);
+  return relativePath !== ".." && !relativePath.startsWith(`..${path.sep}`) && !path.isAbsolute(relativePath);
 }
+
+function getStaticCacheControl(pathname: string): string {
+  // Only Vite's content-hashed assets are immutable. The app entry, manifest,
+  // service worker, and unversioned public files must revalidate on each visit.
+  if ([".html", ".webmanifest"].includes(path.extname(pathname))) return "no-cache";
+  const isHashedAsset = /^\/assets\/.+-[\w-]{8}\.[^/]+$/.test(pathname);
+  const isWorkboxRuntime = /^\/workbox-[a-f0-9]{8}\.js$/.test(pathname);
+  return isHashedAsset || isWorkboxRuntime ? "public, max-age=31536000, immutable" : "no-cache";
+}
+
 
 /**
  * Proxy a request to the shared WebhookServer (for channel webhooks)
@@ -178,8 +152,8 @@ class ProductionServer {
 
     this.port = port;
     
-    // Static files are in out/renderer relative to app path
-    this.staticRoot = path.join(app.getAppPath(), "out", "renderer");
+    // Web has an independent build; Electron continues to load out/renderer.
+    this.staticRoot = path.join(app.getAppPath(), "out", "web");
     prodServerLog.info("Static root:", this.staticRoot);
 
     return new Promise((resolve, reject) => {
@@ -225,6 +199,12 @@ class ProductionServer {
     const url = new URL(req.url || "/", `http://localhost:${this.port}`);
     const pathname = url.pathname;
 
+    if (await handleRemoteAccessRoutes(req, res, pathname)) return;
+    if (!remoteAccessManager.isRequestAllowed(req)) {
+      sendJson(res, { error: "Remote access is disabled for this entry point." }, 403);
+      return;
+    }
+
     // Handle CORS preflight
     if (req.method === "OPTIONS") {
       res.writeHead(204, {
@@ -241,6 +221,7 @@ class ProductionServer {
     // API Routes: Proxy /opencode-api/* to OpenCode server
     // ========================================================================
     if (pathname.startsWith("/opencode-api")) {
+      if (!requireAuth(req, res, deviceStore)) return;
       const targetPath = pathname.replace(/^\/opencode-api/, "") + url.search;
       proxyToOpenCode(req, res, targetPath || "/");
       return;
@@ -269,6 +250,7 @@ class ProductionServer {
       const handled = await handleSettingsRoutes(req, res, pathname, deviceStore, {
         loadSettings,
         saveSettings,
+        getRemoteAccessStatus: () => remoteAccessManager.getStatus(),
       });
       if (handled) return;
       sendJson(res, { error: "Not found" }, 404);
@@ -287,8 +269,7 @@ class ProductionServer {
 
 
     if (pathname === "/api/system/is-local" && req.method === "GET") {
-      const clientIp = getClientIp(req);
-      sendJson(res, { isLocal: isLocalhost(clientIp) });
+      sendJson(res, { isLocal: isLocalRequest(req) });
       return;
     }
 
@@ -346,6 +327,10 @@ class ProductionServer {
     // ========================================================================
     // Static File Serving
     // ========================================================================
+    if (pathname === "/api" || pathname.startsWith("/api/")) {
+      sendJson(res, { error: "Not found" }, 404);
+      return;
+    }
     await this.serveStaticFile(req, res, pathname);
   }
 
@@ -354,38 +339,73 @@ class ProductionServer {
     res: http.ServerResponse,
     pathname: string
   ): Promise<void> {
-    // Normalize path and prevent directory traversal
-    let filePath = path.join(this.staticRoot, pathname);
-    
-    // Security: ensure we're still within static root
-    if (!filePath.startsWith(this.staticRoot)) {
+    if (req.method !== "GET" && req.method !== "HEAD") {
+      res.writeHead(404);
+      res.end("Not Found");
+      return;
+    }
+
+    let decodedPath: string;
+    try {
+      decodedPath = decodeURIComponent(pathname);
+    } catch {
+      res.writeHead(400);
+      res.end("Bad Request");
+      return;
+    }
+
+    if (decodedPath.includes("\0") || decodedPath.includes("\\")) {
+      res.writeHead(400);
+      res.end("Bad Request");
+      return;
+    }
+
+    let filePath = path.resolve(this.staticRoot, `.${decodedPath}`);
+    if (!isWithinDirectory(this.staticRoot, filePath)) {
       res.writeHead(403);
       res.end("Forbidden");
       return;
     }
 
+    const acceptsHtml = req.headers.accept?.split(",").some(value => value.trim().split(";")[0] === "text/html");
+    const isWebNavigation = acceptsHtml && WEB_ROUTES.has(decodedPath.replace(/\/$/, "") || "/");
+
     try {
       const stat = await fs.promises.stat(filePath);
-      
       if (stat.isDirectory()) {
-        // Try index.html for directories
         filePath = path.join(filePath, "index.html");
       }
     } catch {
-      // File not found - serve index.html for SPA routing
-      filePath = path.join(this.staticRoot, "index.html");
+      if (isWebNavigation) {
+        filePath = path.join(this.staticRoot, "index.html");
+      } else {
+        res.writeHead(404);
+        res.end("Not Found");
+        return;
+      }
     }
 
     try {
-      const content = await fs.promises.readFile(filePath);
+      // Follow symlinks only after confirming their target stays in the build.
+      const [realRoot, realFilePath] = await Promise.all([
+        fs.promises.realpath(this.staticRoot),
+        fs.promises.realpath(filePath),
+      ]);
+      if (!isWithinDirectory(realRoot, realFilePath)) {
+        res.writeHead(403);
+        res.end("Forbidden");
+        return;
+      }
+      const content = await fs.promises.readFile(realFilePath);
       const mimeType = getMimeType(filePath);
-      
+
       res.writeHead(200, {
         "Content-Type": mimeType,
         "Content-Length": content.length,
-        "Cache-Control": filePath.endsWith(".html") ? "no-cache" : "public, max-age=31536000",
+        "Cache-Control": getStaticCacheControl(`/${path.relative(this.staticRoot, filePath).split(path.sep).join("/")}`),
+        "X-Content-Type-Options": "nosniff",
       });
-      res.end(content);
+      res.end(req.method === "HEAD" ? undefined : content);
     } catch (err) {
       prodServerLog.error("Failed to serve file:", filePath, err);
       res.writeHead(404);

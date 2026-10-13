@@ -5,6 +5,9 @@ import { requireAuth, sendJson } from "../../../shared/http-utils";
 import { handleAuthRoutes, handleLogRoutes, handleSettingsRoutes } from "../../../shared/auth-route-handlers";
 import { handleChannelRoutes, type ChannelManagerRoutes } from "../../../shared/channel-route-handlers";
 import { AUTH_API_PORT } from "../../../shared/ports";
+import { proxyToOpenCode } from "./opencode-proxy";
+import { remoteAccessManager } from "./remote-access-manager";
+import { handleRemoteAccessRoutes } from "./remote-access-routes";
 
 // ============================================================================
 // Internal Auth API Server
@@ -75,6 +78,18 @@ class AuthApiServer {
     pathname: string,
     url: URL
   ) {
+    if (await handleRemoteAccessRoutes(req, res, pathname)) return;
+    if (!remoteAccessManager.isRequestAllowed(req)) {
+      sendJson(res, { error: "Remote access is disabled for this entry point." }, 403);
+      return;
+    }
+    if (pathname.startsWith("/opencode-api")) {
+      if (!requireAuth(req, res, deviceStore)) return;
+      const targetPath = pathname.replace(/^\/opencode-api/, "") + url.search;
+      proxyToOpenCode(req, res, targetPath || "/");
+      return;
+    }
+
     // Auth + device + admin routes
     const handled = await handleAuthRoutes(req, res, pathname, url, deviceStore, {
       defaultDeviceName: "Local Browser",
@@ -96,6 +111,7 @@ class AuthApiServer {
     const settingsHandled = await handleSettingsRoutes(req, res, pathname, deviceStore, {
       loadSettings,
       saveSettings,
+      getRemoteAccessStatus: () => remoteAccessManager.getStatus(),
     });
     if (settingsHandled) return;
 

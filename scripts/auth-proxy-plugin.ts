@@ -9,8 +9,10 @@ import http from "http";
 import os from "os";
 import type { IncomingMessage, ServerResponse } from "http";
 import type { Plugin, ViteDevServer } from "vite";
-import { sendJson, getClientIp, isLocalhost } from "../shared/http-utils";
+import { sendJson, isLocalRequest } from "../shared/http-utils";
 import { AUTH_API_PORT, WEB_PORT } from "../shared/ports";
+import { isLocalGatewayRequest, isRemoteAccessRequestAllowed } from "../shared/remote-access-policy";
+import type { RemoteAccessStatus } from "../shared/remote-access";
 
 // Electron's internal Auth API server port (imported from shared/ports)
 
@@ -43,7 +45,7 @@ function getLocalIp(): string {
 /**
  * Proxy a request to Electron's Auth API server
  */
-function proxyToAuthApi(
+export function proxyToAuthApi(
   req: IncomingMessage,
   res: ServerResponse,
   targetPath?: string
@@ -54,6 +56,10 @@ function proxyToAuthApi(
   let body = "";
   req.on("data", (chunk) => (body += chunk));
   req.on("end", () => {
+    const forwarded = req.headers["x-forwarded-for"];
+    const forwardedChain = Array.isArray(forwarded) ? forwarded.join(", ") : forwarded;
+    const peer = req.socket.remoteAddress || "unknown";
+    const hostCount = req.rawHeaders.filter((value, index) => index % 2 === 0 && value.toLowerCase() === "host").length;
     const options: http.RequestOptions = {
       hostname: "127.0.0.1",
       port: AUTH_API_PORT,
@@ -61,9 +67,9 @@ function proxyToAuthApi(
       method: req.method,
       headers: {
         ...req.headers,
-        host: `127.0.0.1:${AUTH_API_PORT}`,
-        // Forward client IP for logging
-        "x-forwarded-for": getClientIp(req),
+        // Preserve the external authority and every hop used by local-auth checks.
+        host: hostCount > 1 ? "" : req.headers.host ?? "",
+        "x-forwarded-for": forwardedChain === undefined ? peer : `${forwardedChain}, ${peer}`,
       },
     };
 
@@ -98,30 +104,73 @@ function proxyToAuthApi(
   });
 }
 
-export interface TunnelInfo {
-  url: string;
-  status: "starting" | "running" | "stopped" | "error";
-  startTime?: number;
-  error?: string;
-}
-
-interface TunnelManagerInterface {
-  start(port: number): Promise<TunnelInfo>;
-  stop(): Promise<void>;
-  getInfo(): TunnelInfo;
-}
-
 export interface AuthProxyPluginOptions {
-  tunnelManager?: TunnelManagerInterface;
   defaultPort?: number;
 }
 
+/** Fetch admission policy from the main process without caching mode changes. */
+export function getElectronRemoteAccessStatus(): Promise<RemoteAccessStatus> {
+  return new Promise((resolve, reject) => {
+    const request = http.get({
+      hostname: "127.0.0.1",
+      port: AUTH_API_PORT,
+      path: "/api/remote-access",
+      timeout: 2000,
+    }, response => {
+      let body = "";
+      response.on("data", chunk => { body += chunk; });
+      response.on("end", () => {
+        try {
+          if (response.statusCode !== 200) throw new Error("Remote access policy unavailable.");
+          resolve(JSON.parse(body) as RemoteAccessStatus);
+        } catch (error) {
+          reject(error);
+        }
+      });
+      response.on("error", reject);
+    });
+    request.on("timeout", () => request.destroy(new Error("Remote access policy timed out.")));
+    request.on("error", reject);
+  });
+}
+
+export async function isElectronRemoteRequestAllowed(req: IncomingMessage, gateway = false): Promise<boolean> {
+  if (gateway ? isLocalGatewayRequest(req) : isLocalRequest(req)) return true;
+  try {
+    return isRemoteAccessRequestAllowed(req, await getElectronRemoteAccessStatus(), gateway);
+  } catch {
+    return false;
+  }
+}
+
+/** Preserve peer and authority when the gateway is behind Vite's loopback proxy. */
+export function preserveProxyRequestIdentity(proxyReq: http.ClientRequest, req: IncomingMessage): void {
+  const hostCount = req.rawHeaders.filter((value, index) => index % 2 === 0 && value.toLowerCase() === "host").length;
+  proxyReq.setHeader("host", hostCount > 1 ? "" : req.headers.host ?? "");
+  const forwarded = req.headers["x-forwarded-for"];
+  const chain = Array.isArray(forwarded) ? forwarded.join(", ") : forwarded;
+  const peer = req.socket.remoteAddress || "unknown";
+  proxyReq.setHeader("x-forwarded-for", chain === undefined ? peer : `${chain}, ${peer}`);
+}
+
 export function createAuthProxyPlugin(options: AuthProxyPluginOptions = {}): Plugin {
-  const { tunnelManager, defaultPort = WEB_PORT } = options;
+  const { defaultPort = WEB_PORT } = options;
 
   return {
     name: "auth-api-proxy",
     configureServer(server: ViteDevServer) {
+      server.middlewares.use(async (req, res, next) => {
+        const pathname = new URL(req.url ?? "/", "http://localhost").pathname;
+        if (pathname === "/api/remote-access/status" && req.method === "GET") {
+          proxyToAuthApi(req, res);
+          return;
+        }
+        if (!await isElectronRemoteRequestAllowed(req)) {
+          sendJson(res, { error: "Remote access is disabled for this entry point." }, 403);
+          return;
+        }
+        next();
+      });
       // ====================================================================
       // Proxy auth, admin, device, and channel API requests to Electron's
       // internal Auth API server
@@ -131,10 +180,13 @@ export function createAuthProxyPlugin(options: AuthProxyPluginOptions = {}): Plu
 
         // List of API paths that should be proxied to Electron's Auth API
         const authApiPaths = [
+          "/opencode-api",
           "/api/auth/",
           "/api/admin/",
           "/api/devices",
           "/api/settings/",
+          "/api/remote-access",
+          "/api/tunnel",
           "/api/channels",
           "/api/system/log",
         ];
@@ -176,47 +228,10 @@ export function createAuthProxyPlugin(options: AuthProxyPluginOptions = {}): Plu
           return;
         }
 
-        const clientIp = getClientIp(req);
-        const isLocal = isLocalhost(clientIp);
+        const isLocal = isLocalRequest(req);
         sendJson(res, { isLocal });
       });
 
-      // ====================================================================
-      // Tunnel Management APIs
-      // ====================================================================
-      if (tunnelManager) {
-        server.middlewares.use(async (req, res, next) => {
-          if (!req.url?.startsWith("/api/tunnel")) {
-            next();
-            return;
-          }
-
-          try {
-            if (req.url === "/api/tunnel/start" && req.method === "POST") {
-              const info = await tunnelManager.start(defaultPort);
-              sendJson(res, info);
-              return;
-            }
-
-            if (req.url === "/api/tunnel/stop" && req.method === "POST") {
-              await tunnelManager.stop();
-              sendJson(res, { success: true });
-              return;
-            }
-
-            if (req.url === "/api/tunnel/status" && req.method === "GET") {
-              const info = tunnelManager.getInfo();
-              sendJson(res, info);
-              return;
-            }
-
-            sendJson(res, { error: "Not found" }, 404);
-          } catch (error: any) {
-            console.error("[API Error]", error);
-            sendJson(res, { error: error.message }, 500);
-          }
-        });
-      }
     },
   };
 }

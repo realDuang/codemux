@@ -1,5 +1,5 @@
 import type { IncomingMessage, ServerResponse } from "http";
-import { sendJson, parseBody, extractBearerToken, getClientIp, isLocalhost, requireAuth } from "./http-utils";
+import { sendJson, parseBody, extractBearerToken, getClientIp, isLocalRequest, requireAuth } from "./http-utils";
 import type { DeviceInfo, PendingRequest } from "./device-store-types";
 import { SHARED_SETTINGS_KEYS, isSharedSettingsKey, isValidSharedSettingValue } from "./settings-keys";
 
@@ -189,6 +189,7 @@ export async function handleSettingsRoutes(
   settingsFns: {
     loadSettings: () => Record<string, unknown>;
     saveSettings?: (patch: Record<string, unknown>) => void;
+    getRemoteAccessStatus?: () => { mode: string; url: string };
   },
 ): Promise<boolean> {
   if (pathname !== "/api/settings/shared") return false;
@@ -199,6 +200,11 @@ export async function handleSettingsRoutes(
     const shared = filterSharedSettings(settings);
     // Expose serverMode as a read-only host capability (not in SHARED_SETTINGS_KEYS)
     shared.serverMode = process.env.CODEMUX_SERVER_MODE === "1";
+    const remote = settingsFns.getRemoteAccessStatus?.();
+    if (remote) {
+      shared.remoteAccessMode = remote.mode;
+      shared.remoteAccessUrl = remote.url;
+    }
     sendJson(res, { settings: shared });
     return true;
   }
@@ -216,6 +222,10 @@ export async function handleSettingsRoutes(
     }
     const patch: Record<string, unknown> = {};
     for (const [key, value] of Object.entries(body as Record<string, unknown>)) {
+      if (key === "customAccessUrl" || key === "remoteAccessMode" || key === "tunnelConfig") {
+        sendJson(res, { error: "Use host remote access controls to change connection settings" }, 400);
+        return true;
+      }
       if (!isSharedSettingsKey(key)) {
         sendJson(res, { error: `Key "${key}" is not a shared setting` }, 400);
         return true;
@@ -244,8 +254,7 @@ export async function handleSettingsRoutes(
 // -----------------------------------------------------------------------------
 
 function requireLocalhost(req: IncomingMessage, res: ServerResponse): boolean {
-  const clientIp = getClientIp(req);
-  if (!isLocalhost(clientIp)) {
+  if (!isLocalRequest(req)) {
     sendJson(res, { error: "Local access only" }, 403);
     return false;
   }

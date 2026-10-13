@@ -1,0 +1,71 @@
+@import "../index.css";
+/* The Web Vite root is separate; include the shared application's utilities. */
+@source "../";
+
+.web-client { height: 100%; background: var(--color-background); }
+.web-client body { height: 100%; overscroll-behavior: none; }
+.web-client #root {
+  display: flex;
+  flex-direction: column;
+  height: var(--web-viewport-height, 100dvh);
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+  box-sizing: border-box;
+  overflow: hidden;
+}
+.web-client #root > .h-screen { height: auto; flex: 1; min-height: 0; }
+.web-status-area { flex-shrink: 0; }
+.web-status-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 5px 12px;
+  min-height: 42px;
+  border-bottom: 1px solid var(--sl-color-divider);
+  background: var(--sl-color-bg-surface);
+  color: var(--sl-color-text-secondary);
+  font-size: 12px;
+  line-height: 1.4;
+}
+.web-status-copy { flex: 1; min-width: 0; }
+.web-status-action {
+  flex-shrink: 0;
+  border: 1px solid var(--sl-color-divider);
+  border-radius: 6px;
+  padding: 7px 10px;
+  background: var(--sl-color-blue-low);
+  color: var(--sl-color-blue-high);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.web-status-action:disabled { cursor: default; opacity: .5; }
+.web-status-action:focus-visible, .web-status-dismiss:focus-visible { outline: 2px solid var(--sl-color-blue-high); outline-offset: 2px; }
+.web-status-dismiss { min-width: 32px; min-height: 32px; font-size: 22px; cursor: pointer; color: var(--sl-color-text-secondary); }
+.web-status-offline { background: var(--sl-color-orange-low); color: var(--sl-color-orange-high); min-height: 32px; }
+.web-install-dialog {
+  margin: auto;
+  width: min(380px, calc(100% - 32px));
+  border: 1px solid var(--sl-color-divider);
+  border-radius: 16px;
+  background: var(--sl-color-bg-surface);
+  color: var(--sl-color-text);
+  box-shadow: 0 20px 60px #0003;
+}
+.web-install-dialog::backdrop { background: #0006; }
+.web-install-content { padding: 24px; }
+.web-install-content img { border-radius: 12px; margin-bottom: 16px; }
+.web-install-content h2 { font-size: 20px; font-weight: 600; margin-bottom: 12px; }
+.web-install-content p { line-height: 1.6; font-size: 14px; margin-bottom: 16px; }
+.web-install-note { color: var(--sl-color-text-secondary); }
+.web-install-content form { display: flex; justify-content: flex-end; }
+@media (max-width: 640px) {
+  .web-client input, .web-client textarea, .web-client select { font-size: max(16px, 1em); }
+  /* Connection feedback must not cover the mobile send button. */
+  .web-client [data-component="notification-toasts"] {
+    top: calc(env(safe-area-inset-top) + 96px);
+    bottom: auto;
+    left: 12px;
+    right: 12px;
+    max-width: none;
+  }
+}

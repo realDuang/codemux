@@ -3,6 +3,8 @@ import fs from "fs";
 import os from "os";
 import { deviceStore } from "./services/device-store";
 import { tunnelManager } from "./services/tunnel-manager";
+import { remoteAccessManager } from "./services/remote-access-manager";
+import type { RemoteAccessUpdate } from "../../shared/remote-access";
 import { productionServer } from "./services/production-server";
 import { updateManager } from "./services/update-manager";
 import { trayManager } from "./services/tray-manager";
@@ -152,31 +154,20 @@ export function registerIpcHandlers(): void {
   // ===========================================================================
 
   ipcMain.handle("tunnel:start", async (_, port: number, tunnelConfig?: { hostname?: string }) => {
-    // In production, use the production server port if available
-    const actualPort = app.isPackaged && productionServer.isRunning()
-      ? productionServer.getPort()
-      : port;
-
-    const config = tunnelConfig ?? (loadSettings().tunnelConfig as { hostname?: string } | undefined);
-    return tunnelManager.start(actualPort, config);
+    const status = await remoteAccessManager.update({ mode: "cloudflare", ...(tunnelConfig ? { tunnelConfig } : {}) });
+    return status.tunnel;
   });
 
   ipcMain.handle("tunnel:stop", async () => {
-    return tunnelManager.stop();
+    if (remoteAccessManager.getStatus().mode === "cloudflare") await remoteAccessManager.update({ mode: "off" });
   });
 
   ipcMain.handle("tunnel:getStatus", async () => {
     return tunnelManager.getInfo();
   });
 
-  // Notify renderer when cloudflared exits unexpectedly
-  tunnelManager.setOnUnexpectedExit(() => {
-    for (const win of BrowserWindow.getAllWindows()) {
-      if (!win.isDestroyed()) {
-        win.webContents.send("tunnel:disconnected");
-      }
-    }
-  });
+  ipcMain.handle("remoteAccess:getStatus", () => remoteAccessManager.getStatus());
+  ipcMain.handle("remoteAccess:update", (_, patch: RemoteAccessUpdate) => remoteAccessManager.update(patch));
 
   // ===========================================================================
   // Production Server Management
@@ -286,6 +277,9 @@ export function registerIpcHandlers(): void {
   });
 
   ipcMain.handle("settings:save", async (_event, patch: Record<string, unknown>) => {
+    if (["remoteAccessMode", "customAccessUrl", "tunnelConfig"].some(key => key in patch)) {
+      throw new Error("Use remote access controls to change connection settings.");
+    }
     saveSettings(patch);
     return { success: true };
   });

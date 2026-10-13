@@ -290,13 +290,15 @@ wait_for_electron_main_ready() {
 }
 
 wait_for_tunnel_url() {
-  local pid="$1"
+  local local_url="$1"
   local attempts=$(( DEFAULT_TIMEOUT / 2 ))
-  local url=""
+  local url="" tunnel_json="" tunnel_status=""
 
   while [ "$attempts" -gt 0 ]; do
-    url=$(read_tunnel_url 2>/dev/null || true)
-    if [ -n "$url" ]; then
+    tunnel_json=$(query_tunnel_status "$local_url" 2>/dev/null || true)
+    tunnel_status=$(read_json_field "$tunnel_json" status)
+    url=$(read_json_field "$tunnel_json" url)
+    if [ "$tunnel_status" = "running" ] && [ -n "$url" ]; then
       printf '%s
 ' "$url" > "$TUNNEL_URL_FILE"
       printf '%s
@@ -304,7 +306,7 @@ wait_for_tunnel_url() {
       return 0
     fi
 
-    if ! is_managed_process_running "$pid"; then
+    if [ "$tunnel_status" = "error" ] || [ "$tunnel_status" = "stopped" ]; then
       return 1
     fi
 
@@ -397,26 +399,25 @@ start_background() {
   fi
 }
 
-# Spawn a fresh managed cloudflared quick tunnel pointed at $local_url.
-# Truncates the tunnel log, writes a new pid file, waits for the URL.
+# Select Cloudflare through CodeMux's authoritative remote-access controller.
+# The application owns the connector; the wrapper never starts a second one.
 spawn_managed_tunnel() {
   local local_url="$1"
 
-  : > "$TUNNEL_LOG"
-  setsid bash -lc "exec cloudflared tunnel --url '$local_url'" > "$TUNNEL_LOG" 2>&1 &
-  local tunnel_pid=$!
-  printf '%s
-' "$tunnel_pid" > "$TUNNEL_PID_FILE"
+  kill_process_group_from_file "$TUNNEL_PID_FILE"
+  rm -f "$TUNNEL_URL_FILE"
+  curl -fsS -X PATCH -H 'Content-Type: application/json' \
+    --data '{"mode":"cloudflare"}' "$local_url/api/remote-access" > /dev/null || \
+    fail "Could not enable Cloudflare through CodeMux remote access settings."
 
-  info "Starting Cloudflare quick tunnel..."
+  info "Starting the selected Cloudflare tunnel..."
   local tunnel_url
-  if tunnel_url=$(wait_for_tunnel_url "$tunnel_pid"); then
+  if tunnel_url=$(wait_for_tunnel_url "$local_url"); then
     success "Tunnel is ready: $tunnel_url"
   else
-    warn "Tunnel started, but the quick-tunnel URL was not detected yet."
+    warn "Tunnel started, but its access URL was not detected yet."
   fi
-  printf '  Tunnel log: %s
-' "$TUNNEL_LOG"
+  printf '  Tunnel output: %s\n' "$APP_LOG"
   printf '  Review access requests from this terminal: bun run server:access-requests
 '
 }
@@ -425,12 +426,13 @@ restart_app() {
   cleanup_stale_pid_file "$APP_PID_FILE"
   cleanup_stale_pid_file "$TUNNEL_PID_FILE"
 
-  local app_pid tunnel_pid previous_local_url tunnel_url repo_pids
+  local app_pid repo_pids
   app_pid=$(read_pid_file "$APP_PID_FILE" 2>/dev/null || true)
-  tunnel_pid=$(read_pid_file "$TUNNEL_PID_FILE" 2>/dev/null || true)
-  previous_local_url=$(read_local_url 2>/dev/null || true)
-  tunnel_url=$(read_tunnel_url 2>/dev/null || true)
   repo_pids=$(find_repo_processes || true)
+  # Remove only the legacy connector owned by this wrapper. The application
+  # restores its persisted exclusive access mode after restarting.
+  kill_process_group_from_file "$TUNNEL_PID_FILE"
+  rm -f "$TUNNEL_URL_FILE"
 
   if [ -z "$app_pid" ]; then
     if [ -n "$repo_pids" ]; then
@@ -445,39 +447,19 @@ restart_app() {
   rm -f "$LOCAL_URL_FILE"
 
   if ! start_managed_app_background; then
-    if [ -n "$tunnel_pid" ] && is_process_group_running "$tunnel_pid"; then
-      warn "Managed Cloudflare tunnel is still running."
-      [ -n "$tunnel_url" ] && printf '  Tunnel URL: %s\n' "$tunnel_url"
-      printf '  Tunnel log: %s\n' "$TUNNEL_LOG"
-    fi
     exit 1
   fi
 
-  local restarted_local_url="$STARTED_LOCAL_URL"
-  if [ -n "$tunnel_pid" ] && is_process_group_running "$tunnel_pid"; then
-    if [ -n "$previous_local_url" ] && [ "$previous_local_url" != "$restarted_local_url" ]; then
-      # The whole point of `restart` is URL stability, but cloudflared can't
-      # be repointed without restart. Soft-warn-and-succeed leaves the user
-      # with a fresh app and a stale tunnel mapping to a dead port — the
-      # bookmarked public URL silently 502s. Loudly rotate instead: tear the
-      # stale tunnel down and spawn a fresh one against the new local port.
-      warn "App restarted on $restarted_local_url, but the preserved tunnel targets $previous_local_url."
-      info "Rotating Cloudflare quick tunnel to follow the new local URL (public URL will change)..."
-      kill_process_group_from_file "$TUNNEL_PID_FILE"
-      rm -f "$TUNNEL_URL_FILE"
-      spawn_managed_tunnel "$restarted_local_url"
-    else
-      success "Preserved managed Cloudflare tunnel."
-      [ -n "$tunnel_url" ] && printf '  Tunnel URL: %s\n' "$tunnel_url"
-      printf '  Tunnel log: %s\n' "$TUNNEL_LOG"
-      printf '  Public URL should stay the same while the existing tunnel process remains healthy.\n'
-    fi
+  local tunnel_json tunnel_status tunnel_url
+  tunnel_json=$(query_tunnel_status "$STARTED_LOCAL_URL" 2>/dev/null || true)
+  tunnel_status=$(read_json_field "$tunnel_json" status)
+  if [ "$tunnel_status" = "running" ] || [ "$tunnel_status" = "starting" ]; then
+    tunnel_url=$(wait_for_tunnel_url "$STARTED_LOCAL_URL" || true)
+    success "CodeMux restored its selected Cloudflare access mode."
+    [ -n "$tunnel_url" ] && printf '  Tunnel URL: %s\n' "$tunnel_url"
+    printf '  Temporary quick-tunnel URLs may change when CodeMux restarts.\n'
   else
-    warn "No managed Cloudflare tunnel was running. Restart completed without public tunnel."
-    rm -f "$TUNNEL_URL_FILE"
-    if [ -f "$TUNNEL_LOG" ]; then
-      : > "$TUNNEL_LOG"
-    fi
+    success "CodeMux restarted with its persisted remote access mode."
   fi
 }
 
@@ -573,7 +555,7 @@ stream_logs() {
       file="$APP_LOG"
       ;;
     tunnel)
-      file="$TUNNEL_LOG"
+      file="$APP_LOG"
       ;;
     *)
       fail "Unknown log target: $target"

@@ -232,7 +232,23 @@ export class ChannelManager {
   /** Get config for a channel */
   getConfig(type: string): ChannelConfig | undefined {
     const config = this.configs.get(type) ?? loadConfig(type) ?? undefined;
-    return config ? this.applyRuntimeOptions(config) : undefined;
+    if (!config) return undefined;
+    const runtimeConfig = this.applyRuntimeOptions(config);
+    const options = { ...runtimeConfig.options };
+    if (typeof options.gatewayUrl === "string") {
+      try {
+        const url = new URL(options.gatewayUrl);
+        if (url.searchParams.has("token") || url.username || url.password) {
+          url.searchParams.delete("token");
+          url.username = "";
+          url.password = "";
+          options.gatewayUrl = url.toString();
+        }
+      } catch {
+        delete options.gatewayUrl;
+      }
+    }
+    return { ...runtimeConfig, options };
   }
 
   /** Update channel config and optionally restart */

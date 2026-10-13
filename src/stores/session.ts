@@ -1,4 +1,6 @@
-import { createStore } from "solid-js/store";
+import { createStore, reconcile } from "solid-js/store";
+import { isElectron } from "../lib/platform";
+import { clearPersistedInputDrafts, loadPersistedInputDrafts, persistInputDraft, readPersistedInputDrafts, type InputDraftStorage } from "../lib/input-draft-storage";
 import type {
   CodexServiceTier,
   EngineType,
@@ -30,6 +32,12 @@ export interface SessionInputDraft {
   images: ImageAttachment[];
 }
 
+export interface InputDraftSubmission {
+  snapshot: SessionInputDraft;
+  revision: number;
+  scope: number;
+}
+
 export interface ProjectExpandState {
   [projectID: string]: boolean;
 }
@@ -55,6 +63,7 @@ export const [sessionStore, setSessionStore] = createStore<{
   worktreeExpanded: WorktreeExpandState;
   /** Per-session prompt drafts kept while switching sessions */
   inputDrafts: Record<string, SessionInputDraft>;
+  inputDraftSaveFailures: Record<string, boolean>;
   /** Whether cross-engine team orchestration is enabled */
   teamOrchestrationEnabled: boolean;
 }>({
@@ -69,6 +78,7 @@ export const [sessionStore, setSessionStore] = createStore<{
   worktrees: {},
   worktreeExpanded: {},
   inputDrafts: {},
+  inputDraftSaveFailures: {},
   teamOrchestrationEnabled: false,
 });
 
@@ -87,6 +97,48 @@ export function getInputDraft(sessionId: string): SessionInputDraft {
   return sessionStore.inputDrafts[sessionId] ?? { text: "", images: [] };
 }
 
+let draftDeviceId: string | null | undefined;
+let draftScope = 0;
+const draftRevisions = new Map<string, number>();
+
+function getDraftStorage(): InputDraftStorage | undefined {
+  try {
+    return typeof window !== "undefined" && !isElectron() ? window.localStorage : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function refreshInputDraftSaveFailures(storage: InputDraftStorage | undefined): void {
+  const persisted = storage && draftDeviceId ? readPersistedInputDrafts(storage, draftDeviceId) : {};
+  setSessionStore("inputDraftSaveFailures", reconcile(Object.fromEntries(
+    Object.entries(sessionStore.inputDrafts).map(([id, draft]) => [id, draft.text !== (persisted[id] ?? "")]),
+  )));
+}
+
+/** Restore only the current approved device's Web drafts. Electron keeps in-memory drafts. */
+export function initializeWebInputDrafts(deviceId: string | null): void {
+  if (isElectron() || draftDeviceId === deviceId) return;
+  draftDeviceId = deviceId;
+  draftScope++;
+  draftRevisions.clear();
+  const storage = getDraftStorage();
+  const restored = storage && deviceId ? loadPersistedInputDrafts(storage, deviceId) : {};
+  setSessionStore("inputDrafts", reconcile(Object.fromEntries(
+    Object.entries(restored).map(([id, text]) => [id, { text, images: [] }]),
+  )));
+  refreshInputDraftSaveFailures(storage);
+}
+
+/** Called on logout or confirmed token revocation, before another device can authenticate. */
+export function clearWebInputDrafts(): void {
+  if (isElectron()) return;
+  const storage = getDraftStorage();
+  if (storage) clearPersistedInputDrafts(storage);
+  draftDeviceId = undefined;
+  initializeWebInputDrafts(null);
+}
+
 export function setInputDraft(
   sessionId: string,
   patch: Partial<SessionInputDraft>,
@@ -96,10 +148,31 @@ export function setInputDraft(
     text: patch.text ?? current.text,
     images: patch.images ?? current.images,
   });
+  draftRevisions.set(sessionId, (draftRevisions.get(sessionId) ?? 0) + 1);
+  if (draftDeviceId && !isElectron()) {
+    const storage = getDraftStorage();
+    if (storage) persistInputDraft(storage, draftDeviceId, sessionId, patch.text ?? current.text);
+    refreshInputDraftSaveFailures(storage);
+  }
 }
 
 export function clearInputDraft(sessionId: string): void {
-  setSessionStore("inputDrafts", sessionId, { text: "", images: [] });
+  setInputDraft(sessionId, { text: "", images: [] });
+}
+
+/** Consume after send validation, so failed validation never erases the prompt. */
+export function consumeInputDraft(sessionId: string): InputDraftSubmission {
+  const current = getInputDraft(sessionId);
+  const snapshot = { text: current.text, images: current.images.map((image) => ({ ...image })) };
+  clearInputDraft(sessionId);
+  return { snapshot, revision: draftRevisions.get(sessionId) ?? 0, scope: draftScope };
+}
+
+/** A late failure cannot overwrite edits, a newer submission, or another login's draft. */
+export function restoreInputDraftIfUnchanged(sessionId: string, submission: InputDraftSubmission): boolean {
+  if (submission.scope !== draftScope || submission.revision !== draftRevisions.get(sessionId)) return false;
+  setInputDraft(sessionId, submission.snapshot);
+  return true;
 }
 
 export function getProjectName(project: UnifiedProject): string {

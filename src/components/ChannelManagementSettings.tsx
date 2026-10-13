@@ -1,8 +1,10 @@
 import { Show, For, createSignal, onMount, type JSX, type Accessor } from "solid-js";
 import { useI18n } from "../lib/i18n";
+import { normalizeAccessUrl } from "../../shared/access-url";
+import { Auth } from "../lib/auth";
 import { logger } from "../lib/logger";
 import { isElectron } from "../lib/platform";
-import { channelAPI, getElectronAPI, tunnelAPI, type ChannelInfo, type TunnelInfo } from "../lib/electron-api";
+import { channelAPI, getElectronAPI, remoteAccessAPI, type ChannelInfo } from "../lib/electron-api";
 import { FeishuConfigModal } from "./FeishuConfigModal";
 import { ChannelConfigModal, type ConfigField } from "./ChannelConfigModal";
 import { WeixinIlinkLoginModal, type WeixinIlinkConfig } from "./WeixinIlinkLoginModal";
@@ -17,7 +19,7 @@ interface ChannelDef {
   badgeClass: string;
   titleKey: string;
   descKey: string;
-  /** "direct" channels appear in the top group; "webhook" channels need a tunnel */
+  /** "direct" channels appear in the top group; "webhook" channels need an externally reachable address */
   connection: "direct" | "webhook";
   defaultConfig: Record<string, unknown>;
   /** Return the config fields for the generic ChannelConfigModal (omit for Feishu). */
@@ -309,10 +311,7 @@ function ChannelCard(props: ChannelCardProps) {
 export function ChannelManagementSettings() {
   const { t } = useI18n();
 
-  const [tunnelInfo, setTunnelInfo] = createSignal<TunnelInfo>({
-    url: "",
-    status: "stopped",
-  });
+  const [accessUrl, setAccessUrl] = createSignal("");
 
   // Build reactive state for every channel in the registry
   const channels = channelRegistry.map((def) => ({
@@ -324,25 +323,27 @@ export function ChannelManagementSettings() {
   const webhookChannels = channels.filter((c) => c.def.connection === "webhook");
   const channelMap = Object.fromEntries(channels.map((c) => [c.def.type, c.state]));
 
-  const loadTunnelStatus = async () => {
+  const loadAccessStatus = async () => {
     try {
-      if (isElectron()) {
-        const info = await tunnelAPI.getStatus();
-        if (info) setTunnelInfo(info);
+      if (isElectron() || await Auth.isLocalAccess()) {
+        const status = await remoteAccessAPI.getStatus();
+        setAccessUrl(normalizeAccessUrl(status.url));
         return;
       }
 
-      const response = await fetch("/api/tunnel/status");
-      if (!response.ok) return;
-      const info = await response.json() as TunnelInfo;
-      setTunnelInfo(info);
+      const response = await fetch("/api/settings/shared", { headers: Auth.getAuthHeaders() });
+      if (!response.ok) throw new Error("Remote access settings are unavailable.");
+      const data = await response.json() as { settings?: { remoteAccessUrl?: unknown } };
+      const url = data.settings?.remoteAccessUrl;
+      setAccessUrl(normalizeAccessUrl(typeof url === "string" ? url : ""));
     } catch (error) {
-      logger.error("[ChannelManagement] Failed to load tunnel status:", error);
+      setAccessUrl("");
+      logger.error("[ChannelManagement] Failed to load remote access status:", error);
     }
   };
 
   const loadAll = async () => {
-    await loadTunnelStatus();
+    await loadAccessStatus();
     await Promise.all(channels.map((c) => c.state.load()));
   };
 
@@ -358,14 +359,14 @@ export function ChannelManagementSettings() {
   });
 
   const renderWebhookFooter = (status: ChannelInfo | null) => {
-    if (tunnelInfo().status !== "running" || !tunnelInfo().url || status?.status !== "running" || !status?.webhookMeta?.path) {
+    if (!accessUrl() || status?.status !== "running" || !status?.webhookMeta?.path) {
       return undefined;
     }
 
     return (
       <p class="text-xs text-gray-600 dark:text-gray-300 break-all">
         <span class="text-gray-500 dark:text-gray-500">{t().channel.webhookEndpoint}:</span>{" "}
-        {`${tunnelInfo().url}${status.webhookMeta.path}`}
+        {`${accessUrl()}${status.webhookMeta.path}`}
       </p>
     );
   };
@@ -419,16 +420,20 @@ export function ChannelManagementSettings() {
           </div>
 
           <div class="space-y-3 bg-white dark:bg-slate-800 rounded-xl shadow-xs border border-gray-200 dark:border-slate-700 p-3">
-            <Show when={tunnelInfo().status !== "running"}>
+            <Show when={!accessUrl()}>
               <div class="rounded-lg border border-amber-200 dark:border-amber-900/30 bg-amber-50 dark:bg-amber-900/10 p-3">
-                <span class="text-xs font-medium text-amber-700 dark:text-amber-400">{t().channel.tunnelRequired}</span>
-                <span class="text-xs text-amber-600 dark:text-amber-400/80 ml-1">— {t().channel.tunnelRequiredDesc}</span>
+                <span class="text-xs font-medium text-amber-700 dark:text-amber-400">{t().channel.accessUrlRequired}</span>
+                <span class="text-xs text-amber-600 dark:text-amber-400/80 ml-1">— {t().channel.accessUrlRequiredDesc}</span>
               </div>
+            </Show>
+
+            <Show when={accessUrl()}>
+              <p class="text-xs text-gray-500 dark:text-gray-400">{t().channel.webhookReachabilityHint}</p>
             </Show>
 
             <For each={webhookChannels}>
               {(c) => (
-                <div class={tunnelInfo().status !== "running" ? "opacity-55" : ""}>
+                <div class={!accessUrl() ? "opacity-55" : ""}>
                   {renderChannelCard(c.def, c.state, renderWebhookFooter(c.state.status()))}
                 </div>
               )}

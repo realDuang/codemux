@@ -41,6 +41,7 @@ const MIME_TYPES: Record<string, string> = {
   ".js": "application/javascript",
   ".css": "text/css",
   ".json": "application/json",
+  ".webmanifest": "application/manifest+json",
   ".png": "image/png",
   ".jpg": "image/jpeg",
   ".jpeg": "image/jpeg",
@@ -118,7 +119,7 @@ export async function startTestServer(
   config?: TestServerConfig,
 ): Promise<TestServerInstance> {
   const requestedPort = config?.port ?? 0;
-  const staticRoot = config?.staticRoot ?? path.resolve(__dirname, "../../../out/renderer");
+  const staticRoot = config?.staticRoot ?? path.resolve(__dirname, "../../../out/web");
 
   // --- Create mock adapters ---
 
@@ -142,6 +143,7 @@ export async function startTestServer(
 
   /** sessionId -> engineType */
   const sessionEngineMap = new Map<string, EngineType>();
+  const activeRequests = new Map<string, number>();
   /** permissionId -> engineType */
   const permissionEngineMap = new Map<string, EngineType>();
   /** directory -> engineType project bindings */
@@ -303,7 +305,8 @@ export async function startTestServer(
 
       case GatewayRequestType.SESSION_GET: {
         const adapter = getAdapterForSession(p.sessionId);
-        return adapter.getSession(p.sessionId);
+        const session = await adapter.getSession(p.sessionId);
+        return session && { ...session, activityStatus: activeRequests.has(p.sessionId) ? "running" : "idle" };
       }
 
       case GatewayRequestType.SESSION_DELETE: {
@@ -317,10 +320,25 @@ export async function startTestServer(
       case GatewayRequestType.MESSAGE_SEND: {
         const req = p as MessageSendRequest;
         const adapter = getAdapterForSession(req.sessionId);
-        return adapter.sendMessage(req.sessionId, req.content, {
-          mode: req.mode,
-          modelId: req.modelId,
-        });
+        activeRequests.set(req.sessionId, (activeRequests.get(req.sessionId) ?? 0) + 1);
+        try {
+          return await adapter.sendMessage(req.sessionId, req.content, {
+            mode: req.mode,
+            modelId: req.modelId,
+          });
+        } finally {
+          const remaining = (activeRequests.get(req.sessionId) ?? 1) - 1;
+          if (remaining) activeRequests.set(req.sessionId, remaining);
+          else activeRequests.delete(req.sessionId);
+        }
+      }
+
+      case GatewayRequestType.PENDING_LIST: {
+        const adapter = getAdapterForSession(p.sessionId);
+        return {
+          permissions: await adapter.getPendingPermissions(p.sessionId),
+          questions: await adapter.getPendingQuestions(p.sessionId),
+        };
       }
 
       case GatewayRequestType.MESSAGE_CANCEL: {
@@ -531,6 +549,12 @@ export async function startTestServer(
 
     // --- Test control endpoints ---
 
+    if (pathname === "/api/test/disconnect-ws" && req.method === "POST") {
+      for (const client of wsClients.values()) client.ws.close(1012, "Test connection interruption");
+      sendJson(res, { success: true });
+      return;
+    }
+
     if (pathname === "/api/test/set-local" && req.method === "POST") {
       const body = await parseJsonBody(req);
       authStore.setIsLocal(body.isLocal);
@@ -727,7 +751,12 @@ export async function startTestServer(
         filePath = path.join(filePath, "index.html");
       }
     } catch {
-      // File not found — SPA fallback to index.html
+      const routes = ["/", "/chat", "/settings", "/devices", "/login", "/remote"];
+      if (!req.headers.accept?.includes("text/html") || !routes.includes(pathname.replace(/\/$/, "") || "/")) {
+        res.writeHead(404);
+        res.end("Not Found");
+        return;
+      }
       filePath = path.join(staticRoot, "index.html");
     }
 
@@ -737,7 +766,7 @@ export async function startTestServer(
       res.writeHead(200, {
         "Content-Type": mimeType,
         "Content-Length": content.length,
-        "Cache-Control": filePath.endsWith(".html") ? "no-cache" : "public, max-age=31536000",
+        "Cache-Control": /\/assets\/.+-[\w-]{8}\.[^/]+$/.test(pathname) ? "public, max-age=31536000, immutable" : "no-cache",
       });
       res.end(content);
     } catch {
@@ -766,6 +795,19 @@ export async function startTestServer(
           payload: null,
           error: { code: "PARSE_ERROR", message: "Invalid JSON" },
         });
+        return;
+      }
+
+      // Match the production client's first-frame authentication handshake.
+      if (request.type === "auth") {
+        const token = (request as GatewayRequest & { token?: string }).token;
+        const authenticated = token === "test-token" || Boolean(token && authStore.verifyToken(token).valid);
+        sendToClient(client, {
+          type: "response",
+          requestId: request.requestId,
+          payload: { authenticated },
+        });
+        if (!authenticated) ws.close(4001, "Unauthorized");
         return;
       }
 

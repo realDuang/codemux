@@ -5,6 +5,7 @@
 
 import { gatewayAPI } from "./electron-api";
 import { isElectron } from "./platform";
+import { Auth } from "./auth";
 import {
   GatewayRequestType,
   type GatewayRequest,
@@ -122,6 +123,9 @@ export class GatewayClient {
   private manualClose = false;
   private _connected = false;
   private wsUrl: string | null = null;
+  private connectionPromise: Promise<void> | null = null;
+  private healthCheckPromise: Promise<void> | null = null;
+  private connectionEpoch = 0;
   private listeners = new Map<string, Set<EventHandler>>();
 
   // --- Notification batching ---
@@ -170,8 +174,19 @@ export class GatewayClient {
 
   // --- Connection lifecycle ---
 
-  async connect(url?: string): Promise<void> {
+  connect(url?: string): Promise<void> {
+    if (this.connectionPromise) return this.connectionPromise;
+    const connecting = this.openConnection(url);
+    this.connectionPromise = connecting;
+    void connecting.finally(() => {
+      if (this.connectionPromise === connecting) this.connectionPromise = null;
+    }).catch(() => {});
+    return connecting;
+  }
+
+  private async openConnection(url?: string): Promise<void> {
     if (this.ws) return;
+    const epoch = this.connectionEpoch;
     this.manualClose = false;
 
     if (url) {
@@ -192,28 +207,36 @@ export class GatewayClient {
       }
     }
 
+    if (epoch !== this.connectionEpoch) throw new Error("Client disconnected");
+    const endpoint = new URL(this.wsUrl!);
+    const token = Auth.getToken() || endpoint.searchParams.get("token");
+    if (!token) throw new Error("Gateway authentication required");
+    // Authenticate in the first frame so device credentials stay out of URLs.
+    endpoint.searchParams.delete("token");
+
     return new Promise<void>((resolve, reject) => {
-      const ws = new WebSocket(this.wsUrl!);
+      const ws = new WebSocket(endpoint.toString());
+      const authRequestId = `auth_${++this.requestCounter}`;
+      const authTimer = setTimeout(() => {
+        reject(new Error("Gateway authentication timed out"));
+        ws.close(4000, "Authentication timed out");
+      }, 10_000);
 
       ws.onopen = () => {
-        this._connected = true;
-        this.reconnectAttempt = 0;
-        this.emit("connected");
-        resolve();
+        if (this.ws !== ws) return;
+        ws.send(JSON.stringify({ type: "auth", requestId: authRequestId, token }));
       };
 
       ws.onclose = (ev) => {
-        const wasConnected = this._connected;
+        clearTimeout(authTimer);
+        reject(new Error("Failed to connect to gateway"));
+        if (this.ws !== ws) return;
         this._connected = false;
         this.ws = null;
         this.rejectAllPending("Connection closed");
         this.emit("disconnected", ev.reason || "closed");
 
-        if (!wasConnected) {
-          reject(new Error("Failed to connect to gateway"));
-        }
-
-        if (!this.manualClose) {
+        if (!this.manualClose && ev.code !== 4001) {
           this.scheduleReconnect();
         }
       };
@@ -224,6 +247,29 @@ export class GatewayClient {
       };
 
       ws.onmessage = (ev) => {
+        if (this.ws !== ws) return;
+        if (!this._connected) {
+          let response: GatewayResponse;
+          try {
+            response = JSON.parse(ev.data as string);
+          } catch {
+            return;
+          }
+          if (response?.type !== "response" || response.requestId !== authRequestId) return;
+          if (authTimer) clearTimeout(authTimer);
+          const payload = response.payload;
+          if (response.error || !payload || typeof payload !== "object"
+            || !("authenticated" in payload) || payload.authenticated !== true) {
+            reject(new Error("Gateway authentication failed"));
+            ws.close(4001, "Unauthorized");
+            return;
+          }
+          this._connected = true;
+          this.reconnectAttempt = 0;
+          this.emit("connected");
+          resolve();
+          return;
+        }
         this.handleMessage(ev.data as string);
       };
 
@@ -231,7 +277,53 @@ export class GatewayClient {
     });
   }
 
+  /** Probe the authenticated socket before reusing it after a browser suspension. */
+  ensureConnected(): Promise<void> {
+    if (this.healthCheckPromise) return this.healthCheckPromise;
+    const checking = this.checkConnection();
+    this.healthCheckPromise = checking;
+    void checking.finally(() => {
+      if (this.healthCheckPromise === checking) this.healthCheckPromise = null;
+    }).catch(() => {});
+    return checking;
+  }
+
+  private async checkConnection(): Promise<void> {
+    const epoch = this.connectionEpoch;
+    const socket = this.ws;
+    if (this._connected && socket?.readyState === WebSocket.OPEN) {
+      try {
+        await this.request(GatewayRequestType.ENGINE_LIST, {}, 5_000);
+        return;
+      } catch {
+        if (this.manualClose || epoch !== this.connectionEpoch) throw new Error("Client disconnected");
+        if (this.ws !== socket) return this.connect();
+      }
+    } else if (this.connectionPromise) {
+      return this.connectionPromise;
+    }
+
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+    if (this.ws) {
+      // Detach first: a delayed close event from the stale socket must not
+      // invalidate its authenticated replacement or reject the new requests.
+      const stale = this.ws;
+      this.ws = null;
+      this._connected = false;
+      this.rejectAllPending("Connection interrupted");
+      this.emit("disconnected", "Connection interrupted");
+      stale.close(4000, "Connection health check failed");
+    }
+    await this.connect();
+  }
+
   disconnect(): void {
+    this.connectionEpoch++;
+    this.connectionPromise = null;
+    this.healthCheckPromise = null;
     this.manualClose = true;
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);

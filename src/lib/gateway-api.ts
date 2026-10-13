@@ -60,6 +60,15 @@ const [_gatewayConnected, _setGatewayConnected] = createSignal(
 /** Reactive accessor reflecting `gatewayClient.connected`. */
 export const gatewayConnected = _gatewayConnected;
 
+type SnapshotUpdate =
+  | { type: "message"; message: UnifiedMessage }
+  | { type: "part"; part: UnifiedPart; createdAt: number };
+
+interface PendingMessageSnapshot {
+  sessionId: string;
+  updates: SnapshotUpdate[];
+}
+
 // --- Notification callback types ---
 
 export interface GatewayNotificationHandlers {
@@ -90,7 +99,14 @@ export interface GatewayNotificationHandlers {
 class GatewayAPI {
   private handlers: GatewayNotificationHandlers = {};
   private initialized = false;
+  private pendingMessageSnapshots = new Set<PendingMessageSnapshot>();
   private boundHandlers: Array<{ event: string; handler: (...args: any[]) => void }> = [];
+
+  private recordSnapshotUpdate(sessionId: string, update: SnapshotUpdate): void {
+    for (const snapshot of this.pendingMessageSnapshots) {
+      if (snapshot.sessionId === sessionId) snapshot.updates.push(update);
+    }
+  }
 
   /**
    * Whether the gateway has been initialized (connected + events bound).
@@ -135,6 +151,7 @@ class GatewayAPI {
   destroy(): void {
     this.unbindEvents();
     gatewayClient.disconnect();
+    _setGatewayConnected(false);
     this.initialized = false;
   }
 
@@ -171,14 +188,19 @@ class GatewayAPI {
     });
 
     this.bind("message.part.updated", (data) => {
+      this.recordSnapshotUpdate(data.sessionId, { type: "part", part: data.part, createdAt: Date.now() });
       this.handlers.onPartUpdated?.(data.sessionId, data.part);
     });
 
     this.bind("message.parts.batch", (data) => {
+      for (const part of data.parts) {
+        this.recordSnapshotUpdate(data.sessionId, { type: "part", part, createdAt: Date.now() });
+      }
       this.handlers.onPartsBatch?.(data.sessionId, data.messageId, data.parts);
     });
 
     this.bind("message.updated", (data) => {
+      this.recordSnapshotUpdate(data.sessionId, { type: "message", message: data.message });
       this.handlers.onMessageUpdated?.(data.sessionId, data.message);
     });
 
@@ -306,8 +328,41 @@ class GatewayAPI {
     return gatewayClient.cancelMessage(sessionId);
   }
 
-  listMessages(sessionId: string): Promise<UnifiedMessage[]> {
-    return gatewayClient.listMessages(sessionId);
+  async listMessages(sessionId: string): Promise<UnifiedMessage[]> {
+    // Notifications received while a snapshot is in flight must survive for
+    // every engine so reconnecting cannot rewind live output.
+    const pending: PendingMessageSnapshot = { sessionId, updates: [] };
+    this.pendingMessageSnapshots.add(pending);
+    try {
+      const snapshot = await gatewayClient.listMessages(sessionId);
+      const messages = new Map(snapshot.map((message) => [message.id, message]));
+      const mergeParts = (existing: UnifiedPart[], incoming: UnifiedPart[]) =>
+        [...new Map([...existing, ...incoming].map((part) => [part.id, part])).values()];
+
+      for (const update of pending.updates) {
+        if (update.type === "message") {
+          const current = messages.get(update.message.id);
+          messages.set(update.message.id, {
+            ...current,
+            ...update.message,
+            parts: mergeParts(current?.parts ?? [], update.message.parts ?? []),
+          });
+        } else {
+          const { part } = update;
+          const current = messages.get(part.messageId) ?? {
+            id: part.messageId,
+            sessionId,
+            role: "assistant" as const,
+            time: { created: update.createdAt },
+            parts: [],
+          };
+          messages.set(part.messageId, { ...current, parts: mergeParts(current.parts ?? [], [part]) });
+        }
+      }
+      return [...messages.values()].sort((a, b) => a.time.created - b.time.created);
+    } finally {
+      this.pendingMessageSnapshots.delete(pending);
+    }
   }
 
   async getMessageSteps(sessionId: string, messageId: string): Promise<UnifiedPart[]> {

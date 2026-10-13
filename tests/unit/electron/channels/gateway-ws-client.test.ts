@@ -277,6 +277,18 @@ describe("GatewayWsClient", () => {
       expect(lastWsUrl).toBe("ws://override:5555");
     });
 
+    it("preserves the internal token for the connection without logging URL credentials", async () => {
+      const url = "ws://internal:local-password@127.0.0.1:9999/ws?token=local-test-token&channel=1";
+      const connected = client.connect(url);
+      lastFakeWs.simulateOpen();
+      await connected;
+
+      expect(lastWsUrl).toBe(url);
+      expect(mockChannelLog.info).toHaveBeenCalledWith("Gateway WS connected: ws://127.0.0.1:9999/ws");
+      expect(JSON.stringify(mockChannelLog.info.mock.calls)).not.toContain("local-test-token");
+      expect(JSON.stringify(mockChannelLog.info.mock.calls)).not.toContain("local-password");
+    });
+
     it("rejects if close fires before open (connection failure)", async () => {
       const p = client.connect();
       lastFakeWs.simulateClose(1006, "connection refused");

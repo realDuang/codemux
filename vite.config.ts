@@ -1,13 +1,14 @@
-import { defineConfig } from "vite";
-import tailwindcss from "@tailwindcss/vite";
-import solid from "vite-plugin-solid";
+import { defineConfig, mergeConfig } from "vite";
+import webConfig from "./vite.web.config";
 
-import os from "os";
 import type { IncomingMessage } from "http";
 import { tunnelManager } from "./scripts/tunnel-manager";
+import { remoteAccessManager } from "./scripts/remote-access-manager";
+import { createRemoteAccessPlugin } from "./scripts/remote-access-plugin";
+import { preserveProxyRequestIdentity } from "./scripts/auth-proxy-plugin";
 import { deviceStore } from "./scripts/device-store";
 import type { DeviceInfo } from "./shared/device-store-types";
-import { sendJson, parseBody, extractBearerToken, getClientIp, isLocalhost, getLocalIp } from "./shared/http-utils";
+import { sendJson, parseBody, getClientIp, isLocalRequest, getLocalIp, requireAuth } from "./shared/http-utils";
 import { handleAuthRoutes, handleSettingsRoutes } from "./shared/auth-route-handlers";
 import { loadSettings as loadStandaloneSettings, saveSettings as saveStandaloneSettings } from "./scripts/settings-store";
 import { GATEWAY_PORT, OPENCODE_PORT, WEBHOOK_PORT, WEB_STANDALONE_PORT } from "./shared/ports";
@@ -31,10 +32,9 @@ const localAuthOptions = {
 // Vite Config
 // ============================================================================
 
-export default defineConfig({
+export default mergeConfig(webConfig, defineConfig({
   plugins: [
-    tailwindcss(),
-    solid(),
+    createRemoteAccessPlugin(remoteAccessManager, () => tunnelManager.stop()),
     {
       name: "standalone-auth-api",
       configureServer(server) {
@@ -122,6 +122,7 @@ export default defineConfig({
           const handled = await handleSettingsRoutes(req, res, pathname, deviceStore, {
             loadSettings: loadStandaloneSettings,
             saveSettings: saveStandaloneSettings,
+            getRemoteAccessStatus: () => remoteAccessManager.getStatus(),
           });
           if (!handled) {
             next();
@@ -155,56 +156,39 @@ export default defineConfig({
             return;
           }
 
-          const clientIp = getClientIp(req);
-          const isLocal = isLocalhost(clientIp);
+          const isLocal = isLocalRequest(req);
           sendJson(res, { isLocal });
         });
 
         // ====================================================================
-        // Tunnel Management APIs
+        // OpenCode's internal server is reachable only after authentication.
         // ====================================================================
-        server.middlewares.use(async (req, res, next) => {
-          if (!req.url?.startsWith("/api/tunnel")) {
+        server.middlewares.use((req, res, next) => {
+          if (!req.url?.startsWith("/opencode-api")) {
             next();
             return;
           }
-
-          try {
-            if (req.url === "/api/tunnel/start" && req.method === "POST") {
-              const info = await tunnelManager.start(WEB_STANDALONE_PORT);
-              sendJson(res, info);
-              return;
-            }
-
-            if (req.url === "/api/tunnel/stop" && req.method === "POST") {
-              await tunnelManager.stop();
-              sendJson(res, { success: true });
-              return;
-            }
-
-            if (req.url === "/api/tunnel/status" && req.method === "GET") {
-              const info = tunnelManager.getInfo();
-              sendJson(res, info);
-              return;
-            }
-
-            sendJson(res, { error: "Not found" }, 404);
-          } catch (error: any) {
-            console.error("[API Error]", error);
-            sendJson(res, { error: error.message }, 500);
-          }
+          if (!requireAuth(req, res, deviceStore)) return;
+          next();
         });
       },
     },
   ],
   server: {
     port: WEB_STANDALONE_PORT,
+    // Keep the advertised access URL and the tunnel target on the same port.
+    strictPort: true,
     host: true,
     allowedHosts: true,
     proxy: {
       "/ws": {
         target: `http://localhost:${GATEWAY_PORT}`,
         ws: true,
+        bypass: req => remoteAccessManager.isRequestAllowed(req, true) ? undefined : false,
+        configure: proxy => {
+          proxy.on("proxyReq", preserveProxyRequestIdentity);
+          proxy.on("proxyReqWs", preserveProxyRequestIdentity);
+        },
       },
       "/opencode-api/global/event": {
         target: `http://localhost:${OPENCODE_PORT}`,
@@ -228,4 +212,4 @@ export default defineConfig({
       },
     },
   },
-});
+}));

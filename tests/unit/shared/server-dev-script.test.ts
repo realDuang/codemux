@@ -87,22 +87,28 @@ exec "$@"
 `;
 
 const FAKE_CLOUDFLARED = `#!/usr/bin/env bash
-set -euo pipefail
-
-if [ "\${1:-}" = "tunnel" ] && [ "\${2:-}" = "--url" ]; then
-  echo "2024-01-01 INFO | https://same-tunnel.trycloudflare.com connected"
-  trap 'exit 0' TERM INT
-  while true; do
-    sleep 1
-  done
-fi
-
-echo "Unexpected cloudflared args: $*" >&2
+echo "The wrapper must not spawn cloudflared directly." >&2
 exit 1
 `;
 
 const FAKE_CURL = `#!/usr/bin/env bash
-exit 1
+set -euo pipefail
+state="\${XDG_STATE_HOME}/codemux-server/api-mode"
+if [[ "$*" == *'/api/remote-access'* ]] && [[ "$*" == *'PATCH'* ]]; then
+  printf 'cloudflare' > "$state"
+  printf '{"mode":"cloudflare"}'
+elif [[ "$*" == *'/api/tunnel/stop'* ]]; then
+  printf 'off' > "$state"
+  printf '{"success":true}'
+elif [[ "$*" == *'/api/tunnel/status'* ]]; then
+  if [ "$(cat "$state" 2>/dev/null || true)" = 'cloudflare' ]; then
+    printf '{"status":"running","url":"https://selected-tunnel.trycloudflare.com"}'
+  else
+    printf '{"status":"stopped","url":""}'
+  fi
+else
+  exit 1
+fi
 `;
 
 interface TestRepo {
@@ -236,35 +242,32 @@ async function cleanupRepo(repo: TestRepo): Promise<void> {
 
 describe.skipIf(process.platform !== "linux")("scripts/server-dev.sh", () => {
   it(
-    "restarts the managed app without rotating the managed quick tunnel",
+    "activates Cloudflare through the application and restores its selected mode on restart",
     async () => {
       // Force the launched PID to exist before its process group so startup
       // cannot depend on how quickly setsid is scheduled by the CI runner.
       const repo = await createTestRepo({ delaySetsid: true });
       try {
         const startResult = await runServerScript(repo, "start", "--replace", "--tunnel");
-        expect(startResult.stdout).toContain("Tunnel is ready: https://same-tunnel.trycloudflare.com");
+        expect(startResult.stdout).toContain("Tunnel is ready: https://selected-tunnel.trycloudflare.com");
 
         const initialAppPid = await readStateFile(repo, "dev.pid");
-        const initialTunnelPid = await readStateFile(repo, "tunnel.pid");
         const initialTunnelUrl = await readStateFile(repo, "tunnel-url");
 
         expect(isPidRunning(initialAppPid)).toBe(true);
-        expect(isPidRunning(initialTunnelPid)).toBe(true);
-        expect(initialTunnelUrl).toBe("https://same-tunnel.trycloudflare.com");
+        expect(existsSync(path.join(repo.stateDir, "tunnel.pid"))).toBe(false);
+        expect(initialTunnelUrl).toBe("https://selected-tunnel.trycloudflare.com");
 
         const restartResult = await runServerScript(repo, "restart");
         const restartedAppPid = await readStateFile(repo, "dev.pid");
-        const restartedTunnelPid = await readStateFile(repo, "tunnel.pid");
         const restartedTunnelUrl = await readStateFile(repo, "tunnel-url");
 
-        expect(restartResult.stdout).toContain("Preserved managed Cloudflare tunnel.");
-        expect(restartResult.stdout).toContain("Public URL should stay the same");
+        expect(restartResult.stdout).toContain("CodeMux restored its selected Cloudflare access mode.");
+        expect(restartResult.stdout).toContain("Temporary quick-tunnel URLs may change");
         expect(restartedAppPid).not.toBe(initialAppPid);
-        expect(restartedTunnelPid).toBe(initialTunnelPid);
         expect(restartedTunnelUrl).toBe(initialTunnelUrl);
         expect(isPidRunning(restartedAppPid)).toBe(true);
-        expect(isPidRunning(restartedTunnelPid)).toBe(true);
+        expect(existsSync(path.join(repo.stateDir, "tunnel.pid"))).toBe(false);
       } finally {
         await cleanupRepo(repo);
       }
@@ -286,7 +289,7 @@ describe.skipIf(process.platform !== "linux")("scripts/server-dev.sh", () => {
         const restartResult = await runServerScript(repo, "restart");
         const restartedAppPid = await readStateFile(repo, "dev.pid");
 
-        expect(restartResult.stdout).toContain("No managed Cloudflare tunnel was running.");
+        expect(restartResult.stdout).toContain("CodeMux restarted with its persisted remote access mode.");
         expect(restartedAppPid).not.toBe(initialAppPid);
         expect(isPidRunning(restartedAppPid)).toBe(true);
       } finally {
@@ -297,41 +300,28 @@ describe.skipIf(process.platform !== "linux")("scripts/server-dev.sh", () => {
   );
 
   it(
-    "rotates the managed tunnel when the app comes back on a different local URL",
+    "retires a legacy wrapper-owned tunnel when restarting",
     async () => {
       const repo = await createTestRepo();
       try {
         const startResult = await runServerScript(repo, "start", "--replace", "--tunnel");
-        expect(startResult.stdout).toContain("Tunnel is ready: https://same-tunnel.trycloudflare.com");
+        expect(startResult.stdout).toContain("Tunnel is ready: https://selected-tunnel.trycloudflare.com");
 
         const initialAppPid = await readStateFile(repo, "dev.pid");
-        const initialTunnelPid = await readStateFile(repo, "tunnel.pid");
+        const { stdout: initialTunnelPid } = await execFileAsync("bash", [
+          "-c", "setsid sleep 30 >/dev/null 2>&1 < /dev/null & echo $!",
+        ]);
+        await writeFile(path.join(repo.stateDir, "tunnel.pid"), initialTunnelPid);
         expect(isPidRunning(initialAppPid)).toBe(true);
         expect(isPidRunning(initialTunnelPid)).toBe(true);
 
-        // Simulate the previous app having bound to a different local port.
-        // restart_app reads $LOCAL_URL_FILE before deleting it, so overriding
-        // it here is enough to trigger the URL-mismatch branch when the new
-        // app comes back on the fake bun's hardcoded http://localhost:8233/.
-        await writeFile(
-          path.join(repo.stateDir, "local-url"),
-          "http://localhost:9999\n",
-          "utf8",
-        );
-
         const restartResult = await runServerScript(repo, "restart");
         const restartedAppPid = await readStateFile(repo, "dev.pid");
-        const restartedTunnelPid = await readStateFile(repo, "tunnel.pid");
 
-        expect(restartResult.stdout).toContain(
-          "but the preserved tunnel targets http://localhost:9999",
-        );
-        expect(restartResult.stdout).toContain("Rotating Cloudflare quick tunnel");
-        expect(restartResult.stdout).not.toContain("Preserved managed Cloudflare tunnel.");
+        expect(restartResult.stdout).toContain("CodeMux restored its selected Cloudflare access mode.");
         expect(restartedAppPid).not.toBe(initialAppPid);
-        expect(restartedTunnelPid).not.toBe(initialTunnelPid);
         expect(isPidRunning(restartedAppPid)).toBe(true);
-        expect(isPidRunning(restartedTunnelPid)).toBe(true);
+        expect(existsSync(path.join(repo.stateDir, "tunnel.pid"))).toBe(false);
         expect(isPidRunning(initialTunnelPid)).toBe(false);
       } finally {
         await cleanupRepo(repo);

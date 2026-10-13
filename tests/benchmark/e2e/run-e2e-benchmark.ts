@@ -54,7 +54,7 @@ async function main() {
   console.log("╠══════════════════════════════════════════════════════════════╣\n");
 
   // Step 1: Check for built renderer
-  const staticRoot = path.resolve(__dirname, "../../../out/renderer");
+  const staticRoot = path.resolve(__dirname, "../../../out/web");
   const fs = await import("fs");
 
   if (!fs.existsSync(path.join(staticRoot, "index.html"))) {
@@ -67,7 +67,7 @@ async function main() {
     console.log("  Building renderer...");
     const { execSync } = await import("child_process");
     try {
-      execSync("npx electron-vite build", {
+      execSync("bun run build:web", {
         cwd: path.resolve(__dirname, "../../.."),
         stdio: "inherit",
         env: { ...process.env, ELECTRON_RUN_AS_NODE: undefined },

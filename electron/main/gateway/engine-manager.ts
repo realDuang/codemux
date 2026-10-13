@@ -847,7 +847,11 @@ export class EngineManager extends EventEmitter {
 
   async getSession(sessionId: string): Promise<UnifiedSession | null> {
     const conv = conversationStore.get(sessionId);
-    return conv ? convToSession(conv) : null;
+    if (!conv) return null;
+    return {
+      ...convToSession(conv),
+      activityStatus: this.activeSessionCounts.has(sessionId) ? "running" : "idle",
+    };
   }
 
   async deleteSession(sessionId: string): Promise<void> {

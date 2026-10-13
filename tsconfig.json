@@ -14,5 +14,5 @@
     "isolatedModules": true,
     "resolveJsonModule": true
   },
-  "include": ["src", "scripts", "electron", "vite.config.ts", "electron.vite.config.ts"]
+  "include": ["src", "web", "scripts", "electron", "vite.config.ts", "vite.web.config.ts", "electron.vite.config.ts"]
 }

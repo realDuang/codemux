@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { 
   extractBearerToken, 
   isLocalhost, 
+  isLocalRequest,
   getClientIp, 
   getLocalIp, 
   sendJson, 
@@ -39,18 +40,87 @@ describe('http-utils', () => {
   });
 
   describe('getClientIp', () => {
-    it('prefers x-forwarded-for header, falls back to socket.remoteAddress, and returns unknown if none found', () => {
+    it('uses forwarded addresses only from a loopback proxy and otherwise reports the socket peer', () => {
       // x-forwarded-for
-      const reqForwarded = { headers: { 'x-forwarded-for': '203.0.113.195, 70.41.3.18' } } as unknown as IncomingMessage;
+      const reqForwarded = { headers: { 'x-forwarded-for': '203.0.113.195, 70.41.3.18' }, socket: { remoteAddress: '127.0.0.1' } } as unknown as IncomingMessage;
       expect(getClientIp(reqForwarded)).toBe('203.0.113.195');
 
       // socket fallback
-      const reqSocket = { headers: {}, socket: { remoteAddress: '1.2.3.4' } } as unknown as IncomingMessage;
+      const reqSocket = { headers: { 'x-forwarded-for': '127.0.0.1' }, socket: { remoteAddress: '1.2.3.4' } } as unknown as IncomingMessage;
       expect(getClientIp(reqSocket)).toBe('1.2.3.4');
 
       // unknown
       const reqUnknown = { headers: {} } as unknown as IncomingMessage;
       expect(getClientIp(reqUnknown)).toBe('unknown');
+    });
+  });
+
+  describe('isLocalRequest', () => {
+    const createRequest = (
+      headers: IncomingMessage['headers'] = { host: 'localhost:8233' },
+      remoteAddress = '127.0.0.1',
+    ) => ({ headers, socket: { remoteAddress } }) as unknown as IncomingMessage;
+
+    it('does not grant local authentication to cross-origin browser requests', () => {
+      expect(isLocalRequest(createRequest({ host: 'localhost:8233', origin: 'http://localhost:8233' }))).toBe(true);
+      for (const origin of ['https://external.example', 'http://localhost:9999', 'null']) {
+        expect(isLocalRequest(createRequest({ host: 'localhost:8233', origin }))).toBe(false);
+      }
+    });
+
+    it.each([
+      ['127.0.0.1', 'localhost:8233'],
+      ['::1', '[::1]:8233'],
+      ['::ffff:127.0.0.1', '127.0.0.1:22301'],
+    ])('accepts the local endpoint %s with Host %s', (peer, host) => {
+      expect(isLocalRequest(createRequest({ host }, peer))).toBe(true);
+    });
+
+    it('accepts a local dev proxy while inspecting all forwarded identities', () => {
+      expect(isLocalRequest(createRequest({
+        host: 'localhost:8233',
+        'x-forwarded-for': '127.0.0.1, ::1',
+        'x-real-ip': '127.0.0.1',
+        'x-forwarded-host': 'localhost:8233',
+        forwarded: 'for=127.0.0.1;host=localhost:8233, For="[::1]:8233";proto=http',
+      }))).toBe(true);
+    });
+
+    it.each(['192.168.1.20', '203.0.113.7', 'localhost', ''])('rejects a non-loopback socket %s even with local headers', (peer) => {
+      expect(isLocalRequest(createRequest({ host: 'localhost:8233', 'x-forwarded-for': '127.0.0.1' }, peer))).toBe(false);
+    });
+
+    it.each([
+      undefined, '', 'public.example:8233', 'localhost.example', 'user@localhost',
+      'localhost/path', 'localhost:8233#remote', '[localhost]:8233', 'localhost:65536',
+    ])('rejects missing or nonlocal Host authority %s', (host) => {
+      expect(isLocalRequest(createRequest({ host }))).toBe(false);
+    });
+
+    it.each([
+      { 'x-forwarded-for': '203.0.113.7' },
+      { 'x-forwarded-for': '127.0.0.1, 203.0.113.7' },
+      { 'x-forwarded-for': ['127.0.0.1', '203.0.113.7'] },
+      { 'x-forwarded-for': '' },
+      { 'x-forwarded-for': 'unknown' },
+      { 'x-real-ip': '203.0.113.7' },
+      { 'x-forwarded-host': 'public.example' },
+      { 'x-forwarded-host': 'localhost:8233, public.example' },
+      { forwarded: 'for=203.0.113.7' },
+      { forwarded: 'for=127.0.0.1;host=public.example' },
+      { forwarded: 'for=127.0.0.1, for=unknown' },
+      { forwarded: 'for=127.0.0.1;for=203.0.113.7' },
+      { forwarded: 'for=_hidden' },
+      { forwarded: 'proto=https' },
+      { forwarded: 'for="127.0.0.1' },
+    ])('rejects remote or ambiguous forwarding evidence %j', (headers) => {
+      expect(isLocalRequest(createRequest({ host: 'localhost:8233', ...headers }))).toBe(false);
+    });
+
+    it('rejects duplicate Host headers even when Node keeps only the first value', () => {
+      const req = createRequest();
+      req.rawHeaders = ['Host', 'localhost:8233', 'Host', 'public.example'];
+      expect(isLocalRequest(req)).toBe(false);
     });
   });
 

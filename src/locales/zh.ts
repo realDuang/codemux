@@ -1,6 +1,22 @@
 import { LocaleDict } from "./en";
 
 export const zh: LocaleDict = {
+  pwa: {
+    install: "添加到桌面",
+    installDescription: "从主屏幕直接打开 CodeMux。",
+    installTitle: "将 CodeMux 添加到主屏幕",
+    installIos: "打开分享菜单，选择“添加到主屏幕”，再点“添加”。",
+    installIosBrowser: "如果没有这个选项，请在 Safari 中打开当前网址。",
+    done: "知道了",
+    dismiss: "暂时关闭",
+    offline: "网络已断开，恢复连接后才能发送消息和接收更新。",
+    updateAvailable: "CodeMux 有新版本可用。",
+    update: "刷新",
+    updateImages: "请先发送或移除草稿中的图片，再刷新页面。",
+    updateUnsaved: "有草稿未能保存，请先复制文字，再手动刷新页面。",
+    updateBusy: "正在生成回复，请等回复结束后刷新。",
+    updateFailed: "更新失败，请重试。",
+  },
   // Common
   common: {
     loading: "加载中...",
@@ -152,7 +168,7 @@ export const zh: LocaleDict = {
   // Remote Access page
   remote: {
     title: "远程访问",
-    publicAccess: "公网远程访问",
+    publicAccess: "Cloudflare Tunnel",
     publicAccessDesc: "通过 Cloudflare 隧道从互联网访问",
     starting: "正在启动隧道，请稍候...",
     startFailed: "启动失败，请确保已安装 cloudflared",
@@ -173,8 +189,34 @@ export const zh: LocaleDict = {
     lanQrDesc: "确保手机和电脑连接同一 Wi-Fi",
     webApp: "网页应用",
     devicesDesc: "管理可以访问此服务器的设备",
-    publicAccessTab: "公网访问",
-    publicAccessTabDesc: "通过 Cloudflare Tunnel 将本地服务暴露到公网，支持远程网页访问和 Webhook 渠道消息接收",
+    publicAccessTab: "远程访问",
+    publicAccessTabDesc: "使用自备 IP 或域名，或开启 Cloudflare Tunnel，让其他设备通过浏览器访问，也可用于接收 Webhook 回调。",
+    accessOffDescription: "远程访问已关闭，本机仍可正常使用。",
+    accessOnDescription: "远程访问已开启，当前使用下方选定的方式。",
+    accessMethod: "连接方式",
+    accessCustomMethod: "使用自己的 IP、域名或网络转发。",
+    accessCloudflare: "Cloudflare Tunnel",
+    accessCloudflareMethod: "由 CodeMux 启动并管理 Cloudflare 隧道。",
+    accessExclusive: "两种方式只能启用一种，切换会断开现有远程连接。",
+    accessSwitching: "正在切换远程访问…",
+    accessUpdateFailed: "远程访问设置未成功，请检查连接和配置后重试。",
+    accessUrlRequired: "请先在下方保存自定义地址，再开启此方式。",
+    customAccessTitle: "自定义访问入口",
+    customAccessDesc: "填写已经能访问此 CodeMux 的 IP 或域名地址。网络转发和 HTTPS 需在外部配置，保存地址不会创建隧道。",
+    customAccessUrl: "自定义访问地址",
+    customAccessUrlPlaceholder: "http://192.168.1.20:8233 或 https://codemux.example.com",
+    customAccessInvalid: "请输入 HTTP 或 HTTPS 地址，可带端口号，不支持路径、查询参数、片段或账号密码。",
+    customAccessSaved: "访问地址已保存。",
+    customAccessSaveFailed: "访问地址保存失败，请重试。",
+    customAccessClear: "清除",
+    customAccessConfigured: "已配置自定义访问地址",
+    custom: "自定义",
+    customQrScan: "扫码打开自定义地址",
+    customQrDesc: "请确保当前设备能连接到配置的 IP 或域名。",
+    copyAddress: "复制地址",
+    copyAccessCode: "复制访问码",
+    accessQrAlt: "CodeMux 访问二维码",
+    accessQrError: "二维码生成失败。",
     tunnelRunning: "运行中",
     tunnelStopped: "未运行",
     noteUrlChanges: "重启后 URL 会变化",
@@ -189,11 +231,11 @@ export const zh: LocaleDict = {
     noteSecurity: "访问安全",
     noteSecurityDesc: "网页访问需要 6 位数字密码验证。Webhook 端点由各渠道 SDK 自行校验签名/Token。",
     noteKeepRunning: "保持应用运行",
-    noteKeepRunningDesc: "Tunnel 依赖本机 CodeMux 进程。关闭应用或休眠会导致公网访问中断。",
+    noteKeepRunningDesc: "请保持本机 CodeMux 运行。关闭应用或让电脑休眠会中断远程访问。",
     notes: "注意事项",
     publicAccessEnabled: "公网访问已开启 — Cloudflare Tunnel 运行中",
-    publicAccessDisabled: "公网访问未开启 — 前往开启 Tunnel",
-    goToPublicAccess: "前往公网访问",
+    publicAccessDisabled: "可配置自定义地址或 Cloudflare Tunnel",
+    goToPublicAccess: "配置远程访问",
   },
 
   // Session Sidebar
@@ -247,6 +289,8 @@ export const zh: LocaleDict = {
 
   // Prompt Input
   prompt: {
+    draftSaveFailed: "草稿未能保存在当前设备，请保留这个页面或复制文字。",
+    draftImagesNotSaved: "图片不会随草稿保存，重新打开页面后需要再次添加。",
     buildMode: "Build 模式 - 执行代码修改和命令",
     build: "Build",
     planMode: "Plan 模式 - 只读研究和规划",
@@ -491,6 +535,9 @@ export const zh: LocaleDict = {
     webhookConnectBadge: "Webhook",
     tunnelRequired: "公网访问未开启",
     tunnelRequiredDesc: "前往公网访问页开启 Tunnel 以使用 Webhook 渠道",
+    accessUrlRequired: "尚未配置访问地址",
+    accessUrlRequiredDesc: "请在远程访问页配置自定义地址，或开启 Cloudflare Tunnel。",
+    webhookReachabilityHint: "渠道平台必须能访问此地址。私网或局域网地址可能无法接收 Webhook 回调。",
     teamsWebhookGuide: "请将此 URL 配置到 Azure Bot Service → Settings → Messaging Endpoint",
     wecomWebhookGuide: "请将此 URL 配置到企业微信管理后台 → 应用 → 接收消息 → 回调 URL",
     webhookEndpoint: "Endpoint",
@@ -535,6 +582,7 @@ export const zh: LocaleDict = {
   // Notifications
   notification: {
     messageSendFailed: "消息发送失败，请重试。",
+    messageSendInterrupted: "发送连接已中断，请先核对会话记录，再决定是否重新发送。",
     sessionCreateFailed: "会话创建失败。",
     sessionDeleteFailed: "会话删除失败。",
     gatewayDisconnected: "连接已断开，正在重连...",

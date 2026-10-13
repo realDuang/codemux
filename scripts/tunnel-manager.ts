@@ -1,13 +1,20 @@
 import { spawn, ChildProcess } from "child_process";
 import fs from "fs";
 import path from "path";
+import os from "os";
 import { resolveServerStateDir } from "./state-dir";
+import { normalizeAccessUrl } from "../shared/access-url";
 
-interface TunnelInfo {
+export interface TunnelInfo {
   url: string;
   status: "starting" | "running" | "stopped" | "error";
   startTime?: number;
   error?: string;
+  errorCode?: string;
+}
+
+export interface TunnelConfig {
+  hostname?: string;
 }
 
 interface ExternalTunnelState {
@@ -15,13 +22,18 @@ interface ExternalTunnelState {
   info: TunnelInfo;
 }
 
-class TunnelManager {
+export class TunnelManager {
   private process: ChildProcess | null = null;
   private info: TunnelInfo = {
     url: "",
     status: "stopped",
   };
   private loggedStateDir = false;
+  private onUnexpectedExit: (() => void) | null = null;
+
+  setOnUnexpectedExit(callback: () => void): void {
+    this.onUnexpectedExit = callback;
+  }
 
   private getStateDir(): string {
     const envOverride = process.env.CODEMUX_SERVER_STATE_DIR;
@@ -121,15 +133,39 @@ class TunnelManager {
     };
   }
 
-  async start(port: number): Promise<TunnelInfo> {
+  private namedTunnelConfig(hostname: string, port: number): { path: string; url: string } {
+    const url = normalizeAccessUrl(/^https?:\/\//.test(hostname) ? hostname : `https://${hostname}`);
+    const parsed = new URL(url);
+    if (parsed.port) throw new Error("A Cloudflare hostname cannot include a port.");
+    const credentialsDir = path.join(os.homedir(), ".cloudflared");
+    const credentials = fs.existsSync(credentialsDir)
+      ? fs.readdirSync(credentialsDir)
+        .filter(file => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.json$/.test(file))
+        .sort((a, b) => fs.statSync(path.join(credentialsDir, b)).mtimeMs - fs.statSync(path.join(credentialsDir, a)).mtimeMs)
+      : [];
+    if (!credentials[0]) throw new Error("Named Tunnel credentials not found in ~/.cloudflared.");
+    const configPath = path.join(this.getStateDir(), "cloudflared-config.yml");
+    fs.mkdirSync(path.dirname(configPath), { recursive: true });
+    fs.writeFileSync(configPath, [
+      `tunnel: ${credentials[0].slice(0, -5)}`,
+      `credentials-file: ${JSON.stringify(path.join(credentialsDir, credentials[0]))}`,
+      "ingress:",
+      `  - hostname: ${JSON.stringify(parsed.hostname)}`,
+      `    service: http://localhost:${port}`,
+      "  - service: http_status:404",
+      "",
+    ].join("\n"));
+    return { path: configPath, url: `https://${parsed.hostname}` };
+  }
+
+  async start(port: number, config?: TunnelConfig): Promise<TunnelInfo> {
     if (this.process) {
       return this.info;
     }
 
-    const externalTunnel = this.readExternalTunnelState();
-    if (externalTunnel) {
-      return externalTunnel.info;
-    }
+    // Retire the exact legacy wrapper-owned process instead of adopting an
+    // ingress whose lifecycle is outside the authoritative access controller.
+    await this.stop();
 
     this.info = {
       url: "",
@@ -138,36 +174,47 @@ class TunnelManager {
     };
 
     try {
-      this.process = spawn("cloudflared", ["tunnel", "--url", `http://localhost:${port}`]);
+      const named = config?.hostname?.trim() ? this.namedTunnelConfig(config.hostname.trim(), port) : null;
+      const proc = spawn("cloudflared", named
+        ? ["tunnel", "--config", named.path, "run"]
+        : ["tunnel", "--url", `http://localhost:${port}`]);
+      this.process = proc;
+      if (named) this.info = { ...this.info, url: named.url };
 
       const handleOutput = (data: Buffer) => {
+        if (this.process !== proc) return;
         const output = data.toString();
         console.log("[Tunnel]", output);
 
         const urlMatch = output.match(/https?:\/\/[^\s]+\.trycloudflare\.com/);
-        if (urlMatch) {
+        if (!named && urlMatch) {
           this.info = {
             url: urlMatch[0],
             status: "running",
             startTime: this.info.startTime,
           };
           console.log("[Tunnel] ✅ URL Ready:", this.info.url);
+        } else if (named && /Registered tunnel connection|Connection registered/.test(output)) {
+          this.info = { ...this.info, status: "running" };
         }
       };
 
-      this.process.stdout?.on("data", handleOutput);
-      this.process.stderr?.on("data", handleOutput);
+      proc.stdout?.on("data", handleOutput);
+      proc.stderr?.on("data", handleOutput);
 
-      this.process.on("close", (code) => {
+      proc.on("close", (code) => {
+        if (this.process !== proc) return;
         console.log("[Tunnel] Process closed with code:", code);
         this.info = {
           url: "",
           status: "stopped",
         };
         this.process = null;
+        this.onUnexpectedExit?.();
       });
 
-      this.process.on("error", (err) => {
+      proc.on("error", (err) => {
+        if (this.process !== proc) return;
         console.error("[Tunnel] Process error:", err);
         this.info = {
           url: "",
@@ -178,11 +225,11 @@ class TunnelManager {
       });
 
       return this.info;
-    } catch (error: any) {
+    } catch (error: unknown) {
       this.info = {
         url: "",
         status: "error",
-        error: error.message,
+        error: error instanceof Error ? error.message : String(error),
       };
       return this.info;
     }
@@ -190,18 +237,72 @@ class TunnelManager {
 
   async stop(): Promise<void> {
     if (this.process) {
-      this.process.kill();
+      const proc = this.process;
       this.process = null;
       this.info = {
         url: "",
         status: "stopped",
       };
-      return;
+      await new Promise<void>((resolve, reject) => {
+        let settled = false;
+        const finish = () => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timeout);
+          clearTimeout(hardTimeout);
+          proc.off("close", finish);
+          proc.off("error", handleError);
+          resolve();
+        };
+        const fail = (error = new Error("Cloudflare tunnel did not stop.")) => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timeout);
+          clearTimeout(hardTimeout);
+          proc.off("close", finish);
+          proc.off("error", handleError);
+          this.process = proc;
+          this.info = { url: "", status: "error", error: error.message };
+          reject(error);
+        };
+        const hasExited = () => proc.exitCode !== null && proc.exitCode !== undefined ||
+          proc.signalCode !== null && proc.signalCode !== undefined;
+        const handleError = (error: Error) => hasExited() ? finish() : fail(error);
+        const signal = (value: "SIGTERM" | "SIGKILL") => {
+          try {
+            if (!proc.kill(value) && hasExited()) finish();
+          } catch (error) {
+            if (hasExited()) finish();
+            else fail(error instanceof Error ? error : new Error(String(error)));
+          }
+        };
+        const timeout = setTimeout(() => {
+          if (settled) return;
+          signal("SIGKILL");
+        }, 5000);
+        const hardTimeout = setTimeout(() => fail(), 10_000);
+        proc.once("close", finish);
+        proc.once("error", handleError);
+        if (hasExited()) finish();
+        else signal("SIGTERM");
+      });
     }
 
     const externalTunnel = this.readExternalTunnelState();
     if (externalTunnel) {
       this.killExternalTunnel(externalTunnel.pid);
+      const deadline = Date.now() + 5000;
+      while (this.isPidRunning(externalTunnel.pid) && Date.now() < deadline) {
+        await new Promise(resolve => setTimeout(resolve, 50));
+      }
+      if (this.isPidRunning(externalTunnel.pid)) {
+        process.kill(externalTunnel.pid, "SIGKILL");
+        const killDeadline = Date.now() + 5000;
+        while (this.isPidRunning(externalTunnel.pid) && Date.now() < killDeadline) {
+          await new Promise(resolve => setTimeout(resolve, 50));
+        }
+        if (this.isPidRunning(externalTunnel.pid)) throw new Error("Legacy Cloudflare tunnel did not stop.");
+      }
       this.clearExternalTunnelState();
     }
 
@@ -214,11 +315,6 @@ class TunnelManager {
   getInfo(): TunnelInfo {
     if (this.process) {
       return this.info;
-    }
-
-    const externalTunnel = this.readExternalTunnelState();
-    if (externalTunnel) {
-      return externalTunnel.info;
     }
 
     if (this.info.status === "error") {

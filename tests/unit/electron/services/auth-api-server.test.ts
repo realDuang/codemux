@@ -53,7 +53,7 @@ vi.mock("../../../../shared/ports", async () => {
   const actual = await vi.importActual<typeof import("../../../../shared/ports")>(
     "../../../../shared/ports",
   );
-  return { ...actual, AUTH_API_PORT: 0 };
+  return { ...actual, AUTH_API_PORT: 0, OPENCODE_PORT: 1 };
 });
 
 // ---------------------------------------------------------------------------
@@ -128,6 +128,22 @@ describe("AuthApiServer", () => {
 
   afterAll(async () => {
     await authApiServer.stop();
+  });
+
+  describe("authenticated engine proxy", () => {
+    it("rejects unauthenticated requests before forwarding", async () => {
+      const res = await request(port, "/opencode-api/health");
+      expect(res.status).toBe(401);
+    });
+
+    it("forwards authenticated requests and reports an unavailable upstream", async () => {
+      vi.mocked(deviceStore.verifyToken).mockReturnValueOnce({ valid: true, deviceId: "approved-device" });
+      const res = await request(port, "/opencode-api/health", {
+        headers: { Authorization: "Bearer approved-device-token" },
+      });
+      expect(res.status).toBe(503);
+      expect(res.body.error).toMatch(/OpenCode/i);
+    });
   });
 
   describe("setChannelManager + /api/channels/* dispatch", () => {

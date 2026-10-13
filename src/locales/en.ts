@@ -1,5 +1,21 @@
 // Define the structure of our translations
 export interface LocaleDict {
+  pwa: {
+    install: string;
+    installDescription: string;
+    installTitle: string;
+    installIos: string;
+    installIosBrowser: string;
+    done: string;
+    dismiss: string;
+    offline: string;
+    updateAvailable: string;
+    update: string;
+    updateImages: string;
+    updateUnsaved: string;
+    updateBusy: string;
+    updateFailed: string;
+  };
   // Common
   common: {
     loading: string;
@@ -177,6 +193,32 @@ export interface LocaleDict {
     devicesDesc: string;
     publicAccessTab: string;
     publicAccessTabDesc: string;
+    accessOffDescription: string;
+    accessOnDescription: string;
+    accessMethod: string;
+    accessCustomMethod: string;
+    accessCloudflare: string;
+    accessCloudflareMethod: string;
+    accessExclusive: string;
+    accessSwitching: string;
+    accessUpdateFailed: string;
+    accessUrlRequired: string;
+    customAccessTitle: string;
+    customAccessDesc: string;
+    customAccessUrl: string;
+    customAccessUrlPlaceholder: string;
+    customAccessInvalid: string;
+    customAccessSaved: string;
+    customAccessSaveFailed: string;
+    customAccessClear: string;
+    customAccessConfigured: string;
+    custom: string;
+    customQrScan: string;
+    customQrDesc: string;
+    copyAddress: string;
+    copyAccessCode: string;
+    accessQrAlt: string;
+    accessQrError: string;
     tunnelRunning: string;
     tunnelStopped: string;
     noteUrlChanges: string;
@@ -249,6 +291,8 @@ export interface LocaleDict {
 
   // Prompt Input
   prompt: {
+    draftSaveFailed: string;
+    draftImagesNotSaved: string;
     buildMode: string;
     build: string;
     planMode: string;
@@ -497,6 +541,9 @@ export interface LocaleDict {
     webhookConnectBadge: string;
     tunnelRequired: string;
     tunnelRequiredDesc: string;
+    accessUrlRequired: string;
+    accessUrlRequiredDesc: string;
+    webhookReachabilityHint: string;
     teamsWebhookGuide: string;
     wecomWebhookGuide: string;
     webhookEndpoint: string;
@@ -541,6 +588,7 @@ export interface LocaleDict {
   // Notifications
   notification: {
     messageSendFailed: string;
+    messageSendInterrupted: string;
     sessionCreateFailed: string;
     sessionDeleteFailed: string;
     gatewayDisconnected: string;
@@ -710,6 +758,22 @@ export interface LocaleDict {
 }
 
 export const en: LocaleDict = {
+  pwa: {
+    install: "Install",
+    installDescription: "Open CodeMux from your home screen.",
+    installTitle: "Add CodeMux to your home screen",
+    installIos: "Open the Share menu, choose “Add to Home Screen”, then tap “Add”.",
+    installIosBrowser: "If the option is missing, open this address in Safari.",
+    done: "Got it",
+    dismiss: "Dismiss",
+    offline: "You are offline. Reconnect to send messages and receive updates.",
+    updateAvailable: "A new version of CodeMux is ready.",
+    update: "Refresh",
+    updateImages: "Send or remove draft images before refreshing.",
+    updateUnsaved: "A draft could not be saved. Copy your text before refreshing manually.",
+    updateBusy: "A response is in progress. Refresh when it finishes.",
+    updateFailed: "The update failed. Please try again.",
+  },
   // Common
   common: {
     loading: "Loading...",
@@ -861,7 +925,7 @@ export const en: LocaleDict = {
   // Remote Access page
   remote: {
     title: "Remote Access",
-    publicAccess: "Public Remote Access",
+    publicAccess: "Cloudflare Tunnel",
     publicAccessDesc: "Access via Cloudflare tunnel from the internet",
     starting: "Starting tunnel, please wait...",
     startFailed: "Failed to start. Please ensure cloudflared is installed",
@@ -882,8 +946,34 @@ export const en: LocaleDict = {
     lanQrDesc: "Make sure your phone and computer are on the same Wi-Fi",
     webApp: "Web App",
     devicesDesc: "Manage devices that can access this server",
-    publicAccessTab: "Public Access",
-    publicAccessTabDesc: "Expose local services to the internet via Cloudflare Tunnel for remote web access and webhook-based channel messaging",
+    publicAccessTab: "Remote Access",
+    publicAccessTabDesc: "Use your own IP or domain, or enable Cloudflare Tunnel, for browser access and webhook callbacks.",
+    accessOffDescription: "Remote access is off. This computer can still use CodeMux locally.",
+    accessOnDescription: "Remote access is enabled with the selected method.",
+    accessMethod: "Access method",
+    accessCustomMethod: "Use your own IP, domain, or network forwarding.",
+    accessCloudflare: "Cloudflare Tunnel",
+    accessCloudflareMethod: "CodeMux starts and manages a Cloudflare connector.",
+    accessExclusive: "Only one method can be active. Switching disconnects existing remote clients.",
+    accessSwitching: "Updating remote access…",
+    accessUpdateFailed: "Could not update remote access. Check the host connection and configuration, then try again.",
+    accessUrlRequired: "Save a custom address below before enabling this method.",
+    customAccessTitle: "Custom Access",
+    customAccessDesc: "Use an address that already routes to this CodeMux host. Configure network access and HTTPS externally; saving an address does not create a tunnel.",
+    customAccessUrl: "Custom Access URL",
+    customAccessUrlPlaceholder: "http://192.168.1.20:8233 or https://codemux.example.com",
+    customAccessInvalid: "Enter an HTTP or HTTPS address with an optional port. Paths, query parameters, fragments, and credentials are not supported.",
+    customAccessSaved: "Access address saved.",
+    customAccessSaveFailed: "Could not save the access address. Try again.",
+    customAccessClear: "Clear",
+    customAccessConfigured: "Custom access address configured",
+    custom: "Custom",
+    customQrScan: "Scan to open your custom address",
+    customQrDesc: "Your device must be able to reach the configured IP or domain.",
+    copyAddress: "Copy address",
+    copyAccessCode: "Copy access code",
+    accessQrAlt: "CodeMux access QR code",
+    accessQrError: "Could not generate the QR code.",
     tunnelRunning: "Running",
     tunnelStopped: "Not Running",
     noteUrlChanges: "URL Changes on Restart",
@@ -898,11 +988,11 @@ export const en: LocaleDict = {
     noteSecurity: "Access Security",
     noteSecurityDesc: "Web access requires a 6-digit password. Webhook endpoints are validated by each channel's SDK signature/token verification.",
     noteKeepRunning: "Keep App Running",
-    noteKeepRunningDesc: "The tunnel depends on the local CodeMux process. Closing the app or sleeping the machine will interrupt public access.",
+    noteKeepRunningDesc: "CodeMux must remain running on this computer. Closing the app or putting the computer to sleep interrupts remote access.",
     notes: "Notes",
     publicAccessEnabled: "Public Access enabled — Cloudflare Tunnel running",
-    publicAccessDisabled: "Public Access not enabled — go to enable Tunnel",
-    goToPublicAccess: "Go to Public Access",
+    publicAccessDisabled: "Set up a custom address or Cloudflare Tunnel",
+    goToPublicAccess: "Set Up Remote Access",
   },
 
   // Session Sidebar
@@ -956,6 +1046,8 @@ export const en: LocaleDict = {
 
   // Prompt Input
   prompt: {
+    draftSaveFailed: "This draft could not be saved on this device. Keep this page open or copy your text.",
+    draftImagesNotSaved: "Images are not saved with drafts. Reattach them after reopening.",
     buildMode: "Build mode - execute code changes and commands",
     build: "Build",
     planMode: "Plan mode - read-only research and planning",
@@ -1198,6 +1290,9 @@ export const en: LocaleDict = {
     webhookConnectBadge: "Webhook",
     tunnelRequired: "Public Access not enabled",
     tunnelRequiredDesc: "Go to Public Access tab to enable Tunnel for webhook channels",
+    accessUrlRequired: "No access address configured",
+    accessUrlRequiredDesc: "Configure a custom address or start Cloudflare Tunnel in Remote Access.",
+    webhookReachabilityHint: "The channel provider must be able to reach this address. A private or LAN address may not support webhook callbacks.",
     teamsWebhookGuide: "Configure this URL as Messaging Endpoint in Azure Bot Service → Settings",
     wecomWebhookGuide: "Configure this URL as callback URL in WeCom Admin Console → App → Receive Messages",
     webhookEndpoint: "Endpoint",
@@ -1242,6 +1337,7 @@ export const en: LocaleDict = {
   // Notifications
   notification: {
     messageSendFailed: "Failed to send message. Please try again.",
+    messageSendInterrupted: "Sending was interrupted. Check the conversation before sending again.",
     sessionCreateFailed: "Failed to create session.",
     sessionDeleteFailed: "Failed to delete session.",
     gatewayDisconnected: "Connection lost. Reconnecting...",

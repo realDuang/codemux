@@ -131,7 +131,8 @@ export class GatewayWsClient {
         this._connected = true;
         this.reconnectAttempt = 0;
         this.emit("connected");
-        channelLog.info(`Gateway WS connected: ${this.wsUrl}`);
+        const endpoint = new URL(this.wsUrl);
+        channelLog.info(`Gateway WS connected: ${endpoint.origin}${endpoint.pathname}`);
         resolve();
       });
 

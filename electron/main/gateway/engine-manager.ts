@@ -4,7 +4,7 @@
 
 import { EventEmitter } from "events";
 import { EngineAdapter, type EngineAdapterEvents } from "../engines/engine-adapter";
-import { conversationStore } from "../services/conversation-store";
+import { conversationStore, makeCatalogProjectId } from "../services/conversation-store";
 import { getDefaultWorkspacePath } from "../services/default-workspace";
 import { engineManagerLog, getDefaultEngineFromSettings } from "../services/logger";
 import { timeId } from "../utils/id-gen";
@@ -36,7 +36,11 @@ import type {
   SessionImportProgress,
   EngineCommand,
   CommandInvokeResult,
+  EngineCatalogSnapshot,
+  CatalogProjectInput,
+  CatalogProjectPatch,
 } from "../../../src/types/unified";
+import { REASONING_EFFORT_VALUES } from "../../../src/types/unified";
 
 // --- Helpers ---
 
@@ -78,13 +82,15 @@ function convToSession(conv: ConversationMeta): UnifiedSession {
     id: conv.id,
     engineType: conv.engineType,
     directory: normalizeDir(conv.directory),
-    title: computeDisplayTitle(conv),
+    title: conv.catalogSourceId ? conv.engineTitle ?? "" : computeDisplayTitle(conv),
     mode: conv.mode,
     modelId: conv.modelId,
     reasoningEffort: conv.reasoningEffort,
     serviceTier: conv.serviceTier,
+    ...(typeof conv.archived === "boolean" ? { archived: conv.archived } : {}),
     worktreeId: conv.worktreeId,
-    projectId: `dir-${projectDir}`,
+    projectId: conv.catalogSourceId ? conv.projectId ?? null : `dir-${projectDir}`,
+    ...(conv.catalogSourceId ? { catalogSourceId: conv.catalogSourceId, catalogAvailable: conv.catalogAvailable } : {}),
     time: {
       created: conv.createdAt,
       updated: conv.updatedAt,
@@ -157,6 +163,18 @@ export class EngineManager extends EventEmitter {
 
   /** Track active sendMessage call counts per session (for idle/queue detection). */
   private activeSessionCounts = new Map<string, number>();
+  private authoritativeAttaching = new Map<string, Promise<void>>();
+  /** Live session state owned by an external engine, keyed by conversation ID. */
+  private authoritativeSessions = new Map<string, Partial<UnifiedSession>>();
+  private authoritativeLiveFields = new Map<string, Partial<UnifiedSession>>();
+  private authoritativeReconnects = new Map<EngineType, Promise<void>>();
+  private catalogSources = new Map<EngineType, string>();
+  private catalogRefreshes = new Map<EngineType, Promise<EngineCatalogSnapshot>>();
+  private catalogRevisions = new Map<EngineType, number>();
+  /** Preserve external message event order across multi-step mirror writes. */
+  private authoritativeMessageWrites = new Map<string, Promise<void>>();
+  private sessionRemovals = new Map<string, Promise<void>>();
+  private catalogSessionChecks = new Map<string, Promise<void>>();
 
   // --- Adapter Registration ---
 
@@ -207,18 +225,287 @@ export class EngineManager extends EventEmitter {
     return this.getAdapterOrThrow(engineType);
   }
 
+  private sessionFromConversation(conv: ConversationMeta): UnifiedSession {
+    const session = convToSession(conv);
+    const live = this.authoritativeSessions.get(conv.id);
+    if (!live) return session.archived ? { ...session, activityStatus: "idle" } : session;
+    return {
+      ...session,
+      ...live,
+      id: conv.id,
+      engineType: conv.engineType,
+      directory: session.directory,
+      projectId: session.projectId,
+      ...(conv.catalogSourceId ? { catalogSourceId: conv.catalogSourceId, catalogAvailable: conv.catalogAvailable } : {}),
+      worktreeId: session.worktreeId,
+      title: Object.prototype.hasOwnProperty.call(live, "title") ? live.title ?? "" : session.title,
+      ...((live.archived ?? conv.archived) ? { activityStatus: "idle" as const } : {}),
+    };
+  }
+
+  private syncArchivedState(conversationId: string, session: Pick<UnifiedSession, "archived">): void {
+    if (typeof session.archived !== "boolean") return;
+    const conv = conversationStore.get(conversationId);
+    if (conv && conv.archived !== session.archived) {
+      conversationStore.setArchived(conversationId, session.archived);
+    }
+  }
+
+  private visibleConversations(filter?: { engineType?: EngineType; directory?: string }): ConversationMeta[] {
+    return conversationStore.list(filter).filter((conv) => {
+      if (this.catalogSessionChecks.has(conv.id)) return false;
+      if (!this.adapters.get(conv.engineType)?.getCapabilities().hideArchivedSessions || !conv.archived) return true;
+      void this.purgeRemovedConversation(conv, "archived").catch((error) => {
+        engineManagerLog.error(`Failed to remove archived mirror ${conv.id}:`, error);
+      });
+      return false;
+    });
+  }
+
+  private verifyCatalogOmissions(adapter: EngineAdapter, snapshot: EngineCatalogSnapshot): void {
+    if (!snapshot.complete || !adapter.getCapabilities().hideArchivedSessions) return;
+    const present = new Set(snapshot.sessions.map((session) => session.id));
+    for (const conv of conversationStore.list({ engineType: adapter.engineType })) {
+      if (!conv.engineSessionId || present.has(conv.engineSessionId) || this.catalogSessionChecks.has(conv.id)
+        || (conv.catalogSourceId && conv.catalogSourceId !== snapshot.sourceId)
+        || (conv.catalogSourceId && conv.catalogAvailable === undefined)) continue;
+      // An active-only catalog cannot tell archive from temporarily missing
+      // storage. Confirm omitted saved rows before publishing their metadata.
+      const check = Promise.resolve().then(async () => {
+        try {
+          const session = await adapter.getSession(conv.engineSessionId!);
+          if (session && session.id === conv.engineSessionId && session.archived) {
+            await this.purgeRemovedConversation(conv, "archived", conv.catalogSourceId ?? snapshot.sourceId);
+          }
+        } catch (error) {
+          if ((error as { code?: string }).code === "CODEX_THREAD_ARCHIVED") {
+            await this.purgeRemovedConversation(conv, "archived", conv.catalogSourceId ?? snapshot.sourceId);
+          }
+          // Other failures preserve the saved mirror for an offline read.
+        }
+      }).finally(() => {
+        this.catalogSessionChecks.delete(conv.id);
+        const current = this.listCatalogs().find((catalog) => catalog.engineType === adapter.engineType && catalog.sourceId === snapshot.sourceId);
+        if (current) this.emit("catalog.updated", current);
+      });
+      this.catalogSessionChecks.set(conv.id, check);
+      void check.catch((error) => engineManagerLog.error("Failed to verify omitted conversation:", error));
+    }
+  }
+
+  private ignoreSessionEvent(adapter: EngineAdapter, nativeId: string): boolean {
+    if (!adapter.getCapabilities().hideArchivedSessions) return false;
+    const conversationId = this.resolveConversationId(nativeId, adapter.engineType);
+    if (conversationId && this.catalogSessionChecks.has(conversationId)) return true;
+    return conversationStore.isSessionSuppressed(adapter.engineType, nativeId, this.catalogSources.get(adapter.engineType));
+  }
+
+  private purgeRemovedConversation(conv: ConversationMeta, kind: "local" | "archived", sourceId = conv.catalogSourceId): Promise<void> {
+    const pending = this.sessionRemovals.get(conv.id);
+    if (pending) return kind === "local"
+      ? pending.then(() => conversationStore.removeEngineConversation(conv.id, kind, sourceId)) : pending;
+    // Install the identity tombstone and remove the index synchronously, before
+    // any late event or catalog can observe the old conversation again.
+    const operation = conversationStore.removeEngineConversation(conv.id, kind, sourceId);
+    this.catalogRevisions.set(conv.engineType, (this.catalogRevisions.get(conv.engineType) ?? 0) + 1);
+    this.forgetConversationMappings(conv.id);
+    this.sessionEngineMap.delete(conv.id);
+    this.authoritativeSessions.delete(conv.id);
+    this.authoritativeAttaching.delete(conv.id);
+    this.pendingUserMsgIdQueue.delete(conv.id);
+    this.activeSessionCounts.delete(conv.id);
+    for (const [messageId, conversationId] of this.messageConvMap) {
+      if (conversationId !== conv.id) continue;
+      this.messageConvMap.delete(messageId);
+      this.stepPartsBuffer.delete(messageId);
+      this.contentPartsBuffer.delete(messageId);
+      this.dirtySteps.delete(messageId);
+      this.persistedPlaceholders.delete(messageId);
+    }
+    for (const [id, sessionId] of this.permissionSessionMap) {
+      if (this.permissionEngineMap.get(id) === conv.engineType && (sessionId === conv.engineSessionId || sessionId === conv.id)) {
+        this.permissionSessionMap.delete(id);
+        this.permissionEngineMap.delete(id);
+      }
+    }
+    for (const [id, sessionId] of this.questionSessionMap) {
+      if (this.questionEngineMap.get(id) === conv.engineType && (sessionId === conv.engineSessionId || sessionId === conv.id)) {
+        this.questionSessionMap.delete(id);
+        this.questionEngineMap.delete(id);
+      }
+    }
+    this.emit("session.removed", { sessionId: conv.id });
+    this.sessionRemovals.set(conv.id, operation);
+    void operation.finally(() => this.sessionRemovals.delete(conv.id)).catch(() => {});
+    return operation;
+  }
+
+  listCatalogs(): EngineCatalogSnapshot[] {
+    this.visibleConversations();
+    return conversationStore.listCatalogs().map((catalog) => ({
+      ...catalog,
+      sessions: catalog.sessions.filter((session) => !this.catalogSessionChecks.has(session.id)).map((session) => {
+        const conv = conversationStore.get(session.id);
+        return conv ? this.sessionFromConversation(conv) : session;
+      }),
+    }));
+  }
+
+  private applyCatalog(adapter: EngineAdapter, snapshot: EngineCatalogSnapshot): EngineCatalogSnapshot {
+    if (adapter.getCapabilities().hideArchivedSessions) {
+      for (const session of snapshot.sessions) {
+        if (!session.archived) continue;
+        const conv = conversationStore.findByEngineSession(session.id, adapter.engineType, snapshot.sourceId)
+          ?? conversationStore.findByEngineSession(session.id, adapter.engineType);
+        if (conv && (!conv.catalogSourceId || conv.catalogSourceId === snapshot.sourceId)) {
+          void this.purgeRemovedConversation(conv, "archived", snapshot.sourceId).catch((error) => engineManagerLog.error("Failed to remove archived mirror:", error));
+        }
+      }
+      snapshot = { ...snapshot, sessions: snapshot.sessions.filter((session) => !session.archived) };
+      this.visibleConversations({ engineType: adapter.engineType });
+      this.verifyCatalogOmissions(adapter, snapshot);
+    }
+    const previousSource = this.catalogSources.get(adapter.engineType);
+    if (previousSource && previousSource !== snapshot.sourceId) {
+      const previous = conversationStore.markCatalogUnavailable(adapter.engineType, previousSource);
+      if (previous) this.emit("catalog.updated", { ...previous, sessions: previous.sessions.filter((session) => !this.catalogSessionChecks.has(session.id)) });
+    }
+    const normalized = conversationStore.upsertCatalog(adapter.engineType, {
+      ...snapshot,
+      sessions: snapshot.sessions.map((session) => {
+        const scoped = conversationStore.findByEngineSession(session.id, adapter.engineType, snapshot.sourceId);
+        const legacy = scoped ? undefined : conversationStore.findByEngineSession(session.id, adapter.engineType);
+        const conv = scoped ?? (legacy && !legacy.catalogSourceId ? legacy : undefined);
+        const liveOwner = !session.archived && (adapter.hasSession(session.id) || !!(conv && this.authoritativeAttaching.has(conv.id)));
+        if (conv && !liveOwner) this.authoritativeLiveFields.delete(conv.id);
+        const live = liveOwner && conv ? this.authoritativeLiveFields.get(conv.id) : undefined;
+        if (live) return { ...session, ...live } as UnifiedSession;
+        return session.archived || !liveOwner ? { ...session, activityStatus: session.archived ? "idle" : session.activityStatus ?? "idle" } : session;
+      }),
+    });
+    normalized.sessions = normalized.sessions.filter((session) => !this.catalogSessionChecks.has(session.id));
+    this.catalogSources.set(adapter.engineType, snapshot.sourceId);
+    this.catalogRevisions.set(adapter.engineType, (this.catalogRevisions.get(adapter.engineType) ?? 0) + 1);
+    for (const session of normalized.sessions) {
+      const conv = conversationStore.get(session.id);
+      if (!conv?.engineSessionId) continue;
+      this.sessionEngineMap.set(conv.id, adapter.engineType);
+      this.engineToConvMap.set(JSON.stringify([adapter.engineType, snapshot.sourceId, conv.engineSessionId]), conv.id);
+      this.authoritativeSessions.set(conv.id, { ...this.authoritativeSessions.get(conv.id), ...session });
+    }
+    this.emit("catalog.updated", normalized);
+    return normalized;
+  }
+
+  private markCatalogsUnavailable(engineType: EngineType): void {
+    this.visibleConversations({ engineType });
+    for (const catalog of conversationStore.listCatalogs()) {
+      if (catalog.engineType !== engineType) continue;
+      const unavailable = conversationStore.markCatalogUnavailable(engineType, catalog.sourceId);
+      if (unavailable) this.emit("catalog.updated", { ...unavailable, sessions: unavailable.sessions.filter((session) => !this.catalogSessionChecks.has(session.id)) });
+    }
+  }
+
+  private rememberLiveSessionFields(conversationId: string, session: Partial<UnifiedSession>, ownerAvailable: boolean): void {
+    if (!ownerAvailable || session.archived) {
+      this.authoritativeLiveFields.delete(conversationId);
+      return;
+    }
+    const fields: Partial<UnifiedSession> = { ...this.authoritativeLiveFields.get(conversationId) };
+    for (const key of ["mode", "modelId", "reasoningEffort", "serviceTier", "activityStatus"] as const) {
+      if (Object.prototype.hasOwnProperty.call(session, key)) Object.assign(fields, { [key]: session[key] });
+    }
+    this.authoritativeLiveFields.set(conversationId, fields);
+  }
+
+  private async refreshCatalog(adapter: EngineAdapter, afterMutation = false): Promise<EngineCatalogSnapshot> {
+    const pending = this.catalogRefreshes.get(adapter.engineType);
+    if (pending) {
+      if (!afterMutation) return pending;
+      await pending.catch(() => undefined);
+      return this.refreshCatalog(adapter, true);
+    }
+    const revision = this.catalogRevisions.get(adapter.engineType) ?? 0;
+    const operation = Promise.resolve().then(() => adapter.getCatalog()).then((snapshot) => {
+      if ((this.catalogRevisions.get(adapter.engineType) ?? 0) !== revision) {
+        const latest = this.listCatalogs().find((catalog) => catalog.engineType === adapter.engineType
+          && catalog.sourceId === this.catalogSources.get(adapter.engineType));
+        if (latest) return latest;
+      }
+      return this.applyCatalog(adapter, snapshot);
+    }).catch((error) => {
+      this.markCatalogsUnavailable(adapter.engineType);
+      throw error;
+    }).finally(() => this.catalogRefreshes.delete(adapter.engineType));
+    this.catalogRefreshes.set(adapter.engineType, operation);
+    return operation;
+  }
+
+  private async catalogAdapter(sourceId: string): Promise<EngineAdapter> {
+    const sources = conversationStore.listCatalogs().filter((catalog) => catalog.sourceId === sourceId);
+    if (sources.length !== 1 || !sources[0].engineType) throw new Error("Catalog source is unavailable or ambiguous.");
+    const adapter = this.getAdapterOrThrow(sources[0].engineType);
+    if (!adapter.getCapabilities().sessionCatalog || !adapter.getCapabilities().catalogManagement) {
+      throw new Error("This engine does not support catalog project management.");
+    }
+    await this.refreshCatalog(adapter, true);
+    if (this.catalogSources.get(adapter.engineType) !== sourceId) throw new Error("The catalog source is not connected to this engine.");
+    return adapter;
+  }
+
+  private requireCatalogProject(projectId: string): UnifiedProject {
+    const project = conversationStore.getCatalogProject(projectId);
+    if (!project?.catalogSourceId || !project.catalogProjectId || project.catalogAvailable === false) {
+      throw new Error("The catalog project is unavailable.");
+    }
+    return project;
+  }
+
+  private forgetConversationMappings(conversationId: string): void {
+    for (const [key, mappedId] of this.engineToConvMap) {
+      if (mappedId === conversationId) this.engineToConvMap.delete(key);
+    }
+    this.authoritativeLiveFields.delete(conversationId);
+  }
+
+  private validateProjectInput(input: CatalogProjectInput): CatalogProjectInput {
+    if (!input || typeof input.name !== "string" || !input.name.trim() || !Array.isArray(input.roots)
+      || input.roots.some((root) => typeof root !== "string" || !root.trim())) {
+      throw new Error("A project name and an array of root paths are required.");
+    }
+    return { name: input.name.trim(), roots: input.roots.slice() };
+  }
+
   // --- Event Forwarding ---
 
   /**
    * Resolve engineSessionId → conversationId.
    * Uses in-memory cache first, then falls back to ConversationStore lookup.
    */
-  private resolveConversationId(engineSessionId: string): string | null {
-    const cached = this.engineToConvMap.get(engineSessionId);
+  private resolveConversationId(engineSessionId: string, engineType?: EngineType): string | null {
+    const sourceId = engineType ? this.catalogSources.get(engineType) : undefined;
+    if (engineType && sourceId) {
+      const key = JSON.stringify([engineType, sourceId, engineSessionId]);
+      const cached = this.engineToConvMap.get(key);
+      if (cached) return cached;
+      const scoped = conversationStore.findByEngineSession(engineSessionId, engineType, sourceId);
+      if (scoped) {
+        this.engineToConvMap.set(key, scoped.id);
+        return scoped.id;
+      }
+      const legacy = conversationStore.findByEngineSession(engineSessionId, engineType);
+      return legacy && !legacy.catalogSourceId ? legacy.id : null;
+    }
+    if (engineType && this.adapters.get(engineType)?.getCapabilities().sessionCatalog) {
+      const legacy = conversationStore.findByEngineSession(engineSessionId, engineType);
+      return legacy && !legacy.catalogSourceId ? legacy.id : null;
+    }
+    const cacheKey = engineType ? JSON.stringify([engineType, engineSessionId]) : engineSessionId;
+    const cached = this.engineToConvMap.get(cacheKey);
     if (cached) return cached;
-    const conv = conversationStore.findByEngineSession(engineSessionId);
+    const conv = conversationStore.findByEngineSession(engineSessionId, engineType);
     if (conv) {
-      this.engineToConvMap.set(engineSessionId, conv.id);
+      this.engineToConvMap.set(cacheKey, conv.id);
       return conv.id;
     }
     return null;
@@ -276,10 +563,36 @@ export class EngineManager extends EventEmitter {
   }
 
   private forwardEvents(adapter: EngineAdapter): void {
+    adapter.on("catalog.updated", (snapshot) => {
+      if (!adapter.getCapabilities().sessionCatalog) return;
+      try {
+        this.applyCatalog(adapter, snapshot);
+      } catch (error) {
+        engineManagerLog.warn(`Invalid catalog update for ${adapter.engineType}:`, error);
+        this.markCatalogsUnavailable(adapter.engineType);
+      }
+    });
+    adapter.on("session.removed", ({ sessionId }) => {
+      const conversationId = this.resolveConversationId(sessionId, adapter.engineType);
+      const conv = conversationId && conversationStore.get(conversationId);
+      if (!conv) return;
+      void this.purgeRemovedConversation(conv, "archived", conv.catalogSourceId ?? this.catalogSources.get(adapter.engineType))
+        .catch((error) => engineManagerLog.error("Failed to remove excluded mirror:", error));
+    });
     // --- message.part.updated: accumulate step parts + rewrite sessionId ---
     adapter.on("message.part.updated", (data) => {
       const { sessionId: engineSessionId, messageId, part } = data;
-      const convId = this.resolveConversationId(engineSessionId);
+      if (this.ignoreSessionEvent(adapter, engineSessionId)) return;
+      const convId = this.resolveConversationId(engineSessionId, adapter.engineType);
+
+      // External engines supply complete live messages on read; their streaming
+      // state must not depend on this process's persistence buffers.
+      if (adapter.getCapabilities().authoritativeSessionState) {
+        this.emit("message.part.updated", convId
+          ? this.rewriteSessionId(data, engineSessionId, convId) as typeof data
+          : data);
+        return;
+      }
 
       // Accumulate parts for later persistence
       if (this.isContentPart(part)) {
@@ -331,11 +644,16 @@ export class EngineManager extends EventEmitter {
     // --- message.updated: persist message + flush steps + rewrite sessionId ---
     adapter.on("message.updated", (data) => {
       const { sessionId: engineSessionId, message } = data;
-      const convId = this.resolveConversationId(engineSessionId);
+      if (this.ignoreSessionEvent(adapter, engineSessionId)) return;
+      const convId = this.resolveConversationId(engineSessionId, adapter.engineType);
 
       if (convId) {
         // Persist the message
-        this.persistMessage(convId, message);
+        if (adapter.getCapabilities().authoritativeSessionState) {
+          this.queueAuthoritativeMessageWrite(convId, () => this.persistMessage(convId, message, true));
+        } else {
+          this.persistMessage(convId, message);
+        }
 
         // Rewrite sessionId and forward to frontend
         const rewritten = this.rewriteSessionId(data, engineSessionId, convId);
@@ -345,14 +663,62 @@ export class EngineManager extends EventEmitter {
       }
     });
 
+    adapter.on("message.removed", (data) => {
+      const { sessionId: engineSessionId, messageId } = data;
+      if (this.ignoreSessionEvent(adapter, engineSessionId)) return;
+      const convId = this.resolveConversationId(engineSessionId, adapter.engineType);
+
+      this.stepPartsBuffer.delete(messageId);
+      this.contentPartsBuffer.delete(messageId);
+      this.dirtySteps.delete(messageId);
+      this.persistedPlaceholders.delete(messageId);
+      this.messageConvMap.delete(messageId);
+
+      if (convId && adapter.getCapabilities().authoritativeSessionState) {
+        this.queueAuthoritativeMessageWrite(convId, () => conversationStore.removeMessage(convId, messageId));
+      }
+
+      this.emit("message.removed", convId ? { ...data, sessionId: convId } : data);
+    });
+
     // --- session.updated: persist metadata changes then forward with rewrite ---
     adapter.on("session.updated", (data) => {
       const engineSessionId = data?.session?.id;
-      const convId = engineSessionId ? this.resolveConversationId(engineSessionId) : null;
+      if (engineSessionId && this.ignoreSessionEvent(adapter, engineSessionId)) return;
+      const convId = engineSessionId ? this.resolveConversationId(engineSessionId, adapter.engineType) : null;
+      if (adapter.getCapabilities().hideArchivedSessions && data.session.archived) {
+        const conv = convId && conversationStore.get(convId);
+        if (conv) void this.purgeRemovedConversation(conv, "archived").catch((error) => engineManagerLog.error("Failed to remove archived mirror:", error));
+        return;
+      }
 
       if (convId) {
+        if (adapter.getCapabilities().authoritativeSessionState) {
+          const attachingLiveSnapshot = this.authoritativeAttaching.has(convId)
+            && data.session.activityStatus !== undefined && data.session.activityStatus !== "error";
+          this.rememberLiveSessionFields(convId, data.session, adapter.hasSession(engineSessionId!) || attachingLiveSnapshot);
+          this.authoritativeSessions.set(convId, {
+            ...this.authoritativeSessions.get(convId),
+            ...data.session,
+          });
+        }
+        this.syncArchivedState(convId, data.session);
         const current = conversationStore.get(convId);
-        if (data.session.title && current) {
+        if (current?.catalogSourceId) {
+          const patch: Partial<ConversationMeta> = {};
+          if (Object.prototype.hasOwnProperty.call(data.session, "projectId")) {
+            patch.projectId = data.session.projectId == null ? null
+              : makeCatalogProjectId(adapter.engineType, current.catalogSourceId, data.session.projectId);
+          }
+          if (typeof data.session.directory === "string") patch.directory = data.session.directory;
+          if (Object.keys(patch).length > 0) conversationStore.update(convId, patch);
+        }
+        if (adapter.getCapabilities().authoritativeSessionState && current && Object.prototype.hasOwnProperty.call(data.session, "title")) {
+          const title = data.session.title?.trim() || undefined;
+          if (current.engineTitle !== title || current.customTitle !== undefined) {
+            conversationStore.update(convId, { customTitle: undefined, engineTitle: title });
+          }
+        } else if (data.session.title && current) {
           const title = getUsableEngineTitleCandidate(current, data.session.title);
           if (title) conversationStore.setEngineTitle(convId, title);
         }
@@ -383,7 +749,7 @@ export class EngineManager extends EventEmitter {
         }
         const conv = conversationStore.get(convId);
         if (conv) {
-          this.emit("session.updated", { session: convToSession(conv) });
+          this.emit("session.updated", { session: this.sessionFromConversation(conv) });
         }
       } else {
         this.emit("session.updated", data);
@@ -406,6 +772,18 @@ export class EngineManager extends EventEmitter {
     for (const event of simpleEvents) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       adapter.on(event, (data: any) => {
+        const eventSessionId = data?.sessionId || data?.session?.id || data?.permission?.sessionId || data?.question?.sessionId;
+        if (eventSessionId && (this.ignoreSessionEvent(adapter, eventSessionId)
+          || (adapter.getCapabilities().hideArchivedSessions && data?.session?.archived))) return;
+        if (event === "status.changed" && data?.status === "running") {
+          if (adapter.getCapabilities().sessionCatalog) {
+            void this.refreshCatalog(adapter).catch((error) => engineManagerLog.warn(`Failed to refresh catalog for ${adapter.engineType}:`, error));
+          } else if (adapter.getCapabilities().authoritativeSessionState) {
+            this.reconnectPersistedAuthoritativeSessions(adapter);
+          }
+        } else if (event === "status.changed" && ["stopped", "error"].includes(data?.status) && adapter.getCapabilities().sessionCatalog) {
+          this.markCatalogsUnavailable(adapter.engineType);
+        }
         // Track permission → engine mapping for routing replies
         if (event === "permission.asked" && data?.permission?.id) {
           this.permissionEngineMap.set(data.permission.id, adapter.engineType);
@@ -425,7 +803,7 @@ export class EngineManager extends EventEmitter {
         const engineSessionId =
           data?.sessionId || data?.session?.id || data?.permission?.sessionId || data?.question?.sessionId;
         if (engineSessionId) {
-          const convId = this.resolveConversationId(engineSessionId);
+          const convId = this.resolveConversationId(engineSessionId, adapter.engineType);
           if (convId) {
             this.emit(event, this.rewriteSessionId(data, engineSessionId, convId) as any);
             return;
@@ -440,6 +818,25 @@ export class EngineManager extends EventEmitter {
     }
   }
 
+  private queueAuthoritativeMessageWrite(conversationId: string, write: () => Promise<void>): void {
+    void this.runAuthoritativeMessageWrite(conversationId, write).catch(() => {});
+  }
+
+  private runAuthoritativeMessageWrite<T>(conversationId: string, write: () => Promise<T>): Promise<T> {
+    const previous = this.authoritativeMessageWrites.get(conversationId) ?? Promise.resolve();
+    const result = previous.then(write);
+    const pending = result.then(() => undefined).catch((err) => {
+      engineManagerLog.error(`Failed to mirror message changes for ${conversationId}:`, err);
+    });
+    this.authoritativeMessageWrites.set(conversationId, pending);
+    void pending.then(() => {
+      if (this.authoritativeMessageWrites.get(conversationId) === pending) {
+        this.authoritativeMessageWrites.delete(conversationId);
+      }
+    });
+    return result;
+  }
+
   /**
    * Persist a UnifiedMessage to ConversationStore.
    * Splits content parts (text/file) into ConversationMessage and step parts into StepsFile.
@@ -447,10 +844,15 @@ export class EngineManager extends EventEmitter {
    * User messages are normally persisted via persistUserMessage(); this method only
    * updates the most recent persisted user message when an adapter emits an enriched
    * user message carrying enqueuedAt/processedAt (i.e. a queued message that just
-   * started processing).
+   * started processing). Authoritative external engines instead upsert their own
+   * user message IDs, including messages submitted from another client.
    */
-  private async persistMessage(conversationId: string, message: UnifiedMessage): Promise<void> {
-    if (message.role === "user") {
+  private async persistMessage(
+    conversationId: string,
+    message: UnifiedMessage,
+    authoritative = false,
+  ): Promise<void> {
+    if (message.role === "user" && !authoritative) {
       // Adapter-emitted queued user messages have a different ID than the one
       // we wrote via persistUserMessage at send time. Track only queued sends in
       // pendingUserMsgIdQueue so foreground messages cannot consume timing
@@ -474,7 +876,7 @@ export class EngineManager extends EventEmitter {
     }
 
     const isCompleted = !!message.time.completed;
-    if (!isCompleted) return; // Skip incomplete assistant messages (initial empty emit)
+    if (message.role === "assistant" && !isCompleted) return;
 
     try {
       // Split parts into content vs steps, rewriting sessionId to conversationId
@@ -509,6 +911,8 @@ export class EngineManager extends EventEmitter {
         id: message.id,
         role: message.role,
         time: message.time,
+        enqueuedAt: message.enqueuedAt,
+        processedAt: message.processedAt,
         parts: contentParts,
         tokens: message.tokens,
         cost: message.cost,
@@ -518,14 +922,18 @@ export class EngineManager extends EventEmitter {
         error: message.error,
       };
 
-      // Check if message already exists
-      const existingMessages = await conversationStore.listMessages(conversationId);
-      const existingIdx = existingMessages.findIndex((m) => m.id === message.id);
-
-      if (existingIdx >= 0) {
+      if (authoritative) {
+        // ensureMessage is serialized by the store, so repeated snapshot events
+        // cannot append the same external message twice.
+        await conversationStore.ensureMessage(conversationId, convMessage);
         await conversationStore.updateMessage(conversationId, message.id, convMessage);
       } else {
-        await conversationStore.appendMessage(conversationId, convMessage);
+        const existingMessages = await conversationStore.listMessages(conversationId);
+        if (existingMessages.some((m) => m.id === message.id)) {
+          await conversationStore.updateMessage(conversationId, message.id, convMessage);
+        } else {
+          await conversationStore.appendMessage(conversationId, convMessage);
+        }
       }
 
       // Merge buffered step parts with any steps from the message itself
@@ -780,19 +1188,19 @@ export class EngineManager extends EventEmitter {
   async listSessions(engineTypeOrDirectory: string): Promise<UnifiedSession[]> {
     if (this.adapters.has(engineTypeOrDirectory as EngineType)) {
       // List all conversations for this engine type
-      const convs = conversationStore.list({ engineType: engineTypeOrDirectory as EngineType });
+      const convs = this.visibleConversations({ engineType: engineTypeOrDirectory as EngineType });
       // Register all for routing
       for (const conv of convs) {
         this.sessionEngineMap.set(conv.id, conv.engineType);
       }
-      return convs.map(convToSession);
+      return convs.map((conv) => this.sessionFromConversation(conv));
     } else {
       // List conversations for a specific directory
-      const convs = conversationStore.list({ directory: engineTypeOrDirectory });
+      const convs = this.visibleConversations({ directory: engineTypeOrDirectory });
       for (const conv of convs) {
         this.sessionEngineMap.set(conv.id, conv.engineType);
       }
-      return convs.map(convToSession);
+      return convs.map((conv) => this.sessionFromConversation(conv));
     }
   }
 
@@ -800,9 +1208,17 @@ export class EngineManager extends EventEmitter {
     engineType: EngineType | undefined,
     directory: string,
     worktreeId?: string,
+    projectId?: string | null,
   ): Promise<UnifiedSession> {
-    const resolvedType = engineType || this.getDefaultEngineType();
+    const project = projectId == null ? undefined : this.requireCatalogProject(projectId);
+    if (project && engineType && project.engineType !== engineType) throw new Error("The project belongs to another engine.");
+    const resolvedType = project?.engineType || engineType || this.getDefaultEngineType();
     const adapter = this.getAdapterOrThrow(resolvedType); // Validate engine exists
+    if (project && !adapter.getCapabilities().catalogManagement) throw new Error("This engine does not support catalog project management.");
+    const catalog = adapter.getCapabilities().sessionCatalog ? await this.refreshCatalog(adapter, true) : undefined;
+    if (project && (!catalog || project.catalogSourceId !== catalog.sourceId)) throw new Error("The project belongs to another catalog source.");
+    if (projectId !== undefined && !catalog) throw new Error("This engine does not support catalog project assignment.");
+    const nativeProjectId = project?.catalogProjectId ?? null;
 
     // If worktreeId is specified, resolve worktree directory
     let sessionDir = directory;
@@ -815,48 +1231,122 @@ export class EngineManager extends EventEmitter {
       }
     }
 
-    const conv = conversationStore.create({
+    const localCreation = {
       engineType: resolvedType,
       directory: sessionDir,
       worktreeId,
       // Remember the original repo directory so worktree sessions group under the right project
       parentDirectory: worktreeId ? directory : undefined,
-    });
-    this.sessionEngineMap.set(conv.id, resolvedType);
+      ...(catalog ? { catalogSourceId: catalog.sourceId, projectId: project?.id ?? null } : {}),
+    };
+    // A catalog may announce the native thread before createSession resolves.
+    // Delay the local row until its native ID is known, then reuse that mapping.
+    let conv = catalog ? undefined : conversationStore.create(localCreation);
+    if (conv) this.sessionEngineMap.set(conv.id, resolvedType);
 
     // Create the engine session immediately (not lazily on first sendMessage).
     // This ensures that engine-specific initialization (like fetching Copilot skills
     // or Claude V2 session init) happens at session creation time, so features
     // like slash command autocomplete work before the user sends a message.
+    let engineCreated = false;
     try {
-      const engineSession = await adapter.createSession(conv.directory, conv.engineMeta);
+      const engineSession = await adapter.createSession(sessionDir, catalog
+        ? { catalogSourceId: catalog.sourceId, catalogProjectId: nativeProjectId }
+        : conv?.engineMeta);
+      engineCreated = true;
+      if (catalog) {
+        conv = conversationStore.findByEngineSession(engineSession.id, resolvedType, catalog.sourceId)
+          ?? conversationStore.create(localCreation);
+        if (worktreeId) conversationStore.update(conv.id, { worktreeId, parentDirectory: directory });
+        this.sessionEngineMap.set(conv.id, resolvedType);
+      }
+      if (!conv) throw new Error("The created conversation could not be mapped locally.");
       conversationStore.setEngineSession(conv.id, engineSession.id, engineSession.engineMeta);
       this.engineToConvMap.set(engineSession.id, conv.id);
+      if (catalog) {
+        const actualProjectId = engineSession.projectId ?? null;
+        conversationStore.update(conv.id, {
+          projectId: actualProjectId === null ? null : makeCatalogProjectId(resolvedType, catalog.sourceId, actualProjectId),
+          engineTitle: engineSession.title,
+          ...(engineSession.archived !== undefined ? { archived: engineSession.archived } : {}),
+        });
+        this.engineToConvMap.set(JSON.stringify([resolvedType, catalog.sourceId, engineSession.id]), conv.id);
+        this.authoritativeSessions.set(conv.id, engineSession);
+        this.rememberLiveSessionFields(conv.id, engineSession, adapter.hasSession(engineSession.id));
+        if (actualProjectId !== nativeProjectId) throw new Error("The new conversation's project assignment could not be confirmed.");
+      }
     } catch (err) {
       // Clean up the orphaned conversation if engine session creation fails
-      this.sessionEngineMap.delete(conv.id);
-      conversationStore.delete(conv.id);
+      if (conv && (!catalog || !engineCreated)) {
+        this.sessionEngineMap.delete(conv.id);
+        await conversationStore.delete(conv.id);
+      }
       throw err;
     }
 
-    const session = convToSession(conv);
+    const session = this.sessionFromConversation(conv!);
     // Broadcast to all connected clients (e.g., UI) so session lists update in real-time
     this.emit("session.created", { session });
     return session;
   }
 
   async getSession(sessionId: string): Promise<UnifiedSession | null> {
+    await this.catalogSessionChecks.get(sessionId);
     const conv = conversationStore.get(sessionId);
     if (!conv) return null;
-    return {
-      ...convToSession(conv),
-      activityStatus: this.activeSessionCounts.has(sessionId) ? "running" : "idle",
-    };
+    const adapter = this.adapters.get(conv.engineType);
+    const capabilities = adapter?.getCapabilities();
+    if (conv.archived && capabilities?.hideArchivedSessions) {
+      await this.purgeRemovedConversation(conv, "archived");
+      return null;
+    }
+    if (conv.engineSessionId && adapter && conv.catalogAvailable !== false && (capabilities?.authoritativeSessionState || capabilities?.sessionArchive)) {
+      if (capabilities.authoritativeSessionState) await this.ensureAuthoritativeSession(conv, adapter);
+      const session = await adapter.getSession(conv.engineSessionId);
+      if (!conversationStore.get(sessionId)) return null;
+      if (session) {
+        if (session.id !== conv.engineSessionId) throw new Error("The session read returned a different identity.");
+        if (session.archived && capabilities.hideArchivedSessions) {
+          await this.purgeRemovedConversation(conv, "archived");
+          return null;
+        }
+        if (capabilities.authoritativeSessionState) {
+          this.authoritativeSessions.set(sessionId, session);
+          this.rememberLiveSessionFields(sessionId, session, adapter.hasSession(conv.engineSessionId));
+        }
+        this.syncArchivedState(sessionId, session);
+      }
+    }
+    const result = this.sessionFromConversation(conv);
+    if (!capabilities?.authoritativeSessionState) {
+      result.activityStatus = this.activeSessionCounts.has(sessionId) ? "running" : "idle";
+    }
+    return result;
   }
 
   async deleteSession(sessionId: string): Promise<void> {
     const conv = conversationStore.get(sessionId);
     if (!conv) return;
+    const removalAdapter = this.adapters.get(conv.engineType);
+    if (removalAdapter?.getCapabilities().confirmedSessionRemoval) {
+      if (!conv.engineSessionId) throw new Error("The conversation has no confirmed native identity.");
+      const capabilities = removalAdapter.getCapabilities();
+      let sourceId = conv.catalogSourceId;
+      if (capabilities.sessionCatalog) {
+        const current = await removalAdapter.getCatalog();
+        if (sourceId && current.sourceId !== sourceId) throw new Error("The conversation belongs to a different catalog source.");
+        sourceId = current.sourceId;
+      }
+      // The adapter validates fresh complete history, activity, pending input,
+      // and the native archive result before granting removal.
+      const kind = await removalAdapter.removeSession(conv.engineSessionId);
+      if (kind !== "local" && kind !== "archived") throw new Error("The native removal result was not confirmed.");
+      await this.purgeRemovedConversation(conv, kind, sourceId);
+      await conversationStore.flushAll();
+      return;
+    }
+    if (conv.catalogSourceId) throw new Error("Catalog conversations must be archived through their owner, not removed locally.");
+    this.authoritativeSessions.delete(sessionId);
 
     // Clean up buffers for all messages in this session
     try {
@@ -882,7 +1372,7 @@ export class EngineManager extends EventEmitter {
       } catch {
         // Engine cleanup is best-effort
       }
-      this.engineToConvMap.delete(conv.engineSessionId);
+      this.forgetConversationMappings(conv.id);
     }
 
     await conversationStore.delete(sessionId);
@@ -895,11 +1385,32 @@ export class EngineManager extends EventEmitter {
    * Cleans up engine sessions best-effort, then removes conversations from store.
    */
   async deleteProject(projectId: string): Promise<void> {
+    const catalogProject = conversationStore.getCatalogProject(projectId);
+    if (catalogProject) {
+      const project = this.requireCatalogProject(projectId);
+      const adapter = await this.catalogAdapter(project.catalogSourceId!);
+      if (conversationStore.list().some((conv) => conv.catalogSourceId === project.catalogSourceId
+        && conv.projectId === projectId && conv.catalogAvailable !== false)) {
+        throw new Error("Only an empty catalog project can be deleted.");
+      }
+      await adapter.deleteCatalogProject(project.catalogProjectId!);
+      const confirmed = await this.refreshCatalog(adapter, true);
+      if (confirmed.projects.some((entry) => entry.id === projectId && entry.catalogAvailable !== false)) {
+        throw new Error("The project deletion could not be confirmed.");
+      }
+      return;
+    }
     const allConvs = conversationStore.list();
     const projectConvs = allConvs.filter((conv) => {
       const derived = `dir-${normalizeDir(conv.directory)}`;
       return derived === projectId;
     });
+    // Bulk cleanup cannot bypass the owner's confirmed removal policy.
+    // A saved catalog identity remains protected while its adapter is offline.
+    if (projectConvs.some((conv) => conv.catalogSourceId
+      || this.adapters.get(conv.engineType)?.getCapabilities().confirmedSessionRemoval)) {
+      throw new Error("Shared conversations must be removed individually before deleting their project.");
+    }
 
     for (const conv of projectConvs) {
       // Clean up buffers for all messages in this session
@@ -926,7 +1437,7 @@ export class EngineManager extends EventEmitter {
         } catch (err) {
           engineManagerLog.warn(`Failed to delete engine session for ${conv.id} during project delete:`, err);
         }
-        this.engineToConvMap.delete(conv.engineSessionId);
+        this.forgetConversationMappings(conv.id);
       }
       await conversationStore.delete(conv.id);
       this.sessionEngineMap.delete(conv.id);
@@ -939,14 +1450,28 @@ export class EngineManager extends EventEmitter {
     if (!conv) return { success: false };
 
     const trimmed = title.trim();
+    const adapter = this.adapters.get(conv.engineType);
+    const authoritative = adapter?.getCapabilities().authoritativeSessionState === true;
+    if (authoritative) {
+      if (!conv.engineSessionId) throw new Error("The shared conversation is not connected.");
+      await this.ensureAuthoritativeSession(conv, adapter);
+      await adapter.renameSession(conv.engineSessionId, trimmed, conv.directory, conv.engineMeta);
+      const confirmed = await adapter.getSession(conv.engineSessionId);
+      if (!confirmed || confirmed.id !== conv.engineSessionId || (confirmed.title?.trim() ?? "") !== trimmed) {
+        throw new Error("The shared title could not be confirmed.");
+      }
+      this.authoritativeSessions.set(sessionId, confirmed);
+      conversationStore.update(sessionId, { customTitle: undefined, engineTitle: confirmed.title || undefined });
+      this.emit("session.updated", { session: this.sessionFromConversation(conversationStore.get(sessionId)!) });
+      return { success: true };
+    }
     // Empty string clears the customTitle (revert to engineTitle/firstPrompt fallback)
     conversationStore.setCustomTitle(sessionId, trimmed || undefined);
 
     // Best-effort writeback to the engine so its own session list stays in sync.
     // Adapters that don't support rename are no-ops by default.
-    if (conv.engineSessionId) {
+    if (conv.engineSessionId && !authoritative) {
       try {
-        const adapter = this.adapters.get(conv.engineType);
         await adapter?.renameSession(conv.engineSessionId, trimmed, conv.directory, conv.engineMeta);
       } catch (err) {
         engineManagerLog.warn(`Engine rename writeback failed for ${sessionId}:`, err);
@@ -955,6 +1480,30 @@ export class EngineManager extends EventEmitter {
 
     this.emit("session.updated", { session: convToSession(conversationStore.get(sessionId)!) });
     return { success: true };
+  }
+
+  async setSessionArchived(sessionId: string, archived: boolean): Promise<void> {
+    if (typeof archived !== "boolean") throw new Error("archived must be a boolean");
+    const conv = conversationStore.get(sessionId);
+    if (!conv) throw new Error(`Session ${sessionId} not found`);
+    const adapter = this.getAdapterOrThrow(conv.engineType);
+    const capabilities = adapter.getCapabilities();
+    if (!capabilities.sessionArchive) throw new Error("This engine does not support archiving sessions.");
+    if (!conv.engineSessionId) throw new Error("The conversation is not connected to its engine.");
+    if (capabilities.authoritativeSessionState) await this.ensureAuthoritativeSession(conv, adapter);
+
+    await adapter.setSessionArchived(conv.engineSessionId, archived);
+    const confirmed = await adapter.getSession(conv.engineSessionId);
+    if (!confirmed || confirmed.id !== conv.engineSessionId || confirmed.archived !== archived) {
+      throw new Error("The session archive state could not be confirmed.");
+    }
+    conversationStore.setArchived(sessionId, archived);
+    if (archived && capabilities.hideArchivedSessions) {
+      await this.purgeRemovedConversation(conv, "archived");
+      return;
+    }
+    if (capabilities.authoritativeSessionState) this.authoritativeSessions.set(sessionId, confirmed);
+    this.emit("session.updated", { session: this.sessionFromConversation(conversationStore.get(sessionId)!) });
   }
 
   private resolveSessionOptions(
@@ -1033,12 +1582,17 @@ export class EngineManager extends EventEmitter {
       if (!conv) throw new Error(`Conversation not found: ${sessionId}`);
 
       const adapter = this.getAdapterForSession(sessionId);
+      const resolvedOptions = this.resolveSessionOptions(conv, options);
+      this.validateReasoningEffort(adapter, resolvedOptions.reasoningEffort);
 
       // Lazy engine session creation: first sendMessage triggers adapter.createSession()
       // Also re-create if the adapter lost track of the session (e.g. after app restart,
       // the persisted engineSessionId refers to a cs_ ID that only existed in runtime memory).
       let engineSessionId = conv.engineSessionId;
-      if (!engineSessionId || !adapter.hasSession(engineSessionId)) {
+      if (conv.catalogSourceId) {
+        if (!engineSessionId) throw new Error("The catalog conversation has no native identity.");
+        await this.ensureAuthoritativeSession(conv, adapter);
+      } else if (!engineSessionId || !adapter.hasSession(engineSessionId)) {
         const engineSession = await adapter.createSession(conv.directory, conv.engineMeta);
         engineSessionId = engineSession.id;
         conversationStore.setEngineSession(sessionId, engineSessionId, engineSession.engineMeta);
@@ -1049,9 +1603,10 @@ export class EngineManager extends EventEmitter {
 
       // Persist user message before sending to engine
       // (Some adapters like OpenCode don't emit user message events)
-      await this.persistUserMessage(sessionId, content, trackQueuedTiming);
+      if (!adapter.getCapabilities().authoritativeSessionState) {
+        await this.persistUserMessage(sessionId, content, trackQueuedTiming);
+      }
 
-      const resolvedOptions = this.resolveSessionOptions(conv, options);
       const result = await adapter.sendMessage(engineSessionId, content, {
         ...resolvedOptions,
         directory: conv.directory,
@@ -1059,10 +1614,10 @@ export class EngineManager extends EventEmitter {
 
       // If the engine reported a stale session (no SSE response within timeout),
       // clear the engineSessionId so the next attempt creates a fresh session.
-      if (result.staleSession) {
+      if (result.staleSession && !conv.catalogSourceId) {
         engineManagerLog.warn(`Stale session detected for ${sessionId}, clearing engineSessionId`);
         conversationStore.clearEngineSession(sessionId);
-        this.engineToConvMap.delete(engineSessionId);
+        this.forgetConversationMappings(sessionId);
       }
 
       // Ensure completed assistant messages always have time.completed.
@@ -1070,7 +1625,7 @@ export class EngineManager extends EventEmitter {
       // and only restore it on session.idle — if that event is lost (e.g. WebSocket
       // reconnect), the field stays undefined, causing the frontend timer to tick
       // indefinitely on an already-finished message.
-      if (result.role === "assistant" && !result.time.completed) {
+      if (!adapter.getCapabilities().authoritativeSessionState && result.role === "assistant" && !result.time.completed) {
         const finalized = { ...result, time: { ...result.time, completed: Date.now() } };
         this.persistMessage(sessionId, finalized);
         this.emit("message.updated", { sessionId, message: finalized });
@@ -1107,10 +1662,35 @@ export class EngineManager extends EventEmitter {
   }
 
   async listMessages(sessionId: string): Promise<UnifiedMessage[]> {
+    await this.catalogSessionChecks.get(sessionId);
+    const conv = conversationStore.get(sessionId);
+    if (!conv) return [];
+    const adapter = conv && this.adapters.get(conv.engineType);
+    if (conv.archived && adapter?.getCapabilities().hideArchivedSessions) {
+      await this.purgeRemovedConversation(conv, "archived");
+      return [];
+    }
+    if (conv?.engineSessionId && conv.catalogAvailable !== false && adapter?.getCapabilities().authoritativeSessionState) {
+      await this.ensureAuthoritativeSession(conv, adapter);
+      return this.runAuthoritativeMessageWrite(sessionId, async () => {
+        if (!conversationStore.get(sessionId)) return [];
+        const messages = await adapter.listMessages(conv.engineSessionId!);
+        if (!conversationStore.get(sessionId)) return [];
+        const normalized = messages.map((message) => ({
+          ...message, sessionId,
+          parts: message.parts.map((part) => ({ ...part, sessionId })),
+          stepCount: message.parts.filter((part) => !this.isContentPart(part)).length,
+        }));
+        await conversationStore.replaceMessageSnapshot(sessionId, normalized);
+        return conversationStore.get(sessionId) ? normalized : [];
+      });
+    }
     const messages = await conversationStore.listMessages(sessionId);
     const stepsFile = await conversationStore.getAllSteps(sessionId);
+    if (!conversationStore.get(sessionId)) return [];
     // Backfill costUnit for legacy Copilot data (cost stored without unit)
     const engineType = this.sessionEngineMap.get(sessionId);
+    const scopeMirror = !adapter || adapter.getCapabilities().authoritativeSessionState || !!conv?.catalogSourceId;
 
     return messages.map((msg) => {
       // Content parts only — steps are lazy-loaded via getMessageSteps()
@@ -1118,14 +1698,15 @@ export class EngineManager extends EventEmitter {
       // Legacy Copilot messages have cost but no costUnit
       const costUnit = msg.costUnit ?? (msg.cost != null && engineType === "copilot" ? "premium_requests" : undefined);
 
+      const id = scopeMirror ? this.mirrorMessageId(sessionId, msg.id) : msg.id;
       return {
-        id: msg.id,
+        id,
         sessionId,
         role: msg.role,
         time: msg.time,
         enqueuedAt: msg.enqueuedAt,
         processedAt: msg.processedAt,
-        parts: msg.parts as UnifiedPart[],
+        parts: scopeMirror ? msg.parts.map((part) => this.mirrorPart(sessionId, msg.id, part)) : msg.parts as UnifiedPart[],
         stepCount,
         tokens: msg.tokens,
         cost: msg.cost,
@@ -1138,7 +1719,105 @@ export class EngineManager extends EventEmitter {
   }
 
   async getMessageSteps(sessionId: string, messageId: string): Promise<UnifiedPart[]> {
-    return await conversationStore.getSteps(sessionId, messageId);
+    await this.catalogSessionChecks.get(sessionId);
+    const conv = conversationStore.get(sessionId);
+    if (!conv) return [];
+    const adapter = conv && this.adapters.get(conv.engineType);
+    if (conv.archived && adapter?.getCapabilities().hideArchivedSessions) {
+      await this.purgeRemovedConversation(conv, "archived");
+      return [];
+    }
+    const mirrorPrefix = this.mirrorMessageId(sessionId, "");
+    if (messageId.startsWith(mirrorPrefix)) {
+      const storedId = decodeURIComponent(messageId.slice(mirrorPrefix.length));
+      const parts = await conversationStore.getSteps(sessionId, storedId);
+      return conversationStore.get(sessionId) ? parts.map((part) => this.mirrorPart(sessionId, storedId, part)) : [];
+    }
+    if (conv?.engineSessionId && conv.catalogAvailable !== false && adapter?.getCapabilities().authoritativeSessionState) {
+      const messages = await this.listMessages(sessionId);
+      return (messages.find((message) => message.id === messageId)?.parts ?? [])
+        .filter((part) => !this.isContentPart(part))
+        .map((part) => ({ ...part, sessionId }));
+    }
+    const parts = await conversationStore.getSteps(sessionId, messageId);
+    return conversationStore.get(sessionId) ? parts : [];
+  }
+
+  private mirrorMessageId(conversationId: string, messageId: string): string {
+    return `codemux-mirror:v1:${encodeURIComponent(conversationId)}:${encodeURIComponent(messageId)}`;
+  }
+
+  private mirrorPart(conversationId: string, messageId: string, part: UnifiedPart): UnifiedPart {
+    const id = this.mirrorMessageId(conversationId, messageId);
+    return { ...part, id: `${id}:${encodeURIComponent(part.id)}`, messageId: id, sessionId: conversationId };
+  }
+
+  private async ensureAuthoritativeSession(conv: ConversationMeta, adapter: EngineAdapter): Promise<void> {
+    if (conv.catalogSourceId) {
+      const current = await this.refreshCatalog(adapter);
+      if (current.sourceId !== conv.catalogSourceId) throw new Error("This conversation belongs to another catalog source.");
+      if (conversationStore.get(conv.id)?.catalogAvailable === false) throw new Error("This conversation is unavailable in the current catalog.");
+    }
+    if (!conv.engineSessionId || adapter.hasSession(conv.engineSessionId)) return;
+    const pending = this.authoritativeAttaching.get(conv.id);
+    if (pending) return pending;
+    const operation = Promise.resolve().then(async () => {
+      const session = await adapter.restoreSession(conv.engineSessionId!, conv.directory, conv.engineMeta);
+      if (!conversationStore.get(conv.id)) throw new Error("The conversation has been removed.");
+      if (session.id !== conv.engineSessionId) throw new Error("Restoring the shared conversation changed its identity.");
+      if (session.archived && adapter.getCapabilities().hideArchivedSessions) {
+        await this.purgeRemovedConversation(conv, "archived");
+        throw new Error("Archived conversations are not available.");
+      }
+      this.authoritativeSessions.set(conv.id, session);
+      this.rememberLiveSessionFields(conv.id, session, adapter.hasSession(session.id));
+      this.syncArchivedState(conv.id, session);
+      this.engineToConvMap.set(session.id, conv.id);
+      conversationStore.setEngineSession(conv.id, session.id, session.engineMeta);
+    }).catch(async (error) => {
+      if (adapter.getCapabilities().hideArchivedSessions && (error as { code?: string }).code === "CODEX_THREAD_ARCHIVED") {
+        await this.purgeRemovedConversation(conv, "archived");
+      }
+      throw error;
+    }).finally(() => this.authoritativeAttaching.delete(conv.id));
+    this.authoritativeAttaching.set(conv.id, operation);
+    return operation;
+  }
+
+  private reconnectPersistedAuthoritativeSessions(adapter: EngineAdapter): void {
+    if (this.authoritativeReconnects.has(adapter.engineType)) return;
+    const conversations = conversationStore.list({ engineType: adapter.engineType }).filter((conv) =>
+      conv.engineType === adapter.engineType && !conv.catalogSourceId && !!conv.engineSessionId && conv.archived !== true,
+    );
+    let next = 0;
+    const reconnect = Promise.resolve().then(async () => {
+      const worker = async () => {
+        while (next < conversations.length && adapter.getInfo().status === "running") {
+          const saved = conversations[next++];
+          const conv = conversationStore.get(saved.id);
+          if (!conv || conv.archived || conv.engineSessionId !== saved.engineSessionId || adapter.hasSession(conv.engineSessionId!)) continue;
+          try {
+            await this.ensureAuthoritativeSession(conv, adapter);
+            const session = await adapter.getSession(conv.engineSessionId!);
+            if (!session || session.id !== conv.engineSessionId) throw new Error("The reconnected conversation identity could not be confirmed.");
+            this.authoritativeSessions.set(conv.id, session);
+            this.syncArchivedState(conv.id, session);
+            this.emit("session.updated", { session: this.sessionFromConversation(conv) });
+          } catch (error) {
+            engineManagerLog.warn(`Failed to reconnect shared conversation ${conv.id}:`, error);
+            this.authoritativeSessions.set(conv.id, { ...convToSession(conv), ...this.authoritativeSessions.get(conv.id), activityStatus: "error" });
+            this.emit("session.updated", { session: this.sessionFromConversation(conv) });
+          }
+        }
+      };
+      await Promise.all(Array.from({ length: Math.min(3, conversations.length) }, () => worker()));
+    });
+    this.authoritativeReconnects.set(adapter.engineType, reconnect);
+    void reconnect.catch((error) => {
+      engineManagerLog.warn(`Failed to reconnect shared conversations for ${adapter.engineType}:`, error);
+    }).finally(() => {
+      if (this.authoritativeReconnects.get(adapter.engineType) === reconnect) this.authoritativeReconnects.delete(adapter.engineType);
+    });
   }
 
   // --- Slash Commands ---
@@ -1170,7 +1849,10 @@ export class EngineManager extends EventEmitter {
 
       // Lazy engine session creation (same pattern as sendMessage)
       let engineSessionId = conv.engineSessionId;
-      if (!engineSessionId || !adapter.hasSession(engineSessionId)) {
+      if (conv.catalogSourceId) {
+        if (!engineSessionId) throw new Error("The catalog conversation has no native identity.");
+        await this.ensureAuthoritativeSession(conv, adapter);
+      } else if (!engineSessionId || !adapter.hasSession(engineSessionId)) {
         const engineSession = await adapter.createSession(conv.directory, conv.engineMeta);
         engineSessionId = engineSession.id;
         conversationStore.setEngineSession(sessionId, engineSessionId, engineSession.engineMeta);
@@ -1179,7 +1861,9 @@ export class EngineManager extends EventEmitter {
 
       // Persist user command message
       const commandText = `/${commandName}${args ? ` ${args}` : ""}`;
-      await this.persistUserMessage(sessionId, [{ type: "text", text: commandText }], trackQueuedTiming);
+      if (!adapter.getCapabilities().authoritativeSessionState) {
+        await this.persistUserMessage(sessionId, [{ type: "text", text: commandText }], trackQueuedTiming);
+      }
 
       const resolvedOptions = this.resolveSessionOptions(conv, options);
 
@@ -1252,6 +1936,21 @@ export class EngineManager extends EventEmitter {
       patch.serviceTier = config.serviceTier ?? null;
     }
 
+    const existing = conversationStore.get(sessionId);
+    const existingAdapter = existing && this.adapters.get(existing.engineType);
+    if (existingAdapter) this.validateReasoningEffort(existingAdapter, config.reasoningEffort);
+    if (existing?.engineSessionId && existingAdapter?.getCapabilities().authoritativeSessionState) {
+      await this.ensureAuthoritativeSession(existing, existingAdapter);
+      await this.applySessionConfig(existingAdapter, existing.engineSessionId, config);
+      const confirmed = await existingAdapter.getSession(existing.engineSessionId);
+      if (!confirmed) throw new Error("The shared settings could not be confirmed.");
+      this.authoritativeSessions.set(sessionId, confirmed);
+      for (const key of Object.keys(patch) as Array<keyof typeof patch>) {
+        Object.assign(patch, { [key]: confirmed[key] ?? null });
+      }
+      this.updateStoredSessionConfig(sessionId, patch);
+      return;
+    }
     const conv = this.updateStoredSessionConfig(sessionId, patch);
     if (!conv.engineSessionId) {
       return;
@@ -1259,7 +1958,10 @@ export class EngineManager extends EventEmitter {
 
     const adapter = this.getAdapterForSession(sessionId);
     const engineSessionId = conv.engineSessionId;
+    await this.applySessionConfig(adapter, engineSessionId, config);
+  }
 
+  private async applySessionConfig(adapter: EngineAdapter, engineSessionId: string, config: SessionConfigPatch): Promise<void> {
     if (Object.prototype.hasOwnProperty.call(config, "mode") && config.mode) {
       await adapter.setMode(engineSessionId, config.mode);
     }
@@ -1271,6 +1973,13 @@ export class EngineManager extends EventEmitter {
     }
     if (Object.prototype.hasOwnProperty.call(config, "serviceTier")) {
       await adapter.setServiceTier(engineSessionId, config.serviceTier ?? null);
+    }
+  }
+
+  private validateReasoningEffort(adapter: EngineAdapter, effort: ReasoningEffort | null | undefined): void {
+    const supported = adapter.getCapabilities().reasoningEffortOptions ?? REASONING_EFFORT_VALUES;
+    if (effort != null && !(supported as readonly string[]).includes(effort)) {
+      throw new Error(`This engine does not support reasoning effort: ${effort}`);
     }
   }
 
@@ -1329,7 +2038,73 @@ export class EngineManager extends EventEmitter {
 
   async listProjects(engineType: EngineType): Promise<UnifiedProject[]> {
     // Derive projects from conversations for this engine type
-    return conversationStore.deriveProjects().filter(p => p.engineType === engineType);
+    return [...conversationStore.deriveProjects().filter(p => p.engineType === engineType),
+      ...conversationStore.listCatalogs().filter((catalog) => catalog.engineType === engineType).flatMap((catalog) => catalog.projects)];
+  }
+
+  async createProject(sourceId: string, input: CatalogProjectInput): Promise<UnifiedProject> {
+    const validated = this.validateProjectInput(input);
+    const adapter = await this.catalogAdapter(sourceId);
+    const created = await adapter.createProject(validated);
+    if (!created?.id) throw new Error("The project owner did not return a project identity.");
+    const confirmed = await this.refreshCatalog(adapter, true);
+    const project = confirmed.projects.find((entry) => entry.catalogProjectId === created.id && entry.catalogAvailable !== false);
+    if (!project || project.name !== validated.name || JSON.stringify(project.roots ?? []) !== JSON.stringify(validated.roots)) {
+      throw new Error("The project creation could not be confirmed.");
+    }
+    return project;
+  }
+
+  async updateProject(projectId: string, patch: CatalogProjectPatch): Promise<UnifiedProject> {
+    const project = this.requireCatalogProject(projectId);
+    const validated = this.validateProjectInput({ name: patch.name ?? project.name ?? "", roots: patch.roots ?? project.roots ?? [] });
+    if (patch.name === undefined && patch.roots === undefined) throw new Error("A project update is required.");
+    const adapter = await this.catalogAdapter(project.catalogSourceId!);
+    const updated = await adapter.updateProject(project.catalogProjectId!, {
+      ...(patch.name !== undefined ? { name: validated.name } : {}),
+      ...(patch.roots !== undefined ? { roots: validated.roots } : {}),
+    });
+    if (updated?.id !== project.catalogProjectId) throw new Error("Updating the project changed its identity.");
+    const confirmed = await this.refreshCatalog(adapter, true);
+    const result = confirmed.projects.find((entry) => entry.id === projectId && entry.catalogAvailable !== false);
+    if (!result || (patch.name !== undefined && result.name !== validated.name)
+      || (patch.roots !== undefined && JSON.stringify(result.roots ?? []) !== JSON.stringify(validated.roots))) {
+      throw new Error("The project update could not be confirmed.");
+    }
+    return result;
+  }
+
+  async reorderProjects(sourceId: string, projectIds: string[]): Promise<void> {
+    const adapter = await this.catalogAdapter(sourceId);
+    const projects = conversationStore.listCatalogs().find((catalog) => catalog.engineType === adapter.engineType && catalog.sourceId === sourceId)!
+      .projects.filter((project) => project.catalogAvailable !== false);
+    if (!Array.isArray(projectIds) || projectIds.length !== projects.length || new Set(projectIds).size !== projectIds.length
+      || projectIds.some((id) => !projects.some((project) => project.id === id))) {
+      throw new Error("Project order must contain every available project from this source exactly once.");
+    }
+    const nativeIds = projectIds.map((id) => projects.find((project) => project.id === id)!.catalogProjectId!);
+    try {
+      for (let i = nativeIds.length - 1; i >= 0; i--) await adapter.moveProject(nativeIds[i], nativeIds[i + 1] ?? null);
+    } catch (error) {
+      await this.refreshCatalog(adapter, true).catch((refreshError) => engineManagerLog.warn("Failed to refresh a partially changed project order:", refreshError));
+      throw error;
+    }
+    const confirmed = await this.refreshCatalog(adapter, true);
+    const order = confirmed.projects.filter((project) => project.catalogAvailable !== false).map((project) => project.id);
+    if (JSON.stringify(order) !== JSON.stringify(projectIds)) throw new Error("The project order could not be confirmed.");
+  }
+
+  async setSessionProject(sessionId: string, projectId: string | null): Promise<void> {
+    const conv = conversationStore.get(sessionId);
+    if (!conv?.catalogSourceId || !conv.engineSessionId || conv.catalogAvailable === false) throw new Error("This conversation is not available in a managed catalog.");
+    const project = projectId === null ? null : this.requireCatalogProject(projectId);
+    if (project && (project.catalogSourceId !== conv.catalogSourceId || project.engineType !== conv.engineType)) {
+      throw new Error("A conversation can only move within its own catalog source.");
+    }
+    const adapter = await this.catalogAdapter(conv.catalogSourceId);
+    await adapter.setSessionProject(conv.engineSessionId, project?.catalogProjectId ?? null);
+    await this.refreshCatalog(adapter, true);
+    if (conversationStore.get(sessionId)?.projectId !== projectId) throw new Error("The conversation project change could not be confirmed.");
   }
 
   // --- Pending state (for resync after reconnect / session switch) ---
@@ -1344,10 +2119,15 @@ export class EngineManager extends EventEmitter {
     questions: UnifiedQuestion[];
     permissions: UnifiedPermission[];
   }> {
+    await this.catalogSessionChecks.get(conversationId);
     const conv = conversationStore.get(conversationId);
     if (!conv) return { questions: [], permissions: [] };
     const adapter = this.adapters.get(conv.engineType);
     if (!adapter) return { questions: [], permissions: [] };
+    if (conv.archived && adapter.getCapabilities().hideArchivedSessions) {
+      await this.purgeRemovedConversation(conv, "archived");
+      return { questions: [], permissions: [] };
+    }
 
     const engineSessionId = conv.engineSessionId;
     // Without an engine-side session id we have no safe way to filter: adapters
@@ -1359,6 +2139,7 @@ export class EngineManager extends EventEmitter {
       Promise.resolve(adapter.getPendingQuestions(engineSessionId)),
       Promise.resolve(adapter.getPendingPermissions(engineSessionId)),
     ]);
+    if (!conversationStore.get(conversationId)) return { questions: [], permissions: [] };
     const questions = rawQuestions.map((q) => ({ ...q, sessionId: conversationId }));
     const permissions = rawPermissions.map((p) => ({ ...p, sessionId: conversationId }));
 
@@ -1378,7 +2159,7 @@ export class EngineManager extends EventEmitter {
    * Called once at startup, after conversationStore.init().
    */
   initFromStore(): void {
-    for (const conv of conversationStore.list()) {
+    for (const conv of this.visibleConversations()) {
       this.sessionEngineMap.set(conv.id, conv.engineType);
       // Cache engineSessionId → conversationId mapping
       if (conv.engineSessionId) {
@@ -1399,11 +2180,12 @@ export class EngineManager extends EventEmitter {
 
   /** Return all conversations as UnifiedSession[] (all engines) */
   listAllSessions(): UnifiedSession[] {
-    return conversationStore.list().map(convToSession);
+    return this.visibleConversations().map((conv) => this.sessionFromConversation(conv));
   }
 
   /** Return all projects derived from conversations, always including the default workspace */
   listAllProjects(): UnifiedProject[] {
+    this.visibleConversations();
     const projects = conversationStore.deriveProjects();
     const defaultDir = normalizeDir(getDefaultWorkspacePath());
     const existing = projects.find(
@@ -1419,7 +2201,7 @@ export class EngineManager extends EventEmitter {
     } else {
       existing.isDefault = true;
     }
-    return projects;
+    return [...projects, ...conversationStore.listCatalogs().flatMap((catalog) => catalog.projects)];
   }
 
   // --- Historical Session Import ---
@@ -1430,7 +2212,7 @@ export class EngineManager extends EventEmitter {
    */
   async importPreview(engineType: EngineType, limit: number): Promise<ImportableSession[]> {
     const adapter = this.getAdapterOrThrow(engineType);
-    const sessions = await adapter.listHistoricalSessions(limit);
+    const sessions = (await adapter.listHistoricalSessions(limit)).filter((session) => !adapter.getCapabilities().hideArchivedSessions || !session.archived);
 
     // Build dedup set: all known engine session IDs for this engine type
     const existingIds = conversationStore.findAllEngineSessionIds(engineType);
@@ -1462,6 +2244,9 @@ export class EngineManager extends EventEmitter {
     }>,
   ): Promise<SessionImportResult> {
     const adapter = this.getAdapterOrThrow(engineType);
+    const capabilities = adapter.getCapabilities();
+    const sourceId = capabilities.hideArchivedSessions && capabilities.sessionCatalog
+      ? (await adapter.getCatalog()).sourceId : undefined;
 
     const result: SessionImportResult = { imported: 0, skipped: 0, errors: [] };
     const total = sessions.length;
@@ -1469,18 +2254,10 @@ export class EngineManager extends EventEmitter {
     for (let i = 0; i < sessions.length; i++) {
       const s = sessions[i];
 
-      // If already imported, delete the old CodeMux conversation to allow reimport.
-      // Only deletes local ConversationStore data — does NOT touch the engine session.
       const ccId = s.engineMeta?.ccSessionId;
-      const existingConv = this.findImportedConversation(engineType, s.engineSessionId, ccId);
-      if (existingConv) {
-        engineManagerLog.info(`Reimporting: deleting old conversation ${existingConv.id} for engine session ${s.engineSessionId}`);
-        await conversationStore.delete(existingConv.id);
-        this.sessionEngineMap.delete(existingConv.id);
-        if (existingConv.engineSessionId) {
-          this.engineToConvMap.delete(existingConv.engineSessionId);
-        }
-      }
+      const existingCandidate = this.findImportedConversation(engineType, s.engineSessionId, ccId);
+      const existingConv = sourceId && existingCandidate?.catalogSourceId && existingCandidate.catalogSourceId !== sourceId
+        ? null : existingCandidate;
 
       try {
         // Fetch messages from engine
@@ -1489,6 +2266,16 @@ export class EngineManager extends EventEmitter {
           s.directory,
           s.engineMeta,
         );
+        // Active-only adapters validate their native transcript before returning.
+        // Catalog owners also confirm metadata after the read before restoring a
+        // previously archived identity through this explicit import operation.
+        let nativeSession: UnifiedSession | null = null;
+        if (capabilities.hideArchivedSessions && capabilities.authoritativeSessionState) {
+          nativeSession = await adapter.getSession(s.engineSessionId);
+          if (!nativeSession || nativeSession.id !== s.engineSessionId || nativeSession.archived !== false) {
+            throw new Error("Only a confirmed active native conversation can be imported.");
+          }
+        }
 
         engineManagerLog.info(
           `Import ${s.engineSessionId}: got ${messages.length} messages (${messages.filter(m => m.role === "user").length} user, ${messages.filter(m => m.role === "assistant").length} assistant)`,
@@ -1532,14 +2319,22 @@ export class EngineManager extends EventEmitter {
         // For Claude: store the cc_ prefixed ID, and keep ccSessionId in engineMeta
         const storedEngineSessionId = s.engineSessionId;
 
+        // Preserve the existing mirror if the authoritative history read fails.
+        if (existingConv) {
+          await conversationStore.delete(existingConv.id);
+          this.sessionEngineMap.delete(existingConv.id);
+          this.forgetConversationMappings(existingConv.id);
+        }
+
         const conv = await conversationStore.importConversation({
           engineType,
-          directory: s.directory,
-          title: s.title,
-          createdAt: s.createdAt,
-          updatedAt: s.updatedAt,
+          directory: nativeSession?.directory ?? s.directory,
+          title: nativeSession?.title ?? s.title,
+          createdAt: nativeSession?.time.created ?? s.createdAt,
+          updatedAt: nativeSession?.time.updated ?? s.updatedAt,
           engineSessionId: storedEngineSessionId,
           engineMeta: s.engineMeta,
+          ...(capabilities.hideArchivedSessions ? { archived: false, catalogSourceId: sourceId, restoreArchived: true } : {}),
           messages: convMessages,
           steps: allSteps,
         });
@@ -1547,6 +2342,7 @@ export class EngineManager extends EventEmitter {
         // Register in routing tables
         this.sessionEngineMap.set(conv.id, engineType);
         this.engineToConvMap.set(storedEngineSessionId, conv.id);
+        if (capabilities.hideArchivedSessions) this.emit("session.created", { session: this.sessionFromConversation(conv) });
 
         result.imported++;
       } catch (err: any) {

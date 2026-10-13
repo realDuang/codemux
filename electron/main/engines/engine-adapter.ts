@@ -25,6 +25,9 @@ import type {
   ImportableSession,
   EngineCommand,
   CommandInvokeResult,
+  EngineCatalogSnapshot,
+  CatalogProjectInput,
+  CatalogProjectPatch,
 } from "../../../src/types/unified";
 
 /**
@@ -70,6 +73,7 @@ export interface MessageBuffer {
 // --- Adapter Events ---
 
 export interface EngineAdapterEvents {
+  "catalog.updated": (snapshot: EngineCatalogSnapshot) => void;
   /** A message part was created or updated */
   "message.part.updated": (data: {
     sessionId: string;
@@ -83,6 +87,9 @@ export interface EngineAdapterEvents {
     message: UnifiedMessage;
   }) => void;
 
+  /** An authoritative conversation no longer contains this message. */
+  "message.removed": (data: { sessionId: string; messageId: string }) => void;
+
   /** A session was updated (title, time, etc.) — partial updates allowed */
   "session.updated": (data: {
     session: Partial<UnifiedSession> & Pick<UnifiedSession, "id" | "engineType">;
@@ -90,6 +97,9 @@ export interface EngineAdapterEvents {
 
   /** A new session was created */
   "session.created": (data: { session: UnifiedSession }) => void;
+
+  /** An authoritative source excludes a session and all of its mirrored data. */
+  "session.removed": (data: { sessionId: string }) => void;
 
   /** A permission request from the agent */
   "permission.asked": (data: { permission: UnifiedPermission }) => void;
@@ -198,11 +208,52 @@ export abstract class EngineAdapter extends EventEmitter {
   /** Create a new session. Optional meta contains persisted engine metadata (e.g. ccSessionId). */
   abstract createSession(directory: string, meta?: Record<string, unknown>): Promise<UnifiedSession>;
 
+  /** Attach an existing identity without replacing it or changing its archive state. */
+  async restoreSession(sessionId: string, _directory: string, _meta?: Record<string, unknown>): Promise<UnifiedSession> {
+    const session = await this.getSession(sessionId);
+    if (!session) throw new Error("The existing engine session is unavailable.");
+    return session;
+  }
+
   /** Get a specific session by ID */
   abstract getSession(sessionId: string): Promise<UnifiedSession | null>;
 
   /** Delete a session */
   abstract deleteSession(sessionId: string): Promise<void>;
+
+  /** Explicit user removal; internal lifecycle cleanup keeps using deleteSession. */
+  async removeSession(sessionId: string): Promise<"local" | "archived" | void> {
+    await this.deleteSession(sessionId);
+  }
+
+  /** Archive or restore a session in its owning engine. */
+  async setSessionArchived(_sessionId: string, _archived: boolean): Promise<void> {
+    throw new Error("This engine does not support archiving sessions.");
+  }
+
+  async getCatalog(): Promise<EngineCatalogSnapshot> {
+    throw new Error("This engine does not provide a session catalog.");
+  }
+
+  async createProject(_input: CatalogProjectInput): Promise<UnifiedProject> {
+    throw new Error("This engine does not support catalog project management.");
+  }
+
+  async updateProject(_projectId: string, _patch: CatalogProjectPatch): Promise<UnifiedProject> {
+    throw new Error("This engine does not support catalog project management.");
+  }
+
+  async moveProject(_projectId: string, _beforeId: string | null): Promise<void> {
+    throw new Error("This engine does not support catalog project management.");
+  }
+
+  async deleteCatalogProject(_projectId: string): Promise<void> {
+    throw new Error("This engine does not support catalog project management.");
+  }
+
+  async setSessionProject(_sessionId: string, _projectId: string | null): Promise<void> {
+    throw new Error("This engine does not support catalog project management.");
+  }
 
   /**
    * Rename a session on the engine side. Default: no-op.

@@ -62,6 +62,7 @@ export const ru: LocaleDict = {
   question: {
     submit: "Отправить",
     dismiss: "Закрыть",
+    stopTask: "Остановить задачу",
     customPlaceholder: "Введите свой ответ...",
     waitingAnswer: "Ожидание ответа",
     selectMultiple: "Можно выбрать несколько вариантов",
@@ -93,6 +94,7 @@ export const ru: LocaleDict = {
     startConversationDesc: "Выберите модель и введите вопрос в поле ниже, чтобы начать чат.",
     noSessionSelected: "Сессия не выбрана",
     noSessionSelectedDesc: "Выберите сессию на боковой панели или создайте новую.",
+    archivedReadOnly: "Разговор в архиве. Восстановите его, чтобы продолжить.",
     initFailed: "Ошибка инициализации",
     retry: "Повторить",
     disclaimer: "Содержимое, созданное ИИ, может быть неточным. Проверяйте важную информацию.",
@@ -246,6 +248,11 @@ export const ru: LocaleDict = {
     newSession: "Новая сессия",
     deleteConfirm: "Удалить эту сессию?",
     deleteSession: "Удалить сессию",
+    archiveSession: "В архив",
+    restoreSession: "Восстановить",
+    archivedSessions: "Архив",
+    noArchivedSessions: "Нет разговоров в архиве",
+    removeLocalSession: "Удалить из CodeMux (сохранить исходный разговор)",
     renameSession: "Переименовать сессию",
     justNow: "Только что",
     minutesAgo: "{count} мин. назад",
@@ -271,6 +278,13 @@ export const ru: LocaleDict = {
   },
 
   // Project
+  catalog: {
+    sessions: "Синхронизированные разговоры",
+    unavailable: "Недоступно",
+    unavailableDetail: "Разговор больше недоступен в источнике. Сохранённая история остаётся доступной.",
+    updateFailed: "Не удалось обновить разговор: {message}",
+  },
+
   project: {
     add: "Добавить проект",
     addTitle: "Добавить проект",
@@ -315,6 +329,7 @@ export const ru: LocaleDict = {
     reasoningEffortMedium: "Средний",
     reasoningEffortHigh: "Высокий",
     reasoningEffortMax: "Макс",
+    reasoningEffortUltra: "Ультра",
   },
 
   // Message Parts
@@ -588,6 +603,7 @@ export const ru: LocaleDict = {
     messageSendInterrupted: "Отправка прервалась. Проверьте переписку перед повторной отправкой.",
     sessionCreateFailed: "Не удалось создать сессию.",
     sessionDeleteFailed: "Не удалось удалить сессию.",
+    sessionArchiveFailed: "Не удалось изменить состояние архива: {message}",
     gatewayDisconnected: "Соединение прервано, переподключение...",
     gatewayReconnected: "Соединение восстановлено.",
     engineError: "Ошибка движка: {message}",

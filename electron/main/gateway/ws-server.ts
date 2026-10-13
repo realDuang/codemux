@@ -28,11 +28,13 @@ import {
   type GatewayNotification,
   type EngineType,
   type SessionCreateRequest,
+  type SessionArchiveRequest,
   type MessageSendRequest,
   type PermissionReplyRequest,
   type QuestionReplyRequest,
   type PendingListRequest,
   type ProjectSetEngineRequest,
+  type CatalogProjectPatch,
   type ModelSetRequest,
   type SessionConfigUpdateRequest,
   type ModeSetRequest,
@@ -66,6 +68,18 @@ interface ClientConnection {
 interface GatewayServerOptions {
   authValidator?: (token: string, req: IncomingMessage) => boolean;
   requestValidator?: (req: IncomingMessage) => boolean;
+}
+
+function nonEmptyString(value: unknown): value is string {
+  return typeof value === "string" && value.trim().length > 0;
+}
+
+function stringList(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every(nonEmptyString);
+}
+
+function invalidCatalogParams(message: string): Error & { code: string } {
+  return Object.assign(new Error(message), { code: "INVALID_PARAMS" });
 }
 
 export class GatewayServer {
@@ -367,6 +381,10 @@ export class GatewayServer {
 
       case GatewayRequestType.SESSION_CREATE: {
         const req = p as SessionCreateRequest;
+        if (req?.projectId !== undefined) {
+          if (req.projectId !== null && !nonEmptyString(req.projectId)) throw invalidCatalogParams("projectId must be a non-empty string or null");
+          return this.engineManager.createSession(req.engineType, req.directory, req.worktreeId, req.projectId);
+        }
         return this.engineManager.createSession(req.engineType, req.directory, req.worktreeId);
       }
 
@@ -378,6 +396,22 @@ export class GatewayServer {
 
       case GatewayRequestType.SESSION_RENAME: {
         return this.engineManager.renameSession(p.sessionId, p.title);
+      }
+
+      case GatewayRequestType.SESSION_ARCHIVE: {
+        const req = p as SessionArchiveRequest;
+        if (!req || typeof req.sessionId !== "string" || !req.sessionId || typeof req.archived !== "boolean") {
+          throw Object.assign(new Error("sessionId and archived are required"), { code: "INVALID_PARAMS" });
+        }
+        return this.engineManager.setSessionArchived(req.sessionId, req.archived);
+      }
+
+      case GatewayRequestType.SESSION_PROJECT_SET: {
+        if (!p || !nonEmptyString(p.sessionId) || (p.projectId !== null && !nonEmptyString(p.projectId))) {
+          throw invalidCatalogParams("sessionId and a projectId string or null are required");
+        }
+        await this.engineManager.setSessionProject(p.sessionId, p.projectId);
+        return { success: true };
       }
 
       // Message
@@ -472,6 +506,36 @@ export class GatewayServer {
       }
 
       // Project
+      case GatewayRequestType.CATALOG_LIST:
+        return this.engineManager.listCatalogs();
+
+      case GatewayRequestType.PROJECT_CREATE: {
+        if (!p || !nonEmptyString(p.sourceId) || !nonEmptyString(p.name) || !stringList(p.roots)) {
+          throw invalidCatalogParams("sourceId, name, and a roots array are required");
+        }
+        return this.engineManager.createProject(p.sourceId, { name: p.name, roots: p.roots });
+      }
+
+      case GatewayRequestType.PROJECT_UPDATE: {
+        const patch = p?.patch as CatalogProjectPatch | undefined;
+        if (!p || !nonEmptyString(p.projectId) || !patch || typeof patch !== "object" || Array.isArray(patch)
+          || Object.keys(patch).some((key) => key !== "name" && key !== "roots")
+          || (patch.name === undefined && patch.roots === undefined)
+          || (patch.name !== undefined && !nonEmptyString(patch.name))
+          || (patch.roots !== undefined && !stringList(patch.roots))) {
+          throw invalidCatalogParams("projectId and a valid name or roots patch are required");
+        }
+        return this.engineManager.updateProject(p.projectId, patch);
+      }
+
+      case GatewayRequestType.PROJECT_REORDER: {
+        if (!p || !nonEmptyString(p.sourceId) || !stringList(p.projectIds) || new Set(p.projectIds).size !== p.projectIds.length) {
+          throw invalidCatalogParams("sourceId and unique projectIds are required");
+        }
+        await this.engineManager.reorderProjects(p.sourceId, p.projectIds);
+        return { success: true };
+      }
+
       case GatewayRequestType.PROJECT_LIST:
         return this.engineManager.listProjects(p.engineType as EngineType);
 
@@ -490,6 +554,7 @@ export class GatewayServer {
         return this.engineManager.listAllProjects();
 
       case GatewayRequestType.PROJECT_DELETE:
+        if (!p || !nonEmptyString(p.projectId)) throw invalidCatalogParams("projectId is required");
         await this.engineManager.deleteProject(p.projectId);
         return { success: true };
 
@@ -724,6 +789,14 @@ export class GatewayServer {
       });
     });
 
+    em.on("message.removed", (data) => {
+      this.broadcast({ type: GatewayNotificationType.MESSAGE_REMOVED, payload: data });
+    });
+
+    em.on("session.removed", ({ sessionId }) => {
+      this.broadcast({ type: GatewayNotificationType.SESSION_REMOVED, payload: { sessionId } });
+    });
+
     em.on("session.updated", (data) => {
       this.broadcast({
         type: GatewayNotificationType.SESSION_UPDATED,
@@ -736,6 +809,10 @@ export class GatewayServer {
         type: GatewayNotificationType.SESSION_CREATED,
         payload: data,
       });
+    });
+
+    em.on("catalog.updated", (snapshot) => {
+      this.broadcast({ type: GatewayNotificationType.CATALOG_UPDATED, payload: snapshot });
     });
 
     em.on("permission.asked", (data) => {

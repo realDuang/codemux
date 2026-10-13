@@ -19,6 +19,9 @@ import {
   type UnifiedMessage,
   type ModelListResult,
   type UnifiedProject,
+  type EngineCatalogSnapshot,
+  type CatalogProjectInput,
+  type CatalogProjectPatch,
   type UnifiedPermission,
   type UnifiedQuestion,
   type UnifiedPart,
@@ -68,8 +71,11 @@ export interface GatewayClientEvents {
   "message.part.updated": (data: { sessionId: string; part: UnifiedPart }) => void;
   "message.parts.batch": (data: { sessionId: string; messageId: string; parts: UnifiedPart[] }) => void;
   "message.updated": (data: { sessionId: string; message: UnifiedMessage }) => void;
+  "message.removed": (data: { sessionId: string; messageId: string }) => void;
+  "session.removed": (data: { sessionId: string }) => void;
   "session.updated": (data: { session: UnifiedSession }) => void;
   "session.created": (data: { session: UnifiedSession }) => void;
+  "catalog.updated": (data: EngineCatalogSnapshot) => void;
   "permission.asked": (data: { permission: UnifiedPermission }) => void;
   "permission.replied": (data: { permissionId: string; optionId: string }) => void;
   "question.asked": (data: { question: UnifiedQuestion }) => void;
@@ -138,6 +144,7 @@ export class GatewayClient {
   private static readonly BATCHED_EVENTS = new Set([
     "message.part.updated",
     "message.updated",
+    "message.removed",
     // Keep in sync with the message.updated batch so wire order is preserved.
     // Otherwise consumed fires immediately and clears the queued preview before
     // the preceding `message.updated` (Turn N completed) is handled, which then
@@ -379,6 +386,9 @@ export class GatewayClient {
     } else {
       // Push notification — batch high-frequency events to prevent event loop starvation
       const notif = msg as GatewayNotification;
+      if (notif.type === "session.removed") {
+        this.discardSessionNotifications((notif.payload as { sessionId: string }).sessionId);
+      }
       if (GatewayClient.BATCHED_EVENTS.has(notif.type)) {
         this.notificationQueue.push({ type: notif.type, payload: notif.payload });
         this.scheduleNotificationFlush();
@@ -386,6 +396,11 @@ export class GatewayClient {
         this.emit(notif.type as keyof GatewayClientEvents, notif.payload as any);
       }
     }
+  }
+
+  /** Drop buffered output that predates a session removal or restoration. */
+  discardSessionNotifications(sessionId: string): void {
+    this.notificationQueue = this.notificationQueue.filter((item) => item.payload?.sessionId !== sessionId);
   }
 
   // --- RPC helper ---
@@ -457,22 +472,46 @@ export class GatewayClient {
       this.notificationQueue = [];
 
       // Deduplicate message.part.updated: keep only the latest update per part ID.
-      // Other notification types (message.updated) are emitted as-is.
+      // A removal invalidates earlier message and part updates in this frame.
       const dedupedParts = new Map<string, { type: string; payload: any }>();
       const nonPartNotifications: Array<{ type: string; payload: any }> = [];
+      const removedMessages = new Set<string>();
+      const pendingMessageUpdates = new Map<string, Array<{ type: string; payload: any }>>();
+      const supersededMessages = new Set<{ type: string; payload: any }>();
+      const messageKey = (sessionId: string, messageId: string) => JSON.stringify([sessionId, messageId]);
 
       for (const item of batch) {
+        if (item.type === "message.removed") {
+          const key = messageKey(item.payload.sessionId, item.payload.messageId);
+          removedMessages.add(key);
+          for (const [partId, pending] of dedupedParts) {
+            if (messageKey(pending.payload.sessionId, pending.payload.part.messageId) === key) dedupedParts.delete(partId);
+          }
+          for (const pending of pendingMessageUpdates.get(key) ?? []) supersededMessages.add(pending);
+          pendingMessageUpdates.delete(key);
+          nonPartNotifications.push(item);
+          continue;
+        }
         if (item.type === "message.part.updated" && item.payload?.part?.id) {
+          if (removedMessages.has(messageKey(item.payload.sessionId, item.payload.part.messageId))) continue;
           // Overwrite previous update for the same part ID
           dedupedParts.set(item.payload.part.id, item);
         } else {
+          if (item.type === "message.updated") {
+            const key = messageKey(item.payload.sessionId, item.payload.message.id);
+            removedMessages.delete(key);
+            const updates = pendingMessageUpdates.get(key) ?? [];
+            updates.push(item);
+            pendingMessageUpdates.set(key, updates);
+          }
           nonPartNotifications.push(item);
         }
       }
 
       // Emit non-part notifications first (message.updated may signal completion)
-      for (const { type, payload } of nonPartNotifications) {
-        this.emit(type as keyof GatewayClientEvents, payload as any);
+      for (const notification of nonPartNotifications) {
+        if (supersededMessages.has(notification)) continue;
+        this.emit(notification.type as keyof GatewayClientEvents, notification.payload as any);
       }
 
       // Group deduped parts by messageId. When multiple distinct parts arrive
@@ -540,6 +579,14 @@ export class GatewayClient {
     return this.request(GatewayRequestType.SESSION_RENAME, { sessionId, title });
   }
 
+  setSessionArchived(sessionId: string, archived: boolean): Promise<void> {
+    return this.request(GatewayRequestType.SESSION_ARCHIVE, { sessionId, archived });
+  }
+
+  setSessionProject(req: { sessionId: string; projectId: string | null }): Promise<void> {
+    return this.request(GatewayRequestType.SESSION_PROJECT_SET, req);
+  }
+
   // --- Message API ---
 
   sendMessage(req: MessageSendRequest): Promise<UnifiedMessage> {
@@ -597,6 +644,22 @@ export class GatewayClient {
   }
 
   // --- Project API ---
+
+  listCatalogs(): Promise<EngineCatalogSnapshot[]> {
+    return this.request(GatewayRequestType.CATALOG_LIST);
+  }
+
+  createProject(req: CatalogProjectInput & { sourceId: string }): Promise<UnifiedProject> {
+    return this.request(GatewayRequestType.PROJECT_CREATE, req);
+  }
+
+  updateProject(req: { projectId: string; patch: CatalogProjectPatch }): Promise<UnifiedProject> {
+    return this.request(GatewayRequestType.PROJECT_UPDATE, req);
+  }
+
+  reorderProjects(req: { sourceId: string; projectIds: string[] }): Promise<void> {
+    return this.request(GatewayRequestType.PROJECT_REORDER, req);
+  }
 
   listProjects(engineType: EngineType): Promise<UnifiedProject[]> {
     return this.request(GatewayRequestType.PROJECT_LIST, { engineType });

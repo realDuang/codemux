@@ -27,6 +27,22 @@ export interface EngineInfo {
 }
 
 export interface EngineCapabilities {
+  /** Session messages and activity are owned by a connected external client. */
+  authoritativeSessionState?: boolean;
+  /** Dismissing a blocking question interrupts the current turn. */
+  questionDismissStopsTurn?: boolean;
+  /** Accepted session effort values; omitted engines use the standard fallback levels. */
+  reasoningEffortOptions?: ReasoningEffort[];
+  /** Whether sessions can be archived and restored in the owning engine. */
+  sessionArchive?: boolean;
+  /** Explicit user removal must finish in the engine before local records are discarded. */
+  confirmedSessionRemoval?: boolean;
+  /** Archived records are excluded from this engine's user-facing catalog. */
+  hideArchivedSessions?: boolean;
+  /** A metadata catalog can be synchronized without loading conversation runtimes. */
+  sessionCatalog?: boolean;
+  /** The catalog owner supports project CRUD, ordering, and session membership writes. */
+  catalogManagement?: boolean;
   /** OpenCode uses Provider→Model hierarchy; Copilot/Claude use flat list */
   providerModelHierarchy: boolean;
   /** Whether modes can change per session (Copilot/Claude true, OpenCode static) */
@@ -104,12 +120,13 @@ export interface UnifiedModelInfo {
 }
 
 /** Unified reasoning effort level across engines */
-export type ReasoningEffort = "low" | "medium" | "high" | "max";
+export type ReasoningEffort = "low" | "medium" | "high" | "max" | "ultra";
 
+/** Standard fallback levels for engines without model-specific effort metadata. */
 export const REASONING_EFFORT_VALUES = ["low", "medium", "high", "max"] as const;
 
 export function isReasoningEffort(value: unknown): value is ReasoningEffort {
-  return typeof value === "string" && (REASONING_EFFORT_VALUES as readonly string[]).includes(value);
+  return value === "ultra" || (typeof value === "string" && (REASONING_EFFORT_VALUES as readonly string[]).includes(value));
 }
 
 export function normalizeReasoningEffort(value: unknown): ReasoningEffort | undefined {
@@ -161,6 +178,10 @@ export interface ModelListResult {
 // --- Conversation (self-owned persistence layer) ---
 
 export interface ConversationMeta extends UnifiedSessionConfig {
+  archived?: boolean;
+  projectId?: string | null;
+  catalogSourceId?: string;
+  catalogAvailable?: boolean;
   id: string;
   engineType: EngineType;
   directory: string;
@@ -232,15 +253,21 @@ export type StepPart =
 // --- Session ---
 
 export interface UnifiedSession extends UnifiedSessionConfig {
-  /** Current gateway activity, used when recovering a suspended client. */
-  activityStatus?: SessionActivityStatus;
+  archived?: boolean;
+  catalogSourceId?: string;
+  catalogAvailable?: boolean;
   id: string;
   engineType: EngineType;
   directory: string;
   title?: string;
+  /** User-initiated link to the application's original session. */
+  sourceUrl?: string;
+  sourceName?: string;
+  /** Authoritative activity reported by engines with externally owned sessions. */
+  activityStatus?: SessionActivityStatus;
   parentId?: string;
   /** Resolved project ID — populated by ConversationStore/EngineManager from directory */
-  projectId?: string;
+  projectId?: string | null;
   /** Worktree name if this session belongs to a worktree */
   worktreeId?: string;
   time: {
@@ -521,9 +548,17 @@ export interface QuestionInfo {
   multiple?: boolean;
   /** Allow typing a custom answer (default: true) */
   custom?: boolean;
+  /** Preserve whitespace in custom string answers for schema validation. */
+  preserveWhitespace?: boolean;
+  /** Allow an explicit empty answer; the backend validates its meaning. */
+  allowEmptyAnswer?: boolean;
 }
 
 export interface UnifiedQuestion {
+  /** Backend-validated HTTP(S) URL for an external elicitation flow. */
+  externalUrl?: string;
+  /** Override the engine default for dismissing this individual question. */
+  dismissStopsTurn?: boolean;
   id: string;
   sessionId: string;
   engineType: EngineType;
@@ -561,6 +596,33 @@ export interface UnifiedProject {
   engineMeta?: Record<string, unknown>;
   /** Marks the default workspace project (auto-created fallback directory) */
   isDefault?: boolean;
+  /** Catalog roots are independent of the working directory of member sessions. */
+  roots?: string[];
+  order?: number;
+  catalogSourceId?: string;
+  /** The owner's original ID, retained when the gateway namespaces project IDs. */
+  catalogProjectId?: string;
+  catalogAvailable?: boolean;
+}
+
+export interface EngineCatalogSnapshot {
+  sourceId: string;
+  revision: string;
+  complete: boolean;
+  projects: UnifiedProject[];
+  sessions: UnifiedSession[];
+  /** Added by the gateway so an empty source still identifies its engine. */
+  engineType?: EngineType;
+}
+
+export interface CatalogProjectInput {
+  name: string;
+  roots: string[];
+}
+
+export interface CatalogProjectPatch {
+  name?: string;
+  roots?: string[];
 }
 
 // --- Worktree ---
@@ -700,6 +762,8 @@ export const GatewayRequestType = {
   SESSION_GET: "session.get",
   SESSION_DELETE: "session.delete",
   SESSION_RENAME: "session.rename",
+  SESSION_ARCHIVE: "session.archive",
+  SESSION_PROJECT_SET: "session.project.set",
 
   // Message
   MESSAGE_SEND: "message.send",
@@ -730,6 +794,10 @@ export const GatewayRequestType = {
 
   // Project
   PROJECT_LIST: "project.list",
+  CATALOG_LIST: "catalog.list",
+  PROJECT_CREATE: "project.create",
+  PROJECT_UPDATE: "project.update",
+  PROJECT_REORDER: "project.reorder",
   PROJECT_SET_ENGINE: "project.setEngine",
   PROJECT_LIST_ALL: "project.listAll",
   PROJECT_DELETE: "project.delete",
@@ -803,8 +871,11 @@ export const GatewayRequestType = {
 export const GatewayNotificationType = {
   MESSAGE_PART_UPDATED: "message.part.updated",
   MESSAGE_UPDATED: "message.updated",
+  MESSAGE_REMOVED: "message.removed",
+  CATALOG_UPDATED: "catalog.updated",
   SESSION_UPDATED: "session.updated",
   SESSION_CREATED: "session.created",
+  SESSION_REMOVED: "session.removed",
   PERMISSION_ASKED: "permission.asked",
   PERMISSION_REPLIED: "permission.replied",
   QUESTION_ASKED: "question.asked",
@@ -845,6 +916,12 @@ export interface SessionCreateRequest {
   engineType?: EngineType;
   directory: string;
   worktreeId?: string;
+  projectId?: string | null;
+}
+
+export interface SessionArchiveRequest {
+  sessionId: string;
+  archived: boolean;
 }
 
 export interface MessageSendRequest {
@@ -942,6 +1019,7 @@ export interface ImportableSession {
   createdAt: number;
   updatedAt: number;
   alreadyImported: boolean;
+  archived?: boolean;
   engineMeta?: Record<string, unknown>;
 }
 

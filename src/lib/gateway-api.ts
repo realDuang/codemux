@@ -9,15 +9,20 @@ import { gatewayClient } from "./gateway-client";
 import { GatewayRequestType } from "../types/unified";
 import { logger } from "./logger";
 import { createSignal } from "solid-js";
+import { configStore } from "../stores/config";
+import { sessionStore, setSendingFor } from "../stores/session";
 import type {
   EngineType,
   EngineInfo,
   EngineCapabilities,
   UnifiedSession,
+  SessionActivityStatus,
   UnifiedMessage,
   UnifiedPart,
   ModelListResult,
   UnifiedProject,
+  EngineCatalogSnapshot,
+  CatalogProjectPatch,
   UnifiedPermission,
   UnifiedQuestion,
   ImportableSession,
@@ -60,9 +65,21 @@ const [_gatewayConnected, _setGatewayConnected] = createSignal(
 /** Reactive accessor reflecting `gatewayClient.connected`. */
 export const gatewayConnected = _gatewayConnected;
 
+const [sessionActivity, setSessionActivity] = createSignal<Record<string, SessionActivityStatus>>({});
+
+export function hasAuthoritativeSessionState(engineType: EngineType | undefined): boolean {
+  return configStore.engines.find((engine) => engine.type === engineType)
+    ?.capabilities?.authoritativeSessionState === true;
+}
+
+export function getAuthoritativeSessionActivity(sessionId: string): SessionActivityStatus | undefined {
+  return sessionActivity()[sessionId];
+}
+
 type SnapshotUpdate =
   | { type: "message"; message: UnifiedMessage }
-  | { type: "part"; part: UnifiedPart; createdAt: number };
+  | { type: "part"; part: UnifiedPart; createdAt: number }
+  | { type: "removed"; messageId: string };
 
 interface PendingMessageSnapshot {
   sessionId: string;
@@ -75,8 +92,11 @@ export interface GatewayNotificationHandlers {
   onPartUpdated?: (sessionId: string, part: UnifiedPart) => void;
   onPartsBatch?: (sessionId: string, messageId: string, parts: UnifiedPart[]) => void;
   onMessageUpdated?: (sessionId: string, message: UnifiedMessage) => void;
+  onMessageRemoved?: (sessionId: string, messageId: string) => void;
+  onSessionRemoved?: (sessionId: string) => void;
   onSessionUpdated?: (session: UnifiedSession) => void;
   onSessionCreated?: (session: UnifiedSession) => void;
+  onCatalogUpdated?: (snapshot: EngineCatalogSnapshot) => void;
   onPermissionAsked?: (permission: UnifiedPermission) => void;
   onPermissionReplied?: (permissionId: string, optionId: string) => void;
   onQuestionAsked?: (question: UnifiedQuestion) => void;
@@ -99,14 +119,65 @@ export interface GatewayNotificationHandlers {
 class GatewayAPI {
   private handlers: GatewayNotificationHandlers = {};
   private initialized = false;
-  private pendingMessageSnapshots = new Set<PendingMessageSnapshot>();
   private boundHandlers: Array<{ event: string; handler: (...args: any[]) => void }> = [];
+  private pendingMessageSnapshots = new Set<PendingMessageSnapshot>();
+  private activityRevision = 0;
+  private sessionActivityRevisions = new Map<string, number>();
+  private catalogRevision = 0;
+  private catalogSnapshots = new Map<string, { revision: number; snapshot: EngineCatalogSnapshot }>();
+  private pendingSessionSnapshots = new Set<Map<string, UnifiedSession | null>>();
+  private removedSessionIds = new Set<string>();
+  private sessionRemovalRevisions = new Map<string, number>();
+
+  private recordCatalogSession(session: UnifiedSession, restore = false): boolean {
+    if (this.removedSessionIds.has(session.id)) {
+      if (!restore) return false;
+      gatewayClient.discardSessionNotifications(session.id);
+      this.removedSessionIds.delete(session.id);
+    }
+    for (const updates of this.pendingSessionSnapshots) updates.set(session.id, session);
+    return true;
+  }
+
+  private snapshotWasRemoved(sessionId: string, revision: number): boolean {
+    return this.removedSessionIds.has(sessionId)
+      || (this.sessionRemovalRevisions.get(sessionId) ?? 0) > revision;
+  }
+
+  private async readSessions(read: () => Promise<UnifiedSession[]>, engineType?: EngineType): Promise<UnifiedSession[]> {
+    const revision = this.activityRevision;
+    const updates = new Map<string, UnifiedSession | null>();
+    this.pendingSessionSnapshots.add(updates);
+    try {
+      const sessions = new Map((await read()).map((session) => [session.id, session]));
+      for (const [id, session] of updates) {
+        if (session && (!engineType || session.engineType === engineType)) sessions.set(id, session);
+        else sessions.delete(id);
+      }
+      const current = [...sessions.values()].filter((session) => !this.removedSessionIds.has(session.id));
+      current.forEach((session) => this.syncSessionActivity(session, revision));
+      return current;
+    } finally {
+      this.pendingSessionSnapshots.delete(updates);
+    }
+  }
+
+  private syncSessionActivity(session: UnifiedSession, snapshotRevision = this.activityRevision): void {
+    if (this.removedSessionIds.has(session.id)) return;
+    const activity = session.activityStatus;
+    if (!hasAuthoritativeSessionState(session.engineType) || !activity) return;
+    if ((this.sessionActivityRevisions.get(session.id) ?? 0) > snapshotRevision) return;
+    this.sessionActivityRevisions.set(session.id, ++this.activityRevision);
+    setSessionActivity((current) => ({ ...current, [session.id]: activity }));
+    setSendingFor(session.id, activity === "running" || activity === "waiting");
+  }
 
   private recordSnapshotUpdate(sessionId: string, update: SnapshotUpdate): void {
     for (const snapshot of this.pendingMessageSnapshots) {
       if (snapshot.sessionId === sessionId) snapshot.updates.push(update);
     }
   }
+
 
   /**
    * Whether the gateway has been initialized (connected + events bound).
@@ -153,6 +224,12 @@ class GatewayAPI {
     gatewayClient.disconnect();
     _setGatewayConnected(false);
     this.initialized = false;
+    setSessionActivity({});
+    this.sessionActivityRevisions.clear();
+    this.removedSessionIds.clear();
+    this.sessionRemovalRevisions.clear();
+    this.catalogSnapshots.clear();
+    this.catalogRevision = 0;
   }
 
   get connected(): boolean {
@@ -188,11 +265,13 @@ class GatewayAPI {
     });
 
     this.bind("message.part.updated", (data) => {
+      if (this.removedSessionIds.has(data.sessionId)) return;
       this.recordSnapshotUpdate(data.sessionId, { type: "part", part: data.part, createdAt: Date.now() });
       this.handlers.onPartUpdated?.(data.sessionId, data.part);
     });
 
     this.bind("message.parts.batch", (data) => {
+      if (this.removedSessionIds.has(data.sessionId)) return;
       for (const part of data.parts) {
         this.recordSnapshotUpdate(data.sessionId, { type: "part", part, createdAt: Date.now() });
       }
@@ -200,19 +279,60 @@ class GatewayAPI {
     });
 
     this.bind("message.updated", (data) => {
+      if (this.removedSessionIds.has(data.sessionId)) return;
       this.recordSnapshotUpdate(data.sessionId, { type: "message", message: data.message });
       this.handlers.onMessageUpdated?.(data.sessionId, data.message);
     });
 
+    this.bind("message.removed", (data) => {
+      if (this.removedSessionIds.has(data.sessionId)) return;
+      this.recordSnapshotUpdate(data.sessionId, { type: "removed", messageId: data.messageId });
+      this.handlers.onMessageRemoved?.(data.sessionId, data.messageId);
+    });
+
+    this.bind("session.removed", ({ sessionId }) => {
+      this.removedSessionIds.add(sessionId);
+      const revision = ++this.activityRevision;
+      this.sessionActivityRevisions.set(sessionId, revision);
+      this.sessionRemovalRevisions.set(sessionId, revision);
+      for (const updates of this.pendingSessionSnapshots) updates.set(sessionId, null);
+      for (const [sourceId, entry] of this.catalogSnapshots) {
+        if (!entry.snapshot.sessions.some((session) => session.id === sessionId)) continue;
+        this.catalogSnapshots.set(sourceId, {
+          revision: ++this.catalogRevision,
+          snapshot: { ...entry.snapshot, sessions: entry.snapshot.sessions.filter((session) => session.id !== sessionId) },
+        });
+      }
+      setSessionActivity((current) => {
+        const next = { ...current };
+        delete next[sessionId];
+        return next;
+      });
+      setSendingFor(sessionId, false);
+      this.handlers.onSessionRemoved?.(sessionId);
+    });
+
     this.bind("session.updated", (data) => {
+      if (!this.recordCatalogSession(data.session)) return;
+      this.syncSessionActivity(data.session);
       this.handlers.onSessionUpdated?.(data.session);
     });
 
     this.bind("session.created", (data) => {
+      this.recordCatalogSession(data.session, true);
+      this.syncSessionActivity(data.session);
       this.handlers.onSessionCreated?.(data.session);
     });
 
+    this.bind("catalog.updated", (snapshot) => {
+      this.catalogSnapshots.set(snapshot.sourceId, { revision: ++this.catalogRevision, snapshot });
+      snapshot.sessions.forEach((session) => this.recordCatalogSession(session, true));
+      snapshot.sessions.forEach((session) => this.syncSessionActivity(session));
+      this.handlers.onCatalogUpdated?.(snapshot);
+    });
+
     this.bind("permission.asked", (data) => {
+      if (this.removedSessionIds.has(data.permission.sessionId)) return;
       this.handlers.onPermissionAsked?.(data.permission);
     });
 
@@ -221,6 +341,7 @@ class GatewayAPI {
     });
 
     this.bind("question.asked", (data) => {
+      if (this.removedSessionIds.has(data.question.sessionId)) return;
       this.handlers.onQuestionAsked?.(data.question);
     });
 
@@ -233,10 +354,12 @@ class GatewayAPI {
     });
 
     this.bind("message.queued", (data) => {
+      if (this.removedSessionIds.has(data.sessionId)) return;
       this.handlers.onMessageQueued?.(data.sessionId, data.messageId, data.queuePosition);
     });
 
     this.bind("message.queued.consumed", (data) => {
+      if (this.removedSessionIds.has(data.sessionId)) return;
       this.handlers.onMessageQueuedConsumed?.(data.sessionId, data.messageId);
     });
 
@@ -277,20 +400,38 @@ class GatewayAPI {
 
   // --- Session ---
 
-  listSessions(engineType: EngineType): Promise<UnifiedSession[]> {
-    return gatewayClient.listSessions(engineType);
+  async listSessions(engineType: EngineType): Promise<UnifiedSession[]> {
+    return this.readSessions(() => gatewayClient.listSessions(engineType), engineType);
   }
 
   createSession(
     engineType: EngineType,
     directory: string,
     worktreeId?: string,
+    projectId?: string | null,
   ): Promise<UnifiedSession> {
-    return gatewayClient.createSession({ engineType, directory, worktreeId });
+    return gatewayClient.createSession({ engineType, directory, worktreeId, ...(projectId !== undefined ? { projectId } : {}) });
   }
 
-  getSession(sessionId: string): Promise<UnifiedSession> {
-    return gatewayClient.getSession(sessionId);
+  setSessionProject(sessionId: string, projectId: string | null): Promise<void> {
+    return gatewayClient.setSessionProject({ sessionId, projectId });
+  }
+
+  async getSession(sessionId: string): Promise<UnifiedSession> {
+    const revision = this.activityRevision;
+    const updates = new Map<string, UnifiedSession | null>();
+    this.pendingSessionSnapshots.add(updates);
+    try {
+      const snapshot = await gatewayClient.getSession(sessionId);
+      const session = updates.has(sessionId) ? updates.get(sessionId) : snapshot;
+      if (!session || this.removedSessionIds.has(sessionId)) throw new Error("Session was removed");
+      const stale = (this.sessionActivityRevisions.get(session.id) ?? 0) > revision;
+      this.syncSessionActivity(session, revision);
+      if (!stale && hasAuthoritativeSessionState(session.engineType)) this.handlers.onSessionUpdated?.(session);
+      return session;
+    } finally {
+      this.pendingSessionSnapshots.delete(updates);
+    }
   }
 
   deleteSession(sessionId: string): Promise<void> {
@@ -299,6 +440,10 @@ class GatewayAPI {
 
   renameSession(sessionId: string, title: string): Promise<void> {
     return gatewayClient.renameSession(sessionId, title);
+  }
+
+  setSessionArchived(sessionId: string, archived: boolean): Promise<void> {
+    return gatewayClient.setSessionArchived(sessionId, archived);
   }
 
   // --- Message ---
@@ -329,26 +474,39 @@ class GatewayAPI {
   }
 
   async listMessages(sessionId: string): Promise<UnifiedMessage[]> {
-    // Notifications received while a snapshot is in flight must survive for
-    // every engine so reconnecting cannot rewind live output.
+    const revision = this.activityRevision;
+    if (this.removedSessionIds.has(sessionId)) return [];
+    const session = sessionStore.list.find((item) => item.id === sessionId);
+    const authoritative = hasAuthoritativeSessionState(session?.engineType);
+
+    // Every engine retains notifications received during history loading.
+    // Authoritative messages replace their complete parts; other engines merge.
     const pending: PendingMessageSnapshot = { sessionId, updates: [] };
     this.pendingMessageSnapshots.add(pending);
     try {
       const snapshot = await gatewayClient.listMessages(sessionId);
+      if (this.snapshotWasRemoved(sessionId, revision)) return [];
       const messages = new Map(snapshot.map((message) => [message.id, message]));
+      const removedMessages = new Set<string>();
       const mergeParts = (existing: UnifiedPart[], incoming: UnifiedPart[]) =>
         [...new Map([...existing, ...incoming].map((part) => [part.id, part])).values()];
 
       for (const update of pending.updates) {
-        if (update.type === "message") {
+        if (update.type === "removed") {
+          messages.delete(update.messageId);
+          removedMessages.add(update.messageId);
+        } else if (update.type === "message") {
+          removedMessages.delete(update.message.id);
           const current = messages.get(update.message.id);
           messages.set(update.message.id, {
             ...current,
             ...update.message,
-            parts: mergeParts(current?.parts ?? [], update.message.parts ?? []),
+            parts: authoritative ? update.message.parts ?? []
+              : mergeParts(current?.parts ?? [], update.message.parts ?? []),
           });
         } else {
           const { part } = update;
+          if (removedMessages.has(part.messageId)) continue;
           const current = messages.get(part.messageId) ?? {
             id: part.messageId,
             sessionId,
@@ -366,7 +524,10 @@ class GatewayAPI {
   }
 
   async getMessageSteps(sessionId: string, messageId: string): Promise<UnifiedPart[]> {
-    return gatewayClient.getMessageSteps(sessionId, messageId);
+    const revision = this.activityRevision;
+    if (this.removedSessionIds.has(sessionId)) return [];
+    const steps = await gatewayClient.getMessageSteps(sessionId, messageId);
+    return this.snapshotWasRemoved(sessionId, revision) ? [] : steps;
   }
 
   // --- Model ---
@@ -410,14 +571,71 @@ class GatewayAPI {
 
   // --- Pending state (resync) ---
 
-  listPending(sessionId: string): Promise<{
+  async listPending(sessionId: string): Promise<{
     questions: UnifiedQuestion[];
     permissions: UnifiedPermission[];
   }> {
-    return gatewayClient.request(GatewayRequestType.PENDING_LIST, { sessionId });
+    const revision = this.activityRevision;
+    const empty = { questions: [], permissions: [] };
+    if (this.removedSessionIds.has(sessionId)) return empty;
+    const pending = await gatewayClient.request<{ questions: UnifiedQuestion[]; permissions: UnifiedPermission[] }>(
+      GatewayRequestType.PENDING_LIST, { sessionId },
+    );
+    return this.snapshotWasRemoved(sessionId, revision) ? empty : pending;
   }
 
   // --- Project ---
+
+  async listCatalogs(): Promise<EngineCatalogSnapshot[]> {
+    const revision = this.activityRevision;
+    const catalogRevision = this.catalogRevision;
+    const updates = new Map<string, UnifiedSession | null>();
+    this.pendingSessionSnapshots.add(updates);
+    try {
+      const catalogs = await gatewayClient.listCatalogs();
+      // Preserve both catalog and live-session events received during this read.
+      const current = new Map(catalogs.map((catalog) => [catalog.sourceId, catalog]));
+      for (const entry of this.catalogSnapshots.values()) {
+        if (entry.revision > catalogRevision) current.set(entry.snapshot.sourceId, entry.snapshot);
+      }
+      return [...current.values()].map((catalog) => {
+        const sessions = new Map(catalog.sessions.map((session) => [session.id, session]));
+        for (const session of catalog.sessions) {
+          // A catalog requested after removal may authoritatively restore an active ID.
+          if (!updates.has(session.id) && (this.sessionRemovalRevisions.get(session.id) ?? 0) <= revision
+            && this.removedSessionIds.has(session.id)) this.recordCatalogSession(session, true);
+        }
+        for (const [id, session] of updates) {
+          if (!session) {
+            sessions.delete(id);
+            continue;
+          }
+          const prior = sessions.get(id);
+          if (session.catalogSourceId === catalog.sourceId
+            || (!session.catalogSourceId && prior?.engineType === session.engineType)) {
+            sessions.set(id, session);
+          }
+        }
+        const merged = [...sessions.values()].filter((session) => !this.removedSessionIds.has(session.id));
+        merged.forEach((session) => this.syncSessionActivity(session, revision));
+        return { ...catalog, sessions: merged };
+      });
+    } finally {
+      this.pendingSessionSnapshots.delete(updates);
+    }
+  }
+
+  createProject(sourceId: string, name: string, roots: string[]): Promise<UnifiedProject> {
+    return gatewayClient.createProject({ sourceId, name, roots });
+  }
+
+  updateProject(projectId: string, patch: CatalogProjectPatch): Promise<UnifiedProject> {
+    return gatewayClient.updateProject({ projectId, patch });
+  }
+
+  reorderProjects(sourceId: string, projectIds: string[]): Promise<void> {
+    return gatewayClient.reorderProjects({ sourceId, projectIds });
+  }
 
   listProjects(engineType: EngineType): Promise<UnifiedProject[]> {
     return gatewayClient.listProjects(engineType);
@@ -429,8 +647,8 @@ class GatewayAPI {
 
   // --- Cross-engine (SessionStore) ---
 
-  listAllSessions(): Promise<UnifiedSession[]> {
-    return gatewayClient.listAllSessions();
+  async listAllSessions(): Promise<UnifiedSession[]> {
+    return this.readSessions(() => gatewayClient.listAllSessions());
   }
 
   listAllProjects(): Promise<UnifiedProject[]> {

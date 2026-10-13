@@ -1942,6 +1942,9 @@ describe("CopilotSdkAdapter", () => {
   // ============================================================================
 
   describe("toSdkReasoningEffort()", () => {
+    it("does not forward unsupported ultra to the SDK", () => {
+      expect((adapter as any).toSdkReasoningEffort("ultra")).toBeUndefined();
+    });
     it("maps 'max' to 'xhigh'", () => {
       expect((adapter as any).toSdkReasoningEffort("max")).toBe("xhigh");
     });
@@ -2000,6 +2003,20 @@ describe("CopilotSdkAdapter", () => {
   describe("setReasoningEffort()", () => {
     beforeEach(async () => {
       await adapter.start();
+    });
+
+    it("rejects ultra without changing the session effort", async () => {
+      await adapter.setReasoningEffort("s1", "high");
+      await expect(adapter.setReasoningEffort("s1", "ultra")).rejects.toThrow("does not support ultra");
+      expect(adapter.getReasoningEffort("s1")).toBe("high");
+    });
+
+    it("rejects ultra message options before opening a session", async () => {
+      const ensureSession = vi.spyOn(adapter as any, "ensureActiveSession");
+      await expect(adapter.sendMessage("s1", [{ type: "text", text: "Hello" }], {
+        reasoningEffort: "ultra",
+      })).rejects.toThrow("does not support ultra");
+      expect(ensureSession).not.toHaveBeenCalled();
     });
 
     it("stores reasoning effort and calls model.switchTo on active session", async () => {

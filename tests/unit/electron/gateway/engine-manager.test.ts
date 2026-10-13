@@ -3,7 +3,7 @@ import { EngineManager } from "../../../../electron/main/gateway/engine-manager"
 import { conversationStore } from "../../../../electron/main/services/conversation-store";
 import { EngineAdapter } from "../../../../electron/main/engines/engine-adapter";
 import { getDefaultEngineFromSettings, engineManagerLog } from "../../../../electron/main/services/logger";
-import type { EngineType } from "../../../../src/types/unified";
+import type { EngineType, UnifiedMessage, UnifiedSession, ConversationMessage } from "../../../../src/types/unified";
 
 // --- Mocks ---
 
@@ -15,10 +15,13 @@ vi.mock("../../../../electron/main/services/conversation-store", () => {
     delete: vi.fn(),
     setCustomTitle: vi.fn(),
     setEngineTitle: vi.fn(),
+    setArchived: vi.fn(),
     update: vi.fn(),
     listMessages: vi.fn(() => Promise.resolve([])),
     appendMessage: vi.fn(),
     updateMessage: vi.fn(),
+    removeMessage: vi.fn(),
+    replaceMessageSnapshot: vi.fn(async () => {}),
     getSteps: vi.fn(() => Promise.resolve([])),
     getAllSteps: vi.fn(() => Promise.resolve(null)),
     saveSteps: vi.fn(),
@@ -31,8 +34,15 @@ vi.mock("../../../../electron/main/services/conversation-store", () => {
     findAllEngineSessionIds: vi.fn(() => new Set()),
     ensureMessage: vi.fn(),
     importConversation: vi.fn(),
+    listCatalogs: vi.fn(() => []),
+    getCatalogProject: vi.fn(),
+    upsertCatalog: vi.fn(),
+    markCatalogUnavailable: vi.fn(),
+    isSessionSuppressed: vi.fn(() => false),
+    removeEngineConversation: vi.fn(async () => {}),
   };
-  return { conversationStore: store };
+  return { conversationStore: store, makeCatalogProjectId: (engineType: string, sourceId: string, id: string) =>
+    `catalog:${encodeURIComponent(engineType)}:${encodeURIComponent(sourceId)}:${encodeURIComponent(id)}` };
 });
 
 vi.mock("../../../../electron/main/services/logger", () => ({
@@ -82,7 +92,7 @@ class MockEngineAdapter extends EngineAdapter {
     title: "Test",
     time: { created: Date.now(), updated: Date.now() },
   }) as any);
-  getSession = vi.fn(async () => null);
+  getSession = vi.fn(async (): Promise<UnifiedSession | null> => null);
   deleteSession = vi.fn(async () => {});
   sendMessage = vi.fn(async () => ({
     id: "msg-1",
@@ -92,7 +102,7 @@ class MockEngineAdapter extends EngineAdapter {
     parts: [],
   }) as any);
   cancelMessage = vi.fn(async () => {});
-  listMessages = vi.fn(async () => []);
+  listMessages = vi.fn(async (): Promise<UnifiedMessage[]> => []);
   listModels = vi.fn(async () => ({ models: [] }) as any);
   setModel = vi.fn(async () => {});
   getModes = vi.fn(() => []);
@@ -618,6 +628,45 @@ describe("EngineManager", () => {
       (conversationStore.get as any).mockReturnValue(makeMockConv({ id: "conv1" }));
       await engineManager.renameSession("conv1", "New Title");
       expect(conversationStore.setCustomTitle).toHaveBeenCalledWith("conv1", "New Title");
+    });
+
+    it.each([
+      { catalogSourceId: "source-a", adapterRegistered: true, confirmedSessionRemoval: false },
+      { catalogSourceId: "source-a", adapterRegistered: false, confirmedSessionRemoval: false },
+      { catalogSourceId: undefined, adapterRegistered: true, confirmedSessionRemoval: true },
+    ])("rejects project deletion before changing any shared or ordinary conversation: %j", async (options) => {
+      const sharedAdapter = new MockEngineAdapter("shared-test" as EngineType);
+      sharedAdapter.getCapabilities.mockReturnValue({ confirmedSessionRemoval: options.confirmedSessionRemoval });
+      if (options.adapterRegistered) engineManager.registerAdapter(sharedAdapter);
+      const ordinary = makeMockConv({ id: "ordinary", directory: "/shared-project", engineSessionId: "ordinary-native" });
+      const shared = makeMockConv({
+        id: "shared", engineType: sharedAdapter.engineType, directory: "/shared-project",
+        engineSessionId: "shared-native", catalogSourceId: options.catalogSourceId,
+      });
+      (conversationStore.list as any).mockReturnValue([ordinary, shared]);
+      const onRemoved = vi.fn();
+      engineManager.on("session.removed", onRemoved);
+
+      await expect(engineManager.deleteProject("dir-/shared-project")).rejects.toThrow("Shared conversations must be removed individually");
+
+      expect(adapterA.deleteSession).not.toHaveBeenCalled();
+      expect(sharedAdapter.deleteSession).not.toHaveBeenCalled();
+      expect(conversationStore.listMessages).not.toHaveBeenCalled();
+      expect(conversationStore.delete).not.toHaveBeenCalled();
+      expect(conversationStore.removeEngineConversation).not.toHaveBeenCalled();
+      expect(onRemoved).not.toHaveBeenCalled();
+    });
+
+    it("deletes an ordinary project when a shared conversation belongs to another directory", async () => {
+      const ordinary = makeMockConv({ id: "ordinary", directory: "/ordinary-project", engineSessionId: "ordinary-native" });
+      const shared = makeMockConv({ id: "shared", directory: "/shared-project", catalogSourceId: "source-a" });
+      (conversationStore.list as any).mockReturnValue([ordinary, shared]);
+      (conversationStore.listMessages as any).mockResolvedValue([]);
+
+      await engineManager.deleteProject("dir-/ordinary-project");
+
+      expect(adapterA.deleteSession).toHaveBeenCalledExactlyOnceWith("ordinary-native");
+      expect(conversationStore.delete).toHaveBeenCalledExactlyOnceWith("ordinary");
     });
 
     it("deleteProject skips engine cleanup when no engineSessionId", async () => {
@@ -1216,6 +1265,489 @@ describe("EngineManager", () => {
   // ===========================================================================
   // listMessages — copilot legacy cost unit fallback
   // ===========================================================================
+
+  describe("session archive", () => {
+    let conv: ReturnType<typeof makeMockConv>;
+    const upstream = (archived: boolean, id = "external-1"): UnifiedSession => ({
+      id, engineType: "opencode", directory: "/dir", archived, time: { created: 1, updated: 2 },
+    });
+
+    beforeEach(() => {
+      adapterA.getCapabilities.mockReturnValue({ sessionArchive: true, authoritativeSessionState: true });
+      engineManager.registerAdapter(adapterA);
+      conv = makeMockConv({ engineSessionId: "external-1", archived: false });
+      vi.mocked(conversationStore.get).mockReturnValue(conv);
+      vi.mocked(conversationStore.list).mockReturnValue([conv]);
+      vi.mocked(conversationStore.findByEngineSession).mockReturnValue(conv);
+      vi.mocked(conversationStore.setArchived).mockImplementation((_id, archived) => { conv.archived = archived; });
+    });
+
+    afterEach(() => {
+      vi.mocked(conversationStore.setArchived).mockReset();
+      vi.mocked(conversationStore.list).mockReturnValue([]);
+      vi.mocked(conversationStore.findByEngineSession).mockReturnValue(null);
+    });
+
+    it.each([true, false])("confirms archived=%s before saving and keeps the session in the list", async (archived) => {
+      conv.archived = !archived;
+      let finish!: () => void;
+      const action = vi.spyOn(adapterA, "setSessionArchived").mockReturnValue(new Promise<void>((resolve) => { finish = resolve; }));
+      adapterA.getSession.mockResolvedValue(upstream(archived));
+      const onUpdate = vi.fn();
+      engineManager.on("session.updated", onUpdate);
+      const pending = engineManager.setSessionArchived(conv.id, archived);
+      await Promise.resolve();
+      expect(conversationStore.setArchived).not.toHaveBeenCalled();
+      finish();
+      await pending;
+
+      expect(action).toHaveBeenCalledWith("external-1", archived);
+      expect(conversationStore.setArchived).toHaveBeenCalledWith(conv.id, archived);
+      expect(engineManager.listAllSessions()).toEqual([expect.objectContaining({ id: conv.id, archived })]);
+      expect(onUpdate).toHaveBeenCalledWith({ session: expect.objectContaining({ id: conv.id, archived }) });
+      expect(conversationStore.delete).not.toHaveBeenCalled();
+    });
+
+    it("preserves local state when the owning engine rejects archive", async () => {
+      vi.spyOn(adapterA, "setSessionArchived").mockRejectedValue(new Error("Owner unavailable"));
+      await expect(engineManager.setSessionArchived(conv.id, true)).rejects.toThrow("Owner unavailable");
+      expect(conversationStore.setArchived).not.toHaveBeenCalled();
+      expect(conversationStore.delete).not.toHaveBeenCalled();
+    });
+
+    it.each([null, upstream(false), upstream(true, "other-thread")])("rejects an unconfirmed archive result without changing local state", async (confirmed) => {
+      vi.spyOn(adapterA, "setSessionArchived").mockResolvedValue(undefined);
+      adapterA.getSession.mockResolvedValue(confirmed);
+      await expect(engineManager.setSessionArchived(conv.id, true)).rejects.toThrow("could not be confirmed");
+      expect(conversationStore.setArchived).not.toHaveBeenCalled();
+    });
+
+    it("rejects unsupported engines and unknown conversations without starting them", async () => {
+      adapterA.getCapabilities.mockReturnValue({});
+      const action = vi.spyOn(adapterA, "setSessionArchived");
+      await expect(engineManager.setSessionArchived(conv.id, true)).rejects.toThrow("does not support");
+      expect(action).not.toHaveBeenCalled();
+      vi.mocked(conversationStore.get).mockReturnValue(undefined);
+      await expect(engineManager.setSessionArchived("missing", true)).rejects.toThrow("not found");
+      expect(adapterA.start).not.toHaveBeenCalled();
+      await expect(EngineAdapter.prototype.setSessionArchived.call(adapterA, "external-1", true)).rejects.toThrow("does not support");
+    });
+
+    it("persists archive state from initial reads and later restore notifications", async () => {
+      adapterA.getSession.mockResolvedValue(upstream(true));
+      expect(await engineManager.getSession(conv.id)).toMatchObject({ archived: true });
+      adapterA.emit("session.updated", { session: upstream(false) });
+      expect(conversationStore.setArchived).toHaveBeenNthCalledWith(1, conv.id, true);
+      expect(conversationStore.setArchived).toHaveBeenNthCalledWith(2, conv.id, false);
+    });
+
+    it("attaches archived metadata under the same identity without starting or unarchiving it", async () => {
+      conv.archived = true;
+      conv.engineMeta = { codexThreadId: "external-1", codexDesktopOwner: "codemux" };
+      adapterA.hasSession.mockReturnValue(false);
+      const restore = vi.spyOn(adapterA, "restoreSession").mockResolvedValue({ ...upstream(true), engineMeta: conv.engineMeta });
+      const archive = vi.spyOn(adapterA, "setSessionArchived");
+      adapterA.getSession.mockResolvedValue(upstream(true));
+      expect(await engineManager.getSession(conv.id)).toMatchObject({ archived: true });
+      expect(restore).toHaveBeenCalledWith("external-1", conv.directory, conv.engineMeta);
+      expect(conversationStore.setEngineSession).toHaveBeenCalledWith(conv.id, "external-1", conv.engineMeta);
+      expect(conversationStore.setArchived).not.toHaveBeenCalled();
+      expect(archive).not.toHaveBeenCalled();
+      expect(adapterA.createSession).not.toHaveBeenCalled();
+      expect(adapterA.start).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("authoritative session state", () => {
+    const externalSessionId = "desktop-thread-1";
+    let conv: ReturnType<typeof makeMockConv>;
+
+    const makeExternalMessage = (role: "user" | "assistant", text: string): UnifiedMessage => ({
+      id: `desktop-${role}-1`,
+      sessionId: externalSessionId,
+      role,
+      time: { created: 1000 },
+      parts: [{
+        id: `desktop-${role}-text`,
+        type: "text",
+        messageId: `desktop-${role}-1`,
+        sessionId: externalSessionId,
+        text,
+      }],
+    });
+
+    const persistenceState = () => engineManager as unknown as {
+      stepPartsBuffer: Map<string, unknown[]>;
+      contentPartsBuffer: Map<string, unknown[]>;
+      dirtySteps: Set<string>;
+      persistedPlaceholders: Set<string>;
+      messageConvMap: Map<string, string>;
+      authoritativeMessageWrites: Map<string, Promise<void>>;
+      flushDirtySteps(): Promise<void>;
+    };
+
+    const waitForMirror = () => persistenceState().authoritativeMessageWrites.get(conv.id);
+
+    beforeEach(() => {
+      adapterA.getCapabilities.mockReturnValue({ authoritativeSessionState: true });
+      engineManager.registerAdapter(adapterA);
+      conv = makeMockConv({ engineType: adapterA.engineType, engineSessionId: externalSessionId });
+      vi.mocked(conversationStore.get).mockReturnValue(conv);
+      vi.mocked(conversationStore.list).mockReturnValue([conv]);
+      vi.mocked(conversationStore.findByEngineSession).mockReturnValue(conv);
+      vi.mocked(conversationStore.listMessages).mockResolvedValue([]);
+    });
+
+    afterEach(() => {
+      vi.mocked(conversationStore.ensureMessage).mockReset();
+      vi.mocked(conversationStore.updateMessage).mockReset();
+      vi.mocked(conversationStore.removeMessage).mockReset();
+      vi.mocked(conversationStore.saveSteps).mockReset();
+      vi.mocked(conversationStore.listMessages).mockResolvedValue([]);
+      vi.mocked(conversationStore.list).mockReturnValue([]);
+    });
+
+    it("uses engine user IDs and leaves a running response incomplete after sending", async () => {
+      const response = makeExternalMessage("assistant", "Working");
+      adapterA.sendMessage.mockResolvedValue(response);
+      const onMessage = vi.fn();
+      engineManager.on("message.updated", onMessage);
+
+      const result = await engineManager.sendMessage(conv.id, [{ type: "text", text: "Continue" }]);
+
+      expect(result).toBe(response);
+      expect(result.time.completed).toBeUndefined();
+      expect(conversationStore.appendMessage).not.toHaveBeenCalled();
+      expect(conversationStore.ensureMessage).not.toHaveBeenCalled();
+      expect(onMessage).not.toHaveBeenCalled();
+      expect(adapterA.sendMessage).toHaveBeenCalledWith(externalSessionId, [{ type: "text", text: "Continue" }], expect.any(Object));
+    });
+
+    it("restores a shared identity once before concurrent history and session reads", async () => {
+      adapterA.hasSession.mockReturnValue(false);
+      const external = { id: externalSessionId, engineType: adapterA.engineType, directory: conv.directory, time: { created: 1, updated: 1 } };
+      const restore = vi.spyOn(adapterA, "restoreSession").mockResolvedValue(external);
+      adapterA.getSession.mockResolvedValue(external);
+      await Promise.all([engineManager.getSession(conv.id), engineManager.listMessages(conv.id)]);
+      expect(restore).toHaveBeenCalledTimes(1);
+      expect(restore).toHaveBeenCalledWith(externalSessionId, conv.directory, conv.engineMeta);
+      expect(adapterA.createSession).not.toHaveBeenCalled();
+      restore.mockRestore();
+    });
+
+    it("reattaches persisted bound sessions with bounded concurrency on engine startup", async () => {
+      const records = [0, 1, 2, 3].map((index) => makeMockConv({
+        id: `saved-${index}`, engineType: adapterA.engineType, engineSessionId: `thread-${index}`, imported: true,
+      }));
+      records.push(
+        makeMockConv({ id: "archived", engineSessionId: "archived-thread", imported: true, archived: true }),
+        makeMockConv({ id: "unbound", imported: true }),
+        makeMockConv({ id: "created", engineSessionId: "created-thread" }),
+        makeMockConv({ id: "ordinary", engineType: adapterB.engineType, engineSessionId: "ordinary-thread", imported: true }),
+      );
+      vi.mocked(conversationStore.list).mockReturnValue(records);
+      vi.mocked(conversationStore.get).mockImplementation((id) => records.find((record) => record.id === id));
+      adapterA.hasSession.mockReturnValue(false);
+      let inFlight = 0;
+      let maximum = 0;
+      const restoredSession = (id: string): UnifiedSession => ({ id, engineType: adapterA.engineType, directory: "/dir", activityStatus: "running", time: { created: 1, updated: 2 } });
+      const restore = vi.spyOn(adapterA, "restoreSession").mockImplementation(async (id) => {
+        maximum = Math.max(maximum, ++inFlight);
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        inFlight--;
+        if (id === "thread-1") throw new Error("Owner unavailable");
+        return restoredSession(id);
+      });
+      adapterA.getSession.mockImplementation(async (id) => restoredSession(id));
+      engineManager.registerAdapter(adapterB);
+      adapterB.emit("status.changed", { engineType: adapterB.engineType, status: "running" });
+      adapterA.emit("status.changed", { engineType: adapterA.engineType, status: "running" });
+      const reconnects = (engineManager as unknown as { authoritativeReconnects: Map<EngineType, Promise<void>> }).authoritativeReconnects;
+      await reconnects.get(adapterA.engineType);
+
+      expect(restore.mock.calls.map(([id]) => id)).toEqual(["thread-0", "thread-1", "thread-2", "thread-3", "created-thread"]);
+      expect(maximum).toBe(3);
+      expect(adapterA.createSession).not.toHaveBeenCalled();
+      expect(adapterA.start).not.toHaveBeenCalled();
+      expect(adapterB.hasSession).not.toHaveBeenCalled();
+      expect(engineManagerLog.warn).toHaveBeenCalledWith(expect.stringContaining("saved-1"), expect.any(Error));
+      expect(engineManager.listAllSessions().find((session) => session.id === "saved-0")?.activityStatus).toBe("running");
+      expect(engineManager.listAllSessions().find((session) => session.id === "saved-1")?.activityStatus).toBe("error");
+      restore.mockRestore();
+    });
+
+    it("does not save a local rename when the shared owner rejects it", async () => {
+      const rename = vi.spyOn(adapterA, "renameSession").mockRejectedValue(new Error("Rename unavailable"));
+      await expect(engineManager.renameSession(conv.id, "Changed")).rejects.toThrow("Rename unavailable");
+      expect(conversationStore.setCustomTitle).not.toHaveBeenCalled();
+      rename.mockRestore();
+    });
+
+    it("saves only the confirmed shared title and clears the stale local override", async () => {
+      const rename = vi.spyOn(adapterA, "renameSession").mockResolvedValue(undefined);
+      adapterA.getSession.mockResolvedValue({ id: externalSessionId, engineType: adapterA.engineType, directory: conv.directory, title: "Changed", time: { created: 1, updated: 2 } });
+      await expect(engineManager.renameSession(conv.id, " Changed ")).resolves.toEqual({ success: true });
+      expect(conversationStore.update).toHaveBeenCalledWith(conv.id, { customTitle: undefined, engineTitle: "Changed" });
+      rename.mockRestore();
+    });
+
+    it.each([{ id: "wrong-thread", title: "Changed" }, { id: externalSessionId, title: "Old title" }])("rejects a mismatched shared rename confirmation", async (returned) => {
+      const rename = vi.spyOn(adapterA, "renameSession").mockResolvedValue(undefined);
+      adapterA.getSession.mockResolvedValue({ ...returned, engineType: adapterA.engineType, directory: conv.directory, time: { created: 1, updated: 2 } });
+      await expect(engineManager.renameSession(conv.id, "Changed")).rejects.toThrow("could not be confirmed");
+      expect(conversationStore.update).not.toHaveBeenCalled();
+      rename.mockRestore();
+    });
+
+    it("upserts repeated user events from another client under their original ID", async () => {
+      const persisted: ConversationMessage[] = [];
+      vi.mocked(conversationStore.ensureMessage).mockImplementation(async (_id, message) => {
+        if (!persisted.some((item) => item.id === message.id)) persisted.push(message);
+      });
+      vi.mocked(conversationStore.updateMessage).mockImplementation(async (_id, messageId, patch) => {
+        const message = persisted.find((item) => item.id === messageId);
+        if (message) Object.assign(message, patch);
+      });
+      const message = makeExternalMessage("user", "Sent from the desktop");
+      const onMessage = vi.fn();
+      engineManager.on("message.updated", onMessage);
+
+      adapterA.emit("message.updated", { sessionId: externalSessionId, message });
+      adapterA.emit("message.updated", { sessionId: externalSessionId, message });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(persisted).toHaveLength(1);
+      expect(persisted[0]).toMatchObject({ id: message.id, role: "user", parts: [{ sessionId: conv.id, text: "Sent from the desktop" }] });
+      expect(conversationStore.appendMessage).not.toHaveBeenCalled();
+      expect(onMessage).toHaveBeenCalledWith({
+        sessionId: conv.id,
+        message: expect.objectContaining({ id: message.id, sessionId: conv.id }),
+      });
+    });
+
+    it("maps removed messages, clears their buffers, and removes the authoritative mirror", async () => {
+      const messageId = "desktop-removed-1";
+      const state = persistenceState();
+      state.stepPartsBuffer.set(messageId, [{ id: "step-1" }]);
+      state.contentPartsBuffer.set(messageId, [{ id: "text-1" }]);
+      state.dirtySteps.add(messageId);
+      state.persistedPlaceholders.add(messageId);
+      state.messageConvMap.set(messageId, conv.id);
+      state.contentPartsBuffer.set("retained-message", [{ id: "retained-part" }]);
+      const onRemoved = vi.fn();
+      engineManager.on("message.removed", onRemoved);
+
+      adapterA.emit("message.removed", { sessionId: externalSessionId, messageId });
+
+      expect(onRemoved).toHaveBeenCalledWith({ sessionId: conv.id, messageId });
+      expect(state.stepPartsBuffer.has(messageId)).toBe(false);
+      expect(state.contentPartsBuffer.has(messageId)).toBe(false);
+      expect(state.dirtySteps.has(messageId)).toBe(false);
+      expect(state.persistedPlaceholders.has(messageId)).toBe(false);
+      expect(state.messageConvMap.has(messageId)).toBe(false);
+      expect(state.contentPartsBuffer.has("retained-message")).toBe(true);
+      await waitForMirror();
+      await state.flushDirtySteps();
+      expect(conversationStore.removeMessage).toHaveBeenCalledWith(conv.id, messageId);
+      expect(conversationStore.saveSteps).not.toHaveBeenCalled();
+      expect(state.authoritativeMessageWrites.size).toBe(0);
+    });
+
+    it("forwards an unmapped removal without writing to a conversation", async () => {
+      vi.mocked(conversationStore.findByEngineSession).mockReturnValue(null);
+      const onRemoved = vi.fn();
+      engineManager.on("message.removed", onRemoved);
+      const event = { sessionId: "unknown-thread", messageId: "unknown-message" };
+
+      adapterA.emit("message.removed", event);
+      await Promise.resolve();
+
+      expect(onRemoved).toHaveBeenCalledWith(event);
+      expect(conversationStore.removeMessage).not.toHaveBeenCalled();
+      expect(persistenceState().authoritativeMessageWrites.size).toBe(0);
+    });
+
+    it("forwards ordinary engine removals without adding authoritative mirror writes", async () => {
+      adapterA.getCapabilities.mockReturnValue({});
+      const message = { ...makeExternalMessage("assistant", "Completed"), time: { created: 1000, completed: 2000 } };
+      adapterA.emit("message.updated", { sessionId: externalSessionId, message });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(conversationStore.appendMessage).toHaveBeenCalledWith(conv.id, expect.objectContaining({ id: message.id }));
+      expect(conversationStore.ensureMessage).not.toHaveBeenCalled();
+      const onRemoved = vi.fn();
+      engineManager.on("message.removed", onRemoved);
+      persistenceState().dirtySteps.add(message.id);
+
+      adapterA.emit("message.removed", { sessionId: externalSessionId, messageId: message.id });
+      await Promise.resolve();
+
+      expect(onRemoved).toHaveBeenCalledWith({ sessionId: conv.id, messageId: message.id });
+      expect(persistenceState().dirtySteps.has(message.id)).toBe(false);
+      expect(persistenceState().authoritativeMessageWrites.size).toBe(0);
+      expect(conversationStore.removeMessage).not.toHaveBeenCalled();
+    });
+
+    it.each(["ensureMessage", "updateMessage", "saveSteps"] as const)(
+      "waits for an update paused at %s before removing its message and steps",
+      async (pausedMethod) => {
+        const message = { ...makeExternalMessage("assistant", "Completed"), time: { created: 1000, completed: 2000 } };
+        message.parts.push({ id: "reasoning-removed", type: "reasoning", sessionId: externalSessionId, messageId: message.id, text: "Checked" });
+        const persisted = new Map<string, ConversationMessage>();
+        const savedSteps = new Map<string, unknown[]>();
+        const operations: string[] = [];
+        let release!: () => void;
+        let reachedPause!: () => void;
+        const pause = new Promise<void>((resolve) => { release = resolve; });
+        const paused = new Promise<void>((resolve) => { reachedPause = resolve; });
+        const beforeWrite = async (method: string) => {
+          operations.push(method);
+          if (method === pausedMethod) {
+            reachedPause();
+            await pause;
+          }
+        };
+        vi.mocked(conversationStore.ensureMessage).mockImplementation(async (_id, value) => {
+          await beforeWrite("ensureMessage");
+          if (!persisted.has(value.id)) persisted.set(value.id, value);
+        });
+        vi.mocked(conversationStore.updateMessage).mockImplementation(async (_id, messageId, patch) => {
+          await beforeWrite("updateMessage");
+          const value = persisted.get(messageId);
+          if (value) Object.assign(value, patch);
+        });
+        vi.mocked(conversationStore.saveSteps).mockImplementation(async (_id, messageId, steps) => {
+          await beforeWrite("saveSteps");
+          savedSteps.set(messageId, steps);
+        });
+        vi.mocked(conversationStore.removeMessage).mockImplementation(async (_id, messageId) => {
+          operations.push("removeMessage");
+          persisted.delete(messageId);
+          savedSteps.delete(messageId);
+        });
+
+        adapterA.emit("message.updated", { sessionId: externalSessionId, message });
+        await paused;
+        adapterA.emit("message.removed", { sessionId: externalSessionId, messageId: message.id });
+        await Promise.resolve();
+        expect(conversationStore.removeMessage).not.toHaveBeenCalled();
+        release();
+        await waitForMirror();
+
+        expect(operations).toEqual(["ensureMessage", "updateMessage", "saveSteps", "removeMessage"]);
+        expect(persisted.size).toBe(0);
+        expect(savedSteps.size).toBe(0);
+      },
+    );
+
+    it("keeps a later update after a pending removal in external event order", async () => {
+      const message = makeExternalMessage("user", "Restored by the owner");
+      const persisted = new Map<string, ConversationMessage>();
+      let release!: () => void;
+      let started!: () => void;
+      const pause = new Promise<void>((resolve) => { release = resolve; });
+      const removing = new Promise<void>((resolve) => { started = resolve; });
+      vi.mocked(conversationStore.removeMessage).mockImplementation(async (_id, messageId) => {
+        started();
+        await pause;
+        persisted.delete(messageId);
+      });
+      vi.mocked(conversationStore.ensureMessage).mockImplementation(async (_id, value) => {
+        persisted.set(value.id, value);
+      });
+
+      adapterA.emit("message.removed", { sessionId: externalSessionId, messageId: message.id });
+      await removing;
+      adapterA.emit("message.updated", { sessionId: externalSessionId, message });
+      await Promise.resolve();
+      expect(conversationStore.ensureMessage).not.toHaveBeenCalled();
+      release();
+      await waitForMirror();
+
+      expect(persisted.get(message.id)).toMatchObject({ parts: [{ text: "Restored by the owner" }] });
+      expect(conversationStore.updateMessage).toHaveBeenCalledWith(conv.id, message.id, expect.objectContaining({ id: message.id }));
+    });
+
+    it("continues processing mirror events after a removal fails", async () => {
+      vi.mocked(conversationStore.removeMessage).mockRejectedValueOnce(new Error("Write failed"));
+      const message = makeExternalMessage("user", "A later event");
+
+      adapterA.emit("message.removed", { sessionId: externalSessionId, messageId: message.id });
+      adapterA.emit("message.updated", { sessionId: externalSessionId, message });
+      await waitForMirror();
+
+      expect(engineManagerLog.error).toHaveBeenCalledWith(expect.stringContaining("Failed to mirror message changes"), expect.any(Error));
+      expect(conversationStore.ensureMessage).toHaveBeenCalledWith(conv.id, expect.objectContaining({ id: message.id }));
+      expect(conversationStore.updateMessage).toHaveBeenCalledWith(conv.id, message.id, expect.objectContaining({ id: message.id }));
+      expect(persistenceState().authoritativeMessageWrites.size).toBe(0);
+    });
+
+    it("reads complete live messages after reconnect without relying on local streaming buffers", async () => {
+      const message = makeExternalMessage("assistant", "Already streaming before this client connected");
+      message.parts.push({
+        id: "desktop-reasoning-1",
+        type: "reasoning",
+        messageId: message.id,
+        sessionId: externalSessionId,
+        text: "Checking the workspace",
+      });
+      adapterA.listMessages.mockResolvedValue([message]);
+
+      const messages = await engineManager.listMessages(conv.id);
+
+      expect(messages).toEqual([{
+        ...message,
+        sessionId: conv.id,
+        stepCount: 1,
+        parts: message.parts.map((part) => ({ ...part, sessionId: conv.id })),
+      }]);
+      expect(message.sessionId).toBe(externalSessionId);
+      expect(message.parts[0].sessionId).toBe(externalSessionId);
+      expect(conversationStore.listMessages).not.toHaveBeenCalled();
+      expect(conversationStore.getAllSteps).not.toHaveBeenCalled();
+
+      const reconnectedManager = new EngineManager();
+      reconnectedManager.registerAdapter(adapterA);
+      adapterA.listMessages.mockResolvedValue([{ ...message, time: { created: 1000, completed: 2000 } }]);
+      const restored = await reconnectedManager.listMessages(conv.id);
+      expect(restored[0].time.completed).toBe(2000);
+      expect(restored[0].parts).toHaveLength(2);
+    });
+
+    it("loads current step parts directly from the external snapshot", async () => {
+      const message = makeExternalMessage("assistant", "Working");
+      message.parts.push({ id: "reasoning-1", type: "reasoning", messageId: message.id, sessionId: externalSessionId, text: "Fresh reasoning" });
+      adapterA.listMessages.mockResolvedValue([message]);
+
+      expect(await engineManager.getMessageSteps(conv.id, message.id)).toEqual([
+        { ...message.parts[1], sessionId: conv.id },
+      ]);
+      expect(await engineManager.getMessageSteps(conv.id, "missing")).toEqual([]);
+      expect(conversationStore.getSteps).not.toHaveBeenCalled();
+    });
+
+    it("preserves external activity updates in synchronous lists and refreshes session reads", async () => {
+      conv.customTitle = "My title";
+      adapterA.emit("session.updated", { session: {
+        id: externalSessionId,
+        engineType: adapterA.engineType,
+        activityStatus: "running",
+      } });
+
+      expect(engineManager.listAllSessions()[0]).toMatchObject({ id: conv.id, activityStatus: "running", title: "My title" });
+      expect((await engineManager.listSessions(adapterA.engineType))[0].activityStatus).toBe("running");
+      adapterA.getSession.mockResolvedValue({
+        id: externalSessionId,
+        engineType: adapterA.engineType,
+        directory: "/dir",
+        title: "Desktop title",
+        time: { created: 1000, updated: 3000 },
+        activityStatus: "idle",
+      });
+      expect(await engineManager.getSession(conv.id)).toMatchObject({ id: conv.id, activityStatus: "idle", title: "Desktop title", projectId: "dir-/dir" });
+      expect(adapterA.getSession).toHaveBeenCalledWith(externalSessionId);
+      expect(engineManager.listAllSessions()[0].activityStatus).toBe("idle");
+    });
+  });
 
   describe("listMessages — copilot legacy cost unit", () => {
     it("adds premium_requests costUnit for copilot messages with cost but no costUnit", async () => {

@@ -26,6 +26,7 @@ const effortLabels: Record<ReasoningEffort, string> = {
   medium: "中",
   high: "高",
   max: "最大",
+  ultra: "超高",
 };
 
 function getModelEfforts(models: UnifiedModelInfo[], modelId: string | undefined): ReasoningEffort[] {
@@ -235,7 +236,8 @@ export async function handleSessionOpsCommand(
           lines.push(`- \`${effort}\` · ${effortLabels[effort]}${current}`);
         }
         lines.push("");
-        lines.push("使用 `/effort low|medium|high|max` 切换当前会话推理级别。");
+        const effortUsage = supportedEfforts.includes("ultra") ? "low|medium|high|max|ultra" : "low|medium|high|max";
+        lines.push(`使用 \`/effort ${effortUsage}\` 切换当前会话推理级别。`);
         await args.sendText(lines.join("\n"));
         return true;
       }

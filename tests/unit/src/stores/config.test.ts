@@ -297,7 +297,7 @@ describe('config store', () => {
       expect(getEffectiveReasoningEffortForEngine('copilot')).toBe('high');
     });
 
-    it('getEffectiveReasoningEffortForEngine falls back to model default when saved effort is unsupported', () => {
+    it.each(['high', 'ultra'] as const)('getEffectiveReasoningEffortForEngine falls back when saved %s is unsupported', (unsupported) => {
       setConfigStore('engineModels', 'copilot', [
         {
           modelId: 'gpt-5.4',
@@ -308,7 +308,7 @@ describe('config store', () => {
         },
       ]);
       setConfigStore('engineModelSelections', 'copilot', { providerID: 'openai', modelID: 'gpt-5.4' });
-      setConfigStore('engineReasoningEfforts', 'copilot', 'high');
+      setConfigStore('engineReasoningEfforts', 'copilot', unsupported);
 
       expect(getEffectiveReasoningEffortForEngine('copilot')).toBe('medium');
     });

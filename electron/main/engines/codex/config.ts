@@ -158,6 +158,7 @@ export function toCodexEffort(effort: ReasoningEffort): string {
     case "high":
     case "medium":
     case "low":
+    case "ultra":
       return effort;
     default:
       return "medium";
@@ -174,6 +175,8 @@ export function fromCodexEffort(codexEffort: string): ReasoningEffort | undefine
       return "high";
     case "xhigh":
       return "max";
+    case "ultra":
+      return "ultra";
     default:
       return undefined;
   }

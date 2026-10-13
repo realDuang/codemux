@@ -491,6 +491,7 @@ export class CopilotSdkAdapter extends EngineAdapter {
       _internalSuppressUserEmit?: boolean;
     },
   ): Promise<UnifiedMessage> {
+    if (options?.reasoningEffort === "ultra") throw new Error("Copilot does not support ultra reasoning effort");
     const session = await this.ensureActiveSession(sessionId, options?.directory);
     const now = Date.now();
 
@@ -822,6 +823,7 @@ export class CopilotSdkAdapter extends EngineAdapter {
   // --- Reasoning Effort ---
 
   override async setReasoningEffort(sessionId: string, effort: ReasoningEffort | null): Promise<void> {
+    if (effort === "ultra") throw new Error("Copilot does not support ultra reasoning effort");
     if (effort) {
       this.sessionReasoningEfforts.set(sessionId, effort);
     } else {
@@ -848,7 +850,8 @@ export class CopilotSdkAdapter extends EngineAdapter {
   }
 
   /** Map unified reasoning effort to Copilot SDK's ReasoningEffort */
-  private toSdkReasoningEffort(effort: ReasoningEffort): CopilotReasoningEffort {
+  private toSdkReasoningEffort(effort: ReasoningEffort): CopilotReasoningEffort | undefined {
+    if (effort === "ultra") return undefined;
     return effort === "max" ? "xhigh" : effort;
   }
 

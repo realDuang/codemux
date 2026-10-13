@@ -17,6 +17,7 @@ import {
   createUserMessage,
   finalizeBufferToMessage,
   formatTurnPlanMarkdown,
+  normalizeCodexReasoningText,
   replacePlanText,
   upsertPart,
 } from "../../../../../electron/main/engines/codex/converters";
@@ -41,6 +42,34 @@ function createBuffer(): MessageBuffer {
 }
 
 describe("codex/converters.ts", () => {
+  it("normalizes reasoning blocks without cross-channel duplication or blank placeholders", () => {
+    expect(normalizeCodexReasoningText(["Check the tests", "Check the tests", "  "], [
+      { text: "Check the tests" }, { text: "Read the output" }, { text: "\n\t" },
+    ])).toBe("Check the tests\n\nCheck the tests\n\nRead the output");
+    expect(normalizeCodexReasoningText("Summary", "Details")).toBe("Summary\n\nDetails");
+    expect(normalizeCodexReasoningText([], [{ type: "encrypted", data: "opaque" }])).toBe("");
+    expect(normalizeCodexReasoningText(["\n "], ["\t"])).toBe("");
+  });
+
+  it("preserves separate historical reasoning items around tools and omits encrypted-only items", () => {
+    const [message] = convertThreadToMessages("codex_thread-1", { thread: { id: "thread-1", turns: [{
+      id: "turn-1", status: "completed", items: [
+        { id: "reason-1", type: "reasoning", summary: ["Inspect failures"], content: ["Inspect failures"] },
+        { id: "reason-blank", type: "reasoning", summary: ["   "], content: ["\n"] },
+        { id: "cmd-1", type: "commandExecution", command: "bun test", status: "completed" },
+        { id: "reason-2", type: "reasoning", summary: ["Apply fix"], content: ["Verify result"] },
+        { id: "reason-encrypted", type: "reasoning" },
+      ],
+    }] } });
+    expect(message.parts.filter((part) => part.type === "reasoning" || part.type === "tool")
+      .sort((left, right) => left.id.localeCompare(right.id))
+      .map((part: any) => ({ type: part.type, text: part.text }))).toEqual([
+        { type: "reasoning", text: "Inspect failures" },
+        { type: "tool", text: undefined },
+        { type: "reasoning", text: "Apply fix\n\nVerify result" },
+      ]);
+  });
+
   it("builds and finalizes streaming text, plan, reasoning, tool, and notice parts", () => {
     const buffer = createBuffer();
 

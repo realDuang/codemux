@@ -8,18 +8,25 @@ import type {
   ReasoningEffort,
   UnifiedProject,
   UnifiedWorktree,
+  UnifiedSession,
+  EngineCatalogSnapshot,
 } from "../types/unified";
 
 export interface SessionInfo {
   id: string;
   engineType: EngineType;
   title: string;
+  sourceUrl?: string;
+  sourceName?: string;
+  archived?: boolean;
+  catalogSourceId?: string;
+  catalogAvailable?: boolean;
   directory: string;
   mode?: string;
   modelId?: string;
   reasoningEffort?: ReasoningEffort;
   serviceTier?: CodexServiceTier;
-  projectID?: string;
+  projectID?: string | null;
   worktreeId?: string;
   /** Team orchestration group ID — groups parent + child sessions together */
   teamId?: string;
@@ -52,6 +59,7 @@ export const [sessionStore, setSessionStore] = createStore<{
   loading: boolean;
   initError: string | null;
   projects: UnifiedProject[];
+  catalogs: Record<string, EngineCatalogSnapshot>;
   projectExpanded: ProjectExpandState;
   /** Per-session sending (streaming) state — persists across Chat navigations. */
   sendingMap: Record<string, boolean>;
@@ -72,6 +80,7 @@ export const [sessionStore, setSessionStore] = createStore<{
   loading: false,
   initError: null,
   projects: [],
+  catalogs: {},
   projectExpanded: {},
   sendingMap: {},
   showDefaultWorkspace: true,
@@ -91,6 +100,106 @@ export function updateSessionInfo(sessionId: string, patch: Partial<SessionInfo>
   setSessionStore("list", (list) =>
     list.map((session) => (session.id === sessionId ? { ...session, ...patch } : session)),
   );
+}
+
+export function toSessionInfo(session: UnifiedSession, fallbackProjectId?: string): SessionInfo {
+  return {
+    id: session.id, engineType: session.engineType, title: session.title || "",
+    ...(session.sourceUrl ? { sourceUrl: session.sourceUrl, sourceName: session.sourceName } : {}),
+    archived: session.archived, catalogSourceId: session.catalogSourceId, catalogAvailable: session.catalogAvailable,
+    directory: session.directory || "", mode: session.mode, modelId: session.modelId,
+    reasoningEffort: session.reasoningEffort, serviceTier: session.serviceTier,
+    projectID: session.catalogSourceId ? session.projectId ?? null : fallbackProjectId ?? session.projectId ?? undefined,
+    worktreeId: session.worktreeId,
+    createdAt: new Date(session.time.created).toISOString(), updatedAt: new Date(session.time.updated).toISOString(),
+  };
+}
+
+/** Catalog updates never reset the selected conversation, its messages or drafts. */
+export function applySessionCatalog(snapshot: EngineCatalogSnapshot): void {
+  setSessionStore("catalogs", snapshot.sourceId, snapshot);
+  const incoming = new Map(snapshot.sessions.map((session) => [session.id, toSessionInfo({ ...session, catalogSourceId: snapshot.sourceId })]));
+  setSessionStore("list", (current) => {
+    const result = current.map((session) => {
+      const next = incoming.get(session.id);
+      if (next) {
+        incoming.delete(session.id);
+        const defined = Object.fromEntries(Object.entries(next).filter(([, value]) => value !== undefined));
+        return { ...session, ...defined };
+      }
+      if (snapshot.complete && session.catalogSourceId === snapshot.sourceId && session.catalogAvailable !== undefined) {
+        return { ...session, catalogAvailable: false };
+      }
+      return session;
+    });
+    return [...result, ...incoming.values()];
+  });
+}
+
+/** Ordinary list refreshes must not replace newer catalog events. */
+export function replaceListedSessions(sessions: SessionInfo[]): void {
+  setSessionStore("list", (current) => {
+    const catalog = new Map(sessions.filter((session) => session.catalogSourceId).map((session) => [session.id, session]));
+    for (const session of current) if (session.catalogSourceId) catalog.set(session.id, session);
+    return [...sessions.filter((session) => !session.catalogSourceId), ...catalog.values()];
+  });
+}
+
+export function visibleSessionsForEngines(sessions: readonly SessionInfo[], hideArchivedFor: ReadonlySet<EngineType>): SessionInfo[] {
+  return sessions.filter((session) => !session.archived || !hideArchivedFor.has(session.engineType));
+}
+
+export function removeListedSession(sessionId: string): void {
+  setSessionStore("list", (sessions) => sessions.filter((session) => session.id !== sessionId));
+  for (const [sourceId, catalog] of Object.entries(sessionStore.catalogs)) {
+    if (catalog.sessions.some((session) => session.id === sessionId)) {
+      setSessionStore("catalogs", sourceId, { ...catalog, sessions: catalog.sessions.filter((session) => session.id !== sessionId) });
+    }
+  }
+  setSendingFor(sessionId, false);
+  if (sessionStore.current === sessionId) setSessionStore("current", null);
+}
+
+/** Resolve sidebar groups without changing native project membership or cwd. */
+export function buildSessionProjectView(
+  sessions: readonly SessionInfo[],
+  projects: readonly UnifiedProject[],
+  catalogs: readonly EngineCatalogSnapshot[] = [],
+): { projects: UnifiedProject[]; projectIds: Map<string, string | undefined>; displayOnlyIds: Set<string> } {
+  const normalize = (path: string) => path ? path.replaceAll("\\", "/").replace(/\/+$/, "") || "/" : "";
+  const byId = new Map(projects.map((project) => [project.id, project]));
+  for (const catalog of catalogs) for (const project of catalog.projects) byId.set(project.id, project);
+  const projectIds = new Map<string, string | undefined>();
+  const displayOnlyIds = new Set<string>();
+  for (const session of sessions) {
+    if (!session.catalogSourceId) { projectIds.set(session.id, session.projectID ?? undefined); continue; }
+    if (session.projectID) {
+      projectIds.set(session.id, session.projectID);
+      if (!byId.has(session.projectID)) {
+        byId.set(session.projectID, { id: session.projectID, directory: "", catalogSourceId: session.catalogSourceId });
+        displayOnlyIds.add(session.projectID);
+      }
+      continue;
+    }
+    const cwd = normalize(session.directory);
+    const available = [...byId.values()].filter((project) => project.catalogAvailable !== false
+      && (normalize(project.directory) !== "/" || project.catalogSourceId || project.isDefault));
+    const defaultProject = available.find((project) => project.isDefault && normalize(project.directory) === cwd && cwd);
+    const matches = available.flatMap((project) => [...new Set([project.directory, ...(project.roots ?? [])])]
+      .map(normalize).filter((root) => root && cwd && (cwd === root || cwd.startsWith(root === "/" ? "/" : `${root}/`)))
+      .map((root) => ({ project, length: root.length })));
+    matches.sort((left, right) => right.length - left.length);
+    const matched = defaultProject ?? matches[0]?.project;
+    if (matched) { projectIds.set(session.id, matched.id); continue; }
+    const id = `view:directory:${encodeURIComponent(cwd)}`;
+    if (!byId.has(id)) byId.set(id, { id, directory: session.directory, engineType: session.engineType });
+    displayOnlyIds.add(id);
+    projectIds.set(session.id, id);
+  }
+  return {
+    projects: [...byId.values()].map((project) => project.directory || !project.roots?.length ? project : { ...project, directory: project.roots[0] }),
+    projectIds, displayOnlyIds,
+  };
 }
 
 export function getInputDraft(sessionId: string): SessionInputDraft {

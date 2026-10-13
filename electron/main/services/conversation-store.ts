@@ -34,6 +34,10 @@ import type {
   TextPart,
   ReasoningEffort,
   CodexServiceTier,
+  EngineCatalogSnapshot,
+  UnifiedSession,
+  UnifiedMessage,
+  FilePart,
 } from "../../../src/types/unified";
 
 // Re-export for convenience
@@ -57,6 +61,28 @@ interface ConversationIndex {
   version: number;
   updatedAt: string;
   conversations: ConversationMeta[];
+  catalogs?: StoredCatalog[];
+  removals?: EngineConversationRemoval[];
+}
+
+interface EngineConversationRemoval {
+  engineType: EngineType;
+  sourceId?: string;
+  engineSessionId: string;
+  conversationId: string;
+  kind: "local" | "archived";
+}
+
+interface StoredCatalog {
+  sourceId: string;
+  engineType: EngineType;
+  revision: string;
+  complete: boolean;
+  projects: UnifiedProject[];
+}
+
+export function makeCatalogProjectId(engineType: EngineType, sourceId: string, nativeProjectId: string): string {
+  return `catalog:${encodeURIComponent(engineType)}:${encodeURIComponent(sourceId)}:${encodeURIComponent(nativeProjectId)}`;
 }
 
 // =============================================================================
@@ -69,6 +95,8 @@ class ConversationStore {
 
   // In-memory index: id → ConversationMeta
   private index = new Map<string, ConversationMeta>();
+  private catalogs = new Map<string, StoredCatalog>();
+  private removals = new Map<string, EngineConversationRemoval>();
 
   // Debounced index write
   private indexDirty = false;
@@ -94,11 +122,12 @@ class ConversationStore {
   }
 
   async flushAll(): Promise<void> {
+    if (this.indexTimer) {
+      clearTimeout(this.indexTimer);
+      this.indexTimer = null;
+    }
+    await this.writeLocks.get("$index");
     if (this.indexDirty) {
-      if (this.indexTimer) {
-        clearTimeout(this.indexTimer);
-        this.indexTimer = null;
-      }
       await this.writeIndex();
     }
   }
@@ -136,6 +165,10 @@ class ConversationStore {
     directory: string;
     worktreeId?: string;
     parentDirectory?: string;
+    archived?: boolean;
+    projectId?: string | null;
+    catalogSourceId?: string;
+    catalogAvailable?: boolean;
   }): ConversationMeta {
     this.ensureInitialized();
 
@@ -149,6 +182,10 @@ class ConversationStore {
       messageCount: 0,
       worktreeId: params.worktreeId,
       parentDirectory: params.parentDirectory,
+      ...(params.archived !== undefined ? { archived: params.archived } : {}),
+      ...(params.projectId !== undefined ? { projectId: params.projectId } : {}),
+      ...(params.catalogSourceId ? { catalogSourceId: params.catalogSourceId } : {}),
+      ...(params.catalogAvailable !== undefined ? { catalogAvailable: params.catalogAvailable } : {}),
     };
 
     this.index.set(conv.id, conv);
@@ -198,8 +235,58 @@ class ConversationStore {
     conversationStoreLog.info(`Deleted conversation ${id}`);
   }
 
+  isSessionSuppressed(engineType: EngineType, engineSessionId: string, sourceId?: string): boolean {
+    this.ensureInitialized();
+    return this.findSessionRemoval(engineType, engineSessionId, sourceId) !== undefined;
+  }
+
+  async removeEngineConversation(id: string, kind: "local" | "archived", sourceId?: string): Promise<void> {
+    this.ensureInitialized();
+    const conv = this.index.get(id);
+    const previous = [...this.removals.values()].find((entry) => entry.conversationId === id);
+    if (!conv && !previous) return;
+
+    const engineType = conv?.engineType ?? previous!.engineType;
+    const engineSessionId = conv?.engineSessionId ?? previous?.engineSessionId;
+    const owner = conv?.catalogSourceId ?? previous?.sourceId ?? sourceId;
+    if (sourceId !== undefined && owner !== sourceId) throw new Error("Conversation source does not match removal source");
+    if (engineSessionId) {
+      if (previous) this.removals.delete(this.removalKey(previous.engineType, previous.engineSessionId, previous.sourceId));
+      const removal: EngineConversationRemoval = {
+        engineType, engineSessionId, conversationId: id,
+        kind: previous?.kind === "local" ? "local" : kind,
+        ...(owner !== undefined ? { sourceId: owner } : {}),
+      };
+      this.removals.set(this.removalKey(engineType, engineSessionId, owner), removal);
+    }
+    // Invalidate pending mirror writes before yielding to the filesystem.
+    this.index.delete(id);
+    this.scheduleIndexWrite();
+
+    await this.withWriteLock(id, () => this.withWriteLock(`${id}.steps`, async () => {
+      await this.flushAll();
+      await this.deleteConversationFiles(id);
+    }));
+  }
+
+  private removalKey(engineType: EngineType, engineSessionId: string, sourceId?: string): string {
+    return JSON.stringify([engineType, sourceId ?? null, engineSessionId]);
+  }
+
+  private findSessionRemoval(engineType: EngineType, engineSessionId: string, sourceId?: string): EngineConversationRemoval | undefined {
+    const legacy = this.removals.get(this.removalKey(engineType, engineSessionId));
+    const scoped = sourceId === undefined ? undefined : this.removals.get(this.removalKey(engineType, engineSessionId, sourceId));
+    return legacy?.kind === "local" ? legacy : scoped ?? legacy;
+  }
+
   setCustomTitle(id: string, title?: string): void {
     this.update(id, { customTitle: title });
+  }
+
+  setArchived(id: string, archived: boolean): void {
+    this.ensureInitialized();
+    if (!this.index.has(id)) throw new Error(`Conversation not found: ${id}`);
+    this.update(id, { archived });
   }
 
   setEngineTitle(id: string, title?: string): void {
@@ -240,6 +327,7 @@ class ConversationStore {
     this.ensureInitialized();
 
     await this.withWriteLock(id, async () => {
+      if (!this.index.has(id)) return;
       const messages = await this.listMessages(id);
       messages.push(msg);
       await this.writeMessages(id, messages);
@@ -292,6 +380,7 @@ class ConversationStore {
     this.ensureInitialized();
 
     await this.withWriteLock(id, async () => {
+      if (!this.index.has(id)) return;
       const messages = await this.listMessages(id);
       const idx = messages.findIndex((m) => m.id === msgId);
       if (idx === -1) return;
@@ -300,6 +389,78 @@ class ConversationStore {
       Object.assign(messages[idx], allowed);
       await this.writeMessages(id, messages);
     });
+  }
+
+  /** Replace one local projection only after its owner returned complete history. */
+  async replaceMessageSnapshot(id: string, snapshot: UnifiedMessage[]): Promise<void> {
+    this.ensureInitialized();
+    const ids = snapshot.map((message) => message.id);
+    if (new Set(ids).size !== ids.length) throw new Error("Snapshot message identities must be unique.");
+    const messages: ConversationMessage[] = [];
+    const steps: StepsFile = { version: STEPS_FILE_VERSION, conversationId: id, messages: {} };
+    for (const source of structuredClone(snapshot)) {
+      const parts = source.parts.map((part) => ({ ...part, sessionId: id, messageId: source.id }));
+      const { parts: _parts, sessionId: _sessionId, ...metadata } = source;
+      messages.push({ ...metadata, parts: parts.filter((part): part is TextPart | FilePart => part.type === "text" || part.type === "file") });
+      const messageSteps = parts.filter((part) => part.type !== "text" && part.type !== "file");
+      if (messageSteps.length > 0) steps.messages[source.id] = messageSteps.map((part) => this.truncateStepOutput(part));
+    }
+
+    await this.withWriteLock(id, () => this.withWriteLock(`${id}.steps`, async () => {
+      const conv = this.index.get(id);
+      if (!conv) throw new Error(`Conversation ${id} not found`);
+      await this.writeMessages(id, messages);
+      await this.writeStepsFile(id, steps);
+      conv.messageCount = messages.length;
+      conv.preview = undefined;
+      for (let i = messages.length - 1; i >= 0; i--) {
+        const text = messages[i].parts.find((part): part is TextPart => part.type === "text");
+        if (!text) continue;
+        conv.preview = text.text.slice(0, PREVIEW_LENGTH) + (text.text.length > PREVIEW_LENGTH ? "..." : "");
+        break;
+      }
+      this.scheduleIndexWrite();
+    }));
+  }
+
+  async removeMessage(id: string, messageId: string): Promise<void> {
+    this.ensureInitialized();
+
+    await this.withWriteLock(id, () => this.withWriteLock(`${id}.steps`, async () => {
+      if (!this.index.has(id)) return;
+      const messages = await this.listMessages(id);
+      const remaining = messages.filter((message) => message.id !== messageId);
+      const stepsFile = await this.readStepsFile(id);
+      const hasSteps = stepsFile !== null &&
+        Object.prototype.hasOwnProperty.call(stepsFile.messages, messageId);
+      if (remaining.length === messages.length && !hasSteps) return;
+
+      if (remaining.length !== messages.length) {
+        await this.writeMessages(id, remaining);
+      }
+      if (stepsFile && hasSteps) {
+        delete stepsFile.messages[messageId];
+        await this.writeStepsFile(id, stepsFile);
+      }
+
+      const conv = this.index.get(id);
+      if (conv) {
+        conv.messageCount = remaining.length;
+        conv.updatedAt = Date.now();
+        conv.preview = undefined;
+        for (let i = remaining.length - 1; i >= 0; i--) {
+          const textPart = remaining[i].parts.find(
+            (part): part is TextPart => part.type === "text",
+          );
+          if (textPart) {
+            conv.preview = textPart.text.slice(0, PREVIEW_LENGTH);
+            if (textPart.text.length > PREVIEW_LENGTH) conv.preview += "...";
+            break;
+          }
+        }
+        this.scheduleIndexWrite();
+      }
+    }));
   }
 
   /**
@@ -311,6 +472,7 @@ class ConversationStore {
     this.ensureInitialized();
 
     await this.withWriteLock(id, async () => {
+      if (!this.index.has(id)) return;
       const messages = await this.listMessages(id);
       if (messages.some((m) => m.id === msg.id)) return;
       messages.push(msg);
@@ -362,6 +524,7 @@ class ConversationStore {
     const truncated = steps.map((step) => this.truncateStepOutput(step));
 
     await this.withWriteLock(`${id}.steps`, async () => {
+      if (!this.index.has(id)) return;
       // Read existing steps file or create new
       let stepsFile = await this.readStepsFile(id);
       if (!stepsFile) {
@@ -390,6 +553,7 @@ class ConversationStore {
     const dirMap = new Map<string, { directory: string }>();
 
     for (const conv of this.index.values()) {
+      if (conv.catalogSourceId) continue;
       if (!conv.directory || conv.directory === "/") continue;
       // Worktree sessions belong to their parent project, not a separate one
       if (conv.worktreeId) continue;
@@ -493,11 +657,139 @@ class ConversationStore {
     this.scheduleIndexWrite();
   }
 
-  findByEngineSession(engineSessionId: string): ConversationMeta | null {
+  findByEngineSession(engineSessionId: string, engineType?: EngineType, sourceId?: string): ConversationMeta | null {
     for (const conv of this.index.values()) {
-      if (conv.engineSessionId === engineSessionId) return conv;
+      if (conv.engineSessionId === engineSessionId && (!engineType || conv.engineType === engineType)
+        && (sourceId === undefined || conv.catalogSourceId === sourceId)) return conv;
     }
     return null;
+  }
+
+  listCatalogs(): EngineCatalogSnapshot[] {
+    this.ensureInitialized();
+    return [...this.catalogs.values()].map((catalog) => ({
+      ...catalog,
+      projects: structuredClone(catalog.projects),
+      sessions: [...this.index.values()].filter((conv) => conv.engineType === catalog.engineType && conv.catalogSourceId === catalog.sourceId)
+        .map((conv) => this.catalogSession(conv)),
+    }));
+  }
+
+  getCatalogProject(projectId: string): UnifiedProject | undefined {
+    this.ensureInitialized();
+    for (const catalog of this.catalogs.values()) {
+      const project = catalog.projects.find((candidate) => candidate.id === projectId);
+      if (project) return structuredClone(project);
+    }
+    return undefined;
+  }
+
+  upsertCatalog(engineType: EngineType, snapshot: EngineCatalogSnapshot): EngineCatalogSnapshot {
+    this.ensureInitialized();
+    if (typeof snapshot.sourceId !== "string" || !snapshot.sourceId.trim() || typeof snapshot.revision !== "string"
+      || typeof snapshot.complete !== "boolean" || !Array.isArray(snapshot.projects) || !Array.isArray(snapshot.sessions)) throw new Error("Invalid catalog identity or snapshot");
+    if (snapshot.engineType !== undefined && snapshot.engineType !== engineType) throw new Error("Catalog engine identity does not match its source");
+    for (const entries of [snapshot.projects, snapshot.sessions]) {
+      const ids = entries.map((entry) => entry?.id);
+      if (ids.some((id) => typeof id !== "string" || !id) || new Set(ids).size !== ids.length) throw new Error("Catalog IDs must be unique and non-empty");
+    }
+    for (const project of snapshot.projects) {
+      if (project.engineType !== undefined && project.engineType !== engineType) throw new Error("Catalog project belongs to another engine");
+      if (project.directory !== undefined && typeof project.directory !== "string") throw new Error("Invalid catalog project directory");
+      if (project.roots !== undefined && (!Array.isArray(project.roots) || project.roots.some((root) => typeof root !== "string"))) throw new Error("Invalid catalog project roots");
+      if (project.order !== undefined && !Number.isFinite(project.order)) throw new Error("Invalid catalog project order");
+    }
+    for (const session of snapshot.sessions) {
+      if (session.engineType !== engineType) throw new Error("Catalog session belongs to another engine");
+      if (typeof session.directory !== "string" || !Number.isFinite(session.time?.created) || !Number.isFinite(session.time?.updated)) throw new Error("Invalid catalog session metadata");
+      if (session.projectId != null && (typeof session.projectId !== "string" || !session.projectId)) throw new Error("Invalid catalog session project ID");
+    }
+    // Validate and detach all input before changing persistent metadata. Engines
+    // may reuse their snapshot objects while the store waits for its disk flush.
+    snapshot = structuredClone(snapshot);
+    const key = JSON.stringify([engineType, snapshot.sourceId]);
+    const previous = this.catalogs.get(key);
+    const projects = new Map((previous?.projects ?? []).map((project) => [project.id, project]));
+    let nextPartialOrder = [...projects.values()].reduce((last, project) => Math.max(last, project.order ?? -1), -1) + 1;
+    if (snapshot.complete) {
+      for (const [id, project] of projects) projects.set(id, { ...project, catalogAvailable: false });
+    }
+    snapshot.projects.forEach((project, position) => {
+      const id = makeCatalogProjectId(engineType, snapshot.sourceId, project.id);
+      // A partial page has no absolute position for an omitted order field.
+      const order = project.order ?? (snapshot.complete ? position : projects.get(id)?.order ?? nextPartialOrder);
+      nextPartialOrder = Math.max(nextPartialOrder, order + 1);
+      projects.set(id, {
+        ...project, id, engineType, directory: project.directory ?? project.roots?.[0] ?? "",
+        roots: project.roots?.slice() ?? (project.directory ? [project.directory] : []),
+        order, catalogSourceId: snapshot.sourceId,
+        catalogProjectId: project.id, catalogAvailable: true,
+      });
+    });
+
+    const seen = new Set<string>();
+    const liveSessions = new Map<string, UnifiedSession>();
+    for (const session of snapshot.sessions) {
+      if (this.isSessionSuppressed(engineType, session.id, snapshot.sourceId)) continue;
+      const existing = this.findByEngineSession(session.id, engineType, snapshot.sourceId)
+        ?? [...this.index.values()].find((conv) => conv.engineType === engineType && conv.engineSessionId === session.id && !conv.catalogSourceId);
+      const conv: ConversationMeta = existing ?? {
+        id: timeId("conv"), engineType, directory: session.directory, createdAt: session.time.created,
+        updatedAt: session.time.updated, messageCount: 0, imported: true,
+      };
+      const projectId = session.projectId === undefined ? (existing?.catalogSourceId === snapshot.sourceId ? conv.projectId ?? null : null)
+        : session.projectId === null ? null : makeCatalogProjectId(engineType, snapshot.sourceId, session.projectId);
+      Object.assign(conv, {
+        engineType, engineSessionId: session.id, catalogSourceId: snapshot.sourceId, catalogAvailable: true,
+        projectId, directory: session.directory, updatedAt: session.time.updated,
+        ...(Object.prototype.hasOwnProperty.call(session, "title") ? { engineTitle: session.title } : {}),
+        ...(session.archived !== undefined ? { archived: session.archived } : {}),
+        ...(session.mode !== undefined ? { mode: session.mode } : {}),
+        ...(session.modelId !== undefined ? { modelId: session.modelId } : {}),
+        ...(session.reasoningEffort !== undefined ? { reasoningEffort: session.reasoningEffort } : {}),
+        ...(session.serviceTier !== undefined ? { serviceTier: session.serviceTier } : {}),
+        engineMeta: structuredClone({ ...conv.engineMeta, ...session.engineMeta }),
+      });
+      this.index.set(conv.id, conv);
+      seen.add(conv.id);
+      liveSessions.set(conv.id, { ...session, ...this.catalogSession(conv) });
+    }
+    if (snapshot.complete) {
+      for (const conv of this.index.values()) {
+        // Undefined means a local creation has not appeared in native storage yet.
+        if (conv.engineType === engineType && conv.catalogSourceId === snapshot.sourceId && conv.catalogAvailable === true && !seen.has(conv.id)) conv.catalogAvailable = false;
+      }
+    }
+    this.catalogs.set(key, {
+      sourceId: snapshot.sourceId, engineType, revision: snapshot.revision, complete: snapshot.complete,
+      projects: [...projects.values()].sort((a, b) => Number(b.catalogAvailable) - Number(a.catalogAvailable) || (a.order ?? 0) - (b.order ?? 0)),
+    });
+    this.scheduleIndexWrite();
+    const result = this.listCatalogs().find((catalog) => catalog.engineType === engineType && catalog.sourceId === snapshot.sourceId)!;
+    result.sessions = result.sessions.map((session) => liveSessions.get(session.id) ?? session);
+    return result;
+  }
+
+  markCatalogUnavailable(engineType: EngineType, sourceId: string): EngineCatalogSnapshot | undefined {
+    this.ensureInitialized();
+    const catalog = this.catalogs.get(JSON.stringify([engineType, sourceId]));
+    if (!catalog) return undefined;
+    catalog.complete = false;
+    catalog.projects = catalog.projects.map((project) => ({ ...project, catalogAvailable: false }));
+    for (const conv of this.index.values()) {
+      if (conv.engineType === engineType && conv.catalogSourceId === sourceId && conv.catalogAvailable === true) conv.catalogAvailable = false;
+    }
+    this.scheduleIndexWrite();
+    return this.listCatalogs().find((entry) => entry.engineType === engineType && entry.sourceId === sourceId);
+  }
+
+  private catalogSession(conv: ConversationMeta): UnifiedSession {
+    return {
+      id: conv.id, engineType: conv.engineType, title: conv.engineTitle ?? "", directory: conv.directory,
+      projectId: conv.projectId ?? null, catalogSourceId: conv.catalogSourceId, catalogAvailable: conv.catalogAvailable,
+      archived: conv.archived, mode: conv.mode, modelId: conv.modelId, reasoningEffort: conv.reasoningEffort,
+      serviceTier: conv.serviceTier, engineMeta: structuredClone(conv.engineMeta), time: { created: conv.createdAt, updated: conv.updatedAt },
+    };
   }
 
   // -------------------------------------------------------------------------
@@ -533,12 +825,17 @@ class ConversationStore {
     updatedAt: number;
     engineSessionId: string;
     engineMeta?: Record<string, unknown>;
+    archived?: boolean;
+    catalogSourceId?: string;
+    restoreArchived?: boolean;
     messages: ConversationMessage[];
     steps: Record<string, UnifiedPart[]>;
   }): Promise<ConversationMeta> {
     this.ensureInitialized();
 
-    const convId = timeId("conv");
+    const removal = this.findSessionRemoval(params.engineType, params.engineSessionId, params.catalogSourceId);
+    if (removal && (removal.kind === "local" || !params.restoreArchived)) throw new Error("Engine session is suppressed");
+    const convId = removal?.conversationId ?? timeId("conv");
     const conv: ConversationMeta = {
       id: convId,
       engineType: params.engineType,
@@ -550,6 +847,8 @@ class ConversationStore {
       engineSessionId: params.engineSessionId,
       engineMeta: params.engineMeta,
       imported: true,
+      ...(params.archived !== undefined ? { archived: params.archived } : {}),
+      ...(params.catalogSourceId !== undefined ? { catalogSourceId: params.catalogSourceId } : {}),
     };
 
     // Rewrite sessionId in all parts to use the conversation ID
@@ -581,39 +880,56 @@ class ConversationStore {
       }
     }
 
-    // Write messages file
-    if (rewrittenMessages.length > 0) {
-      await this.atomicWrite(this.getMessageFilePath(convId), rewrittenMessages);
-    }
+    return this.withWriteLock(convId, () => this.withWriteLock(`${convId}.steps`, async () => {
+      const currentRemoval = this.findSessionRemoval(params.engineType, params.engineSessionId, params.catalogSourceId);
+      if (currentRemoval !== removal || (currentRemoval && (currentRemoval.kind === "local" || !params.restoreArchived))) {
+        throw new Error("Engine session is suppressed");
+      }
+      const stepEntries = Object.entries(params.steps);
+      // Publish the restored identity only after both files have been written.
+      try {
+        // Write messages file
+        if (rewrittenMessages.length > 0 || removal) {
+          await this.atomicWrite(this.getMessageFilePath(convId), rewrittenMessages, true);
+        }
 
-    // Write steps file
-    const stepEntries = Object.entries(params.steps);
-    if (stepEntries.length > 0) {
-      // Truncate large tool outputs and rewrite sessionId
-      const truncatedSteps: Record<string, UnifiedPart[]> = {};
-      for (const [msgId, parts] of stepEntries) {
-        truncatedSteps[msgId] = parts.map((s) => {
-          const rewritten = { ...s, sessionId: convId } as UnifiedPart;
-          return this.truncateStepOutput(rewritten);
-        });
+        // Write steps file
+        if (stepEntries.length > 0 || removal) {
+          // Truncate large tool outputs and rewrite sessionId
+          const truncatedSteps: Record<string, UnifiedPart[]> = {};
+          for (const [msgId, parts] of stepEntries) {
+            truncatedSteps[msgId] = parts.map((s) => {
+              const rewritten = { ...s, sessionId: convId } as UnifiedPart;
+              return this.truncateStepOutput(rewritten);
+            });
+          }
+
+          const stepsFile: StepsFile = {
+            version: STEPS_FILE_VERSION,
+            conversationId: convId,
+            messages: truncatedSteps,
+          };
+          await this.atomicWrite(this.getStepsFilePath(convId), stepsFile, true);
+        }
+      } catch (err) {
+        await this.deleteConversationFiles(convId);
+        throw err;
       }
 
-      const stepsFile: StepsFile = {
-        version: STEPS_FILE_VERSION,
-        conversationId: convId,
-        messages: truncatedSteps,
-      };
-      await this.atomicWrite(this.getStepsFilePath(convId), stepsFile);
-    }
+      if (this.findSessionRemoval(params.engineType, params.engineSessionId, params.catalogSourceId) !== removal) {
+        await this.deleteConversationFiles(convId);
+        throw new Error("Engine session was removed while importing");
+      }
 
-    // Add to index
-    this.index.set(convId, conv);
-    this.scheduleIndexWrite();
+      if (removal) this.removals.delete(this.removalKey(removal.engineType, removal.engineSessionId, removal.sourceId));
+      this.index.set(convId, conv);
+      this.scheduleIndexWrite();
 
-    conversationStoreLog.info(
-      `Imported conversation ${convId} (${conv.engineType}, ${params.messages.length} msgs, ${stepEntries.length} msgs with steps)`,
-    );
-    return conv;
+      conversationStoreLog.info(
+        `Imported conversation ${convId} (${conv.engineType}, ${params.messages.length} msgs, ${stepEntries.length} msgs with steps)`,
+      );
+      return conv;
+    }));
   }
 
   // -------------------------------------------------------------------------
@@ -646,6 +962,8 @@ class ConversationStore {
 
   /** Synchronous index load — called once at startup before app is ready */
   private loadIndex(): void {
+    this.catalogs.clear();
+    this.removals.clear();
     const indexPath = this.getIndexPath();
 
     if (!fs.existsSync(indexPath)) {
@@ -667,6 +985,13 @@ class ConversationStore {
       for (const conv of data.conversations) {
         this.index.set(conv.id, conv);
       }
+      for (const catalog of data.catalogs ?? []) {
+        this.catalogs.set(JSON.stringify([catalog.engineType, catalog.sourceId]), catalog);
+      }
+      for (const removal of data.removals ?? []) {
+        this.removals.set(this.removalKey(removal.engineType, removal.engineSessionId, removal.sourceId), removal);
+        this.index.delete(removal.conversationId);
+      }
 
       conversationStoreLog.info(
         `Index loaded: ${this.index.size} conversations`,
@@ -677,18 +1002,27 @@ class ConversationStore {
   }
 
   private async writeIndex(): Promise<void> {
-    this.indexDirty = false;
+    await this.withWriteLock("$index", async () => {
+      this.indexDirty = false;
 
-    const conversations = Array.from(this.index.values());
-    conversations.sort((a, b) => b.updatedAt - a.updatedAt);
+      const conversations = Array.from(this.index.values());
+      conversations.sort((a, b) => b.updatedAt - a.updatedAt);
 
-    const data: ConversationIndex = {
-      version: INDEX_VERSION,
-      updatedAt: new Date().toISOString(),
-      conversations,
-    };
+      const data: ConversationIndex = {
+        version: INDEX_VERSION,
+        updatedAt: new Date().toISOString(),
+        conversations,
+        ...(this.catalogs.size > 0 ? { catalogs: [...this.catalogs.values()] } : {}),
+        ...(this.removals.size > 0 ? { removals: [...this.removals.values()] } : {}),
+      };
 
-    await this.atomicWrite(this.getIndexPath(), data);
+      try {
+        await this.atomicWrite(this.getIndexPath(), data, true);
+      } catch (err) {
+        this.indexDirty = true;
+        throw err;
+      }
+    });
   }
 
   private scheduleIndexWrite(): void {
@@ -700,7 +1034,7 @@ class ConversationStore {
 
     this.indexTimer = setTimeout(() => {
       this.indexTimer = null;
-      this.writeIndex();
+      void this.writeIndex().catch((err) => conversationStoreLog.error("Failed to persist conversation index:", err));
     }, INDEX_DEBOUNCE_MS);
   }
 
@@ -725,6 +1059,7 @@ class ConversationStore {
   // -------------------------------------------------------------------------
 
   private async writeMessages(id: string, messages: ConversationMessage[]): Promise<void> {
+    if (!this.index.has(id)) return;
     await this.atomicWrite(this.getMessageFilePath(id), messages);
   }
 
@@ -747,6 +1082,7 @@ class ConversationStore {
   }
 
   private async writeStepsFile(id: string, stepsFile: StepsFile): Promise<void> {
+    if (!this.index.has(id)) return;
     await this.atomicWrite(this.getStepsFilePath(id), stepsFile);
   }
 
@@ -815,11 +1151,17 @@ class ConversationStore {
     }
   }
 
+  private async deleteConversationFiles(id: string): Promise<void> {
+    const messages = this.getMessageFilePath(id);
+    const steps = this.getStepsFilePath(id);
+    await Promise.all([messages, `${messages}.tmp`, steps, `${steps}.tmp`].map((file) => fsp.rm(file, { force: true })));
+  }
+
   /**
    * Atomic write: write to .tmp file first, then rename.
    * Uses async I/O to avoid blocking the main process event loop.
    */
-  private async atomicWrite(filePath: string, data: unknown): Promise<void> {
+  private async atomicWrite(filePath: string, data: unknown, throwOnError = false): Promise<void> {
     const dir = path.dirname(filePath);
     await this.ensureDir(dir);
 
@@ -834,6 +1176,7 @@ class ConversationStore {
       } catch {
         /* ignore */
       }
+      if (throwOnError) throw err;
     }
   }
 }

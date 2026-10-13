@@ -641,6 +641,8 @@ export function SessionTurn(props: SessionTurnProps) {
       // Hide all todo tools (todowrite/todoread) — displayed in TodoDock instead
       if (x.type === "tool" && (x as ToolPart).normalizedTool === "todo") return false;
       if (x.type === "text" && !(x as any).text) return false;
+      // Stored history can still contain empty reasoning from older adapters.
+      if (x.type === "reasoning" && !x.text.trim()) return false;
       // Hide pending/running tools when not working
       if (
         x.type === "tool" &&

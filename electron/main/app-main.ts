@@ -1,7 +1,7 @@
 import { app, BrowserWindow } from "electron";
 import { randomBytes } from "node:crypto";
 import { shellEnvSync } from "shell-env";
-import { mainLog } from "./services/logger";
+import { mainLog, loadSettings } from "./services/logger";
 import { unwatchAll } from "./services/file-service";
 // dev restart trigger
 
@@ -47,6 +47,10 @@ import { OpenCodeAdapter } from "./engines/opencode";
 import { CopilotSdkAdapter } from "./engines/copilot";
 import { ClaudeCodeAdapter } from "./engines/claude";
 import { CodexAdapter } from "./engines/codex";
+import { createCodexDesktopSharing } from "./engines/codex/desktop-sharing";
+import { CodexDesktopCatalog } from "./engines/codex/desktop-catalog";
+import { getOrCreateCodexCatalogEnrollment } from "./engines/codex/desktop-catalog-enrollment";
+import { getUserDataPath } from "./services/app-paths";
 import { ChannelManager } from "./channels/channel-manager";
 import { WebhookServer } from "./channels/webhook-server";
 import { FeishuAdapter } from "./channels/feishu/feishu-adapter";
@@ -78,10 +82,37 @@ const openCodeAdapter = new OpenCodeAdapter({ port: OPENCODE_PORT });
 const copilotAdapter = new CopilotSdkAdapter();
 const claudeAdapter = new ClaudeCodeAdapter();
 const codexAdapter = new CodexAdapter();
+// Opt-in until the private Desktop protocol has a supported compatibility contract.
+const desktopSharingEnabled = process.env.CODEMUX_CODEX_DESKTOP_BRIDGE !== undefined
+  ? process.env.CODEMUX_CODEX_DESKTOP_BRIDGE === "1"
+  : loadSettings().codexDesktopBridgeEnabled === true;
+const codexDesktopSharing = desktopSharingEnabled
+  ? createCodexDesktopSharing({
+    listCandidates: (limit) => codexAdapter.listHistoricalSessions(limit),
+    listModelCatalog: async () => { await codexAdapter.start(); return codexAdapter.listModels(); },
+    renameStoredThread: (threadId, title) => codexAdapter.renameStoredThread(threadId, title),
+    readStoredThread: (threadId) => codexAdapter.readStoredThread(threadId, { activeOnly: true }),
+    archiveStoredThread: (threadId) => codexAdapter.archiveStoredThread(threadId),
+    unarchiveStoredThread: (threadId) => codexAdapter.unarchiveStoredThread(threadId),
+    catalogFactory: () => {
+      const enrollment = getOrCreateCodexCatalogEnrollment(getUserDataPath());
+      return new CodexDesktopCatalog({
+        ...enrollment,
+        client: codexAdapter.createDesktopCatalogClient(),
+        previouslyAdmittedThreadIds: conversationStore.list({ engineType: "codex-desktop" })
+          .filter((conversation) => conversation.catalogSourceId === enrollment.sourceId && conversation.engineSessionId)
+          .map((conversation) => conversation.engineSessionId!),
+        onError: (error) => mainLog.warn("Codex catalog refresh failed:", error.message),
+      });
+    },
+  })
+  : null;
+const codexDesktopAdapter = codexDesktopSharing?.adapter;
 engineManager.registerAdapter(openCodeAdapter);
 engineManager.registerAdapter(copilotAdapter);
 engineManager.registerAdapter(claudeAdapter);
 engineManager.registerAdapter(codexAdapter);
+if (codexDesktopAdapter) engineManager.registerAdapter(codexDesktopAdapter);
 
 // Export for IPC handlers
 export { engineManager, gatewayServer };
@@ -201,6 +232,7 @@ if (!gotTheLock) {
       ["Copilot", copilotAdapter],
       ["Claude", claudeAdapter],
       ["Codex", codexAdapter],
+      ...(codexDesktopAdapter ? [["Codex Desktop", codexDesktopAdapter] as const] : []),
     ] as const;
     for (const [name, adapter] of engines) {
       const p = (adapter as any).start().then(
@@ -328,6 +360,7 @@ if (!gotTheLock) {
         productionServer.stop(),
         scheduledTaskService.shutdown(),
       ]);
+      await codexDesktopSharing?.stop();
     } catch (err) {
       mainLog.error("Cleanup error:", err);
     }

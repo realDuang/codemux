@@ -8,6 +8,7 @@ interface InputAreaQuestionProps {
   question: UnifiedQuestion;
   onRespond: (sessionID: string, questionID: string, answers: string[][]) => void;
   onDismiss: (sessionID: string, questionID: string) => void;
+  dismissLabel?: string;
 }
 
 /**
@@ -78,26 +79,22 @@ export function InputAreaQuestion(props: InputAreaQuestionProps) {
 
   // Check if any question has at least one answer
   const hasAnyAnswer = () => {
-    return props.question.questions.some((_, i) => {
+    return props.question.questions.some((question, i) => {
       const selected = selections()[i] || [];
-      const custom = customInputs()[i]?.trim();
-      return selected.length > 0 || (custom && custom.length > 0);
+      const raw = customInputs()[i] ?? "";
+      const custom = question.preserveWhitespace ? raw : raw.trim();
+      return selected.length > 0 || (question.custom !== false
+        && (custom.length > 0 || question.allowEmptyAnswer === true));
     });
   };
 
-  // Check if current page has an answer
-  const currentHasAnswer = () => {
-    const qi = pageIndex();
-    const selected = selections()[qi] || [];
-    const custom = customInputs()[qi]?.trim();
-    return selected.length > 0 || (custom && custom.length > 0);
-  };
-
   const handleSubmit = () => {
-    const answers = props.question.questions.map((_, i) => {
+    const answers = props.question.questions.map((question, i) => {
       const selected = selections()[i] || [];
-      const custom = customInputs()[i]?.trim();
+      const raw = customInputs()[i] ?? "";
+      const custom = question.preserveWhitespace ? raw : raw.trim();
       if (custom) return [...selected, custom];
+      if (question.custom !== false && question.allowEmptyAnswer && selected.length === 0) return [""];
       return [...selected];
     });
     props.onRespond(props.question.sessionId, props.question.id, answers);
@@ -125,6 +122,14 @@ export function InputAreaQuestion(props: InputAreaQuestionProps) {
     current: questionContext().current,
     total: questionContext().total,
   }));
+  const externalUrl = createMemo(() => {
+    try {
+      const url = new URL(props.question.externalUrl ?? "");
+      return ["https:", "http:"].includes(url.protocol) && !url.username && !url.password ? url : undefined;
+    } catch {
+      return undefined;
+    }
+  });
 
   return (
     <div class={styles.root}>
@@ -152,6 +157,19 @@ export function InputAreaQuestion(props: InputAreaQuestionProps) {
           </div>
         </Show>
       </div>
+
+      <Show when={externalUrl()}>
+        {(url) => (
+          <a
+            class="my-2 inline-flex max-w-full items-center gap-1 break-all text-sm text-indigo-600 underline dark:text-indigo-300"
+            href={url().href}
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            {url().origin} ↗
+          </a>
+        )}
+      </Show>
 
       <Show when={questionContext().isMultiQuestion}>
         <div class={styles.meta}>
@@ -250,7 +268,7 @@ export function InputAreaQuestion(props: InputAreaQuestionProps) {
       {/* Actions */}
       <div class={styles.actions}>
         <button type="button" class={styles.btnDismiss} onClick={handleDismiss}>
-          {t().question.dismiss}
+          {props.dismissLabel ?? t().question.dismiss}
         </button>
 
         <Show when={isMultiQuestion() && pageIndex() > 0}>

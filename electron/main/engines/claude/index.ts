@@ -164,7 +164,9 @@ export function getClaudeReasoningCapabilities(
 ): NonNullable<UnifiedModelInfo["capabilities"]> {
   const reasoning = model.supportsEffort === true;
   const supportedReasoningEfforts = reasoning
-    ? normalizeReasoningEfforts(model.supportedEffortLevels) ?? [...REASONING_EFFORT_VALUES]
+    ? normalizeReasoningEfforts(model.supportedEffortLevels?.filter((effort) =>
+        (REASONING_EFFORT_VALUES as readonly string[]).includes(effort),
+      )) ?? [...REASONING_EFFORT_VALUES]
     : undefined;
 
   return {
@@ -744,6 +746,7 @@ export class ClaudeCodeAdapter extends EngineAdapter {
     content: MessagePromptContent[],
     options?: { mode?: string; modelId?: string; reasoningEffort?: ReasoningEffort | null },
   ): Promise<UnifiedMessage> {
+    if (options?.reasoningEffort === "ultra") throw new Error("Claude does not support ultra reasoning effort");
     const directory =
       this.v2Sessions.get(sessionId)?.directory ??
       this.sessionDirectories.get(sessionId);
@@ -1342,6 +1345,7 @@ export class ClaudeCodeAdapter extends EngineAdapter {
   // ==========================================================================
 
   override async setReasoningEffort(sessionId: string, effort: ReasoningEffort | null): Promise<void> {
+    if (effort === "ultra") throw new Error("Claude does not support ultra reasoning effort");
     const current = this.sessionReasoningEfforts.get(sessionId) ?? null;
     if (current === effort) return; // No change, skip session rebuild
 
@@ -2115,7 +2119,7 @@ export class ClaudeCodeAdapter extends EngineAdapter {
 
     // Apply reasoning effort level if set for this session
     const reasoningEffort = this.sessionReasoningEfforts.get(sessionId);
-    if (reasoningEffort) {
+    if (reasoningEffort && reasoningEffort !== "ultra") {
       sdkOptions.effort = reasoningEffort;
     }
 

@@ -69,6 +69,7 @@ export function SessionControls(props: SessionControlsProps) {
     medium: () => t().prompt.reasoningEffortMedium,
     high: () => t().prompt.reasoningEffortHigh,
     max: () => t().prompt.reasoningEffortMax,
+    ultra: () => t().prompt.reasoningEffortUltra,
   };
 
   const effortLabel = createMemo(() => {

@@ -30,7 +30,7 @@ const COPILOT_REASONING_EFFORT_MAP: Record<string, ReasoningEffort> = {
 };
 
 function normalizeCopilotReasoningEffort(value: unknown): ReasoningEffort | undefined {
-  if (typeof value !== "string") return undefined;
+  if (typeof value !== "string" || value === "ultra") return undefined;
   return normalizeReasoningEffort(COPILOT_REASONING_EFFORT_MAP[value] ?? value);
 }
 

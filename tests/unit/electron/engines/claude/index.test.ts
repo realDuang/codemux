@@ -152,7 +152,7 @@ describe("getClaudeReasoningCapabilities", () => {
   it("filters invalid effort levels and picks a supported default", () => {
     const caps = getClaudeReasoningCapabilities({
       supportsEffort: true,
-      supportedEffortLevels: ["high", "turbo", "max"] as any,
+      supportedEffortLevels: ["high", "turbo", "max", "ultra"] as any,
     } as ClaudeModelInfo);
 
     expect(caps).toEqual({
@@ -442,6 +442,12 @@ describe("ClaudeCodeAdapter", () => {
   });
 
   describe("setReasoningEffort()", () => {
+    it("rejects ultra without changing the session effort", async () => {
+      seedSession(adapter, "cs_1");
+      await adapter.setReasoningEffort("cs_1", "high");
+      await expect(adapter.setReasoningEffort("cs_1", "ultra")).rejects.toThrow("does not support ultra");
+      expect(adapter.getReasoningEffort("cs_1")).toBe("high");
+    });
     it("stores the effort level", async () => {
       seedSession(adapter, "cs_1");
       await adapter.setReasoningEffort("cs_1", "high");
@@ -2993,6 +2999,13 @@ describe("ClaudeCodeAdapter", () => {
   // =========================================================================
 
   describe("sendMessage() — reasoning effort change in options", () => {
+    it("rejects ultra before starting or rebuilding a session", async () => {
+      const createSession = vi.spyOn(adapter as any, "getOrCreateV2Session");
+      await expect(adapter.sendMessage("cs_1", [{ type: "text", text: "Hello" }], {
+        reasoningEffort: "ultra",
+      })).rejects.toThrow("does not support ultra");
+      expect(createSession).not.toHaveBeenCalled();
+    });
     it("applies new reasoningEffort from options and rebuilds session", async () => {
       seedSession(adapter, "cs_1");
       const mockV2 = makeMockV2Session([

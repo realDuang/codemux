@@ -801,7 +801,7 @@ describe('copilot-converters', () => {
         id: 'o3',
         name: 'O3',
         capabilities: { supports: { vision: false, reasoningEffort: true } as any, limits: { max_context_window_tokens: 200000 } },
-        supportedReasoningEfforts: ['low', 'medium', 'high', 'xhigh'] as any,
+        supportedReasoningEfforts: ['low', 'medium', 'high', 'xhigh', 'ultra'] as any,
         defaultReasoningEffort: 'high' as any,
       } as any;
 

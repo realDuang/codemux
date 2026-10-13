@@ -1,6 +1,5 @@
-import { defineConfig } from "vite";
-import tailwindcss from "@tailwindcss/vite";
-import solid from "vite-plugin-solid";
+import { defineConfig, mergeConfig } from "vite";
+import webConfig from "./vite.web.config";
 
 import type { IncomingMessage } from "http";
 import { tunnelManager } from "./scripts/tunnel-manager";
@@ -33,10 +32,8 @@ const localAuthOptions = {
 // Vite Config
 // ============================================================================
 
-export default defineConfig({
+export default mergeConfig(webConfig, defineConfig({
   plugins: [
-    tailwindcss(),
-    solid(),
     createRemoteAccessPlugin(remoteAccessManager, () => tunnelManager.stop()),
     {
       name: "standalone-auth-api",
@@ -213,4 +210,4 @@ export default defineConfig({
       },
     },
   },
-});
+}));

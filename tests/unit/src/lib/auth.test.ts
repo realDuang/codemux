@@ -43,7 +43,9 @@ describe("Auth.checkDeviceToken", () => {
   it("sends the saved browser token and refreshes the device ID after successful validation", async () => {
     fetchMock.mockResolvedValueOnce(validationResponse(200, { valid: true, deviceId: "confirmed-device" }));
     expect(await Auth.checkDeviceToken()).toBe(true);
-    expect(fetchMock).toHaveBeenCalledWith("/api/auth/validate", { headers: { Authorization: "Bearer device-token" } });
+    expect(fetchMock).toHaveBeenCalledWith("/api/auth/validate", {
+      headers: { Authorization: "Bearer device-token" }, cache: "no-store", signal: expect.any(AbortSignal),
+    });
     expect(Auth.getToken()).toBe("device-token");
     expect(Auth.getDeviceId()).toBe("confirmed-device");
   });
@@ -106,5 +108,91 @@ describe("Auth.checkDeviceToken", () => {
     expect(fetchMock).not.toHaveBeenCalled();
     expect(Auth.getToken()).toBeNull();
     expect(Auth.getDeviceId()).toBeNull();
+  });
+
+  it("does not revoke a new login when the old token's validation finishes late", async () => {
+    let respond!: (response: Response) => void;
+    fetchMock.mockReturnValueOnce(new Promise<Response>((resolve) => { respond = resolve; }));
+    const checking = Auth.checkDeviceToken();
+    Auth.saveToken("new-token");
+    Auth.saveDeviceId("new-device");
+    respond(validationResponse(401));
+    expect(await checking).toBe(true);
+    expect(Auth.getToken()).toBe("new-token");
+    expect(Auth.getDeviceId()).toBe("new-device");
+  });
+
+  it("does not treat a transport failure after logout as an authenticated session", async () => {
+    let fail!: (error: Error) => void;
+    fetchMock.mockReturnValueOnce(new Promise<Response>((_resolve, reject) => { fail = reject; }));
+    const checking = Auth.checkDeviceToken();
+    Auth.clearAuth();
+    fail(new TypeError("Connection lost"));
+    expect(await checking).toBe(false);
+    expect(Auth.getToken()).toBeNull();
+  });
+
+  it("bounds an unresponsive validation request without forgetting the approved device", async () => {
+    vi.useFakeTimers();
+    try {
+      fetchMock.mockImplementationOnce((_input, init) => new Promise((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => reject(new DOMException("Timed out", "AbortError")));
+      }));
+      const checking = Auth.checkDeviceToken();
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(await checking).toBe(true);
+      expect(Auth.getDeviceId()).toBe("approved-device");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("bounds an incomplete response body without forgetting the approved device", async () => {
+    vi.useFakeTimers();
+    try {
+      fetchMock.mockImplementationOnce(async (_input, init) => new Response(new ReadableStream({
+        start(controller) {
+          init?.signal?.addEventListener("abort", () => controller.error(new DOMException("Timed out", "AbortError")));
+        },
+      }), { status: 200 }));
+      const checking = Auth.checkDeviceToken();
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(await checking).toBe(true);
+      expect(Auth.getToken()).toBe("device-token");
+      expect(Auth.getDeviceId()).toBe("approved-device");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe("Auth.logout", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("clears local approval immediately and leaves a newer login intact after a late response", async () => {
+    mocks.isElectron.mockReturnValue(false);
+    const storage = new Map<string, string>();
+    vi.stubGlobal("localStorage", {
+      getItem: (key: string) => storage.get(key) ?? null,
+      setItem: (key: string, value: string) => storage.set(key, value),
+      removeItem: (key: string) => storage.delete(key),
+    });
+    let respond!: (response: Response) => void;
+    const request = vi.fn(() => new Promise<Response>((resolve) => { respond = resolve; }));
+    vi.stubGlobal("fetch", request);
+    Auth.saveToken("old-token");
+    Auth.saveDeviceId("old-device");
+    const loggingOut = Auth.logout();
+    expect(Auth.getToken()).toBeNull();
+    expect(Auth.getDeviceId()).toBeNull();
+    expect(request).toHaveBeenCalledWith("/api/auth/logout", {
+      method: "POST", headers: { Authorization: "Bearer old-token" }, cache: "no-store",
+    });
+    Auth.saveToken("new-token");
+    Auth.saveDeviceId("new-device");
+    respond(new Response(null, { status: 200 }));
+    await loggingOut;
+    expect(Auth.getToken()).toBe("new-token");
+    expect(Auth.getDeviceId()).toBe("new-device");
   });
 });

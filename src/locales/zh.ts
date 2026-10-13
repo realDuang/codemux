@@ -1,6 +1,22 @@
 import { LocaleDict } from "./en";
 
 export const zh: LocaleDict = {
+  pwa: {
+    install: "添加到桌面",
+    installDescription: "从主屏幕直接打开 CodeMux。",
+    installTitle: "将 CodeMux 添加到主屏幕",
+    installIos: "打开分享菜单，选择“添加到主屏幕”，再点“添加”。",
+    installIosBrowser: "如果没有这个选项，请在 Safari 中打开当前网址。",
+    done: "知道了",
+    dismiss: "暂时关闭",
+    offline: "网络已断开，恢复连接后才能发送消息和接收更新。",
+    updateAvailable: "CodeMux 有新版本可用。",
+    update: "刷新",
+    updateImages: "请先发送或移除草稿中的图片，再刷新页面。",
+    updateUnsaved: "有草稿未能保存，请先复制文字，再手动刷新页面。",
+    updateBusy: "正在生成回复，请等回复结束后刷新。",
+    updateFailed: "更新失败，请重试。",
+  },
   // Common
   common: {
     loading: "加载中...",
@@ -273,6 +289,8 @@ export const zh: LocaleDict = {
 
   // Prompt Input
   prompt: {
+    draftSaveFailed: "草稿未能保存在当前设备，请保留这个页面或复制文字。",
+    draftImagesNotSaved: "图片不会随草稿保存，重新打开页面后需要再次添加。",
     buildMode: "Build 模式 - 执行代码修改和命令",
     build: "Build",
     planMode: "Plan 模式 - 只读研究和规划",
@@ -564,6 +582,7 @@ export const zh: LocaleDict = {
   // Notifications
   notification: {
     messageSendFailed: "消息发送失败，请重试。",
+    messageSendInterrupted: "发送连接已中断，请先核对会话记录，再决定是否重新发送。",
     sessionCreateFailed: "会话创建失败。",
     sessionDeleteFailed: "会话删除失败。",
     gatewayDisconnected: "连接已断开，正在重连...",

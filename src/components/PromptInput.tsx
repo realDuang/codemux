@@ -2,6 +2,7 @@ import { createSignal, createEffect, createMemo, For, Show, onCleanup, type JSX 
 import { IconArrowUp } from "./icons";
 import { useI18n } from "../lib/i18n";
 import { notify } from "../lib/notifications";
+import { isBrowser } from "../lib/platform";
 import type { AgentMode, ImageAttachment, EngineCommand } from "../types/unified";
 import {
   ACCEPTED_IMAGE_MIME_TYPES,
@@ -117,6 +118,10 @@ interface PromptInputProps {
   availableModes?: AgentMode[];
   /** When true, the input is disabled (e.g., no session or modes not loaded yet) */
   disabled?: boolean;
+  /** Prevent sending while disconnected without blocking draft editing. */
+  sendDisabled?: boolean;
+  /** The current Web draft could not be persisted on this device. */
+  draftSaveFailed?: boolean;
   /** Whether the current engine supports image attachments */
   imageAttachmentEnabled?: boolean;
   /** Available slash commands from the current engine */
@@ -408,7 +413,7 @@ export function PromptInput(props: PromptInputProps) {
       e.preventDefault();
       const canSend = !props.isGenerating || props.canEnqueue;
       const hasContent = text().trim() || images().length > 0;
-      if (hasContent && canSend && !props.disabled) {
+      if (hasContent && canSend && !props.disabled && !props.sendDisabled) {
         doSend();
       }
     }
@@ -416,6 +421,12 @@ export function PromptInput(props: PromptInputProps) {
 
   /** Shared send logic — detects slash command or falls through to normal send */
   const doSend = () => {
+    const clearUncontrolledDraft = () => {
+      // Controlled drafts are consumed by the caller after send validation.
+      if (props.text !== undefined || props.images !== undefined) return;
+      setTextValue("");
+      setImagesValue([]);
+    };
     const trimmed = text().trim();
     // Detect slash command: text starts with / and onCommandInvoke is provided
     if (trimmed.startsWith("/") && props.onCommandInvoke) {
@@ -424,21 +435,19 @@ export function PromptInput(props: PromptInputProps) {
       const args = spaceIdx === -1 ? "" : trimmed.slice(spaceIdx + 1).trim();
       if (commandName) {
         props.onCommandInvoke(commandName, args, agent());
-        setTextValue("");
-        setImagesValue([]);
+        clearUncontrolledDraft();
         return;
       }
     }
     // Normal send
     const imgs = images().length > 0 ? [...images()] : undefined;
     props.onSend(text(), agent(), imgs);
-    setTextValue("");
-    setImagesValue([]);
+    clearUncontrolledDraft();
   };
 
   const handleSend = () => {
     const canSend = !props.isGenerating || props.canEnqueue;
-    if (!canSend || props.disabled) return;
+    if (!canSend || props.disabled || props.sendDisabled) return;
 
     const hasContent = text().trim() || images().length > 0;
     if (hasContent) {
@@ -622,7 +631,7 @@ export function PromptInput(props: PromptInputProps) {
                   </Show>
                   <button
                     onClick={handleSend}
-                    disabled={!hasContent || props.disabled}
+                    disabled={!hasContent || props.disabled || props.sendDisabled}
                     class={`p-2 rounded-xl text-white transition-all disabled:bg-slate-200 dark:disabled:bg-slate-700 disabled:text-slate-400 dark:disabled:text-slate-500 shadow-md disabled:shadow-none ${activeAccent().bgHover}`}
                     aria-label={t().prompt.send}
                   >
@@ -658,6 +667,13 @@ export function PromptInput(props: PromptInputProps) {
           })()}
         </div>
       </div>
+      <Show when={isBrowser() && props.draftSaveFailed} fallback={
+        <Show when={isBrowser() && images().length > 0}>
+          <p class="mt-1.5 px-1 text-xs text-slate-500 dark:text-slate-400" role="status">{t().prompt.draftImagesNotSaved}</p>
+        </Show>
+      }>
+        <p class="mt-1.5 px-1 text-xs text-amber-700 dark:text-amber-400" role="status">{t().prompt.draftSaveFailed}</p>
+      </Show>
     </div>
   );
 }

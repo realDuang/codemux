@@ -1,6 +1,22 @@
 import { LocaleDict } from "./en";
 
 export const ru: LocaleDict = {
+  pwa: {
+    install: "Установить",
+    installDescription: "Открывайте CodeMux с главного экрана.",
+    installTitle: "Добавьте CodeMux на главный экран",
+    installIos: "Откройте меню «Поделиться», выберите «На экран Домой», затем нажмите «Добавить».",
+    installIosBrowser: "Если этого пункта нет, откройте этот адрес в Safari.",
+    done: "Понятно",
+    dismiss: "Скрыть",
+    offline: "Нет сети. Подключитесь, чтобы отправлять сообщения и получать обновления.",
+    updateAvailable: "Доступна новая версия CodeMux.",
+    update: "Обновить",
+    updateImages: "Отправьте или удалите изображения из черновиков перед обновлением.",
+    updateUnsaved: "Черновик не сохранён. Скопируйте текст перед обновлением страницы вручную.",
+    updateBusy: "Ответ формируется. Обновите страницу после завершения.",
+    updateFailed: "Не удалось обновить. Попробуйте снова.",
+  },
   // Common
   common: {
     loading: "Загрузка...",
@@ -274,6 +290,8 @@ export const ru: LocaleDict = {
 
   // Prompt Input
   prompt: {
+    draftSaveFailed: "Не удалось сохранить черновик на этом устройстве. Не закрывайте страницу или скопируйте текст.",
+    draftImagesNotSaved: "Изображения не сохраняются в черновиках. Добавьте их снова после открытия страницы.",
     buildMode: "Режим Build — выполнение изменений кода и команд",
     build: "Build",
     planMode: "Режим Plan — анализ и планирование только для чтения",
@@ -567,6 +585,7 @@ export const ru: LocaleDict = {
   // Notifications
   notification: {
     messageSendFailed: "Не удалось отправить сообщение. Повторите попытку.",
+    messageSendInterrupted: "Отправка прервалась. Проверьте переписку перед повторной отправкой.",
     sessionCreateFailed: "Не удалось создать сессию.",
     sessionDeleteFailed: "Не удалось удалить сессию.",
     gatewayDisconnected: "Соединение прервано, переподключение...",

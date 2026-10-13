@@ -373,7 +373,9 @@ bun run server:access-code # Print the current 6-digit access code
 bun run server:access-requests # Interactively review pending remote access requests
 bun run server:down        # Stop background headless Electron dev
 bun run server:status      # Show background headless Electron dev status
-bun run build              # Production build
+bun run build              # Build Electron and Web/PWA clients
+bun run build:desktop      # Electron renderer, main, and preload only
+bun run build:web          # Independent Web/PWA client in out/web
 bun run dist:mac:arm64     # macOS Apple Silicon
 bun run dist:mac:x64       # macOS Intel
 bun run dist:win           # Windows NSIS installer
@@ -382,6 +384,8 @@ bun run update:cloudflared # Update Cloudflare Tunnel binary
 ```
 
 ### Project Structure
+
+See [Web and mobile PWA](docs/web-pwa.md) for build boundaries, mobile installation, caching, and validation.
 
 ```
 codemux/

@@ -13,7 +13,9 @@ import {
 } from "solid-js";
 import { Auth } from "../lib/auth";
 import { useNavigate } from "@solidjs/router";
-import { gateway } from "../lib/gateway-api";
+import { gateway, gatewayConnected } from "../lib/gateway-api";
+import { gatewayClient } from "../lib/gateway-client";
+import { observeBrowserResume } from "../lib/browser-resume";
 import { ensureGatewayInitialized, refreshEngineConfigState } from "../lib/engine-bootstrap";
 import { logger } from "../lib/logger";
 import { isElectron } from "../lib/platform";
@@ -26,6 +28,10 @@ import {
   setInputDraft,
   setSendingFor,
   updateSessionInfo,
+  initializeWebInputDrafts,
+  consumeInputDraft,
+  restoreInputDraftIfUnchanged,
+  type InputDraftSubmission,
 } from "../stores/session";
 import {
   messageStore,
@@ -637,6 +643,17 @@ export default function Chat() {
     setSendError(msg);
     sendErrorTimer = setTimeout(() => setSendError(null), 3000);
   };
+  const notifySendFailure = (error: unknown) => {
+    const message = error instanceof Error ? error.message : "";
+    const interrupted = !gateway.connected || message.startsWith("Request timeout:")
+      || message === "Connection closed" || message === "Connection interrupted";
+    notify(
+      interrupted ? t().notification.messageSendInterrupted : t().notification.messageSendFailed,
+      interrupted ? "warning" : "error",
+      interrupted ? 10000 : 5000,
+    );
+    if (interrupted && !isElectron() && gateway.connected) void recoverWebSession();
+  };
   onCleanup(() => clearTimeout(sendErrorTimer));
   // Clean up Active section delayed-removal timers
   onCleanup(() => { for (const t of delayTimers.values()) clearTimeout(t); });
@@ -655,13 +672,17 @@ export default function Chat() {
   const [deleteWorktreeInfo, setDeleteWorktreeInfo] = createSignal<{ dir: string; name: string; branch: string; sessionCount: number } | null>(null);
 
   // WebSocket connection status
-  const [wsConnected, setWsConnected] = createSignal(true);
+  const [wsConnected, setWsConnected] = createSignal(gatewayConnected());
+  const [webOnline, setWebOnline] = createSignal(isElectron() || navigator.onLine !== false);
+  const [webRecovering, setWebRecovering] = createSignal(false);
+  const canSendToGateway = () => gateway.connected && (isElectron() || (webOnline() && !webRecovering()));
 
   // Track if this is a local access (Electron or localhost web)
   const [isLocalAccess, setIsLocalAccess] = createSignal(isElectron());
   const [canAddProject, setCanAddProject] = createSignal(isElectron());
 
   const handleLogout = () => {
+    if (!isElectron()) gateway.destroy();
     Auth.logout();
     navigate("/", { replace: true });
   };
@@ -821,20 +842,31 @@ export default function Chat() {
   //  - Messages: disk is base, store-only messages (not yet flushed) are preserved.
   //  - Parts: disk parts overwrite if non-empty; existing streaming parts are
   //    preserved when disk parts are empty (placeholder messages during streaming).
-  const loadSessionMessages = async (sessionId: string) => {
+  const sessionLoadVersions = new Map<string, number>();
+  const sessionActivityVersions = new Map<string, number>();
+  const noteSessionActivity = (sessionId: string) => {
+    sessionActivityVersions.set(sessionId, (sessionActivityVersions.get(sessionId) ?? 0) + 1);
+  };
+  const loadSessionMessages = async (sessionId: string, options?: { preserveScroll?: boolean; refreshActivity?: boolean }) => {
+    const version = (sessionLoadVersions.get(sessionId) ?? 0) + 1;
+    sessionLoadVersions.set(sessionId, version);
+    const refreshActivity = !isElectron() || options?.refreshActivity;
+    const activityVersion = sessionActivityVersions.get(sessionId);
     const t0 = performance.now();
     logger.debug("[LoadMessages] Loading messages for session:", sessionId);
     const hadExisting = !!messageStore.message[sessionId]?.length;
     if (!hadExisting) setLoadingMessages(true);
 
     try {
+      let activity: SessionActivityStatus | undefined;
+      if (refreshActivity) {
+        const session = await gateway.getSession(sessionId);
+        activity = session.activityStatus;
+      }
       const messages = await gateway.listMessages(sessionId);
+      if (disposed || sessionLoadVersions.get(sessionId) !== version) return;
       const t1 = performance.now();
       logger.debug(`[LoadMessages] RPC took ${(t1 - t0).toFixed(0)}ms, got ${messages.length} messages`);
-
-      // If user switched away while we were loading, still cache the data
-      // but don't flip loadingMessages — the new session's load owns that.
-      const isStale = sessionStore.current !== sessionId;
 
       // Store parts — preserve existing streaming parts when disk parts are empty.
       // Disk is authoritative for completed messages; streaming parts are more
@@ -848,9 +880,8 @@ export default function Chat() {
         }
       }
 
-      // Merge messages: disk is the base for ordering and completeness.
-      // Keep any store-only messages (streaming placeholders not yet flushed
-      // to disk) so they aren't lost during active streaming.
+      // Snapshots include notifications received during the request. Ordinary
+      // engines also retain store-only messages that have not reached disk yet.
       messages.sort((a, b) => a.time.created - b.time.created);
       const existing = messageStore.message[sessionId] || [];
       if (existing.length > 0) {
@@ -867,6 +898,15 @@ export default function Chat() {
         setMessageStore("message", sessionId, messages);
       }
 
+      if (refreshActivity && !isTeamParentSession(sessionId)
+        && sessionActivityVersions.get(sessionId) === activityVersion) {
+        const lastAssistant = [...(messageStore.message[sessionId] ?? [])]
+          .reverse().find((message) => message.role === "assistant");
+        setSendingFor(sessionId, activity
+          ? activity === "running" || activity === "waiting"
+          : !!lastAssistant && !lastAssistant.time.completed && !lastAssistant.error);
+      }
+
       const t2 = performance.now();
       logger.debug(`[LoadMessages] Store update took ${(t2 - t1).toFixed(0)}ms, total ${(t2 - t0).toFixed(0)}ms`);
     } catch (error) {
@@ -874,14 +914,108 @@ export default function Chat() {
         logger.error("[LoadMessages] Failed to load messages:", error);
       }
     } finally {
-      if (!hadExisting) setLoadingMessages(false);
-      setTimeout(() => scrollToBottomStable(), 100);
+      if (!disposed && sessionStore.current === sessionId && sessionLoadVersions.get(sessionId) === version) {
+        setLoadingMessages(false);
+        if (!options?.preserveScroll) {
+          setTimeout(() => {
+            if (!disposed && sessionStore.current === sessionId) scrollToBottomStable();
+          }, 100);
+        }
+      }
     }
-    };
+  };
 
   // Generation counter to discard stale background loads when initializeSession
   let initGeneration = 0;
   let engineRefreshTimer: ReturnType<typeof setTimeout> | undefined;
+  const refreshWebSessionList = async (current: () => boolean) => {
+    const previous = new Map(sessionStore.list.map((session) => [session.id, { ...session }]));
+    const [projects, sessions] = await Promise.all([
+      gateway.listAllProjects(),
+      gateway.listAllSessions(),
+    ]);
+    if (!current()) return;
+    const normalizeDirectory = (directory: string) => directory.replaceAll("\\", "/");
+    const projectIndex = new Map(projects.map((project) => [project.directory, project]));
+    const refreshed = sessions
+      .filter((session) => session.directory && (projectIndex.has(normalizeDirectory(session.directory)) || session.worktreeId))
+      .map((session) => toSessionInfo(session, projectIndex.get(normalizeDirectory(session.directory))?.id));
+    setSessionStore("projects", projects);
+    setSessionStore("list", (existing) => {
+      const existingById = new Map(existing.map((session) => [session.id, session]));
+      const refreshedIds = new Set(refreshed.map((session) => session.id));
+      // Keep local changes and notifications received while the snapshot loaded.
+      const merged = refreshed.filter((session) => !previous.has(session.id) || existingById.has(session.id)).map((session) => {
+        const before = previous.get(session.id);
+        const latest = existingById.get(session.id);
+        if (latest && (!before || (Object.keys(latest) as Array<keyof SessionInfo>).some((key) => latest[key] !== before[key]))) {
+          return latest;
+        }
+        return { ...session, ...(latest?.teamId ? { teamId: latest.teamId } : {}) };
+      });
+      return [...merged, ...existing.filter((session) => !previous.has(session.id) && !refreshedIds.has(session.id))];
+    });
+  };
+
+  let recoveryGeneration = 0;
+  let recoveryPromise: Promise<void> | undefined;
+  let orchestrationRevision = 0;
+
+  const recoverWebSession = (): Promise<void> => {
+    if (recoveryPromise) return recoveryPromise;
+    setWebRecovering(true);
+    const generation = ++recoveryGeneration;
+    const sessionId = sessionStore.current;
+    const recoverySessionIds = Object.keys(sessionStore.sendingMap).filter((id) => sessionStore.sendingMap[id]);
+    if (sessionId && !recoverySessionIds.includes(sessionId)) recoverySessionIds.push(sessionId);
+    const activityVersions = new Map(recoverySessionIds.map((id) => [id, sessionActivityVersions.get(id)]));
+    const current = () => !disposed && generation === recoveryGeneration && gatewayConnected();
+    recoveryPromise = (async () => {
+      if (!current()) return;
+      const tasks: Promise<unknown>[] = [refreshWebSessionList(current)];
+      if (sessionId) {
+        tasks.push(loadSessionMessages(sessionId, { preserveScroll: true, refreshActivity: true }));
+        tasks.push(resyncPending(sessionId));
+      }
+      // Background completions must also release the global PWA update guard.
+      for (const pendingSessionId of recoverySessionIds) {
+        if (pendingSessionId === sessionId || isTeamParentSession(pendingSessionId)) continue;
+        const loadVersion = sessionLoadVersions.get(pendingSessionId);
+        tasks.push(gateway.getSession(pendingSessionId).then((session) => {
+          if (!current() || !sessionStore.sendingMap[pendingSessionId]
+            || sessionLoadVersions.get(pendingSessionId) !== loadVersion
+            || sessionActivityVersions.get(pendingSessionId) !== activityVersions.get(pendingSessionId)
+            || session.activityStatus === undefined) return;
+          setSendingFor(pendingSessionId, session.activityStatus === "running" || session.activityStatus === "waiting");
+        }));
+      }
+      if (sessionStore.teamOrchestrationEnabled || recoverySessionIds.some(isTeamParentSession)) {
+        const revision = orchestrationRevision;
+        tasks.push(gateway.listOrchestrations().then((runs) => {
+          if (!current() || revision !== orchestrationRevision) return;
+          // Preserve a newer push received while the recovery request was in flight.
+          for (const run of runs) updateRun(run);
+          const recoveredRunIds = new Set(runs.map((run) => run.id));
+          for (const pendingSessionId of recoverySessionIds) {
+            if (!isTeamParentSession(pendingSessionId)
+              || (pendingSessionId !== sessionId && !sessionStore.sendingMap[pendingSessionId])
+              || sessionActivityVersions.get(pendingSessionId) !== activityVersions.get(pendingSessionId)) continue;
+            const teamId = getTeamId(pendingSessionId);
+            const run = teamId && getRunForTeam(teamId);
+            if (run && recoveredRunIds.has(run.id)) {
+              setSendingFor(pendingSessionId, ["setup", "decomposing", "dispatching", "running", "aggregating"].includes(run.status));
+            }
+          }
+        }));
+      }
+      await Promise.allSettled(tasks);
+    })().finally(() => {
+      recoveryPromise = undefined;
+      if (!disposed && gatewayConnected() && generation !== recoveryGeneration) void recoverWebSession();
+      else if (!disposed) setWebRecovering(false);
+    });
+    return recoveryPromise;
+  };
 
   const initializeSession = async () => {
     const gen = ++initGeneration;
@@ -897,12 +1031,16 @@ export default function Chat() {
       }
 
       const isValidToken = await Auth.checkDeviceToken();
+      if (disposed || gen !== initGeneration) return;
       if (!isValidToken) {
         logger.debug("[Init] Device token invalid or revoked, redirecting to entry");
+        if (!isElectron()) gateway.destroy();
         Auth.clearAuth();
         navigate("/", { replace: true });
         return;
       }
+
+      if (!isElectron()) initializeWebInputDrafts(Auth.getDeviceId());
 
       // Bootstrap host settings on page refresh (no-op if already done)
       const applied = await bootstrapHostSettings();
@@ -914,6 +1052,7 @@ export default function Chat() {
       // Build notification handlers for this mount's closures
       const handlers = {
         onConnected: () => {
+          if (disposed) return;
           logger.debug("[Gateway] Connected/reconnected");
           if (!wsConnected()) {
             notify(t().notification.gatewayReconnected, "info", 3000);
@@ -921,7 +1060,12 @@ export default function Chat() {
           setWsConnected(true);
           // If we were in error state, re-initialize on reconnect
           if (sessionStore.initError) {
-            initializeSession();
+            void initializeSession();
+            return;
+          }
+          if (!isElectron()) {
+            void recoverWebSession();
+            return;
           }
           // Resync pending question/permission state for the active session —
           // a reconnect may have caused us to miss one-shot `*.asked` events.
@@ -929,6 +1073,8 @@ export default function Chat() {
           if (sid) void resyncPending(sid);
         },
         onDisconnected: (reason: string) => {
+          if (disposed) return;
+          recoveryGeneration++;
           logger.warn("[Gateway] Disconnected:", reason);
           setWsConnected(false);
           notify(t().notification.gatewayDisconnected, "warning", 8000);
@@ -990,6 +1136,7 @@ export default function Chat() {
           notify(formatMessage(t().scheduledTask.taskFailed, { error }), "warning", 5000);
         },
         onOrchestrationUpdated: (run: OrchestrationRun) => {
+          orchestrationRevision++;
           updateRun(run);
 
           if (
@@ -1053,6 +1200,11 @@ export default function Chat() {
 
       if (!needsSessionBootstrap) {
         logger.debug("[Init] Gateway already initialized, handlers refreshed (remount)");
+        const currentSessionId = sessionStore.current;
+        if (currentSessionId && !isElectron()) {
+          await loadSessionMessages(currentSessionId, { preserveScroll: true, refreshActivity: true });
+          void resyncPending(currentSessionId);
+        }
         // Restore scroll position for the current session after route navigation
         const scrollAction = resolveRemountScroll(sessionStore.current);
         if (scrollAction.action === "restore") {
@@ -1257,6 +1409,10 @@ export default function Chat() {
     if (!existing || !existing.some(m => m.role === "user")) {
       await loadSessionMessages(sessionId);
     } else {
+      if (!isElectron()) {
+        await loadSessionMessages(sessionId, { preserveScroll: true });
+        if (gen !== switchGeneration || sessionStore.current !== sessionId) return;
+      }
       const scrollAction = resolveSessionSwitchScroll(sessionId);
       if (scrollAction.action === "restore") {
         const pos = scrollAction.position;
@@ -1415,10 +1571,14 @@ export default function Chat() {
     return run?.id ?? null;
   };
 
-  const handleTeamSend = async (sessionId: string, prompt: string) => {
+  const handleTeamSend = async (sessionId: string, prompt: string, submission?: InputDraftSubmission) => {
     const teamId = getTeamId(sessionId);
-    if (!teamId) return;
+    if (!teamId) {
+      if (submission) restoreInputDraftIfUnchanged(sessionId, submission);
+      return;
+    }
 
+    noteSessionActivity(sessionId);
     setSendingFor(sessionId, true);
 
     // Show the user's prompt as a temp message
@@ -1465,8 +1625,11 @@ export default function Chat() {
       });
     } catch (error) {
       logger.error("[TeamTask] Failed to start team orchestration:", error);
-      notify(t().notification.messageSendFailed);
+      notifySendFailure(error);
       setSendingFor(sessionId, false);
+      setMessageStore("message", sessionId, (messages) => messages.filter((message) => message.id !== tempMsgId));
+      setMessageStore("part", tempMsgId, undefined as any);
+      if (submission) restoreInputDraftIfUnchanged(sessionId, submission);
     }
   };
 
@@ -1764,6 +1927,7 @@ export default function Chat() {
 
     try {
       await gateway.replyPermission(permissionID, reply);
+      pendingReplyRevision++;
 
       // Optimistically remove from queue
       const existing = messageStore.permission[sessionID] || [];
@@ -1901,9 +2065,13 @@ export default function Chat() {
   };
 
   const handleMessageUpdated = (_sessionId: string, msgInfo: UnifiedMessage) => {
+    noteSessionActivity(msgInfo.sessionId);
     const targetSessionId = msgInfo.sessionId;
 
     batch(() => {
+      if (!isElectron() && msgInfo.role === "assistant" && !msgInfo.time.completed && !msgInfo.error) {
+        setSendingFor(targetSessionId, true);
+      }
       if (msgInfo.role === "user") {
         const currentMessages = messageStore.message[targetSessionId] || [];
         const tempMessages = currentMessages.filter(m => m.id.startsWith("msg-temp-"));
@@ -2009,6 +2177,10 @@ export default function Chat() {
   };
 
   const handleSessionUpdated = (updated: UnifiedSession) => {
+    noteSessionActivity(updated.id);
+    if (!isElectron() && updated.activityStatus && !isTeamParentSession(updated.id)) {
+      setSendingFor(updated.id, updated.activityStatus === "running" || updated.activityStatus === "waiting");
+    }
     logger.debug("[WS] session.updated received:", updated);
     setSessionStore("list", (list) =>
       list.map((s) =>
@@ -2078,6 +2250,9 @@ export default function Chat() {
     setSessionStore("list", (list) => [info, ...list]);
   };
 
+  let pendingReplyRevision = 0;
+  const pendingLoadVersions = new Map<string, number>();
+
   const handlePermissionAsked = (permission: UnifiedPermission) => {
     logger.debug("[WS] Permission asked:", permission);
     const existing = messageStore.permission[permission.sessionId] || [];
@@ -2087,6 +2262,7 @@ export default function Chat() {
   };
 
   const handlePermissionReplied = (permissionId: string, _optionId: string) => {
+    pendingReplyRevision++;
     logger.debug("[WS] Permission replied:", permissionId);
     // Find and remove permission from all sessions
     for (const [sessionId, perms] of Object.entries(messageStore.permission)) {
@@ -2108,6 +2284,7 @@ export default function Chat() {
   };
 
   const handleQuestionReplied = (questionId: string, _answers: string[][]) => {
+    pendingReplyRevision++;
     logger.debug("[WS] Question replied:", questionId);
     // Find and remove question from all sessions
     for (const [sessionId, qs] of Object.entries(messageStore.question)) {
@@ -2124,13 +2301,6 @@ export default function Chat() {
    * Resync pending questions/permissions for a session from the backend.
    * Called on session switch and after WS reconnect so the user isn't stranded
    * if a `question.asked` / `permission.asked` notification was missed.
-   * Merges with existing store entries (dedupe by id) — never removes, since
-   * an already-seen item might still be valid.
-   */
-  /**
-   * Resync pending questions/permissions for a session from the backend.
-   * Called on session switch and after WS reconnect so the user isn't stranded
-   * if a `question.asked` / `permission.asked` notification was missed.
    *
    * Merge strategy (handles cross-device replies too):
    *   1. Snapshot the store's ids before the RPC. Anything in the snapshot that
@@ -2141,6 +2311,9 @@ export default function Chat() {
    *   3. Append server items that aren't already in the store.
    */
   const resyncPending = async (sessionId: string) => {
+    const version = (pendingLoadVersions.get(sessionId) ?? 0) + 1;
+    pendingLoadVersions.set(sessionId, version);
+    const replyRevision = pendingReplyRevision;
     const preQuestionIds = new Set(
       (messageStore.question[sessionId] ?? []).map((q) => q.id),
     );
@@ -2150,6 +2323,7 @@ export default function Chat() {
 
     try {
       const { questions, permissions } = await gateway.listPending(sessionId);
+      if (disposed || pendingLoadVersions.get(sessionId) !== version || pendingReplyRevision !== replyRevision) return;
       const serverQIds = new Set(questions.map((q) => q.id));
       const serverPIds = new Set(permissions.map((p) => p.id));
 
@@ -2198,6 +2372,7 @@ export default function Chat() {
 
     try {
       await gateway.replyQuestion(questionID, answers);
+      pendingReplyRevision++;
 
       // Optimistically remove from queue
       const existing = messageStore.question[sessionID] || [];
@@ -2215,6 +2390,7 @@ export default function Chat() {
 
     try {
       await gateway.rejectQuestion(questionID);
+      pendingReplyRevision++;
 
       // Optimistically remove from queue
       const existing = messageStore.question[sessionID] || [];
@@ -2226,7 +2402,7 @@ export default function Chat() {
 
   // Continue after interruption — re-send with current agent mode
   const handleContinue = (_sessionID: string) => {
-    if (sending()) return;
+    if (!canSendToGateway() || sending()) return;
     handleSendMessage("Continue where you left off.", currentAgent());
   };
 
@@ -2239,6 +2415,10 @@ export default function Chat() {
   const handleCommandInvoke = async (commandName: string, args: string, agent: AgentMode) => {
     const sessionId = sessionStore.current;
     if (!sessionId) return;
+    if (!canSendToGateway()) {
+      showSendError(t().notification.gatewayDisconnected);
+      return;
+    }
 
     const isBusy = sending();
     if (isBusy && !canEnqueue()) return;
@@ -2249,6 +2429,8 @@ export default function Chat() {
       return;
     }
 
+    const submission = consumeInputDraft(sessionId);
+    noteSessionActivity(sessionId);
     setSendingFor(sessionId, true);
 
     const reasoningEffort = currentSessionReasoningEffort();
@@ -2297,23 +2479,28 @@ export default function Chat() {
       }
     } catch (error) {
       logger.error("[CommandInvoke] Failed:", error);
-      notify(t().notification.messageSendFailed);
+      notifySendFailure(error);
       // Remove the optimistic temp message on failure
       setMessageStore("message", sessionId, (draft) =>
         draft.filter((m) => m.id !== tempMessageId),
       );
       setMessageStore("part", tempMessageId, undefined as any);
       setSendingFor(sessionId, false);
+      restoreInputDraftIfUnchanged(sessionId, submission);
     }
   };
 
-  const handleSendMessage = async (text: string, agent: AgentMode, images?: import("../types/unified").ImageAttachment[]) => {
+  const handleSendMessage = async (text: string, agent: AgentMode, images?: ImageAttachment[], fromDraft = false) => {
     const sessionId = sessionStore.current;
     if (!sessionId) return;
+    if (!canSendToGateway()) {
+      showSendError(t().notification.gatewayDisconnected);
+      return;
+    }
 
     // Team session interception: route to orchestration flow instead of normal send
     if (isTeamParentSession(sessionId)) {
-      await handleTeamSend(sessionId, text);
+      await handleTeamSend(sessionId, text, fromDraft ? consumeInputDraft(sessionId) : undefined);
       return;
     }
 
@@ -2332,6 +2519,8 @@ export default function Chat() {
       return;
     }
 
+    const submission = fromDraft ? consumeInputDraft(sessionId) : undefined;
+    noteSessionActivity(sessionId);
     setSendingFor(sessionId, true);
 
     const reasoningEffort = currentSessionReasoningEffort();
@@ -2369,11 +2558,12 @@ export default function Chat() {
         serviceTier,
       }).catch((error) => {
         logger.error("[SendMessage] Failed to enqueue message:", error);
-        notify(t().notification.messageSendFailed);
+        notifySendFailure(error);
         // Remove from queued store on failure
         setMessageStore("queued", sessionId, (draft) =>
           draft.filter((m) => m.id !== tempMessageId),
         );
+        if (submission) restoreInputDraftIfUnchanged(sessionId, submission);
       });
       return;
     }
@@ -2461,13 +2651,14 @@ export default function Chat() {
       }
     } catch (error) {
       logger.error("[SendMessage] Failed to send message:", error);
-      notify(t().notification.messageSendFailed);
+      notifySendFailure(error);
       // Remove the optimistic temp message on failure
       setMessageStore("message", sessionId, (draft) =>
         draft.filter((m) => m.id !== tempMessageId),
       );
       setMessageStore("part", tempMessageId, undefined as any);
       setSendingFor(sessionId, false);
+      if (submission) restoreInputDraftIfUnchanged(sessionId, submission);
     }
   };
 
@@ -2510,6 +2701,54 @@ export default function Chat() {
 
   onCleanup(() => {
     registerTerminalActions(undefined);
+  });
+
+  onMount(() => {
+    if (isElectron()) return;
+    const resume = async () => {
+      setWebRecovering(true);
+      try {
+        const valid = await Auth.checkDeviceToken();
+        if (disposed) return;
+        if (!valid) {
+          gateway.destroy();
+          Auth.clearAuth();
+          navigate("/", { replace: true });
+          return;
+        }
+        initializeWebInputDrafts(Auth.getDeviceId());
+        await gatewayClient.ensureConnected();
+        if (!disposed) await recoverWebSession();
+      } catch (error) {
+        if (!disposed) logger.debug("[Gateway] Browser resume could not restore the connection:", error);
+      } finally {
+        if (!disposed && !recoveryPromise) setWebRecovering(false);
+      }
+    };
+    const stopObserving = observeBrowserResume(resume);
+    const handleNetworkChange = () => setWebOnline(navigator.onLine !== false);
+    window.addEventListener("online", handleNetworkChange);
+    window.addEventListener("offline", handleNetworkChange);
+    const handleAuthStorage = (event: StorageEvent) => {
+      if (event.key !== null && event.key !== "opencode_device_token" && event.key !== "opencode_device_id") return;
+      initializeWebInputDrafts(Auth.getDeviceId());
+      // Another window may have changed the approved device. Rebind the gateway
+      // through normal initialization so the previous JWT cannot remain in use.
+      gateway.destroy();
+      setWsConnected(false);
+      if (Auth.isAuthenticated()) void initializeSession();
+      else {
+        Auth.clearAuth();
+        navigate("/", { replace: true });
+      }
+    };
+    window.addEventListener("storage", handleAuthStorage);
+    onCleanup(() => {
+      stopObserving();
+      window.removeEventListener("online", handleNetworkChange);
+      window.removeEventListener("offline", handleNetworkChange);
+      window.removeEventListener("storage", handleAuthStorage);
+    });
   });
 
   createEffect(() => {
@@ -2990,7 +3229,7 @@ export default function Chat() {
                     </Show>
 
                     <PromptInput
-                      onSend={handleSendMessage}
+                      onSend={(text, agent, images) => handleSendMessage(text, agent, images, true)}
                       onCancel={handleCancelMessage}
                       isGenerating={sending()}
                       canEnqueue={canEnqueue()}
@@ -2999,6 +3238,8 @@ export default function Chat() {
                       onAgentChange={handleAgentChange}
                       availableModes={currentAvailableModes()}
                       disabled={!sessionStore.current}
+                      sendDisabled={!gatewayConnected() || (!isElectron() && (!webOnline() || webRecovering()))}
+                      draftSaveFailed={sessionStore.inputDraftSaveFailures[sessionStore.current ?? ""] === true}
                       imageAttachmentEnabled={currentEngineInfo()?.capabilities?.imageAttachment ?? false}
                       availableCommands={availableCommands()}
                       onCommandInvoke={handleCommandInvoke}

@@ -195,4 +195,78 @@ describe("GatewayClient authentication", () => {
     expect(ws.close).toHaveBeenCalledWith(4000, "Authentication timed out");
     expect(client.connected).toBe(false);
   });
+
+  describe("ensureConnected", () => {
+    it("keeps a responsive authenticated socket and coalesces concurrent health checks", async () => {
+      const ws = await connect();
+      const first = client.ensureConnected();
+      const second = client.ensureConnected();
+      const request = JSON.parse(ws.send.mock.calls.at(-1)![0]);
+      expect(request.type).toBe("engine.list");
+      ws.onmessage?.({ data: JSON.stringify({ type: "response", requestId: request.requestId, payload: [] }) });
+      await Promise.all([first, second]);
+      expect(FakeWebSocket.instances).toHaveLength(1);
+      expect(ws.close).not.toHaveBeenCalled();
+      expect(ws.send).toHaveBeenCalledTimes(2);
+    });
+
+    it("replaces a suspended socket and ignores its delayed close after reauthentication", async () => {
+      const old = await connect();
+      const recovery = client.ensureConnected();
+      await vi.advanceTimersByTimeAsync(5_000);
+      const replacement = FakeWebSocket.instances.at(-1)!;
+      expect(replacement).not.toBe(old);
+      expect(old.close).toHaveBeenCalledWith(4000, "Connection health check failed");
+      expect(client.connected).toBe(false);
+      replacement.open();
+      await expect(client.request("message.send")).rejects.toThrow("Not connected");
+      replacement.authenticate();
+      await recovery;
+      const pending = client.request("engine.list");
+      const request = JSON.parse(replacement.send.mock.calls.at(-1)![0]);
+      old.closeFromServer();
+      expect(client.connected).toBe(true);
+      replacement.onmessage?.({ data: JSON.stringify({ type: "response", requestId: request.requestId, payload: [] }) });
+      expect(await pending).toEqual([]);
+      await vi.advanceTimersByTimeAsync(500);
+      expect(FakeWebSocket.instances).toHaveLength(2);
+    });
+
+    it("waits for an existing connection handshake instead of reporting ready early", async () => {
+      const connecting = client.connect();
+      const recovery = client.ensureConnected();
+      const settled = vi.fn();
+      void recovery.then(settled);
+      const ws = FakeWebSocket.instances.at(-1)!;
+      ws.open();
+      await Promise.resolve();
+      expect(settled).not.toHaveBeenCalled();
+      expect(FakeWebSocket.instances).toHaveLength(1);
+      ws.authenticate();
+      await Promise.all([connecting, recovery]);
+      expect(settled).toHaveBeenCalledOnce();
+    });
+
+    it("does not reconnect when the client is explicitly destroyed during a probe", async () => {
+      await connect();
+      const checking = client.ensureConnected();
+      const rejected = expect(checking).rejects.toThrow("Client disconnected");
+      client.disconnect();
+      await rejected;
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(FakeWebSocket.instances).toHaveLength(1);
+    });
+
+    it("does not open an old native endpoint after the connection is destroyed", async () => {
+      mocks.isElectron.mockReturnValue(true);
+      let resolveEndpoint!: (url: string) => void;
+      mocks.getWsUrl.mockReturnValueOnce(new Promise((resolve) => { resolveEndpoint = resolve; }));
+      const connecting = client.connect();
+      const rejected = expect(connecting).rejects.toThrow("Client disconnected");
+      client.disconnect();
+      resolveEndpoint("ws://127.0.0.1:8233/ws");
+      await rejected;
+      expect(FakeWebSocket.instances).toHaveLength(0);
+    });
+  });
 });

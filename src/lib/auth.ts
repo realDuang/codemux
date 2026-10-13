@@ -1,6 +1,7 @@
 import { logger } from "./logger";
 import { isElectron } from "./platform";
 import { authAPI, type DeviceInfo } from "./electron-api";
+import { clearWebInputDrafts } from "../stores/session";
 
 // ============================================================================
 // Types
@@ -84,6 +85,7 @@ export class Auth {
   }
 
   static clearAuth(): void {
+    if (!isElectron()) clearWebInputDrafts();
     localStorage.removeItem(this.TOKEN_KEY);
     localStorage.removeItem(this.DEVICE_ID_KEY);
   }
@@ -175,6 +177,7 @@ export class Auth {
       // Electron uses IPC
       if (isElectron()) {
         const result = await authAPI.validateToken(token);
+        if (this.getToken() !== token) return this.isAuthenticated();
         if (result.valid && result.deviceId) {
           this.saveDeviceId(result.deviceId);
           return true;
@@ -184,33 +187,44 @@ export class Auth {
       }
 
       // Browser uses HTTP
-      const response = await fetch("/api/auth/validate", {
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 10_000);
+      try {
+        const response = await fetch("/api/auth/validate", {
+          headers: { Authorization: `Bearer ${token}` },
+          cache: "no-store",
+          signal: controller.signal,
+        });
 
-      if (response.status === 401) {
-        this.clearAuth();
-        return false;
-      }
-      // Access policy can return 403 while the device token remains valid.
-      // Other failed responses cannot establish that its approval was revoked.
-      if (!response.ok) return true;
+        if (this.getToken() !== token) return this.isAuthenticated();
 
-      const data: ValidateResponse = await response.json();
-      if (data.valid === false) {
-        this.clearAuth();
-        return false;
+        if (response.status === 401) {
+          this.clearAuth();
+          return false;
+        }
+        // Access policy can return 403 while the device token remains valid.
+        // Other failed responses cannot establish that its approval was revoked.
+        if (!response.ok) return true;
+
+        const data: ValidateResponse = await response.json();
+        if (this.getToken() !== token) return this.isAuthenticated();
+        if (data.valid === false) {
+          this.clearAuth();
+          return false;
+        }
+        if (data.valid && data.deviceId) {
+          // Update local device ID if needed
+          this.saveDeviceId(data.deviceId);
+        }
+        return this.isAuthenticated();
+      } finally {
+        clearTimeout(timeout);
       }
-      if (data.valid && data.deviceId) {
-        // Update local device ID if needed
-        this.saveDeviceId(data.deviceId);
-      }
-      return true;
     } catch (err) {
       logger.error("Token validation error:", err);
       // Network error - assume token might still be valid
       // Let the user proceed, they'll get 401 on actual API calls
-      return true;
+      return this.isAuthenticated();
     }
   }
 
@@ -219,17 +233,20 @@ export class Auth {
    */
   static async logout(): Promise<void> {
     const token = this.getToken();
+    // Local logout must complete even when the host cannot acknowledge it.
+    // A late response must also never clear a subsequent login's credentials.
+    this.clearAuth();
     if (token) {
       try {
         await fetch("/api/auth/logout", {
           method: "POST",
           headers: { Authorization: `Bearer ${token}` },
+          cache: "no-store",
         });
       } catch (err) {
         logger.error("Logout error:", err);
       }
     }
-    this.clearAuth();
   }
 
   /**

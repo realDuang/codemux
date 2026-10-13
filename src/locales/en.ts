@@ -1,5 +1,21 @@
 // Define the structure of our translations
 export interface LocaleDict {
+  pwa: {
+    install: string;
+    installDescription: string;
+    installTitle: string;
+    installIos: string;
+    installIosBrowser: string;
+    done: string;
+    dismiss: string;
+    offline: string;
+    updateAvailable: string;
+    update: string;
+    updateImages: string;
+    updateUnsaved: string;
+    updateBusy: string;
+    updateFailed: string;
+  };
   // Common
   common: {
     loading: string;
@@ -275,6 +291,8 @@ export interface LocaleDict {
 
   // Prompt Input
   prompt: {
+    draftSaveFailed: string;
+    draftImagesNotSaved: string;
     buildMode: string;
     build: string;
     planMode: string;
@@ -570,6 +588,7 @@ export interface LocaleDict {
   // Notifications
   notification: {
     messageSendFailed: string;
+    messageSendInterrupted: string;
     sessionCreateFailed: string;
     sessionDeleteFailed: string;
     gatewayDisconnected: string;
@@ -739,6 +758,22 @@ export interface LocaleDict {
 }
 
 export const en: LocaleDict = {
+  pwa: {
+    install: "Install",
+    installDescription: "Open CodeMux from your home screen.",
+    installTitle: "Add CodeMux to your home screen",
+    installIos: "Open the Share menu, choose “Add to Home Screen”, then tap “Add”.",
+    installIosBrowser: "If the option is missing, open this address in Safari.",
+    done: "Got it",
+    dismiss: "Dismiss",
+    offline: "You are offline. Reconnect to send messages and receive updates.",
+    updateAvailable: "A new version of CodeMux is ready.",
+    update: "Refresh",
+    updateImages: "Send or remove draft images before refreshing.",
+    updateUnsaved: "A draft could not be saved. Copy your text before refreshing manually.",
+    updateBusy: "A response is in progress. Refresh when it finishes.",
+    updateFailed: "The update failed. Please try again.",
+  },
   // Common
   common: {
     loading: "Loading...",
@@ -1011,6 +1046,8 @@ export const en: LocaleDict = {
 
   // Prompt Input
   prompt: {
+    draftSaveFailed: "This draft could not be saved on this device. Keep this page open or copy your text.",
+    draftImagesNotSaved: "Images are not saved with drafts. Reattach them after reopening.",
     buildMode: "Build mode - execute code changes and commands",
     build: "Build",
     planMode: "Plan mode - read-only research and planning",
@@ -1300,6 +1337,7 @@ export const en: LocaleDict = {
   // Notifications
   notification: {
     messageSendFailed: "Failed to send message. Please try again.",
+    messageSendInterrupted: "Sending was interrupted. Check the conversation before sending again.",
     sessionCreateFailed: "Failed to create session.",
     sessionDeleteFailed: "Failed to delete session.",
     gatewayDisconnected: "Connection lost. Reconnecting...",

@@ -26,6 +26,8 @@ const MIME_TYPES: Record<string, string> = {
   ".js": "application/javascript",
   ".css": "text/css",
   ".json": "application/json",
+  ".webmanifest": "application/manifest+json",
+  ".wasm": "application/wasm",
   ".png": "image/png",
   ".jpg": "image/jpeg",
   ".jpeg": "image/jpeg",
@@ -42,6 +44,22 @@ const MIME_TYPES: Record<string, string> = {
 function getMimeType(filePath: string): string {
   const ext = path.extname(filePath).toLowerCase();
   return MIME_TYPES[ext] || "application/octet-stream";
+}
+
+const WEB_ROUTES = new Set(["/", "/login", "/remote", "/settings", "/devices", "/chat"]);
+
+function isWithinDirectory(directory: string, filePath: string): boolean {
+  const relativePath = path.relative(directory, filePath);
+  return relativePath !== ".." && !relativePath.startsWith(`..${path.sep}`) && !path.isAbsolute(relativePath);
+}
+
+function getStaticCacheControl(pathname: string): string {
+  // Only Vite's content-hashed assets are immutable. The app entry, manifest,
+  // service worker, and unversioned public files must revalidate on each visit.
+  if ([".html", ".webmanifest"].includes(path.extname(pathname))) return "no-cache";
+  const isHashedAsset = /^\/assets\/.+-[\w-]{8}\.[^/]+$/.test(pathname);
+  const isWorkboxRuntime = /^\/workbox-[a-f0-9]{8}\.js$/.test(pathname);
+  return isHashedAsset || isWorkboxRuntime ? "public, max-age=31536000, immutable" : "no-cache";
 }
 
 
@@ -134,8 +152,8 @@ class ProductionServer {
 
     this.port = port;
     
-    // Static files are in out/renderer relative to app path
-    this.staticRoot = path.join(app.getAppPath(), "out", "renderer");
+    // Web has an independent build; Electron continues to load out/renderer.
+    this.staticRoot = path.join(app.getAppPath(), "out", "web");
     prodServerLog.info("Static root:", this.staticRoot);
 
     return new Promise((resolve, reject) => {
@@ -309,6 +327,10 @@ class ProductionServer {
     // ========================================================================
     // Static File Serving
     // ========================================================================
+    if (pathname === "/api" || pathname.startsWith("/api/")) {
+      sendJson(res, { error: "Not found" }, 404);
+      return;
+    }
     await this.serveStaticFile(req, res, pathname);
   }
 
@@ -317,38 +339,73 @@ class ProductionServer {
     res: http.ServerResponse,
     pathname: string
   ): Promise<void> {
-    // Normalize path and prevent directory traversal
-    let filePath = path.join(this.staticRoot, pathname);
-    
-    // Security: ensure we're still within static root
-    if (!filePath.startsWith(this.staticRoot)) {
+    if (req.method !== "GET" && req.method !== "HEAD") {
+      res.writeHead(404);
+      res.end("Not Found");
+      return;
+    }
+
+    let decodedPath: string;
+    try {
+      decodedPath = decodeURIComponent(pathname);
+    } catch {
+      res.writeHead(400);
+      res.end("Bad Request");
+      return;
+    }
+
+    if (decodedPath.includes("\0") || decodedPath.includes("\\")) {
+      res.writeHead(400);
+      res.end("Bad Request");
+      return;
+    }
+
+    let filePath = path.resolve(this.staticRoot, `.${decodedPath}`);
+    if (!isWithinDirectory(this.staticRoot, filePath)) {
       res.writeHead(403);
       res.end("Forbidden");
       return;
     }
 
+    const acceptsHtml = req.headers.accept?.split(",").some(value => value.trim().split(";")[0] === "text/html");
+    const isWebNavigation = acceptsHtml && WEB_ROUTES.has(decodedPath.replace(/\/$/, "") || "/");
+
     try {
       const stat = await fs.promises.stat(filePath);
-      
       if (stat.isDirectory()) {
-        // Try index.html for directories
         filePath = path.join(filePath, "index.html");
       }
     } catch {
-      // File not found - serve index.html for SPA routing
-      filePath = path.join(this.staticRoot, "index.html");
+      if (isWebNavigation) {
+        filePath = path.join(this.staticRoot, "index.html");
+      } else {
+        res.writeHead(404);
+        res.end("Not Found");
+        return;
+      }
     }
 
     try {
-      const content = await fs.promises.readFile(filePath);
+      // Follow symlinks only after confirming their target stays in the build.
+      const [realRoot, realFilePath] = await Promise.all([
+        fs.promises.realpath(this.staticRoot),
+        fs.promises.realpath(filePath),
+      ]);
+      if (!isWithinDirectory(realRoot, realFilePath)) {
+        res.writeHead(403);
+        res.end("Forbidden");
+        return;
+      }
+      const content = await fs.promises.readFile(realFilePath);
       const mimeType = getMimeType(filePath);
-      
+
       res.writeHead(200, {
         "Content-Type": mimeType,
         "Content-Length": content.length,
-        "Cache-Control": filePath.endsWith(".html") ? "no-cache" : "public, max-age=31536000",
+        "Cache-Control": getStaticCacheControl(`/${path.relative(this.staticRoot, filePath).split(path.sep).join("/")}`),
+        "X-Content-Type-Options": "nosniff",
       });
-      res.end(content);
+      res.end(req.method === "HEAD" ? undefined : content);
     } catch (err) {
       prodServerLog.error("Failed to serve file:", filePath, err);
       res.writeHead(404);

@@ -1,5 +1,5 @@
 import { Router, HashRouter, Route, useNavigate, Navigate } from "@solidjs/router";
-import { createEffect, createSignal, lazy, onMount, Show, Suspense, type ParentComponent } from "solid-js";
+import { createEffect, createSignal, lazy, onMount, Show, Suspense, type ParentComponent, type ParentProps } from "solid-js";
 import { Auth } from "./lib/auth";
 import { I18nProvider, useI18n } from "./lib/i18n";
 import { logger } from "./lib/logger";
@@ -196,7 +196,7 @@ function StartupSplash() {
   );
 }
 
-function App() {
+function App(props: ParentProps) {
   logger.debug("🎨 App component rendering");
   logger.debug("🔐 Is authenticated:", Auth.isAuthenticated());
 
@@ -234,6 +234,7 @@ function App() {
         <StartupSplash />
       </Show>
       <Show when={appReady()}>
+        {props.children}
         <NotificationToast />
         <AccessRequestNotification />
         <UpdateNotification />

@@ -232,6 +232,8 @@ export type StepPart =
 // --- Session ---
 
 export interface UnifiedSession extends UnifiedSessionConfig {
+  /** Current gateway activity, used when recovering a suspended client. */
+  activityStatus?: SessionActivityStatus;
   id: string;
   engineType: EngineType;
   directory: string;

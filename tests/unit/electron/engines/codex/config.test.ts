@@ -14,7 +14,7 @@ import {
   sandboxModeFromPolicy,
   toCodexEffort,
 } from "../../../../../electron/main/engines/codex/config";
-import { isCodexServiceTier } from "../../../../../src/types/unified";
+import { REASONING_EFFORT_VALUES, isCodexServiceTier, isReasoningEffort, normalizeReasoningEfforts } from "../../../../../src/types/unified";
 
 describe("codex/config.ts", () => {
   it("defines the expected Codex modes", () => {
@@ -103,12 +103,20 @@ describe("codex/config.ts", () => {
     expect(toCodexEffort("max")).toBe("xhigh");
     expect(toCodexEffort("medium")).toBe("medium");
     expect(toCodexEffort("low")).toBe("low");
+    expect(toCodexEffort("ultra")).toBe("ultra");
 
     expect(fromCodexEffort("xhigh")).toBe("max");
     expect(fromCodexEffort("medium")).toBe("medium");
     expect(fromCodexEffort("high")).toBe("high");
     expect(fromCodexEffort("low")).toBe("low");
+    expect(fromCodexEffort("ultra")).toBe("ultra");
     expect(fromCodexEffort("minimal")).toBeUndefined();
+  });
+
+  it("accepts model-declared ultra without expanding standard fallback levels", () => {
+    expect(isReasoningEffort("ultra")).toBe(true);
+    expect(normalizeReasoningEfforts(["medium", "ultra", "invalid"])).toEqual(["medium", "ultra"]);
+    expect(REASONING_EFFORT_VALUES).toEqual(["low", "medium", "high", "max"]);
   });
 
   it("derives sandbox mode from a sandbox policy", () => {

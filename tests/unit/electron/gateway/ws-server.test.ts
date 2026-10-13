@@ -154,6 +154,7 @@ function createMockEngineManager() {
     getSession: vi.fn(async () => ({ id: "sess-1" })),
     deleteSession: vi.fn(async () => {}),
     renameSession: vi.fn(async () => ({ success: true })),
+    setSessionArchived: vi.fn(async () => {}),
     sendMessage: vi.fn(async () => ({ id: "msg-1" })),
     cancelMessage: vi.fn(async () => {}),
     listMessages: vi.fn(async () => []),
@@ -166,6 +167,11 @@ function createMockEngineManager() {
     replyQuestion: vi.fn(async () => {}),
     rejectQuestion: vi.fn(async () => {}),
     listProjects: vi.fn(async () => []),
+    listCatalogs: vi.fn(),
+    createProject: vi.fn(),
+    updateProject: vi.fn(),
+    reorderProjects: vi.fn(async () => {}),
+    setSessionProject: vi.fn(async () => {}),
     setProjectEngine: vi.fn(),
     listAllSessions: vi.fn(() => []),
     listAllProjects: vi.fn(() => []),
@@ -1043,6 +1049,21 @@ describe("GatewayServer", () => {
       expect(engineManager.deleteSession).toHaveBeenCalledWith("sess-1");
     });
 
+    it.each([true, false])("SESSION_ARCHIVE delegates archived=%s", async (archived) => {
+      const { connect, sendMessage, engineManager } = createTestHarness();
+      const ws = connect();
+      await sendMessage(ws, { type: GatewayRequestType.SESSION_ARCHIVE, requestId: "archive", payload: { sessionId: "s1", archived } });
+      expect(engineManager.setSessionArchived).toHaveBeenCalledWith("s1", archived);
+    });
+
+    it.each([{}, { sessionId: "s1", archived: "true" }, { sessionId: "", archived: true }])("SESSION_ARCHIVE rejects invalid payloads", async (payload) => {
+      const { connect, sendMessage, engineManager } = createTestHarness();
+      const ws = connect();
+      await sendMessage(ws, { type: GatewayRequestType.SESSION_ARCHIVE, requestId: "archive", payload });
+      expect(engineManager.setSessionArchived).not.toHaveBeenCalled();
+      expect(JSON.parse(ws.send.mock.calls[0][0]).error.code).toBe("INVALID_PARAMS");
+    });
+
     it("SESSION_RENAME delegates with sessionId and title", async () => {
       const { connect, sendMessage, engineManager } = createTestHarness();
       const ws = connect();
@@ -1299,6 +1320,97 @@ describe("GatewayServer", () => {
       });
 
       expect(engineManager.listProjects).toHaveBeenCalledWith("claude");
+    });
+
+    it("CATALOG_LIST returns mapped projects and sessions including empty sources", async () => {
+      const { connect, sendMessage, engineManager } = createTestHarness();
+      const ws = connect();
+      const catalogs = [
+        { sourceId: "source-a", engineType: "codex-desktop", revision: "1", complete: true, projects: [], sessions: [] },
+        { sourceId: "source-b", engineType: "other-engine", revision: "2", complete: true,
+          projects: [{ id: "catalog-project-b", catalogProjectId: "native-project", directory: "/repo" }],
+          sessions: [{ id: "codemux-conversation", projectId: "catalog-project-b" }] },
+      ];
+      engineManager.listCatalogs.mockReturnValue(catalogs);
+      await sendMessage(ws, { type: GatewayRequestType.CATALOG_LIST, requestId: "catalog" });
+      expect(engineManager.listCatalogs).toHaveBeenCalledOnce();
+      expect(JSON.parse(ws.send.mock.calls[0][0])).toEqual({ type: "response", requestId: "catalog", payload: catalogs });
+    });
+
+    it("PROJECT_CREATE forwards the source and roots and returns the confirmed stable project", async () => {
+      const { connect, sendMessage, engineManager } = createTestHarness();
+      const ws = connect();
+      const payload = { sourceId: "source-a", name: "New project", roots: ["/repo", "/another-root"] };
+      const confirmed = { id: "catalog-project-a", name: payload.name, directory: "/repo", roots: payload.roots, catalogProjectId: "native-a" };
+      engineManager.createProject.mockResolvedValue(confirmed);
+      await sendMessage(ws, { type: GatewayRequestType.PROJECT_CREATE, requestId: "create-project", payload });
+      expect(engineManager.createProject).toHaveBeenCalledExactlyOnceWith("source-a", { name: payload.name, roots: payload.roots });
+      expect(JSON.parse(ws.send.mock.calls[0][0]).payload).toEqual(confirmed);
+    });
+
+    it("PROJECT_UPDATE preserves omitted fields and delegates with the stable project ID", async () => {
+      const { connect, sendMessage, engineManager } = createTestHarness();
+      const ws = connect();
+      const patch = { name: "Renamed project" };
+      engineManager.updateProject.mockResolvedValue({ id: "catalog-project-a", ...patch });
+      await sendMessage(ws, { type: GatewayRequestType.PROJECT_UPDATE, requestId: "update-project", payload: { projectId: "catalog-project-a", patch } });
+      expect(engineManager.updateProject).toHaveBeenCalledExactlyOnceWith("catalog-project-a", patch);
+      expect(JSON.parse(ws.send.mock.calls[0][0]).payload).toEqual({ id: "catalog-project-a", ...patch });
+    });
+
+    it("PROJECT_REORDER preserves the requested stable ID order and confirms completion", async () => {
+      const { connect, sendMessage, engineManager } = createTestHarness();
+      const ws = connect();
+      const projectIds = ["catalog-project-b", "catalog-project-a"];
+      await sendMessage(ws, { type: GatewayRequestType.PROJECT_REORDER, requestId: "reorder", payload: { sourceId: "source-a", projectIds } });
+      expect(engineManager.reorderProjects).toHaveBeenCalledExactlyOnceWith("source-a", projectIds);
+      expect(JSON.parse(ws.send.mock.calls[0][0]).payload).toEqual({ success: true });
+    });
+
+    it.each(["catalog-project-a", null])("SESSION_PROJECT_SET preserves assignment %s without changing the directory", async (projectId) => {
+      const { connect, sendMessage, engineManager } = createTestHarness();
+      const ws = connect();
+      await sendMessage(ws, { type: GatewayRequestType.SESSION_PROJECT_SET, requestId: "assign", payload: { sessionId: "codemux-conversation", projectId } });
+      expect(engineManager.setSessionProject).toHaveBeenCalledExactlyOnceWith("codemux-conversation", projectId);
+      expect(engineManager.createSession).not.toHaveBeenCalled();
+      expect(engineManager.setProjectEngine).not.toHaveBeenCalled();
+    });
+
+    it.each(["catalog-project-a", null])("SESSION_CREATE forwards explicit project assignment %s as the fourth argument", async (projectId) => {
+      const { connect, sendMessage, engineManager } = createTestHarness();
+      const ws = connect();
+      await sendMessage(ws, { type: GatewayRequestType.SESSION_CREATE, requestId: "create", payload: { engineType: "codex-desktop", directory: "/cwd", projectId } });
+      expect(engineManager.createSession).toHaveBeenCalledExactlyOnceWith("codex-desktop", "/cwd", undefined, projectId);
+    });
+
+    it.each([
+      { type: GatewayRequestType.PROJECT_CREATE, payload: { sourceId: "s", name: "", roots: ["/repo"] }, method: "createProject" },
+      { type: GatewayRequestType.PROJECT_CREATE, payload: { sourceId: "s", name: "Name", roots: "/repo" }, method: "createProject" },
+      { type: GatewayRequestType.PROJECT_UPDATE, payload: { projectId: "p", patch: {} }, method: "updateProject" },
+      { type: GatewayRequestType.PROJECT_UPDATE, payload: { projectId: "p", patch: { roots: [42] } }, method: "updateProject" },
+      { type: GatewayRequestType.PROJECT_UPDATE, payload: { projectId: "p", patch: { directory: "/changed" } }, method: "updateProject" },
+      { type: GatewayRequestType.PROJECT_REORDER, payload: { sourceId: "s", projectIds: ["p", "p"] }, method: "reorderProjects" },
+      { type: GatewayRequestType.SESSION_PROJECT_SET, payload: { sessionId: "s" }, method: "setSessionProject" },
+      { type: GatewayRequestType.SESSION_PROJECT_SET, payload: { sessionId: "s", projectId: false }, method: "setSessionProject" },
+      { type: GatewayRequestType.SESSION_CREATE, payload: { directory: "/cwd", projectId: 1 }, method: "createSession" },
+      { type: GatewayRequestType.PROJECT_DELETE, payload: { projectId: "" }, method: "deleteProject" },
+    ])("rejects malformed $type before calling $method", async ({ type, payload, method }) => {
+      const { connect, sendMessage, engineManager } = createTestHarness();
+      const ws = connect();
+      await sendMessage(ws, { type, requestId: "invalid", payload });
+      expect(engineManager[method as keyof typeof engineManager]).not.toHaveBeenCalled();
+      expect(JSON.parse(ws.send.mock.calls[0][0]).error.code).toBe("INVALID_PARAMS");
+    });
+
+    it("does not report project deletion success when the native empty-project check rejects it", async () => {
+      const { connect, sendMessage, engineManager } = createTestHarness();
+      const ws = connect();
+      engineManager.deleteProject.mockRejectedValue(new Error("The project contains conversations"));
+      await sendMessage(ws, { type: GatewayRequestType.PROJECT_DELETE, requestId: "delete", payload: { projectId: "catalog-project-a" } });
+      const response = JSON.parse(ws.send.mock.calls[0][0]);
+      expect(response.error).toBeDefined();
+      expect(response.payload?.success).not.toBe(true);
+      expect(engineManager.deleteProject).toHaveBeenCalledExactlyOnceWith("catalog-project-a");
     });
 
     it("PROJECT_SET_ENGINE delegates and returns success", async () => {
@@ -1748,6 +1860,34 @@ describe("GatewayServer", () => {
   // =========================================================================
 
   describe("broadcast", () => {
+    it("broadcasts only mapped removal identity to currently authorized clients", () => {
+      let authorized = true;
+      const { connect, engineManager } = createTestHarness({ authValidator: (token) => token === "valid" && authorized });
+      mockRandomUUID.mockReturnValueOnce("removed-auth");
+      const ws = connect({ url: "/ws?token=valid" });
+      mockRandomUUID.mockReturnValueOnce("removed-unauth");
+      const unauthenticated = connect({ url: "/ws" });
+      engineManager.emit("session.removed", { sessionId: "codemux-conversation", title: "Must not leak", archived: true });
+      expect(ws.send).toHaveBeenCalledExactlyOnceWith(JSON.stringify({
+        type: GatewayNotificationType.SESSION_REMOVED, payload: { sessionId: "codemux-conversation" },
+      }));
+      expect(unauthenticated.send).not.toHaveBeenCalled();
+      ws.send.mockClear();
+      authorized = false;
+      engineManager.emit("session.removed", { sessionId: "codemux-conversation" });
+      expect(ws.send).not.toHaveBeenCalled();
+      expect(ws.close).toHaveBeenCalledWith(4001, "Unauthorized");
+    });
+
+    it("forwards message removal without changing its session identity", () => {
+      const { connect, engineManager } = createTestHarness();
+      const ws = connect();
+      const payload = { sessionId: "s1", messageId: "m1" };
+      engineManager.emit("message.removed", payload);
+
+      expect(ws.send).toHaveBeenCalledWith(JSON.stringify({ type: GatewayNotificationType.MESSAGE_REMOVED, payload }));
+    });
+
     it("sends notification to all authenticated OPEN clients", () => {
       const { connect } = createTestHarness();
       mockRandomUUID.mockReturnValueOnce("c1");
@@ -1828,6 +1968,22 @@ describe("GatewayServer", () => {
           payload: { id: "sess-new" },
         }),
       );
+    });
+
+    it("broadcasts catalog snapshots unchanged only while the device remains authorized", () => {
+      let authorized = true;
+      const { connect, engineManager } = createTestHarness({ authValidator: (token) => token === "catalog-token" && authorized });
+      const ws = connect({ url: "/ws?token=catalog-token" });
+      const snapshot = { sourceId: "source-a", revision: "2", complete: true, engineType: "codex-desktop",
+        projects: [{ id: "catalog-project-a", catalogProjectId: "native-project-a", directory: "/root" }],
+        sessions: [{ id: "codemux-conversation-a", projectId: "catalog-project-a" }] };
+      engineManager.emit("catalog.updated", snapshot);
+      expect(ws.send).toHaveBeenCalledExactlyOnceWith(JSON.stringify({ type: GatewayNotificationType.CATALOG_UPDATED, payload: snapshot }));
+      ws.send.mockClear();
+      authorized = false;
+      engineManager.emit("catalog.updated", snapshot);
+      expect(ws.send).not.toHaveBeenCalled();
+      expect(ws.close).toHaveBeenCalledWith(4001, "Unauthorized");
     });
 
     it("broadcasts permission.asked events", () => {

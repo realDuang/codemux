@@ -37,6 +37,8 @@ Switch between engines from a single interface. Each keeps its full power — fi
 >
 > ⚠️ Codex support is currently experimental/unstable. Expect protocol details and behavior to evolve as the upstream app-server protocol changes.
 
+An opt-in local integration automatically discovers new Codex Desktop conversations and shares their live state through its private coordination protocol. Older conversations can be attached manually. See [shared Codex Desktop conversations](docs/codex-desktop-sharing.md) for setup, live checks, and current limits.
+
 ### 2. Agent Chain-of-Thought Visualization
 
 Every agent action is rendered as an expandable step — file diffs, shell commands, search results, tool calls — so you can see exactly what the agent is doing and why, not just the final answer.

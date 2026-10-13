@@ -40,6 +40,7 @@ export function ReasoningEffortSelector(props: ReasoningEffortSelectorProps) {
     medium: () => t().prompt.reasoningEffortMedium,
     high: () => t().prompt.reasoningEffortHigh,
     max: () => t().prompt.reasoningEffortMax,
+    ultra: () => t().prompt.reasoningEffortUltra,
   };
 
   return (

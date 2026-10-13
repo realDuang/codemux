@@ -1,9 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import type { UnifiedMessage, UnifiedPart } from '../../../../src/types/unified';
+import { reconcile } from 'solid-js/store';
+import type { EngineCatalogSnapshot, EngineInfo, SessionActivityStatus, UnifiedMessage, UnifiedPart, UnifiedProject, UnifiedSession } from '../../../../src/types/unified';
 
 const mockGatewayClient = {
   connect: vi.fn().mockResolvedValue(undefined),
   disconnect: vi.fn(),
+  discardSessionNotifications: vi.fn(),
   connected: true,
   listEngines: vi.fn().mockResolvedValue([]),
   listModels: vi.fn().mockResolvedValue({ models: [] }),
@@ -12,6 +14,8 @@ const mockGatewayClient = {
   getSession: vi.fn().mockResolvedValue({ id: 's1' }),
   deleteSession: vi.fn().mockResolvedValue(undefined),
   renameSession: vi.fn().mockResolvedValue(undefined),
+  setSessionArchived: vi.fn().mockResolvedValue(undefined),
+  setSessionProject: vi.fn().mockResolvedValue(undefined),
   sendMessage: vi.fn().mockResolvedValue({ id: 'm1' }),
   cancelMessage: vi.fn().mockResolvedValue(undefined),
   listMessages: vi.fn().mockResolvedValue([]),
@@ -22,6 +26,10 @@ const mockGatewayClient = {
   replyQuestion: vi.fn().mockResolvedValue(undefined),
   rejectQuestion: vi.fn().mockResolvedValue(undefined),
   listProjects: vi.fn().mockResolvedValue([]),
+  listCatalogs: vi.fn().mockResolvedValue([]),
+  createProject: vi.fn().mockResolvedValue({ id: 'project' }),
+  updateProject: vi.fn().mockResolvedValue({ id: 'project' }),
+  reorderProjects: vi.fn().mockResolvedValue(undefined),
   setProjectEngine: vi.fn().mockResolvedValue(undefined),
   listAllSessions: vi.fn().mockResolvedValue([]),
   listAllProjects: vi.fn().mockResolvedValue([]),
@@ -58,7 +66,7 @@ vi.mock('../../../../src/lib/logger', () => ({
 }));
 
 // Import after mocks are set up
-const { gateway, gatewayConnected } = await import('../../../../src/lib/gateway-api');
+const { gateway, gatewayConnected, getAuthoritativeSessionActivity } = await import('../../../../src/lib/gateway-api');
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -81,12 +89,51 @@ function part(id: string, text: string, messageId = 'm1', sessionId = 's1'): Uni
   return { id, sessionId, messageId, type: 'text', text };
 }
 
+const { setConfigStore } = await import('../../../../src/stores/config');
+const { sessionStore, setSessionStore } = await import('../../../../src/stores/session');
+const { messageStore, setMessageStore } = await import('../../../../src/stores/message');
+
+function useAuthoritativeEngine() {
+  setConfigStore('engines', [{
+    type: 'test-engine',
+    capabilities: { authoritativeSessionState: true },
+  } as EngineInfo]);
+  setSessionStore('list', [{
+    id: 's1', engineType: 'test-engine', title: 'Shared', directory: '/tmp',
+    createdAt: new Date(1).toISOString(), updatedAt: new Date(1).toISOString(),
+  }]);
+}
+
+function sharedSession(activityStatus: SessionActivityStatus, id = 's1'): UnifiedSession {
+  return { id, engineType: 'test-engine', directory: '/tmp', activityStatus, time: { created: 1, updated: 2 } };
+}
+
+function emitGatewayEvent(event: string, payload: unknown) {
+  const handler = mockGatewayClient.on.mock.calls.find(([name]) => name === event)?.[1];
+  expect(handler).toBeTypeOf('function');
+  handler(payload);
+}
+
+function catalogSnapshot(sourceId = 'desktop/local', revision = 'r1', sessions: UnifiedSession[] = []): EngineCatalogSnapshot {
+  return { sourceId, revision, complete: true, sessions, projects: [{
+    id: `catalog:${sourceId}:stable-project`, name: 'Shared project', directory: '/workspace/Second Root',
+    roots: ['/workspace/Second Root', 'C:\\Projects\\First', '/workspace/nested/../root'],
+    catalogSourceId: sourceId, catalogProjectId: 'stable-project',
+  }] };
+}
+
 describe('GatewayAPI', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     // Reset initialized state by calling destroy
     gateway.destroy();
     vi.clearAllMocks(); // clear the disconnect/off calls from destroy
+    setConfigStore('engines', []);
+    setSessionStore('list', []);
+    setSessionStore('current', null);
+    setSessionStore('sendingMap', reconcile({}));
+    setMessageStore('message', reconcile({}));
+    setMessageStore('part', reconcile({}));
   });
 
   // --- init & isInitialized ---
@@ -146,7 +193,475 @@ describe('GatewayAPI', () => {
     expect(gateway.connected).toBe(true);
   });
 
+  describe('authoritative session state', () => {
+    it.each<[SessionActivityStatus, boolean]>([
+      ['running', true], ['waiting', true], ['idle', false],
+      ['completed', false], ['error', false], ['cancelled', false],
+    ])('applies remote %s activity without a local send', async (status, sending) => {
+      useAuthoritativeEngine();
+      setSessionStore('sendingMap', 's1', !sending);
+      const onSessionUpdated = vi.fn();
+      await gateway.init({ onSessionUpdated });
+      const session = sharedSession(status);
+
+      emitGatewayEvent('session.updated', { session });
+
+      expect(sessionStore.sendingMap.s1).toBe(sending);
+      expect(getAuthoritativeSessionActivity('s1')).toBe(status);
+      expect(onSessionUpdated).toHaveBeenCalledWith(session);
+    });
+
+    it('preserves ordinary engine sending state when activity is not authoritative', async () => {
+      setSessionStore('sendingMap', 's1', true);
+      await gateway.init({});
+
+      emitGatewayEvent('session.updated', { session: sharedSession('idle') });
+
+      expect(sessionStore.sendingMap.s1).toBe(true);
+      expect(getAuthoritativeSessionActivity('s1')).toBeUndefined();
+    });
+
+    it('restores activity from session list and get snapshots', async () => {
+      useAuthoritativeEngine();
+      mockGatewayClient.listAllSessions.mockResolvedValueOnce([sharedSession('running')]);
+      await gateway.listAllSessions();
+      expect(sessionStore.sendingMap.s1).toBe(true);
+
+      mockGatewayClient.getSession.mockResolvedValueOnce(sharedSession('waiting'));
+      await gateway.getSession('s1');
+      expect(getAuthoritativeSessionActivity('s1')).toBe('waiting');
+
+      mockGatewayClient.listSessions.mockResolvedValueOnce([sharedSession('completed')]);
+      await gateway.listSessions('test-engine');
+      expect(sessionStore.sendingMap.s1).toBe(false);
+    });
+
+    it('keeps a newer activity event when an earlier snapshot finishes late', async () => {
+      useAuthoritativeEngine();
+      await gateway.init({});
+      let resolveSnapshot!: (session: UnifiedSession) => void;
+      mockGatewayClient.getSession.mockReturnValueOnce(new Promise<UnifiedSession>((resolve) => {
+        resolveSnapshot = resolve;
+      }));
+      const snapshot = gateway.getSession('s1');
+
+      emitGatewayEvent('session.updated', { session: sharedSession('running') });
+      resolveSnapshot(sharedSession('idle'));
+      await snapshot;
+
+      expect(sessionStore.sendingMap.s1).toBe(true);
+      expect(getAuthoritativeSessionActivity('s1')).toBe('running');
+    });
+  });
+
+  describe('session removal', () => {
+    it('clears activity and ignores late session output until an explicit restoration', async () => {
+      useAuthoritativeEngine();
+      const handlers = {
+        onSessionRemoved: vi.fn(), onSessionUpdated: vi.fn(), onMessageUpdated: vi.fn(),
+        onPartUpdated: vi.fn(), onPartsBatch: vi.fn(), onMessageRemoved: vi.fn(),
+        onPermissionAsked: vi.fn(), onQuestionAsked: vi.fn(), onMessageQueued: vi.fn(), onMessageQueuedConsumed: vi.fn(),
+      };
+      await gateway.init(handlers);
+      emitGatewayEvent('session.updated', { session: sharedSession('running') });
+      handlers.onSessionUpdated.mockClear();
+      emitGatewayEvent('session.removed', { sessionId: 's1' });
+      emitGatewayEvent('session.updated', { session: sharedSession('running') });
+      emitGatewayEvent('message.updated', { sessionId: 's1', message: { id: 'old' } });
+      emitGatewayEvent('message.part.updated', { sessionId: 's1', part: { id: 'old' } });
+      emitGatewayEvent('message.parts.batch', { sessionId: 's1', messageId: 'old', parts: [{ id: 'old' }] });
+      emitGatewayEvent('message.removed', { sessionId: 's1', messageId: 'old' });
+      emitGatewayEvent('message.queued', { sessionId: 's1', messageId: 'old', queuePosition: 0 });
+      emitGatewayEvent('message.queued.consumed', { sessionId: 's1', messageId: 'old' });
+      emitGatewayEvent('permission.asked', { permission: { id: 'old', sessionId: 's1' } });
+      emitGatewayEvent('question.asked', { question: { id: 'old', sessionId: 's1' } });
+
+      expect(getAuthoritativeSessionActivity('s1')).toBeUndefined();
+      expect(sessionStore.sendingMap.s1).toBe(false);
+      expect(handlers.onSessionRemoved).toHaveBeenCalledExactlyOnceWith('s1');
+      for (const [name, handler] of Object.entries(handlers)) {
+        if (name !== 'onSessionRemoved') expect(handler).not.toHaveBeenCalled();
+      }
+      emitGatewayEvent('session.created', { session: sharedSession('idle') });
+      emitGatewayEvent('message.updated', { sessionId: 's1', message: { id: 'fresh' } });
+      expect(mockGatewayClient.discardSessionNotifications).toHaveBeenCalledExactlyOnceWith('s1');
+      expect(handlers.onMessageUpdated).toHaveBeenCalledExactlyOnceWith('s1', { id: 'fresh' });
+    });
+
+    it('filters every in-flight session and content snapshot after removal', async () => {
+      useAuthoritativeEngine();
+      const onSessionUpdated = vi.fn();
+      await gateway.init({ onSessionUpdated });
+      let finish!: () => void;
+      const wait = new Promise<void>((resolve) => { finish = resolve; });
+      const old = { ...sharedSession('running'), title: 'Old private title', catalogSourceId: 'desktop/local' };
+      const message: UnifiedMessage = { id: 'old-message', sessionId: 's1', role: 'assistant', time: { created: 1 }, parts: [] };
+      const part = { id: 'old-part', messageId: message.id, sessionId: 's1', type: 'text' as const, text: 'Old output' };
+      mockGatewayClient.listSessions.mockReturnValueOnce(wait.then(() => [old]));
+      mockGatewayClient.listAllSessions.mockReturnValueOnce(wait.then(() => [old]));
+      mockGatewayClient.getSession.mockReturnValueOnce(wait.then(() => old));
+      mockGatewayClient.listCatalogs.mockReturnValueOnce(wait.then(() => [catalogSnapshot('desktop/local', 'old', [old])]));
+      mockGatewayClient.listMessages.mockReturnValueOnce(wait.then(() => [message]));
+      mockGatewayClient.getMessageSteps.mockReturnValueOnce(wait.then(() => [part]));
+      mockGatewayClient.request.mockReturnValueOnce(wait.then(() => ({ questions: [{ id: 'old' }], permissions: [{ id: 'old' }] })));
+      const sessions = gateway.listSessions('test-engine');
+      const allSessions = gateway.listAllSessions();
+      const session = expect(gateway.getSession('s1')).rejects.toThrow('Session was removed');
+      const catalogs = gateway.listCatalogs();
+      const messages = gateway.listMessages('s1');
+      const steps = gateway.getMessageSteps('s1', message.id);
+      const pending = gateway.listPending('s1');
+      emitGatewayEvent('session.removed', { sessionId: 's1' });
+      finish();
+
+      expect(await sessions).toEqual([]);
+      expect(await allSessions).toEqual([]);
+      await session;
+      expect((await catalogs)[0].sessions).toEqual([]);
+      expect(await messages).toEqual([]);
+      expect(await steps).toEqual([]);
+      expect(await pending).toEqual({ questions: [], permissions: [] });
+      expect(onSessionUpdated).not.toHaveBeenCalled();
+      expect(getAuthoritativeSessionActivity('s1')).toBeUndefined();
+    });
+
+    it.each([false, true])('preserves removal and explicit restoration order when removed again=%s', async (removeAgain) => {
+      await gateway.init({});
+      let finish!: () => void;
+      const wait = new Promise<void>((resolve) => { finish = resolve; });
+      const old = { ...sharedSession('idle'), title: 'Old title', catalogSourceId: 'desktop/local', projectId: 'old-project' };
+      const restored = { ...sharedSession('idle'), title: 'Restored title', catalogSourceId: 'desktop/local' };
+      mockGatewayClient.listAllSessions.mockReturnValueOnce(wait.then(() => [old]));
+      mockGatewayClient.getSession.mockReturnValueOnce(wait.then(() => old));
+      mockGatewayClient.listCatalogs.mockReturnValueOnce(wait.then(() => [catalogSnapshot('desktop/local', 'old', [old])]));
+      mockGatewayClient.listMessages.mockReturnValueOnce(wait.then(() => [{ id: 'old-message' }]));
+      const sessions = gateway.listAllSessions();
+      const get = gateway.getSession('s1');
+      const result = removeAgain ? expect(get).rejects.toThrow('Session was removed') : get;
+      const catalogs = gateway.listCatalogs();
+      const messages = gateway.listMessages('s1');
+      emitGatewayEvent('session.updated', { session: { ...old, title: 'Before removal' } });
+      emitGatewayEvent('session.removed', { sessionId: 's1' });
+      emitGatewayEvent('session.created', { session: restored });
+      if (removeAgain) emitGatewayEvent('session.removed', { sessionId: 's1' });
+      finish();
+
+      expect(await sessions).toEqual(removeAgain ? [] : [restored]);
+      expect((await catalogs)[0].sessions).toEqual(removeAgain ? [] : [restored]);
+      if (removeAgain) await result;
+      else expect(await result).toEqual(restored);
+      expect(await messages).toEqual([]);
+    });
+
+    it('allows only a fresh catalog or created event to restore an active ID', async () => {
+      await gateway.init({});
+      const restored = { ...sharedSession('idle'), catalogSourceId: 'desktop/local' };
+      emitGatewayEvent('session.removed', { sessionId: 's1' });
+      mockGatewayClient.listAllSessions.mockResolvedValueOnce([restored]);
+      expect(await gateway.listAllSessions()).toEqual([]);
+      mockGatewayClient.listCatalogs.mockResolvedValueOnce([catalogSnapshot('desktop/local', 'restored', [restored])]);
+      expect((await gateway.listCatalogs())[0].sessions).toEqual([restored]);
+      expect(mockGatewayClient.discardSessionNotifications).toHaveBeenCalledExactlyOnceWith('s1');
+      mockGatewayClient.getSession.mockResolvedValueOnce(restored);
+      expect(await gateway.getSession('s1')).toEqual(restored);
+    });
+
+    it('drops removed IDs from cached catalog events as well as pending replies', async () => {
+      await gateway.init({});
+      let resolve!: (value: EngineCatalogSnapshot[]) => void;
+      mockGatewayClient.listCatalogs.mockReturnValueOnce(new Promise((done) => { resolve = done; }));
+      const loading = gateway.listCatalogs();
+      emitGatewayEvent('catalog.updated', catalogSnapshot('desktop/local', 'new', [sharedSession('idle')]));
+      emitGatewayEvent('session.removed', { sessionId: 's1' });
+      resolve([catalogSnapshot('desktop/local', 'old', [sharedSession('idle')])]);
+      expect((await loading)[0].sessions).toEqual([]);
+    });
+  });
+
+  describe('authoritative message snapshots', () => {
+    it('keeps removed messages out of a late snapshot and ignores their trailing parts', async () => {
+      useAuthoritativeEngine();
+      const onMessageRemoved = vi.fn();
+      await gateway.init({ onMessageRemoved });
+      let resolveSnapshot!: (messages: UnifiedMessage[]) => void;
+      mockGatewayClient.listMessages.mockReturnValueOnce(new Promise<UnifiedMessage[]>((resolve) => {
+        resolveSnapshot = resolve;
+      }));
+      const loading = gateway.listMessages('s1');
+      const oldPart = { id: 'p1', messageId: 'm1', sessionId: 's1', type: 'text' as const, text: 'removed output' };
+
+      emitGatewayEvent('message.removed', { sessionId: 's1', messageId: 'm1' });
+      emitGatewayEvent('message.part.updated', { sessionId: 's1', part: oldPart });
+      resolveSnapshot([
+        { id: 'm1', sessionId: 's1', role: 'assistant', time: { created: 1 }, parts: [oldPart] },
+        { id: 'm2', sessionId: 's1', role: 'user', time: { created: 2 }, parts: [] },
+      ]);
+
+      expect((await loading).map((message) => message.id)).toEqual(['m2']);
+      expect(onMessageRemoved).toHaveBeenCalledWith('s1', 'm1');
+    });
+
+    it('allows an explicit message update to restore an ID removed during the snapshot', async () => {
+      useAuthoritativeEngine();
+      await gateway.init({});
+      let resolveSnapshot!: (messages: UnifiedMessage[]) => void;
+      mockGatewayClient.listMessages.mockReturnValueOnce(new Promise<UnifiedMessage[]>((resolve) => {
+        resolveSnapshot = resolve;
+      }));
+      const loading = gateway.listMessages('s1');
+      const restored: UnifiedMessage = { id: 'm1', sessionId: 's1', role: 'user', time: { created: 2 }, parts: [] };
+      emitGatewayEvent('message.removed', { sessionId: 's1', messageId: 'm1' });
+      emitGatewayEvent('message.updated', { sessionId: 's1', message: restored });
+      resolveSnapshot([]);
+
+      expect(await loading).toEqual([restored]);
+    });
+
+    it.each(['removed part', 'empty parts'] as const)(
+      'replaces stale parts with a complete message update containing %s during history loading',
+      async (variant) => {
+        useAuthoritativeEngine();
+        await gateway.init({});
+        let resolveSnapshot!: (messages: UnifiedMessage[]) => void;
+        mockGatewayClient.listMessages.mockReturnValueOnce(new Promise<UnifiedMessage[]>((resolve) => {
+          resolveSnapshot = resolve;
+        }));
+        const loading = gateway.listMessages('s1');
+        const keptPart = { id: 'p1', messageId: 'm1', sessionId: 's1', type: 'text' as const, text: 'old output' };
+        const removedPart = { ...keptPart, id: 'p2', text: 'removed output' };
+        const interimPart = { ...keptPart, id: 'p3', text: 'interim output' };
+        const snapshot: UnifiedMessage = {
+          id: 'm1', sessionId: 's1', role: 'assistant', time: { created: 1 }, parts: [keptPart, removedPart],
+        };
+        const complete: UnifiedMessage = {
+          ...snapshot,
+          parts: variant === 'empty parts' ? [] : [{ ...keptPart, text: 'current output' }],
+        };
+
+        emitGatewayEvent('message.part.updated', { sessionId: 's1', part: interimPart });
+        emitGatewayEvent('message.updated', { sessionId: 's1', message: complete });
+        resolveSnapshot([snapshot]);
+
+        expect(await loading).toEqual([complete]);
+      },
+    );
+
+    it('merges partial updates after a complete message replacement during history loading', async () => {
+      useAuthoritativeEngine();
+      await gateway.init({});
+      let resolveSnapshot!: (messages: UnifiedMessage[]) => void;
+      mockGatewayClient.listMessages.mockReturnValueOnce(new Promise<UnifiedMessage[]>((resolve) => {
+        resolveSnapshot = resolve;
+      }));
+      const loading = gateway.listMessages('s1');
+      const removedPart = { id: 'p1', messageId: 'm1', sessionId: 's1', type: 'text' as const, text: 'removed output' };
+      const keptPart = { ...removedPart, id: 'p2', text: 'current output' };
+      const snapshot: UnifiedMessage = {
+        id: 'm1', sessionId: 's1', role: 'assistant', time: { created: 1 }, parts: [removedPart],
+      };
+      const complete: UnifiedMessage = { ...snapshot, parts: [keptPart] };
+      const nextPart = { ...keptPart, id: 'p3', text: 'new output' };
+      const updatedPart = { ...keptPart, text: 'updated output' };
+
+      emitGatewayEvent('message.updated', { sessionId: 's1', message: complete });
+      emitGatewayEvent('message.part.updated', { sessionId: 's1', part: nextPart });
+      emitGatewayEvent('message.parts.batch', { sessionId: 's1', messageId: 'm1', parts: [updatedPart] });
+      resolveSnapshot([snapshot]);
+
+      expect(await loading).toEqual([{ ...complete, parts: [updatedPart, nextPart] }]);
+    });
+
+    it('retains messages and streaming parts received while a snapshot is loading', async () => {
+      useAuthoritativeEngine();
+      await gateway.init({});
+      let resolveSnapshot!: (messages: UnifiedMessage[]) => void;
+      mockGatewayClient.listMessages.mockReturnValueOnce(new Promise<UnifiedMessage[]>((resolve) => {
+        resolveSnapshot = resolve;
+      }));
+      const loading = gateway.listMessages('s1');
+      const oldPart = { id: 'p1', messageId: 'm1', sessionId: 's1', type: 'text' as const, text: 'old' };
+      const newPart = { ...oldPart, text: 'new output' };
+      const user: UnifiedMessage = { id: 'm2', sessionId: 's1', role: 'user', time: { created: 2 }, parts: [] };
+      const nextPart = { ...newPart, id: 'p3', messageId: 'm3', text: 'next turn' };
+
+      emitGatewayEvent('message.updated', { sessionId: 's1', message: user });
+      emitGatewayEvent('message.part.updated', { sessionId: 's1', part: newPart });
+      emitGatewayEvent('message.parts.batch', { sessionId: 's1', messageId: 'm3', parts: [nextPart] });
+      emitGatewayEvent('message.updated', { sessionId: 'other', message: { ...user, id: 'other', sessionId: 'other' } });
+      resolveSnapshot([{ id: 'm1', sessionId: 's1', role: 'assistant', time: { created: 1 }, parts: [oldPart] }]);
+
+      const messages = await loading;
+      expect(messages.map((message) => message.id)).toEqual(['m1', 'm2', 'm3']);
+      expect(messages[0].parts).toEqual([newPart]);
+      expect(messages[2].parts).toEqual([nextPart]);
+    });
+
+    it('retains ordinary engine messages received during history loading', async () => {
+      await gateway.init({});
+      let resolveSnapshot!: (messages: UnifiedMessage[]) => void;
+      mockGatewayClient.listMessages.mockReturnValueOnce(new Promise<UnifiedMessage[]>((resolve) => {
+        resolveSnapshot = resolve;
+      }));
+      const loading = gateway.listMessages('s1');
+      const incoming: UnifiedMessage = { id: 'new', sessionId: 's1', role: 'user', time: { created: 2 }, parts: [] };
+      emitGatewayEvent('message.updated', { sessionId: 's1', message: incoming });
+      const snapshot: UnifiedMessage[] = [];
+      resolveSnapshot(snapshot);
+
+      expect(await loading).toEqual([incoming]);
+    });
+  });
+
   // --- Delegation methods ---
+
+  describe('canonical catalogs', () => {
+    it('keeps session metadata events newer than an in-flight catalog response in delivery order', async () => {
+      await gateway.init();
+      let resolveCatalogs!: (catalogs: EngineCatalogSnapshot[]) => void;
+      mockGatewayClient.listCatalogs.mockReturnValueOnce(new Promise((resolve) => { resolveCatalogs = resolve; }));
+      const loading = gateway.listCatalogs();
+      const old = { ...sharedSession('idle'), catalogSourceId: 'desktop/local', title: 'Old', modelId: 'old-model' };
+      emitGatewayEvent('session.updated', { session: { ...old, title: 'First' } });
+      const snapshot = catalogSnapshot('desktop/local', 'r2', [{ ...old, title: 'Catalog title' }]);
+      emitGatewayEvent('catalog.updated', snapshot);
+      const latest = { ...old, title: 'Live title', modelId: 'new-model', activityStatus: 'running' as const, projectId: null };
+      emitGatewayEvent('session.updated', { session: latest });
+      const created = { ...sharedSession('idle', 'new-chat'), catalogSourceId: 'desktop/local' };
+      emitGatewayEvent('session.created', { session: created });
+      resolveCatalogs([catalogSnapshot('desktop/local', 'r1', [old])]);
+      const [result] = await loading;
+      expect(result.sessions).toEqual([latest, created]);
+      expect(snapshot.sessions[0].title).toBe('Catalog title');
+
+      mockGatewayClient.listCatalogs.mockResolvedValueOnce([catalogSnapshot('desktop/local', 'r3', [{ ...old, title: 'Later' }])]);
+      expect((await gateway.listCatalogs())[0].sessions[0].title).toBe('Later');
+    });
+
+    it('lists owner snapshots unchanged and synchronizes their session activity', async () => {
+      useAuthoritativeEngine();
+      const snapshot = catalogSnapshot('desktop/local', 'owner-revision', [sharedSession('running')]);
+      mockGatewayClient.listCatalogs.mockResolvedValueOnce([snapshot]);
+
+      expect(await gateway.listCatalogs()).toEqual([snapshot]);
+      expect(mockGatewayClient.listCatalogs).toHaveBeenCalledExactlyOnceWith();
+      expect(sessionStore.sendingMap.s1).toBe(true);
+      expect(getAuthoritativeSessionActivity('s1')).toBe('running');
+    });
+
+    it('synchronizes all catalog activity before notifying without changing the active chat', async () => {
+      useAuthoritativeEngine();
+      setSessionStore('current', 's1');
+      setSessionStore('sendingMap', 's2', true);
+      setSessionStore('sendingMap', 'ordinary', true);
+      const message: UnifiedMessage = { id: 'm1', sessionId: 's1', role: 'assistant', time: { created: 1 }, parts: [] };
+      const part = { id: 'p1', messageId: 'm1', sessionId: 's1', type: 'text' as const, text: 'Visible streamed output' };
+      setMessageStore('message', 's1', [message]);
+      setMessageStore('part', 'm1', [part]);
+      const activeMessages = messageStore.message.s1;
+      const activeParts = messageStore.part.m1;
+      const selectedSession = sessionStore.list[0];
+      const snapshot = catalogSnapshot('desktop/local', 'r2', [sharedSession('running'), sharedSession('completed', 's2'),
+        { ...sharedSession('idle', 'ordinary'), engineType: 'claude' }]);
+      const onCatalogUpdated = vi.fn((incoming: EngineCatalogSnapshot) => {
+        expect(incoming).toBe(snapshot);
+        expect(getAuthoritativeSessionActivity('s1')).toBe('running');
+        expect(getAuthoritativeSessionActivity('s2')).toBe('completed');
+        expect(sessionStore.sendingMap.s1).toBe(true);
+        expect(sessionStore.sendingMap.s2).toBe(false);
+      });
+      const onMessageRemoved = vi.fn();
+      await gateway.init({ onCatalogUpdated, onMessageRemoved });
+
+      emitGatewayEvent('catalog.updated', snapshot);
+
+      expect(onCatalogUpdated).toHaveBeenCalledExactlyOnceWith(snapshot);
+      expect(onCatalogUpdated.mock.calls[0][0]).toBe(snapshot);
+      expect(sessionStore.current).toBe('s1');
+      expect(sessionStore.list[0]).toBe(selectedSession);
+      expect(messageStore.message.s1).toBe(activeMessages);
+      expect(messageStore.part.m1).toBe(activeParts);
+      expect(messageStore.part.m1).toEqual([part]);
+      expect(onMessageRemoved).not.toHaveBeenCalled();
+      expect(sessionStore.sendingMap.ordinary).toBe(true);
+      expect(getAuthoritativeSessionActivity('ordinary')).toBeUndefined();
+      for (const fetch of [mockGatewayClient.listCatalogs, mockGatewayClient.listSessions, mockGatewayClient.listAllSessions,
+        mockGatewayClient.listProjects, mockGatewayClient.listAllProjects, mockGatewayClient.getSession, mockGatewayClient.listMessages]) {
+        expect(fetch).not.toHaveBeenCalled();
+      }
+    });
+
+    it('retains the latest pushed snapshot and new sources when an older catalog request completes', async () => {
+      useAuthoritativeEngine();
+      await gateway.init({});
+      let resolveCatalogs!: (catalogs: EngineCatalogSnapshot[]) => void;
+      mockGatewayClient.listCatalogs.mockReturnValueOnce(new Promise<EngineCatalogSnapshot[]>((resolve) => { resolveCatalogs = resolve; }));
+      const loading = gateway.listCatalogs();
+      const stale = catalogSnapshot('desktop/local', 'r1', [sharedSession('idle')]);
+      const unchanged = catalogSnapshot('other-source', 'other-r1');
+      const latest = catalogSnapshot('desktop/local', 'r3', [sharedSession('waiting')]);
+      latest.projects.push({ id: 'catalog:desktop/local:new-project', name: 'Created during loading', directory: '/new', roots: ['/new'] });
+      const added = catalogSnapshot('new-source', 'new-r1', [sharedSession('running', 'new-session')]);
+      emitGatewayEvent('catalog.updated', catalogSnapshot('desktop/local', 'r2', [sharedSession('running')]));
+      emitGatewayEvent('catalog.updated', latest);
+      emitGatewayEvent('catalog.updated', added);
+      resolveCatalogs([stale, unchanged]);
+
+      const catalogs = await loading;
+      expect(catalogs).toHaveLength(3);
+      expect(catalogs).toContainEqual(latest);
+      expect(catalogs).toContainEqual(unchanged);
+      expect(catalogs).toContainEqual(added);
+      expect(getAuthoritativeSessionActivity('s1')).toBe('waiting');
+      expect(getAuthoritativeSessionActivity('new-session')).toBe('running');
+      expect(mockGatewayClient.listCatalogs).toHaveBeenCalledOnce();
+    });
+
+    it('clears pushed catalogs on destroy before a new connection loads its sources', async () => {
+      await gateway.init({});
+      emitGatewayEvent('catalog.updated', catalogSnapshot('previous-connection', 'r9'));
+      gateway.destroy();
+      mockGatewayClient.on.mockClear();
+      await gateway.init({});
+      let resolveCatalogs!: (catalogs: EngineCatalogSnapshot[]) => void;
+      mockGatewayClient.listCatalogs.mockReturnValueOnce(new Promise<EngineCatalogSnapshot[]>((resolve) => { resolveCatalogs = resolve; }));
+      const loading = gateway.listCatalogs();
+      const current = catalogSnapshot('new-connection', 'r1');
+      emitGatewayEvent('catalog.updated', current);
+      resolveCatalogs([]);
+
+      expect(await loading).toEqual([current]);
+      expect(mockGatewayClient.off).toHaveBeenCalledWith('catalog.updated', expect.any(Function));
+    });
+
+    it('creates and updates projects without normalizing roots or replacing stable IDs', async () => {
+      const snapshot = catalogSnapshot();
+      const project = snapshot.projects[0];
+      mockGatewayClient.createProject.mockResolvedValueOnce(project);
+      expect(await gateway.createProject(snapshot.sourceId, project.name!, project.roots!)).toBe(project);
+      expect(mockGatewayClient.createProject).toHaveBeenCalledWith({ sourceId: snapshot.sourceId, name: project.name, roots: project.roots });
+      const patch = { name: 'Renamed project', roots: [...project.roots!].reverse() };
+      const updated: UnifiedProject = { ...project, ...patch };
+      mockGatewayClient.updateProject.mockResolvedValueOnce(updated);
+      expect(await gateway.updateProject(project.id, patch)).toBe(updated);
+      expect(mockGatewayClient.updateProject).toHaveBeenCalledWith({ projectId: project.id, patch });
+    });
+
+    it('reorders stable project IDs without changing their supplied order', async () => {
+      const projectIds = ['catalog:desktop/local:second', 'catalog:desktop/local:first'];
+      await gateway.reorderProjects('desktop/local', projectIds);
+      expect(mockGatewayClient.reorderProjects).toHaveBeenCalledExactlyOnceWith({ sourceId: 'desktop/local', projectIds });
+    });
+
+    it.each(['catalog:desktop/local:stable-project', null])('passes session project assignment %s unchanged', async (projectId) => {
+      await gateway.setSessionProject('s1', projectId);
+      expect(mockGatewayClient.setSessionProject).toHaveBeenCalledExactlyOnceWith({ sessionId: 's1', projectId });
+    });
+
+    it.each(['catalog:desktop/local:stable-project', null])('creates a session with explicit project assignment %s', async (projectId) => {
+      await gateway.createSession('codex', '/workspace/worktree', 'worktree-stable', projectId);
+      expect(mockGatewayClient.createSession).toHaveBeenCalledExactlyOnceWith({ engineType: 'codex', directory: '/workspace/worktree', worktreeId: 'worktree-stable', projectId });
+    });
+  });
 
   it('listEngines delegates', async () => {
     const engines = [{ type: 'claude' }];
@@ -190,6 +705,13 @@ describe('GatewayAPI', () => {
   it('renameSession delegates', async () => {
     await gateway.renameSession('s1', 'New Title');
     expect(mockGatewayClient.renameSession).toHaveBeenCalledWith('s1', 'New Title');
+  });
+
+  it.each([true, false])('setSessionArchived delegates archived=%s without hiding errors', async (archived) => {
+    await gateway.setSessionArchived('s1', archived);
+    expect(mockGatewayClient.setSessionArchived).toHaveBeenCalledWith('s1', archived);
+    mockGatewayClient.setSessionArchived.mockRejectedValueOnce(new Error('Owner unavailable'));
+    await expect(gateway.setSessionArchived('s1', archived)).rejects.toThrow('Owner unavailable');
   });
 
   it('cancelMessage delegates', async () => {

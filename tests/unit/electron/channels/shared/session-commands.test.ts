@@ -256,10 +256,23 @@ describe("handleSessionOpsCommand", () => {
     expect(h.sendText.mock.calls[0][0]).toContain("medium");
   });
 
-  it("/effort rejects unsupported levels for the current model", async () => {
-    expect(await invoke(h, cmd("effort", { args: ["max"] }))).toBe(true);
+  it.each(["max", "ultra"])("/effort rejects unsupported %s for the current model", async (level) => {
+    expect(await invoke(h, cmd("effort", { args: [level] }))).toBe(true);
     expect(h.gatewayClient.updateSessionConfig).not.toHaveBeenCalled();
     expect(h.sendText.mock.calls[0][0]).toContain("当前模型支持的推理级别");
+  });
+
+  it("lists and applies ultra only when the session model declares support", async () => {
+    h.context = { ...defaultContext(), engineType: "codex" };
+    h.gatewayClient.getSession.mockResolvedValue({ id: "conv-1", engineType: "codex", modelId: "m2", reasoningEffort: "ultra" });
+    h.gatewayClient.listModels.mockResolvedValue({ models: [{
+      modelId: "m2", capabilities: { supportedReasoningEfforts: ["medium", "ultra"] },
+    }] });
+
+    await invoke(h, cmd("effort"));
+    expect(h.sendText.mock.calls[0][0]).toContain("`ultra` · 超高（当前会话）");
+    await invoke(h, cmd("effort", { args: ["ultra"] }));
+    expect(h.gatewayClient.updateSessionConfig).toHaveBeenCalledWith("conv-1", { reasoningEffort: "ultra" });
   });
 
   it("/history with no messages sends empty notice", async () => {

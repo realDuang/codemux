@@ -47,6 +47,11 @@ export const [messageStore, setMessageStore] = createStore<{
   stepsLoaded: {},
 });
 
+/** Replace the displayed parts with a complete authoritative message snapshot. */
+export function replaceMessageParts(messageId: string, parts: readonly UnifiedPart[]): void {
+  setMessageStore("part", messageId, [...parts].sort((a, b) => a.id.localeCompare(b.id)));
+}
+
 // Helper functions for expanded state management
 export function isExpanded(key: string): boolean {
   return messageStore.expanded[key] ?? false;

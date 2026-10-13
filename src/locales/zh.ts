@@ -61,6 +61,7 @@ export const zh: LocaleDict = {
   question: {
     submit: "提交",
     dismiss: "忽略",
+    stopTask: "停止任务",
     customPlaceholder: "输入自定义回答...",
     waitingAnswer: "等待回答",
     selectMultiple: "可选择多个选项",
@@ -92,6 +93,7 @@ export const zh: LocaleDict = {
     startConversationDesc: "选择一个模型，在下方输入框中输入任何问题开始聊天。",
     noSessionSelected: "未选择会话",
     noSessionSelectedDesc: "从侧边栏选择一个会话或创建新会话以开始使用。",
+    archivedReadOnly: "此会话已归档，恢复后可以继续。",
     initFailed: "初始化失败",
     retry: "重试",
     disclaimer: "AI 生成的内容可能不准确，请核实重要信息。",
@@ -245,6 +247,11 @@ export const zh: LocaleDict = {
     newSession: "新建会话",
     deleteConfirm: "确定要删除这个会话吗？",
     deleteSession: "删除会话",
+    archiveSession: "归档",
+    restoreSession: "恢复",
+    archivedSessions: "已归档",
+    noArchivedSessions: "暂无已归档会话",
+    removeLocalSession: "从 CodeMux 移除（保留原会话）",
     renameSession: "重命名会话",
     justNow: "刚刚",
     minutesAgo: "{count}分钟前",
@@ -270,6 +277,13 @@ export const zh: LocaleDict = {
   },
 
   // Project
+  catalog: {
+    sessions: "同步会话",
+    unavailable: "暂不可用",
+    unavailableDetail: "来源端的此会话已不可用，已保存的记录仍然保留。",
+    updateFailed: "会话更新失败：{message}",
+  },
+
   project: {
     add: "添加项目",
     addTitle: "添加项目",
@@ -314,6 +328,7 @@ export const zh: LocaleDict = {
     reasoningEffortMedium: "中",
     reasoningEffortHigh: "高",
     reasoningEffortMax: "最大",
+    reasoningEffortUltra: "超高",
   },
 
   // Message Parts
@@ -585,6 +600,7 @@ export const zh: LocaleDict = {
     messageSendInterrupted: "发送连接已中断，请先核对会话记录，再决定是否重新发送。",
     sessionCreateFailed: "会话创建失败。",
     sessionDeleteFailed: "会话删除失败。",
+    sessionArchiveFailed: "归档状态更新失败：{message}",
     gatewayDisconnected: "连接已断开，正在重连...",
     gatewayReconnected: "连接已恢复。",
     engineError: "引擎错误：{message}",

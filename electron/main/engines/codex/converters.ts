@@ -146,6 +146,28 @@ export function appendReasoningDelta(buffer: MessageBuffer, delta: string): Reas
   return reasoningPart;
 }
 
+export function normalizeCodexReasoningText(summary: unknown, content: unknown): string {
+  const summaryBlocks = extractReasoningBlocks(summary);
+  const summaryText = new Set(summaryBlocks);
+  return [
+    ...summaryBlocks,
+    ...extractReasoningBlocks(content).filter((text) => !summaryText.has(text)),
+  ].join("\n\n");
+}
+
+function extractReasoningBlocks(value: unknown): string[] {
+  const blocks = Array.isArray(value) ? value : [value];
+  return blocks.flatMap((block) => {
+    let text = "";
+    if (typeof block === "string") {
+      text = block;
+    } else if (block && typeof block === "object" && typeof (block as { text?: unknown }).text === "string") {
+      text = (block as { text: string }).text;
+    }
+    return text.trim() ? [text] : [];
+  });
+}
+
 export function appendPlanDelta(buffer: MessageBuffer, delta: string): TextPart {
   const prefix = "## Plan\n\n";
   const current = buffer.planAccumulator ?? prefix;
@@ -799,11 +821,16 @@ function applyHistoricalItem(
       return;
     }
     case "reasoning": {
-      const text = [
-        ...(Array.isArray(item.summary) ? item.summary : []),
-        ...extractStringArray(item.content),
-      ].filter(Boolean).join("\n\n");
-      if (text) appendReasoningDelta(buffer, text);
+      const text = normalizeCodexReasoningText(item.summary, item.content);
+      if (text) {
+        upsertPart(buffer.parts, {
+          id: timeId("part"),
+          messageId: buffer.messageId,
+          sessionId: buffer.sessionId,
+          type: "reasoning",
+          text,
+        });
+      }
       return;
     }
     case "plan": {
@@ -1248,11 +1275,6 @@ function asRecord(value: unknown): Record<string, unknown> {
 function extractUserInputs(value: unknown): CodexUserInput[] {
   if (!Array.isArray(value)) return [];
   return value.filter((input): input is CodexUserInput => Boolean(input) && typeof input === "object");
-}
-
-function extractStringArray(value: unknown): string[] {
-  if (!Array.isArray(value)) return [];
-  return value.filter((entry): entry is string => typeof entry === "string" && entry.length > 0);
 }
 
 function toNumber(value: unknown): number | undefined {

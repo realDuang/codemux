@@ -17,6 +17,7 @@ import type {
   ModelListResult,
   PermissionReply,
   ReasoningEffort,
+  ReasoningPart,
   ToolPart,
   UnifiedMessage,
   UnifiedModelInfo,
@@ -32,6 +33,9 @@ import { CODEMUX_IDENTITY_PROMPT } from "../identity-prompt";
 import { timeId } from "../../utils/id-gen";
 import { codexLog } from "../../services/logger";
 import { CodexJsonRpcClient } from "./jsonrpc-client";
+import type { CodexDesktopOwnerRuntime, CodexOwnerRequestMethod, NativeOwnedThreadState } from "./desktop-owner";
+import { DESKTOP_CATALOG_METHODS, DESKTOP_CATALOG_NOTIFICATION_METHODS, type DesktopCatalogClient } from "./desktop-catalog";
+import { verifyCodexRolloutPath } from "./desktop-rollout-path";
 import {
   CODEX_FALLBACK_MODEL,
   CODEX_MODES,
@@ -55,7 +59,6 @@ import {
 } from "./config";
 import {
   appendPlanDelta,
-  appendReasoningDelta,
   appendTextDelta,
   applyTurnMetadata,
   applyTurnUsage,
@@ -69,6 +72,7 @@ import {
   createUserMessage,
   finalizeBufferToMessage,
   formatTurnPlanMarkdown,
+  normalizeCodexReasoningText,
   replacePlanText,
   upsertPart,
 } from "./converters";
@@ -77,6 +81,8 @@ const SESSION_IDLE_TIMEOUT_MS = 30 * 60 * 1000;
 const START_TIMEOUT_MS = 120_000;
 const DEFAULT_MODE_ID = "default";
 const MAX_IMAGE_ATTACHMENT_BYTES = 3 * 1024 * 1024;
+const STORED_THREAD_PAGE_SIZE = 100;
+const STORED_THREAD_MAX_PAGES = 20;
 
 /**
  * Read the `model_provider` field from `~/.codex/config.toml`.
@@ -84,7 +90,7 @@ const MAX_IMAGE_ATTACHMENT_BYTES = 3 * 1024 * 1024;
  */
 function readCodexModelProvider(): string | undefined {
   try {
-    const configPath = join(homedir(), ".codex", "config.toml");
+    const configPath = join(process.env.CODEX_HOME ?? join(homedir(), ".codex"), "config.toml");
     if (!existsSync(configPath)) return undefined;
     const content = readFileSync(configPath, "utf-8");
     // Match top-level `model_provider = "..."` (before any [section] header)
@@ -102,8 +108,22 @@ function readCodexModelProvider(): string | undefined {
 
 type CodexTurnInput =
   | { type: "text"; text: string; text_elements: unknown[] }
+  | { type: "image"; url: string }
   | { type: "localImage"; path: string }
   | { type: "skill"; name: string; path: string };
+
+interface CodexMessageOptions {
+  mode?: string;
+  modelId?: string;
+  reasoningEffort?: ReasoningEffort | null;
+  serviceTier?: CodexServiceTier | null;
+  directory?: string;
+  /** Used only by an explicitly created Desktop owner runtime. */
+  ownerAdmission?: "start" | "steer";
+  nativeOverrides?: Record<string, unknown>;
+  onAdmitted?: (result: unknown) => void;
+  onAdmissionFailed?: (error: Error) => void;
+}
 
 interface ThreadInfo {
   threadId: string;
@@ -124,13 +144,7 @@ interface QueuedMessage {
   input: CodexTurnInput[];
   userMessage: UnifiedMessage;
   tempDirs: string[];
-  options?: {
-    mode?: string;
-    modelId?: string;
-    reasoningEffort?: ReasoningEffort | null;
-    serviceTier?: CodexServiceTier | null;
-    directory?: string;
-  };
+  options?: CodexMessageOptions;
   resolver: SendResolver;
 }
 
@@ -165,13 +179,17 @@ interface ThreadResponse {
     updatedAt?: number | string;
     name?: string | null;
     preview?: string;
+    projectId?: string | null;
   };
   cwd?: string;
   model?: string;
+  modelProvider?: string;
   approvalPolicy?: CodexApprovalPolicy;
   sandbox?: CodexSandboxPolicy;
   reasoningEffort?: string | null;
   serviceTier?: string | null;
+  collaborationMode?: Record<string, unknown>;
+  permissions?: string | null;
 }
 
 interface TurnResponse {
@@ -182,8 +200,20 @@ interface TurnResponse {
   turnId?: string;
 }
 
+interface CodexReasoningItemState {
+  partId: string;
+  summary: Map<number, string>;
+  content: Map<number, string>;
+  completed: boolean;
+}
+
+export type StoredCodexThreadAvailability = "active" | "archived" | "missing";
+export type StoredCodexThreadMetadata = Record<string, unknown> & { id: string };
+
 export class CodexAdapter extends EngineAdapter {
   readonly engineType: EngineType = "codex";
+  private readonly desktopCatalogAdmissions = new Map<string, number>();
+  private readonly desktopRuntimeAdmissions = new Set<string>();
 
   private client: CodexJsonRpcClient | null = null;
   private status: EngineStatus = "stopped";
@@ -200,6 +230,7 @@ export class CodexAdapter extends EngineAdapter {
   private threads = new Map<string, ThreadInfo>();
 
   private messageBuffers = new Map<string, MessageBuffer>();
+  private reasoningItems = new WeakMap<MessageBuffer, Map<string, CodexReasoningItemState>>();
   private messageHistory = new Map<string, UnifiedMessage[]>();
   private turnResolvers = new Map<string, SendResolver[]>();
   private messageQueues = new Map<string, QueuedMessage[]>();
@@ -215,6 +246,11 @@ export class CodexAdapter extends EngineAdapter {
   private sessionReasoningEfforts = new Map<string, ReasoningEffort>();
   private sessionServiceTiers = new Map<string, CodexServiceTier>();
   private sessionDirectories = new Map<string, string>();
+  private nativeSessionSettings = new Map<string, Record<string, unknown>>();
+  private desktopOwnerRuntimeEnabled = false;
+  private desktopOwnerSessions = new Set<string>();
+  private desktopOwnerListeners = new Set<(sessionId: string) => void>();
+  private desktopCatalogListeners = new Set<(method: string, params: unknown) => void>();
 
   private currentModelId: string = CODEX_FALLBACK_MODEL;
   private currentMode: string = DEFAULT_MODE_ID;
@@ -262,6 +298,7 @@ export class CodexAdapter extends EngineAdapter {
   }
 
   async stop(): Promise<void> {
+    this.desktopRuntimeAdmissions.clear();
     this.stopSessionCleanup();
     this.rejectPendingInteractions("Adapter stopped");
     this.rejectQueuedMessages("Adapter stopped");
@@ -291,6 +328,329 @@ export class CodexAdapter extends EngineAdapter {
     return this.status;
   }
 
+  /** A revocable metadata-only facade; it cannot acquire or execute a thread. */
+  createDesktopCatalogClient(): DesktopCatalogClient {
+    let active = true;
+    const admitted = new Set<string>();
+    const subscriptions = new Set<(method: string, params: unknown) => void>();
+    const assertActive = () => { if (!active) throw new Error("Codex catalog metadata access has stopped"); };
+    return {
+      admitThread: (threadId) => {
+        assertActive();
+        if (!threadId.trim()) throw new Error("A native thread ID is required for catalog admission");
+        if (admitted.has(threadId)) return;
+        admitted.add(threadId);
+        this.desktopCatalogAdmissions.set(threadId, (this.desktopCatalogAdmissions.get(threadId) ?? 0) + 1);
+      },
+      request: async (method, params) => {
+        assertActive();
+        if (!(DESKTOP_CATALOG_METHODS as readonly string[]).includes(method)) throw new Error("Unsupported Codex catalog metadata method");
+        if (method === "thread/read" && params.includeTurns !== false) throw new Error("Catalog reads must omit turn bodies");
+        if (method === "thread/list" && params.useStateDbOnly !== true) throw new Error("Catalog reads require the state database without scan-and-repair");
+        await this.start();
+        assertActive();
+        if (!this.client?.running) throw new Error("Codex metadata client is not running");
+        return this.client.request(method, params);
+      },
+      subscribe: (listener) => {
+        assertActive();
+        subscriptions.add(listener);
+        this.desktopCatalogListeners.add(listener);
+        return () => { subscriptions.delete(listener); this.desktopCatalogListeners.delete(listener); };
+      },
+      dispose: () => {
+        active = false;
+        for (const threadId of admitted) {
+          const remaining = (this.desktopCatalogAdmissions.get(threadId) ?? 1) - 1;
+          if (remaining > 0) this.desktopCatalogAdmissions.set(threadId, remaining);
+          else this.desktopCatalogAdmissions.delete(threadId);
+        }
+        admitted.clear();
+        for (const listener of subscriptions) this.desktopCatalogListeners.delete(listener);
+        subscriptions.clear();
+      },
+    };
+  }
+
+  createDesktopOwnerRuntime(): CodexDesktopOwnerRuntime {
+    this.desktopOwnerRuntimeEnabled = true;
+    const retained = new Set<string>();
+    return {
+      readThread: async (sessionId) => {
+        this.requireDesktopOwnerThread(sessionId);
+        retained.add(sessionId);
+        this.desktopOwnerSessions.add(sessionId);
+        return this.readDesktopOwnerThread(sessionId);
+      },
+      readMetadata: (sessionId) => this.readStoredThreadMetadata(this.requireDesktopOwnerThread(sessionId)),
+      request: (sessionId, method, params) => this.requestDesktopOwner(sessionId, method, params),
+      respond: (sessionId, requestId, result) => this.respondDesktopOwner(sessionId, requestId, result),
+      updateSettings: (sessionId, settings, options) => this.updateDesktopOwnerSettings(sessionId, settings, options),
+      subscribe: (listener) => {
+        this.desktopOwnerListeners.add(listener);
+        return () => {
+          this.desktopOwnerListeners.delete(listener);
+          for (const sessionId of retained) this.desktopOwnerSessions.delete(sessionId);
+          retained.clear();
+        };
+      },
+    };
+  }
+
+  private requireDesktopOwnerThread(sessionId: string): string {
+    const threadId = this.sessionToThread.get(sessionId);
+    if (!this.client?.running || !threadId || !this.threads.get(threadId)?.loaded) {
+      throw new Error("Desktop owner requests require a thread already loaded in this Codex adapter");
+    }
+    return threadId;
+  }
+
+  private desktopOwnerSettings(sessionId: string): Record<string, unknown> {
+    const previous = this.nativeSessionSettings.get(sessionId) ?? {};
+    const mode = this.sessionModes.get(sessionId) ?? this.currentMode;
+    const model = this.sessionModels.get(sessionId) ?? (typeof previous.model === "string" ? previous.model : this.currentModelId);
+    const effort = Object.prototype.hasOwnProperty.call(previous, "effort") ? previous.effort
+      : this.sessionReasoningEfforts.has(sessionId) ? toCodexEffort(this.sessionReasoningEfforts.get(sessionId)!) : null;
+    const directory = this.sessionDirectories.get(sessionId) ?? "";
+    return {
+      ...previous, model, effort, cwd: directory,
+      serviceTier: this.sessionServiceTiers.get(sessionId) ?? previous.serviceTier ?? null,
+      approvalPolicy: previous.approvalPolicy ?? clampApprovalPolicy(modeToApprovalPolicy(mode), this.configRequirements),
+      sandboxPolicy: previous.sandboxPolicy ?? clampSandboxPolicy(modeToSandboxPolicy(mode, directory), this.configRequirements),
+      collaborationMode: previous.collaborationMode ?? {
+        mode, settings: { model, reasoning_effort: effort, developer_instructions: null },
+      },
+    };
+  }
+
+  private async readDesktopOwnerThread(sessionId: string): Promise<NativeOwnedThreadState> {
+    const threadId = this.requireDesktopOwnerThread(sessionId);
+    let response: Record<string, unknown>;
+    try {
+      response = asRecord(await this.client!.request("thread/read", { threadId, includeTurns: true }));
+    } catch (error) {
+      // Legacy threads only acquire a persisted turn history on their first user
+      // message. The app-server still provides authoritative metadata beforehand.
+      if (!(error instanceof Error) || !error.message.includes("is not materialized yet; includeTurns is unavailable before first user message")) throw error;
+      response = asRecord(await this.client!.request("thread/read", { threadId, includeTurns: false }));
+    }
+    const thread = asRecord(response.thread);
+    if (thread.id !== threadId) throw new Error("Native Codex thread/read returned a different thread");
+    const settings = this.desktopOwnerSettings(sessionId);
+    return {
+      thread,
+      model: String(settings.model),
+      modelProvider: typeof thread.modelProvider === "string" ? thread.modelProvider
+        : typeof settings.modelProvider === "string" ? settings.modelProvider : readCodexModelProvider(),
+      reasoningEffort: typeof settings.effort === "string" ? settings.effort : null,
+      collaborationMode: asRecord(settings.collaborationMode),
+      serviceTier: typeof settings.serviceTier === "string" ? settings.serviceTier : null,
+      approvalPolicy: settings.approvalPolicy,
+      sandboxPolicy: settings.sandboxPolicy,
+      permissions: typeof settings.permissions === "string" ? settings.permissions : undefined,
+      requests: [
+        ...[...this.pendingPermissions.values()].filter((pending) => pending.sessionId === sessionId)
+          .map((pending) => ({ id: pending.requestId, method: pending.method, params: asRecord(pending.params) })),
+        ...[...this.pendingQuestions.values()].filter((pending) => pending.sessionId === sessionId)
+          .map((pending) => ({ id: pending.requestId, method: "item/tool/requestUserInput", params: asRecord(pending.params) })),
+      ],
+    };
+  }
+
+  private async readStoredThreadMetadata(threadId: string): Promise<StoredCodexThreadMetadata> {
+    if (!this.client?.running) throw new Error("Codex metadata client is not running");
+    const response = asRecord(await this.client.request("thread/read", { threadId, includeTurns: false }));
+    const thread = asRecord(response.thread);
+    if (thread.id !== threadId) throw new Error("Native Codex metadata returned a different thread");
+    return thread as StoredCodexThreadMetadata;
+  }
+
+  private async requireUnarchivedStoredThread(threadId: string, directory: unknown): Promise<void> {
+    if (!await this.findStoredThreadInList(threadId, false, directory)
+      && !(this.isAdmittedDesktopThread(threadId) && await this.storedThreadAvailability(threadId, directory) === "active")) {
+      throw new Error("The Codex thread is not in the verified unarchived list");
+    }
+  }
+
+  private async findStoredThreadInList(threadId: string, archived: boolean, directory?: unknown): Promise<StoredCodexThreadMetadata | undefined> {
+    if (!this.client?.running) throw new Error("Codex metadata client is not running");
+    let cursor: string | null = null;
+    const seen = new Set<string>();
+    for (let page = 0; page < STORED_THREAD_MAX_PAGES; page += 1) {
+      const response = asRecord(await this.client.request("thread/list", {
+        cursor,
+        limit: STORED_THREAD_PAGE_SIZE,
+        sortKey: "updated_at",
+        archived,
+        modelProviders: null,
+        sourceKinds: [],
+        useStateDbOnly: true,
+        ...(typeof directory === "string" && directory ? { cwd: directory } : {}),
+      }));
+      if (!Array.isArray(response.data)) throw new Error(`Codex returned an invalid ${archived ? "archived" : "unarchived"} thread list`);
+      const match = response.data.find((entry) => asRecord(entry).id === threadId);
+      if (match) return asRecord(match) as StoredCodexThreadMetadata;
+      if (response.nextCursor == null) return undefined;
+      if (typeof response.nextCursor !== "string" || !response.nextCursor || seen.has(response.nextCursor)) {
+        throw new Error("Codex returned an invalid or repeated thread-list cursor");
+      }
+      cursor = response.nextCursor;
+      seen.add(cursor);
+    }
+    throw new Error("Stored Codex thread verification exceeded its pagination limit");
+  }
+
+  private async storedThreadAvailability(threadId: string, directory?: unknown): Promise<StoredCodexThreadAvailability> {
+    const [active, archived] = await Promise.all([
+      this.findStoredThreadInList(threadId, false, directory),
+      this.findStoredThreadInList(threadId, true, directory),
+    ]);
+    if (active && archived) throw new Error("Codex returned conflicting active and archived thread records");
+    if (!active && !archived && this.isAdmittedDesktopThread(threadId)) {
+      const metadata = await this.readStoredThreadMetadata(threadId);
+      // Admission and a verified native rollout path are both required. A
+      // readable arbitrary UUID alone must never bypass catalog presence checks.
+      const availability = await verifyCodexRolloutPath(threadId, metadata);
+      return this.isAdmittedDesktopThread(threadId) ? availability ?? "missing" : "missing";
+    }
+    return active ? "active" : archived ? "archived" : "missing";
+  }
+
+  private isAdmittedDesktopThread(threadId: string): boolean {
+    return this.desktopCatalogAdmissions.has(threadId) || this.desktopRuntimeAdmissions.has(threadId);
+  }
+
+  private async requestDesktopOwner(sessionId: string, method: CodexOwnerRequestMethod, params: Record<string, unknown>): Promise<unknown> {
+    const threadId = this.requireDesktopOwnerThread(sessionId);
+    if (params.threadId !== threadId) throw new Error("Desktop owner request targets another thread");
+    if (method === "thread/compact/start") {
+      const result = await this.client!.request(method, { threadId });
+      this.notifyDesktopOwnerState(sessionId);
+      return result;
+    }
+    if (method === "turn/interrupt") {
+      const turnId = this.activeTurnIds.get(sessionId);
+      if (!turnId || params.turnId !== turnId) throw new Error("Desktop interrupt does not match the active turn");
+      const result = await this.client!.request(method, { threadId, turnId });
+      if (this.activeTurnIds.get(sessionId) === turnId) {
+        this.rejectQueuedMessagesForSession(sessionId, "Cancelled");
+        this.rejectPendingForSession(sessionId, "Cancelled");
+        this.failActiveTurn(sessionId, "Cancelled", false);
+      }
+      this.notifyDesktopOwnerState(sessionId);
+      return result;
+    }
+    if (method !== "turn/start" && method !== "turn/steer") throw new Error("Unsupported Desktop owner request");
+    if (method === "turn/start" && this.hasActiveTurn(sessionId)) throw new Error("A Codex turn is already active; use steer instead of start");
+    if (method === "turn/steer" && (!this.activeTurnIds.has(sessionId) || params.expectedTurnId !== this.activeTurnIds.get(sessionId))) {
+      throw new Error("Desktop steer does not match the active turn");
+    }
+    const input = parseDesktopOwnerInput(params.input);
+    const text = input.flatMap((item) => item.type === "text" ? [item.text] : item.type === "skill" ? [`$${item.name}`] : []).join("\n");
+    const userMessage = createUserMessage(sessionId, text);
+    const overrides = pickDesktopOwnerSettings(params, true);
+    const settings = method === "turn/start" ? { ...this.desktopOwnerSettings(sessionId), ...overrides } : overrides;
+    if (method === "turn/start") {
+      const collaboration = asRecord(settings.collaborationMode);
+      const requestedCollaboration = asRecord(asRecord(overrides.collaborationMode).settings);
+      if (typeof overrides.model !== "string" && typeof requestedCollaboration.model === "string") settings.model = requestedCollaboration.model;
+      if (!Object.prototype.hasOwnProperty.call(overrides, "effort") && Object.prototype.hasOwnProperty.call(requestedCollaboration, "reasoning_effort")) settings.effort = requestedCollaboration.reasoning_effort;
+      settings.collaborationMode = {
+        ...collaboration,
+        settings: { ...asRecord(collaboration.settings), model: settings.model, reasoning_effort: settings.effort },
+      };
+    }
+    return new Promise((resolve, reject) => {
+      const options: CodexMessageOptions = {
+        ownerAdmission: method === "turn/start" ? "start" : "steer",
+        directory: typeof settings.cwd === "string" ? normalizeDirectory(settings.cwd) : this.sessionDirectories.get(sessionId),
+        modelId: typeof settings.model === "string" ? settings.model : undefined,
+        nativeOverrides: pickDesktopOwnerSettings(settings, true),
+        onAdmitted: (result) => {
+          if (method === "turn/start") this.commitDesktopOwnerSettings(sessionId, settings);
+          this.notifyDesktopOwnerState(sessionId);
+          resolve(result);
+        },
+        onAdmissionFailed: reject,
+      };
+      const completion = method === "turn/start"
+        ? this.startPreparedTurn(sessionId, input, userMessage, [], options, false)
+        : this.steerTurn(sessionId, input, userMessage, [], options);
+      // The IPC reply acknowledges admission; the existing notification handlers
+      // continue to own the full turn and its completion/error bookkeeping.
+      void completion.catch((error: unknown) => reject(error instanceof Error ? error : new Error(String(error))));
+    });
+  }
+
+  private async updateDesktopOwnerSettings(sessionId: string, patch: Record<string, unknown>, options: {
+    activeTurnId?: string;
+    condition?: Record<string, unknown>;
+  }): Promise<boolean> {
+    this.requireDesktopOwnerThread(sessionId);
+    if (options.activeTurnId != null) throw new Error("Changing permissions of an active Codex turn is not supported by this owner");
+    const unsupported = Object.keys(patch).find((key) => patch[key] !== undefined && !DESKTOP_OWNER_SETTING_KEYS.has(key));
+    if (unsupported) throw new Error(`Unsupported Desktop owner setting: ${unsupported}`);
+    const previous = this.desktopOwnerSettings(sessionId);
+    if (options.condition?.ifModelEquals != null && options.condition.ifModelEquals !== previous.model) return false;
+    if (options.condition && Object.prototype.hasOwnProperty.call(options.condition, "ifEffortEquals") && options.condition.ifEffortEquals !== previous.effort) return false;
+    const settings = { ...previous, ...pickDesktopOwnerSettings(patch) };
+    const collaboration = asRecord(settings.collaborationMode);
+    const mode = typeof collaboration.mode === "string" ? collaboration.mode : this.sessionModes.get(sessionId) ?? this.currentMode;
+    if (!CODEX_MODES.some((candidate) => candidate.id === mode)) throw new Error("Unsupported Codex collaboration mode");
+    const collaborationSettings = asRecord(collaboration.settings);
+    if (patch.collaborationMode != null) {
+      if (typeof collaborationSettings.model === "string") settings.model = collaborationSettings.model;
+      if (Object.prototype.hasOwnProperty.call(collaborationSettings, "reasoning_effort")) settings.effort = collaborationSettings.reasoning_effort;
+    }
+    settings.collaborationMode = { ...collaboration, mode, settings: { ...collaborationSettings, model: settings.model, reasoning_effort: settings.effort } };
+    this.commitDesktopOwnerSettings(sessionId, settings);
+    this.notifyDesktopOwnerState(sessionId);
+    return true;
+  }
+
+  private commitDesktopOwnerSettings(sessionId: string, settings: Record<string, unknown>): void {
+    this.nativeSessionSettings.set(sessionId, {
+      modelProvider: this.nativeSessionSettings.get(sessionId)?.modelProvider,
+      ...pickDesktopOwnerSettings(settings),
+    });
+    if (typeof settings.model === "string") this.sessionModels.set(sessionId, settings.model);
+    const mode = asRecord(settings.collaborationMode).mode;
+    if (typeof mode === "string") this.sessionModes.set(sessionId, mode);
+    if (typeof settings.cwd === "string") this.sessionDirectories.set(sessionId, normalizeDirectory(settings.cwd));
+    const effort = typeof settings.effort === "string" ? fromCodexEffort(settings.effort) : undefined;
+    if (effort) this.sessionReasoningEfforts.set(sessionId, effort); else this.sessionReasoningEfforts.delete(sessionId);
+    if (isCodexServiceTier(settings.serviceTier)) this.sessionServiceTiers.set(sessionId, settings.serviceTier); else this.sessionServiceTiers.delete(sessionId);
+  }
+
+  private async respondDesktopOwner(sessionId: string, requestId: string | number, result: unknown): Promise<void> {
+    this.requireDesktopOwnerThread(sessionId);
+    const key = String(requestId);
+    const permission = this.pendingPermissions.get(key);
+    const question = this.pendingQuestions.get(key);
+    const pending = permission ?? question;
+    if (!pending || pending.sessionId !== sessionId) throw new Error("Desktop response does not match a pending request in this session");
+    this.client!.respond(pending.requestId, result);
+    if (permission) {
+      this.pendingPermissions.delete(key);
+      this.emit("permission.replied", { permissionId: key, optionId: "resolved" });
+    } else {
+      this.pendingQuestions.delete(key);
+      const answers = asRecord(asRecord(result).answers);
+      this.emit("question.replied", { questionId: key, answers: Object.values(answers).map((answer) => {
+        const values = asRecord(answer).answers;
+        return Array.isArray(values) ? values.filter((value): value is string => typeof value === "string") : [];
+      }) });
+    }
+    this.touchThread(sessionId);
+    this.notifyDesktopOwnerState(sessionId);
+  }
+
+  private notifyDesktopOwnerState(sessionId: string): void {
+    for (const listener of this.desktopOwnerListeners) {
+      try { listener(sessionId); } catch (error) { codexLog.warn("Desktop owner state listener failed:", error); }
+    }
+  }
+
   getInfo(): EngineInfo {
     return {
       type: this.engineType,
@@ -307,6 +667,7 @@ export class CodexAdapter extends EngineAdapter {
 
   getCapabilities(): EngineCapabilities {
     return {
+      reasoningEffortOptions: ["low", "medium", "high", "max", "ultra"],
       providerModelHierarchy: false,
       dynamicModes: true,
       messageCancellation: true,
@@ -314,6 +675,7 @@ export class CodexAdapter extends EngineAdapter {
       imageAttachment: true,
       loadSession: true,
       listSessions: true,
+      hideArchivedSessions: true,
       modelSwitchable: true,
       customModelInput: true,
       messageEnqueue: true,
@@ -360,12 +722,21 @@ export class CodexAdapter extends EngineAdapter {
   }
 
   async createSession(directory: string, meta?: Record<string, unknown>): Promise<UnifiedSession> {
+    const strictOwnerRestore = meta?.codexDesktopOwner === "codemux";
+    const existingThreadId = resolveThreadId(undefined, meta);
+    if (strictOwnerRestore && !existingThreadId) throw new Error("CodeMux-owned restoration requires the original Codex thread ID");
     await this.start();
 
-    const normalizedDirectory = normalizeDirectory(directory);
-    const existingThreadId = resolveThreadId(undefined, meta);
+    let normalizedDirectory = normalizeDirectory(directory);
     let threadResponse: ThreadResponse;
-    if (existingThreadId) {
+    if (strictOwnerRestore && existingThreadId) {
+      threadResponse = await this.resumeThread(existingThreadId, normalizedDirectory, true);
+      if (threadResponse.thread?.id !== existingThreadId) throw new Error("CodeMux-owned restoration changed the original Codex thread ID");
+      normalizedDirectory = normalizeDirectory(threadResponse.thread.cwd ?? threadResponse.cwd ?? normalizedDirectory);
+    } else if (existingThreadId) {
+      if (await this.getStoredThreadAvailability(existingThreadId) === "archived") {
+        throw Object.assign(new Error("Archived Codex conversations are not available in CodeMux."), { code: "CODEX_THREAD_ARCHIVED" });
+      }
       try {
         threadResponse = await this.resumeThread(existingThreadId, normalizedDirectory);
       } catch (error) {
@@ -373,7 +744,9 @@ export class CodexAdapter extends EngineAdapter {
         threadResponse = await this.startThread(normalizedDirectory);
       }
     } else {
-      threadResponse = await this.startThread(normalizedDirectory);
+      threadResponse = typeof meta?.catalogProjectId === "string"
+        ? await this.startThread(normalizedDirectory, meta.catalogProjectId)
+        : await this.startThread(normalizedDirectory);
     }
 
     const threadId = threadResponse.thread?.id;
@@ -382,9 +755,24 @@ export class CodexAdapter extends EngineAdapter {
     }
 
     const sessionId = toEngineSessionId(threadId);
+    if (this.desktopOwnerRuntimeEnabled && (!existingThreadId || strictOwnerRestore)) this.desktopRuntimeAdmissions.add(threadId);
     this.registerThread(sessionId, threadId, normalizedDirectory, threadResponse.thread?.name ?? undefined, true, threadResponse.thread?.createdAt, threadResponse.thread?.updatedAt);
+    this.nativeSessionSettings.set(sessionId, {
+      model: threadResponse.model ?? this.currentModelId,
+      modelProvider: threadResponse.modelProvider,
+      effort: threadResponse.reasoningEffort ?? null,
+      serviceTier: threadResponse.serviceTier ?? null,
+      approvalPolicy: threadResponse.approvalPolicy,
+      sandboxPolicy: threadResponse.sandbox,
+      collaborationMode: threadResponse.collaborationMode,
+      permissions: threadResponse.permissions,
+      cwd: threadResponse.cwd ?? normalizedDirectory,
+    });
 
-    if (!this.sessionModes.has(sessionId)) {
+    const restoredMode = strictOwnerRestore ? threadResponse.collaborationMode?.mode : undefined;
+    if (typeof restoredMode === "string") {
+      this.sessionModes.set(sessionId, restoredMode);
+    } else if (!this.sessionModes.has(sessionId)) {
       this.sessionModes.set(sessionId, this.currentMode);
     }
     if (!this.sessionDirectories.has(sessionId)) {
@@ -418,16 +806,24 @@ export class CodexAdapter extends EngineAdapter {
       codexLog.warn(`Failed to refresh skills for ${normalizedDirectory}:`, error);
     });
 
+    const catalogContext = typeof meta?.catalogSourceId === "string" || typeof meta?.catalogProjectId === "string";
+    const actualProjectId = threadResponse.thread?.projectId;
+    const hasActualProject = catalogContext && (typeof actualProjectId === "string" || actualProjectId === null);
     return {
       id: sessionId,
       engineType: this.engineType,
       directory: normalizedDirectory,
+      ...(hasActualProject ? { projectId: actualProjectId } : {}),
       title: threadResponse.thread?.name ?? undefined,
       time: {
         created: toMillis(threadResponse.thread?.createdAt, Date.now()),
         updated: toMillis(threadResponse.thread?.updatedAt, Date.now()),
       },
-      engineMeta: { codexThreadId: threadId },
+      engineMeta: {
+        codexThreadId: threadId,
+        ...(typeof meta?.catalogSourceId === "string" ? { catalogSourceId: meta.catalogSourceId } : {}),
+        ...(hasActualProject ? { catalogProjectId: actualProjectId } : {}),
+      },
     };
   }
 
@@ -470,7 +866,7 @@ export class CodexAdapter extends EngineAdapter {
     try {
       await this.client.request("thread/name/set", {
         threadId,
-        threadName: title,
+        name: title,
       });
       const thread = this.threads.get(threadId);
       if (thread) {
@@ -482,16 +878,96 @@ export class CodexAdapter extends EngineAdapter {
     }
   }
 
+  /** Renames persisted metadata without loading, resuming, or changing its owner. */
+  async renameStoredThread(threadId: string, title: string): Promise<void> {
+    if (!threadId.trim() || !title.trim()) throw new Error("A Codex thread ID and non-empty title are required");
+    await this.start();
+    const before = await this.readStoredThreadMetadata(threadId);
+    await this.requireUnarchivedStoredThread(threadId, before.cwd);
+    await this.client!.request("thread/name/set", { threadId, name: title });
+    const after = await this.readStoredThreadMetadata(threadId);
+    if (after.name !== title) throw new Error("Codex accepted the rename but the stored title did not match");
+    // A concurrent archive must not be turned into an unarchive by the caller's
+    // subsequent UI refresh. Report success only after this second verification.
+    await this.requireUnarchivedStoredThread(threadId, after.cwd);
+  }
+
+  /** Checks both native indexes without resuming a thread or acquiring its writer. */
+  async getStoredThreadAvailability(threadId: string): Promise<StoredCodexThreadAvailability> {
+    if (!threadId.trim()) throw new Error("A Codex thread ID is required");
+    await this.start();
+    let directory: unknown;
+    try {
+      directory = (await this.readStoredThreadMetadata(threadId)).cwd;
+    } catch (error) {
+      // This is the native metadata response for a missing/non-materialized ID.
+      // Still check both bounded indexes before concluding that storage is absent.
+      if (!(error instanceof Error) || error.message !== `thread not loaded: ${threadId} (code: -32600)`) throw error;
+    }
+    return this.storedThreadAvailability(threadId, directory);
+  }
+
+  /** Internal lifecycle checks may read archives; client history reads can exclude them. */
+  async readStoredThread(threadId: string, options: { activeOnly?: boolean } = {}): Promise<{ thread: StoredCodexThreadMetadata; archived: boolean }> {
+    if (!threadId.trim()) throw new Error("A Codex thread ID is required");
+    await this.start();
+    if (!this.client?.running) throw new Error("Codex metadata client is not running");
+    const checkAvailability = (availability: StoredCodexThreadAvailability) => {
+      if (availability === "missing") throw new Error("The Codex thread is missing from native storage");
+      if (options.activeOnly && availability === "archived") {
+        throw Object.assign(new Error("Archived Codex conversations are not available in CodeMux."), { code: "CODEX_THREAD_ARCHIVED" });
+      }
+    };
+    // Do not hydrate an archived transcript merely to discover its archive flag.
+    if (options.activeOnly) checkAvailability(await this.getStoredThreadAvailability(threadId));
+    let response: Record<string, unknown>;
+    try { response = asRecord(await this.client.request("thread/read", { threadId, includeTurns: true })); }
+    catch (error) {
+      if (!this.isAdmittedDesktopThread(threadId) || !(error instanceof Error)
+        || error.message !== `thread ${threadId} is not materialized yet; includeTurns is unavailable before first user message (code: -32600)`) throw error;
+      response = asRecord(await this.client.request("thread/read", { threadId, includeTurns: false }));
+    }
+    const thread = asRecord(response.thread);
+    if (thread.id !== threadId) throw new Error("Native Codex history returned a different thread");
+    const availability = await this.storedThreadAvailability(threadId, thread.cwd);
+    checkAvailability(availability);
+    return { thread: thread as StoredCodexThreadMetadata, archived: availability === "archived" };
+  }
+
+  /** Archives only native storage; never fabricates an IPC fact to release an owner. */
+  async archiveStoredThread(threadId: string): Promise<StoredCodexThreadMetadata> {
+    if (!threadId.trim()) throw new Error("A Codex thread ID is required");
+    await this.start();
+    const before = await this.readStoredThreadMetadata(threadId);
+    const availability = await this.storedThreadAvailability(threadId, before.cwd);
+    if (availability === "archived") return before;
+    if (availability !== "active") throw new Error("The Codex thread is missing from native storage");
+    // A foreign active writer is rejected by the native API. Propagate that
+    // failure without stopping it, retrying, or announcing a false archive.
+    await this.client!.request("thread/archive", { threadId });
+    const after = await this.readStoredThreadMetadata(threadId);
+    if (await this.storedThreadAvailability(threadId, after.cwd) !== "archived") throw new Error("Codex archive was not confirmed by native storage");
+    return after;
+  }
+
+  /** Restores an archived record without resuming its conversation. */
+  async unarchiveStoredThread(threadId: string): Promise<StoredCodexThreadMetadata> {
+    if (!threadId.trim()) throw new Error("A Codex thread ID is required");
+    await this.start();
+    const before = await this.readStoredThreadMetadata(threadId);
+    const availability = await this.storedThreadAvailability(threadId, before.cwd);
+    if (availability === "active") return before;
+    if (availability !== "archived") throw new Error("The Codex thread is missing from native storage");
+    await this.client!.request("thread/unarchive", { threadId });
+    const after = await this.readStoredThreadMetadata(threadId);
+    if (await this.storedThreadAvailability(threadId, after.cwd) !== "active") throw new Error("Codex restore was not confirmed by native storage");
+    return after;
+  }
+
   async sendMessage(
     sessionId: string,
     content: MessagePromptContent[],
-    options?: {
-      mode?: string;
-      modelId?: string;
-      reasoningEffort?: ReasoningEffort | null;
-      serviceTier?: CodexServiceTier | null;
-      directory?: string;
-    },
+    options?: CodexMessageOptions,
   ): Promise<UnifiedMessage> {
     const prepared = this.buildPromptInput(content);
     const userMessage = createUserMessage(sessionId, prepared.displayText, Date.now(), prepared.images);
@@ -605,13 +1081,11 @@ export class CodexAdapter extends EngineAdapter {
     if (!threadId) return [];
 
     try {
-      const response = asRecord(await this.client.request("thread/read", {
-        threadId,
-        includeTurns: true,
-      }));
+      const response = await this.readStoredThread(threadId, { activeOnly: true });
 
       return convertThreadToMessages(engineSessionId, response as any, normalizeDirectory(directory));
     } catch (error) {
+      if (error instanceof Error && "code" in error && error.code === "CODEX_THREAD_ARCHIVED") throw error;
       codexLog.warn(`Failed to read Codex thread ${threadId}:`, error);
       return [];
     }
@@ -1097,81 +1571,96 @@ export class CodexAdapter extends EngineAdapter {
   }
 
   private handleNotification(method: string, params: unknown): void {
+    if (DESKTOP_CATALOG_NOTIFICATION_METHODS.has(method)) {
+      for (const listener of this.desktopCatalogListeners) {
+        try { listener(method, params); }
+        catch { codexLog.warn("A Codex catalog notification observer failed"); }
+      }
+    }
     const data = asRecord(params);
     const threadId = extractThreadId(method, data);
-    const sessionId = threadId ? this.threadToSession.get(threadId) : undefined;
+    const resolvedRequestSession = method === "serverRequest/resolved"
+      ? this.pendingPermissions.get(String(data.requestId))?.sessionId ?? this.pendingQuestions.get(String(data.requestId))?.sessionId
+      : undefined;
+    const sessionId = threadId ? this.threadToSession.get(threadId) : resolvedRequestSession;
 
-    switch (method) {
-      case "thread/started":
-        this.handleThreadStarted(data);
-        return;
-      case "thread/name/updated":
-        if (sessionId) this.handleThreadNameUpdated(sessionId, data);
-        return;
-      case "thread/status/changed":
-        if (threadId) this.handleThreadStatusChanged(threadId, data);
-        return;
-      case "thread/closed":
-        if (threadId) this.handleThreadClosed(threadId);
-        return;
-      case "thread/tokenUsage/updated":
-        if (sessionId) this.handleTokenUsageUpdated(sessionId, data);
-        return;
-      case "turn/started":
-        if (sessionId) this.handleTurnStarted(sessionId, data);
-        return;
-      case "turn/completed":
-        if (sessionId) this.handleTurnCompleted(sessionId, data);
-        return;
-      case "turn/diff/updated":
-        if (sessionId) this.handleTurnDiffUpdated(sessionId, data);
-        return;
-      case "turn/plan/updated":
-        if (sessionId) this.handleTurnPlanUpdated(sessionId, data);
-        return;
-      case "item/started":
-        if (sessionId) this.handleItemStarted(sessionId, data);
-        return;
-      case "item/completed":
-        if (sessionId) this.handleItemCompleted(sessionId, data);
-        return;
-      case "item/agentMessage/delta":
-        if (sessionId) this.handleAgentMessageDelta(sessionId, data);
-        return;
-      case "item/plan/delta":
-        if (sessionId) this.handlePlanDelta(sessionId, data);
-        return;
-      case "item/reasoning/textDelta":
-      case "item/reasoning/summaryTextDelta":
-        if (sessionId) this.handleReasoningDelta(sessionId, data);
-        return;
-      case "item/commandExecution/outputDelta":
-        if (sessionId) this.handleToolOutputDelta(sessionId, data);
-        return;
-      case "item/fileChange/outputDelta":
-        if (sessionId) this.handleFileChangeDelta(sessionId, data);
-        return;
-      case "item/mcpToolCall/progress":
-        if (sessionId) this.handleMcpProgress(sessionId, data);
-        return;
-      case "serverRequest/resolved":
-        this.handleServerRequestResolved(data);
-        return;
-      case "skills/changed":
-        this.handleSkillsChanged();
-        return;
-      case "model/rerouted":
-        if (sessionId) this.handleModelRerouted(sessionId, data);
-        return;
-      case "thread/compacted":
-        if (sessionId) this.handleContextCompacted(sessionId);
-        return;
-      case "error":
-        if (sessionId) this.handleTurnError(sessionId, data);
-        return;
-      default:
-        codexLog.debug(`Unhandled Codex notification: ${method}`);
-        return;
+    try {
+      switch (method) {
+        case "thread/started":
+          this.handleThreadStarted(data);
+          return;
+        case "thread/name/updated":
+          if (sessionId) this.handleThreadNameUpdated(sessionId, data);
+          return;
+        case "thread/status/changed":
+          if (threadId) this.handleThreadStatusChanged(threadId, data);
+          return;
+        case "thread/closed":
+          if (threadId) this.handleThreadClosed(threadId);
+          return;
+        case "thread/tokenUsage/updated":
+          if (sessionId) this.handleTokenUsageUpdated(sessionId, data);
+          return;
+        case "turn/started":
+          if (sessionId) this.handleTurnStarted(sessionId, data);
+          return;
+        case "turn/completed":
+          if (sessionId) this.handleTurnCompleted(sessionId, data);
+          return;
+        case "turn/diff/updated":
+          if (sessionId) this.handleTurnDiffUpdated(sessionId, data);
+          return;
+        case "turn/plan/updated":
+          if (sessionId) this.handleTurnPlanUpdated(sessionId, data);
+          return;
+        case "item/started":
+          if (sessionId) this.handleItemStarted(sessionId, data);
+          return;
+        case "item/completed":
+          if (sessionId) this.handleItemCompleted(sessionId, data);
+          return;
+        case "item/agentMessage/delta":
+          if (sessionId) this.handleAgentMessageDelta(sessionId, data);
+          return;
+        case "item/plan/delta":
+          if (sessionId) this.handlePlanDelta(sessionId, data);
+          return;
+        case "item/reasoning/textDelta":
+          if (sessionId) this.handleReasoningDelta(sessionId, data, "content");
+          return;
+        case "item/reasoning/summaryTextDelta":
+          if (sessionId) this.handleReasoningDelta(sessionId, data, "summary");
+          return;
+        case "item/commandExecution/outputDelta":
+          if (sessionId) this.handleToolOutputDelta(sessionId, data);
+          return;
+        case "item/fileChange/outputDelta":
+          if (sessionId) this.handleFileChangeDelta(sessionId, data);
+          return;
+        case "item/mcpToolCall/progress":
+          if (sessionId) this.handleMcpProgress(sessionId, data);
+          return;
+        case "serverRequest/resolved":
+          this.handleServerRequestResolved(data);
+          return;
+        case "skills/changed":
+          this.handleSkillsChanged();
+          return;
+        case "model/rerouted":
+          if (sessionId) this.handleModelRerouted(sessionId, data);
+          return;
+        case "thread/compacted":
+          if (sessionId) this.handleContextCompacted(sessionId);
+          return;
+        case "error":
+          if (sessionId) this.handleTurnError(sessionId, data);
+          return;
+        default:
+          codexLog.debug(`Unhandled Codex notification: ${method}`);
+          return;
+      }
+    } finally {
+      if (sessionId) this.notifyDesktopOwnerState(sessionId);
     }
   }
 
@@ -1322,10 +1811,12 @@ export class CodexAdapter extends EngineAdapter {
         return;
       }
       case "agentMessage":
-      case "reasoning":
       case "plan":
       case "userMessage":
       case "hookPrompt":
+        return;
+      case "reasoning":
+        this.getReasoningItem(buffer, item);
         return;
       default:
         break;
@@ -1355,12 +1846,13 @@ export class CodexAdapter extends EngineAdapter {
         return;
       }
       case "reasoning": {
-        const content = [
-          ...extractStrings(item.summary),
-          ...extractStrings(item.content),
-        ].join("\n\n");
-        if (content) {
-          const part = this.replaceReasoningPart(buffer, content);
+        const state = this.getReasoningItem(buffer, item);
+        const summary = normalizeCodexReasoningText(item.summary, []) ? item.summary : this.reasoningBlocks(state.summary);
+        const content = normalizeCodexReasoningText([], item.content) ? item.content : this.reasoningBlocks(state.content);
+        state.completed = true;
+        const text = normalizeCodexReasoningText(summary, content);
+        if (text) {
+          const part = this.replaceReasoningPart(buffer, state, text);
           this.emit("message.part.updated", { sessionId, messageId: buffer.messageId, part });
         }
         return;
@@ -1428,11 +1920,25 @@ export class CodexAdapter extends EngineAdapter {
     this.emit("message.part.updated", { sessionId, messageId: buffer.messageId, part });
   }
 
-  private handleReasoningDelta(sessionId: string, data: Record<string, unknown>): void {
+  private handleReasoningDelta(
+    sessionId: string,
+    data: Record<string, unknown>,
+    channel: "summary" | "content" = "summary",
+  ): void {
     const buffer = this.ensureBuffer(sessionId);
     const delta = typeof data.delta === "string" ? data.delta : "";
     if (!delta) return;
-    const part = appendReasoningDelta(buffer, delta);
+    const state = this.getReasoningItem(buffer, data);
+    if (state.completed) return;
+    const nativeIndex = data[channel === "summary" ? "summaryIndex" : "contentIndex"];
+    const index = typeof nativeIndex === "number" && Number.isInteger(nativeIndex) && nativeIndex >= 0 ? nativeIndex : 0;
+    const blocks = state[channel];
+    blocks.set(index, `${blocks.get(index) ?? ""}${delta}`);
+    // Summary and content describe the same item; keep their deltas separate while streaming.
+    const summary = normalizeCodexReasoningText(this.reasoningBlocks(state.summary), []);
+    const text = summary || normalizeCodexReasoningText([], this.reasoningBlocks(state.content));
+    if (!text) return;
+    const part = this.replaceReasoningPart(buffer, state, text);
     this.emit("message.part.updated", { sessionId, messageId: buffer.messageId, part });
   }
 
@@ -1502,6 +2008,11 @@ export class CodexAdapter extends EngineAdapter {
   }
 
   private handleTurnError(sessionId: string, data: Record<string, unknown>): void {
+    if (this.desktopOwnerSessions.has(sessionId) && data.willRetry === true) {
+      // A retry notification is not a terminal turn; followers must remain able
+      // to steer or interrupt the same running ModelHub request.
+      return;
+    }
     const error = normalizeTurnError(data.error) ?? "Turn failed";
     this.failActiveTurn(sessionId, error, false);
   }
@@ -1515,25 +2026,29 @@ export class CodexAdapter extends EngineAdapter {
       return;
     }
 
-    switch (method) {
-      case "item/commandExecution/requestApproval":
-      case "item/fileChange/requestApproval":
-      case "item/permissions/requestApproval":
-      case "execCommandApproval":
-      case "applyPatchApproval": {
-        const permission = convertApprovalToPermission(sessionId, requestId, method, params);
-        this.pendingPermissions.set(requestId, { requestId: id, sessionId, method, params, permission });
-        this.emit("permission.asked", { permission });
-        return;
+    try {
+      switch (method) {
+        case "item/commandExecution/requestApproval":
+        case "item/fileChange/requestApproval":
+        case "item/permissions/requestApproval":
+        case "execCommandApproval":
+        case "applyPatchApproval": {
+          const permission = convertApprovalToPermission(sessionId, requestId, method, params);
+          this.pendingPermissions.set(requestId, { requestId: id, sessionId, method, params, permission });
+          this.emit("permission.asked", { permission });
+          return;
+        }
+        case "item/tool/requestUserInput": {
+          const question = convertUserInputToQuestion(sessionId, requestId, params);
+          this.pendingQuestions.set(requestId, { requestId: id, sessionId, params, question });
+          this.emit("question.asked", { question });
+          return;
+        }
+        default:
+          this.client?.respondError(id, -32601, `CodeMux does not support ${method}`);
       }
-      case "item/tool/requestUserInput": {
-        const question = convertUserInputToQuestion(sessionId, requestId, params);
-        this.pendingQuestions.set(requestId, { requestId: id, sessionId, params, question });
-        this.emit("question.asked", { question });
-        return;
-      }
-      default:
-        this.client?.respondError(id, -32601, `CodeMux does not support ${method}`);
+    } finally {
+      if (sessionId) this.notifyDesktopOwnerState(sessionId);
     }
   }
 
@@ -1610,17 +2125,16 @@ export class CodexAdapter extends EngineAdapter {
     input: CodexTurnInput[],
     userMessage: UnifiedMessage,
     tempDirs: string[],
-    options: {
-      mode?: string;
-      modelId?: string;
-      reasoningEffort?: ReasoningEffort | null;
-      serviceTier?: CodexServiceTier | null;
-      directory?: string;
-    } | undefined,
+    options: CodexMessageOptions | undefined,
     emitQueuedConsumed: boolean,
   ): Promise<UnifiedMessage> {
     const directory = normalizeDirectory(options?.directory ?? this.sessionDirectories.get(sessionId) ?? this.threads.get(this.sessionToThread.get(sessionId) ?? "")?.directory ?? "");
-    const threadId = await this.ensureThreadLoaded(sessionId, directory);
+    const threadId = options?.ownerAdmission
+      ? this.requireDesktopOwnerThread(sessionId)
+      : await this.ensureThreadLoaded(sessionId, directory);
+    if (options?.ownerAdmission && this.hasActiveTurn(sessionId)) {
+      throw new Error("A Codex turn is already active; use steer instead of start");
+    }
     const modeId = options?.mode ?? this.sessionModes.get(sessionId) ?? this.currentMode;
     const modelId = options?.modelId ?? this.sessionModels.get(sessionId) ?? this.currentModelId;
     const reasoningEffort = options?.reasoningEffort ?? this.sessionReasoningEfforts.get(sessionId) ?? null;
@@ -1669,6 +2183,7 @@ export class CodexAdapter extends EngineAdapter {
             developer_instructions: null,
           },
         },
+        ...options?.nativeOverrides,
       }, START_TIMEOUT_MS)
         .then((response) => {
           const result = asRecord(response) as TurnResponse;
@@ -1677,14 +2192,16 @@ export class CodexAdapter extends EngineAdapter {
             : typeof result.turnId === "string"
               ? result.turnId
               : undefined;
-          if (turnId) {
+          if (turnId && (!options?.ownerAdmission || this.messageBuffers.get(sessionId) === buffer)) {
             this.activeTurnIds.set(sessionId, turnId);
             buffer.activeTurnId = turnId;
           }
           buffer.modelId = modelId;
           buffer.reasoningEffort = reasoningEffort ?? undefined;
+          options?.onAdmitted?.(response);
         })
         .catch((error) => {
+          options?.onAdmissionFailed?.(error instanceof Error ? error : new Error(String(error)));
           codexLog.error(`Failed to start turn for ${sessionId}:`, error);
           this.failActiveTurn(sessionId, error instanceof Error ? error.message : String(error), false);
         });
@@ -1696,25 +2213,21 @@ export class CodexAdapter extends EngineAdapter {
     input: CodexTurnInput[],
     userMessage: UnifiedMessage,
     tempDirs: string[],
-    options: {
-      mode?: string;
-      modelId?: string;
-      reasoningEffort?: ReasoningEffort | null;
-      serviceTier?: CodexServiceTier | null;
-      directory?: string;
-    } | undefined,
+    options: CodexMessageOptions | undefined,
   ): Promise<UnifiedMessage> {
     const threadId = this.sessionToThread.get(sessionId);
     const activeTurnId = this.activeTurnIds.get(sessionId);
     if (!threadId || !activeTurnId || !this.client?.running) {
+      if (options?.ownerAdmission) throw new Error("No active Codex turn to steer");
       return this.enqueueMessage(sessionId, input, userMessage, tempDirs, options);
     }
 
     try {
-      await this.client.request("turn/steer", {
+      const response = await this.client.request("turn/steer", {
         threadId,
         input,
         expectedTurnId: activeTurnId,
+        ...options?.nativeOverrides,
       }, START_TIMEOUT_MS);
 
       this.appendMessageToHistory(sessionId, userMessage);
@@ -1722,11 +2235,23 @@ export class CodexAdapter extends EngineAdapter {
       const existing = this.activeTempDirs.get(sessionId) ?? [];
       this.activeTempDirs.set(sessionId, [...existing, ...tempDirs]);
       this.touchThread(sessionId);
+      options?.onAdmitted?.(response);
+
+      if (options?.ownerAdmission && this.activeTurnIds.get(sessionId) !== activeTurnId) {
+        const completed = [...(this.messageHistory.get(sessionId) ?? [])].reverse().find((message) => message.role === "assistant");
+        if (completed) return completed;
+        throw new Error("The steered Codex turn ended before its admission response");
+      }
 
       return new Promise<UnifiedMessage>((resolve, reject) => {
         this.pushTurnResolver(sessionId, { resolve, reject });
       });
     } catch (error) {
+      if (options?.ownerAdmission) {
+        this.cleanupTempDirs(tempDirs);
+        options.onAdmissionFailed?.(error instanceof Error ? error : new Error(String(error)));
+        throw error;
+      }
       codexLog.warn(`turn/steer failed for ${sessionId}, falling back to queue:`, error);
       return this.enqueueMessage(sessionId, input, userMessage, tempDirs, options);
     }
@@ -1737,13 +2262,7 @@ export class CodexAdapter extends EngineAdapter {
     input: CodexTurnInput[],
     userMessage: UnifiedMessage,
     tempDirs: string[],
-    options: {
-      mode?: string;
-      modelId?: string;
-      reasoningEffort?: ReasoningEffort | null;
-      serviceTier?: CodexServiceTier | null;
-      directory?: string;
-    } | undefined,
+    options: CodexMessageOptions | undefined,
   ): Promise<UnifiedMessage> {
     return new Promise<UnifiedMessage>((resolve, reject) => {
       const queue = this.messageQueues.get(sessionId) ?? [];
@@ -1836,14 +2355,31 @@ export class CodexAdapter extends EngineAdapter {
     return part;
   }
 
-  private replaceReasoningPart(buffer: MessageBuffer, text: string) {
-    buffer.reasoningAccumulator = text;
-    if (!buffer.reasoningPartId) buffer.reasoningPartId = timeId("part");
-    const part = {
-      id: buffer.reasoningPartId,
+  private getReasoningItem(buffer: MessageBuffer, data: Record<string, unknown>): CodexReasoningItemState {
+    let items = this.reasoningItems.get(buffer);
+    if (!items) {
+      items = new Map();
+      this.reasoningItems.set(buffer, items);
+    }
+    const itemId = typeof data.itemId === "string" ? data.itemId : typeof data.id === "string" ? data.id : "";
+    let state = items.get(itemId);
+    if (!state) {
+      state = { partId: timeId("part"), summary: new Map(), content: new Map(), completed: false };
+      items.set(itemId, state);
+    }
+    return state;
+  }
+
+  private reasoningBlocks(blocks: Map<number, string>): string[] {
+    return [...blocks.entries()].sort(([left], [right]) => left - right).map(([, text]) => text);
+  }
+
+  private replaceReasoningPart(buffer: MessageBuffer, state: CodexReasoningItemState, text: string): ReasoningPart {
+    const part: ReasoningPart = {
+      id: state.partId,
       messageId: buffer.messageId,
       sessionId: buffer.sessionId,
-      type: "reasoning" as const,
+      type: "reasoning",
       text,
     };
     upsertPart(buffer.parts, part);
@@ -1926,7 +2462,7 @@ export class CodexAdapter extends EngineAdapter {
     return undefined;
   }
 
-  private async startThread(directory: string): Promise<ThreadResponse> {
+  private async startThread(directory: string, projectId?: string): Promise<ThreadResponse> {
     const modeId = this.currentMode;
     const approvalPolicy = clampApprovalPolicy(modeToApprovalPolicy(modeId), this.configRequirements);
     const sandboxMode = clampSandboxMode(modeToSandboxMode(modeId), this.configRequirements);
@@ -1939,12 +2475,25 @@ export class CodexAdapter extends EngineAdapter {
       serviceName: "codemux",
       experimentalRawEvents: false,
       persistExtendedHistory: true,
+      ...(projectId !== undefined ? { projectId } : {}),
+      // Codex 0.154 defaults to paginated history, whose direct app-server read
+      // methods are not implemented in this runtime. Keep this explicit choice
+      // confined to the private Desktop owner runtime; ordinary Codex is unchanged.
+      ...(this.desktopOwnerRuntimeEnabled ? { historyMode: "legacy" } : {}),
     })) as ThreadResponse;
 
     return response;
   }
 
-  private async resumeThread(threadId: string, directory: string): Promise<ThreadResponse> {
+  private async resumeThread(threadId: string, directory: string, preserveSettings = false): Promise<ThreadResponse> {
+    if (preserveSettings) {
+      // A persisted CodeMux owner must resume the same native context. Applying
+      // today's defaults here can change its model family or permission profile.
+      return asRecord(await this.client!.request("thread/resume", {
+        threadId,
+        persistExtendedHistory: true,
+      })) as ThreadResponse;
+    }
     const sessionId = toEngineSessionId(threadId);
     const modeId = this.sessionModes.get(sessionId) ?? this.currentMode;
     const approvalPolicy = clampApprovalPolicy(modeToApprovalPolicy(modeId), this.configRequirements);
@@ -2188,6 +2737,8 @@ export class CodexAdapter extends EngineAdapter {
   }
 
   private clearSessionState(sessionId: string): void {
+    this.nativeSessionSettings.delete(sessionId);
+    this.desktopOwnerSessions.delete(sessionId);
     const threadId = this.sessionToThread.get(sessionId);
     if (threadId) {
       this.threadToSession.delete(threadId);
@@ -2241,6 +2792,7 @@ export class CodexAdapter extends EngineAdapter {
       if (!thread.loaded) continue;
       const sessionId = this.threadToSession.get(threadId);
       if (!sessionId) continue;
+      if (this.desktopOwnerSessions.has(sessionId)) continue;
       if (this.hasActiveTurn(sessionId)) continue;
       if ((this.messageQueues.get(sessionId)?.length ?? 0) > 0) continue;
       if (now - thread.lastUsedAt < SESSION_IDLE_TIMEOUT_MS) continue;
@@ -2283,6 +2835,42 @@ export class CodexAdapter extends EngineAdapter {
     this.setStatus("error", message);
     return new Error(message);
   }
+}
+
+export function createCodexDesktopOwnerRuntime(adapter: CodexAdapter): CodexDesktopOwnerRuntime {
+  return adapter.createDesktopOwnerRuntime();
+}
+
+const DESKTOP_OWNER_SETTING_KEYS = new Set([
+  "model", "effort", "cwd", "serviceTier", "collaborationMode", "approvalPolicy", "approvalsReviewer",
+  "sandboxPolicy", "permissions", "multiAgentMode", "personality", "summary", "outputSchema",
+]);
+
+function pickDesktopOwnerSettings(value: Record<string, unknown>, includeTurnFields = false): Record<string, unknown> {
+  const keys = [
+    ...DESKTOP_OWNER_SETTING_KEYS,
+    ...(includeTurnFields ? ["clientUserMessageId", "additionalContext", "responsesapiClientMetadata"] : []),
+  ];
+  return Object.fromEntries(keys.filter((key) => Object.prototype.hasOwnProperty.call(value, key) && value[key] !== undefined).map((key) => [key, value[key]]));
+}
+
+function parseDesktopOwnerInput(value: unknown): CodexTurnInput[] {
+  if (!Array.isArray(value) || value.length === 0) throw new Error("Desktop owner input must be a non-empty array");
+  return value.map((entry): CodexTurnInput => {
+    const item = asRecord(entry);
+    if (item.type === "text" && typeof item.text === "string") {
+      return { type: "text", text: item.text, text_elements: Array.isArray(item.text_elements) ? item.text_elements : [] };
+    }
+    if (item.type === "image" && typeof item.url === "string") {
+      const data = /^data:image\/[a-zA-Z0-9.+-]+;base64,([\s\S]*)$/.exec(item.url);
+      if (!data) throw new Error("Desktop owner images must be data URLs");
+      if (Buffer.byteLength(data[1], "base64") > MAX_IMAGE_ATTACHMENT_BYTES) throw new Error("Desktop owner image attachment is too large");
+      return { type: "image", url: item.url };
+    }
+    if (item.type === "localImage" && typeof item.path === "string" && item.path) return { type: "localImage", path: item.path };
+    if (item.type === "skill" && typeof item.name === "string" && typeof item.path === "string") return { type: "skill", name: item.name, path: item.path };
+    throw new Error(`Unsupported Desktop owner input type: ${String(item.type)}`);
+  });
 }
 
 function toEngineSessionId(threadId: string): string {
@@ -2363,12 +2951,6 @@ function normalizeItemToolError(item: Record<string, unknown>): string | undefin
     return typeof item.result === "string" && item.result ? item.result : "Tool failed";
   }
   return undefined;
-}
-
-function extractStrings(value: unknown): string[] {
-  return Array.isArray(value)
-    ? value.filter((entry): entry is string => typeof entry === "string" && entry.length > 0)
-    : [];
 }
 
 function asRecord(value: unknown): Record<string, unknown> {

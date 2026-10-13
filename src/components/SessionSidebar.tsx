@@ -1,5 +1,5 @@
 import { For, Show, Switch, Match, createSignal, createMemo, createEffect } from "solid-js";
-import { SessionInfo, sessionStore, setSessionStore, getProjectName } from "../stores/session";
+import { SessionInfo, sessionStore, setSessionStore, getProjectName, buildSessionProjectView } from "../stores/session";
 import { useI18n, formatMessage } from "../lib/i18n";
 import { isDefaultTitle } from "../lib/session-utils";
 import { filterSessionsBySearch } from "../lib/active-sessions";
@@ -16,11 +16,16 @@ import { systemAPI } from "../lib/electron-api";
 
 interface SessionSidebarProps {
   sessions: SessionInfo[];
+  showArchived?: boolean;
+  onShowArchivedChange?: (archived: boolean) => void;
+  archiveViewAvailable?: boolean;
+  archivedSessionCount?: number;
   currentSessionId: string | null;
   projects: UnifiedProject[];
   getSessionStatus: (sessionId: string) => SessionActivityStatus;
   onSelectSession: (sessionId: string) => void;
   onNewSession: (directory?: string, engineType?: EngineType, worktreeId?: string) => void;
+  newSessionPending?: boolean;
   onDeleteSession: (sessionId: string) => void;
   onRenameSession: (sessionId: string, newTitle: string) => void;
   onDeleteProjectSessions: (projectID: string, projectName: string, sessionCount: number) => void;
@@ -65,6 +70,13 @@ export function SessionSidebar(props: SessionSidebarProps) {
   const [editingTitle, setEditingTitle] = createSignal("");
   const [pendingDeleteId, setPendingDeleteId] = createSignal<string | null>(null);
   const [searchQuery, setSearchQuery] = createSignal("");
+  const visibleSessions = createMemo(() => props.sessions.filter((session) => (session.archived === true) === (props.showArchived === true)));
+  const projectView = createMemo(() => buildSessionProjectView(visibleSessions(), props.projects, Object.values(sessionStore.catalogs)));
+  const sessionRemovalLabel = (session: SessionInfo) => {
+    const capabilities = configStore.engines.find((engine) => engine.type === session.engineType)?.capabilities;
+    return !session.catalogSourceId && !capabilities?.hideArchivedSessions && capabilities?.authoritativeSessionState
+      ? t().sidebar.removeLocalSession : t().sidebar.deleteSession;
+  };
 
   const StatusIndicator = (p: { status: SessionActivityStatus }) => {
     return (
@@ -136,14 +148,15 @@ export function SessionSidebar(props: SessionSidebarProps) {
 
   // Default workspace — displayed above the projects divider
   const defaultWorkspaceGroup = createMemo((): ProjectGroup | null => {
-    if (!sessionStore.showDefaultWorkspace) return null;
-    const defaultProject = props.projects.find((p) => p.isDefault);
+    const defaultProject = projectView().projects.find((p) => p.isDefault && !p.catalogSourceId);
     if (!defaultProject) return null;
 
-    const sessions = props.sessions.filter(
-      (s) => isEngineEnabled(s.engineType) && s.projectID === defaultProject.id
-        && (!s.worktreeId || worktreeEnabled() || (s.teamId && sessionStore.teamOrchestrationEnabled)),
+    const sessions = visibleSessions().filter(
+      (s) => (props.showArchived || isEngineEnabled(s.engineType)) && projectView().projectIds.get(s.id) === defaultProject.id
+        && (props.showArchived || s.catalogSourceId || !s.worktreeId || worktreeEnabled() || (s.teamId && sessionStore.teamOrchestrationEnabled)),
     );
+    if (!sessionStore.showDefaultWorkspace && !props.showArchived && !sessions.some((session) => session.catalogSourceId)) return null;
+    if (props.showArchived && sessions.length === 0) return null;
 
     return {
       projectID: defaultProject.id,
@@ -157,8 +170,8 @@ export function SessionSidebar(props: SessionSidebarProps) {
   const projectGroups = createMemo((): ProjectGroup[] => {
     const groups: Map<string, SessionInfo[]> = new Map();
 
-    const filteredProjects = props.projects.filter((p) => {
-      if (p.directory === "/") return false;
+    const filteredProjects = projectView().projects.filter((p) => {
+      if (p.directory === "/" && !p.catalogSourceId && !projectView().displayOnlyIds.has(p.id)) return false;
       if (p.isDefault) return false; // handled separately above
       return true;
     });
@@ -167,12 +180,12 @@ export function SessionSidebar(props: SessionSidebarProps) {
       groups.set(project.id, []);
     }
 
-    const rootSessions = props.sessions.filter(s =>
-      isEngineEnabled(s.engineType) && (!s.worktreeId || worktreeEnabled() || (s.teamId && sessionStore.teamOrchestrationEnabled)),
+    const rootSessions = visibleSessions().filter(s =>
+      (props.showArchived || isEngineEnabled(s.engineType)) && (props.showArchived || s.catalogSourceId || !s.worktreeId || worktreeEnabled() || (s.teamId && sessionStore.teamOrchestrationEnabled)),
     );
 
     for (const session of rootSessions) {
-      const projectID = session.projectID || "";
+      const projectID = projectView().projectIds.get(session.id) || "";
 
       if (groups.has(projectID)) {
         groups.get(projectID)!.push(session);
@@ -262,15 +275,16 @@ export function SessionSidebar(props: SessionSidebarProps) {
     local: SessionInfo[];
     worktreeGroups: { worktree: UnifiedWorktree; sessions: SessionInfo[]; isTeam: boolean }[];
   } => {
+    if (props.showArchived) return { local: sessions, worktreeGroups: [] };
     const worktrees = getProjectWorktrees(projectDir);
     if (worktrees.length === 0) {
-      return { local: sessions.filter(s => !s.worktreeId), worktreeGroups: [] };
+      return { local: sessions.filter(s => !s.worktreeId || s.catalogSourceId), worktreeGroups: [] };
     }
 
-    const local = sessions.filter((s) => !s.worktreeId);
+    const local = sessions.filter((s) => !s.worktreeId || s.catalogSourceId);
     const wtGroups = worktrees.map((wt) => ({
       worktree: wt,
-      sessions: sessions.filter((s) => s.worktreeId === wt.name),
+      sessions: sessions.filter((s) => !s.catalogSourceId && s.worktreeId === wt.name),
       isTeam: wt.name.startsWith("team-"),
     }));
 
@@ -301,7 +315,8 @@ export function SessionSidebar(props: SessionSidebarProps) {
 
   // Filtered active sessions (respects search query)
   const filteredActiveSessions = createMemo((): SessionInfo[] => {
-    const sessions = props.activeSessions ?? [];
+    if (props.showArchived) return [];
+    const sessions = (props.activeSessions ?? []).filter((session) => !session.archived);
     if (sessions.length === 0) return [];
     return filterSessionsBySearch(sessions, searchQuery());
   });
@@ -310,8 +325,9 @@ export function SessionSidebar(props: SessionSidebarProps) {
 
   // Helper to find the project name for an active session
   const getProjectNameForSession = (session: SessionInfo): string | null => {
-    if (!session.projectID) return null;
-    const project = props.projects.find((p) => p.id === session.projectID);
+    const projectId = projectView().projectIds.get(session.id);
+    if (!projectId) return null;
+    const project = projectView().projects.find((p) => p.id === projectId);
     if (!project) return null;
     return getProjectName(project);
   };
@@ -389,8 +405,22 @@ export function SessionSidebar(props: SessionSidebarProps) {
 
   return (
     <div class="tooltip-host w-full bg-gray-50 dark:bg-slate-950 border-r border-gray-200 dark:border-slate-800 flex flex-col h-full overflow-hidden">
+      <Show when={!props.collapsed && props.archiveViewAvailable}>
+        <div class="flex gap-1 px-2 pt-2" role="group" aria-label={t().sidebar.sessions}>
+          <button
+            onClick={() => props.onShowArchivedChange?.(false)}
+            aria-pressed={!props.showArchived}
+            class={`flex-1 rounded-md px-2 py-1.5 text-xs font-medium ${!props.showArchived ? "bg-white dark:bg-slate-800 text-gray-900 dark:text-white shadow-sm" : "text-gray-500 hover:bg-gray-100 dark:hover:bg-slate-800"}`}
+          >{t().sidebar.sessions}</button>
+          <button
+            onClick={() => props.onShowArchivedChange?.(true)}
+            aria-pressed={props.showArchived === true}
+            class={`flex-1 rounded-md px-2 py-1.5 text-xs font-medium ${props.showArchived ? "bg-white dark:bg-slate-800 text-gray-900 dark:text-white shadow-sm" : "text-gray-500 hover:bg-gray-100 dark:hover:bg-slate-800"}`}
+          >{t().sidebar.archivedSessions} <span class="tabular-nums">({props.archivedSessionCount ?? 0})</span></button>
+        </div>
+      </Show>
       {/* Search Box */}
-      <Show when={!props.collapsed && (projectGroups().length > 0 || filteredDefaultWorkspaceGroup() !== null)}>
+      <Show when={!props.collapsed && (projectGroups().length > 0 || filteredDefaultWorkspaceGroup() !== null || Object.keys(sessionStore.catalogs).length > 0)}>
         <div class="flex items-center gap-1.5 px-2 pt-2">
           <div class="relative flex-1 min-w-0">
             <svg
@@ -432,8 +462,14 @@ export function SessionSidebar(props: SessionSidebarProps) {
       </Show>
       {/* Session List */}
       <div class={`flex-1 overflow-y-auto ${props.collapsed ? "px-1" : "px-2"} py-2`}>
+        <Show when={props.newSessionPending && !props.collapsed}>
+          <p role="status" class="px-3 py-2 text-xs text-gray-400">{t().common.loading}</p>
+        </Show>
+        <Show when={props.showArchived && visibleSessions().length === 0 && !props.collapsed}>
+          <p class="px-3 py-4 text-xs text-gray-400 dark:text-gray-500">{t().sidebar.noArchivedSessions}</p>
+        </Show>
         {/* Scheduled Tasks Section */}
-        <Show when={(props.scheduledTasks?.length ?? 0) > 0 || (props.onCreateTask && !props.collapsed)}>
+        <Show when={!props.showArchived && ((props.scheduledTasks?.length ?? 0) > 0 || (props.onCreateTask && !props.collapsed))}>
           <ScheduledTaskSection
             tasks={props.scheduledTasks ?? []}
             collapsed={props.collapsed}
@@ -626,6 +662,7 @@ export function SessionSidebar(props: SessionSidebarProps) {
                             onClick={startEditing}
                             class="p-1.5 text-gray-400 hover:text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded transition-all"
                             title={t().sidebar.renameSession}
+                            disabled={session.catalogAvailable === false}
                           >
                             <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                               <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" /><path d="m15 5 4 4" />
@@ -655,7 +692,8 @@ export function SessionSidebar(props: SessionSidebarProps) {
                           <button
                             onClick={(e) => { e.stopPropagation(); e.preventDefault(); setPendingDeleteId(session.id); }}
                             class="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded transition-all"
-                            title={t().sidebar.deleteSession}
+                            title={sessionRemovalLabel(session)}
+                            aria-label={sessionRemovalLabel(session)}
                           >
                             <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                               <path d="M3 6h18" /><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" /><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" />
@@ -741,7 +779,7 @@ export function SessionSidebar(props: SessionSidebarProps) {
                         }
                         const firstSession = dwg().sessions[0];
                         if (firstSession) props.onSelectSession(firstSession.id);
-                        else props.onNewSession(dwg().project?.directory);
+                        else if (!props.newSessionPending) props.onNewSession(dwg().project?.directory);
                       }}
                       title={dwg().name}
                       aria-label={dwg().name}
@@ -844,7 +882,8 @@ export function SessionSidebar(props: SessionSidebarProps) {
                           e.stopPropagation();
                           props.onNewSession(dwg().project ? getProjectDirectory(dwg().project!) : undefined);
                         }}
-                        title={t().sidebar.newSession}
+                        title={props.newSessionPending ? t().common.loading : t().sidebar.newSession}
+                        disabled={props.newSessionPending}
                       >
                         <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                           <path d="M5 12h14" />
@@ -1002,6 +1041,7 @@ export function SessionSidebar(props: SessionSidebarProps) {
                                       onClick={startEditing}
                                       class="p-1.5 text-gray-400 hover:text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded transition-all"
                                       title={t().sidebar.renameSession}
+                                      disabled={session.catalogAvailable === false}
                                     >
                                       <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                                         <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" /><path d="m15 5 4 4" />
@@ -1031,7 +1071,8 @@ export function SessionSidebar(props: SessionSidebarProps) {
                                     <button
                                       onClick={(e) => { e.stopPropagation(); e.preventDefault(); setPendingDeleteId(session.id); }}
                                       class="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded transition-all"
-                                      title={t().sidebar.deleteSession}
+                                      title={sessionRemovalLabel(session)}
+                                      aria-label={sessionRemovalLabel(session)}
                                     >
                                       <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                                         <path d="M3 6h18" /><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" /><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" />
@@ -1180,7 +1221,8 @@ export function SessionSidebar(props: SessionSidebarProps) {
                           e.stopPropagation();
                           props.onNewSession(project.project ? getProjectDirectory(project.project) : undefined);
                         }}
-                        title={t().sidebar.newSession}
+                        title={props.newSessionPending ? t().common.loading : t().sidebar.newSession}
+                        disabled={props.newSessionPending}
                       >
                         <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                           <path d="M5 12h14" />
@@ -1188,7 +1230,7 @@ export function SessionSidebar(props: SessionSidebarProps) {
                         </svg>
                       </button>
                       {/* New team task */}
-                      <Show when={props.onNewTeamTask}>
+                      <Show when={props.onNewTeamTask && !project.project?.catalogSourceId && !projectView().displayOnlyIds.has(project.projectID)}>
                         <button
                           class="p-1 text-gray-400 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-900/20 rounded transition-all"
                           onClick={(e) => {
@@ -1206,7 +1248,7 @@ export function SessionSidebar(props: SessionSidebarProps) {
                         </button>
                       </Show>
                       {/* Manage worktrees (only when feature enabled) */}
-                      <Show when={worktreeEnabled() && project.project?.directory}>
+                      <Show when={worktreeEnabled() && project.project?.directory && !project.project.catalogSourceId && !projectView().displayOnlyIds.has(project.projectID)}>
                         <button
                           class="p-1 text-gray-400 hover:text-emerald-600 dark:hover:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-900/20 rounded transition-all"
                           onClick={(e) => {
@@ -1225,30 +1267,32 @@ export function SessionSidebar(props: SessionSidebarProps) {
                         </button>
                       </Show>
                       {/* Hide project */}
-                      <button
-                        class="p-1 text-gray-400 hover:text-red-500 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 rounded transition-all"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          props.onDeleteProjectSessions(project.projectID, project.name, project.sessions.length);
-                        }}
-                        title={t().project.hideTitle}
-                      >
-                        <svg
-                          xmlns="http://www.w3.org/2000/svg"
-                          width="14"
-                          height="14"
-                          viewBox="0 0 24 24"
-                          fill="none"
-                          stroke="currentColor"
-                          stroke-width="2"
-                          stroke-linecap="round"
-                          stroke-linejoin="round"
+                      <Show when={!project.sessions.some((session) => session.catalogSourceId) && !project.project?.catalogSourceId && !projectView().displayOnlyIds.has(project.projectID)}>
+                        <button
+                          class="p-1 text-gray-400 hover:text-red-500 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 rounded transition-all"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            props.onDeleteProjectSessions(project.projectID, project.name, project.sessions.length);
+                          }}
+                          title={t().project.hideTitle}
                         >
-                          <path d="M3 6h18" />
-                          <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" />
-                          <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" />
-                        </svg>
-                      </button>
+                          <svg
+                            xmlns="http://www.w3.org/2000/svg"
+                            width="14"
+                            height="14"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="2"
+                            stroke-linecap="round"
+                            stroke-linejoin="round"
+                          >
+                            <path d="M3 6h18" />
+                            <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" />
+                            <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" />
+                          </svg>
+                        </button>
+                      </Show>
                     </div>
                   </div>
 
@@ -1420,6 +1464,7 @@ export function SessionSidebar(props: SessionSidebarProps) {
                                     onClick={startEditing}
                                     class="p-1.5 text-gray-400 hover:text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded transition-all"
                                     title={t().sidebar.renameSession}
+                                    disabled={session.catalogAvailable === false}
                                   >
                                     <svg
                                       xmlns="http://www.w3.org/2000/svg"
@@ -1464,7 +1509,8 @@ export function SessionSidebar(props: SessionSidebarProps) {
                                       setPendingDeleteId(session.id);
                                     }}
                                     class="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded transition-all"
-                                    title={t().sidebar.deleteSession}
+                                    title={sessionRemovalLabel(session)}
+                                    aria-label={sessionRemovalLabel(session)}
                                   >
                                     <svg
                                       xmlns="http://www.w3.org/2000/svg"
@@ -1724,7 +1770,8 @@ export function SessionSidebar(props: SessionSidebarProps) {
                                           e.stopPropagation();
                                           props.onNewSession(dir, undefined, wtGroup.worktree.name);
                                         }}
-                                        title={t().sidebar.newSession}
+                                        title={props.newSessionPending ? t().common.loading : t().sidebar.newSession}
+                                        disabled={props.newSessionPending}
                                       >
                                         <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24"
                                           fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -1804,7 +1851,7 @@ export function SessionSidebar(props: SessionSidebarProps) {
               );
             }}
           </For>
-          <Show when={!isSearching() && filteredProjectGroups().length === 0}>
+          <Show when={!props.showArchived && !isSearching() && filteredProjectGroups().length === 0}>
             <div class="px-3 py-2 text-xs text-gray-400 dark:text-gray-500 italic">
               {t().sidebar.noProjects}
             </div>

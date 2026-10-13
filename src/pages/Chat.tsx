@@ -13,7 +13,7 @@ import {
 } from "solid-js";
 import { Auth } from "../lib/auth";
 import { useNavigate } from "@solidjs/router";
-import { gateway, gatewayConnected } from "../lib/gateway-api";
+import { gateway, gatewayConnected, getAuthoritativeSessionActivity, hasAuthoritativeSessionState } from "../lib/gateway-api";
 import { gatewayClient } from "../lib/gateway-client";
 import { observeBrowserResume } from "../lib/browser-resume";
 import { ensureGatewayInitialized, refreshEngineConfigState } from "../lib/engine-bootstrap";
@@ -32,10 +32,16 @@ import {
   consumeInputDraft,
   restoreInputDraftIfUnchanged,
   type InputDraftSubmission,
+  toSessionInfo,
+  applySessionCatalog,
+  replaceListedSessions,
+  visibleSessionsForEngines,
+  removeListedSession,
 } from "../stores/session";
 import {
   messageStore,
   setMessageStore,
+  replaceMessageParts,
   type QueuedMessage,
 } from "../stores/message";
 import { MessageList } from "../components/MessageList";
@@ -139,27 +145,36 @@ function binarySearch<T>(
   return { found: false, index: left };
 }
 
-function toSessionInfo(s: UnifiedSession, projectID?: string): SessionInfo {
-  return {
-    id: s.id,
-    engineType: s.engineType,
-    title: s.title || "",
-    directory: s.directory || "",
-    mode: s.mode,
-    modelId: s.modelId,
-    reasoningEffort: s.reasoningEffort,
-    serviceTier: s.serviceTier,
-    projectID: projectID ?? s.projectId ?? undefined,
-    worktreeId: s.worktreeId,
-    createdAt: new Date(s.time.created).toISOString(),
-    updatedAt: new Date(s.time.updated).toISOString(),
-  };
-}
-
 export default function Chat() {
   const { t } = useI18n();
   const navigate = useNavigate();
   const emptyDraft = () => ({ text: "", images: [] as ImageAttachment[] });
+  const removedSessionIds = new Set<string>();
+  const handleCatalogUpdated = (catalog: Parameters<typeof applySessionCatalog>[0]) => {
+    // A fresh gateway catalog may restore an explicitly re-imported native chat.
+    for (const session of catalog.sessions) removedSessionIds.delete(session.id);
+    applySessionCatalog(catalog);
+  };
+  let catalogRefresh: Promise<void> | undefined;
+  const refreshSessionCatalogs = (): Promise<void> => {
+    if (catalogRefresh) return catalogRefresh;
+    catalogRefresh = gateway.listCatalogs()
+      .then((catalogs) => { for (const catalog of catalogs) handleCatalogUpdated(catalog); })
+      .catch((error) => logger.warn("[Catalog] Failed to refresh shared conversations:", error))
+      .finally(() => { catalogRefresh = undefined; });
+    return catalogRefresh;
+  };
+  const isAuthoritativeSession = (sessionId: string) =>
+    hasAuthoritativeSessionState(sessionStore.list.find((session) => session.id === sessionId)?.engineType);
+  const restoreSendingState = (sessionId: string) => {
+    if (isAuthoritativeSession(sessionId)) {
+      void gateway.getSession(sessionId).catch((error) => {
+        logger.warn("[SessionState] Failed to refresh activity:", error);
+      });
+    } else {
+      setSendingFor(sessionId, false);
+    }
+  };
   // Per-session sending state lives in sessionStore.sendingMap (persists across navigations).
   const sending = createMemo(() => {
     const sid = sessionStore.current;
@@ -232,7 +247,15 @@ export default function Chat() {
     if (pendingPerms && pendingPerms.length > 0) return "waiting";
     const pendingQuestions = messageStore.question[sid];
     if (pendingQuestions && pendingQuestions.length > 0) return "waiting";
+    const authoritativeActivity = isAuthoritativeSession(sid) ? getAuthoritativeSessionActivity(sid) : undefined;
+    if (authoritativeActivity === "waiting") return "waiting";
     if (sessionStore.sendingMap[sid]) return "running";
+    if (authoritativeActivity) {
+      if ((authoritativeActivity === "error" || authoritativeActivity === "cancelled") && !dismissedSessions().has(sid)) {
+        return authoritativeActivity;
+      }
+      return unreadSessions().has(sid) ? "completed" : "idle";
+    }
     const messages = messageStore.message[sid];
     if (messages && messages.length > 0) {
       let lastAssistant: UnifiedMessage | undefined;
@@ -413,6 +436,21 @@ export default function Chat() {
     if (!sid) return undefined;
     return sessionStore.list.find((session) => session.id === sid);
   });
+  const currentSessionArchived = createMemo(() => currentSessionInfo()?.archived === true);
+  const currentSessionUnavailable = createMemo(() => currentSessionInfo()?.catalogAvailable === false);
+  const [showArchivedSessions, setShowArchivedSessions] = createSignal(false);
+  const [archivePendingId, setArchivePendingId] = createSignal<string | null>(null);
+  const [newSessionPending, setNewSessionPending] = createSignal(false);
+  const hiddenArchivedEngines = createMemo(() => new Set(configStore.engines.filter((engine) => engine.capabilities?.hideArchivedSessions).map((engine) => engine.type)));
+  const visibleSessionList = createMemo(() => visibleSessionsForEngines(sessionStore.list, hiddenArchivedEngines()));
+  const archivedSessionCount = createMemo(() => visibleSessionList().filter((session) => session.archived).length);
+  const archiveViewAvailable = createMemo(() => archivedSessionCount() > 0
+    || configStore.engines.some((engine) => engine.capabilities?.sessionArchive && !engine.capabilities.hideArchivedSessions));
+  createEffect(() => {
+    if (showArchivedSessions() && !archiveViewAvailable()) setShowArchivedSessions(false);
+    const selected = currentSessionInfo();
+    if (selected?.archived && hiddenArchivedEngines().has(selected.engineType)) setSessionStore("current", null);
+  });
 
   const currentEngineInfo = createMemo(() =>
     configStore.engines.find((engine) => engine.type === currentEngineType()),
@@ -478,7 +516,7 @@ export default function Chat() {
     patch: import("../types/unified").SessionConfigPatch,
   ) => {
     const sessionId = sessionStore.current;
-    if (!sessionId) return;
+    if (!sessionId || currentSessionArchived() || currentSessionUnavailable()) return;
     const prev = currentSessionInfo();
     const rollback: Partial<SessionInfo> = {};
     for (const key of Object.keys(patch) as (keyof typeof patch)[]) {
@@ -839,7 +877,8 @@ export default function Chat() {
   // Load messages for specific session from disk.
   // When the store already has streaming data (e.g., scheduled tasks created
   // assistant placeholders), merges disk data with existing store data:
-  //  - Messages: disk is base, store-only messages (not yet flushed) are preserved.
+  //  - Authoritative engines replace cached history with a complete snapshot.
+  //  - Other engines keep store-only messages that have not been flushed yet.
   //  - Parts: disk parts overwrite if non-empty; existing streaming parts are
   //    preserved when disk parts are empty (placeholder messages during streaming).
   const sessionLoadVersions = new Map<string, number>();
@@ -847,10 +886,20 @@ export default function Chat() {
   const noteSessionActivity = (sessionId: string) => {
     sessionActivityVersions.set(sessionId, (sessionActivityVersions.get(sessionId) ?? 0) + 1);
   };
+  const pendingModelRefreshes = new Set<EngineType>();
+  const refreshSharedModels = (engineType: EngineType) => {
+    if (pendingModelRefreshes.has(engineType)) return;
+    pendingModelRefreshes.add(engineType);
+    void gateway.listModels(engineType).then((result) => {
+      if (!disposed && result.models.length > 0) setConfigStore("engineModels", engineType, result.models);
+    }).catch((error) => logger.debug("[LoadMessages] Shared model metadata refresh failed:", error))
+      .finally(() => pendingModelRefreshes.delete(engineType));
+  };
   const loadSessionMessages = async (sessionId: string, options?: { preserveScroll?: boolean; refreshActivity?: boolean }) => {
     const version = (sessionLoadVersions.get(sessionId) ?? 0) + 1;
     sessionLoadVersions.set(sessionId, version);
-    const refreshActivity = !isElectron() || options?.refreshActivity;
+    const authoritative = isAuthoritativeSession(sessionId);
+    const refreshActivity = authoritative || !isElectron() || options?.refreshActivity;
     const activityVersion = sessionActivityVersions.get(sessionId);
     const t0 = performance.now();
     logger.debug("[LoadMessages] Loading messages for session:", sessionId);
@@ -862,8 +911,10 @@ export default function Chat() {
       if (refreshActivity) {
         const session = await gateway.getSession(sessionId);
         activity = session.activityStatus;
+        if (authoritative) refreshSharedModels(session.engineType);
       }
       const messages = await gateway.listMessages(sessionId);
+      if (removedSessionIds.has(sessionId)) return;
       if (disposed || sessionLoadVersions.get(sessionId) !== version) return;
       const t1 = performance.now();
       logger.debug(`[LoadMessages] RPC took ${(t1 - t0).toFixed(0)}ms, got ${messages.length} messages`);
@@ -875,16 +926,16 @@ export default function Chat() {
         const diskParts = msg.parts || [];
         diskParts.sort((a, b) => a.id.localeCompare(b.id));
         const existingParts = messageStore.part[msg.id];
-        if (diskParts.length > 0 || !existingParts || existingParts.length === 0) {
+        if (authoritative || diskParts.length > 0 || !existingParts || existingParts.length === 0) {
           setMessageStore("part", msg.id, diskParts);
         }
       }
 
-      // Snapshots include notifications received during the request. Ordinary
-      // engines also retain store-only messages that have not reached disk yet.
+      // Authoritative snapshots already include notifications received during
+      // the request. Only ordinary engines need to retain store-only messages.
       messages.sort((a, b) => a.time.created - b.time.created);
       const existing = messageStore.message[sessionId] || [];
-      if (existing.length > 0) {
+      if (!authoritative && existing.length > 0) {
         const diskIds = new Set(messages.map(m => m.id));
         const storeOnly = existing.filter(m => !diskIds.has(m.id));
         if (storeOnly.length > 0) {
@@ -898,7 +949,7 @@ export default function Chat() {
         setMessageStore("message", sessionId, messages);
       }
 
-      if (refreshActivity && !isTeamParentSession(sessionId)
+      if (!authoritative && refreshActivity && !isTeamParentSession(sessionId)
         && sessionActivityVersions.get(sessionId) === activityVersion) {
         const lastAssistant = [...(messageStore.message[sessionId] ?? [])]
           .reverse().find((message) => message.role === "assistant");
@@ -910,7 +961,7 @@ export default function Chat() {
       const t2 = performance.now();
       logger.debug(`[LoadMessages] Store update took ${(t2 - t1).toFixed(0)}ms, total ${(t2 - t0).toFixed(0)}ms`);
     } catch (error) {
-      if (!disposed) {
+      if (!disposed && !removedSessionIds.has(sessionId)) {
         logger.error("[LoadMessages] Failed to load messages:", error);
       }
     } finally {
@@ -933,28 +984,28 @@ export default function Chat() {
     const [projects, sessions] = await Promise.all([
       gateway.listAllProjects(),
       gateway.listAllSessions(),
+      refreshSessionCatalogs(),
     ]);
     if (!current()) return;
     const normalizeDirectory = (directory: string) => directory.replaceAll("\\", "/");
-    const projectIndex = new Map(projects.map((project) => [project.directory, project]));
+    const projectIndex = new Map(projects.filter((project) => !project.catalogSourceId).map((project) => [project.directory, project]));
     const refreshed = sessions
-      .filter((session) => session.directory && (projectIndex.has(normalizeDirectory(session.directory)) || session.worktreeId))
+      .filter((session) => session.catalogSourceId || (session.directory && (projectIndex.has(normalizeDirectory(session.directory)) || session.worktreeId)))
       .map((session) => toSessionInfo(session, projectIndex.get(normalizeDirectory(session.directory))?.id));
     setSessionStore("projects", projects);
-    setSessionStore("list", (existing) => {
-      const existingById = new Map(existing.map((session) => [session.id, session]));
-      const refreshedIds = new Set(refreshed.map((session) => session.id));
-      // Keep local changes and notifications received while the snapshot loaded.
-      const merged = refreshed.filter((session) => !previous.has(session.id) || existingById.has(session.id)).map((session) => {
-        const before = previous.get(session.id);
-        const latest = existingById.get(session.id);
-        if (latest && (!before || (Object.keys(latest) as Array<keyof SessionInfo>).some((key) => latest[key] !== before[key]))) {
-          return latest;
-        }
-        return { ...session, ...(latest?.teamId ? { teamId: latest.teamId } : {}) };
-      });
-      return [...merged, ...existing.filter((session) => !previous.has(session.id) && !refreshedIds.has(session.id))];
+    const existing = sessionStore.list;
+    const existingById = new Map(existing.map((session) => [session.id, session]));
+    const refreshedIds = new Set(refreshed.map((session) => session.id));
+    // Keep local changes and notifications received while the snapshot loaded.
+    const merged = refreshed.filter((session) => !previous.has(session.id) || existingById.has(session.id)).map((session) => {
+      const before = previous.get(session.id);
+      const latest = existingById.get(session.id);
+      if (latest && (!before || (Object.keys(latest) as Array<keyof SessionInfo>).some((key) => latest[key] !== before[key]))) {
+        return latest;
+      }
+      return { ...session, ...(latest?.teamId ? { teamId: latest.teamId } : {}) };
     });
+    replaceListedSessions([...merged, ...existing.filter((session) => !previous.has(session.id) && !refreshedIds.has(session.id))]);
   };
 
   let recoveryGeneration = 0;
@@ -1058,6 +1109,7 @@ export default function Chat() {
             notify(t().notification.gatewayReconnected, "info", 3000);
           }
           setWsConnected(true);
+          void refreshSessionCatalogs();
           // If we were in error state, re-initialize on reconnect
           if (sessionStore.initError) {
             void initializeSession();
@@ -1070,7 +1122,10 @@ export default function Chat() {
           // Resync pending question/permission state for the active session —
           // a reconnect may have caused us to miss one-shot `*.asked` events.
           const sid = sessionStore.current;
-          if (sid) void resyncPending(sid);
+          if (sid) {
+            void resyncPending(sid);
+            if (isAuthoritativeSession(sid)) void loadSessionMessages(sid, { preserveScroll: true });
+          }
         },
         onDisconnected: (reason: string) => {
           if (disposed) return;
@@ -1082,8 +1137,11 @@ export default function Chat() {
         onPartUpdated: handlePartUpdated,
         onPartsBatch: handlePartsBatch,
         onMessageUpdated: handleMessageUpdated,
+        onMessageRemoved: handleMessageRemoved,
         onSessionUpdated: handleSessionUpdated,
         onSessionCreated: handleSessionCreated,
+        onSessionRemoved: handleSessionRemoved,
+        onCatalogUpdated: handleCatalogUpdated,
         onPermissionAsked: handlePermissionAsked,
         onPermissionReplied: handlePermissionReplied,
         onQuestionAsked: handleQuestionAsked,
@@ -1197,11 +1255,12 @@ export default function Chat() {
       } catch (err) {
         logger.warn("[Init] Failed to load engines:", err);
       }
+      await refreshSessionCatalogs();
 
       if (!needsSessionBootstrap) {
         logger.debug("[Init] Gateway already initialized, handlers refreshed (remount)");
         const currentSessionId = sessionStore.current;
-        if (currentSessionId && !isElectron()) {
+        if (currentSessionId && (!isElectron() || isAuthoritativeSession(currentSessionId))) {
           await loadSessionMessages(currentSessionId, { preserveScroll: true, refreshActivity: true });
           void resyncPending(currentSessionId);
         }
@@ -1247,16 +1306,16 @@ export default function Chat() {
           const validDirectories = new Set(allProjects.map(p => p.directory));
           const normDir = (d: string) => d.replaceAll("\\", "/");
           const filteredSessions = allSessions.filter(s =>
-            s.directory && (validDirectories.has(normDir(s.directory)) || s.worktreeId)
+            s.catalogSourceId || (s.directory && (validDirectories.has(normDir(s.directory)) || s.worktreeId))
           );
 
           const sessionInfos = filteredSessions.map(s => {
             const nd = normDir(s.directory);
-            const project = allProjects.find(p => p.directory === nd);
+            const project = allProjects.find(p => !p.catalogSourceId && p.directory === nd);
             return toSessionInfo(s, project?.id);
           });
 
-          setSessionStore("list", sessionInfos);
+          replaceListedSessions(sessionInfos);
 
           // Restore orchestration state (team groupings) from backend runs
           try {
@@ -1328,6 +1387,7 @@ export default function Chat() {
 
             // Select the session and load its messages
             setSessionStore("current", lastSessionId);
+            setShowArchivedSessions(lastSession.archived === true);
             try {
               await loadSessionMessages(lastSessionId);
             } catch (err) {
@@ -1361,6 +1421,7 @@ export default function Chat() {
     }
 
     setSessionStore("current", sessionId);
+    setShowArchivedSessions(sessionStore.list.find((session) => session.id === sessionId)?.archived === true);
     setSessionStore("initError", null);
     setOrchestratorView("dashboard");
 
@@ -1403,10 +1464,10 @@ export default function Chat() {
 
     // Load from disk if the store is empty or incomplete (e.g., scheduled tasks
     // only have assistant placeholders from streaming — no user message).
-    // For normal UI sessions the store already has user messages (from temp
-    // message or engine events), so we skip the RPC for instant switching.
+    // Authoritative engines always refresh because another client may have
+    // changed the conversation. Ordinary engines retain instant cache switching.
     const existing = messageStore.message[sessionId];
-    if (!existing || !existing.some(m => m.role === "user")) {
+    if (isAuthoritativeSession(sessionId) || !existing || !existing.some(m => m.role === "user")) {
       await loadSessionMessages(sessionId);
     } else {
       if (!isElectron()) {
@@ -1444,12 +1505,15 @@ export default function Chat() {
   // New session
   const handleNewSession = async (directory?: string, explicitEngineType?: EngineType, worktreeId?: string) => {
     logger.debug("[NewSession] Creating new session in directory:", directory, "engineType:", explicitEngineType, "worktreeId:", worktreeId);
+    // Use explicitly-passed engineType when available, otherwise use global default engine.
+    const engineType = explicitEngineType || getDefaultEngineType();
+    const catalogNew = configStore.engines.find((engine) => engine.type === engineType)?.capabilities?.sessionCatalog === true;
+    if (catalogNew && newSessionPending()) return;
+    if (catalogNew) setNewSessionPending(true);
 
     try {
-      const defaultProject = sessionStore.projects.find(p => p.isDefault);
-      const dir = directory || defaultProject?.directory || sessionStore.projects[0]?.directory || ".";
-      // Use explicitly-passed engineType when available, otherwise use global default engine.
-      const engineType = explicitEngineType || getDefaultEngineType();
+      const defaultProject = sessionStore.projects.find(p => p.isDefault && !p.catalogSourceId);
+      const dir = directory || defaultProject?.directory || sessionStore.projects.find((project) => !project.catalogSourceId)?.directory || ".";
       const newSession = await gateway.createSession(engineType, dir, worktreeId);
       logger.debug("[NewSession] Created:", newSession);
 
@@ -1467,6 +1531,7 @@ export default function Chat() {
         );
       }
       setSessionStore("current", processedSession.id);
+      setShowArchivedSessions(false);
       setSessionStore("initError", null);
       setConfigStore("currentEngineType", engineType as import("../types/unified").EngineType);
       if (isMobile()) {
@@ -1490,6 +1555,8 @@ export default function Chat() {
     } catch (error) {
       logger.error("[NewSession] Failed to create session:", error);
       notify(t().notification.sessionCreateFailed);
+    } finally {
+      if (catalogNew) setNewSessionPending(false);
     }
   };
 
@@ -1533,6 +1600,7 @@ export default function Chat() {
         );
       }
       setSessionStore("current", processedSession.id);
+      setShowArchivedSessions(false);
       if (isMobile()) setIsSidebarOpen(false);
       setMessageStore("message", processedSession.id, []);
 
@@ -1633,51 +1701,77 @@ export default function Chat() {
     }
   };
 
-  // Delete session
+  // Archive state is changed locally only after the backend confirms success.
+  const handleSetSessionArchived = async (sessionId: string, archived: boolean) => {
+    const session = sessionStore.list.find((item) => item.id === sessionId);
+    const engine = configStore.engines.find((item) => item.type === session?.engineType);
+    if (!session || !engine?.capabilities?.sessionArchive || archivePendingId()) return;
+    setArchivePendingId(sessionId);
+    try {
+      await gateway.setSessionArchived(sessionId, archived);
+      updateSessionInfo(sessionId, { archived });
+      if (sessionStore.current === sessionId) setShowArchivedSessions(archived);
+    } catch (error) {
+      logger.error("[ArchiveSession] Failed to change archived state:", error);
+      notify(formatMessage(t().notification.sessionArchiveFailed, { message: error instanceof Error ? error.message : String(error) }));
+    } finally {
+      setArchivePendingId(null);
+    }
+  };
+
+  // Both local deletion and a remote removal clear only this conversation.
+  const handleSessionRemoved = (sessionId: string) => {
+    removedSessionIds.add(sessionId);
+    if (sessionStore.current === sessionId) {
+      switchGeneration++;
+      setLoadingMessages(false);
+    }
+    // Clean up messageStore to prevent memory leaks.
+    // Without this, part/message/expanded/stepsLoaded entries accumulate
+    // indefinitely as sessions are created and deleted.
+    const messages = messageStore.message[sessionId] || [];
+    for (const msg of messages) {
+      // Clean up per-part state (expanded is keyed by partId, not messageId)
+      const parts = messageStore.part[msg.id] || [];
+      for (const part of parts) {
+        if (part?.id) {
+          setMessageStore("expanded", part.id, undefined as any);
+        }
+      }
+      // Clean up steps expanded state (keyed as "steps-${messageId}")
+      setMessageStore("expanded", `steps-${msg.id}`, undefined as any);
+      setMessageStore("part", msg.id, undefined as any);
+      setMessageStore("stepsLoaded", msg.id, undefined as any);
+    }
+    setMessageStore("message", sessionId, undefined as any);
+    setMessageStore("permission", sessionId, undefined as any);
+    setMessageStore("question", sessionId, undefined as any);
+    setMessageStore("queued", sessionId, undefined as any);
+    clearInputDraft(sessionId);
+
+    // Clear todoPartRef if it points to the deleted session
+    const ref = todoPartRef();
+    if (ref && ref.sessionId === sessionId) {
+      setTodoPartRef(null);
+    }
+
+    deleteScrollPosition(sessionId);
+
+    removeListedSession(sessionId);
+    if (pinnedSessions().has(sessionId)) handleUnpinSession(sessionId);
+    setUnreadSessions((previous) => {
+      if (!previous.has(sessionId)) return previous;
+      const next = new Set(previous);
+      next.delete(sessionId);
+      return next;
+    });
+  };
+
   const handleDeleteSession = async (sessionId: string) => {
     logger.debug("[DeleteSession] Deleting session:", sessionId);
-
     try {
       await gateway.deleteSession(sessionId);
-
-      // Clean up messageStore to prevent memory leaks.
-      // Without this, part/message/expanded/stepsLoaded entries accumulate
-      // indefinitely as sessions are created and deleted.
-      const messages = messageStore.message[sessionId] || [];
-      for (const msg of messages) {
-        // Clean up per-part state (expanded is keyed by partId, not messageId)
-        const parts = messageStore.part[msg.id] || [];
-        for (const part of parts) {
-          if (part?.id) {
-            setMessageStore("expanded", part.id, undefined as any);
-          }
-        }
-        // Clean up steps expanded state (keyed as "steps-${messageId}")
-        setMessageStore("expanded", `steps-${msg.id}`, undefined as any);
-        setMessageStore("part", msg.id, undefined as any);
-        setMessageStore("stepsLoaded", msg.id, undefined as any);
-      }
-      setMessageStore("message", sessionId, undefined as any);
-      setMessageStore("permission", sessionId, undefined as any);
-      setMessageStore("question", sessionId, undefined as any);
-      setMessageStore("queued", sessionId, undefined as any);
-      clearInputDraft(sessionId);
-
-      // Clear todoPartRef if it points to the deleted session
-      const ref = todoPartRef();
-      if (ref && ref.sessionId === sessionId) {
-        setTodoPartRef(null);
-      }
-
-      deleteScrollPosition(sessionId);
-
-      // Remove from list
-      setSessionStore("list", (list) => list.filter((s) => s.id !== sessionId));
-
-      // If current session was deleted, just clear it — don't auto-switch
-      if (sessionStore.current === sessionId) {
-        setSessionStore("current", null);
-      }
+      handleSessionRemoved(sessionId);
     } catch (error) {
       logger.error("[DeleteSession] Failed to delete session:", error);
       notify(t().notification.sessionDeleteFailed);
@@ -1686,15 +1780,20 @@ export default function Chat() {
 
   const handleRenameSession = async (sessionId: string, newTitle: string) => {
     logger.debug("[RenameSession] Renaming session:", sessionId, newTitle);
+    const catalogSession = sessionStore.list.find((session) => session.id === sessionId)?.catalogSourceId;
     try {
       // Update frontend store immediately for responsiveness
-      setSessionStore("list", (list) =>
-        list.map((s) => (s.id === sessionId ? { ...s, title: newTitle } : s))
-      );
+      if (!catalogSession) {
+        setSessionStore("list", (list) =>
+          list.map((s) => (s.id === sessionId ? { ...s, title: newTitle } : s))
+        );
+      }
       // Persist to backend SessionStore
       await gateway.renameSession(sessionId, newTitle);
+      if (catalogSession) updateSessionInfo(sessionId, { title: newTitle });
     } catch (error) {
       logger.error("[RenameSession] Failed:", error);
+      if (catalogSession) notify(formatMessage(t().catalog.updateFailed, { message: error instanceof Error ? error.message : String(error) }));
     }
   };
 
@@ -1712,18 +1811,19 @@ export default function Chat() {
       const validDirectories = new Set(allProjects.map(p => p.directory));
       const normDir = (d: string) => d.replaceAll("\\", "/");
       const filteredSessions = allSessions.filter(s =>
-        s.directory && (validDirectories.has(normDir(s.directory)) || s.worktreeId)
+        s.catalogSourceId || (s.directory && (validDirectories.has(normDir(s.directory)) || s.worktreeId))
       );
       // Build index for O(1) project lookup by directory
       const projectIndex = new Map<string, UnifiedProject>();
       for (const p of allProjects) {
-        projectIndex.set(p.directory, p);
+        if (!p.catalogSourceId) projectIndex.set(p.directory, p);
       }
       const sessionInfos = filteredSessions.map(s => {
         const project = projectIndex.get(normDir(s.directory));
         return toSessionInfo(s, project?.id);
       });
-      setSessionStore("list", sessionInfos);
+      replaceListedSessions(sessionInfos);
+      await refreshSessionCatalogs();
 
       // Restore orchestration team groupings from backend runs
       try {
@@ -1939,6 +2039,19 @@ export default function Chat() {
 
   // --- Gateway notification handlers ---
 
+  const handleMessageRemoved = (sessionId: string, messageId: string) => {
+    batch(() => {
+      setMessageStore("message", sessionId, (messages = []) => messages.filter((message) => message.id !== messageId));
+      for (const part of messageStore.part[messageId] ?? []) {
+        setMessageStore("expanded", part.id, undefined as any);
+      }
+      setMessageStore("part", messageId, undefined as any);
+      setMessageStore("stepsLoaded", messageId, undefined as any);
+      const todo = todoPartRef();
+      if (todo?.sessionId === sessionId && todo.messageId === messageId) setTodoPartRef(null);
+    });
+  };
+
   const handlePartUpdated = (_sessionId: string, part: UnifiedPart) => {
     const messageId = part.messageId;
     const sessionId = part.sessionId;
@@ -2067,9 +2180,10 @@ export default function Chat() {
   const handleMessageUpdated = (_sessionId: string, msgInfo: UnifiedMessage) => {
     noteSessionActivity(msgInfo.sessionId);
     const targetSessionId = msgInfo.sessionId;
+    const authoritative = isAuthoritativeSession(targetSessionId);
 
     batch(() => {
-      if (!isElectron() && msgInfo.role === "assistant" && !msgInfo.time.completed && !msgInfo.error) {
+      if (!authoritative && !isElectron() && msgInfo.role === "assistant" && !msgInfo.time.completed && !msgInfo.error) {
         setSendingFor(targetSessionId, true);
       }
       if (msgInfo.role === "user") {
@@ -2106,26 +2220,28 @@ export default function Chat() {
         }
       }
 
-      // Store parts from the incoming message (critical for Copilot/Claude
-      // which emit full messages with parts via message.updated).
-      // If we already have parts from streaming part.updated events,
-      // prefer those since they may have more up-to-date state.
+      if (authoritative) replaceMessageParts(msgInfo.id, msgInfo.parts ?? []);
+
+      // Ordinary engines preserve newer part.updated events. Authoritative
+      // engines replace the full snapshot, including existing IDs and removals.
       if (msgInfo.parts && msgInfo.parts.length > 0) {
-        const existingParts = messageStore.part[msgInfo.id];
-        if (!existingParts || existingParts.length === 0) {
-          // Sort in-place — msgInfo.parts is from the incoming event, safe to mutate
-          msgInfo.parts.sort((a, b) => a.id.localeCompare(b.id));
-          setMessageStore("part", msgInfo.id, msgInfo.parts);
-        } else {
-          // Merge: use existing streaming parts as base, add any new parts
-          // from the final message that weren't received via streaming
-          const existingIds = new Set(existingParts.map(p => p.id));
-          const newParts = msgInfo.parts.filter(p => !existingIds.has(p.id));
-          if (newParts.length > 0) {
-            // Single concat + in-place sort (avoids spread + sort creating 2 arrays)
-            const merged = existingParts.concat(newParts);
-            merged.sort((a, b) => a.id.localeCompare(b.id));
-            setMessageStore("part", msgInfo.id, merged);
+        if (!authoritative) {
+          const existingParts = messageStore.part[msgInfo.id];
+          if (!existingParts || existingParts.length === 0) {
+            // Sort in-place — msgInfo.parts is from the incoming event, safe to mutate
+            msgInfo.parts.sort((a, b) => a.id.localeCompare(b.id));
+            setMessageStore("part", msgInfo.id, msgInfo.parts);
+          } else {
+            // Merge: use existing streaming parts as base, add any new parts
+            // from the final message that weren't received via streaming
+            const existingIds = new Set(existingParts.map(p => p.id));
+            const newParts = msgInfo.parts.filter(p => !existingIds.has(p.id));
+            if (newParts.length > 0) {
+              // Single concat + in-place sort (avoids spread + sort creating 2 arrays)
+              const merged = existingParts.concat(newParts);
+              merged.sort((a, b) => a.id.localeCompare(b.id));
+              setMessageStore("part", msgInfo.id, merged);
+            }
           }
         }
 
@@ -2166,7 +2282,7 @@ export default function Chat() {
         sessionStore.sendingMap[targetSessionId]
       ) {
         const queued = messageStore.queued[targetSessionId];
-        if (!queued || queued.length === 0) {
+        if (!isAuthoritativeSession(targetSessionId) && (!queued || queued.length === 0)) {
           setSendingFor(targetSessionId, false);
         }
         // Refresh git status after engine finishes — engine file changes
@@ -2182,12 +2298,20 @@ export default function Chat() {
       setSendingFor(updated.id, updated.activityStatus === "running" || updated.activityStatus === "waiting");
     }
     logger.debug("[WS] session.updated received:", updated);
+    if (hasAuthoritativeSessionState(updated.engineType) && updated.modelId
+      && !configStore.engineModels[updated.engineType]?.some((model) => model.modelId === updated.modelId)) {
+      refreshSharedModels(updated.engineType);
+    }
     setSessionStore("list", (list) =>
       list.map((s) =>
         s.id === updated.id
           ? {
               ...s,
-              title: updated.title || s.title,
+              title: hasAuthoritativeSessionState(updated.engineType) ? updated.title ?? "" : updated.title || s.title,
+              ...(updated.sourceUrl ? { sourceUrl: updated.sourceUrl, sourceName: updated.sourceName } : {}),
+              ...(typeof updated.archived === "boolean" ? { archived: updated.archived } : {}),
+              ...(updated.catalogSourceId ? { catalogSourceId: updated.catalogSourceId, projectID: updated.projectId ?? null } : {}),
+              ...(typeof updated.catalogAvailable === "boolean" ? { catalogAvailable: updated.catalogAvailable } : {}),
               directory: updated.directory || s.directory || "",
               ...(Object.prototype.hasOwnProperty.call(updated, "mode") && {
                 mode: updated.mode,
@@ -2212,6 +2336,7 @@ export default function Chat() {
   };
 
   const handleSessionCreated = (created: UnifiedSession) => {
+    removedSessionIds.delete(created.id);
     logger.debug("[WS] session.created received:", created);
     const teamId = getTeamId(created.id);
 
@@ -2231,6 +2356,7 @@ export default function Chat() {
     );
     if (hasActiveOrchestration) {
       setTimeout(() => {
+        if (disposed || removedSessionIds.has(created.id)) return;
         if (sessionStore.list.some(s => s.id === created.id)) return;
         const latestTeamId = getTeamId(created.id);
         const project = sessionStore.projects.find(p => p.directory === created.directory);
@@ -2402,7 +2528,7 @@ export default function Chat() {
 
   // Continue after interruption — re-send with current agent mode
   const handleContinue = (_sessionID: string) => {
-    if (!canSendToGateway() || sending()) return;
+    if (!canSendToGateway() || sending() || currentSessionArchived() || currentSessionUnavailable()) return;
     handleSendMessage("Continue where you left off.", currentAgent());
   };
 
@@ -2414,7 +2540,7 @@ export default function Chat() {
    */
   const handleCommandInvoke = async (commandName: string, args: string, agent: AgentMode) => {
     const sessionId = sessionStore.current;
-    if (!sessionId) return;
+    if (!sessionId || currentSessionArchived() || currentSessionUnavailable()) return;
     if (!canSendToGateway()) {
       showSendError(t().notification.gatewayDisconnected);
       return;
@@ -2474,7 +2600,9 @@ export default function Chat() {
       // Check if assistant message is finalized
       const msgs = messageStore.message[sessionId] || [];
       const lastAssistant = [...msgs].reverse().find((m) => m.role === "assistant");
-      if (!lastAssistant || lastAssistant.time.completed || lastAssistant.error) {
+      if (isAuthoritativeSession(sessionId)) {
+        restoreSendingState(sessionId);
+      } else if (!lastAssistant || lastAssistant.time.completed || lastAssistant.error) {
         setSendingFor(sessionId, false);
       }
     } catch (error) {
@@ -2485,14 +2613,14 @@ export default function Chat() {
         draft.filter((m) => m.id !== tempMessageId),
       );
       setMessageStore("part", tempMessageId, undefined as any);
-      setSendingFor(sessionId, false);
+      restoreSendingState(sessionId);
       restoreInputDraftIfUnchanged(sessionId, submission);
     }
   };
 
   const handleSendMessage = async (text: string, agent: AgentMode, images?: ImageAttachment[], fromDraft = false) => {
     const sessionId = sessionStore.current;
-    if (!sessionId) return;
+    if (!sessionId || currentSessionArchived() || currentSessionUnavailable()) return;
     if (!canSendToGateway()) {
       showSendError(t().notification.gatewayDisconnected);
       return;
@@ -2646,7 +2774,9 @@ export default function Chat() {
       const msgs = messageStore.message[sessionId] || [];
       const lastAssistant = [...msgs].reverse().find((m) => m.role === "assistant");
       const hasQueued = (messageStore.queued[sessionId]?.length ?? 0) > 0;
-      if (!hasQueued && (!lastAssistant || lastAssistant.time.completed || lastAssistant.error)) {
+      if (isAuthoritativeSession(sessionId)) {
+        restoreSendingState(sessionId);
+      } else if (!hasQueued && (!lastAssistant || lastAssistant.time.completed || lastAssistant.error)) {
         setSendingFor(sessionId, false);
       }
     } catch (error) {
@@ -2657,7 +2787,7 @@ export default function Chat() {
         draft.filter((m) => m.id !== tempMessageId),
       );
       setMessageStore("part", tempMessageId, undefined as any);
-      setSendingFor(sessionId, false);
+      restoreSendingState(sessionId);
       if (submission) restoreInputDraftIfUnchanged(sessionId, submission);
     }
   };
@@ -2672,7 +2802,7 @@ export default function Chat() {
     }
     // Clear any queued messages — cancel stops everything
     setMessageStore("queued", sessionId, []);
-    setSendingFor(sessionId, false);
+    restoreSendingState(sessionId);
   };
 
   const currentSessionTitle = createMemo(() => {
@@ -2911,12 +3041,17 @@ export default function Chat() {
         <div class="relative flex flex-col h-full overflow-hidden">
           <Show when={!sessionStore.loading}>
             <SessionSidebar
-              sessions={sessionStore.list}
+              sessions={visibleSessionList()}
+              showArchived={showArchivedSessions()}
+              onShowArchivedChange={setShowArchivedSessions}
+              archiveViewAvailable={archiveViewAvailable()}
+              archivedSessionCount={archivedSessionCount()}
               projects={sessionStore.projects}
               currentSessionId={sessionStore.current}
               getSessionStatus={getSessionStatus}
               onSelectSession={handleSelectSession}
               onNewSession={handleNewSession}
+              newSessionPending={newSessionPending()}
               onDeleteSession={handleDeleteSession}
               onRenameSession={handleRenameSession}
               onDeleteProjectSessions={(projectID, projectName, sessionCount) =>
@@ -3171,13 +3306,28 @@ export default function Chat() {
               {/* Input Area */}
               <div class="p-2 sm:p-4 bg-white/90 dark:bg-slate-900/90 backdrop-blur-xs border-t border-gray-100 dark:border-slate-800 relative z-20">
                 <div class="max-w-4xl mx-auto w-full">
+                  <Show when={currentSessionUnavailable()}>
+                    <p role="status" class="rounded-lg bg-gray-100 dark:bg-slate-800 px-3 py-3 text-sm text-gray-500 dark:text-gray-400">{t().catalog.unavailableDetail}</p>
+                  </Show>
+                  <Show when={currentSessionArchived()}>
+                    <div role="status" class="flex items-center justify-between gap-3 rounded-lg bg-gray-100 dark:bg-slate-800 px-3 py-3 text-sm text-gray-600 dark:text-gray-300">
+                      <p>{t().chat.archivedReadOnly}</p>
+                      <Show when={currentEngineInfo()?.capabilities?.sessionArchive}>
+                        <button
+                          onClick={() => void handleSetSessionArchived(sessionStore.current!, false)}
+                          disabled={archivePendingId() !== null || currentSessionUnavailable()}
+                          class="shrink-0 px-3 py-1.5 rounded-md bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-40"
+                        >{t().sidebar.restoreSession}</button>
+                      </Show>
+                    </div>
+                  </Show>
                   {/* TodoDock — persistent task list above input */}
                   <Show when={currentTodos().length > 0}>
                     <TodoDock todos={currentTodos()} isWorking={sending()} />
                   </Show>
 
                   {/* Permission prompt replaces input when permissions are pending */}
-                  <Show when={currentPermissions().length > 0}>
+                  <Show when={!currentSessionArchived() && !currentSessionUnavailable() && currentPermissions().length > 0}>
                     <div class="space-y-3">
                       <For each={currentPermissions()}>
                         {(perm) => (
@@ -3191,7 +3341,7 @@ export default function Chat() {
                   </Show>
 
                   {/* Question prompt replaces input when questions are pending */}
-                  <Show when={currentPermissions().length === 0 && currentQuestions().length > 0}>
+                  <Show when={!currentSessionArchived() && !currentSessionUnavailable() && currentPermissions().length === 0 && currentQuestions().length > 0}>
                     <div class="space-y-3">
                       <For each={currentQuestions()}>
                         {(question) => (
@@ -3199,6 +3349,7 @@ export default function Chat() {
                             question={question}
                             onRespond={handleQuestionRespond}
                             onDismiss={handleQuestionDismiss}
+                            dismissLabel={(question.dismissStopsTurn ?? currentEngineInfo()?.capabilities?.questionDismissStopsTurn) ? t().question.stopTask : undefined}
                           />
                         )}
                       </For>
@@ -3206,7 +3357,7 @@ export default function Chat() {
                   </Show>
 
                   {/* Normal input when no permissions or questions pending */}
-                  <Show when={currentPermissions().length === 0 && currentQuestions().length === 0}>
+                  <Show when={!currentSessionArchived() && !currentSessionUnavailable() && currentPermissions().length === 0 && currentQuestions().length === 0}>
                     <Show when={sendError()}>
                       <div class="mb-2 px-3 py-2 text-sm text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg">
                         {sendError()}
@@ -3237,7 +3388,7 @@ export default function Chat() {
                       currentAgent={currentAgent()}
                       onAgentChange={handleAgentChange}
                       availableModes={currentAvailableModes()}
-                      disabled={!sessionStore.current}
+                      disabled={!sessionStore.current || currentSessionArchived() || currentSessionUnavailable()}
                       sendDisabled={!gatewayConnected() || (!isElectron() && (!webOnline() || webRecovering()))}
                       draftSaveFailed={sessionStore.inputDraftSaveFailures[sessionStore.current ?? ""] === true}
                       imageAttachmentEnabled={currentEngineInfo()?.capabilities?.imageAttachment ?? false}

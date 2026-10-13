@@ -60,6 +60,7 @@ export interface LocaleDict {
   question: {
     submit: string;
     dismiss: string;
+    stopTask: string;
     customPlaceholder: string;
     waitingAnswer: string;
     selectMultiple: string;
@@ -91,6 +92,7 @@ export interface LocaleDict {
     startConversationDesc: string;
     noSessionSelected: string;
     noSessionSelectedDesc: string;
+    archivedReadOnly: string;
     initFailed: string;
     retry: string;
     disclaimer: string;
@@ -247,6 +249,11 @@ export interface LocaleDict {
     newSession: string;
     deleteConfirm: string;
     deleteSession: string;
+    archiveSession: string;
+    restoreSession: string;
+    archivedSessions: string;
+    noArchivedSessions: string;
+    removeLocalSession: string;
     renameSession: string;
     justNow: string;
     minutesAgo: string;
@@ -269,6 +276,13 @@ export interface LocaleDict {
     activeSection: string;
     pinSession: string;
     unpinSession: string;
+  };
+
+  catalog: {
+    sessions: string;
+    unavailable: string;
+    unavailableDetail: string;
+    updateFailed: string;
   };
 
   // Project
@@ -317,6 +331,7 @@ export interface LocaleDict {
     reasoningEffortMedium: string;
     reasoningEffortHigh: string;
     reasoningEffortMax: string;
+    reasoningEffortUltra: string;
   };
 
   // Message Parts
@@ -591,6 +606,7 @@ export interface LocaleDict {
     messageSendInterrupted: string;
     sessionCreateFailed: string;
     sessionDeleteFailed: string;
+    sessionArchiveFailed: string;
     gatewayDisconnected: string;
     gatewayReconnected: string;
     engineError: string;
@@ -818,6 +834,7 @@ export const en: LocaleDict = {
   question: {
     submit: "Submit",
     dismiss: "Dismiss",
+    stopTask: "Stop task",
     customPlaceholder: "Type a custom answer...",
     waitingAnswer: "Waiting for answer",
     selectMultiple: "Select multiple options",
@@ -849,6 +866,7 @@ export const en: LocaleDict = {
     startConversationDesc: "Select a model and type any question in the input box below to start chatting.",
     noSessionSelected: "No session selected",
     noSessionSelectedDesc: "Select a session from the sidebar or create a new one to get started.",
+    archivedReadOnly: "This conversation is archived. Restore it to continue.",
     initFailed: "Initialization Failed",
     retry: "Retry",
     disclaimer: "AI-generated content may be inaccurate. Please verify important information.",
@@ -1002,6 +1020,11 @@ export const en: LocaleDict = {
     newSession: "New session",
     deleteConfirm: "Are you sure you want to delete this session?",
     deleteSession: "Delete session",
+    archiveSession: "Archive",
+    restoreSession: "Restore",
+    archivedSessions: "Archived",
+    noArchivedSessions: "No archived conversations",
+    removeLocalSession: "Remove from CodeMux (keep the original conversation)",
     renameSession: "Rename session",
     justNow: "just now",
     minutesAgo: "{count} min ago",
@@ -1024,6 +1047,13 @@ export const en: LocaleDict = {
     activeSection: "Active",
     pinSession: "Pin to Active",
     unpinSession: "Unpin",
+  },
+
+  catalog: {
+    sessions: "Synced conversations",
+    unavailable: "Unavailable",
+    unavailableDetail: "This conversation is no longer available from its source. Saved history is preserved.",
+    updateFailed: "Could not update the conversation: {message}",
   },
 
   // Project
@@ -1071,6 +1101,7 @@ export const en: LocaleDict = {
     reasoningEffortMedium: "Medium",
     reasoningEffortHigh: "High",
     reasoningEffortMax: "Max",
+    reasoningEffortUltra: "Ultra",
   },
   parts: {
     linkToMessage: "Link to this message",
@@ -1340,6 +1371,7 @@ export const en: LocaleDict = {
     messageSendInterrupted: "Sending was interrupted. Check the conversation before sending again.",
     sessionCreateFailed: "Failed to create session.",
     sessionDeleteFailed: "Failed to delete session.",
+    sessionArchiveFailed: "Could not change archived state: {message}",
     gatewayDisconnected: "Connection lost. Reconnecting...",
     gatewayReconnected: "Connection restored.",
     engineError: "Engine error: {message}",

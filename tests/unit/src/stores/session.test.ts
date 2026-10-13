@@ -53,7 +53,14 @@ import {
   setInputDraft,
   setSessionStore,
   updateSessionInfo,
+  toSessionInfo,
+  applySessionCatalog,
+  replaceListedSessions,
+  buildSessionProjectView,
+  visibleSessionsForEngines,
+  removeListedSession,
 } from "../../../../src/stores/session";
+import type { UnifiedSession } from "../../../../src/types/unified";
 import {
   INPUT_DRAFT_STORAGE_KEY,
   MAX_STORED_INPUT_DRAFT_CHARS,
@@ -80,6 +87,7 @@ describe("session store", () => {
       loading: false,
       initError: null,
       projects: [],
+      catalogs: {},
       projectExpanded: {},
       sendingMap: {},
       showDefaultWorkspace: true,
@@ -279,6 +287,125 @@ describe("session store", () => {
   });
 
   describe("session info updates", () => {
+    it("removes a session from list and catalog caches without disturbing another selection", () => {
+      const session = (id: string): UnifiedSession => ({ id, engineType: "codex-desktop", catalogSourceId: "native", projectId: null, directory: "/repo", time: { created: 1, updated: 2 } });
+      applySessionCatalog({ sourceId: "native", revision: "1", complete: true, projects: [], sessions: [session("removed"), session("kept")] });
+      setSessionStore("current", "kept");
+      setInputDraft("kept", { text: "Keep this draft" });
+      removeListedSession("removed");
+      removeListedSession("removed");
+      expect(sessionStore.list.map((item) => item.id)).toEqual(["kept"]);
+      expect(sessionStore.catalogs.native.sessions.map((item) => item.id)).toEqual(["kept"]);
+      expect(sessionStore.current).toBe("kept");
+      expect(getInputDraft("kept").text).toBe("Keep this draft");
+      removeListedSession("kept");
+      expect(sessionStore.current).toBeNull();
+      expect(sessionStore.list).toEqual([]);
+    });
+
+    it("hides archived conversations only for engines that request it", () => {
+      const make = (id: string, engineType: UnifiedSession["engineType"], archived: boolean) => toSessionInfo({ id, engineType, archived, directory: "/repo", time: { created: 1, updated: 2 } });
+      const sessions = [make("hidden", "codex-desktop", true), make("active", "codex-desktop", false), make("other-archived", "claude", true)];
+      expect(visibleSessionsForEngines(sessions, new Set(["codex-desktop"])).map((session) => session.id)).toEqual(["active", "other-archived"]);
+      expect(sessions).toHaveLength(3);
+      expect(visibleSessionsForEngines(sessions, new Set()).map((session) => session.id)).toEqual(["hidden", "active", "other-archived"]);
+    });
+
+    it("displays unassigned catalog sessions in the existing default workspace without changing membership", () => {
+      const directory = "/Users/test/Library/Application Support/codemux/workspace";
+      const projects = [{ id: "default-project", directory, isDefault: true }];
+      const sessions = Array.from({ length: 5 }, (_, index) => toSessionInfo({
+        id: `new-${index}`, engineType: "codex-desktop", directory, projectId: null,
+        catalogSourceId: "native", time: { created: 1, updated: 2 },
+      }));
+      const before = structuredClone(sessions);
+      const view = buildSessionProjectView(sessions, projects);
+      expect([...view.projectIds.values()]).toEqual(Array(5).fill("default-project"));
+      expect(view.projects).toHaveLength(1);
+      expect(view.displayOnlyIds.size).toBe(0);
+      expect(sessions).toEqual(before);
+    });
+
+    it("uses canonical project metadata before cwd matches and leaves ordinary engine grouping unchanged", () => {
+      const native = { id: "native-project", directory: "", name: "Canonical name", roots: ["/root-a", "/root-b"], catalogSourceId: "native" };
+      const projects = [{ id: "existing-directory", directory: "/root-b" }];
+      const catalogSession = toSessionInfo({ id: "catalog", engineType: "codex-desktop", directory: "/root-b/subdir", projectId: native.id, catalogSourceId: "native", time: { created: 1, updated: 2 } });
+      const ordinary = toSessionInfo({ id: "ordinary", engineType: "claude", directory: "/root-b", time: { created: 1, updated: 2 } }, "existing-directory");
+      const view = buildSessionProjectView([catalogSession, ordinary], projects, [{ sourceId: "native", revision: "1", complete: true, projects: [native], sessions: [] }]);
+      expect(view.projectIds.get("catalog")).toBe("native-project");
+      expect(view.projectIds.get("ordinary")).toBe("existing-directory");
+      expect(view.projects.find((project) => project.id === "native-project")).toMatchObject({ name: "Canonical name", directory: "/root-a", roots: ["/root-a", "/root-b"] });
+      expect(native.directory).toBe("");
+      expect(catalogSession.directory).toBe("/root-b/subdir");
+      expect(catalogSession.projectID).toBe("native-project");
+    });
+
+    it("matches the most specific known root and creates only display groups for unknown directories", () => {
+      const session = (id: string, directory: string) => toSessionInfo({ id, engineType: "codex-desktop", directory, projectId: null, catalogSourceId: "native", time: { created: 1, updated: 2 } });
+      const sessions = [session("known", "/repo/nested/src"), session("unknown", "/different/repo"), session("same-dir", "/different/repo")];
+      const projects = [{ id: "outer", directory: "/repo" }, { id: "inner", directory: "/repo/nested" }];
+      const view = buildSessionProjectView(sessions, projects);
+      expect(view.projectIds.get("known")).toBe("inner");
+      const displayId = view.projectIds.get("unknown")!;
+      expect(view.displayOnlyIds.has(displayId)).toBe(true);
+      expect(view.projectIds.get("same-dir")).toBe(displayId);
+      expect(view.projects.find((project) => project.id === displayId)?.directory).toBe("/different/repo");
+      expect(projects).toHaveLength(2);
+      expect(sessions.every((item) => item.projectID === null && item.catalogSourceId === "native")).toBe(true);
+    });
+
+    it("keeps explicit catalog classification independent of directory fallback", () => {
+      const session: UnifiedSession = { id: "native-session", engineType: "codex-desktop", directory: "/different/root", time: { created: 1, updated: 2 } };
+      expect(toSessionInfo({ ...session, catalogSourceId: "native", projectId: null }, "dir-fallback").projectID).toBeNull();
+      expect(toSessionInfo({ ...session, catalogSourceId: "native", projectId: "native-project" }, "dir-fallback").projectID).toBe("native-project");
+      expect(toSessionInfo({ ...session, engineType: "claude" }, "dir-fallback").projectID).toBe("dir-fallback");
+    });
+
+    it("merges new unassigned catalog conversations without disturbing selection, drafts or other sources", () => {
+      const session = (id: string, source?: string): UnifiedSession => ({
+        id, engineType: source ? "codex-desktop" : "claude", catalogSourceId: source,
+        catalogAvailable: source ? true : undefined, directory: "", projectId: source ? null : undefined,
+        title: id, time: { created: 1, updated: 2 },
+      });
+      setSessionStore("list", [toSessionInfo(session("legacy")), toSessionInfo(session("other", "other-source"))]);
+      applySessionCatalog({ sourceId: "native", engineType: "codex-desktop", revision: "1", complete: true, projects: [], sessions: [session("selected", "native")] });
+      setSessionStore("current", "selected");
+      setInputDraft("selected", { text: "Keep this draft" });
+      applySessionCatalog({ sourceId: "native", engineType: "codex-desktop", revision: "2", complete: true, projects: [], sessions: [session("new-chat", "native")] });
+
+      expect(sessionStore.list.find((item) => item.id === "new-chat")).toMatchObject({ projectID: null, directory: "", catalogSourceId: "native" });
+      expect(sessionStore.list.find((item) => item.id === "selected")?.catalogAvailable).toBe(false);
+      expect(sessionStore.list.find((item) => item.id === "other")?.catalogAvailable).toBe(true);
+      expect(sessionStore.list.some((item) => item.id === "legacy")).toBe(true);
+      expect(sessionStore.current).toBe("selected");
+      expect(getInputDraft("selected").text).toBe("Keep this draft");
+      expect(sessionStore.catalogs.native.engineType).toBe("codex-desktop");
+    });
+
+    it("retains empty sources and newer catalog events through an ordinary list refresh", () => {
+      applySessionCatalog({ sourceId: "empty", engineType: "codex-desktop", revision: "1", complete: true, projects: [], sessions: [] });
+      const current: UnifiedSession = { id: "new-chat", engineType: "codex-desktop", catalogSourceId: "native", catalogAvailable: true, title: "Latest title", directory: "/repo", projectId: null, time: { created: 1, updated: 2 } };
+      applySessionCatalog({ sourceId: "native", engineType: "codex-desktop", revision: "2", complete: true, projects: [], sessions: [current] });
+      replaceListedSessions([toSessionInfo({ ...current, title: "Stale title" }), toSessionInfo({ ...current, id: "legacy", engineType: "claude", catalogSourceId: undefined })]);
+      expect(sessionStore.list.find((item) => item.id === "new-chat")?.title).toBe("Latest title");
+      expect(sessionStore.catalogs.empty.sessions).toEqual([]);
+      expect(sessionStore.list.some((item) => item.id === "legacy")).toBe(true);
+    });
+
+    it("preserves archived history, source links and drafts until explicitly restored", () => {
+      setSessionStore("list", [{
+        id: "shared-session", engineType: "codex-desktop", title: "Shared conversation", directory: "/repo",
+        sourceUrl: "codex://threads/native-thread", sourceName: "Codex", archived: true, createdAt: "1", updatedAt: "2",
+      }]);
+      setInputDraft("shared-session", { text: "Continue after restoring" });
+
+      updateSessionInfo("shared-session", { title: "Updated from Desktop" });
+      expect(sessionStore.list[0]).toMatchObject({ archived: true, sourceUrl: "codex://threads/native-thread", title: "Updated from Desktop" });
+      updateSessionInfo("shared-session", { archived: false });
+      expect(sessionStore.list[0]).toMatchObject({ id: "shared-session", archived: false, sourceName: "Codex" });
+      expect(getInputDraft("shared-session").text).toBe("Continue after restoring");
+    });
+
     it("updates only the matching session info entry", () => {
       setSessionStore("list", [
         {

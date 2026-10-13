@@ -11,6 +11,7 @@ vi.mock("../../../../src/lib/platform", () => ({ isElectron: mocks.isElectron })
 vi.mock("../../../../src/lib/electron-api", () => ({ gatewayAPI: { getWsUrl: mocks.getWsUrl } }));
 
 import { GatewayClient } from "../../../../src/lib/gateway-client";
+import type { EngineCatalogSnapshot, UnifiedProject } from "../../../../src/types/unified";
 
 class FakeWebSocket {
   static OPEN = 1;
@@ -183,6 +184,184 @@ describe("GatewayClient authentication", () => {
     await vi.advanceTimersByTimeAsync(30_000);
     expect(FakeWebSocket.instances).toHaveLength(1);
     expect(client.connected).toBe(false);
+  });
+
+  it("removes all buffered output for a removed session while preserving other sessions", async () => {
+    const ws = await connect();
+    const removed = vi.fn();
+    const updated = vi.fn();
+    const partUpdated = vi.fn();
+    const consumed = vi.fn();
+    client.on("session.removed", removed);
+    client.on("message.updated", updated);
+    client.on("message.part.updated", partUpdated);
+    client.on("message.queued.consumed", consumed);
+    const notify = (type: string, payload: unknown) => ws.onmessage?.({ data: JSON.stringify({ type, payload }) });
+    notify("message.updated", { sessionId: "s1", message: { id: "old" } });
+    notify("message.part.updated", { sessionId: "s1", part: { id: "old-part", messageId: "old" } });
+    notify("message.queued.consumed", { sessionId: "s1", messageId: "old" });
+    notify("message.updated", { sessionId: "s2", message: { id: "other" } });
+    notify("session.removed", { sessionId: "s1" });
+    expect(removed).toHaveBeenCalledExactlyOnceWith({ sessionId: "s1" });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(updated).toHaveBeenCalledExactlyOnceWith({ sessionId: "s2", message: { id: "other" } });
+    expect(partUpdated).not.toHaveBeenCalled();
+    expect(consumed).not.toHaveBeenCalled();
+  });
+
+  it("discards trailing buffered output before a removed session is restored", async () => {
+    const ws = await connect();
+    const updated = vi.fn();
+    client.on("message.updated", updated);
+    const notify = (type: string, payload: unknown) => ws.onmessage?.({ data: JSON.stringify({ type, payload }) });
+    notify("session.removed", { sessionId: "s1" });
+    notify("message.updated", { sessionId: "s1", message: { id: "late" } });
+    client.discardSessionNotifications("s1");
+    notify("message.updated", { sessionId: "s1", message: { id: "restored" } });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(updated).toHaveBeenCalledExactlyOnceWith({ sessionId: "s1", message: { id: "restored" } });
+  });
+
+  it("drops queued updates and parts for a message removed in the same frame", async () => {
+    const ws = await connect();
+    const removed = vi.fn();
+    const updated = vi.fn();
+    const partUpdated = vi.fn();
+    client.on("message.removed", removed);
+    client.on("message.updated", updated);
+    client.on("message.part.updated", partUpdated);
+    const part = { id: "p1", messageId: "m1", sessionId: "s1", type: "text", text: "old" };
+    const notify = (type: string, payload: unknown) => ws.onmessage?.({ data: JSON.stringify({ type, payload }) });
+
+    notify("message.updated", { sessionId: "s1", message: { id: "m1" } });
+    notify("message.part.updated", { sessionId: "s1", part });
+    notify("message.removed", { sessionId: "s1", messageId: "m1" });
+    notify("message.part.updated", { sessionId: "s1", part: { ...part, text: "late old part" } });
+    notify("message.part.updated", { sessionId: "s1", part: { ...part, id: "p2", messageId: "m2" } });
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(removed).toHaveBeenCalledWith({ sessionId: "s1", messageId: "m1" });
+    expect(updated).not.toHaveBeenCalled();
+    expect(partUpdated).toHaveBeenCalledOnce();
+    expect(partUpdated.mock.calls[0][0].part.messageId).toBe("m2");
+  });
+
+  it("preserves a later explicit recreation after a removal in the same frame", async () => {
+    const ws = await connect();
+    const order: string[] = [];
+    client.on("message.removed", () => order.push("removed"));
+    client.on("message.updated", () => order.push("updated"));
+    client.on("message.part.updated", () => order.push("part"));
+    const notify = (type: string, payload: unknown) => ws.onmessage?.({ data: JSON.stringify({ type, payload }) });
+    notify("message.removed", { sessionId: "s1", messageId: "m1" });
+    notify("message.updated", { sessionId: "s1", message: { id: "m1" } });
+    notify("message.part.updated", { sessionId: "s1", part: { id: "p1", messageId: "m1", text: "new" } });
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(order).toEqual(["removed", "updated", "part"]);
+  });
+
+  it("retains ordinary message ordering and part coalescing without removal events", async () => {
+    const ws = await connect();
+    const order: string[] = [];
+    client.on("message.updated", () => order.push("message"));
+    client.on("message.part.updated", ({ part }) => order.push((part as { text: string }).text));
+    const part = { id: "p1", messageId: "m1", sessionId: "s1", type: "text", text: "old" };
+    const notify = (type: string, payload: unknown) => ws.onmessage?.({ data: JSON.stringify({ type, payload }) });
+    notify("message.part.updated", { sessionId: "s1", part });
+    notify("message.updated", { sessionId: "s1", message: { id: "m1" } });
+    notify("message.part.updated", { sessionId: "s1", part: { ...part, text: "latest" } });
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(order).toEqual(["message", "latest"]);
+  });
+
+  it.each([true, false])("sends the archive RPC and propagates an upstream rejection for archived=%s", async (archived) => {
+    const ws = await connect();
+    const pending = client.setSessionArchived("s1", archived);
+    const rejected = expect(pending).rejects.toThrow("Archive rejected");
+    const request = JSON.parse(ws.send.mock.calls.at(-1)![0]);
+    expect(request).toMatchObject({ type: "session.archive", payload: { sessionId: "s1", archived } });
+    ws.onmessage?.({ data: JSON.stringify({ type: "response", requestId: request.requestId, payload: null, error: { code: "ARCHIVE_FAILED", message: "Archive rejected" } }) });
+    await rejected;
+  });
+
+  describe("catalog contracts", () => {
+    const sourceId = "desktop/local";
+    const projectId = "catalog:desktop/local:stable-project";
+    const roots = ["/workspace/Second Root", "C:\\Projects\\First", "/workspace/nested/../root"];
+    const project: UnifiedProject = { id: projectId, name: "Shared project", directory: roots[0], roots,
+      catalogSourceId: sourceId, catalogProjectId: "stable-project" };
+
+    function reply(ws: FakeWebSocket, type: string, payload: unknown, result: unknown): void {
+      const request = JSON.parse(ws.send.mock.calls.at(-1)![0]);
+      expect(request).toEqual({ type, requestId: expect.any(String), payload });
+      ws.onmessage?.({ data: JSON.stringify({ type: "response", requestId: request.requestId, payload: result }) });
+    }
+
+    it("lists catalog snapshots without deriving project IDs from roots", async () => {
+      const ws = await connect();
+      const catalogs: EngineCatalogSnapshot[] = [{ sourceId, revision: "owner-revision", complete: true, projects: [project], sessions: [] }];
+      const pending = client.listCatalogs();
+      reply(ws, "catalog.list", {}, catalogs);
+      expect(await pending).toEqual(catalogs);
+    });
+
+    it("creates a project with the source ID and roots unchanged", async () => {
+      const ws = await connect();
+      const input = { sourceId, name: project.name!, roots };
+      const pending = client.createProject(input);
+      reply(ws, "project.create", input, project);
+      expect(await pending).toEqual(project);
+    });
+
+    it("updates and reorders projects by stable ID instead of their working directories", async () => {
+      const ws = await connect();
+      const patch = { name: "Renamed project", roots: [...roots].reverse() };
+      const updated = { ...project, ...patch };
+      const updating = client.updateProject({ projectId, patch });
+      reply(ws, "project.update", { projectId, patch }, updated);
+      expect(await updating).toEqual(updated);
+      const projectIds = ["catalog:desktop/local:other-project", projectId];
+      const reordering = client.reorderProjects({ sourceId, projectIds });
+      reply(ws, "project.reorder", { sourceId, projectIds }, null);
+      await reordering;
+    });
+
+    it.each([projectId, null])("sends explicit session project assignment %s", async (assignedProjectId) => {
+      const ws = await connect();
+      const input = { sessionId: "shared-session", projectId: assignedProjectId };
+      const pending = client.setSessionProject(input);
+      reply(ws, "session.project.set", input, null);
+      await pending;
+    });
+
+    it("carries a project ID when creating a session without replacing its directory or engine", async () => {
+      const ws = await connect();
+      const input = { engineType: "codex", directory: "/workspace/worktree", worktreeId: "worktree-stable", projectId };
+      const session = { id: "shared-session", ...input, time: { created: 1, updated: 1 } };
+      const pending = client.createSession(input);
+      reply(ws, "session.create", input, session);
+      expect(await pending).toEqual(session);
+    });
+
+    it("delivers the catalog snapshot as the direct event payload after authentication", async () => {
+      const updated = vi.fn();
+      client.on("catalog.updated", updated);
+      const pending = client.connect();
+      const ws = FakeWebSocket.instances.at(-1)!;
+      ws.open();
+      const snapshot: EngineCatalogSnapshot = { sourceId, revision: "r2", complete: false, projects: [project], sessions: [] };
+      const event = { data: JSON.stringify({ type: "catalog.updated", payload: snapshot }) };
+      ws.onmessage?.(event);
+      expect(updated).not.toHaveBeenCalled();
+      ws.authenticate();
+      await pending;
+      const sent = ws.send.mock.calls.length;
+      ws.onmessage?.(event);
+      expect(updated).toHaveBeenCalledExactlyOnceWith(snapshot);
+      expect(ws.send).toHaveBeenCalledTimes(sent);
+    });
   });
 
   it("times out a socket that never confirms authentication", async () => {

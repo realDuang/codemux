@@ -4,12 +4,14 @@ import { dirname, join } from "path";
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { mkdtempSyncMock, writeFileSyncMock, resolveCodexCliPathMock, resolveCodexCliVersionMock } = vi.hoisted(() => ({
+const { mkdtempSyncMock, writeFileSyncMock, resolveCodexCliPathMock, resolveCodexCliVersionMock, verifyRolloutMock } = vi.hoisted(() => ({
   mkdtempSyncMock: vi.fn(),
   writeFileSyncMock: vi.fn(),
   resolveCodexCliPathMock: vi.fn(),
   resolveCodexCliVersionMock: vi.fn(),
+  verifyRolloutMock: vi.fn(async (_id: string, _metadata: Record<string, unknown>): Promise<"active" | "archived" | undefined> => undefined),
 }));
+vi.mock("../../../../../electron/main/engines/codex/desktop-rollout-path", () => ({ verifyCodexRolloutPath: verifyRolloutMock }));
 
 vi.mock("fs", async () => {
   const actual = await vi.importActual<typeof import("fs")>("fs");
@@ -44,7 +46,8 @@ vi.mock("../../../../../electron/main/services/logger", () => ({
   },
 }));
 
-import { CodexAdapter } from "../../../../../electron/main/engines/codex/index";
+import { CodexAdapter, createCodexDesktopOwnerRuntime } from "../../../../../electron/main/engines/codex/index";
+import { convertThreadToMessages } from "../../../../../electron/main/engines/codex/converters";
 
 interface MockClient {
   running: boolean;
@@ -129,6 +132,7 @@ describe("CodexAdapter", () => {
 
   it("resumes an existing Codex thread from engineMeta during session creation", async () => {
     const { adapter } = createAdapterWithClient();
+    vi.spyOn(adapter, "getStoredThreadAvailability").mockResolvedValue("active");
     vi.spyOn(adapter as any, "resumeThread").mockResolvedValue({
       thread: {
         id: "thread-123",
@@ -160,6 +164,7 @@ describe("CodexAdapter", () => {
 
   it("falls back to starting a new thread when resume fails", async () => {
     const { adapter } = createAdapterWithClient();
+    vi.spyOn(adapter, "getStoredThreadAvailability").mockResolvedValue("missing");
     vi.spyOn(adapter as any, "resumeThread").mockRejectedValue(new Error("missing thread"));
     vi.spyOn(adapter as any, "startThread").mockResolvedValue({
       thread: {
@@ -177,6 +182,57 @@ describe("CodexAdapter", () => {
     expect((adapter as any).resumeThread).toHaveBeenCalledWith("thread-stale", "/repo");
     expect((adapter as any).startThread).toHaveBeenCalledWith("/repo");
     expect(session.id).toBe("codex_thread-fresh");
+  });
+
+  it("refuses ordinary Codex restoration of an archived native thread without replacing it", async () => {
+    const { adapter, client } = createAdapterWithClient();
+    const thread = { id: "archived-native", cwd: "/repo", turns: [] };
+    client.request.mockImplementation(async (method: string, params: Record<string, unknown>) => method === "thread/read" ? { thread }
+      : { data: params.archived ? [thread] : [], nextCursor: null });
+    const resume = vi.spyOn(adapter as any, "resumeThread").mockResolvedValue({ thread });
+    const create = vi.spyOn(adapter as any, "startThread");
+    await expect(adapter.createSession("/repo", { codexThreadId: thread.id })).rejects.toMatchObject({ code: "CODEX_THREAD_ARCHIVED" });
+    expect(resume).not.toHaveBeenCalled();
+    expect(create).not.toHaveBeenCalled();
+  });
+
+  it("excludes archived native history from ordinary Codex imports before reading turns", async () => {
+    const { adapter, client } = createAdapterWithClient();
+    const thread = { id: "archived-native", cwd: "/repo", turns: [] };
+    client.request.mockImplementation(async (method: string, params: Record<string, unknown>) => method === "thread/read" ? { thread }
+      : { data: params.archived ? [thread] : [], nextCursor: null });
+    await expect(adapter.getHistoricalMessages("codex_archived-native", "/repo", { codexThreadId: thread.id })).rejects.toMatchObject({ code: "CODEX_THREAD_ARCHIVED" });
+    expect(client.request.mock.calls.filter(([method]) => method === "thread/read").every(([, params]) => params.includeTurns === false)).toBe(true);
+  });
+
+  it("restores a marked CodeMux owner without overriding its original model, cwd, permissions or instructions", async () => {
+    const { adapter, client } = createAdapterWithClient();
+    (adapter as any).currentModelId = "today-default";
+    const saved = {
+      thread: { id: "saved-thread", cwd: "/saved/repo", name: "Saved work", turns: [] },
+      model: "original-model", modelProvider: "modelhub", reasoningEffort: "ultra",
+      approvalPolicy: "on-request", sandbox: { type: "readOnly" }, serviceTier: "fast",
+      collaborationMode: { mode: "plan", settings: { model: "original-model", reasoning_effort: "ultra", developer_instructions: null } },
+    };
+    client.request.mockImplementation(async (method: string) => method === "thread/resume" || method === "thread/read" ? saved : { data: [] });
+    const session = await adapter.createSession("/outdated/path", { codexThreadId: "saved-thread", codexDesktopOwner: "codemux" });
+    expect(client.request).toHaveBeenCalledWith("thread/resume", { threadId: "saved-thread", persistExtendedHistory: true });
+    expect(client.request.mock.calls.some(([method]) => method === "thread/start")).toBe(false);
+    expect(session).toMatchObject({ id: "codex_saved-thread", directory: "/saved/repo", engineMeta: { codexThreadId: "saved-thread" } });
+    const state = await createCodexDesktopOwnerRuntime(adapter).readThread(session.id);
+    expect(state).toMatchObject({ model: "original-model", modelProvider: "modelhub", reasoningEffort: "ultra", approvalPolicy: "on-request", sandboxPolicy: { type: "readOnly" }, collaborationMode: { mode: "plan" } });
+  });
+
+  it("never creates a replacement thread for a failed or mismatched marked owner restore", async () => {
+    const { adapter, client } = createAdapterWithClient();
+    const startThread = vi.spyOn(adapter as any, "startThread");
+    client.request.mockRejectedValueOnce(new Error("Original thread missing"));
+    await expect(adapter.createSession("/repo", { codexThreadId: "original", codexDesktopOwner: "codemux" })).rejects.toThrow("Original thread missing");
+    client.request.mockResolvedValueOnce({ thread: { id: "replacement" } });
+    await expect(adapter.createSession("/repo", { codexThreadId: "original", codexDesktopOwner: "codemux" })).rejects.toThrow("changed the original");
+    await expect(adapter.createSession("/repo", { codexDesktopOwner: "codemux" })).rejects.toThrow("original Codex thread ID");
+    expect(startThread).not.toHaveBeenCalled();
+    expect((adapter as any).sessionToThread.size).toBe(0);
   });
 
   it("loads model metadata from model/list and adopts the default model", async () => {
@@ -219,7 +275,7 @@ describe("CodexAdapter", () => {
 
   it("reads historical thread messages with includeTurns enabled", async () => {
     const { adapter, client } = createAdapterWithClient();
-    client.request.mockResolvedValue({
+    const response = {
       thread: {
         id: "thread-1",
         createdAt: 100,
@@ -231,7 +287,9 @@ describe("CodexAdapter", () => {
           ],
         }],
       },
-    });
+    };
+    client.request.mockImplementation(async (method: string, params: Record<string, unknown>) => method === "thread/read" ? response
+      : { data: params.archived ? [] : [response.thread], nextCursor: null });
 
     const messages = await adapter.getHistoricalMessages("codex_thread-1", "/repo\\sub", { codexThreadId: "thread-1" });
 
@@ -922,6 +980,100 @@ describe("CodexAdapter", () => {
     expect(partUpdates.some((part) => part.type === "system-notice" && part.noticeType === "compact")).toBe(true);
   });
 
+  it("keeps native reasoning items stable across deltas and tool boundaries", () => {
+    const { adapter } = createAdapterWithClient();
+    const { sessionId, threadId } = seedSession(adapter);
+    const notify = (method: string, data: Record<string, unknown>) =>
+      (adapter as any).handleNotification(method, { threadId, turnId: "turn-1", ...data });
+    const reasoningParts = () => (adapter as any).messageBuffers.get(sessionId).parts
+      .filter((part: any) => part.type === "reasoning");
+
+    notify("turn/started", { turn: { id: "turn-1" } });
+    notify("item/started", { item: { id: "reason-1", type: "reasoning", summary: [], content: [] } });
+    notify("item/reasoning/textDelta", { itemId: "reason-1", contentIndex: 0, delta: "Inspect failures" });
+    const firstId = reasoningParts()[0].id;
+    notify("item/reasoning/summaryTextDelta", { itemId: "reason-1", summaryIndex: 0, delta: "Inspect " });
+    notify("item/reasoning/summaryTextDelta", { itemId: "reason-1", summaryIndex: 0, delta: "failures" });
+    expect(reasoningParts()).toHaveLength(1);
+    expect(reasoningParts()[0]).toMatchObject({ id: firstId, text: "Inspect failures" });
+    notify("item/reasoning/textDelta", { itemId: "reason-1", contentIndex: 0, delta: " before changing anything" });
+    expect(reasoningParts()[0]).toMatchObject({ id: firstId, text: "Inspect failures" });
+
+    const firstReasoning = { id: "reason-1", type: "reasoning", summary: ["Inspect failures"], content: ["Inspect failures"] };
+    notify("item/completed", { item: firstReasoning });
+    notify("item/started", { item: { id: "cmd-1", type: "commandExecution", command: "bun test" } });
+    notify("item/completed", { item: { id: "cmd-1", type: "commandExecution", command: "bun test", status: "completed" } });
+    notify("item/started", { item: { id: "reason-2", type: "reasoning", summary: [], content: [] } });
+    notify("item/reasoning/summaryTextDelta", { itemId: "reason-2", summaryIndex: 1, delta: "Verify result" });
+    notify("item/reasoning/summaryTextDelta", { itemId: "reason-2", summaryIndex: 0, delta: "Apply fix" });
+    const secondReasoning = { id: "reason-2", type: "reasoning", summary: ["Apply fix", "Verify result"], content: [] };
+    notify("item/completed", { item: secondReasoning });
+    // Repeated native snapshots must update their own item instead of adding or overwriting another item.
+    notify("item/completed", { item: firstReasoning });
+    notify("item/completed", { item: secondReasoning });
+
+    expect(reasoningParts().map((part: any) => part.text)).toEqual(["Inspect failures", "Apply fix\n\nVerify result"]);
+    expect(reasoningParts()[0].id).toBe(firstId);
+    expect(reasoningParts()[1].id).not.toBe(firstId);
+    const streamed = (adapter as any).messageBuffers.get(sessionId).parts
+      .filter((part: any) => part.type === "reasoning" || part.type === "tool")
+      .sort((left: any, right: any) => left.id.localeCompare(right.id))
+      .map((part: any) => ({ type: part.type, text: part.text }));
+    const [history] = convertThreadToMessages(sessionId, { thread: { id: threadId, turns: [{
+      id: "turn-1", status: "completed", items: [firstReasoning,
+        { id: "cmd-1", type: "commandExecution", command: "bun test", status: "completed" }, secondReasoning],
+    }] } });
+    expect(history.parts.filter((part) => part.type === "reasoning" || part.type === "tool")
+      .sort((left, right) => left.id.localeCompare(right.id))
+      .map((part: any) => ({ type: part.type, text: part.text }))).toEqual(streamed);
+  });
+
+  it("preserves streamed reasoning when completion omits text and ignores late deltas", () => {
+    const { adapter } = createAdapterWithClient();
+    const { sessionId, threadId } = seedSession(adapter);
+    const notify = (method: string, data: Record<string, unknown>) =>
+      (adapter as any).handleNotification(method, { threadId, turnId: "turn-1", ...data });
+    notify("item/reasoning/summaryTextDelta", { itemId: "reason-1", summaryIndex: 0, delta: "Check the tests" });
+    notify("item/completed", { item: { id: "reason-1", type: "reasoning", summary: [], content: [] } });
+    notify("item/reasoning/summaryTextDelta", { itemId: "reason-1", summaryIndex: 0, delta: "Check the tests" });
+    const parts = (adapter as any).messageBuffers.get(sessionId).parts;
+    expect(parts).toHaveLength(1);
+    expect(parts[0]).toMatchObject({ type: "reasoning", text: "Check the tests" });
+  });
+
+  it("starts the next turn with fresh reasoning item state", () => {
+    const { adapter } = createAdapterWithClient();
+    const { sessionId, threadId } = seedSession(adapter);
+    const notify = (method: string, data: Record<string, unknown>) =>
+      (adapter as any).handleNotification(method, { threadId, ...data });
+    notify("turn/started", { turn: { id: "turn-1" } });
+    notify("item/reasoning/summaryTextDelta", { turnId: "turn-1", itemId: "reason-1", delta: "First turn" });
+    notify("item/completed", { turnId: "turn-1", item: { id: "reason-1", type: "reasoning", summary: ["First turn"] } });
+    const firstPartId = (adapter as any).messageBuffers.get(sessionId).parts[0].id;
+    notify("turn/completed", { turn: { id: "turn-1", status: "completed" } });
+    expect((adapter as any).messageBuffers.has(sessionId)).toBe(false);
+    notify("turn/started", { turn: { id: "turn-2" } });
+    notify("item/reasoning/summaryTextDelta", { turnId: "turn-2", itemId: "reason-1", delta: "Next turn" });
+    const parts = (adapter as any).messageBuffers.get(sessionId).parts;
+    expect(parts).toHaveLength(1);
+    expect(parts[0]).toMatchObject({ type: "reasoning", text: "Next turn" });
+    expect(parts[0].id).not.toBe(firstPartId);
+  });
+
+  it("does not emit completed empty reasoning placeholders", () => {
+    const { adapter } = createAdapterWithClient();
+    const { sessionId, threadId } = seedSession(adapter);
+    const parts: any[] = [];
+    adapter.on("message.part.updated", ({ part }) => parts.push(part));
+    for (let index = 0; index < 4; index++) {
+      const item = { id: `reason-${index}`, type: "reasoning", summary: [], content: [] };
+      (adapter as any).handleNotification("item/started", { threadId, turnId: "turn-1", item });
+      (adapter as any).handleNotification("item/completed", { threadId, turnId: "turn-1", item });
+    }
+    expect(parts.filter((part) => part.type === "reasoning")).toEqual([]);
+    expect((adapter as any).messageBuffers.get(sessionId).parts).toEqual([]);
+  });
+
   it("streams tool, reasoning, plan, and notice events into a single assistant buffer", async () => {
     const { adapter } = createAdapterWithClient();
     const { sessionId, threadId } = seedSession(adapter);
@@ -1393,5 +1545,499 @@ describe("CodexAdapter", () => {
     (adapter as any).sessionServiceTiers.set(sessionId, "fast");
     (adapter as any).clearSessionState(sessionId);
     expect((adapter as any).sessionServiceTiers.has(sessionId)).toBe(false);
+  });
+});
+
+describe("CodexAdapter stored lifecycle", () => {
+  beforeEach(() => { verifyRolloutMock.mockReset(); });
+  it.each(["active", "archived"] as const)("reads an admitted index-less rollout only after path verification confirms %s", async (availability) => {
+    const { adapter, client } = createAdapterWithClient();
+    const thread = { id: "known-empty", cwd: "/repo", name: "Empty", path: "/native/rollout.jsonl", turns: [] };
+    const catalog = adapter.createDesktopCatalogClient();
+    catalog.admitThread!(thread.id);
+    verifyRolloutMock.mockResolvedValue(availability);
+    client.request.mockImplementation(async (method: string) => method === "thread/read" ? { thread } : { data: [], nextCursor: null });
+    expect(await adapter.readStoredThread(thread.id)).toEqual({ thread, archived: availability === "archived" });
+    expect(verifyRolloutMock).toHaveBeenCalledExactlyOnceWith(thread.id, thread);
+    expect(client.request.mock.calls.every(([method]) => ["thread/read", "thread/list"].includes(method))).toBe(true);
+    expect((adapter as any).sessionToThread.size).toBe(0);
+    catalog.dispose!();
+  });
+
+  it("rejects unadmitted or invalid paths instead of treating metadata as storage proof", async () => {
+    const { adapter, client } = createAdapterWithClient();
+    const thread = { id: "unknown-empty", cwd: "/repo", path: "/native/rollout.jsonl", turns: [] };
+    client.request.mockImplementation(async (method: string) => method === "thread/read" ? { thread } : { data: [], nextCursor: null });
+    verifyRolloutMock.mockResolvedValue("active");
+    await expect(adapter.readStoredThread(thread.id)).rejects.toThrow("missing from native storage");
+    expect(verifyRolloutMock).not.toHaveBeenCalled();
+    const catalog = adapter.createDesktopCatalogClient();
+    catalog.admitThread!(thread.id);
+    verifyRolloutMock.mockResolvedValue(undefined);
+    await expect(adapter.readStoredThread(thread.id)).rejects.toThrow("missing from native storage");
+    catalog.dispose!();
+  });
+
+  it("revokes only the disposed catalog's admission lease", async () => {
+    const { adapter, client } = createAdapterWithClient();
+    const thread = { id: "known-empty", cwd: "/repo", turns: [] };
+    client.request.mockImplementation(async (method: string) => method === "thread/read" ? { thread } : { data: [], nextCursor: null });
+    verifyRolloutMock.mockResolvedValue("active");
+    const first = adapter.createDesktopCatalogClient();
+    const second = adapter.createDesktopCatalogClient();
+    first.admitThread!(thread.id);
+    first.admitThread!(thread.id);
+    second.admitThread!(thread.id);
+    first.dispose!();
+    first.dispose!();
+    expect((await adapter.readStoredThread(thread.id)).archived).toBe(false);
+    second.dispose!();
+    await expect(adapter.readStoredThread(thread.id)).rejects.toThrow("missing from native storage");
+    expect(() => first.admitThread!(thread.id)).toThrow("stopped");
+  });
+
+  it("uses metadata only for the exact admitted not-materialized error and keeps identity checks", async () => {
+    const { adapter, client } = createAdapterWithClient();
+    const id = "known-empty";
+    const thread = { id, cwd: "/repo", turns: [] };
+    const catalog = adapter.createDesktopCatalogClient();
+    catalog.admitThread!(id);
+    verifyRolloutMock.mockResolvedValue("active");
+    client.request.mockImplementation(async (method: string) => method === "thread/read" ? { thread } : { data: [], nextCursor: null });
+    client.request.mockRejectedValueOnce(new Error(`thread ${id} is not materialized yet; includeTurns is unavailable before first user message (code: -32600)`));
+    expect((await adapter.readStoredThread(id)).thread).toEqual(thread);
+    expect(client.request).toHaveBeenNthCalledWith(1, "thread/read", { threadId: id, includeTurns: true });
+    expect(client.request).toHaveBeenNthCalledWith(2, "thread/read", { threadId: id, includeTurns: false });
+    for (const error of [new Error("Native connection failed"), new Error("list_turns is not supported yet (code: -32601)"), new Error("thread other-id is not materialized yet; includeTurns is unavailable before first user message (code: -32600)")]) {
+      client.request.mockClear().mockRejectedValueOnce(error);
+      await expect(adapter.readStoredThread(id)).rejects.toBe(error);
+      expect(client.request).toHaveBeenCalledOnce();
+    }
+    client.request.mockResolvedValueOnce({ thread: { id: "wrong-id" } });
+    await expect(adapter.readStoredThread(id)).rejects.toThrow("different thread");
+    catalog.dispose!();
+  });
+
+  it("verifies archive and restore through the native path for an admitted blank rollout", async () => {
+    const { adapter, client } = createAdapterWithClient();
+    const id = "known-empty";
+    let archived = false;
+    const catalog = adapter.createDesktopCatalogClient();
+    catalog.admitThread!(id);
+    client.request.mockImplementation(async (method: string) => {
+      if (method === "thread/read") return { thread: { id, cwd: "/repo", path: archived ? "/native/archived" : "/native/active" } };
+      if (method === "thread/archive") { archived = true; return {}; }
+      if (method === "thread/unarchive") { archived = false; return {}; }
+      return { data: [], nextCursor: null };
+    });
+    verifyRolloutMock.mockImplementation(async (_id, metadata) => metadata.path === "/native/archived" ? "archived" : "active");
+    await adapter.archiveStoredThread(id);
+    expect(await adapter.getStoredThreadAvailability(id)).toBe("archived");
+    await adapter.unarchiveStoredThread(id);
+    expect(await adapter.getStoredThreadAvailability(id)).toBe("active");
+    expect(client.request.mock.calls.some(([method]) => ["thread/resume", "thread/start", "turn/start"].includes(method))).toBe(false);
+    catalog.dispose!();
+  });
+
+  it("preserves original archived turn and item identities without resuming their runtime", async () => {
+    const { adapter, client } = createAdapterWithClient();
+    const thread = { id: "stored-thread", cwd: "/repo", turns: [{ id: "original-turn", items: [{ id: "original-item", type: "agentMessage", text: "Saved response" }] }] };
+    client.request.mockImplementation(async (method: string, params: Record<string, unknown>) => method === "thread/read" ? { thread }
+      : { data: params.archived ? [thread] : [], nextCursor: null });
+    expect(await adapter.readStoredThread("stored-thread")).toEqual({ thread, archived: true });
+    expect(client.request).toHaveBeenCalledWith("thread/read", { threadId: "stored-thread", includeTurns: true });
+    expect(client.request.mock.calls.some(([method]) => method === "thread/resume" || method === "thread/unarchive" || method === "turn/start")).toBe(false);
+    expect((adapter as any).sessionToThread.size).toBe(0);
+  });
+
+  it("rejects archived client history before requesting its turns", async () => {
+    const { adapter, client } = createAdapterWithClient();
+    const thread = { id: "archived-thread", cwd: "/repo" };
+    client.request.mockImplementation(async (method: string, params: Record<string, unknown>) => method === "thread/read" ? { thread }
+      : { data: params.archived ? [thread] : [], nextCursor: null });
+    await expect(adapter.readStoredThread(thread.id, { activeOnly: true })).rejects.toMatchObject({ code: "CODEX_THREAD_ARCHIVED" });
+    expect(client.request.mock.calls.filter(([method]) => method === "thread/read").every(([, params]) => params.includeTurns === false)).toBe(true);
+    expect((adapter as any).sessionToThread.size).toBe(0);
+  });
+
+  it("does not return a transcript archived while its client read was in flight", async () => {
+    const { adapter, client } = createAdapterWithClient();
+    let archived = false;
+    const thread = { id: "racing-thread", cwd: "/repo", turns: [] };
+    client.request.mockImplementation(async (method: string, params: Record<string, unknown>) => {
+      if (method === "thread/read") {
+        if (params.includeTurns) archived = true;
+        return { thread };
+      }
+      return { data: params.archived === archived ? [thread] : [], nextCursor: null };
+    });
+    await expect(adapter.readStoredThread(thread.id, { activeOnly: true })).rejects.toMatchObject({ code: "CODEX_THREAD_ARCHIVED" });
+  });
+
+  it("reads active client history without acquiring its runtime", async () => {
+    const { adapter, client } = createAdapterWithClient();
+    const thread = { id: "active-thread", cwd: "/repo", turns: [] };
+    client.request.mockImplementation(async (method: string, params: Record<string, unknown>) => method === "thread/read" ? { thread }
+      : { data: params.archived ? [] : [thread], nextCursor: null });
+    await expect(adapter.readStoredThread(thread.id, { activeOnly: true })).resolves.toEqual({ thread, archived: false });
+    expect((adapter as any).sessionToThread.size).toBe(0);
+  });
+  it("archives and restores native storage with verified state and no thread resume", async () => {
+    const { adapter, client } = createAdapterWithClient();
+    let archived = false;
+    const metadata = { id: "stored-thread", name: "Saved title", cwd: "/repo" };
+    client.request.mockImplementation(async (method: string, params: Record<string, unknown>) => {
+      if (method === "thread/read") return { thread: metadata };
+      if (method === "thread/archive") { archived = true; return {}; }
+      if (method === "thread/unarchive") { archived = false; return { thread: metadata }; }
+      return { data: params.archived === archived ? [metadata] : [], nextCursor: null };
+    });
+    expect(await adapter.getStoredThreadAvailability("stored-thread")).toBe("active");
+    expect(await adapter.archiveStoredThread("stored-thread")).toEqual(metadata);
+    expect(await adapter.getStoredThreadAvailability("stored-thread")).toBe("archived");
+    expect(await adapter.unarchiveStoredThread("stored-thread")).toEqual(metadata);
+    expect(await adapter.getStoredThreadAvailability("stored-thread")).toBe("active");
+    expect(client.request.mock.calls.filter(([method]) => method === "thread/archive" || method === "thread/unarchive").map(([method]) => method)).toEqual(["thread/archive", "thread/unarchive"]);
+    expect(client.request.mock.calls.some(([method]) => method === "thread/resume" || method === "turn/start")).toBe(false);
+    expect(client.request.mock.calls.filter(([method]) => method === "thread/read").every(([, params]) => params.includeTurns === false)).toBe(true);
+    expect((adapter as any).sessionToThread.size).toBe(0);
+  });
+
+  it.each([false, true])("does not repeat an already verified lifecycle state (archived=$0)", async (archived) => {
+    const { adapter, client } = createAdapterWithClient();
+    const metadata = { id: "stored-thread", cwd: "/repo" };
+    client.request.mockImplementation(async (method: string, params: Record<string, unknown>) => method === "thread/read" ? { thread: metadata }
+      : { data: params.archived === archived ? [metadata] : [], nextCursor: null });
+    if (archived) await adapter.archiveStoredThread("stored-thread"); else await adapter.unarchiveStoredThread("stored-thread");
+    expect(client.request.mock.calls.some(([method]) => method === "thread/archive" || method === "thread/unarchive")).toBe(false);
+  });
+
+  it("preserves the native active-writer rejection without retrying or releasing the owner", async () => {
+    const { adapter, client } = createAdapterWithClient();
+    client.request.mockImplementation(async (method: string, params: Record<string, unknown>) => {
+      if (method === "thread/read") return { thread: { id: "stored-thread" } };
+      if (method === "thread/archive") throw new Error("thread stored-thread already has an active writer (code: -32600)");
+      return { data: params.archived ? [] : [{ id: "stored-thread" }], nextCursor: null };
+    });
+    await expect(adapter.archiveStoredThread("stored-thread")).rejects.toThrow("active writer");
+    expect(client.request.mock.calls.filter(([method]) => method === "thread/archive")).toHaveLength(1);
+    expect(client.request.mock.calls.some(([method]) => method === "thread/unsubscribe" || method === "turn/interrupt" || method === "thread/resume")).toBe(false);
+  });
+
+  it.each(["archive", "unarchive"] as const)("does not report an unconfirmed %s as success", async (operation) => {
+    const { adapter, client } = createAdapterWithClient();
+    const archived = operation === "unarchive";
+    client.request.mockImplementation(async (method: string, params: Record<string, unknown>) => {
+      if (method === "thread/read") return { thread: { id: "stored-thread" } };
+      if (method === `thread/${operation}`) return {};
+      return { data: params.archived === archived ? [{ id: "stored-thread" }] : [], nextCursor: null };
+    });
+    await expect(operation === "archive" ? adapter.archiveStoredThread("stored-thread") : adapter.unarchiveStoredThread("stored-thread")).rejects.toThrow("not confirmed");
+    expect(client.request.mock.calls.filter(([method]) => method === `thread/${operation}`)).toHaveLength(1);
+  });
+
+  it("reports missing only after both bounded indexes confirm absence", async () => {
+    const { adapter, client } = createAdapterWithClient();
+    client.request.mockImplementation(async (method: string) => {
+      if (method === "thread/read") throw new Error("thread not loaded: missing-thread (code: -32600)");
+      return { data: [], nextCursor: null };
+    });
+    expect(await adapter.getStoredThreadAvailability("missing-thread")).toBe("missing");
+    expect(client.request.mock.calls.filter(([method]) => method === "thread/list").map(([, params]) => params.archived)).toEqual([false, true]);
+    client.request.mockRejectedValueOnce(new Error("Metadata connection failed"));
+    await expect(adapter.getStoredThreadAvailability("missing-thread")).rejects.toThrow("Metadata connection failed");
+  });
+
+  it("fails closed on conflicting availability records", async () => {
+    const { adapter, client } = createAdapterWithClient();
+    client.request.mockImplementation(async (method: string) => method === "thread/read" ? { thread: { id: "stored-thread" } }
+      : { data: [{ id: "stored-thread" }], nextCursor: null });
+    await expect(adapter.getStoredThreadAvailability("stored-thread")).rejects.toThrow("conflicting active and archived");
+    await expect(adapter.archiveStoredThread("stored-thread")).rejects.toThrow("conflicting active and archived");
+    expect(client.request.mock.calls.some(([method]) => method === "thread/archive")).toBe(false);
+  });
+});
+
+describe("CodexAdapter.renameStoredThread", () => {
+  it("uses the native name field when renaming a loaded session", async () => {
+    const { adapter, client } = createAdapterWithClient();
+    const { sessionId, threadId } = seedSession(adapter);
+    client.request.mockResolvedValue({});
+    await adapter.renameSession(sessionId, "New title");
+    expect(client.request).toHaveBeenCalledExactlyOnceWith("thread/name/set", { threadId, name: "New title" });
+    expect((await adapter.getSession(sessionId))?.title).toBe("New title");
+  });
+  it("verifies unarchived storage around one rename without loading the target into this runtime", async () => {
+    const { adapter, client } = createAdapterWithClient();
+    let renamed = false;
+    client.request.mockImplementation(async (method: string, params: Record<string, unknown>) => {
+      if (method === "thread/read") return { thread: { id: "stored-thread", cwd: "/exact/repo", name: renamed ? "New title" : "Old title" } };
+      if (method === "thread/name/set") { renamed = true; return {}; }
+      if (!renamed && params.cursor === null) return { data: [{ id: "other" }], nextCursor: "page-2" };
+      return { data: [{ id: "stored-thread" }], nextCursor: null };
+    });
+    await adapter.renameStoredThread("stored-thread", "New title");
+    expect(adapter.start).toHaveBeenCalledOnce();
+    expect(client.request.mock.calls.map(([method]) => method)).toEqual([
+      "thread/read", "thread/list", "thread/list", "thread/name/set", "thread/read", "thread/list",
+    ]);
+    expect(client.request).toHaveBeenNthCalledWith(2, "thread/list", {
+      cursor: null, limit: 100, sortKey: "updated_at", archived: false,
+      modelProviders: null, sourceKinds: [], useStateDbOnly: true, cwd: "/exact/repo",
+    });
+    expect(client.request).toHaveBeenNthCalledWith(3, "thread/list", expect.objectContaining({ cursor: "page-2", archived: false }));
+    expect(client.request).toHaveBeenNthCalledWith(4, "thread/name/set", { threadId: "stored-thread", name: "New title" });
+    expect(client.request.mock.calls.filter(([method]) => method === "thread/read").every(([, params]) => params.includeTurns === false)).toBe(true);
+    expect((adapter as any).sessionToThread.size).toBe(0);
+  });
+
+  it("does not write when the target is absent from the unarchived list", async () => {
+    const { adapter, client } = createAdapterWithClient();
+    client.request.mockImplementation(async (method: string) => method === "thread/read"
+      ? { thread: { id: "stored-thread", cwd: "/repo", name: "Old title" } }
+      : { data: [], nextCursor: null });
+    await expect(adapter.renameStoredThread("stored-thread", "New title")).rejects.toThrow("not in the verified unarchived list");
+    expect(client.request.mock.calls.map(([method]) => method)).toEqual(["thread/read", "thread/list"]);
+  });
+
+  it("fails closed when the target is archived after the single write", async () => {
+    const { adapter, client } = createAdapterWithClient();
+    let renamed = false;
+    client.request.mockImplementation(async (method: string) => {
+      if (method === "thread/read") return { thread: { id: "stored-thread", name: renamed ? "New title" : "Old title" } };
+      if (method === "thread/name/set") { renamed = true; return {}; }
+      return { data: renamed ? [] : [{ id: "stored-thread" }], nextCursor: null };
+    });
+    await expect(adapter.renameStoredThread("stored-thread", "New title")).rejects.toThrow("not in the verified unarchived list");
+    expect(client.request.mock.calls.filter(([method]) => method === "thread/name/set")).toHaveLength(1);
+    expect(client.request.mock.calls.some(([method]) => method === "thread/unarchive" || method === "thread/resume")).toBe(false);
+  });
+
+  it("reports a stored-title mismatch without retrying the write", async () => {
+    const { adapter, client } = createAdapterWithClient();
+    client.request.mockImplementation(async (method: string) => method === "thread/read"
+      ? { thread: { id: "stored-thread", name: "Still old" } }
+      : { data: [{ id: "stored-thread" }], nextCursor: null });
+    await expect(adapter.renameStoredThread("stored-thread", "New title")).rejects.toThrow("stored title did not match");
+    expect(client.request.mock.calls.filter(([method]) => method === "thread/name/set")).toHaveLength(1);
+  });
+
+  it.each(["repeated", "limit", "invalid"] as const)("does not rename when pagination is %s", async (failure) => {
+    const { adapter, client } = createAdapterWithClient();
+    let page = 0;
+    client.request.mockImplementation(async (method: string) => {
+      if (method === "thread/read") return { thread: { id: "stored-thread" } };
+      page += 1;
+      if (failure === "invalid") return { data: null };
+      return { data: [], nextCursor: failure === "repeated" ? "same-cursor" : `page-${page}` };
+    });
+    await expect(adapter.renameStoredThread("stored-thread", "New title")).rejects.toThrow(failure === "limit" ? "pagination limit" : failure === "repeated" ? "repeated" : "invalid unarchived");
+    expect(page).toBe(failure === "limit" ? 20 : failure === "repeated" ? 2 : 1);
+    expect(client.request.mock.calls.some(([method]) => method === "thread/name/set")).toBe(false);
+  });
+});
+
+describe("createCodexDesktopOwnerRuntime", () => {
+  it("reads owner title metadata without loading turns or resuming a thread", async () => {
+    const { adapter, client } = createAdapterWithClient();
+    const { sessionId, threadId } = seedSession(adapter);
+    client.request.mockResolvedValue({ thread: { id: threadId, name: "Current title" } });
+    const runtime = createCodexDesktopOwnerRuntime(adapter);
+    expect(await runtime.readMetadata!(sessionId)).toEqual({ id: threadId, name: "Current title" });
+    expect(client.request).toHaveBeenCalledExactlyOnceWith("thread/read", { threadId, includeTurns: false });
+  });
+  it("uses legacy history only for new private owner threads", async () => {
+    for (const ownerEnabled of [false, true]) {
+      const { adapter, client } = createAdapterWithClient();
+      if (ownerEnabled) createCodexDesktopOwnerRuntime(adapter);
+      client.request.mockImplementation(async (method: string) => method === "thread/start" ? { thread: { id: "new-thread" }, model: "custom-model" } : { data: [] });
+      await adapter.createSession("/repo");
+      const params = client.request.mock.calls.find(([method]) => method === "thread/start")?.[1];
+      if (ownerEnabled) expect(params).toHaveProperty("historyMode", "legacy");
+      else expect(params).not.toHaveProperty("historyMode");
+    }
+  });
+
+  it("reads authoritative metadata before a new legacy thread has its first user message", async () => {
+    const { adapter, client } = createAdapterWithClient();
+    const { sessionId, threadId } = seedSession(adapter);
+    const runtime = createCodexDesktopOwnerRuntime(adapter);
+    client.request.mockRejectedValueOnce(new Error(`thread ${threadId} is not materialized yet; includeTurns is unavailable before first user message (code: -32600)`));
+    client.request.mockResolvedValueOnce({ thread: { id: threadId, historyMode: "legacy", turns: [] } });
+    expect((await runtime.readThread(sessionId)).thread).toEqual({ id: threadId, historyMode: "legacy", turns: [] });
+    expect(client.request).toHaveBeenNthCalledWith(1, "thread/read", { threadId, includeTurns: true });
+    expect(client.request).toHaveBeenNthCalledWith(2, "thread/read", { threadId, includeTurns: false });
+    client.request.mockRejectedValueOnce(new Error("list_turns is not supported yet (code: -32601)"));
+    await expect(runtime.readThread(sessionId)).rejects.toThrow("list_turns is not supported");
+    expect(client.request).toHaveBeenCalledTimes(3);
+  });
+
+  it("reads only an already loaded native thread and preserves its provider, raw effort and pending requests", async () => {
+    const { adapter, client } = createAdapterWithClient();
+    const { sessionId, threadId } = seedSession(adapter);
+    const runtime = createCodexDesktopOwnerRuntime(adapter);
+    (adapter as any).nativeSessionSettings.set(sessionId, { model: "modelhub-model", effort: "ultra" });
+    client.request.mockResolvedValue({ thread: { id: threadId, cwd: "/repo", modelProvider: "modelhub", turns: [{ id: "native-turn", items: [] }] } });
+    const changed = vi.fn();
+    const unsubscribe = runtime.subscribe(changed);
+    (adapter as any).handleServerRequest(42, "item/commandExecution/requestApproval", { threadId, itemId: "cmd", command: "pwd" });
+    const state = await runtime.readThread(sessionId);
+    expect(state).toMatchObject({ model: "modelhub-model", modelProvider: "modelhub", reasoningEffort: "ultra", thread: { id: threadId, turns: [{ id: "native-turn" }] }, requests: [{ id: 42, method: "item/commandExecution/requestApproval" }] });
+    expect(client.request).toHaveBeenCalledExactlyOnceWith("thread/read", { threadId, includeTurns: true });
+    expect(changed).toHaveBeenCalledWith(sessionId);
+    (adapter as any).threads.get(threadId).loaded = false;
+    await expect(runtime.readThread(sessionId)).rejects.toThrow("already loaded");
+    await expect(runtime.readThread("unknown-session")).rejects.toThrow("already loaded");
+    expect(client.request).toHaveBeenCalledTimes(1);
+    unsubscribe();
+  });
+
+  it("acknowledges native start before completion while keeping the existing user and active-turn pipeline", async () => {
+    const { adapter, client } = createAdapterWithClient();
+    const { sessionId, threadId } = seedSession(adapter);
+    const runtime = createCodexDesktopOwnerRuntime(adapter);
+    await runtime.updateSettings!(sessionId, { model: "custom-model", effort: "ultra" }, {});
+    const response = { turn: { id: "native-turn", status: "inProgress" } };
+    client.request.mockResolvedValue(response);
+    const input = [
+      { type: "text", text: "Check this", text_elements: [] },
+      { type: "image", url: "data:image/png;base64,aGVsbG8=" },
+      { type: "skill", name: "review", path: "/skills/review/SKILL.md" },
+    ];
+    const admitted = await runtime.request(sessionId, "turn/start", { threadId, input, clientUserMessageId: "client-user-1" });
+    expect(admitted).toBe(response);
+    expect(client.request).toHaveBeenCalledWith("turn/start", expect.objectContaining({ threadId, input, model: "custom-model", effort: "ultra", clientUserMessageId: "client-user-1" }), 120000);
+    expect((adapter as any).activeTurnIds.get(sessionId)).toBe("native-turn");
+    expect((await adapter.listMessages(sessionId)).map((message) => message.role)).toEqual(["user"]);
+    (adapter as any).handleTurnCompleted(sessionId, { turn: { id: "native-turn", status: "completed" } });
+    await flushMicrotasks();
+    expect((await adapter.listMessages(sessionId)).map((message) => message.role)).toEqual(["user", "assistant"]);
+    expect((adapter as any).activeTurnIds.has(sessionId)).toBe(false);
+    expect((adapter as any).nativeSessionSettings.get(sessionId)).not.toHaveProperty("clientUserMessageId");
+  });
+
+  it("keeps explicit start and steer distinct and never silently queues a rejected owner request", async () => {
+    const { adapter, client } = createAdapterWithClient();
+    const { sessionId, threadId } = seedSession(adapter);
+    const runtime = createCodexDesktopOwnerRuntime(adapter);
+    const input = [{ type: "text", text: "First" }];
+    client.request.mockResolvedValueOnce({ turn: { id: "active-turn" } });
+    await runtime.request(sessionId, "turn/start", { threadId, input });
+    await expect(runtime.request(sessionId, "turn/start", { threadId, input })).rejects.toThrow("already active");
+    await expect(runtime.request(sessionId, "turn/steer", { threadId, expectedTurnId: "stale-turn", input })).rejects.toThrow("does not match");
+    client.request.mockRejectedValueOnce(new Error("Steer rejected"));
+    await expect(runtime.request(sessionId, "turn/steer", { threadId, expectedTurnId: "active-turn", input })).rejects.toThrow("Steer rejected");
+    expect((adapter as any).messageQueues.size).toBe(0);
+    expect((adapter as any).activeTurnIds.get(sessionId)).toBe("active-turn");
+    client.request.mockResolvedValueOnce({ turnId: "active-turn" });
+    expect(await runtime.request(sessionId, "turn/steer", { threadId, expectedTurnId: "active-turn", input, clientUserMessageId: "steered-user" })).toEqual({ turnId: "active-turn" });
+    expect(client.request).toHaveBeenLastCalledWith("turn/steer", { threadId, expectedTurnId: "active-turn", input: [{ type: "text", text: "First", text_elements: [] }], clientUserMessageId: "steered-user" }, 120000);
+    (adapter as any).handleTurnCompleted(sessionId, { turn: { id: "active-turn", status: "completed" } });
+  });
+
+  it("returns a failed admission and still finalizes the adapter's failed message", async () => {
+    const { adapter, client } = createAdapterWithClient();
+    const { sessionId, threadId } = seedSession(adapter);
+    client.request.mockRejectedValue(new Error("Provider rejected request"));
+    const runtime = createCodexDesktopOwnerRuntime(adapter);
+    await expect(runtime.request(sessionId, "turn/start", { threadId, input: [{ type: "text", text: "Hello" }] })).rejects.toThrow("Provider rejected");
+    await flushMicrotasks();
+    expect((await adapter.listMessages(sessionId)).at(-1)?.error).toBe("Provider rejected request");
+    expect((adapter as any).messageBuffers.has(sessionId)).toBe(false);
+  });
+
+  it.each(["turn/start", "turn/steer"] as const)("does not resurrect a completed turn when %s admission arrives late", async (method) => {
+    const { adapter, client } = createAdapterWithClient();
+    const { sessionId, threadId } = seedSession(adapter);
+    const runtime = createCodexDesktopOwnerRuntime(adapter);
+    if (method === "turn/steer") {
+      (adapter as any).activeTurnIds.set(sessionId, "fast-turn");
+      (adapter as any).messageBuffers.set(sessionId, (adapter as any).createMessageBuffer(sessionId, "/repo", threadId));
+    }
+    let acknowledge!: (value: unknown) => void;
+    client.request.mockImplementation(() => new Promise((resolve) => { acknowledge = resolve; }));
+    const admission = runtime.request(sessionId, method, { threadId, expectedTurnId: "fast-turn", input: [{ type: "text", text: "Quick response" }] });
+    (adapter as any).handleTurnCompleted(sessionId, { turn: { id: "fast-turn", status: "completed" } });
+    acknowledge(method === "turn/start" ? { turn: { id: "fast-turn" } } : { turnId: "fast-turn" });
+    await admission;
+    await flushMicrotasks();
+    expect((adapter as any).hasActiveTurn(sessionId)).toBe(false);
+    expect((adapter as any).turnResolvers.has(sessionId)).toBe(false);
+  });
+
+  it("interrupts only the exact active turn and preserves local state if the native interrupt fails", async () => {
+    const { adapter, client } = createAdapterWithClient();
+    const { sessionId, threadId } = seedSession(adapter);
+    const runtime = createCodexDesktopOwnerRuntime(adapter);
+    (adapter as any).activeTurnIds.set(sessionId, "active-turn");
+    (adapter as any).messageBuffers.set(sessionId, (adapter as any).createMessageBuffer(sessionId, "/repo", threadId));
+    await expect(runtime.request(sessionId, "turn/interrupt", { threadId, turnId: "other-turn" })).rejects.toThrow("does not match");
+    expect(client.request).not.toHaveBeenCalled();
+    client.request.mockRejectedValueOnce(new Error("Connection lost"));
+    await expect(runtime.request(sessionId, "turn/interrupt", { threadId, turnId: "active-turn" })).rejects.toThrow("Connection lost");
+    expect((adapter as any).activeTurnIds.get(sessionId)).toBe("active-turn");
+    client.request.mockResolvedValueOnce({});
+    await runtime.request(sessionId, "turn/interrupt", { threadId, turnId: "active-turn" });
+    expect((adapter as any).activeTurnIds.has(sessionId)).toBe(false);
+    expect((await adapter.listMessages(sessionId)).at(-1)?.error).toBe("Cancelled");
+  });
+
+  it("replies with original request ids and clears existing pending maps", async () => {
+    const { adapter, client } = createAdapterWithClient();
+    const { sessionId, threadId } = seedSession(adapter);
+    const runtime = createCodexDesktopOwnerRuntime(adapter);
+    const changed = vi.fn();
+    runtime.subscribe(changed);
+    (adapter as any).handleServerRequest(42, "item/commandExecution/requestApproval", { threadId, itemId: "cmd", command: "pwd" });
+    (adapter as any).handleServerRequest("q1", "item/tool/requestUserInput", { threadId, itemId: "ask", questions: [{ id: "choice", question: "Continue?" }] });
+    await runtime.respond(sessionId, "42", { decision: "accept" });
+    await runtime.respond(sessionId, "q1", { answers: { choice: { answers: ["Yes"] } } });
+    expect(client.respond).toHaveBeenCalledWith(42, { decision: "accept" });
+    expect(adapter.getPendingPermissions(sessionId)).toEqual([]);
+    expect(adapter.getPendingQuestions(sessionId)).toEqual([]);
+    await expect(runtime.respond(sessionId, "42", { decision: "accept" })).rejects.toThrow("does not match");
+    expect(changed).toHaveBeenCalledWith(sessionId);
+  });
+
+  it("keeps owned sessions loaded until the owner subscription is disposed", async () => {
+    const { adapter, client } = createAdapterWithClient();
+    const { sessionId, threadId } = seedSession(adapter);
+    const runtime = createCodexDesktopOwnerRuntime(adapter);
+    const unsubscribe = runtime.subscribe(() => {});
+    client.request.mockResolvedValue({ thread: { id: threadId, turns: [] } });
+    await runtime.readThread(sessionId);
+    await (adapter as any).cleanupIdleThreads();
+    expect(client.request).toHaveBeenCalledTimes(1);
+    unsubscribe();
+    await (adapter as any).cleanupIdleThreads();
+    expect(client.request).toHaveBeenLastCalledWith("thread/unsubscribe", { threadId });
+  });
+
+  it("retains an owner turn during a native retry notification", async () => {
+    const { adapter, client } = createAdapterWithClient();
+    const { sessionId, threadId } = seedSession(adapter);
+    const runtime = createCodexDesktopOwnerRuntime(adapter);
+    client.request.mockResolvedValue({ thread: { id: threadId, turns: [] } });
+    await runtime.readThread(sessionId);
+    (adapter as any).activeTurnIds.set(sessionId, "retrying-turn");
+    (adapter as any).messageBuffers.set(sessionId, (adapter as any).createMessageBuffer(sessionId, "/repo", threadId));
+    (adapter as any).handleNotification("error", { threadId, turnId: "retrying-turn", willRetry: true, error: { message: "Rate limited" } });
+    expect((adapter as any).activeTurnIds.get(sessionId)).toBe("retrying-turn");
+    expect((adapter as any).messageBuffers.has(sessionId)).toBe(true);
+    (adapter as any).handleTurnCompleted(sessionId, { turn: { id: "retrying-turn", status: "failed", error: { message: "Retries exhausted" } } });
+    expect((adapter as any).activeTurnIds.has(sessionId)).toBe(false);
+  });
+
+  it("applies conditional next-turn settings without switching providers or executing native requests", async () => {
+    const { adapter, client } = createAdapterWithClient();
+    const { sessionId } = seedSession(adapter);
+    const runtime = createCodexDesktopOwnerRuntime(adapter);
+    expect(await runtime.updateSettings!(sessionId, { model: "next-model" }, { condition: { ifModelEquals: "wrong-model" } })).toBe(false);
+    await expect(runtime.updateSettings!(sessionId, { modelProvider: "foreign" }, {})).rejects.toThrow("Unsupported Desktop owner setting");
+    expect(await runtime.updateSettings!(sessionId, { collaborationMode: { mode: "plan", settings: { model: "next-model", reasoning_effort: "ultra", developer_instructions: null } } }, {})).toBe(true);
+    expect((adapter as any).desktopOwnerSettings(sessionId)).toMatchObject({ model: "next-model", effort: "ultra", collaborationMode: { mode: "plan" } });
+    expect((adapter as any).nativeSessionSettings.get(sessionId).modelProvider).not.toBe("foreign");
+    await expect(runtime.updateSettings!(sessionId, { model: "other" }, { activeTurnId: "active" })).rejects.toThrow("active Codex turn");
+    expect(client.request).not.toHaveBeenCalled();
   });
 });

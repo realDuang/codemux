@@ -150,11 +150,16 @@ export default function Chat() {
   const navigate = useNavigate();
   const emptyDraft = () => ({ text: "", images: [] as ImageAttachment[] });
   const removedSessionIds = new Set<string>();
+  const handleCatalogUpdated = (catalog: Parameters<typeof applySessionCatalog>[0]) => {
+    // A fresh gateway catalog may restore an explicitly re-imported native chat.
+    for (const session of catalog.sessions) removedSessionIds.delete(session.id);
+    applySessionCatalog(catalog);
+  };
   let catalogRefresh: Promise<void> | undefined;
   const refreshSessionCatalogs = (): Promise<void> => {
     if (catalogRefresh) return catalogRefresh;
     catalogRefresh = gateway.listCatalogs()
-      .then((catalogs) => { for (const catalog of catalogs) applySessionCatalog(catalog); })
+      .then((catalogs) => { for (const catalog of catalogs) handleCatalogUpdated(catalog); })
       .catch((error) => logger.warn("[Catalog] Failed to refresh shared conversations:", error))
       .finally(() => { catalogRefresh = undefined; });
     return catalogRefresh;
@@ -1136,7 +1141,7 @@ export default function Chat() {
         onSessionUpdated: handleSessionUpdated,
         onSessionCreated: handleSessionCreated,
         onSessionRemoved: handleSessionRemoved,
-        onCatalogUpdated: applySessionCatalog,
+        onCatalogUpdated: handleCatalogUpdated,
         onPermissionAsked: handlePermissionAsked,
         onPermissionReplied: handlePermissionReplied,
         onQuestionAsked: handleQuestionAsked,
@@ -2351,6 +2356,7 @@ export default function Chat() {
     );
     if (hasActiveOrchestration) {
       setTimeout(() => {
+        if (disposed || removedSessionIds.has(created.id)) return;
         if (sessionStore.list.some(s => s.id === created.id)) return;
         const latestTeamId = getTeamId(created.id);
         const project = sessionStore.projects.find(p => p.directory === created.directory);

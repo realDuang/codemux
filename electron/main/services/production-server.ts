@@ -11,6 +11,7 @@ import { WEB_PORT, WEBHOOK_PORT } from "../../../shared/ports";
 import { proxyToOpenCode } from "./opencode-proxy";
 import { remoteAccessManager } from "./remote-access-manager";
 import { handleRemoteAccessRoutes } from "./remote-access-routes";
+import { encodeStaticContent } from "../../../shared/http-compression";
 
 // ============================================================================
 // Production HTTP Server
@@ -398,14 +399,23 @@ class ProductionServer {
       }
       const content = await fs.promises.readFile(realFilePath);
       const mimeType = getMimeType(filePath);
+      const encoded = await encodeStaticContent(content, mimeType, req.headers["accept-encoding"]);
+
+      if (!encoded.acceptable) {
+        res.writeHead(406, { "Vary": "Accept-Encoding" });
+        res.end("Not Acceptable");
+        return;
+      }
 
       res.writeHead(200, {
         "Content-Type": mimeType,
-        "Content-Length": content.length,
+        "Content-Length": encoded.body.length,
+        ...(encoded.vary ? { "Vary": "Accept-Encoding" } : {}),
+        ...(encoded.encoding ? { "Content-Encoding": encoded.encoding } : {}),
         "Cache-Control": getStaticCacheControl(`/${path.relative(this.staticRoot, filePath).split(path.sep).join("/")}`),
         "X-Content-Type-Options": "nosniff",
       });
-      res.end(req.method === "HEAD" ? undefined : content);
+      res.end(req.method === "HEAD" ? undefined : encoded.body);
     } catch (err) {
       prodServerLog.error("Failed to serve file:", filePath, err);
       res.writeHead(404);

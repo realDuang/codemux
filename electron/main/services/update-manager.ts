@@ -1,4 +1,3 @@
-import { app } from "electron";
 import pkg from "electron-updater";
 import type { UpdateInfo, ProgressInfo } from "electron-updater";
 const { autoUpdater } = pkg;
@@ -45,6 +44,11 @@ class UpdateManager {
   private initialCheckTimer: ReturnType<typeof setTimeout> | null = null;
   private initialized = false;
   private updating = false;
+  private installErrorHandler: (() => void) | undefined;
+
+  setInstallErrorHandler(handler: () => void): void {
+    this.installErrorHandler = handler;
+  }
 
   init(): void {
     // Configure logging
@@ -149,8 +153,12 @@ class UpdateManager {
       autoUpdater.autoInstallOnAppQuit = false;
     }
 
+    let reset = false;
     const resetUpdating = () => {
+      if (reset) return;
+      reset = true;
       this.updating = false;
+      this.installErrorHandler?.();
     };
     autoUpdater.once("error", resetUpdating);
 
@@ -215,8 +223,8 @@ class UpdateManager {
     }
   }
 
-  setAutoCheck(enabled: boolean): void {
-    saveSettings({ autoUpdate: enabled });
+  async setAutoCheck(enabled: boolean): Promise<void> {
+    await saveSettings({ autoUpdate: enabled });
 
     if (this.initialCheckTimer) {
       clearTimeout(this.initialCheckTimer);

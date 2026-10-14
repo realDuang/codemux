@@ -196,7 +196,10 @@ Respond with ONLY the JSON array, no markdown fencing, no explanation.`;
         } catch { /* ignore */ }
       }
     }
-    // Flush any pending debounced writes
+    this.flush();
+  }
+
+  flush(): void {
     if (this.saveTimer) {
       clearTimeout(this.saveTimer);
       this.saveTimer = null;

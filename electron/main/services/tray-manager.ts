@@ -27,11 +27,8 @@ class TrayManager {
 
   private getIconPath(): string {
     if (app.isPackaged) {
-      // In packaged app, icon is in the app resources
-      if (process.platform === "win32") {
-        return join(process.resourcesPath, "app.asar", "out", "renderer", "assets", "favicon-32x32.png");
-      }
-      return join(process.resourcesPath, "app.asar", "out", "renderer", "assets", "favicon-32x32.png");
+      // The shared UI build owns the packaged public assets.
+      return join(process.resourcesPath, "app.asar", "out", "web", "assets", "favicon-32x32.png");
     }
     // In dev mode, use the public folder
     return join(app.getAppPath(), "public", "assets", "favicon-32x32.png");
@@ -101,8 +98,8 @@ class TrayManager {
     return settings.launchAtLogin === true;
   }
 
-  setLaunchAtLogin(enabled: boolean): void {
-    saveSettings({ launchAtLogin: enabled });
+  async setLaunchAtLogin(enabled: boolean): Promise<void> {
+    await saveSettings({ launchAtLogin: enabled });
 
     if (process.platform === "linux") {
       // On Linux, app.setLoginItemSettings may not work reliably.

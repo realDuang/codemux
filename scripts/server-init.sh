@@ -10,10 +10,9 @@ usage() {
 Usage: ./scripts/server-init.sh [--skip-setup]
 
 Prepare a Debian/Ubuntu-style Linux server for CodeMux development:
-  - install Electron runtime dependencies for headless environments
+  - install native build tools for the Node.js server (Node.js 24+ required)
   - install Bun if it is missing
   - install repository dependencies with bun install
-  - fix chrome-sandbox permissions for Electron
   - optionally run the interactive bun run setup flow
 EOF
 }
@@ -47,24 +46,6 @@ run_as_root() {
   fi
 }
 
-has_apt_candidate() {
-  local candidate
-  candidate=$(apt-cache policy "$1" | awk '$1 == "Candidate:" { print $2; exit }')
-  [ -n "$candidate" ] && [ "$candidate" != "(none)" ]
-}
-
-choose_available_package() {
-  local pkg
-  for pkg in "$@"; do
-    if has_apt_candidate "$pkg"; then
-      printf '%s
-' "$pkg"
-      return 0
-    fi
-  done
-  return 1
-}
-
 main() {
   while [ "$#" -gt 0 ]; do
     case "$1" in
@@ -89,30 +70,11 @@ main() {
     fail "sudo is required to install Linux packages."
   fi
 
-  local asound_pkg
-  asound_pkg=$(choose_available_package libasound2t64 libasound2) || fail "Unable to find a usable libasound2 package."
+  command -v node >/dev/null 2>&1 || fail "Install Node.js 24 or newer before running this helper."
+  node -e 'if (Number(process.versions.node.split(".")[0]) < 24) process.exit(1)' || \
+    fail "Node.js 24 or newer is required; update the node command on PATH first."
 
-  local packages=(
-    curl
-    git
-    unzip
-    dbus-x11
-    xvfb
-    libnss3
-    libxss1
-    libxtst6
-    libdrm2
-    libgbm1
-    libxrandr2
-    libxdamage1
-    libxcomposite1
-    libxkbcommon0
-    libcairo2
-    libpango-1.0-0
-    libatk-bridge2.0-0
-    libgtk-3-0
-    "$asound_pkg"
-  )
+  local packages=(curl git unzip ca-certificates python3 make g++ pkg-config)
 
   info "Installing Linux server dependencies..."
   run_as_root apt-get update
@@ -127,16 +89,7 @@ main() {
 
   cd "$REPO_DIR"
   info "Installing repository dependencies with Bun..."
-  bun install
-
-  local sandbox="$REPO_DIR/node_modules/electron/dist/chrome-sandbox"
-  if [ -f "$sandbox" ]; then
-    info "Configuring chrome-sandbox permissions..."
-    run_as_root chown root:root "$sandbox"
-    run_as_root chmod 4755 "$sandbox"
-  else
-    warn "chrome-sandbox not found yet; skipping permission fix."
-  fi
+  ELECTRON_SKIP_BINARY_DOWNLOAD=1 bun install --frozen-lockfile
 
   success "Linux server bootstrap is ready."
 
@@ -150,11 +103,11 @@ main() {
   cat <<'EOF'
 
 Next steps:
-  bun run server:dev      # foreground headless Electron dev
-  bun run server:up       # background headless Electron dev
-  bun run server:tunnel   # background headless Electron dev + quick tunnel
-  bun run server:restart  # restart app only, preserving managed tunnel when possible
-  bun run start           # web-only standalone server
+  bun run server:dev      # foreground watched Node server
+  bun run server:up       # background watched Node server
+  bun run server:tunnel   # background watched Node server + quick tunnel
+  bun run server:restart  # restart the owned runtime; quick-tunnel URL may change
+  bun run start           # legacy web-only compatibility entry
 EOF
 }
 

@@ -1,19 +1,20 @@
 # Web and mobile PWA
 
-CodeMux's Web client can run in a browser or be installed on a phone's home screen. Both use the same Web application and connect to the existing Gateway. Engines, project files, and commands remain on the host running CodeMux. The Web bundle runs outside Electron and has its own build, but live operations still require the existing CodeMux host. Extracting a standalone server runtime is a separate migration.
+CodeMux's Web client can run in a browser or be installed on a phone's home screen. Both use the same Web application and connect to the existing Gateway. Engines, project files, and commands remain on the host running CodeMux. The host can run as an independent Node server or as a local child supervised by Electron. Live operations require a running host.
 
 ## Build boundaries
 
 | Client | Entry | Build command | Output |
 | --- | --- | --- | --- |
-| Electron | `index.html`, `src/main.tsx` | `bun run build:desktop` | `out/renderer`, `out/main`, `out/preload` |
-| Web / PWA | `web/index.html`, `src/web/main.tsx` | `bun run build:web` | `out/web` |
+| Electron | `web/desktop.html`, `src/main.tsx` | `bun run build:desktop` | `out/main`, `out/preload`, `out/server`, shared UI below |
+| Shared UI / PWA | `web/index.html`, `src/web/main.tsx` plus the desktop entry | `bun run build:web` | `out/web` and `out/renderer/index.html` |
+| Node server / CLI | `server/index.ts`, `server/cli.ts` | `bun run build:server` | `out/server` |
 
-`bun run build` produces both clients. Distribution commands also build both, and Electron Builder includes both through `out/**/*`. The packaged HTTP server serves `out/web`; the Electron window continues to load `out/renderer/index.html` through `file:`.
+`bun run build` produces the complete desktop and server application. Distribution commands use the same build, and Electron Builder includes its output through `out/**/*`. The HTTP server serves `out/web`; Electron continues to load `out/renderer/index.html` through `file:`. Both thin entry points import the same compiled business JavaScript and CSS from `out/web/assets`. Every Web build also refreshes the desktop HTML, so it cannot reference a retired asset hash. Desktop HTML is excluded from the public Web output and precache.
 
 Shared pages, message renderers, stores, and Gateway types remain in `src`. Installation, Service Worker registration, update UI, and mobile viewport handling live under `src/web` and are imported only by the Web entry. Electron has no manifest or Service Worker registration.
 
-`vite.web.config.ts` defines the Web build. The standalone development configuration in `vite.config.ts` extends it with the existing API middleware and Gateway proxy. Development does not register a Service Worker. Electron development continues to use `electron.vite.config.ts`.
+`vite.web.config.ts` defines the shared production UI build and reads the repository root's environment files. The legacy standalone development configuration in `vite.config.ts` extends it with the existing API middleware and Gateway proxy. Development does not register a Service Worker. Electron development continues to use `electron.vite.config.ts` with its original renderer and proxy. Public assets and lazy imports resolve from the loaded module in both HTTP and file contexts; Electron retains its original hash routing and storage origin.
 
 ## Host and install
 

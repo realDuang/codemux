@@ -18,6 +18,8 @@ restart CodeMux. Alternatively, launch with `CODEMUX_CODEX_DESKTOP_BRIDGE=1`.
 An explicitly supplied environment value overrides the saved setting; `0`
 disables the bridge. The feature is disabled by default.
 
+In the separated runtime, the Server process owns this bridge and its catalog. Electron passes its local settings/data directory to the supervised Server; standalone Node uses its selected data directory. The bridge uses local Node IPC and adds no Electron or display dependency to the Server. Stopping CodeMux detaches external Desktop conversations and stops only execution processes owned by CodeMux.
+
 New eligible conversations appear automatically in the existing project sidebar.
 The first successful catalog initialization saves a cutoff and a canonical
 Codex-home source identity in CodeMux's `codex-desktop-catalog.json`. Native

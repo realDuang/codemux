@@ -1,5 +1,23 @@
 // Define the structure of our translations
 export interface LocaleDict {
+  localServer: {
+    title: string;
+    description: string;
+    stopped: string;
+    starting: string;
+    ready: string;
+    stopping: string;
+    error: string;
+    process: string;
+    external: string;
+    start: string;
+    stop: string;
+    restart: string;
+    openLogs: string;
+    openManager: string;
+    returnToApp: string;
+    editingHint: string;
+  };
   pwa: {
     install: string;
     installDescription: string;
@@ -774,6 +792,24 @@ export interface LocaleDict {
 }
 
 export const en: LocaleDict = {
+  localServer: {
+    title: "Local server",
+    description: "Manage the CodeMux server on this computer.",
+    stopped: "Stopped",
+    starting: "Starting services…",
+    ready: "Running",
+    stopping: "Stopping services…",
+    error: "Server unavailable",
+    process: "PID {pid}",
+    external: "This server was started outside CodeMux Desktop and keeps running when you close the desktop app. Use its original launcher to restart it and preserve its launch settings.",
+    start: "Start server",
+    stop: "Stop server",
+    restart: "Restart server",
+    openLogs: "Open logs",
+    openManager: "Manage server",
+    returnToApp: "Return to CodeMux",
+    editingHint: "Your open conversation and drafts remain available. Sending messages and server actions require the server to be running.",
+  },
   pwa: {
     install: "Install",
     installDescription: "Open CodeMux from your home screen.",

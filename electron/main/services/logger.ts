@@ -1,59 +1,37 @@
 import log from "electron-log/main";
-import { app } from "electron";
-import path from "node:path";
-import fs from "node:fs";
+import { runtimeHost } from "#runtime-host";
 import type { LevelOption } from "electron-log";
-import { getLogsPath, getSettingsPath, isDevIsolatedMode } from "./app-paths";
+import { getLogsPath, getSettingsPath } from "./app-paths";
+import { createSettingsStore } from "../../../shared/settings-store";
+import { resolveRuntimeLogPath } from "../../../shared/runtime-paths";
 
 // Configure electron-log for the main process.
-// All logs (main + renderer forwarded via WebSocket) go to a single file.
+// The desktop supervisor and the runtime use separate files in the same directory.
 
-// File transport: write to {userData}/logs/main.log
-log.transports.file.resolvePathFn = (variables) => {
-  // Use Electron's standard logs directory when running as packaged app,
-  // otherwise fallback to the default library directory.
-  const dir = app.isPackaged || isDevIsolatedMode()
-    ? getLogsPath()
-    : variables.libraryDefaultDir;
-  return path.join(dir, variables.fileName ?? "main.log");
-};
+// File transport: preserve the host's configured log directory.
+log.transports.file.resolvePathFn = (variables) => resolveRuntimeLogPath({
+  useLibraryDefaultLogPath: runtimeHost.useLibraryDefaultLogPath,
+  get logsPath() { return getLogsPath(); },
+}, variables.libraryDefaultDir, runtimeHost.logFileName ?? variables.fileName ?? "main.log");
 
-// Rotate at 5 MB, keep the old file as main.old.log
+// Rotate each host's file at 5 MB.
 log.transports.file.maxSize = 5 * 1024 * 1024;
 
 // --- Persisted settings ---
 
 const VALID_LEVELS: LevelOption[] = ["error", "warn", "info", "verbose", "debug", "silly", false];
 
+const localSettings = createSettingsStore({
+  getFilePath: getSettingsPath,
+  createDirectory: true,
+});
+
 function loadSettings(): Record<string, unknown> {
-  try {
-    const raw = fs.readFileSync(getSettingsPath(), "utf-8");
-    return JSON.parse(raw);
-  } catch {
-    return {};
-  }
+  return (runtimeHost.settings ?? localSettings).loadSettings();
 }
 
-function saveSettings(patch: Record<string, unknown>): void {
-  const existing = loadSettings();
-  // Deep merge: for object-valued keys, merge nested properties instead of replacing
-  const settings = { ...existing };
-  for (const [key, value] of Object.entries(patch)) {
-    if (value && typeof value === "object" && !Array.isArray(value)
-        && existing[key] && typeof existing[key] === "object" && !Array.isArray(existing[key])) {
-      settings[key] = { ...(existing[key] as Record<string, unknown>), ...(value as Record<string, unknown>) };
-    } else {
-      settings[key] = value;
-    }
-  }
-  const filePath = getSettingsPath();
-  const dir = path.dirname(filePath);
-  if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true });
-  }
-  const tmpPath = `${filePath}.tmp`;
-  fs.writeFileSync(tmpPath, JSON.stringify(settings, null, 2));
-  fs.renameSync(tmpPath, filePath);
+function saveSettings(patch: Record<string, unknown>): void | Promise<void> {
+  return (runtimeHost.settings ?? localSettings).saveSettings(patch);
 }
 
 // Restore persisted log level, fallback to "warn"
@@ -95,10 +73,10 @@ export function getFileLogLevel(): string {
 }
 
 /** Set the file transport log level at runtime and persist to disk */
-export function setFileLogLevel(level: string): void {
+export function setFileLogLevel(level: string): void | Promise<void> {
   if (VALID_LEVELS.includes(level as LevelOption)) {
     log.transports.file.level = level as LevelOption;
-    saveSettings({ logLevel: level });
+    return saveSettings({ logLevel: level });
   }
 }
 

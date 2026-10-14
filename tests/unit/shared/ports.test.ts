@@ -8,6 +8,7 @@ const PORT_ENV_KEYS = [
   "CODEMUX_OPENCODE_PORT",
   "CODEMUX_AUTH_API_PORT",
   "CODEMUX_WEBHOOK_PORT",
+  "CODEMUX_RUNTIME_WEB_MODE",
 ] as const;
 
 const originalEnv = new Map<string, string | undefined>();
@@ -86,5 +87,14 @@ describe("shared ports", () => {
       CODEMUX_WEB_PORT: "9001",
       CODEMUX_GATEWAY_PORT: "9001",
     })).rejects.toThrow("GATEWAY_PORT and WEB_PORT both resolve to port 9001");
+  });
+
+  it.each(["8234", "4097", "4200"])("allows the static HTTP server to use inactive dev port %s", async (port) => {
+    const ports = await importPorts({ CODEMUX_RUNTIME_WEB_MODE: "static", CODEMUX_WEB_PORT: port });
+    expect(ports.WEB_PORT).toBe(Number(port));
+  });
+
+  it.each(["4096", "4098"])("rejects a static HTTP port shared with an active service: %s", async (port) => {
+    await expect(importPorts({ CODEMUX_RUNTIME_WEB_MODE: "static", CODEMUX_WEB_PORT: port })).rejects.toThrow("both resolve to port");
   });
 });

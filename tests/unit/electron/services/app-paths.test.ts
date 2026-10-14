@@ -20,6 +20,8 @@ vi.mock("electron", () => ({ app: mockApp }));
 import {
   configureDevIsolatedAppPaths,
   DEV_ISOLATED_ENV,
+} from "../../../../electron/main/runtime-host";
+import {
   getChannelsPath,
   getDevicesPath,
   getSettingsPath,
@@ -90,5 +92,26 @@ describe("app-paths", () => {
     expect(getDevicesPath()).toBe(path.join("/mock/userData", "devices.json"));
     expect(getSettingsPath()).toBe(path.join("/mock/userData", "settings.json"));
     expect(getChannelsPath()).toBe(path.join("/mock/userData", "channels"));
+  });
+
+  it.each(["true", "yes", "0", ""])("does not enable isolation for %j", (value) => {
+    process.env[DEV_ISOLATED_ENV] = value;
+    expect(isDevIsolatedMode()).toBe(false);
+    expect(usesSharedDevDeviceStorePath()).toBe(true);
+  });
+
+  it("ignores the isolation flag in packaged builds", () => {
+    mockApp.isPackaged = true;
+    process.env[DEV_ISOLATED_ENV] = "1";
+    configureDevIsolatedAppPaths("/repo");
+    expect(isDevIsolatedMode()).toBe(false);
+    expect(mockApp.setPath).not.toHaveBeenCalled();
+    expect(getDevicesPath()).toBe(path.join("/mock/userData", "devices.json"));
+  });
+
+  it("uses the current Electron paths after import", () => {
+    expect(getSettingsPath()).toBe(path.join("/mock/userData", "settings.json"));
+    setUserDataPath("/other/userData");
+    expect(getSettingsPath()).toBe(path.join("/other/userData", "settings.json"));
   });
 });

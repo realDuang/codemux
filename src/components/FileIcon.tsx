@@ -1,5 +1,5 @@
 import { createMemo } from "solid-js";
-const spriteUrl = `${import.meta.env.BASE_URL}assets/file-icons-sprite.svg`;
+import { publicAssetUrl } from "../lib/public-assets";
 import {
   FILE_NAMES,
   FILE_EXTENSIONS,
@@ -9,6 +9,8 @@ import {
   DEFAULT_FOLDER_ICON,
   DEFAULT_FOLDER_EXPANDED_ICON,
 } from "./file-icons/icon-map";
+
+const spriteUrl = publicAssetUrl("file-icons-sprite.svg");
 
 interface FileIconProps {
   name: string;

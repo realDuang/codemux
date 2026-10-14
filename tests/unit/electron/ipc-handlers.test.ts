@@ -1,17 +1,20 @@
 /**
  * Unit tests for electron/main/ipc-handlers.ts
  *
- * Strategy: mock all Electron and service dependencies, call registerIpcHandlers(),
+ * Strategy: inject the real host controller with mocked dependencies and mock native Electron,
  * then extract each registered callback and invoke it directly to cover every branch.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type { RemoteAccessStatus, RemoteAccessUpdate } from "../../../shared/remote-access";
+import type { ChannelManager } from "../../../electron/main/channels/channel-manager";
+import { HostManagementController, HOST_MANAGEMENT_METHODS, type HostManagementDependencies } from "../../../shared/host-management";
 
 // ─── Hoisted mocks (must be created before any imports) ──────────────────────
 
 const mockHandle = vi.hoisted(() => vi.fn());
 const mockIpcOn = vi.hoisted(() => vi.fn());
+const mockBeforeInstall = vi.hoisted(() => vi.fn<() => Promise<void>>());
 
 const mockShellOpenExternal = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
 const mockShellOpenPath = vi.hoisted(() => vi.fn().mockResolvedValue(""));
@@ -90,12 +93,13 @@ const mockSaveSettings = vi.hoisted(() => vi.fn());
 
 const mockIsStartupReady = vi.hoisted(() => vi.fn(() => true));
 const mockChannelManager = vi.hoisted(() => ({
-  listChannels: vi.fn(() => []),
-  getConfig: vi.fn(() => ({ enabled: false })),
+  listChannels: vi.fn<ChannelManager["listChannels"]>(() => []),
+  getConfig: vi.fn<ChannelManager["getConfig"]>(() => ({ type: "feishu", name: "Feishu", enabled: false, options: {} })),
   updateConfig: vi.fn().mockResolvedValue(undefined),
   startChannel: vi.fn().mockResolvedValue(undefined),
   stopChannel: vi.fn().mockResolvedValue(undefined),
-  getStatus: vi.fn(() => ({ running: false })),
+  getStatus: vi.fn<ChannelManager["getStatus"]>(() => ({ type: "feishu", name: "Feishu", status: "stopped" })),
+  logoutChannel: vi.fn().mockResolvedValue(undefined),
 }));
 
 // ─── Module mocks ─────────────────────────────────────────────────────────────
@@ -113,46 +117,12 @@ vi.mock("fs", () => ({
   statSync: mockStatSync,
 }));
 
-vi.mock("os", () => ({
-  default: { networkInterfaces: mockNetworkInterfaces },
-  networkInterfaces: mockNetworkInterfaces,
-}));
-
-vi.mock("../../../electron/main/services/device-store", () => ({
-  deviceStore: mockDeviceStore,
-}));
-
-vi.mock("../../../electron/main/services/tunnel-manager", () => ({
-  tunnelManager: mockTunnelManager,
-}));
-
-vi.mock("../../../electron/main/services/remote-access-manager", () => ({
-  remoteAccessManager: mockRemoteAccessManager,
-}));
-
-vi.mock("../../../electron/main/services/production-server", () => ({
-  productionServer: mockProductionServer,
-}));
-
 vi.mock("../../../electron/main/services/update-manager", () => ({
   updateManager: mockUpdateManager,
 }));
 
 vi.mock("../../../electron/main/services/tray-manager", () => ({
   trayManager: mockTrayManager,
-}));
-
-vi.mock("../../../electron/main/services/logger", () => ({
-  getLogFilePath: mockGetLogFilePath,
-  getFileLogLevel: mockGetFileLogLevel,
-  setFileLogLevel: mockSetFileLogLevel,
-  loadSettings: mockLoadSettings,
-  saveSettings: mockSaveSettings,
-}));
-
-vi.mock("../../../electron/main/app-main", () => ({
-  isStartupReady: mockIsStartupReady,
-  channelManager: mockChannelManager,
 }));
 
 // ─── Import under test (AFTER all vi.mock calls) ──────────────────────────────
@@ -192,7 +162,38 @@ describe("registerIpcHandlers", () => {
     mockProductionServer.isRunning.mockReturnValue(false);
     mockRemoteAccessManager.getStatus.mockReturnValue(mockRemoteAccessStatus);
     mockRemoteAccessManager.update.mockResolvedValue(mockRemoteAccessStatus);
-    registerIpcHandlers();
+    mockBeforeInstall.mockResolvedValue(undefined);
+    const management = new HostManagementController({
+      getSystemInfo: () => ({
+        platform: process.platform,
+        arch: process.arch,
+        version: mockApp.getVersion(),
+        userDataPath: mockApp.getPath("userData"),
+        homePath: mockApp.getPath("home"),
+        isPackaged: mockApp.isPackaged,
+      }),
+      getNetworkInterfaces: mockNetworkInterfaces,
+      getGatewayUrl: () => mockApp.isPackaged && mockProductionServer.isRunning()
+        ? `ws://127.0.0.1:${mockProductionServer.getPort()}/ws`
+        : "ws://127.0.0.1:4200",
+      deviceStore: mockDeviceStore as unknown as HostManagementDependencies["deviceStore"],
+      tunnelManager: mockTunnelManager as HostManagementDependencies["tunnelManager"],
+      remoteAccessManager: mockRemoteAccessManager,
+      productionServer: mockProductionServer,
+      logging: { getPath: mockGetLogFilePath, getLevel: mockGetFileLogLevel, setLevel: mockSetFileLogLevel },
+      settings: { load: mockLoadSettings, save: mockSaveSettings },
+      channelManager: mockChannelManager,
+      ilink: { getQrCode: vi.fn(), pollQrStatus: vi.fn() },
+      isStartupReady: mockIsStartupReady,
+    });
+    registerIpcHandlers({ management, beforeInstall: mockBeforeInstall });
+  });
+
+  it("registers every host management operation exactly once", () => {
+    const registered = mockHandle.mock.calls.map(([name]) => name);
+    for (const method of HOST_MANAGEMENT_METHODS) {
+      expect(registered.filter(name => name === method)).toEqual([method]);
+    }
   });
 
   // ===========================================================================
@@ -710,18 +711,20 @@ describe("registerIpcHandlers", () => {
 
   describe("channel:list", () => {
     it("returns channel list from channelManager", async () => {
-      mockChannelManager.listChannels.mockReturnValue([{ type: "feishu" }]);
+      const channels = [{ type: "feishu", name: "Feishu", status: "running" as const }];
+      mockChannelManager.listChannels.mockReturnValue(channels);
       const result = await getHandler("channel:list")(fakeEvent);
-      expect(result).toEqual([{ type: "feishu" }]);
+      expect(result).toEqual(channels);
     });
   });
 
   describe("channel:getConfig", () => {
     it("returns config for the given channel type", async () => {
-      mockChannelManager.getConfig.mockReturnValue({ enabled: true });
+      const config = { type: "feishu", name: "Feishu", enabled: true, options: {} };
+      mockChannelManager.getConfig.mockReturnValue(config);
       const result = await getHandler("channel:getConfig")(fakeEvent, "feishu");
       expect(mockChannelManager.getConfig).toHaveBeenCalledWith("feishu");
-      expect(result).toEqual({ enabled: true });
+      expect(result).toEqual(config);
     });
   });
 
@@ -751,10 +754,19 @@ describe("registerIpcHandlers", () => {
 
   describe("channel:getStatus", () => {
     it("returns channel status from channelManager", async () => {
-      mockChannelManager.getStatus.mockReturnValue({ running: true });
+      const status = { type: "feishu", name: "Feishu", status: "running" as const };
+      mockChannelManager.getStatus.mockReturnValue(status);
       const result = await getHandler("channel:getStatus")(fakeEvent, "feishu");
       expect(mockChannelManager.getStatus).toHaveBeenCalledWith("feishu");
-      expect(result).toEqual({ running: true });
+      expect(result).toEqual(status);
+    });
+  });
+
+  describe("channel:weixin-ilink:logout", () => {
+    it("logs out the channel and returns success", async () => {
+      const result = await getHandler("channel:weixin-ilink:logout")(fakeEvent);
+      expect(mockChannelManager.logoutChannel).toHaveBeenCalledWith("weixin-ilink");
+      expect(result).toEqual({ success: true });
     });
   });
 
@@ -815,6 +827,26 @@ describe("registerIpcHandlers", () => {
     it("calls updateManager.quitAndInstall", async () => {
       await getHandler("update:quitAndInstall")(fakeEvent);
       expect(mockUpdateManager.quitAndInstall).toHaveBeenCalled();
+    });
+
+    it("waits for host shutdown before invoking the native installer", async () => {
+      let finishPreparation!: () => void;
+      mockBeforeInstall.mockReturnValueOnce(new Promise<void>(resolve => { finishPreparation = resolve; }));
+      const installing = getHandler("update:quitAndInstall")(fakeEvent);
+      try {
+        expect(mockBeforeInstall).toHaveBeenCalledOnce();
+        expect(mockUpdateManager.quitAndInstall).not.toHaveBeenCalled();
+      } finally {
+        finishPreparation();
+        await installing;
+      }
+      expect(mockUpdateManager.quitAndInstall).toHaveBeenCalledOnce();
+    });
+
+    it("does not start the native installer when host shutdown fails", async () => {
+      mockBeforeInstall.mockRejectedValueOnce(new Error("Host shutdown failed"));
+      await expect(getHandler("update:quitAndInstall")(fakeEvent)).rejects.toThrow("Host shutdown failed");
+      expect(mockUpdateManager.quitAndInstall).not.toHaveBeenCalled();
     });
   });
 
@@ -884,6 +916,25 @@ describe("registerIpcHandlers", () => {
       expect(mockTrayManager.setLaunchAtLogin).toHaveBeenCalledWith(false);
       expect(result).toEqual({ success: true });
     });
+  });
+
+  it.each([
+    { channel: "update:setAutoCheck", save: mockUpdateManager.setAutoCheck },
+    { channel: "autostart:setEnabled", save: mockTrayManager.setLaunchAtLogin },
+  ])("waits for $channel persistence before acknowledging success", async ({ channel, save }) => {
+    let finishSave!: () => void;
+    save.mockReturnValueOnce(new Promise<void>(resolve => { finishSave = resolve; }));
+    const settled = vi.fn();
+    const result = getHandler(channel)(fakeEvent, true).then(settled);
+    try {
+      expect(save).toHaveBeenCalledWith(true);
+      await Promise.resolve();
+      expect(settled).not.toHaveBeenCalled();
+    } finally {
+      finishSave();
+      await result;
+    }
+    expect(settled).toHaveBeenCalledWith({ success: true });
   });
 
   // ===========================================================================

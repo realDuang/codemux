@@ -6,6 +6,7 @@
 
 import { WebSocketServer, WebSocket } from "ws";
 import { randomUUID } from "crypto";
+import { readFileSync } from "node:fs";
 import type { IncomingMessage, Server } from "http";
 import { EngineManager } from "./engine-manager";
 import * as fileService from "../services/file-service";
@@ -89,6 +90,7 @@ export class GatewayServer {
   private authValidator?: GatewayServerOptions["authValidator"];
   private requestValidator?: GatewayServerOptions["requestValidator"];
   private pingInterval: ReturnType<typeof setInterval> | null = null;
+  private closePromise: Promise<void> | null = null;
 
   constructor(
     engineManager: EngineManager,
@@ -118,6 +120,7 @@ export class GatewayServer {
     if (this.wss) {
       throw new Error("Gateway server already started");
     }
+    this.closePromise = null;
 
     const WS_MAX_PAYLOAD = 20 * 1024 * 1024; // 20MB — image attachments can be large
     const verifyClient = (info: { req: IncomingMessage }, done: (allowed: boolean, code?: number, message?: string) => void) => {
@@ -151,21 +154,51 @@ export class GatewayServer {
   }
 
   stop(): void {
+    void this.close().catch((err) => {
+      gatewayLog.error("WebSocket server shutdown failed:", err);
+    });
+  }
+
+  /** Close upgraded connections before their owning HTTP server is stopped. */
+  close(): Promise<void> {
+    if (this.closePromise) return this.closePromise;
     unwatchAll();
     if (this.pingInterval) {
       clearInterval(this.pingInterval);
       this.pingInterval = null;
     }
-    if (this.wss) {
-      // Close all client connections
-      for (const client of this.clients.values()) {
-        client.ws.close(1001, "Server shutting down");
+    const wss = this.wss;
+    if (!wss) return Promise.resolve();
+    this.wss = null;
+
+    // Keep the sockets after clearing the routing map: a suspended mobile
+    // client may never acknowledge the close frame, but still owns PTYs.
+    const sockets = new Set(wss.clients);
+    for (const client of this.clients.values()) sockets.add(client.ws);
+    this.clients.clear();
+    const disconnected = [...sockets].map((ws) => new Promise<void>((resolve) => {
+      if (ws.readyState === WebSocket.CLOSED) resolve();
+      else ws.once("close", () => resolve());
+    }));
+    const forceCloseTimer = setTimeout(() => {
+      for (const ws of sockets) {
+        if (ws.readyState !== WebSocket.CLOSED) ws.terminate();
       }
-      this.clients.clear();
-      this.wss.close();
-      this.wss = null;
+    }, 1_000);
+    forceCloseTimer.unref?.();
+    const stopped = new Promise<void>((resolve, reject) => {
+      wss.close((err) => {
+        if (err) reject(err);
+        else resolve();
+      });
+    });
+    // An internally owned HTTP server can report close before the WebSocket
+    // close handlers have destroyed the clients' terminal processes.
+    this.closePromise = Promise.all([stopped, ...disconnected]).then(() => {
       gatewayLog.info("Stopped");
-    }
+    }).finally(() => clearTimeout(forceCloseTimer));
+    for (const ws of sockets) ws.close(1001, "Server shutting down");
+    return this.closePromise;
   }
 
   getPort(): number | undefined {
@@ -350,7 +383,7 @@ export class GatewayServer {
 
   private isWorktreeEnabled(): boolean {
     try {
-      const raw = require("fs").readFileSync(getSettingsPath(), "utf-8");
+      const raw = readFileSync(getSettingsPath(), "utf-8");
       const settings = JSON.parse(raw);
       return settings.worktreeEnabled === true;
     } catch {

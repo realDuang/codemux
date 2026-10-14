@@ -7,7 +7,7 @@
 
 import { EventEmitter } from "events";
 import { randomUUID } from "crypto";
-import { Notification } from "electron";
+import { runtimeHost } from "#runtime-host";
 import path from "node:path";
 import fs from "node:fs";
 import { scheduledTaskLog } from "./logger";
@@ -565,9 +565,7 @@ export class ScheduledTaskService extends EventEmitter {
 
   private showNotification(title: string, body: string): void {
     try {
-      if (Notification.isSupported()) {
-        new Notification({ title, body }).show();
-      }
+      runtimeHost.notify(title, body);
     } catch (err) {
       scheduledTaskLog.warn("Failed to show notification:", err);
     }

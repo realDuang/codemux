@@ -12,8 +12,8 @@
   "scripts": {
     "dev": "electron-vite dev",
     "dev:isolated": "cross-env CODEMUX_DEV_ISOLATED=1 bun scripts/dev-isolated.ts",
-    "build": "bun run build:desktop && bun run build:web",
-    "preview": "electron-vite preview",
+    "build": "bun run build:desktop",
+    "preview": "bun run build && electron-vite preview --skipBuild",
     "pack": "electron-builder --dir",
     "dist": "bun scripts/predist.ts && bun run build && electron-builder --publish never",
     "dist:mac": "bun scripts/predist.ts && bun run build && electron-builder --mac --publish never",
@@ -46,8 +46,14 @@
     "bench:check": "npx tsx scripts/bench-regression.ts",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
-    "build:desktop": "electron-vite build",
-    "build:web": "vite build --config vite.web.config.ts"
+    "build:desktop": "electron-vite build --ignoreConfigWarning && bun run build:web",
+    "build:web": "vite build --config vite.web.config.ts",
+    "build:server": "vite build --config vite.server.config.ts",
+    "server:serve": "node out/server/index.mjs",
+    "server:ctl": "node out/server/cli.mjs",
+    "postinstall": "bun scripts/prepare-native.ts",
+    "build:server-app": "bun run build:server && bun run build:web",
+    "pack:server": "bun run build:server-app && bun scripts/pack-server.ts"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.2.137",
@@ -75,6 +81,7 @@
     "marked-shiki": "^1.1.2",
     "material-icon-theme": "^5.32.0",
     "node-pty": "^1.1.0",
+    "proper-lockfile": "4.1.2",
     "qrcode": "^1.5.4",
     "shell-env": "^4.0.3",
     "shiki": "^1.22.0",
@@ -89,6 +96,7 @@
     "@types/diff": "^5.0.9",
     "@types/luxon": "^3.4.0",
     "@types/node": "^20.0.0",
+    "@types/proper-lockfile": "4.1.4",
     "@types/qrcode": "^1.5.6",
     "@types/ws": "^8.18.1",
     "@vitest/coverage-v8": "4.0.18",

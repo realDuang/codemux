@@ -198,12 +198,19 @@ export class GatewayClient {
 
     if (url) {
       this.wsUrl = url;
-    } else if (!this.wsUrl) {
+    }
+    let wsUrl = this.wsUrl;
+    if (!wsUrl) {
       if (isElectron()) {
-        // In Electron: get full WS URL from main process via IPC
-        // Dev mode uses the configured standalone Gateway port.
-        // Packaged mode attaches Gateway to the production server at /ws.
-        this.wsUrl = await gatewayAPI.getWsUrl();
+        // The local Server can restart on a different port. Resolve automatic
+        // Electron endpoints for every attempt; explicit URLs remain pinned.
+        try {
+          wsUrl = await gatewayAPI.getWsUrl();
+        } catch (error) {
+          // No socket exists yet to schedule a retry through onclose.
+          if (!this.manualClose && epoch === this.connectionEpoch) this.scheduleReconnect();
+          throw error;
+        }
       } else {
         // In remote browser: derive WS URL from current page location
         // Production (Cloudflare Tunnel): wss://tunnel-host/ws
@@ -211,11 +218,12 @@ export class GatewayClient {
         const loc = window.location;
         const wsProtocol = loc.protocol === "https:" ? "wss:" : "ws:";
         this.wsUrl = `${wsProtocol}//${loc.host}/ws`;
+        wsUrl = this.wsUrl;
       }
     }
 
     if (epoch !== this.connectionEpoch) throw new Error("Client disconnected");
-    const endpoint = new URL(this.wsUrl!);
+    const endpoint = new URL(wsUrl);
     const token = Auth.getToken() || endpoint.searchParams.get("token");
     if (!token) throw new Error("Gateway authentication required");
     // Authenticate in the first frame so device credentials stay out of URLs.
@@ -353,7 +361,7 @@ export class GatewayClient {
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
       this.connect().catch(() => {
-        // Will retry via onclose → scheduleReconnect
+        // Endpoint resolution failures and onclose schedule their own retries.
       });
     }, delay);
   }

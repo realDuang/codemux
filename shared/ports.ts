@@ -82,7 +82,12 @@ const resolvedPorts = {
   WEBHOOK_PORT: readPortEnv("CODEMUX_WEBHOOK_PORT", DEFAULT_WEBHOOK_PORT + PORT_OFFSET),
 };
 
-validateDistinctPorts(resolvedPorts);
+// A standalone static host attaches WS to HTTP and does not bind Vite or the dev auth API.
+validateDistinctPorts(readEnv("CODEMUX_RUNTIME_WEB_MODE") === "static" ? {
+  WEB_PORT: resolvedPorts.WEB_PORT,
+  OPENCODE_PORT: resolvedPorts.OPENCODE_PORT,
+  WEBHOOK_PORT: resolvedPorts.WEBHOOK_PORT,
+} : resolvedPorts);
 
 /** Electron-Vite dev server / Production HTTP server */
 export const WEB_PORT = resolvedPorts.WEB_PORT;

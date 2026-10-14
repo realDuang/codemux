@@ -4,7 +4,7 @@
 .
 ├── electron/
 │   ├── main/
-│   │   ├── index.ts              # Main process entry (service orchestration)
+│   │   ├── index.ts              # Desktop shell entry and local supervision
 │   │   ├── ipc-handlers.ts       # IPC handler registration
 │   │   ├── window-manager.ts     # BrowserWindow creation
 │   │   ├── engines/              # Engine adapters
@@ -51,7 +51,19 @@
 │   │       └── tunnel-manager.ts     # Cloudflare Tunnel management
 │   └── preload/
 │       └── index.ts              # contextBridge (electronAPI)
-├── shared/                            # Code shared between main & renderer
+├── server/                            # Independent Node runtime and CLI
+│   ├── index.ts                       # Server entry and launch options
+│   ├── bootstrap.ts                   # Lock, control endpoint, and shutdown
+│   ├── service-host.ts                # Shared engine/channel composition
+│   ├── runtime-host.ts                # Node paths, logging, and notifications
+│   └── cli.ts                         # Private local management client
+├── shared/                            # Host-independent contracts and runtime
+│   ├── service-runtime.ts                # Shared lifecycle and readiness
+│   ├── runtime-paths.ts                  # Compatible data paths
+│   ├── settings-store.ts                 # Shared settings persistence
+│   ├── host-management.ts                # Business management controller
+│   ├── host-control-server.ts            # Private loopback owner control
+│   ├── host-control-client.ts            # Owner discovery and calls
 │   ├── auth-route-handlers.ts            # Auth route handling logic
 │   ├── device-store-base.ts              # Device store base class
 │   ├── device-store-types.ts             # Device store type definitions
@@ -121,7 +133,7 @@
 │       └── electron.d.ts         # ElectronAPI type declarations
 ├── scripts/                      # Bun scripts + Linux server helpers
 │   ├── server-init.sh            # Linux server bootstrap + dependency helper
-│   ├── server-dev.sh             # Headless Electron dev/tunnel wrapper
+│   ├── server-dev.sh             # Pure Node development supervisor entry
 │   └── server-auth.ts            # Terminal access-code and access-request helper
 ├── tests/                        # Unit + E2E tests (Vitest + Playwright)
 │   └── unit/                     # Unit tests mirroring source structure
@@ -130,7 +142,10 @@
 │       └── src/                      # Tests for src/ sources
 ├── electron.vite.config.ts       # Build config (main/preload/renderer)
 ├── electron-builder.yml          # Packaging config
-├── vite.config.ts                # Standalone Vite dev server config
+├── vite.web.config.ts            # Shared UI and PWA production build
+├── vite.server.config.ts         # Node Server and CLI build
+├── vite.server-dev.config.ts     # Web development proxies for the Node host
+├── vite.config.ts                # Legacy standalone Vite compatibility config
 ├── vitest.config.ts              # Vitest config (tests/unit/**/*.test.ts)
 └── package.json
 ```

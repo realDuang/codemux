@@ -15,6 +15,7 @@ import { randomUUID } from "crypto";
 import path from "node:path";
 import fs from "node:fs";
 import os from "node:os";
+import { createRequire } from "node:module";
 import type * as pty from "node-pty";
 import { terminalLog } from "./logger";
 import { listTerminalProfiles, getTerminalProfile } from "./terminal-profiles";
@@ -33,6 +34,7 @@ const DEFAULT_MAX_PER_SESSION = 5;
 /** Bounds passed straight to the PTY library — sanity-clamped. */
 const MIN_DIMENSION = 1;
 const MAX_DIMENSION = 1000;
+const requireNativeModule = createRequire(import.meta.url);
 
 // ---------------------------------------------------------------------------
 // Types
@@ -332,7 +334,7 @@ export class TerminalService extends EventEmitter {
     if (!this.ptyModule) {
       // Lazy require to keep `node-pty` out of the renderer bundle and to
       // allow tests to construct the service without the native binding.
-      this.ptyModule = require("node-pty") as PtyModule;
+      this.ptyModule = requireNativeModule("node-pty") as PtyModule;
     }
     return this.ptyModule;
   }

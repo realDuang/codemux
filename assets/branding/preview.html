@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CodeMux icon preview</title>
+<style>
+  :root{color-scheme:light;--page:#eeefec;--panel:#fff;--ink:#202a35;--muted:#727b82;--line:#dce0dd;--inset:#f3f5f5}
+  *{box-sizing:border-box}body{margin:0;background:var(--page);color:var(--ink);font-family:"Avenir Next",-apple-system,sans-serif}
+  body.dark{color-scheme:dark;--page:#111820;--panel:#1b242e;--ink:#f1f4f7;--muted:#9caab6;--line:#33404c;--inset:#151e27}
+  main{max-width:1180px;margin:auto;padding:38px 44px 30px}header{display:flex;align-items:center;justify-content:space-between;margin-bottom:24px}
+  .eyebrow{font-size:10px;letter-spacing:.18em;font-weight:700;color:var(--muted)}h1{font-size:32px;letter-spacing:-1.3px;margin:8px 0}p{font-size:13px;color:var(--muted);margin:0;line-height:1.6}
+  button{border:1px solid var(--line);border-radius:20px;padding:9px 16px;background:var(--panel);color:var(--ink);font:inherit;font-size:12px;cursor:pointer}
+  button:focus-visible{outline:3px solid #77afff;outline-offset:3px}.hero{display:grid;grid-template-columns:1.4fr 1fr;gap:18px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:18px;padding:22px}.label{font-size:11px;font-weight:600;color:var(--muted);letter-spacing:.03em}
+  .comparison{display:flex;align-items:center;justify-content:space-around;height:260px}.sample{text-align:center}.sample img{object-fit:contain;display:block;margin:auto}.sample small{display:block;color:var(--muted);font-size:11px;margin-top:12px}
+  .previous{width:114px;height:114px}.current{width:228px;height:228px}.swatches{display:flex;gap:18px;margin-top:18px}.swatch{display:flex;align-items:center;gap:8px;font:10px ui-monospace,monospace}.dot{width:16px;height:16px;border:1px solid #ccd3dc55;border-radius:50%}
+  .sizes{height:194px;display:flex;align-items:center;justify-content:space-between;gap:12px}.sizes img{display:block;margin:auto}.sizes small{display:block;font:10px ui-monospace,monospace;color:var(--muted);text-align:center;margin-top:14px}
+  .rule{border-top:1px solid var(--line);padding-top:17px}.platforms{display:grid;grid-template-columns:1fr 1fr 1fr;gap:18px;margin-top:18px}.platforms .card{padding:19px}.platforms p{font-size:11px;margin-top:13px}
+  .bar{height:40px;display:flex;align-items:center;justify-content:flex-end;padding:0 13px;gap:16px;font-size:11px;margin-top:18px;border-radius:7px;background:#e1e4e7;color:#182028}.bar.darkbar{background:#303944;color:#fff;margin-top:8px}.tray{width:18px;height:18px}.darkbar .tray{filter:invert(1)}
+  .system-dot{width:6px;height:6px;border-radius:50%;background:currentColor}.dock{height:74px;background:var(--inset);border:1px solid var(--line);border-radius:12px;display:flex;align-items:center;justify-content:center;gap:24px;margin-top:18px}.dock-item{text-align:center;position:relative;height:56px;display:flex;align-items:center}.dock img{width:48px;height:48px}.indicator{position:absolute;width:4px;height:4px;border-radius:50%;bottom:-3px;left:22px;background:var(--muted)}
+  .taskbar{height:42px;display:flex;gap:20px;align-items:center;justify-content:center;background:var(--inset);border-radius:8px;margin-top:10px}.taskbar img{width:24px;height:24px}.active{position:relative}.active:after{content:"";position:absolute;bottom:-5px;left:5px;width:14px;height:2px;border-radius:1px;background:#77afff}
+  .homescreen{display:flex;justify-content:space-around;align-items:center;height:135px}.home img{width:66px;height:66px;display:block}.home small{font-size:10px;display:block;text-align:center;color:var(--muted);margin-top:7px}.ios{border-radius:16px}.android{border-radius:50%}
+  footer{display:flex;justify-content:space-between;color:var(--muted);font-size:10px;margin-top:20px}.shape{display:flex;align-items:center;gap:6px}
+  @media(max-width:760px){main{padding:24px}.hero,.platforms{grid-template-columns:1fr}header{align-items:flex-start;gap:12px}.sizes{height:145px}footer{line-height:1.8;display:block}}
+</style>
+<main>
+  <header><div><div class="eyebrow">CODEMUX / PRODUCT ICONS</div><h1>A clearer everyday presence.</h1><p>The familiar wireless terminal, with a restrained palette and native platform treatment.</p></div><button id="theme" type="button" aria-pressed="false">Switch to dark</button></header>
+  <div class="hero">
+    <section class="card"><div class="label">Identity</div><div class="comparison"><div class="sample"><img class="previous" src="icon-reference.png" alt="Previous gradient CodeMux mark"><small>Previous</small></div><div class="sample"><img class="current" src="../../public/assets/icon.png" alt="Refined CodeMux app icon"><small>Refined</small></div></div><div class="swatches"><div class="swatch"><span class="dot" style="background:#23303d"></span>Graphite</div><div class="swatch"><span class="dot" style="background:#f3f6fa"></span>Soft white</div><div class="swatch"><span class="dot" style="background:#77afff"></span>Blue</div></div></section>
+    <section class="card"><div class="label">Actual display sizes</div><div class="sizes"><div><img width="16" height="16" src="../../public/assets/favicon-16x16.png" alt="16 pixel favicon"><small>16</small></div><div><img width="24" height="24" src="../../public/assets/favicon-32x32.png" alt="24 pixel icon"><small>24</small></div><div><img width="32" height="32" src="../../public/assets/favicon-32x32.png" alt="32 pixel icon"><small>32</small></div><div><img width="48" height="48" src="../../public/assets/favicon-48x48.png" alt="48 pixel icon"><small>48</small></div><div><img width="96" height="96" src="../../public/assets/icon.png" alt="96 pixel icon"><small>96</small></div></div><p class="rule">Optically adjusted small icons keep all three signal bands readable. Larger icons retain the original outlined geometry.</p></section>
+  </div>
+  <div class="platforms">
+    <section class="card"><div class="label">macOS menu bar</div><div class="bar"><span class="system-dot"></span><img class="tray" src="../../public/assets/trayTemplate.png" srcset="../../public/assets/trayTemplate@2x.png 2x" alt="Light menu-bar template"><span>100%</span><span>09:41</span></div><div class="bar darkbar"><span class="system-dot"></span><img class="tray" src="../../public/assets/trayTemplate.png" srcset="../../public/assets/trayTemplate@2x.png 2x" alt="Dark menu-bar template"><span>100%</span><span>09:41</span></div><p>Monochrome template with a dedicated Retina representation.</p></section>
+    <section class="card"><div class="label">Dock &amp; Windows taskbar</div><div class="dock"><div class="dock-item"><img src="../../public/assets/icon.png" alt="Dock icon"><span class="indicator"></span></div></div><div class="taskbar"><div class="active"><img src="../../public/assets/favicon-32x32.png" alt="Active taskbar icon"></div><img style="opacity:.55" src="../../public/assets/favicon-32x32.png" alt="Inactive taskbar icon"></div><p>Balanced margins. Activity indicators remain controlled by the OS.</p></section>
+    <section class="card"><div class="label">Home screen</div><div class="homescreen"><div class="home"><img class="ios" src="../../public/assets/apple-touch-icon.png" alt="iOS rounded home screen preview"><small>iOS</small></div><div class="home"><img class="android" src="../../public/assets/pwa-maskable-512.png" alt="Android circular mask preview"><small>Android</small></div></div><p>Full-bleed backgrounds with room for platform masks.</p></section>
+  </div>
+  <footer><span>Platform previews use the shipped assets. OS chrome is illustrative.</span><span>CodeMux · October 2026</span></footer>
+</main>
+<script>
+  document.querySelector('#theme').addEventListener('click', function () {
+    const dark = document.body.classList.toggle('dark');
+    this.setAttribute('aria-pressed', String(dark));
+    this.textContent = dark ? 'Switch to light' : 'Switch to dark';
+  });
+</script>
+</html>

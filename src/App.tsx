@@ -93,47 +93,19 @@ function StartupSplash() {
 
       {/* Content */}
       <div class="relative z-10 flex flex-col items-center">
-        {/* Logo with draw-in animation */}
+        {/* Logo with a single entrance transition */}
         <div
           class="mb-8"
           style={{
             animation: "splash-logo-enter 0.8s cubic-bezier(0.16, 1, 0.3, 1) both",
           }}
         >
-          <div
-            class="relative"
-            style={{
-              animation: "splash-float 4s ease-in-out infinite",
-              "animation-delay": "0.8s",
-            }}
-          >
-            <img
-              src={publicAssetUrl("logo.png")}
-              alt="CodeMux"
-              class="w-24 h-24 object-contain"
-              style={{
-                filter: "drop-shadow(0 0 24px rgba(59, 130, 246, 0.3))",
-              }}
-            />
-            {/* Shimmer sweep */}
-            <div
-              class="absolute inset-0 overflow-hidden rounded"
-              style={{
-                animation: "splash-shimmer 2.5s ease-in-out infinite",
-                "animation-delay": "1s",
-              }}
-            >
-              <div
-                class="absolute inset-0"
-                style={{
-                  background: "linear-gradient(105deg, transparent 40%, rgba(255,255,255,0.15) 45%, rgba(255,255,255,0.3) 50%, rgba(255,255,255,0.15) 55%, transparent 60%)",
-                  transform: "translateX(-100%)",
-                  animation: "splash-shimmer-slide 2.5s ease-in-out infinite",
-                  "animation-delay": "1s",
-                }}
-              />
-            </div>
-          </div>
+          <img
+            src={publicAssetUrl("logo.png")}
+            alt="CodeMux"
+            class="w-24 h-24 object-contain"
+            style={{ filter: "drop-shadow(0 6px 12px rgba(15, 23, 42, 0.12))" }}
+          />
         </div>
 
         {/* Loading indicator */}
@@ -175,10 +147,6 @@ function StartupSplash() {
           from { opacity: 0; transform: translateY(8px); }
           to { opacity: 1; transform: translateY(0); }
         }
-        @keyframes splash-float {
-          0%, 100% { transform: translateY(0); }
-          50% { transform: translateY(-6px); }
-        }
         @keyframes splash-pulse {
           0%, 100% { transform: scale(0.8); opacity: 0.07; }
           50% { transform: scale(1.1); opacity: 0.12; }
@@ -186,10 +154,6 @@ function StartupSplash() {
         @keyframes splash-dot {
           0%, 80%, 100% { transform: scale(0.6); opacity: 0.4; }
           40% { transform: scale(1); opacity: 1; }
-        }
-        @keyframes splash-shimmer-slide {
-          0%, 100% { transform: translateX(-100%); }
-          50% { transform: translateX(100%); }
         }
         @keyframes dark-splash-pulse {
           0%, 100% { transform: scale(0.8); opacity: 0.05; }

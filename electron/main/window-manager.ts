@@ -28,6 +28,9 @@ const closeDialogLabels: Record<string, { title: string; message: string; tray: 
 };
 
 export function createWindow(hidden = false): BrowserWindow {
+  const assetsPath = app.isPackaged
+    ? join(app.getAppPath(), "out", "web", "assets")
+    : join(app.getAppPath(), "public", "assets");
   mainWindow = new BrowserWindow({
     width: 1280,
     height: 800,
@@ -35,6 +38,9 @@ export function createWindow(hidden = false): BrowserWindow {
     minHeight: 600,
     show: false,
     autoHideMenuBar: true,
+    ...(process.platform !== "darwin"
+      ? { icon: join(assetsPath, process.platform === "win32" ? "icon.ico" : "icon.png") }
+      : {}),
     // Platform-specific title bar styling
     ...(process.platform === "darwin"
       ? {

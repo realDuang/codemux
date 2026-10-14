@@ -11,9 +11,11 @@ class TrayManager {
     if (this.tray) return;
 
     const iconPath = this.getIconPath();
-    const icon = nativeImage.createFromPath(iconPath);
-    // Use a 16x16 icon for the tray on all platforms
-    const trayIcon = icon.resize({ width: 16, height: 16 });
+    // Let Windows select the ICO size and preserve macOS Retina representations.
+    const trayIcon = process.platform === "win32" ? iconPath : nativeImage.createFromPath(iconPath);
+    if (process.platform === "darwin" && typeof trayIcon !== "string") {
+      trayIcon.setTemplateImage(true);
+    }
 
     this.tray = new Tray(trayIcon);
     this.tray.setToolTip("CodeMux");
@@ -26,12 +28,14 @@ class TrayManager {
   }
 
   private getIconPath(): string {
+    const filename = process.platform === "darwin" ? "trayTemplate.png"
+      : process.platform === "win32" ? "icon.ico" : "tray.png";
     if (app.isPackaged) {
       // The shared UI build owns the packaged public assets.
-      return join(process.resourcesPath, "app.asar", "out", "web", "assets", "favicon-32x32.png");
+      return join(process.resourcesPath, "app.asar", "out", "web", "assets", filename);
     }
     // In dev mode, use the public folder
-    return join(app.getAppPath(), "public", "assets", "favicon-32x32.png");
+    return join(app.getAppPath(), "public", "assets", filename);
   }
 
   private toggleWindow(): void {

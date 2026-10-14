@@ -5,18 +5,26 @@ import { defineConfig, transformWithEsbuild } from "vite";
 import solid from "vite-plugin-solid";
 import tailwindcss from "@tailwindcss/vite";
 import { VitePWA } from "vite-plugin-pwa";
+import { createDesktopBootstrapPlugin } from "./scripts/desktop-bootstrap-plugin";
 
 // Each build owns its precache, including rebuilds of the same source revision.
 const buildId = randomUUID().replaceAll("-", "");
 const cacheHelper = `pwa-cache-${buildId}.js`;
 
-// Web and Electron share application components, but never their entry or cache.
+// Both entries share compiled business code; only Web imports the PWA runtime.
 export default defineConfig({
   root: resolve(__dirname, "web"),
+  envDir: __dirname,
   base: "/",
   publicDir: resolve(__dirname, "public"),
   define: { __PWA_BUILD_ID__: JSON.stringify(buildId) },
   resolve: { alias: { "@": resolve(__dirname, "src") } },
+  experimental: {
+    // Lazy imports and their CSS must also work from Electron's file: origin.
+    renderBuiltUrl: (_filename, { hostType }) => (
+      hostType === "js" || hostType === "css" ? { relative: true } : undefined
+    ),
+  },
   plugins: [
     tailwindcss(),
     solid(),
@@ -60,6 +68,7 @@ export default defineConfig({
         cleanupOutdatedCaches: false,
         importScripts: [cacheHelper],
         globPatterns: ["**/*.{js,css,html}"],
+        globIgnores: ["desktop.html"],
         navigateFallback: "/index.html",
         navigateFallbackAllowlist: [/^\/(?:chat|settings|devices|login|remote)?\/?(?:\?.*)?$/],
         // Old tabs retain lazy chunks; auth, user data and commands stay live.
@@ -73,12 +82,22 @@ export default defineConfig({
       },
       devOptions: { enabled: false },
     }),
+    createDesktopBootstrapPlugin(resolve(__dirname, "out/renderer")),
   ],
   build: {
     outDir: resolve(__dirname, "out/web"),
     emptyOutDir: true,
     rollupOptions: {
-      output: { manualChunks: { shiki: ["shiki", "@shikijs/core", "@shikijs/transformers"] } },
+      input: {
+        web: resolve(__dirname, "web/index.html"),
+        desktop: resolve(__dirname, "web/desktop.html"),
+      },
+      output: {
+        // Public image URLs resolve relative to the shared JavaScript chunks.
+        entryFileNames: "assets/[name]-[hash].js",
+        chunkFileNames: "assets/[name]-[hash].js",
+        manualChunks: { shiki: ["shiki", "@shikijs/core", "@shikijs/transformers"] },
+      },
     },
   },
 });

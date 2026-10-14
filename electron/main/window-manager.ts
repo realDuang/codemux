@@ -1,6 +1,6 @@
 import { app, BrowserWindow, dialog, shell, nativeTheme } from "electron";
 import { join } from "path";
-import { loadSettings, saveSettings } from "./services/logger";
+import { loadSettings, saveSettings, windowLog } from "./services/logger";
 
 let mainWindow: BrowserWindow | null = null;
 let isQuittingApp = false;
@@ -99,17 +99,19 @@ export function createWindow(hidden = false): BrowserWindow {
       message: labels.message,
       checkboxLabel: labels.remember,
       checkboxChecked: false,
-    }).then(({ response, checkboxChecked }) => {
+    }).then(async ({ response, checkboxChecked }) => {
       if (response === 0) {
         // Minimize to tray
-        if (checkboxChecked) saveSettings({ closeAction: "tray" });
+        if (checkboxChecked) await saveSettings({ closeAction: "tray" });
         mainWindow?.hide();
         updateTrayMenu();
       } else {
         // Quit
-        if (checkboxChecked) saveSettings({ closeAction: "quit" });
+        if (checkboxChecked) await saveSettings({ closeAction: "quit" });
         app.quit();
       }
+    }).catch(error => {
+      windowLog.error("Failed to save the window close preference:", error);
     });
   });
 

@@ -227,41 +227,38 @@ Supported port overrides:
 - `CODEMUX_AUTH_API_PORT`
 - `CODEMUX_WEBHOOK_PORT`
 
-### Linux Server / Headless Dev
+### Linux Server
 
-On headless Linux hosts, `bun run dev` may exit early because Electron needs a virtual display, a DBus session, and a correctly configured `chrome-sandbox` helper. This repo includes Linux server helpers for that workflow:
+The complete host runs on Node 24 without Electron, a display server, or a desktop session. It serves the Web/PWA client and the same gateway, engines, channels, tasks, files, and terminals used by the desktop application.
 
 ```bash
-# First-time bootstrap on a Linux server (installs Bun if needed)
-./scripts/server-init.sh
+# Build and run the production server from this checkout
+bun install --frozen-lockfile
+bun run build:server-app
+node out/server/index.mjs
 
-# Run the full Electron dev stack in the foreground with Xvfb + DBus
-bun run server:dev
+# Manage the running host from another terminal
+node out/server/cli.mjs status
+node out/server/cli.mjs access-code
+node out/server/cli.mjs pending
+node out/server/cli.mjs stop
 
-# Run the same headless dev stack in the background
-bun run server:up
+# Develop with the full Node host and Vite source updates
+./scripts/server-init.sh        # Debian/Ubuntu prerequisites; optional engine setup
+bun run server:dev             # Foreground
+bun run server:up              # Background
 bun run server:status
 bun run server:restart
 bun run server:down
-
-# Run the headless dev stack and start a Cloudflare quick tunnel
-bun run server:tunnel
-
-# Show the 6-digit access code from the terminal
-bun run server:access-code
-
-# Review or approve pending device requests from the terminal
-bun run server:access-requests
+bun run server:tunnel          # Enable the existing Cloudflare quick-tunnel flow
+bun run server:access-requests # Review device approvals from the terminal
 ```
 
-`bun run start` is still the lightest option for a web-only standalone server. The desktop app's "Public Access" toggle manages Cloudflare inside the packaged app; on a headless dev server, `bun run server:tunnel` provides the equivalent quick-tunnel workflow from the shell.
+Use `--data-dir /absolute/path` on both the production server and CLI to select an existing data directory. Development wrappers retain their legacy device-file and isolation conventions. `bun run start` remains the legacy OpenCode/Vite compatibility entry on port 8234, with `.devices.json` and `.settings.json` in its working directory; it is separate from the complete Node host.
 
-If you want to restart CodeMux itself without rotating the current quick-tunnel URL, use `bun run server:restart`. It restarts the managed app process and keeps the existing `cloudflared` process alive whenever possible, so remote browsers can usually stay on the same public origin.
+Remote access retains its existing settings and device-approval flow. A quick-tunnel URL can change when its owning server restarts; use a named tunnel or an existing stable HTTPS address for an installed PWA. Approved browsers can manage channels through Settings.
 
-
-`bun run server:tunnel` now prints the access code after startup. When a remote browser submits that code, you can stay entirely in SSH and run `bun run server:access-requests` to review and interactively approve or deny pending requests. If you started CodeMux with `bun run server:dev`, open a second SSH session and run `bun run server:access-code` / `bun run server:access-requests`.
-
-After a browser has been approved, it can open **Settings → Channels** in the web UI to configure or toggle IM channels directly from server mode; you no longer need the Electron-only host page for that workflow.
+See [Server runtime and distribution](docs/server-runtime.md) for directory packages, service management, data paths, and upgrades.
 
 > **Engine Prerequisites**: All engines are external dependencies that must be installed and available in your PATH:
 > - **OpenCode**: Install from [opencode.ai](https://opencode.ai) — `curl -fsSL https://opencode.ai/install | bash` (Unix) or `irm https://opencode.ai/install.ps1 | iex` (Windows)
@@ -367,17 +364,19 @@ All access methods — desktop app, remote browser, and IM bots — connect thro
 ```bash
 ./scripts/server-init.sh  # Bootstrap a Linux server before Bun is installed
 bun run dev                # Electron + Vite HMR
-bun run server:dev         # Foreground headless Electron dev
-bun run server:up          # Background headless Electron dev
-bun run server:tunnel      # Background headless Electron dev + quick tunnel
-bun run server:restart     # Restart app only; preserve managed quick tunnel when possible
+bun run server:dev         # Foreground Node + Vite development
+bun run server:up          # Background Node + Vite development
+bun run server:tunnel      # Background Node + Vite development + quick tunnel
+bun run server:restart     # Restart the managed development host
 bun run server:access-code # Print the current 6-digit access code
 bun run server:access-requests # Interactively review pending remote access requests
-bun run server:down        # Stop background headless Electron dev
-bun run server:status      # Show background headless Electron dev status
+bun run server:down        # Stop the managed development host
+bun run server:status      # Show managed development status
 bun run build              # Build Electron and Web/PWA clients
-bun run build:desktop      # Electron renderer, main, and preload only
-bun run build:web          # Independent Web/PWA client in out/web
+bun run build:desktop      # Desktop shell, local Server, and shared UI
+bun run build:web          # Shared UI in out/web plus thin desktop HTML
+bun run build:server-app   # Pure Node Server/CLI and Web UI
+bun run pack:server        # Target-platform standalone directory package
 bun run dist:mac:arm64     # macOS Apple Silicon
 bun run dist:mac:x64       # macOS Intel
 bun run dist:win           # Windows NSIS installer

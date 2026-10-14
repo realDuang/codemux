@@ -285,7 +285,7 @@ export interface SpawnTarget {
  *
  * - `--server`: spawn the headless server wrapper (`scripts/server-dev.sh
  *   start --foreground`), which inherits `CODEMUX_DEV_ISOLATED=1` +
- *   `CODEMUX_PORT_OFFSET=<N>` from us and feeds them into `bun run dev`. This
+ *   `CODEMUX_PORT_OFFSET=<N>` from us and feeds them into the watched Node server. This
  *   is what `server:dev:isolated` ships.
  * - default: spawn `bun run dev` directly. This is the original `dev:isolated`
  *   behaviour for the Electron desktop loop.

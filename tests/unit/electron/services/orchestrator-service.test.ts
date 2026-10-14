@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { EventEmitter } from "node:events";
+import type { EngineManager } from "../../../../electron/main/gateway/engine-manager";
 import type { OrchestrationSubtask, RoleEngineMapping } from "../../../../src/types/unified";
 
 // ---------------------------------------------------------------------------
@@ -436,6 +437,58 @@ describe("OrchestratorService", () => {
       await svc.shutdown();
       expect(svc.listRuns().find((r) => r.id === r1.id)!.status).toBe("cancelled");
       expect(svc.listRuns().find((r) => r.id === r2.id)!.status).toBe("completed");
+    });
+  });
+
+  describe("flush", () => {
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it("persists active runs immediately without cancelling or changing their state", async () => {
+      vi.useFakeTimers();
+      const svc = await freshService();
+      const em = new MockEngineManager();
+      let releaseSend: (value: { parts: Array<{ type: string; text: string }> }) => void = () => {};
+      em.sendMessage.mockReturnValueOnce(new Promise((resolve) => {
+        releaseSend = resolve;
+      }));
+      svc.init(em as unknown as EngineManager);
+      const run = svc.createRun("parent", "/tmp", "task", ["claude"]);
+      const execution = svc.confirmAndExecute(run.id, [makeSubtask()]);
+      const childSession = await em.createSession.mock.results[0].value;
+      expect(run.status).toBe("running");
+      expect(run.subtasks[0].status).toBe("running");
+      expect(mockWriteFileSync).not.toHaveBeenCalled();
+      const snapshot = JSON.parse(JSON.stringify(svc.listRuns()));
+
+      svc.flush();
+
+      expect(mockWriteFileSync).toHaveBeenCalledWith(
+        expect.stringMatching(/orchestrations\.json\.tmp$/),
+        JSON.stringify(snapshot, null, 2),
+        "utf-8",
+      );
+      expect(mockRenameSync).toHaveBeenCalledOnce();
+      expect(svc.listRuns()).toEqual(snapshot);
+      expect(em.cancelMessage).not.toHaveBeenCalled();
+      expect(vi.getTimerCount()).toBe(0);
+      await vi.advanceTimersByTimeAsync(250);
+      expect(mockWriteFileSync).toHaveBeenCalledOnce();
+
+      em.emit("permission.asked", {
+        permission: {
+          id: "permission-after-flush",
+          sessionId: childSession.id,
+          options: [{ id: "accept", type: "accept_once" }],
+        },
+      });
+      expect(em.replyPermission).toHaveBeenCalledWith("permission-after-flush", { optionId: "accept" });
+
+      releaseSend({ parts: [{ type: "text", text: "done" }] });
+      await execution;
+      expect(run.status).toBe("completed");
+      svc.flush();
     });
   });
 

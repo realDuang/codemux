@@ -1,10 +1,11 @@
 import { spawn, ChildProcess } from "child_process";
-import { app } from "electron";
+import { runtimeHost } from "#runtime-host";
 import path from "path";
 import fs from "fs";
 import os from "os";
 import { tunnelLog } from "./logger";
 import { getCloudflaredConfigPath } from "./app-paths";
+import { getCloudflaredPath } from "../../../shared/cloudflared-path";
 
 export interface TunnelConfig {
   /** Custom hostname for named tunnel (e.g. "codemux.example.com") */
@@ -34,15 +35,12 @@ class TunnelManager {
   }
 
   private getCloudflaredPath(): string {
-    if (!app.isPackaged) {
-      return "cloudflared"; // Use system-installed cloudflared in dev mode
-    }
-    const resourcesPath = process.resourcesPath;
-    const platform = process.platform;
-    const arch = process.arch;
-
-    const binaryName = platform === "win32" ? "cloudflared.exe" : "cloudflared";
-    return path.join(resourcesPath, "cloudflared", `${platform}-${arch}`, binaryName);
+    return getCloudflaredPath({
+      isPackaged: runtimeHost.isPackaged,
+      resourcesPath: runtimeHost.resourcesPath,
+      platform: process.platform,
+      arch: process.arch,
+    });
   }
 
   /**
@@ -126,7 +124,7 @@ class TunnelManager {
       const cloudflaredPath = this.getCloudflaredPath();
 
       // Check if binary exists before spawning
-      if (app.isPackaged && !fs.existsSync(cloudflaredPath)) {
+      if (runtimeHost.isPackaged && !fs.existsSync(cloudflaredPath)) {
         throw new Error(`Cloudflared binary not found at ${cloudflaredPath}`);
       }
 

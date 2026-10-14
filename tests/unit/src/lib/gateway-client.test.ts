@@ -102,6 +102,81 @@ describe("GatewayClient authentication", () => {
     expect(JSON.parse(ws.send.mock.calls[0][0]).token).toBe("device-token");
   });
 
+  it("resolves the native endpoint again after a Server restart without resending commands", async () => {
+    mocks.isElectron.mockReturnValue(true);
+    const first = await connect();
+    const sending = client.request("message.send", { text: "Run once" });
+    const interrupted = expect(sending).rejects.toThrow("Connection closed");
+    mocks.getWsUrl.mockResolvedValueOnce("ws://127.0.0.1:8234/ws");
+    first.closeFromServer();
+    await interrupted;
+    await vi.advanceTimersByTimeAsync(500);
+    const second = FakeWebSocket.instances.at(-1)!;
+    second.open();
+    second.authenticate();
+
+    expect(mocks.getWsUrl).toHaveBeenCalledTimes(2);
+    expect(first.url).toBe("ws://127.0.0.1:8233/ws");
+    expect(second.url).toBe("ws://127.0.0.1:8234/ws");
+    expect(second.send).toHaveBeenCalledOnce();
+    expect(JSON.parse(second.send.mock.calls[0][0]).type).toBe("auth");
+    expect(client.connected).toBe(true);
+  });
+
+  it("continues reconnecting while the local Server endpoint is temporarily unavailable", async () => {
+    mocks.isElectron.mockReturnValue(true);
+    const first = await connect();
+    mocks.getWsUrl
+      .mockRejectedValueOnce(new Error("Server not ready"))
+      .mockRejectedValueOnce(new Error("Server not ready"))
+      .mockResolvedValueOnce("ws://127.0.0.1:8235/ws");
+    first.closeFromServer();
+
+    await vi.advanceTimersByTimeAsync(500);
+    expect(mocks.getWsUrl).toHaveBeenCalledTimes(2);
+    expect(FakeWebSocket.instances).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(mocks.getWsUrl).toHaveBeenCalledTimes(3);
+    expect(FakeWebSocket.instances).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(2_000);
+    const replacement = FakeWebSocket.instances.at(-1)!;
+    replacement.open();
+    replacement.authenticate();
+
+    expect(mocks.getWsUrl).toHaveBeenCalledTimes(4);
+    expect(replacement.url).toBe("ws://127.0.0.1:8235/ws");
+    expect(client.connected).toBe(true);
+  });
+
+  it("retries an initial native endpoint failure before any socket exists", async () => {
+    mocks.isElectron.mockReturnValue(true);
+    mocks.getWsUrl.mockRejectedValueOnce(new Error("Server not ready"));
+    await expect(client.connect()).rejects.toThrow("Server not ready");
+    expect(FakeWebSocket.instances).toHaveLength(0);
+
+    await vi.advanceTimersByTimeAsync(500);
+    const ws = FakeWebSocket.instances.at(-1)!;
+    ws.open();
+    ws.authenticate();
+
+    expect(mocks.getWsUrl).toHaveBeenCalledTimes(2);
+    expect(client.connected).toBe(true);
+  });
+
+  it("keeps an explicit native endpoint across reconnects without resolving IPC", async () => {
+    mocks.isElectron.mockReturnValue(true);
+    const first = await connect("ws://127.0.0.1:4200/ws?route=explicit");
+    first.closeFromServer();
+    await vi.advanceTimersByTimeAsync(500);
+    const second = FakeWebSocket.instances.at(-1)!;
+    second.open();
+    second.authenticate();
+
+    expect(second.url).toBe(first.url);
+    expect(mocks.getWsUrl).not.toHaveBeenCalled();
+    expect(client.connected).toBe(true);
+  });
+
   it("moves explicit endpoint credentials into the authentication frame", async () => {
     mocks.getToken.mockReturnValue("current token/+");
 
@@ -165,15 +240,20 @@ describe("GatewayClient authentication", () => {
     expect(connected).toHaveBeenCalledOnce();
   });
 
-  it("rejects missing credentials without opening a socket", async () => {
+  it.each([false, true])("rejects missing credentials without opening or retrying a socket (native=%s)", async (native) => {
+    mocks.isElectron.mockReturnValue(native);
     mocks.getToken.mockReturnValue(null);
     await expect(client.connect()).rejects.toThrow("Gateway authentication required");
+    await vi.advanceTimersByTimeAsync(30_000);
     expect(FakeWebSocket.instances).toHaveLength(0);
+    expect(mocks.getWsUrl).toHaveBeenCalledTimes(native ? 1 : 0);
   });
 
-  it("rejects a failed authentication response and does not reconnect after rejection", async () => {
+  it.each([false, true])("rejects failed authentication without reconnecting (native=%s)", async (native) => {
+    mocks.isElectron.mockReturnValue(native);
     const pending = client.connect();
     const rejected = expect(pending).rejects.toThrow("Gateway authentication failed");
+    await Promise.resolve();
     const ws = FakeWebSocket.instances.at(-1)!;
     ws.open();
     const auth = JSON.parse(ws.send.mock.calls[0][0]);
@@ -183,6 +263,7 @@ describe("GatewayClient authentication", () => {
     ws.onclose?.({ code: 4001, reason: "Unauthorized" });
     await vi.advanceTimersByTimeAsync(30_000);
     expect(FakeWebSocket.instances).toHaveLength(1);
+    expect(mocks.getWsUrl).toHaveBeenCalledTimes(native ? 1 : 0);
     expect(client.connected).toBe(false);
   });
 
@@ -436,16 +517,23 @@ describe("GatewayClient authentication", () => {
       expect(FakeWebSocket.instances).toHaveLength(1);
     });
 
-    it("does not open an old native endpoint after the connection is destroyed", async () => {
+    it.each(["resolve", "reject"])("does not resume a destroyed connection when native endpoint lookup settles (%s)", async (outcome) => {
       mocks.isElectron.mockReturnValue(true);
       let resolveEndpoint!: (url: string) => void;
-      mocks.getWsUrl.mockReturnValueOnce(new Promise((resolve) => { resolveEndpoint = resolve; }));
+      let rejectEndpoint!: (error: Error) => void;
+      mocks.getWsUrl.mockReturnValueOnce(new Promise((resolve, reject) => {
+        resolveEndpoint = resolve;
+        rejectEndpoint = reject;
+      }));
       const connecting = client.connect();
-      const rejected = expect(connecting).rejects.toThrow("Client disconnected");
+      const rejected = expect(connecting).rejects.toThrow(outcome === "resolve" ? "Client disconnected" : "Server not ready");
       client.disconnect();
-      resolveEndpoint("ws://127.0.0.1:8233/ws");
+      if (outcome === "resolve") resolveEndpoint("ws://127.0.0.1:8233/ws");
+      else rejectEndpoint(new Error("Server not ready"));
       await rejected;
+      await vi.advanceTimersByTimeAsync(30_000);
       expect(FakeWebSocket.instances).toHaveLength(0);
+      expect(mocks.getWsUrl).toHaveBeenCalledOnce();
     });
   });
 });

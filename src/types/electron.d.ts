@@ -4,6 +4,20 @@
  */
 
 interface ElectronAPI {
+  runtime?: {
+    getState: () => Promise<import("../../shared/local-server-types").LocalServerState>;
+    start: () => Promise<import("../../shared/local-server-types").LocalServerState>;
+    stop: () => Promise<import("../../shared/local-server-types").LocalServerState>;
+    restart: () => Promise<import("../../shared/local-server-types").LocalServerState>;
+    showManager: () => Promise<void>;
+    openLogs: () => Promise<void>;
+    onStateChange: (callback: (state: import("../../shared/local-server-types").LocalServerState) => void) => () => void;
+    onShowManager: (callback: () => void) => () => void;
+  };
+  startup?: {
+    isReady: () => Promise<boolean>;
+    onReady: (callback: () => void) => () => void;
+  };
   remoteAccess: {
     getStatus: () => Promise<import("../../shared/remote-access").RemoteAccessStatus>;
     update: (patch: import("../../shared/remote-access").RemoteAccessUpdate) => Promise<import("../../shared/remote-access").RemoteAccessStatus>;

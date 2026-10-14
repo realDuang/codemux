@@ -3,7 +3,7 @@ import { EngineManager } from "../../../../electron/main/gateway/engine-manager"
 import { conversationStore } from "../../../../electron/main/services/conversation-store";
 import { EngineAdapter } from "../../../../electron/main/engines/engine-adapter";
 import { getDefaultEngineFromSettings, engineManagerLog } from "../../../../electron/main/services/logger";
-import type { EngineType, UnifiedMessage, UnifiedSession, ConversationMessage } from "../../../../src/types/unified";
+import type { EngineType, ReasoningPart, UnifiedMessage, UnifiedSession, ConversationMessage } from "../../../../src/types/unified";
 
 // --- Mocks ---
 
@@ -2416,6 +2416,283 @@ describe("EngineManager", () => {
       // Only 1 timer should have been scheduled (deduplication via stepFlushTimer guard)
       // Advance timer past the flush interval
       await vi.advanceTimersByTimeAsync(3000);
+    });
+  });
+
+  describe("flushPendingState", () => {
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it("drains queued authoritative snapshots and their later removal before returning", async () => {
+      vi.useFakeTimers();
+      adapterA.getCapabilities.mockReturnValue({ authoritativeSessionState: true });
+      engineManager.registerAdapter(adapterA);
+      const conv = makeMockConv({ id: "conv-owner", engineSessionId: "owner-thread" });
+      vi.mocked(conversationStore.get).mockReturnValue(conv);
+      vi.mocked(conversationStore.findByEngineSession).mockReturnValue(conv);
+      let releaseSnapshot = () => {};
+      let releaseRemoval = () => {};
+      vi.mocked(conversationStore.ensureMessage).mockReturnValueOnce(new Promise<void>((resolve) => {
+        releaseSnapshot = resolve;
+      }));
+      vi.mocked(conversationStore.removeMessage).mockReturnValueOnce(new Promise<void>((resolve) => {
+        releaseRemoval = resolve;
+      }));
+      const message: UnifiedMessage = {
+        id: "owner-message",
+        sessionId: "owner-thread",
+        role: "assistant",
+        time: { created: 1, completed: 2 },
+        parts: [
+          { id: "owner-content", type: "text", text: "Final answer", sessionId: "owner-thread", messageId: "owner-message" },
+          { id: "owner-reasoning", type: "reasoning", text: "Final reasoning", sessionId: "owner-thread", messageId: "owner-message" },
+        ],
+      };
+
+      adapterA.emit("message.updated", { sessionId: message.sessionId, message });
+      adapterA.emit("message.removed", { sessionId: message.sessionId, messageId: message.id });
+      const onFlushed = vi.fn();
+      const flushing = engineManager.flushPendingState().then(onFlushed);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(conversationStore.ensureMessage).toHaveBeenCalledWith(conv.id, expect.objectContaining({ id: message.id }));
+      expect(conversationStore.removeMessage).not.toHaveBeenCalled();
+      expect(onFlushed).not.toHaveBeenCalled();
+
+      releaseSnapshot();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(conversationStore.updateMessage).toHaveBeenCalledWith(conv.id, message.id, expect.objectContaining({
+        parts: [{ ...message.parts[0], sessionId: conv.id }],
+      }));
+      expect(conversationStore.saveSteps).toHaveBeenCalledWith(conv.id, message.id, [{ ...message.parts[1], sessionId: conv.id }]);
+      expect(conversationStore.removeMessage).toHaveBeenCalledWith(conv.id, message.id);
+      expect(onFlushed).not.toHaveBeenCalled();
+
+      releaseRemoval();
+      await flushing;
+      expect(onFlushed).toHaveBeenCalledOnce();
+      expect(conversationStore.appendMessage).not.toHaveBeenCalled();
+      expect(vi.getTimerCount()).toBe(0);
+    });
+
+    it("awaits authoritative session removal persistence before returning", async () => {
+      vi.useFakeTimers();
+      engineManager.registerAdapter(adapterA);
+      const conv = makeMockConv({ id: "conv-removed", engineSessionId: "removed-thread", catalogSourceId: "owner-source" });
+      vi.mocked(conversationStore.get).mockReturnValue(conv);
+      vi.mocked(conversationStore.findByEngineSession).mockReturnValue(conv);
+      let releaseRemoval = () => {};
+      vi.mocked(conversationStore.removeEngineConversation).mockReturnValueOnce(new Promise<void>((resolve) => {
+        releaseRemoval = resolve;
+      }));
+
+      adapterA.emit("session.removed", { sessionId: "removed-thread" });
+      const onFlushed = vi.fn();
+      const flushing = engineManager.flushPendingState().then(onFlushed);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(conversationStore.removeEngineConversation).toHaveBeenCalledWith(conv.id, "archived", "owner-source");
+      expect(onFlushed).not.toHaveBeenCalled();
+
+      releaseRemoval();
+      await flushing;
+      expect(onFlushed).toHaveBeenCalledOnce();
+    });
+
+    it.each(["event", "send fallback"])("awaits completed-message content and steps from %s", async (source) => {
+      vi.useFakeTimers();
+      engineManager.registerAdapter(adapterA);
+      const conv = makeMockConv({ id: "conv-complete", engineSessionId: "engine-complete" });
+      vi.mocked(conversationStore.get).mockReturnValue(conv);
+      vi.mocked(conversationStore.findByEngineSession).mockReturnValue(conv);
+      vi.mocked(conversationStore.listMessages).mockResolvedValueOnce([]);
+      let releaseContent = () => {};
+      let releaseSteps = () => {};
+      const contentWrite = new Promise<void>((resolve) => { releaseContent = resolve; });
+      const stepsWrite = new Promise<void>((resolve) => { releaseSteps = resolve; });
+      if (source === "send fallback") {
+        vi.mocked(conversationStore.appendMessage).mockResolvedValueOnce(undefined);
+      }
+      vi.mocked(conversationStore.appendMessage).mockReturnValueOnce(contentWrite);
+      vi.mocked(conversationStore.saveSteps).mockReturnValueOnce(stepsWrite);
+      const message: UnifiedMessage = {
+        id: "message-complete",
+        sessionId: "engine-complete",
+        role: "assistant",
+        time: { created: 1, completed: 2 },
+        parts: [
+          { id: "content", type: "text", text: "Final answer", sessionId: "engine-complete", messageId: "message-complete" },
+          { id: "step", type: "reasoning", text: "Final reasoning", sessionId: "engine-complete", messageId: "message-complete" },
+        ],
+      };
+      if (source === "send fallback") {
+        adapterA.sendMessage.mockResolvedValueOnce({ ...message, time: { created: 1 } });
+        await engineManager.sendMessage(conv.id, [{ type: "text", text: "Question" }]);
+      } else {
+        adapterA.emit("message.updated", { sessionId: message.sessionId, message });
+      }
+      const onFlushed = vi.fn();
+      const flushing = engineManager.flushPendingState().then(onFlushed);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(conversationStore.appendMessage).toHaveBeenLastCalledWith(conv.id, expect.objectContaining({
+        id: message.id,
+        parts: [{ ...message.parts[0], sessionId: conv.id }],
+      }));
+      expect(conversationStore.saveSteps).not.toHaveBeenCalled();
+      expect(onFlushed).not.toHaveBeenCalled();
+
+      releaseContent();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(conversationStore.saveSteps).toHaveBeenCalledWith(conv.id, message.id, [{ ...message.parts[1], sessionId: conv.id }]);
+      expect(onFlushed).not.toHaveBeenCalled();
+      releaseSteps();
+      await flushing;
+      expect(onFlushed).toHaveBeenCalledOnce();
+      expect(vi.getTimerCount()).toBe(0);
+    });
+
+    it("awaits user-message persistence before returning", async () => {
+      vi.useFakeTimers();
+      engineManager.registerAdapter(adapterA);
+      vi.mocked(conversationStore.get).mockReturnValue(makeMockConv({ engineSessionId: "engine-user" }));
+      let releaseUser = () => {};
+      vi.mocked(conversationStore.appendMessage).mockReturnValueOnce(new Promise<void>((resolve) => {
+        releaseUser = resolve;
+      }));
+      adapterA.sendMessage.mockResolvedValueOnce({
+        id: "response",
+        sessionId: "engine-user",
+        role: "assistant",
+        time: { created: 1, completed: 2 },
+        parts: [],
+      });
+      const send = engineManager.sendMessage("conv1", [{ type: "text", text: "Pending question" }]);
+      const onFlushed = vi.fn();
+      const flushing = engineManager.flushPendingState().then(onFlushed);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(conversationStore.appendMessage).toHaveBeenCalledWith("conv1", expect.objectContaining({ role: "user" }));
+      expect(onFlushed).not.toHaveBeenCalled();
+      expect(adapterA.sendMessage).not.toHaveBeenCalled();
+
+      releaseUser();
+      await Promise.all([send, flushing]);
+      expect(onFlushed).toHaveBeenCalledOnce();
+    });
+
+    it("awaits partial step persistence without waiting for the debounce timer", async () => {
+      vi.useFakeTimers();
+      engineManager.registerAdapter(adapterA);
+      vi.mocked(conversationStore.findByEngineSession).mockReturnValue(makeMockConv({ id: "conv-pending" }));
+      const part: ReasoningPart = {
+        id: "step-pending",
+        type: "reasoning",
+        sessionId: "engine-pending",
+        messageId: "message-pending",
+        text: "Partial reasoning",
+      };
+      adapterA.emit("message.part.updated", { sessionId: part.sessionId, messageId: part.messageId, part });
+      expect(conversationStore.saveSteps).not.toHaveBeenCalled();
+
+      let releaseSave = () => {};
+      vi.mocked(conversationStore.saveSteps).mockReturnValueOnce(new Promise<void>((resolve) => {
+        releaseSave = resolve;
+      }));
+      const onFlushed = vi.fn();
+      const flushing = engineManager.flushPendingState().then(onFlushed);
+      await Promise.resolve();
+
+      expect(conversationStore.ensureMessage).toHaveBeenCalledWith(
+        "conv-pending",
+        expect.objectContaining({ id: part.messageId, role: "assistant", parts: [] }),
+      );
+      expect(conversationStore.saveSteps).toHaveBeenCalledWith(
+        "conv-pending",
+        part.messageId,
+        [{ ...part, sessionId: "conv-pending" }],
+      );
+      expect(onFlushed).not.toHaveBeenCalled();
+      expect(vi.getTimerCount()).toBe(0);
+
+      releaseSave();
+      await flushing;
+      await engineManager.flushPendingState();
+      await vi.advanceTimersByTimeAsync(2500);
+      expect(conversationStore.saveSteps).toHaveBeenCalledTimes(1);
+    });
+
+    it("serializes a pending timer flush before saving the latest snapshot", async () => {
+      vi.useFakeTimers();
+      engineManager.registerAdapter(adapterA);
+      vi.mocked(conversationStore.findByEngineSession).mockReturnValue(makeMockConv({ id: "conv-drain" }));
+      const part: ReasoningPart = {
+        id: "step-drain",
+        type: "reasoning",
+        sessionId: "engine-drain",
+        messageId: "message-drain",
+        text: "Earlier reasoning",
+      };
+      let releaseFirst = () => {};
+      let releaseLatest = () => {};
+      const firstWrite = new Promise<void>((resolve) => { releaseFirst = resolve; });
+      const latestWrite = new Promise<void>((resolve) => { releaseLatest = resolve; });
+      const savedSnapshots: unknown[] = [];
+      vi.mocked(conversationStore.saveSteps)
+        .mockImplementationOnce(async (_conversationId, _messageId, steps) => {
+          await firstWrite;
+          savedSnapshots.push(steps);
+        })
+        .mockImplementationOnce(async (_conversationId, _messageId, steps) => {
+          await latestWrite;
+          savedSnapshots.push(steps);
+        });
+      adapterA.emit("message.part.updated", { sessionId: part.sessionId, messageId: part.messageId, part });
+      await vi.advanceTimersByTimeAsync(2000);
+      expect(conversationStore.saveSteps).toHaveBeenCalledTimes(1);
+
+      const latestPart = { ...part, text: "Latest reasoning" };
+      adapterA.emit("message.part.updated", { sessionId: part.sessionId, messageId: part.messageId, part: latestPart });
+      const onFlushed = vi.fn();
+      const flushing = engineManager.flushPendingState().then(onFlushed);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(onFlushed).not.toHaveBeenCalled();
+      expect(conversationStore.saveSteps).toHaveBeenCalledTimes(1);
+
+      releaseFirst();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(conversationStore.saveSteps).toHaveBeenCalledTimes(2);
+      expect(onFlushed).not.toHaveBeenCalled();
+      releaseLatest();
+      await flushing;
+
+      expect(savedSnapshots).toEqual([
+        [{ ...part, sessionId: "conv-drain" }],
+        [{ ...latestPart, sessionId: "conv-drain" }],
+      ]);
+      expect(conversationStore.ensureMessage).toHaveBeenCalledOnce();
+      expect(vi.getTimerCount()).toBe(0);
+    });
+
+    it("keeps failed steps dirty for a later flush without retrying indefinitely", async () => {
+      vi.useFakeTimers();
+      engineManager.registerAdapter(adapterA);
+      vi.mocked(conversationStore.findByEngineSession).mockReturnValue(makeMockConv({ id: "conv-retry" }));
+      const part: ReasoningPart = {
+        id: "step-retry",
+        type: "reasoning",
+        sessionId: "engine-retry",
+        messageId: "message-retry",
+        text: "Pending reasoning",
+      };
+      vi.mocked(conversationStore.saveSteps)
+        .mockRejectedValueOnce(new Error("Disk unavailable"))
+        .mockResolvedValueOnce(undefined);
+      adapterA.emit("message.part.updated", { sessionId: part.sessionId, messageId: part.messageId, part });
+
+      await engineManager.flushPendingState();
+      expect(conversationStore.saveSteps).toHaveBeenCalledOnce();
+      expect(vi.getTimerCount()).toBe(0);
+      await engineManager.flushPendingState();
+      expect(conversationStore.saveSteps).toHaveBeenCalledTimes(2);
+      expect(conversationStore.ensureMessage).toHaveBeenCalledOnce();
     });
   });
 

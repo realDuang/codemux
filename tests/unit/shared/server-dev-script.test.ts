@@ -1,332 +1,160 @@
-import { describe, it, expect } from "vitest";
-import { chmod, copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { existsSync } from "node:fs";
-import { execFile } from "node:child_process";
-import { tmpdir } from "node:os";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { promisify } from "node:util";
 
-const execFileAsync = promisify(execFile);
-// Anchor to the test file's own location so the test still finds the script
-// when vitest is invoked from a subdirectory, an IDE, or a wrapper.
-const SOURCE_SCRIPT = fileURLToPath(
-  new URL("../../../scripts/server-dev.sh", import.meta.url),
-);
+const mocks = vi.hoisted(() => ({
+  readMetadata: vi.fn(), callHost: vi.fn(), check: vi.fn(), readFile: vi.fn(),
+  writeFile: vi.fn(), spawn: vi.fn(), node: vi.fn(), commandExists: vi.fn(),
+}));
+vi.mock("../../../shared/host-control-client", () => ({
+  readHostControlMetadata: mocks.readMetadata, callHost: mocks.callHost,
+}));
+vi.mock("proper-lockfile", () => ({ check: mocks.check }));
+vi.mock("node:fs/promises", () => ({ default: {
+  readFile: mocks.readFile, writeFile: mocks.writeFile, mkdir: vi.fn(),
+} }));
+vi.mock("node:child_process", () => ({ spawn: mocks.spawn }));
+vi.mock("node:fs", () => ({ openSync: () => 99, closeSync: vi.fn() }));
+vi.mock("../../../scripts/server-dev-host", () => ({
+  resolveNodeExecutable: mocks.node, ServerDevHost: class {},
+}));
+vi.mock("../../../scripts/state-dir", () => ({ resolveServerStateDir: () => "/test/state" }));
+vi.mock("../../../scripts/utils", () => ({ commandExists: mocks.commandExists }));
 
-const FAKE_BUN = `#!/usr/bin/env bash
-set -euo pipefail
+import { runServerDev } from "../../../scripts/server-dev";
 
-if [ "\${1:-}" = "run" ] && [ "\${2:-}" = "dev" ]; then
-  echo "http://localhost:8233/"
-  # Mimic the Electron main process log line that server-dev.sh greps for.
-  # The script reads \$APP_LOG (dev.log), which is the stdout/stderr capture
-  # of this fake bun, so emitting the line here is sufficient.
-  echo "12:34:56.000 [info]  (main)         > Gateway server started on port 4200"
-  trap 'exit 0' TERM INT
-  while true; do
-    sleep 1
-  done
-elif [ "\${1:-}" = "scripts/server-auth.ts" ] && [ "\${2:-}" = "access-code" ]; then
-  if [ "\${3:-}" = "--plain" ]; then
-    echo "123456"
-  else
-    echo "[ok] Access code: 123456"
-  fi
-elif [ "\${1:-}" = "scripts/server-auth.ts" ] && [ "\${2:-}" = "access-requests" ]; then
-  if [ "\${3:-}" = "--count" ]; then
-    echo "0"
-  else
-    echo "[!] No pending requests."
-  fi
-elif [[ "\${1:-}" == */state-dir.ts ]]; then
-  # Mirror getGlobalServerStateRoot() in scripts/state-dir.ts for the
-  # non-isolated path that server-dev.sh uses. Keep this in sync with the
-  # production implementation: XDG_STATE_HOME wins, otherwise fall back to
-  # \$HOME/.local/state, with "codemux-server" appended.
-  base="\${XDG_STATE_HOME:-\${HOME}/.local/state}"
-  printf '%s/codemux-server' "\$base"
-else
-  echo "Unexpected bun args: $*" >&2
-  exit 1
-fi
-`;
+const metadata = { version: 1, instanceId: "fixture-owner", pid: 12345, port: 50200, dataPath: "/test/state", ownerCredential: "test-only" };
+const repositoryPath = path.resolve(fileURLToPath(new URL("../../..", import.meta.url)));
+const ready = {
+  pid: metadata.pid, runtimePid: 12346, ready: true, phase: "ready",
+  dataPath: "/test/state", runtimeDataPath: "/test/data", webPort: 8233, error: null,
+};
+let kill: ReturnType<typeof vi.spyOn>;
+let output: ReturnType<typeof vi.spyOn>;
 
-const FAKE_DBUS_RUN_SESSION = `#!/usr/bin/env bash
-set -euo pipefail
-
-if [ "\${1:-}" = "--" ]; then
-  shift
-fi
-
-exec "$@"
-`;
-
-const FAKE_XVFB_RUN = `#!/usr/bin/env bash
-set -euo pipefail
-
-while [ "$#" -gt 0 ]; do
-  case "$1" in
-    --auto-servernum|--listen-tcp)
-      shift
-      ;;
-    --server-args=*|--server-num=*|-s|-n)
-      shift
-      ;;
-    --)
-      shift
-      break
-      ;;
-    *)
-      break
-      ;;
-  esac
-done
-
-exec "$@"
-`;
-
-const FAKE_CLOUDFLARED = `#!/usr/bin/env bash
-echo "The wrapper must not spawn cloudflared directly." >&2
-exit 1
-`;
-
-const FAKE_CURL = `#!/usr/bin/env bash
-set -euo pipefail
-state="\${XDG_STATE_HOME}/codemux-server/api-mode"
-if [[ "$*" == *'/api/remote-access'* ]] && [[ "$*" == *'PATCH'* ]]; then
-  printf 'cloudflare' > "$state"
-  printf '{"mode":"cloudflare"}'
-elif [[ "$*" == *'/api/tunnel/stop'* ]]; then
-  printf 'off' > "$state"
-  printf '{"success":true}'
-elif [[ "$*" == *'/api/tunnel/status'* ]]; then
-  if [ "$(cat "$state" 2>/dev/null || true)" = 'cloudflare' ]; then
-    printf '{"status":"running","url":"https://selected-tunnel.trycloudflare.com"}'
-  else
-    printf '{"status":"stopped","url":""}'
-  fi
-else
-  exit 1
-fi
-`;
-
-interface TestRepo {
-  env: NodeJS.ProcessEnv;
-  root: string;
-  scriptPath: string;
-  stateDir: string;
-}
-
-interface TestRepoOptions {
-  delaySetsid?: boolean;
-}
-
-async function writeExecutable(filePath: string, content: string): Promise<void> {
-  await writeFile(filePath, content, "utf8");
-  await chmod(filePath, 0o755);
-}
-
-async function createTestRepo(options: TestRepoOptions = {}): Promise<TestRepo> {
-  const root = await mkdtemp(path.join(tmpdir(), "codemux-server-dev-"));
-  const home = path.join(root, "home");
-  const bunBin = path.join(home, ".bun", "bin");
-  const stateDir = path.join(root, "state", "codemux-server");
-  const scriptPath = path.join(root, "scripts", "server-dev.sh");
-
-  await mkdir(path.join(root, "scripts"), { recursive: true });
-  await mkdir(path.join(root, "node_modules"), { recursive: true });
-  await mkdir(bunBin, { recursive: true });
-  await mkdir(stateDir, { recursive: true });
-
-  await copyFile(SOURCE_SCRIPT, scriptPath);
-  await chmod(scriptPath, 0o755);
-
-  await writeExecutable(path.join(bunBin, "bun"), FAKE_BUN);
-  await writeExecutable(path.join(bunBin, "dbus-run-session"), FAKE_DBUS_RUN_SESSION);
-  await writeExecutable(path.join(bunBin, "xvfb-run"), FAKE_XVFB_RUN);
-  await writeExecutable(path.join(bunBin, "cloudflared"), FAKE_CLOUDFLARED);
-  await writeExecutable(path.join(bunBin, "curl"), FAKE_CURL);
-
-  if (options.delaySetsid) {
-    const { stdout } = await execFileAsync("bash", ["-c", "command -v setsid"]);
-    await writeExecutable(
-      path.join(bunBin, "setsid"),
-      `#!/usr/bin/env bash\nset -euo pipefail\nsleep 0.25\nexec "${stdout.trim()}" "$@"\n`,
-    );
-  }
-
-  return {
-    env: {
-      ...process.env,
-      HOME: home,
-      PATH: `${bunBin}:${process.env.PATH ?? ""}`,
-      XDG_STATE_HOME: path.join(root, "state"),
-      CODEMUX_SERVER_START_TIMEOUT: "10",
-    },
-    root,
-    scriptPath,
-    stateDir,
-  };
-}
-
-async function runServerScript(repo: TestRepo, ...args: string[]) {
-  return execFileAsync("bash", [repo.scriptPath, ...args], {
-    cwd: repo.root,
-    env: repo.env,
-    timeout: 20_000,
+beforeEach(() => {
+  vi.restoreAllMocks();
+  vi.clearAllMocks();
+  kill = vi.spyOn(process, "kill").mockReturnValue(true);
+  output = vi.spyOn(console, "log").mockImplementation(() => {});
+  mocks.readMetadata.mockResolvedValue(metadata);
+  mocks.check.mockResolvedValue(false);
+  mocks.readFile.mockResolvedValue("");
+  mocks.writeFile.mockResolvedValue(undefined);
+  mocks.node.mockResolvedValue("/explicit/node");
+  mocks.commandExists.mockReturnValue(true);
+  mocks.callHost.mockImplementation(async (_path: string, method: string) => {
+    if (method === "host:status" || method === "dev:restart") return ready;
+    if (method === "host:stop") return { stopping: true };
+    if (method === "auth:getAccessCode") return "test-code";
+    if (method === "auth:getPendingRequests") return [];
+    if (method === "tunnel:getStatus") return { status: "running", url: "https://new-tunnel.example.test" };
+    throw new Error(`Unexpected method: ${method}`);
   });
+});
+
+afterEach(() => { vi.restoreAllMocks(); vi.unstubAllEnvs(); });
+
+function expectNoSignals(): void {
+  expect(kill.mock.calls.every(([, signal]) => signal === 0)).toBe(true);
 }
 
-async function readStateFile(repo: TestRepo, fileName: string): Promise<string> {
-  return (await readFile(path.join(repo.stateDir, fileName), "utf8")).trim();
-}
+describe("runServerDev", () => {
+  it("stops through the exact private owner and waits for its lease release", async () => {
+    mocks.readMetadata.mockResolvedValueOnce(metadata).mockResolvedValue(null);
+    await runServerDev(["stop"]);
+    expect(mocks.callHost).toHaveBeenCalledExactlyOnceWith("/test/state", "host:stop", [], {
+      expectedInstanceId: metadata.instanceId, timeoutMs: 40_000,
+    });
+    expect(mocks.check).toHaveBeenCalledWith("/test/state", { stale: 30_000 });
+    expectNoSignals();
+  });
 
-function isPidRunning(pidText: string): boolean {
-  const pid = Number.parseInt(pidText, 10);
-  if (!Number.isInteger(pid) || pid <= 0) {
-    return false;
-  }
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
-}
+  it("does not signal a live legacy PID without private control identity", async () => {
+    mocks.readMetadata.mockResolvedValue(null);
+    mocks.readFile.mockResolvedValue("23456\n");
+    await expect(runServerDev(["stop"])).rejects.toThrow("original launcher");
+    expect(mocks.callHost).not.toHaveBeenCalled();
+    expect(mocks.spawn).not.toHaveBeenCalled();
+    expectNoSignals();
+  });
 
-function killPidOrGroup(pidText: string | null): void {
-  if (!pidText) {
-    return;
-  }
+  it("leaves a replacement owner running when it appears during --replace", async () => {
+    mocks.readMetadata.mockResolvedValueOnce(metadata).mockResolvedValue({ ...metadata, instanceId: "replacement", pid: 23456 });
+    await expect(runServerDev(["start", "--replace"])).rejects.toThrow("left running");
+    expect(mocks.node).toHaveBeenCalled();
+    expect(mocks.callHost).toHaveBeenCalledTimes(1);
+    expect(mocks.callHost.mock.calls[0][3]).toMatchObject({ expectedInstanceId: metadata.instanceId });
+    expect(mocks.spawn).not.toHaveBeenCalled();
+    expectNoSignals();
+  });
 
-  const pid = Number.parseInt(pidText, 10);
-  if (!Number.isInteger(pid) || pid <= 0) {
-    return;
-  }
+  it("restarts the dev stack with the caller's worktree and environment and restores runtime-owned access", async () => {
+    const replacement = { ...metadata, instanceId: "replacement", pid: 23456 };
+    mocks.readMetadata.mockResolvedValueOnce(metadata).mockResolvedValueOnce(null).mockResolvedValue(replacement);
+    mocks.spawn.mockReturnValue({ pid: replacement.pid, once: vi.fn(), unref: vi.fn(), kill: vi.fn() });
+    const call = mocks.callHost.getMockImplementation()!;
+    mocks.callHost.mockImplementation(async (dataPath: string, method: string, args: unknown[], options: { expectedInstanceId: string }) => {
+      if (method === "host:status") return { ...ready, pid: replacement.pid, runtimePid: 23457 };
+      return call(dataPath, method, args, options);
+    });
+    vi.stubEnv("CODEMUX_DATA_DIR", "/caller/selected-data");
+    vi.stubEnv("CODEMUX_WEB_PORT", "9233");
+    await runServerDev(["restart"]);
+    expect(mocks.callHost).toHaveBeenCalledWith("/test/state", "host:stop", [], {
+      expectedInstanceId: metadata.instanceId, timeoutMs: 40_000,
+    });
+    expect(mocks.callHost.mock.calls.filter(call => call[1] !== "host:stop").every(call => call[3].expectedInstanceId === replacement.instanceId)).toBe(true);
+    expect(mocks.callHost.mock.calls.some(call => ["dev:restart", "tunnel:start", "remoteAccess:update"].includes(call[1]))).toBe(false);
+    expect(output).toHaveBeenCalledWith("Tunnel is ready: https://new-tunnel.example.test");
+    expect(output).toHaveBeenCalledWith("Temporary quick-tunnel URLs may change when CodeMux restarts.");
+    expect(mocks.spawn).toHaveBeenCalledWith(process.execPath, [path.join(repositoryPath, "scripts/server-dev.ts"), "supervise"], expect.objectContaining({
+      cwd: repositoryPath, env: expect.objectContaining({ CODEMUX_DATA_DIR: "/caller/selected-data", CODEMUX_WEB_PORT: "9233" }),
+    }));
+    expectNoSignals();
+  });
 
-  for (const signal of ["SIGTERM", "SIGKILL"] as const) {
-    try {
-      process.kill(-pid, signal);
-      return;
-    } catch {
-      // Fall through to the process itself.
-    }
+  it("does not replace a running host when the requested tunnel dependency is absent", async () => {
+    mocks.commandExists.mockReturnValue(false);
+    await expect(runServerDev(["start", "--replace", "--tunnel"])).rejects.toThrow("cloudflared");
+    expect(mocks.readMetadata).not.toHaveBeenCalled();
+    expect(mocks.callHost).not.toHaveBeenCalled();
+    expect(mocks.spawn).not.toHaveBeenCalled();
+  });
 
-    try {
-      process.kill(pid, signal);
-      return;
-    } catch {
-      // Process may already be gone.
-    }
-  }
-}
+  it.each(["start", "restart"])("validates Node before %s replaces an existing host", async command => {
+    mocks.node.mockRejectedValue(new Error("Node 24 required"));
+    await expect(runServerDev(command === "start" ? [command, "--replace"] : [command])).rejects.toThrow("Node 24 required");
+    expect(mocks.readMetadata).not.toHaveBeenCalled();
+    expect(mocks.callHost).not.toHaveBeenCalled();
+    expect(mocks.spawn).not.toHaveBeenCalled();
+  });
 
-async function cleanupRepo(repo: TestRepo): Promise<void> {
-  try {
-    await runServerScript(repo, "stop");
-  } catch {
-    // Best-effort cleanup below handles leftover processes.
-  }
+  it("allows stale dead-host discovery to be replaced only after its lease expires", async () => {
+    kill.mockImplementation(() => { throw Object.assign(new Error("gone"), { code: "ESRCH" }); });
+    mocks.check.mockResolvedValue(true);
+    await expect(runServerDev(["status"])).rejects.toThrow("30-second lease");
+    mocks.check.mockResolvedValue(false);
+    await runServerDev(["status"]);
+    expect(output).toHaveBeenCalledWith("CodeMux development server is not running.");
+    expect(mocks.callHost).not.toHaveBeenCalled();
+    expectNoSignals();
+  });
 
-  const pidFiles = ["dev.pid", "tunnel.pid"] as const;
-  for (const fileName of pidFiles) {
-    const filePath = path.join(repo.stateDir, fileName);
-    if (existsSync(filePath)) {
-      killPidOrGroup(await readStateFile(repo, fileName));
-    }
-  }
+  it("does not treat an inaccessible live PID as proof that its owner is gone", async () => {
+    kill.mockImplementation(() => { throw Object.assign(new Error("denied"), { code: "EPERM" }); });
+    await runServerDev(["status"]);
+    expect(mocks.callHost).toHaveBeenCalledWith("/test/state", "host:status", [], {
+      expectedInstanceId: metadata.instanceId, timeoutMs: 40_000,
+    });
+    expect(mocks.check).not.toHaveBeenCalled();
+    expectNoSignals();
+  });
 
-  await rm(repo.root, { recursive: true, force: true });
-}
-
-describe.skipIf(process.platform !== "linux")("scripts/server-dev.sh", () => {
-  it(
-    "activates Cloudflare through the application and restores its selected mode on restart",
-    async () => {
-      // Force the launched PID to exist before its process group so startup
-      // cannot depend on how quickly setsid is scheduled by the CI runner.
-      const repo = await createTestRepo({ delaySetsid: true });
-      try {
-        const startResult = await runServerScript(repo, "start", "--replace", "--tunnel");
-        expect(startResult.stdout).toContain("Tunnel is ready: https://selected-tunnel.trycloudflare.com");
-
-        const initialAppPid = await readStateFile(repo, "dev.pid");
-        const initialTunnelUrl = await readStateFile(repo, "tunnel-url");
-
-        expect(isPidRunning(initialAppPid)).toBe(true);
-        expect(existsSync(path.join(repo.stateDir, "tunnel.pid"))).toBe(false);
-        expect(initialTunnelUrl).toBe("https://selected-tunnel.trycloudflare.com");
-
-        const restartResult = await runServerScript(repo, "restart");
-        const restartedAppPid = await readStateFile(repo, "dev.pid");
-        const restartedTunnelUrl = await readStateFile(repo, "tunnel-url");
-
-        expect(restartResult.stdout).toContain("CodeMux restored its selected Cloudflare access mode.");
-        expect(restartResult.stdout).toContain("Temporary quick-tunnel URLs may change");
-        expect(restartedAppPid).not.toBe(initialAppPid);
-        expect(restartedTunnelUrl).toBe(initialTunnelUrl);
-        expect(isPidRunning(restartedAppPid)).toBe(true);
-        expect(existsSync(path.join(repo.stateDir, "tunnel.pid"))).toBe(false);
-      } finally {
-        await cleanupRepo(repo);
-      }
-    },
-    20_000,
-  );
-
-  it(
-    "restarts cleanly when no managed tunnel is running",
-    async () => {
-      const repo = await createTestRepo();
-      try {
-        const startResult = await runServerScript(repo, "start", "--replace");
-        expect(startResult.stdout).toContain("CodeMux dev is ready: http://localhost:8233");
-
-        const initialAppPid = await readStateFile(repo, "dev.pid");
-        expect(isPidRunning(initialAppPid)).toBe(true);
-
-        const restartResult = await runServerScript(repo, "restart");
-        const restartedAppPid = await readStateFile(repo, "dev.pid");
-
-        expect(restartResult.stdout).toContain("CodeMux restarted with its persisted remote access mode.");
-        expect(restartedAppPid).not.toBe(initialAppPid);
-        expect(isPidRunning(restartedAppPid)).toBe(true);
-      } finally {
-        await cleanupRepo(repo);
-      }
-    },
-    20_000,
-  );
-
-  it(
-    "retires a legacy wrapper-owned tunnel when restarting",
-    async () => {
-      const repo = await createTestRepo();
-      try {
-        const startResult = await runServerScript(repo, "start", "--replace", "--tunnel");
-        expect(startResult.stdout).toContain("Tunnel is ready: https://selected-tunnel.trycloudflare.com");
-
-        const initialAppPid = await readStateFile(repo, "dev.pid");
-        const { stdout: initialTunnelPid } = await execFileAsync("bash", [
-          "-c", "setsid sleep 30 >/dev/null 2>&1 < /dev/null & echo $!",
-        ]);
-        await writeFile(path.join(repo.stateDir, "tunnel.pid"), initialTunnelPid);
-        expect(isPidRunning(initialAppPid)).toBe(true);
-        expect(isPidRunning(initialTunnelPid)).toBe(true);
-
-        const restartResult = await runServerScript(repo, "restart");
-        const restartedAppPid = await readStateFile(repo, "dev.pid");
-
-        expect(restartResult.stdout).toContain("CodeMux restored its selected Cloudflare access mode.");
-        expect(restartedAppPid).not.toBe(initialAppPid);
-        expect(isPidRunning(restartedAppPid)).toBe(true);
-        expect(existsSync(path.join(repo.stateDir, "tunnel.pid"))).toBe(false);
-        expect(isPidRunning(initialTunnelPid)).toBe(false);
-      } finally {
-        await cleanupRepo(repo);
-      }
-    },
-    20_000,
-  );
+  it("rejects a status response from a different process", async () => {
+    mocks.callHost.mockResolvedValue({ ...ready, pid: 23456 });
+    await expect(runServerDev(["status"])).rejects.toThrow("invalid identity");
+    expect(mocks.spawn).not.toHaveBeenCalled();
+    expectNoSignals();
+  });
 });

@@ -159,6 +159,9 @@ export class EngineManager extends EventEmitter {
   private persistedPlaceholders = new Set<string>();
   /** Timer for debounced step flush (2s interval) */
   private stepFlushTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Serialize timer and explicit flushes so older snapshots finish first. */
+  private stepFlushPromise: Promise<void> | null = null;
+  private pendingMessageWrites = new Set<Promise<void>>();
   private static readonly STEP_FLUSH_INTERVAL_MS = 2000;
 
   /** Track active sendMessage call counts per session (for idle/queue detection). */
@@ -303,10 +306,10 @@ export class EngineManager extends EventEmitter {
   private purgeRemovedConversation(conv: ConversationMeta, kind: "local" | "archived", sourceId = conv.catalogSourceId): Promise<void> {
     const pending = this.sessionRemovals.get(conv.id);
     if (pending) return kind === "local"
-      ? pending.then(() => conversationStore.removeEngineConversation(conv.id, kind, sourceId)) : pending;
+      ? this.trackMessageWrite(pending.then(() => conversationStore.removeEngineConversation(conv.id, kind, sourceId))) : pending;
     // Install the identity tombstone and remove the index synchronously, before
     // any late event or catalog can observe the old conversation again.
-    const operation = conversationStore.removeEngineConversation(conv.id, kind, sourceId);
+    const operation = this.trackMessageWrite(conversationStore.removeEngineConversation(conv.id, kind, sourceId));
     this.catalogRevisions.set(conv.engineType, (this.catalogRevisions.get(conv.engineType) ?? 0) + 1);
     this.forgetConversationMappings(conv.id);
     this.sessionEngineMap.delete(conv.id);
@@ -829,6 +832,8 @@ export class EngineManager extends EventEmitter {
       engineManagerLog.error(`Failed to mirror message changes for ${conversationId}:`, err);
     });
     this.authoritativeMessageWrites.set(conversationId, pending);
+    // Include queued snapshots and removals before their first write starts.
+    this.trackMessageWrite(pending);
     void pending.then(() => {
       if (this.authoritativeMessageWrites.get(conversationId) === pending) {
         this.authoritativeMessageWrites.delete(conversationId);
@@ -847,10 +852,27 @@ export class EngineManager extends EventEmitter {
    * started processing). Authoritative external engines instead upsert their own
    * user message IDs, including messages submitted from another client.
    */
-  private async persistMessage(
+  private persistMessage(
     conversationId: string,
     message: UnifiedMessage,
     authoritative = false,
+  ): Promise<void> {
+    return this.trackMessageWrite(this.writeMessage(conversationId, message, authoritative));
+  }
+
+  private trackMessageWrite(write: Promise<void>): Promise<void> {
+    this.pendingMessageWrites.add(write);
+    void write.then(
+      () => { this.pendingMessageWrites.delete(write); },
+      () => { this.pendingMessageWrites.delete(write); },
+    );
+    return write;
+  }
+
+  private async writeMessage(
+    conversationId: string,
+    message: UnifiedMessage,
+    authoritative: boolean,
   ): Promise<void> {
     if (message.role === "user" && !authoritative) {
       // Adapter-emitted queued user messages have a different ID than the one
@@ -981,12 +1003,35 @@ export class EngineManager extends EventEmitter {
     }, EngineManager.STEP_FLUSH_INTERVAL_MS);
   }
 
+  async flushPendingState(): Promise<void> {
+    if (this.stepFlushTimer) {
+      clearTimeout(this.stepFlushTimer);
+      this.stepFlushTimer = null;
+    }
+    do {
+      while (this.pendingMessageWrites.size > 0) {
+        await Promise.allSettled([...this.pendingMessageWrites]);
+      }
+      await this.flushDirtySteps();
+    } while (this.pendingMessageWrites.size > 0);
+  }
+
   /**
    * Incrementally persist dirty step buffers to disk.
    * Ensures a placeholder assistant message exists so that steps are
    * discoverable via listMessages() even if the message never completes.
    */
-  private async flushDirtySteps(): Promise<void> {
+  private flushDirtySteps(): Promise<void> {
+    const flush = this.stepFlushPromise
+      ? this.stepFlushPromise.then(() => this.writeDirtySteps())
+      : this.writeDirtySteps();
+    this.stepFlushPromise = flush;
+    return flush.finally(() => {
+      if (this.stepFlushPromise === flush) this.stepFlushPromise = null;
+    });
+  }
+
+  private async writeDirtySteps(): Promise<void> {
     const toFlush = [...this.dirtySteps];
     this.dirtySteps.clear();
 
@@ -1027,10 +1072,18 @@ export class EngineManager extends EventEmitter {
    * Called before adapter.sendMessage() to ensure user messages are saved
    * even if the adapter doesn't emit user message events (e.g., OpenCode).
    */
-  private async persistUserMessage(
+  private persistUserMessage(
     conversationId: string,
     content: MessagePromptContent[],
     trackQueuedTiming = false,
+  ): Promise<void> {
+    return this.trackMessageWrite(this.writeUserMessage(conversationId, content, trackQueuedTiming));
+  }
+
+  private async writeUserMessage(
+    conversationId: string,
+    content: MessagePromptContent[],
+    trackQueuedTiming: boolean,
   ): Promise<void> {
     try {
       const now = Date.now();

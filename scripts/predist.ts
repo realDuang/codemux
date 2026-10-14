@@ -8,6 +8,7 @@
 
 import { existsSync } from "fs";
 import { join } from "path";
+import { repairNodePtyPermissions } from "./prepare-native";
 
 const ROOT = join(import.meta.dir, "..");
 const RESOURCES_DIR = join(ROOT, "resources", "cloudflared");
@@ -22,6 +23,8 @@ const expectedBinary = join(expectedDir, binaryName);
 
 async function main() {
   console.log("🔍 Pre-dist check: verifying required resources...\n");
+
+  await repairNodePtyPermissions(ROOT);
 
   // Check cloudflared binary
   if (existsSync(expectedBinary)) {

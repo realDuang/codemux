@@ -1,6 +1,24 @@
 import { LocaleDict } from "./en";
 
 export const zh: LocaleDict = {
+  localServer: {
+    title: "本机服务",
+    description: "管理这台电脑上的 CodeMux 服务。",
+    stopped: "已停止",
+    starting: "正在启动服务…",
+    ready: "运行中",
+    stopping: "正在停止服务…",
+    error: "服务不可用",
+    process: "进程 {pid}",
+    external: "此服务由桌面应用以外的方式启动，关闭 CodeMux 桌面应用后仍会继续运行。请通过原启动方式重启，以保留原有启动配置。",
+    start: "启动服务",
+    stop: "停止服务",
+    restart: "重启服务",
+    openLogs: "打开日志",
+    openManager: "管理服务",
+    returnToApp: "返回 CodeMux",
+    editingHint: "当前会话和草稿会保留。发送消息及其他服务操作需要先启动服务。",
+  },
   pwa: {
     install: "添加到桌面",
     installDescription: "从主屏幕直接打开 CodeMux。",

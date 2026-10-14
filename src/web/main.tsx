@@ -1,6 +1,7 @@
 import { render } from "solid-js/web";
 import App from "../App";
 import { PwaControls } from "./PwaControls";
+import "../index.css";
 import "./web.css";
 
 document.documentElement.classList.add("web-client");

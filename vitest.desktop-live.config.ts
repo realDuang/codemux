@@ -1,7 +1,9 @@
 import { defineConfig } from "vitest/config";
+import { resolve } from "node:path";
 
 // Opt-in live integration suite; the normal unit-test command never includes it.
 export default defineConfig({
+  resolve: { alias: { "#runtime-host": resolve(__dirname, "electron/main/runtime-host.ts") } },
   test: {
     include: [
       "tests/integration/codex-desktop-gateway.test.ts",

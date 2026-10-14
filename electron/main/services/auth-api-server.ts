@@ -72,6 +72,10 @@ class AuthApiServer {
     return AUTH_API_PORT;
   }
 
+  isRunning(): boolean {
+    return this.server?.listening ?? false;
+  }
+
   private async handleRequest(
     req: http.IncomingMessage,
     res: http.ServerResponse,

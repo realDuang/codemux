@@ -1,4 +1,6 @@
 @import "tailwindcss";
+/* Both Vite roots use the same application utilities. */
+@source "./";
 
 /* Custom dark mode variant using class selector */
 @custom-variant dark (&:where(.dark, .dark *));

@@ -9,6 +9,7 @@ import {
   isAbsolute as isAbsolutePath,
 } from "node:path";
 import { execFile } from "node:child_process";
+import { createRequire } from "node:module";
 import type * as ParcelWatcher from "@parcel/watcher";
 import type {
   FileExplorerNode,
@@ -514,20 +515,18 @@ export async function getGitDiff(
 // ---------------------------------------------------------------------------
 
 // Lazy-load @parcel/watcher with platform-specific native binding (cached)
+const requireNativeModule = createRequire(import.meta.url);
 let _cachedWatcher: typeof import("@parcel/watcher") | null = null;
 function getWatcher(): typeof import("@parcel/watcher") {
   if (_cachedWatcher) return _cachedWatcher;
   const suffix = process.platform === "linux" ? "-glibc" : "";
   const bindingName = `@parcel/watcher-${process.platform}-${process.arch}${suffix}`;
   try {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const binding = require(bindingName);
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const { createWrapper } = require("@parcel/watcher/wrapper");
+    const binding = requireNativeModule(bindingName);
+    const { createWrapper } = requireNativeModule("@parcel/watcher/wrapper");
     _cachedWatcher = createWrapper(binding) as typeof import("@parcel/watcher");
   } catch {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    _cachedWatcher = require("@parcel/watcher");
+    _cachedWatcher = requireNativeModule("@parcel/watcher");
   }
   return _cachedWatcher!;
 }

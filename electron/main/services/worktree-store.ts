@@ -37,6 +37,8 @@ export class WorktreeStore {
   private cache = new Map<string, Map<string, WorktreeInfo>>();
   private dirtyProjects = new Set<string>();
   private writeTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Serialize batches to prevent concurrent writes to a project's temporary file. */
+  private writePromise: Promise<void> | null = null;
 
   init(): void {
     if (this.initialized) return;
@@ -144,10 +146,22 @@ export class WorktreeStore {
     }, INDEX_DEBOUNCE_MS);
   }
 
-  private async flushDirty(): Promise<void> {
+  private flushDirty(): Promise<void> {
+    const flush = this.writePromise
+      ? this.writePromise.then(() => this.writeDirty())
+      : this.writeDirty();
+    this.writePromise = flush;
+    return flush.finally(() => {
+      if (this.writePromise === flush) this.writePromise = null;
+    });
+  }
+
+  private async writeDirty(): Promise<void> {
     const projects = Array.from(this.dirtyProjects);
     this.dirtyProjects.clear();
-    await Promise.all(projects.map((pid) => this.writeIndex(pid)));
+    const results = await Promise.allSettled(projects.map((pid) => this.writeIndex(pid)));
+    const failure = results.find((result) => result.status === "rejected");
+    if (failure?.status === "rejected") throw failure.reason;
   }
 
   private async writeIndex(projectId: string): Promise<void> {

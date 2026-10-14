@@ -1,7 +1,7 @@
 import http from "http";
 import fs from "fs";
 import path from "path";
-import { app } from "electron";
+import { runtimeHost } from "#runtime-host";
 import { deviceStore } from "./device-store";
 import { prodServerLog, getLogFilePath, getFileLogLevel, setFileLogLevel, loadSettings, saveSettings } from "./logger";
 import { sendJson, requireAuth, isLocalRequest, getLocalIp } from "../../../shared/http-utils";
@@ -154,7 +154,7 @@ class ProductionServer {
     this.port = port;
     
     // Web has an independent build; Electron continues to load out/renderer.
-    this.staticRoot = path.join(app.getAppPath(), "out", "web");
+    this.staticRoot = path.join(runtimeHost.appPath, "out", "web");
     prodServerLog.info("Static root:", this.staticRoot);
 
     return new Promise((resolve, reject) => {

@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer } from "electron";
 import type { RemoteAccessUpdate } from "../../shared/remote-access";
+import type { LocalServerState } from "../../shared/local-server-types";
 
 // Pre-load settings synchronously so renderer can read them immediately at module init
 // (needed for theme/locale which must be applied before first paint)
@@ -109,7 +110,29 @@ const electronAPI = {
   startup: {
     isReady: () => ipcRenderer.invoke("startup:isReady") as Promise<boolean>,
     onReady: (callback: () => void) => {
-      ipcRenderer.once("startup:ready", callback);
+      const handler = () => callback();
+      ipcRenderer.once("startup:ready", handler);
+      return () => { ipcRenderer.removeListener("startup:ready", handler); };
+    },
+  },
+
+  // Local server lifecycle; host control credentials remain in the main process.
+  runtime: {
+    getState: () => ipcRenderer.invoke("runtime:getState") as Promise<LocalServerState>,
+    start: () => ipcRenderer.invoke("runtime:start") as Promise<LocalServerState>,
+    stop: () => ipcRenderer.invoke("runtime:stop") as Promise<LocalServerState>,
+    restart: () => ipcRenderer.invoke("runtime:restart") as Promise<LocalServerState>,
+    showManager: () => ipcRenderer.invoke("runtime:showManager") as Promise<void>,
+    openLogs: () => ipcRenderer.invoke("runtime:openLogs") as Promise<void>,
+    onStateChange: (callback: (state: LocalServerState) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, state: LocalServerState) => callback(state);
+      ipcRenderer.on("runtime:state", handler);
+      return () => { ipcRenderer.removeListener("runtime:state", handler); };
+    },
+    onShowManager: (callback: () => void) => {
+      const handler = () => callback();
+      ipcRenderer.on("runtime:showManager", handler);
+      return () => { ipcRenderer.removeListener("runtime:showManager", handler); };
     },
   },
 

@@ -5,6 +5,7 @@ import tailwindcss from '@tailwindcss/vite';
 import { resolve } from 'path';
 import { createLogger } from 'vite';
 import { createAuthProxyPlugin, isElectronRemoteRequestAllowed, preserveProxyRequestIdentity } from './scripts/auth-proxy-plugin';
+import { createServerBuildPlugin } from './scripts/server-build-plugin';
 import { GATEWAY_PORT, WEBHOOK_PORT, WEB_PORT } from './shared/ports';
 
 // Custom logger that suppresses proxy errors during startup
@@ -15,9 +16,10 @@ logger.error = (msg, options) => {
   _loggerError(msg, options);
 };
 
-export default defineConfig({
+export default defineConfig(({ command }) => ({
   main: {
-    plugins: [externalizeDepsPlugin({ exclude: ['ws', 'shell-env', 'electron-log'] })],
+    resolve: { alias: { '#runtime-host': resolve(__dirname, 'electron/main/runtime-host.ts') } },
+    plugins: [createServerBuildPlugin(__dirname), externalizeDepsPlugin({ exclude: ['ws', 'shell-env', 'electron-log'] })],
     build: {
       lib: {
         entry: resolve(__dirname, 'electron/main/index.ts'),
@@ -48,7 +50,8 @@ export default defineConfig({
     },
   },
 
-  renderer: {
+  // Production UI is built once by vite.web.config.ts; development keeps its proxy.
+  renderer: command === 'serve' ? {
     root: '.',
     base: './',
     customLogger: logger,
@@ -107,5 +110,5 @@ export default defineConfig({
         },
       },
     },
-  },
-});
+  } : undefined,
+}));

@@ -3,6 +3,7 @@ import { useNavigate } from "@solidjs/router";
 import { Auth, type DeviceInfo } from "../lib/auth";
 import { useI18n, formatMessage } from "../lib/i18n";
 import { isElectron } from "../lib/platform";
+import { publicAssetUrl } from "../lib/public-assets";
 
 // ============================================================================
 // Helper Functions
@@ -231,7 +232,7 @@ export default function Devices() {
         style={{ height: "var(--electron-title-bar-height, 40px)", "min-height": "var(--electron-title-bar-height, 40px)" }}
       >
         <div class="flex items-center gap-1.5 electron-no-drag flex-shrink-0 titlebar-brand">
-          <img src={`${import.meta.env.BASE_URL}assets/logo.png`} alt="CodeMux" class="w-5 h-5 rounded" />
+          <img src={publicAssetUrl("logo.png")} alt="CodeMux" class="w-5 h-5 rounded" />
           <span class="hidden sm:inline text-[11px] font-semibold tracking-wide text-gray-500 dark:text-gray-400 bg-gray-100 dark:bg-slate-800 px-2 py-0.5 rounded-md border border-gray-200 dark:border-slate-700 select-none">CodeMux</span>
         </div>
         <div class="flex items-center gap-2 electron-no-drag flex-shrink-0">

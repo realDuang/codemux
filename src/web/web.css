@@ -1,7 +1,3 @@
-@import "../index.css";
-/* The Web Vite root is separate; include the shared application's utilities. */
-@source "../";
-
 .web-client { height: 100%; background: var(--color-background); }
 .web-client body { height: 100%; overscroll-behavior: none; }
 .web-client #root {

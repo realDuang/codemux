@@ -469,10 +469,49 @@ describe("TunnelManager", () => {
   });
 
   // -------------------------------------------------------------------------
-  // start() — binary not found
+  // start() — binary lookup
   // -------------------------------------------------------------------------
 
-  describe("start() - binary not found", () => {
+  describe("start() - binary lookup", () => {
+    it("uses PATH without checking a packaged binary in development", async () => {
+      mockExistsSync.mockReturnValue(false);
+
+      const info = await tunnelManager.start(3000);
+
+      expect(info.status).toBe("starting");
+      expect(mockExistsSync).not.toHaveBeenCalled();
+      expect(mockSpawn).toHaveBeenCalledWith("cloudflared", [
+        "tunnel", "--url", "http://localhost:3000",
+      ]);
+    });
+
+    it("spawns the packaged resource binary after verifying it exists", async () => {
+      mockApp.isPackaged = true;
+      const originalResourcesPath = process.resourcesPath;
+      Object.defineProperty(process, "resourcesPath", {
+        value: "/app/resources",
+        configurable: true,
+      });
+      const executable = process.platform === "win32" ? "cloudflared.exe" : "cloudflared";
+      const expectedPath = path.join("/app/resources", "cloudflared", `${process.platform}-${process.arch}`, executable);
+      mockExistsSync.mockImplementation(file => file === expectedPath);
+
+      try {
+        const info = await tunnelManager.start(3000);
+
+        expect(info.status).toBe("starting");
+        expect(mockExistsSync).toHaveBeenCalledExactlyOnceWith(expectedPath);
+        expect(mockSpawn).toHaveBeenCalledWith(expectedPath, [
+          "tunnel", "--url", "http://localhost:3000",
+        ]);
+      } finally {
+        Object.defineProperty(process, "resourcesPath", {
+          value: originalResourcesPath,
+          configurable: true,
+        });
+      }
+    });
+
     it("returns error info when packaged binary does not exist", async () => {
       mockApp.isPackaged = true;
       const originalResourcesPath = process.resourcesPath;

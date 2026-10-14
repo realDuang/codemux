@@ -1,8 +1,9 @@
 import { existsSync, readFileSync } from "fs";
-import { join, dirname, sep } from "path";
+import { join } from "path";
 import { fileURLToPath } from "url";
-import { app } from "electron";
+import { runtimeHost } from "#runtime-host";
 import type { AgentMode } from "../../../../src/types/unified";
+import { getCopilotCliCandidates, unpackCopilotCliPath } from "./cli-path";
 
 // ============================================================================
 // Default Agent Modes
@@ -40,7 +41,6 @@ export function readConfigModel(): string | undefined {
  */
 export function resolvePlatformCli(): string | undefined {
   const pkgName = `@github/copilot-${process.platform}-${process.arch}`;
-  const binaryName = process.platform === "win32" ? "copilot.exe" : "copilot";
 
   // Strategy 1: import.meta.resolve
   // In packaged builds, import.meta.resolve returns paths inside app.asar.
@@ -48,23 +48,14 @@ export function resolvePlatformCli(): string | undefined {
   // execute a binary from inside an asar archive.  Convert the path to the
   // unpacked location (electron-builder extracts copilot-* via asarUnpack).
   try {
-    let resolved = fileURLToPath((import.meta as any).resolve(pkgName));
-    if (resolved.includes(`app.asar${sep}`) && !resolved.includes("app.asar.unpacked")) {
-      resolved = resolved.replace(`app.asar${sep}`, `app.asar.unpacked${sep}`);
-    }
+    const resolved = unpackCopilotCliPath(fileURLToPath((import.meta as any).resolve(pkgName)));
     if (existsSync(resolved)) return resolved;
   } catch {
     // Not resolvable
   }
 
   // Strategy 2: Scan known filesystem locations
-  const appPath = app.getAppPath();
-  const candidates = [
-    join(dirname(appPath), "app.asar.unpacked", "node_modules", "@github", "copilot", "node_modules", pkgName, binaryName),
-    join(dirname(appPath), "app.asar.unpacked", "node_modules", pkgName, binaryName),
-    join(appPath, "node_modules", pkgName, binaryName),
-    join(appPath, "node_modules", "@github", "copilot", "node_modules", pkgName, binaryName),
-  ];
+  const candidates = getCopilotCliCandidates(runtimeHost.appPath, process.platform, process.arch);
 
   for (const candidate of candidates) {
     if (existsSync(candidate)) return candidate;

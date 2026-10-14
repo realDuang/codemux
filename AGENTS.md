@@ -152,6 +152,14 @@ codemux/
 
 ## Core Architecture
 
+### Runtime boundaries
+
+- `server/index.ts` and `server/cli.ts` build to `out/server` and run on Node 24 without Electron or a display. `server/service-host.ts` composes the same engine/channel stack for both hosts, with lifecycle in `shared/service-runtime.ts`.
+- Electron owns native integration and `LocalServerSupervisor`; engines and services run in its local Node child. Host settings have one writer, accessed through the private owner control API while running. Preserve the existing data paths and local/remote authorization rules.
+- Production Web and desktop entries share compiled business assets in `out/web`. Electron still loads `out/renderer/index.html` through `file:`. Only the Web entry imports the PWA runtime.
+- `bun run build:server-app` builds the standalone server and UI; `bun run pack:server` creates a target-platform directory package. `server:dev` / `server:up` use Node plus Vite, while `dev` retains Electron. `start` remains the legacy 8234 OpenCode/Vite compatibility entry.
+- See [Server runtime](docs/server-runtime.md) for launch, data, ownership, packaging, and upgrade details. Sources retained under `electron/main/engines`, `gateway`, `channels`, and `services` can be shared runtime modules; directory names alone do not imply an Electron dependency.
+
 ### Communication Flow
 
 ```

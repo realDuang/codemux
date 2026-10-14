@@ -1,8 +1,9 @@
 import { Router, HashRouter, Route, useNavigate, Navigate } from "@solidjs/router";
-import { createEffect, createSignal, lazy, onMount, Show, Suspense, type ParentComponent, type ParentProps } from "solid-js";
+import { createEffect, createSignal, lazy, onCleanup, onMount, Show, Suspense, type ParentComponent, type ParentProps } from "solid-js";
 import { Auth } from "./lib/auth";
 import { I18nProvider, useI18n } from "./lib/i18n";
 import { logger } from "./lib/logger";
+import { publicAssetUrl } from "./lib/public-assets";
 import { initElectronTitleBar, isElectron } from "./lib/platform";
 import "./lib/theme";
 import { AccessRequestNotification } from "./components/AccessRequestNotification";
@@ -11,6 +12,9 @@ import { NotificationToast } from "./components/NotificationToast";
 import { Spinner } from "./components/Spinner";
 import EntryPage from "./pages/EntryPage";
 import Chat from "./pages/Chat";
+import { LocalServerManager } from "./desktop/LocalServerManager";
+import { initialLocalServerView, observeLocalServer, receiveLocalServerState, type LocalServerAction } from "./desktop/local-server-state";
+import type { LocalServerState } from "../shared/local-server-types";
 
 const PageFallback = () => (
   <div class="fixed inset-0 flex items-center justify-center bg-gray-50 dark:bg-slate-950">
@@ -104,7 +108,7 @@ function StartupSplash() {
             }}
           >
             <img
-              src={`${import.meta.env.BASE_URL}assets/logo.png`}
+              src={publicAssetUrl("logo.png")}
               alt="CodeMux"
               class="w-24 h-24 object-contain"
               style={{
@@ -202,24 +206,69 @@ function App(props: ParentProps) {
 
   // Startup readiness: web is always ready; Electron waits for IPC signal
   const [appReady, setAppReady] = createSignal(!isElectron());
+  const runtime = isElectron() ? window.electronAPI?.runtime : undefined;
+  const [serverView, setServerView] = createSignal(initialLocalServerView);
+  const [runtimePending, setRuntimePending] = createSignal(false);
+  const [runtimeError, setRuntimeError] = createSignal<string | null>(null);
+  let runtimeObserver: ReturnType<typeof observeLocalServer> | undefined;
+
+  const handleRuntimeState = (state: LocalServerState) => {
+    setServerView((view) => receiveLocalServerState(view, state));
+    if (state.phase === "ready") setAppReady(true);
+  };
+
+  const handleRuntimeAction = async (action: LocalServerAction) => {
+    if (!runtimeObserver || runtimePending()) return;
+    setRuntimePending(true);
+    setRuntimeError(null);
+    try {
+      await runtimeObserver.run(action);
+    } catch (error) {
+      setRuntimeError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setRuntimePending(false);
+    }
+  };
+
+  const handleOpenLogs = async () => {
+    try {
+      await runtime?.openLogs();
+    } catch (error) {
+      setRuntimeError(error instanceof Error ? error.message : String(error));
+    }
+  };
 
   // Initialize Electron title bar safe area on mount
   onMount(() => {
     initElectronTitleBar();
 
-    if (isElectron()) {
-      const api = (window as any).electronAPI;
+    if (runtime) {
+      runtimeObserver = observeLocalServer(runtime, handleRuntimeState, (error) => {
+        setServerView((view) => receiveLocalServerState(view, {
+          ...view.state,
+          phase: "error",
+          error: error instanceof Error ? error.message : String(error),
+        }));
+      });
+      const unsubscribeManager = runtime.onShowManager(() => {
+        setServerView((view) => ({ ...view, managerVisible: true }));
+      });
+      onCleanup(() => {
+        runtimeObserver?.dispose();
+        unsubscribeManager();
+      });
+    } else if (isElectron()) {
+      const api = window.electronAPI;
       if (api?.startup) {
-        // Check if already ready (e.g. services started before renderer loaded)
-        api.startup.isReady().then((ready: boolean) => {
-          if (ready) {
-            setAppReady(true);
-          } else {
-            // Wait for push notification from main process
-            api.startup.onReady(() => {
-              setAppReady(true);
-            });
-          }
+        // Subscribe first: readiness can arrive while the initial query is pending.
+        const unsubscribe = api.startup.onReady(() => setAppReady(true));
+        let disposed = false;
+        void api.startup.isReady().then((ready) => {
+          if (ready && !disposed) setAppReady(true);
+        }).catch((error: unknown) => logger.error("[Startup] Readiness check failed:", error));
+        onCleanup(() => {
+          disposed = true;
+          unsubscribe?.();
         });
       } else {
         // No startup API available (shouldn't happen), don't block
@@ -230,8 +279,19 @@ function App(props: ParentProps) {
 
   return (
     <I18nProvider>
-      <Show when={!appReady()}>
+      <Show when={!appReady() && !runtime}>
         <StartupSplash />
+      </Show>
+      <Show when={runtime && serverView().managerVisible}>
+        <LocalServerManager
+          state={serverView().state}
+          canClose={serverView().hasBeenReady}
+          pending={runtimePending()}
+          actionError={runtimeError()}
+          onAction={handleRuntimeAction}
+          onOpenLogs={handleOpenLogs}
+          onClose={() => setServerView((view) => ({ ...view, managerVisible: false }))}
+        />
       </Show>
       <Show when={appReady()}>
         {props.children}

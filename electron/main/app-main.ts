@@ -1,370 +1,225 @@
-import { app, BrowserWindow } from "electron";
-import { randomBytes } from "node:crypto";
+import { app, BrowserWindow, ipcMain, Notification, shell } from "electron";
+import path from "node:path";
 import { shellEnvSync } from "shell-env";
-import { mainLog, loadSettings } from "./services/logger";
-import { unwatchAll } from "./services/file-service";
-// dev restart trigger
+import log, { getLogFilePath, loadSettings, mainLog } from "./services/logger";
+import { createWindow, getMainWindow } from "./window-manager";
+import { registerIpcHandlers } from "./ipc-handlers";
+import { updateManager } from "./services/update-manager";
+import { trayManager } from "./services/tray-manager";
+import { runtimeHost } from "./runtime-host";
+import { getDevicesPath, getUserDataPath } from "./services/app-paths";
+import { flushDesktopSettings } from "./desktop-settings";
+import { LocalServerSupervisor } from "./local-server-supervisor";
+import { getLocalIp } from "../../shared/http-utils";
+import {
+  AUTH_API_PORT, GATEWAY_PORT, OPENCODE_PORT, WEBHOOK_PORT, WEB_PORT, WEB_STANDALONE_PORT,
+} from "../../shared/ports";
 
-// Load the user's full login-shell environment for packaged macOS/Linux apps.
-// GUI-launched apps inherit a minimal environment from launchd, missing vars
-// defined in ~/.zshrc / ~/.bashrc (e.g. PATH, ANTHROPIC_API_KEY).
-// shell-env spawns a login shell to capture the complete env.
-// On Windows this is a no-op (returns process.env as-is).
+// GUI launchers omit login-shell variables; preserve explicit CodeMux overrides.
 try {
   const codemuxEnv = Object.fromEntries(
     Object.entries(process.env).filter(([key]) => key.startsWith("CODEMUX_")),
   );
   Object.assign(process.env, shellEnvSync(), codemuxEnv);
 } catch {
-  // Non-fatal: if shell-env fails (e.g. non-standard shell), continue with
-  // the existing environment. PATH and other vars may be incomplete.
+  // Continue with the inherited environment when the user's shell cannot be read.
 }
 
-// Catch uncaught exceptions from child process stdio (EPIPE, etc.)
-// Without this, Electron shows an error dialog and the app becomes unstable.
-process.on("uncaughtException", (err) => {
-  // EPIPE occurs when writing to a child process whose stdin is already closed
-  // (e.g. engine CLI exits before SDK finishes writing). Safe to suppress.
-  if ((err as NodeJS.ErrnoException).code === "EPIPE") {
-    mainLog.warn("Suppressed EPIPE error:", err.message);
+let supervisor: LocalServerSupervisor | undefined;
+let quitting = false;
+let quitReady = false;
+let finalQuitStarted = false;
+let shutdownPromise: Promise<void> | undefined;
+
+export function isStartupReady(): boolean {
+  return supervisor?.getState().phase === "ready";
+}
+
+async function prepareForQuit(): Promise<void> {
+  if (shutdownPromise) return shutdownPromise;
+  quitting = true;
+  shutdownPromise = (async () => {
+    let failure: unknown;
+    try { await flushDesktopSettings(); } catch (error) { failure = error; }
+    try { await supervisor?.shutdown(); } catch (error) { failure ??= error; }
+    try { await flushDesktopSettings(); } catch (error) { failure ??= error; }
+    if (failure) throw failure;
+  })();
+  return shutdownPromise;
+}
+
+async function prepareForInstall(): Promise<void> {
+  try {
+    await prepareForQuit();
+    quitReady = true;
+  } catch (error) {
+    // The installer has not started; leave the manager usable for a retry.
+    shutdownPromise = undefined;
+    quitting = false;
+    throw error;
+  }
+}
+
+process.on("uncaughtException", error => {
+  if ((error as NodeJS.ErrnoException).code === "EPIPE") {
+    mainLog.warn("Suppressed EPIPE error:", error.message);
     return;
   }
-  mainLog.error("Uncaught exception:", err);
-  // Non-EPIPE uncaught exceptions leave the process in undefined state — exit gracefully
+  mainLog.error("Uncaught desktop exception:", error);
+  // A forked desktop server also stops when this parent's IPC channel closes.
   app.exit(1);
 });
-import { createWindow, getMainWindow } from "./window-manager";
-import { registerIpcHandlers } from "./ipc-handlers";
-import { deviceStore } from "./services/device-store";
-import { conversationStore } from "./services/conversation-store";
-import { authApiServer } from "./services/auth-api-server";
-import { productionServer } from "./services/production-server";
-import { remoteAccessManager, setRemoteAccessPort, stopRemoteAccessTunnel } from "./services/remote-access-manager";
-import { isLocalGatewayRequest } from "../../shared/remote-access-policy";
-import { EngineManager } from "./gateway/engine-manager";
-import { GatewayServer } from "./gateway/ws-server";
-import { OpenCodeAdapter } from "./engines/opencode";
-import { CopilotSdkAdapter } from "./engines/copilot";
-import { ClaudeCodeAdapter } from "./engines/claude";
-import { CodexAdapter } from "./engines/codex";
-import { createCodexDesktopSharing } from "./engines/codex/desktop-sharing";
-import { CodexDesktopCatalog } from "./engines/codex/desktop-catalog";
-import { getOrCreateCodexCatalogEnrollment } from "./engines/codex/desktop-catalog-enrollment";
-import { getUserDataPath } from "./services/app-paths";
-import { ChannelManager } from "./channels/channel-manager";
-import { WebhookServer } from "./channels/webhook-server";
-import { FeishuAdapter } from "./channels/feishu/feishu-adapter";
-import { DingTalkAdapter } from "./channels/dingtalk/dingtalk-adapter";
-import { TelegramAdapter } from "./channels/telegram/telegram-adapter";
-import { WeComAdapter } from "./channels/wecom/wecom-adapter";
-import { TeamsAdapter } from "./channels/teams/teams-adapter";
-import { WeixinIlinkAdapter } from "./channels/weixin-ilink/weixin-ilink-adapter";
-import { updateManager } from "./services/update-manager";
-import { trayManager } from "./services/tray-manager";
-import { scheduledTaskService } from "./services/scheduled-task-service";
-import { ensureDefaultWorkspace } from "./services/default-workspace";
-import { getTerminalService } from "./services/terminal-service";
-import { GATEWAY_PORT, OPENCODE_PORT, WEBHOOK_PORT, WEB_PORT } from "../../shared/ports";
 
-// --- Gateway singleton instances ---
-const engineManager = new EngineManager();
-const internalGatewayToken = randomBytes(32).toString("hex");
-const gatewayServer = new GatewayServer(engineManager, {
-  authValidator: (token, req) => token === internalGatewayToken
-    ? req.headers.origin === undefined && isLocalGatewayRequest(req)
-    : deviceStore.verifyToken(token).valid,
-  requestValidator: (req) => remoteAccessManager.isRequestAllowed(req, true),
-});
-remoteAccessManager.subscribe(() => gatewayServer.revalidateClients());
-
-// Register engine adapters
-const openCodeAdapter = new OpenCodeAdapter({ port: OPENCODE_PORT });
-const copilotAdapter = new CopilotSdkAdapter();
-const claudeAdapter = new ClaudeCodeAdapter();
-const codexAdapter = new CodexAdapter();
-// Opt-in until the private Desktop protocol has a supported compatibility contract.
-const desktopSharingEnabled = process.env.CODEMUX_CODEX_DESKTOP_BRIDGE !== undefined
-  ? process.env.CODEMUX_CODEX_DESKTOP_BRIDGE === "1"
-  : loadSettings().codexDesktopBridgeEnabled === true;
-const codexDesktopSharing = desktopSharingEnabled
-  ? createCodexDesktopSharing({
-    listCandidates: (limit) => codexAdapter.listHistoricalSessions(limit),
-    listModelCatalog: async () => { await codexAdapter.start(); return codexAdapter.listModels(); },
-    renameStoredThread: (threadId, title) => codexAdapter.renameStoredThread(threadId, title),
-    readStoredThread: (threadId) => codexAdapter.readStoredThread(threadId, { activeOnly: true }),
-    archiveStoredThread: (threadId) => codexAdapter.archiveStoredThread(threadId),
-    unarchiveStoredThread: (threadId) => codexAdapter.unarchiveStoredThread(threadId),
-    catalogFactory: () => {
-      const enrollment = getOrCreateCodexCatalogEnrollment(getUserDataPath());
-      return new CodexDesktopCatalog({
-        ...enrollment,
-        client: codexAdapter.createDesktopCatalogClient(),
-        previouslyAdmittedThreadIds: conversationStore.list({ engineType: "codex-desktop" })
-          .filter((conversation) => conversation.catalogSourceId === enrollment.sourceId && conversation.engineSessionId)
-          .map((conversation) => conversation.engineSessionId!),
-        onError: (error) => mainLog.warn("Codex catalog refresh failed:", error.message),
-      });
-    },
-  })
-  : null;
-const codexDesktopAdapter = codexDesktopSharing?.adapter;
-engineManager.registerAdapter(openCodeAdapter);
-engineManager.registerAdapter(copilotAdapter);
-engineManager.registerAdapter(claudeAdapter);
-engineManager.registerAdapter(codexAdapter);
-if (codexDesktopAdapter) engineManager.registerAdapter(codexDesktopAdapter);
-
-// Export for IPC handlers
-export { engineManager, gatewayServer };
-
-// --- Channel Manager ---
-const channelManager = new ChannelManager();
-const webhookServer = new WebhookServer(WEBHOOK_PORT);
-channelManager.setWebhookServer(webhookServer);
-
-// Register all channel adapters
-channelManager.registerAdapter(new FeishuAdapter());
-channelManager.registerAdapter(new DingTalkAdapter());
-channelManager.registerAdapter(new TelegramAdapter());
-channelManager.registerAdapter(new WeComAdapter());
-channelManager.registerAdapter(new TeamsAdapter());
-channelManager.registerAdapter(new WeixinIlinkAdapter());
-
-// Export for IPC handlers
-export { channelManager };
-
-// Gateway WS port — imported from shared/ports
-
-// Startup readiness tracking
-let startupReady = false;
-export function isStartupReady(): boolean {
-  return startupReady;
-}
-
-// Single instance lock
-const gotTheLock = app.requestSingleInstanceLock();
-
-// Track if we're already quitting to prevent double cleanup
-let isQuitting = false;
-
-if (!gotTheLock) {
+if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
   app.on("second-instance", () => {
-    const mainWindow = getMainWindow();
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      if (!mainWindow.isVisible()) mainWindow.show();
-      if (mainWindow.isMinimized()) mainWindow.restore();
-      mainWindow.focus();
+    const win = getMainWindow();
+    if (win && !win.isDestroyed()) {
+      if (!win.isVisible()) win.show();
+      if (win.isMinimized()) win.restore();
+      win.focus();
     }
   });
 
-  app.whenReady().then(async () => {
-    // Ensure default workspace directory exists
-    ensureDefaultWorkspace();
-
-    // Initialize DeviceStore (needs to be after app ready)
-    deviceStore.init();
-
-    // Initialize ConversationStore (needs to be after app ready, before engines start)
-    conversationStore.init();
-
-    // Rebuild engine routing tables from persisted ConversationStore data
-    engineManager.initFromStore();
-
-    // Initialize scheduled task service (persistent desktop-level scheduled tasks)
-    scheduledTaskService.init(engineManager);
-
-    // Register IPC handlers
-    registerIpcHandlers();
-
-    // In dev mode, start internal Auth API server
-    // Vite middleware will proxy requests to this server
-    if (!app.isPackaged) {
-      try {
-        authApiServer.setChannelManager(channelManager);
-        await authApiServer.start();
-      } catch (err) {
-        mainLog.error("Failed to start Auth API server:", err);
-      }
-    } else {
-      // In production mode, start the production HTTP server
-      // This is required for Cloudflare Tunnel to work
-      try {
-        productionServer.setChannelManager(channelManager);
-        const port = await productionServer.start(WEB_PORT);
-        setRemoteAccessPort(port);
-        mainLog.info(`Production server started on port ${port}`);
-      } catch (err) {
-        mainLog.error("Failed to start Production server:", err);
-      }
+  // All normal quit paths, including Windows install-on-quit, drain the owner first.
+  app.on("before-quit", event => {
+    if (quitReady) {
+      finalQuitStarted = true;
+      trayManager.destroy();
+      return;
     }
-
-    await remoteAccessManager.initialize().catch(error => {
-      mainLog.error("Failed to initialize remote access:", error);
+    event.preventDefault();
+    void prepareForQuit().then(() => {
+      quitReady = true;
+      app.quit();
+    }).catch(error => {
+      mainLog.error("Desktop shutdown failed:", error);
+      app.exit(1);
     });
+  });
+  process.once("SIGTERM", () => app.quit());
+  process.once("SIGINT", () => app.quit());
 
-    // Start Gateway WebSocket server
-    try {
-      if (app.isPackaged && productionServer.isRunning()) {
-        // In production: attach to production server for single-port access through Cloudflare Tunnel
-        const httpServer = productionServer.getServer();
-        if (httpServer) {
-          gatewayServer.start({ server: httpServer, path: "/ws" });
-          mainLog.info("Gateway server attached to production server at /ws");
-        } else {
-          gatewayServer.start({ port: GATEWAY_PORT });
-          mainLog.info(`Gateway server started on port ${GATEWAY_PORT}`);
+  app.whenReady().then(() => {
+    if (quitting) return;
+    const logsPath = path.dirname(getLogFilePath());
+    const childEnv: NodeJS.ProcessEnv = {
+      ...process.env,
+      ELECTRON_RUN_AS_NODE: "1",
+      CODEMUX_DESKTOP_HOST: "1",
+      CODEMUX_DESKTOP_PARENT_PID: String(process.pid),
+      CODEMUX_RUNTIME_WEB_MODE: app.isPackaged ? "static" : "dev-proxy",
+      CODEMUX_SHARED_DEV_DEVICE_STORE: runtimeHost.usesSharedDevDeviceStore ? "1" : "0",
+      CODEMUX_DATA_DIR: getUserDataPath(),
+      CODEMUX_LOGS_DIR: logsPath,
+      CODEMUX_DEVICES_FILE: getDevicesPath(),
+      CODEMUX_APP_PATH: runtimeHost.appPath,
+      CODEMUX_RESOURCES_PATH: runtimeHost.resourcesPath,
+      CODEMUX_BUNDLED_RESOURCES: app.isPackaged ? "1" : "0",
+      CODEMUX_WEB_PORT: String(WEB_PORT),
+      CODEMUX_WEB_STANDALONE_PORT: String(WEB_STANDALONE_PORT),
+      CODEMUX_GATEWAY_PORT: String(GATEWAY_PORT),
+      CODEMUX_OPENCODE_PORT: String(OPENCODE_PORT),
+      CODEMUX_AUTH_API_PORT: String(AUTH_API_PORT),
+      CODEMUX_WEBHOOK_PORT: String(WEBHOOK_PORT),
+    };
+    delete childEnv.CODEMUX_DESKTOP_SHELL;
+    const localServer = new LocalServerSupervisor({
+      dataPath: getUserDataPath(),
+      cwd: process.cwd(),
+      entryPath: path.join(runtimeHost.appPath, "out", "server", "index.mjs"),
+      execPath: process.execPath,
+      env: childEnv,
+      beforeStart: flushDesktopSettings,
+      onNotification: ({ title, body }) => {
+        try {
+          if (Notification.isSupported()) new Notification({ title, body }).show();
+        } catch (error) {
+          mainLog.warn("Failed to show notification:", error);
         }
-      } else {
-        // In dev: standalone port
-        gatewayServer.start({ port: GATEWAY_PORT });
-        mainLog.info(`Gateway server started on port ${GATEWAY_PORT}`);
-      }
-    } catch (err) {
-      mainLog.error("Failed to start Gateway server:", err);
-    }
-
-    // Start all engine adapters (non-blocking, don't delay window creation)
-    const enginePromises: Promise<void>[] = [];
-    const engines = [
-      ["OpenCode", openCodeAdapter],
-      ["Copilot", copilotAdapter],
-      ["Claude", claudeAdapter],
-      ["Codex", codexAdapter],
-      ...(codexDesktopAdapter ? [["Codex Desktop", codexDesktopAdapter] as const] : []),
-    ] as const;
-    for (const [name, adapter] of engines) {
-      const p = (adapter as any).start().then(
-        () => mainLog.info(`${name} engine started successfully`),
-        (err: any) => mainLog.error(`${name} engine failed to start:`, err?.message ?? err),
-      );
-      enginePromises.push(p);
-    }
-
-    // Create main window
-    const isHiddenStart = process.argv.includes("--hidden");
-    createWindow(isHiddenStart);
-
-    // Initialize system tray
-    trayManager.init();
-
-    // Initialize auto-updater (only in packaged mode)
-    if (app.isPackaged) {
-      updateManager.init();
-    }
-
-    // Mark startup as ready once all engines have settled (success or failure)
-    Promise.allSettled(enginePromises).then(async () => {
-      mainLog.info("All engines settled");
-
-      const gatewayBaseUrl = app.isPackaged && productionServer.isRunning()
-        ? `ws://127.0.0.1:${productionServer.getPort()}/ws`
-        : `ws://127.0.0.1:${GATEWAY_PORT}`;
-      const internalGatewayUrl = new URL(gatewayBaseUrl);
-      internalGatewayUrl.searchParams.set("token", internalGatewayToken);
-      const gatewayUrl = internalGatewayUrl.toString();
-
-      channelManager.setRuntimeOptions({ gatewayUrl });
-
-      try {
-        // Start the shared webhook HTTP server for channels that need it
-        // (Telegram, WeCom, Teams). Feishu and DingTalk use platform WSClient.
-        await webhookServer.start();
-        mainLog.info(`Webhook server started on port ${webhookServer.serverPort}`);
-      } catch (err) {
-        mainLog.error("Failed to start channel webhook server:", err);
-      }
-
-      // Initialize channels (after engines are ready and gateway is running)
-      try {
-        await channelManager.initFromConfig({ gatewayUrl });
-      } catch (err) {
-        mainLog.error("Failed to initialize channels:", err);
-      }
-
-      // Mark startup ready AFTER channels are initialized so the renderer
-      // sees final channel statuses when it (re-)polls on startup:ready.
-      startupReady = true;
-      mainLog.info("All engines and channels settled, startup ready");
-      const win = getMainWindow();
-      if (win && !win.isDestroyed()) {
-        win.webContents.send("startup:ready");
-      }
+      },
     });
+    supervisor = localServer;
+    updateManager.setInstallErrorHandler(() => {
+      if (finalQuitStarted) return;
+      quitReady = false;
+      quitting = false;
+      shutdownPromise = undefined;
+      void localServer.start().catch(error => mainLog.error("Failed to restore server after update error:", error));
+    });
+
+    const management = {
+      loadSettings,
+      async invoke(method: string, args: unknown[] = []): Promise<unknown> {
+        if (method === "startup:isReady") return isStartupReady();
+        if (method === "settings:load") return loadSettings();
+        if (method === "system:getInfo") {
+          return {
+            platform: process.platform, arch: process.arch, version: app.getVersion(),
+            userDataPath: getUserDataPath(), homePath: app.getPath("home"), isPackaged: app.isPackaged,
+          };
+        }
+        if (method === "system:getLocalIp") return getLocalIp();
+        const result = await localServer.invoke(method, args);
+        if (method === "log:setLevel") {
+          // The child persists the setting; mirror its accepted level in desktop logging.
+          log.transports.file.level = await localServer.invoke("log:getLevel");
+        }
+        return result;
+      },
+    };
+    registerIpcHandlers({ management, beforeInstall: prepareForInstall });
+    ipcMain.handle("runtime:getState", () => localServer.getState());
+    ipcMain.handle("runtime:start", () => {
+      if (quitting) throw new Error("CodeMux is shutting down");
+      return localServer.start();
+    });
+    ipcMain.handle("runtime:stop", async () => {
+      await flushDesktopSettings();
+      return localServer.stop();
+    });
+    ipcMain.handle("runtime:restart", async () => {
+      if (quitting) throw new Error("CodeMux is shutting down");
+      await flushDesktopSettings();
+      if (quitting) throw new Error("CodeMux is shutting down");
+      return localServer.restart();
+    });
+    ipcMain.handle("runtime:showManager", () => {
+      getMainWindow()?.webContents.send("runtime:showManager");
+    });
+    ipcMain.handle("runtime:openLogs", async () => {
+      const error = await shell.openPath(logsPath);
+      if (error) throw new Error(error);
+    });
+    localServer.subscribe(state => {
+      const win = getMainWindow();
+      if (!win || win.isDestroyed()) return;
+      win.webContents.send("runtime:state", state);
+      if (state.phase === "ready") win.webContents.send("startup:ready");
+    });
+
+    // Keep the original file URL and preload so localStorage and desktop identity survive.
+    createWindow(process.argv.includes("--hidden"));
+    trayManager.init();
+    if (app.isPackaged) updateManager.init();
+    void localServer.start().catch(error => mainLog.error("Local server startup failed:", error));
 
     app.on("activate", () => {
-      const mainWindow = getMainWindow();
-      if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.show();
-        mainWindow.focus();
+      const win = getMainWindow();
+      if (win && !win.isDestroyed()) {
+        win.show();
+        win.focus();
       } else if (BrowserWindow.getAllWindows().length === 0) {
         createWindow();
       }
     });
+  }).catch(error => {
+    mainLog.error("Failed to initialize desktop:", error);
+    app.quit();
   });
 
-  // On non-macOS platforms, quit when all windows are closed
   app.on("window-all-closed", () => {
-    if (process.platform !== "darwin") {
-      app.quit();
-    }
-  });
-
-  // Cleanup before app quits
-  app.on("will-quit", async (event) => {
-    if (isQuitting) return;
-    isQuitting = true;
-
-    // When installing an update, the updater needs the normal quit flow to
-    // complete (e.g. Squirrel.Mac swaps the app bundle and relaunches).
-    // Only do synchronous cleanup and let the quit proceed without
-    // preventDefault.
-    if (updateManager.isInstallingUpdate()) {
-      trayManager.destroy();
-      await conversationStore.flushAll();
-      await scheduledTaskService.shutdown();
-      // Kill any remaining PTYs synchronously so child shells don't outlive
-      // the app bundle swap during an update.
-      getTerminalService().destroyAll();
-      gatewayServer.stop();
-      await stopRemoteAccessTunnel();
-      return;
-    }
-
-    event.preventDefault();
-
-    try {
-      trayManager.destroy();
-
-      // Stop native file watchers early — @parcel/watcher uses NAPI threadsafe
-      // functions that must be torn down before Node.js module cleanup begins.
-      unwatchAll();
-
-      // Tear down PTY child processes before the rest of the cleanup. This
-      // keeps node-pty's native cleanup off the critical path of the engine
-      // shutdown, and prevents orphan shells if engineManager.stopAll() hangs.
-      getTerminalService().destroyAll();
-
-      // Flush conversation store before quit
-      await conversationStore.flushAll();
-
-      // HTTP server.close waits for upgraded WebSockets to disconnect.
-      gatewayServer.stop();
-      await Promise.all([
-        stopRemoteAccessTunnel(),
-        authApiServer.stop(),
-        channelManager.stopAll(),
-        webhookServer.stop(),
-        engineManager.stopAll(),
-        productionServer.stop(),
-        scheduledTaskService.shutdown(),
-      ]);
-      await codexDesktopSharing?.stop();
-    } catch (err) {
-      mainLog.error("Cleanup error:", err);
-    }
-
-    app.exit(0);
+    if (process.platform !== "darwin") app.quit();
   });
 }

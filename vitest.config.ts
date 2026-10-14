@@ -1,6 +1,8 @@
 import { defineConfig } from "vitest/config";
+import { resolve } from "node:path";
 
 export default defineConfig({
+  resolve: { alias: { "#runtime-host": resolve(__dirname, "electron/main/runtime-host.ts") } },
   test: {
     include: ["tests/unit/**/*.test.ts"],
     environment: "node",

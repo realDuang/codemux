@@ -3,6 +3,8 @@ import http from "node:http";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { createHash } from "node:crypto";
+import { brotliDecompressSync, gunzipSync } from "node:zlib";
 import { app } from "electron";
 import type { AddressInfo } from "node:net";
 import type { RemoteAccessTunnelInfo } from "../../../../shared/remote-access";
@@ -106,7 +108,7 @@ import { remoteAccessManager } from "../../../../electron/main/services/remote-a
 // Helpers
 // ---------------------------------------------------------------------------
 
-type Json = { status: number; headers: http.IncomingHttpHeaders; body: any };
+type Json = { status: number; headers: http.IncomingHttpHeaders; body: any; rawBuffer: Buffer };
 
 function request(
   port: number,
@@ -126,7 +128,8 @@ function request(
         const chunks: Buffer[] = [];
         res.on("data", (c) => chunks.push(c));
         res.on("end", () => {
-          const text = Buffer.concat(chunks).toString("utf-8");
+          const rawBuffer = Buffer.concat(chunks);
+          const text = rawBuffer.toString("utf-8");
           let body: any = text;
           try {
             body = text ? JSON.parse(text) : undefined;
@@ -137,6 +140,7 @@ function request(
             status: res.statusCode ?? 0,
             headers: res.headers,
             body,
+            rawBuffer,
           });
         });
       },
@@ -166,6 +170,18 @@ describe("ProductionServer", () => {
   let port: number;
   let appRoot: string;
   const webIndex = "<!doctype html><title>CodeMux Web</title>";
+  const largeJavaScript = Buffer.from("const message = 'CodeMux remote web client';\n".repeat(128));
+  const largeAssetPath = "/assets/large-A1b2C3d4.js";
+  const compressionFixtures: Array<[string, string, Buffer]> = [
+    ["/assets/large.html", "text/html", Buffer.from(`<html>${"<p>CodeMux Web</p>".repeat(128)}</html>`)],
+    ["/assets/large.css", "text/css", Buffer.from(".message { color: blue; padding: 10px; }\n".repeat(128))],
+    ["/assets/large.json", "application/json", Buffer.from(JSON.stringify({ messages: Array(128).fill("CodeMux Web") }))],
+    ["/large.webmanifest", "application/manifest+json", Buffer.from(JSON.stringify({ name: "CodeMux", description: "Remote coding client ".repeat(128) }))],
+    ["/assets/large.svg", "image/svg+xml", Buffer.from(`<svg>${"<text>CodeMux</text>".repeat(128)}</svg>`)],
+    ["/assets/large.wasm", "application/wasm", Buffer.concat([Buffer.from([0, 97, 115, 109, 1, 0, 0, 0]), Buffer.alloc(2048)])],
+  ];
+  const excludedBinary = Buffer.alloc(2048, 1);
+  const incompressibleContent = Buffer.concat(Array.from({ length: 32 }, (_, index) => createHash("sha256").update(String(index)).digest()));
 
   beforeAll(async () => {
     appRoot = await fs.mkdtemp(path.join(os.tmpdir(), "codemux-production-server-"));
@@ -180,6 +196,11 @@ describe("ProductionServer", () => {
       fs.writeFile(path.join(webRoot, "manifest.webmanifest"), JSON.stringify({ name: "CodeMux" })),
       fs.writeFile(path.join(webRoot, "workbox-a1b2c3d4.js"), "/* Workbox runtime */"),
       fs.writeFile(path.join(webRoot, "assets", "index-A1b2C3d4.js"), "console.log('web');"),
+      fs.writeFile(path.join(webRoot, largeAssetPath), largeJavaScript),
+      fs.writeFile(path.join(webRoot, "assets", "large.png"), excludedBinary),
+      fs.writeFile(path.join(webRoot, "assets", "large.woff2"), excludedBinary),
+      fs.writeFile(path.join(webRoot, "assets", "incompressible.js"), incompressibleContent),
+      ...compressionFixtures.map(([pathname, _contentType, content]) => fs.writeFile(path.join(webRoot, pathname), content)),
       fs.writeFile(path.join(webRoot, "assets", "page-A1b2C3d4.html"), webIndex),
       fs.writeFile(path.join(webRoot, "assets", "logo.png"), "image fixture"),
       fs.writeFile(path.join(webRoot, "assets", "file with spaces.txt"), "decoded pathname"),
@@ -502,6 +523,105 @@ describe("ProductionServer", () => {
   });
 
   describe("Static file serving", () => {
+    it.each([
+      ["gzip", "gzip"],
+      [" gzip ; q=1 ", "gzip"],
+      ["gzip ; q=1, identity ; q=0", "gzip"],
+      ["gzip, br", "br"],
+      ["BR;q=0.5, GZIP;q=1", "gzip"],
+      ["br;q=0, gzip;q=1", "gzip"],
+      ["gzip;q=0, *;q=0.7", "br"],
+      ["br;q=0, *;q=1", "gzip"],
+      ["gzip;q=0.5, br;q=0.5, identity;q=0", "br"],
+      ["identity;q=1, gzip;q=0.5, br;q=0.5", undefined],
+      ["gzip;q=0, br;q=0", undefined],
+      ["deflate", undefined],
+      ["", undefined],
+      [undefined, undefined],
+    ])("negotiates static encoding for Accept-Encoding %s", async (acceptEncoding, encoding) => {
+      const res = await request(port, largeAssetPath, {
+        headers: acceptEncoding === undefined ? {} : { "accept-encoding": acceptEncoding },
+      });
+      expect(res.status).toBe(200);
+      expect(res.headers["content-encoding"]).toBe(encoding);
+      expect(res.headers["content-length"]).toBe(String(res.rawBuffer.length));
+      expect(res.headers.vary).toBe("Accept-Encoding");
+      expect(res.headers["cache-control"]).toBe("public, max-age=31536000, immutable");
+      const decoded = encoding === "br" ? brotliDecompressSync(res.rawBuffer)
+        : encoding === "gzip" ? gunzipSync(res.rawBuffer) : res.rawBuffer;
+      expect(decoded).toEqual(largeJavaScript);
+      if (encoding) expect(res.rawBuffer.length).toBeLessThan(largeJavaScript.length);
+    });
+
+    it.each(compressionFixtures)("compresses %s without changing its MIME type or content", async (pathname, contentType, content) => {
+      const res = await request(port, pathname, { headers: { "accept-encoding": "gzip" } });
+      expect(res.status).toBe(200);
+      expect(res.headers["content-encoding"]).toBe("gzip");
+      expect(res.headers["content-type"]).toBe(contentType);
+      expect(res.headers["cache-control"]).toBe("no-cache");
+      expect(gunzipSync(res.rawBuffer)).toEqual(content);
+    });
+
+    it.each(["gzip", "br"])("returns the same %s representation metadata for HEAD and GET", async (encoding) => {
+      const headers = { "accept-encoding": encoding };
+      const get = await request(port, largeAssetPath, { headers });
+      const head = await request(port, largeAssetPath, { method: "HEAD", headers });
+      expect(head.status).toBe(200);
+      expect(head.headers["content-encoding"]).toBe(encoding);
+      expect(head.headers["content-length"]).toBe(get.headers["content-length"]);
+      expect(head.headers["cache-control"]).toBe(get.headers["cache-control"]);
+      expect(head.headers.vary).toBe(get.headers.vary);
+      expect(head.rawBuffer.length).toBe(0);
+    });
+
+    it("leaves small files and precompressed binary formats unchanged", async () => {
+      for (const [pathname, content] of [
+        ["/assets/index-A1b2C3d4.js", Buffer.from("console.log('web');")],
+        ["/assets/large.png", excludedBinary],
+        ["/assets/large.woff2", excludedBinary],
+      ] as const) {
+        const res = await request(port, pathname, { headers: { "accept-encoding": "br, gzip" } });
+        expect(res.status).toBe(200);
+        expect(res.headers["content-encoding"]).toBeUndefined();
+        expect(res.rawBuffer).toEqual(content);
+      }
+    });
+
+    it("avoids compression that makes an eligible file larger", async () => {
+      const res = await request(port, "/assets/incompressible.js", { headers: { "accept-encoding": "gzip" } });
+      expect(res.status).toBe(200);
+      expect(res.headers["content-encoding"]).toBeUndefined();
+      expect(res.headers.vary).toBe("Accept-Encoding");
+      expect(res.rawBuffer).toEqual(incompressibleContent);
+    });
+
+    it("honors identity exclusion for small and binary files", async () => {
+      const headers = { "accept-encoding": "gzip, identity;q=0" };
+      const small = await request(port, "/assets/index-A1b2C3d4.js", { headers });
+      expect(small.status).toBe(200);
+      expect(small.headers["content-encoding"]).toBe("gzip");
+      expect(gunzipSync(small.rawBuffer).toString()).toBe("console.log('web');");
+
+      const binary = await request(port, "/assets/large.png", { headers });
+      expect(binary.status).toBe(406);
+      expect(binary.headers["content-encoding"]).toBeUndefined();
+    });
+
+    it.each(["gzip;q=0, br;q=0, identity;q=0", "*;q=0", "deflate, identity;q=0"])("returns 406 when no available encoding is acceptable: %s", async (acceptEncoding) => {
+      const res = await request(port, largeAssetPath, { headers: { "accept-encoding": acceptEncoding } });
+      expect(res.status).toBe(406);
+      expect(res.headers["content-encoding"]).toBeUndefined();
+    });
+
+    it("keeps API, authentication, and WebSocket fallback responses outside static compression", async () => {
+      for (const [pathname, status] of [["/api/system/info", 200], ["/api/settings/shared", 401], ["/ws", 404]] as const) {
+        const res = await request(port, pathname, { headers: { "accept-encoding": "br, gzip, identity;q=0" } });
+        expect(res.status).toBe(status);
+        expect(res.headers["content-encoding"]).toBeUndefined();
+        expect(res.headers.vary).toBeUndefined();
+      }
+    });
+
     it("serves the independent web build with revalidated HTML", async () => {
       const res = await request(port, "/");
       expect(res.status).toBe(200);
@@ -580,11 +700,12 @@ describe("ProductionServer", () => {
 
     it("applies remote admission before serving the PWA shell or assets", async () => {
       await remoteAccessManager.update({ mode: "off" });
-      const headers = { host: "codemux.example.com", "x-forwarded-for": "192.168.31.2", accept: "text/html" };
-      for (const pathname of ["/", "/chat", "/sw.js", "/manifest.webmanifest"]) {
+      const headers = { host: "codemux.example.com", "x-forwarded-for": "192.168.31.2", accept: "text/html", "accept-encoding": "br, gzip, identity;q=0" };
+      for (const pathname of ["/", "/chat", "/sw.js", "/manifest.webmanifest", largeAssetPath]) {
         const res = await request(port, pathname, { headers });
         expect(res.status).toBe(403);
         expect(res.body.error).toBe("Remote access is disabled for this entry point.");
+        expect(res.headers["content-encoding"]).toBeUndefined();
       }
     });
   });

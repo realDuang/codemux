@@ -16,6 +16,13 @@ vi.mock("../../../shared/terminate-owned-children", () => ({ terminateOwnedProce
 
 class FakeChild extends EventEmitter {
   pid = 41_234;
+  connected = true;
+  disconnect = vi.fn(() => {
+    this.connected = false;
+    currentMetadata = null;
+    currentLocked = false;
+    this.emit("exit", 0, null);
+  });
   kill = vi.fn(() => {
     currentMetadata = null;
     currentLocked = false;
@@ -97,6 +104,7 @@ afterEach(async () => {
   currentMetadata = null;
   currentLocked = false;
   child.kill.mockImplementation(() => { child.emit("exit", 0, null); return true; });
+  child.disconnect.mockImplementation(() => { child.connected = false; child.emit("exit", 0, null); });
   await Promise.allSettled(supervisors.map(instance => instance.shutdown()));
   vi.restoreAllMocks();
 });
@@ -325,13 +333,17 @@ describe("LocalServerSupervisor", () => {
 
   it("retires its losing fork before attaching to an external host that wins the writer lock", async () => {
     child.kill.mockImplementation(() => { child.emit("exit", 1, null); return true; });
+    child.disconnect.mockImplementation(() => { child.connected = false; child.emit("exit", 1, null); });
     mocks.fork.mockImplementation(() => {
       queueMicrotask(() => setOwner(23_456));
       return child as unknown as ChildProcess;
     });
     const instance = supervisor();
     await expect(instance.start()).resolves.toMatchObject({ phase: "ready", ownership: "external", pid: 23_456 });
-    expect(child.kill).toHaveBeenCalledExactlyOnceWith("SIGTERM");
+    if (process.platform === "win32") {
+      expect(child.disconnect).toHaveBeenCalledOnce();
+      expect(child.kill).not.toHaveBeenCalled();
+    } else expect(child.kill).toHaveBeenCalledExactlyOnceWith("SIGTERM");
     await instance.shutdown();
     expect(currentMetadata?.pid).toBe(23_456);
     expect(mocks.call.mock.calls.map(call => call[1])).not.toContain("host:stop");
@@ -340,6 +352,7 @@ describe("LocalServerSupervisor", () => {
 
   it("cleans up only the losing owned fork when quit races with another host's startup", async () => {
     child.kill.mockImplementation(() => { child.emit("exit", 1, null); return true; });
+    child.disconnect.mockImplementation(() => { child.connected = false; child.emit("exit", 1, null); });
     mocks.fork.mockImplementation(() => child as unknown as ChildProcess);
     const instance = supervisor();
     const starting = instance.start();
@@ -381,7 +394,128 @@ describe("LocalServerSupervisor", () => {
     await vi.waitFor(() => expect(mocks.fork).toHaveBeenCalledOnce());
     await expect(instance.stop()).resolves.toMatchObject({ phase: "stopped" });
     await starting;
-    expect(child.kill).toHaveBeenCalledExactlyOnceWith("SIGTERM");
+    if (process.platform === "win32") {
+      expect(child.disconnect).toHaveBeenCalledOnce();
+      expect(child.kill).not.toHaveBeenCalled();
+    } else expect(child.kill).toHaveBeenCalledExactlyOnceWith("SIGTERM");
+  });
+
+  describe("Windows shutdown fallbacks", () => {
+    const originalPlatform = process.platform;
+
+    beforeEach(() => {
+      Object.defineProperty(process, "platform", { value: "win32", configurable: true });
+    });
+
+    afterEach(() => {
+      Object.defineProperty(process, "platform", { value: originalPlatform, configurable: true });
+    });
+
+    function failStopRequest(): void {
+      const original = mocks.call.getMockImplementation()!;
+      mocks.call.mockImplementation(async (...args: unknown[]) => {
+        if (args[1] === "host:stop") throw new HostControlError("UNAVAILABLE", "Control request timed out");
+        return original(...args);
+      });
+    }
+
+    it("disconnects IPC and waits for persisted state when the control stop request times out", async () => {
+      const instance = supervisor();
+      await instance.start();
+      failStopRequest();
+      let persisted = false;
+      child.disconnect.mockImplementation(() => {
+        child.connected = false;
+        setTimeout(() => {
+          persisted = true;
+          currentMetadata = null;
+          currentLocked = false;
+          child.emit("exit", 0, null);
+        }, 5);
+      });
+
+      await expect(instance.stop()).resolves.toMatchObject({ phase: "stopped" });
+      expect(persisted).toBe(true);
+      expect(child.disconnect).toHaveBeenCalledOnce();
+      expect(child.kill).not.toHaveBeenCalled();
+      expect(mocks.terminate).not.toHaveBeenCalled();
+    });
+
+    it("disconnects a cancelled child that has not published its control listener", async () => {
+      mocks.fork.mockImplementation(() => child as unknown as ChildProcess);
+      const instance = supervisor();
+      const starting = instance.start();
+      await vi.waitFor(() => expect(mocks.fork).toHaveBeenCalledOnce());
+
+      await expect(instance.stop()).resolves.toMatchObject({ phase: "stopped" });
+      await starting;
+      expect(child.disconnect).toHaveBeenCalledOnce();
+      expect(child.kill).not.toHaveBeenCalled();
+      expect(mocks.terminate).not.toHaveBeenCalled();
+    });
+
+    it.each(["connected", "disconnected", "disconnect-error"] as const)(
+      "retains tree ownership until the grace period expires for an unresponsive %s child",
+      async state => {
+        const instance = supervisor({ stopTimeoutMs: 10 });
+        await instance.start();
+        failStopRequest();
+        const order: string[] = [];
+        let exited = false;
+        child.once("exit", () => { exited = true; order.push("exit"); });
+        child.connected = state !== "disconnected";
+        child.disconnect.mockImplementation(() => {
+          order.push("disconnect");
+          if (state === "disconnect-error") throw new Error("IPC channel unavailable");
+          child.connected = false;
+        });
+        mocks.terminate.mockImplementation((pid: number) => {
+          expect(pid).toBe(child.pid);
+          expect(exited).toBe(false);
+          order.push("terminate-tree");
+          currentMetadata = null;
+          currentLocked = false;
+          child.emit("exit", null, "SIGKILL");
+        });
+
+        await expect(instance.stop()).resolves.toMatchObject({ phase: "stopped" });
+        expect(order).toEqual([
+          ...(state === "disconnected" ? [] : ["disconnect"]), "terminate-tree", "exit",
+        ]);
+        expect(mocks.terminate).toHaveBeenCalledExactlyOnceWith(child.pid);
+        expect(child.kill).not.toHaveBeenCalled();
+      },
+    );
+
+    it.each(["graceful", "unresponsive"] as const)(
+      "retires a %s losing fork without stopping the replacement owner",
+      async state => {
+        mocks.fork.mockImplementation(() => {
+          queueMicrotask(() => setOwner(23_456));
+          return child as unknown as ChildProcess;
+        });
+        let exited = false;
+        child.once("exit", () => { exited = true; });
+        child.disconnect.mockImplementation(() => {
+          child.connected = false;
+          if (state === "graceful") child.emit("exit", 0, null);
+        });
+        mocks.terminate.mockImplementation((pid: number) => {
+          expect(pid).toBe(child.pid);
+          expect(exited).toBe(false);
+          child.emit("exit", null, "SIGKILL");
+        });
+        const instance = supervisor({ stopTimeoutMs: 10 });
+
+        await expect(instance.start()).resolves.toMatchObject({ phase: "ready", ownership: "external", pid: 23_456 });
+        expect(child.disconnect).toHaveBeenCalledOnce();
+        expect(child.kill).not.toHaveBeenCalled();
+        expect(mocks.terminate).toHaveBeenCalledTimes(state === "unresponsive" ? 1 : 0);
+        await instance.shutdown();
+        expect(currentMetadata?.pid).toBe(23_456);
+        expect(mocks.call.mock.calls.map(call => call[1])).not.toContain("host:stop");
+      },
+    );
   });
 
   it("waits for the old owned child to exit before restart can fork its replacement", async () => {
@@ -675,14 +809,19 @@ const { randomUUID } = require('node:crypto');
     }
   });
 
-  it("starts, invokes, stops, and restarts a real IPC child using paths with spaces and shell punctuation", async () => {
+  it.each(["control", "fallback"] as const)("starts and restarts a real IPC child through %s shutdown using paths with spaces and shell punctuation", async stopTransport => {
     killSpy.mockRestore();
     const realChild = await vi.importActual<typeof import("node:child_process")>("node:child_process");
     const realControl = await vi.importActual<typeof import("../../../shared/host-control-client")>("../../../shared/host-control-client");
     const realLock = await vi.importActual<typeof import("proper-lockfile")>("proper-lockfile");
     mocks.fork.mockImplementation(realChild.fork);
     mocks.read.mockImplementation(realControl.readHostControlMetadata);
-    mocks.call.mockImplementation(realControl.callHost);
+    mocks.call.mockImplementation((...args: Parameters<typeof realControl.callHost>) => {
+      if (stopTransport === "fallback" && args[1] === "host:stop") {
+        return Promise.reject(new HostControlError("UNAVAILABLE", "Control request timed out"));
+      }
+      return realControl.callHost(...args);
+    });
     mocks.check.mockImplementation(realLock.check);
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "codemux supervisor ; $-"));
     const dataPath = path.join(root, "runtime data");
@@ -706,8 +845,9 @@ const { randomUUID } = require('node:crypto');
     stopping = true;
     await new Promise(resolve => server.close(resolve));
     await fs.unlink(filename);
+    await fs.writeFile(path.join(dataPath, 'shutdown.json'), JSON.stringify({pid:process.pid}));
     await release();
-    process.disconnect();
+    if (process.connected) process.disconnect();
   };
   const server = http.createServer(async (req, res) => {
     let body = '';
@@ -724,6 +864,7 @@ const { randomUUID } = require('node:crypto');
   await fs.writeFile(filename, JSON.stringify({version:1, instanceId:randomUUID(), pid:process.pid, port:server.address().port,dataPath,ownerCredential:credential}));
   process.send({type:'codemux.notify',title:'Child ready',body:'IPC works'});
   process.on('SIGTERM', stop);
+  process.on('disconnect', stop);
 })().catch(error => { console.error(error); process.exit(1); });
 `);
     const onNotification = vi.fn();
@@ -738,8 +879,10 @@ const { randomUUID } = require('node:crypto');
       const restarted = await instance.restart();
       expect(restarted.phase).toBe("ready");
       expect(restarted.pid).not.toBe(started.pid);
+      expect(JSON.parse(await fs.readFile(path.join(dataPath, "shutdown.json"), "utf8"))).toEqual({ pid: started.pid });
       await instance.shutdown();
       expect(instance.getState().phase).toBe("stopped");
+      expect(JSON.parse(await fs.readFile(path.join(dataPath, "shutdown.json"), "utf8"))).toEqual({ pid: restarted.pid });
       expect(await realControl.readHostControlMetadata(canonicalPath)).toBeNull();
       expect(await realLock.check(canonicalPath)).toBe(false);
       expect(mocks.terminate).not.toHaveBeenCalled();

@@ -278,8 +278,20 @@ export class LocalServerSupervisor {
     });
   }
 
+  private requestChildStop(child: OwnedChild): void {
+    if (child.exited) return;
+    if (process.platform === "win32") {
+      // Windows SIGTERM kills the host immediately, before it can flush or
+      // stop its SDK/PTY children. Parent IPC loss uses the host's normal stop
+      // path and preserves ancestry for force-cleanup if the grace period expires.
+      if (child.process.connected) {
+        try { child.process.disconnect(); } catch { /* Retain ownership until exit or force-cleanup. */ }
+      }
+    } else child.process.kill("SIGTERM");
+  }
+
   private async retireChild(child: OwnedChild): Promise<void> {
-    if (!child.exited) child.process.kill("SIGTERM");
+    this.requestChildStop(child);
     const deadline = Date.now() + this.stopMs;
     while (!child.exited && Date.now() < deadline) await this.delay();
     if (!child.exited && child.process.pid) {
@@ -334,10 +346,10 @@ export class LocalServerSupervisor {
           if ((current && (current.instanceId !== owner.instanceId || isAlive(current.pid))) || await this.locked()) throw error;
         } else {
           // An owned child may not have published its control listener yet.
-          if (!child.exited) child.process.kill("SIGTERM");
+          this.requestChildStop(child);
         }
       }
-    } else if (owned && !child.exited) child.process.kill("SIGTERM");
+    } else if (owned) this.requestChildStop(child);
     const deadline = Date.now() + this.stopMs;
     while (true) {
       const metadata = await readHostControlMetadata(this.options.dataPath);

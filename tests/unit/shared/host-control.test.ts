@@ -20,6 +20,7 @@ beforeEach(async () => {
 
 afterEach(async () => {
   vi.restoreAllMocks();
+  vi.useRealTimers();
   await Promise.allSettled(hosts.map(host => host.close()));
   await Promise.all(listeners.map(server => new Promise<void>((resolve) => {
     server.closeAllConnections();
@@ -356,6 +357,76 @@ describe("readHostControlMetadata", () => {
 });
 
 describe("callHost", () => {
+  function useControlledTimeouts() {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    // Node's native AbortSignal.timeout does not use the global fake timers.
+    return vi.spyOn(AbortSignal, "timeout").mockImplementation((milliseconds) => {
+      const controller = new AbortController();
+      setTimeout(() => controller.abort(new DOMException("Timed out", "TimeoutError")), milliseconds);
+      return controller.signal;
+    });
+  }
+
+  it("waits for channel startup after its 30-second connection fallback", async () => {
+    let invocationStarted!: () => void;
+    const started = new Promise<void>(resolve => { invocationStarted = resolve; });
+    let finishStartup!: () => void;
+    await start({ invoke: async () => {
+      invocationStarted();
+      await new Promise<void>(resolve => {
+        const timer = setTimeout(resolve, 30_010);
+        finishStartup = () => { clearTimeout(timer); resolve(); };
+      });
+      return { connected: true };
+    } });
+    const timeouts = useControlledTimeouts();
+    let settled = false;
+    const response = callHost(directory, "channel:start", ["feishu"])
+      .then(value => ({ value }), error => ({ error }))
+      .finally(() => { settled = true; });
+    try {
+      await started;
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect(settled).toBe(false);
+      await vi.advanceTimersByTimeAsync(10);
+      expect(await response).toEqual({ value: { connected: true } });
+      expect(timeouts).toHaveBeenCalledWith(120_000);
+    } finally {
+      finishStartup();
+      await response;
+    }
+  });
+
+  it.each([
+    { method: "settings:load", timeoutMs: undefined, deadline: 30_000 },
+    { method: "channel:start", timeoutMs: undefined, deadline: 120_000 },
+    { method: "channel:start", timeoutMs: 250, deadline: 250 },
+    { method: "settings:load", timeoutMs: 250, deadline: 250 },
+  ])("bounds $method by $deadline ms with timeout override $timeoutMs", async ({ method, timeoutMs, deadline }) => {
+    let invocationStarted!: () => void;
+    const started = new Promise<void>(resolve => { invocationStarted = resolve; });
+    let finishOperation!: () => void;
+    const operation = new Promise<void>(resolve => { finishOperation = resolve; });
+    await start({ invoke: async () => {
+      invocationStarted();
+      await operation;
+    } });
+    const timeouts = useControlledTimeouts();
+    let settled = false;
+    const response = callHost(directory, method, [], { timeoutMs }).finally(() => { settled = true; });
+    const result = expect(response).rejects.toMatchObject({ code: "UNAVAILABLE" });
+    try {
+      await started;
+      await vi.advanceTimersByTimeAsync(deadline - 1);
+      expect(settled).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      await result;
+      expect(timeouts).toHaveBeenCalledWith(deadline);
+    } finally {
+      finishOperation();
+    }
+  });
+
   it("constructs a loopback URL and sends owner credentials only in the authorization header", async () => {
     let observed: { url?: string; authorization?: string; host?: string; body: string } | undefined;
     const saved = await fakeListener((req, res) => {

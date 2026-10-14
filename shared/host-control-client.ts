@@ -56,6 +56,8 @@ export async function callHost<T = unknown>(
   let response: Response;
   let body: unknown;
   try {
+    // Channel startup can spend 30 seconds in its connection fallback before succeeding.
+    const timeoutMs = options.timeoutMs ?? (method.startsWith("channel:") ? 120_000 : 30_000);
     response = await fetch(`http://127.0.0.1:${metadata.port}/control`, {
       method: "POST",
       headers: {
@@ -64,7 +66,7 @@ export async function callHost<T = unknown>(
       },
       body: JSON.stringify({ method, args }),
       redirect: "error",
-      signal: AbortSignal.timeout(options.timeoutMs ?? 30_000),
+      signal: AbortSignal.timeout(timeoutMs),
     });
     body = await response.json();
   } catch {

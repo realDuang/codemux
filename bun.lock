@@ -6,6 +6,8 @@
       "name": "codemux",
       "dependencies": {
         "@anthropic-ai/claude-agent-sdk": "^0.2.137",
+        "@fontsource-variable/geist": "^5.3.0",
+        "@fontsource-variable/geist-mono": "^5.3.0",
         "@github/copilot-sdk": "1.0.0",
         "@larksuiteoapi/node-sdk": "^1.42.0",
         "@opencode-ai/sdk": "^1.14.41",
@@ -374,6 +376,10 @@
     "@eslint/object-schema": ["@eslint/object-schema@3.0.3", "", {}, "sha512-iM869Pugn9Nsxbh/YHRqYiqd23AmIbxJOcpUMOuWCVNdoQJ5ZtwL6h3t0bcZzJUlC3Dq9jCFCESBZnX0GTv7iQ=="],
 
     "@eslint/plugin-kit": ["@eslint/plugin-kit@0.6.1", "", { "dependencies": { "@eslint/core": "^1.1.1", "levn": "^0.4.1" } }, "sha512-iH1B076HoAshH1mLpHMgwdGeTs0CYwL0SPMkGuSebZrwBp16v415e9NZXg2jtrqPVQjf6IANe2Vtlr5KswtcZQ=="],
+
+    "@fontsource-variable/geist": ["@fontsource-variable/geist@5.3.0", "", {}, "sha512-j0m+vLQuG5XAYoHtGCVu0spvlGreR3EzpECUVzkFmI1mTVnAO38l/NEPDCFgZ177JxzYJCLSmTQibIiYPilGrA=="],
+
+    "@fontsource-variable/geist-mono": ["@fontsource-variable/geist-mono@5.3.0", "", {}, "sha512-vBbuwDEo9AkrqADMXOrlAR3DFcJi4/JxeuU43FoiQERnNwsfXNnvxvReZG02cQKmyk4DZkZdBZX3oTDvy2zBAw=="],
 
     "@github/copilot": ["@github/copilot@1.0.59", "", { "dependencies": { "detect-libc": "^2.1.2" }, "optionalDependencies": { "@github/copilot-darwin-arm64": "1.0.59", "@github/copilot-darwin-x64": "1.0.59", "@github/copilot-linux-arm64": "1.0.59", "@github/copilot-linux-x64": "1.0.59", "@github/copilot-linuxmusl-arm64": "1.0.59", "@github/copilot-linuxmusl-x64": "1.0.59", "@github/copilot-win32-arm64": "1.0.59", "@github/copilot-win32-x64": "1.0.59" }, "bin": { "copilot": "npm-loader.js" } }, "sha512-D8ctn5cwDwYW0drjFhjLeKpEO4cB8G2tQCMfql2BuFsq5n26liLHymw+4JAhmbDxWgD/gEjr6c3u2zVwD0xxzA=="],
 

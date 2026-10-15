@@ -23,46 +23,48 @@ function getModeDisplayName(mode: AgentMode): string {
   return raw.charAt(0).toUpperCase() + raw.slice(1);
 }
 
-/** Return the active-state background colour class for a mode button. */
+/** Return the active-state text colour class for a mode segment. */
 function getModeColor(mode: AgentMode, index: number): string {
+  // Active segment tint: icon + label pick up the mode hue on a raised chip.
   const label = getModeDisplayName(mode).toLowerCase();
-  if (label === "default" || label === "interactive" || label === "build") return "bg-indigo-600";
-  if (label === "plan") return "bg-cyan-600";
-  if (label === "autopilot" || label === "bypass permissions") return "bg-emerald-600";
+  if (label === "default" || label === "interactive" || label === "build") return "text-indigo-600 dark:text-indigo-300";
+  if (label === "plan") return "text-cyan-600 dark:text-cyan-300";
+  if (label === "autopilot" || label === "bypass permissions") return "text-emerald-600 dark:text-emerald-300";
   // Fallback by position
-  const palette = ["bg-indigo-600", "bg-cyan-600", "bg-emerald-600"];
+  const palette = ["text-indigo-600 dark:text-indigo-300", "text-cyan-600 dark:text-cyan-300", "text-emerald-600 dark:text-emerald-300"];
   if (index < palette.length) return palette[index];
-  return "bg-slate-600";
+  return "text-slate-700 dark:text-slate-200";
 }
 
-/** Return the textarea / send-button accent colour for the active mode. */
-function getModeAccentRing(mode: AgentMode, index: number): {
+/** Return the composer / send-button accent for the active mode. */
+function getModeAccentRing(mode: AgentMode, _index: number): {
   bg: string;
   ring: string;
   border: string;
   bgHover: string;
 } {
   const label = getModeDisplayName(mode).toLowerCase();
+  const base = "bg-[var(--cm-surface)] dark:bg-[var(--cm-surface-2)]";
   if (label === "plan")
     return {
-      bg: "bg-cyan-50/60 dark:bg-slate-800/70 backdrop-blur-xl",
-      ring: "focus-within:ring-cyan-500/40",
-      border: "border-cyan-200/40 dark:border-cyan-600/30",
-      bgHover: "bg-cyan-600 hover:bg-cyan-700",
+      bg: base,
+      ring: "focus-within:ring-4 focus-within:ring-cyan-500/10 focus-within:border-cyan-500/50",
+      border: "border-[var(--cm-hairline-strong)]",
+      bgHover: "bg-cyan-600 hover:bg-cyan-500 shadow-[0_6px_18px_-6px] shadow-cyan-500/60",
     };
   if (label === "autopilot" || label === "bypass permissions")
     return {
-      bg: "bg-emerald-50/60 dark:bg-slate-800/70 backdrop-blur-xl",
-      ring: "focus-within:ring-emerald-500/40",
-      border: "border-emerald-200/40 dark:border-emerald-600/30",
-      bgHover: "bg-emerald-600 hover:bg-emerald-700",
+      bg: base,
+      ring: "focus-within:ring-4 focus-within:ring-emerald-500/10 focus-within:border-emerald-500/50",
+      border: "border-[var(--cm-hairline-strong)]",
+      bgHover: "bg-emerald-600 hover:bg-emerald-500 shadow-[0_6px_18px_-6px] shadow-emerald-500/60",
     };
-  // Default / Interactive / Build / unknown
+  // Default / Interactive / Build / unknown — signature gradient
   return {
-    bg: "bg-indigo-50/60 dark:bg-slate-800/70 backdrop-blur-xl",
-    ring: "focus-within:ring-indigo-500/40",
-    border: "border-indigo-200/40 dark:border-indigo-600/30",
-    bgHover: "bg-indigo-600 hover:bg-indigo-700",
+    bg: base,
+    ring: "focus-within:ring-4 focus-within:ring-indigo-500/10 focus-within:border-indigo-500/50",
+    border: "border-[var(--cm-hairline-strong)]",
+    bgHover: "cm-btn-primary",
   };
 }
 
@@ -478,9 +480,9 @@ export function PromptInput(props: PromptInputProps) {
   return (
     <div class="w-full max-w-4xl mx-auto">
       {/* Agent selector and Model selector row */}
-      <div class="flex items-center justify-between gap-1.5 sm:gap-2 mb-2 px-1 flex-wrap">
-        {/* Agent mode buttons - left side */}
-        <div class="flex gap-1.5 sm:gap-2">
+      <div class="flex items-center justify-between gap-1.5 sm:gap-2 mb-2 flex-wrap">
+        {/* Agent mode segmented control - left side */}
+        <div role="radiogroup" class="inline-flex items-center gap-0.5 p-0.5 rounded-[10px] bg-gray-900/[0.04] dark:bg-white/[0.04] ring-1 ring-inset ring-[var(--cm-hairline)]">
           <For each={modes()}>
             {(mode, index) => {
               const displayName = getModeDisplayName(mode);
@@ -490,11 +492,13 @@ export function PromptInput(props: PromptInputProps) {
 
               return (
                 <button
+                  role="radio"
+                  aria-checked={isActive()}
                   onClick={() => handleAgentChange(mode)}
-                  class={`px-2 sm:px-3 py-1.5 text-xs font-medium rounded-lg transition-all flex items-center gap-1 sm:gap-1.5 min-h-[36px] ${
+                  class={`px-2 sm:px-2.5 py-1 text-xs font-medium rounded-lg transition-all flex items-center gap-1 sm:gap-1.5 min-h-[30px] ${
                     isActive()
-                      ? `${color} text-white shadow-md shadow-current/20`
-                      : "bg-slate-100/60 dark:bg-slate-800/60 text-slate-500 dark:text-slate-400 hover:bg-slate-200/80 dark:hover:bg-slate-700/60 backdrop-blur-sm"
+                      ? `${color} bg-[var(--cm-surface)] dark:bg-white/[0.09] shadow-[var(--cm-shadow-sm)] ring-1 ring-[var(--cm-hairline)]`
+                      : "text-gray-500 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200"
                   }`}
                   title={mode.description ?? displayName}
                 >
@@ -509,7 +513,7 @@ export function PromptInput(props: PromptInputProps) {
 
       {/* Input area */}
       <div
-        class={`relative rounded-2xl border shadow-lg shadow-black/[0.03] dark:shadow-black/20 focus-within:ring-2 focus-within:border-transparent transition-all ${activeAccent().bg} ${activeAccent().border} ${activeAccent().ring} ${dragOver() ? "ring-2 ring-blue-400 border-blue-400" : ""}`}
+        class={`relative rounded-2xl border shadow-[var(--cm-shadow-md)] transition-[box-shadow,border-color] duration-200 ${activeAccent().bg} ${activeAccent().border} ${activeAccent().ring} ${dragOver() ? "ring-4 ring-blue-500/20 border-blue-500/60 border-dashed" : ""}`}
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
@@ -518,7 +522,7 @@ export function PromptInput(props: PromptInputProps) {
         <Show when={showCommandMenu() && filteredCommands().length > 0}>
           <div
             ref={(el) => { commandMenuRef = el; }}
-            class="absolute bottom-full left-0 right-0 mb-1 bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-xl shadow-xl shadow-black/10 dark:shadow-black/30 max-h-48 overflow-y-auto z-50"
+            class="absolute bottom-full left-0 right-0 mb-2 p-1 bg-[var(--cm-surface)] dark:bg-[var(--cm-surface-2)] border border-[var(--cm-hairline-strong)] rounded-xl shadow-[var(--cm-shadow-lg)] backdrop-blur-xl max-h-56 overflow-y-auto z-50"
           >
             <For each={filteredCommands()}>
               {(cmd, index) => (
@@ -526,10 +530,10 @@ export function PromptInput(props: PromptInputProps) {
                   data-command-item
                   onClick={() => selectCommand(cmd)}
                   onMouseEnter={() => setCommandSelectedIndex(index())}
-                  class={`w-full text-left px-3 py-2 flex items-center gap-3 text-sm transition-colors ${
+                  class={`w-full text-left px-2.5 py-1.5 rounded-lg flex items-center gap-3 text-sm transition-colors ${
                     commandSelectedIndex() === index()
-                      ? "bg-indigo-50 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300"
-                      : "text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-slate-700/50"
+                      ? "bg-indigo-500/10 text-indigo-700 dark:text-indigo-200"
+                      : "text-gray-700 dark:text-gray-300 hover:bg-gray-900/[0.04] dark:hover:bg-white/[0.04]"
                   }`}
                 >
                   <span class="font-mono font-semibold text-xs shrink-0 text-indigo-600 dark:text-indigo-400">/{cmd.name}</span>
@@ -547,7 +551,7 @@ export function PromptInput(props: PromptInputProps) {
           <div class="flex gap-2 px-3 pt-3 pb-1 overflow-x-auto">
             <For each={images()}>
               {(img) => (
-                <div class="relative flex-shrink-0 w-12 h-12 rounded-lg overflow-hidden bg-slate-200 dark:bg-slate-700 group">
+                <div class="relative flex-shrink-0 w-12 h-12 rounded-lg overflow-hidden bg-slate-200 dark:bg-slate-700 ring-1 ring-[var(--cm-hairline-strong)] group">
                   <img
                     src={`data:${img.mimeType};base64,${img.data}`}
                     alt={img.name}
@@ -584,7 +588,7 @@ export function PromptInput(props: PromptInputProps) {
               : modePlaceholder()
           }
           rows={1}
-          class={`w-full px-3 sm:px-4 py-3 bg-transparent resize-none focus:outline-none dark:text-white max-h-[120px] sm:max-h-[200px] overflow-y-auto text-sm placeholder:text-slate-400 dark:placeholder:text-slate-500 ${props.disabled ? "cursor-not-allowed opacity-50" : ""}`}
+          class={`w-full px-3.5 sm:px-4 pt-3.5 pb-2 bg-transparent resize-none focus:outline-none text-gray-900 dark:text-gray-50 max-h-[120px] sm:max-h-[200px] overflow-y-auto text-[14px] leading-relaxed placeholder:text-gray-400 dark:placeholder:text-gray-500 ${props.disabled ? "cursor-not-allowed opacity-50" : ""}`}
           style={{ "min-height": "52px" }}
         />
         {/* Hidden file input for image selection */}
@@ -601,7 +605,7 @@ export function PromptInput(props: PromptInputProps) {
           }}
         />
         {/* Bottom toolbar: session config (left) + action buttons (right) */}
-        <div class="flex items-center justify-between px-2 pb-2 pt-0.5 gap-2">
+        <div class="flex items-center justify-between pl-2 pr-2 pb-2 pt-0.5 gap-2">
           {/* Left: toolbar content (model/effort/fast mode) */}
           <div class="flex items-center gap-1.5 overflow-x-auto min-w-0">
             {props.toolbarContent}
@@ -620,7 +624,7 @@ export function PromptInput(props: PromptInputProps) {
                     <button
                       onClick={() => fileInputRef?.click()}
                       disabled={props.disabled || images().length >= MAX_IMAGES_PER_MESSAGE}
-                      class="p-2 rounded-xl text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 transition-colors disabled:opacity-30"
+                      class="p-1.5 rounded-lg text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:bg-gray-900/5 dark:hover:bg-white/5 transition-colors disabled:opacity-30"
                       aria-label={t().prompt.attachImage}
                       title={t().prompt.attachImage}
                     >
@@ -632,10 +636,10 @@ export function PromptInput(props: PromptInputProps) {
                   <button
                     onClick={handleSend}
                     disabled={!hasContent || props.disabled || props.sendDisabled}
-                    class={`p-2 rounded-xl text-white transition-all disabled:bg-slate-200 dark:disabled:bg-slate-700 disabled:text-slate-400 dark:disabled:text-slate-500 shadow-md disabled:shadow-none ${activeAccent().bgHover}`}
+                    class={`w-8 h-8 flex items-center justify-center rounded-[10px] text-white transition-all disabled:!bg-none disabled:!bg-gray-900/[0.06] dark:disabled:!bg-white/[0.07] disabled:!text-gray-400 dark:disabled:!text-gray-500 disabled:!shadow-none disabled:!filter-none disabled:!opacity-100 ${activeAccent().bgHover}`}
                     aria-label={t().prompt.send}
                   >
-                    <IconArrowUp width={20} height={20} />
+                    <IconArrowUp width={17} height={17} />
                   </button>
                 </div>
               );
@@ -646,11 +650,12 @@ export function PromptInput(props: PromptInputProps) {
                 <div class="flex items-center flex-shrink-0 relative">
                   <button
                     onClick={() => props.onCancel?.()}
-                    class="p-2 rounded-xl bg-red-500 hover:bg-red-600 text-white transition-all shadow-md"
+                    class="relative w-8 h-8 flex items-center justify-center rounded-[10px] bg-gray-900 hover:bg-gray-800 dark:bg-white dark:hover:bg-gray-200 text-white dark:text-gray-900 transition-all shadow-[var(--cm-shadow-md)] ring-1 ring-inset ring-white/10"
                     aria-label="Stop"
                   >
-                    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
-                      <rect x="6" y="6" width="12" height="12" rx="2" />
+                    <span aria-hidden="true" class="absolute -inset-[3px] rounded-[12px] border-2 border-transparent border-t-indigo-500 border-r-cyan-400 animate-spin [animation-duration:1.4s]" />
+                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                      <rect x="5" y="5" width="14" height="14" rx="3" />
                     </svg>
                     {/* Queue count badge */}
                     <Show when={(props.queueCount ?? 0) > 0}>

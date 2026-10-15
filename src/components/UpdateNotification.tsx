@@ -96,7 +96,7 @@ export function UpdateNotification() {
   return (
     <Show when={shouldShow()}>
       <div class="fixed bottom-6 right-6 z-50 w-80 max-w-[calc(100vw-3rem)] font-sans animate-in fade-in slide-in-from-bottom-4 duration-300">
-        <div class="bg-white dark:bg-slate-900 rounded-xl shadow-2xl border border-gray-100 dark:border-slate-800 overflow-hidden">
+        <div class="bg-white dark:bg-slate-900 rounded-2xl shadow-[var(--cm-shadow-lg)] ring-1 ring-[var(--cm-hairline-strong)] border border-gray-100 dark:border-slate-800 overflow-hidden">
           {/* Checking state */}
           <Show when={state()?.status === "checking"}>
             <div class="p-4">

@@ -268,7 +268,7 @@ function ChannelCard(props: ChannelCardProps) {
         <div class="flex items-center gap-3 flex-shrink-0">
           <button
             onClick={() => props.onConfigure()}
-            class="px-3 py-1.5 text-xs font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-slate-800 rounded-lg transition-colors border border-gray-200 dark:border-slate-700"
+            class="px-3 py-1.5 text-xs font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-900/[0.04] dark:hover:bg-white/[0.05] rounded-lg transition-colors border border-gray-200 dark:border-slate-700"
           >
             {t().channel.configure}
           </button>
@@ -387,7 +387,7 @@ export function ChannelManagementSettings() {
 
   return (
     <section>
-      <h2 class="text-sm font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-4 px-1">
+      <h2 class="cm-eyebrow !text-[11px] mb-3 px-1">
         {t().channel.channels}
       </h2>
 
@@ -402,7 +402,7 @@ export function ChannelManagementSettings() {
             <div class="flex-1 h-px bg-gray-100 dark:bg-slate-800" />
           </div>
 
-          <div class="space-y-3 bg-white dark:bg-slate-800 rounded-xl shadow-xs border border-gray-200 dark:border-slate-700 p-3">
+          <div class="space-y-3 bg-[var(--cm-surface)] dark:bg-white/[0.025] rounded-xl border border-[var(--cm-hairline-strong)] shadow-[var(--cm-shadow-sm)] p-3">
             <For each={directChannels}>
               {(c) => renderChannelCard(c.def, c.state)}
             </For>
@@ -419,7 +419,7 @@ export function ChannelManagementSettings() {
             <div class="flex-1 h-px bg-gray-100 dark:bg-slate-800" />
           </div>
 
-          <div class="space-y-3 bg-white dark:bg-slate-800 rounded-xl shadow-xs border border-gray-200 dark:border-slate-700 p-3">
+          <div class="space-y-3 bg-[var(--cm-surface)] dark:bg-white/[0.025] rounded-xl border border-[var(--cm-hairline-strong)] shadow-[var(--cm-shadow-sm)] p-3">
             <Show when={!accessUrl()}>
               <div class="rounded-lg border border-amber-200 dark:border-amber-900/30 bg-amber-50 dark:bg-amber-900/10 p-3">
                 <span class="text-xs font-medium text-amber-700 dark:text-amber-400">{t().channel.accessUrlRequired}</span>

@@ -16,7 +16,7 @@
 
     :global(.dark) & {
       border-color: rgba(71, 85, 105, 0.3);
-      background-color: #0b1120;
+      background-color: var(--cm-code-bg);
     }
   }
 
@@ -70,8 +70,8 @@
       margin: 0;
 
       :global(.dark) & {
-        --shiki-dark-bg: #0b1120 !important;
-        background-color: #0b1120 !important;
+        --shiki-dark-bg: var(--cm-code-bg) !important;
+        background-color: var(--cm-code-bg) !important;
       }
 
       span {

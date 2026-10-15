@@ -9,7 +9,6 @@ import { ChannelManagementSettings } from "../components/ChannelManagementSettin
 import { TerminalSettingsSection } from "../components/TerminalSettingsSection";
 import { formatMessage, useI18n } from "../lib/i18n";
 import { logger } from "../lib/logger";
-import { publicAssetUrl } from "../lib/public-assets";
 import { useAuthGuard } from "../lib/useAuthGuard";
 import { isElectron } from "../lib/platform";
 import { Auth } from "../lib/auth";
@@ -23,6 +22,7 @@ import { gateway } from "../lib/gateway-api";
 import { systemAPI, updateAPI, autostartAPI } from "../lib/electron-api";
 import { getSetting, saveSetting } from "../lib/settings";
 import type { UnifiedModelInfo, EngineType, UnifiedSession } from "../types/unified";
+import { BrandMark } from "../components/BrandMark";
 
 export default function Settings() {
   const { t } = useI18n();
@@ -274,16 +274,13 @@ export default function Settings() {
   };
 
   return (
-    <div class="flex flex-col h-screen bg-gray-50 dark:bg-slate-950 font-sans text-gray-900 dark:text-gray-100">
+    <div class="flex flex-col h-screen bg-[var(--cm-canvas)] font-sans text-gray-900 dark:text-gray-100">
       {/* Unified Titlebar */}
       <div
-        class="w-full flex-shrink-0 flex items-center px-2 border-b border-gray-200 dark:border-slate-800 bg-gray-50 dark:bg-slate-950 electron-drag-region electron-titlebar-pad-left electron-titlebar-pad-right"
+        class="w-full flex-shrink-0 flex items-center px-2.5 border-b border-[var(--cm-hairline)] bg-[var(--cm-canvas)] electron-drag-region electron-titlebar-pad-left electron-titlebar-pad-right"
         style={{ height: "var(--electron-title-bar-height, 40px)", "min-height": "var(--electron-title-bar-height, 40px)" }}
       >
-        <div class="flex items-center gap-1.5 electron-no-drag flex-shrink-0 titlebar-brand">
-          <img src={publicAssetUrl("logo.png")} alt="CodeMux" class="w-5 h-5 rounded" />
-          <span class="hidden sm:inline text-[11px] font-semibold tracking-wide text-gray-500 dark:text-gray-400 bg-gray-100 dark:bg-slate-800 px-2 py-0.5 rounded-md border border-gray-200 dark:border-slate-700 select-none">CodeMux</span>
-        </div>
+        <BrandMark />
         <div class="flex items-center gap-2 electron-no-drag flex-shrink-0">
           <button
             onClick={() => navigate("/chat")}
@@ -304,40 +301,40 @@ export default function Settings() {
         <nav class="hidden md:flex flex-col w-44 flex-shrink-0 pt-6 pl-4 pr-2 overflow-y-auto">
           <ul class="space-y-0.5 sticky top-0">
             <li>
-              <button onClick={() => document.getElementById("section-general")?.scrollIntoView({ behavior: "smooth" })} class="w-full text-left block px-3 py-2 text-[13px] font-medium text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-slate-800 rounded-lg transition-colors">
+              <button onClick={() => document.getElementById("section-general")?.scrollIntoView({ behavior: "smooth" })} class="w-full text-left block px-3 py-2 text-[13px] font-medium text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white hover:bg-gray-900/[0.04] dark:hover:bg-white/[0.05] rounded-lg transition-colors">
                 {t().settings.general}
               </button>
             </li>
             <li>
-              <button onClick={() => document.getElementById("section-engines")?.scrollIntoView({ behavior: "smooth" })} class="w-full text-left block px-3 py-2 text-[13px] font-medium text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-slate-800 rounded-lg transition-colors">
+              <button onClick={() => document.getElementById("section-engines")?.scrollIntoView({ behavior: "smooth" })} class="w-full text-left block px-3 py-2 text-[13px] font-medium text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white hover:bg-gray-900/[0.04] dark:hover:bg-white/[0.05] rounded-lg transition-colors">
                 {t().engine.engines}
               </button>
             </li>
             <Show when={showLogSection()}>
               <li>
-                <button onClick={() => document.getElementById("section-logging")?.scrollIntoView({ behavior: "smooth" })} class="w-full text-left block px-3 py-2 text-[13px] font-medium text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-slate-800 rounded-lg transition-colors">
+                <button onClick={() => document.getElementById("section-logging")?.scrollIntoView({ behavior: "smooth" })} class="w-full text-left block px-3 py-2 text-[13px] font-medium text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white hover:bg-gray-900/[0.04] dark:hover:bg-white/[0.05] rounded-lg transition-colors">
                   {t().settings.logging}
                 </button>
               </li>
             </Show>
             <li>
-              <button onClick={() => document.getElementById("section-terminal")?.scrollIntoView({ behavior: "smooth" })} class="w-full text-left block px-3 py-2 text-[13px] font-medium text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-slate-800 rounded-lg transition-colors">
+              <button onClick={() => document.getElementById("section-terminal")?.scrollIntoView({ behavior: "smooth" })} class="w-full text-left block px-3 py-2 text-[13px] font-medium text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white hover:bg-gray-900/[0.04] dark:hover:bg-white/[0.05] rounded-lg transition-colors">
                 {t().terminal.settingsSectionTitle}
               </button>
             </li>
             <li>
-              <button onClick={() => document.getElementById("section-features")?.scrollIntoView({ behavior: "smooth" })} class="w-full text-left block px-3 py-2 text-[13px] font-medium text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-slate-800 rounded-lg transition-colors">
+              <button onClick={() => document.getElementById("section-features")?.scrollIntoView({ behavior: "smooth" })} class="w-full text-left block px-3 py-2 text-[13px] font-medium text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white hover:bg-gray-900/[0.04] dark:hover:bg-white/[0.05] rounded-lg transition-colors">
                 {t().settings.features}
               </button>
             </li>
             <li>
-              <button onClick={() => document.getElementById("section-experimental")?.scrollIntoView({ behavior: "smooth" })} class="w-full text-left block px-3 py-2 text-[13px] font-medium text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-slate-800 rounded-lg transition-colors">
+              <button onClick={() => document.getElementById("section-experimental")?.scrollIntoView({ behavior: "smooth" })} class="w-full text-left block px-3 py-2 text-[13px] font-medium text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white hover:bg-gray-900/[0.04] dark:hover:bg-white/[0.05] rounded-lg transition-colors">
                 {t().settings.experimental}
               </button>
             </li>
             <Show when={isElectron()}>
               <li>
-                <button onClick={() => document.getElementById("section-update")?.scrollIntoView({ behavior: "smooth" })} class="w-full text-left block px-3 py-2 text-[13px] font-medium text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-slate-800 rounded-lg transition-colors">
+                <button onClick={() => document.getElementById("section-update")?.scrollIntoView({ behavior: "smooth" })} class="w-full text-left block px-3 py-2 text-[13px] font-medium text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white hover:bg-gray-900/[0.04] dark:hover:bg-white/[0.05] rounded-lg transition-colors">
                   {t().update.title}
                 </button>
               </li>
@@ -350,10 +347,10 @@ export default function Settings() {
           <div class="space-y-8">
             {/* General Settings Section */}
             <section id="section-general">
-              <h2 class="text-sm font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-4 px-1">
+              <h2 class="cm-eyebrow !text-[11px] mb-3 px-1">
                 {t().settings.general}
               </h2>
-              <div class="bg-white dark:bg-slate-800 rounded-xl shadow-xs border border-gray-200 dark:border-slate-700 overflow-visible">
+              <div class="bg-[var(--cm-surface)] dark:bg-white/[0.025] rounded-xl border border-[var(--cm-hairline-strong)] shadow-[var(--cm-shadow-sm)] overflow-visible">
                 {/* Language Setting */}
                 <div class="p-4 sm:p-6 flex items-center justify-between gap-4 border-b border-gray-200 dark:border-slate-700">
                   <div>
@@ -400,7 +397,7 @@ export default function Settings() {
 
             {/* Engines Section */}
             <section id="section-engines">
-              <h2 class="text-sm font-medium text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-1 px-1">
+              <h2 class="cm-eyebrow !text-[11px] mb-1 px-1">
                 {t().engine.engines}
               </h2>
               <p class="text-xs text-slate-500 dark:text-slate-400 mb-4 px-1">
@@ -409,7 +406,7 @@ export default function Settings() {
               <Show
                 when={configStore.engines.length > 0}
                 fallback={
-                  <div class="bg-white dark:bg-slate-800 rounded-xl shadow-xs border border-slate-200 dark:border-slate-700 p-6 text-center text-sm text-slate-400 dark:text-slate-500">
+                  <div class="bg-[var(--cm-surface)] dark:bg-white/[0.025] rounded-xl border border-[var(--cm-hairline-strong)] shadow-[var(--cm-shadow-sm)] p-6 text-center text-sm text-slate-400 dark:text-slate-500">
                     <Show
                       when={enginesLoading()}
                       fallback={t().engine.noEngines}
@@ -422,7 +419,7 @@ export default function Settings() {
                   </div>
                 }
               >
-                <div class="bg-white dark:bg-slate-800 rounded-xl shadow-xs border border-slate-200 dark:border-slate-700">
+                <div class="bg-[var(--cm-surface)] dark:bg-white/[0.025] rounded-xl border border-[var(--cm-hairline-strong)] shadow-[var(--cm-shadow-sm)]">
                   <For each={configStore.engines}>
                     {(engine, index) => {
                       const models = createMemo(() => configStore.engineModels[engine.type] || []);
@@ -595,7 +592,7 @@ export default function Settings() {
                                       value={selectedModelId()}
                                       onChange={(e) => handleModelSelect(e.currentTarget.value)}
                                       disabled={engine.capabilities?.modelSwitchable === false}
-                                      class={`w-full sm:w-[260px] px-3 py-1.5 text-sm font-medium rounded-lg border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-gray-700 dark:text-gray-300 transition-colors ${engine.capabilities?.modelSwitchable === false ? "opacity-60 cursor-not-allowed" : "cursor-pointer hover:bg-gray-100 dark:hover:bg-slate-600"}`}
+                                      class={`w-full sm:w-[260px] cm-select h-8 text-sm font-medium ${engine.capabilities?.modelSwitchable === false ? "opacity-60 cursor-not-allowed" : "cursor-pointer"}`}
                                     >
                                       <For each={providerGroups()}>
                                         {([pid, group]) => (
@@ -707,10 +704,10 @@ export default function Settings() {
             {/* Logging Section */}
             <Show when={showLogSection()}>
               <section id="section-logging">
-                <h2 class="text-sm font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-4 px-1">
+                <h2 class="cm-eyebrow !text-[11px] mb-3 px-1">
                   {t().settings.logging}
                 </h2>
-                <div class="bg-white dark:bg-slate-800 rounded-xl shadow-xs border border-gray-200 dark:border-slate-700 overflow-visible">
+                <div class="bg-[var(--cm-surface)] dark:bg-white/[0.025] rounded-xl border border-[var(--cm-hairline-strong)] shadow-[var(--cm-shadow-sm)] overflow-visible">
                   {/* Log file path */}
                   <div class="p-4 sm:p-6 flex items-center justify-between gap-4 border-b border-gray-200 dark:border-slate-700">
                     <div class="min-w-0">
@@ -779,7 +776,7 @@ export default function Settings() {
                       <select
                         value={logLevel()}
                         onChange={(e) => handleLogLevelChange(e.currentTarget.value)}
-                        class="px-3 py-1.5 text-sm font-medium rounded-lg border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-slate-600 transition-colors cursor-pointer"
+                        class="cm-select h-8 text-sm font-medium cursor-pointer"
                       >
                         <For each={logLevels}>
                           {(level) => (
@@ -798,10 +795,10 @@ export default function Settings() {
 
             {/* Features Section */}
             <section id="section-features">
-              <h2 class="text-sm font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-4 px-1">
+              <h2 class="cm-eyebrow !text-[11px] mb-3 px-1">
                 {t().settings.features}
               </h2>
-              <div class="bg-white dark:bg-slate-800 rounded-xl shadow-xs border border-gray-200 dark:border-slate-700 overflow-visible">
+              <div class="bg-[var(--cm-surface)] dark:bg-white/[0.025] rounded-xl border border-[var(--cm-hairline-strong)] shadow-[var(--cm-shadow-sm)] overflow-visible">
                 {/* Show Default Workspace toggle */}
                 <div class="p-4 sm:p-6 flex items-center justify-between gap-4 border-b border-gray-200 dark:border-slate-700">
                   <div>
@@ -891,10 +888,10 @@ export default function Settings() {
 
             {/* Experimental Section */}
             <section id="section-experimental">
-              <h2 class="text-sm font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-4 px-1">
+              <h2 class="cm-eyebrow !text-[11px] mb-3 px-1">
                 {t().settings.experimental}
               </h2>
-              <div class="bg-white dark:bg-slate-800 rounded-xl shadow-xs border border-gray-200 dark:border-slate-700 overflow-visible">
+              <div class="bg-[var(--cm-surface)] dark:bg-white/[0.025] rounded-xl border border-[var(--cm-hairline-strong)] shadow-[var(--cm-shadow-sm)] overflow-visible">
                 {/* Team Orchestration toggle */}
                 <div class="p-4 sm:p-6 flex items-center justify-between gap-4" classList={{ "border-b border-gray-200 dark:border-slate-700": teamOrchestrationEnabled() }}>
                   <div>
@@ -967,7 +964,7 @@ export default function Settings() {
                                 ref={selectRef}
                                 value={mapping.engineType}
                                 onChange={(e) => handleRoleEngineChange(mapping.role, e.currentTarget.value)}
-                                class="px-2.5 py-1 text-sm rounded-lg border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-gray-700 dark:text-gray-300 cursor-pointer flex-shrink-0"
+                                class="cm-select h-8 text-sm cursor-pointer flex-shrink-0"
                               >
                                 <For each={configStore.engines}>
                                   {(engine) => (
@@ -989,10 +986,10 @@ export default function Settings() {
 
             <Show when={isElectron()}>
               <section id="section-update">
-                <h2 class="text-sm font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-4 px-1">
+                <h2 class="cm-eyebrow !text-[11px] mb-3 px-1">
                   {t().update.title}
                 </h2>
-                <div class="bg-white dark:bg-slate-800 rounded-xl shadow-xs border border-gray-200 dark:border-slate-700 overflow-visible">
+                <div class="bg-[var(--cm-surface)] dark:bg-white/[0.025] rounded-xl border border-[var(--cm-hairline-strong)] shadow-[var(--cm-shadow-sm)] overflow-visible">
                   {/* Current version + check for updates */}
                   <div class="p-4 sm:p-6 flex items-center justify-between gap-4 border-b border-gray-200 dark:border-slate-700">
                     <div>

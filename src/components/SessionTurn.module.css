@@ -9,11 +9,12 @@
   display: flex;
   flex-direction: column;
   gap: 0.75rem;
-  padding: 0.75rem 1rem;
-  border: 1px solid #C7D2FE;
-  border-radius: 1rem;
-  background: #EEF2FF;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+  padding: 0.625rem 0.95rem;
+  border: 1px solid var(--cm-hairline-strong);
+  border-radius: 1rem 1rem 0.3rem 1rem;
+  background: var(--cm-surface-2);
+  color: var(--cm-text);
+  box-shadow: var(--cm-shadow-sm);
   margin-left: auto;
   max-width: 85%;
   overflow-wrap: break-word;
@@ -28,9 +29,8 @@
 }
 
 :global(.dark) .userMessage {
-  border-color: #3730A3;
-  background: #1E1B4B;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+  background: var(--cm-surface-3);
+  border-color: var(--cm-hairline);
 }
 
 /* ─── Steps Trigger ─── */
@@ -54,55 +54,64 @@
 }
 
 .stepsTriggerButton {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 0.5rem;
   width: 100%;
-  padding: 0.625rem 0.875rem;
-  border: 1px solid rgba(148, 163, 184, 0.15);
-  border-radius: 0.875rem;
-  background: linear-gradient(135deg, rgba(248, 250, 252, 0.8) 0%, rgba(241, 245, 249, 0.6) 100%);
-  backdrop-filter: blur(12px);
-  color: #475569;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid var(--cm-hairline);
+  border-radius: 0.75rem;
+  background: var(--cm-surface-2);
+  color: var(--cm-text-muted);
   font-size: 0.8125rem;
   font-weight: 500;
   cursor: pointer;
-  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  transition: border-color 0.2s ease, background-color 0.2s ease, color 0.2s ease, box-shadow 0.2s ease;
   text-align: left;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+  overflow: hidden;
 }
 
 :global(.dark) .stepsTriggerButton {
-  background: linear-gradient(135deg, rgba(30, 41, 59, 0.5) 0%, rgba(15, 23, 42, 0.6) 100%);
-  border-color: rgba(71, 85, 105, 0.25);
-  color: #94a3b8;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2), inset 0 1px 1px rgba(255, 255, 255, 0.03);
+  background: oklch(1 0 0 / 0.025);
 }
 
 .stepsTriggerButton:hover {
-  border-color: rgba(148, 163, 184, 0.3);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.06);
-  color: #334155;
+  border-color: var(--cm-hairline-strong);
+  color: var(--cm-text);
 }
 
 :global(.dark) .stepsTriggerButton:hover {
-  border-color: rgba(99, 102, 241, 0.35);
-  color: #e2e8f0;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3), 0 0 12px rgba(99, 102, 241, 0.08);
+  background: oklch(1 0 0 / 0.04);
 }
 
+/* Working: accent hairline + a light sweep travelling along the bottom edge */
 .stepsTriggerButton[data-working] {
-  border-color: rgba(14, 165, 233, 0.4);
-  background: linear-gradient(135deg, rgba(224, 242, 254, 0.6) 0%, rgba(240, 249, 255, 0.4) 100%);
-  box-shadow: 0 0 16px rgba(14, 165, 233, 0.1), inset 0 0 10px rgba(14, 165, 233, 0.2);
-  animation: border-glow-pulse 2s ease-in-out infinite;
+  border-color: oklch(0.6 0.2 274 / 0.35);
+  background: linear-gradient(90deg, oklch(0.62 0.23 290 / 0.06), oklch(0.74 0.14 210 / 0.05));
+  box-shadow: 0 0 0 3px oklch(0.6 0.2 274 / 0.06);
 }
 
-:global(.dark) .stepsTriggerButton[data-working] {
-  border-color: rgba(14, 165, 233, 0.5);
-  background: linear-gradient(135deg, rgba(12, 74, 110, 0.2) 0%, rgba(15, 23, 42, 0.5) 100%);
-  box-shadow: 0 0 20px rgba(14, 165, 233, 0.12), inset 0 1px 1px rgba(255, 255, 255, 0.03), inset 0 0 12px rgba(14, 165, 233, 0.2);
-  animation: border-glow-pulse-dark 2s ease-in-out infinite;
+.stepsTriggerButton[data-working]::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--cm-accent), var(--cm-accent-2), transparent);
+  background-size: 40% 100%;
+  background-repeat: no-repeat;
+  animation: steps-sweep 1.6s linear infinite;
+}
+
+@keyframes steps-sweep {
+  0% { background-position: -40% 0; }
+  100% { background-position: 140% 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .stepsTriggerButton[data-working]::after { animation: none; }
 }
 
 .statusText {
@@ -128,14 +137,14 @@
 
 .statusDivider {
   margin: 0 0.375rem;
-  color: #9ca3af;
+  color: var(--cm-text-faint);
   opacity: 0.5;
   font-size: 0.75rem;
   flex-shrink: 0;
 }
 
 :global(.dark) .statusDivider {
-  color: #71717a;
+  color: var(--cm-text-faint);
 }
 
 .statusHeading {
@@ -147,23 +156,17 @@
 }
 
 .separator {
-  color: #9ca3af;
+  color: var(--cm-text-faint);
+  opacity: 0.6;
   flex-shrink: 0;
-}
-
-:global(.dark) .separator {
-  color: #71717a;
 }
 
 .duration {
-  color: #9ca3af;
+  color: var(--cm-text-faint);
+  font-family: var(--font-mono);
   font-size: 0.6875rem;
   flex-shrink: 0;
   font-variant-numeric: tabular-nums;
-}
-
-:global(.dark) .duration {
-  color: #71717a;
 }
 
 .modelIcon {
@@ -171,11 +174,7 @@
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-  color: #6b7280;
-}
-
-:global(.dark) .modelIcon {
-  color: #a1a1aa;
+  color: var(--cm-text-muted);
 }
 
 .arrow {
@@ -240,23 +239,20 @@
 }
 
 /* ─── Steps Content (expanded area) ─── */
+/* Rendered as a timeline: a hairline rail on the left, no boxed card. */
 .stepsContent {
+  position: relative;
   display: flex;
   flex-direction: column;
   gap: 0.5rem;
   min-width: 0;
-  padding: 0.75rem;
-  border: 1px solid rgba(148, 163, 184, 0.12);
-  border-radius: 0.875rem;
-  background: linear-gradient(135deg, rgba(248, 250, 252, 0.5) 0%, rgba(241, 245, 249, 0.3) 100%);
-  backdrop-filter: blur(8px);
-  max-height: 400px;
+  margin-left: 0.875rem;
+  padding: 0.25rem 0 0.25rem 1rem;
+  border-left: 1px solid var(--cm-hairline-strong);
+  max-height: 420px;
   overflow-y: auto;
-}
-
-:global(.dark) .stepsContent {
-  background: linear-gradient(135deg, rgba(30, 41, 59, 0.3) 0%, rgba(15, 23, 42, 0.4) 100%);
-  border-color: rgba(71, 85, 105, 0.15);
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 8px, #000 calc(100% - 8px), transparent 100%);
+  mask-image: linear-gradient(to bottom, transparent 0, #000 8px, #000 calc(100% - 8px), transparent 100%);
 }
 
 .assistantMessageParts {
@@ -272,7 +268,8 @@
   gap: 0.5rem;
 }
 
-/* ─── Response Card ─── */
+/* ─── Response ─── */
+/* Final answer flows directly on the canvas; only a small mono header marks it. */
 .response {
   display: flex;
   flex-direction: column;
@@ -280,17 +277,7 @@
   min-width: 0;
   max-width: 100%;
   overflow: hidden;
-  padding: 0.75rem 1rem;
-  border: 1px solid #E2E8F0;
-  border-radius: 1rem;
-  background: #F1F5F9;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
-}
-
-:global(.dark) .response {
-  border-color: #334155;
-  background: #1E293B;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+  padding: 0.25rem 0.125rem 0;
 }
 
 .responseHeader {
@@ -303,32 +290,25 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 1.375rem;
-  height: 1.375rem;
-  border-radius: 0.25rem;
-  color: rgb(13, 148, 136);
-  background: rgba(13, 148, 136, 0.12);
-  margin-right: 0.375rem;
-}
-
-:global(.dark) .responseIcon {
-  color: rgb(94, 234, 212);
-  background: rgba(20, 184, 166, 0.15);
+  width: 1.25rem;
+  height: 1.25rem;
+  border-radius: 0.375rem;
+  color: #fff;
+  background: var(--cm-gradient);
+  box-shadow: 0 2px 8px -2px oklch(0.6 0.2 274 / 0.6);
+  margin-right: 0.5rem;
 }
 
 .responseTitle {
   display: flex;
   align-items: center;
-  font-size: 0.75rem;
-  font-weight: 600;
-  color: rgba(13, 148, 136, 0.8);
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
+  font-weight: 500;
+  color: var(--cm-text-faint);
   margin: 0;
   text-transform: uppercase;
-  letter-spacing: 0.5px;
-}
-
-:global(.dark) .responseTitle {
-  color: rgba(94, 234, 212, 0.7);
+  letter-spacing: 0.08em;
 }
 
 .responseContent {
@@ -341,22 +321,13 @@
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  padding: 0.625rem 0.875rem;
-  border: 1px solid rgba(148, 163, 184, 0.15);
-  border-radius: 0.875rem;
-  background: linear-gradient(135deg, rgba(248, 250, 252, 0.8) 0%, rgba(241, 245, 249, 0.6) 100%);
-  backdrop-filter: blur(8px);
-  color: #475569;
+  padding: 0.5rem 0.75rem;
+  border: 1px dashed var(--cm-hairline-strong);
+  border-radius: 0.75rem;
+  background: transparent;
+  color: var(--cm-text-muted);
   font-size: 0.8125rem;
   font-weight: 500;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
-}
-
-:global(.dark) .compactingTurn {
-  background: linear-gradient(135deg, rgba(30, 41, 59, 0.5) 0%, rgba(15, 23, 42, 0.6) 100%);
-  border-color: rgba(71, 85, 105, 0.25);
-  color: #94a3b8;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2), inset 0 1px 1px rgba(255, 255, 255, 0.03);
 }
 
 .compactingIcon {
@@ -364,34 +335,7 @@
 }
 
 .compactingText {
-  color: #6b7280;
-}
-
-:global(.dark) .compactingText {
-  color: #a1a1aa;
-}
-
-/* ─── Border Glow Animation (running lights) ─── */
-@keyframes border-glow-pulse {
-  0%, 100% {
-    border-color: rgba(14, 165, 233, 0.2);
-    box-shadow: 0 0 12px rgba(14, 165, 233, 0.05), inset 0 0 8px rgba(14, 165, 233, 0.05);
-  }
-  50% {
-    border-color: rgba(14, 165, 233, 0.6);
-    box-shadow: 0 0 20px rgba(14, 165, 233, 0.3), inset 0 0 12px rgba(14, 165, 233, 0.2);
-  }
-}
-
-@keyframes border-glow-pulse-dark {
-  0%, 100% {
-    border-color: rgba(14, 165, 233, 0.3);
-    box-shadow: 0 0 16px rgba(14, 165, 233, 0.1), inset 0 1px 1px rgba(255, 255, 255, 0.03), inset 0 0 8px rgba(14, 165, 233, 0.1);
-  }
-  50% {
-    border-color: rgba(14, 165, 233, 0.8);
-    box-shadow: 0 0 24px rgba(14, 165, 233, 0.4), inset 0 1px 1px rgba(255, 255, 255, 0.03), inset 0 0 16px rgba(14, 165, 233, 0.3);
-  }
+  color: var(--cm-text-muted);
 }
 
 /* ─── Error/Cancelled Banner ─── */
@@ -400,33 +344,27 @@
   flex-direction: column;
   gap: 0.375rem;
   padding: 0.625rem 0.875rem;
-  border-radius: 0.875rem;
+  border-radius: 0.75rem;
 }
 
 .errorBanner[data-variant="cancelled"] {
   border: 1px solid rgba(245, 158, 11, 0.25);
-  background: linear-gradient(135deg, rgba(255, 251, 235, 0.8) 0%, rgba(254, 243, 199, 0.5) 100%);
-  backdrop-filter: blur(12px);
-  box-shadow: 0 2px 8px -2px rgba(245, 158, 11, 0.1);
+  background: rgba(245, 158, 11, 0.06);
 }
 
 :global(.dark) .errorBanner[data-variant="cancelled"] {
   border-color: rgba(245, 158, 11, 0.3);
-  background: linear-gradient(135deg, rgba(120, 53, 15, 0.2) 0%, rgba(69, 26, 3, 0.25) 100%);
-  box-shadow: 0 2px 16px -2px rgba(245, 158, 11, 0.12), inset 0 1px 1px rgba(255, 255, 255, 0.04);
+  background: rgba(245, 158, 11, 0.07);
 }
 
 .errorBanner[data-variant="error"] {
   border: 1px solid rgba(239, 68, 68, 0.25);
-  background: linear-gradient(135deg, rgba(254, 242, 242, 0.8) 0%, rgba(254, 226, 226, 0.5) 100%);
-  backdrop-filter: blur(12px);
-  box-shadow: 0 2px 8px -2px rgba(239, 68, 68, 0.1);
+  background: rgba(239, 68, 68, 0.05);
 }
 
 :global(.dark) .errorBanner[data-variant="error"] {
   border-color: rgba(239, 68, 68, 0.3);
-  background: linear-gradient(135deg, rgba(127, 29, 29, 0.2) 0%, rgba(69, 10, 10, 0.25) 100%);
-  box-shadow: 0 2px 16px -2px rgba(239, 68, 68, 0.12), inset 0 1px 1px rgba(255, 255, 255, 0.04);
+  background: rgba(239, 68, 68, 0.07);
 }
 
 .errorBannerHeader {
@@ -467,11 +405,12 @@
 .errorBannerTitle {
   display: flex;
   align-items: center;
-  font-size: 0.75rem;
-  font-weight: 600;
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
+  font-weight: 500;
   margin: 0;
   text-transform: uppercase;
-  letter-spacing: 0.5px;
+  letter-spacing: 0.08em;
 }
 
 .errorBanner[data-variant="cancelled"] .errorBannerTitle {
@@ -493,11 +432,7 @@
 .errorBannerContent {
   padding-left: 1.75rem;
   font-size: 0.8125rem;
-  color: #6b7280;
-}
-
-:global(.dark) .errorBannerContent {
-  color: #a1a1aa;
+  color: var(--cm-text-muted);
 }
 
 /* ─── Working Dot (trigger bar) ─── */
@@ -505,7 +440,8 @@
   width: 7px;
   height: 7px;
   border-radius: 50%;
-  background: rgb(14, 165, 233);
+  background: var(--cm-accent-2);
+  box-shadow: 0 0 8px var(--cm-accent-2);
   animation: working-pulse 1.4s ease-in-out infinite;
   flex-shrink: 0;
   transition: background-color 300ms ease, box-shadow 300ms ease;
@@ -518,7 +454,7 @@
 }
 
 .workingDot[data-phase="tool"] {
-  box-shadow: 0 0 6px rgba(14, 165, 233, 0.3);
+  box-shadow: 0 0 8px oklch(0.74 0.14 210 / 0.6);
 }
 
 @keyframes working-pulse {

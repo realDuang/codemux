@@ -3,16 +3,15 @@
    ═══════════════════════════════════════════════════ */
 
 .root {
-  border-radius: 8px;
-  border: 1px solid #E2E8F0;
-  background: #F8FAFC;
+  border-radius: 0.625rem;
+  border: 1px solid var(--cm-hairline);
+  background: var(--cm-surface);
   overflow: hidden;
   margin: 2px 0;
 }
 
 :global(.dark) .root {
-  border-color: #334155;
-  background: #1E293B;
+  background: oklch(1 0 0 / 0.02);
 }
 
 /* ── Trigger row ── */
@@ -112,13 +111,10 @@
 
 /* ── Expanded list ── */
 .list {
-  border-top: 1px solid #E2E8F0;
+  border-top: 1px solid var(--cm-hairline);
   padding: 4px 6px 6px;
 }
 
-:global(.dark) .list {
-  border-top-color: #334155;
-}
 
 .item {
   display: flex;

@@ -2,7 +2,6 @@ import { createSignal, onMount, onCleanup, Show, Switch, Match } from "solid-js"
 import { useNavigate } from "@solidjs/router";
 import { Auth } from "../lib/auth";
 import { useI18n } from "../lib/i18n";
-import { publicAssetUrl } from "../lib/public-assets";
 import { copyTextToClipboard } from "../lib/clipboard";
 import { AccessQRCode } from "../components/AccessQRCode";
 import { RemoteAccessSettings } from "../components/RemoteAccessSettings";
@@ -19,6 +18,8 @@ import { systemAPI, remoteAccessAPI, channelAPI, weixinIlinkAPI, type ChannelInf
 import { getSetting, bootstrapHostSettings } from "../lib/settings";
 import { refreshThemeFromSettings } from "../lib/theme";
 import { refreshLocaleFromSettings } from "../lib/i18n";
+import { BrandMark } from "../components/BrandMark";
+import { publicAssetUrl } from "../lib/public-assets";
 
 export default function EntryPage() {
   const { t } = useI18n();
@@ -858,16 +859,13 @@ export default function EntryPage() {
   // =========================================================================
 
   return (
-    <div class="flex flex-col h-screen overflow-hidden bg-gray-50/50 dark:bg-slate-950 font-sans text-gray-900 dark:text-gray-100">
+    <div class="flex flex-col h-screen overflow-hidden bg-[var(--cm-canvas)] font-sans text-gray-900 dark:text-gray-100">
       {/* Unified Titlebar */}
       <div
-        class="w-full flex-shrink-0 flex items-center px-2 border-b border-gray-200 dark:border-slate-800 bg-gray-50/50 dark:bg-slate-950 electron-drag-region electron-titlebar-pad-left electron-titlebar-pad-right"
+        class="w-full flex-shrink-0 flex items-center px-2.5 border-b border-[var(--cm-hairline)] bg-[var(--cm-canvas)] electron-drag-region electron-titlebar-pad-left electron-titlebar-pad-right"
         style={{ height: "var(--electron-title-bar-height, 40px)", "min-height": "var(--electron-title-bar-height, 40px)" }}
       >
-        <div class="flex items-center gap-1.5 electron-no-drag flex-shrink-0 titlebar-brand">
-          <img src={publicAssetUrl("logo.png")} alt="CodeMux" class="w-5 h-5 rounded" />
-          <span class="hidden sm:inline text-[11px] font-semibold tracking-wide text-gray-500 dark:text-gray-400 bg-gray-100 dark:bg-slate-800 px-2 py-0.5 rounded-md border border-gray-200 dark:border-slate-700 select-none">CodeMux</span>
-        </div>
+        <BrandMark />
         <div class="flex-1" />
         <div class="electron-no-drag">
           <LanguageSwitcher />
@@ -886,8 +884,10 @@ export default function EntryPage() {
 
       {/* Remote access: Show login form or approval status */}
       <Show when={!checking() && !isHost()}>
-        <div class="flex-1 flex items-center justify-center p-4">
-          <div class="w-full max-w-md p-8 bg-white dark:bg-slate-800 rounded-lg shadow-md transition-all duration-300">
+        <div class="relative flex-1 flex items-center justify-center p-4 isolate overflow-hidden">
+          <div aria-hidden="true" class="pointer-events-none absolute inset-0 -z-10 cm-grid-bg" />
+          <div aria-hidden="true" class="pointer-events-none absolute inset-0 -z-10 cm-aurora" />
+          <div class="animate-cm-fade-up w-full max-w-md p-8 bg-[var(--cm-surface)]/90 backdrop-blur-xl rounded-2xl ring-1 ring-[var(--cm-hairline-strong)] shadow-[var(--cm-shadow-lg)] transition-all duration-300">
             <Show when={!waitingApproval()} fallback={
               <div class="text-center space-y-6">
                 <Switch>
@@ -978,7 +978,10 @@ export default function EntryPage() {
                 </Switch>
               </div>
             }>
-              <h1 class="text-2xl font-bold text-center mb-6 text-gray-800 dark:text-white">
+              <div class="flex justify-center mb-5">
+                <span class="cm-brand-mark rounded-xl"><img src={publicAssetUrl("logo.png")} alt="" class="w-11 h-11 rounded-xl" /></span>
+              </div>
+              <h1 class="text-[22px] font-semibold tracking-tight text-center mb-6 text-gray-900 dark:text-white">
                 {t().login.title}
               </h1>
 
@@ -992,7 +995,7 @@ export default function EntryPage() {
                     value={code()}
                     onInput={(e) => setCode(e.currentTarget.value)}
                     placeholder={t().login.placeholder}
-                    class="w-full px-4 py-2 border rounded-md focus:ring-2 focus:ring-blue-500 focus:outline-none dark:bg-slate-700 dark:border-slate-600 dark:text-white text-center text-lg tracking-widest font-mono"
+                    class="w-full h-14 px-4 bg-[var(--cm-surface-2)] border border-[var(--cm-hairline-strong)] rounded-xl focus:outline-none focus:border-indigo-500/60 focus:ring-4 focus:ring-indigo-500/15 text-gray-900 dark:text-white text-center text-2xl tracking-[0.5em] font-mono transition-shadow"
                     maxLength={6}
                     disabled={loginLoading()}
                     autofocus
@@ -1008,7 +1011,7 @@ export default function EntryPage() {
                 <button
                   type="submit"
                   disabled={loginLoading() || code().length !== 6}
-                  class="w-full py-2.5 px-4 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                  class="cm-btn-primary w-full h-11 px-4 font-medium rounded-xl disabled:cursor-not-allowed flex items-center justify-center gap-2"
                 >
                   <Show when={loginLoading()} fallback={t().login.connect}>
                     <div class="animate-spin w-4 h-4 border-2 border-white border-t-transparent rounded-full" />
@@ -1034,7 +1037,7 @@ export default function EntryPage() {
             <div class="max-w-4xl mx-auto space-y-6">
 
               {/* Local Mode Banner */}
-              <div class="rounded-xl bg-blue-50 dark:bg-blue-900/10 border border-blue-100 dark:border-blue-900/30 p-4 flex gap-3">
+              <div class="rounded-xl bg-[var(--cm-gradient-soft)] ring-1 ring-inset ring-blue-500/20 p-4 flex gap-3">
                 <svg xmlns="http://www.w3.org/2000/svg" class="shrink-0 text-blue-600 dark:text-blue-400 mt-0.5" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" x2="16" y1="21" y2="21"/><line x1="12" x2="12" y1="17" y2="21"/></svg>
                 <div class="text-sm text-blue-800 dark:text-blue-200">
                   <span class="font-medium">{t().entry.localModeTitle}</span> {t().entry.localModeDesc}
@@ -1042,15 +1045,15 @@ export default function EntryPage() {
               </div>
 
               {/* Vertical Tab Layout (horizontal on mobile) */}
-              <div class="flex flex-col md:flex-row gap-0 bg-white dark:bg-slate-900 rounded-xl border border-gray-200 dark:border-slate-800 shadow-xs overflow-hidden md:min-h-[520px]">
+              <div class="flex flex-col md:flex-row gap-0 bg-[var(--cm-surface)] rounded-2xl border border-[var(--cm-hairline-strong)] shadow-[var(--cm-shadow-md)] overflow-hidden md:min-h-[520px]">
                 {/* Left: Tab Navigation (top on mobile) */}
-                <nav class="w-full md:w-auto md:min-w-44 md:max-w-56 shrink-0 border-b md:border-b-0 md:border-r border-gray-200 dark:border-slate-800 bg-gray-50/50 dark:bg-slate-950/50 p-2 md:p-3 flex md:flex-col gap-1 overflow-x-auto">
+                <nav class="w-full md:w-auto md:min-w-44 md:max-w-56 shrink-0 border-b md:border-b-0 md:border-r border-[var(--cm-hairline)] bg-[var(--cm-surface-2)]/60 p-2 md:p-3 flex md:flex-col gap-1 overflow-x-auto">
                   <Show when={isElectron()}>
                     <button
                       onClick={() => setActiveTab("channels")}
                       class={`flex items-center gap-2 md:gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all text-left whitespace-nowrap ${
                         activeTab() === "channels"
-                          ? "bg-white dark:bg-slate-800 text-blue-600 dark:text-blue-400 shadow-xs"
+                          ? "bg-[var(--cm-surface)] dark:bg-white/[0.07] text-gray-900 dark:text-white shadow-[var(--cm-shadow-sm)] ring-1 ring-[var(--cm-hairline)]"
                           : "text-gray-600 dark:text-gray-400 hover:bg-white/60 dark:hover:bg-slate-800/60 hover:text-gray-900 dark:hover:text-gray-200"
                       }`}
                     >
@@ -1063,7 +1066,7 @@ export default function EntryPage() {
                     aria-label={t().remote.webApp}
                     class={`flex items-center gap-2 md:gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all text-left whitespace-nowrap ${
                       activeTab() === "webApp"
-                        ? "bg-white dark:bg-slate-800 text-blue-600 dark:text-blue-400 shadow-xs"
+                        ? "bg-[var(--cm-surface)] dark:bg-white/[0.07] text-gray-900 dark:text-white shadow-[var(--cm-shadow-sm)] ring-1 ring-[var(--cm-hairline)]"
                         : "text-gray-600 dark:text-gray-400 hover:bg-white/60 dark:hover:bg-slate-800/60 hover:text-gray-900 dark:hover:text-gray-200"
                     }`}
                   >
@@ -1075,7 +1078,7 @@ export default function EntryPage() {
                     aria-label={t().remote.publicAccessTab}
                     class={`flex items-center gap-2 md:gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all text-left relative whitespace-nowrap ${
                       activeTab() === "publicAccess"
-                        ? "bg-white dark:bg-slate-800 text-blue-600 dark:text-blue-400 shadow-xs"
+                        ? "bg-[var(--cm-surface)] dark:bg-white/[0.07] text-gray-900 dark:text-white shadow-[var(--cm-shadow-sm)] ring-1 ring-[var(--cm-hairline)]"
                         : "text-gray-600 dark:text-gray-400 hover:bg-white/60 dark:hover:bg-slate-800/60 hover:text-gray-900 dark:hover:text-gray-200"
                     }`}
                   >
@@ -1350,7 +1353,7 @@ export default function EntryPage() {
                               <div class="flex items-center gap-3">
                                 <button
                                   onClick={() => setFeishuConfigOpen(true)}
-                                  class="px-3 py-1.5 text-xs font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-slate-800 rounded-lg transition-colors border border-gray-200 dark:border-slate-700"
+                                  class="px-3 py-1.5 text-xs font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-900/[0.04] dark:hover:bg-white/[0.05] rounded-lg transition-colors border border-gray-200 dark:border-slate-700"
                                 >
                                   {t().channel.configure}
                                 </button>
@@ -1412,7 +1415,7 @@ export default function EntryPage() {
                               <div class="flex items-center gap-3">
                                 <button
                                   onClick={() => setDingtalkConfigOpen(true)}
-                                  class="px-3 py-1.5 text-xs font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-slate-800 rounded-lg transition-colors border border-gray-200 dark:border-slate-700"
+                                  class="px-3 py-1.5 text-xs font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-900/[0.04] dark:hover:bg-white/[0.05] rounded-lg transition-colors border border-gray-200 dark:border-slate-700"
                                 >
                                   {t().channel.configure}
                                 </button>
@@ -1474,7 +1477,7 @@ export default function EntryPage() {
                               <div class="flex items-center gap-3">
                                 <button
                                   onClick={() => setTelegramConfigOpen(true)}
-                                  class="px-3 py-1.5 text-xs font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-slate-800 rounded-lg transition-colors border border-gray-200 dark:border-slate-700"
+                                  class="px-3 py-1.5 text-xs font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-900/[0.04] dark:hover:bg-white/[0.05] rounded-lg transition-colors border border-gray-200 dark:border-slate-700"
                                 >
                                   {t().channel.configure}
                                 </button>
@@ -1540,7 +1543,7 @@ export default function EntryPage() {
                                   fallback={
                                     <button
                                       onClick={() => setWeixinIlinkLoginOpen(true)}
-                                      class="px-3 py-1.5 text-xs font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-slate-800 rounded-lg transition-colors border border-gray-200 dark:border-slate-700"
+                                      class="px-3 py-1.5 text-xs font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-900/[0.04] dark:hover:bg-white/[0.05] rounded-lg transition-colors border border-gray-200 dark:border-slate-700"
                                     >
                                       {t().channel.login}
                                     </button>
@@ -1645,7 +1648,7 @@ export default function EntryPage() {
                               <div class="flex items-center gap-3">
                                 <button
                                   onClick={() => setTeamsConfigOpen(true)}
-                                  class="px-3 py-1.5 text-xs font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-slate-800 rounded-lg transition-colors border border-gray-200 dark:border-slate-700"
+                                  class="px-3 py-1.5 text-xs font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-900/[0.04] dark:hover:bg-white/[0.05] rounded-lg transition-colors border border-gray-200 dark:border-slate-700"
                                 >
                                   {t().channel.configure}
                                 </button>
@@ -1720,7 +1723,7 @@ export default function EntryPage() {
                               <div class="flex items-center gap-3">
                                 <button
                                   onClick={() => setWecomConfigOpen(true)}
-                                  class="px-3 py-1.5 text-xs font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-slate-800 rounded-lg transition-colors border border-gray-200 dark:border-slate-700"
+                                  class="px-3 py-1.5 text-xs font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-900/[0.04] dark:hover:bg-white/[0.05] rounded-lg transition-colors border border-gray-200 dark:border-slate-700"
                                 >
                                   {t().channel.configure}
                                 </button>
@@ -1865,12 +1868,12 @@ export default function EntryPage() {
         </div>
 
         {/* Bottom: Enter Chat Button (sticky) */}
-        <div class="sticky bottom-0 bg-white/80 dark:bg-slate-900/80 backdrop-blur-md border-t border-gray-200 dark:border-slate-800 p-4">
+        <div class="sticky bottom-0 bg-[var(--cm-canvas)]/80 backdrop-blur-xl border-t border-[var(--cm-hairline)] p-4">
           <div class="max-w-4xl mx-auto">
             <button
               onClick={handleEnterChat}
               disabled={enteringChat()}
-              class="w-full py-3 px-6 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-xl transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-3"
+              class="cm-btn-primary group w-full h-12 px-6 font-medium tracking-tight rounded-xl disabled:cursor-not-allowed flex items-center justify-center gap-3"
             >
               <Show when={enteringChat()} fallback={
                 <>
@@ -1878,7 +1881,7 @@ export default function EntryPage() {
                     <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
                   </svg>
                   <span>{t().entry.enterChat}</span>
-                  <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="transition-transform duration-200 group-hover:translate-x-0.5">
                     <path d="m9 18 6-6-6-6"/>
                   </svg>
                 </>

@@ -7,10 +7,11 @@ import { For } from "solid-js";
 import { notifications, dismiss, type NotificationType } from "../lib/notifications";
 import { useI18n } from "../lib/i18n";
 
+// Glass toasts: neutral surface, a coloured status dot carries the type.
 const typeStyles: Record<NotificationType, string> = {
-  error: "bg-red-600 text-white",
-  warning: "bg-yellow-500 text-gray-900",
-  info: "bg-blue-600 text-white",
+  error: "text-red-500",
+  warning: "text-amber-500",
+  info: "text-indigo-500 dark:text-indigo-400",
 };
 
 const typeIcons: Record<NotificationType, string> = {
@@ -26,12 +27,14 @@ export function NotificationToast() {
       <For each={notifications()}>
         {(n) => (
           <div
-            class={`pointer-events-auto flex items-start gap-2 px-4 py-3 rounded-lg shadow-lg text-sm ${typeStyles[n.type]} animate-[toast-in_0.25s_ease-out]`}
+            class={`pointer-events-auto flex items-start gap-2.5 pl-3 pr-2.5 py-2.5 rounded-xl text-[13px] text-gray-800 dark:text-gray-100 bg-[var(--cm-surface)]/90 dark:bg-[var(--cm-surface-2)]/90 backdrop-blur-xl ring-1 ring-[var(--cm-hairline-strong)] shadow-[var(--cm-shadow-lg)] animate-[toast-in_0.25s_ease-out]`}
           >
-            <span class="font-bold text-base leading-5 shrink-0">{typeIcons[n.type]}</span>
-            <span class="flex-1 break-words leading-5">{n.message}</span>
+            <span class={`mt-[3px] w-[18px] h-[18px] rounded-md flex items-center justify-center shrink-0 text-[11px] font-bold bg-current/10 ${typeStyles[n.type]}`}>
+              <span class="text-current">{typeIcons[n.type]}</span>
+            </span>
+            <span class="flex-1 break-words leading-6">{n.message}</span>
             <button
-              class="shrink-0 opacity-70 hover:opacity-100 ml-2 text-base leading-5 cursor-pointer"
+              class="shrink-0 w-6 h-6 rounded-md flex items-center justify-center text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:bg-gray-900/5 dark:hover:bg-white/10 text-base leading-5 cursor-pointer"
               onClick={() => dismiss(n.id)}
               aria-label={t().question.dismiss}
             >
@@ -42,8 +45,8 @@ export function NotificationToast() {
       </For>
       <style>{`
         @keyframes toast-in {
-          from { opacity: 0; transform: translateY(100%); }
-          to { opacity: 1; transform: translateY(0); }
+          from { opacity: 0; transform: translateY(8px) scale(0.98); }
+          to { opacity: 1; transform: none; }
         }
       `}</style>
     </div>

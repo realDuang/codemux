@@ -115,7 +115,7 @@ export function ScheduledTaskSection(props: ScheduledTaskSectionProps) {
     <div class="mb-2 pb-2 border-b border-gray-200 dark:border-slate-800">
       {/* Section Header */}
       <div
-        class="group flex items-center justify-between px-2 py-1.5 rounded-md cursor-pointer hover:bg-gray-100 dark:hover:bg-slate-900 transition-colors"
+        class="group flex items-center justify-between px-2 py-1.5 rounded-md cursor-pointer hover:bg-gray-900/[0.035] dark:hover:bg-white/[0.04] transition-colors"
         onClick={toggleExpanded}
       >
         <div class="flex items-center gap-2 min-w-0 flex-1">
@@ -136,7 +136,7 @@ export function ScheduledTaskSection(props: ScheduledTaskSectionProps) {
           </svg>
 
           {/* Clock icon */}
-          <div class="w-5 h-5 rounded flex items-center justify-center bg-indigo-500 text-white flex-shrink-0">
+          <div class="w-5 h-5 rounded-md flex items-center justify-center bg-indigo-500/12 text-indigo-600 dark:text-indigo-300 ring-1 ring-inset ring-indigo-500/25 flex-shrink-0">
             <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <circle cx="12" cy="12" r="10" />
               <polyline points="12 6 12 12 16 14" />
@@ -144,11 +144,11 @@ export function ScheduledTaskSection(props: ScheduledTaskSectionProps) {
           </div>
 
           {/* Title + count */}
-          <span class="text-sm font-medium text-gray-700 dark:text-gray-300 truncate">
+          <span class="text-[13px] font-medium text-gray-800 dark:text-gray-200 truncate">
             {t().scheduledTask.title}
           </span>
           <Show when={props.tasks.length > 0}>
-            <span class="text-[10px] text-gray-400 dark:text-gray-500">
+            <span class="cm-mono text-[10px] text-gray-400 dark:text-gray-500">
               [{enabledCount()}/{props.tasks.length}]
             </span>
           </Show>
@@ -199,7 +199,7 @@ export function ScheduledTaskSection(props: ScheduledTaskSectionProps) {
 
                   return (
                     <div
-                      class="group relative px-3 py-2 mb-0.5 rounded-md cursor-pointer transition-all duration-150 hover:bg-gray-100 dark:hover:bg-slate-900"
+                      class="group relative px-3 py-2 mb-0.5 rounded-md cursor-pointer transition-all duration-150 hover:bg-gray-900/[0.035] dark:hover:bg-white/[0.04]"
                       onClick={handleClick}
                     >
                       {/* Line 1: Status dot + Name */}
@@ -228,11 +228,11 @@ export function ScheduledTaskSection(props: ScheduledTaskSectionProps) {
                             </span>
                           )}
                         </Show>
-                        <span class="text-[10px] text-gray-400 dark:text-gray-500">
+                        <span class="cm-mono text-[10px] text-gray-400 dark:text-gray-500">
                           {frequencyLabel(task)}
                         </span>
                         <Show when={task.enabled && task.frequency.type !== "manual"}>
-                          <span class="text-[10px] text-gray-400 dark:text-gray-500">
+                          <span class="cm-mono text-[10px] text-gray-400 dark:text-gray-500">
                             · {formatNextRun(task)}
                           </span>
                         </Show>

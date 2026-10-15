@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync } from "fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { dirname, join } from "path";
 
@@ -210,6 +210,59 @@ describe("CodexAdapter", () => {
     expect((await adapter.listMessages(sessionId)).filter((message) => message.role === "user")).toEqual([]);
     expect(client.request.mock.calls.map(([method]) => method)).toEqual(["turn/steer"]);
     expect((adapter as any).messageBuffers.get(sessionId).parts.at(-1).text).toContain("Yes");
+  });
+
+  it.each(["unknown", "mixed", "malformed"])("rejects an explicitly asynchronous %s owner reply without creating a user message", async (source) => {
+    const { adapter, client } = createAdapterWithClient();
+    const { sessionId, threadId } = seedSession(adapter);
+    (adapter as any).handleNotification("turn/started", { threadId, turn: { id: "active-turn", status: "inProgress" } });
+    (adapter as any).handleNotification("item/completed", { threadId, turnId: "active-turn", item: {
+      id: "question", type: "agentMessage", questions: [{ title: "Continue?" }],
+    } });
+    const ids = source === "mixed" ? ["question", "old-question"] : ["old-question"];
+    const text = source === "malformed" ? "<send_user_message_question_reply>invalid</send_user_message_question_reply>"
+      : `<send_user_message_question_reply>\n${JSON.stringify(ids.map((id) => ({
+        questionItemId: JSON.stringify(["request_user_input_async", id, 0]), question: "Continue?", answer: "Yes",
+      })))}\n</send_user_message_question_reply>`;
+    await expect(adapter.createDesktopOwnerRuntime().request(sessionId, "turn/steer", {
+      threadId, expectedTurnId: "active-turn", input: [{ type: "text", text }],
+      restoreMessage: { context: { turnTrigger: "send_user_message_async_question" } },
+    })).rejects.toThrow("no longer belongs to the active Codex turn");
+    expect(client.request).not.toHaveBeenCalled();
+    expect((await adapter.listMessages(sessionId)).some((message) => message.role === "user")).toBe(false);
+    expect(adapter.getPendingQuestions(sessionId)).toHaveLength(1);
+    expect((adapter as any).messageQueues.size).toBe(0);
+  });
+
+  it("does not authorize visualization reads from an async user answer", async () => {
+    const { adapter, client } = createAdapterWithClient();
+    const { sessionId, threadId } = seedSession(adapter, { threadId: "11111111-1111-4111-8111-111111111111" });
+    const codexHome = mkdtempSync(join(tmpdir(), "codemux-question-image-"));
+    const imagePath = join(codexHome, "visualizations", "2026", "10", "14", threadId, "preview.png");
+    mkdirSync(dirname(imagePath), { recursive: true });
+    writeFileSync(imagePath, Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl6AAAAAElFTkSuQmCC", "base64"));
+    vi.stubEnv("CODEX_HOME", codexHome);
+    try {
+      const notify = (method: string, values: Record<string, unknown>) => (adapter as any).handleNotification(method, {
+        threadId, turnId: "active-turn", ...values,
+      });
+      notify("turn/started", { turn: { id: "active-turn", status: "inProgress" } });
+      notify("item/completed", { item: { id: "question", type: "agentMessage", questions: [{ title: "Which image?" }] } });
+      client.request.mockResolvedValue({ turnId: "active-turn" });
+      const markdown = `![Preview](${imagePath})`;
+      await adapter.replyQuestion(adapter.getPendingQuestions(sessionId)[0].id, [[markdown]], sessionId);
+      notify("item/completed", { item: { id: "native-image", type: "agentMessage", text: markdown } });
+      notify("turn/completed", { turn: { id: "active-turn", status: "completed" } });
+      const parts = (await adapter.listMessages(sessionId)).flatMap((message) => message.parts);
+      const receipt = parts.find((part) => part.type === "text" && part.text === `Which image?\n\n${markdown}`);
+      expect(receipt).toMatchObject({ type: "text", completed: true, phase: "commentary" });
+      expect(receipt).not.toHaveProperty("inlineAssets");
+      expect(parts.find((part) => part.type === "text" && part.text === markdown))
+        .toMatchObject({ inlineAssets: [{ sourcePath: imagePath }] });
+    } finally {
+      vi.unstubAllEnvs();
+      rmSync(codexHome, { recursive: true, force: true });
+    }
   });
 
   it("restores only unanswered active questions and keeps local dismissals through history refresh", async () => {

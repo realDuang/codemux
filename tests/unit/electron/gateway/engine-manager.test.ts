@@ -3,7 +3,7 @@ import { EngineManager } from "../../../../electron/main/gateway/engine-manager"
 import { conversationStore } from "../../../../electron/main/services/conversation-store";
 import { EngineAdapter } from "../../../../electron/main/engines/engine-adapter";
 import { getDefaultEngineFromSettings, engineManagerLog } from "../../../../electron/main/services/logger";
-import type { EngineType, ReasoningPart, UnifiedMessage, UnifiedSession, ConversationMessage } from "../../../../src/types/unified";
+import type { EngineType, ReasoningPart, UnifiedMessage, UnifiedPart, UnifiedSession, ConversationMessage } from "../../../../src/types/unified";
 
 // --- Mocks ---
 
@@ -1637,7 +1637,7 @@ describe("EngineManager", () => {
       expect(persistenceState().authoritativeMessageWrites.size).toBe(0);
     });
 
-    it("forwards ordinary engine removals without adding authoritative mirror writes", async () => {
+    it("persists ordinary engine removals and clears their buffered steps", async () => {
       adapterA.getCapabilities.mockReturnValue({});
       const message = { ...makeExternalMessage("assistant", "Completed"), time: { created: 1000, completed: 2000 } };
       adapterA.emit("message.updated", { sessionId: externalSessionId, message });
@@ -1649,12 +1649,12 @@ describe("EngineManager", () => {
       persistenceState().dirtySteps.add(message.id);
 
       adapterA.emit("message.removed", { sessionId: externalSessionId, messageId: message.id });
-      await Promise.resolve();
+      await engineManager.flushPendingState();
 
       expect(onRemoved).toHaveBeenCalledWith({ sessionId: conv.id, messageId: message.id });
       expect(persistenceState().dirtySteps.has(message.id)).toBe(false);
       expect(persistenceState().authoritativeMessageWrites.size).toBe(0);
-      expect(conversationStore.removeMessage).not.toHaveBeenCalled();
+      expect(conversationStore.removeMessage).toHaveBeenCalledWith(conv.id, message.id);
     });
 
     it.each(["ensureMessage", "updateMessage", "saveSteps"] as const)(
@@ -1938,7 +1938,7 @@ describe("EngineManager", () => {
       );
     });
 
-    it("buffers content parts and updates existing entries by part id", () => {
+    it("buffers content parts and updates existing entries by part id", async () => {
       (conversationStore.findByEngineSession as any).mockReturnValue({ id: "conv1" });
 
       const part1 = { id: "p1", type: "text", text: "v1", sessionId: "eng-s", messageId: "m1" } as any;
@@ -1960,14 +1960,10 @@ describe("EngineManager", () => {
           parts: [],
         },
       });
-      // Flush microtasks
-      return Promise.resolve().then(() => {
-        // appendMessage was called exactly once (not twice) with the message
-        const callCount = (conversationStore.appendMessage as any).mock.calls.filter(
-          (c: any[]) => c[0] === "conv1",
-        ).length;
-        expect(callCount).toBe(1);
-      });
+      await engineManager.flushPendingState();
+      expect(conversationStore.appendMessage).toHaveBeenCalledExactlyOnceWith("conv1", expect.objectContaining({
+        parts: [{ ...part1Updated, sessionId: "conv1" }],
+      }));
     });
 
     it("buffers step parts and updates existing step entries by part id", () => {
@@ -2485,6 +2481,171 @@ describe("EngineManager", () => {
     });
   });
 
+  describe("message retraction persistence", () => {
+    const conversationId = "retraction-conversation";
+    const sessionId = "retraction-session";
+    const messageId = "composite-assistant";
+    let savedMessages: Map<string, ConversationMessage>;
+    let savedSteps: Map<string, UnifiedPart[]>;
+    const retainedMessage: ConversationMessage = {
+      id: "retained-message",
+      role: "assistant",
+      time: { created: 1, completed: 2 },
+      parts: [{ id: "retained-content", type: "text", sessionId: conversationId, messageId: "retained-message", text: "Earlier answer" }],
+    };
+    const textPart: UnifiedPart = { id: "retained-text", type: "text", sessionId, messageId, text: "Retained text" };
+    const oldStep: UnifiedPart = {
+      id: "superseded-tool", type: "tool", sessionId, messageId,
+      callId: "superseded-call", normalizedTool: "shell", originalTool: "Bash", title: "Superseded command", kind: "other",
+      state: { status: "running", input: { command: "superseded" }, time: { start: 3 } },
+    };
+    const retainedStep: UnifiedPart = { id: "retained-step", type: "reasoning", sessionId, messageId, text: "Retained reasoning" };
+    const message = (parts: UnifiedPart[], completed = true): UnifiedMessage => ({
+      id: messageId, sessionId, role: "assistant", time: { created: 3, ...(completed ? { completed: 4 } : {}) }, parts,
+    });
+    const emitParts = (parts: UnifiedPart[]) => {
+      for (const part of parts) adapterA.emit("message.part.updated", { sessionId, messageId, part });
+    };
+    const retract = (parts: UnifiedPart[]) => {
+      adapterA.emit("message.removed", { sessionId, messageId });
+      adapterA.emit("message.updated", { sessionId, message: message(parts, false) });
+      emitParts(parts);
+    };
+    const expectRetainedMessage = () => {
+      expect(savedMessages.get(retainedMessage.id)).toEqual(retainedMessage);
+      expect(savedSteps.get(retainedMessage.id)).toEqual([{ ...retainedStep, messageId: retainedMessage.id, sessionId: conversationId }]);
+    };
+
+    beforeEach(() => {
+      vi.useFakeTimers();
+      engineManager.registerAdapter(adapterA);
+      const conv = makeMockConv({ id: conversationId, engineSessionId: sessionId });
+      vi.mocked(conversationStore.get).mockReturnValue(conv);
+      vi.mocked(conversationStore.findByEngineSession).mockReturnValue(conv);
+      savedMessages = new Map([[retainedMessage.id, structuredClone(retainedMessage)]]);
+      savedSteps = new Map([[retainedMessage.id, [{ ...retainedStep, messageId: retainedMessage.id, sessionId: conversationId }]]]);
+      vi.mocked(conversationStore.listMessages).mockImplementation(async () => [...savedMessages.values()]);
+      vi.mocked(conversationStore.appendMessage).mockImplementation(async (_id, value) => { savedMessages.set(value.id, structuredClone(value)); });
+      vi.mocked(conversationStore.ensureMessage).mockImplementation(async (_id, value) => {
+        if (!savedMessages.has(value.id)) savedMessages.set(value.id, structuredClone(value));
+      });
+      vi.mocked(conversationStore.updateMessage).mockImplementation(async (_id, id, patch) => {
+        const value = savedMessages.get(id);
+        if (value) Object.assign(value, structuredClone(patch));
+      });
+      vi.mocked(conversationStore.saveSteps).mockImplementation(async (_id, id, steps) => { savedSteps.set(id, structuredClone(steps)); });
+      vi.mocked(conversationStore.removeMessage).mockImplementation(async (_id, id) => {
+        savedMessages.delete(id);
+        savedSteps.delete(id);
+      });
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+      vi.mocked(conversationStore.listMessages).mockReset().mockResolvedValue([]);
+      vi.mocked(conversationStore.appendMessage).mockReset();
+      vi.mocked(conversationStore.ensureMessage).mockReset();
+      vi.mocked(conversationStore.updateMessage).mockReset();
+      vi.mocked(conversationStore.saveSteps).mockReset();
+      vi.mocked(conversationStore.removeMessage).mockReset();
+    });
+
+    it("removes persisted superseded steps before saving a text-only replacement with the same message ID", async () => {
+      emitParts([oldStep, { ...textPart, id: "superseded-text", text: "Superseded text" }]);
+      await engineManager.flushPendingState();
+      expect(savedSteps.get(messageId)).toEqual([{ ...oldStep, sessionId: conversationId }]);
+
+      retract([textPart]);
+      adapterA.emit("message.updated", { sessionId, message: message([textPart]) });
+      await engineManager.flushPendingState();
+
+      expect(savedMessages.get(messageId)?.parts).toEqual([{ ...textPart, sessionId: conversationId }]);
+      expect(savedSteps.get(messageId) ?? []).toEqual([]);
+      expectRetainedMessage();
+    });
+
+    it.each(["ensureMessage", "saveSteps", "appendMessage"] as const)(
+      "keeps re-emitted parts after a superseded write pauses at %s",
+      async (pausedMethod) => {
+        let release!: () => void;
+        let reachedPause!: () => void;
+        const pause = new Promise<void>((resolve) => { release = resolve; });
+        const paused = new Promise<void>((resolve) => { reachedPause = resolve; });
+        if (pausedMethod === "saveSteps") {
+          vi.mocked(conversationStore.saveSteps).mockImplementationOnce(async (_id, id, steps) => {
+            reachedPause();
+            await pause;
+            savedSteps.set(id, structuredClone(steps));
+          });
+        } else {
+          vi.mocked(conversationStore[pausedMethod]).mockImplementationOnce(async (_id, value) => {
+            reachedPause();
+            await pause;
+            if (!savedMessages.has(value.id)) savedMessages.set(value.id, structuredClone(value));
+          });
+        }
+        emitParts([oldStep]);
+        if (pausedMethod === "appendMessage") {
+          adapterA.emit("message.updated", { sessionId, message: message([{ ...textPart, text: "Superseded text" }, oldStep]) });
+        } else {
+          await vi.advanceTimersByTimeAsync(2000);
+        }
+        await paused;
+
+        retract([textPart, retainedStep]);
+        adapterA.emit("message.updated", { sessionId, message: message([textPart]) });
+        const onFlushed = vi.fn();
+        const flushing = engineManager.flushPendingState().then(onFlushed);
+        await vi.advanceTimersByTimeAsync(0);
+        expect(onFlushed).not.toHaveBeenCalled();
+        release();
+        await flushing;
+
+        expect(savedMessages.get(messageId)?.parts).toEqual([{ ...textPart, sessionId: conversationId }]);
+        expect(savedSteps.get(messageId)).toEqual([{ ...retainedStep, sessionId: conversationId }]);
+        expectRetainedMessage();
+        expect(vi.getTimerCount()).toBe(0);
+      },
+    );
+
+    it.each(["ensureMessage", "saveSteps"] as const)(
+      "preserves streamed content when cancellation completes behind a pending %s write",
+      async (pausedMethod) => {
+        let release!: () => void;
+        let reachedPause!: () => void;
+        const pause = new Promise<void>((resolve) => { release = resolve; });
+        const paused = new Promise<void>((resolve) => { reachedPause = resolve; });
+        if (pausedMethod === "ensureMessage") {
+          vi.mocked(conversationStore.ensureMessage).mockImplementationOnce(async (_id, value) => {
+            reachedPause();
+            await pause;
+            if (!savedMessages.has(value.id)) savedMessages.set(value.id, structuredClone(value));
+          });
+        } else {
+          vi.mocked(conversationStore.saveSteps).mockImplementationOnce(async (_id, id, steps) => {
+            reachedPause();
+            await pause;
+            savedSteps.set(id, structuredClone(steps));
+          });
+        }
+        emitParts([textPart, retainedStep]);
+        await vi.advanceTimersByTimeAsync(2000);
+        await paused;
+        adapterA.cancelMessage.mockImplementationOnce(async () => {
+          adapterA.emit("message.updated", { sessionId, message: message([]) });
+        });
+
+        await engineManager.cancelMessage(conversationId);
+        release();
+        await engineManager.flushPendingState();
+
+        expect(savedMessages.get(messageId)?.parts).toEqual([{ ...textPart, sessionId: conversationId }]);
+        expect(savedSteps.get(messageId)).toEqual([{ ...retainedStep, sessionId: conversationId }]);
+        expectRetainedMessage();
+      },
+    );
+  });
+
   // ===========================================================================
   // scheduleStepFlush — timer deduplication
   // ===========================================================================
@@ -2691,7 +2852,7 @@ describe("EngineManager", () => {
       }));
       const onFlushed = vi.fn();
       const flushing = engineManager.flushPendingState().then(onFlushed);
-      await Promise.resolve();
+      await vi.advanceTimersByTimeAsync(0);
 
       expect(conversationStore.ensureMessage).toHaveBeenCalledWith(
         "conv-pending",

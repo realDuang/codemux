@@ -90,6 +90,7 @@ import {
   replacePlanText,
   upsertPart,
   upsertAgentMessage,
+  upsertAsyncQuestionReply,
 } from "./converters";
 
 const SESSION_IDLE_TIMEOUT_MS = 30 * 60 * 1000;
@@ -591,7 +592,11 @@ export class CodexAdapter extends EngineAdapter {
     }
     const input = parseDesktopOwnerInput(params.input);
     const asyncReplies = method === "turn/steer" ? parseCodexAsyncQuestionReplies(input) : undefined;
-    if (asyncReplies && this.knowsAsyncQuestionReplies(sessionId, this.activeTurnIds.get(sessionId)!, asyncReplies)) {
+    const knownAsyncReplies = asyncReplies && this.knowsAsyncQuestionReplies(sessionId, this.activeTurnIds.get(sessionId)!, asyncReplies);
+    if (asRecord(asRecord(params.restoreMessage).context).turnTrigger === "send_user_message_async_question" && !knownAsyncReplies) {
+      throw new Error("The asynchronous question no longer belongs to the active Codex turn");
+    }
+    if (asyncReplies && knownAsyncReplies) {
       const turnId = this.activeTurnIds.get(sessionId)!;
       const result = await this.client!.request("turn/steer", { threadId, input, expectedTurnId: turnId }, START_TIMEOUT_MS);
       this.acceptAsyncQuestionReplies(sessionId, turnId, asyncReplies);
@@ -1394,7 +1399,7 @@ export class CodexAdapter extends EngineAdapter {
     for (const reply of replies) {
       state.settledIds.add(reply.questionItemId);
       if (buffer) {
-        const part = upsertAgentMessage(buffer, `async-question-reply:${reply.questionItemId}`, formatCodexAsyncQuestionReplies([reply]), { completed: true, phase: "commentary" });
+        const part = upsertAsyncQuestionReply(buffer, `async-question-reply:${reply.questionItemId}`, formatCodexAsyncQuestionReplies([reply]));
         this.emit("message.part.updated", { sessionId, messageId: buffer.messageId, part });
       }
     }

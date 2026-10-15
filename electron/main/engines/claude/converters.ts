@@ -64,9 +64,8 @@ export function buildEditDiffMetadata(
 // messages wrapped in XML-ish tags. They are not real user prompts.
 
 const LOCAL_COMMAND_CAVEAT_RE = /^\s*<local-command-caveat>[\s\S]*<\/local-command-caveat>\s*$/;
-const COMMAND_NAME_RE = /<command-name>([\s\S]*?)<\/command-name>/;
-const COMMAND_ARGS_RE = /<command-args>([\s\S]*?)<\/command-args>/;
-const LOCAL_COMMAND_STDOUT_RE = /<local-command-(?:stdout|stderr)>([\s\S]*?)<\/local-command-(?:stdout|stderr)>/g;
+const COMMAND_BLOCK_RE = /<command-(name|message|args)>([\s\S]*?)<\/command-\1>/g;
+const LOCAL_COMMAND_STDOUT_RE = /<local-command-(stdout|stderr)>([\s\S]*?)<\/local-command-\1>/g;
 const INTERRUPTED_RE = /^\[Request interrupted by user[^\]]*\]$/;
 const COMPACT_SUMMARY_PREFIX = "This session is being continued from a previous conversation";
 
@@ -84,16 +83,18 @@ function classifyUserText(raw: string): UserTextClass {
   if (INTERRUPTED_RE.test(text)) return { kind: "interrupted" };
   if (text.startsWith(COMPACT_SUMMARY_PREFIX)) return { kind: "skip" };
 
-  const nameMatch = text.match(COMMAND_NAME_RE);
-  if (nameMatch) {
-    const name = nameMatch[1].trim();
-    const args = text.match(COMMAND_ARGS_RE)?.[1].trim();
+  // Only unwrap complete transcript records; prompts can quote these tags.
+  const commandBlocks = [...text.matchAll(COMMAND_BLOCK_RE)];
+  const name = commandBlocks.find((block) => block[1] === "name")?.[2].trim();
+  if (name && commandBlocks.some((block) => block[1] === "message") && !text.replace(COMMAND_BLOCK_RE, "").trim()) {
+    const args = commandBlocks.find((block) => block[1] === "args")?.[2].trim();
     const cmd = name.startsWith("/") ? name : `/${name}`;
     return { kind: "command", text: args ? `${cmd} ${args}` : cmd };
   }
 
-  if (text.includes("<local-command-stdout>") || text.includes("<local-command-stderr>")) {
-    const outputs = [...text.matchAll(LOCAL_COMMAND_STDOUT_RE)].map((m) => m[1].trim()).filter(Boolean);
+  const outputBlocks = [...text.matchAll(LOCAL_COMMAND_STDOUT_RE)];
+  if (outputBlocks.length > 0 && !text.replace(LOCAL_COMMAND_STDOUT_RE, "").trim()) {
+    const outputs = outputBlocks.map((block) => block[2].trim()).filter(Boolean);
     return outputs.length > 0 ? { kind: "command-output", text: outputs.join("\n") } : { kind: "skip" };
   }
 

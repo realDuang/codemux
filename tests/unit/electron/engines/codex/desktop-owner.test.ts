@@ -229,6 +229,46 @@ describe("CodexDesktopOwner", () => {
     h.bridge.dispose();
   });
 
+  it("rejects an async answer when refreshing the owner has advanced to another turn", async () => {
+    const h = harness();
+    const question = { id: "old-question", type: "agentMessage", questions: [{ title: "Deploy staging?" }] };
+    h.state.thread.turns.push({ id: "turn-old", status: "inProgress", items: [question] });
+    await h.bridge.registerCreatedThread("codex_thread-created", "thread-created");
+    h.state.thread.turns[0].status = "completed";
+    h.state.thread.turns.push({ id: "turn-new", status: "inProgress", items: [] });
+    const text = `<send_user_message_question_reply>\n${JSON.stringify([{
+      questionItemId: JSON.stringify(["request_user_input_async", "old-question", 0]), question: "Deploy staging?", answer: "Yes",
+    }])}\n</send_user_message_question_reply>`;
+    try {
+      await expect(h.call("thread-follower-steer-turn", {
+        input: [{ type: "text", text }], restoreMessage: { context: { turnTrigger: "send_user_message_async_question" } },
+      })).rejects.toThrow("no longer belongs to the active Codex turn");
+      expect(h.request).not.toHaveBeenCalled();
+    } finally {
+      h.bridge.dispose();
+    }
+  });
+
+  it("retains explicit async answer intent for the runtime's active-turn validation", async () => {
+    const h = harness();
+    h.state.thread.turns.push({ id: "turn-active", status: "inProgress", items: [
+      { id: "question", type: "agentMessage", questions: [{ title: "Continue?" }] },
+    ] });
+    await h.bridge.registerCreatedThread("codex_thread-created", "thread-created");
+    const input = [{ type: "text", text: `<send_user_message_question_reply>\n${JSON.stringify([{
+      questionItemId: JSON.stringify(["request_user_input_async", "question", 0]), question: "Continue?", answer: "Yes",
+    }])}\n</send_user_message_question_reply>` }];
+    const restoreMessage = { context: { turnTrigger: "send_user_message_async_question" } };
+    try {
+      await h.call("thread-follower-steer-turn", { input, restoreMessage });
+      expect(h.request).toHaveBeenCalledWith("codex_thread-created", "turn/steer", {
+        threadId: "thread-created", expectedTurnId: "turn-active", input, restoreMessage,
+      });
+    } finally {
+      h.bridge.dispose();
+    }
+  });
+
   it("routes approvals only to the matching pending native request and publishes their removal", async () => {
     const h = harness();
     h.state.requests.push({ id: 42, method: "item/commandExecution/requestApproval", params: { threadId: "thread-created", turnId: "turn-1", itemId: "cmd", command: "pwd" } });

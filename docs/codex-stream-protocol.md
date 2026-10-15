@@ -527,11 +527,20 @@ question IDs, original questions, and trimmed answers. Desktop routes this throu
 prompt or start another turn. Partial answers leave the remaining questions
 pending. Pending or failed steering does not count as an accepted answer.
 
+CodeMux-owned Desktop threads also validate the async marker and question IDs at
+the refreshed owner boundary before sending a turn-bound request. The inspected
+official Desktop v1 follower method does not accept a caller's expected turn ID;
+its native implementation may retry a turn mismatch against the current turn.
+The official-owner path therefore has the same local precheck limitation as the
+native UI and cannot promise atomic original-turn targeting through this IPC.
+
 Only receipt batches whose IDs all match questions from the same turn are
 normalized into assistant question/answer history. Unknown, mixed, quoted, or
 malformed examples stay ordinary user content. Dismissing an async question is
 local display state and sends neither an empty answer nor a turn interruption.
 Blocking questions and permission requests retain their separate reply contracts.
+Answer receipts use a text-only conversion path and cannot authorize the
+assistant-only visualization-file resolver.
 
 The gateway restores reply routes after failed submissions and when pending
 requests are recovered, while protecting in-flight submissions against duplicate

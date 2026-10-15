@@ -3641,6 +3641,138 @@ describe("ClaudeCodeAdapter", () => {
     });
   });
 
+  describe("refusal fallback retractions", () => {
+    it.each([undefined, "session", "local"])("honors the next model selection after a %s fallback", async (scope) => {
+      const mockSession = makeMockV2Session([
+        { type: "system", subtype: "init", session_id: "cc-1" },
+        {
+          type: "system", subtype: "model_refusal_fallback", original_model: "primary", fallback_model: "fallback",
+          content: "Retried with fallback", scope,
+        },
+        { type: "result", subtype: "success" },
+      ]);
+      mockSession.query.setModel = vi.fn().mockResolvedValue(undefined);
+      seedV2Session(adapter, "cs_1", mockSession);
+      (adapter as any).v2Sessions.get("cs_1").model = "primary";
+
+      await adapter.sendMessage("cs_1", [{ type: "text", text: "First" }], { mode: "default", modelId: "primary" });
+      await adapter.sendMessage("cs_1", [{ type: "text", text: "Second" }], { mode: "default", modelId: "primary" });
+
+      expect(mockSession.query.setModel.mock.calls).toEqual(scope === "local" ? [] : [["primary"]]);
+    });
+
+    it("restores a retracted tool result without removing its call or another completed tool", async () => {
+      const call = (uuid: string, callId: string) => ({
+        type: "assistant", uuid, parent_tool_use_id: null,
+        message: { id: uuid, content: [{ type: "tool_use", id: callId, name: "Read", input: { file_path: "/a.ts" } }] },
+      });
+      const result = (uuid: string, callId: string, content: string) => ({
+        type: "user", uuid, parent_tool_use_id: null,
+        message: { content: [{ type: "tool_result", tool_use_id: callId, content }] },
+      });
+      const retraction = {
+        type: "system", subtype: "model_refusal_fallback", original_model: "primary", fallback_model: "fallback",
+        content: "Retried with fallback", retracted_message_uuids: ["withdrawn-result"],
+      };
+      seedV2Session(adapter, "cs_1", makeMockV2Session([
+        { type: "system", subtype: "init", session_id: "cc-1" },
+        call("keep-call", "keep-tool"), result("keep-result", "keep-tool", "Kept output"),
+        call("retry-call", "retry-tool"), result("withdrawn-result", "retry-tool", "Withdrawn output"),
+        retraction,
+        result("replacement-result", "retry-tool", "Replacement output"),
+        retraction,
+        { type: "result", subtype: "success" },
+      ]));
+      const restored: any[] = [];
+      const removed: string[] = [];
+      adapter.on("message.updated", ({ message }) => {
+        if (message.role === "assistant" && !message.time.completed && message.parts.length > 0) restored.push(structuredClone(message));
+      });
+      adapter.on("message.removed", ({ messageId }) => removed.push(messageId));
+
+      const response = await adapter.sendMessage("cs_1", [{ type: "text", text: "Continue" }], { mode: "default" });
+
+      const tools = response.parts.filter((part) => part.type === "tool");
+      expect(tools.map((part: any) => [part.callId, part.state.status, part.state.output])).toEqual([
+        ["keep-tool", "completed", "Kept output"], ["retry-tool", "completed", "Replacement output"],
+      ]);
+      expect(restored).toHaveLength(1);
+      expect(restored[0].parts.find((part: any) => part.callId === "retry-tool")).toMatchObject({
+        id: tools[1].id, state: { status: "running", input: { filePath: "/a.ts" } },
+      });
+      expect(restored[0].parts.find((part: any) => part.callId === "retry-tool").state).not.toHaveProperty("output");
+      expect(removed).toEqual([response.id]);
+      expect(response.parts.filter((part) => part.type === "step-finish")).toHaveLength(2);
+    });
+
+    it("retracts only named SDK blocks and republishes surviving parts with their original IDs", async () => {
+      const ev = (event: unknown) => ({ type: "stream_event", event, parent_tool_use_id: null });
+      const assistant = (uuid: string, id: string, block: unknown, supersedes?: string[]) => ({
+        type: "assistant", uuid, parent_tool_use_id: null, supersedes,
+        message: { id, content: [block] },
+      });
+      const events = [
+        { type: "system", subtype: "init", session_id: "cc-1" },
+        assistant("retained-text", "api-retained", { type: "text", text: "Keep this earlier answer." }),
+        ev({ type: "message_start", message: { id: "api-refused" } }),
+        ev({ type: "content_block_start", index: 0, content_block: { type: "thinking", thinking: "" } }),
+        ev({ type: "content_block_delta", index: 0, delta: { type: "thinking_delta", thinking: "Withdrawn reasoning" } }),
+        assistant("refused-reasoning", "api-refused", { type: "thinking", thinking: "Withdrawn reasoning" }),
+        ev({ type: "content_block_stop", index: 0 }),
+        ev({ type: "content_block_start", index: 1, content_block: { type: "text", text: "" } }),
+        ev({ type: "content_block_delta", index: 1, delta: { type: "text_delta", text: "Withdrawn partial answer" } }),
+        assistant("refused-text", "api-refused", { type: "text", text: "Withdrawn partial answer" }),
+        ev({ type: "content_block_stop", index: 1 }),
+        ev({ type: "content_block_start", index: 3, content_block: { type: "text", text: "" } }),
+        ev({ type: "content_block_delta", index: 3, delta: { type: "text_delta", text: "Keep this sibling block." } }),
+        assistant("retained-sibling", "api-refused", { type: "text", text: "Keep this sibling block." }),
+        ev({ type: "content_block_stop", index: 3 }),
+        ev({ type: "content_block_start", index: 2, content_block: { type: "tool_use", id: "refused-tool", name: "Bash", input: {} } }),
+        assistant("refused-call", "api-refused", { type: "tool_use", id: "refused-tool", name: "Bash", input: { command: "echo old" } }),
+        ev({ type: "content_block_stop", index: 2 }),
+        { type: "user", uuid: "refused-result", parent_tool_use_id: null, message: { content: [
+          { type: "tool_result", tool_use_id: "refused-tool", content: "old" },
+        ] } },
+        assistant("replacement", "api-replacement", { type: "text", text: "Replacement answer." }, [
+          "refused-reasoning", "refused-text", "refused-call", "refused-result", "unknown-uuid",
+        ]),
+        {
+          type: "system", subtype: "model_refusal_fallback", original_model: "primary", fallback_model: "fallback",
+          content: "Retried with fallback", retracted_message_uuids: [
+            "refused-reasoning", "refused-text", "refused-call", "refused-result",
+          ],
+        },
+        { type: "result", subtype: "success" },
+      ];
+      seedV2Session(adapter, "cs_1", makeMockV2Session(events));
+      const previousMessage = {
+        id: "previous-final", sessionId: "cs_1", role: "assistant", time: { created: 1, completed: 2 },
+        parts: [{ type: "text", id: "previous-part", messageId: "previous-final", sessionId: "cs_1", text: "Earlier turn" }],
+      };
+      (adapter as any).messageHistory.set("cs_1", [previousMessage]);
+      const removed: string[] = [];
+      const updated: any[] = [];
+      let retainedPartId: string | undefined;
+      adapter.on("message.part.updated", ({ part }) => {
+        if (part.type === "text" && part.text === "Keep this earlier answer.") retainedPartId ??= part.id;
+      });
+      adapter.on("message.removed", ({ messageId }) => removed.push(messageId));
+      adapter.on("message.updated", ({ message }) => updated.push(structuredClone(message)));
+
+      const response = await adapter.sendMessage("cs_1", [{ type: "text", text: "Continue" }], { mode: "default" });
+
+      expect(response.parts.map((part: any) => part.text)).toEqual([
+        "Keep this earlier answer.", "Keep this sibling block.", "Replacement answer.", "Retried with fallback",
+      ]);
+      expect(response.parts[0].id).toBe(retainedPartId);
+      expect(removed).toEqual([response.id]);
+      const replacementSnapshot = updated.find((message) => message.id === response.id && message.parts.length === 2);
+      expect(replacementSnapshot?.parts[0].id).toBe(retainedPartId);
+      expect(replacementSnapshot?.time.completed).toBeUndefined();
+      expect((await adapter.listMessages("cs_1"))[0]).toEqual(previousMessage);
+    });
+  });
+
   describe("subagent (Agent tool) messages", () => {
     it("does not render subagent tool calls as top-level steps; updates the parent part instead", () => {
       seedSession(adapter, "cs_1");

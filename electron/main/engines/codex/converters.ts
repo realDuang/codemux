@@ -142,6 +142,15 @@ export function upsertAgentMessage(
   return part;
 }
 
+export function upsertAsyncQuestionReply(buffer: MessageBuffer, itemId: string, text: string): TextPart {
+  const part: TextPart = {
+    id: codexItemPartId(buffer, itemId), messageId: buffer.messageId, sessionId: buffer.sessionId,
+    type: "text", text, completed: true, phase: "commentary",
+  };
+  upsertPart(buffer.parts, part);
+  return part;
+}
+
 export function appendTextDelta(buffer: MessageBuffer, delta: string): TextPart {
   buffer.textAccumulator += delta;
 
@@ -939,7 +948,7 @@ export function convertThreadToMessages(
       if (item.type === "userMessage") {
         const replies = parseCodexAsyncQuestionReplies(item.content);
         if (replies?.every((reply) => asyncQuestionIds.has(reply.questionItemId))) {
-          upsertAgentMessage(buffer, itemId, formatCodexAsyncQuestionReplies(replies), { completed: true, phase: "commentary" });
+          upsertAsyncQuestionReply(buffer, itemId, formatCodexAsyncQuestionReplies(replies));
           return;
         }
         const messageId = `${messagePrefix}:user:${encodeURIComponent(itemId)}`;

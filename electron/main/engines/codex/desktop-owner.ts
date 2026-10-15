@@ -1,6 +1,7 @@
 import type {
   CodexDesktopIpcClient, DesktopFollowerMethod, DesktopThreadSnapshot,
 } from "./desktop-ipc-client";
+import { getCodexAsyncQuestions, parseCodexAsyncQuestionReplies } from "./async-questions";
 
 export type CodexOwnerRequestMethod = "turn/start" | "turn/steer" | "turn/interrupt" | "thread/compact/start";
 
@@ -254,8 +255,17 @@ export class CodexDesktopOwner {
       }
       if (!activeTurnId) throw new Error("No active Codex turn to steer");
       if (params.toolOutput != null) throw new Error("Desktop dynamic tool outputs require their original runtime owner");
+      const asyncQuestionReply = record(record(params.restoreMessage).context).turnTrigger === "send_user_message_async_question";
+      if (asyncQuestionReply) {
+        const replies = parseCodexAsyncQuestionReplies(params.input);
+        const knownIds = new Set(records(active?.items).flatMap(getCodexAsyncQuestions).map((question) => question.id));
+        if (!replies?.every((reply) => knownIds.has(reply.questionItemId))) {
+          throw new Error("The asynchronous question no longer belongs to the active Codex turn");
+        }
+      }
       const result = await this.runtime.request(entry.engineSessionId, "turn/steer", {
         threadId, expectedTurnId: activeTurnId, input: params.input,
+        ...(asyncQuestionReply ? { restoreMessage: { context: { turnTrigger: "send_user_message_async_question" } } } : {}),
         ...(params.clientUserMessageId != null ? { clientUserMessageId: params.clientUserMessageId } : {}),
         ...(params.additionalContext != null ? { additionalContext: params.additionalContext } : {}),
       });

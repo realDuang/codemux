@@ -314,6 +314,22 @@ describe('Claude Converters', () => {
       expect(result[1]).toMatchObject({ role: 'assistant', parts: [{ type: 'text', text: 'Compacted.' }] });
     });
 
+    it.each([
+      'Explain why <command-name>/compact</command-name> appears in this log.',
+      'Review this transcript:\n<command-name>/compact</command-name>\n<command-message>compact</command-message>\n<command-args>keep tests</command-args>',
+      '```xml\n<command-name>/compact</command-name>\n<command-message>compact</command-message>\n```',
+      'This log contains <local-command-stdout>done</local-command-stdout>; is the operation safe?',
+      '<local-command-stderr>failed</local-command-stderr> Please explain the error.',
+      'Use <local-command-stdout> in the output.',
+    ])('preserves ordinary user text containing transcript tags: %s', (text) => {
+      const result = convertSdkMessages([
+        { type: 'user', uuid: 'u1', message: { content: text } },
+      ], sessionId);
+
+      expect(result).toHaveLength(1);
+      expect(result[0]).toMatchObject({ id: 'u1', role: 'user', parts: [{ type: 'text', text }] });
+    });
+
     it('marks the interrupted turn instead of showing the interrupt marker as a user message', () => {
       const result = convertSdkMessages([
         { type: 'user', uuid: 'u1', message: { content: 'do it' } },

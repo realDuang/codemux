@@ -69,6 +69,27 @@ describe("Codex assistant images", () => {
     expect(messages[0].parts[0]).toMatchObject({ sessionId: "unified-session", text, inlineAssets: [{ sourcePath: imagePath }] });
   });
 
+  it("keeps accepted async user answers as text without authorizing their image references", () => {
+    const answer = `![Preview](${imagePath})`;
+    const text = `<send_user_message_question_reply>\n${JSON.stringify([{
+      questionItemId: JSON.stringify(["request_user_input_async", "question", 0]), question: "Which image?", answer,
+    }])}\n</send_user_message_question_reply>`;
+    const messages = convertThreadToMessages("unified-session", { thread: {
+      id: THREAD_ID, cwd: "/project", turns: [{ id: "turn", status: "completed", items: [
+        { id: "question", type: "agentMessage", questions: [{ title: "Which image?" }] },
+        { id: "reply", type: "userMessage", content: [{ type: "text", text }] },
+        { id: "native-image", type: "agentMessage", text: answer },
+      ] }],
+    } });
+    const parts = messages.flatMap((message) => message.parts);
+    const receipt = parts.find((part) => part.type === "text" && part.text === `Which image?\n\n${answer}`);
+    expect(receipt).toMatchObject({ type: "text", completed: true, phase: "commentary" });
+    expect(receipt).not.toHaveProperty("inlineAssets");
+    expect(parts.find((part) => part.type === "text" && part.text === answer))
+      .toMatchObject({ inlineAssets: [{ sourcePath: imagePath }] });
+    expect(messages.every((message) => message.role === "assistant")).toBe(true);
+  });
+
   it("preserves raw text, visible text, citations, phase and identity without mutating the input", () => {
     const input = { ...part(), text: "Raw native content", displayText: `![Preview](${imagePath})`, citations: [{ note: "Source note" }] };
     const result = withCodexAssistantImages(input, THREAD_ID);

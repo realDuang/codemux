@@ -99,6 +99,19 @@ interface StreamingBlock {
   content: string;
   toolName?: string;
   toolId?: string;
+  partIds?: Set<string>;
+  sdkMessageClaimed?: boolean;
+}
+
+interface SdkMessageRendering {
+  partIds: Set<string>;
+  toolResults: Array<{ part: ToolPart; previous: ToolPart["state"]; applied: ToolPart["state"] }>;
+}
+
+interface SdkRenderingState {
+  currentMessageId?: string;
+  blocks: Map<string, StreamingBlock[]>;
+  messages: Map<string, SdkMessageRendering>;
 }
 
 /** Tracks stream end conditions for comprehensive result classification. */
@@ -357,6 +370,9 @@ export class ClaudeCodeAdapter extends EngineAdapter {
    * so these ids are used to avoid rendering text/thinking/tool calls twice.
    */
   private streamedMessageIds = new WeakMap<MessageBuffer, Set<string>>();
+
+  /** SDK wire UUIDs own individual blocks, even when they share an API message ID. */
+  private sdkRenderings = new WeakMap<MessageBuffer, SdkRenderingState>();
 
   /** The api_retry notice of the current turn — updated in place on each retry. */
   private retryNotices = new WeakMap<MessageBuffer, SystemNoticePart>();
@@ -2615,6 +2631,7 @@ export class ClaudeCodeAdapter extends EngineAdapter {
           delete buffer.error;
           streamingBlocks.clear();
           this.streamedMessageIds.delete(buffer);
+          this.sdkRenderings.delete(buffer);
           continue;
         }
 
@@ -3074,6 +3091,15 @@ export class ClaudeCodeAdapter extends EngineAdapter {
         this.pushNotice(sessionId, buffer, severe ? "warning" : "info", text.trim());
       }
     } else if (msg.subtype === "model_refusal_fallback" || msg.subtype === "model_refusal_no_fallback") {
+      if (msg.subtype === "model_refusal_fallback") {
+        this.retractSdkMessages(sessionId, buffer, msg.retracted_message_uuids);
+        // Session-scoped fallbacks persist in the CLI; keep the runtime model
+        // comparison accurate so the next explicit selection can switch back.
+        const liveSession = this.v2Sessions.get(sessionId);
+        if (liveSession && msg.scope !== "local" && typeof msg.fallback_model === "string") {
+          liveSession.model = msg.fallback_model;
+        }
+      }
       // The model declined the request; the CLI either retried on a fallback
       // model or gave up. `content` is the CLI's own user-facing explanation.
       const text = typeof msg.content === "string" && msg.content.trim()
@@ -3264,6 +3290,12 @@ export class ClaudeCodeAdapter extends EngineAdapter {
       return;
     }
 
+    this.retractSdkMessages(sessionId, buffer, msg.supersedes);
+    const rendering: SdkMessageRendering = { partIds: new Set(), toolResults: [] };
+    const rememberRendering = () => {
+      if (typeof msg.uuid === "string") this.getSdkRenderingState(buffer).messages.set(msg.uuid, rendering);
+    };
+
     // Extract token usage
     if (betaMessage.usage) {
       buffer.tokens = {
@@ -3282,8 +3314,14 @@ export class ClaudeCodeAdapter extends EngineAdapter {
     if (typeof content === "string") {
       // Slash command output converted by SDK: content is plain text
       if (content.trim()) {
+        if (msg.uuid) {
+          buffer.textPartId = null;
+          buffer.textAccumulator = "";
+        }
         this.appendText(sessionId, buffer, content);
+        if (buffer.textPartId) rendering.partIds.add(buffer.textPartId);
       }
+      rememberRendering();
       return;
     }
 
@@ -3292,13 +3330,35 @@ export class ClaudeCodeAdapter extends EngineAdapter {
     // Content already rendered from stream_event deltas for this API message?
     const apiMessageId: string | undefined = betaMessage.id;
     const alreadyStreamed = !!apiMessageId && !!this.streamedMessageIds.get(buffer)?.has(apiMessageId);
+    const streamedBlocks = apiMessageId ? this.sdkRenderings.get(buffer)?.blocks.get(apiMessageId) : undefined;
 
     // Process content blocks
     for (const block of content) {
+      const streamedBlock = streamedBlocks?.find((candidate) =>
+        !candidate.sdkMessageClaimed && candidate.type === block.type &&
+        (block.type !== "tool_use" || candidate.toolId === block.id));
+      if (streamedBlock) {
+        streamedBlock.sdkMessageClaimed = true;
+        for (const id of streamedBlock.partIds ?? []) rendering.partIds.add(id);
+      }
       if (block.type === "text") {
-        if (!alreadyStreamed) this.appendText(sessionId, buffer, block.text ?? "");
+        if (!alreadyStreamed) {
+          if (msg.uuid) {
+            buffer.textPartId = null;
+            buffer.textAccumulator = "";
+          }
+          this.appendText(sessionId, buffer, block.text ?? "");
+          if (buffer.textPartId) rendering.partIds.add(buffer.textPartId);
+        }
       } else if (block.type === "thinking") {
-        if (!alreadyStreamed) this.appendReasoning(sessionId, buffer, block.thinking ?? "");
+        if (!alreadyStreamed) {
+          if (msg.uuid) {
+            buffer.reasoningPartId = null;
+            buffer.reasoningAccumulator = "";
+          }
+          this.appendReasoning(sessionId, buffer, block.thinking ?? "");
+          if (buffer.reasoningPartId) rendering.partIds.add(buffer.reasoningPartId);
+        }
       } else if (block.type === "tool_use") {
         const existing = this.toolCallParts.get(block.id);
         if (existing && existing.sessionId === sessionId) {
@@ -3318,6 +3378,7 @@ export class ClaudeCodeAdapter extends EngineAdapter {
         this.flushTextAccumulator(sessionId, buffer);
 
         // Create tool part
+        const firstNewPart = buffer.parts.length;
         this.createToolPart(
           sessionId,
           buffer,
@@ -3325,8 +3386,10 @@ export class ClaudeCodeAdapter extends EngineAdapter {
           block.name,
           block.input,
         );
+        for (const part of buffer.parts.slice(firstNewPart)) rendering.partIds.add(part.id);
       }
     }
+    rememberRendering();
   }
 
   /**
@@ -3390,9 +3453,17 @@ export class ClaudeCodeAdapter extends EngineAdapter {
 
     if (!Array.isArray(betaMessage.content)) return;
 
+    const rendering: SdkMessageRendering = { partIds: new Set(), toolResults: [] };
     for (const block of betaMessage.content) {
       if (block.type === "tool_result") {
+        const part = this.toolCallParts.get(block.tool_use_id);
+        const previous = part?.state;
+        const firstNewPart = buffer.parts.length;
         this.handleToolResult(sessionId, buffer, block);
+        for (const added of buffer.parts.slice(firstNewPart)) rendering.partIds.add(added.id);
+        if (part && previous && part.state !== previous) {
+          rendering.toolResults.push({ part, previous, applied: part.state });
+        }
       } else if (block.type === "text") {
         // Text blocks in user messages — from slash command output
         const text = (block.text ?? "").trim();
@@ -3401,6 +3472,74 @@ export class ClaudeCodeAdapter extends EngineAdapter {
         }
       }
     }
+    if (typeof msg.uuid === "string") this.getSdkRenderingState(buffer).messages.set(msg.uuid, rendering);
+  }
+
+  private getSdkRenderingState(buffer: MessageBuffer): SdkRenderingState {
+    let state = this.sdkRenderings.get(buffer);
+    if (!state) {
+      state = { blocks: new Map(), messages: new Map() };
+      this.sdkRenderings.set(buffer, state);
+    }
+    return state;
+  }
+
+  private retractSdkMessages(sessionId: string, buffer: MessageBuffer, uuids: unknown): void {
+    if (!Array.isArray(uuids)) return;
+    const state = this.sdkRenderings.get(buffer);
+    if (!state) return;
+    const removedIds = new Set<string>();
+    const results: SdkMessageRendering["toolResults"] = [];
+    for (const uuid of uuids) {
+      if (typeof uuid !== "string") continue;
+      const rendering = state.messages.get(uuid);
+      if (!rendering) continue;
+      state.messages.delete(uuid);
+      for (const id of rendering.partIds) removedIds.add(id);
+      results.push(...rendering.toolResults);
+    }
+    let changed = buffer.parts.some((part) => removedIds.has(part.id));
+    buffer.parts = buffer.parts.filter((part) => !removedIds.has(part.id));
+    for (const { part, previous, applied } of results) {
+      if (buffer.parts.includes(part) && part.state === applied) {
+        part.state = previous;
+        changed = true;
+      }
+    }
+    if (!changed) return;
+    if (buffer.textPartId && removedIds.has(buffer.textPartId)) {
+      buffer.textPartId = null;
+      buffer.textAccumulator = "";
+    }
+    if (buffer.reasoningPartId && removedIds.has(buffer.reasoningPartId)) {
+      buffer.reasoningPartId = null;
+      buffer.reasoningAccumulator = "";
+    }
+    for (const [callId, part] of this.toolCallParts) {
+      if (part.sessionId === sessionId && removedIds.has(part.id)) this.toolCallParts.delete(callId);
+    }
+    for (const [taskId, callId] of this.taskToToolUseId) {
+      if (!this.toolCallParts.has(callId)) this.taskToToolUseId.delete(taskId);
+    }
+
+    // Claude messages merge parts downstream. Reset this active aggregate,
+    // then republish retained parts so renderer and persistence caches evict
+    // retracted blocks without changing surviving message/part identities.
+    this.emit("message.removed", { sessionId, messageId: buffer.messageId });
+    this.emit("message.updated", {
+      sessionId,
+      message: {
+        id: buffer.messageId,
+        sessionId,
+        role: "assistant",
+        time: { created: buffer.startTime },
+        parts: [...buffer.parts],
+        modelId: buffer.modelId,
+        reasoningEffort: buffer.reasoningEffort,
+        workingDirectory: this.sessionDirectories.get(sessionId),
+      },
+    });
+    for (const part of buffer.parts) this.emitPartUpdated(sessionId, buffer, part);
   }
 
   /**
@@ -3496,7 +3635,15 @@ export class ClaudeCodeAdapter extends EngineAdapter {
           index: idx,
           type: contentBlock.type,
           content: "",
+          partIds: new Set(),
         };
+
+        const rendering = this.getSdkRenderingState(buffer);
+        if (rendering.currentMessageId) {
+          const blocks = rendering.blocks.get(rendering.currentMessageId) ?? [];
+          blocks.push(block);
+          rendering.blocks.set(rendering.currentMessageId, blocks);
+        }
 
         if (contentBlock.type === "tool_use") {
           block.toolName = contentBlock.name;
@@ -3508,6 +3655,7 @@ export class ClaudeCodeAdapter extends EngineAdapter {
           // Create the step-start + tool part early
           const stepStartPart: StepStartPart = { type: "step-start", id: timeId("pt"), messageId: buffer.messageId, sessionId };
           buffer.parts.push(stepStartPart);
+          block.partIds!.add(stepStartPart.id);
           this.emitPartUpdated(sessionId, buffer, stepStartPart);
 
           // Create a pending tool part
@@ -3527,11 +3675,17 @@ export class ClaudeCodeAdapter extends EngineAdapter {
           };
 
           buffer.parts.push(toolPart);
+          block.partIds!.add(toolPart.id);
           this.toolCallParts.set(contentBlock.id ?? toolPartId, toolPart);
           this.emitPartUpdated(sessionId, buffer, toolPart);
         } else if (contentBlock.type === "thinking") {
           // Start reasoning block
           block.content = contentBlock.thinking ?? "";
+          buffer.reasoningPartId = null;
+          buffer.reasoningAccumulator = "";
+        } else if (contentBlock.type === "text") {
+          buffer.textPartId = null;
+          buffer.textAccumulator = "";
         }
 
         streamingBlocks.set(idx, block);
@@ -3549,9 +3703,11 @@ export class ClaudeCodeAdapter extends EngineAdapter {
         if (delta.type === "text_delta" && delta.text) {
           block.content += delta.text;
           this.appendText(sessionId, buffer, delta.text);
+          if (buffer.textPartId) block.partIds?.add(buffer.textPartId);
         } else if (delta.type === "thinking_delta" && delta.thinking) {
           block.content += delta.thinking;
           this.appendReasoning(sessionId, buffer, delta.thinking);
+          if (buffer.reasoningPartId) block.partIds?.add(buffer.reasoningPartId);
         } else if (delta.type === "input_json_delta" && delta.partial_json) {
           block.content += delta.partial_json;
           // Tool input JSON accumulates but we don't parse until complete
@@ -3600,6 +3756,7 @@ export class ClaudeCodeAdapter extends EngineAdapter {
         // assistant message that follows is not rendered a second time.
         const apiMessageId = event.message?.id;
         if (apiMessageId) {
+          this.getSdkRenderingState(buffer).currentMessageId = apiMessageId;
           let ids = this.streamedMessageIds.get(buffer);
           if (!ids) {
             ids = new Set();

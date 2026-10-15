@@ -257,7 +257,7 @@ export function FileExplorer() {
 
         {/* Right: Tabs + Preview */}
         <Show when={hasPreview()}>
-          <div class="flex-1 flex flex-col min-w-0 overflow-hidden border-l border-gray-200 dark:border-slate-800">
+          <div class="flex-1 flex flex-col min-w-0 overflow-hidden border-l border-[var(--cm-hairline-strong)]">
             <FileTabs />
             <div class="min-h-0 flex-1 overflow-auto">
               <FilePreview />

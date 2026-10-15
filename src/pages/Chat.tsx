@@ -3199,7 +3199,7 @@ export default function Chat() {
                       setSessionStore({ loading: true, initError: null });
                       initializeSession();
                     }}
-                    class="mt-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-lg transition-colors"
+                    class="cm-btn-primary mt-2 px-4 py-2 text-sm font-medium rounded-lg"
                   >
                     {t().chat.retry}
                   </button>

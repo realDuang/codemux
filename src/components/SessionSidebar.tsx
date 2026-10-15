@@ -607,7 +607,7 @@ export function SessionSidebar(props: SessionSidebarProps) {
                             onKeyDown={handleKeyDown}
                             onBlur={saveTitle}
                             autofocus
-                            class="text-sm w-full px-1 py-0.5 bg-white dark:bg-slate-700 border border-blue-500 rounded outline-none text-gray-900 dark:text-gray-100"
+                            class="text-sm w-full px-1 py-0.5 bg-[var(--cm-surface)] dark:bg-[var(--cm-surface-3)] border border-blue-500 rounded outline-none text-gray-900 dark:text-gray-100"
                             onClick={(e) => e.stopPropagation()}
                           />
                         </Show>
@@ -638,7 +638,7 @@ export function SessionSidebar(props: SessionSidebarProps) {
                         <Show
                           when={pendingDeleteId() !== session.id}
                           fallback={
-                            <div class="absolute right-1 top-1/2 -translate-y-1/2 flex items-center gap-1 bg-white dark:bg-slate-800 rounded-md shadow-sm px-1 py-0.5">
+                            <div class="absolute right-1 top-1/2 -translate-y-1/2 flex items-center gap-1 bg-[var(--cm-surface)] dark:bg-[var(--cm-surface-2)] rounded-md shadow-sm px-1 py-0.5">
                               <button
                                 onClick={(e) => { e.stopPropagation(); props.onDeleteSession(session.id); setPendingDeleteId(null); }}
                                 class="px-2 py-1 text-[10px] font-medium text-white bg-red-500 hover:bg-red-600 rounded transition-colors"
@@ -994,7 +994,7 @@ export function SessionSidebar(props: SessionSidebarProps) {
                                       onKeyDown={handleKeyDown}
                                       onBlur={saveTitle}
                                       autofocus
-                                      class="text-sm w-full px-1 py-0.5 bg-white dark:bg-slate-700 border border-blue-500 rounded outline-none text-gray-900 dark:text-gray-100"
+                                      class="text-sm w-full px-1 py-0.5 bg-[var(--cm-surface)] dark:bg-[var(--cm-surface-3)] border border-blue-500 rounded outline-none text-gray-900 dark:text-gray-100"
                                       onClick={(e) => e.stopPropagation()}
                                     />
                                   </Show>
@@ -1018,7 +1018,7 @@ export function SessionSidebar(props: SessionSidebarProps) {
                                   <Show
                                     when={pendingDeleteId() !== session.id}
                                     fallback={
-                                      <div class="absolute right-1 top-1/2 -translate-y-1/2 flex items-center gap-1 bg-white dark:bg-slate-800 rounded-md shadow-sm px-1 py-0.5">
+                                      <div class="absolute right-1 top-1/2 -translate-y-1/2 flex items-center gap-1 bg-[var(--cm-surface)] dark:bg-[var(--cm-surface-2)] rounded-md shadow-sm px-1 py-0.5">
                                         <button
                                           onClick={(e) => { e.stopPropagation(); props.onDeleteSession(session.id); setPendingDeleteId(null); }}
                                           class="px-2 py-1 text-[10px] font-medium text-white bg-red-500 hover:bg-red-600 rounded transition-colors"
@@ -1384,7 +1384,7 @@ export function SessionSidebar(props: SessionSidebarProps) {
                                     onKeyDown={handleKeyDown}
                                     onBlur={saveTitle}
                                     autofocus
-                                    class="text-sm w-full px-1 py-0.5 bg-white dark:bg-slate-700 border border-blue-500 rounded outline-none text-gray-900 dark:text-gray-100"
+                                    class="text-sm w-full px-1 py-0.5 bg-[var(--cm-surface)] dark:bg-[var(--cm-surface-3)] border border-blue-500 rounded outline-none text-gray-900 dark:text-gray-100"
                                     onClick={(e) => e.stopPropagation()}
                                   />
                                 </Show>
@@ -1412,7 +1412,7 @@ export function SessionSidebar(props: SessionSidebarProps) {
                                 <Show
                                   when={pendingDeleteId() !== session.id}
                                   fallback={
-                                    <div class="absolute right-1 top-1/2 -translate-y-1/2 flex items-center gap-1 bg-white dark:bg-slate-800 rounded-md shadow-sm px-1 py-0.5">
+                                    <div class="absolute right-1 top-1/2 -translate-y-1/2 flex items-center gap-1 bg-[var(--cm-surface)] dark:bg-[var(--cm-surface-2)] rounded-md shadow-sm px-1 py-0.5">
                                       <button
                                         onClick={(e) => {
                                           e.stopPropagation();
@@ -1635,7 +1635,7 @@ export function SessionSidebar(props: SessionSidebarProps) {
                                         <Show
                                           when={pendingDeleteId() !== `team:${wtGroup.worktree.name}`}
                                           fallback={
-                                            <div class="absolute right-1 top-1/2 -translate-y-1/2 flex items-center gap-1 bg-white dark:bg-slate-800 rounded-md shadow-sm px-1 py-0.5" onClick={(e) => e.stopPropagation()}>
+                                            <div class="absolute right-1 top-1/2 -translate-y-1/2 flex items-center gap-1 bg-[var(--cm-surface)] dark:bg-[var(--cm-surface-2)] rounded-md shadow-sm px-1 py-0.5" onClick={(e) => e.stopPropagation()}>
                                               <button
                                                 onClick={(e) => {
                                                   e.stopPropagation();
@@ -1705,7 +1705,7 @@ export function SessionSidebar(props: SessionSidebarProps) {
                                       </div>
                                       <Show when={isWorktreeExpanded(wtKey) || isSearching()}>
                                         <Show when={childSessions().length > 0}>
-                                          <div class="ml-5 border-l border-slate-200 dark:border-slate-700/50 pl-2">
+                                          <div class="ml-5 border-l border-[var(--cm-hairline-strong)]/50 pl-2">
                                             <For each={childSessions()}>
                                               {(session, idx) => (
                                                 <div

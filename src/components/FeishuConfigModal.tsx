@@ -71,10 +71,10 @@ export function FeishuConfigModal(props: FeishuConfigModalProps) {
           role="dialog"
           aria-modal="true"
           aria-labelledby="feishu-config-modal-title"
-          class="relative bg-white dark:bg-slate-900 rounded-2xl shadow-[var(--cm-shadow-lg)] ring-1 ring-[var(--cm-hairline-strong)] w-full max-w-md mx-4 overflow-hidden flex flex-col max-h-[calc(100vh-2rem)]"
+          class="relative bg-[var(--cm-surface)] dark:bg-[var(--cm-surface-2)] rounded-2xl shadow-[var(--cm-shadow-[var(--cm-shadow-lg)])] ring-1 ring-[var(--cm-hairline-strong)] w-full max-w-md mx-4 overflow-hidden flex flex-col max-h-[calc(100vh-2rem)]"
         >
           {/* Header */}
-          <div class="flex items-center justify-between px-6 py-4 border-b border-gray-200 dark:border-slate-800">
+          <div class="flex items-center justify-between px-6 py-4 border-b border-[var(--cm-hairline-strong)]">
             <h2 id="feishu-config-modal-title" class="text-lg font-semibold text-gray-900 dark:text-white">
               {t().channel.feishuBot}
             </h2>
@@ -109,7 +109,7 @@ export function FeishuConfigModal(props: FeishuConfigModalProps) {
               <select
                 value={config().platform}
                 onChange={(e) => setConfig((prev) => ({ ...prev, platform: e.currentTarget.value as "feishu" | "lark" }))}
-                class="w-full px-3 py-2 text-sm rounded-lg border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                class="w-full px-3 py-2 text-sm rounded-lg border border-[var(--cm-hairline-strong)] bg-[var(--cm-surface)] dark:bg-[var(--cm-surface-2)] text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
               >
                 <option value="feishu">{t().channel.platformFeishu}</option>
                 <option value="lark">{t().channel.platformLark}</option>
@@ -128,7 +128,7 @@ export function FeishuConfigModal(props: FeishuConfigModalProps) {
                 value={config().appId}
                 onInput={(e) => setConfig((prev) => ({ ...prev, appId: e.currentTarget.value }))}
                 placeholder={t().channel.appIdPlaceholder}
-                class="w-full px-3 py-2 text-sm rounded-lg border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                class="w-full px-3 py-2 text-sm rounded-lg border border-[var(--cm-hairline-strong)] bg-[var(--cm-surface)] dark:bg-[var(--cm-surface-2)] text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
               />
             </div>
 
@@ -142,7 +142,7 @@ export function FeishuConfigModal(props: FeishuConfigModalProps) {
                 value={config().appSecret}
                 onInput={(e) => setConfig((prev) => ({ ...prev, appSecret: e.currentTarget.value }))}
                 placeholder={props.secretsConfigured?.includes("appSecret") ? t().channel.secretConfiguredHint : t().channel.appSecretPlaceholder}
-                class="w-full px-3 py-2 text-sm rounded-lg border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                class="w-full px-3 py-2 text-sm rounded-lg border border-[var(--cm-hairline-strong)] bg-[var(--cm-surface)] dark:bg-[var(--cm-surface-2)] text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
               />
             </div>
 
@@ -180,7 +180,7 @@ export function FeishuConfigModal(props: FeishuConfigModalProps) {
           </div>
 
           {/* Footer */}
-          <div class="flex flex-col-reverse sm:flex-row justify-end gap-2 sm:gap-3 px-6 py-4 border-t border-gray-200 dark:border-slate-800 bg-gray-50 dark:bg-slate-900/50 flex-shrink-0">
+          <div class="flex flex-col-reverse sm:flex-row justify-end gap-2 sm:gap-3 px-6 py-4 border-t border-[var(--cm-hairline-strong)] bg-gray-50 dark:bg-slate-900/50 flex-shrink-0">
             <button
               onClick={props.onClose}
               class="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-900/[0.04] dark:hover:bg-white/[0.05] rounded-lg transition-colors"
@@ -190,7 +190,7 @@ export function FeishuConfigModal(props: FeishuConfigModalProps) {
             <button
               onClick={handleSave}
               disabled={saving() || !config().appId || !isSecretSatisfied("appSecret")}
-              class="px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg transition-colors"
+              class="cm-btn-primary px-4 py-2 text-sm font-medium disabled:cursor-not-allowed rounded-lg"
             >
               {saving() ? t().channel.saving : t().common.save}
             </button>

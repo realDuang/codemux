@@ -548,7 +548,8 @@ export function PromptInput(props: PromptInputProps) {
 
       {/* Input area */}
       <div
-        class={`relative rounded-2xl border shadow-[var(--cm-shadow-md)] transition-[box-shadow,border-color] duration-200 ${activeAccent().bg} ${activeAccent().border} ${activeAccent().ring} ${dragOver() ? "ring-4 ring-blue-500/20 border-blue-500/60 border-dashed" : ""}`}
+        data-orbit={props.isGenerating ? "" : undefined}
+        class={`cm-orbit relative rounded-2xl border shadow-[var(--cm-shadow-md)] transition-[box-shadow,border-color] duration-200 ${activeAccent().bg} ${activeAccent().border} ${activeAccent().ring} ${dragOver() ? "ring-4 ring-blue-500/20 border-blue-500/60 border-dashed" : ""}`}
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
@@ -688,7 +689,6 @@ export function PromptInput(props: PromptInputProps) {
                     class="relative w-8 h-8 flex items-center justify-center rounded-[10px] bg-gray-900 hover:bg-gray-800 dark:bg-white dark:hover:bg-gray-200 text-white dark:text-gray-900 transition-all shadow-[var(--cm-shadow-md)] ring-1 ring-inset ring-white/10"
                     aria-label="Stop"
                   >
-                    <span aria-hidden="true" class="absolute -inset-[3px] rounded-[12px] border-2 border-transparent border-t-indigo-500 border-r-cyan-400 animate-spin [animation-duration:1.4s]" />
                     <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
                       <rect x="5" y="5" width="14" height="14" rx="3" />
                     </svg>

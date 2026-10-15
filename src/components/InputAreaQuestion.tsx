@@ -161,7 +161,7 @@ export function InputAreaQuestion(props: InputAreaQuestionProps) {
       <Show when={externalUrl()}>
         {(url) => (
           <a
-            class="my-2 inline-flex max-w-full items-center gap-1 break-all text-sm text-indigo-600 underline dark:text-indigo-300"
+            class="cm-mono my-2 inline-flex max-w-full items-center gap-1 break-all text-[12.5px] text-[var(--cm-accent)] underline decoration-[var(--cm-accent)]/40 underline-offset-[3px] hover:decoration-current"
             href={url().href}
             target="_blank"
             rel="noopener noreferrer"

@@ -657,6 +657,63 @@ code, kbd, samp, pre {
   animation: cm-scan 1.8s linear infinite;
 }
 
+/* Orbit: while an agent is working, a comet of light circles the element's
+   border (used by the composer). The angle is a registered property so the
+   conic gradient can be animated smoothly. */
+@property --cm-orbit-angle {
+  syntax: "<angle>";
+  initial-value: 0deg;
+  inherits: false;
+}
+.cm-orbit::before,
+.cm-orbit::after {
+  content: "";
+  position: absolute;
+  inset: -1px;
+  border-radius: inherit;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.4s ease;
+  background: conic-gradient(
+    from var(--cm-orbit-angle),
+    transparent 0deg,
+    transparent 210deg,
+    oklch(0.62 0.23 290 / 0.35) 260deg,
+    oklch(0.62 0.23 290) 315deg,
+    oklch(0.78 0.14 210) 350deg,
+    transparent 360deg
+  );
+}
+/* Crisp 1.5px ring */
+.cm-orbit::after {
+  padding: 1.5px;
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  z-index: 2;
+}
+/* Soft glow trailing the comet */
+.cm-orbit::before {
+  inset: -3px;
+  padding: 3px;
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  filter: blur(6px);
+  z-index: 0;
+}
+.cm-orbit[data-orbit]::before,
+.cm-orbit[data-orbit]::after {
+  opacity: 1;
+  animation: cm-orbit 2.6s linear infinite;
+}
+.cm-orbit[data-orbit]::before {
+  opacity: 0.7;
+}
+@keyframes cm-orbit {
+  to { --cm-orbit-angle: 360deg; }
+}
+
 @keyframes cm-ping {
   75%, 100% { transform: scale(2.2); opacity: 0; }
 }
@@ -675,7 +732,9 @@ code, kbd, samp, pre {
 
 @media (prefers-reduced-motion: reduce) {
   .cm-live-dot::after,
-  .cm-scanline::after {
+  .cm-scanline::after,
+  .cm-orbit[data-orbit]::before,
+  .cm-orbit[data-orbit]::after {
     animation: none;
   }
 }

@@ -59,7 +59,7 @@ export function ReasoningEffortSelector(props: ReasoningEffortSelectorProps) {
           </div>
         </Show>
         <div
-          class={`flex rounded-lg overflow-hidden border border-gray-300 dark:border-slate-600 flex-shrink-0 ${props.compact ? "bg-white/80 dark:bg-slate-800/80" : ""}`}
+          class={`flex rounded-lg overflow-hidden border border-[var(--cm-hairline-strong)] flex-shrink-0 ${props.compact ? "bg-white/80 dark:bg-slate-800/80" : ""}`}
           role="group"
           aria-label={t().engine.reasoningEffort}
         >
@@ -74,7 +74,7 @@ export function ReasoningEffortSelector(props: ReasoningEffortSelectorProps) {
                   class={`px-3 py-1.5 text-sm font-medium transition-colors ${
                     isActive()
                       ? "bg-amber-500 text-white"
-                      : "bg-white dark:bg-slate-700 text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-slate-600"
+                      : "bg-[var(--cm-surface)] dark:bg-[var(--cm-surface-3)] text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-slate-600"
                   }`}
                 >
                   {levelLabels[effort]?.() ?? effort}

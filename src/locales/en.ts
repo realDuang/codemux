@@ -714,6 +714,7 @@ export interface LocaleDict {
 
   // File Explorer
   fileExplorer: {
+    title: string;
     togglePanel: string;
     allFiles: string;
     changes: string;
@@ -1577,6 +1578,7 @@ export const en: LocaleDict = {
 
   // File Explorer
   fileExplorer: {
+    title: "File explorer",
     togglePanel: "Toggle file explorer",
     allFiles: "Files",
     changes: "Changes",

@@ -710,6 +710,7 @@ export const ru: LocaleDict = {
 
   // File Explorer
   fileExplorer: {
+    title: "Проводник файлов",
     togglePanel: "Переключить проводник",
     allFiles: "Файлы",
     changes: "Изменения",

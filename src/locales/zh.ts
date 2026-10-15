@@ -707,6 +707,7 @@ export const zh: LocaleDict = {
 
   // File Explorer
   fileExplorer: {
+    title: "文件浏览器",
     togglePanel: "切换文件浏览器",
     allFiles: "文件",
     changes: "变更",

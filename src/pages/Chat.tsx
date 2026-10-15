@@ -3503,7 +3503,7 @@ export default function Chat() {
                 widthReady() && !isMobile() ? "transition-[width] duration-200 ease-out" : ""
               }`}
               style={{ width: isMobile() ? "100%" : `${effectiveWidth()}px` }}
-              aria-label={t().chat.filePreview}
+              aria-label={isMobile() ? t().chat.filePreview : t().fileExplorer.title}
               role="region"
               onKeyDown={(event) => {
                 if (isMobile() && event.key === "Escape") {

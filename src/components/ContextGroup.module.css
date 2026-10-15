@@ -64,7 +64,9 @@
 }
 
 .summary {
-  font-size: 0.75rem;
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
+  letter-spacing: -0.01em;
 }
 
 .arrow,
@@ -86,14 +88,16 @@
   height: 5px;
   flex-shrink: 0;
   border-radius: 50%;
+  color: var(--cm-accent-2);
   background: currentColor;
+  box-shadow: 0 0 6px currentColor;
   animation: contextPulse 1.5s ease-in-out infinite;
 }
 
 .list {
   margin: 0.25rem 0 0.5rem 0.875rem;
   padding-left: 0.625rem;
-  border-left: 1px solid var(--conversation-border, var(--sl-color-divider));
+  border-left: 1px solid var(--conversation-rail, var(--sl-color-divider));
 }
 
 .item {
@@ -116,11 +120,16 @@
 
 .itemDetail {
   flex: 1;
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
+  letter-spacing: -0.01em;
 }
 
 .itemStatus {
   margin-left: auto;
+  font-family: var(--font-mono);
   font-size: 0.6875rem;
+  font-variant-numeric: tabular-nums;
 }
 
 .itemArrow {
@@ -149,8 +158,12 @@
 
 .detailLabel {
   margin-bottom: 0.25rem;
-  font-size: 0.6875rem;
+  font-family: var(--font-mono);
+  font-size: 0.65625rem;
   font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--conversation-subtle, var(--sl-color-text-secondary));
 }
 
 .detailText,
@@ -168,7 +181,7 @@
   padding: 0.5rem 0.625rem;
   border: 1px solid var(--conversation-border, var(--sl-color-divider));
   border-radius: var(--conversation-radius, 0.5rem);
-  background: var(--conversation-surface, var(--sl-color-bg-alt));
+  background: var(--conversation-code-bg, var(--conversation-surface, var(--sl-color-bg-alt)));
   color: var(--conversation-text, var(--sl-color-text));
 }
 
@@ -179,13 +192,7 @@
 .error,
 .errorStatus,
 .itemStatus[data-error] {
-  color: #b42318;
-}
-
-:global(.dark) .error,
-:global(.dark) .errorStatus,
-:global(.dark) .itemStatus[data-error] {
-  color: #fda29b;
+  color: var(--sl-color-red-high);
 }
 
 @keyframes contextPulse {

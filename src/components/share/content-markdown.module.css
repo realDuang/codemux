@@ -64,10 +64,11 @@
     > :last-child { margin-bottom: 0; }
 
     pre {
-      --shiki-dark-bg: var(--conversation-surface, var(--sl-color-bg-surface)) !important;
+      --shiki-dark-bg: var(--conversation-code-bg, var(--sl-color-bg-surface)) !important;
+      --shiki-light-bg: var(--conversation-code-bg, var(--sl-color-bg-surface)) !important;
       position: relative;
       max-width: 100%;
-      background-color: var(--conversation-surface, var(--sl-color-bg-surface)) !important;
+      background-color: var(--conversation-code-bg, var(--sl-color-bg-surface)) !important;
       border: 1px solid var(--conversation-border, var(--sl-color-border));
       border-radius: var(--conversation-radius, 0.75rem);
       padding: 0.875rem 1rem;
@@ -109,10 +110,11 @@
       font-family: var(--conversation-font-mono, monospace);
       font-weight: 400;
       &:not(pre code) {
-        padding: 0.12em 0.35em;
-        border-radius: 0.3em;
+        padding: 0.12em 0.38em;
+        border-radius: 0.375em;
         background: var(--conversation-surface, rgba(148, 163, 184, 0.12));
-        font-size: 0.9em;
+        box-shadow: inset 0 0 0 1px var(--cm-hairline);
+        font-size: 0.86em;
         overflow-wrap: anywhere;
       }
     }
@@ -126,7 +128,8 @@
       padding: 0.25rem 0.5rem 0.25rem 1rem;
       border-bottom: 1px solid var(--conversation-border, var(--sl-color-border));
       color: var(--conversation-muted, var(--sl-color-text-dimmed));
-      background: var(--conversation-surface, var(--sl-color-bg-surface));
+      /* Same fill as the code body: Shiki's dark theme paints every span inside <pre> with it. */
+      background: var(--conversation-code-bg, var(--conversation-surface, var(--sl-color-bg-surface)));
       font-family: var(--font-sans, inherit);
       font-size: 12px;
       line-height: 1.4;
@@ -157,7 +160,30 @@
       position: absolute;
       inset: 0 0 auto;
       height: 2.625rem;
-      [data-code-language] { flex: 0 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      [data-code-language] {
+        flex: 0 1 auto;
+        display: inline-flex;
+        align-items: center;
+        gap: 0.5rem;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        font-family: var(--font-mono);
+        font-size: 11px;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        color: var(--conversation-subtle, inherit);
+      }
+      /* Gradient "window" dot ahead of the language label */
+      [data-code-language]::before {
+        content: "";
+        flex: 0 0 auto;
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: var(--cm-gradient);
+        box-shadow: 0 0 6px oklch(0.66 0.2 274 / 0.55);
+      }
       [data-markdown-copy-code] { min-width: 5rem; }
     }
 
@@ -180,6 +206,7 @@
       box-shadow: inset -8px 0 10px -10px var(--conversation-muted, #64748b);
     }
 
+    [data-markdown-table-toolbar] { background: var(--conversation-surface, var(--sl-color-bg-surface)); }
     [data-markdown-table-frame] {
       max-width: 100%;
       border: 1px solid var(--conversation-border, var(--sl-color-border));
@@ -205,7 +232,17 @@
       overflow-wrap: anywhere;
       font-size: 0.9em;
     }
-    th { font-weight: 600; background: var(--conversation-surface, var(--sl-color-bg-surface)); }
+    th {
+      font-family: var(--font-mono);
+      font-size: 0.8em;
+      font-weight: 500;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      color: var(--conversation-muted, inherit);
+      background: var(--conversation-surface, var(--sl-color-bg-surface));
+    }
+    tbody tr { transition: background-color 120ms ease; }
+    tbody tr:hover { background: var(--conversation-hover, transparent); }
     tr:last-child td { border-bottom: 0; }
     td > :last-child, th > :last-child { margin-bottom: 0; }
 
@@ -219,10 +256,10 @@
       border-radius: var(--conversation-radius, 0.75rem);
       color: var(--conversation-text, var(--sl-color-text));
       background: var(--conversation-bg, var(--sl-color-bg));
-      box-shadow: 0 20px 80px #00000040;
+      box-shadow: var(--cm-shadow-lg);
       overflow: hidden;
       &[open] { display: flex; flex-direction: column; }
-      &::backdrop { background: #00000066; }
+      &::backdrop { background: #00000066; -webkit-backdrop-filter: blur(4px); backdrop-filter: blur(4px); }
       > [data-markdown-table-toolbar] { flex: 0 0 auto; }
       > [data-markdown-table-toolbar] > strong { flex: 1; }
       > [data-markdown-table-scroll] { flex: 1; min-height: 0; }
@@ -251,7 +288,7 @@
       border-radius: var(--conversation-radius, 0.75rem);
       color: var(--conversation-text, var(--sl-color-text));
       background: var(--conversation-bg, var(--sl-color-bg));
-      box-shadow: 0 20px 80px #00000040;
+      box-shadow: var(--cm-shadow-lg);
       overflow: hidden;
       &[open] { display: flex; flex-direction: column; }
       &::backdrop { background: #00000099; }

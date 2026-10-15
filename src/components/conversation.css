@@ -1,13 +1,15 @@
-/* Shared reading surfaces. Keep the surrounding application theme independent. */
+/* Shared reading surfaces, bound to the Graphite design tokens (src/index.css). */
 .conversation {
-  --conversation-text: var(--sl-color-text);
-  --conversation-muted: var(--sl-color-text-secondary);
-  --conversation-subtle: var(--sl-color-text-secondary);
-  --conversation-bg: var(--sl-color-bg-surface);
-  --conversation-surface: var(--sl-color-bg-alt);
-  --conversation-hover: var(--sl-color-bg-hover);
-  --conversation-border: var(--sl-color-border);
-  --conversation-focus: var(--sl-color-blue-high);
+  --conversation-text: var(--cm-text);
+  --conversation-muted: var(--cm-text-muted);
+  --conversation-subtle: var(--cm-text-faint);
+  --conversation-bg: var(--cm-surface);
+  --conversation-surface: var(--cm-surface-2);
+  --conversation-hover: color-mix(in oklch, var(--cm-text) 5%, transparent);
+  --conversation-border: var(--cm-hairline-strong);
+  --conversation-rail: var(--cm-hairline-strong);
+  --conversation-code-bg: var(--cm-code-bg);
+  --conversation-focus: var(--cm-accent);
   --conversation-width: 48rem;
   --conversation-radius: 0.75rem;
   --conversation-font-size: 15px;
@@ -89,20 +91,36 @@
   padding: 0.375rem 0.75rem;
   border: 1px solid var(--conversation-border);
   border-radius: 2rem;
-  background: var(--conversation-bg);
+  background: color-mix(in oklch, var(--conversation-bg) 82%, transparent);
+  -webkit-backdrop-filter: blur(14px);
+  backdrop-filter: blur(14px);
   color: var(--conversation-text);
-  box-shadow: 0 2px 8px #00000010;
+  box-shadow: var(--cm-shadow-md);
   font-size: 0.75rem;
+  animation: conversation-jump-in 0.24s cubic-bezier(0.2, 0.8, 0.2, 1) both;
   line-height: 1.4;
   cursor: pointer;
 }
 
+@keyframes conversation-jump-in {
+  from { opacity: 0; transform: translate(-50%, 6px); }
+  to { opacity: 1; transform: translate(-50%, 0); }
+}
+
 .conversation-jump:hover {
   background: var(--conversation-surface);
+  border-color: color-mix(in oklch, var(--cm-accent) 45%, transparent);
+  box-shadow: var(--cm-shadow-md), 0 0 0 3px var(--cm-accent-soft);
+}
+
+.conversation-jump svg {
+  color: var(--cm-accent);
 }
 
 .conversation-session-summary {
   color: var(--conversation-subtle);
+  font-family: var(--font-mono);
+  letter-spacing: -0.01em;
   font-size: 0.6875rem;
   line-height: 1.5;
   font-variant-numeric: tabular-nums;

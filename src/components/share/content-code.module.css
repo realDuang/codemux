@@ -3,7 +3,7 @@
   min-width: 0;
   max-width: 100%;
   border: 1px solid var(--conversation-border, var(--sl-color-divider));
-  background-color: var(--conversation-surface, var(--sl-color-bg-surface));
+  background-color: var(--conversation-code-bg, var(--conversation-surface, var(--sl-color-bg-surface)));
   border-radius: var(--conversation-radius, 0.5rem);
   padding: 0.625rem 0.75rem;
   font-family: var(--conversation-font-mono, var(--font-mono));
@@ -28,8 +28,9 @@
   }
 
   pre {
-    --shiki-dark-bg: var(--conversation-surface, var(--sl-color-bg-surface)) !important;
-    background-color: var(--conversation-surface, var(--sl-color-bg-surface)) !important;
+    --shiki-dark-bg: var(--conversation-code-bg, var(--conversation-surface, var(--sl-color-bg-surface))) !important;
+    --shiki-light-bg: var(--conversation-code-bg, var(--conversation-surface, var(--sl-color-bg-surface))) !important;
+    background-color: var(--conversation-code-bg, var(--conversation-surface, var(--sl-color-bg-surface))) !important;
     font: inherit;
     white-space: pre-wrap;
     overflow-wrap: anywhere;

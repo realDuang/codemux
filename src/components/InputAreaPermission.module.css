@@ -183,6 +183,17 @@
   min-height: 36px;
 }
 
+.btn:focus-visible {
+  outline: 2px solid var(--conversation-focus, currentColor);
+  outline-offset: 3px;
+}
+
+@media (pointer: coarse) {
+  .btn {
+    min-height: 44px;
+  }
+}
+
 .btn[data-variant="reject"] {
   background: rgba(239, 68, 68, 0.1);
   color: rgba(185, 28, 28, 0.85);

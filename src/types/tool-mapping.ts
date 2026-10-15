@@ -31,6 +31,9 @@ const CLAUDE_TOOL_MAP: Record<string, NormalizedToolName> = {
   Grep: "grep",
   Glob: "glob",
   WebFetch: "web_fetch",
+  WebSearch: "web_fetch",
+  // Subagent tool: named "Agent" since Claude Code 2.1.x ("Task" is the legacy name)
+  Agent: "task",
   Task: "task",
   TodoWrite: "todo",
 };

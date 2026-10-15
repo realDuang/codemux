@@ -19,11 +19,9 @@ interface TextRevealProps {
 /**
  * TextReveal — animated text transitions with mask-position wipe.
  *
- * When the `text` prop changes, the old text slides upward and fades out
- * while the new text rises in from below, using CSS mask gradients for
- * soft edge reveals. Width transitions use spring-like cubic-bezier.
- *
- * Inspired by OpenCode's TextReveal component.
+ * Replaced labels can transition without remounting their text nodes.
+ * Appended text stays still, including headings received incrementally.
+ * Conversation and reduced-motion styles keep all updates stationary.
  */
 export function TextReveal(props: TextRevealProps) {
   const [cur, setCur] = createSignal(props.text);
@@ -43,7 +41,7 @@ export function TextReveal(props: TextRevealProps) {
   const growOnly = () => props.growOnly ?? true;
 
   const widen = (next: number) => {
-    if (next <= 0) return;
+    if (props.truncate || next <= 0) return;
     if (growOnly()) {
       const prev = Number.parseFloat(width());
       if (Number.isFinite(prev) && next <= prev) return;
@@ -58,6 +56,20 @@ export function TextReveal(props: TextRevealProps) {
       (next, prev) => {
         if (next === prev) return;
 
+        if (frame !== undefined && typeof cancelAnimationFrame === "function") {
+          cancelAnimationFrame(frame);
+          frame = undefined;
+        }
+
+        // Streamed suffixes update the existing node without replaying a label swap.
+        if (prev === undefined || next.startsWith(prev)) {
+          setOld(undefined);
+          setCur(next);
+          setSwapping(false);
+          widen(win());
+          return;
+        }
+
         setSwapping(true);
         setOld(prev);
         setCur(next);
@@ -67,10 +79,6 @@ export function TextReveal(props: TextRevealProps) {
           rootRef?.offsetHeight; // force reflow
           setSwapping(false);
           return;
-        }
-
-        if (frame !== undefined && typeof cancelAnimationFrame === "function") {
-          cancelAnimationFrame(frame);
         }
 
         frame = requestAnimationFrame(() => {
@@ -121,7 +129,6 @@ export function TextReveal(props: TextRevealProps) {
       data-ready={ready() ? "true" : "false"}
       data-swapping={swapping() ? "true" : "false"}
       data-truncate={props.truncate ? "true" : "false"}
-      aria-label={props.text ?? ""}
       style={{
         "--text-reveal-duration": `${duration()}ms`,
         "--text-reveal-edge": `${edge()}%`,
@@ -135,7 +142,7 @@ export function TextReveal(props: TextRevealProps) {
         <span class={styles.entering} ref={inRef}>
           {cur() ?? "\u00A0"}
         </span>
-        <span class={styles.leaving} ref={outRef}>
+        <span class={styles.leaving} ref={outRef} aria-hidden="true">
           {old() ?? "\u00A0"}
         </span>
       </span>

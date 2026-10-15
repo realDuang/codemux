@@ -27,6 +27,8 @@ export interface EngineInfo {
 }
 
 export interface EngineCapabilities {
+  /** Keep activity segments independently collapsed between assistant responses. */
+  compactActivityGroups?: boolean;
   /** Session messages and activity are owned by a connected external client. */
   authoritativeSessionState?: boolean;
   /** Dismissing a blocking question interrupts the current turn. */
@@ -330,17 +332,40 @@ interface PartBase {
   id: string;
   messageId: string;
   sessionId: string;
+  /** Stable position within the message when part IDs do not encode chronology. */
+  order?: number;
 }
 
 export interface TextPart extends PartBase {
   type: "text";
   text: string;
+  /** The native content item can finish before the enclosing turn. */
+  completed?: boolean;
+  /** Visible content when the original text also carries non-display metadata. */
+  displayText?: string;
+  /** Source notes normalized by the adapter for the response footer. */
+  citations?: TextCitation[];
+  /** Adapter-authorized resources for exact image references; text and copy content stay intact. */
+  inlineAssets?: FilePart[];
   synthetic?: boolean;
+  /** Progress updates stay in the activity stream; final text forms the response. */
+  phase?: "commentary" | "partial" | "final";
+}
+
+export interface TextCitation {
+  note: string;
+  /** Opaque source identity; it is not necessarily a navigable URL. */
+  reference?: string;
 }
 
 export interface ReasoningPart extends PartBase {
   type: "reasoning";
   text: string;
+  /** Only explicitly normalized summaries use a leading heading as metadata. */
+  summaryFormat?: "heading-prefixed";
+  /** Item completion can precede the enclosing assistant message's completion. */
+  completed?: boolean;
+  time?: { start: number; end?: number };
 }
 
 export interface FilePart extends PartBase {
@@ -348,6 +373,8 @@ export interface FilePart extends PartBase {
   mime: string;
   filename: string;
   url: string;
+  /** Local attachment path resolved through the authenticated file service. */
+  sourcePath?: string;
 }
 
 // --- File Explorer Types ---
@@ -432,6 +459,15 @@ export type NormalizedToolName =
   | "cron"
   | "unknown";
 
+/** Display-only actions within one tool invocation; execution identity stays on ToolPart. */
+export interface ToolDisplayAction {
+  kind: "skill" | "read" | "search" | "list" | "shell";
+  label?: string;
+  path?: string;
+  query?: string;
+  command?: string;
+}
+
 export interface ToolPart extends PartBase {
   type: "tool";
   /** Engine-specific tool call ID */
@@ -442,6 +478,8 @@ export interface ToolPart extends PartBase {
   originalTool: string;
   /** Human-readable title (e.g., "Finding files matching *.ts") */
   title: string;
+  /** Adapter-normalized actions for compact activity summaries. */
+  displayActions?: ToolDisplayAction[];
   /** Operation kind for UI hints */
   kind: "read" | "edit" | "other";
   /** Tool execution state */
@@ -465,6 +503,8 @@ export interface SystemNoticePart extends PartBase {
   noticeType: "compact" | "info" | "warning";
   /** i18n key (e.g. "notice:context_compressed") or raw fallback text */
   text: string;
+  /** Values for {placeholders} in the resolved text (e.g. retry attempt, reset time) */
+  params?: Record<string, string | number>;
 }
 
 export type UnifiedPart =

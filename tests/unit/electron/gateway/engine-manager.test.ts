@@ -1104,6 +1104,76 @@ describe("EngineManager", () => {
     });
   });
 
+  describe("replyPermission", () => {
+    it("allows retrying a failed reply without another permission event", async () => {
+      engineManager.registerAdapter(adapterA);
+      adapterA.emit("permission.asked", {
+        permission: {
+          id: "permission-retry",
+          sessionId: "engine-retry",
+          engineType: adapterA.engineType,
+          title: "Run the command",
+          kind: "other",
+          options: [{ id: "allow_once", label: "Allow once", type: "allow_once" }],
+        },
+      });
+      adapterA.replyPermission.mockRejectedValueOnce(new Error("Reply was not accepted"));
+
+      await expect(engineManager.replyPermission("permission-retry", { optionId: "invalid" }))
+        .rejects.toThrow("Reply was not accepted");
+      await expect(engineManager.replyPermission("permission-retry", { optionId: "allow_once" }))
+        .resolves.toBeUndefined();
+      expect(adapterA.replyPermission).toHaveBeenLastCalledWith("permission-retry", { optionId: "allow_once" }, "engine-retry");
+      await expect(engineManager.replyPermission("permission-retry", { optionId: "allow_once" }))
+        .rejects.toThrow("No engine binding found for permission");
+    });
+  });
+
+  describe("replyQuestion", () => {
+    it("allows retrying a failed answer without another question event", async () => {
+      engineManager.registerAdapter(adapterA);
+      adapterA.emit("question.asked", {
+        question: {
+          id: "question-retry",
+          sessionId: "engine-retry",
+          engineType: adapterA.engineType,
+          questions: [{ header: "Choice", question: "Which option?", options: [], custom: true }],
+        },
+      });
+      adapterA.replyQuestion.mockRejectedValueOnce(new Error("Answer was not accepted"));
+
+      await expect(engineManager.replyQuestion("question-retry", [[]]))
+        .rejects.toThrow("Answer was not accepted");
+      await expect(engineManager.replyQuestion("question-retry", [["My choice"]]))
+        .resolves.toBeUndefined();
+      expect(adapterA.replyQuestion).toHaveBeenLastCalledWith("question-retry", [["My choice"]], "engine-retry");
+      await expect(engineManager.replyQuestion("question-retry", [["My choice"]]))
+        .rejects.toThrow("No engine binding found for question");
+    });
+  });
+
+  describe("rejectQuestion", () => {
+    it("allows retrying a failed dismissal without another question event", async () => {
+      engineManager.registerAdapter(adapterA);
+      adapterA.emit("question.asked", {
+        question: {
+          id: "dismiss-retry",
+          sessionId: "engine-retry",
+          engineType: adapterA.engineType,
+          questions: [{ header: "Choice", question: "Which option?", options: [], custom: true }],
+        },
+      });
+      adapterA.rejectQuestion.mockRejectedValueOnce(new Error("Dismissal was not accepted"));
+
+      await expect(engineManager.rejectQuestion("dismiss-retry"))
+        .rejects.toThrow("Dismissal was not accepted");
+      await expect(engineManager.rejectQuestion("dismiss-retry")).resolves.toBeUndefined();
+      expect(adapterA.rejectQuestion).toHaveBeenLastCalledWith("dismiss-retry", "engine-retry");
+      await expect(engineManager.rejectQuestion("dismiss-retry"))
+        .rejects.toThrow("No engine binding found for question");
+    });
+  });
+
   // ===========================================================================
   // listCommands
   // ===========================================================================
@@ -1746,6 +1816,29 @@ describe("EngineManager", () => {
       expect(await engineManager.getSession(conv.id)).toMatchObject({ id: conv.id, activityStatus: "idle", title: "Desktop title", projectId: "dir-/dir" });
       expect(adapterA.getSession).toHaveBeenCalledWith(externalSessionId);
       expect(engineManager.listAllSessions()[0].activityStatus).toBe("idle");
+    });
+
+    it("getSession preserves external activity while local sends begin and finish", async () => {
+      let completeReply: (message: UnifiedMessage) => void = () => {};
+      adapterA.sendMessage.mockReturnValue(new Promise<UnifiedMessage>((resolve) => { completeReply = resolve; }));
+      const externalSession: UnifiedSession = {
+        id: externalSessionId,
+        engineType: adapterA.engineType,
+        directory: conv.directory,
+        activityStatus: "waiting",
+        time: { created: 1000, updated: 2000 },
+      };
+      adapterA.getSession.mockResolvedValue(externalSession);
+
+      const sendPromise = engineManager.sendMessage(conv.id, [{ type: "text", text: "Continue" }]);
+      expect(engineManager.isSessionIdle(conv.id)).toBe(false);
+      expect(await engineManager.getSession(conv.id)).toMatchObject({ activityStatus: "waiting" });
+
+      completeReply(makeExternalMessage("assistant", "Working"));
+      await sendPromise;
+      adapterA.getSession.mockResolvedValue({ ...externalSession, activityStatus: "running" });
+      expect(engineManager.isSessionIdle(conv.id)).toBe(true);
+      expect(await engineManager.getSession(conv.id)).toMatchObject({ activityStatus: "running" });
     });
   });
 
@@ -3478,6 +3571,72 @@ describe("EngineManager", () => {
   });
 
   describe("getPending", () => {
+    it("does not reopen reply routes while requests are being submitted", async () => {
+      engineManager.registerAdapter(adapterA);
+      vi.mocked(conversationStore.get).mockReturnValue(makeMockConv({ engineSessionId: "engine-pending" }));
+      adapterA.getPendingQuestions = vi.fn(() => [{
+        id: "question-pending", sessionId: "engine-pending", engineType: adapterA.engineType, questions: [],
+      }]);
+      adapterA.getPendingPermissions = vi.fn(() => [{
+        id: "permission-pending", sessionId: "engine-pending", engineType: adapterA.engineType,
+        title: "Run the command", kind: "other" as const, options: [],
+      }]);
+      let completeReply: () => void = () => {};
+      const submitted = new Promise<void>((resolve) => { completeReply = resolve; });
+      adapterA.replyQuestion.mockReturnValueOnce(submitted);
+      adapterA.replyPermission.mockReturnValueOnce(submitted);
+      await engineManager.getPending("conv1");
+
+      const questionReply = engineManager.replyQuestion("question-pending", [["Yes"]]);
+      const permissionReply = engineManager.replyPermission("permission-pending", { optionId: "allow_once" });
+      try {
+        await engineManager.getPending("conv1");
+        await expect(engineManager.replyQuestion("question-pending", [["Yes"]]))
+          .rejects.toThrow("No engine binding found for question");
+        await expect(engineManager.replyPermission("permission-pending", { optionId: "allow_once" }))
+          .rejects.toThrow("No engine binding found for permission");
+      } finally {
+        completeReply();
+        await Promise.all([questionReply, permissionReply]);
+      }
+    });
+
+    it("restores reply routes for pending requests without replayed events", async () => {
+      const adapter = new MockEngineAdapter("codex-desktop");
+      engineManager.registerAdapter(adapter);
+      vi.mocked(conversationStore.get).mockReturnValue(makeMockConv({
+        id: "conv-reconnected",
+        engineType: adapter.engineType,
+        engineSessionId: "engine-reconnected",
+      }));
+      adapter.getPendingQuestions = vi.fn(() => [{
+        id: "question-reconnected",
+        sessionId: "engine-reconnected",
+        engineType: adapter.engineType,
+        questions: [{ header: "Choice", question: "Which option?", options: [], custom: true }],
+      }]);
+      adapter.getPendingPermissions = vi.fn(() => [{
+        id: "permission-reconnected",
+        sessionId: "engine-reconnected",
+        engineType: adapter.engineType,
+        title: "Run the command",
+        kind: "other" as const,
+        options: [{ id: "allow_once", label: "Allow once", type: "allow_once" as const }],
+      }]);
+
+      const pending = await engineManager.getPending("conv-reconnected");
+      expect(pending.questions[0].sessionId).toBe("conv-reconnected");
+      expect(pending.permissions[0].sessionId).toBe("conv-reconnected");
+      await expect(engineManager.replyQuestion(pending.questions[0].id, [["My choice"]]))
+        .resolves.toBeUndefined();
+      await expect(engineManager.replyPermission(pending.permissions[0].id, { optionId: "allow_once" }))
+        .resolves.toBeUndefined();
+      expect(adapter.replyQuestion).toHaveBeenCalledWith("question-reconnected", [["My choice"]], "engine-reconnected");
+      expect(adapter.replyPermission).toHaveBeenCalledWith("permission-reconnected", { optionId: "allow_once" }, "engine-reconnected");
+      expect(adapter.getPendingQuestions).toHaveBeenCalledWith("engine-reconnected");
+      expect(adapter.getPendingPermissions).toHaveBeenCalledWith("engine-reconnected");
+    });
+
     it("aggregates pending questions/permissions from the conversation's engine adapter and rewrites sessionId to conversationId", async () => {
       engineManager.registerAdapter(adapterA);
 

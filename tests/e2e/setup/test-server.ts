@@ -98,6 +98,8 @@ export interface TestServerConfig {
   port?: number;
   /** Path to built renderer files for static serving */
   staticRoot?: string;
+  /** Sessions whose history separates content from lazily requested steps. */
+  lazyStepsSessionIds?: readonly string[];
 }
 
 export interface TestServerInstance {
@@ -106,6 +108,8 @@ export interface TestServerInstance {
   port: number;
   mockAdapters: Map<string, MockEngineAdapter>;
   authStore: MockAuthStore;
+  /** Observed message.steps requests, keyed by the fixture message ID. */
+  messageStepRequests: Map<string, number>;
   /** Pre-register session→engine routing (call after seeding) */
   registerSessionRoutes: () => Promise<void>;
   stop: () => Promise<void>;
@@ -120,6 +124,8 @@ export async function startTestServer(
 ): Promise<TestServerInstance> {
   const requestedPort = config?.port ?? 0;
   const staticRoot = config?.staticRoot ?? path.resolve(__dirname, "../../../out/web");
+  const lazyStepsSessionIds = new Set(config?.lazyStepsSessionIds);
+  const messageStepRequests = new Map<string, number>();
 
   // --- Create mock adapters ---
 
@@ -349,7 +355,21 @@ export async function startTestServer(
 
       case GatewayRequestType.MESSAGE_LIST: {
         const adapter = getAdapterForSession(p.sessionId);
-        return adapter.listMessages(p.sessionId);
+        const messages = await adapter.listMessages(p.sessionId);
+        if (!lazyStepsSessionIds.has(p.sessionId)) return messages;
+        return messages.map((message) => ({
+          ...message,
+          parts: message.parts.filter((part) => part.type === "text" || part.type === "file"),
+          stepCount: message.parts.filter((part) => part.type !== "text" && part.type !== "file").length,
+        }));
+      }
+
+      case GatewayRequestType.MESSAGE_STEPS: {
+        const adapter = getAdapterForSession(p.sessionId);
+        const message = (await adapter.listMessages(p.sessionId)).find((item) => item.id === p.messageId);
+        if (!message) throw Object.assign(new Error(`Unknown fixture message: ${p.messageId}`), { code: "MESSAGE_NOT_FOUND" });
+        messageStepRequests.set(message.id, (messageStepRequests.get(message.id) ?? 0) + 1);
+        return message.parts.filter((part) => part.type !== "text" && part.type !== "file");
       }
 
       // --- Model ---
@@ -575,6 +595,7 @@ export async function startTestServer(
         await adapter.start();
       }
       sessionEngineMap.clear();
+      messageStepRequests.clear();
       seedTestData(adapters);
       // Re-register session routes
       for (const [engineType, adapter] of adapters) {
@@ -855,6 +876,7 @@ export async function startTestServer(
         port: actualPort,
         mockAdapters: adapters,
         authStore,
+        messageStepRequests,
         registerSessionRoutes: async () => {
           for (const [engineType, adapter] of adapters) {
             const sessions = await adapter.listSessions();

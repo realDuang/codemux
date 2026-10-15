@@ -1,4 +1,4 @@
-import { createSignal, ParentProps, Show, createContext, useContext } from "solid-js";
+import { createSignal, createUniqueId, ParentProps, Show, createContext, useContext } from "solid-js";
 
 export interface CollapsibleProps {
   open?: boolean;
@@ -9,7 +9,10 @@ export interface CollapsibleProps {
 
 function CollapsibleRoot(props: ParentProps<CollapsibleProps>) {
   const [internalOpen, setInternalOpen] = createSignal(props.defaultOpen ?? false);
-  
+  const id = createUniqueId();
+  const triggerId = `collapsible-${id}-trigger`;
+  const contentId = `collapsible-${id}-content`;
+
   const isOpen = () => props.open ?? internalOpen();
   
   const handleToggle = () => {
@@ -24,7 +27,7 @@ function CollapsibleRoot(props: ParentProps<CollapsibleProps>) {
       data-open={isOpen() ? "" : undefined}
       class={props.class}
     >
-      <CollapsibleContext.Provider value={{ isOpen, handleToggle }}>
+      <CollapsibleContext.Provider value={{ isOpen, handleToggle, triggerId, contentId }}>
         {props.children}
       </CollapsibleContext.Provider>
     </div>
@@ -34,6 +37,8 @@ function CollapsibleRoot(props: ParentProps<CollapsibleProps>) {
 interface CollapsibleContextType {
   isOpen: () => boolean;
   handleToggle: () => void;
+  triggerId: string;
+  contentId: string;
 }
 
 const CollapsibleContext = createContext<CollapsibleContextType>();
@@ -49,16 +54,25 @@ function useCollapsible() {
 // Trigger component
 interface CollapsibleTriggerProps extends ParentProps {
   class?: string;
+  disabled?: boolean;
+  "aria-label"?: string;
+  title?: string;
 }
 
 function CollapsibleTrigger(props: CollapsibleTriggerProps) {
-  const { handleToggle } = useCollapsible();
+  const { isOpen, handleToggle, triggerId, contentId } = useCollapsible();
   
   return (
     <button
       type="button"
+      id={triggerId}
       data-slot="collapsible-trigger"
       class={props.class}
+      disabled={props.disabled}
+      aria-label={props["aria-label"]}
+      aria-expanded={isOpen()}
+      aria-controls={contentId}
+      title={props.title}
       onClick={handleToggle}
     >
       {props.children}
@@ -72,14 +86,20 @@ interface CollapsibleContentProps extends ParentProps {
 }
 
 function CollapsibleContent(props: CollapsibleContentProps) {
-  const { isOpen } = useCollapsible();
+  const { isOpen, triggerId, contentId } = useCollapsible();
   
   return (
-    <Show when={isOpen()}>
-      <div data-slot="collapsible-content" class={props.class}>
-        {props.children}
-      </div>
-    </Show>
+    <div
+      id={contentId}
+      role="group"
+      aria-labelledby={triggerId}
+      data-slot="collapsible-content"
+      class={props.class}
+      hidden={!isOpen()}
+      style={{ display: isOpen() ? undefined : "none" }}
+    >
+      <Show when={isOpen()}>{props.children}</Show>
+    </div>
   );
 }
 
@@ -95,9 +115,9 @@ function CollapsibleArrow(props: CollapsibleArrowProps) {
     <div 
       data-slot="collapsible-arrow" 
       class={props.class}
+      aria-hidden="true"
       style={{
         transform: isOpen() ? "rotate(180deg)" : "rotate(0deg)",
-        transition: "transform 0.2s ease"
       }}
     >
       <svg 

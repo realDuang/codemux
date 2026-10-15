@@ -6,13 +6,14 @@ import type {
   MessagePromptContent, PermissionReply, UnifiedMessage, UnifiedSession,
   ReasoningEffort, CodexServiceTier, EngineCommand, CommandInvokeResult,
   ModelListResult, UnifiedModelInfo, EngineCatalogSnapshot, UnifiedProject,
-  CatalogProjectInput, CatalogProjectPatch,
+  CatalogProjectInput, CatalogProjectPatch, UnifiedQuestion,
 } from "../../../../src/types/unified";
 import { CodexDesktopIpcClient, type DesktopThreadStream, type DesktopThreadSettingsPatch, type DesktopCollaborationMode } from "./desktop-ipc-client";
 import { DesktopStateReducer, desktopRequestId, type DesktopStateChange, type DesktopConversationSnapshot, type DesktopPendingRequest } from "./desktop-state";
 import { CODEX_MODES, toCodexEffort } from "./config";
 import { validateImageAddition, type ImageCandidate } from "../../../../shared/image-limits";
 import { buildDesktopElicitationResponse, cancelDesktopElicitation } from "./desktop-elicitation";
+import { buildCodexAsyncQuestionReply, convertCodexAsyncQuestion, type CodexAsyncQuestion } from "./async-questions";
 
 const READ_OWNER_MISS_TTL_MS = 1000;
 const MAX_READ_OWNER_MISSES = 256;
@@ -76,6 +77,7 @@ export class CodexDesktopAdapter extends EngineAdapter {
   private readonly codemuxOwnedThreadIds = new Set<string>();
   private readonly storedSnapshots = new Map<string, DesktopConversationSnapshot>();
   private readonly archivedSessionIds = new Set<string>();
+  private readonly dismissedAsyncQuestionIds = new Set<string>();
   private catalogSnapshot?: EngineCatalogSnapshot;
   private status: EngineStatus = "stopped";
   private lastError: string | undefined;
@@ -127,6 +129,7 @@ export class CodexDesktopAdapter extends EngineAdapter {
     this.client.close();
     this.markUnavailable("CodeMux detached from Codex Desktop");
     this.status = "stopped";
+    this.dismissedAsyncQuestionIds.clear();
   }
 
   async healthCheck(): Promise<boolean> { return this.client.connected; }
@@ -139,6 +142,7 @@ export class CodexDesktopAdapter extends EngineAdapter {
   }
   getCapabilities(): EngineCapabilities {
     return {
+      compactActivityGroups: true,
       reasoningEffortOptions: ["low", "medium", "high", "max", "ultra"],
       sessionCatalog: !!this.options.catalog,
       catalogManagement: this.options.catalog?.managementAvailable === true,
@@ -619,7 +623,8 @@ export class CodexDesktopAdapter extends EngineAdapter {
     return [...this.sessions.entries()].flatMap(([key, entry]) => !id || key === id ? entry.reducer.snapshot?.permissions ?? [] : []);
   }
   getPendingQuestions(id?: string) {
-    return [...this.sessions.entries()].flatMap(([key, entry]) => !id || key === id ? entry.reducer.snapshot?.questions ?? [] : []);
+    return [...this.sessions.entries()].flatMap(([key, entry]) => (!id || key === id) && entry.reducer.snapshot
+      ? this.visibleQuestions(entry.reducer.snapshot) : []);
   }
   async replyPermission(id: string, reply: PermissionReply, sessionId?: string): Promise<void> {
     const { threadId, entry, request } = this.pendingRequest(id, sessionId);
@@ -646,6 +651,37 @@ export class CodexDesktopAdapter extends EngineAdapter {
     await this.waitForRequestRemoval(threadId, request.id);
   }
   async replyQuestion(id: string, answers: string[][], sessionId?: string): Promise<void> {
+    const asynchronous = this.pendingAsyncQuestion(id, sessionId);
+    if (asynchronous) {
+      const { threadId, entry, question, definitions } = asynchronous;
+      const snapshot = this.requireSnapshot(threadId);
+      const turnId = question.metadata?.codexTurnId;
+      if (!snapshot.isActive || !snapshot.activeTurnId || snapshot.activeTurnId !== turnId) {
+        throw new Error("The question's active turn has changed. Refresh before replying.");
+      }
+      const { text, replies } = buildCodexAsyncQuestionReply(definitions, answers);
+      const clientUserMessageId = randomUUID();
+      await this.client.steerTurn(threadId, entry.ownerClientId, {
+        input: [{ type: "text", text }], clientUserMessageId, attachments: [],
+        restoreMessage: {
+          id: clientUserMessageId, text, cwd: snapshot.session.directory, createdAt: Date.now(),
+          context: {
+            prompt: text, turnTrigger: "send_user_message_async_question", messageThreadId: threadId,
+            workspaceRoots: [snapshot.session.directory], collaborationMode: entry.reducer.conversationState?.latestCollaborationMode,
+            addedFiles: [], commentAttachments: [], fileAttachments: [], imageAttachments: [], ideContext: null,
+          },
+          responsesapiClientMetadata: { source: "codex" },
+        },
+      });
+      // Admission is not acknowledgement: a pending or failed steer cannot consume a question.
+      await this.waitForState(threadId, (current) => {
+        const accepted = new Set(current.messages.flatMap(message =>
+          message.engineMeta?.codexTurnId === turnId && message.engineMeta?.codexAsyncQuestionReplyAccepted === true
+            && Array.isArray(message.engineMeta.codexAsyncQuestionReplyIds) ? message.engineMeta.codexAsyncQuestionReplyIds : []));
+        return replies.every(reply => accepted.has(reply.questionItemId));
+      }, "The answer was sent but its accepted receipt has not synchronized yet.");
+      return;
+    }
     const { threadId, entry, request } = this.pendingRequest(id, sessionId);
     if (request.method === "mcpServer/elicitation/request") {
       const response = buildDesktopElicitationResponse(request.params, answers);
@@ -666,6 +702,15 @@ export class CodexDesktopAdapter extends EngineAdapter {
     await this.waitForRequestRemoval(threadId, request.id);
   }
   async rejectQuestion(id: string, sessionId?: string): Promise<void> {
+    const asynchronous = this.pendingAsyncQuestion(id, sessionId);
+    if (asynchronous) {
+      for (const question of asynchronous.definitions) {
+        this.dismissedAsyncQuestionIds.add(JSON.stringify([asynchronous.threadId, question.id]));
+      }
+      // Native async question dismissal is local UI state, never an empty answer or interruption.
+      this.emit("question.replied", { questionId: id, answers: [] });
+      return;
+    }
     const { threadId, entry, request } = this.pendingRequest(id, sessionId);
     if (request.method === "mcpServer/elicitation/request") {
       await this.client.replyMcpElicitation(threadId, entry.ownerClientId, request.id, cancelDesktopElicitation());
@@ -679,6 +724,33 @@ export class CodexDesktopAdapter extends EngineAdapter {
     // Empty answers are reserved for specific onboarding/automatic flows.
     await this.client.interruptTurn(threadId, entry.ownerClientId, snapshot.activeTurnId);
     await this.waitForRequestRemoval(threadId, request.id);
+  }
+
+  private visibleQuestions(snapshot: DesktopConversationSnapshot): UnifiedQuestion[] {
+    return snapshot.questions.flatMap(question => {
+      const definitions = question.metadata?.codexAsyncQuestions as CodexAsyncQuestion[] | undefined;
+      if (!Array.isArray(definitions)) return [question];
+      const remaining = definitions.filter(item => !this.dismissedAsyncQuestionIds.has(JSON.stringify([snapshot.session.id, item.id])));
+      if (remaining.length === definitions.length) return [question];
+      if (remaining.length === 0) return [];
+      return [convertCodexAsyncQuestion(snapshot.session.id, String(question.metadata?.codexTurnId), remaining,
+        "codex-desktop", String(snapshot.session.engineMeta?.desktopHostId ?? "local"))];
+    });
+  }
+
+  private pendingAsyncQuestion(id: string, sessionId?: string): {
+    threadId: string; entry: FollowedSession; question: UnifiedQuestion; definitions: CodexAsyncQuestion[];
+  } | undefined {
+    for (const [threadId, entry] of this.sessions) {
+      if ((sessionId && threadId !== sessionId) || !entry.reducer.snapshot) continue;
+      const question = this.visibleQuestions(entry.reducer.snapshot).find(item => item.id === id);
+      const definitions = question?.metadata?.codexAsyncQuestions as CodexAsyncQuestion[] | undefined;
+      if (question && Array.isArray(definitions)) {
+        this.requireSnapshot(threadId);
+        return { threadId, entry, question, definitions };
+      }
+    }
+    return undefined;
   }
 
   private pendingRequest(id: string, sessionId?: string): { threadId: string; entry: FollowedSession; request: DesktopPendingRequest } {
@@ -760,10 +832,17 @@ export class CodexDesktopAdapter extends EngineAdapter {
     for (const permission of previous?.permissions ?? []) {
       if (!snapshot.permissions.some((current) => current.id === permission.id)) this.emit("permission.replied", { permissionId: permission.id, optionId: "resolved" });
     }
-    const oldQuestions = new Set(previous?.questions.map((question) => question.id));
-    for (const question of snapshot.questions) if (!oldQuestions.has(question.id)) this.emit("question.asked", { question });
-    for (const question of previous?.questions ?? []) {
-      if (!snapshot.questions.some((current) => current.id === question.id)) this.emit("question.replied", { questionId: question.id, answers: [] });
+    const previousQuestions = previous ? this.visibleQuestions(previous) : [];
+    const currentQuestions = this.visibleQuestions(snapshot);
+    const oldQuestions = new Set(previousQuestions.map((question) => question.id));
+    for (const question of currentQuestions) if (!oldQuestions.has(question.id)) this.emit("question.asked", { question });
+    for (const question of previousQuestions) {
+      if (!currentQuestions.some((current) => current.id === question.id)) this.emit("question.replied", { questionId: question.id, answers: [] });
+    }
+    const currentAsyncIds = new Set(snapshot.questions.flatMap(question =>
+      (question.metadata?.codexAsyncQuestions as CodexAsyncQuestion[] | undefined)?.map(item => JSON.stringify([id, item.id])) ?? []));
+    for (const key of this.dismissedAsyncQuestionIds) {
+      if (JSON.parse(key)[0] === id && !currentAsyncIds.has(key)) this.dismissedAsyncQuestionIds.delete(key);
     }
     this.notifyWatchers();
   }

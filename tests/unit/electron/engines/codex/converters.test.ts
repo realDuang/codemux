@@ -18,7 +18,9 @@ import {
   finalizeBufferToMessage,
   formatTurnPlanMarkdown,
   normalizeCodexReasoningText,
+  normalizeCodexToolDisplayActions,
   replacePlanText,
+  upsertAgentMessage,
   upsertPart,
 } from "../../../../../electron/main/engines/codex/converters";
 import type { MessageBuffer } from "../../../../../electron/main/engines/engine-adapter";
@@ -41,12 +43,153 @@ function createBuffer(): MessageBuffer {
   };
 }
 
+describe("normalizeCodexToolDisplayActions", () => {
+  it("keeps native command action order and meaningful paths without parsing shell text", () => {
+    expect(normalizeCodexToolDisplayActions({ cwd: "/repo", command: "combined command", commandActions: [
+      { type: "read", command: "cat src/main.ts", name: "main.ts", path: "src/main.ts" },
+      { type: "search", command: "rg needle src", query: "needle", path: "src" },
+      { type: "listFiles", command: "ls tests", path: "tests" },
+      { type: "unknown", command: "bun test" },
+    ] })).toEqual([
+      { kind: "read", label: "main.ts", path: "/repo/src/main.ts", command: "cat src/main.ts" },
+      { kind: "search", query: "needle", path: "/repo/src", command: "rg needle src" },
+      { kind: "list", path: "/repo/tests", command: "ls tests" },
+      { kind: "shell", command: "bun test" },
+    ]);
+    expect(normalizeCodexToolDisplayActions({ command: "cat SKILL.md && rg needle src" })).toEqual([
+      { kind: "shell", command: "cat SKILL.md && rg needle src" },
+    ]);
+  });
+
+  it.each([
+    ["/home/user/.codex/skills/review/SKILL.md", "review"],
+    ["/home/user/.codex/skills/.system/openai-docs/SKILL.md", "openai-docs"],
+    ["C:\\Users\\user\\.agents\\skills\\_import\\audit\\SKILL.md", "audit"],
+    ["/home/user/.codex/plugins/cache/vendor/media/1.0/skills/diagram/SKILL.md", "diagram"],
+    ["/repo/plugins/media/skills/diagram/SKILL.md", "diagram"],
+    ["/repo/plugins/media/SKILL.md", "media"],
+    ["/home/user/.codex/plugins/cache/vendor/media/1.0/SKILL.md", "media"],
+  ])("recognizes a skill definition under its supported root: %s", (path, label) => {
+    expect(normalizeCodexToolDisplayActions({ commandActions: [
+      { type: "read", command: "read", name: "SKILL.md", path },
+    ] })).toEqual([{ kind: "skill", label, path, command: "read" }]);
+  });
+
+  it.each([
+    "/repo/docs/SKILL.md",
+    "/repo/.codex/skills/review/references/SKILL.md",
+    "/repo/plugins/media/skills/diagram/scripts/SKILL.md",
+    "/repo/.agents/skills/review/../README.md",
+  ])("keeps ordinary files out of the loaded skill group: %s", (path) => {
+    expect(normalizeCodexToolDisplayActions({ commandActions: [
+      { type: "read", command: "read", name: "Document", path },
+    ] })?.[0]).toMatchObject({ kind: "read", label: "Document" });
+  });
+
+  it("accepts a native parsed command and prefers its supplied display label", () => {
+    expect(normalizeCodexToolDisplayActions({ parsedCmd: {
+      type: "read", cmd: "cat .agents/skills/review/SKILL.md", name: "SKILL.md",
+      path: ".agents/skills/review/SKILL.md", displayLabel: "Repository review",
+    } }, "/repo")).toEqual([{
+      kind: "skill", label: "Repository review", path: "/repo/.agents/skills/review/SKILL.md",
+      command: "cat .agents/skills/review/SKILL.md",
+    }]);
+    expect(normalizeCodexToolDisplayActions({ cwd: "C:\\repo", parsedCmd: { type: "list_files", cmd: "dir src", path: "src" } }))
+      .toEqual([{ kind: "list", path: "C:\\repo\\src", command: "dir src" }]);
+  });
+
+  it("falls back to the raw command when action metadata is empty or unsupported", () => {
+    for (const commandActions of [undefined, [], [null, { type: "unrecognized" }]]) {
+      expect(normalizeCodexToolDisplayActions({ command: "  printf '%s' literal  ", commandActions }))
+        .toEqual([{ kind: "shell", command: "  printf '%s' literal  " }]);
+    }
+    expect(normalizeCodexToolDisplayActions({})).toBeUndefined();
+    expect(normalizeCodexToolDisplayActions({ command: "cat .agents/skills/review/SKILL.md", status: "declined", commandActions: [
+      { type: "read", command: "cat .agents/skills/review/SKILL.md", name: "SKILL.md", path: "/repo/.agents/skills/review/SKILL.md" },
+    ] })).toEqual([{ kind: "shell", command: "cat .agents/skills/review/SKILL.md" }]);
+  });
+});
+
 describe("codex/converters.ts", () => {
-  it("normalizes reasoning blocks without cross-channel duplication or blank placeholders", () => {
+  it("keeps valid asynchronous question replies inside assistant history", () => {
+    const reply = `<send_user_message_question_reply>\n${JSON.stringify([{
+      questionItemId: JSON.stringify(["request_user_input_async", "question-item", 0]),
+      question: "Which environment?", answer: "Staging",
+    }])}\n</send_user_message_question_reply>`;
+    const messages = convertThreadToMessages("codex_thread-1", { thread: { id: "thread-1", turns: [{
+      id: "turn-1", status: "completed", items: [
+        { id: "user-1", type: "userMessage", content: [{ type: "text", text: "Deploy the fix" }] },
+        { id: "question-item", type: "agentMessage", text: "Checking configuration.", questions: [{ title: "Which environment?", options: ["Staging", "Production"] }] },
+        { id: "reply-item", type: "userMessage", content: [{ type: "text", text: reply }] },
+        { id: "final", type: "agentMessage", text: "Using staging.", phase: "final_answer" },
+      ],
+    }] } });
+    expect(messages.map((message) => message.role)).toEqual(["user", "assistant"]);
+    const transcript = messages[1].parts.filter((part) => part.type === "text").map((part) => part.text).join("\n");
+    expect(transcript).toContain("Which environment?");
+    expect(transcript).toContain("Staging");
+    expect(transcript).not.toContain("send_user_message_question_reply");
+  });
+
+  it.each([
+    "Example: <send_user_message_question_reply>[]</send_user_message_question_reply>",
+    "<send_user_message_question_reply>not JSON</send_user_message_question_reply>",
+    "```xml\n<send_user_message_question_reply>[]</send_user_message_question_reply>\n```",
+  ])("keeps literal or malformed asynchronous reply text as a user message: %s", (text) => {
+    const messages = convertThreadToMessages("codex_thread-1", { thread: { turns: [{
+      id: "turn-1", status: "completed", items: [{ id: "user-1", type: "userMessage", content: [{ type: "text", text }] }],
+    }] } });
+    expect(messages).toHaveLength(1);
+    expect(messages[0]).toMatchObject({ role: "user", parts: [{ type: "text", text }] });
+  });
+
+  it.each(["unknown", "mixed", "previous-turn"])("keeps %s asynchronous reply envelopes as literal user history", (source) => {
+    const ids = source === "mixed" ? ["current-question", "foreign-question"] : [source === "previous-turn" ? "old-question" : "foreign-question"];
+    const text = `<send_user_message_question_reply>\n${JSON.stringify(ids.map((id) => ({
+      questionItemId: JSON.stringify(["request_user_input_async", id, 0]), question: "Continue?", answer: "Yes",
+    })))}\n</send_user_message_question_reply>`;
+    const messages = convertThreadToMessages("codex_thread-1", { thread: { id: "thread-1", turns: [
+      { id: "old-turn", status: "completed", items: [{ id: "old-question", type: "agentMessage", questions: [{ title: "Continue?" }] }] },
+      { id: "current-turn", status: "completed", items: [
+        { id: "current-question", type: "agentMessage", questions: [{ title: "Continue?" }] },
+        { id: "user-example", type: "userMessage", content: [{ type: "text", text }] },
+      ] },
+    ] } });
+    expect(messages.filter((message) => message.role === "user")).toMatchObject([{ parts: [{ type: "text", text }] }]);
+    expect(messages.filter((message) => message.role === "assistant").flatMap((message) => message.parts)
+      .some((part) => part.type === "text" && part.text.includes("Yes"))).toBe(false);
+  });
+
+  it("retains one executable tool and matching display actions through history restoration", () => {
+    const buffer = createBuffer();
+    buffer.activeTurnId = "turn-1";
+    const input = { command: "cat src/main.ts && rg needle src", cwd: "/repo", commandActions: [
+      { type: "read", command: "cat src/main.ts", name: "main.ts", path: "src/main.ts" },
+      { type: "search", command: "rg needle src", query: "needle", path: "src" },
+    ] };
+    const { toolPart } = createToolPart(buffer, "tool-1", "commandExecution", input);
+    completeToolPart(toolPart, "Full combined output");
+    const [restored] = convertThreadToMessages(buffer.sessionId, { thread: { id: "thread-1", cwd: "/repo", turns: [{
+      id: "turn-1", status: "completed", items: [
+        { id: "tool-1", type: "commandExecution", ...input, aggregatedOutput: "Full combined output", status: "completed" },
+      ],
+    }] } });
+    const tools = restored.parts.filter((part) => part.type === "tool");
+    expect(tools).toHaveLength(1);
+    expect(tools[0]).toMatchObject({
+      id: toolPart.id, callId: "tool-1", normalizedTool: "shell", originalTool: "commandExecution",
+      title: toolPart.title, displayActions: toolPart.displayActions,
+      state: { input, output: "Full combined output", status: "completed" },
+    });
+    expect(createToolPart(createBuffer(), "other", "mcpToolCall", { tool: "search", commandActions: input.commandActions }).toolPart.displayActions).toBeUndefined();
+  });
+
+  it("projects only summary sections without blank placeholders or raw content", () => {
     expect(normalizeCodexReasoningText(["Check the tests", "Check the tests", "  "], [
       { text: "Check the tests" }, { text: "Read the output" }, { text: "\n\t" },
-    ])).toBe("Check the tests\n\nCheck the tests\n\nRead the output");
-    expect(normalizeCodexReasoningText("Summary", "Details")).toBe("Summary\n\nDetails");
+    ])).toBe("Check the tests\n\nCheck the tests");
+    expect(normalizeCodexReasoningText("Summary", "Details")).toBe("Summary");
+    expect(normalizeCodexReasoningText([], ["Raw reasoning"])).toBe("");
     expect(normalizeCodexReasoningText([], [{ type: "encrypted", data: "opaque" }])).toBe("");
     expect(normalizeCodexReasoningText(["\n "], ["\t"])).toBe("");
   });
@@ -62,12 +205,165 @@ describe("codex/converters.ts", () => {
       ],
     }] } });
     expect(message.parts.filter((part) => part.type === "reasoning" || part.type === "tool")
-      .sort((left, right) => left.id.localeCompare(right.id))
       .map((part: any) => ({ type: part.type, text: part.text }))).toEqual([
         { type: "reasoning", text: "Inspect failures" },
         { type: "tool", text: undefined },
-        { type: "reasoning", text: "Apply fix\n\nVerify result" },
+        { type: "reasoning", text: "Apply fix" },
       ]);
+  });
+
+  it("keeps native agent message boundaries and authoritative replacements in item order", () => {
+    const buffer = createBuffer();
+    buffer.activeTurnId = "turn-native";
+    const started = upsertAgentMessage(buffer, "z-commentary", "", { phase: "commentary" });
+    const partial = upsertAgentMessage(buffer, "z-commentary", "  Checking", { delta: true });
+    const { toolPart } = createToolPart(buffer, "m-tool", "commandExecution", { command: "bun test" });
+    upsertAgentMessage(buffer, "a-final", "Done", { delta: true });
+    const complete = upsertAgentMessage(buffer, "z-commentary", "  Checked the tests.");
+    upsertAgentMessage(buffer, "a-final", "Done.", { phase: "final" });
+
+    expect(partial.text).toBe("  Checking");
+    expect(complete).toMatchObject({ id: started.id, order: started.order, phase: "commentary", text: "  Checked the tests." });
+    expect(buffer.parts.filter((part) => part.type === "text" || part.type === "tool")).toMatchObject([
+      { type: "text", phase: "commentary", text: "  Checked the tests." },
+      { id: toolPart.id, type: "tool" },
+      { type: "text", phase: "final", text: "Done." },
+    ]);
+    expect(buffer.parts.map((part) => part.order)).toEqual([0, 1, 2, 3]);
+  });
+
+  it("projects live and restored text items to the same native IDs and phases", () => {
+    const buffer = createBuffer();
+    buffer.activeTurnId = "turn-1";
+    upsertAgentMessage(buffer, "z-commentary", "Inspect", { delta: true, phase: "commentary" });
+    upsertAgentMessage(buffer, "z-commentary", "Inspect failures");
+    const { toolPart } = createToolPart(buffer, "m-tool", "commandExecution", { command: "bun test" });
+    completeToolPart(toolPart, "ok");
+    createStepFinish(buffer, "m-tool");
+    upsertAgentMessage(buffer, "b-partial", "The failing test is fixed.", { phase: "partial" });
+    upsertAgentMessage(buffer, "a-final", "Fixed.", { phase: "final" });
+    const [restored] = convertThreadToMessages(buffer.sessionId, { thread: { id: "thread-1", turns: [{
+      id: "turn-1", status: "completed", items: [
+        { id: "z-commentary", type: "agentMessage", text: "Inspect failures", phase: "commentary" },
+        { id: "m-tool", type: "commandExecution", command: "bun test", status: "completed", aggregatedOutput: "ok" },
+        { id: "b-partial", type: "agentMessage", text: "The failing test is fixed.", phase: "partial_answer" },
+        { id: "a-final", type: "agentMessage", text: "Fixed.", phase: "final_answer" },
+      ],
+    }] } });
+    const project = (parts: MessageBuffer["parts"]) => parts.map((part) => ({
+      id: part.id,
+      order: part.order,
+      type: part.type,
+      ...(part.type === "text" ? { text: part.text, phase: part.phase } : {}),
+    }));
+    expect(project(restored.parts)).toEqual(project(buffer.parts));
+  });
+
+  it.each(["completed", "failed", "interrupted", "inProgress", undefined])(
+    "uses turn completion evidence for restored reasoning in a %s turn",
+    (status) => {
+      const terminal = status === "completed" || status === "failed" || status === "interrupted";
+      const [message] = convertThreadToMessages("codex_thread-1", { thread: { turns: [{
+        id: "turn-1", status, startedAt: 1_710_000_100, completedAt: terminal ? 1_710_000_102 : null,
+        items: [{ id: "reason-1", type: "reasoning", summary: ["Inspect the parser"] }],
+      }] } });
+      const reasoning = message.parts.find((part) => part.type === "reasoning");
+      expect(reasoning?.completed).toBe(terminal);
+      expect(reasoning?.time).toBeUndefined();
+    },
+  );
+
+  it("retains stable native history identities when content and turn status change", () => {
+    const result = { thread: { id: "thread-1", createdAt: 1_710_000_000, turns: [{
+      id: "turn-1", status: "inProgress", items: [
+        { id: "user-1", type: "userMessage", content: [{ type: "text", text: "Check this" }] },
+        { id: "reason-1", type: "reasoning", summary: ["Inspect failures"] },
+        { id: "plan-1", type: "plan", text: "Run tests" },
+        { id: "tool-1", type: "commandExecution", command: "bun test", status: "inProgress" },
+        { id: "notice-1", type: "contextCompaction" },
+        { id: "answer-1", type: "agentMessage", text: "Checking", phase: "commentary" },
+      ],
+    }] } };
+    const before = convertThreadToMessages("codex_thread-1", result);
+    result.thread.turns[0].status = "completed";
+    result.thread.turns[0].items[3].status = "completed";
+    result.thread.turns[0].items[5].text = "Checked";
+    const after = convertThreadToMessages("codex_thread-1", result);
+    expect(after.map((message) => message.id)).toEqual(before.map((message) => message.id));
+    for (const previous of before) {
+      const restored = after.find((message) => message.id === previous.id)!;
+      expect(restored.parts.map((part) => part.id)).toEqual(expect.arrayContaining(previous.parts.map((part) => part.id)));
+      expect(restored.parts.every((part) => part.messageId === restored.id)).toBe(true);
+    }
+    expect(before[1].time.completed).toBeUndefined();
+    expect(after[1].time.completed).toBeDefined();
+    expect(convertThreadToMessages("codex_thread-1", result)).toEqual(after);
+  });
+
+  it("preserves running tools, available output and native turn timestamps on restore", () => {
+    const [message] = convertThreadToMessages("codex_thread-1", { thread: { id: "thread-1", turns: [{
+      id: "turn-active", status: "inProgress", startedAt: 1_710_000_100, completedAt: null, items: [
+        { id: "done", type: "commandExecution", command: "pwd", status: "completed", aggregatedOutput: "/repo", durationMs: 25 },
+        { id: "running", type: "commandExecution", command: "bun test", status: "inProgress", aggregatedOutput: "Running tests" },
+        { id: "pending", type: "mcpToolCall", server: "docs", tool: "search", status: "inProgress" },
+      ],
+    }] } });
+    const tools = message.parts.filter((part): part is ToolPart => part.type === "tool");
+    expect(message.time).toEqual({ created: 1_710_000_100_000 });
+    expect(message.engineMeta).toMatchObject({ codexTurnId: "turn-active", codexTurnStatus: "inProgress" });
+    expect(tools.map((part) => part.state.status)).toEqual(["completed", "running", "running"]);
+    expect(tools[0].state).toMatchObject({ time: { duration: 25 } });
+    expect(tools[1].state).toMatchObject({ input: { _output: "Running tests" } });
+    expect(message.parts.filter((part) => part.type === "step-finish")).toHaveLength(1);
+    const [waiting] = convertThreadToMessages("codex_thread-1", { thread: { turns: [{ id: "waiting", status: "inProgress", items: [] }] } });
+    expect(waiting.parts).toEqual([]);
+    expect(waiting.time.completed).toBeUndefined();
+  });
+
+  it.each([
+    ["interrupted", "Turn interrupted"],
+    ["failed", "Turn failed"],
+    ["completed", "Tool did not finish before the turn ended"],
+  ])("settles unfinished tools when the restored turn is %s", (status, error) => {
+    const [message] = convertThreadToMessages("codex_thread-1", { thread: { turns: [{
+      id: "turn-1", status, items: [{
+        id: "cmd-1", type: "commandExecution", command: "bun test", status: "inProgress", aggregatedOutput: "Running tests",
+      }],
+    }] } });
+    const tool = message.parts.find((part) => part.type === "tool");
+    expect(message.time.completed).toBeDefined();
+    expect(tool?.state).toMatchObject({ status: "error", error, output: "Running tests" });
+    expect(message.parts.filter((part) => part.type === "step-finish")).toHaveLength(1);
+  });
+
+  it("preserves user steering boundaries inside the same native turn", () => {
+    const result = { thread: { id: "thread-1", turns: [{ id: "turn-1", status: "inProgress", items: [
+      { id: "prompt", type: "userMessage", content: [{ type: "text", text: "Fix the tests" }] },
+      { id: "comment", type: "agentMessage", text: "Checking", phase: "commentary" },
+      { id: "steer", type: "userMessage", content: [{ type: "text", text: "Only change the parser" }] },
+      { id: "reply", type: "agentMessage", text: "Checking the parser", phase: "commentary" },
+    ] }] } };
+    const messages = convertThreadToMessages("codex_thread-1", result);
+    expect(messages.map((message) => message.role)).toEqual(["user", "assistant", "user", "assistant"]);
+    expect(messages.map((message) => message.parts.filter((part) => part.type === "text").map((part) => part.text))).toEqual([
+      ["Fix the tests"], ["Checking"], ["Only change the parser"], ["Checking the parser"],
+    ]);
+    expect(new Set(messages.map((message) => message.id)).size).toBe(4);
+    expect(messages.map((message) => message.id)).toEqual(convertThreadToMessages("codex_thread-1", result).map((message) => message.id));
+    expect(messages[1].time.completed).toBeDefined();
+    expect(messages[3].time.completed).toBeUndefined();
+  });
+
+  it("keeps native turn order when multiple turns start in the same second", () => {
+    const messages = convertThreadToMessages("codex_thread-1", { thread: { turns: [1, 2].map((index) => ({
+      id: `turn-${index}`, status: "completed", startedAt: 1_710_000_100, items: [
+        { id: `user-${index}`, type: "userMessage", content: [{ type: "text", text: `Prompt ${index}` }] },
+        { id: `answer-${index}`, type: "agentMessage", text: `Answer ${index}`, phase: "final_answer" },
+      ],
+    })) } });
+    expect([...messages].sort((left, right) => left.time.created - right.time.created).map((message) => message.id))
+      .toEqual(messages.map((message) => message.id));
+    expect(messages[2].time.created).toBeGreaterThan(messages[1].time.created);
   });
 
   it("builds and finalizes streaming text, plan, reasoning, tool, and notice parts", () => {
@@ -387,10 +683,10 @@ describe("codex/converters.ts", () => {
     const assistant = messages[1];
     expect(assistant.role).toBe("assistant");
     expect(assistant.workingDirectory).toBe("/repo");
-    expect(assistant.engineMeta).toEqual({ codexThreadId: "thread-1" });
+    expect(assistant.engineMeta).toEqual({ codexThreadId: "thread-1", codexTurnId: "turn-1", codexTurnStatus: "completed" });
 
     const reasoning = assistant.parts.find((part) => part.type === "reasoning");
-    expect((reasoning as any)?.text).toBe("Inspect failures\n\nUpdate snapshots");
+    expect((reasoning as any)?.text).toBe("Inspect failures");
 
     const shellTool = assistant.parts.find((part) => part.type === "tool" && (part as ToolPart).callId === "cmd-1") as ToolPart;
     expect(shellTool.normalizedTool).toBe("shell");
@@ -1075,7 +1371,7 @@ describe("convertThreadToMessages - skipped turns and special cases", () => {
         }],
       },
     });
-    expect(messages[0].engineMeta).toBeUndefined();
+    expect(messages[0].engineMeta?.codexThreadId).toBeUndefined();
   });
 
   it("uses thread.cwd when no workingDirectory parameter is given", () => {
@@ -1183,7 +1479,7 @@ describe("convertThreadToMessages - all historical item types", () => {
     expect(textParts).toHaveLength(0);
   });
 
-  it("reasoning without summary uses only content strings", () => {
+  it("reasoning without summary does not expose content strings", () => {
     const messages = convertThreadToMessages("sess", {
       thread: {
         id: "t-1",
@@ -1195,8 +1491,7 @@ describe("convertThreadToMessages - all historical item types", () => {
         }],
       },
     });
-    const reasoning = messages[0].parts.find((p) => p.type === "reasoning");
-    expect((reasoning as any)?.text).toBe("Think about this\n\nThen that");
+    expect(messages.flatMap((message) => message.parts).filter((part) => part.type === "reasoning")).toEqual([]);
   });
 
   it("reasoning without summary or content produces no reasoning part", () => {

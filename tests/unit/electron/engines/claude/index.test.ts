@@ -7,15 +7,15 @@ import type { MessageBuffer } from "../../../../../electron/main/engines/engine-
 // ---------------------------------------------------------------------------
 
 const {
-  unstable_v2_createSessionMock,
-  unstable_v2_resumeSessionMock,
+  createClaudeSessionMock,
+  resumeClaudeSessionMock,
   sdkListSessionsMock,
   sdkGetSessionMessagesMock,
   sdkQueryMock,
   timeIdMock,
 } = vi.hoisted(() => ({
-  unstable_v2_createSessionMock: vi.fn(),
-  unstable_v2_resumeSessionMock: vi.fn(),
+  createClaudeSessionMock: vi.fn(),
+  resumeClaudeSessionMock: vi.fn(),
   sdkListSessionsMock: vi.fn(),
   sdkGetSessionMessagesMock: vi.fn(),
   sdkQueryMock: vi.fn(),
@@ -27,11 +27,18 @@ const {
 // ---------------------------------------------------------------------------
 
 vi.mock("@anthropic-ai/claude-agent-sdk", () => ({
-  unstable_v2_createSession: unstable_v2_createSessionMock,
-  unstable_v2_resumeSession: unstable_v2_resumeSessionMock,
   listSessions: sdkListSessionsMock,
   getSessionMessages: sdkGetSessionMessagesMock,
   query: sdkQueryMock,
+}));
+
+// ---------------------------------------------------------------------------
+// Mock: query()-based persistent session (replaces the removed V2 session API)
+// ---------------------------------------------------------------------------
+
+vi.mock("../../../../../electron/main/engines/claude/query-session", () => ({
+  createClaudeSession: createClaudeSessionMock,
+  resumeClaudeSession: resumeClaudeSessionMock,
 }));
 
 // ---------------------------------------------------------------------------
@@ -1882,6 +1889,29 @@ describe("ClaudeCodeAdapter", () => {
       ]);
       expect(result.error).toBe("error:interrupted");
     });
+
+    it("skips empty placeholder results from merged background-task completions", async () => {
+      const result = await runStream("cs_placeholder", [
+        { type: "result", subtype: "success", num_turns: 0, result: "" },
+        { type: "system", subtype: "init", session_id: "cc-1" },
+        { type: "assistant", parent_tool_use_id: null, message: { content: [{ type: "text", text: "Real answer" }] } },
+        { type: "result", subtype: "success", num_turns: 1, result: "Real answer" },
+      ]);
+      expect(result.error).toBeUndefined();
+      expect(result.parts.map((p: any) => p.text)).toEqual(["Real answer"]);
+    });
+
+    it("does not discard a normal turn when ambient events precede system:init", async () => {
+      const result = await runStream("cs_ambient", [
+        { type: "rate_limit_event", rate_limit_info: {} },
+        { type: "system", subtype: "status", status: "requesting" },
+        { type: "system", subtype: "init", session_id: "cc-1" },
+        { type: "assistant", parent_tool_use_id: null, message: { content: [{ type: "text", text: "Hi there" }] } },
+        { type: "result", subtype: "success" },
+      ]);
+      expect(result.error).toBeUndefined();
+      expect(result.parts.map((p: any) => p.text)).toEqual(["Hi there"]);
+    });
   });
 
   // =========================================================================
@@ -1914,7 +1944,8 @@ describe("ClaudeCodeAdapter", () => {
     it("returns Claude modes that mirror Copilot autopilot without exposing Copilot-only modes", () => {
       const modes = adapter.getModes();
       const ids = modes.map((m) => m.id);
-      expect(ids).toEqual(["bypassPermissions", "default", "plan"]);
+      expect(ids).toEqual(["bypassPermissions", "default", "acceptEdits", "plan", "auto"]);
+      expect(ids).not.toContain("dontAsk");
       expect(ids).not.toContain("autopilot");
     });
   });
@@ -2889,7 +2920,7 @@ describe("ClaudeCodeAdapter", () => {
       seedV2Session(adapter, "cs_1", oldSession);
       (adapter as any).v2Sessions.get("cs_1").permissionMode = "default";
       (adapter as any).v2Sessions.get("cs_1").capturedSessionId = "cc-prev";
-      unstable_v2_resumeSessionMock.mockReturnValue(newSession);
+      resumeClaudeSessionMock.mockReturnValue(newSession);
 
       const session = await (adapter as any).getOrCreateV2Session("cs_1", "/repo", {
         permissionMode: "bypassPermissions",
@@ -2898,7 +2929,7 @@ describe("ClaudeCodeAdapter", () => {
       expect(session).toBe(newSession);
       expect(oldSession.query.setPermissionMode).not.toHaveBeenCalled();
       expect(oldSession.close).toHaveBeenCalledTimes(1);
-      expect(unstable_v2_resumeSessionMock).toHaveBeenCalledWith(
+      expect(resumeClaudeSessionMock).toHaveBeenCalledWith(
         "cc-prev",
         expect.objectContaining({
           permissionMode: "bypassPermissions",
@@ -2927,11 +2958,11 @@ describe("ClaudeCodeAdapter", () => {
       seedSession(adapter, "cs_1");
       (adapter as any).sessionCcIds.set("cs_1", "cc-resume-abc");
 
-      unstable_v2_resumeSessionMock.mockReturnValue(makeMockV2Session());
+      resumeClaudeSessionMock.mockReturnValue(makeMockV2Session());
 
       await (adapter as any).getOrCreateV2Session("cs_1", "/repo", {});
 
-      expect(unstable_v2_resumeSessionMock).toHaveBeenCalledWith(
+      expect(resumeClaudeSessionMock).toHaveBeenCalledWith(
         "cc-resume-abc",
         expect.any(Object),
       );
@@ -2940,11 +2971,11 @@ describe("ClaudeCodeAdapter", () => {
     it("creates new sessions with bypassPermissions by default", async () => {
       seedSession(adapter, "cs_1");
 
-      unstable_v2_createSessionMock.mockReturnValue(makeMockV2Session());
+      createClaudeSessionMock.mockReturnValue(makeMockV2Session());
 
       await (adapter as any).getOrCreateV2Session("cs_1", "/repo", {});
 
-      const options = unstable_v2_createSessionMock.mock.calls[0][0];
+      const options = createClaudeSessionMock.mock.calls[0][0];
       expect(options.permissionMode).toBe("bypassPermissions");
       expect(options.allowDangerouslySkipPermissions).toBe(true);
     });
@@ -2952,24 +2983,24 @@ describe("ClaudeCodeAdapter", () => {
     it("passes the native Claude executable path to created sessions", async () => {
       seedSession(adapter, "cs_1");
       vi.spyOn(adapter as any, "resolveClaudeExecutablePath").mockReturnValue("/native/claude");
-      unstable_v2_createSessionMock.mockReturnValue(makeMockV2Session());
+      createClaudeSessionMock.mockReturnValue(makeMockV2Session());
 
       await (adapter as any).getOrCreateV2Session("cs_1", "/repo", {});
 
-      const options = unstable_v2_createSessionMock.mock.calls[0][0];
+      const options = createClaudeSessionMock.mock.calls[0][0];
       expect(options.pathToClaudeCodeExecutable).toBe("/native/claude");
       expect(options.pathToClaudeCodeExecutable).not.toContain("cli.js");
     });
 
     it("passes Claude Code native bypass permission options when creating sessions", async () => {
       seedSession(adapter, "cs_1");
-      unstable_v2_createSessionMock.mockReturnValue(makeMockV2Session());
+      createClaudeSessionMock.mockReturnValue(makeMockV2Session());
 
       await (adapter as any).getOrCreateV2Session("cs_1", "/repo", {
         permissionMode: "bypassPermissions",
       });
 
-      const options = unstable_v2_createSessionMock.mock.calls[0][0];
+      const options = createClaudeSessionMock.mock.calls[0][0];
       expect(options.permissionMode).toBe("bypassPermissions");
       expect(options.allowDangerouslySkipPermissions).toBe(true);
       expect((adapter as any).v2Sessions.get("cs_1").allowDangerouslySkipPermissions).toBe(true);
@@ -2981,14 +3012,14 @@ describe("ClaudeCodeAdapter", () => {
       seedV2Session(adapter, "cs_1", deadSession);
       (adapter as any).v2Sessions.get("cs_1").capturedSessionId = "cc-dead";
 
-      unstable_v2_resumeSessionMock.mockReturnValue(makeMockV2Session());
+      resumeClaudeSessionMock.mockReturnValue(makeMockV2Session());
 
       await (adapter as any).getOrCreateV2Session("cs_1", "/repo", {});
 
       // Dead session should be cleaned up
       expect(deadSession.close).toHaveBeenCalled();
       // New session should be created via resume (preserving ccSessionId)
-      expect(unstable_v2_resumeSessionMock).toHaveBeenCalledWith("cc-dead", expect.any(Object));
+      expect(resumeClaudeSessionMock).toHaveBeenCalledWith("cc-dead", expect.any(Object));
       // pendingResumeNotice should be set
       expect((adapter as any).pendingResumeNotice.has("cs_1")).toBe(true);
     });
@@ -3513,6 +3544,401 @@ describe("ClaudeCodeAdapter", () => {
 
       const meta = (adapter as any).buildToolMetadata(toolPart, "");
       expect(meta).toBeUndefined();
+    });
+  });
+
+  // =========================================================================
+  // AS. Alignment with current Claude Code CLI / Agent SDK behaviour
+  // =========================================================================
+
+  describe("session options forwarded to the CLI", () => {
+    it("passes systemPrompt, settingSources, partial streaming and cwd; no deprecated thinking budget", async () => {
+      seedSession(adapter, "cs_1", "/repo/project");
+      (adapter as any).sessionReasoningEfforts.set("cs_1", "high");
+      createClaudeSessionMock.mockReturnValue(makeMockV2Session());
+
+      await (adapter as any).getOrCreateV2Session("cs_1", "/repo/project", { permissionMode: "default" });
+
+      const options = createClaudeSessionMock.mock.calls[0][0];
+      expect(options.systemPrompt).toMatchObject({ type: "preset", preset: "claude_code" });
+      expect(typeof options.systemPrompt.append).toBe("string");
+      expect(options.settingSources).toEqual(["user", "project", "local"]);
+      expect(options.includePartialMessages).toBe(true);
+      expect(options.effort).toBe("high");
+      expect(options.cwd).toBe(sep === "\\" ? "\\repo\\project" : "/repo/project");
+      expect(options).not.toHaveProperty("maxThinkingTokens");
+      expect(typeof options.stderr).toBe("function");
+    });
+
+    it("switches the model on a live session instead of keeping the creation model", async () => {
+      const mockSession = makeMockV2Session();
+      mockSession.query.setModel = vi.fn().mockResolvedValue(undefined);
+      seedV2Session(adapter, "cs_1", mockSession);
+      (adapter as any).v2Sessions.get("cs_1").model = "claude-sonnet-4-5";
+
+      await (adapter as any).getOrCreateV2Session("cs_1", "/repo", {
+        permissionMode: "default",
+        model: "claude-opus-4-7",
+      });
+
+      expect(mockSession.query.setModel).toHaveBeenCalledWith("claude-opus-4-7");
+      expect((adapter as any).v2Sessions.get("cs_1").model).toBe("claude-opus-4-7");
+    });
+
+    it("setModel() uses the runtime switch and keeps the process alive", async () => {
+      const mockSession = makeMockV2Session();
+      mockSession.query.setModel = vi.fn().mockResolvedValue(undefined);
+      seedV2Session(adapter, "cs_1", mockSession);
+
+      await adapter.setModel("cs_1", "claude-opus-4-7");
+
+      expect(mockSession.query.setModel).toHaveBeenCalledWith("claude-opus-4-7");
+      expect(mockSession.close).not.toHaveBeenCalled();
+      expect((adapter as any).v2Sessions.has("cs_1")).toBe(true);
+    });
+  });
+
+  describe("partial-message streaming de-duplication", () => {
+    function run(adapter: ClaudeCodeAdapter, buf: MessageBuffer, msgs: any[]) {
+      const blocks = new Map();
+      const endState = { receivedResult: false, hadErrorDuringExecution: false };
+      for (const m of msgs) (adapter as any).handleSdkMessage(m, "cs_1", buf, blocks, endState);
+    }
+
+    it("renders streamed text and tool calls once even though complete messages follow", () => {
+      seedSession(adapter, "cs_1");
+      const buf = makeBuffer("cs_1");
+      const ev = (event: any) => ({ type: "stream_event", event, parent_tool_use_id: null });
+      run(adapter, buf, [
+        ev({ type: "message_start", message: { id: "api_1" } }),
+        ev({ type: "content_block_start", index: 0, content_block: { type: "text", text: "" } }),
+        ev({ type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "Hello " } }),
+        ev({ type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "world" } }),
+        { type: "assistant", parent_tool_use_id: null, message: { id: "api_1", content: [{ type: "text", text: "Hello world" }] } },
+        ev({ type: "content_block_stop", index: 0 }),
+        ev({ type: "content_block_start", index: 1, content_block: { type: "tool_use", id: "tu_1", name: "Read", input: {} } }),
+        ev({ type: "content_block_delta", index: 1, delta: { type: "input_json_delta", partial_json: "{\"file_path\":\"/a.ts\"}" } }),
+        { type: "assistant", parent_tool_use_id: null, message: { id: "api_1", content: [{ type: "tool_use", id: "tu_1", name: "Read", input: { file_path: "/a.ts" } }] } },
+        ev({ type: "content_block_stop", index: 1 }),
+        ev({ type: "message_stop" }),
+      ]);
+
+      const texts = buf.parts.filter((p) => p.type === "text") as any[];
+      const tools = buf.parts.filter((p) => p.type === "tool") as any[];
+      expect(texts).toHaveLength(1);
+      expect(texts[0].text).toBe("Hello world");
+      expect(tools).toHaveLength(1);
+      expect(tools[0].state.input).toEqual({ filePath: "/a.ts" });
+    });
+
+    it("still renders complete messages that were not streamed", () => {
+      seedSession(adapter, "cs_1");
+      const buf = makeBuffer("cs_1");
+      run(adapter, buf, [
+        { type: "assistant", parent_tool_use_id: null, message: { id: "api_err", content: [{ type: "text", text: "API Error: overloaded" }] } },
+      ]);
+      expect((buf.parts[0] as any).text).toBe("API Error: overloaded");
+    });
+  });
+
+  describe("subagent (Agent tool) messages", () => {
+    it("does not render subagent tool calls as top-level steps; updates the parent part instead", () => {
+      seedSession(adapter, "cs_1");
+      const buf = makeBuffer("cs_1");
+      (adapter as any).createToolPart("cs_1", buf, "agent_1", "Agent", { description: "Explore", prompt: "find x" });
+      const before = buf.parts.length;
+
+      (adapter as any).handleAssistantMessage(
+        { type: "assistant", parent_tool_use_id: "agent_1", message: { id: "sub_api", content: [{ type: "tool_use", id: "sub_tu", name: "Grep", input: { pattern: "x" } }] } },
+        "cs_1",
+        buf,
+      );
+      (adapter as any).handleUserMessage(
+        { type: "user", parent_tool_use_id: "agent_1", message: { content: [{ type: "tool_result", tool_use_id: "sub_tu", content: "hit" }] } },
+        "cs_1",
+        buf,
+      );
+
+      expect(buf.parts).toHaveLength(before);
+      const agentPart = (adapter as any).toolCallParts.get("agent_1");
+      expect(agentPart.normalizedTool).toBe("task");
+      expect(agentPart.state.input._lastToolName).toBe("Grep");
+      expect(agentPart.state.input._subToolCount).toBe(1);
+      expect((adapter as any).toolCallParts.has("sub_tu")).toBe(false);
+    });
+  });
+
+  describe("part ordering across model steps", () => {
+    it("keeps each thinking block as its own part in stream order", () => {
+      seedSession(adapter, "cs_1");
+      const buf = makeBuffer("cs_1");
+      (adapter as any).appendReasoning("cs_1", buf, "first thought");
+      (adapter as any).appendText("cs_1", buf, "Let me check.");
+      (adapter as any).flushTextAccumulator("cs_1", buf);
+      (adapter as any).createToolPart("cs_1", buf, "t1", "Bash", { command: "ls" });
+      (adapter as any).appendReasoning("cs_1", buf, "second thought");
+      (adapter as any).appendText("cs_1", buf, "Done.");
+
+      const summary = buf.parts.map((p: any) => p.type === "reasoning" || p.type === "text" ? `${p.type}:${p.text}` : p.type);
+      expect(summary).toEqual([
+        "reasoning:first thought",
+        "text:Let me check.",
+        "step-start",
+        "tool",
+        "reasoning:second thought",
+        "text:Done.",
+      ]);
+    });
+  });
+
+  describe("result error subtypes", () => {
+    it("surfaces errors[] for error_max_turns instead of 'Unknown error'", () => {
+      const buf = makeBuffer("cs_1");
+      const endState = { receivedResult: false, hadErrorDuringExecution: false };
+      (adapter as any).handleResultMessage(
+        { type: "result", subtype: "error_max_turns", is_error: true, errors: ["Reached maximum number of turns (5)"] },
+        "cs_1", buf, endState,
+      );
+      expect(buf.error).toBe("Reached maximum number of turns (5)");
+      expect(endState.hadErrorDuringExecution).toBe(false);
+    });
+
+    it("classifies error_during_execution as interrupted even when is_error is set", () => {
+      const buf = makeBuffer("cs_1");
+      const endState = { receivedResult: false, hadErrorDuringExecution: false };
+      (adapter as any).handleResultMessage(
+        { type: "result", subtype: "error_during_execution", is_error: true, errors: [] },
+        "cs_1", buf, endState,
+      );
+      expect(buf.error).toBeUndefined();
+      expect(endState.hadErrorDuringExecution).toBe(true);
+    });
+  });
+
+  describe("permission mode changes reported by the CLI", () => {
+    it("mirrors the CLI mode (e.g. leaving plan mode) and notifies the UI", () => {
+      const mockSession = makeMockV2Session();
+      seedV2Session(adapter, "cs_1", mockSession);
+      (adapter as any).sessionModes.set("cs_1", "plan");
+      const events: any[] = [];
+      adapter.on("session.updated", (d: any) => events.push(d));
+
+      (adapter as any).handleSystemMessage(
+        { type: "system", subtype: "status", status: null, permissionMode: "default" },
+        "cs_1",
+        makeBuffer("cs_1"),
+      );
+
+      expect((adapter as any).sessionModes.get("cs_1")).toBe("default");
+      expect((adapter as any).v2Sessions.get("cs_1").permissionMode).toBe("default");
+      expect(events).toEqual([{ session: { id: "cs_1", engineType: "claude", mode: "default" } }]);
+    });
+  });
+
+  describe("queued messages", () => {
+    it("keeps image attachments of messages queued while busy", async () => {
+      seedV2Session(adapter, "cs_1", makeMockV2Session());
+      (adapter as any).sendResolvers.set("cs_1", [{ resolve: vi.fn(), reject: vi.fn() }]);
+
+      void adapter.sendMessage("cs_1", [
+        { type: "text", text: "look" },
+        { type: "image", data: "AAAA", mimeType: "image/png" },
+      ] as any);
+
+      const queued = (adapter as any).pendingMessageTexts.get("cs_1");
+      expect(queued).toHaveLength(1);
+      expect(queued[0]).toMatchObject({
+        type: "user",
+        message: { content: [{ type: "text", text: "look" }, { type: "image", source: { data: "AAAA" } }] },
+      });
+    });
+  });
+
+  describe("permission modes (Claude Code parity)", () => {
+    it("passes every Claude Code permission mode through unchanged", async () => {
+      for (const mode of ["default", "acceptEdits", "plan", "auto"]) {
+        const mockSession = makeMockV2Session();
+        seedV2Session(adapter, "cs_m", mockSession);
+        await adapter.setMode("cs_m", mode);
+        expect((adapter as any).sessionModes.get("cs_m")).toBe(mode);
+        if (mode !== "default") expect(mockSession.query.setPermissionMode).toHaveBeenCalledWith(mode);
+      }
+    });
+
+    it("maps unknown modes and the CLI 'manual' alias to default", async () => {
+      seedSession(adapter, "cs_1");
+      await adapter.setMode("cs_1", "autopilot");
+      expect((adapter as any).sessionModes.get("cs_1")).toBe("default");
+      await adapter.setMode("cs_1", "manual");
+      expect((adapter as any).sessionModes.get("cs_1")).toBe("default");
+    });
+
+    it("rolls the UI back when the CLI rejects a mode (e.g. auto unavailable)", async () => {
+      const mockSession = makeMockV2Session();
+      seedV2Session(adapter, "cs_1", mockSession);
+      (adapter as any).sessionModes.set("cs_1", "acceptEdits");
+      mockSession.query.setPermissionMode.mockRejectedValueOnce(new Error("auto mode unavailable"));
+      const events: any[] = [];
+      adapter.on("session.updated", (d: any) => events.push(d));
+
+      await adapter.setMode("cs_1", "auto");
+
+      expect((adapter as any).sessionModes.get("cs_1")).toBe("acceptEdits");
+      expect(events).toEqual([{ session: { id: "cs_1", engineType: "claude", mode: "acceptEdits" } }]);
+    });
+
+    it("adopts the mode reported in system:init", () => {
+      seedV2Session(adapter, "cs_1", makeMockV2Session());
+      (adapter as any).sessionModes.set("cs_1", "auto");
+      (adapter as any).handleSystemMessage(
+        { type: "system", subtype: "init", session_id: "cc-1", permissionMode: "default", slash_commands: [] },
+        "cs_1",
+        makeBuffer("cs_1"),
+      );
+      expect((adapter as any).sessionModes.get("cs_1")).toBe("default");
+    });
+  });
+
+  describe("CLI notices and ambient events", () => {
+    const sys = (adapter: ClaudeCodeAdapter, msg: any, buf: MessageBuffer) =>
+      (adapter as any).handleSdkMessage(msg, "cs_1", buf, new Map(), { receivedResult: false, hadErrorDuringExecution: false });
+
+    it("shows one api_retry notice per turn and updates it in place", () => {
+      seedSession(adapter, "cs_1");
+      const buf = makeBuffer("cs_1");
+      sys(adapter, { type: "system", subtype: "api_retry", attempt: 1, max_retries: 10, retry_delay_ms: 2000, error_status: 529, error: "server_error" }, buf);
+      sys(adapter, { type: "system", subtype: "api_retry", attempt: 2, max_retries: 10, retry_delay_ms: 4500, error_status: 529, error: "server_error" }, buf);
+      const notices = buf.parts.filter((p) => p.type === "system-notice") as any[];
+      expect(notices).toHaveLength(1);
+      expect(notices[0]).toMatchObject({
+        noticeType: "warning",
+        text: "notice:api_retry",
+        params: { attempt: 2, max: 10, seconds: 5, error: "server_error 529" },
+      });
+    });
+
+    it("surfaces auto-denied tool calls of the main agent", () => {
+      seedSession(adapter, "cs_1");
+      const buf = makeBuffer("cs_1");
+      sys(adapter, { type: "system", subtype: "permission_denied", tool_name: "Bash", tool_use_id: "t1", decision_reason_type: "mode", message: "Permission denied in dontAsk mode" }, buf);
+      sys(adapter, { type: "system", subtype: "permission_denied", tool_name: "Bash", tool_use_id: "t2", agent_id: "sub", message: "x" }, buf);
+      expect(buf.parts).toHaveLength(1);
+      expect(buf.parts[0]).toMatchObject({ text: "notice:permission_denied", params: { tool: "Bash", reason: "Permission denied in dontAsk mode" } });
+    });
+
+    it("renders CLI notification / informational text as notices", () => {
+      seedSession(adapter, "cs_1");
+      const buf = makeBuffer("cs_1");
+      sys(adapter, { type: "system", subtype: "notification", key: "k", text: "MCP server github failed to connect", priority: "high" }, buf);
+      sys(adapter, { type: "system", subtype: "informational", message: "Large file truncated" }, buf);
+      expect(buf.parts.map((p: any) => [p.noticeType, p.text])).toEqual([
+        ["warning", "MCP server github failed to connect"],
+        ["info", "Large file truncated"],
+      ]);
+    });
+
+    it("shows rate-limit warnings and rejections once, ignoring 'allowed'", () => {
+      seedSession(adapter, "cs_1");
+      const buf = makeBuffer("cs_1");
+      const ev = (info: any) => sys(adapter, { type: "rate_limit_event", rate_limit_info: info }, buf);
+      ev({ status: "allowed", utilization: 0.1 });
+      ev({ status: "allowed_warning", rateLimitType: "five_hour", utilization: 0.82, resetsAt: 1_800_000_000 });
+      ev({ status: "allowed_warning", rateLimitType: "five_hour", utilization: 0.82, resetsAt: 1_800_000_000 });
+      ev({ status: "rejected", rateLimitType: "five_hour", resetsAt: 1_800_000_000 });
+      expect(buf.parts.map((p: any) => [p.text, p.params])).toEqual([
+        ["notice:rate_limit_warning", { percent: 82, resetsAt: 1_800_000_000_000 }],
+        ["notice:rate_limit_rejected", { resetsAt: 1_800_000_000_000 }],
+      ]);
+    });
+
+    it("notifies when compaction fails", () => {
+      seedSession(adapter, "cs_1");
+      const buf = makeBuffer("cs_1");
+      sys(adapter, { type: "system", subtype: "status", status: null, compact_result: "failed", compact_error: "too large" }, buf);
+      expect(buf.parts[0]).toMatchObject({ text: "notice:compact_failed", params: { error: "too large" } });
+    });
+
+    it("applies task_updated patches to the owning Agent tool part", () => {
+      seedSession(adapter, "cs_1");
+      const buf = makeBuffer("cs_1");
+      (adapter as any).createToolPart("cs_1", buf, "agent_1", "Agent", { description: "x" });
+      sys(adapter, { type: "system", subtype: "task_started", task_id: "task_1", tool_use_id: "agent_1", description: "x" }, buf);
+      sys(adapter, { type: "system", subtype: "task_updated", task_id: "task_1", patch: { status: "failed", error: "boom", is_backgrounded: true } }, buf);
+      const input = (adapter as any).toolCallParts.get("agent_1").state.input;
+      expect(input).toMatchObject({ _taskStatus: "failed", _taskError: "boom", _taskBackgrounded: true });
+    });
+  });
+
+  describe("SDK 0.3.x messages", () => {
+    const run = (adapter: ClaudeCodeAdapter, msg: any, buf: MessageBuffer) =>
+      (adapter as any).handleSdkMessage(msg, "cs_1", buf, new Map(), { receivedResult: false, hadErrorDuringExecution: false });
+
+    it("follows conversation_reset to the new on-disk session id", () => {
+      seedV2Session(adapter, "cs_1", makeMockV2Session());
+      (adapter as any).v2Sessions.get("cs_1").capturedSessionId = "cc-old";
+      const events: any[] = [];
+      adapter.on("session.updated", (d: any) => events.push(d));
+      const buf = makeBuffer("cs_1");
+
+      run(adapter, { type: "conversation_reset", new_conversation_id: "cc-new", trigger: "plan_mode_exit" }, buf);
+
+      expect((adapter as any).v2Sessions.get("cs_1").capturedSessionId).toBe("cc-new");
+      expect((adapter as any).sessionCcIds.get("cs_1")).toBe("cc-new");
+      expect(events).toEqual([{ session: { id: "cs_1", engineType: "claude", engineMeta: { ccSessionId: "cc-new" } } }]);
+      expect(buf.parts[0]).toMatchObject({ noticeType: "info", text: "notice:conversation_reset" });
+    });
+
+    it("shows model refusal fallbacks using the CLI's explanation", () => {
+      seedSession(adapter, "cs_1");
+      const buf = makeBuffer("cs_1");
+      run(adapter, {
+        type: "system", subtype: "model_refusal_fallback", trigger: "refusal", direction: "retry",
+        original_model: "claude-opus-5", fallback_model: "claude-sonnet-5", request_id: null,
+        content: "Opus declined this request, retried with Sonnet.",
+      }, buf);
+      run(adapter, { type: "system", subtype: "model_refusal_no_fallback", original_model: "claude-opus-5", request_id: null, content: "" }, buf);
+      expect(buf.parts.map((p: any) => [p.noticeType, p.text])).toEqual([
+        ["warning", "Opus declined this request, retried with Sonnet."],
+        ["warning", "claude-opus-5 declined the request"],
+      ]);
+    });
+
+    it("maps informational levels and replaces commands on commands_changed", () => {
+      seedSession(adapter, "cs_1");
+      const buf = makeBuffer("cs_1");
+      const changed: any[] = [];
+      adapter.on("commands.changed", (d: any) => changed.push(d));
+      run(adapter, { type: "system", subtype: "informational", content: "Hook blocked the edit", level: "warning" }, buf);
+      run(adapter, { type: "system", subtype: "commands_changed", commands: [
+        { name: "compact", description: "Compact", argumentHint: "" },
+        { name: "my-skill", description: "Mine", argumentHint: "<file>" },
+      ] }, buf);
+      expect(buf.parts[0]).toMatchObject({ noticeType: "warning", text: "Hook blocked the edit" });
+      expect(changed[0].commands).toEqual([
+        { name: "compact", description: "Compact", argumentHint: undefined },
+        { name: "my-skill", description: "Mine", argumentHint: "<file>" },
+      ]);
+      expect((adapter as any).cachedSkillNames).toEqual(["my-skill"]);
+    });
+
+    it("treats 0.3.x ambient events before init as non-turn-starting", () => {
+      for (const [t, st] of [["system", "thinking_tokens"], ["system", "control_request_progress"], ["system", "background_tasks_changed"], ["conversation_reset", undefined], ["prompt_suggestion", undefined]]) {
+        expect((ClaudeCodeAdapter as any).isAmbientMessage(t, st)).toBe(true);
+      }
+      expect((ClaudeCodeAdapter as any).isAmbientMessage("system", "task_notification")).toBe(false);
+    });
+  });
+
+  describe("history lookups after the CLI process was cleaned up", () => {
+    it("listMessages() falls back to the persisted ccSessionId", async () => {
+      seedSession(adapter, "cs_1");
+      (adapter as any).messageHistory.delete("cs_1");
+      (adapter as any).sessionCcIds.set("cs_1", "cc-persisted");
+      sdkGetSessionMessagesMock.mockResolvedValue([]);
+
+      await adapter.listMessages("cs_1");
+
+      expect(sdkGetSessionMessagesMock).toHaveBeenCalledWith("cc-persisted", { dir: "/repo" });
     });
   });
 });

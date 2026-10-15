@@ -43,7 +43,7 @@ export function FallbackTool(props: ToolProps) {
                 <ContentText
                   expand
                   compact
-                  text={props.state.output}
+                  text={typeof props.state.output === "string" ? props.state.output : JSON.stringify(props.state.output, null, 2)}
                   data-size="sm"
                   data-color="dimmed"
                 />

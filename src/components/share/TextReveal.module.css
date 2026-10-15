@@ -135,6 +135,22 @@
   overflow: clip;
 }
 
+/* Activity labels remain steady while the conversation streams. */
+:global(.conversation) .root .track {
+  transition: none;
+}
+
+:global(.conversation) .root .entering {
+  mask: none;
+  -webkit-mask: none;
+  transform: none;
+  transition: none;
+}
+
+:global(.conversation) .root .leaving {
+  display: none;
+}
+
 /* ── Accessibility: reduced motion ── */
 @media (prefers-reduced-motion: reduce) {
   .track {
@@ -144,5 +160,15 @@
   .entering,
   .leaving {
     transition-duration: 0ms !important;
+  }
+
+  .root .entering {
+    mask: none;
+    -webkit-mask: none;
+    transform: none !important;
+  }
+
+  .root .leaving {
+    display: none;
   }
 }

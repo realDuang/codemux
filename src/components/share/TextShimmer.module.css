@@ -98,6 +98,17 @@
   }
 }
 
+/* Conversation activity uses readable text instead of a repeating sweep. */
+:global(.conversation) .root .charBase {
+  opacity: 1;
+  transition: none;
+}
+
+:global(.conversation) .root .charShimmer {
+  display: none;
+  animation: none;
+}
+
 /* ── Accessibility: reduced motion ── */
 @media (prefers-reduced-motion: reduce) {
   .charBase,
@@ -106,6 +117,7 @@
   }
 
   .charShimmer {
+    display: none;
     animation: none !important;
     color: inherit;
     -webkit-text-fill-color: currentColor;

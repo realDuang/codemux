@@ -20,6 +20,7 @@
 │   │   │   ├── claude/               # Claude Code (@anthropic-ai/claude-agent-sdk)
 │   │   │   │   ├── index.ts
 │   │   │   │   ├── converters.ts
+│   │   │   │   ├── query-session.ts   # Persistent CLI session on query() (streaming input)
 │   │   │   │   └── cc-session-files.ts
 │   │   │   ├── codex/                # Codex CLI (JSON-RPC/stdio app-server, experimental)
 │   │   │   │   ├── index.ts

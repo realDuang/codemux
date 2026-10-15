@@ -42,6 +42,7 @@ codemux/
 │   │   │   ├── claude/                   # Claude Code (@anthropic-ai/claude-agent-sdk)
 │   │   │   │   ├── index.ts
 │   │   │   │   ├── converters.ts
+│   │   │   │   ├── query-session.ts       # Persistent CLI session on query() (streaming input)
 │   │   │   │   └── cc-session-files.ts
 │   │   │   └── mock-adapter.ts           # Mock engine for testing
 │   │   ├── gateway/                   # WebSocket Gateway

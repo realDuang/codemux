@@ -133,6 +133,8 @@ export class EngineManager extends EventEmitter {
   private questionSessionMap = new Map<string, string>();
   /** permissionId → sessionId lookup so adapters can resolve correct directory */
   private permissionSessionMap = new Map<string, string>();
+  private pendingPermissionReplies = new Set<string>();
+  private pendingQuestionReplies = new Set<string>();
   /** engineSessionId → conversationId cache (populated on session creation / lookup) */
   private engineToConvMap = new Map<string, string>();
   /** Accumulate step-type parts during streaming: messageId → UnifiedPart[] */
@@ -2052,7 +2054,19 @@ export class EngineManager extends EventEmitter {
     const sessionId = this.permissionSessionMap.get(permissionId);
     this.permissionEngineMap.delete(permissionId);
     this.permissionSessionMap.delete(permissionId);
-    return adapter.replyPermission(permissionId, reply, sessionId);
+    this.pendingPermissionReplies.add(permissionId);
+    try {
+      await adapter.replyPermission(permissionId, reply, sessionId);
+    } catch (error) {
+      // Keep failed submissions retryable without allowing concurrent replies.
+      if (!this.permissionEngineMap.has(permissionId)) {
+        this.permissionEngineMap.set(permissionId, engineType);
+        if (sessionId) this.permissionSessionMap.set(permissionId, sessionId);
+      }
+      throw error;
+    } finally {
+      this.pendingPermissionReplies.delete(permissionId);
+    }
   }
 
   // --- Questions ---
@@ -2070,7 +2084,18 @@ export class EngineManager extends EventEmitter {
     const sessionId = this.questionSessionMap.get(questionId);
     this.questionEngineMap.delete(questionId);
     this.questionSessionMap.delete(questionId);
-    return adapter.replyQuestion(questionId, answers, sessionId);
+    this.pendingQuestionReplies.add(questionId);
+    try {
+      await adapter.replyQuestion(questionId, answers, sessionId);
+    } catch (error) {
+      if (!this.questionEngineMap.has(questionId)) {
+        this.questionEngineMap.set(questionId, engineType);
+        if (sessionId) this.questionSessionMap.set(questionId, sessionId);
+      }
+      throw error;
+    } finally {
+      this.pendingQuestionReplies.delete(questionId);
+    }
   }
 
   async rejectQuestion(
@@ -2084,7 +2109,18 @@ export class EngineManager extends EventEmitter {
     const sessionId = this.questionSessionMap.get(questionId);
     this.questionEngineMap.delete(questionId);
     this.questionSessionMap.delete(questionId);
-    return adapter.rejectQuestion(questionId, sessionId);
+    this.pendingQuestionReplies.add(questionId);
+    try {
+      await adapter.rejectQuestion(questionId, sessionId);
+    } catch (error) {
+      if (!this.questionEngineMap.has(questionId)) {
+        this.questionEngineMap.set(questionId, engineType);
+        if (sessionId) this.questionSessionMap.set(questionId, sessionId);
+      }
+      throw error;
+    } finally {
+      this.pendingQuestionReplies.delete(questionId);
+    }
   }
 
   // --- Projects ---
@@ -2193,6 +2229,17 @@ export class EngineManager extends EventEmitter {
       Promise.resolve(adapter.getPendingPermissions(engineSessionId)),
     ]);
     if (!conversationStore.get(conversationId)) return { questions: [], permissions: [] };
+    // Reconnect can discover requests whose original asked event was missed.
+    for (const question of rawQuestions) {
+      if (this.pendingQuestionReplies.has(question.id)) continue;
+      this.questionEngineMap.set(question.id, adapter.engineType);
+      this.questionSessionMap.set(question.id, question.sessionId);
+    }
+    for (const permission of rawPermissions) {
+      if (this.pendingPermissionReplies.has(permission.id)) continue;
+      this.permissionEngineMap.set(permission.id, adapter.engineType);
+      this.permissionSessionMap.set(permission.id, permission.sessionId);
+    }
     const questions = rawQuestions.map((q) => ({ ...q, sessionId: conversationId }));
     const permissions = rawPermissions.map((p) => ({ ...p, sessionId: conversationId }));
 

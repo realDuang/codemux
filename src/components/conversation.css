@@ -1,0 +1,128 @@
+/* Shared reading surfaces. Keep the surrounding application theme independent. */
+.conversation {
+  --conversation-text: var(--sl-color-text);
+  --conversation-muted: var(--sl-color-text-secondary);
+  --conversation-subtle: var(--sl-color-text-secondary);
+  --conversation-bg: var(--sl-color-bg-surface);
+  --conversation-surface: var(--sl-color-bg-alt);
+  --conversation-hover: var(--sl-color-bg-hover);
+  --conversation-border: var(--sl-color-border);
+  --conversation-focus: var(--sl-color-blue-high);
+  --conversation-width: 48rem;
+  --conversation-radius: 0.75rem;
+  --conversation-font-size: 15px;
+  --conversation-line-height: 1.7;
+  --conversation-font-mono: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  color: var(--conversation-text);
+  background: var(--conversation-bg);
+  font-size: var(--conversation-font-size);
+  line-height: var(--conversation-line-height);
+  min-width: 0;
+}
+
+.conversation :where(button, a, summary, [tabindex="0"]):focus-visible {
+  outline: 2px solid var(--conversation-focus);
+  outline-offset: 3px;
+}
+
+.conversation-viewport {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-inline: clamp(1rem, 3vw, 2rem);
+  overscroll-behavior-y: contain;
+  scroll-padding-block: 1.5rem 3rem;
+  scrollbar-gutter: stable both-edges;
+}
+
+.conversation-viewport:focus-visible {
+  outline: 2px solid var(--conversation-focus);
+  outline-offset: -3px;
+}
+
+.conversation-column {
+  width: 100%;
+  max-width: var(--conversation-width);
+  margin-inline: auto;
+  min-width: 0;
+}
+
+.conversation-content {
+  padding-block: 1.5rem 2.5rem;
+}
+
+.conversation-turns {
+  display: flex;
+  flex-direction: column;
+  gap: 2.25rem;
+  padding-block: 0.25rem;
+}
+
+.conversation-composer {
+  position: relative;
+  z-index: 20;
+  padding: 0.75rem clamp(1rem, 3vw, 2rem) max(0.75rem, env(safe-area-inset-bottom));
+  background: var(--conversation-bg);
+}
+
+.conversation-composer::before {
+  content: "";
+  position: absolute;
+  inset: -1.25rem 0 auto;
+  height: 1.25rem;
+  pointer-events: none;
+  background: linear-gradient(transparent, var(--conversation-bg));
+}
+
+.conversation-jump {
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + 0.75rem);
+  transform: translateX(-50%);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.375rem;
+  min-height: 2.25rem;
+  max-width: calc(100% - 2rem);
+  padding: 0.375rem 0.75rem;
+  border: 1px solid var(--conversation-border);
+  border-radius: 2rem;
+  background: var(--conversation-bg);
+  color: var(--conversation-text);
+  box-shadow: 0 2px 8px #00000010;
+  font-size: 0.75rem;
+  line-height: 1.4;
+  cursor: pointer;
+}
+
+.conversation-jump:hover {
+  background: var(--conversation-surface);
+}
+
+.conversation-session-summary {
+  color: var(--conversation-subtle);
+  font-size: 0.6875rem;
+  line-height: 1.5;
+  font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 640px) {
+  .conversation-content { padding-block: 1rem 2rem; }
+  .conversation-turns { gap: 1.75rem; }
+  .conversation-composer { padding-top: 0.5rem; }
+}
+
+@media (pointer: coarse) {
+  .conversation-jump { min-height: 44px; }
+  .conversation [data-slot="collapsible-trigger"] { min-height: 44px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .conversation *, .conversation *::before, .conversation *::after {
+    animation: none !important;
+    transition: none !important;
+    scroll-behavior: auto !important;
+  }
+}

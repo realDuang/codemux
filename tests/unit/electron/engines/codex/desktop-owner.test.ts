@@ -78,6 +78,50 @@ describe("buildDesktopOwnerState", () => {
     expect(converted.incompleteHistory).toBe(false);
     expect(native.thread.turns[0]).not.toHaveProperty("turnId");
   });
+
+  it("maps observed item completion and diff only to their native turn while preserving thread usage", () => {
+    const native = nativeState();
+    native.thread.turns.push(
+      { id: "turn-previous", status: "completed", items: [] },
+      { id: "turn-active", status: "inProgress", startedAt: 11, items: [
+        { id: "reasoning-1", type: "reasoning", summary: ["Checked the files"], content: [] },
+        { id: "answer-1", type: "agentMessage", text: "Checking the result", phase: "commentary" },
+      ] },
+    );
+    const latestTokenUsageInfo = { total: { inputTokens: 100, outputTokens: 20 }, last: { inputTokens: 40, outputTokens: 10 } };
+    const observed = {
+      completedItemIds: { "reasoning-1": true, "answer-1": true, "running-tool": false },
+      agentMessageCompletedAtMsById: { "answer-1": 11_250 },
+      diff: "diff --git a/file.ts b/file.ts",
+    };
+    const state = buildDesktopOwnerState({ ...native, latestTokenUsageInfo, turnStateById: { "turn-active": observed } });
+    const turns = state.turns as Array<Record<string, unknown>>;
+    expect(state.latestTokenUsageInfo).toEqual(latestTokenUsageInfo);
+    expect(turns[0]).toMatchObject({ turnId: "turn-previous", diff: null });
+    expect(turns[0]).not.toHaveProperty("completedItemIds");
+    expect(turns[0]).not.toHaveProperty("agentMessageCompletedAtMsById");
+    expect(turns[1]).toMatchObject({ turnId: "turn-active", ...observed });
+    expect(turns[1].completedItemIds).not.toBe(observed.completedItemIds);
+    expect(turns[1].agentMessageCompletedAtMsById).not.toBe(observed.agentMessageCompletedAtMsById);
+    const converted = convertDesktopConversation(state);
+    expect(converted.messages.find((message) => message.engineMeta?.codexItemId === "answer-1")?.time.completed).toBe(11_250);
+    expect(converted.isActive).toBe(true);
+  });
+
+  it("leaves absent runtime metadata unknown instead of inferring item completion", () => {
+    const native = nativeState();
+    native.thread.turns.push({ id: "turn-active", status: "inProgress", items: [
+      { id: "reasoning-1", type: "reasoning", summary: ["Checked the files"], content: [] },
+      { id: "command-1", type: "commandExecution", command: "pwd", status: "inProgress" },
+    ] });
+    const state = buildDesktopOwnerState(native);
+    const turn = (state.turns as Array<Record<string, unknown>>)[0];
+    expect(state.latestTokenUsageInfo).toBeNull();
+    expect(turn.diff).toBeNull();
+    expect(turn).not.toHaveProperty("completedItemIds");
+    expect(turn).not.toHaveProperty("agentMessageCompletedAtMsById");
+    expect(convertDesktopConversation(state).messages[0].time.completed).toBeUndefined();
+  });
 });
 
 describe("CodexDesktopOwner", () => {

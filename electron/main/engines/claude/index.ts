@@ -1,31 +1,31 @@
 // ============================================================================
 // Claude Code Adapter — Claude Code integration via @anthropic-ai/claude-agent-sdk
 //
-// Uses the official SDK's V2 Session API (unstable_v2_createSession) which spawns
-// a Claude Code CLI subprocess communicating over stdio JSON-RPC.
-// V2 Sessions enable process reuse: subsequent messages in the same conversation
-// reuse the running CC process, avoiding cold start (~3-5s) each time.
+// Uses the SDK's query() API in streaming-input mode (see ./query-session.ts),
+// which spawns a Claude Code CLI subprocess communicating over stdio JSON.
+// The session object keeps the process alive across turns: subsequent messages
+// in the same conversation reuse the running CC process, avoiding a cold start
+// (~3-5s) each time. (This replaced the experimental unstable_v2_* session API,
+// which ignored most options and was removed in Agent SDK 0.3.142.)
 // ============================================================================
 
 import { timeId } from "../../utils/id-gen";
 import { mimeToFileExtension } from "../../../../shared/image-limits";
 import { CODEMUX_IDENTITY_PROMPT } from "../identity-prompt";
 import {
-  unstable_v2_createSession,
-  unstable_v2_resumeSession,
   listSessions as sdkListSessions,
   getSessionMessages as sdkGetSessionMessages,
   renameSession as sdkRenameSession,
   query as sdkQuery,
 } from "@anthropic-ai/claude-agent-sdk";
 import type {
-  SDKSession,
   SDKMessage,
   CanUseTool,
   PermissionResult,
   PermissionUpdate,
   PermissionMode,
   ModelInfo as ClaudeModelInfo,
+  Options,
 } from "@anthropic-ai/claude-agent-sdk";
 
 import { EngineAdapter, MessageBuffer } from "../engine-adapter";
@@ -64,27 +64,29 @@ import type {
 } from "../../../../src/types/unified";
 import { REASONING_EFFORT_VALUES, normalizeReasoningEfforts } from "../../../../src/types/unified";
 
-import { sdkSessionToUnified, convertSdkMessages } from "./converters";
+import { sdkSessionToUnified, convertSdkMessages, normalizeToolInputKeys, buildEditDiffMetadata } from "./converters";
+import { createClaudeSession, resumeClaudeSession, type ClaudeSession } from "./query-session";
 import { deleteCCSessionFile, readJsonlTimestamps } from "./cc-session-files";
 import { createRequire } from "node:module";
 import { sep, dirname, join } from "node:path";
 import { readFileSync, readdirSync, statSync, existsSync } from "node:fs";
 import { readdir, stat, readFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { createTwoFilesPatch } from "diff";
 
 // ============================================================================
 // V2 Session Info — Tracks a persistent SDK session
 // ============================================================================
 
 interface V2SessionInfo {
-  session: SDKSession;
+  session: ClaudeSession;
   directory: string;
   createdAt: number;
   lastUsedAt: number;
   capturedSessionId?: string; // CC's internal session ID from system init message
   permissionMode?: PermissionMode;
   allowDangerouslySkipPermissions?: boolean;
+  /** Model the CLI process is currently using (switched at runtime via setModel) */
+  model?: string;
 }
 
 // ============================================================================
@@ -127,20 +129,32 @@ interface PendingQuestion {
 // Default Agent Modes
 // ============================================================================
 
+// The modes Claude Code lets a user pick interactively (CLI Shift+Tab cycle,
+// VS Code / Desktop mode selector): Manual (config value `default`),
+// Accept edits, Plan, plus the optional Bypass permissions and Auto.
+// `dontAsk` is intentionally omitted — it never appears in Claude Code's mode
+// cycle and is meant for headless CI runs with an explicit allowlist.
+// `auto` is only honoured when auto mode is available to the account/model;
+// otherwise the CLI stays in Manual and syncPermissionModeFromCli() reflects it.
 const DEFAULT_MODES: AgentMode[] = [
   { id: "bypassPermissions", label: "Bypass Permissions", description: "Bypass all permission checks" },
-  { id: "default", label: "Default", description: "Standard behavior, prompts for dangerous operations" },
-  { id: "plan", label: "Plan", description: "Planning mode, no actual tool execution" },
+  { id: "default", label: "Manual", description: "Ask before edits, shell commands and network access" },
+  { id: "acceptEdits", label: "Accept Edits", description: "Auto-accept file edits and common filesystem commands" },
+  { id: "plan", label: "Plan", description: "Explore and plan without editing files" },
+  { id: "auto", label: "Auto", description: "A classifier reviews actions instead of prompting (when auto mode is available)" },
 ];
 
 const CLAUDE_PERMISSION_MODES = new Set<PermissionMode>([
   "default",
+  "acceptEdits",
   "bypassPermissions",
   "plan",
+  "auto",
 ]);
 
 function toClaudePermissionMode(mode: string | undefined): PermissionMode {
   if (!mode) return "bypassPermissions";
+  if (mode === "manual") return "default"; // CLI alias for `default`
   return CLAUDE_PERMISSION_MODES.has(mode as PermissionMode)
     ? (mode as PermissionMode)
     : "default";
@@ -180,9 +194,14 @@ export function getClaudeReasoningCapabilities(
 // Read ~/.claude/settings.json env field for proxy auth detection
 // ============================================================================
 
+/** Claude Code config directory (respects CLAUDE_CONFIG_DIR like the CLI does). */
+function claudeConfigDir(): string {
+  return process.env.CLAUDE_CONFIG_DIR || join(homedir(), ".claude");
+}
+
 function readClaudeSettingsEnv(): Record<string, string> {
   try {
-    const settingsPath = join(homedir(), ".claude", "settings.json");
+    const settingsPath = join(claudeConfigDir(), "settings.json");
     if (!existsSync(settingsPath)) return {};
     const settings = JSON.parse(readFileSync(settingsPath, "utf-8"));
     if (settings && typeof settings.env === "object" && settings.env !== null) {
@@ -321,13 +340,29 @@ export class ClaudeCodeAdapter extends EngineAdapter {
   // --- Queued message texts (deferred send to CLI) ---
   // Claude CLI doesn't reliably queue multiple stdin sends. We maintain our
   // own text queue and send() one at a time after each stream() completes.
-  private pendingMessageTexts = new Map<string, string[]>();
+  // Holds the full payload (string, or SDKUserMessage when images are attached)
+  // so queued image attachments are not dropped.
+  private pendingMessageTexts = new Map<string, Array<string | object>>();
 
   // --- Tool call tracking ---
   private toolCallParts = new Map<string, ToolPart>();
 
   /** Maps SDK task_id → tool_use_id for correlating task_progress/notification to ToolPart */
   private taskToToolUseId = new Map<string, string>();
+
+  /**
+   * API message ids (BetaMessage.id) whose content was already rendered from
+   * stream_event deltas in the current turn. With includePartialMessages the
+   * CLI still emits the complete assistant message for every content block,
+   * so these ids are used to avoid rendering text/thinking/tool calls twice.
+   */
+  private streamedMessageIds = new WeakMap<MessageBuffer, Set<string>>();
+
+  /** The api_retry notice of the current turn — updated in place on each retry. */
+  private retryNotices = new WeakMap<MessageBuffer, SystemNoticePart>();
+
+  /** Rate-limit notices already shown per session (status+window), to avoid repeats. */
+  private rateLimitNoticeKeys = new Map<string, Set<string>>();
 
   // --- Active requests (for abort) ---
   private activeAbortControllers = new Map<string, AbortController>();
@@ -724,8 +759,10 @@ export class ClaudeCodeAdapter extends EngineAdapter {
       this.v2Sessions.delete(sessionId);
     }
 
-    // Delete the Claude Code .jsonl session file so it won't reappear on next listSessions
-    const ccSessionId = v2Info?.capturedSessionId;
+    // Delete the Claude Code .jsonl session file so it won't reappear on next listSessions.
+    // The process may already have been idle-cleaned, so fall back to the
+    // persisted ccSessionId.
+    const ccSessionId = v2Info?.capturedSessionId ?? this.sessionCcIds.get(sessionId);
     const directory = v2Info?.directory ?? this.sessionDirectories.get(sessionId);
     if (ccSessionId && directory) {
       deleteCCSessionFile(ccSessionId, directory);
@@ -735,6 +772,12 @@ export class ClaudeCodeAdapter extends EngineAdapter {
     this.messageHistory.delete(sessionId);
     this.messageBuffers.delete(sessionId);
     this.sessionModes.delete(sessionId);
+    this.sessionCcIds.delete(sessionId);
+    this.sessionReasoningEfforts.delete(sessionId);
+    this.pendingResumeNotice.delete(sessionId);
+    this.pendingUserMessages.delete(sessionId);
+    this.pendingMessageTexts.delete(sessionId);
+    this.rateLimitNoticeKeys.delete(sessionId);
   }
 
   // ==========================================================================
@@ -829,7 +872,7 @@ export class ClaudeCodeAdapter extends EngineAdapter {
       // stdin sends. Store the text and send it when processStream finishes
       // the current turn and is ready for the next one.
       const pendingTexts = this.pendingMessageTexts.get(sessionId) ?? [];
-      pendingTexts.push(textContent);
+      pendingTexts.push(messageToSend);
       this.pendingMessageTexts.set(sessionId, pendingTexts);
 
       return new Promise<UnifiedMessage>((resolve, reject) => {
@@ -970,8 +1013,8 @@ export class ClaudeCodeAdapter extends EngineAdapter {
     }
 
     // Interrupt the V2 session's underlying Query to stop the CLI subprocess.
-    // SDKSession doesn't expose interrupt() directly, but the internal `query`
-    // property (an instance of the Query class) does. Without this call, the
+    // The session exposes the underlying SDK Query as `.query`, which provides
+    // interrupt(). Without this call, the
     // CLI process continues executing tools in the background even though we
     // stopped reading the stream.
     const v2Info = this.v2Sessions.get(sessionId);
@@ -1034,9 +1077,10 @@ export class ClaudeCodeAdapter extends EngineAdapter {
       return history;
     }
 
-    // Resolve the CC session ID from in-memory v2Sessions
+    // Resolve the CC session ID from the live session, or the persisted one
+    // (the process may have been idle-cleaned or not started yet after restart)
     const v2Info = this.v2Sessions.get(sessionId);
-    const ccSessionId = v2Info?.capturedSessionId;
+    const ccSessionId = v2Info?.capturedSessionId ?? this.sessionCcIds.get(sessionId);
 
     if (!ccSessionId) {
       return [];
@@ -1286,8 +1330,24 @@ export class ClaudeCodeAdapter extends EngineAdapter {
     this.currentModelId = modelId;
     claudeLog.info(`[Claude] Model set to: ${modelId}`);
 
-    // Close existing session to force recreation with new model
     const v2Info = this.v2Sessions.get(sessionId);
+
+    // Prefer switching the model on the live CLI process (same as /model):
+    // keeps the warm process and does not kill an in-flight turn.
+    const query = (v2Info?.session as any)?.query;
+    if (v2Info && query && typeof query.setModel === "function") {
+      try {
+        await query.setModel(modelId);
+        v2Info.model = modelId;
+        v2Info.lastUsedAt = Date.now();
+        claudeLog.info(`[Claude][${sessionId}] Model switched at runtime to: ${modelId}`);
+        return;
+      } catch (err) {
+        claudeLog.warn(`[Claude][${sessionId}] Runtime setModel failed, recreating session:`, err);
+      }
+    }
+
+    // Fallback: close existing session to force recreation with new model
     if (v2Info) {
       // Preserve ccSessionId so the recreated session resumes context
       if (v2Info.capturedSessionId) {
@@ -1312,6 +1372,7 @@ export class ClaudeCodeAdapter extends EngineAdapter {
 
   async setMode(sessionId: string, modeId: string): Promise<void> {
     const permissionMode = toClaudePermissionMode(modeId);
+    const previousMode = this.sessionModes.get(sessionId);
     this.sessionModes.set(sessionId, permissionMode);
     claudeLog.info(`[Claude][${sessionId}] Mode set to: ${permissionMode}`);
 
@@ -1335,7 +1396,17 @@ export class ClaudeCodeAdapter extends EngineAdapter {
           claudeLog.warn(`[Claude][${sessionId}] setPermissionMode not available on query, will apply on next message`);
         }
       } catch (err) {
+        // e.g. `auto` when auto mode isn't available for this account/model:
+        // the CLI stays in its current mode, so roll the UI back to it.
         claudeLog.warn(`[Claude][${sessionId}] Failed to set permission mode:`, err);
+        const fallback = previousMode ?? "default";
+        if (fallback !== permissionMode) {
+          v2Info.permissionMode = fallback;
+          this.sessionModes.set(sessionId, fallback);
+          this.emit("session.updated", {
+            session: { id: sessionId, engineType: this.engineType, mode: fallback },
+          });
+        }
       }
     }
   }
@@ -1569,7 +1640,11 @@ export class ClaudeCodeAdapter extends EngineAdapter {
     // so the user can review it before the confirmation dialog appears.
     const buffer = this.messageBuffers.get(sessionId);
     if (buffer) {
-      const planContent = await this.readLatestPlanFile(sessionId);
+      // Recent CLI versions pass the plan in the tool input; older ones only
+      // write it to the plans directory.
+      const planContent = (typeof input.plan === "string" && input.plan.trim())
+        ? input.plan
+        : await this.readLatestPlanFile(sessionId);
       if (planContent) {
         this.appendText(sessionId, buffer, "\n\n" + planContent);
       }
@@ -1649,7 +1724,7 @@ export class ClaudeCodeAdapter extends EngineAdapter {
    */
   private async readLatestPlanFile(_sessionId: string): Promise<string | null> {
     try {
-      const plansDir = join(homedir(), ".claude", "plans");
+      const plansDir = join(claudeConfigDir(), "plans");
       const entries = await readdir(plansDir);
       const files = await Promise.all(
         entries
@@ -1924,7 +1999,7 @@ export class ClaudeCodeAdapter extends EngineAdapter {
   private readSkillFileBody(skillName: string, directory: string): string | null {
     const dirs = [
       join(directory, ".claude", "skills"),
-      join(homedir(), ".claude", "skills"),
+      join(claudeConfigDir(), "skills"),
     ];
     for (const dir of dirs) {
       const skillFile = join(dir, skillName, "SKILL.md");
@@ -2028,7 +2103,7 @@ export class ClaudeCodeAdapter extends EngineAdapter {
       model?: string;
       permissionMode?: PermissionMode;
     },
-  ): Promise<SDKSession> {
+  ): Promise<ClaudeSession> {
     const existing = this.v2Sessions.get(sessionId);
     if (existing) {
       // Check if the CLI subprocess is still alive before reusing
@@ -2066,6 +2141,21 @@ export class ClaudeCodeAdapter extends EngineAdapter {
             }
           }
 
+          // Per-message model override (e.g. from a channel) — switch the live
+          // process instead of silently keeping the model it was created with.
+          if (opts.model && existing.model && opts.model !== existing.model) {
+            try {
+              const query = (existing.session as any).query;
+              if (query && typeof query.setModel === "function") {
+                await query.setModel(opts.model);
+                claudeLog.info(`[Claude][${sessionId}] Model switched from ${existing.model} to ${opts.model}`);
+                existing.model = opts.model;
+              }
+            } catch (err) {
+              claudeLog.warn(`[Claude][${sessionId}] Failed to switch model at runtime:`, err);
+            }
+          }
+
           // Session is ready — update usage timestamp and return
           existing.lastUsedAt = Date.now();
           return existing.session;
@@ -2093,11 +2183,6 @@ export class ClaudeCodeAdapter extends EngineAdapter {
     // interfere with child process behavior
     delete env.ELECTRON_RUN_AS_NODE;
 
-    // Build SDK session options
-    // We use 'as any' because the SDK v0.2.x SDKSessionOptions type is still
-    // narrower than the internal Options type. The SDK internally passes these
-    // through to ProcessTransport which accepts all Options fields.
-
     // Build system prompt append: identity + cached user skills
     let promptAppend = CODEMUX_IDENTITY_PROMPT;
     if (this.cachedSkillNames.length > 0) {
@@ -2106,68 +2191,47 @@ export class ClaudeCodeAdapter extends EngineAdapter {
 
     const permissionMode = opts.permissionMode ?? toClaudePermissionMode(undefined);
     const allowDangerouslySkipPermissions = allowsDangerouslySkipPermissions(permissionMode);
-    const sdkOptions: any = this.withClaudeExecutablePath({
+    const nativeCwd = directory
+      ? directory.replaceAll("/", process.platform === "win32" ? "\\" : "/")
+      : undefined;
+
+    // Thinking is left to the CLI default (adaptive thinking on models that
+    // support it); depth is controlled via `effort`. A fixed
+    // maxThinkingTokens budget is deprecated and would override adaptive
+    // thinking for every model.
+    const sdkOptions: Options = this.withClaudeExecutablePath({
       model: opts.model ?? this.currentModelId ?? "claude-sonnet-4-20250514",
       env,
+      ...(nativeCwd ? { cwd: nativeCwd } : {}),
       permissionMode,
       ...(allowDangerouslySkipPermissions ? { allowDangerouslySkipPermissions: true } : {}),
       canUseTool: this.createCanUseTool(sessionId),
       systemPrompt: { type: "preset" as const, preset: "claude_code" as const, append: promptAppend },
+      // Same sources the interactive CLI loads: CLAUDE.md, settings.json
+      // permissions/hooks/MCP servers, and user/project skills.
+      settingSources: ["user", "project", "local"],
+      // Token-level streaming (stream_event). Whole assistant messages are
+      // still emitted afterwards and are de-duplicated in handleAssistantMessage.
+      includePartialMessages: true,
       stderr: this.stderrCallback,
-      maxThinkingTokens: 10240,
     });
 
     // Apply reasoning effort level if set for this session
     const reasoningEffort = this.sessionReasoningEfforts.get(sessionId);
     if (reasoningEffort && reasoningEffort !== "ultra") {
-      sdkOptions.effort = reasoningEffort;
+      sdkOptions.effort = reasoningEffort as Options["effort"];
     }
 
-    // Set working directory.
-    // Note: sdkOptions.cwd is currently ignored by the SDK's V2 session API
-    // (rQ constructor doesn't forward it to ProcessTransport), so we also
-    // temporarily chdir to the target directory before creating the session.
-    // The rQ → y4 → spawn() chain is fully synchronous, so this is safe in
-    // single-threaded Node.js.
-    const nativeCwd = directory
-      ? directory.replaceAll("/", process.platform === "win32" ? "\\" : "/")
-      : undefined;
-    if (nativeCwd) {
-      sdkOptions.cwd = nativeCwd;
-    }
-
-    let v2Session: SDKSession;
-
-    const origCwd = nativeCwd ? process.cwd() : undefined;
-    if (nativeCwd) {
-      try {
-        process.chdir(nativeCwd);
-      } catch (e) {
-        claudeLog.warn(
-          `[Claude][${sessionId}] Failed to chdir to ${nativeCwd}: ${e}`,
-        );
-      }
-    }
-
-    try {
-      if (ccSessionId) {
-        // Resume existing session
-        claudeLog.info(
-          `[Claude][${sessionId}] Resuming CC session: ${ccSessionId}`,
-        );
-        v2Session = unstable_v2_resumeSession(ccSessionId, sdkOptions);
-      } else {
-        // Create new session
-        v2Session = unstable_v2_createSession(sdkOptions);
-      }
-    } finally {
-      if (origCwd) {
-        try {
-          process.chdir(origCwd);
-        } catch {
-          // ignore — original cwd may have been removed
-        }
-      }
+    let v2Session: ClaudeSession;
+    if (ccSessionId) {
+      // Resume existing session
+      claudeLog.info(
+        `[Claude][${sessionId}] Resuming CC session: ${ccSessionId}`,
+      );
+      v2Session = resumeClaudeSession(ccSessionId, sdkOptions);
+    } else {
+      // Create new session
+      v2Session = createClaudeSession(sdkOptions);
     }
 
     claudeLog.info(
@@ -2182,6 +2246,7 @@ export class ClaudeCodeAdapter extends EngineAdapter {
       capturedSessionId: ccSessionId,
       permissionMode,
       allowDangerouslySkipPermissions,
+      model: sdkOptions.model,
     };
 
     this.v2Sessions.set(sessionId, info);
@@ -2193,7 +2258,7 @@ export class ClaudeCodeAdapter extends EngineAdapter {
    * Check if the CLI subprocess behind a V2 session is still alive.
    * Returns false if the process has exited (OOM, crash, signal).
    */
-  private isSessionTransportReady(session: SDKSession): boolean {
+  private isSessionTransportReady(session: ClaudeSession): boolean {
     try {
       const query = (session as any).query;
       const transport = query?.transport;
@@ -2219,7 +2284,7 @@ export class ClaudeCodeAdapter extends EngineAdapter {
    * sessionCcIds so the next getOrCreateV2Session() call can resume it
    * with a fresh process.
    */
-  private registerProcessExitListener(session: SDKSession, sessionId: string): void {
+  private registerProcessExitListener(session: ClaudeSession, sessionId: string): void {
     try {
       const transport = (session as any).query?.transport;
       if (!transport) return;
@@ -2358,7 +2423,7 @@ export class ClaudeCodeAdapter extends EngineAdapter {
       // The CC CLI's supportedCommands() API may not include these.
       const existingNames = new Set(this.availableCommands.map((c) => c.name));
       const userSkillDirs = [
-        join(homedir(), ".claude", "skills"),
+        join(claudeConfigDir(), "skills"),
         join(cwd, ".claude", "skills"),
       ];
       for (const dir of userSkillDirs) {
@@ -2392,7 +2457,7 @@ export class ClaudeCodeAdapter extends EngineAdapter {
         { name: "cost", description: "Show token usage and cost" },
       ];
       const existingNames = new Set(this.availableCommands.map((c) => c.name));
-      for (const dir of [join(homedir(), ".claude", "skills"), join(cwd, ".claude", "skills")]) {
+      for (const dir of [join(claudeConfigDir(), "skills"), join(cwd, ".claude", "skills")]) {
         for (const skill of ClaudeCodeAdapter.scanSkillsDir(dir)) {
           if (!existingNames.has(skill.name)) {
             existingNames.add(skill.name);
@@ -2428,7 +2493,7 @@ export class ClaudeCodeAdapter extends EngineAdapter {
    * and if more resolvers remain, create a new buffer and call stream() again.
    */
   private async processStream(
-    v2Session: SDKSession,
+    v2Session: ClaudeSession,
     sessionId: string,
     messageContent: string | object,
     buffer: MessageBuffer,
@@ -2446,14 +2511,22 @@ export class ClaudeCodeAdapter extends EngineAdapter {
 
       // Slash commands (e.g. /compact, /help) are processed locally by the CLI
       // and may NOT produce a system:init message. We must not misclassify
-      // their output as stale autonomous turns.
-      const isSlashCommand =
-        typeof messageContent === "string" && messageContent.startsWith("/");
+      // their output as stale autonomous turns. Re-evaluated for every queued
+      // turn below.
+      const isSlashPayload = (payload: string | object) =>
+        typeof payload === "string" && payload.trimStart().startsWith("/");
+      let isSlashCommand = isSlashPayload(messageContent);
 
       // Process stream events — loop to handle multiple turns from enqueued messages
       let staleTurnRetries = 0;
+      let skippedEmptyResults = 0;
       while (!abortController.signal.aborted) {
         let firstMessageIsInit = false;
+        let turnStartDecided = false;
+        // A bare `result` with num_turns 0 and nothing before it: Claude Code
+        // (SDK 0.3.274+) emits these placeholder results when several queued
+        // background-task completions share one model call.
+        let emptyPlaceholderResult = false;
         let messageCount = 0;
         // Reset per-turn — only the final turn's result matters for end-state
         endState.receivedResult = false;
@@ -2463,13 +2536,30 @@ export class ClaudeCodeAdapter extends EngineAdapter {
           if (abortController.signal.aborted) break;
           messageCount++;
 
-          // Track whether the first message is system:init (normal turn start).
+          // Track whether the turn starts with system:init (normal turn start).
           // Stale autonomous turns (from subagent completions after a previous
           // turn's result) start with other types like task_notification.
-          if (messageCount === 1) {
-            firstMessageIsInit =
-              (sdkMessage as any).type === "system" &&
-              (sdkMessage as any).subtype === "init";
+          // Ambient events (rate limits, status, retries, notifications) can
+          // precede init and must not make a normal turn look stale.
+          if (!turnStartDecided) {
+            const t = (sdkMessage as any).type;
+            const st = (sdkMessage as any).subtype;
+            if (t === "system" && st === "init") {
+              firstMessageIsInit = true;
+              turnStartDecided = true;
+            } else if (!ClaudeCodeAdapter.isAmbientMessage(t, st)) {
+              turnStartDecided = true;
+              const r = sdkMessage as any;
+              if (
+                t === "result" && r.num_turns === 0 && !r.is_error && !isSlashCommand &&
+                !(typeof r.result === "string" && r.result.trim())
+              ) {
+                emptyPlaceholderResult = true;
+                // Don't let the placeholder classify / finalize the turn
+                messageCount--;
+                continue;
+              }
+            }
           }
 
           this.handleSdkMessage(
@@ -2479,6 +2569,12 @@ export class ClaudeCodeAdapter extends EngineAdapter {
             streamingBlocks,
             endState,
           );
+        }
+
+        if (emptyPlaceholderResult && !abortController.signal.aborted && skippedEmptyResults < 50) {
+          skippedEmptyResults++;
+          claudeLog.debug(`[Claude][${sessionId}] Skipping empty placeholder result (${skippedEmptyResults})`);
+          continue;
         }
 
         // Safety: if stream() produced zero messages, the CLI is likely idle
@@ -2518,6 +2614,7 @@ export class ClaudeCodeAdapter extends EngineAdapter {
           delete buffer.cost;
           delete buffer.error;
           streamingBlocks.clear();
+          this.streamedMessageIds.delete(buffer);
           continue;
         }
 
@@ -2576,7 +2673,8 @@ export class ClaudeCodeAdapter extends EngineAdapter {
         if (pendingTexts && pendingTexts.length > 0) {
           const nextText = pendingTexts.shift()!;
           if (pendingTexts.length === 0) this.pendingMessageTexts.delete(sessionId);
-          await v2Session.send(nextText);
+          isSlashCommand = isSlashPayload(nextText);
+          await v2Session.send(nextText as any);
         }
 
         buffer = {
@@ -2626,6 +2724,32 @@ export class ClaudeCodeAdapter extends EngineAdapter {
   }
 
   /**
+   * Messages the CLI may emit at any time, independent of turn boundaries.
+   */
+  private static isAmbientMessage(type: string, subtype: string | undefined): boolean {
+    if (
+      type === "rate_limit_event" || type === "auth_status" || type === "keep_alive" ||
+      type === "prompt_suggestion" || type === "conversation_reset"
+    ) return true;
+    if (type !== "system") return false;
+    return subtype === "status"
+      || subtype === "control_request_progress"
+      || subtype === "thinking_tokens"
+      || subtype === "background_tasks_changed"
+      || subtype === "commands_changed"
+      || subtype === "worker_shutting_down"
+      || subtype === "api_retry"
+      || subtype === "notification"
+      || subtype === "session_state_changed"
+      || subtype === "hook_started"
+      || subtype === "hook_progress"
+      || subtype === "hook_response"
+      || subtype === "plugin_install"
+      || subtype === "files_persisted"
+      || subtype === "memory_recall";
+  }
+
+  /**
    * Handle a single SDK message from the stream.
    */
   private handleSdkMessage(
@@ -2672,6 +2796,27 @@ export class ClaudeCodeAdapter extends EngineAdapter {
       case "tool_use_summary":
         this.handleToolUseSummary(msg as any, sessionId);
         break;
+
+      case "rate_limit_event":
+        this.handleRateLimitEvent(msg as any, sessionId, buffer);
+        break;
+
+      case "conversation_reset":
+        this.handleConversationReset(msg as any, sessionId, buffer);
+        break;
+
+      case "prompt_suggestion":
+        // Predicted next user prompt (CLI ghost text) — not surfaced.
+        break;
+
+      case "auth_status": {
+        const auth = msg as any;
+        if (auth.error) {
+          claudeLog.warn(`[Claude][${sessionId}] auth_status error: ${auth.error}`);
+          this.pushNotice(sessionId, buffer, "warning", "notice:auth_error", { error: String(auth.error) });
+        }
+        break;
+      }
 
       default:
         // Log type/subtype only — avoid serializing full message to prevent leaking user data
@@ -2728,6 +2873,12 @@ export class ClaudeCodeAdapter extends EngineAdapter {
         buffer.modelId = msg.model;
       }
 
+      // The actual mode the CLI runs in (e.g. Manual when `auto` was requested
+      // but auto mode isn't available to this session).
+      if (typeof msg.permissionMode === "string") {
+        this.syncPermissionModeFromCli(sessionId, msg.permissionMode);
+      }
+
       // The init message carries slash_commands (user-invocable) and skills
       // (model-invocable) arrays. Log them to verify CC CLI's discovery.
       const initSlashCmds: string[] = msg.slash_commands ?? [];
@@ -2777,6 +2928,18 @@ export class ClaudeCodeAdapter extends EngineAdapter {
         claudeLog.info(
           `[Claude][${sessionId}] Context compacting...`,
         );
+      }
+      if (msg.compact_result === "failed") {
+        claudeLog.warn(`[Claude][${sessionId}] Context compaction failed: ${msg.compact_error ?? "unknown error"}`);
+        this.pushNotice(sessionId, buffer, "warning", "notice:compact_failed", {
+          error: String(msg.compact_error ?? "unknown error"),
+        });
+      }
+      // The CLI reports permission-mode changes it makes itself (e.g. leaving
+      // plan mode after ExitPlanMode is approved). Mirror them, otherwise the
+      // next sendMessage would push the stale mode (e.g. "plan") back.
+      if (typeof msg.permissionMode === "string") {
+        this.syncPermissionModeFromCli(sessionId, msg.permissionMode);
       }
     } else if (msg.subtype === "compact_boundary") {
       // Context compaction completed — emit a SystemNoticePart so frontend
@@ -2861,7 +3024,180 @@ export class ClaudeCodeAdapter extends EngineAdapter {
         this.taskToToolUseId.delete(msg.task_id);
       }
       claudeLog.debug(`[Claude][${sessionId}] task_notification: task=${msg.task_id}, status=${msg.status}`);
+    } else if (msg.subtype === "task_updated") {
+      // Incremental task state (e.g. background agent finished / failed / killed)
+      const toolUseId = this.taskToToolUseId.get(msg.task_id);
+      const toolPart = toolUseId ? this.toolCallParts.get(toolUseId) : undefined;
+      const patch = msg.patch ?? {};
+      if (toolPart && (toolPart.state.status === "running" || toolPart.state.status === "pending")) {
+        const input = ((toolPart.state as any).input ?? {}) as Record<string, unknown>;
+        if (patch.status) input._taskStatus = patch.status;
+        if (patch.description) input._taskDescription = patch.description;
+        if (patch.error) input._taskError = patch.error;
+        if (typeof patch.is_backgrounded === "boolean") input._taskBackgrounded = patch.is_backgrounded;
+        (toolPart.state as any).input = input;
+        this.emit("message.part.updated", { sessionId, messageId: toolPart.messageId, part: toolPart });
+      }
+      claudeLog.debug(`[Claude][${sessionId}] task_updated: task=${msg.task_id}, status=${patch.status}`);
+    } else if (msg.subtype === "api_retry") {
+      // Retryable API failure (overloaded / 5xx / timeout). One notice per
+      // turn, updated in place with the latest attempt.
+      const params = {
+        attempt: msg.attempt ?? 0,
+        max: msg.max_retries ?? 0,
+        seconds: Math.max(1, Math.round((msg.retry_delay_ms ?? 0) / 1000)),
+        error: msg.error_status != null ? `${msg.error} ${msg.error_status}` : String(msg.error ?? "connection error"),
+      };
+      claudeLog.warn(`[Claude][${sessionId}] api_retry ${params.attempt}/${params.max} in ${params.seconds}s (${params.error})`);
+      const existing = this.retryNotices.get(buffer);
+      if (existing && buffer.parts.includes(existing)) {
+        existing.params = params;
+        this.emitPartUpdated(sessionId, buffer, existing);
+      } else {
+        const notice = this.pushNotice(sessionId, buffer, "warning", "notice:api_retry", params);
+        this.retryNotices.set(buffer, notice);
+      }
+    } else if (msg.subtype === "permission_denied") {
+      // Auto-denied without a prompt (dontAsk / auto classifier / deny rule)
+      if (!msg.agent_id) {
+        this.pushNotice(sessionId, buffer, "warning", "notice:permission_denied", {
+          tool: String(msg.tool_name ?? "tool"),
+          reason: String(msg.decision_reason ?? msg.message ?? msg.decision_reason_type ?? ""),
+        });
+      }
+      claudeLog.info(`[Claude][${sessionId}] permission_denied: tool=${msg.tool_name}, reason=${msg.decision_reason_type}`);
+    } else if (msg.subtype === "notification" || msg.subtype === "informational") {
+      // CLI notices (REPL notification queue / turn warnings). Already human text.
+      const text = [msg.text, msg.message, msg.content].find((v) => typeof v === "string" && v.trim());
+      if (text) {
+        const severe = msg.priority === "high" || msg.priority === "immediate" || msg.level === "warning" || msg.level === "error";
+        this.pushNotice(sessionId, buffer, severe ? "warning" : "info", text.trim());
+      }
+    } else if (msg.subtype === "model_refusal_fallback" || msg.subtype === "model_refusal_no_fallback") {
+      // The model declined the request; the CLI either retried on a fallback
+      // model or gave up. `content` is the CLI's own user-facing explanation.
+      const text = typeof msg.content === "string" && msg.content.trim()
+        ? msg.content.trim()
+        : msg.subtype === "model_refusal_fallback"
+          ? `${msg.original_model} declined the request; retried with ${msg.fallback_model}`
+          : `${msg.original_model} declined the request`;
+      this.pushNotice(sessionId, buffer, "warning", text);
+      claudeLog.warn(
+        `[Claude][${sessionId}] ${msg.subtype}: ${msg.original_model}${msg.fallback_model ? ` -> ${msg.fallback_model}` : ""} (${msg.api_refusal_category ?? "n/a"})`,
+      );
+    } else if (msg.subtype === "commands_changed") {
+      // Slash commands / skills changed at runtime (plugin install, new skill file)
+      if (Array.isArray(msg.commands)) {
+        this.availableCommands = msg.commands
+          .filter((cmd: any) => cmd && typeof cmd.name === "string")
+          .map((cmd: any) => ({
+            name: cmd.name,
+            description: cmd.description || "",
+            argumentHint: cmd.argumentHint || undefined,
+          }));
+        this.cachedSkillNames = this.availableCommands
+          .filter((cmd) => !this.isBuiltInCommand(cmd.name))
+          .map((cmd) => cmd.name);
+        this.emit("commands.changed", { engineType: this.engineType, commands: this.availableCommands });
+      }
+    } else if (msg.subtype === "worker_shutting_down") {
+      claudeLog.warn(`[Claude][${sessionId}] CLI worker shutting down: ${msg.reason}`);
+    } else if (msg.subtype === "mirror_error") {
+      claudeLog.warn(`[Claude][${sessionId}] mirror_error: ${msg.error}`);
     }
+  }
+
+  /**
+   * The CLI started a new conversation in the same process (/clear, or
+   * "clear context" when approving a plan). The on-disk session id changes,
+   * so resumption must follow the new id.
+   */
+  private handleConversationReset(msg: any, sessionId: string, buffer: MessageBuffer): void {
+    const newId = msg.new_conversation_id;
+    if (typeof newId !== "string" || !newId) return;
+    const v2Info = this.v2Sessions.get(sessionId);
+    if (v2Info) v2Info.capturedSessionId = newId;
+    this.sessionCcIds.set(sessionId, newId);
+    this.emit("session.updated", {
+      session: { id: sessionId, engineType: this.engineType, engineMeta: { ccSessionId: newId } },
+    });
+    this.pushNotice(sessionId, buffer, "info", "notice:conversation_reset");
+    claudeLog.info(`[Claude][${sessionId}] conversation_reset (${msg.trigger ?? "unknown"}): ccSessionId=${newId}`);
+  }
+
+  /**
+   * Append a SystemNoticePart (rendered as a centered notice bar).
+   * `text` is an i18n key (notice:*) or raw text; `params` fill {placeholders}.
+   */
+  private pushNotice(
+    sessionId: string,
+    buffer: MessageBuffer,
+    noticeType: SystemNoticePart["noticeType"],
+    text: string,
+    params?: Record<string, string | number>,
+  ): SystemNoticePart {
+    const notice: SystemNoticePart = {
+      type: "system-notice",
+      id: timeId("part"),
+      messageId: buffer.messageId,
+      sessionId,
+      noticeType,
+      text,
+      ...(params ? { params } : {}),
+    };
+    buffer.parts.push(notice);
+    this.emitPartUpdated(sessionId, buffer, notice);
+    return notice;
+  }
+
+  /**
+   * Subscription usage-limit updates. Emitted on most requests with
+   * status "allowed"; only warnings and rejections are surfaced, once each.
+   */
+  private handleRateLimitEvent(msg: any, sessionId: string, buffer: MessageBuffer): void {
+    const info = msg.rate_limit_info;
+    if (!info || (info.status !== "allowed_warning" && info.status !== "rejected")) return;
+
+    const key = `${info.status}:${info.rateLimitType ?? ""}:${info.surpassedThreshold ?? ""}:${info.resetsAt ?? ""}`;
+    let shown = this.rateLimitNoticeKeys.get(sessionId);
+    if (!shown) {
+      shown = new Set();
+      this.rateLimitNoticeKeys.set(sessionId, shown);
+    }
+    if (shown.has(key)) return;
+    shown.add(key);
+
+    const params: Record<string, string | number> = {};
+    if (typeof info.resetsAt === "number") {
+      // resetsAt is a Unix timestamp (seconds); normalise to ms for the UI
+      params.resetsAt = info.resetsAt < 1e12 ? info.resetsAt * 1000 : info.resetsAt;
+    }
+    if (info.status === "rejected") {
+      this.pushNotice(sessionId, buffer, "warning",
+        params.resetsAt ? "notice:rate_limit_rejected" : "notice:rate_limit_rejected_no_reset", params);
+    } else {
+      const utilization = typeof info.utilization === "number" ? info.utilization : info.surpassedThreshold;
+      params.percent = typeof utilization === "number"
+        ? Math.round(utilization <= 1 ? utilization * 100 : utilization)
+        : 0;
+      this.pushNotice(sessionId, buffer, "warning", "notice:rate_limit_warning", params);
+    }
+    claudeLog.info(`[Claude][${sessionId}] rate_limit_event: status=${info.status}, type=${info.rateLimitType}`);
+  }
+
+  /**
+   * Mirror a permission mode reported by the CLI into adapter state and the UI.
+   */
+  private syncPermissionModeFromCli(sessionId: string, cliMode: string): void {
+    const mode = toClaudePermissionMode(cliMode);
+    const v2Info = this.v2Sessions.get(sessionId);
+    if (v2Info) v2Info.permissionMode = mode;
+    if (this.sessionModes.get(sessionId) === mode) return;
+    this.sessionModes.set(sessionId, mode);
+    claudeLog.info(`[Claude][${sessionId}] Permission mode changed by CLI: ${cliMode} (ui=${mode})`);
+    this.emit("session.updated", {
+      session: { id: sessionId, engineType: this.engineType, mode },
+    });
   }
 
   /**
@@ -2920,6 +3256,14 @@ export class ClaudeCodeAdapter extends EngineAdapter {
     const betaMessage = msg.message;
     if (!betaMessage?.content) return;
 
+    // Messages produced inside a subagent (Agent/Task tool) carry the parent
+    // tool_use id. Claude Code renders these nested under the Agent call, not
+    // as top-level steps of the main conversation.
+    if (msg.parent_tool_use_id) {
+      this.handleSubagentAssistantMessage(sessionId, msg.parent_tool_use_id, betaMessage.content);
+      return;
+    }
+
     // Extract token usage
     if (betaMessage.usage) {
       buffer.tokens = {
@@ -2945,13 +3289,31 @@ export class ClaudeCodeAdapter extends EngineAdapter {
 
     if (!Array.isArray(content)) return;
 
+    // Content already rendered from stream_event deltas for this API message?
+    const apiMessageId: string | undefined = betaMessage.id;
+    const alreadyStreamed = !!apiMessageId && !!this.streamedMessageIds.get(buffer)?.has(apiMessageId);
+
     // Process content blocks
     for (const block of content) {
       if (block.type === "text") {
-        this.appendText(sessionId, buffer, block.text ?? "");
+        if (!alreadyStreamed) this.appendText(sessionId, buffer, block.text ?? "");
       } else if (block.type === "thinking") {
-        this.appendReasoning(sessionId, buffer, block.thinking ?? "");
+        if (!alreadyStreamed) this.appendReasoning(sessionId, buffer, block.thinking ?? "");
       } else if (block.type === "tool_use") {
+        const existing = this.toolCallParts.get(block.id);
+        if (existing && existing.sessionId === sessionId) {
+          // Tool part was created from content_block_start — the complete
+          // message carries the authoritative, fully-parsed input.
+          if (existing.state.status === "running" || existing.state.status === "pending") {
+            const input = block.input && typeof block.input === "object"
+              ? normalizeToolInputKeys(block.input)
+              : (existing.state as any).input ?? {};
+            (existing.state as any).input = { ...((existing.state as any).input ?? {}), ...input };
+            this.emitPartUpdated(sessionId, buffer, existing);
+          }
+          continue;
+        }
+
         // Flush accumulated text first
         this.flushTextAccumulator(sessionId, buffer);
 
@@ -2964,6 +3326,34 @@ export class ClaudeCodeAdapter extends EngineAdapter {
           block.input,
         );
       }
+    }
+  }
+
+  /**
+   * Reflect a subagent's activity on its parent Agent/Task tool part instead
+   * of rendering the subagent's internal steps in the main transcript.
+   */
+  private handleSubagentAssistantMessage(
+    sessionId: string,
+    parentToolUseId: string,
+    content: unknown,
+  ): void {
+    if (!Array.isArray(content)) return;
+    const parent = this.toolCallParts.get(parentToolUseId);
+    if (!parent || (parent.state.status !== "running" && parent.state.status !== "pending")) return;
+
+    let changed = false;
+    const input = ((parent.state as any).input ?? {}) as Record<string, unknown>;
+    for (const block of content) {
+      if (block?.type === "tool_use" && typeof block.name === "string") {
+        input._lastToolName = block.name;
+        input._subToolCount = ((input._subToolCount as number | undefined) ?? 0) + 1;
+        changed = true;
+      }
+    }
+    if (changed) {
+      (parent.state as any).input = input;
+      this.emit("message.part.updated", { sessionId, messageId: parent.messageId, part: parent });
     }
   }
 
@@ -2984,6 +3374,10 @@ export class ClaudeCodeAdapter extends EngineAdapter {
     // Ignore synthetic replay messages — these are echoes of the command input,
     // not actual output we should display.
     if (msg.isReplay || msg.isSynthetic) return;
+
+    // Tool results produced inside a subagent belong to the nested transcript
+    // (see handleSubagentAssistantMessage), not to the main conversation.
+    if (msg.parent_tool_use_id) return;
 
     // String content — may be slash command output stripped of XML tags
     if (typeof betaMessage.content === "string") {
@@ -3036,14 +3430,24 @@ export class ClaudeCodeAdapter extends EngineAdapter {
       buffer.cost = msg.total_cost_usd;
     }
 
-    // Check for error results
-    if (msg.is_error) {
-      buffer.error = msg.result ?? "Unknown error";
-    } else if (msg.subtype === "error_during_execution") {
+    // Check for error results.
+    // - success + is_error: API-level failure, message is in `result`
+    // - error_during_execution: turn aborted (interrupt / process error);
+    //   classified as interrupted by processStream's end-state table
+    // - error_max_turns / error_max_budget_usd / ...: have no `result`, the
+    //   details are in `errors[]`
+    const errorDetails = Array.isArray(msg.errors)
+      ? msg.errors.filter((e: unknown) => typeof e === "string" && e.trim()).join("\n")
+      : "";
+    if (msg.subtype === "error_during_execution") {
       endState.hadErrorDuringExecution = true;
       claudeLog.info(
-        `[Claude][${sessionId}] Result subtype=error_during_execution (interrupted)`,
+        `[Claude][${sessionId}] Result subtype=error_during_execution (interrupted)${errorDetails ? `: ${errorDetails}` : ""}`,
       );
+    } else if (typeof msg.subtype === "string" && msg.subtype.startsWith("error_")) {
+      buffer.error = errorDetails || `Claude Code stopped: ${msg.subtype}`;
+    } else if (msg.is_error) {
+      buffer.error = (typeof msg.result === "string" && msg.result.trim()) || errorDetails || "Unknown error";
     }
 
     // For slash commands: if the buffer has no text content but the result
@@ -3078,6 +3482,9 @@ export class ClaudeCodeAdapter extends EngineAdapter {
     const event = msg.event ?? msg;
 
     if (!event?.type) return;
+
+    // Token-level deltas are only rendered for the main conversation.
+    if (msg.parent_tool_use_id) return;
 
     switch (event.type) {
       case "content_block_start": {
@@ -3160,19 +3567,27 @@ export class ClaudeCodeAdapter extends EngineAdapter {
         if (block.type === "tool_use" && block.toolId) {
           // Parse accumulated JSON input for the tool
           let parsedInput: Record<string, unknown> = {};
+          let parseFailed = false;
           try {
             if (block.content.trim()) {
               parsedInput = JSON.parse(block.content);
             }
           } catch {
+            parseFailed = true;
             parsedInput = { raw: block.content };
           }
 
-          // Update tool part with parsed input (normalize snake_case keys)
+          // Update tool part with parsed input (normalize snake_case keys).
+          // The complete assistant message usually arrives just before this
+          // event and has already set the full input — merge, don't clobber.
           const toolPart = this.toolCallParts.get(block.toolId);
           if (toolPart && toolPart.state.status === "running") {
-            (toolPart.state as any).input = ClaudeCodeAdapter.normalizeInputKeys(parsedInput);
-            this.emitPartUpdated(sessionId, buffer, toolPart);
+            const current = ((toolPart.state as any).input ?? {}) as Record<string, unknown>;
+            const hasInput = Object.keys(current).some((k) => !k.startsWith("_"));
+            if (!(parseFailed && hasInput)) {
+              (toolPart.state as any).input = { ...current, ...ClaudeCodeAdapter.normalizeInputKeys(parsedInput) };
+              this.emitPartUpdated(sessionId, buffer, toolPart);
+            }
           }
         }
 
@@ -3180,7 +3595,21 @@ export class ClaudeCodeAdapter extends EngineAdapter {
         break;
       }
 
-      case "message_start":
+      case "message_start": {
+        // Remember which API message is being streamed so the complete
+        // assistant message that follows is not rendered a second time.
+        const apiMessageId = event.message?.id;
+        if (apiMessageId) {
+          let ids = this.streamedMessageIds.get(buffer);
+          if (!ids) {
+            ids = new Set();
+            this.streamedMessageIds.set(buffer, ids);
+          }
+          ids.add(apiMessageId);
+        }
+        break;
+      }
+
       case "message_delta":
       case "message_stop":
         // These are message-level events, no action needed for parts
@@ -3200,6 +3629,14 @@ export class ClaudeCodeAdapter extends EngineAdapter {
     buffer: MessageBuffer,
     text: string,
   ): void {
+    // If something else (reasoning, a notice) was appended after the current
+    // text part, start a new text part so output stays in stream order
+    // instead of being merged into an earlier part.
+    if (buffer.textPartId && buffer.parts[buffer.parts.length - 1]?.id !== buffer.textPartId) {
+      buffer.textPartId = null;
+      buffer.textAccumulator = "";
+    }
+
     buffer.textAccumulator += text;
 
     // Trim leading whitespace from the first text content. Some models send
@@ -3227,7 +3664,7 @@ export class ClaudeCodeAdapter extends EngineAdapter {
     } else {
       // Update existing text part with accumulated text
       const textPart = buffer.parts.find(
-        (p) => p.type === "text" && p === this.findLastTextPart(buffer),
+        (p) => p.id === buffer.textPartId,
       ) as TextPart | undefined;
       if (textPart) {
         textPart.text = buffer.textAccumulator;
@@ -3241,6 +3678,14 @@ export class ClaudeCodeAdapter extends EngineAdapter {
     buffer: MessageBuffer,
     text: string,
   ): void {
+    // Each thinking block (one per model step) gets its own reasoning part.
+    // Merging them all into the first part would hoist later reasoning above
+    // the tool calls and text that preceded it.
+    if (buffer.reasoningPartId && buffer.parts[buffer.parts.length - 1]?.id !== buffer.reasoningPartId) {
+      buffer.reasoningPartId = null;
+      buffer.reasoningAccumulator = "";
+    }
+
     buffer.reasoningAccumulator += text;
 
     if (!buffer.reasoningPartId) {
@@ -3256,7 +3701,7 @@ export class ClaudeCodeAdapter extends EngineAdapter {
       this.emitPartUpdated(sessionId, buffer, reasoningPart);
     } else {
       const reasoningPart = buffer.parts.find(
-        (p) => p.type === "reasoning",
+        (p) => p.id === buffer.reasoningPartId,
       ) as ReasoningPart | undefined;
       if (reasoningPart) {
         reasoningPart.text = buffer.reasoningAccumulator;
@@ -3294,12 +3739,7 @@ export class ClaudeCodeAdapter extends EngineAdapter {
    * (which sends snake_case like `file_path`).
    */
   private static normalizeInputKeys(input: Record<string, unknown>): Record<string, unknown> {
-    const result: Record<string, unknown> = {};
-    for (const [key, value] of Object.entries(input)) {
-      const camelKey = key.replace(/_([a-z])/g, (_, c) => c.toUpperCase());
-      result[camelKey] = value;
-    }
-    return result;
+    return normalizeToolInputKeys(input);
   }
 
   private createToolPart(
@@ -3408,23 +3848,8 @@ export class ClaudeCodeAdapter extends EngineAdapter {
     toolPart: ToolPart,
     _output: string,
   ): Record<string, unknown> | undefined {
-    if (toolPart.normalizedTool !== "edit") return undefined;
-
     const input = (toolPart.state as any).input as Record<string, unknown> | undefined;
-    if (!input) return undefined;
-
-    const filePath = (input.filePath as string) ?? "";
-    const oldStr = (input.oldString as string) ?? "";
-    const newStr = (input.newString as string) ?? "";
-
-    if (!oldStr && !newStr) return undefined;
-
-    try {
-      const diff = createTwoFilesPatch(filePath, filePath, oldStr, newStr, "", "", { context: 3 });
-      return { diff };
-    } catch {
-      return undefined;
-    }
+    return buildEditDiffMetadata(toolPart.normalizedTool, input);
   }
 
   // ==========================================================================

@@ -244,14 +244,14 @@ export function ChatModelPicker(props: ChatModelPickerProps) {
               top: `${position()!.top}px`,
               width: `${position()!.width}px`,
             }}
-            class="fixed z-[9999] max-h-60 -translate-y-full overflow-y-auto rounded-lg border border-slate-200 bg-white py-1 shadow-lg dark:border-slate-700 dark:bg-slate-800"
+            class="fixed z-[9999] max-h-60 -translate-y-full overflow-y-auto rounded-xl p-1 border border-[var(--cm-hairline-strong)] bg-[var(--cm-surface)] dark:bg-[var(--cm-surface-2)] shadow-[var(--cm-shadow-lg)]"
             onMouseDown={(e) => e.preventDefault()}
           >
             <For each={groups()}>
               {(group) => (
                 <>
                   <Show when={groups().length > 1}>
-                    <div class="sticky top-0 z-10 bg-white/95 px-3 py-1 text-[10px] font-medium uppercase tracking-wide text-slate-400 dark:bg-slate-800/95 dark:text-slate-500">
+                    <div class="cm-eyebrow sticky top-0 z-10 bg-[var(--cm-surface)] dark:bg-[var(--cm-surface-2)] px-2.5 pt-1.5 pb-1 !text-[10px]">
                       <span class="block truncate" title={group.name}>{group.name}</span>
                     </div>
                   </Show>
@@ -264,10 +264,10 @@ export function ChatModelPicker(props: ChatModelPickerProps) {
                           role="option"
                           aria-selected={selected() ? "true" : "false"}
                           title={modelTitle(model, model.modelId)}
-                          class={`flex w-full min-w-0 items-center px-3 py-1.5 text-left text-[11px] transition-colors ${
+                          class={`cm-mono flex w-full min-w-0 items-center rounded-lg px-2.5 py-1.5 text-left text-[11px] transition-colors ${
                             selected()
-                              ? "bg-slate-100 text-slate-700 dark:bg-slate-700/70 dark:text-slate-100"
-                              : "text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-700"
+                              ? "bg-[var(--cm-accent-soft)] text-[var(--cm-accent)]"
+                              : "text-gray-600 hover:bg-gray-900/[0.04] dark:text-gray-300 dark:hover:bg-white/[0.06]"
                           }`}
                           onClick={() => selectModel(model.modelId)}
                         >

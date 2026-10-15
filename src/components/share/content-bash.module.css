@@ -15,7 +15,7 @@
     width: 100%;
 
     :global(.dark) & {
-      border-color: rgba(71, 85, 105, 0.3);
+      border-color: var(--cm-hairline-strong);
       background-color: var(--cm-code-bg);
     }
   }

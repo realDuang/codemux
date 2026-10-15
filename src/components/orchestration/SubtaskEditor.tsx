@@ -65,7 +65,7 @@ export function SubtaskEditor(props: SubtaskEditorProps) {
       style={{ "animation-delay": animationDelay }}
       classList={{
         "border-indigo-200 dark:border-indigo-800/60 bg-indigo-50/50 dark:bg-indigo-950/20": expanded(),
-        "border-slate-200 dark:border-slate-700/50 bg-white/80 dark:bg-slate-800/50 hover:border-indigo-200 dark:hover:border-indigo-800/40": !expanded(),
+        "border-[var(--cm-hairline-strong)]/50 bg-white/80 dark:bg-slate-800/50 hover:border-indigo-200 dark:hover:border-indigo-800/40": !expanded(),
       }}
     >
       {/* Collapsed header */}
@@ -121,7 +121,7 @@ export function SubtaskEditor(props: SubtaskEditorProps) {
               Description
             </label>
             <textarea
-              class="w-full text-sm rounded-md border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-100 px-3 py-2 resize-none focus:outline-none focus:ring-2 focus:ring-indigo-400/50 focus:border-indigo-400 transition-colors"
+              class="w-full text-sm rounded-md border border-[var(--cm-hairline-strong)] bg-[var(--cm-surface)] dark:bg-[var(--cm-surface-2)] text-slate-800 dark:text-slate-100 px-3 py-2 resize-none focus:outline-none focus:ring-2 focus:ring-indigo-400/50 focus:border-indigo-400 transition-colors"
               rows={2}
               value={props.subtask.description}
               onInput={(e) => update({ description: e.currentTarget.value })}
@@ -136,7 +136,7 @@ export function SubtaskEditor(props: SubtaskEditorProps) {
                 Role
               </label>
               <select
-                class="text-sm rounded-md border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-100 px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-indigo-400/50 focus:border-indigo-400 transition-colors"
+                class="text-sm rounded-md border border-[var(--cm-hairline-strong)] bg-[var(--cm-surface)] dark:bg-[var(--cm-surface-2)] text-slate-800 dark:text-slate-100 px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-indigo-400/50 focus:border-indigo-400 transition-colors"
                 value={props.subtask.role ?? ""}
                 onChange={(e) => {
                   const role = e.currentTarget.value as OrchestratorRole;
@@ -174,7 +174,7 @@ export function SubtaskEditor(props: SubtaskEditorProps) {
                         class="text-[11px] px-2 py-1 rounded border transition-colors"
                         classList={{
                           "border-indigo-400 bg-indigo-50 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-300": isSelected(),
-                          "border-slate-200 dark:border-slate-600 text-slate-500 dark:text-slate-400 hover:border-indigo-300 dark:hover:border-indigo-700": !isSelected(),
+                          "border-[var(--cm-hairline-strong)] text-slate-500 dark:text-slate-400 hover:border-indigo-300 dark:hover:border-indigo-700": !isSelected(),
                         }}
                       >
                         #{otherIdx() + 1} {other.description.slice(0, 24)}{other.description.length > 24 ? "…" : ""}

@@ -58,7 +58,7 @@ export function LocalServerManager(props: LocalServerManagerProps) {
         aria-modal="true"
         aria-labelledby="local-server-title"
         onKeyDown={handleKeyDown}
-        class="w-full max-w-lg rounded-xl border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-6 shadow-xl outline-none"
+        class="w-full max-w-lg rounded-xl border border-[var(--cm-hairline-strong)] bg-[var(--cm-surface)] dark:bg-[var(--cm-surface-2)] p-6 shadow-[var(--cm-shadow-lg)] outline-none"
       >
         <div class="flex items-center gap-3 mb-5">
           <img src={publicAssetUrl("logo.png")} alt="" class="h-10 w-10 object-contain" />
@@ -104,17 +104,17 @@ export function LocalServerManager(props: LocalServerManagerProps) {
               type="button"
               disabled={isBusy()}
               onClick={() => props.onAction("stop")}
-              class="rounded-lg border border-gray-200 dark:border-slate-700 px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-slate-800 disabled:opacity-50 disabled:cursor-not-allowed"
+              class="rounded-lg border border-[var(--cm-hairline-strong)] px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-slate-800 disabled:opacity-50 disabled:cursor-not-allowed"
             >{t().localServer.stop}</button>
           </Show>
           <button
             type="button"
             onClick={() => props.onOpenLogs()}
-            class="rounded-lg border border-gray-200 dark:border-slate-700 px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-slate-800"
+            class="rounded-lg border border-[var(--cm-hairline-strong)] px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-slate-800"
           >{t().localServer.openLogs}</button>
         </div>
         <Show when={props.canClose}>
-          <div class="mt-5 border-t border-gray-200 dark:border-slate-700 pt-4">
+          <div class="mt-5 border-t border-[var(--cm-hairline-strong)] pt-4">
             <Show when={props.state.phase !== "ready"}>
               <p class="mb-3 text-sm text-gray-500 dark:text-gray-400">{t().localServer.editingHint}</p>
             </Show>

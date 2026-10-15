@@ -96,7 +96,7 @@ export function UpdateNotification() {
   return (
     <Show when={shouldShow()}>
       <div class="fixed bottom-6 right-6 z-50 w-80 max-w-[calc(100vw-3rem)] font-sans animate-in fade-in slide-in-from-bottom-4 duration-300">
-        <div class="bg-white dark:bg-slate-900 rounded-2xl shadow-[var(--cm-shadow-lg)] ring-1 ring-[var(--cm-hairline-strong)] border border-gray-100 dark:border-slate-800 overflow-hidden">
+        <div class="bg-[var(--cm-surface)] dark:bg-[var(--cm-surface-2)] rounded-2xl shadow-[var(--cm-shadow-[var(--cm-shadow-lg)])] ring-1 ring-[var(--cm-hairline-strong)] border border-[var(--cm-hairline-strong)] overflow-hidden">
           {/* Checking state */}
           <Show when={state()?.status === "checking"}>
             <div class="p-4">
@@ -152,7 +152,7 @@ export function UpdateNotification() {
                   href={state()!.downloadUrl}
                   target="_blank"
                   rel="noopener noreferrer"
-                  class="flex-1 px-3 py-2 text-sm font-medium text-center text-white bg-blue-600 hover:bg-blue-700 active:bg-blue-800 rounded-lg transition-colors"
+                  class="cm-btn-primary flex-1 px-3 py-2 text-sm font-medium text-center rounded-lg"
                 >
                   {t().update.manualDownload}
                 </a>
@@ -228,7 +228,7 @@ export function UpdateNotification() {
                 </button>
                 <button
                   onClick={handleRestart}
-                  class="flex-1 px-3 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 active:bg-blue-800 rounded-lg transition-colors"
+                  class="cm-btn-primary flex-1 px-3 py-2 text-sm font-medium rounded-lg"
                 >
                   {t().update.restartNow}
                 </button>

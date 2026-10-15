@@ -200,8 +200,8 @@ export function ScheduledTaskModal(props: ScheduledTaskModalProps) {
   ];
 
   // Shared input classes
-  const inputClass = "w-full px-3 py-1.5 text-sm bg-white dark:bg-slate-800 border border-gray-300 dark:border-slate-600 rounded-lg text-gray-900 dark:text-white placeholder-gray-400 focus:outline-none focus:ring-1 focus:ring-blue-500";
-  const selectClass = "w-full px-3 py-1.5 text-sm bg-white dark:bg-slate-800 border border-gray-300 dark:border-slate-600 rounded-lg text-gray-900 dark:text-white focus:outline-none focus:ring-1 focus:ring-blue-500";
+  const inputClass = "w-full px-3 py-1.5 text-sm bg-[var(--cm-surface)] dark:bg-[var(--cm-surface-2)] border border-[var(--cm-hairline-strong)] rounded-lg text-gray-900 dark:text-white placeholder-gray-400 focus:outline-none focus:ring-1 focus:ring-blue-500";
+  const selectClass = "w-full px-3 py-1.5 text-sm bg-[var(--cm-surface)] dark:bg-[var(--cm-surface-2)] border border-[var(--cm-hairline-strong)] rounded-lg text-gray-900 dark:text-white focus:outline-none focus:ring-1 focus:ring-blue-500";
   const labelClass = "block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1";
 
   return (
@@ -217,10 +217,10 @@ export function ScheduledTaskModal(props: ScheduledTaskModalProps) {
           role="dialog"
           aria-modal="true"
           aria-labelledby="task-modal-title"
-          class="relative bg-white dark:bg-slate-900 rounded-2xl shadow-[var(--cm-shadow-lg)] ring-1 ring-[var(--cm-hairline-strong)] w-full max-w-lg mx-4 overflow-hidden flex flex-col max-h-[calc(100vh-2rem)]"
+          class="relative bg-[var(--cm-surface)] dark:bg-[var(--cm-surface-2)] rounded-2xl shadow-[var(--cm-shadow-[var(--cm-shadow-lg)])] ring-1 ring-[var(--cm-hairline-strong)] w-full max-w-lg mx-4 overflow-hidden flex flex-col max-h-[calc(100vh-2rem)]"
         >
           {/* Header */}
-          <div class="flex items-center justify-between px-6 py-4 border-b border-gray-200 dark:border-slate-800">
+          <div class="flex items-center justify-between px-6 py-4 border-b border-[var(--cm-hairline-strong)]">
             <h2 id="task-modal-title" class="text-lg font-semibold text-gray-900 dark:text-white">
               {isEdit() ? t().scheduledTask.edit : t().scheduledTask.create}
             </h2>
@@ -324,7 +324,7 @@ export function ScheduledTaskModal(props: ScheduledTaskModalProps) {
                   <button
                     type="button"
                     onClick={handleBrowseDirectory}
-                    class="px-3 py-1.5 text-sm font-medium text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-slate-700 hover:bg-gray-200 dark:hover:bg-slate-600 border border-gray-300 dark:border-slate-600 rounded-lg transition-colors whitespace-nowrap"
+                    class="px-3 py-1.5 text-sm font-medium text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-slate-700 hover:bg-gray-200 dark:hover:bg-slate-600 border border-[var(--cm-hairline-strong)] rounded-lg transition-colors whitespace-nowrap"
                   >
                     ...
                   </button>
@@ -344,7 +344,7 @@ export function ScheduledTaskModal(props: ScheduledTaskModalProps) {
                       class={`px-3 py-1.5 text-sm rounded-lg border transition-colors ${
                         frequencyType() === opt.value
                           ? "bg-blue-600 text-white border-blue-600"
-                          : "bg-white dark:bg-slate-800 text-gray-700 dark:text-gray-300 border-gray-300 dark:border-slate-600 hover:bg-gray-50 dark:hover:bg-slate-700"
+                          : "bg-[var(--cm-surface)] dark:bg-[var(--cm-surface-2)] text-gray-700 dark:text-gray-300 border-[var(--cm-hairline-strong)] hover:bg-gray-50 dark:hover:bg-slate-700"
                       }`}
                     >
                       {opt.label()}
@@ -367,7 +367,7 @@ export function ScheduledTaskModal(props: ScheduledTaskModalProps) {
                         class={`px-3 py-1.5 text-sm rounded-lg border transition-colors ${
                           intervalMinutes() === opt.value
                             ? "bg-indigo-600 text-white border-indigo-600"
-                            : "bg-white dark:bg-slate-800 text-gray-700 dark:text-gray-300 border-gray-300 dark:border-slate-600 hover:bg-gray-50 dark:hover:bg-slate-700"
+                            : "bg-[var(--cm-surface)] dark:bg-[var(--cm-surface-2)] text-gray-700 dark:text-gray-300 border-[var(--cm-hairline-strong)] hover:bg-gray-50 dark:hover:bg-slate-700"
                         }`}
                       >
                         {opt.label()}
@@ -423,7 +423,7 @@ export function ScheduledTaskModal(props: ScheduledTaskModalProps) {
                         class={`w-10 h-8 text-xs rounded-md border transition-colors ${
                           daysOfWeek().includes(d)
                             ? "bg-blue-600 text-white border-blue-600"
-                            : "bg-white dark:bg-slate-800 text-gray-700 dark:text-gray-300 border-gray-300 dark:border-slate-600 hover:bg-gray-50 dark:hover:bg-slate-700"
+                            : "bg-[var(--cm-surface)] dark:bg-[var(--cm-surface-2)] text-gray-700 dark:text-gray-300 border-[var(--cm-hairline-strong)] hover:bg-gray-50 dark:hover:bg-slate-700"
                         }`}
                       >
                         {t().scheduledTask.daysShort[d]}
@@ -465,7 +465,7 @@ export function ScheduledTaskModal(props: ScheduledTaskModalProps) {
           </div>
 
           {/* Footer */}
-          <div class="flex flex-col-reverse sm:flex-row justify-end gap-2 sm:gap-3 px-6 py-4 border-t border-gray-200 dark:border-slate-800 bg-gray-50 dark:bg-slate-900/50 flex-shrink-0">
+          <div class="flex flex-col-reverse sm:flex-row justify-end gap-2 sm:gap-3 px-6 py-4 border-t border-[var(--cm-hairline-strong)] bg-gray-50 dark:bg-slate-900/50 flex-shrink-0">
             <button
               onClick={handleClose}
               class="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-900/[0.04] dark:hover:bg-white/[0.05] rounded-lg transition-colors"
@@ -475,7 +475,7 @@ export function ScheduledTaskModal(props: ScheduledTaskModalProps) {
             <button
               onClick={handleSave}
               disabled={loading()}
-              class="px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg transition-colors"
+              class="cm-btn-primary px-4 py-2 text-sm font-medium disabled:cursor-not-allowed rounded-lg"
             >
               {loading() ? t().common.loading : t().scheduledTask.save}
             </button>

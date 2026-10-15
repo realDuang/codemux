@@ -65,10 +65,10 @@ function DeviceCard(props: DeviceCardProps) {
 
   const borderClass = props.isCurrent
     ? "border-2 border-blue-500 dark:border-blue-600"
-    : "border border-gray-200 dark:border-slate-800";
+    : "border border-[var(--cm-hairline-strong)]";
 
   return (
-    <div class={`bg-white dark:bg-slate-900 rounded-xl ${borderClass} shadow-xs overflow-hidden`}>
+    <div class={`bg-[var(--cm-surface)] dark:bg-[var(--cm-surface-2)] rounded-xl ${borderClass} shadow-xs overflow-hidden`}>
       <div class="p-5">
         <div class="flex items-start justify-between">
           <div class="flex items-start gap-3">

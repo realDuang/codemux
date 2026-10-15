@@ -12,7 +12,7 @@
 
   :global(.dark) & {
     background-color: var(--cm-code-bg);
-    border-color: rgba(71, 85, 105, 0.3);
+    border-color: var(--cm-hairline-strong);
   }
 }
 
@@ -42,11 +42,11 @@
     }
 
     :global(.dark) & {
-      background-color: rgba(239, 68, 68, 0.12);
+      background-color: color-mix(in oklch, var(--cm-danger) 12%, transparent);
 
       .content pre {
-        --shiki-dark-bg: rgba(239, 68, 68, 0.12) !important;
-        background-color: rgba(239, 68, 68, 0.12) !important;
+        --shiki-dark-bg: color-mix(in oklch, var(--cm-danger) 12%, transparent) !important;
+        background-color: color-mix(in oklch, var(--cm-danger) 12%, transparent) !important;
       }
     }
   }
@@ -64,11 +64,11 @@
     }
 
     :global(.dark) & {
-      background-color: rgba(34, 197, 94, 0.12);
+      background-color: color-mix(in oklch, var(--cm-success) 12%, transparent);
 
       .content pre {
-        --shiki-dark-bg: rgba(34, 197, 94, 0.12) !important;
-        background-color: rgba(34, 197, 94, 0.12) !important;
+        --shiki-dark-bg: color-mix(in oklch, var(--cm-success) 12%, transparent) !important;
+        background-color: color-mix(in oklch, var(--cm-success) 12%, transparent) !important;
       }
     }
   }

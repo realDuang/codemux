@@ -108,7 +108,7 @@ export function AccessRequestNotification() {
         <For each={requests()}>
           {(req) => (
             <div 
-              class="relative bg-white dark:bg-slate-900 rounded-2xl shadow-[var(--cm-shadow-lg)] ring-1 ring-[var(--cm-hairline-strong)] border border-gray-100 dark:border-slate-800 overflow-hidden animate-in fade-in slide-in-from-bottom-4 duration-300"
+              class="relative bg-[var(--cm-surface)] dark:bg-[var(--cm-surface-2)] rounded-2xl shadow-[var(--cm-shadow-[var(--cm-shadow-lg)])] ring-1 ring-[var(--cm-hairline-strong)] border border-[var(--cm-hairline-strong)] overflow-hidden animate-in fade-in slide-in-from-bottom-4 duration-300"
               classList={{
                 "pointer-events-none": processingIds().has(req.id)
               }}
@@ -195,7 +195,7 @@ export function AccessRequestNotification() {
                   
                   <button
                     onClick={() => handleApprove(req.id)}
-                    class="flex-1 px-4 py-2.5 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 active:bg-blue-800 rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 dark:focus:ring-offset-slate-900"
+                    class="cm-btn-primary flex-1 px-4 py-2.5 text-sm font-medium rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 dark:focus:ring-offset-slate-900"
                   >
                     {t().approval.approve}
                   </button>

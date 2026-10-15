@@ -126,7 +126,7 @@ function SubtaskResultRow(props: SubtaskResultRowProps) {
         classList={{
           "border-green-200 dark:border-green-800/40 bg-green-50/30 dark:bg-green-950/10": isCompleted(),
           "border-red-200 dark:border-red-800/40 bg-red-50/30 dark:bg-red-950/10": isFailed(),
-          "border-slate-200 dark:border-slate-700/40 bg-slate-50/50 dark:bg-slate-800/30": !isCompleted() && !isFailed(),
+          "border-[var(--cm-hairline-strong)]/40 bg-slate-50/50 dark:bg-slate-800/30": !isCompleted() && !isFailed(),
         }}
       >
         <Collapsible.Trigger class="w-full flex items-center gap-2 px-3 py-2.5 text-left">

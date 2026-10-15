@@ -79,13 +79,13 @@ function StartupSplash() {
   const { t } = useI18n();
 
   return (
-    <div class="fixed inset-0 z-[9999] flex items-center justify-center bg-gray-50 dark:bg-slate-950 electron-safe-top overflow-hidden">
+    <div class="fixed inset-0 z-[9999] flex items-center justify-center bg-[var(--cm-canvas)] electron-safe-top overflow-hidden">
       {/* Animated background glow */}
       <div class="absolute inset-0 flex items-center justify-center pointer-events-none">
         <div
           class="w-[500px] h-[500px] rounded-full opacity-[0.07] dark:opacity-[0.05] dark:animate-[dark-splash-pulse_3s_ease-in-out_infinite]"
           style={{
-            background: "radial-gradient(circle, #3b82f6 0%, transparent 70%)",
+            background: "radial-gradient(circle, var(--cm-accent) 0%, transparent 70%)",
             animation: "splash-pulse 3s ease-in-out infinite",
           }}
         />

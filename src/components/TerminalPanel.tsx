@@ -67,19 +67,24 @@ type GpuMode = "auto" | "canvas" | "dom";
 
 const isDarkTheme = () => document.documentElement.classList.contains("dark");
 
+// xterm needs concrete sRGB colours, so these are the Graphite tokens
+// (--cm-code-bg, --cm-text, --cm-accent and an accent-tinted selection)
+// converted from their oklch definitions in src/index.css.
 const buildXtermTheme = () =>
   isDarkTheme()
     ? {
-        background: "#0f172a",
-        foreground: "#e2e8f0",
-        cursor: "#e2e8f0",
-        selectionBackground: "#334155",
+        background: "#060608",
+        foreground: "#edeef1",
+        cursor: "#7f93ff",
+        cursorAccent: "#060608",
+        selectionBackground: "#222955",
       }
     : {
-        background: "#ffffff",
-        foreground: "#1e293b",
-        cursor: "#1e293b",
-        selectionBackground: "#cbd5e1",
+        background: "#f7f8f9",
+        foreground: "#1d1f24",
+        cursor: "#535df2",
+        cursorAccent: "#f7f8f9",
+        selectionBackground: "#cbd5ff",
       };
 
 function getGpuMode(): GpuMode {
@@ -701,9 +706,9 @@ export function TerminalPanel(props: TerminalPanelProps) {
   });
 
   return (
-    <div class="flex flex-col h-full bg-white dark:bg-slate-950 border-t border-gray-200 dark:border-slate-800">
+    <div class="flex flex-col h-full bg-[var(--cm-code-bg)] border-t border-[var(--cm-hairline-strong)]">
       {/* Tab bar + close panel button */}
-      <div class="flex items-stretch bg-gray-50 dark:bg-slate-900 border-b border-gray-200 dark:border-slate-800 flex-shrink-0 overflow-hidden">
+      <div class="flex items-stretch bg-[var(--cm-canvas)] border-b border-[var(--cm-hairline)] flex-shrink-0 overflow-hidden">
         <div
           class="flex items-stretch overflow-x-auto flex-1 min-w-0"
           style={{ "scrollbar-width": "none" }}
@@ -711,7 +716,7 @@ export function TerminalPanel(props: TerminalPanelProps) {
           <For each={currentTabs()}>
             {(tab) => (
               <button
-                class={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium whitespace-nowrap border-r border-gray-200 dark:border-slate-800 transition-colors flex-shrink-0 ${
+                class={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium whitespace-nowrap border-r border-[var(--cm-hairline-strong)] transition-colors flex-shrink-0 ${
                   currentActiveTab() === tab.id
                     ? "bg-white dark:bg-slate-950 text-gray-800 dark:text-gray-200"
                     : "text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-slate-800"
@@ -822,7 +827,7 @@ export function TerminalPanel(props: TerminalPanelProps) {
               <Portal>
                 <div
                   ref={(el) => (profilePortalRef = el)}
-                  class="fixed z-[1000] min-w-[200px] py-1 rounded-md bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-700 shadow-lg"
+                  class="fixed z-[1000] min-w-[200px] py-1 rounded-md bg-[var(--cm-surface)] dark:bg-[var(--cm-surface-2)] border border-[var(--cm-hairline-strong)] shadow-[var(--cm-shadow-lg)]"
                   style={{
                     left: `${profileMenuPos()!.left}px`,
                     top: `${profileMenuPos()!.top}px`,
@@ -867,7 +872,7 @@ export function TerminalPanel(props: TerminalPanelProps) {
 
         <button
           onClick={() => (searchOpen() ? closeSearch() : openSearch())}
-          class={`flex-shrink-0 px-2 transition-colors border-l border-gray-200 dark:border-slate-800 ${
+          class={`flex-shrink-0 px-2 transition-colors border-l border-[var(--cm-hairline-strong)] ${
             searchOpen()
               ? "text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/40"
               : "text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-200 dark:hover:bg-slate-700"
@@ -892,7 +897,7 @@ export function TerminalPanel(props: TerminalPanelProps) {
 
         <button
           onClick={() => props.onClose()}
-          class="flex-shrink-0 px-2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-200 dark:hover:bg-slate-700 transition-colors border-l border-gray-200 dark:border-slate-800"
+          class="flex-shrink-0 px-2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-200 dark:hover:bg-slate-700 transition-colors border-l border-[var(--cm-hairline-strong)]"
           title={t().terminal.closePanel}
         >
           <svg
@@ -916,7 +921,7 @@ export function TerminalPanel(props: TerminalPanelProps) {
           Only the active session's active tab is visible. */}
       <div class="flex-1 overflow-hidden relative">
         <Show when={searchOpen()}>
-          <div class="absolute top-1 right-3 z-10 flex items-center gap-1 px-1.5 py-1 rounded-md bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-700 shadow-md">
+          <div class="absolute top-1 right-3 z-10 flex items-center gap-1 px-1.5 py-1 rounded-md bg-[var(--cm-surface)] dark:bg-[var(--cm-surface-2)] border border-[var(--cm-hairline-strong)] shadow-[var(--cm-shadow-md)]">
             <input
               ref={(el) => (searchInputRef = el)}
               type="text"

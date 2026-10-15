@@ -108,9 +108,9 @@ export default function ImportHistoryModal(props: Props) {
 
   return (
     <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm" onClick={(e) => { if (e.target === e.currentTarget && phase() !== "importing") props.onClose(); }}>
-      <div class="bg-white dark:bg-slate-800 rounded-2xl shadow-[var(--cm-shadow-lg)] ring-1 ring-[var(--cm-hairline-strong)] border border-slate-200 dark:border-slate-700 w-full max-w-xl mx-4 max-h-[80vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+      <div class="bg-[var(--cm-surface)] dark:bg-[var(--cm-surface-2)] rounded-2xl shadow-[var(--cm-shadow-[var(--cm-shadow-lg)])] ring-1 ring-[var(--cm-hairline-strong)] border border-[var(--cm-hairline-strong)] w-full max-w-xl mx-4 max-h-[80vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
         {/* Header */}
-        <div class="px-6 py-4 border-b border-slate-200 dark:border-slate-700 flex items-center justify-between">
+        <div class="px-6 py-4 border-b border-[var(--cm-hairline-strong)] flex items-center justify-between">
           <h3 class="text-lg font-semibold text-gray-900 dark:text-white">
             {t().settings.importHistory}
           </h3>
@@ -139,7 +139,7 @@ export default function ImportHistoryModal(props: Props) {
                     class={`px-4 py-2 text-sm rounded-lg border transition-colors ${
                       limit() === opt.value
                         ? "bg-blue-600 text-white border-blue-600"
-                        : "bg-white dark:bg-slate-700 text-gray-700 dark:text-gray-300 border-gray-300 dark:border-slate-600 hover:bg-gray-50 dark:hover:bg-slate-600"
+                        : "bg-[var(--cm-surface)] dark:bg-[var(--cm-surface-3)] text-gray-700 dark:text-gray-300 border-[var(--cm-hairline-strong)] hover:bg-gray-50 dark:hover:bg-slate-600"
                     }`}
                   >
                     {opt.label}
@@ -166,7 +166,7 @@ export default function ImportHistoryModal(props: Props) {
                     type="checkbox"
                     checked={selectedCount() === importableSessions().length && importableSessions().length > 0}
                     onChange={toggleAll}
-                    class="rounded border-gray-300 dark:border-slate-600"
+                    class="rounded border-[var(--cm-hairline-strong)]"
                   />
                   {selectedCount()}/{sessions().length}
                 </label>
@@ -185,7 +185,7 @@ export default function ImportHistoryModal(props: Props) {
                         type="checkbox"
                         checked={selected().has(s.engineSessionId)}
                         onChange={() => toggleSession(s.engineSessionId)}
-                        class="rounded border-gray-300 dark:border-slate-600 flex-shrink-0"
+                        class="rounded border-[var(--cm-hairline-strong)] flex-shrink-0"
                       />
                       <div class="min-w-0 flex-1">
                         <div class="truncate font-medium text-gray-800 dark:text-gray-200">
@@ -263,11 +263,11 @@ export default function ImportHistoryModal(props: Props) {
         </div>
 
         {/* Footer */}
-        <div class="px-6 py-4 border-t border-slate-200 dark:border-slate-700 flex justify-end gap-3">
+        <div class="px-6 py-4 border-t border-[var(--cm-hairline-strong)] flex justify-end gap-3">
           <Show when={phase() === "select"}>
             <button
               onClick={props.onClose}
-              class="px-4 py-2 text-sm rounded-lg border border-gray-300 dark:border-slate-600 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-slate-700"
+              class="px-4 py-2 text-sm rounded-lg border border-[var(--cm-hairline-strong)] text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-slate-700"
             >
               {t().common.cancel}
             </button>
@@ -283,7 +283,7 @@ export default function ImportHistoryModal(props: Props) {
           <Show when={phase() === "preview"}>
             <button
               onClick={() => setPhase("select")}
-              class="px-4 py-2 text-sm rounded-lg border border-gray-300 dark:border-slate-600 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-slate-700"
+              class="px-4 py-2 text-sm rounded-lg border border-[var(--cm-hairline-strong)] text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-slate-700"
             >
               {t().settings.back}
             </button>

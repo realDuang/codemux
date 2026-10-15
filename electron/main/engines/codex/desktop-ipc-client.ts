@@ -17,6 +17,7 @@ export const DESKTOP_IPC_VERSIONS = {
   "thread-stream-following-changed": 1,
   "thread-stream-following-status-requested": 1,
   "thread-stream-state-changed": 11,
+  "thread-queued-followups-changed": 2,
   "thread-archived": 2,
   "thread-unarchived": 1,
   "thread-follower-start-turn": 2,
@@ -60,6 +61,8 @@ export interface DesktopThreadStream {
 export interface DesktopThreadOwner {
   ownerClientId: string;
   supportsUntrustedAppInput: boolean;
+  /** Optional application identity explicitly advertised by the current owner. */
+  clientName?: string;
 }
 export interface DesktopThreadAvailabilityEvent {
   conversationId: string;
@@ -136,8 +139,10 @@ export interface DesktopOwnedThreadRegistration {
   hostId?: string;
   supportedMethods: readonly DesktopFollowerMethod[];
   getSnapshot: () => DesktopThreadSnapshot;
+  getQueuedFollowUps?: () => readonly DesktopQueuedFollowUp[];
   handleRequest: (method: DesktopFollowerMethod, params: Record<string, unknown>, context: { sourceClientId: string }) => Promise<unknown>;
   supportsUntrustedAppInput?: boolean;
+  clientName?: string;
 }
 interface OwnedThread {
   registration: DesktopOwnedThreadRegistration;
@@ -301,7 +306,10 @@ export class CodexDesktopIpcClient extends EventEmitter {
     try {
       const response = await this.sendRequest("thread-owner-discovery", { conversationId, hostId }, 1);
       if (!response.handledByClientId || !isRecord(response.result)) throw new DesktopIpcError("invalid-owner-response");
-      const owner = { ownerClientId: response.handledByClientId, supportsUntrustedAppInput: response.result.supportsUntrustedAppInput === true };
+      const clientName = ownerClientName(response.result.clientName);
+      const owner: DesktopThreadOwner = { ownerClientId: response.handledByClientId, supportsUntrustedAppInput: response.result.supportsUntrustedAppInput === true,
+        ...(clientName ? { clientName } : {}),
+      };
       this.owners.set(key, owner);
       return owner;
     } catch (error) {
@@ -309,6 +317,12 @@ export class CodexDesktopIpcClient extends EventEmitter {
       if (error instanceof DesktopIpcError && error.code === "no-client-found") return null;
       throw error;
     }
+  }
+
+  /** Cached discovery metadata only; never infers the executor from its transcript. */
+  getThreadOwner(conversationId: string, hostId = "local"): DesktopThreadOwner | undefined {
+    const owner = this.connected ? this.owners.get(threadKey(conversationId, hostId)) : undefined;
+    return owner ? { ...owner } : undefined;
   }
 
   /** Only register threads created or explicitly acquired by this execution host. */
@@ -332,6 +346,13 @@ export class CodexDesktopIpcClient extends EventEmitter {
     const entry = this.owned.get(threadKey(conversationId, hostId));
     if (!entry) throw new DesktopIpcError("thread-not-owned");
     this.sendOwnedState(entry, change, [...entry.followers]);
+  }
+
+  publishOwnedQueuedFollowUps(conversationId: string, messages: readonly DesktopQueuedFollowUp[], hostId = "local"): void {
+    this.assertConnected();
+    const entry = this.owned.get(threadKey(conversationId, hostId));
+    if (!entry) throw new DesktopIpcError("thread-not-owned");
+    this.sendOwnedQueuedFollowUps(entry, messages, [...entry.followers]);
   }
 
   followThread(conversationId: string, ownerClientId: string, hostId = "local"): Promise<DesktopThreadSnapshot> {
@@ -540,8 +561,9 @@ export class CodexDesktopIpcClient extends EventEmitter {
       const handledByClientId = this._clientId;
       response = Promise.resolve().then(async (): Promise<Record<string, unknown>> => {
         try {
+          const clientName = ownerClientName(match.entry.registration.clientName);
           const result = match.method === "thread-owner-discovery"
-            ? { supportsUntrustedAppInput: match.entry.registration.supportsUntrustedAppInput === true }
+            ? { supportsUntrustedAppInput: match.entry.registration.supportsUntrustedAppInput === true, ...(clientName ? { clientName } : {}) }
             : await match.entry.registration.handleRequest(match.method, match.params, { sourceClientId });
           return { type: "response", requestId, resultType: "success", method: match.method, handledByClientId, result };
         } catch (error) {
@@ -579,6 +601,13 @@ export class CodexDesktopIpcClient extends EventEmitter {
   private sendFollowing(entry: FollowedThread, following: boolean): void {
     this.write({ type: "broadcast", method: "thread-stream-following-changed", version: 1, sourceClientId: this._clientId,
       targetClientIds: [entry.ownerClientId], params: { conversationId: entry.conversationId, hostId: entry.hostId, following } });
+  }
+
+  private sendOwnedQueuedFollowUps(entry: OwnedThread, messages: readonly DesktopQueuedFollowUp[], targetClientIds: string[]): void {
+    if (targetClientIds.length === 0) return;
+    this.write({ type: "broadcast", method: "thread-queued-followups-changed", version: DESKTOP_IPC_VERSIONS["thread-queued-followups-changed"],
+      sourceClientId: this._clientId, targetClientIds,
+      params: { conversationId: entry.registration.conversationId, hostId: entry.hostId, messages } });
   }
 
   private sendRequest(method: string, params: unknown, version: number, options?: DesktopFollowerRequestOptions): Promise<IpcResponse> {
@@ -709,6 +738,7 @@ export class CodexDesktopIpcClient extends EventEmitter {
       if (params.following) {
         owned.followers.add(sourceClientId);
         this.sendOwnedState(owned, owned.registration.getSnapshot(), [sourceClientId]);
+        if (owned.registration.getQueuedFollowUps) this.sendOwnedQueuedFollowUps(owned, owned.registration.getQueuedFollowUps(), [sourceClientId]);
       } else owned.followers.delete(sourceClientId);
       this.emit("followersChanged", { conversationId: params.conversationId, hostId: params.hostId, followerCount: owned.followers.size });
       return;
@@ -763,4 +793,9 @@ export class CodexDesktopIpcClient extends EventEmitter {
 }
 
 function threadKey(conversationId: string, hostId: string): string { return JSON.stringify([hostId, conversationId]); }
+function ownerClientName(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const name = value.trim();
+  return name && name.length <= 80 && !/[\u0000-\u001f\u007f]/.test(name) ? name : undefined;
+}
 function isRecord(value: unknown): value is Record<string, unknown> { return value !== null && typeof value === "object" && !Array.isArray(value); }

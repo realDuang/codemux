@@ -42,6 +42,7 @@ import type {
 } from "../../../src/types/unified";
 import { REASONING_EFFORT_VALUES } from "../../../src/types/unified";
 import { normalizeMessageToolDisplay, normalizeToolPartDisplay } from "../engines/tool-display";
+import { canonicalCodexEngineType, canonicalCodexProjectId, canonicalCodexThreadId } from "../engines/codex/conversation-migration";
 
 // --- Helpers ---
 
@@ -112,6 +113,14 @@ interface MessageWriteSnapshot {
   steps: UnifiedPart[];
 }
 
+interface InteractionReply {
+  engineType: EngineType;
+  sessionId?: string;
+  fingerprint: string;
+  promise: Promise<void>;
+  completed: boolean;
+}
+
 export declare interface EngineManager {
   on<K extends keyof EngineManagerEvents>(
     event: K,
@@ -142,6 +151,8 @@ export class EngineManager extends EventEmitter {
   private permissionSessionMap = new Map<string, string>();
   private pendingPermissionReplies = new Set<string>();
   private pendingQuestionReplies = new Set<string>();
+  /** Coalesce answers from multiple channel bindings for the same native prompt. */
+  private interactionReplies = new Map<string, InteractionReply>();
   /** engineSessionId → conversationId cache (populated on session creation / lookup) */
   private engineToConvMap = new Map<string, string>();
   /** Accumulate step-type parts during streaming: messageId → UnifiedPart[] */
@@ -202,11 +213,15 @@ export class EngineManager extends EventEmitter {
   }
 
   getAdapter(engineType: EngineType): EngineAdapter | undefined {
-    return this.adapters.get(engineType);
+    return this.adapters.get(this.resolveEngineType(engineType));
+  }
+
+  private resolveEngineType(engineType: EngineType): EngineType {
+    return this.adapters.has(engineType) ? engineType : canonicalCodexEngineType(engineType);
   }
 
   private getAdapterOrThrow(engineType: EngineType): EngineAdapter {
-    const adapter = this.adapters.get(engineType);
+    const adapter = this.getAdapter(engineType);
     if (!adapter) {
       throw new Error(`No adapter registered for engine type: ${engineType}`);
     }
@@ -215,6 +230,7 @@ export class EngineManager extends EventEmitter {
 
   /** Get adapter for a conversation by looking up its engine binding */
   private getAdapterForSession(sessionId: string): EngineAdapter {
+    sessionId = conversationStore.resolveConversationId(sessionId);
     let engineType = this.sessionEngineMap.get(sessionId);
     if (!engineType) {
       // Fallback: recover binding from ConversationStore
@@ -227,7 +243,26 @@ export class EngineManager extends EventEmitter {
     if (!engineType) {
       throw new Error(`No engine binding found for session: ${sessionId}`);
     }
-    return this.getAdapterOrThrow(engineType);
+    const adapter = this.getAdapterOrThrow(engineType);
+    const conversation = conversationStore.get(sessionId);
+    if (conversation?.engineSessionId) this.assertSessionCompatible(conversation, adapter);
+    return adapter;
+  }
+
+  private isSessionCompatible(conversation: ConversationMeta, adapter: EngineAdapter): boolean {
+    try {
+      this.assertSessionCompatible(conversation, adapter);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  private assertSessionCompatible(conversation: ConversationMeta, adapter: EngineAdapter): void {
+    if (conversation.engineSessionId) adapter.assertSessionCompatible(conversation.engineSessionId, {
+      ...conversation.engineMeta,
+      ...(conversation.catalogSourceId ? { catalogSourceId: conversation.catalogSourceId } : {}),
+    });
   }
 
   /** Get adapter for a directory based on project binding */
@@ -268,7 +303,7 @@ export class EngineManager extends EventEmitter {
   private visibleConversations(filter?: { engineType?: EngineType; directory?: string }): ConversationMeta[] {
     return conversationStore.list(filter).filter((conv) => {
       if (this.catalogSessionChecks.has(conv.id)) return false;
-      if (!this.adapters.get(conv.engineType)?.getCapabilities().hideArchivedSessions || !conv.archived) return true;
+      if (!this.getAdapter(conv.engineType)?.getCapabilities().hideArchivedSessions || !conv.archived) return true;
       void this.purgeRemovedConversation(conv, "archived").catch((error) => {
         engineManagerLog.error(`Failed to remove archived mirror ${conv.id}:`, error);
       });
@@ -280,7 +315,7 @@ export class EngineManager extends EventEmitter {
     if (!snapshot.complete || !adapter.getCapabilities().hideArchivedSessions) return;
     const present = new Set(snapshot.sessions.map((session) => session.id));
     for (const conv of conversationStore.list({ engineType: adapter.engineType })) {
-      if (!conv.engineSessionId || present.has(conv.engineSessionId) || this.catalogSessionChecks.has(conv.id)
+      if (!this.isSessionCompatible(conv, adapter) || !conv.engineSessionId || present.has(conv.engineSessionId) || this.catalogSessionChecks.has(conv.id)
         || (conv.catalogSourceId && conv.catalogSourceId !== snapshot.sourceId)
         || (conv.catalogSourceId && conv.catalogAvailable === undefined)) continue;
       // An active-only catalog cannot tell archive from temporarily missing
@@ -320,6 +355,7 @@ export class EngineManager extends EventEmitter {
       ? this.trackMessageWrite(pending.then(() => conversationStore.removeEngineConversation(conv.id, kind, sourceId))) : pending;
     // Install the identity tombstone and remove the index synchronously, before
     // any late event or catalog can observe the old conversation again.
+    const conversationAliases = conversationStore.getConversationIds(conv.id).filter((id) => id !== conv.id);
     const operation = this.trackMessageWrite(conversationStore.removeEngineConversation(conv.id, kind, sourceId));
     this.catalogRevisions.set(conv.engineType, (this.catalogRevisions.get(conv.engineType) ?? 0) + 1);
     this.forgetConversationMappings(conv.id);
@@ -348,7 +384,8 @@ export class EngineManager extends EventEmitter {
         this.questionEngineMap.delete(id);
       }
     }
-    this.emit("session.removed", { sessionId: conv.id });
+    const removed = { sessionId: conv.id, ...(conversationAliases.length ? { conversationAliases } : {}) };
+    this.emit("session.removed", removed);
     this.sessionRemovals.set(conv.id, operation);
     void operation.finally(() => this.sessionRemovals.delete(conv.id)).catch(() => {});
     return operation;
@@ -371,7 +408,7 @@ export class EngineManager extends EventEmitter {
         if (!session.archived) continue;
         const conv = conversationStore.findByEngineSession(session.id, adapter.engineType, snapshot.sourceId)
           ?? conversationStore.findByEngineSession(session.id, adapter.engineType);
-        if (conv && (!conv.catalogSourceId || conv.catalogSourceId === snapshot.sourceId)) {
+        if (conv && this.isSessionCompatible(conv, adapter) && (!conv.catalogSourceId || conv.catalogSourceId === snapshot.sourceId)) {
           void this.purgeRemovedConversation(conv, "archived", snapshot.sourceId).catch((error) => engineManagerLog.error("Failed to remove archived mirror:", error));
         }
       }
@@ -389,7 +426,7 @@ export class EngineManager extends EventEmitter {
       sessions: snapshot.sessions.map((session) => {
         const scoped = conversationStore.findByEngineSession(session.id, adapter.engineType, snapshot.sourceId);
         const legacy = scoped ? undefined : conversationStore.findByEngineSession(session.id, adapter.engineType);
-        const conv = scoped ?? (legacy && !legacy.catalogSourceId ? legacy : undefined);
+        const conv = scoped ?? (legacy && !legacy.catalogSourceId && this.isSessionCompatible(legacy, adapter) ? legacy : undefined);
         const liveOwner = !session.archived && (adapter.hasSession(session.id) || !!(conv && this.authoritativeAttaching.has(conv.id)));
         if (conv && !liveOwner) this.authoritativeLiveFields.delete(conv.id);
         const live = liveOwner && conv ? this.authoritativeLiveFields.get(conv.id) : undefined;
@@ -426,7 +463,7 @@ export class EngineManager extends EventEmitter {
       return;
     }
     const fields: Partial<UnifiedSession> = { ...this.authoritativeLiveFields.get(conversationId) };
-    for (const key of ["mode", "modelId", "reasoningEffort", "serviceTier", "activityStatus"] as const) {
+    for (const key of ["mode", "modelId", "reasoningEffort", "serviceTier", "activityStatus", "connection"] as const) {
       if (Object.prototype.hasOwnProperty.call(session, key)) Object.assign(fields, { [key]: session[key] });
     }
     this.authoritativeLiveFields.set(conversationId, fields);
@@ -468,6 +505,7 @@ export class EngineManager extends EventEmitter {
   }
 
   private requireCatalogProject(projectId: string): UnifiedProject {
+    projectId = canonicalCodexProjectId(projectId);
     const project = conversationStore.getCatalogProject(projectId);
     if (!project?.catalogSourceId || !project.catalogProjectId || project.catalogAvailable === false) {
       throw new Error("The catalog project is unavailable.");
@@ -497,28 +535,31 @@ export class EngineManager extends EventEmitter {
    * Uses in-memory cache first, then falls back to ConversationStore lookup.
    */
   private resolveConversationId(engineSessionId: string, engineType?: EngineType): string | null {
+    if (engineType) engineType = this.resolveEngineType(engineType);
+    const adapter = engineType ? this.getAdapter(engineType) : undefined;
+    const compatible = (conv: ConversationMeta | null | undefined) => !!conv && (!adapter || this.isSessionCompatible(conv, adapter));
     const sourceId = engineType ? this.catalogSources.get(engineType) : undefined;
     if (engineType && sourceId) {
       const key = JSON.stringify([engineType, sourceId, engineSessionId]);
       const cached = this.engineToConvMap.get(key);
-      if (cached) return cached;
+      if (cached && compatible(conversationStore.get(cached))) return conversationStore.resolveConversationId(cached);
       const scoped = conversationStore.findByEngineSession(engineSessionId, engineType, sourceId);
-      if (scoped) {
+      if (scoped && compatible(scoped)) {
         this.engineToConvMap.set(key, scoped.id);
         return scoped.id;
       }
       const legacy = conversationStore.findByEngineSession(engineSessionId, engineType);
-      return legacy && !legacy.catalogSourceId ? legacy.id : null;
+      return legacy && !legacy.catalogSourceId && compatible(legacy) ? legacy.id : null;
     }
-    if (engineType && this.adapters.get(engineType)?.getCapabilities().sessionCatalog) {
+    if (engineType && adapter?.getCapabilities().sessionCatalog) {
       const legacy = conversationStore.findByEngineSession(engineSessionId, engineType);
-      return legacy && !legacy.catalogSourceId ? legacy.id : null;
+      return legacy && !legacy.catalogSourceId && compatible(legacy) ? legacy.id : null;
     }
     const cacheKey = engineType ? JSON.stringify([engineType, engineSessionId]) : engineSessionId;
     const cached = this.engineToConvMap.get(cacheKey);
-    if (cached) return cached;
+    if (cached && compatible(conversationStore.get(cached))) return conversationStore.resolveConversationId(cached);
     const conv = conversationStore.findByEngineSession(engineSessionId, engineType);
-    if (conv) {
+    if (conv && compatible(conv)) {
       this.engineToConvMap.set(cacheKey, conv.id);
       return conv.id;
     }
@@ -783,6 +824,26 @@ export class EngineManager extends EventEmitter {
     for (const event of simpleEvents) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       adapter.on(event, (data: any) => {
+        if (event === "permission.replied" || event === "question.replied") {
+          const permission = event === "permission.replied";
+          const id = permission ? data?.permissionId : data?.questionId;
+          const engines = permission ? this.permissionEngineMap : this.questionEngineMap;
+          const sessions = permission ? this.permissionSessionMap : this.questionSessionMap;
+          const key = `${permission ? "permission" : "question"}:${id}`;
+          const submitted = this.interactionReplies.get(key);
+          const sessionId = data?.sessionId ?? (engines.get(id) === adapter.engineType ? sessions.get(id) : undefined)
+            ?? (submitted?.engineType === adapter.engineType ? submitted.sessionId : undefined);
+          if (sessionId) data = { ...data, sessionId };
+          if (engines.get(id) === adapter.engineType) {
+            engines.delete(id);
+            sessions.delete(id);
+            if (!submitted) this.rememberInteractionReply(key, {
+              engineType: adapter.engineType, sessionId,
+              fingerprint: permission ? JSON.stringify(data.optionId) : JSON.stringify(["answer", data.answers]),
+              promise: Promise.resolve(), completed: true,
+            });
+          }
+        }
         const eventSessionId = data?.sessionId || data?.session?.id || data?.permission?.sessionId || data?.question?.sessionId;
         if (eventSessionId && (this.ignoreSessionEvent(adapter, eventSessionId)
           || (adapter.getCapabilities().hideArchivedSessions && data?.session?.archived))) return;
@@ -797,6 +858,8 @@ export class EngineManager extends EventEmitter {
         }
         // Track permission → engine mapping for routing replies
         if (event === "permission.asked" && data?.permission?.id) {
+          const key = `permission:${data.permission.id}`;
+          if (this.interactionReplies.get(key)?.completed) this.interactionReplies.delete(key);
           this.permissionEngineMap.set(data.permission.id, adapter.engineType);
           // Also store sessionId so adapters can resolve correct directory
           const permSid = data?.permission?.sessionId || data?.sessionId;
@@ -804,6 +867,8 @@ export class EngineManager extends EventEmitter {
         }
         // Track question → engine mapping for routing replies
         if (event === "question.asked" && data?.question?.id) {
+          const key = `question:${data.question.id}`;
+          if (this.interactionReplies.get(key)?.completed) this.interactionReplies.delete(key);
           this.questionEngineMap.set(data.question.id, adapter.engineType);
           // Also store sessionId so adapters can resolve correct directory
           const qSid = data?.question?.sessionId || data?.sessionId;
@@ -1181,6 +1246,7 @@ export class EngineManager extends EventEmitter {
   // --- Project-Engine Bindings ---
 
   setProjectEngine(directory: string, engineType: EngineType): void {
+    engineType = this.resolveEngineType(engineType);
     this.getAdapterOrThrow(engineType); // Validate engine exists
     this.projectBindings.set(normalizeDir(directory), engineType);
   }
@@ -1195,7 +1261,7 @@ export class EngineManager extends EventEmitter {
 
   loadProjectBindings(bindings: Record<string, EngineType>): void {
     for (const [dir, engine] of Object.entries(bindings)) {
-      this.projectBindings.set(normalizeDir(dir), engine);
+      this.projectBindings.set(normalizeDir(dir), this.resolveEngineType(engine));
     }
   }
 
@@ -1240,7 +1306,7 @@ export class EngineManager extends EventEmitter {
    * Falls back to the first running engine, then to the first registered engine.
    */
   getDefaultEngineType(): EngineType {
-    const saved = getDefaultEngineFromSettings();
+    const saved = this.resolveEngineType(getDefaultEngineFromSettings() as EngineType);
     const adapter = this.adapters.get(saved as EngineType);
     if (adapter && adapter.getInfo().status === "running") {
       return saved as EngineType;
@@ -1258,9 +1324,19 @@ export class EngineManager extends EventEmitter {
     return this.getAdapterOrThrow(engineType).getInfo();
   }
 
+  getSessionSharing(engineType: EngineType) {
+    return this.getAdapterOrThrow(engineType).getSessionSharing();
+  }
+
+  async setSessionSharing(engineType: EngineType, enabled: boolean) {
+    if (typeof enabled !== "boolean") throw new Error("enabled must be a boolean");
+    return this.getAdapterOrThrow(engineType).setSessionSharing(enabled);
+  }
+
   // --- Sessions (backed by ConversationStore) ---
 
   async listSessions(engineTypeOrDirectory: string): Promise<UnifiedSession[]> {
+    engineTypeOrDirectory = this.resolveEngineType(engineTypeOrDirectory as EngineType);
     if (this.adapters.has(engineTypeOrDirectory as EngineType)) {
       // List all conversations for this engine type
       const convs = this.visibleConversations({ engineType: engineTypeOrDirectory as EngineType });
@@ -1285,6 +1361,8 @@ export class EngineManager extends EventEmitter {
     worktreeId?: string,
     projectId?: string | null,
   ): Promise<UnifiedSession> {
+    if (engineType) engineType = this.resolveEngineType(engineType);
+    if (projectId) projectId = canonicalCodexProjectId(projectId);
     const project = projectId == null ? undefined : this.requireCatalogProject(projectId);
     if (project && engineType && project.engineType !== engineType) throw new Error("The project belongs to another engine.");
     const resolvedType = project?.engineType || engineType || this.getDefaultEngineType();
@@ -1366,10 +1444,11 @@ export class EngineManager extends EventEmitter {
   }
 
   async getSession(sessionId: string): Promise<UnifiedSession | null> {
+    sessionId = conversationStore.resolveConversationId(sessionId);
     await this.catalogSessionChecks.get(sessionId);
     const conv = conversationStore.get(sessionId);
     if (!conv) return null;
-    const adapter = this.adapters.get(conv.engineType);
+    const adapter = this.getAdapter(conv.engineType);
     const capabilities = adapter?.getCapabilities();
     if (conv.archived && capabilities?.hideArchivedSessions) {
       await this.purgeRemovedConversation(conv, "archived");
@@ -1400,9 +1479,16 @@ export class EngineManager extends EventEmitter {
   }
 
   async deleteSession(sessionId: string): Promise<void> {
+    if (conversationStore.isConversationAlias(sessionId)) {
+      await conversationStore.delete(sessionId);
+      this.sessionEngineMap.delete(sessionId);
+      this.emit("session.removed", { sessionId });
+      return;
+    }
     const conv = conversationStore.get(sessionId);
     if (!conv) return;
-    const removalAdapter = this.adapters.get(conv.engineType);
+    const removalAdapter = this.getAdapter(conv.engineType);
+    if (removalAdapter) this.assertSessionCompatible(conv, removalAdapter);
     if (removalAdapter?.getCapabilities().confirmedSessionRemoval) {
       if (!conv.engineSessionId) throw new Error("The conversation has no confirmed native identity.");
       const capabilities = removalAdapter.getCapabilities();
@@ -1440,7 +1526,7 @@ export class EngineManager extends EventEmitter {
     // Best-effort engine session cleanup
     if (conv.engineSessionId) {
       try {
-        const adapter = this.adapters.get(conv.engineType);
+        const adapter = this.getAdapter(conv.engineType);
         if (adapter) {
           await adapter.deleteSession(conv.engineSessionId);
         }
@@ -1460,6 +1546,7 @@ export class EngineManager extends EventEmitter {
    * Cleans up engine sessions best-effort, then removes conversations from store.
    */
   async deleteProject(projectId: string): Promise<void> {
+    projectId = canonicalCodexProjectId(projectId);
     const catalogProject = conversationStore.getCatalogProject(projectId);
     if (catalogProject) {
       const project = this.requireCatalogProject(projectId);
@@ -1483,7 +1570,7 @@ export class EngineManager extends EventEmitter {
     // Bulk cleanup cannot bypass the owner's confirmed removal policy.
     // A saved catalog identity remains protected while its adapter is offline.
     if (projectConvs.some((conv) => conv.catalogSourceId
-      || this.adapters.get(conv.engineType)?.getCapabilities().confirmedSessionRemoval)) {
+      || this.getAdapter(conv.engineType)?.getCapabilities().confirmedSessionRemoval)) {
       throw new Error("Shared conversations must be removed individually before deleting their project.");
     }
 
@@ -1505,7 +1592,7 @@ export class EngineManager extends EventEmitter {
       // Best-effort engine session cleanup
       if (conv.engineSessionId) {
         try {
-          const adapter = this.adapters.get(conv.engineType);
+          const adapter = this.getAdapter(conv.engineType);
           if (adapter) {
             await adapter.deleteSession(conv.engineSessionId);
           }
@@ -1521,11 +1608,12 @@ export class EngineManager extends EventEmitter {
   }
 
   async renameSession(sessionId: string, title: string): Promise<{ success: boolean }> {
+    sessionId = conversationStore.resolveConversationId(sessionId);
     const conv = conversationStore.get(sessionId);
     if (!conv) return { success: false };
 
     const trimmed = title.trim();
-    const adapter = this.adapters.get(conv.engineType);
+    const adapter = this.getAdapter(conv.engineType);
     const authoritative = adapter?.getCapabilities().authoritativeSessionState === true;
     if (authoritative) {
       if (!conv.engineSessionId) throw new Error("The shared conversation is not connected.");
@@ -1558,6 +1646,7 @@ export class EngineManager extends EventEmitter {
   }
 
   async setSessionArchived(sessionId: string, archived: boolean): Promise<void> {
+    sessionId = conversationStore.resolveConversationId(sessionId);
     if (typeof archived !== "boolean") throw new Error("archived must be a boolean");
     const conv = conversationStore.get(sessionId);
     if (!conv) throw new Error(`Session ${sessionId} not found`);
@@ -1651,6 +1740,7 @@ export class EngineManager extends EventEmitter {
     content: MessagePromptContent[],
     options?: { mode?: string; modelId?: string; reasoningEffort?: ReasoningEffort | null; serviceTier?: CodexServiceTier | null },
   ): Promise<UnifiedMessage> {
+    sessionId = conversationStore.resolveConversationId(sessionId);
     const trackQueuedTiming = this.markSessionActive(sessionId);
     try {
       const conv = conversationStore.get(sessionId);
@@ -1664,7 +1754,7 @@ export class EngineManager extends EventEmitter {
       // Also re-create if the adapter lost track of the session (e.g. after app restart,
       // the persisted engineSessionId refers to a cs_ ID that only existed in runtime memory).
       let engineSessionId = conv.engineSessionId;
-      if (conv.catalogSourceId) {
+      if (conv.catalogSourceId || (engineSessionId && adapter.getCapabilities().authoritativeSessionState)) {
         if (!engineSessionId) throw new Error("The catalog conversation has no native identity.");
         await this.ensureAuthoritativeSession(conv, adapter);
       } else if (!engineSessionId || !adapter.hasSession(engineSessionId)) {
@@ -1714,10 +1804,12 @@ export class EngineManager extends EventEmitter {
 
   /** Check if a session is idle (not actively processing a message) */
   isSessionIdle(sessionId: string): boolean {
+    sessionId = conversationStore.resolveConversationId(sessionId);
     return !this.activeSessionCounts.has(sessionId);
   }
 
   async cancelMessage(sessionId: string): Promise<void> {
+    sessionId = conversationStore.resolveConversationId(sessionId);
     const conv = conversationStore.get(sessionId);
     if (!conv?.engineSessionId) return;
     const adapter = this.getAdapterForSession(sessionId);
@@ -1737,10 +1829,11 @@ export class EngineManager extends EventEmitter {
   }
 
   async listMessages(sessionId: string): Promise<UnifiedMessage[]> {
+    sessionId = conversationStore.resolveConversationId(sessionId);
     await this.catalogSessionChecks.get(sessionId);
     const conv = conversationStore.get(sessionId);
     if (!conv) return [];
-    const adapter = conv && this.adapters.get(conv.engineType);
+    const adapter = conv && this.getAdapter(conv.engineType);
     if (conv.archived && adapter?.getCapabilities().hideArchivedSessions) {
       await this.purgeRemovedConversation(conv, "archived");
       return [];
@@ -1795,10 +1888,11 @@ export class EngineManager extends EventEmitter {
   }
 
   async getMessageSteps(sessionId: string, messageId: string): Promise<UnifiedPart[]> {
+    sessionId = conversationStore.resolveConversationId(sessionId);
     await this.catalogSessionChecks.get(sessionId);
     const conv = conversationStore.get(sessionId);
     if (!conv) return [];
-    const adapter = conv && this.adapters.get(conv.engineType);
+    const adapter = conv && this.getAdapter(conv.engineType);
     if (conv.archived && adapter?.getCapabilities().hideArchivedSessions) {
       await this.purgeRemovedConversation(conv, "archived");
       return [];
@@ -1856,6 +1950,7 @@ export class EngineManager extends EventEmitter {
   }
 
   private async ensureAuthoritativeSession(conv: ConversationMeta, adapter: EngineAdapter): Promise<void> {
+    this.assertSessionCompatible(conv, adapter);
     if (conv.catalogSourceId) {
       const current = await this.refreshCatalog(adapter);
       if (current.sourceId !== conv.catalogSourceId) throw new Error("This conversation belongs to another catalog source.");
@@ -1926,11 +2021,12 @@ export class EngineManager extends EventEmitter {
   // --- Slash Commands ---
 
   async listCommands(engineType: EngineType, sessionId?: string): Promise<EngineCommand[]> {
-    const adapter = this.adapters.get(engineType);
+    const adapter = this.getAdapter(engineType);
     if (!adapter) return [];
 
     if (sessionId) {
       const conv = conversationStore.get(sessionId);
+      if (conv) this.assertSessionCompatible(conv, adapter);
       return adapter.listCommands(conv?.engineSessionId ?? undefined, conv?.directory);
     }
 
@@ -1943,6 +2039,7 @@ export class EngineManager extends EventEmitter {
     args: string,
     options?: { mode?: string; modelId?: string; reasoningEffort?: ReasoningEffort | null; serviceTier?: CodexServiceTier | null },
   ): Promise<CommandInvokeResult> {
+    sessionId = conversationStore.resolveConversationId(sessionId);
     const trackQueuedTiming = this.markSessionActive(sessionId);
     try {
       const conv = conversationStore.get(sessionId);
@@ -1952,7 +2049,7 @@ export class EngineManager extends EventEmitter {
 
       // Lazy engine session creation (same pattern as sendMessage)
       let engineSessionId = conv.engineSessionId;
-      if (conv.catalogSourceId) {
+      if (conv.catalogSourceId || (engineSessionId && adapter.getCapabilities().authoritativeSessionState)) {
         if (!engineSessionId) throw new Error("The catalog conversation has no native identity.");
         await this.ensureAuthoritativeSession(conv, adapter);
       } else if (!engineSessionId || !adapter.hasSession(engineSessionId)) {
@@ -2019,6 +2116,7 @@ export class EngineManager extends EventEmitter {
     sessionId: string,
     config: SessionConfigPatch,
   ): Promise<void> {
+    sessionId = conversationStore.resolveConversationId(sessionId);
     const patch: {
       mode?: string | null;
       modelId?: string | null;
@@ -2040,7 +2138,7 @@ export class EngineManager extends EventEmitter {
     }
 
     const existing = conversationStore.get(sessionId);
-    const existingAdapter = existing && this.adapters.get(existing.engineType);
+    const existingAdapter = existing && this.getAdapter(existing.engineType);
     if (existingAdapter) this.validateReasoningEffort(existingAdapter, config.reasoningEffort);
     if (existing?.engineSessionId && existingAdapter?.getCapabilities().authoritativeSessionState) {
       await this.ensureAuthoritativeSession(existing, existingAdapter);
@@ -2088,92 +2186,78 @@ export class EngineManager extends EventEmitter {
 
   // --- Permissions ---
 
-  async replyPermission(
-    permissionId: string,
-    reply: PermissionReply,
-  ): Promise<void> {
-    // Look up engine by permissionId (registered when permission.asked was emitted)
-    const engineType = this.permissionEngineMap.get(permissionId);
-    if (!engineType) {
-      throw new Error(`No engine binding found for permission: ${permissionId}`);
+  private rememberInteractionReply(key: string, reply: InteractionReply): void {
+    this.interactionReplies.set(key, reply);
+    // Only recent completed replies need to acknowledge late channel callbacks.
+    if (this.interactionReplies.size > 512) {
+      for (const [id, entry] of this.interactionReplies) {
+        if (entry.completed) this.interactionReplies.delete(id);
+        if (this.interactionReplies.size <= 512) break;
+      }
     }
+  }
+
+  private submitInteractionReply(
+    kind: "permission" | "question",
+    id: string,
+    fingerprint: string,
+    submit: (adapter: EngineAdapter, sessionId?: string) => Promise<void>,
+  ): Promise<void> {
+    const engines = kind === "permission" ? this.permissionEngineMap : this.questionEngineMap;
+    const sessions = kind === "permission" ? this.permissionSessionMap : this.questionSessionMap;
+    const pending = kind === "permission" ? this.pendingPermissionReplies : this.pendingQuestionReplies;
+    const key = `${kind}:${id}`;
+    const engineType = engines.get(id);
+    const sessionId = sessions.get(id);
+    const previous = this.interactionReplies.get(key);
+    if (previous && (!engineType || (previous.engineType === engineType && previous.sessionId === sessionId))) {
+      if (previous.fingerprint === fingerprint) return previous.promise;
+      return Promise.reject(Object.assign(new Error(`This ${kind} already has a different reply.`), { code: "INTERACTION_ALREADY_RESOLVED" }));
+    }
+    if (!engineType) return Promise.reject(new Error(`No engine binding found for ${kind}: ${id}`));
     const adapter = this.getAdapterOrThrow(engineType);
-    // Resolve the sessionId so the adapter can use the correct directory context
-    const sessionId = this.permissionSessionMap.get(permissionId);
-    this.permissionEngineMap.delete(permissionId);
-    this.permissionSessionMap.delete(permissionId);
-    this.pendingPermissionReplies.add(permissionId);
-    try {
-      await adapter.replyPermission(permissionId, reply, sessionId);
-    } catch (error) {
-      // Keep failed submissions retryable without allowing concurrent replies.
-      if (!this.permissionEngineMap.has(permissionId)) {
-        this.permissionEngineMap.set(permissionId, engineType);
-        if (sessionId) this.permissionSessionMap.set(permissionId, sessionId);
+    const entry: InteractionReply = { engineType, sessionId, fingerprint, promise: Promise.resolve(), completed: false };
+    pending.add(id);
+    entry.promise = Promise.resolve().then(() => submit(adapter, sessionId)).then(() => {
+      entry.completed = true;
+      if (engines.get(id) === engineType && sessions.get(id) === sessionId) {
+        engines.delete(id);
+        sessions.delete(id);
+      }
+    }).catch((error) => {
+      // Failed submissions remain retryable and never cache a successful answer.
+      if (this.interactionReplies.get(key) === entry) this.interactionReplies.delete(key);
+      if (!engines.has(id)) {
+        engines.set(id, engineType);
+        if (sessionId) sessions.set(id, sessionId);
       }
       throw error;
-    } finally {
-      this.pendingPermissionReplies.delete(permissionId);
-    }
+    }).finally(() => pending.delete(id));
+    this.rememberInteractionReply(key, entry);
+    return entry.promise;
+  }
+
+  async replyPermission(permissionId: string, reply: PermissionReply): Promise<void> {
+    return this.submitInteractionReply("permission", permissionId, JSON.stringify(reply.optionId),
+      (adapter, sessionId) => adapter.replyPermission(permissionId, reply, sessionId));
   }
 
   // --- Questions ---
 
-  async replyQuestion(
-    questionId: string,
-    answers: string[][],
-  ): Promise<void> {
-    const engineType = this.questionEngineMap.get(questionId);
-    if (!engineType) {
-      throw new Error(`No engine binding found for question: ${questionId}`);
-    }
-    const adapter = this.getAdapterOrThrow(engineType);
-    // Resolve the sessionId so the adapter can use the correct directory context
-    const sessionId = this.questionSessionMap.get(questionId);
-    this.questionEngineMap.delete(questionId);
-    this.questionSessionMap.delete(questionId);
-    this.pendingQuestionReplies.add(questionId);
-    try {
-      await adapter.replyQuestion(questionId, answers, sessionId);
-    } catch (error) {
-      if (!this.questionEngineMap.has(questionId)) {
-        this.questionEngineMap.set(questionId, engineType);
-        if (sessionId) this.questionSessionMap.set(questionId, sessionId);
-      }
-      throw error;
-    } finally {
-      this.pendingQuestionReplies.delete(questionId);
-    }
+  async replyQuestion(questionId: string, answers: string[][]): Promise<void> {
+    return this.submitInteractionReply("question", questionId, JSON.stringify(["answer", answers]),
+      (adapter, sessionId) => adapter.replyQuestion(questionId, answers, sessionId));
   }
 
-  async rejectQuestion(
-    questionId: string,
-  ): Promise<void> {
-    const engineType = this.questionEngineMap.get(questionId);
-    if (!engineType) {
-      throw new Error(`No engine binding found for question: ${questionId}`);
-    }
-    const adapter = this.getAdapterOrThrow(engineType);
-    const sessionId = this.questionSessionMap.get(questionId);
-    this.questionEngineMap.delete(questionId);
-    this.questionSessionMap.delete(questionId);
-    this.pendingQuestionReplies.add(questionId);
-    try {
-      await adapter.rejectQuestion(questionId, sessionId);
-    } catch (error) {
-      if (!this.questionEngineMap.has(questionId)) {
-        this.questionEngineMap.set(questionId, engineType);
-        if (sessionId) this.questionSessionMap.set(questionId, sessionId);
-      }
-      throw error;
-    } finally {
-      this.pendingQuestionReplies.delete(questionId);
-    }
+  async rejectQuestion(questionId: string): Promise<void> {
+    return this.submitInteractionReply("question", questionId, "reject",
+      (adapter, sessionId) => adapter.rejectQuestion(questionId, sessionId));
   }
 
   // --- Projects ---
 
   async listProjects(engineType: EngineType): Promise<UnifiedProject[]> {
+    engineType = this.resolveEngineType(engineType);
     // Derive projects from conversations for this engine type
     return [...conversationStore.deriveProjects().filter(p => p.engineType === engineType),
       ...conversationStore.listCatalogs().filter((catalog) => catalog.engineType === engineType).flatMap((catalog) => catalog.projects)];
@@ -2193,6 +2277,7 @@ export class EngineManager extends EventEmitter {
   }
 
   async updateProject(projectId: string, patch: CatalogProjectPatch): Promise<UnifiedProject> {
+    projectId = canonicalCodexProjectId(projectId);
     const project = this.requireCatalogProject(projectId);
     const validated = this.validateProjectInput({ name: patch.name ?? project.name ?? "", roots: patch.roots ?? project.roots ?? [] });
     if (patch.name === undefined && patch.roots === undefined) throw new Error("A project update is required.");
@@ -2212,6 +2297,7 @@ export class EngineManager extends EventEmitter {
   }
 
   async reorderProjects(sourceId: string, projectIds: string[]): Promise<void> {
+    projectIds = projectIds.map(canonicalCodexProjectId);
     const adapter = await this.catalogAdapter(sourceId);
     const projects = conversationStore.listCatalogs().find((catalog) => catalog.engineType === adapter.engineType && catalog.sourceId === sourceId)!
       .projects.filter((project) => project.catalogAvailable !== false);
@@ -2232,6 +2318,8 @@ export class EngineManager extends EventEmitter {
   }
 
   async setSessionProject(sessionId: string, projectId: string | null): Promise<void> {
+    sessionId = conversationStore.resolveConversationId(sessionId);
+    if (projectId) projectId = canonicalCodexProjectId(projectId);
     const conv = conversationStore.get(sessionId);
     if (!conv?.catalogSourceId || !conv.engineSessionId || conv.catalogAvailable === false) throw new Error("This conversation is not available in a managed catalog.");
     const project = projectId === null ? null : this.requireCatalogProject(projectId);
@@ -2256,11 +2344,13 @@ export class EngineManager extends EventEmitter {
     questions: UnifiedQuestion[];
     permissions: UnifiedPermission[];
   }> {
+    conversationId = conversationStore.resolveConversationId(conversationId);
     await this.catalogSessionChecks.get(conversationId);
     const conv = conversationStore.get(conversationId);
     if (!conv) return { questions: [], permissions: [] };
-    const adapter = this.adapters.get(conv.engineType);
+    const adapter = this.getAdapter(conv.engineType);
     if (!adapter) return { questions: [], permissions: [] };
+    this.assertSessionCompatible(conv, adapter);
     if (conv.archived && adapter.getCapabilities().hideArchivedSessions) {
       await this.purgeRemovedConversation(conv, "archived");
       return { questions: [], permissions: [] };
@@ -2297,6 +2387,7 @@ export class EngineManager extends EventEmitter {
   // --- Session Registration (for adapters that load existing sessions) ---
 
   registerSession(sessionId: string, engineType: EngineType): void {
+    sessionId = conversationStore.resolveConversationId(sessionId);
     this.sessionEngineMap.set(sessionId, engineType);
   }
 
@@ -2359,18 +2450,22 @@ export class EngineManager extends EventEmitter {
    * Returns all historical sessions with dedup flags marking already-imported ones.
    */
   async importPreview(engineType: EngineType, limit: number): Promise<ImportableSession[]> {
+    engineType = this.resolveEngineType(engineType);
     const adapter = this.getAdapterOrThrow(engineType);
     const sessions = (await adapter.listHistoricalSessions(limit)).filter((session) => !adapter.getCapabilities().hideArchivedSessions || !session.archived);
 
     // Build dedup set: all known engine session IDs for this engine type
     const existingIds = conversationStore.findAllEngineSessionIds(engineType);
+    const knownConversations = conversationStore.list({ engineType });
 
     for (const s of sessions) {
       // Check both the direct engine session ID and any nested IDs (e.g. Claude's ccSessionId)
       const ccId = s.engineMeta?.ccSessionId;
+      const candidates = knownConversations.filter((conv) => conv.engineSessionId === s.engineSessionId
+        || (typeof ccId === "string" && conv.engineMeta?.ccSessionId === ccId));
       s.alreadyImported =
-        existingIds.has(s.engineSessionId) ||
-        (typeof ccId === "string" && existingIds.has(ccId));
+        (existingIds.has(s.engineSessionId) || (typeof ccId === "string" && existingIds.has(ccId)))
+        && (candidates.length === 0 || candidates.some((conv) => this.isSessionCompatible(conv, adapter)));
     }
 
     return sessions;
@@ -2391,6 +2486,8 @@ export class EngineManager extends EventEmitter {
       engineMeta?: Record<string, unknown>;
     }>,
   ): Promise<SessionImportResult> {
+    engineType = this.resolveEngineType(engineType);
+    if (engineType === "codex") sessions = sessions.map((session) => ({ ...session, engineSessionId: canonicalCodexThreadId(session.engineSessionId) }));
     const adapter = this.getAdapterOrThrow(engineType);
     const capabilities = adapter.getCapabilities();
     const sourceId = capabilities.hideArchivedSessions && capabilities.sessionCatalog
@@ -2409,6 +2506,7 @@ export class EngineManager extends EventEmitter {
 
       try {
         // Fetch messages from engine
+        adapter.assertSessionCompatible(s.engineSessionId, s.engineMeta);
         const messages = await adapter.getHistoricalMessages(
           s.engineSessionId,
           s.directory,
@@ -2523,7 +2621,7 @@ export class EngineManager extends EventEmitter {
     ccSessionId?: string | unknown,
   ): ConversationMeta | null {
     for (const conv of conversationStore.list({ engineType })) {
-      if (!conv.imported) continue;
+      if (!conv.imported || !this.isSessionCompatible(conv, this.getAdapterOrThrow(engineType))) continue;
       if (conv.engineSessionId === engineSessionId) return conv;
       if (typeof ccSessionId === "string" && conv.engineMeta?.ccSessionId === ccSessionId) return conv;
     }

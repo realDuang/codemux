@@ -4,7 +4,7 @@ import {
   type CodexDesktopOwnerRuntime, type CodexOwnerRequestMethod,
 } from "../../../../../electron/main/engines/codex/desktop-owner";
 import type {
-  DesktopFollowerMethod, DesktopOwnedThreadRegistration, DesktopThreadOwner,
+  DesktopFollowerMethod, DesktopOwnedThreadRegistration, DesktopQueuedFollowUp, DesktopThreadOwner,
 } from "../../../../../electron/main/engines/codex/desktop-ipc-client";
 import { convertDesktopConversation } from "../../../../../electron/main/engines/codex/desktop-state";
 
@@ -33,6 +33,7 @@ function harness(metadataEnabled = false) {
       return () => { registrations.delete(registration.conversationId); };
     }),
     publishOwnedThreadState: vi.fn(),
+    publishOwnedQueuedFollowUps: vi.fn(),
   };
   let listener: ((sessionId: string) => void) | undefined;
   const unsubscribe = vi.fn();
@@ -51,7 +52,7 @@ function harness(metadataEnabled = false) {
   const errors: Error[] = [];
   const bridge = new CodexDesktopOwner(transport, runtime, { onError: (_threadId, error) => errors.push(error) });
   return {
-    state, transport, registrations, bridge, readThread, readMetadata, request, respond, updateSettings, unsubscribe, errors,
+    state, transport, registrations, bridge, runtime, readThread, readMetadata, request, respond, updateSettings, unsubscribe, errors,
     changed: () => listener?.("codex_thread-created"),
     call: (method: DesktopFollowerMethod, params: Record<string, unknown> = {}) => {
       const registration = registrations.get("thread-created");
@@ -125,6 +126,145 @@ describe("buildDesktopOwnerState", () => {
 });
 
 describe("CodexDesktopOwner", () => {
+  it("admits the native Desktop composer queue before consuming its original message ID", async () => {
+    const h = harness();
+    await h.bridge.registerCreatedThread("codex_thread-created", "thread-created");
+    const queued: DesktopQueuedFollowUp = {
+      id: "native-user-1", text: "Continue", context: {}, cwd: "/repo", createdAt: 1,
+      submission: { hostId: "local", status: "pending" },
+    };
+    let admit!: (value: unknown) => void;
+    h.request.mockImplementation(() => new Promise((resolve) => { admit = resolve; }));
+    expect(h.registrations.get("thread-created")?.supportedMethods).toContain("thread-follower-set-queued-follow-ups-state");
+    expect(h.registrations.get("thread-created")?.clientName).toBe("CodeMux");
+    expect(await h.call("thread-follower-set-queued-follow-ups-state", { state: { "thread-created": [queued] }, discardedMessageIds: [] })).toEqual({ ok: true });
+    await vi.waitFor(() => expect(h.request).toHaveBeenCalledOnce());
+    expect(h.request).toHaveBeenCalledWith("codex_thread-created", "turn/start", expect.objectContaining({
+      threadId: "thread-created", clientUserMessageId: "native-user-1", input: [{ type: "text", text: "Continue" }],
+    }));
+    expect(h.registrations.get("thread-created")?.getQueuedFollowUps?.()).toHaveLength(1);
+    await h.call("thread-follower-set-queued-follow-ups-state", { state: { "thread-created": [queued] }, discardedMessageIds: [] });
+    admit({ turn: { id: "native-turn", status: "inProgress", items: [] } });
+    await vi.waitFor(() => expect(h.registrations.get("thread-created")?.getQueuedFollowUps?.()).toEqual([]));
+    expect(h.transport.publishOwnedQueuedFollowUps).toHaveBeenLastCalledWith("thread-created", []);
+    await h.call("thread-follower-set-queued-follow-ups-state", { state: { "thread-created": [queued] }, discardedMessageIds: [] });
+    expect(h.request).toHaveBeenCalledOnce();
+    h.bridge.dispose();
+  });
+
+  it("keeps queued input during an active turn and starts it after the original runtime completes", async () => {
+    vi.useFakeTimers();
+    const h = harness();
+    h.state.thread.turns.push({ id: "current-turn", status: "inProgress", items: [] });
+    await h.bridge.registerCreatedThread("codex_thread-created", "thread-created");
+    const queued = { id: "next-input", text: "Next", context: {}, createdAt: 2, submission: { hostId: "local", status: "pending" } };
+    await h.call("thread-follower-set-queued-follow-ups-state", { state: { "thread-created": [queued] } });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(h.request).not.toHaveBeenCalled();
+    expect(h.registrations.get("thread-created")?.getQueuedFollowUps?.()).toEqual([queued]);
+    h.state.thread.turns[0].status = "completed";
+    h.changed();
+    await vi.advanceTimersByTimeAsync(100);
+    expect(h.request).toHaveBeenCalledOnce();
+    expect(h.registrations.get("thread-created")?.getQueuedFollowUps?.()).toEqual([]);
+    h.bridge.dispose();
+  });
+
+  it("uses canonical composer input and settings, and steers send-now input into its active turn", async () => {
+    const h = harness();
+    await h.bridge.registerCreatedThread("codex_thread-created", "thread-created");
+    const collaborationMode = { mode: "default", settings: { model: "selected-model", reasoning_effort: "low", developer_instructions: null } };
+    const queued = { id: "selected-input", text: "Display preview", context: { prompt: "Actual prompt", messageThreadId: "thread-created" },
+      createdAt: 2, submissionIntent: "start", submission: { hostId: "local", status: "pending" },
+      submissionOptions: { collaborationMode, serviceTier: "priority" } };
+    await h.call("thread-follower-set-queued-follow-ups-state", { state: { "thread-created": [queued] } });
+    await vi.waitFor(() => expect(h.request).toHaveBeenCalledOnce());
+    expect(h.request).toHaveBeenCalledWith("codex_thread-created", "turn/start", expect.objectContaining({
+      input: [{ type: "text", text: "Actual prompt" }], collaborationMode, serviceTier: "priority",
+    }));
+    await vi.waitFor(() => expect(h.registrations.get("thread-created")?.getQueuedFollowUps?.()).toEqual([]));
+    h.state.thread.turns.push({ id: "active-turn", status: "inProgress", items: [] });
+    await h.call("thread-follower-set-queued-follow-ups-state", { state: { "thread-created": [{ ...queued,
+      id: "steering-input", submissionOptions: undefined, submissionIntent: "send-now",
+    }] } });
+    await vi.waitFor(() => expect(h.request).toHaveBeenCalledTimes(2));
+    expect(h.request).toHaveBeenLastCalledWith("codex_thread-created", "turn/steer", expect.objectContaining({
+      expectedTurnId: "active-turn", clientUserMessageId: "steering-input", input: [{ type: "text", text: "Actual prompt" }],
+    }));
+    h.bridge.dispose();
+  });
+
+  it("resolves the native custom permission selection before accepting the queued turn", async () => {
+    const h = harness();
+    const permissions = { approvalPolicy: "never", sandboxPolicy: { type: "dangerFullAccess" }, approvalsReviewer: "user" };
+    const resolvePermissions = vi.fn(async () => permissions);
+    h.runtime.resolveQueuedPermissions = resolvePermissions;
+    await h.bridge.registerCreatedThread("codex_thread-created", "thread-created");
+    const queued = { id: "custom-input", text: "Continue", context: {}, createdAt: 2,
+      submissionOptions: { permissionSelection: { kind: "custom" } } };
+    await h.call("thread-follower-set-queued-follow-ups-state", { state: { "thread-created": [queued] } });
+    expect(resolvePermissions).toHaveBeenCalledExactlyOnceWith("codex_thread-created", queued);
+    await vi.waitFor(() => expect(h.request).toHaveBeenCalledWith("codex_thread-created", "turn/start", expect.objectContaining(permissions)));
+    h.bridge.dispose();
+  });
+
+  it("retains uncertain admissions across queue edits without replaying and accepts an explicit discard", async () => {
+    const h = harness();
+    await h.bridge.registerCreatedThread("codex_thread-created", "thread-created");
+    h.request.mockRejectedValue(new Error("request-timeout"));
+    const queued = { id: "uncertain-input", text: "Next", context: {}, createdAt: 2, submission: { hostId: "local", status: "pending" } };
+    await h.call("thread-follower-set-queued-follow-ups-state", { state: { "thread-created": [queued] } });
+    await vi.waitFor(() => expect(h.errors).toHaveLength(1));
+    expect(h.registrations.get("thread-created")?.getQueuedFollowUps?.()).toEqual([
+      { ...queued, submission: { hostId: "local", status: "outcome-unknown" } },
+    ]);
+    await h.call("thread-follower-set-queued-follow-ups-state", { state: { "thread-created": [] } });
+    expect(h.registrations.get("thread-created")?.getQueuedFollowUps?.()).toHaveLength(1);
+    await h.call("thread-follower-set-queued-follow-ups-state", { state: { "thread-created": [] }, discardedMessageIds: [queued.id] });
+    expect(h.registrations.get("thread-created")?.getQueuedFollowUps?.()).toEqual([]);
+    expect(h.request).toHaveBeenCalledOnce();
+    h.bridge.dispose();
+  });
+
+  it("rejects unsupported attachment input before acknowledging or replacing a queue", async () => {
+    const h = harness();
+    await h.bridge.registerCreatedThread("codex_thread-created", "thread-created");
+    await expect(h.call("thread-follower-set-queued-follow-ups-state", { state: { "thread-created": [{
+      id: "image-input", text: "Read this", createdAt: 2, context: { imageAttachments: [{ path: "/private/image.png" }] },
+    }] } })).rejects.toThrow("attachments");
+    expect(h.request).not.toHaveBeenCalled();
+    expect(h.registrations.get("thread-created")?.getQueuedFollowUps?.()).toEqual([]);
+    h.bridge.dispose();
+  });
+
+  it("removes and clears waiting input without cancelling the original turn", async () => {
+    const h = harness();
+    h.state.thread.turns.push({ id: "current-turn", status: "inProgress", items: [] });
+    await h.bridge.registerCreatedThread("codex_thread-created", "thread-created");
+    const queued = ["first", "second"].map((id) => ({ id, text: id, context: {}, createdAt: 2 }));
+    await h.call("thread-follower-set-queued-follow-ups-state", { state: { "thread-created": queued } });
+    await h.call("thread-follower-remove-queued-message", { messageId: "first" });
+    expect(h.registrations.get("thread-created")?.getQueuedFollowUps?.()).toEqual([queued[1]]);
+    await h.call("thread-follower-clear-queued-messages");
+    expect(h.registrations.get("thread-created")?.getQueuedFollowUps?.()).toEqual([]);
+    expect(h.request).not.toHaveBeenCalled();
+    h.bridge.dispose();
+  });
+
+  it("keeps waiting input after a stale stop but cancels it after the active user stop", async () => {
+    const h = harness();
+    h.state.thread.turns.push({ id: "current-turn", status: "inProgress", items: [] });
+    await h.bridge.registerCreatedThread("codex_thread-created", "thread-created");
+    const queued = { id: "waiting", text: "Next", context: {}, createdAt: 2 };
+    await h.call("thread-follower-set-queued-follow-ups-state", { state: { "thread-created": [queued] } });
+    await h.call("thread-follower-interrupt-turn", { expectedTurnId: "stale", mode: "user-stop" });
+    expect(h.registrations.get("thread-created")?.getQueuedFollowUps?.()).toHaveLength(1);
+    await h.call("thread-follower-interrupt-turn", { expectedTurnId: "current-turn", mode: "user-stop" });
+    expect(h.registrations.get("thread-created")?.getQueuedFollowUps?.()).toEqual([]);
+    expect(h.request).toHaveBeenCalledExactlyOnceWith("codex_thread-created", "turn/interrupt", { threadId: "thread-created", turnId: "current-turn" });
+    h.bridge.dispose();
+  });
+
   it("polls metadata only for registered threads and refreshes full state only when the title changes", async () => {
     vi.useFakeTimers();
     const h = harness(true);

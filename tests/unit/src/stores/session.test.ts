@@ -286,6 +286,38 @@ describe("session store", () => {
     });
   });
 
+  describe("toSessionInfo", () => {
+    it("keeps creation origin separate from the current executor and leaves missing provenance unknown", () => {
+      const session: UnifiedSession = {
+        id: "shared", engineType: "codex", title: "Shared chat", directory: "/repo",
+        sourceName: "Companion", sourceUrl: "app://threads/shared", time: { created: 1, updated: 2 },
+        connection: { origin: "CodeMux", executor: "Companion", shared: true, available: true, runtimeVersion: "1.2.3" },
+      };
+      expect(toSessionInfo(session).connection).toEqual(session.connection);
+      expect(toSessionInfo({ ...session, connection: { executor: "Companion", shared: true, available: true } }).connection?.origin).toBeUndefined();
+      expect(toSessionInfo({ ...session, engineType: "claude", connection: undefined }).connection).toBeUndefined();
+    });
+  });
+
+  describe("applySessionCatalog", () => {
+    it("updates connection availability without replacing identity, selection, or drafts", () => {
+      const session: UnifiedSession = {
+        id: "shared", engineType: "codex", title: "Shared chat", directory: "/repo",
+        catalogSourceId: "native", catalogAvailable: true, time: { created: 1, updated: 2 },
+        connection: { origin: "Companion", executor: "Companion", shared: true, available: true },
+      };
+      const snapshot = { sourceId: "native", complete: true, projects: [], sessions: [session] };
+      applySessionCatalog({ ...snapshot, revision: "1" });
+      setSessionStore("current", session.id);
+      setInputDraft(session.id, { text: "Continue when connected" });
+      applySessionCatalog({ ...snapshot, revision: "2", sessions: [{ ...session, connection: { ...session.connection!, shared: false, available: false } }] });
+      expect(sessionStore.list).toHaveLength(1);
+      expect(sessionStore.list[0].connection).toEqual({ origin: "Companion", executor: "Companion", shared: false, available: false });
+      expect(sessionStore.current).toBe(session.id);
+      expect(getInputDraft(session.id).text).toBe("Continue when connected");
+    });
+  });
+
   describe("session info updates", () => {
     it("removes a session from list and catalog caches without disturbing another selection", () => {
       const session = (id: string): UnifiedSession => ({ id, engineType: "codex-desktop", catalogSourceId: "native", projectId: null, directory: "/repo", time: { created: 1, updated: 2 } });

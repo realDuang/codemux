@@ -318,6 +318,30 @@ export interface LocaleDict {
     unpinSession: string;
   };
 
+  sessionSharing: {
+    title: string;
+    peer: string;
+    description: string;
+    connected: string;
+    connecting: string;
+    disabled: string;
+    updating: string;
+    unavailable: string;
+    unavailableHint: string;
+    updateFailed: string;
+    details: string;
+    createdIn: string;
+    origin: string;
+    unknownOrigin: string;
+    executor: string;
+    unknownExecutor: string;
+    connection: string;
+    runtimeVersion: string;
+    shared: string;
+    notShared: string;
+    sessionUnavailable: string;
+  };
+
   catalog: {
     sessions: string;
     unavailable: string;
@@ -1191,6 +1215,30 @@ export const en: LocaleDict = {
     activeSection: "Active",
     pinSession: "Pin to Active",
     unpinSession: "Unpin",
+  },
+
+  sessionSharing: {
+    title: "Share chats with {peer}",
+    peer: "the companion app",
+    description: "Continue the same chats in CodeMux and {peer}. Messages, progress, and requests stay with the current executor.",
+    connected: "Connected",
+    connecting: "Connecting…",
+    disabled: "Sharing is off",
+    updating: "Updating sharing…",
+    unavailable: "Not connected",
+    unavailableHint: "Open {peer} on this computer to reconnect. CodeMux-owned chats can continue; external chats remain readable.",
+    updateFailed: "Could not update sharing: {message}",
+    details: "Chat connection",
+    createdIn: "Created in {origin}",
+    origin: "Created in",
+    unknownOrigin: "Unknown origin",
+    executor: "Current executor",
+    unknownExecutor: "Unknown executor",
+    connection: "Sharing",
+    runtimeVersion: "Runtime version",
+    shared: "Shared",
+    notShared: "Not shared",
+    sessionUnavailable: "This chat’s executor is unavailable. Reconnect sharing in Settings or reopen the originating app to continue. Your history is still available.",
   },
 
   catalog: {

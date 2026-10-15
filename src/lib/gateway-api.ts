@@ -14,6 +14,7 @@ import { sessionStore, setSendingFor } from "../stores/session";
 import type {
   EngineType,
   EngineInfo,
+  EngineSharingState,
   EngineCapabilities,
   UnifiedSession,
   SessionActivityStatus,
@@ -392,6 +393,14 @@ class GatewayAPI {
 
   listEngines(): Promise<EngineInfo[]> {
     return gatewayClient.listEngines();
+  }
+
+  getSessionSharing(engineType: EngineType): Promise<EngineSharingState> {
+    return gatewayClient.request(GatewayRequestType.ENGINE_SHARING_GET, { engineType });
+  }
+
+  setSessionSharing(engineType: EngineType, enabled: boolean): Promise<EngineSharingState> {
+    return gatewayClient.request(GatewayRequestType.ENGINE_SHARING_SET, { engineType, enabled });
   }
 
   getCapabilities(engineType: EngineType): Promise<EngineCapabilities> {

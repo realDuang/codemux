@@ -10,6 +10,9 @@ import type { EngineType, ReasoningPart, UnifiedMessage, UnifiedPart, UnifiedSes
 vi.mock("../../../../electron/main/services/conversation-store", () => {
   const store = {
     get: vi.fn(),
+    resolveConversationId: vi.fn((id: string) => id),
+    getConversationIds: vi.fn((id: string) => [id]),
+    isConversationAlias: vi.fn(() => false),
     list: vi.fn(() => []),
     create: vi.fn(),
     delete: vi.fn(),
@@ -149,6 +152,9 @@ describe("EngineManager", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(conversationStore.resolveConversationId).mockImplementation((id) => id);
+    vi.mocked(conversationStore.getConversationIds).mockImplementation((id) => [id]);
+    vi.mocked(conversationStore.isConversationAlias).mockReturnValue(false);
     engineManager = new EngineManager();
     adapterA = new MockEngineAdapter("opencode" as any);
     adapterB = new MockEngineAdapter("claude-code" as any);
@@ -169,6 +175,102 @@ describe("EngineManager", () => {
 
       // returns undefined for unregistered adapter
       expect(engineManager.getAdapter("unknown" as any)).toBeUndefined();
+    });
+  });
+
+  describe("unified engine compatibility", () => {
+    it("routes legacy engine settings through the unified adapter", async () => {
+      const adapter = new MockEngineAdapter("codex");
+      adapter.getSessionSharing = vi.fn(() => ({ enabled: false, available: true, status: "disabled" as const, peerName: "Desktop" }));
+      adapter.setSessionSharing = vi.fn(async () => ({ enabled: true, available: true, status: "connected" as const, peerName: "Desktop" }));
+      engineManager.registerAdapter(adapter);
+      expect(engineManager.getAdapter("codex-desktop")).toBe(adapter);
+      expect(engineManager.getSessionSharing("codex-desktop")).toMatchObject({ enabled: false, available: true });
+      await expect(engineManager.setSessionSharing("codex-desktop", true)).resolves.toMatchObject({ enabled: true, available: true });
+      expect(adapter.setSessionSharing).toHaveBeenCalledExactlyOnceWith(true);
+      await engineManager.listModels("codex-desktop");
+      expect(adapter.listModels).toHaveBeenCalledOnce();
+      vi.mocked(conversationStore.list).mockReturnValueOnce([]);
+      await engineManager.listSessions("codex-desktop");
+      expect(conversationStore.list).toHaveBeenLastCalledWith({ engineType: "codex" });
+    });
+
+    it("uses canonical runtime maps for alias reads and detaches alias deletion locally", async () => {
+      engineManager.registerAdapter(adapterA);
+      vi.mocked(conversationStore.resolveConversationId).mockImplementation((id) => id === "old-conv" ? "conv1" : id);
+      vi.mocked(conversationStore.get).mockReturnValue(makeMockConv({ engineSessionId: "native" }));
+      engineManager.registerSession("old-conv", adapterA.engineType);
+      await engineManager.cancelMessage("old-conv");
+      expect(adapterA.cancelMessage).toHaveBeenCalledExactlyOnceWith("native", "/dir");
+      expect(await engineManager.getSession("old-conv")).toMatchObject({ id: "conv1", activityStatus: "idle" });
+      vi.mocked(conversationStore.isConversationAlias).mockReturnValue(true);
+      await engineManager.deleteSession("old-conv");
+      expect(conversationStore.delete).toHaveBeenCalledExactlyOnceWith("old-conv");
+      expect(adapterA.deleteSession).not.toHaveBeenCalled();
+      expect(conversationStore.removeEngineConversation).not.toHaveBeenCalled();
+    });
+
+    it("validates persisted source metadata before accepting an already attached UUID", async () => {
+      const adapter = new MockEngineAdapter("codex");
+      adapter.getCapabilities.mockReturnValue({ authoritativeSessionState: true });
+      adapter.assertSessionCompatible = vi.fn(() => { throw new Error("Foreign source"); });
+      engineManager.registerAdapter(adapter);
+      vi.mocked(conversationStore.get).mockReturnValue(makeMockConv({ engineType: "codex", engineSessionId: "native", engineMeta: { codexHome: "/foreign" } }));
+      await expect(engineManager.getSession("conv1")).rejects.toThrow("Foreign source");
+      await expect(engineManager.cancelMessage("conv1")).rejects.toThrow("Foreign source");
+      await expect(engineManager.getPending("conv1")).rejects.toThrow("Foreign source");
+      await expect(engineManager.listCommands("codex", "conv1")).rejects.toThrow("Foreign source");
+      expect(adapter.hasSession).not.toHaveBeenCalled();
+      expect(adapter.getSession).not.toHaveBeenCalled();
+      expect(adapter.cancelMessage).not.toHaveBeenCalled();
+    });
+
+    it("retains live session connection details in subsequent list results", async () => {
+      const adapter = new MockEngineAdapter("codex");
+      adapter.getCapabilities.mockReturnValue({ authoritativeSessionState: true });
+      const conv = makeMockConv({ engineType: "codex", engineSessionId: "native" });
+      const connection = { origin: "CodeMux", executor: "Desktop", shared: true, available: true, runtimeVersion: "0.162.0" };
+      adapter.getSession.mockResolvedValue({ id: "native", engineType: "codex", directory: "/dir", time: { created: 1, updated: 2 }, connection });
+      vi.mocked(conversationStore.get).mockReturnValue(conv);
+      vi.mocked(conversationStore.list).mockReturnValueOnce([conv]);
+      engineManager.registerAdapter(adapter);
+      expect(await engineManager.getSession("conv1")).toMatchObject({ id: "conv1", connection });
+      expect(await engineManager.listSessions("codex")).toEqual([expect.objectContaining({ id: "conv1", connection })]);
+    });
+
+    it("does not route a current-source event into another home's same-UUID history", async () => {
+      const adapter = new MockEngineAdapter("codex");
+      adapter.getCapabilities.mockReturnValue({ authoritativeSessionState: true, sessionCatalog: true });
+      adapter.assertSessionCompatible = vi.fn(() => { throw new Error("Foreign source"); });
+      engineManager.registerAdapter(adapter);
+      vi.mocked(conversationStore.findByEngineSession).mockReturnValueOnce(makeMockConv({ engineType: "codex", engineSessionId: "native", engineMeta: { codexHome: "/foreign" } }));
+      const event = vi.fn();
+      engineManager.on("message.updated", event);
+      adapter.emit("message.updated", { sessionId: "native", message: { id: "message", sessionId: "native", role: "assistant", time: { created: 1 }, parts: [] } });
+      await Promise.resolve();
+      expect(event.mock.calls[0][0].sessionId).toBe("native");
+      expect(conversationStore.appendMessage).not.toHaveBeenCalled();
+      expect(conversationStore.replaceMessageSnapshot).not.toHaveBeenCalled();
+    });
+
+    it("imports a current-home UUID without replacing another home's mirror", async () => {
+      const adapter = new MockEngineAdapter("codex");
+      adapter.assertSessionCompatible = vi.fn((_id, meta) => {
+        if (meta?.codexHome === "/foreign") throw new Error("Foreign source");
+      });
+      const session = { engineSessionId: "native", directory: "/dir", title: "Current", createdAt: 1, updatedAt: 2 };
+      const foreign = makeMockConv({ id: "foreign-conv", engineType: "codex", engineSessionId: "native", imported: true, engineMeta: { codexHome: "/foreign" } });
+      vi.mocked(conversationStore.list).mockReturnValue([foreign]);
+      vi.mocked(conversationStore.findAllEngineSessionIds).mockReturnValueOnce(new Set(["native"]));
+      adapter.listHistoricalSessions.mockResolvedValueOnce([session] as never[]);
+      vi.mocked(conversationStore.importConversation).mockResolvedValueOnce(makeMockConv({ id: "new-current-conv", engineType: "codex", engineSessionId: "native" }));
+      engineManager.registerAdapter(adapter);
+      expect(await engineManager.importPreview("codex-desktop", 10)).toEqual([expect.objectContaining({ alreadyImported: false })]);
+      const result = await engineManager.importExecute("codex-desktop", [session]);
+      expect(result.imported).toBe(1);
+      expect(conversationStore.delete).not.toHaveBeenCalled();
+      expect(conversationStore.importConversation).toHaveBeenCalledOnce();
+      vi.mocked(conversationStore.list).mockReturnValue([]);
     });
   });
 
@@ -1105,6 +1207,21 @@ describe("EngineManager", () => {
   });
 
   describe("replyPermission", () => {
+    it("keeps a canonical session binding on native replies that omit their session ID", async () => {
+      engineManager.registerAdapter(adapterA);
+      vi.mocked(conversationStore.findByEngineSession).mockReturnValue(makeMockConv({ engineSessionId: "native" }));
+      const event = vi.fn();
+      engineManager.on("permission.replied", event);
+      adapterA.emit("permission.asked", { permission: { id: "permission", sessionId: "native", engineType: adapterA.engineType, title: "Run", kind: "other", options: [] } });
+      adapterA.replyPermission.mockImplementationOnce(async () => {
+        adapterA.emit("permission.replied", { permissionId: "permission", optionId: "allow_once" });
+      });
+      await engineManager.replyPermission("permission", { optionId: "allow_once" });
+      expect(event).toHaveBeenCalledExactlyOnceWith({ permissionId: "permission", optionId: "allow_once", sessionId: "conv1" });
+      await engineManager.replyPermission("permission", { optionId: "allow_once" });
+      expect(adapterA.replyPermission).toHaveBeenCalledOnce();
+      await expect(engineManager.replyPermission("permission", { optionId: "deny" })).rejects.toThrow("already has a different reply");
+    });
     it("allows retrying a failed reply without another permission event", async () => {
       engineManager.registerAdapter(adapterA);
       adapterA.emit("permission.asked", {
@@ -1125,11 +1242,26 @@ describe("EngineManager", () => {
         .resolves.toBeUndefined();
       expect(adapterA.replyPermission).toHaveBeenLastCalledWith("permission-retry", { optionId: "allow_once" }, "engine-retry");
       await expect(engineManager.replyPermission("permission-retry", { optionId: "allow_once" }))
-        .rejects.toThrow("No engine binding found for permission");
+        .resolves.toBeUndefined();
+      expect(adapterA.replyPermission).toHaveBeenCalledTimes(2);
     });
   });
 
   describe("replyQuestion", () => {
+    it("acknowledges an identical externally completed answer without reapplying it", async () => {
+      engineManager.registerAdapter(adapterA);
+      engineManager.registerAdapter(adapterB);
+      const question = { id: "external-question", sessionId: "native", engineType: adapterA.engineType, questions: [] };
+      adapterA.emit("question.asked", { question });
+      adapterA.emit("question.replied", { questionId: question.id, answers: [["Yes"]] });
+      await expect(engineManager.replyQuestion(question.id, [["Yes"]])).resolves.toBeUndefined();
+      expect(adapterA.replyQuestion).not.toHaveBeenCalled();
+      await expect(engineManager.rejectQuestion(question.id)).rejects.toThrow("already has a different reply");
+      // Reusing an ID in another engine is a distinct prompt.
+      adapterB.emit("question.asked", { question: { ...question, engineType: adapterB.engineType } });
+      await engineManager.replyQuestion(question.id, [["Yes"]]);
+      expect(adapterB.replyQuestion).toHaveBeenCalledExactlyOnceWith(question.id, [["Yes"]], "native");
+    });
     it("allows retrying a failed answer without another question event", async () => {
       engineManager.registerAdapter(adapterA);
       adapterA.emit("question.asked", {
@@ -1148,7 +1280,8 @@ describe("EngineManager", () => {
         .resolves.toBeUndefined();
       expect(adapterA.replyQuestion).toHaveBeenLastCalledWith("question-retry", [["My choice"]], "engine-retry");
       await expect(engineManager.replyQuestion("question-retry", [["My choice"]]))
-        .rejects.toThrow("No engine binding found for question");
+        .resolves.toBeUndefined();
+      expect(adapterA.replyQuestion).toHaveBeenCalledTimes(2);
     });
   });
 
@@ -1170,7 +1303,8 @@ describe("EngineManager", () => {
       await expect(engineManager.rejectQuestion("dismiss-retry")).resolves.toBeUndefined();
       expect(adapterA.rejectQuestion).toHaveBeenLastCalledWith("dismiss-retry", "engine-retry");
       await expect(engineManager.rejectQuestion("dismiss-retry"))
-        .rejects.toThrow("No engine binding found for question");
+        .resolves.toBeUndefined();
+      expect(adapterA.rejectQuestion).toHaveBeenCalledTimes(2);
     });
   });
 
@@ -3750,16 +3884,20 @@ describe("EngineManager", () => {
 
       const questionReply = engineManager.replyQuestion("question-pending", [["Yes"]]);
       const permissionReply = engineManager.replyPermission("permission-pending", { optionId: "allow_once" });
+      const duplicateQuestion = engineManager.replyQuestion("question-pending", [["Yes"]]);
+      const duplicatePermission = engineManager.replyPermission("permission-pending", { optionId: "allow_once" });
       try {
         await engineManager.getPending("conv1");
-        await expect(engineManager.replyQuestion("question-pending", [["Yes"]]))
-          .rejects.toThrow("No engine binding found for question");
-        await expect(engineManager.replyPermission("permission-pending", { optionId: "allow_once" }))
-          .rejects.toThrow("No engine binding found for permission");
+        await expect(engineManager.replyQuestion("question-pending", [["No"]]))
+          .rejects.toThrow("already has a different reply");
+        await expect(engineManager.replyPermission("permission-pending", { optionId: "deny" }))
+          .rejects.toThrow("already has a different reply");
       } finally {
         completeReply();
-        await Promise.all([questionReply, permissionReply]);
+        await Promise.all([questionReply, permissionReply, duplicateQuestion, duplicatePermission]);
       }
+      expect(adapterA.replyQuestion).toHaveBeenCalledOnce();
+      expect(adapterA.replyPermission).toHaveBeenCalledOnce();
     });
 
     it("restores reply routes for pending requests without replayed events", async () => {

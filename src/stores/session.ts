@@ -18,6 +18,7 @@ export interface SessionInfo {
   title: string;
   sourceUrl?: string;
   sourceName?: string;
+  connection?: UnifiedSession["connection"];
   archived?: boolean;
   catalogSourceId?: string;
   catalogAvailable?: boolean;
@@ -106,6 +107,7 @@ export function toSessionInfo(session: UnifiedSession, fallbackProjectId?: strin
   return {
     id: session.id, engineType: session.engineType, title: session.title || "",
     ...(session.sourceUrl ? { sourceUrl: session.sourceUrl, sourceName: session.sourceName } : {}),
+    connection: session.connection,
     archived: session.archived, catalogSourceId: session.catalogSourceId, catalogAvailable: session.catalogAvailable,
     directory: session.directory || "", mode: session.mode, modelId: session.modelId,
     reasoningEffort: session.reasoningEffort, serviceTier: session.serviceTier,

@@ -35,6 +35,9 @@ const mockLog = vi.hoisted(() => ({
 const mockConversationStore = vi.hoisted(() => ({
   list: vi.fn(() => []),
   get: vi.fn(),
+  resolveConversationId: vi.fn((id: string) => id),
+  getConversationIds: vi.fn((id: string) => [id]),
+  isConversationAlias: vi.fn(() => false),
 }));
 
 const mockScheduledTaskService = vi.hoisted(() => ({
@@ -149,6 +152,8 @@ function createMockEngineManager() {
       type: "claude",
       capabilities: { imageAttachment: true },
     })),
+    getSessionSharing: vi.fn(() => ({ enabled: false, available: true })),
+    setSessionSharing: vi.fn(async () => ({ enabled: true, available: true })),
     listSessions: vi.fn(async () => []),
     createSession: vi.fn(async () => ({ id: "sess-1" })),
     getSession: vi.fn(async () => ({ id: "sess-1" })),
@@ -166,6 +171,7 @@ function createMockEngineManager() {
     replyPermission: vi.fn(async () => {}),
     replyQuestion: vi.fn(async () => {}),
     rejectQuestion: vi.fn(async () => {}),
+    getPending: vi.fn(async () => ({ questions: [], permissions: [] })),
     listProjects: vi.fn(async () => []),
     listCatalogs: vi.fn(),
     createProject: vi.fn(),
@@ -254,6 +260,8 @@ function createTestHarness(options?: ConstructorParameters<typeof GatewayServer>
 describe("GatewayServer", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockConversationStore.resolveConversationId.mockImplementation((id: string) => id);
+    mockConversationStore.getConversationIds.mockImplementation((id: string) => [id]);
     vi.useFakeTimers();
     wssHandlers = {};
     lastWssConstructorArgs = undefined;
@@ -976,6 +984,33 @@ describe("GatewayServer", () => {
   // =========================================================================
 
   describe("routeRequest - major types", () => {
+    it("routes sharing settings through the unified engine and rejects invalid switches", async () => {
+      const { connect, sendMessage, engineManager } = createTestHarness();
+      const ws = connect();
+      await sendMessage(ws, { type: GatewayRequestType.ENGINE_SHARING_GET, requestId: "get", payload: { engineType: "codex-desktop" } });
+      await sendMessage(ws, { type: GatewayRequestType.ENGINE_SHARING_SET, requestId: "set", payload: { engineType: "codex-desktop", enabled: true } });
+      expect(engineManager.getSessionSharing).toHaveBeenCalledExactlyOnceWith("codex");
+      expect(engineManager.setSessionSharing).toHaveBeenCalledExactlyOnceWith("codex", true);
+      for (const enabled of ["true", 1, null, undefined]) {
+        await sendMessage(ws, { type: GatewayRequestType.ENGINE_SHARING_SET, requestId: "invalid", payload: { engineType: "codex", enabled } });
+        expect(JSON.parse(ws.send.mock.calls.at(-1)![0]).error.code).toBe("INVALID_PARAMS");
+      }
+      expect(engineManager.setSessionSharing).toHaveBeenCalledTimes(1);
+    });
+
+    it("canonicalizes saved bindings before routing while preserving alias deletion", async () => {
+      const { connect, sendMessage, engineManager } = createTestHarness();
+      mockConversationStore.resolveConversationId.mockImplementation((id) => id === "old-conv" ? "canonical-conv" : id);
+      const ws = connect();
+      await sendMessage(ws, { type: GatewayRequestType.MESSAGE_SEND, requestId: "send", payload: { sessionId: "old-conv", content: [] } });
+      await sendMessage(ws, { type: GatewayRequestType.PENDING_LIST, requestId: "pending", payload: { sessionId: "old-conv" } });
+      await sendMessage(ws, { type: GatewayRequestType.SESSION_DELETE, requestId: "delete", payload: { sessionId: "old-conv" } });
+      await sendMessage(ws, { type: GatewayRequestType.SESSION_CREATE, requestId: "create", payload: { engineType: "codex-desktop", directory: "/cwd", projectId: "catalog:codex-desktop:source:project" } });
+      expect(engineManager.sendMessage.mock.calls[0][0]).toBe("canonical-conv");
+      expect(engineManager.getPending).toHaveBeenCalledWith("canonical-conv");
+      expect(engineManager.deleteSession).toHaveBeenCalledExactlyOnceWith("old-conv");
+      expect(engineManager.createSession).toHaveBeenCalledExactlyOnceWith("codex", "/cwd", undefined, "catalog:codex:source:project");
+    });
     it("ENGINE_LIST delegates to engineManager.listEngines", async () => {
       const { connect, sendMessage, engineManager } = createTestHarness();
       const ws = connect();
@@ -1385,7 +1420,7 @@ describe("GatewayServer", () => {
       const { connect, sendMessage, engineManager } = createTestHarness();
       const ws = connect();
       await sendMessage(ws, { type: GatewayRequestType.SESSION_CREATE, requestId: "create", payload: { engineType: "codex-desktop", directory: "/cwd", projectId } });
-      expect(engineManager.createSession).toHaveBeenCalledExactlyOnceWith("codex-desktop", "/cwd", undefined, projectId);
+      expect(engineManager.createSession).toHaveBeenCalledExactlyOnceWith("codex", "/cwd", undefined, projectId);
     });
 
     it.each([
@@ -1865,6 +1900,28 @@ describe("GatewayServer", () => {
   // =========================================================================
 
   describe("broadcast", () => {
+    it("adds alias metadata once without changing canonical or native interaction identities", () => {
+      const { connect, engineManager } = createTestHarness();
+      mockConversationStore.getConversationIds.mockImplementation((id) => id === "canonical" ? [id, "old-cli", "old-desktop"] : [id]);
+      const ws = connect();
+      engineManager.emit("message.updated", { sessionId: "canonical", message: { id: "native-message", sessionId: "canonical", parts: [] } });
+      engineManager.emit("question.replied", { sessionId: "canonical", questionId: "native-question", answers: [["Yes"]] });
+      engineManager.emit("permission.replied", { sessionId: "canonical", permissionId: "native-permission", optionId: "allow_once" });
+      const payloads = ws.send.mock.calls.map(([raw]) => JSON.parse(raw).payload);
+      expect(payloads).toHaveLength(3);
+      expect(payloads.every((payload) => payload.sessionId === "canonical")).toBe(true);
+      expect(payloads.map((payload) => payload.conversationAliases)).toEqual(Array(3).fill(["old-cli", "old-desktop"]));
+      expect(payloads[0].message.id).toBe("native-message");
+      expect(payloads[1].questionId).toBe("native-question");
+      expect(payloads[2].permissionId).toBe("native-permission");
+    });
+
+    it("retains removal aliases after the conversation was removed from storage", () => {
+      const { connect, engineManager } = createTestHarness();
+      const ws = connect();
+      engineManager.emit("session.removed", { sessionId: "canonical", conversationAliases: ["old-conv"], title: "Excluded" });
+      expect(JSON.parse(ws.send.mock.calls[0][0]).payload).toEqual({ sessionId: "canonical", conversationAliases: ["old-conv"] });
+    });
     it("broadcasts only mapped removal identity to currently authorized clients", () => {
       let authorized = true;
       const { connect, engineManager } = createTestHarness({ authValidator: (token) => token === "valid" && authorized });

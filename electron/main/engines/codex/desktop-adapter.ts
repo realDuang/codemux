@@ -48,6 +48,8 @@ export interface DesktopCreatedThread {
 }
 
 export interface CodexDesktopAdapterOptions {
+  /** Backend-only identity for the unified-entry prototype. */
+  engineType?: "codex" | "codex-desktop";
   client?: CodexDesktopIpcClient;
   /** A read-only history index. Listing must not resume or execute threads. */
   listCandidates?: (limit: number) => Promise<ImportableSession[]>;
@@ -67,7 +69,7 @@ export interface CodexDesktopAdapterOptions {
 
 /** Follows IPC owners; optional service callbacks manage CodeMux-created threads. */
 export class CodexDesktopAdapter extends EngineAdapter {
-  readonly engineType = "codex-desktop";
+  readonly engineType: "codex" | "codex-desktop";
   private readonly client: CodexDesktopIpcClient;
   private readonly sessions = new Map<string, FollowedSession>();
   private readonly attaching = new Map<string, Promise<UnifiedSession>>();
@@ -85,6 +87,7 @@ export class CodexDesktopAdapter extends EngineAdapter {
 
   constructor(private readonly options: CodexDesktopAdapterOptions = {}) {
     super();
+    this.engineType = options.engineType ?? "codex-desktop";
     this.client = options.client ?? new CodexDesktopIpcClient();
     this.client.on("stream", (stream: DesktopThreadStream) => this.receive(stream));
     this.client.on("close", () => this.markUnavailable("Codex Desktop connection closed"));
@@ -136,7 +139,7 @@ export class CodexDesktopAdapter extends EngineAdapter {
   getStatus(): EngineStatus { return this.status; }
   getInfo(): EngineInfo {
     return {
-      type: this.engineType, name: "Codex Desktop (shared)", status: this.status,
+      type: this.engineType, name: this.engineType === "codex" ? "Codex" : "Codex Desktop (shared)", status: this.status,
       capabilities: this.getCapabilities(), errorMessage: this.lastError,
     };
   }
@@ -173,7 +176,7 @@ export class CodexDesktopAdapter extends EngineAdapter {
       }
     }
     for (const id of excluded) this.excludeArchivedSession(id);
-    snapshot = { ...snapshot, sessions: snapshot.sessions.filter((session) => !session.archived) };
+    snapshot = this.applyCatalogIdentity({ ...snapshot, sessions: snapshot.sessions.filter((session) => !session.archived) });
     if (this.catalogSnapshot?.sourceId !== snapshot.sourceId) this.readOwnerMisses.clear();
     else {
       const previous = new Map(this.catalogSnapshot.sessions.map((session) => [session.id, session.archived]));
@@ -195,7 +198,17 @@ export class CodexDesktopAdapter extends EngineAdapter {
 
   async getCatalog(): Promise<EngineCatalogSnapshot> {
     const snapshot = await this.catalog().getCatalog();
-    return { ...snapshot, sessions: snapshot.sessions.filter((session) => !session.archived) };
+    return this.applyCatalogIdentity({ ...snapshot, sessions: snapshot.sessions.filter((session) => !session.archived) });
+  }
+
+  private applyCatalogIdentity(snapshot: EngineCatalogSnapshot): EngineCatalogSnapshot {
+    if (!this.options.engineType) return snapshot;
+    return {
+      ...snapshot,
+      engineType: this.engineType,
+      sessions: snapshot.sessions.map((session) => ({ ...session, engineType: this.engineType })),
+      projects: snapshot.projects.map((project) => ({ ...project, ...(project.engineType ? { engineType: this.engineType } : {}) })),
+    };
   }
   async createProject(input: CatalogProjectInput): Promise<UnifiedProject> { return this.catalog(true).createProject(input); }
   async updateProject(id: string, patch: CatalogProjectPatch): Promise<UnifiedProject> { return this.catalog(true).updateProject(id, patch); }
@@ -330,6 +343,12 @@ export class CodexDesktopAdapter extends EngineAdapter {
     const snapshot = this.sessions.get(id)?.reducer.snapshot;
     if (snapshot) snapshot.session = { ...snapshot.session, engineMeta: { ...snapshot.session.engineMeta, codexDesktopOwner: "codemux" } };
   }
+
+  /** Called only after the service registers an already loaded native writer. */
+  async attachOwnedThread(id: string): Promise<UnifiedSession> {
+    this.markCodeMuxOwnedThread(id);
+    return this.attachForInput(id);
+  }
   async getSession(id: string): Promise<UnifiedSession | null> {
     if (this.archivedSessionIds.has(id)) return null;
     if (!this.sessions.has(id) && !this.storedSnapshots.has(id) && !this.options.readStoredThread) return null;
@@ -435,6 +454,7 @@ export class CodexDesktopAdapter extends EngineAdapter {
     });
     const reducer = new DesktopStateReducer();
     const snapshot = reducer.apply({ type: "snapshot", revision: 0, conversationState: state });
+    this.applyEngineIdentity(snapshot);
     snapshot.session = {
       ...snapshot.session, archived: false, activityStatus: "error",
       ...(snapshot.messages.length > 0 ? { sourceUrl: `codex://threads/${encodeURIComponent(id)}`, sourceName: "Codex" } : {}),
@@ -733,7 +753,7 @@ export class CodexDesktopAdapter extends EngineAdapter {
       if (remaining.length === definitions.length) return [question];
       if (remaining.length === 0) return [];
       return [convertCodexAsyncQuestion(snapshot.session.id, String(question.metadata?.codexTurnId), remaining,
-        "codex-desktop", String(snapshot.session.engineMeta?.desktopHostId ?? "local"))];
+        this.engineType, String(snapshot.session.engineMeta?.desktopHostId ?? "local"))];
     });
   }
 
@@ -798,6 +818,7 @@ export class CodexDesktopAdapter extends EngineAdapter {
     if (this.archivedSessionIds.has(id)) throw archivedThreadError();
     const previous = entry.reducer.snapshot;
     const snapshot = entry.reducer.apply(change);
+    this.applyEngineIdentity(snapshot);
     snapshot.session = { ...snapshot.session, archived: false };
     const catalogEntry = this.catalogSnapshot?.sessions.find((session) => session.id === id);
     if (catalogEntry) snapshot.session = {
@@ -844,6 +865,12 @@ export class CodexDesktopAdapter extends EngineAdapter {
       if (JSON.parse(key)[0] === id && !currentAsyncIds.has(key)) this.dismissedAsyncQuestionIds.delete(key);
     }
     this.notifyWatchers();
+  }
+
+  private applyEngineIdentity(snapshot: DesktopConversationSnapshot): void {
+    snapshot.session.engineType = this.engineType;
+    for (const permission of snapshot.permissions) permission.engineType = this.engineType;
+    for (const question of snapshot.questions) question.engineType = this.engineType;
   }
 
   private requireSnapshot(id: string): DesktopConversationSnapshot {

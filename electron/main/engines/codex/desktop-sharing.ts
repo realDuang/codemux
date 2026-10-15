@@ -1,4 +1,4 @@
-import type { ImportableSession, ModelListResult, EngineCatalogSnapshot, UnifiedMessage } from "../../../../src/types/unified";
+import type { ImportableSession, ModelListResult, EngineCatalogSnapshot, UnifiedMessage, UnifiedSession } from "../../../../src/types/unified";
 import { isDefaultTitle } from "../../../../src/lib/session-utils";
 import type { CodexDesktopCatalog } from "./desktop-catalog";
 import { CodexAdapter, createCodexDesktopOwnerRuntime } from "./index";
@@ -8,6 +8,8 @@ import { CodexDesktopOwner } from "./desktop-owner";
 import { verifyCodexRolloutPath } from "./desktop-rollout-path";
 
 export interface CodexDesktopSharingOptions {
+  /** Backend-only identity for the unified Codex engine. */
+  engineType?: "codex" | "codex-desktop";
   listCandidates?: (limit: number) => Promise<ImportableSession[]>;
   listModelCatalog?: () => Promise<ModelListResult>;
   /** Writes a stored title once, verifies it, and confirms the thread is unarchived. Never resumes it. */
@@ -21,6 +23,8 @@ export interface CodexDesktopSharingOptions {
   catalogManagement?: boolean;
   /** Must be dedicated to this service and never registered with EngineManager. */
   privateExecutionAdapter?: CodexAdapter;
+  /** A caller-owned runtime can keep executing after the sharing bridge detaches. */
+  stopExecutionOnStop?: boolean;
   ownerClient?: CodexDesktopIpcClient;
   followerClient?: CodexDesktopIpcClient;
   turnTimeoutMs?: number;
@@ -37,6 +41,7 @@ export interface CodexDesktopSharingOptions {
 export class CodexDesktopSharingService {
   readonly adapter: CodexDesktopAdapter;
   private readonly execution: CodexAdapter;
+  private readonly stopExecutionOnStop: boolean;
   private readonly ownerClient: CodexDesktopIpcClient;
   private readonly followerClient: CodexDesktopIpcClient;
   private readonly owner: CodexDesktopOwner;
@@ -51,6 +56,7 @@ export class CodexDesktopSharingService {
   private readonly restores = new Map<string, Promise<string>>();
   private readonly pending = new Set<Promise<unknown>>();
   private readonly acquisitions = new Map<string, Promise<{ threadId: string; owned: boolean }>>();
+  private readonly attachments = new Map<string, Promise<UnifiedSession>>();
   private readonly catalogFactory: CodexDesktopSharingOptions["catalogFactory"];
   private catalog?: CodexDesktopCatalog;
   private catalogStarting?: Promise<void>;
@@ -61,6 +67,7 @@ export class CodexDesktopSharingService {
 
   constructor(options: CodexDesktopSharingOptions = {}) {
     this.execution = options.privateExecutionAdapter ?? new CodexAdapter();
+    this.stopExecutionOnStop = options.stopExecutionOnStop !== false;
     this.ownerClient = options.ownerClient ?? new CodexDesktopIpcClient();
     const followerClient = options.followerClient ?? new CodexDesktopIpcClient();
     this.followerClient = followerClient;
@@ -75,6 +82,7 @@ export class CodexDesktopSharingService {
       onError: options.onError,
     });
     this.adapter = new CodexDesktopAdapter({
+      engineType: options.engineType,
       client: followerClient,
       turnTimeoutMs: options.turnTimeoutMs,
       syncTimeoutMs: options.syncTimeoutMs,
@@ -107,7 +115,7 @@ export class CodexDesktopSharingService {
     this.adapter.on("message.updated", this.observeCreatedUserMessage);
   }
 
-  /** Detaches external owners and stops only this service's own execution process. */
+  /** Detaches external owners; caller-owned execution may explicitly outlive sharing. */
   stop(): Promise<void> {
     if (this.stopping) return this.stopping;
     this.stopped = true;
@@ -119,9 +127,44 @@ export class CodexDesktopSharingService {
       this.owner.dispose();
       this.ownerClient.close();
       await Promise.allSettled([...this.pending]);
-      if (this.executionUsed) await this.execution.stop();
+      if (this.executionUsed && this.stopExecutionOnStop) await this.execution.stop();
     })();
     return this.stopping;
+  }
+
+  /** Publishes an existing writer without starting, resuming, or replacing it. */
+  attachExistingSession(engineSessionId: string): Promise<UnifiedSession> {
+    const pending = this.attachments.get(engineSessionId);
+    if (pending) return pending;
+    const operation = this.track(this.attachLoadedSession(engineSessionId));
+    this.attachments.set(engineSessionId, operation);
+    void operation.finally(() => { this.attachments.delete(engineSessionId); }).catch(() => {});
+    return operation;
+  }
+
+  private async attachLoadedSession(engineSessionId: string): Promise<UnifiedSession> {
+    this.assertRunning();
+    if (!this.execution.hasSession(engineSessionId)) throw new Error("Sharing requires a session already loaded in this Codex runtime.");
+    const session = await this.execution.getSession(engineSessionId);
+    const threadId = session?.engineMeta?.codexThreadId;
+    if (!session || typeof threadId !== "string" || !threadId) throw new Error("The loaded Codex session has no native thread identity.");
+    const runtime = createCodexDesktopOwnerRuntime(this.execution);
+    const metadata = await runtime.readMetadata!(engineSessionId);
+    if (metadata.id !== threadId || metadata.canAcceptDirectInput !== true) {
+      throw new Error("The loaded Codex runtime did not confirm exclusive input ownership.");
+    }
+    this.assertRunning();
+    const existing = this.ownedThreads.get(threadId);
+    if (existing && existing !== engineSessionId) throw new Error("The shared thread is already bound to another execution session.");
+    // Registration verifies the IPC owner itself; repeating discovery adds the
+    // router's full no-owner deadline before a thread can first be shared.
+    await this.owner.registerCreatedThread(engineSessionId, threadId);
+    if (this.stopped) this.owner.unregisterThread(threadId);
+    this.assertRunning();
+    this.ownedThreads.set(threadId, engineSessionId);
+    this.executionUsed = true;
+    if (existing) await this.owner.reconnect();
+    return this.adapter.attachOwnedThread(threadId);
   }
 
   private async createThread(directory: string, meta?: Record<string, unknown>): Promise<string | DesktopCreatedThread> {

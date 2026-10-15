@@ -1,10 +1,10 @@
 # Codex stream protocol and compatibility
 
-CodeMux's two Codex engines share conversation concepts, but use different wire
-protocols. The normal engine consumes public app-server events. The shared
-Desktop engine follows an execution owner's private, versioned conversation
-state. Preserve this boundary: normalize both in the adapters, then render the
-same unified message types without engine-specific frontend branches.
+CodeMux exposes one Codex engine over two wire protocols. Local execution uses
+public app-server events; Desktop sharing follows a native execution owner's
+private, versioned conversation state. The unified adapter retains one native
+thread identity and normalizes both paths before the frontend renders them.
+The legacy `codex-desktop` engine identifier remains an input compatibility alias.
 
 The implemented baseline is standalone CLI **0.162.1** and the inspected Desktop
 build below. The conversation UI plan has been implemented, including native

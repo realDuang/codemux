@@ -317,6 +317,30 @@ export const zh: LocaleDict = {
   },
 
   // Project
+  sessionSharing: {
+    title: "与 {peer} 共享会话",
+    peer: "配套应用",
+    description: "在 CodeMux 和 {peer} 中接续同一会话。消息、进度和待确认问题由当前执行端同步处理。",
+    connected: "已连接",
+    connecting: "正在连接…",
+    disabled: "共享已关闭",
+    updating: "正在更新共享设置…",
+    unavailable: "未连接",
+    unavailableHint: "在这台电脑上打开 {peer} 即可重新连接。CodeMux 执行的会话仍可继续，外部会话仍可查看历史。",
+    updateFailed: "无法更新共享设置：{message}",
+    details: "会话连接",
+    createdIn: "创建于 {origin}",
+    origin: "创建来源",
+    unknownOrigin: "来源未知",
+    executor: "当前执行端",
+    unknownExecutor: "执行端未知",
+    connection: "共享状态",
+    runtimeVersion: "运行时版本",
+    shared: "已共享",
+    notShared: "未共享",
+    sessionUnavailable: "此会话的执行端暂不可用。请在设置中重新连接共享，或打开原应用后继续。历史记录仍可查看。",
+  },
+
   catalog: {
     sessions: "同步会话",
     unavailable: "暂不可用",

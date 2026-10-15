@@ -83,6 +83,188 @@ describe("ConversationStore", () => {
     });
   });
 
+  describe("migrateCodexConversations", () => {
+    const threadId = "01a13ef6-bc2d-7030-8e3b-76c50f20d412";
+    const sourceId = "codex-desktop:local:migration-fixture";
+    const options = () => ({ sourceId, codexHome: path.join(tmpDir, "codex-home") });
+    const message = (id: string, conversationId: string, text: string, created: number): ConversationMessage => ({
+      id, role: "assistant", time: { created, completed: created + 1 },
+      parts: [{ id: `${id}:part`, messageId: id, sessionId: conversationId, type: "text", text }],
+    });
+    const reload = async () => {
+      await conversationStore.flushAll();
+      (conversationStore as any).initialized = false;
+      (conversationStore as any).index = new Map();
+      conversationStore.init();
+    };
+
+    it("consolidates one native thread while retaining legacy IDs, source metadata, and recovery files", async () => {
+      const local = conversationStore.create({ engineType: "codex", directory: "/project" });
+      conversationStore.setEngineSession(local.id, `codex_${threadId}`, { codexThreadId: threadId });
+      conversationStore.setCustomTitle(local.id, "Local title");
+      const desktop = conversationStore.create({
+        engineType: "codex-desktop", directory: "/project", catalogSourceId: sourceId,
+        projectId: makeCatalogProjectId("codex-desktop", sourceId, "native-project"),
+      });
+      conversationStore.update(desktop.id, { imported: true, engineMeta: { nativeDeleteEligible: false, desktopHostId: "local" }, archived: true });
+      conversationStore.setEngineSession(desktop.id, threadId);
+      const oldMessage = message(`msg_codex:codex_${threadId}:turn-1:assistant`, local.id, "final", 10);
+      const nativeMessage = message(`codex-desktop:v1:local:${threadId}:turn-1:item:answer`, desktop.id, "A more complete final", 10);
+      const earlierMessage = message(`msg_codex:codex_${threadId}:turn-0:assistant`, local.id, "Earlier turn", 1);
+      await conversationStore.appendMessage(local.id, earlierMessage);
+      await conversationStore.appendMessage(local.id, oldMessage);
+      await conversationStore.appendMessage(desktop.id, nativeMessage);
+      await conversationStore.saveSteps(desktop.id, nativeMessage.id, [{
+        id: "reasoning", messageId: nativeMessage.id, sessionId: desktop.id, type: "reasoning", text: "Native reasoning",
+      }]);
+
+      await conversationStore.migrateCodexConversations(options());
+      expect(conversationStore.list().map(conversation => conversation.id)).toEqual([local.id]);
+      expect(conversationStore.get(desktop.id)).toMatchObject({
+        id: local.id, engineType: "codex", engineSessionId: threadId, customTitle: "Local title", archived: true,
+        catalogSourceId: sourceId, projectId: makeCatalogProjectId("codex", sourceId, "native-project"),
+        engineMeta: { codexThreadId: threadId, nativeDeleteEligible: false, codexDesktopOwner: "codemux" },
+      });
+      expect(conversationStore.getConversationIds(local.id)).toEqual([local.id, desktop.id]);
+      expect(conversationStore.resolveConversationId(desktop.id)).toBe(local.id);
+      expect(conversationStore.findByEngineSession(`codex_${threadId}`, "codex-desktop", sourceId)?.id).toBe(local.id);
+      expect((await conversationStore.listMessages(desktop.id)).map(entry => entry.id)).toEqual([earlierMessage.id, nativeMessage.id]);
+      expect((await conversationStore.getSteps(desktop.id, nativeMessage.id))[0].sessionId).toBe(local.id);
+      expect(JSON.parse(fs.readFileSync(path.join(tmpDir, "conversations", `${desktop.id}.json`), "utf8"))).toEqual([nativeMessage]);
+      const recovery = path.join(tmpDir, "conversations", "migrations", "codex-unified-v1");
+      expect(JSON.parse(fs.readFileSync(path.join(recovery, `${local.id}.json`), "utf8"))).toEqual([earlierMessage, oldMessage]);
+
+      const diskBefore = fs.readFileSync(path.join(tmpDir, "conversations", "index.json"), "utf8");
+      await reload();
+      await conversationStore.migrateCodexConversations(options());
+      expect(fs.readFileSync(path.join(tmpDir, "conversations", "index.json"), "utf8")).toBe(diskBefore);
+      expect(conversationStore.getConversationIds(desktop.id)).toEqual([local.id, desktop.id]);
+      conversationStore.setCustomTitle(desktop.id, "Alias rename");
+      expect(conversationStore.get(local.id)?.customTitle).toBe("Alias rename");
+      await conversationStore.delete(desktop.id);
+      expect(conversationStore.get(local.id)?.engineSessionId).toBe(threadId);
+      expect(conversationStore.isConversationAlias(desktop.id)).toBe(false);
+    });
+
+    it("keeps different sources and other engines separate without enrolling historical sessions", async () => {
+      const local = conversationStore.create({ engineType: "codex", directory: "/project" });
+      conversationStore.setEngineSession(local.id, `codex_${threadId}`);
+      const otherHome = conversationStore.create({ engineType: "codex", directory: "/project" });
+      conversationStore.setEngineSession(otherHome.id, `codex_${threadId}`, { codexHome: path.join(tmpDir, "another-home") });
+      const otherSource = conversationStore.create({ engineType: "codex-desktop", directory: "/project", catalogSourceId: "remote-source" });
+      conversationStore.setEngineSession(otherSource.id, threadId);
+      const claude = conversationStore.create({ engineType: "claude", directory: "/project" });
+      conversationStore.setEngineSession(claude.id, `codex_${threadId}`, { sourceId });
+      const unchangedClaude = structuredClone(claude);
+      await conversationStore.migrateCodexConversations(options());
+      expect(conversationStore.list()).toHaveLength(4);
+      expect(conversationStore.get(local.id)?.catalogSourceId).toBeUndefined();
+      expect(conversationStore.get(otherSource.id)?.engineMeta?.codexDesktopOwner).toBeUndefined();
+      expect(conversationStore.get(claude.id)).toEqual(unchangedClaude);
+      expect(conversationStore.list({ engineType: "codex-desktop" })).toHaveLength(3);
+    });
+
+    it("preserves an observed final answer when another projection only has longer progress text", async () => {
+      const local = conversationStore.create({ engineType: "codex", directory: "/project" });
+      conversationStore.setEngineSession(local.id, `codex_${threadId}`);
+      const desktop = conversationStore.create({ engineType: "codex-desktop", directory: "/project" });
+      conversationStore.update(desktop.id, { imported: true });
+      conversationStore.setEngineSession(desktop.id, threadId);
+      const final = message(`msg_codex:codex_${threadId}:turn-1:assistant`, local.id, "Complete final answer", 1);
+      (final.parts[0] as TextPart).phase = "final";
+      const partial = message(`codex-desktop:v1:local:${threadId}:turn-1:item:progress`, desktop.id, "Long progress ".repeat(100), 1);
+      (partial.parts[0] as TextPart).phase = "commentary";
+      await conversationStore.appendMessage(local.id, final);
+      await conversationStore.appendMessage(desktop.id, partial);
+      await conversationStore.migrateCodexConversations(options());
+      expect(await conversationStore.listMessages(local.id)).toEqual([final]);
+    });
+
+    it("migrates native catalog identities and local suppression without resurrecting another projection", async () => {
+      const desktop = conversationStore.create({ engineType: "codex-desktop", directory: "/project" });
+      conversationStore.setEngineSession(desktop.id, threadId);
+      await conversationStore.removeEngineConversation(desktop.id, "local");
+      const local = conversationStore.create({ engineType: "codex", directory: "/project" });
+      conversationStore.setEngineSession(local.id, `codex_${threadId}`);
+      const remote = conversationStore.create({ engineType: "codex-desktop", directory: "/project", catalogSourceId: "remote-source" });
+      conversationStore.setEngineSession(remote.id, threadId);
+      const claudeRemoved = conversationStore.create({ engineType: "claude", directory: "/project" });
+      conversationStore.setEngineSession(claudeRemoved.id, "claude-native");
+      await conversationStore.removeEngineConversation(claudeRemoved.id, "local");
+      const claudeRetained = conversationStore.create({ engineType: "claude", directory: "/project" });
+      conversationStore.setEngineSession(claudeRetained.id, "claude-native");
+      conversationStore.upsertCatalog("codex-desktop", {
+        engineType: "codex-desktop", sourceId, revision: "1", complete: true,
+        projects: [{ id: "native-project", name: "Native project", directory: "/project", engineMeta: { nativeDeleteEligible: false } }],
+        sessions: [],
+      });
+      await conversationStore.migrateCodexConversations(options());
+      expect(conversationStore.list().map(conversation => conversation.id).sort()).toEqual([remote.id, claudeRetained.id].sort());
+      expect(conversationStore.isSessionSuppressed("codex", threadId, sourceId)).toBe(true);
+      expect(conversationStore.isSessionSuppressed("codex-desktop", `codex_${threadId}`, sourceId)).toBe(true);
+      expect(conversationStore.isSessionSuppressed("codex", threadId, "remote-source")).toBe(false);
+      expect(conversationStore.listCatalogs()[0]).toMatchObject({ engineType: "codex", sourceId });
+      expect(conversationStore.getCatalogProject(makeCatalogProjectId("codex-desktop", sourceId, "native-project"))).toMatchObject({
+        id: makeCatalogProjectId("codex", sourceId, "native-project"), engineType: "codex", catalogProjectId: "native-project",
+        engineMeta: { nativeDeleteEligible: false },
+      });
+      await reload();
+      expect(conversationStore.list().map(conversation => conversation.id).sort()).toEqual([remote.id, claudeRetained.id].sort());
+      expect(conversationStore.isSessionSuppressed("codex", threadId, sourceId)).toBe(true);
+    });
+
+    it("does not publish aliases when a duplicate history cannot be read", async () => {
+      const first = conversationStore.create({ engineType: "codex", directory: "/project" });
+      conversationStore.setEngineSession(first.id, `codex_${threadId}`);
+      const second = conversationStore.create({ engineType: "codex-desktop", directory: "/project" });
+      conversationStore.setEngineSession(second.id, threadId);
+      fs.writeFileSync(path.join(tmpDir, "conversations", `${second.id}.json`), "invalid history");
+      await expect(conversationStore.migrateCodexConversations(options())).rejects.toThrow();
+      expect(conversationStore.list()).toHaveLength(2);
+      expect(conversationStore.get(first.id)?.engineSessionId).toBe(`codex_${threadId}`);
+      expect(conversationStore.isConversationAlias(second.id)).toBe(false);
+      const saved = JSON.parse(fs.readFileSync(path.join(tmpDir, "conversations", "index.json"), "utf8"));
+      expect(saved.codexMigrationVersion).toBeUndefined();
+      const repaired = message("repaired-message", second.id, "Recovered history", 1);
+      fs.writeFileSync(path.join(tmpDir, "conversations", `${second.id}.json`), JSON.stringify([repaired]));
+      await conversationStore.migrateCodexConversations(options());
+      expect(conversationStore.list()).toHaveLength(1);
+      expect((await conversationStore.listMessages(first.id)).map(entry => entry.id)).toEqual([repaired.id]);
+    });
+
+    it("retries an interrupted projection write from its validated originals before publishing aliases", async () => {
+      const local = conversationStore.create({ engineType: "codex", directory: "/project" });
+      conversationStore.setEngineSession(local.id, `codex_${threadId}`);
+      const desktop = conversationStore.create({ engineType: "codex-desktop", directory: "/project" });
+      conversationStore.setEngineSession(desktop.id, threadId);
+      conversationStore.update(desktop.id, { imported: true });
+      const first = message("first-message", local.id, "First", 1);
+      const second = message("second-message", desktop.id, "Second", 2);
+      await conversationStore.appendMessage(local.id, first);
+      await conversationStore.appendMessage(desktop.id, second);
+      await conversationStore.flushAll();
+      const indexPath = path.join(tmpDir, "conversations", "index.json");
+      const oldIndex = fs.readFileSync(indexPath, "utf8");
+      const rename = fsp.rename.bind(fsp);
+      const spy = vi.spyOn(fsp, "rename").mockImplementation(async (from, to) => {
+        if (to === indexPath) throw new Error("Index publication unavailable");
+        await rename(from, to);
+      });
+      try {
+        await expect(conversationStore.migrateCodexConversations(options())).rejects.toThrow("Index publication unavailable");
+      } finally {
+        spy.mockRestore();
+      }
+      expect(conversationStore.list()).toHaveLength(2);
+      expect(conversationStore.isConversationAlias(desktop.id)).toBe(false);
+      expect(fs.readFileSync(indexPath, "utf8")).toBe(oldIndex);
+      await conversationStore.migrateCodexConversations(options());
+      expect(conversationStore.list()).toHaveLength(1);
+      expect((await conversationStore.listMessages(local.id)).map(entry => entry.id)).toEqual([first.id, second.id]);
+      expect(conversationStore.resolveConversationId(desktop.id)).toBe(local.id);
+    });
+  });
+
   describe("Conversation CRUD", () => {
     it("creates conversations with metadata and handles retrieval", () => {
       // create() returns a ConversationMeta with correct fields.
@@ -950,6 +1132,25 @@ describe("ConversationStore", () => {
       expect(historyBytes(manual.id)).toEqual(history);
       await restart();
       expect(conversationStore.upsertCatalog("codex-desktop", incoming).sessions[0].id).toBe(manual.id);
+      expect(historyBytes(manual.id)).toEqual(history);
+    });
+
+    it.each(["sourceId", "codexHome"] as const)("keeps an unscoped native UUID with a different %s out of the current catalog", async field => {
+      const manual = conversationStore.create({ engineType: "codex", directory: "/other/project" });
+      const metadata = { [field]: field === "sourceId" ? "other-source" : path.join(tmpDir, "other-codex-home"), localOnly: "keep" };
+      conversationStore.setEngineSession(manual.id, "01a13ef6-bc2d-7030-8e3b-76c50f20d412", metadata);
+      const history = await addHistory(manual.id);
+      const saved = structuredClone(manual);
+      const incoming = snapshot({ sessions: [nativeSession(manual.engineSessionId!, { engineType: "codex" })] });
+      const catalog = conversationStore.upsertCatalog("codex", incoming);
+
+      expect(catalog.sessions[0].id).not.toBe(manual.id);
+      expect(conversationStore.get(manual.id)).toEqual(saved);
+      expect(historyBytes(manual.id)).toEqual(history);
+      expect(conversationStore.list()).toHaveLength(2);
+      await restart();
+      expect(conversationStore.upsertCatalog("codex", incoming).sessions[0].id).toBe(catalog.sessions[0].id);
+      expect(conversationStore.get(manual.id)?.engineMeta).toEqual(metadata);
       expect(historyBytes(manual.id)).toEqual(history);
     });
 

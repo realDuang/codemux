@@ -14,12 +14,14 @@ import type { RemoteAccessController } from "./remote-access-controller";
 
 export interface ServiceRuntimeOptions {
   webMode: "static" | "dev-proxy";
+  listenHost?: string;
   webPort: number;
   gatewayPort: number;
   internalGatewayToken: string;
   ensureDefaultWorkspace: () => void;
   deviceStore: Pick<typeof deviceStore, "init">;
   conversationStore: Pick<typeof conversationStore, "init" | "flushAll">;
+  beforeEngineInitialize?: () => Promise<void>;
   engineManager: EngineManager;
   engines: ReadonlyArray<readonly [name: string, adapter: Pick<EngineAdapter, "start" | "stop">]>;
   scheduledTaskService: Pick<ScheduledTaskService, "init" | "shutdown">;
@@ -63,6 +65,7 @@ export class ServiceRuntime {
   private completionPromise: Promise<void> | undefined;
   private channelStartup: Promise<void> | undefined;
   private stopPromise: Promise<void> | undefined;
+  private initialization: Promise<void> | undefined;
 
   constructor(private options: ServiceRuntimeOptions) {}
 
@@ -74,12 +77,22 @@ export class ServiceRuntime {
     return this.stopping;
   }
 
-  initialize(): void {
-    if (this.stopping) return;
+  initialize(): Promise<void> {
+    if (this.stopping) return Promise.resolve();
+    if (this.initialization) return this.initialization;
+    this.initialization = this.initializeServices();
+    // Hosts await initialization; observe failures even if a stop arrives first.
+    void this.initialization.catch(() => {});
+    return this.initialization;
+  }
+
+  private async initializeServices(): Promise<void> {
     const services = this.options;
     services.ensureDefaultWorkspace();
     services.deviceStore.init();
     services.conversationStore.init();
+    if (services.beforeEngineInitialize) await services.beforeEngineInitialize();
+    if (this.stopping) return;
     services.engineManager.initFromStore();
     services.scheduledTaskService.init(services.engineManager);
   }
@@ -95,6 +108,8 @@ export class ServiceRuntime {
   }
 
   private async startServices(): Promise<void> {
+    if (this.initialization) await this.initialization;
+    if (this.stopping) return;
     const services = this.options;
     const { log } = services;
 
@@ -108,7 +123,9 @@ export class ServiceRuntime {
     } else {
       try {
         services.productionServer.setChannelManager(services.channelManager);
-        const port = await services.productionServer.start(services.webPort);
+        const port = await (services.listenHost === undefined
+          ? services.productionServer.start(services.webPort)
+          : services.productionServer.start(services.webPort, services.listenHost));
         if (this.stopping) return;
         services.setRemoteAccessPort(port);
         log.info(`Production server started on port ${port}`);
@@ -212,6 +229,7 @@ export class ServiceRuntime {
   }
 
   private async stopServices(pendingEngines: EngineStartup[]): Promise<void> {
+    if (this.initialization) await this.initialization.catch(() => {});
     const services = this.options;
     // Tear down native watchers and PTYs before persistence and engine shutdown.
     services.unwatchAll();
@@ -261,6 +279,7 @@ export class ServiceRuntime {
   }
 
   private async stopUpdateServices(): Promise<void> {
+    if (this.initialization) await this.initialization.catch(() => {});
     const services = this.options;
     await services.conversationStore.flushAll();
     await services.scheduledTaskService.shutdown();

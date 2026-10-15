@@ -17,6 +17,7 @@ import {
 import { gatewayLog } from "../services/logger";
 import log from "../services/logger";
 import { conversationStore } from "../services/conversation-store";
+import { canonicalCodexEngineType, canonicalCodexProjectId, canonicalCodexThreadId } from "../engines/codex/conversation-migration";
 import { scheduledTaskService } from "../services/scheduled-task-service";
 import { orchestratorService } from "../services/orchestrator-service";
 import { getTerminalService } from "../services/terminal-service";
@@ -396,7 +397,25 @@ export class GatewayServer {
     client: ClientConnection,
   ): Promise<unknown> {
     const { type, payload } = request;
-    const p = payload as any;
+    const p = payload && typeof payload === "object" ? { ...payload } as any : payload as any;
+    if (p && typeof p === "object") {
+      // Old browser tabs and IM bindings keep their saved conversation IDs.
+      // Deleting an alias detaches that binding instead of deleting its owner.
+      for (const key of ["sessionId", "conversationId"] as const) {
+        if (type !== GatewayRequestType.SESSION_DELETE && typeof p[key] === "string") {
+          p[key] = conversationStore.resolveConversationId(p[key]);
+        }
+      }
+      if (typeof p.engineType === "string") p.engineType = canonicalCodexEngineType(p.engineType);
+      if (typeof p.projectId === "string") p.projectId = canonicalCodexProjectId(p.projectId);
+      if (Array.isArray(p.projectIds)) p.projectIds = p.projectIds.map((id: unknown) => typeof id === "string" ? canonicalCodexProjectId(id) : id);
+      if (p.engineType === "codex" && Array.isArray(p.sessions)) {
+        p.sessions = p.sessions.map((session: Record<string, unknown>) => ({
+          ...session,
+          ...(typeof session.engineSessionId === "string" ? { engineSessionId: canonicalCodexThreadId(session.engineSessionId) } : {}),
+        }));
+      }
+    }
 
     switch (type) {
       // Engine
@@ -407,6 +426,13 @@ export class GatewayServer {
         return this.engineManager
           .getEngineInfo(p.engineType as EngineType)
           .capabilities;
+
+      case GatewayRequestType.ENGINE_SHARING_GET:
+        return this.engineManager.getSessionSharing(p?.engineType);
+
+      case GatewayRequestType.ENGINE_SHARING_SET:
+        if (typeof p?.enabled !== "boolean") throw invalidCatalogParams("enabled must be a boolean");
+        return this.engineManager.setSessionSharing(p.engineType, p.enabled);
 
       // Session
       case GatewayRequestType.SESSION_LIST:
@@ -826,8 +852,12 @@ export class GatewayServer {
       this.broadcast({ type: GatewayNotificationType.MESSAGE_REMOVED, payload: data });
     });
 
-    em.on("session.removed", ({ sessionId }) => {
-      this.broadcast({ type: GatewayNotificationType.SESSION_REMOVED, payload: { sessionId } });
+    em.on("session.removed", (data) => {
+      const aliases = (data as { conversationAliases?: string[] }).conversationAliases;
+      this.broadcast({ type: GatewayNotificationType.SESSION_REMOVED, payload: {
+        sessionId: data.sessionId,
+        ...(Array.isArray(aliases) ? { conversationAliases: aliases.filter((id) => typeof id === "string" && id !== data.sessionId) } : {}),
+      } });
     });
 
     em.on("session.updated", (data) => {
@@ -965,6 +995,13 @@ export class GatewayServer {
   }
 
   private broadcast(notification: GatewayNotification): void {
+    const payload = notification.payload as Record<string, any> | undefined;
+    const sessionId = payload?.sessionId ?? payload?.session?.id ?? payload?.message?.sessionId
+      ?? payload?.part?.sessionId ?? payload?.permission?.sessionId ?? payload?.question?.sessionId;
+    if (typeof sessionId === "string") {
+      const aliases = conversationStore.getConversationIds(sessionId).filter((id) => id !== sessionId);
+      if (aliases.length > 0) notification = { ...notification, payload: { ...payload, conversationAliases: aliases } };
+    }
     const msg = JSON.stringify(notification);
     for (const client of this.clients.values()) {
       if (this.isClientAuthorized(client) && client.ws.readyState === WebSocket.OPEN) {

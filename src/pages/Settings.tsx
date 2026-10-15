@@ -1,4 +1,4 @@
-import { For, Show, Switch, Match, createSignal, createMemo, createEffect, onMount } from "solid-js";
+import { For, Show, Switch, Match, createSignal, createMemo, createEffect, onMount, onCleanup } from "solid-js";
 import { useNavigate } from "@solidjs/router";
 import { LanguageSwitcher } from "../components/LanguageSwitcher";
 import { Spinner } from "../components/Spinner";
@@ -12,10 +12,10 @@ import { logger } from "../lib/logger";
 import { useAuthGuard } from "../lib/useAuthGuard";
 import { isElectron } from "../lib/platform";
 import { Auth } from "../lib/auth";
-import { configStore, saveEngineModelSelection, isEngineEnabled, setEngineEnabled } from "../stores/config";
+import { configStore, setConfigStore, saveEngineModelSelection, isEngineEnabled, setEngineEnabled } from "../stores/config";
 import { ReasoningEffortSelector } from "../components/ReasoningEffortSelector";
 import { CodexFastModeToggle } from "../components/CodexFastModeToggle";
-import { sessionStore, setSessionStore } from "../stores/session";
+import { sessionStore, setSessionStore, toSessionInfo } from "../stores/session";
 import { setScheduledTaskStore } from "../stores/scheduled-task";
 import { orchestrationStore, DEFAULT_ROLE_MAPPINGS, updateRoleMappings } from "../stores/orchestration";
 import { gateway } from "../lib/gateway-api";
@@ -45,6 +45,74 @@ export default function Settings() {
 
   // Import history modal state
   const [importModalEngine, setImportModalEngine] = createSignal<EngineType | null>(null);
+  const [sharingPending, setSharingPending] = createSignal<Partial<Record<EngineType, boolean>>>({});
+  const [sharingErrors, setSharingErrors] = createSignal<Partial<Record<EngineType, string>>>({});
+  const sharingRevisions = new Map<EngineType, number>();
+  let sharingRefreshTimer: ReturnType<typeof setTimeout> | undefined;
+  let disposed = false;
+
+  const refreshSessionSharing = async () => {
+    if (disposed) return;
+    if (document.visibilityState !== "hidden") {
+      await Promise.all(configStore.engines.filter((engine) => engine.capabilities?.sessionSharing).map(async (engine) => {
+        if (sharingPending()[engine.type]) return;
+        const revision = sharingRevisions.get(engine.type) ?? 0;
+        try {
+          const sessionSharing = await gateway.getSessionSharing(engine.type);
+          if (disposed || sharingPending()[engine.type] || revision !== (sharingRevisions.get(engine.type) ?? 0)) return;
+          setConfigStore("engines", (engines) => engines.map((current) =>
+            current.type === engine.type ? { ...current, sessionSharing } : current));
+        } catch (error) {
+          logger.debug("[Settings] Failed to refresh session sharing:", error);
+        }
+      }));
+    }
+    if (!disposed) sharingRefreshTimer = setTimeout(() => void refreshSessionSharing(), 5000);
+  };
+
+  onCleanup(() => {
+    disposed = true;
+    clearTimeout(sharingRefreshTimer);
+  });
+
+  const handleSessionSharingToggle = async (engineType: EngineType, enabled: boolean) => {
+    if (sharingPending()[engineType]) return;
+    sharingRevisions.set(engineType, (sharingRevisions.get(engineType) ?? 0) + 1);
+    setSharingPending((current) => ({ ...current, [engineType]: true }));
+    setSharingErrors((current) => ({ ...current, [engineType]: undefined }));
+    try {
+      const sessionSharing = await gateway.setSessionSharing(engineType, enabled);
+      setConfigStore("engines", (engines) => engines.map((engine) =>
+        engine.type === engineType ? { ...engine, sessionSharing } : engine));
+      // Refresh connection ownership after the host has applied the setting.
+      // Keep existing IDs and drafts, including unavailable external chats.
+      try {
+        await Promise.all([
+          gateway.listEngines().then((engines) => setConfigStore("engines", engines)),
+          gateway.listSessions(engineType).then((sessions) => {
+            setSessionStore("list", (current) => {
+              const incoming = new Map(sessions.map((session) => [session.id, session]));
+              const updated = current.map((session) => {
+                const next = incoming.get(session.id);
+                if (!next) return session;
+                incoming.delete(session.id);
+                return { ...session, ...toSessionInfo(next, session.projectID ?? undefined) };
+              });
+              return [...updated, ...[...incoming.values()].map((session) => toSessionInfo(session))];
+            });
+          }),
+        ]);
+      } catch (error) {
+        logger.debug("[Settings] Failed to refresh sessions after updating sharing:", error);
+      }
+    } catch (error) {
+      setSharingErrors((current) => ({ ...current, [engineType]: formatMessage(t().sessionSharing.updateFailed, {
+        message: error instanceof Error ? error.message : String(error),
+      }) }));
+    } finally {
+      setSharingPending((current) => ({ ...current, [engineType]: false }));
+    }
+  };
 
   // Default workspace visibility
   const [showDefaultWorkspace, setShowDefaultWorkspace] = createSignal(
@@ -117,6 +185,7 @@ export default function Settings() {
         // Keep existing fallback UI when engine bootstrap fails.
       } finally {
         setEnginesLoading(false);
+        void refreshSessionSharing();
       }
     })();
 
@@ -673,9 +742,53 @@ export default function Settings() {
                             />
                           </Show>
 
-                          {/* Codex Fast Mode toggle */}
-                          <Show when={engine.type === "codex" && showModelSelector() && isEngineEnabled(engine.type)}>
+                          {/* Fast Mode toggle */}
+                          <Show when={engine.capabilities?.fastModeSupported && showModelSelector() && isEngineEnabled(engine.type)}>
                             <CodexFastModeToggle engineType={engine.type} />
+                          </Show>
+
+                          <Show when={engine.capabilities?.sessionSharing}>
+                            <div class="mx-4 mb-4 rounded-lg border border-[var(--cm-hairline)] bg-[var(--cm-surface-2)] p-3 sm:mx-6 sm:mb-6" data-session-sharing-settings>
+                              <div class="flex items-start justify-between gap-4">
+                                <div class="min-w-0">
+                                  <h4 class="text-sm font-medium text-[var(--cm-text)]">
+                                    {formatMessage(t().sessionSharing.title, { peer: engine.sessionSharing?.peerName || t().sessionSharing.peer })}
+                                  </h4>
+                                  <p class="mt-1 text-xs leading-relaxed text-[var(--cm-text-muted)]">
+                                    {formatMessage(t().sessionSharing.description, { peer: engine.sessionSharing?.peerName || t().sessionSharing.peer })}
+                                  </p>
+                                </div>
+                                <button
+                                  type="button"
+                                  role="switch"
+                                  aria-checked={engine.sessionSharing?.enabled === true}
+                                  aria-label={formatMessage(t().sessionSharing.title, { peer: engine.sessionSharing?.peerName || t().sessionSharing.peer })}
+                                  aria-busy={sharingPending()[engine.type] === true}
+                                  disabled={sharingPending()[engine.type] || (engine.status !== "running" && !engine.sessionSharing?.enabled)}
+                                  onClick={() => void handleSessionSharingToggle(engine.type, !engine.sessionSharing?.enabled)}
+                                  class={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--cm-accent)] disabled:cursor-wait disabled:opacity-50 ${engine.sessionSharing?.enabled ? "bg-blue-600" : "bg-gray-300 dark:bg-slate-600"}`}
+                                >
+                                  <span class={`inline-block h-4 w-4 rounded-full bg-white shadow-sm transition-transform ${engine.sessionSharing?.enabled ? "translate-x-6" : "translate-x-1"}`} />
+                                </button>
+                              </div>
+                              <div class="mt-3 flex items-center gap-1.5 text-xs text-[var(--cm-text-muted)]" role="status" aria-live="polite">
+                                <span class={`h-1.5 w-1.5 shrink-0 rounded-full ${engine.sessionSharing?.status === "connected" ? "bg-emerald-500" : engine.sessionSharing?.enabled ? "bg-amber-500" : "bg-[var(--cm-text-faint)]"}`} />
+                                <Switch fallback={t().sessionSharing.disabled}>
+                                  <Match when={sharingPending()[engine.type]}>{t().sessionSharing.updating}</Match>
+                                  <Match when={engine.sessionSharing?.status === "connected"}>{t().sessionSharing.connected}</Match>
+                                  <Match when={engine.sessionSharing?.status === "connecting"}>{t().sessionSharing.connecting}</Match>
+                                  <Match when={engine.sessionSharing?.status === "unavailable"}>{t().sessionSharing.unavailable}</Match>
+                                </Switch>
+                              </div>
+                              <Show when={engine.sessionSharing?.enabled && engine.sessionSharing?.status === "unavailable"}>
+                                <p class="mt-1.5 text-xs leading-relaxed text-[var(--cm-text-muted)]">
+                                  {formatMessage(t().sessionSharing.unavailableHint, { peer: engine.sessionSharing?.peerName || t().sessionSharing.peer })}
+                                </p>
+                              </Show>
+                              <Show when={sharingErrors()[engine.type] || engine.sessionSharing?.error}>
+                                {(error) => <p role="alert" class="mt-2 break-words text-xs text-red-600 dark:text-red-400">{error()}</p>}
+                              </Show>
+                            </div>
                           </Show>
 
                           {/* Import History button - only for running + enabled engines */}

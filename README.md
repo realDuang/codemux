@@ -31,13 +31,13 @@ Switch between engines from a single interface. Each keeps its full power — fi
 | **[OpenCode](https://opencode.ai)** | HTTP REST + SSE | ✅ Stable |
 | **[GitHub Copilot CLI](https://docs.github.com/en/copilot/concepts/agents/about-copilot-cli)** | JSON-RPC/stdio | ✅ Stable |
 | **[Claude Code](https://claude.ai/code)** | SDK (stdio) | ✅ Stable |
-| **[Codex](https://github.com/openai/codex)** | JSON-RPC/stdio (app-server) | ⚠️ Experimental |
+| **[Codex](https://github.com/openai/codex)** | JSON-RPC/stdio (app-server), optional local Desktop IPC | ⚠️ Experimental |
 
 > 💡 CodeMux is also the **first — and currently only — open-source GUI for GitHub Copilot CLI**, connecting at the protocol level (JSON-RPC over stdio) to deliver Copilot's complete agentic coding experience in a visual interface.
 >
 > ⚠️ Codex support is currently experimental/unstable. Expect protocol details and behavior to evolve as the upstream app-server protocol changes.
 
-An opt-in local integration automatically discovers new Codex Desktop conversations and shares their live state through its private coordination protocol. Older conversations can be attached manually. See [shared Codex Desktop conversations](docs/codex-desktop-sharing.md) for setup, live checks, and current limits.
+Codex has one engine entry for independent execution and optional Desktop sharing. Enable **Settings → Engines → Codex → Share chats with Codex Desktop** to discover eligible native conversations and exchange input with their current execution owner. Existing CodeMux conversations join sharing without replacing their writer, and older Desktop conversations can be imported manually. Conversation details show the known creation origin and current execution client. See [unified Codex sharing](docs/codex-desktop-sharing.md) for migration, live checks, and runtime compatibility limits.
 
 ### 2. Agent Chain-of-Thought Visualization
 

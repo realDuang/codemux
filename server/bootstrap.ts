@@ -89,7 +89,8 @@ export async function startServer(): Promise<void> {
     ownership = await ownershipPromise;
     if (stopping) return;
     host = createServiceHost(serverRuntimeRole.webMode);
-    host.runtime.initialize();
+    await host.runtime.initialize();
+    if (stopping) return;
     const services = host;
     controlStartup = startHostControlServer({
       dataPath: ownership.dataPath,

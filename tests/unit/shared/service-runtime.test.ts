@@ -75,6 +75,21 @@ function createFixture(webMode: ServiceRuntimeOptions["webMode"] = "dev-proxy") 
 
 describe("ServiceRuntime", () => {
   describe("initialize", () => {
+    it("waits for migration before routing and shutdown releases persistence only afterward", async () => {
+      const { options, events } = createFixture();
+      const migration = deferred();
+      const runtime = new ServiceRuntime({ ...options, beforeEngineInitialize: () => migration.promise });
+      const initializing = runtime.initialize();
+      expect(events).toEqual(["workspace:init", "devices:init", "conversations:init"]);
+      const stopping = runtime.stop();
+      expect(options.conversationStore.flushAll).not.toHaveBeenCalled();
+      migration.resolve();
+      await initializing;
+      await stopping;
+      expect(options.engineManager.initFromStore).not.toHaveBeenCalled();
+      expect(options.conversationStore.flushAll).toHaveBeenCalledOnce();
+    });
+
     it("initializes persistence and routing before the scheduler without starting services", () => {
       const { runtime, options, events } = createFixture();
       expect(events).toEqual([]);

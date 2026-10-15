@@ -93,6 +93,7 @@ export interface GatewayNotificationHandlers {
   onPartUpdated?: (sessionId: string, part: UnifiedPart) => void;
   onPartsBatch?: (sessionId: string, messageId: string, parts: UnifiedPart[]) => void;
   onMessageUpdated?: (sessionId: string, message: UnifiedMessage) => void;
+  onMessagesUpdated?: (messages: UnifiedMessage[]) => void;
   onMessageRemoved?: (sessionId: string, messageId: string) => void;
   onSessionRemoved?: (sessionId: string) => void;
   onSessionUpdated?: (session: UnifiedSession) => void;
@@ -312,6 +313,18 @@ class GatewayAPI {
       this.handlers.onMessageUpdated?.(data.sessionId, data.message);
     });
 
+    this.bind("message.updated.batch", ({ messages }) => {
+      const retained = messages.filter(({ sessionId }) => !this.removedSessionIds.has(sessionId));
+      for (const { sessionId, message } of retained) {
+        this.recordSnapshotUpdate(sessionId, { type: "message", message });
+      }
+      if (this.handlers.onMessagesUpdated) {
+        if (retained.length > 0) this.handlers.onMessagesUpdated(retained.map(({ message }) => message));
+      } else {
+        for (const { sessionId, message } of retained) this.handlers.onMessageUpdated?.(sessionId, message);
+      }
+    });
+
     this.bind("message.removed", (data) => {
       if (this.removedSessionIds.has(data.sessionId)) return;
       this.recordSnapshotUpdate(data.sessionId, { type: "removed", messageId: data.messageId });
@@ -516,6 +529,9 @@ class GatewayAPI {
   async listMessages(sessionId: string): Promise<UnifiedMessage[]> {
     const revision = this.activityRevision;
     if (this.removedSessionIds.has(sessionId)) return [];
+    const queued = gatewayClient.waitForQueuedNotifications();
+    if (queued) await queued;
+    if (this.snapshotWasRemoved(sessionId, revision)) return [];
     const session = sessionStore.list.find((item) => item.id === sessionId);
     const authoritative = hasAuthoritativeSessionState(session?.engineType);
 

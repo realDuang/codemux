@@ -3,15 +3,88 @@ import { reconcile } from "solid-js/store";
 import {
   isExpanded,
   messageStore,
+  invalidateMessageSteps,
+  replaceFetchedMessageSteps,
   replaceMessageParts,
+  replaceMessageProjection,
   setExpanded,
   setMessageStore,
   toggleExpanded,
 } from "../../../../src/stores/message";
-import type { ReasoningPart, TextPart } from "../../../../src/types/unified";
+import type { ReasoningPart, TextPart, ToolPart, UnifiedMessage } from "../../../../src/types/unified";
 
 const textPart = (id: string, text: string): TextPart => ({
   id, messageId: "reply", sessionId: "shared-session", type: "text", text,
+});
+
+describe("replaceMessageProjection", () => {
+  const tool = (id: string, output: string): ToolPart => ({
+    id, messageId: "reply", sessionId: "shared-session", type: "tool",
+    callId: id, originalTool: "read", normalizedTool: "read", title: "Read", kind: "read",
+    state: { status: "completed", input: {}, output, time: { start: 1, end: 2, duration: 1 } },
+  });
+  const projection = (stepCount: number): UnifiedMessage => ({
+    id: "reply", sessionId: "shared-session", role: "assistant", time: { created: 1, completed: 2 },
+    stepCount, parts: [textPart("answer", "Final answer")],
+  });
+
+  beforeEach(() => {
+    setMessageStore("part", reconcile({}));
+    setMessageStore("stepsLoaded", reconcile({}));
+    setMessageStore("stepsVersion", reconcile({}));
+  });
+
+  it("keeps loaded steps visible while refreshing a lightweight projection, then replaces the step partition", () => {
+    replaceMessageParts("reply", [tool("old", "Original"), tool("removed", "Obsolete")]);
+    setMessageStore("stepsLoaded", "reply", true);
+
+    replaceMessageProjection(projection(1));
+    expect(messageStore.part.reply.map((part) => part.id)).toEqual(["answer", "old", "removed"]);
+    expect(messageStore.stepsLoaded.reply).toBe(false);
+    const version = messageStore.stepsVersion.reply;
+
+    expect(replaceFetchedMessageSteps("reply", [tool("old", "Corrected")], version)).toBe("applied");
+    expect(messageStore.part.reply).toEqual([textPart("answer", "Final answer"), tool("old", "Corrected")]);
+    expect(messageStore.stepsLoaded.reply).toBe(true);
+  });
+
+  it("clears removed native steps immediately and rejects an older lazy response", () => {
+    replaceMessageParts("reply", [tool("removed", "Old")]);
+    replaceMessageProjection(projection(1));
+    const oldVersion = messageStore.stepsVersion.reply;
+
+    replaceMessageProjection(projection(0));
+
+    expect(messageStore.part.reply).toEqual([textPart("answer", "Final answer")]);
+    expect(messageStore.stepsLoaded.reply).toBe(true);
+    expect(replaceFetchedMessageSteps("reply", [tool("removed", "Old")], oldVersion)).toBe("superseded");
+    expect(messageStore.part.reply).toEqual([textPart("answer", "Final answer")]);
+  });
+
+  it("retries an obsolete lazy response only when a newer projection still needs its steps", () => {
+    replaceMessageProjection(projection(1));
+    const version = messageStore.stepsVersion.reply;
+    replaceMessageProjection(projection(2));
+
+    expect(replaceFetchedMessageSteps("reply", [tool("old", "Stale")], version)).toBe("retry");
+    expect(messageStore.stepsLoaded.reply).toBe(false);
+    expect(messageStore.part.reply).toEqual([textPart("answer", "Final answer")]);
+  });
+
+  it("does not overwrite a newer ordinary-engine step notification with an in-flight lazy response", () => {
+    replaceMessageParts("reply", [tool("tool", "Before request")]);
+    const version = messageStore.stepsVersion.reply ?? 0;
+    replaceMessageParts("reply", [tool("tool", "Live result"), textPart("answer", "Live answer")]);
+    invalidateMessageSteps("reply");
+    setMessageStore("stepsLoaded", "reply", true);
+
+    expect(replaceFetchedMessageSteps("reply", [tool("tool", "Stale persisted result")], version)).toBe("superseded");
+    expect(messageStore.stepsLoaded.reply).toBe(true);
+    expect(messageStore.part.reply).toEqual([textPart("answer", "Live answer"), tool("tool", "Live result")]);
+    const current = messageStore.stepsVersion.reply;
+    expect(replaceFetchedMessageSteps("reply", [tool("tool", "Live result")], current)).toBe("applied");
+    expect(messageStore.part.reply).toEqual([textPart("answer", "Live answer"), tool("tool", "Live result")]);
+  });
 });
 
 describe("replaceMessageParts", () => {

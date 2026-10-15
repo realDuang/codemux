@@ -19,6 +19,7 @@ const mockGatewayClient = {
   sendMessage: vi.fn().mockResolvedValue({ id: 'm1' }),
   cancelMessage: vi.fn().mockResolvedValue(undefined),
   listMessages: vi.fn().mockResolvedValue([]),
+  waitForQueuedNotifications: vi.fn(),
   getMessageSteps: vi.fn().mockResolvedValue([]),
   setModel: vi.fn().mockResolvedValue(undefined),
   setMode: vi.fn().mockResolvedValue(undefined),
@@ -865,6 +866,94 @@ describe('GatewayAPI', () => {
   });
 
   describe('listMessages', () => {
+    it('drains notifications received before loading without replaying them over the fresh snapshot', async () => {
+      const onMessageUpdated = vi.fn();
+      await gateway.init({ onMessageUpdated });
+      const drained = deferred<void>();
+      mockGatewayClient.waitForQueuedNotifications.mockReturnValueOnce(drained.promise);
+      const fresh = { ...message('m1', 's1', [part('p1', 'fresh snapshot')]), time: { created: 1, completed: 10 } };
+      mockGatewayClient.listMessages.mockResolvedValueOnce([fresh]);
+      const loading = gateway.listMessages('s1');
+
+      expect(mockGatewayClient.waitForQueuedNotifications).toHaveBeenCalledOnce();
+      expect(mockGatewayClient.listMessages).not.toHaveBeenCalled();
+      const old = message('m1', 's1', [part('p1', 'already received')]);
+      emit('message.updated', { sessionId: 's1', message: old });
+      expect(onMessageUpdated).toHaveBeenCalledExactlyOnceWith('s1', old);
+      drained.resolve();
+
+      expect(await loading).toEqual([fresh]);
+      expect(mockGatewayClient.listMessages).toHaveBeenCalledExactlyOnceWith('s1');
+    });
+
+    it('records every message batch entry in pending snapshots while dispatching one batch callback', async () => {
+      const onMessagesUpdated = vi.fn();
+      const onMessageUpdated = vi.fn();
+      await gateway.init({ onMessagesUpdated, onMessageUpdated });
+      const first = deferred<UnifiedMessage[]>();
+      const second = deferred<UnifiedMessage[]>();
+      mockGatewayClient.listMessages.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
+      const firstLoad = gateway.listMessages('s1');
+      const secondLoad = gateway.listMessages('s2');
+      const complete = { ...message('m1', 's1', [part('p1', 'live')]), time: { created: 1, completed: 10 } };
+      const added = { ...message('new'), time: { created: 2 } };
+      const other = message('other', 's2');
+
+      emit('message.updated.batch', { messages: [
+        { sessionId: 's1', message: complete },
+        { sessionId: 's1', message: added },
+        { sessionId: 's2', message: other },
+      ] });
+      emit('message.part.updated', { sessionId: 's1', part: part('p1', 'latest') });
+      first.resolve([message('m1', 's1', [part('p1', 'stale'), part('disk-only', 'retained')])]);
+      second.resolve([]);
+
+      expect(await firstLoad).toEqual([
+        { ...complete, parts: [part('p1', 'latest'), part('disk-only', 'retained')] },
+        added,
+      ]);
+      expect(await secondLoad).toEqual([other]);
+      expect(onMessagesUpdated).toHaveBeenCalledExactlyOnceWith([complete, added, other]);
+      expect(onMessageUpdated).not.toHaveBeenCalled();
+    });
+
+    it('falls back to one existing callback per batch entry without a batch handler', async () => {
+      const onMessageUpdated = vi.fn();
+      await gateway.init({ onMessageUpdated });
+      const first = message('m1');
+      const second = message('m2', 's2');
+
+      emit('message.updated.batch', { messages: [
+        { sessionId: 's1', message: first }, { sessionId: 's2', message: second },
+      ] });
+
+      expect(onMessageUpdated.mock.calls).toEqual([['s1', first], ['s2', second]]);
+    });
+
+    it('filters removed sessions from batches and resumes delivery only after explicit restoration', async () => {
+      const onMessagesUpdated = vi.fn();
+      await gateway.init({ onMessagesUpdated });
+      const pending = deferred<UnifiedMessage[]>();
+      mockGatewayClient.listMessages.mockReturnValueOnce(pending.promise);
+      const loading = gateway.listMessages('s1');
+      emit('session.removed', { sessionId: 's1' });
+      const stale = message('stale');
+      const retained = message('retained', 's2');
+      emit('message.updated.batch', { messages: [
+        { sessionId: 's1', message: stale }, { sessionId: 's2', message: retained },
+      ] });
+      emit('message.updated.batch', { messages: [{ sessionId: 's1', message: stale }] });
+      pending.resolve([message('cached')]);
+
+      expect(await loading).toEqual([]);
+      expect(onMessagesUpdated).toHaveBeenCalledExactlyOnceWith([retained]);
+      emit('session.created', { session: sharedSession('idle') });
+      const restored = message('restored');
+      emit('message.updated.batch', { messages: [{ sessionId: 's1', message: restored }] });
+      expect(onMessagesUpdated).toHaveBeenLastCalledWith([restored]);
+      expect(onMessagesUpdated).toHaveBeenCalledTimes(2);
+    });
+
     it('merges live part batches and message completion into an older snapshot', async () => {
       const onPartsBatch = vi.fn();
       await gateway.init({ onPartsBatch });

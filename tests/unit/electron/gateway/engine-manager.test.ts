@@ -23,6 +23,7 @@ vi.mock("../../../../electron/main/services/conversation-store", () => {
     listMessages: vi.fn(() => Promise.resolve([])),
     appendMessage: vi.fn(),
     updateMessage: vi.fn(),
+    upsertMessageSnapshots: vi.fn(async () => {}),
     removeMessage: vi.fn(),
     replaceMessageSnapshot: vi.fn(async () => {}),
     getSteps: vi.fn(() => Promise.resolve([])),
@@ -1603,6 +1604,7 @@ describe("EngineManager", () => {
     });
 
     afterEach(() => {
+      vi.mocked(conversationStore.upsertMessageSnapshots).mockReset();
       vi.mocked(conversationStore.ensureMessage).mockReset();
       vi.mocked(conversationStore.updateMessage).mockReset();
       vi.mocked(conversationStore.removeMessage).mockReset();
@@ -1704,13 +1706,9 @@ describe("EngineManager", () => {
     });
 
     it("upserts repeated user events from another client under their original ID", async () => {
-      const persisted: ConversationMessage[] = [];
-      vi.mocked(conversationStore.ensureMessage).mockImplementation(async (_id, message) => {
-        if (!persisted.some((item) => item.id === message.id)) persisted.push(message);
-      });
-      vi.mocked(conversationStore.updateMessage).mockImplementation(async (_id, messageId, patch) => {
-        const message = persisted.find((item) => item.id === messageId);
-        if (message) Object.assign(message, patch);
+      const persisted = new Map<string, UnifiedMessage>();
+      vi.mocked(conversationStore.upsertMessageSnapshots).mockImplementation(async (_id, messages) => {
+        for (const message of messages) persisted.set(message.id, message);
       });
       const message = makeExternalMessage("user", "Sent from the desktop");
       const onMessage = vi.fn();
@@ -1720,8 +1718,9 @@ describe("EngineManager", () => {
       adapterA.emit("message.updated", { sessionId: externalSessionId, message });
       await new Promise((resolve) => setTimeout(resolve, 0));
 
-      expect(persisted).toHaveLength(1);
-      expect(persisted[0]).toMatchObject({ id: message.id, role: "user", parts: [{ sessionId: conv.id, text: "Sent from the desktop" }] });
+      expect(persisted.size).toBe(1);
+      expect(persisted.get(message.id)).toMatchObject({ id: message.id, role: "user", parts: [{ sessionId: conv.id, text: "Sent from the desktop" }] });
+      expect(conversationStore.upsertMessageSnapshots).toHaveBeenCalledOnce();
       expect(conversationStore.appendMessage).not.toHaveBeenCalled();
       expect(onMessage).toHaveBeenCalledWith({
         sessionId: conv.id,
@@ -1791,12 +1790,12 @@ describe("EngineManager", () => {
       expect(conversationStore.removeMessage).toHaveBeenCalledWith(conv.id, message.id);
     });
 
-    it.each(["ensureMessage", "updateMessage", "saveSteps"] as const)(
+    it.each(["upsertMessageSnapshots"] as const)(
       "waits for an update paused at %s before removing its message and steps",
       async (pausedMethod) => {
         const message = { ...makeExternalMessage("assistant", "Completed"), time: { created: 1000, completed: 2000 } };
         message.parts.push({ id: "reasoning-removed", type: "reasoning", sessionId: externalSessionId, messageId: message.id, text: "Checked" });
-        const persisted = new Map<string, ConversationMessage>();
+        const persisted = new Map<string, UnifiedMessage>();
         const savedSteps = new Map<string, unknown[]>();
         const operations: string[] = [];
         let release!: () => void;
@@ -1810,18 +1809,12 @@ describe("EngineManager", () => {
             await pause;
           }
         };
-        vi.mocked(conversationStore.ensureMessage).mockImplementation(async (_id, value) => {
-          await beforeWrite("ensureMessage");
-          if (!persisted.has(value.id)) persisted.set(value.id, value);
-        });
-        vi.mocked(conversationStore.updateMessage).mockImplementation(async (_id, messageId, patch) => {
-          await beforeWrite("updateMessage");
-          const value = persisted.get(messageId);
-          if (value) Object.assign(value, patch);
-        });
-        vi.mocked(conversationStore.saveSteps).mockImplementation(async (_id, messageId, steps) => {
-          await beforeWrite("saveSteps");
-          savedSteps.set(messageId, steps);
+        vi.mocked(conversationStore.upsertMessageSnapshots).mockImplementation(async (_id, messages) => {
+          await beforeWrite("upsertMessageSnapshots");
+          for (const value of messages) {
+            persisted.set(value.id, value);
+            savedSteps.set(value.id, value.parts.filter((part) => part.type !== "text" && part.type !== "file"));
+          }
         });
         vi.mocked(conversationStore.removeMessage).mockImplementation(async (_id, messageId) => {
           operations.push("removeMessage");
@@ -1837,7 +1830,7 @@ describe("EngineManager", () => {
         release();
         await waitForMirror();
 
-        expect(operations).toEqual(["ensureMessage", "updateMessage", "saveSteps", "removeMessage"]);
+        expect(operations).toEqual(["upsertMessageSnapshots", "removeMessage"]);
         expect(persisted.size).toBe(0);
         expect(savedSteps.size).toBe(0);
       },
@@ -1845,7 +1838,7 @@ describe("EngineManager", () => {
 
     it("keeps a later update after a pending removal in external event order", async () => {
       const message = makeExternalMessage("user", "Restored by the owner");
-      const persisted = new Map<string, ConversationMessage>();
+      const persisted = new Map<string, UnifiedMessage>();
       let release!: () => void;
       let started!: () => void;
       const pause = new Promise<void>((resolve) => { release = resolve; });
@@ -1855,20 +1848,20 @@ describe("EngineManager", () => {
         await pause;
         persisted.delete(messageId);
       });
-      vi.mocked(conversationStore.ensureMessage).mockImplementation(async (_id, value) => {
-        persisted.set(value.id, value);
+      vi.mocked(conversationStore.upsertMessageSnapshots).mockImplementation(async (_id, messages) => {
+        for (const value of messages) persisted.set(value.id, value);
       });
 
       adapterA.emit("message.removed", { sessionId: externalSessionId, messageId: message.id });
       await removing;
       adapterA.emit("message.updated", { sessionId: externalSessionId, message });
       await Promise.resolve();
-      expect(conversationStore.ensureMessage).not.toHaveBeenCalled();
+      expect(conversationStore.upsertMessageSnapshots).not.toHaveBeenCalled();
       release();
       await waitForMirror();
 
       expect(persisted.get(message.id)).toMatchObject({ parts: [{ text: "Restored by the owner" }] });
-      expect(conversationStore.updateMessage).toHaveBeenCalledWith(conv.id, message.id, expect.objectContaining({ id: message.id }));
+      expect(conversationStore.upsertMessageSnapshots).toHaveBeenCalledWith(conv.id, [expect.objectContaining({ id: message.id })]);
     });
 
     it("continues processing mirror events after a removal fails", async () => {
@@ -1880,8 +1873,7 @@ describe("EngineManager", () => {
       await waitForMirror();
 
       expect(engineManagerLog.error).toHaveBeenCalledWith(expect.stringContaining("Failed to mirror message changes"), expect.any(Error));
-      expect(conversationStore.ensureMessage).toHaveBeenCalledWith(conv.id, expect.objectContaining({ id: message.id }));
-      expect(conversationStore.updateMessage).toHaveBeenCalledWith(conv.id, message.id, expect.objectContaining({ id: message.id }));
+      expect(conversationStore.upsertMessageSnapshots).toHaveBeenCalledWith(conv.id, [expect.objectContaining({ id: message.id })]);
       expect(persistenceState().authoritativeMessageWrites.size).toBe(0);
     });
 
@@ -1914,7 +1906,8 @@ describe("EngineManager", () => {
       adapterA.listMessages.mockResolvedValue([{ ...message, time: { created: 1000, completed: 2000 } }]);
       const restored = await reconnectedManager.listMessages(conv.id);
       expect(restored[0].time.completed).toBe(2000);
-      expect(restored[0].parts).toHaveLength(2);
+      expect(restored[0].parts).toHaveLength(1);
+      expect(restored[0].stepCount).toBe(1);
     });
 
     it("loads current step parts directly from the external snapshot", async () => {
@@ -2821,7 +2814,7 @@ describe("EngineManager", () => {
       vi.mocked(conversationStore.findByEngineSession).mockReturnValue(conv);
       let releaseSnapshot = () => {};
       let releaseRemoval = () => {};
-      vi.mocked(conversationStore.ensureMessage).mockReturnValueOnce(new Promise<void>((resolve) => {
+      vi.mocked(conversationStore.upsertMessageSnapshots).mockReturnValueOnce(new Promise<void>((resolve) => {
         releaseSnapshot = resolve;
       }));
       vi.mocked(conversationStore.removeMessage).mockReturnValueOnce(new Promise<void>((resolve) => {
@@ -2843,16 +2836,14 @@ describe("EngineManager", () => {
       const onFlushed = vi.fn();
       const flushing = engineManager.flushPendingState().then(onFlushed);
       await vi.advanceTimersByTimeAsync(0);
-      expect(conversationStore.ensureMessage).toHaveBeenCalledWith(conv.id, expect.objectContaining({ id: message.id }));
+      expect(conversationStore.upsertMessageSnapshots).toHaveBeenCalledWith(conv.id, [expect.objectContaining({
+        id: message.id, parts: message.parts.map((part) => ({ ...part, sessionId: conv.id })),
+      })]);
       expect(conversationStore.removeMessage).not.toHaveBeenCalled();
       expect(onFlushed).not.toHaveBeenCalled();
 
       releaseSnapshot();
       await vi.advanceTimersByTimeAsync(0);
-      expect(conversationStore.updateMessage).toHaveBeenCalledWith(conv.id, message.id, expect.objectContaining({
-        parts: [{ ...message.parts[0], sessionId: conv.id }],
-      }));
-      expect(conversationStore.saveSteps).toHaveBeenCalledWith(conv.id, message.id, [{ ...message.parts[1], sessionId: conv.id }]);
       expect(conversationStore.removeMessage).toHaveBeenCalledWith(conv.id, message.id);
       expect(onFlushed).not.toHaveBeenCalled();
 

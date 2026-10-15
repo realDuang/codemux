@@ -71,6 +71,8 @@ export interface GatewayClientEvents {
   "message.part.updated": (data: { sessionId: string; part: UnifiedPart }) => void;
   "message.parts.batch": (data: { sessionId: string; messageId: string; parts: UnifiedPart[] }) => void;
   "message.updated": (data: { sessionId: string; message: UnifiedMessage }) => void;
+  /** Local delivery optimization; the wire protocol remains message.updated. */
+  "message.updated.batch": (data: { messages: Array<{ sessionId: string; message: UnifiedMessage }> }) => void;
   "message.removed": (data: { sessionId: string; messageId: string }) => void;
   "session.removed": (data: { sessionId: string }) => void;
   "session.updated": (data: { session: UnifiedSession }) => void;
@@ -108,6 +110,7 @@ export interface GatewayClientEvents {
 // --- Pending request tracking ---
 
 interface PendingRequest {
+  requestType: string;
   resolve: (payload: any) => void;
   reject: (err: Error) => void;
   timer?: ReturnType<typeof setTimeout>;
@@ -117,6 +120,11 @@ interface PendingRequest {
 
 const DEFAULT_TIMEOUT = 120_000; // 2 min for long-running requests like message.send
 const RECONNECT_DELAYS = [500, 1000, 2000, 5000]; // Backoff sequence
+const NOTIFICATION_FRAME_BUDGET_MS = 8;
+const MAX_NOTIFICATIONS_PER_FRAME = 128;
+const MAX_MESSAGE_BATCH_SIZE = 16;
+const MAX_PART_BATCH_SIZE = 64;
+const MESSAGE_SNAPSHOT_BARRIER = "internal.message.snapshot";
 
 type EventHandler = (...args: any[]) => void;
 
@@ -382,14 +390,14 @@ export class GatewayClient {
       // Response to a request
       const resp = msg as GatewayResponse;
       const pending = this.pending.get(resp.requestId);
-      if (pending) {
-        this.pending.delete(resp.requestId);
+      if (pending?.requestType === GatewayRequestType.MESSAGE_LIST && this.notificationQueue.length > 0) {
+        // Older buffered notifications must be delivered before the snapshot;
+        // otherwise frame slicing could replay stale history over newer data.
         if (pending.timer) clearTimeout(pending.timer);
-        if (resp.error) {
-          pending.reject(new Error(`${resp.error.code}: ${resp.error.message}`));
-        } else {
-          pending.resolve(resp.payload);
-        }
+        this.notificationQueue.push({ type: MESSAGE_SNAPSHOT_BARRIER, payload: () => this.resolveResponse(resp) });
+        this.scheduleNotificationFlush();
+      } else {
+        this.resolveResponse(resp);
       }
     } else {
       // Push notification — batch high-frequency events to prevent event loop starvation
@@ -406,9 +414,27 @@ export class GatewayClient {
     }
   }
 
+  private resolveResponse(response: GatewayResponse): void {
+    const pending = this.pending.get(response.requestId);
+    if (!pending) return;
+    this.pending.delete(response.requestId);
+    if (pending.timer) clearTimeout(pending.timer);
+    if (response.error) pending.reject(new Error(`${response.error.code}: ${response.error.message}`));
+    else pending.resolve(response.payload);
+  }
+
   /** Drop buffered output that predates a session removal or restoration. */
   discardSessionNotifications(sessionId: string): void {
     this.notificationQueue = this.notificationQueue.filter((item) => item.payload?.sessionId !== sessionId);
+  }
+
+  /** Fence only the already received prefix, so a continuous stream cannot starve history reads. */
+  waitForQueuedNotifications(): Promise<void> | undefined {
+    if (this.notificationQueue.length === 0) return undefined;
+    return new Promise((resolve) => {
+      this.notificationQueue.push({ type: MESSAGE_SNAPSHOT_BARRIER, payload: resolve });
+      this.scheduleNotificationFlush();
+    });
   }
 
   // --- RPC helper ---
@@ -429,7 +455,7 @@ export class GatewayClient {
         }, timeout);
       }
 
-      this.pending.set(requestId, { resolve, reject, timer });
+      this.pending.set(requestId, { requestType: type, resolve, reject, timer });
 
       const msg: GatewayRequest = { type, requestId, payload };
       try {
@@ -476,8 +502,17 @@ export class GatewayClient {
 
     const flush = () => {
       this.notificationFlushScheduled = false;
-      const batch = this.notificationQueue;
+      const queued = this.notificationQueue;
       this.notificationQueue = [];
+      if (queued[0]?.type === MESSAGE_SNAPSHOT_BARRIER) {
+        queued[0].payload();
+        this.notificationQueue = queued.slice(1);
+        if (this.notificationQueue.length > 0) this.scheduleNotificationFlush();
+        return;
+      }
+      const barrier = queued.findIndex((item) => item.type === MESSAGE_SNAPSHOT_BARRIER);
+      const batch = barrier < 0 ? queued : queued.slice(0, barrier);
+      const following = barrier < 0 ? [] : queued.slice(barrier);
 
       // Deduplicate message.part.updated: keep only the latest update per part ID.
       // A removal invalidates earlier message and part updates in this frame.
@@ -516,34 +551,54 @@ export class GatewayClient {
         }
       }
 
-      // Emit non-part notifications first (message.updated may signal completion)
-      for (const notification of nonPartNotifications) {
-        if (supersededMessages.has(notification)) continue;
-        this.emit(notification.type as keyof GatewayClientEvents, notification.payload as any);
+      // Preserve existing completion-before-part ordering, grouping parts by
+      // session and message without exposing synthetic batches on the wire.
+      const byMessage = new Map<string, Array<{ type: string; payload: any }>>();
+      for (const notification of dedupedParts.values()) {
+        const key = messageKey(notification.payload.sessionId, notification.payload.part.messageId);
+        const group = byMessage.get(key) ?? [];
+        group.push(notification);
+        byMessage.set(key, group);
       }
-
-      // Group deduped parts by messageId. When multiple distinct parts arrive
-      // in one frame (e.g. tool-heavy streaming), emit them as a single batch
-      // so the handler can merge them in one store mutation instead of N.
-      const byMessage = new Map<string, { sessionId: string; parts: any[] }>();
-      for (const { payload } of dedupedParts.values()) {
-        const messageId = payload.part.messageId;
-        let group = byMessage.get(messageId);
-        if (!group) {
-          group = { sessionId: payload.sessionId, parts: [] };
-          byMessage.set(messageId, group);
-        }
-        group.parts.push(payload.part);
-      }
-
-      for (const [messageId, { sessionId, parts }] of byMessage) {
-        if (parts.length === 1) {
-          // Single part per message: emit as-is (common case for text streaming)
-          this.emit("message.part.updated", { sessionId, part: parts[0] } as any);
+      const pending = [
+        ...nonPartNotifications.filter((notification) => !supersededMessages.has(notification)),
+        ...[...byMessage.values()].flat(),
+      ];
+      const started = performance.now();
+      let index = 0;
+      while (index < pending.length) {
+        const notification = pending[index];
+        if (notification.type === "message.updated" && this.listeners.get("message.updated.batch")?.size) {
+          const messages: Array<{ sessionId: string; message: UnifiedMessage }> = [];
+          while (index < pending.length && pending[index].type === "message.updated"
+            && messages.length < MAX_MESSAGE_BATCH_SIZE && index < MAX_NOTIFICATIONS_PER_FRAME) {
+            messages.push(pending[index++].payload);
+          }
+          this.emit("message.updated.batch", { messages });
+        } else if (notification.type === "message.part.updated") {
+          const { sessionId, part } = notification.payload;
+          const parts: UnifiedPart[] = [];
+          while (index < pending.length && pending[index].type === "message.part.updated"
+            && pending[index].payload.sessionId === sessionId
+            && pending[index].payload.part.messageId === part.messageId
+            && parts.length < MAX_PART_BATCH_SIZE && index < MAX_NOTIFICATIONS_PER_FRAME) {
+            parts.push(pending[index++].payload.part);
+          }
+          if (parts.length === 1) this.emit("message.part.updated", { sessionId, part: parts[0] });
+          else this.emit("message.parts.batch", { sessionId, messageId: part.messageId, parts });
         } else {
-          // Multiple parts per message: emit batch to avoid N separate store updates
-          this.emit("message.parts.batch", { sessionId, messageId, parts } as any);
+          index++;
+          this.emit(notification.type as keyof GatewayClientEvents, notification.payload as any);
         }
+        // A single animation frame must not consume an entire restored history.
+        // Both limits matter: fast callbacks and coarse clocks still yield.
+        if (index >= MAX_NOTIFICATIONS_PER_FRAME || performance.now() - started >= NOTIFICATION_FRAME_BUDGET_MS) break;
+      }
+      if (index < pending.length || following.length > 0) {
+        // Keep raw notifications so removals and newer part snapshots can still
+        // invalidate queued work before the next frame publishes it.
+        this.notificationQueue = [...pending.slice(index), ...following, ...this.notificationQueue];
+        this.scheduleNotificationFlush();
       }
     };
 

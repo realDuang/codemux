@@ -11,7 +11,7 @@
   line-height: 1.4;
 
   :global(.dark) & {
-    background-color: #0b1120;
+    background-color: var(--cm-code-bg);
     border-color: rgba(71, 85, 105, 0.3);
   }
 }

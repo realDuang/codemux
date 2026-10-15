@@ -9,20 +9,37 @@
   min-width: 0;
   max-width: 100%;
 }
+/* Compact (per-segment) activity uses the same rail as .stepsContent, so every
+   engine reads the same way: activity hangs on a rail, prose sits on the canvas.
+   No display rule here: the element relies on [hidden] while steps are deferred. */
+.compactStep {
+  min-width: 0;
+  margin-left: 0.5rem;
+  padding: 0.125rem 0 0.125rem 0.875rem;
+  border-left: 1px solid var(--conversation-rail, var(--sl-color-border));
+}
+/* Adjacent steps share one continuous rail across the turn's flex gap. */
+.compactStep + .compactStep {
+  margin-top: -0.875rem;
+  padding-top: calc(0.125rem + 0.875rem);
+}
+.compactStep:has([data-working]) {
+  border-image: linear-gradient(to bottom, var(--cm-accent), var(--cm-accent-2) 60%, var(--conversation-rail)) 1;
+}
 
-.sessionTurn[data-compact-activities] .compactStandalone :global([data-component="reasoning"] [data-slot="title"]) {
+.sessionTurn .compactStandalone :global([data-component="reasoning"] [data-slot="title"]) {
   gap: 0.375rem;
 }
 
-.sessionTurn[data-compact-activities] :global([data-slot="markdown"] ul) {
+.sessionTurn :global([data-slot="markdown"] ul) {
   list-style-type: disc;
 }
 
-.sessionTurn[data-compact-activities] :global([data-slot="markdown"] ol) {
+.sessionTurn :global([data-slot="markdown"] ol) {
   list-style-type: decimal;
 }
 
-.sessionTurn[data-compact-activities] :global([data-slot="markdown"] li:has(> input[type="checkbox"])) {
+.sessionTurn :global([data-slot="markdown"] li:has(> input[type="checkbox"])) {
   list-style-type: none;
 }
 .userMessage {
@@ -32,8 +49,10 @@
   margin: 0 0 0.5rem auto;
   max-width: min(85%, 38rem);
   padding: 0.75rem 1rem;
-  border-radius: 1rem;
+  border: 1px solid var(--cm-hairline);
+  border-radius: 1rem 1rem 0.3rem 1rem;
   background: var(--conversation-surface, var(--sl-color-bg-alt));
+  box-shadow: var(--cm-shadow-sm);
   color: var(--conversation-text, var(--sl-color-text));
   overflow-wrap: anywhere;
 }
@@ -43,6 +62,7 @@
   min-width: 0;
 }
 .stepsTriggerButton {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 0.5rem;
@@ -94,7 +114,9 @@
   color: var(--conversation-subtle, var(--sl-color-text-secondary));
 }
 .duration {
-  font-size: 0.75rem;
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
+  letter-spacing: -0.01em;
   font-variant-numeric: tabular-nums;
 }
 .modelIcon, .arrow {
@@ -132,7 +154,7 @@
   min-width: 0;
   margin: 0.25rem 0 0.5rem 0.5rem;
   padding: 0.25rem 0 0.25rem 0.875rem;
-  border-left: 1px solid var(--conversation-border, var(--sl-color-border));
+  border-left: 1px solid var(--conversation-rail, var(--sl-color-border));
 }
 .assistantMessageParts, .permissionPrompts {
   display: flex;
@@ -168,29 +190,52 @@
   color: inherit;
 }
 .workingDot {
+  position: relative;
   width: 6px;
   height: 6px;
   flex-shrink: 0;
   border-radius: 50%;
+  color: var(--cm-accent-2);
   background: currentColor;
+  box-shadow: 0 0 8px currentColor;
+}
+.workingDot[data-phase="reasoning"] {
+  color: oklch(0.68 0.2 292);
+}
+.workingDot::after {
+  content: "";
+  position: absolute;
+  inset: -3px;
+  border-radius: inherit;
+  background: currentColor;
+  opacity: 0.35;
+  animation: cm-ping 1.6s cubic-bezier(0, 0, 0.2, 1) infinite;
 }
 .activityAttention {
-  font-size: 0.75rem;
-  color: var(--sl-color-red-high);
   flex-shrink: 0;
+  padding: 0 0.375rem;
+  border-radius: 0.3125rem;
+  font-family: var(--font-mono);
+  font-size: 0.65625rem;
+  line-height: 1.125rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--sl-color-red-high);
+  background: color-mix(in oklch, var(--cm-danger) 12%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--cm-danger) 28%, transparent);
 }
 .errorBanner {
   display: flex;
   flex-direction: column;
   gap: 0.5rem;
   padding: 0.75rem;
-  border: 1px solid var(--sl-color-red-high);
+  border: 1px solid color-mix(in oklch, var(--cm-danger) 35%, transparent);
   border-radius: var(--conversation-radius, 0.75rem);
-  background: var(--sl-color-red-low);
+  background: color-mix(in oklch, var(--cm-danger) 6%, transparent);
 }
 .errorBanner[data-variant="cancelled"] {
-  border-color: var(--sl-color-orange-high);
-  background: var(--sl-color-orange-low);
+  border-color: color-mix(in oklch, var(--cm-warning) 40%, transparent);
+  background: color-mix(in oklch, var(--cm-warning) 7%, transparent);
 }
 .errorBannerHeader {
   display: flex;
@@ -205,8 +250,11 @@
   color: var(--sl-color-red-high);
 }
 .errorBannerTitle {
-  font-size: 0.8125rem;
-  font-weight: 600;
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
   margin: 0;
   color: var(--sl-color-red-high);
 }
@@ -225,9 +273,9 @@
   margin-left: auto;
   padding: 0.375rem 0.625rem;
   min-height: 2rem;
-  border: 1px solid currentColor;
+  border: 1px solid color-mix(in oklch, currentColor 40%, transparent);
   border-radius: 0.5rem;
-  background: transparent;
+  background: color-mix(in oklch, currentColor 8%, transparent);
   color: var(--sl-color-orange-high);
   font-size: 0.75rem;
   cursor: pointer;
@@ -239,7 +287,7 @@
   .userMessage {
     max-width: 92%;
     padding: 0.625rem 0.875rem;
-  } .stepsContent {
+  } .stepsContent, .compactStep {
     margin-left: 0.25rem;
     padding-left: 0.625rem;
   }
@@ -253,4 +301,35 @@
   .arrow, .stepsTriggerButton {
     transition: none;
   }
+  .workingDot::after, .stepsTriggerButton[data-working]::after {
+    animation: none;
+  }
+}
+
+/* ─── Graphite: live state ─── */
+/* A working turn/segment gets an accent hairline that sweeps along its base,
+   and the activity rail below it lights up with the signature gradient. */
+.stepsTriggerButton[data-working] {
+  color: var(--conversation-text, var(--sl-color-text));
+}
+.stepsTriggerButton[data-working]::after {
+  content: "";
+  position: absolute;
+  left: 0.5rem;
+  right: 0.5rem;
+  bottom: 0;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--cm-accent), var(--cm-accent-2), transparent);
+  background-size: 40% 100%;
+  background-repeat: no-repeat;
+  animation: steps-sweep 1.6s linear infinite;
+  pointer-events: none;
+}
+.stepsTrigger:has(> [data-working]) + .stepsContent,
+.stepsTrigger:has(> [data-working]) + * > .stepsContent {
+  border-image: linear-gradient(to bottom, var(--cm-accent), var(--cm-accent-2) 60%, var(--conversation-rail)) 1;
+}
+@keyframes steps-sweep {
+  0% { background-position: -40% 0; }
+  100% { background-position: 140% 0; }
 }

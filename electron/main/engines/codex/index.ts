@@ -725,7 +725,6 @@ export class CodexAdapter extends EngineAdapter {
 
   getCapabilities(): EngineCapabilities {
     return {
-      compactActivityGroups: true,
       reasoningEffortOptions: ["low", "medium", "high", "max", "ultra"],
       providerModelHierarchy: false,
       dynamicModes: true,

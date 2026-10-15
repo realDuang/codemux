@@ -75,10 +75,10 @@ export function TerminalSettingsSection() {
 
   return (
     <section id="section-terminal">
-      <h2 class="text-sm font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-4 px-1">
+      <h2 class="cm-eyebrow !text-[11px] mb-3 px-1">
         {t().terminal.settingsSectionTitle}
       </h2>
-      <div class="bg-white dark:bg-slate-800 rounded-xl shadow-xs border border-gray-200 dark:border-slate-700 overflow-visible">
+      <div class="bg-[var(--cm-surface)] dark:bg-white/[0.025] rounded-xl border border-[var(--cm-hairline-strong)] shadow-[var(--cm-shadow-sm)] overflow-visible">
         <p class="px-4 sm:px-6 pt-4 sm:pt-6 text-sm text-gray-500 dark:text-gray-400">
           {t().terminal.settingsSectionDesc}
         </p>

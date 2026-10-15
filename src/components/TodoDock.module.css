@@ -4,7 +4,7 @@
 
 .root {
   position: relative;
-  border-radius: 10px;
+  border-radius: 12px;
   border: 1px solid rgba(99, 102, 241, 0.2);
   background: linear-gradient(
     135deg,

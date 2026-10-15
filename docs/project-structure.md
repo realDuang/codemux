@@ -87,7 +87,7 @@
 │   │   ├── HideProjectModal.tsx  # Hide project dialog
 │   │   ├── FeishuConfigModal.tsx # Feishu channel config dialog
 │   │   ├── ChannelManagementSettings.tsx # Browser-accessible channel management section
-│   │   ├── ContextGroup.tsx     # Context group display
+│   │   ├── ToolActivityGroup.tsx # Collapsible tool-activity group (all engines)
 │   │   ├── InputAreaPermission.tsx  # Permission request in input area
 │   │   ├── InputAreaQuestion.tsx    # Question prompt in input area
 │   │   ├── TodoDock.tsx         # Todo dock component

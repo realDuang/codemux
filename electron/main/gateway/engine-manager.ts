@@ -41,6 +41,7 @@ import type {
   CatalogProjectPatch,
 } from "../../../src/types/unified";
 import { REASONING_EFFORT_VALUES } from "../../../src/types/unified";
+import { normalizeMessageToolDisplay, normalizeToolPartDisplay } from "../engines/tool-display";
 
 // --- Helpers ---
 
@@ -1752,7 +1753,7 @@ export class EngineManager extends EventEmitter {
         if (!conversationStore.get(sessionId)) return [];
         const normalized = messages.map((message) => ({
           ...message, sessionId,
-          parts: message.parts.map((part) => ({ ...part, sessionId })),
+          parts: message.parts.map((part) => normalizeToolPartDisplay({ ...part, sessionId }, conv.directory)),
           stepCount: message.parts.filter((part) => !this.isContentPart(part)).length,
         }));
         await conversationStore.replaceMessageSnapshot(sessionId, normalized);
@@ -1780,7 +1781,8 @@ export class EngineManager extends EventEmitter {
         time: msg.time,
         enqueuedAt: msg.enqueuedAt,
         processedAt: msg.processedAt,
-        parts: scopeMirror ? msg.parts.map((part) => this.mirrorPart(sessionId, msg.id, part)) : msg.parts as UnifiedPart[],
+        parts: (scopeMirror ? msg.parts.map((part) => this.mirrorPart(sessionId, msg.id, part)) : msg.parts as UnifiedPart[])
+          .map((part) => normalizeToolPartDisplay(part, conv.directory)),
         stepCount,
         tokens: msg.tokens,
         cost: msg.cost,
@@ -1805,7 +1807,9 @@ export class EngineManager extends EventEmitter {
     if (messageId.startsWith(mirrorPrefix)) {
       const storedId = decodeURIComponent(messageId.slice(mirrorPrefix.length));
       const parts = await conversationStore.getSteps(sessionId, storedId);
-      return conversationStore.get(sessionId) ? parts.map((part) => this.mirrorPart(sessionId, storedId, part)) : [];
+      return conversationStore.get(sessionId)
+        ? parts.map((part) => normalizeToolPartDisplay(this.mirrorPart(sessionId, storedId, part), conv.directory))
+        : [];
     }
     if (conv?.engineSessionId && conv.catalogAvailable !== false && adapter?.getCapabilities().authoritativeSessionState) {
       const messages = await this.listMessages(sessionId);
@@ -1814,7 +1818,32 @@ export class EngineManager extends EventEmitter {
         .map((part) => ({ ...part, sessionId }));
     }
     const parts = await conversationStore.getSteps(sessionId, messageId);
-    return conversationStore.get(sessionId) ? parts : [];
+    return conversationStore.get(sessionId) ? parts.map((part) => normalizeToolPartDisplay(part, conv.directory)) : [];
+  }
+
+  /**
+   * Single egress for client-facing message events: tool parts leave with the
+   * same engine-agnostic display fields whichever adapter produced them.
+   * Buffers and persistence keep the raw adapter parts.
+   */
+  override emit(event: string | symbol, ...args: any[]): boolean {
+    const payload = args[0];
+    if ((event === "message.part.updated" || event === "message.updated") && payload && typeof payload === "object") {
+      const dir = this.conversationDirectory(payload.sessionId);
+      if (event === "message.part.updated" && payload.part) {
+        const part = normalizeToolPartDisplay(payload.part, dir);
+        if (part !== payload.part) args = [{ ...payload, part }, ...args.slice(1)];
+      } else if (event === "message.updated" && payload.message) {
+        const message = normalizeMessageToolDisplay(payload.message, dir);
+        if (message !== payload.message) args = [{ ...payload, message }, ...args.slice(1)];
+      }
+    }
+    return super.emit(event, ...args);
+  }
+
+  /** Session directory used to show tool paths relative to the project. */
+  private conversationDirectory(conversationId: string | null | undefined): string | undefined {
+    return conversationId ? conversationStore.get(conversationId)?.directory : undefined;
   }
 
   private mirrorMessageId(conversationId: string, messageId: string): string {

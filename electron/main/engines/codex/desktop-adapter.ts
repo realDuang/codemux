@@ -142,7 +142,6 @@ export class CodexDesktopAdapter extends EngineAdapter {
   }
   getCapabilities(): EngineCapabilities {
     return {
-      compactActivityGroups: true,
       reasoningEffortOptions: ["low", "medium", "high", "max", "ultra"],
       sessionCatalog: !!this.options.catalog,
       catalogManagement: this.options.catalog?.managementAvailable === true,

@@ -27,8 +27,6 @@ export interface EngineInfo {
 }
 
 export interface EngineCapabilities {
-  /** Keep activity segments independently collapsed between assistant responses. */
-  compactActivityGroups?: boolean;
   /** Session messages and activity are owned by a connected external client. */
   authoritativeSessionState?: boolean;
   /** Dismissing a blocking question interrupts the current turn. */
@@ -460,8 +458,13 @@ export type NormalizedToolName =
   | "unknown";
 
 /** Display-only actions within one tool invocation; execution identity stays on ToolPart. */
+/**
+ * One compact activity row. Adapters may set these from native data; the
+ * gateway derives them from canonical tool input for every other engine
+ * (see electron/main/engines/tool-display.ts).
+ */
 export interface ToolDisplayAction {
-  kind: "skill" | "read" | "search" | "list" | "shell";
+  kind: "skill" | "read" | "search" | "list" | "shell" | "edit" | "web";
   label?: string;
   path?: string;
   query?: string;

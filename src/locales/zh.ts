@@ -397,6 +397,10 @@ export const zh: LocaleDict = {
     listing: "正在列出 {target}",
     ranCommand: "已运行 {target}",
     runningCommand: "正在运行 {target}",
+    editedFile: "已编辑 {target}",
+    editingFile: "正在编辑 {target}",
+    fetched: "已获取 {target}",
+    fetching: "正在获取 {target}",
     separator: "，",
   },
   parts: {

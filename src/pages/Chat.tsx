@@ -12,7 +12,6 @@ import {
   untrack,
 } from "solid-js";
 import { Auth } from "../lib/auth";
-import { publicAssetUrl } from "../lib/public-assets";
 import { useNavigate } from "@solidjs/router";
 import { gateway, gatewayConnected, getAuthoritativeSessionActivity, hasAuthoritativeSessionState } from "../lib/gateway-api";
 import { gatewayClient } from "../lib/gateway-client";
@@ -77,7 +76,9 @@ import { useI18n, formatMessage } from "../lib/i18n";
 import { notify } from "../lib/notifications";
 import { isDefaultTitle } from "../lib/session-utils";
 import { formatTokenCount, formatCostWithUnit, getEngineBadge } from "../components/share/common";
+import { EmptyHero } from "../components/EmptyHero";
 import { getSetting, saveSetting, bootstrapHostSettings } from "../lib/settings";
+import { BrandMark } from "../components/BrandMark";
 import { refreshThemeFromSettings } from "../lib/theme";
 import { refreshLocaleFromSettings } from "../lib/i18n";
 import { saveScrollPosition, deleteScrollPosition, resolveRemountScroll, resolveSessionSwitchScroll } from "../lib/scroll-position";
@@ -2921,25 +2922,22 @@ export default function Chat() {
   });
 
   return (
-    <div class="flex flex-col h-screen bg-gray-50/50 dark:bg-slate-950 font-sans text-gray-900 dark:text-gray-100 overflow-hidden relative">
+    <div class="flex flex-col h-screen bg-[var(--cm-canvas)] font-sans text-gray-900 dark:text-gray-100 overflow-hidden relative">
 
       {/* Unified Titlebar — 40px, spans full width */}
       <div
-        class="w-full flex-shrink-0 flex items-center px-2 border-b border-gray-200 dark:border-slate-800 bg-gray-50 dark:bg-slate-950 electron-drag-region electron-titlebar-pad-left electron-titlebar-pad-right"
+        class="w-full flex-shrink-0 flex items-center px-2.5 border-b border-[var(--cm-hairline)] bg-[var(--cm-canvas)] electron-drag-region electron-titlebar-pad-left electron-titlebar-pad-right"
         style={{ height: "var(--electron-title-bar-height, 40px)", "min-height": "var(--electron-title-bar-height, 40px)" }}
       >
         {/* Brand: Logo + App name (CSS order moves it right on macOS) */}
-        <div class="flex items-center gap-1.5 electron-no-drag flex-shrink-0 titlebar-brand">
-          <img src={publicAssetUrl("logo.png")} alt="CodeMux" class="w-5 h-5 rounded" />
-          <span class="hidden sm:inline text-[11px] font-semibold tracking-wide text-gray-500 dark:text-gray-400 bg-gray-100 dark:bg-slate-800 px-2 py-0.5 rounded-md border border-gray-200 dark:border-slate-700 select-none">CodeMux</span>
-        </div>
+        <BrandMark />
 
         {/* Left: Sidebar toggles */}
         <div class="flex items-center gap-1 electron-no-drag flex-shrink-0">
           {/* Mobile sidebar toggle */}
           <button
             onClick={toggleSidebar}
-            class="md:hidden p-2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-slate-800 rounded-md transition-colors min-w-[36px] min-h-[36px] flex items-center justify-center"
+            class="md:hidden p-2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-900/5 dark:hover:bg-white/5 rounded-md transition-colors min-w-[36px] min-h-[36px] flex items-center justify-center"
           >
             <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" x2="20" y1="12" y2="12" /><line x1="4" x2="20" y1="6" y2="6" /><line x1="4" x2="20" y1="18" y2="18" /></svg>
           </button>
@@ -2947,7 +2945,7 @@ export default function Chat() {
           {/* Desktop sidebar collapse/expand toggle */}
           <button
             onClick={toggleSidebarCollapse}
-            class="hidden md:inline-flex p-1.5 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-slate-800 rounded-md transition-colors"
+            class="hidden md:inline-flex p-1.5 text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:bg-gray-900/5 dark:hover:bg-white/5 rounded-md transition-colors"
             title={isSidebarCollapsed() ? t().sidebar.expandSidebar : t().sidebar.collapseSidebar}
           >
             <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -2984,26 +2982,27 @@ export default function Chat() {
                 </>
               )}
             </Show>
-            <h1 class="text-[13px] font-medium text-gray-600 dark:text-gray-400 truncate electron-no-drag">
+            <h1 class="text-[13px] font-medium tracking-tight text-gray-800 dark:text-gray-200 truncate electron-no-drag">
               {getDisplayTitle(currentSessionTitle())}
             </h1>
-            <span class={`shrink-0 px-1.5 py-0.5 text-[10px] font-medium rounded-full electron-no-drag ${currentEngineBadge().class}`}>
+            <span class={`shrink-0 px-1.5 py-[1px] text-[10px] font-medium rounded-md electron-no-drag ${currentEngineBadge().class}`}>
               {currentEngineBadge().label}
             </span>
-            <span class={`shrink-0 px-1.5 py-0.5 text-[10px] font-medium rounded-full electron-no-drag ${
+            <span class={`cm-mono shrink-0 inline-flex items-center gap-1 px-1.5 py-[1px] text-[10px] font-medium rounded-md ring-1 ring-inset electron-no-drag ${
               (() => {
                 const id = currentAgent().id;
                 if (id === "plan")
-                  return "bg-cyan-100 text-cyan-700 dark:bg-cyan-900/30 dark:text-cyan-400";
+                  return "bg-cyan-500/10 text-cyan-700 ring-cyan-500/25 dark:text-cyan-300";
                 if (id === "autopilot" || id === "bypassPermissions")
-                  return "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400";
+                  return "bg-emerald-500/10 text-emerald-700 ring-emerald-500/25 dark:text-emerald-300";
                 if (id === "acceptEdits")
-                  return "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400";
+                  return "bg-amber-500/10 text-amber-700 ring-amber-500/25 dark:text-amber-300";
                 if (id === "auto")
-                  return "bg-violet-100 text-violet-700 dark:bg-violet-900/30 dark:text-violet-400";
-                return "bg-indigo-100 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-400";
+                  return "bg-violet-500/10 text-violet-700 ring-violet-500/25 dark:text-violet-300";
+                return "bg-indigo-500/10 text-indigo-700 ring-indigo-500/25 dark:text-indigo-300";
               })()
             }`}>
+              <span class="w-1 h-1 rounded-full bg-current opacity-80" />
               {currentAgent().label}
             </span>
           </Show>
@@ -3016,8 +3015,8 @@ export default function Chat() {
               onClick={handleToggleTerminal}
               class={`hidden md:inline-flex p-1.5 rounded-md transition-colors ${
                 terminalOpenForCurrent()
-                  ? "bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400"
-                  : "text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-slate-800"
+                  ? "bg-blue-500/10 text-blue-600 dark:text-blue-300 ring-1 ring-inset ring-blue-500/25"
+                  : "text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:bg-gray-900/5 dark:hover:bg-white/5"
               }`}
               title={t().terminal.togglePanel}
             >
@@ -3032,8 +3031,8 @@ export default function Chat() {
               onClick={togglePanel}
               class={`hidden md:inline-flex p-1.5 rounded-md transition-colors ${
                 fileStore.panelOpen
-                  ? "bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400"
-                  : "text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-slate-800"
+                  ? "bg-blue-500/10 text-blue-600 dark:text-blue-300 ring-1 ring-inset ring-blue-500/25"
+                  : "text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:bg-gray-900/5 dark:hover:bg-white/5"
               }`}
               title={t().fileExplorer.togglePanel}
             >
@@ -3046,9 +3045,9 @@ export default function Chat() {
           </Show>
 
           <Show when={!wsConnected()}>
-            <div class="flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-red-50 dark:bg-red-900/20">
-              <span class="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" />
-              <span class="text-[10px] font-medium text-red-600 dark:text-red-400">{t().chat.disconnected}</span>
+            <div class="flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-red-500/10 ring-1 ring-inset ring-red-500/25">
+              <span class="cm-live-dot text-red-500" />
+              <span class="cm-mono text-[10px] font-medium text-red-600 dark:text-red-400">{t().chat.disconnected}</span>
             </div>
           </Show>
         </div>
@@ -3059,7 +3058,7 @@ export default function Chat() {
       {/* Mobile Sidebar Overlay */}
       <Show when={isMobile() && isSidebarOpen()}>
         <div
-          class="absolute inset-0 bg-black/50 z-20 backdrop-blur-xs"
+          class="absolute inset-0 bg-black/40 backdrop-blur-sm z-20 backdrop-blur-xs"
           onClick={toggleSidebar}
         />
       </Show>
@@ -3067,7 +3066,7 @@ export default function Chat() {
       {/* Sidebar - Desktop: Static, Mobile: Drawer */}
       <aside
         class={`
-          fixed md:static inset-y-0 left-0 z-30 ${isSidebarCollapsed() ? "md:w-14" : "w-72"} bg-gray-50 dark:bg-slate-950 border-r border-gray-200 dark:border-slate-800 transform transition-[width,transform] duration-300 ease-in-out flex flex-col justify-between
+          fixed md:static inset-y-0 left-0 z-30 ${isSidebarCollapsed() ? "md:w-14" : "w-72"} bg-[var(--cm-canvas)] border-r border-[var(--cm-hairline)] transform transition-[width,transform] duration-300 ease-in-out flex flex-col justify-between
           ${isSidebarOpen() ? "translate-x-0 w-72" : "-translate-x-full md:translate-x-0"}
         `}
       >
@@ -3121,7 +3120,7 @@ export default function Chat() {
             />
           </Show>
           <Show when={refreshingSessions()}>
-            <div class="absolute inset-0 bg-gray-50/60 dark:bg-slate-950/60 backdrop-blur-[1px] z-10 flex items-center justify-center transition-opacity">
+            <div class="absolute inset-0 bg-[var(--cm-canvas)]/60 backdrop-blur-[1px] z-10 flex items-center justify-center transition-opacity">
               <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="animate-spin text-gray-400 dark:text-gray-500">
                 <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8" />
                 <path d="M21 3v5h-5" />
@@ -3133,14 +3132,14 @@ export default function Chat() {
         </div>
 
         {/* User Actions Footer in Sidebar */}
-        <div class={`${isSidebarCollapsed() && !isMobile() ? "px-1 py-2" : "p-3"} border-t border-gray-200 dark:border-slate-800 space-y-1 bg-gray-50 dark:bg-slate-950`}>
+        <div class={`${isSidebarCollapsed() && !isMobile() ? "px-1 py-2" : "p-2"} border-t border-[var(--cm-hairline)] space-y-0.5 bg-[var(--cm-canvas)]`}>
           <Show when={isLocalAccess()}>
             <button
               onClick={() => navigate("/")}
-              class={`w-full flex items-center ${isSidebarCollapsed() && !isMobile() ? "justify-center p-2" : "gap-3 px-3 py-2"} text-sm font-medium text-gray-600 dark:text-gray-400 hover:bg-white dark:hover:bg-slate-800 hover:text-gray-900 dark:hover:text-white rounded-lg transition-all shadow-xs hover:shadow-sm`}
+              class={`w-full flex items-center ${isSidebarCollapsed() && !isMobile() ? "justify-center p-2" : "gap-2.5 px-2.5 py-1.5"} text-[13px] font-medium text-gray-600 dark:text-gray-400 hover:bg-gray-900/[0.04] dark:hover:bg-white/[0.05] hover:text-gray-900 dark:hover:text-white rounded-lg transition-colors`}
               title={t().chat.remoteAccess}
             >
-              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="20" height="14" x="2" y="3" rx="2" /><line x1="8" x2="16" y1="21" y2="21" /><line x1="12" x2="12" y1="17" y2="21" /></svg>
+              <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect width="20" height="14" x="2" y="3" rx="2" /><line x1="8" x2="16" y1="21" y2="21" /><line x1="12" x2="12" y1="17" y2="21" /></svg>
               <Show when={!isSidebarCollapsed() || isMobile()}>
                 {t().chat.remoteAccess}
               </Show>
@@ -3148,7 +3147,7 @@ export default function Chat() {
           </Show>
           <button
             onClick={() => navigate("/settings")}
-            class={`w-full flex items-center ${isSidebarCollapsed() && !isMobile() ? "justify-center p-2" : "gap-3 px-3 py-2"} text-sm font-medium text-gray-600 dark:text-gray-400 hover:bg-white dark:hover:bg-slate-800 hover:text-gray-900 dark:hover:text-white rounded-lg transition-all shadow-xs hover:shadow-sm`}
+            class={`w-full flex items-center ${isSidebarCollapsed() && !isMobile() ? "justify-center p-2" : "gap-2.5 px-2.5 py-1.5"} text-[13px] font-medium text-gray-600 dark:text-gray-400 hover:bg-gray-900/[0.04] dark:hover:bg-white/[0.05] hover:text-gray-900 dark:hover:text-white rounded-lg transition-colors`}
             title={t().chat.settings}
           >
             <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.09a2 2 0 0 1-1-1.74v-.51a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" /><circle cx="12" cy="12" r="3" /></svg>
@@ -3158,7 +3157,7 @@ export default function Chat() {
           </button>
           <button
             onClick={handleLogout}
-            class={`w-full flex items-center ${isSidebarCollapsed() && !isMobile() ? "justify-center p-2" : "gap-3 px-3 py-2"} text-sm font-medium text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors`}
+            class={`w-full flex items-center ${isSidebarCollapsed() && !isMobile() ? "justify-center p-2" : "gap-2.5 px-2.5 py-1.5"} text-[13px] font-medium text-gray-500 dark:text-gray-500 hover:text-red-600 dark:hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-colors`}
             title={t().chat.logout}
           >
             <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" /><polyline points="16 17 21 12 16 7" /><line x1="21" x2="9" y1="12" y2="12" /></svg>
@@ -3174,7 +3173,7 @@ export default function Chat() {
 
       {/* Top row: chat area + file explorer */}
       <div class="relative flex-1 flex overflow-hidden min-w-0 min-h-0">
-      <div class="flex-1 flex flex-col overflow-hidden min-w-0" style={{ background: "var(--sl-color-bg-surface)" }}>
+      <div class="flex-1 flex flex-col overflow-hidden min-w-0 bg-[var(--cm-surface)]">
 
 
 
@@ -3218,18 +3217,14 @@ export default function Chat() {
           <Show
             when={sessionStore.current}
             fallback={
-              <div class="flex-1 flex items-center justify-center">
-                <div class="flex flex-col items-center gap-4 text-center px-6">
-                  <div class="w-16 h-16 bg-gray-100 dark:bg-slate-800 rounded-2xl flex items-center justify-center text-gray-400 dark:text-gray-500">
-                    <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M14 9a2 2 0 0 1-2 2H6l-4 4V4c0-1.1.9-2 2-2h8a2 2 0 0 1 2 2v5Z" /><path d="M18 9h2a2 2 0 0 1 2 2v11l-4-4h-6a2 2 0 0 1-2-2v-1" /></svg>
-                  </div>
-                  <h2 class="text-xl font-semibold text-gray-900 dark:text-white">
-                    {t().chat.noSessionSelected}
-                  </h2>
-                  <p class="text-sm text-gray-500 dark:text-gray-400 max-w-xs">
-                    {t().chat.noSessionSelectedDesc}
-                  </p>
-                </div>
+              <div class="flex-1 flex items-center justify-center overflow-hidden">
+                <EmptyHero
+                  class="w-full h-full"
+                  icon={<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5" /><line x1="12" x2="20" y1="19" y2="19" /></svg>}
+                  title={t().chat.noSessionSelected}
+                  description={t().chat.noSessionSelectedDesc}
+                  engines={configStore.engines.filter((e) => isEngineEnabled(e.type))}
+                />
               </div>
             }
           >
@@ -3239,7 +3234,7 @@ export default function Chat() {
               <div ref={setMessagesRef} onScroll={handleScroll} onWheel={(event) => { if (event.deltaY < 0) pauseScrollFollowing(); else if (event.deltaY > 0 && isNearBottom()) resumeScrollFollowing(); }} onTouchStart={handleTouchStart} onTouchMove={handleTouchMove} onKeyDown={handleScrollKeyDown} class="conversation-viewport" tabIndex={0} role="region" aria-label={t().chat.conversationRegion} style={{ position: "relative" }}>
                 {/* Loading overlay — covers scroll area during message load */}
                 <Show when={loadingMessages()}>
-                  <div class="absolute inset-0 flex items-center justify-center z-10 bg-white/80 dark:bg-slate-900/80">
+                  <div class="absolute inset-0 flex items-center justify-center z-10 bg-[var(--cm-surface)]/80">
                     <div class="flex flex-col items-center gap-3 text-gray-400">
                       <div class="w-6 h-6 border-2 border-current border-t-transparent rounded-full animate-spin"></div>
                     </div>
@@ -3248,11 +3243,11 @@ export default function Chat() {
                 <div ref={setMessagesContentRef} class="conversation-column conversation-content">
                   {/* Tab bar — Dashboard / Chat switcher for team parent sessions */}
                   <Show when={showOrchestrationTabs()}>
-                    <div class="flex items-center gap-1 mb-4 bg-gray-100 dark:bg-slate-800/80 rounded-lg p-0.5 w-fit">
+                    <div class="flex items-center gap-0.5 mb-4 bg-gray-900/[0.04] dark:bg-white/[0.04] ring-1 ring-inset ring-[var(--cm-hairline)] rounded-lg p-0.5 w-fit">
                       <button
                         class={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
                           orchestratorView() === "dashboard"
-                            ? "bg-white dark:bg-slate-700 text-gray-900 dark:text-white shadow-sm"
+                            ? "bg-[var(--cm-surface)] dark:bg-white/10 text-gray-900 dark:text-white shadow-[var(--cm-shadow-sm)]"
                             : "text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300"
                         }`}
                         onClick={() => setOrchestratorView("dashboard")}
@@ -3262,7 +3257,7 @@ export default function Chat() {
                       <button
                         class={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
                           orchestratorView() === "chat"
-                            ? "bg-white dark:bg-slate-700 text-gray-900 dark:text-white shadow-sm"
+                            ? "bg-[var(--cm-surface)] dark:bg-white/10 text-gray-900 dark:text-white shadow-[var(--cm-shadow-sm)]"
                             : "text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300"
                         }`}
                         onClick={() => setOrchestratorView("chat")}
@@ -3283,43 +3278,26 @@ export default function Chat() {
                           <Show
                             when={sessionStore.current && isTeamParentSession(sessionStore.current)}
                             fallback={
-                              <div class="flex flex-col items-center justify-center h-[50vh] text-center px-4">
-                                <div class="w-16 h-16 bg-gray-100 dark:bg-slate-800 rounded-2xl flex items-center justify-center mb-6 text-gray-400 dark:text-gray-500">
-                                  <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M14 9a2 2 0 0 1-2 2H6l-4 4V4c0-1.1.9-2 2-2h8a2 2 0 0 1 2 2v5Z" /><path d="M18 9h2a2 2 0 0 1 2 2v11l-4-4h-6a2 2 0 0 1-2-2v-1" /></svg>
-                                </div>
-                                <h2 class="text-xl font-semibold text-gray-900 dark:text-white mb-2">
-                                  {t().chat.startConversation}
-                                </h2>
-                                <p class="text-sm text-gray-500 dark:text-gray-400 max-w-xs mx-auto">
-                                  {t().chat.startConversationDesc}
-                                </p>
-                              </div>
+                              <EmptyHero
+                                class="h-[55vh]"
+                                icon={<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.9 5.8L20 10l-6.1 1.2L12 17l-1.9-5.8L4 10l6.1-1.2Z" /><path d="M19 17l.8 2.2L22 20l-2.2.8L19 23l-.8-2.2L16 20l2.2-.8Z" /></svg>}
+                                title={t().chat.startConversation}
+                                description={t().chat.startConversationDesc}
+                              />
                             }
                           >
                             {/* Team session welcome */}
-                            <div class="flex flex-col items-center justify-center h-[50vh] text-center px-4">
-                              <div class="w-16 h-16 bg-indigo-50 dark:bg-indigo-900/20 rounded-2xl flex items-center justify-center mb-6">
-                                <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="text-indigo-500">
-                                  <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
-                                  <circle cx="9" cy="7" r="4" />
-                                  <path d="M22 21v-2a4 4 0 0 0-3-3.87" />
-                                  <path d="M16 3.13a4 4 0 0 1 0 7.75" />
-                                </svg>
-                              </div>
-                              <h2 class="text-xl font-semibold text-gray-900 dark:text-white mb-2">
-                                {t().chat.teamTask}
-                              </h2>
-                              <p class="text-sm text-gray-500 dark:text-gray-400 max-w-sm mx-auto mb-1">
-                                {t().chat.teamTaskDesc}
-                              </p>
-                              <p class="text-xs text-gray-400 dark:text-gray-500 max-w-sm mx-auto">
-                                {t().chat.teamTaskDetail}
-                              </p>
-                            </div>
+                            <EmptyHero
+                              class="h-[55vh]"
+                              icon={<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="M22 21v-2a4 4 0 0 0-3-3.87" /><path d="M16 3.13a4 4 0 0 1 0 7.75" /></svg>}
+                              title={t().chat.teamTask}
+                              description={t().chat.teamTaskDesc}
+                              detail={t().chat.teamTaskDetail}
+                            />
                           </Show>
                         }
                       >
-                        <MessageList sessionID={sessionStore.current!} isWorking={sending()} compactActivityGroups={currentEngineInfo()?.capabilities?.compactActivityGroups} scrollContainerRef={messagesRef} onPermissionRespond={handlePermissionRespond} onQuestionRespond={handleQuestionRespond} onQuestionDismiss={handleQuestionDismiss} onContinue={handleContinue} />
+                        <MessageList sessionID={sessionStore.current!} isWorking={sending()} scrollContainerRef={messagesRef} onPermissionRespond={handlePermissionRespond} onQuestionRespond={handleQuestionRespond} onQuestionDismiss={handleQuestionDismiss} onContinue={handleContinue} />
                       </Show>
                     }
                   >
@@ -3459,7 +3437,7 @@ export default function Chat() {
                       }
                     />
                   </Show>
-                  <div class="mt-2 text-center">
+                  <div class="mt-1.5 text-center">
                     <p class="conversation-session-summary">
                       <Show when={sessionUsage()} fallback={t().chat.disclaimer}>
                         {(u) => (

@@ -87,7 +87,7 @@ export function ThemeSwitcher() {
     <div class="relative">
       <button
         onClick={() => setIsOpen(!isOpen())}
-        class="flex items-center gap-2 px-3 py-2 text-sm text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-slate-800 rounded-lg transition-colors"
+        class="flex items-center gap-2 px-3 py-2 text-sm text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white hover:bg-gray-900/[0.04] dark:hover:bg-white/[0.05] rounded-lg transition-colors"
       >
         {getThemeIcon(themeMode())}
         <span>{getThemeLabel(themeMode())}</span>

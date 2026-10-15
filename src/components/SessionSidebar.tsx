@@ -383,14 +383,14 @@ export function SessionSidebar(props: SessionSidebarProps) {
   // Generate color based on project name
   const getProjectColor = (name: string): string => {
     const colors = [
-      "bg-blue-500",
-      "bg-green-500",
-      "bg-purple-500",
-      "bg-orange-500",
-      "bg-pink-500",
-      "bg-cyan-500",
-      "bg-indigo-500",
-      "bg-teal-500",
+      "bg-blue-500/12 text-blue-600 ring-blue-500/25 dark:text-blue-300",
+      "bg-green-500/12 text-green-600 ring-green-500/25 dark:text-green-300",
+      "bg-purple-500/12 text-purple-600 ring-purple-500/25 dark:text-purple-300",
+      "bg-orange-500/12 text-orange-600 ring-orange-500/25 dark:text-orange-300",
+      "bg-pink-500/12 text-pink-600 ring-pink-500/25 dark:text-pink-300",
+      "bg-cyan-500/12 text-cyan-600 ring-cyan-500/25 dark:text-cyan-300",
+      "bg-indigo-500/12 text-indigo-600 ring-indigo-500/25 dark:text-indigo-300",
+      "bg-teal-500/12 text-teal-600 ring-teal-500/25 dark:text-teal-300",
     ];
     let hash = 0;
     for (let i = 0; i < name.length; i++) {
@@ -404,18 +404,18 @@ export function SessionSidebar(props: SessionSidebarProps) {
   };
 
   return (
-    <div class="tooltip-host w-full bg-gray-50 dark:bg-slate-950 border-r border-gray-200 dark:border-slate-800 flex flex-col h-full overflow-hidden">
+    <div class="tooltip-host w-full bg-[var(--cm-canvas)] flex flex-col h-full overflow-hidden">
       <Show when={!props.collapsed && props.archiveViewAvailable}>
         <div class="flex gap-1 px-2 pt-2" role="group" aria-label={t().sidebar.sessions}>
           <button
             onClick={() => props.onShowArchivedChange?.(false)}
             aria-pressed={!props.showArchived}
-            class={`flex-1 rounded-md px-2 py-1.5 text-xs font-medium ${!props.showArchived ? "bg-white dark:bg-slate-800 text-gray-900 dark:text-white shadow-sm" : "text-gray-500 hover:bg-gray-100 dark:hover:bg-slate-800"}`}
+            class={`flex-1 rounded-md px-2 py-1.5 text-xs font-medium ${!props.showArchived ? "bg-[var(--cm-surface)] dark:bg-white/[0.08] text-gray-900 dark:text-white shadow-[var(--cm-shadow-sm)] ring-1 ring-[var(--cm-hairline)]" : "text-gray-500 hover:text-gray-800 dark:hover:text-gray-200"}`}
           >{t().sidebar.sessions}</button>
           <button
             onClick={() => props.onShowArchivedChange?.(true)}
             aria-pressed={props.showArchived === true}
-            class={`flex-1 rounded-md px-2 py-1.5 text-xs font-medium ${props.showArchived ? "bg-white dark:bg-slate-800 text-gray-900 dark:text-white shadow-sm" : "text-gray-500 hover:bg-gray-100 dark:hover:bg-slate-800"}`}
+            class={`flex-1 rounded-md px-2 py-1.5 text-xs font-medium ${props.showArchived ? "bg-[var(--cm-surface)] dark:bg-white/[0.08] text-gray-900 dark:text-white shadow-[var(--cm-shadow-sm)] ring-1 ring-[var(--cm-hairline)]" : "text-gray-500 hover:text-gray-800 dark:hover:text-gray-200"}`}
           >{t().sidebar.archivedSessions} <span class="tabular-nums">({props.archivedSessionCount ?? 0})</span></button>
         </div>
       </Show>
@@ -444,7 +444,7 @@ export function SessionSidebar(props: SessionSidebarProps) {
               onInput={(e) => setSearchQuery(e.currentTarget.value)}
               onKeyDown={(e) => { if (e.key === "Escape") setSearchQuery(""); }}
               placeholder={t().sidebar.searchPlaceholder}
-              class="w-full pl-8 pr-7 py-1.5 text-xs bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-md text-gray-700 dark:text-gray-300 placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+              class="w-full h-8 pl-8 pr-7 text-[12.5px] bg-gray-900/[0.035] dark:bg-white/[0.04] border border-[var(--cm-hairline)] rounded-lg text-gray-800 dark:text-gray-200 placeholder-gray-400 dark:placeholder-gray-500 transition-colors hover:border-[var(--cm-hairline-strong)] focus:outline-none focus:bg-[var(--cm-surface)] dark:focus:bg-white/[0.06] focus:border-indigo-500/50 focus:ring-4 focus:ring-indigo-500/10"
             />
             <Show when={searchQuery().length > 0}>
               <button
@@ -495,7 +495,7 @@ export function SessionSidebar(props: SessionSidebarProps) {
               <div class="mb-2">
                 {/* Active Section Header */}
                 <div
-                  class="group flex items-center justify-between px-2 py-1.5 rounded-md cursor-pointer hover:bg-gray-100 dark:hover:bg-slate-900 transition-colors"
+                  class="group flex items-center justify-between px-2 py-1.5 rounded-lg cursor-pointer hover:bg-gray-900/[0.035] dark:hover:bg-white/[0.04] transition-colors"
                   onClick={toggleActiveExpanded}
                 >
                   <div class="flex items-center gap-2 min-w-0 flex-1">
@@ -515,15 +515,15 @@ export function SessionSidebar(props: SessionSidebarProps) {
                     >
                       <path d="m9 18 6-6-6-6" />
                     </svg>
-                    <div class="w-5 h-5 rounded flex items-center justify-center bg-blue-500 text-white flex-shrink-0">
+                    <div class="w-5 h-5 rounded-md flex items-center justify-center bg-blue-500/12 text-blue-600 dark:text-blue-300 ring-1 ring-inset ring-blue-500/25 flex-shrink-0">
                       <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
                         <path d="M21 12a9 9 0 1 1-6.219-8.56" />
                       </svg>
                     </div>
-                    <span class="text-sm font-medium text-gray-700 dark:text-gray-300">
+                    <span class="text-[13px] font-medium text-gray-800 dark:text-gray-200">
                       {t().sidebar.activeSection}
                     </span>
-                    <span class="text-[10px] text-gray-400 dark:text-gray-500">
+                    <span class="cm-mono text-[10px] text-gray-400 dark:text-gray-500">
                       [{filteredActiveSessions().length}]
                     </span>
                   </div>
@@ -564,10 +564,10 @@ export function SessionSidebar(props: SessionSidebarProps) {
 
                   return (
                     <div
-                      class={`group relative px-3 py-2 mb-0.5 rounded-md cursor-pointer transition-all duration-150 ${
+                      class={`group relative px-2.5 py-1.5 mb-px rounded-lg cursor-pointer transition-colors duration-150 ${
                         isActive()
-                          ? "bg-white dark:bg-slate-800 shadow-xs"
-                          : "hover:bg-gray-100 dark:hover:bg-slate-900"
+                          ? "bg-gray-900/[0.05] dark:bg-white/[0.065] ring-1 ring-inset ring-[var(--cm-hairline)] before:absolute before:left-0 before:top-2 before:bottom-2 before:w-[2px] before:rounded-full before:bg-[image:var(--cm-gradient)]"
+                          : "hover:bg-gray-900/[0.035] dark:hover:bg-white/[0.04]"
                       }`}
                       onClick={() => !isEditing() && props.onSelectSession(session.id)}
                     >
@@ -615,18 +615,18 @@ export function SessionSidebar(props: SessionSidebarProps) {
                       <Show when={!isEditing()}>
                         <div class="flex items-center gap-1.5 mt-0.5">
                           <Show when={projectName()}>
-                            <span class="text-[9px] font-medium px-1 py-0.5 rounded leading-none flex-shrink-0 bg-gray-200 text-gray-600 dark:bg-slate-700 dark:text-gray-400">
+                            <span class="text-[9px] font-medium px-1 py-[3px] rounded leading-none flex-shrink-0 bg-gray-200 text-gray-600 dark:bg-slate-700 dark:text-gray-400">
                               {projectName()}
                             </span>
                           </Show>
                           <Show when={getEngineBadge(session.engineType)}>
                             {(badge) => (
-                              <span class={`text-[9px] font-medium px-1 py-0.5 rounded leading-none flex-shrink-0 ${badge().class}`}>
+                              <span class={`text-[9px] font-medium px-1 py-[3px] rounded leading-none flex-shrink-0 ${badge().class}`}>
                                 {badge().label}
                               </span>
                             )}
                           </Show>
-                          <span class="text-[10px] text-gray-400 dark:text-gray-500">
+                          <span class="cm-mono text-[10px] text-gray-400 dark:text-gray-500">
                             {formatDate(session.updatedAt)}
                           </span>
                         </div>
@@ -648,7 +648,7 @@ export function SessionSidebar(props: SessionSidebarProps) {
                             </div>
                           }
                         >
-                        <div class="absolute right-1 top-1/2 -translate-y-1/2 hidden group-hover:flex items-center gap-0.5 bg-white/90 dark:bg-slate-800/90 backdrop-blur-xs rounded-md shadow-sm px-0.5 py-0.5">
+                        <div class="absolute right-1 top-1/2 -translate-y-1/2 hidden group-hover:flex items-center gap-0.5 bg-[var(--cm-surface)]/95 dark:bg-[var(--cm-surface-2)]/95 backdrop-blur-md rounded-lg shadow-[var(--cm-shadow-md)] ring-1 ring-[var(--cm-hairline)] px-0.5 py-0.5">
                           <button
                             onClick={(e) => { e.stopPropagation(); navigator.clipboard.writeText(session.id).catch(() => {}); }}
                             class="p-1.5 text-gray-400 hover:text-green-500 hover:bg-green-50 dark:hover:bg-green-900/20 rounded transition-all"
@@ -713,7 +713,7 @@ export function SessionSidebar(props: SessionSidebarProps) {
             );
           })()}
           {/* Divider after Active section */}
-          <hr class="border-gray-200 dark:border-slate-800 my-2 mx-2" />
+          <hr class="border-[var(--cm-hairline)] my-2 mx-2" />
         </Show>
 
         <Show
@@ -818,7 +818,7 @@ export function SessionSidebar(props: SessionSidebarProps) {
                       aria-label={project.name}
                     >
                       <div
-                        class={`w-7 h-7 rounded flex items-center justify-center text-white text-xs font-medium ${getProjectColor(project.name)}`}
+                        class={`w-7 h-7 rounded-md flex items-center justify-center cm-mono text-[11px] font-semibold ring-1 ring-inset ${getProjectColor(project.name)}`}
                       >
                         {getProjectInitial(project.name)}
                       </div>
@@ -839,7 +839,7 @@ export function SessionSidebar(props: SessionSidebarProps) {
                 <div class="mb-2">
                   {/* Default Workspace Header */}
                   <div
-                    class="group flex items-center justify-between px-2 py-1.5 rounded-md cursor-pointer hover:bg-gray-100 dark:hover:bg-slate-900 transition-colors"
+                    class="group flex items-center justify-between px-2 py-1.5 rounded-lg cursor-pointer hover:bg-gray-900/[0.035] dark:hover:bg-white/[0.04] transition-colors"
                     onMouseEnter={() => setHoveredProject(dwg().projectID)}
                     onMouseLeave={() => setHoveredProject(null)}
                     onClick={() => toggleProjectExpanded(dwg().projectID)}
@@ -862,7 +862,7 @@ export function SessionSidebar(props: SessionSidebarProps) {
                       >
                         <path d="m9 18 6-6-6-6" />
                       </svg>
-                      <div class="w-5 h-5 rounded flex items-center justify-center bg-slate-500 text-white flex-shrink-0">
+                      <div class="w-5 h-5 rounded-md flex items-center justify-center bg-slate-500/12 text-slate-600 dark:text-slate-300 ring-1 ring-inset ring-slate-500/25 flex-shrink-0">
                         <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                           <rect width="18" height="18" x="3" y="3" rx="2" />
                           <path d="M3 9h18" />
@@ -870,7 +870,7 @@ export function SessionSidebar(props: SessionSidebarProps) {
                         </svg>
                       </div>
                       <div class="min-w-0 flex-1">
-                        <span class="text-sm font-medium text-gray-700 dark:text-gray-300 truncate">
+                        <span class="text-[13px] font-medium text-gray-800 dark:text-gray-200 truncate">
                           {dwg().name}
                         </span>
                       </div>
@@ -950,10 +950,10 @@ export function SessionSidebar(props: SessionSidebarProps) {
 
                             return (
                               <div
-                                class={`group relative px-3 py-2 mb-0.5 rounded-md cursor-pointer transition-all duration-150 ${
+                                class={`group relative px-2.5 py-1.5 mb-px rounded-lg cursor-pointer transition-colors duration-150 ${
                                   isActive()
-                                    ? "bg-white dark:bg-slate-800 shadow-xs"
-                                    : "hover:bg-gray-100 dark:hover:bg-slate-900"
+                                    ? "bg-gray-900/[0.05] dark:bg-white/[0.065] ring-1 ring-inset ring-[var(--cm-hairline)] before:absolute before:left-0 before:top-2 before:bottom-2 before:w-[2px] before:rounded-full before:bg-[image:var(--cm-gradient)]"
+                                    : "hover:bg-gray-900/[0.035] dark:hover:bg-white/[0.04]"
                                 }`}
                                 onClick={() => !isEditing() && props.onSelectSession(session.id)}
                               >
@@ -1001,12 +1001,12 @@ export function SessionSidebar(props: SessionSidebarProps) {
                                   <div class="flex items-center gap-1.5 mt-0.5">
                                     <Show when={getEngineBadge(session.engineType)}>
                                       {(badge) => (
-                                        <span class={`text-[9px] font-medium px-1 py-0.5 rounded leading-none flex-shrink-0 ${badge().class}`}>
+                                        <span class={`text-[9px] font-medium px-1 py-[3px] rounded leading-none flex-shrink-0 ${badge().class}`}>
                                           {badge().label}
                                         </span>
                                       )}
                                     </Show>
-                                    <span class="text-[10px] text-gray-400 dark:text-gray-500">
+                                    <span class="cm-mono text-[10px] text-gray-400 dark:text-gray-500">
                                       {formatDate(session.updatedAt)}
                                     </span>
                                   </div>
@@ -1027,7 +1027,7 @@ export function SessionSidebar(props: SessionSidebarProps) {
                                       </div>
                                     }
                                   >
-                                  <div class="absolute right-1 top-1/2 -translate-y-1/2 hidden group-hover:flex items-center gap-0.5 bg-white/90 dark:bg-slate-800/90 backdrop-blur-xs rounded-md shadow-sm px-0.5 py-0.5">
+                                  <div class="absolute right-1 top-1/2 -translate-y-1/2 hidden group-hover:flex items-center gap-0.5 bg-[var(--cm-surface)]/95 dark:bg-[var(--cm-surface-2)]/95 backdrop-blur-md rounded-lg shadow-[var(--cm-shadow-md)] ring-1 ring-[var(--cm-hairline)] px-0.5 py-0.5">
                                     <button
                                       onClick={(e) => { e.stopPropagation(); navigator.clipboard.writeText(session.id).catch(() => {}); }}
                                       class="p-1.5 text-gray-400 hover:text-green-500 hover:bg-green-50 dark:hover:bg-green-900/20 rounded transition-all"
@@ -1095,22 +1095,17 @@ export function SessionSidebar(props: SessionSidebarProps) {
 
           {/* Divider between Default Workspace and Projects */}
           <Show when={filteredDefaultWorkspaceGroup() && showProjectsSection()}>
-            <hr class="border-gray-200 dark:border-slate-800 my-2 mx-2" />
+            <hr class="border-[var(--cm-hairline)] my-2 mx-2" />
           </Show>
 
           {/* Projects section title */}
           <Show when={showProjectsSection()}>
-          <div class="flex items-center gap-2 px-2 py-1.5 mb-1">
-            <div class="w-5 h-5 rounded flex items-center justify-center bg-emerald-500 text-white flex-shrink-0">
-              <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z" />
-              </svg>
-            </div>
-            <span class="text-sm font-medium text-gray-700 dark:text-gray-300">
+          <div class="flex items-center gap-2 pl-2.5 pr-1 pt-2 pb-1 mb-0.5">
+            <span class="cm-eyebrow">
               {t().sidebar.projectsTitle}
             </span>
-            <span class="text-[10px] text-gray-400 dark:text-gray-500">
-              [{filteredProjectGroups().length}]
+            <span class="cm-mono text-[10px] text-gray-400 dark:text-gray-500 px-1 rounded bg-gray-900/[0.04] dark:bg-white/[0.05]">
+              {filteredProjectGroups().length}
             </span>
             <div class="flex-1" />
             <Show when={props.showAddProject !== false}>
@@ -1150,7 +1145,7 @@ export function SessionSidebar(props: SessionSidebarProps) {
                 <div class="mb-2">
                   {/* Project Header */}
                   <div
-                    class="group relative flex items-center px-2 py-1.5 rounded-md cursor-pointer hover:bg-gray-100 dark:hover:bg-slate-900 transition-colors"
+                    class="group relative flex items-center px-2 py-1.5 rounded-lg cursor-pointer hover:bg-gray-900/[0.035] dark:hover:bg-white/[0.04] transition-colors"
                     onClick={() => toggleProjectExpanded(project.projectID)}
                     title={project.project?.directory || project.sessions[0]?.directory || ""}
                   >
@@ -1175,7 +1170,7 @@ export function SessionSidebar(props: SessionSidebarProps) {
 
                       {/* Project Icon */}
                       <div
-                        class={`w-5 h-5 rounded flex items-center justify-center text-white text-xs font-medium flex-shrink-0 ${getProjectColor(project.name)}`}
+                        class={`w-5 h-5 rounded-md flex items-center justify-center cm-mono text-[10px] font-semibold flex-shrink-0 ring-1 ring-inset ${getProjectColor(project.name)}`}
                       >
                         {getProjectInitial(project.name)}
                       </div>
@@ -1183,21 +1178,21 @@ export function SessionSidebar(props: SessionSidebarProps) {
                       {/* Project Name and Path */}
                       <div class="min-w-0 flex-1">
                         <div class="flex items-center gap-1.5">
-                          <span class="text-sm font-medium text-gray-700 dark:text-gray-300 truncate">
+                          <span class="text-[13px] font-medium text-gray-800 dark:text-gray-200 truncate">
                             {project.name}
                           </span>
-                          <span class="text-[10px] text-gray-400 dark:text-gray-500 flex-shrink-0">
+                          <span class="cm-mono text-[10px] text-gray-400 dark:text-gray-500 flex-shrink-0">
                             {project.sessions.length}
                           </span>
                         </div>
-                        <span class="text-[10px] text-gray-400 dark:text-gray-500 truncate block">
+                        <span class="cm-mono text-[10px] text-gray-400 dark:text-gray-500 truncate block">
                           {project.project?.directory || project.sessions[0]?.directory || ""}
                         </span>
                       </div>
                     </div>
 
                     {/* Action buttons — absolute overlay on hover */}
-                    <div class="absolute right-1 top-1/2 -translate-y-1/2 hidden group-hover:flex items-center gap-0.5 bg-gray-50/90 dark:bg-slate-950/90 backdrop-blur-xs rounded-md shadow-sm px-0.5 py-0.5">
+                    <div class="absolute right-1 top-1/2 -translate-y-1/2 hidden group-hover:flex items-center gap-0.5 bg-[var(--cm-surface)]/95 dark:bg-[var(--cm-surface-2)]/95 backdrop-blur-md rounded-lg shadow-[var(--cm-shadow-md)] ring-1 ring-[var(--cm-hairline)] px-0.5 py-0.5">
                       {/* Open in file explorer (Electron only) — first */}
                       <Show when={isElectron() && project.project}>
                         <button
@@ -1343,10 +1338,10 @@ export function SessionSidebar(props: SessionSidebarProps) {
 
                           return (
                             <div
-                              class={`group relative px-3 py-2 mb-0.5 rounded-md cursor-pointer transition-all duration-150 ${
+                              class={`group relative px-2.5 py-1.5 mb-px rounded-lg cursor-pointer transition-colors duration-150 ${
                                 isActive()
-                                  ? "bg-white dark:bg-slate-800 shadow-xs"
-                                  : "hover:bg-gray-100 dark:hover:bg-slate-900"
+                                  ? "bg-gray-900/[0.05] dark:bg-white/[0.065] ring-1 ring-inset ring-[var(--cm-hairline)] before:absolute before:left-0 before:top-2 before:bottom-2 before:w-[2px] before:rounded-full before:bg-[image:var(--cm-gradient)]"
+                                  : "hover:bg-gray-900/[0.035] dark:hover:bg-white/[0.04]"
                               }`}
                               onClick={() => !isEditing() && props.onSelectSession(session.id)}
                             >
@@ -1397,12 +1392,12 @@ export function SessionSidebar(props: SessionSidebarProps) {
                                 <div class="flex items-center gap-1.5 mt-0.5">
                                   <Show when={getEngineBadge(session.engineType)}>
                                     {(badge) => (
-                                      <span class={`text-[9px] font-medium px-1 py-0.5 rounded leading-none flex-shrink-0 ${badge().class}`}>
+                                      <span class={`text-[9px] font-medium px-1 py-[3px] rounded leading-none flex-shrink-0 ${badge().class}`}>
                                         {badge().label}
                                       </span>
                                     )}
                                   </Show>
-                                  <span class="text-[10px] text-gray-400 dark:text-gray-500">
+                                  <span class="cm-mono text-[10px] text-gray-400 dark:text-gray-500">
                                     {formatDate(session.updatedAt)}
                                   </span>
                                 </div>
@@ -1436,7 +1431,7 @@ export function SessionSidebar(props: SessionSidebarProps) {
                                     </div>
                                   }
                                 >
-                                <div class="absolute right-1 top-1/2 -translate-y-1/2 hidden group-hover:flex items-center gap-0.5 bg-white/90 dark:bg-slate-800/90 backdrop-blur-xs rounded-md shadow-sm px-0.5 py-0.5">
+                                <div class="absolute right-1 top-1/2 -translate-y-1/2 hidden group-hover:flex items-center gap-0.5 bg-[var(--cm-surface)]/95 dark:bg-[var(--cm-surface-2)]/95 backdrop-blur-md rounded-lg shadow-[var(--cm-shadow-md)] ring-1 ring-[var(--cm-hairline)] px-0.5 py-0.5">
                                   <button
                                     onClick={(e) => {
                                       e.stopPropagation();
@@ -1549,7 +1544,7 @@ export function SessionSidebar(props: SessionSidebarProps) {
                             <Show when={local.length > 0}>
                               <div class="mb-1.5">
                                 <div
-                                  class="flex items-center gap-1.5 px-2 py-1 cursor-pointer hover:bg-gray-100 dark:hover:bg-slate-900 rounded-md transition-colors"
+                                  class="flex items-center gap-1.5 px-2 py-1 cursor-pointer hover:bg-gray-900/[0.035] dark:hover:bg-white/[0.04] rounded-md transition-colors"
                                   onClick={() => toggleWorktreeExpanded(`${dir}::local`)}
                                 >
                                   <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24"
@@ -1600,8 +1595,8 @@ export function SessionSidebar(props: SessionSidebarProps) {
                                       <div
                                         class="group relative flex items-center gap-1.5 px-2 py-1 cursor-pointer rounded-md transition-colors"
                                         classList={{
-                                          "bg-white dark:bg-slate-800 shadow-xs": isOrchestratorActive(),
-                                          "hover:bg-gray-100 dark:hover:bg-slate-900": !isOrchestratorActive(),
+                                          "bg-gray-900/[0.05] dark:bg-white/[0.065] ring-1 ring-inset ring-[var(--cm-hairline)] before:absolute before:left-0 before:top-2 before:bottom-2 before:w-[2px] before:rounded-full before:bg-[image:var(--cm-gradient)]": isOrchestratorActive(),
+                                          "hover:bg-gray-900/[0.035] dark:hover:bg-white/[0.04]": !isOrchestratorActive(),
                                         }}
                                         onClick={() => {
                                           const ps = parentSession();
@@ -1686,7 +1681,7 @@ export function SessionSidebar(props: SessionSidebarProps) {
                                             </div>
                                           }
                                         >
-                                          <div class="absolute right-1 top-1/2 -translate-y-1/2 hidden group-hover:flex items-center gap-0.5 bg-white/90 dark:bg-slate-800/90 backdrop-blur-xs rounded-md shadow-sm px-0.5 py-0.5">
+                                          <div class="absolute right-1 top-1/2 -translate-y-1/2 hidden group-hover:flex items-center gap-0.5 bg-[var(--cm-surface)]/95 dark:bg-[var(--cm-surface-2)]/95 backdrop-blur-md rounded-lg shadow-[var(--cm-shadow-md)] ring-1 ring-[var(--cm-hairline)] px-0.5 py-0.5">
                                             <button
                                               onClick={(e) => {
                                                 e.stopPropagation();
@@ -1737,7 +1732,7 @@ export function SessionSidebar(props: SessionSidebarProps) {
                                 return (
                                 <div class="mb-1.5">
                                   <div
-                                    class="group relative flex items-center gap-1.5 px-2 py-1 cursor-pointer hover:bg-gray-100 dark:hover:bg-slate-900 rounded-md transition-colors"
+                                    class="group relative flex items-center gap-1.5 px-2 py-1 cursor-pointer hover:bg-gray-900/[0.035] dark:hover:bg-white/[0.04] rounded-md transition-colors"
                                     onClick={() => toggleWorktreeExpanded(wtKey)}
                                   >
                                     <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24"
@@ -1762,7 +1757,7 @@ export function SessionSidebar(props: SessionSidebarProps) {
                                       {wtGroup.sessions.length}
                                     </span>
                                     {/* Action buttons — absolute overlay */}
-                                    <div class="absolute right-1 top-1/2 -translate-y-1/2 hidden group-hover:flex items-center gap-0.5 bg-gray-50/90 dark:bg-slate-950/90 backdrop-blur-xs rounded-md shadow-sm px-0.5 py-0.5">
+                                    <div class="absolute right-1 top-1/2 -translate-y-1/2 hidden group-hover:flex items-center gap-0.5 bg-[var(--cm-surface)]/95 dark:bg-[var(--cm-surface-2)]/95 backdrop-blur-md rounded-lg shadow-[var(--cm-shadow-md)] ring-1 ring-[var(--cm-hairline)] px-0.5 py-0.5">
                                       {/* New session */}
                                       <button
                                         class="p-1 text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded transition-all"
@@ -1868,9 +1863,9 @@ export function SessionSidebar(props: SessionSidebarProps) {
 
       {/* Default Engine Selector (footer, visible when at least one engine available) */}
       <Show when={runningEngines().length >= 1 && !props.collapsed}>
-        <div class="px-3 py-2 border-t border-gray-200 dark:border-slate-800">
+        <div class="px-3 py-2 border-t border-[var(--cm-hairline)]">
           <div class="flex items-center gap-2">
-            <span class="text-[11px] font-medium text-gray-500 dark:text-gray-400 whitespace-nowrap">{t().sidebar.defaultEngine}</span>
+            <span class="cm-eyebrow whitespace-nowrap">{t().sidebar.defaultEngine}</span>
             <select
               ref={(el) => {
                 // Re-apply value after <For> recreates option elements
@@ -1882,7 +1877,7 @@ export function SessionSidebar(props: SessionSidebarProps) {
               }}
               value={getDefaultEngineType()}
               onChange={(e) => { void handleDefaultEngineChange(e); }}
-              class="flex-1 min-w-0 text-xs px-2 py-1 bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-md text-gray-700 dark:text-gray-300 focus:outline-none focus:ring-1 focus:ring-blue-500"
+              class="cm-select flex-1 min-w-0 h-7 text-xs"
             >
               <For each={runningEngines()}>
                 {(engine) => (

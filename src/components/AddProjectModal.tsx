@@ -59,7 +59,7 @@ export function AddProjectModal(props: AddProjectModalProps) {
     <Show when={props.isOpen}>
       <div class="fixed inset-0 z-50 flex items-center justify-center">
         <div
-          class="absolute inset-0 bg-black/50 backdrop-blur-xs"
+          class="absolute inset-0 bg-black/40 backdrop-blur-sm backdrop-blur-xs"
           onClick={handleClose}
           aria-hidden="true"
         />
@@ -68,7 +68,7 @@ export function AddProjectModal(props: AddProjectModalProps) {
           role="dialog"
           aria-modal="true"
           aria-labelledby="add-project-modal-title"
-          class="relative bg-white dark:bg-slate-900 rounded-xl shadow-2xl w-full max-w-md mx-4 overflow-hidden flex flex-col max-h-[calc(100vh-2rem)]"
+          class="relative bg-white dark:bg-slate-900 rounded-2xl shadow-[var(--cm-shadow-lg)] ring-1 ring-[var(--cm-hairline-strong)] w-full max-w-md mx-4 overflow-hidden flex flex-col max-h-[calc(100vh-2rem)]"
         >
           <div class="flex items-center justify-between px-6 py-4 border-b border-gray-200 dark:border-slate-800">
             <h2 id="add-project-modal-title" class="text-lg font-semibold text-gray-900 dark:text-white">
@@ -155,7 +155,7 @@ export function AddProjectModal(props: AddProjectModalProps) {
           <div class="flex flex-col-reverse sm:flex-row justify-end gap-2 sm:gap-3 px-6 py-4 border-t border-gray-200 dark:border-slate-800 bg-gray-50 dark:bg-slate-900/50 flex-shrink-0">
             <button
               onClick={handleClose}
-              class="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-slate-800 rounded-lg transition-colors"
+              class="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-900/[0.04] dark:hover:bg-white/[0.05] rounded-lg transition-colors"
             >
               {t().common.cancel}
             </button>

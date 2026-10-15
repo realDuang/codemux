@@ -79,7 +79,10 @@
     [data-component="assistant-reasoning-markdown"] [data-slot="markdown"] { color: var(--conversation-muted, var(--sl-color-text-secondary)); line-height: 1.55; }
     [data-component="assistant-reasoning-markdown"] p { margin-bottom: 0.5rem; }
     [data-slot="reasoning-preview"] { font-size: 0.75rem; line-height: 1.5; color: var(--conversation-subtle, var(--sl-color-text-secondary)); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; padding-bottom: 0.25rem; }
-    [data-slot="streaming-dot"] { display: inline-block; width: 5px; height: 5px; border-radius: 50%; background: currentColor; }
+    [data-slot="streaming-dot"] { display: inline-block; width: 5px; height: 5px; border-radius: 50%; color: oklch(0.68 0.2 292); background: currentColor; box-shadow: 0 0 6px currentColor; animation: cm-pulse 1.2s ease-in-out infinite; }
+    /* Thinking: violet-tinted icon and a soft violet rail under the readable summary */
+    [data-slot="title"] svg { color: oklch(0.62 0.2 292); }
+    [data-component="assistant-reasoning-markdown"] { border-left: 1px solid oklch(0.62 0.2 292 / 0.28); padding-left: 0.75rem; margin-left: 0.4375rem; }
     &[data-streaming] [data-component="assistant-reasoning-markdown"] { max-height: 8.75rem; overflow-y: auto; overscroll-behavior: contain; scroll-padding-block: 0.5rem; }
   }
 
@@ -153,7 +156,15 @@
     display: flex; flex-direction: column; align-items: stretch; width: 100%; min-width: 0; max-width: 100%; border: 1px solid var(--conversation-border, var(--sl-color-border)); border-radius: 0.5rem; overflow: hidden; background: transparent;
     [data-slot="collapsible-trigger"] { display: flex; align-items: center; gap: 0.5rem; width: 100%; min-width: 0; padding: 0.375rem 0.625rem; min-height: 2.25rem; border: 0; background: transparent; color: var(--conversation-muted, var(--sl-color-text-secondary)); font-size: 0.8125rem; text-align: left; cursor: pointer; }
     [data-slot="collapsible-trigger"]:hover { background: var(--conversation-surface, var(--sl-color-bg-hover)); }
+    /* Collapsed tools read as light rows on the activity rail (matching compact
+       activity groups); the card frame appears on hover and while open. */
+    border-color: transparent;
+    transition: border-color 120ms ease, background-color 120ms ease;
+    &:hover { border-color: var(--conversation-border); }
+    &:has([data-component="collapsible"][data-open]) { border-color: var(--conversation-border); background: var(--conversation-bg); }
+    &[data-tool="error"] { border-color: color-mix(in oklch, var(--cm-danger) 30%, transparent); }
     [data-slot="duration"], [data-slot="collapsible-arrow"] { flex-shrink: 0; color: var(--conversation-subtle, var(--sl-color-text-secondary)); font-size: 0.75rem; }
+    [data-slot="duration"] { font-family: var(--font-mono); font-size: 0.6875rem; font-variant-numeric: tabular-nums; }
     [data-slot="collapsible-content"] { width: 100%; min-width: 0; padding: 0.625rem; border-top: 1px solid var(--conversation-border, var(--sl-color-border)); }
     [data-component="tool-input"], [data-component="tool-output"] { min-width: 0; max-width: 100%; font-size: 0.8125rem; overflow-wrap: anywhere; }
   }
@@ -164,8 +175,8 @@
     [data-slot="icon"] { display: flex; align-items: center; justify-content: center; flex-shrink: 0; width: 1rem; height: 1rem; color: inherit; }
     [data-slot="icon"][data-icon-color="red"] { color: var(--sl-color-red-high); }
     [data-slot="name"] { font-size: inherit; font-weight: 500; flex-shrink: 0; color: inherit; }
-    [data-slot="target"] { min-width: 0; color: var(--conversation-text, var(--sl-color-text)); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    [data-slot="summary"] { font-size: 0.75rem; margin-left: auto; flex-shrink: 0; color: var(--conversation-subtle, var(--sl-color-text-secondary)); }
+    [data-slot="target"] { min-width: 0; color: var(--conversation-text, var(--sl-color-text)); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-family: var(--font-mono); font-size: 0.75rem; letter-spacing: -0.01em; }
+    [data-slot="summary"] { font-size: 0.6875rem; font-family: var(--font-mono); margin-left: auto; flex-shrink: 0; color: var(--conversation-subtle, var(--sl-color-text-secondary)); }
   }
 
   [data-component="tool-result"] {

@@ -9,7 +9,7 @@ Multi-engine AI coding assistant client. Access OpenCode, GitHub Copilot, and Cl
 | Desktop Shell | Electron 40 (`electron: ^40.6.1`) |
 | Build System | electron-vite (Vite 5) |
 | Frontend | SolidJS 1.8 + TypeScript 5 |
-| Styling | Tailwind CSS v4 + CSS Modules |
+| Styling | Tailwind CSS v4 + CSS Modules, Geist / Geist Mono fonts |
 | Routing | @solidjs/router (HashRouter in Electron, BrowserRouter in web) |
 | i18n | @solid-primitives/i18n (en, zh, ru) |
 | Markdown | marked + shiki (syntax highlighting) |
@@ -126,6 +126,7 @@ All engines support image attachments via a unified pipeline:
 - Engine behavioral differences are expressed through `EngineCapabilities` flags (e.g. `customModelInput`, `providerModelHierarchy`), not engine name checks.
 - Default engine resolution uses `getDefaultEngineType()` from `config.ts`, not hardcoded strings.
 - Example: Copilot's `sql` tool operating on the `todos` table is intercepted and converted to a synthetic `normalizedTool: "todo"` part by the adapter — the frontend sees the same todo format as OpenCode/Claude.
+- Example: every engine renders the same activity timeline (prose on the canvas, reasoning/tool runs as collapsible activity groups). Tool rows are driven by `ToolPart.displayActions`; adapters may set them from native data (Codex parses shell commands), and `EngineManager` derives the rest from canonical tool input via `electron/main/engines/tool-display.ts` on its client-facing egress.
 
 ## Git Policy
 
@@ -165,7 +166,8 @@ npm run dist:mac   # macOS DMG
 - Tailwind utility classes for layout and common styling
 - CSS Modules (`.module.css`) for share/ components with complex styles
 - Dark mode via `.dark` class on `<html>`, toggled by ThemeSwitcher
-- CSS custom properties for theme colors (`--color-background`, `--color-text`, etc.)
+- Design tokens ("Graphite" system) in `src/index.css`: semantic `--cm-*` variables (canvas, surface, hairline, text, accent, gradient) plus `cm-*` primitives (`cm-mono`, `cm-eyebrow`, `cm-btn-primary`, ...). Tailwind `gray`/`slate`/`blue` scales are remapped to the system palette. See [docs/design-system.md](docs/design-system.md)
+- Legacy `--color-*` / `--sl-color-*` variables alias the `--cm-*` tokens
 
 ### i18n
 

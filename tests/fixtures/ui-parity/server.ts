@@ -132,8 +132,6 @@ for (const profile of profiles) {
     await adapter.start();
     backend.mockAdapters.set(profile.type, adapter);
   }
-  const getCapabilities = adapter.getCapabilities.bind(adapter);
-  adapter.getCapabilities = () => ({ ...getCapabilities(), compactActivityGroups: profile.phased });
   const session = sessions.find((item) => item.engineType === profile.type)!;
   adapter.seedSession(session, createFixtureMessages(session));
   const boundAdapter = adapter;

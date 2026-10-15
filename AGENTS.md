@@ -91,7 +91,7 @@ codemux/
 │   │   ├── AddProjectModal.tsx        # Add project dialog
 │   │   ├── HideProjectModal.tsx       # Hide project dialog
 │   │   ├── FeishuConfigModal.tsx      # Feishu channel config dialog
-│   │   ├── ContextGroup.tsx           # Context group display
+│   │   ├── ToolActivityGroup.tsx      # Collapsible tool-activity group (all engines)
 │   │   ├── InputAreaPermission.tsx    # Permission request in input area
 │   │   ├── InputAreaQuestion.tsx      # Question prompt in input area
 │   │   ├── TodoDock.tsx               # Todo dock component

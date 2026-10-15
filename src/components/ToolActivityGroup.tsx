@@ -85,6 +85,8 @@ export function ToolActivityGroup(props: Props) {
       search: running ? labels.searching : labels.searched,
       list: running ? labels.listing : labels.listed,
       shell: running ? labels.runningCommand : labels.ranCommand,
+      edit: running ? labels.editingFile : labels.editedFile,
+      web: running ? labels.fetching : labels.fetched,
     };
     return templates[kind(row)] ? formatMessage(templates[kind(row)], { target: target(row) }) : target(row);
   };
@@ -122,7 +124,7 @@ export function ToolActivityGroup(props: Props) {
         <span class={styles.chevron} aria-hidden="true">›</span>
       </summary>
       <Show when={isExpanded(key())}><div class={styles.detail}>
-        <Show when={state().input != null}>
+        <Show when={state().input != null && !row().part.diff}>
           <section aria-label={t().parts.toolInput}><div class={styles.detailLabel}>{t().parts.toolInput}</div><pre>{detail(state().input)}</pre></section>
         </Show>
         <Show when={output()}>
@@ -137,7 +139,7 @@ export function ToolActivityGroup(props: Props) {
     <Index each={rowsFor(item().part as ToolPart)}>{renderRow}</Index>
   </Show>}</Index>;
 
-  return <div class={styles.root} data-component="tool-activity-group" data-group-id={props.id} data-grouped={grouped() ? "" : undefined}>
+  return <div class={styles.root} data-component="tool-activity-group" data-group-id={props.id} data-grouped={grouped() ? "" : undefined} data-working={active() ? "" : undefined}>
     <Show when={grouped()} fallback={contents()}>
       <button type="button" class={styles.trigger} id={`${controlId}-trigger`} aria-expanded={props.expanded} aria-controls={`${controlId}-body`} onClick={() => props.onToggle()}>
         <span class={styles.icon} aria-hidden="true"><ActivityIcon kind={rows().every(row => ["read", "search", "list"].includes(kind(row))) ? "search" : "tool"} /></span>

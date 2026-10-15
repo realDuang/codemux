@@ -108,7 +108,7 @@ export function AccessRequestNotification() {
         <For each={requests()}>
           {(req) => (
             <div 
-              class="relative bg-white dark:bg-slate-900 rounded-xl shadow-2xl border border-gray-100 dark:border-slate-800 overflow-hidden animate-in fade-in slide-in-from-bottom-4 duration-300"
+              class="relative bg-white dark:bg-slate-900 rounded-2xl shadow-[var(--cm-shadow-lg)] ring-1 ring-[var(--cm-hairline-strong)] border border-gray-100 dark:border-slate-800 overflow-hidden animate-in fade-in slide-in-from-bottom-4 duration-300"
               classList={{
                 "pointer-events-none": processingIds().has(req.id)
               }}

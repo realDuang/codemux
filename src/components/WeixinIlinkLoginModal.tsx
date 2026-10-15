@@ -169,7 +169,7 @@ export function WeixinIlinkLoginModal(props: WeixinIlinkLoginModalProps) {
     <Show when={props.isOpen}>
       <div class="fixed inset-0 z-50 flex items-center justify-center">
         <div
-          class="absolute inset-0 bg-black/50 backdrop-blur-xs"
+          class="absolute inset-0 bg-black/40 backdrop-blur-sm backdrop-blur-xs"
           onClick={closeAndCleanup}
           aria-hidden="true"
         />
@@ -179,7 +179,7 @@ export function WeixinIlinkLoginModal(props: WeixinIlinkLoginModalProps) {
           role="dialog"
           aria-modal="true"
           aria-labelledby="weixin-ilink-login-modal-title"
-          class="relative bg-white dark:bg-slate-900 rounded-xl shadow-2xl w-full max-w-sm mx-4 overflow-hidden flex flex-col outline-none"
+          class="relative bg-white dark:bg-slate-900 rounded-2xl shadow-[var(--cm-shadow-lg)] ring-1 ring-[var(--cm-hairline-strong)] w-full max-w-sm mx-4 overflow-hidden flex flex-col outline-none"
           onKeyDown={handleKeyDown}
         >
           <div class="flex items-center justify-between px-6 py-4 border-b border-gray-200 dark:border-slate-800">

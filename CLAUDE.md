@@ -126,6 +126,7 @@ All engines support image attachments via a unified pipeline:
 - Engine behavioral differences are expressed through `EngineCapabilities` flags (e.g. `customModelInput`, `providerModelHierarchy`), not engine name checks.
 - Default engine resolution uses `getDefaultEngineType()` from `config.ts`, not hardcoded strings.
 - Example: Copilot's `sql` tool operating on the `todos` table is intercepted and converted to a synthetic `normalizedTool: "todo"` part by the adapter — the frontend sees the same todo format as OpenCode/Claude.
+- Example: every engine renders the same activity timeline (prose on the canvas, reasoning/tool runs as collapsible activity groups). Tool rows are driven by `ToolPart.displayActions`; adapters may set them from native data (Codex parses shell commands), and `EngineManager` derives the rest from canonical tool input via `electron/main/engines/tool-display.ts` on its client-facing egress.
 
 ## Git Policy
 

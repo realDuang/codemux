@@ -22,19 +22,19 @@
   border-image: linear-gradient(to bottom, var(--cm-accent), var(--cm-accent-2) 60%, var(--conversation-rail)) 1;
 }
 
-.sessionTurn[data-compact-activities] .compactStandalone :global([data-component="reasoning"] [data-slot="title"]) {
+.sessionTurn .compactStandalone :global([data-component="reasoning"] [data-slot="title"]) {
   gap: 0.375rem;
 }
 
-.sessionTurn[data-compact-activities] :global([data-slot="markdown"] ul) {
+.sessionTurn :global([data-slot="markdown"] ul) {
   list-style-type: disc;
 }
 
-.sessionTurn[data-compact-activities] :global([data-slot="markdown"] ol) {
+.sessionTurn :global([data-slot="markdown"] ol) {
   list-style-type: decimal;
 }
 
-.sessionTurn[data-compact-activities] :global([data-slot="markdown"] li:has(> input[type="checkbox"])) {
+.sessionTurn :global([data-slot="markdown"] li:has(> input[type="checkbox"])) {
   list-style-type: none;
 }
 .userMessage {

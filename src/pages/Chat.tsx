@@ -3297,7 +3297,7 @@ export default function Chat() {
                           </Show>
                         }
                       >
-                        <MessageList sessionID={sessionStore.current!} isWorking={sending()} compactActivityGroups={currentEngineInfo()?.capabilities?.compactActivityGroups} scrollContainerRef={messagesRef} onPermissionRespond={handlePermissionRespond} onQuestionRespond={handleQuestionRespond} onQuestionDismiss={handleQuestionDismiss} onContinue={handleContinue} />
+                        <MessageList sessionID={sessionStore.current!} isWorking={sending()} scrollContainerRef={messagesRef} onPermissionRespond={handlePermissionRespond} onQuestionRespond={handleQuestionRespond} onQuestionDismiss={handleQuestionDismiss} onContinue={handleContinue} />
                       </Show>
                     }
                   >

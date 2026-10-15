@@ -399,6 +399,10 @@ export interface LocaleDict {
     listing: string;
     ranCommand: string;
     runningCommand: string;
+    editedFile: string;
+    editingFile: string;
+    fetched: string;
+    fetching: string;
     separator: string;
   };
 
@@ -1268,6 +1272,10 @@ export const en: LocaleDict = {
     listing: "Listing {target}",
     ranCommand: "Ran {target}",
     runningCommand: "Running {target}",
+    editedFile: "Edited {target}",
+    editingFile: "Editing {target}",
+    fetched: "Fetched {target}",
+    fetching: "Fetching {target}",
     separator: " · ",
   },
   parts: {

@@ -2,16 +2,13 @@ import {
   createMemo,
   createSignal,
   createEffect,
-  For,
   Index,
   Show,
-  Suspense,
   onCleanup,
   onMount,
 } from "solid-js";
-import { messageStore, setMessageStore, isExpanded, setExpanded, toggleExpanded } from "../stores/message";
-import { Part, PartProps, ProviderIcon, PermissionPrompt, QuestionPrompt } from "./share/part";
-import { ContextGroup, CONTEXT_TOOLS, type ContextGroupItem } from "./ContextGroup";
+import { messageStore, setMessageStore, isExpanded, toggleExpanded } from "../stores/message";
+import { Part, PartProps, ProviderIcon } from "./share/part";
 import { ToolActivityGroup } from "./ToolActivityGroup";
 import { ContentError } from "./share/content-error";
 import { TextShimmer } from "./share/TextShimmer";
@@ -19,7 +16,7 @@ import { TextReveal } from "./share/TextReveal";
 import { useI18n } from "../lib/i18n";
 import { logger } from "../lib/logger";
 import { gateway } from "../lib/gateway-api";
-import { compareParts, groupCompactTurnParts, groupTurnParts, selectResponseParts, shouldHideUnfinishedTool, type CompactTurnSegment, type TurnPart } from "../lib/message-parts";
+import { compareParts, groupCompactTurnParts, selectResponseParts, shouldHideUnfinishedTool, type CompactTurnSegment, type TurnPart } from "../lib/message-parts";
 import type { UnifiedMessage, UnifiedPart, TextPart, ToolPart, UnifiedPermission } from "../types/unified";
 import { TokenUsage } from "./TokenUsage";
 import styles from "./SessionTurn.module.css";
@@ -30,7 +27,6 @@ interface SessionTurnProps {
   assistantMessages: UnifiedMessage[];
   isLastTurn: boolean;
   isWorking: boolean;
-  compactActivityGroups?: boolean;
   onPermissionRespond?: (sessionID: string, permissionID: string, reply: string) => void;
   onQuestionRespond?: (sessionID: string, questionID: string, answers: string[][]) => void;
   onQuestionDismiss?: (sessionID: string, questionID: string) => void;
@@ -257,71 +253,6 @@ function extractReasoningHeading(text: string | undefined): string | undefined {
   return undefined;
 }
 
-interface ActivitySegmentTriggerProps {
-  controlsId: string;
-  expanded: boolean;
-  working: boolean;
-  hasError: boolean;
-  status: string;
-  onToggle: () => void;
-}
-
-function ActivitySegmentTrigger(props: ActivitySegmentTriggerProps) {
-  const { t } = useI18n();
-  const [visibleStatus, setVisibleStatus] = createSignal(props.status);
-  let lastStatusChange = Date.now();
-
-  // Keep active titles readable while tool/reasoning events arrive in quick succession.
-  // Completion bypasses this delay through the working prop below.
-  createEffect(() => {
-    const next = props.status;
-    if (!props.working) {
-      setVisibleStatus(next);
-      lastStatusChange = Date.now();
-      return;
-    }
-    if (next === visibleStatus()) return;
-    const delay = Math.max(0, 1000 - (Date.now() - lastStatusChange));
-    const update = () => {
-      setVisibleStatus(next);
-      lastStatusChange = Date.now();
-    };
-    if (delay === 0) update();
-    else {
-      const timer = setTimeout(update, delay);
-      onCleanup(() => clearTimeout(timer));
-    }
-  });
-
-  return (
-    <div class={styles.stepsTrigger} data-component="activity-segment-trigger">
-      <button
-        type="button"
-        class={styles.stepsTriggerButton}
-        onClick={props.onToggle}
-        aria-expanded={props.expanded}
-        aria-controls={props.controlsId}
-        data-working={props.working ? "" : undefined}
-      >
-        <Show when={props.working}>
-          <span class={styles.workingDot} />
-        </Show>
-        <span class={styles.statusText}>
-          <Show when={props.working} fallback={props.expanded ? t().steps.hideSteps : t().steps.showSteps}>
-            <TextReveal text={visibleStatus()} class={styles.statusReveal} travel={12} duration={250} truncate />
-          </Show>
-        </span>
-        <Show when={props.hasError}><span class={styles.activityAttention}>{t().common.error}</span></Show>
-        <span class={styles.arrow} aria-hidden="true" data-expanded={props.expanded ? "" : undefined}>
-          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="m6 9 6 6 6-6" />
-          </svg>
-        </span>
-      </button>
-    </div>
-  );
-}
-
 export function SessionTurn(props: SessionTurnProps) {
   const { t } = useI18n();
   const [observedWorking, setObservedWorking] = createSignal(false);
@@ -375,16 +306,6 @@ export function SessionTurn(props: SessionTurnProps) {
     ).finally(() => {
       if (stepsInflight.size === 0) setStepsLoading(false);
     });
-  });
-
-  // Auto-expand steps panel when AI starts working (last turn only).
-  // Only auto-expand once per turn to respect manual user collapse.
-  let hasAutoExpanded = false;
-  createEffect(() => {
-    if (props.isWorking && !props.compactActivityGroups && !hasAutoExpanded) {
-      setExpanded(stepsExpandedKey(), true);
-      hasAutoExpanded = true;
-    }
   });
 
   const isCompactingTurn = createMemo(() => {
@@ -468,20 +389,6 @@ export function SessionTurn(props: SessionTurnProps) {
     return undefined;
   };
 
-  // Get permissions that don't match any tool part (need standalone rendering)
-  const unmatchedPermissions = createMemo(() => {
-    const matched = new Set<string>();
-    for (const msg of props.assistantMessages) {
-      const parts = messageStore.part[msg.id] || [];
-      for (const p of parts) {
-        if (p.type !== "tool") continue;
-        const perm = getPermissionForPart(p);
-        if (perm) matched.add(perm.id);
-      }
-    }
-    return permissions().filter(p => !matched.has(p.id));
-  });
-
   // Get pending questions for this session
   const questions = createMemo(
     () => messageStore.question[props.sessionID] || []
@@ -512,26 +419,11 @@ export function SessionTurn(props: SessionTurnProps) {
     return undefined;
   };
 
-  // Get questions that don't match any tool part (need standalone rendering)
-  const unmatchedQuestions = createMemo(() => {
-    const matched = new Set<string>();
-    for (const msg of props.assistantMessages) {
-      const parts = messageStore.part[msg.id] || [];
-      for (const p of parts) {
-        if (p.type !== "tool") continue;
-        const q = getQuestionForPart(p);
-        if (q) matched.add(q.id);
-      }
-    }
-    return questions().filter(q => !matched.has(q.id));
-  });
-
   // Combined memo: single reverse scan derives all part-scanning state at once.
   // Previously 6 separate memos each scanned the same parts arrays, creating
   // 6× redundant SolidJS subscriptions and 6× the scan work per streaming frame.
   const derivedPartState = createMemo(() => {
     const msgs = props.assistantMessages;
-    let hasSteps = false;
     const textParts: { message: UnifiedMessage; part: TextPart; index: number }[] = [];
     let isReasoningActive = false;
     let reasoningHeading: string | null | undefined;
@@ -544,22 +436,11 @@ export function SessionTurn(props: SessionTurnProps) {
     // Reverse scan: most recent message first
     for (let mi = msgs.length - 1; mi >= 0; mi--) {
       const msg = msgs[mi];
-      // Check metadata stepCount for historical sessions
-      if (!hasSteps && msg.stepCount && msg.stepCount > 0) hasSteps = true;
-
       const parts = messageStore.part[msg.id] || [];
 
       for (let pi = parts.length - 1; pi >= 0; pi--) {
         const p = parts[pi];
         if (!p) continue;
-
-        // Progress text remains accessible even when the turn has no tools or reasoning.
-        if (!hasSteps) {
-          if (p.type === "reasoning" && p.text.trim()) hasSteps = true;
-          else if (p.type === "tool" && (p as ToolPart).normalizedTool !== "todo") hasSteps = true;
-          else if (p.type === "text" && p.phase === "commentary" && p.text && !p.synthetic) hasSteps = true;
-          else if (p.type === "system-notice") hasSteps = true;
-        }
 
         if (p.type === "text") {
           textParts.push({ message: msg, part: p, index: pi });
@@ -602,7 +483,6 @@ export function SessionTurn(props: SessionTurnProps) {
     textParts.reverse();
     const responses = new Set(selectResponseParts(textParts.map(({ part }) => part)));
     return {
-      hasSteps,
       responseParts: textParts.filter(({ part }) => responses.has(part)),
       isReasoningActive,
       reasoningHeading: reasoningHeading ?? undefined,
@@ -611,17 +491,10 @@ export function SessionTurn(props: SessionTurnProps) {
   });
 
   // Convenience accessors (unwrap the combined memo for downstream consumers)
-  const hasSteps = () => derivedPartState().hasSteps;
   const responseParts = () => derivedPartState().responseParts;
   const isReasoningActive = () => derivedPartState().isReasoningActive;
   const reasoningHeading = () => derivedPartState().reasoningHeading;
   const currentStatus = () => derivedPartState().currentStatus;
-
-  // Last assistant message ID (for streaming detection)
-  const lastAssistantMsgId = () => {
-    const msgs = props.assistantMessages;
-    return msgs.length > 0 ? msgs[msgs.length - 1].id : undefined;
-  };
 
   // Detect error/cancelled state from the last assistant message
   const lastMessageError = createMemo(() => {
@@ -736,84 +609,12 @@ export function SessionTurn(props: SessionTurnProps) {
     }
     return items;
   });
-  const timelineSegments = createMemo(() => groupTurnParts(timelineParts()));
-  const compactSegments = createMemo(() => props.compactActivityGroups ? groupCompactTurnParts(timelineParts()) : []);
-
-  type RenderItem =
-    | ({ kind: "part" } & TurnPart)
-    | { kind: "context-group"; items: ContextGroupItem[]; isStreaming: boolean };
-  type RenderSegment =
-    | { kind: "activity"; id: string; source: TurnPart[]; items: RenderItem[] }
-    | { kind: "response"; items: TurnPart[] };
-
-  // Context groups cannot span a response or a message boundary.
-  const groupedRenderSegments = createMemo(() => {
-    const segments: RenderSegment[] = [];
-    let activityBoundary = "start";
-    for (const segment of timelineSegments()) {
-      if (segment.kind === "response") {
-        segments.push({ kind: "response", items: segment.items });
-        const last = segment.items.at(-1)!;
-        activityBoundary = `${last.message.id}:${last.part.id}`;
-        continue;
-      }
-      const result: RenderItem[] = [];
-      let contextBuf: { item: ContextGroupItem; source: TurnPart }[] = [];
-      const flushContext = (isStreaming: boolean) => {
-        if (contextBuf.length >= 2) {
-          result.push({ kind: "context-group", items: contextBuf.map(({ item }) => item), isStreaming });
-        } else if (contextBuf.length === 1) {
-          result.push({ kind: "part", ...contextBuf[0].source });
-        }
-        contextBuf = [];
-      };
-
-      for (const source of segment.items) {
-        const part = source.part;
-        if (contextBuf.at(-1)?.source.message.id !== source.message.id) flushContext(false);
-        if (part.type === "tool" && CONTEXT_TOOLS.has(part.normalizedTool)) {
-          const input = part.state.input as Record<string, unknown> | undefined;
-          let action: string = part.normalizedTool;
-          let detail = "";
-          switch (part.normalizedTool) {
-            case "read":
-              action = "Read";
-              detail = extractFileBasename(input) || "";
-              break;
-            case "grep":
-              action = "Grep";
-              detail = extractPattern(input) || "";
-              break;
-            case "glob":
-              action = "Glob";
-              detail = extractPattern(input) || "";
-              break;
-            case "list":
-              action = "LS";
-              detail = extractFileBasename(input) || "";
-              break;
-          }
-          contextBuf.push({ item: { part, action, detail }, source });
-        } else {
-          flushContext(false);
-          result.push({ kind: "part", ...source });
-        }
-      }
-      const lastContext = contextBuf.at(-1)?.source;
-      const lastMessageParts = lastContext && messageStore.part[lastContext.message.id];
-      const isStreamingTail = props.isWorking
-        && lastContext?.message.id === lastAssistantMsgId()
-        && lastContext?.part.id === lastMessageParts?.at(-1)?.id;
-      flushContext(isStreamingTail);
-      // The preceding response keeps expansion stable when a delayed activity item appears.
-      segments.push({ kind: "activity", id: activityBoundary, source: segment.items, items: result });
-    }
-    return segments;
-  });
+  // Every engine uses the same timeline: prose stays on the canvas, while reasoning and
+  // tool calls collapse into activity segments between the texts that surround them.
+  const compactSegments = createMemo(() => groupCompactTurnParts(timelineParts()));
 
   const activityExpandedKey = (id: string) => `activity-${props.userMessage.id}-${id}`;
-  const expandedActivitySegment = createMemo(() => props.compactActivityGroups
-    && compactSegments().some((segment) => segment.kind === "activity" && isExpanded(activityExpandedKey(segment.id))));
+  const expandedActivitySegment = createMemo(() => compactSegments().some((segment) => segment.kind === "activity" && isExpanded(activityExpandedKey(segment.id))));
   // Loading history must not remove the disclosure that opened its steps.
   const hasDeferredSteps = createMemo(() => props.assistantMessages.some(
     (message) => (message.stepCount ?? 0) > 0,
@@ -823,17 +624,16 @@ export function SessionTurn(props: SessionTurnProps) {
   const hasUnloadedSteps = createMemo(() => props.assistantMessages.some(
     (message) => (message.stepCount ?? 0) > 0 && !messageStore.stepsLoaded[message.id],
   ));
-  const showTurnStepsTrigger = createMemo(() => !props.compactActivityGroups
-    ? props.isWorking || hasSteps()
-    : (hasDeferredSteps() && (hasUnloadedSteps() || compactSegments().some(isCompactStep)))
-      || (props.isWorking && groupedRenderSegments().length === 0));
+  const showTurnStepsTrigger = createMemo(() =>
+    (hasDeferredSteps() && (hasUnloadedSteps() || compactSegments().some(isCompactStep)))
+      || (props.isWorking && compactSegments().length === 0));
   const compactStepsVisible = () => !hasDeferredSteps() || stepsExpanded();
   const compactStepId = (index: number) => `compact-activity-${props.userMessage.id}-${index}`;
-  const turnHasToolError = createMemo(() => groupedRenderSegments().some((segment) => segment.kind === "activity"
-    && segment.source.some(({ part }) => part.type === "tool" && part.state.status === "error")));
+  const turnHasToolError = createMemo(() => compactSegments().some((segment) => segment.kind === "activity"
+    && segment.items.some(({ part }) => part.type === "tool" && part.state.status === "error")));
 
   return (
-    <div class={styles.sessionTurn} data-component="session-turn" data-compact-activities={props.compactActivityGroups ? "" : undefined} data-compacting={isCompactingTurn() ? "" : undefined}>
+    <div class={styles.sessionTurn} data-component="session-turn" data-compacting={isCompactingTurn() ? "" : undefined}>
       <span class="sr-only" role="status" aria-live="polite" aria-atomic="true">
         {observedWorking() && !props.isWorking ? t().steps.turnFinished : ""}
       </span>
@@ -865,9 +665,7 @@ export function SessionTurn(props: SessionTurnProps) {
                 class={styles.stepsTriggerButton}
                 onClick={handleStepsToggle}
                 aria-expanded={stepsExpanded()}
-                aria-controls={(props.compactActivityGroups
-                  ? compactSegments().flatMap((segment, index) => isCompactStep(segment) ? [compactStepId(index)] : [])
-                  : groupedRenderSegments().flatMap((segment, index) => segment.kind === "activity" ? [`activity-${props.userMessage.id}-${index}`] : [])).join(" ") || undefined}
+                aria-controls={compactSegments().flatMap((segment, index) => isCompactStep(segment) ? [compactStepId(index)] : []).join(" ") || undefined}
                 data-working={props.isWorking ? "" : undefined}
               >
                 {/* Handoff wrap: thinking layer ↔ meta layer with blur/fade transition */}
@@ -969,140 +767,7 @@ export function SessionTurn(props: SessionTurnProps) {
             </div>
           </Show>
 
-          <Show when={props.compactActivityGroups} fallback={
-          <Index each={groupedRenderSegments()}>
-            {(segment, segmentIndex) => {
-              const responseItems = () => {
-                const current = segment();
-                return current.kind === "response" ? current.items : [];
-              };
-              const activityItems = () => {
-                const current = segment();
-                return current.kind === "activity" ? current.items : [];
-              };
-              const activityKey = () => {
-                const current = segment();
-                return current.kind === "activity" ? activityExpandedKey(current.id) : "";
-              };
-              const activityExpanded = () => props.compactActivityGroups ? isExpanded(activityKey()) : stepsExpanded();
-              const activityWorking = () => props.isWorking && segmentIndex === groupedRenderSegments().length - 1;
-              const activityId = () => `activity-${props.userMessage.id}-${segmentIndex}`;
-              const activityHasError = () => {
-                const current = segment();
-                return current.kind === "activity" && current.source.some(({ part }) => part.type === "tool" && part.state.status === "error");
-              };
-              const activityStatus = () => {
-                const current = segment();
-                const last = current.kind === "activity" ? current.source.at(-1)?.part : undefined;
-                if (activityWorking() && currentStatus()) return currentStatus()!;
-                return computeStatusFromPart(last, t) || t().steps.consideringNextSteps;
-              };
-              return (
-                <Show when={segment().kind === "response"} fallback={
-                  <>
-                  <Show when={props.compactActivityGroups}>
-                    <ActivitySegmentTrigger
-                      controlsId={activityId()}
-                      expanded={activityExpanded()}
-                      hasError={activityHasError()}
-                      working={activityWorking()}
-                      status={activityStatus()}
-                      onToggle={() => toggleExpanded(activityKey())}
-                    />
-                  </Show>
-                  <div id={activityId()} hidden={!activityExpanded()}>
-                  <Show when={activityExpanded()}>
-                    <div class={styles.stepsContent} data-segment="activity">
-                      <div class={styles.assistantMessageParts}>
-                        <Suspense>
-                          <Index each={activityItems()}>
-                            {(renderItem) => {
-                              const partItem = () => {
-                                const current = renderItem();
-                                return current.kind === "part" ? current : undefined;
-                              };
-                              const contextItems = () => {
-                                const current = renderItem();
-                                return current.kind === "context-group" ? current.items : [];
-                              };
-                              const contextStreaming = () => {
-                                const current = renderItem();
-                                return current.kind === "context-group" && current.isStreaming;
-                              };
-                              return (
-                                <Show when={partItem()} fallback={
-                                  <ContextGroup
-                                    items={contextItems()}
-                                    isStreaming={contextStreaming()}
-                                    defaultOpen={contextStreaming()}
-                                  />
-                                }>
-                                  {(ri) => {
-                                    const isPartStreaming = () => {
-                                      const { part, message } = ri();
-                                      if (part.type === "text") return props.isWorking && part.completed !== true && message.time.completed == null;
-                                      return props.isWorking && part.type === "reasoning"
-                                        && part.completed !== true && part.time?.end === undefined && isReasoningActive()
-                                        && message.id === lastAssistantMsgId()
-                                        && part.id === messageStore.part[message.id]?.filter((candidate) => candidate.type === "reasoning").at(-1)?.id;
-                                    };
-                                    return (
-                                      <Show when={`${ri().message.id}:${ri().part.id}`} keyed>
-                                        {(_partKey) => (
-                                          <Part
-                                            last={false}
-                                            part={ri().part}
-                                            index={ri().index}
-                                            message={ri().message}
-                                            isStreaming={isPartStreaming()}
-                                            permission={getPermissionForPart(ri().part)}
-                                            onPermissionRespond={props.onPermissionRespond}
-                                            question={getQuestionForPart(ri().part)}
-                                            onQuestionRespond={props.onQuestionRespond}
-                                            onQuestionDismiss={props.onQuestionDismiss}
-                                          />
-                                        )}
-                                      </Show>
-                                    );
-                                  }}
-                                </Show>
-                              );
-                            }}
-                          </Index>
-                        </Suspense>
-                      </div>
-                    </div>
-                  </Show>
-                  </div>
-                  </>
-                }>
-                  <div class={styles.response} data-segment="response" role="article" aria-label={t().steps.response}>
-                    <div class={styles.responseContent}>
-                      <Index each={responseItems()}>
-                        {(response) => (
-                          <Show when={`${response().message.id}:${response().part.id}`} keyed>
-                            {(_partKey) => (
-                              <Part
-                                last={response().part.id === responseParts().at(-1)?.part.id}
-                                part={response().part}
-                                index={response().index}
-                                message={response().message}
-                                isStreaming={props.isWorking
-                                  && !(response().part.type === "text" && (response().part as TextPart).completed === true)
-                                  && response().message.id === lastAssistantMsgId()
-                                  && response().part.id === messageStore.part[response().message.id]?.at(-1)?.id}
-                              />
-                            )}
-                          </Show>
-                        )}
-                      </Index>
-                    </div>
-                  </div>
-                </Show>
-              );
-            }}
-          </Index>
-          }>
+          <>
             <Index each={compactSegments()}>
               {(segment, segmentIndex) => {
                 const renderItem = (item: () => TurnPart) => <Show when={`${item().message.id}:${item().part.id}`} keyed>{(_key) =>
@@ -1140,26 +805,9 @@ export function SessionTurn(props: SessionTurnProps) {
                 </Show>;
               }}
             </Index>
-          </Show>
+          </>
 
-          {/* Compact conversations use the input area's permission and question controls. */}
-          <Show when={!props.compactActivityGroups && stepsExpanded()}>
-            <For each={unmatchedPermissions()}>
-              {(perm) => (
-                <PermissionPrompt permission={perm} onRespond={props.onPermissionRespond} />
-              )}
-            </For>
-            <For each={unmatchedQuestions()}>
-              {(question) => (
-                <QuestionPrompt
-                  question={question}
-                  onRespond={props.onQuestionRespond}
-                  onDismiss={props.onQuestionDismiss}
-                />
-              )}
-            </For>
-          </Show>
-
+          {/* Permissions and questions are answered from the input area for every engine. */}
           {/* Per-turn token usage (collapsed by default) */}
           <Show when={!props.isWorking && props.assistantMessages.length > 0}>
             <TokenUsage messages={props.assistantMessages} />

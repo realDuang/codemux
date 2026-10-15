@@ -78,8 +78,8 @@ than redefined:
 | `--conversation-code-bg` | `--cm-code-bg` (code blocks, toolbars, tool I/O) |
 | `--conversation-focus` | `--cm-accent` |
 
-Renderer modules (`SessionTurn`, `ToolActivityGroup`, `ContextGroup`,
-`TokenUsage`, `share/*`) only consume `--conversation-*`, so the transcript can be
+Renderer modules (`SessionTurn`, `ToolActivityGroup`, `TokenUsage`,
+`share/*`) only consume `--conversation-*`, so the transcript can be
 re-themed in one place.
 
 ## Patterns
@@ -88,12 +88,15 @@ re-themed in one place.
   (hairline, tucked bottom-right corner). Activity triggers are flat rows;
   activity expands onto a left hairline rail. The response flows directly on
   the canvas with no card around it.
-- **One grammar for every engine**: engines that set
-  `capabilities.compactActivityGroups` (currently Codex CLI and Codex Desktop)
-  render per-segment activity groups instead of one turn-level steps block.
-  Both paths use the same visuals: activity sits on the rail (`.stepsContent` /
-  `.compactStep`) and prose on the canvas. Collapsed tools are light rows that
-  only show a card frame on hover or while open.
+- **Engine-agnostic activity timeline**: every engine renders one timeline.
+  Text parts are prose on the canvas. Runs of reasoning and tool calls between
+  them become activity segments on a rail (`.compactStep`), and a run with
+  tools collapses into a `ToolActivityGroup` ("Read files · Ran commands")
+  whose rows read "Read src/a.ts", "Ran npm test", and so on. Rows come from
+  `ToolPart.displayActions`, which the gateway derives for any engine that does
+  not supply native ones. Lazily loaded history adds a turn-level "Show steps"
+  trigger that reveals the segments in place. Standalone tools (e.g. `task`)
+  keep their card, which only shows its frame on hover or while open.
 - **Live state**: a working trigger gets a cyan/violet ping dot (violet while
   reasoning) and a light sweep along its base, and the activity rail below it
   turns into the signature gradient.

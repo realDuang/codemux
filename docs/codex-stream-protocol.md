@@ -439,9 +439,12 @@ checks actually ran; do not inherit a previous release's live acceptance.
 
 This increment follows the installed Codex Desktop 26.1007.30912 (20156), whose
 ASAR SHA-256 remains `75e397e2280dde93b70a85aa926f4282c728eacc84dfeb15ba7fb6ddd84628af`.
-The implementation remains gated by the existing `compactActivityGroups`
-capability enabled by the two Codex adapters. The legacy renderer path and
-ContextGroup remain unchanged for OpenCode, Copilot, and Claude.
+This grouping was first gated by a `compactActivityGroups` capability enabled
+only by the two Codex adapters. It is now the single renderer path for every
+engine: the capability, the legacy turn-level steps container and ContextGroup
+were removed, and the gateway derives `displayActions` for engines that do not
+supply them (see "Engine-agnostic activity timeline" in
+[design-system.md](design-system.md)).
 
 ### Verified grouping rules
 

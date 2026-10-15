@@ -6,11 +6,6 @@ export interface TurnPart {
   index: number;
 }
 
-export interface TurnPartSegment {
-  kind: "activity" | "response";
-  items: TurnPart[];
-}
-
 export type CompactTurnSegment =
   | { kind: "message" | "standalone"; id: string; item: TurnPart }
   | { kind: "activity"; id: string; items: TurnPart[] };
@@ -91,24 +86,4 @@ export function selectResponseParts(parts: readonly TextPart[]): TextPart[] {
     if (part.phase === undefined) lastLegacy = part;
   }
   return visible.filter((part) => part.phase === "partial" || part.phase === "final" || part === lastLegacy);
-}
-
-/** Keep native responses between activities while preserving the legacy trailing response. */
-export function groupTurnParts(items: readonly TurnPart[]): TurnPartSegment[] {
-  const responseParts = new Set(selectResponseParts(
-    items.map(({ part }) => part).filter((part): part is TextPart => part.type === "text"),
-  ));
-  const legacyResponse = items.find(({ part }) => part.type === "text" && part.phase === undefined && responseParts.has(part));
-  const timeline = legacyResponse
-    ? [...items.filter((item) => item !== legacyResponse), legacyResponse]
-    : items;
-  const segments: TurnPartSegment[] = [];
-  for (const item of timeline) {
-    const kind = (item.part.type === "text" && responseParts.has(item.part))
-      || (item.part.type === "file" && item.message.role === "assistant") ? "response" : "activity";
-    const previous = segments.at(-1);
-    if (previous?.kind === kind) previous.items.push(item);
-    else segments.push({ kind, items: [item] });
-  }
-  return segments;
 }

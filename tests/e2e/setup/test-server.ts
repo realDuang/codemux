@@ -16,6 +16,7 @@ import { randomUUID } from "crypto";
 import { sendJson, extractBearerToken } from "../../../shared/http-utils";
 import { MockEngineAdapter } from "../../../electron/main/engines/mock-adapter";
 import { MockAuthStore } from "./mock-auth-store";
+import { normalizeMessageToolDisplay, normalizeToolPartDisplay } from "../../../electron/main/engines/tool-display";
 import { seedTestData } from "./seed-data";
 import {
   GatewayRequestType,
@@ -197,12 +198,13 @@ export async function startTestServer(
   // --- Subscribe to adapter events and broadcast ---
 
   function subscribeAdapterEvents(adapter: MockEngineAdapter): void {
+    // Mirror the gateway: tool parts leave with engine-agnostic display fields.
     adapter.on("message.part.updated", (data) => {
-      broadcast({ type: GatewayNotificationType.MESSAGE_PART_UPDATED, payload: data });
+      broadcast({ type: GatewayNotificationType.MESSAGE_PART_UPDATED, payload: { ...data, part: normalizeToolPartDisplay(data.part) } });
     });
 
     adapter.on("message.updated", (data) => {
-      broadcast({ type: GatewayNotificationType.MESSAGE_UPDATED, payload: data });
+      broadcast({ type: GatewayNotificationType.MESSAGE_UPDATED, payload: { ...data, message: normalizeMessageToolDisplay(data.message) } });
     });
 
     adapter.on("session.updated", (data) => {
@@ -355,7 +357,7 @@ export async function startTestServer(
 
       case GatewayRequestType.MESSAGE_LIST: {
         const adapter = getAdapterForSession(p.sessionId);
-        const messages = await adapter.listMessages(p.sessionId);
+        const messages = (await adapter.listMessages(p.sessionId)).map((message) => normalizeMessageToolDisplay(message));
         if (!lazyStepsSessionIds.has(p.sessionId)) return messages;
         return messages.map((message) => ({
           ...message,
@@ -369,7 +371,7 @@ export async function startTestServer(
         const message = (await adapter.listMessages(p.sessionId)).find((item) => item.id === p.messageId);
         if (!message) throw Object.assign(new Error(`Unknown fixture message: ${p.messageId}`), { code: "MESSAGE_NOT_FOUND" });
         messageStepRequests.set(message.id, (messageStepRequests.get(message.id) ?? 0) + 1);
-        return message.parts.filter((part) => part.type !== "text" && part.type !== "file");
+        return normalizeMessageToolDisplay(message).parts.filter((part) => part.type !== "text" && part.type !== "file");
       }
 
       // --- Model ---

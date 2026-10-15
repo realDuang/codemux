@@ -398,6 +398,10 @@ export const ru: LocaleDict = {
     listing: "Получение списка {target}",
     ranCommand: "Выполнено: {target}",
     runningCommand: "Выполняется: {target}",
+    editedFile: "Изменён {target}",
+    editingFile: "Изменяется {target}",
+    fetched: "Получено: {target}",
+    fetching: "Получение: {target}",
     separator: " · ",
   },
   parts: {

@@ -85,6 +85,8 @@ export function ToolActivityGroup(props: Props) {
       search: running ? labels.searching : labels.searched,
       list: running ? labels.listing : labels.listed,
       shell: running ? labels.runningCommand : labels.ranCommand,
+      edit: running ? labels.editingFile : labels.editedFile,
+      web: running ? labels.fetching : labels.fetched,
     };
     return templates[kind(row)] ? formatMessage(templates[kind(row)], { target: target(row) }) : target(row);
   };
@@ -122,7 +124,7 @@ export function ToolActivityGroup(props: Props) {
         <span class={styles.chevron} aria-hidden="true">›</span>
       </summary>
       <Show when={isExpanded(key())}><div class={styles.detail}>
-        <Show when={state().input != null}>
+        <Show when={state().input != null && !row().part.diff}>
           <section aria-label={t().parts.toolInput}><div class={styles.detailLabel}>{t().parts.toolInput}</div><pre>{detail(state().input)}</pre></section>
         </Show>
         <Show when={output()}>

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { compareParts, groupCompactTurnParts, groupTurnParts, selectResponseParts, shouldHideUnfinishedTool, upsertPart } from "../../../../src/lib/message-parts";
+import { compareParts, groupCompactTurnParts, selectResponseParts, shouldHideUnfinishedTool, upsertPart } from "../../../../src/lib/message-parts";
 import type { TextPart, UnifiedMessage, UnifiedPart } from "../../../../src/types/unified";
 
 const textPart = (id: string, order?: number, phase?: TextPart["phase"]): TextPart => ({
@@ -98,48 +98,6 @@ describe("selectResponseParts", () => {
   });
 });
 
-describe("groupTurnParts", () => {
-  const message: UnifiedMessage = {
-    id: "reply", sessionId: "session", role: "assistant", time: { created: 1 }, parts: [],
-  };
-  const tool: UnifiedPart = {
-    id: "tool", messageId: "reply", sessionId: "session", type: "tool", order: 1,
-    callId: "call", normalizedTool: "shell", originalTool: "shell", title: "Run checks",
-    state: { status: "completed", input: { command: "test" }, output: "Passed", time: { start: 1, end: 2 } },
-  };
-  const segmentsFor = (parts: UnifiedPart[]) => groupTurnParts(parts.map((part, index) => ({ message, part, index })));
-
-  it("keeps a partial response before intervening tools and the final response after them", () => {
-    const segments = segmentsFor([textPart("partial", 0, "partial"), tool, textPart("final", 2, "final")]);
-
-    expect(segments.map(({ kind, items }) => [kind, items.map(({ part }) => part.id)]))
-      .toEqual([["response", ["partial"]], ["activity", ["tool"]], ["response", ["final"]]]);
-    expect(segments.flatMap(({ items }) => items.map(({ part }) => part.id))).toEqual(["partial", "tool", "final"]);
-  });
-
-  it("groups consecutive responses without absorbing commentary or losing message ownership", () => {
-    const laterMessage = { ...message, id: "reply-2" };
-    const partial = textPart("partial", 0, "partial");
-    const final = { ...textPart("final", 1, "final"), messageId: laterMessage.id };
-    const commentary = { ...textPart("commentary", 2, "commentary"), messageId: laterMessage.id };
-    const segments = groupTurnParts([
-      { message, part: partial, index: 0 },
-      { message: laterMessage, part: final, index: 0 },
-      { message: laterMessage, part: commentary, index: 1 },
-    ]);
-
-    expect(segments.map(({ kind, items }) => [kind, items.map(({ part }) => part.id)]))
-      .toEqual([["response", ["partial", "final"]], ["activity", ["commentary"]]]);
-    expect(segments[0].items[1]).toEqual({ message: laterMessage, part: final, index: 0 });
-  });
-
-  it("keeps unphased engines' final text after their activity as before", () => {
-    const segments = segmentsFor([textPart("legacy-progress"), textPart("legacy-answer"), tool]);
-    expect(segments.map(({ kind, items }) => [kind, items.map(({ part }) => part.id)]))
-      .toEqual([["activity", ["legacy-progress", "tool"]], ["response", ["legacy-answer"]]]);
-  });
-});
-
 describe("shouldHideUnfinishedTool", () => {
   const message: UnifiedMessage = {
     id: "earlier-reply", sessionId: "session", role: "assistant", time: { created: 1 }, parts: [],
@@ -188,12 +146,16 @@ describe("groupCompactTurnParts", () => {
     expect(groupCompactTurnParts(sources([reasoning]))[0]).toMatchObject({ kind: "standalone", item: { part: { id: "thought" } } });
   });
 
-  it("keeps group identity stable as later tools arrive and leaves legacy grouping unchanged", () => {
+  it("keeps group identity stable as later tools arrive", () => {
     const first = sources([textPart("progress", 0, "commentary"), tool("a")]);
     const later = [...first, ...sources([tool("b")])];
     expect(groupCompactTurnParts(first)[1].id).toBe(groupCompactTurnParts(later)[1].id);
-    expect(groupTurnParts(first).map(item => item.kind)).toEqual(["activity"]);
-    const legacy = sources([textPart("old-progress"), tool("read", "read"), textPart("old-answer")]);
-    expect(groupTurnParts(legacy).map(item => item.kind)).toEqual(["activity", "response"]);
+  });
+
+  it("gives engines without phase metadata the same timeline", () => {
+    const legacy = sources([textPart("old-progress"), tool("read", "read"), tool("command"), textPart("old-answer")]);
+    const grouped = groupCompactTurnParts(legacy);
+    expect(grouped.map(item => item.kind)).toEqual(["message", "activity", "message"]);
+    expect(grouped[1]).toMatchObject({ kind: "activity", items: [{ part: { id: "read" } }, { part: { id: "command" } }] });
   });
 });

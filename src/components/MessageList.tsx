@@ -7,7 +7,6 @@ import "./conversation.css";
 interface MessageListProps {
   sessionID: string;
   isWorking?: boolean;
-  compactActivityGroups?: boolean;
   scrollContainerRef?: () => HTMLDivElement | undefined;
   onPermissionRespond?: (sessionID: string, permissionID: string, reply: string) => void;
   onQuestionRespond?: (sessionID: string, questionID: string, answers: string[][]) => void;
@@ -94,7 +93,6 @@ export function MessageList(props: MessageListProps) {
                   assistantMessages={turn().assistantMessages}
                   isLastTurn={isLastTurn()}
                   isWorking={isWorking()}
-                  compactActivityGroups={props.compactActivityGroups}
                   onPermissionRespond={props.onPermissionRespond}
                   onQuestionRespond={props.onQuestionRespond}
                   onQuestionDismiss={props.onQuestionDismiss}

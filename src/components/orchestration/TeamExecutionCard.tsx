@@ -228,13 +228,13 @@ export function TeamExecutionCard(props: TeamExecutionCardProps) {
           <svg class={styles.dagSvg}>
             <defs>
               <marker id="dagArrowActive" markerWidth="6" markerHeight="4" refX="6" refY="2" orient="auto">
-                <path d="M0,0 L6,2 L0,4" fill="#6366f1" />
+                <path d="M0,0 L6,2 L0,4" style={{ fill: "var(--cm-accent)" }} />
               </marker>
               <marker id="dagArrowCompleted" markerWidth="6" markerHeight="4" refX="6" refY="2" orient="auto">
-                <path d="M0,0 L6,2 L0,4" fill="#22c55e" />
+                <path d="M0,0 L6,2 L0,4" style={{ fill: "var(--cm-success)" }} />
               </marker>
               <marker id="dagArrowPending" markerWidth="6" markerHeight="4" refX="6" refY="2" orient="auto">
-                <path d="M0,0 L6,2 L0,4" fill="#94a3b8" />
+                <path d="M0,0 L6,2 L0,4" style={{ fill: "var(--cm-text-faint)" }} />
               </marker>
             </defs>
             <For each={edges()}>
@@ -245,11 +245,11 @@ export function TeamExecutionCard(props: TeamExecutionCardProps) {
                   <path
                     d={d}
                     fill="none"
-                    stroke={
-                      edge.status === "completed" ? "#22c55e" :
-                      edge.status === "active" ? "#6366f1" :
-                      "#94a3b8"
-                    }
+                    style={{
+                      stroke: edge.status === "completed" ? "var(--cm-success)" :
+                        edge.status === "active" ? "var(--cm-accent)" :
+                        "var(--cm-text-faint)",
+                    }}
                     stroke-width={edge.status === "pending" ? "1.5" : "2"}
                     stroke-dasharray={edge.status === "pending" ? "4 3" : "none"}
                     marker-end={`url(#dagArrow${edge.status.charAt(0).toUpperCase() + edge.status.slice(1)})`}

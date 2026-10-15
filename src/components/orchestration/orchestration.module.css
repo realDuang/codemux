@@ -11,22 +11,22 @@
   position: relative;
   border-radius: 12px;
   padding: 16px;
-  background: rgba(255, 255, 255, 0.85);
+  background: var(--cm-surface);
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
-  border: 1px solid rgba(99, 102, 241, 0.2);
+  border: 1px solid color-mix(in oklch, var(--cm-accent) 20%, transparent);
   box-shadow:
-    0 4px 24px rgba(99, 102, 241, 0.08),
-    0 1px 4px rgba(0, 0, 0, 0.06);
+    0 4px 24px color-mix(in oklch, var(--cm-accent) 8%, transparent),
+    0 1px 4px oklch(0 0 0 / 0.06);
   overflow: hidden;
 }
 
 :global(.dark) .teamCard {
-  background: rgba(15, 23, 42, 0.85);
-  border-color: rgba(99, 102, 241, 0.25);
+  background: var(--cm-surface-2);
+  border-color: color-mix(in oklch, var(--cm-accent) 25%, transparent);
   box-shadow:
-    0 4px 24px rgba(99, 102, 241, 0.12),
-    0 1px 4px rgba(0, 0, 0, 0.4);
+    0 4px 24px color-mix(in oklch, var(--cm-accent) 12%, transparent),
+    0 1px 4px oklch(0 0 0 / 0.4);
 }
 
 /* Gradient top-edge accent */
@@ -37,7 +37,7 @@
   left: 0;
   right: 0;
   height: 2px;
-  background: linear-gradient(90deg, #6366f1, #8b5cf6, #06b6d4);
+  background: var(--cm-gradient);
   border-radius: 12px 12px 0 0;
 }
 
@@ -48,8 +48,8 @@
 .subtaskCard {
   border-radius: 8px;
   padding: 10px 12px;
-  border: 1px solid rgba(148, 163, 184, 0.2);
-  background: rgba(248, 250, 252, 0.9);
+  border: 1px solid var(--cm-hairline-strong);
+  background: var(--cm-surface-2);
   transition:
     border-color 0.2s ease,
     box-shadow 0.2s ease,
@@ -58,13 +58,13 @@
 }
 
 :global(.dark) .subtaskCard {
-  background: rgba(30, 41, 59, 0.8);
-  border-color: rgba(71, 85, 105, 0.4);
+  background: var(--cm-surface-3);
+  border-color: var(--cm-hairline-strong);
 }
 
 .subtaskCard:hover {
-  border-color: rgba(99, 102, 241, 0.4);
-  box-shadow: 0 2px 8px rgba(99, 102, 241, 0.1);
+  border-color: color-mix(in oklch, var(--cm-accent) 40%, transparent);
+  box-shadow: 0 2px 8px color-mix(in oklch, var(--cm-accent) 10%, transparent);
 }
 
 /* --------------------------------------------------------------------------
@@ -75,18 +75,18 @@
   position: relative;
   height: 6px;
   border-radius: 99px;
-  background: rgba(148, 163, 184, 0.2);
+  background: color-mix(in oklch, var(--cm-text) 12%, transparent);
   overflow: hidden;
 }
 
 :global(.dark) .progressBar {
-  background: rgba(71, 85, 105, 0.4);
+  background: color-mix(in oklch, var(--cm-text) 24%, transparent);
 }
 
 .progressFill {
   height: 100%;
   border-radius: 99px;
-  background: linear-gradient(90deg, #6366f1, #8b5cf6);
+  background: var(--cm-gradient);
   transition: width 0.4s ease;
   position: relative;
   overflow: hidden;
@@ -99,7 +99,7 @@
   background: linear-gradient(
     90deg,
     transparent 0%,
-    rgba(255, 255, 255, 0.4) 50%,
+    oklch(1 0 0 / 0.4) 50%,
     transparent 100%
   );
   animation: shimmer 1.8s infinite;
@@ -149,59 +149,59 @@
   max-width: 190px;
   padding: 8px 10px;
   border-radius: 8px;
-  border: 1.5px solid rgba(148, 163, 184, 0.3);
-  background: rgba(248, 250, 252, 0.95);
+  border: 1.5px solid var(--cm-hairline-strong);
+  background: var(--cm-surface);
   transition: all 0.2s ease;
 }
 
 :global(.dark) .dagNode {
-  background: rgba(30, 41, 59, 0.85);
-  border-color: rgba(71, 85, 105, 0.4);
+  background: var(--cm-surface-3);
+  border-color: var(--cm-hairline-strong);
 }
 
 .dagNode:hover {
   transform: translateY(-1px);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+  box-shadow: 0 4px 12px oklch(0 0 0 / 0.08);
 }
 
 :global(.dark) .dagNode:hover {
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  box-shadow: 0 4px 12px oklch(0 0 0 / 0.3);
 }
 
 .dagNodeRunning {
-  border-color: #3b82f6;
-  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.12);
+  border-color: var(--cm-accent);
+  box-shadow: 0 0 0 2px color-mix(in oklch, var(--cm-accent) 12%, transparent);
   animation: borderPulse 2s ease-in-out infinite;
 }
 
 :global(.dark) .dagNodeRunning {
-  border-color: #60a5fa;
-  box-shadow: 0 0 0 2px rgba(96, 165, 250, 0.15);
+  border-color: var(--cm-accent);
+  box-shadow: 0 0 0 2px color-mix(in oklch, var(--cm-accent) 15%, transparent);
 }
 
 .dagNodeCompleted {
-  border-color: #22c55e;
+  border-color: var(--cm-success);
 }
 
 :global(.dark) .dagNodeCompleted {
-  border-color: #4ade80;
+  border-color: var(--cm-success);
 }
 
 .dagNodeFailed {
-  border-color: #ef4444;
+  border-color: var(--cm-danger);
 }
 
 :global(.dark) .dagNodeFailed {
-  border-color: #f87171;
+  border-color: var(--cm-danger);
 }
 
 .dagNodePending {
-  border-color: rgba(148, 163, 184, 0.3);
+  border-color: var(--cm-hairline-strong);
   opacity: 0.55;
 }
 
 :global(.dark) .dagNodePending {
-  border-color: rgba(71, 85, 105, 0.4);
+  border-color: var(--cm-hairline-strong);
 }
 
 /* --------------------------------------------------------------------------
@@ -221,11 +221,11 @@
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  color: #3b82f6;
+  color: var(--cm-accent);
 }
 
 :global(.dark) .statusRunning {
-  color: #60a5fa;
+  color: var(--cm-accent);
 }
 
 .statusRunning::before {
@@ -234,23 +234,23 @@
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: #3b82f6;
+  background: var(--cm-accent);
   animation: pulse 1.2s ease-in-out infinite;
 }
 
 :global(.dark) .statusRunning::before {
-  background: #60a5fa;
+  background: var(--cm-accent);
 }
 
 .statusComplete {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  color: #22c55e;
+  color: var(--cm-success);
 }
 
 :global(.dark) .statusComplete {
-  color: #4ade80;
+  color: var(--cm-success);
 }
 
 .statusComplete::before {
@@ -261,7 +261,7 @@
   width: 14px;
   height: 14px;
   border-radius: 50%;
-  background: #22c55e;
+  background: var(--cm-success);
   color: white;
   font-size: 9px;
   font-weight: 700;
@@ -269,18 +269,18 @@
 }
 
 :global(.dark) .statusComplete::before {
-  background: #4ade80;
+  background: var(--cm-success);
 }
 
 .statusBlocked {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  color: #94a3b8;
+  color: var(--cm-text-faint);
 }
 
 :global(.dark) .statusBlocked {
-  color: #64748b;
+  color: var(--cm-text-faint);
 }
 
 .statusBlocked::before {
@@ -289,18 +289,18 @@
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: rgba(148, 163, 184, 0.5);
+  background: color-mix(in oklch, var(--cm-text) 30%, transparent);
 }
 
 .statusFailed {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  color: #ef4444;
+  color: var(--cm-danger);
 }
 
 :global(.dark) .statusFailed {
-  color: #f87171;
+  color: var(--cm-danger);
 }
 
 .statusFailed::before {
@@ -311,14 +311,14 @@
   width: 14px;
   height: 14px;
   border-radius: 50%;
-  background: #ef4444;
+  background: var(--cm-danger);
   color: white;
   font-size: 9px;
   font-weight: 700;
 }
 
 :global(.dark) .statusFailed::before {
-  background: #f87171;
+  background: var(--cm-danger);
 }
 
 /* --------------------------------------------------------------------------
@@ -334,15 +334,15 @@
   font-weight: 600;
   letter-spacing: 0.03em;
   text-transform: uppercase;
-  background: rgba(99, 102, 241, 0.1);
-  color: #6366f1;
-  border: 1px solid rgba(99, 102, 241, 0.2);
+  background: color-mix(in oklch, var(--cm-accent) 10%, transparent);
+  color: var(--cm-accent);
+  border: 1px solid color-mix(in oklch, var(--cm-accent) 20%, transparent);
 }
 
 :global(.dark) .engineBadge {
-  background: rgba(99, 102, 241, 0.15);
-  color: #a5b4fc;
-  border-color: rgba(99, 102, 241, 0.3);
+  background: color-mix(in oklch, var(--cm-accent) 15%, transparent);
+  color: var(--cm-accent);
+  border-color: color-mix(in oklch, var(--cm-accent) 30%, transparent);
 }
 
 /* Running badge gets pulse */
@@ -384,7 +384,7 @@
   background: linear-gradient(
     90deg,
     transparent 0%,
-    rgba(255, 255, 255, 0.35) 50%,
+    oklch(1 0 0 / 0.35) 50%,
     transparent 100%
   );
   animation: shimmer 2s infinite;
@@ -419,7 +419,7 @@
   content: "";
   position: absolute;
   inset: -8px;
-  border: 2px solid rgba(34, 197, 94, 0.5);
+  border: 2px solid color-mix(in oklch, var(--cm-success) 50%, transparent);
   border-radius: inherit;
   animation: rippleOut 0.6s ease-out both;
   pointer-events: none;
@@ -477,12 +477,12 @@
 
 @keyframes borderPulse {
   0%, 100% {
-    border-color: rgba(59, 130, 246, 0.4);
-    box-shadow: 0 0 0 0 rgba(59, 130, 246, 0);
+    border-color: color-mix(in oklch, var(--cm-accent) 40%, transparent);
+    box-shadow: 0 0 0 0 color-mix(in oklch, var(--cm-accent) 0%, transparent);
   }
   50% {
-    border-color: rgba(59, 130, 246, 0.8);
-    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+    border-color: color-mix(in oklch, var(--cm-accent) 80%, transparent);
+    box-shadow: 0 0 0 3px color-mix(in oklch, var(--cm-accent) 10%, transparent);
   }
 }
 

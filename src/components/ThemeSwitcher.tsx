@@ -107,7 +107,7 @@ export function ThemeSwitcher() {
       </button>
 
       <Show when={isOpen()}>
-        <div class="absolute right-0 top-full mt-1 py-1 bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-lg shadow-lg z-50 min-w-[120px]">
+        <div class="absolute right-0 top-full mt-1 py-1 bg-[var(--cm-surface)] dark:bg-[var(--cm-surface-2)] border border-[var(--cm-hairline-strong)] rounded-lg shadow-[var(--cm-shadow-lg)] z-50 min-w-[120px]">
           <For each={themes}>
             {(mode) => (
               <button

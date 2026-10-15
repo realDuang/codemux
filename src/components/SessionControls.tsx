@@ -185,7 +185,7 @@ export function SessionControls(props: SessionControlsProps) {
               top: `${position()!.top}px`,
               width: `${position()!.width}px`,
             }}
-            class="fixed z-[9998] -translate-y-full rounded-2xl border border-slate-200 bg-white/95 p-3 shadow-xl shadow-slate-900/10 backdrop-blur dark:border-slate-700 dark:bg-slate-900/95 dark:shadow-black/30"
+            class="fixed z-[9998] -translate-y-full rounded-2xl p-3 backdrop-blur-xl border border-[var(--cm-hairline-strong)] bg-[var(--cm-surface)] dark:bg-[var(--cm-surface-2)] shadow-[var(--cm-shadow-lg)]"
           >
             <div class="space-y-3">
               <SettingRow label={t().engine.defaultModel}>

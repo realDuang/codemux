@@ -71,11 +71,11 @@ export default function MergeWorktreeModal(props: MergeWorktreeModalProps) {
   return (
     <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm" onClick={props.onClose}>
       <div
-        class="bg-white dark:bg-slate-800 rounded-2xl shadow-[var(--cm-shadow-lg)] ring-1 ring-[var(--cm-hairline-strong)] max-w-md w-full mx-4 overflow-hidden"
+        class="bg-[var(--cm-surface)] dark:bg-[var(--cm-surface-2)] rounded-2xl shadow-[var(--cm-shadow-[var(--cm-shadow-lg)])] ring-1 ring-[var(--cm-hairline-strong)] max-w-md w-full mx-4 overflow-hidden"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
-        <div class="px-6 py-4 border-b border-gray-200 dark:border-slate-700 flex items-center justify-between">
+        <div class="px-6 py-4 border-b border-[var(--cm-hairline-strong)] flex items-center justify-between">
           <div>
             <h2 class="text-lg font-semibold text-gray-900 dark:text-white">
               {t().worktree.merge}
@@ -144,7 +144,7 @@ export default function MergeWorktreeModal(props: MergeWorktreeModalProps) {
                   setMessage(`Merge ${props.worktreeBranch} into ${e.target.value}`);
                 }}
                 disabled={loading()}
-                class="w-full px-3 py-2 text-sm bg-gray-50 dark:bg-slate-900 border border-gray-200 dark:border-slate-600 rounded-lg text-gray-900 dark:text-white focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:opacity-50"
+                class="w-full px-3 py-2 text-sm bg-gray-50 dark:bg-slate-900 border border-[var(--cm-hairline-strong)] rounded-lg text-gray-900 dark:text-white focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:opacity-50"
               >
                 <For each={branches()}>
                   {(branch) => <option value={branch}>{branch}</option>}
@@ -163,7 +163,7 @@ export default function MergeWorktreeModal(props: MergeWorktreeModalProps) {
                     <label class={`flex items-start gap-2.5 p-2.5 rounded-lg border cursor-pointer transition-colors ${
                       mode() === opt.value
                         ? "border-blue-500 bg-blue-50/50 dark:bg-blue-900/20"
-                        : "border-gray-200 dark:border-slate-600 hover:bg-gray-50 dark:hover:bg-slate-900"
+                        : "border-[var(--cm-hairline-strong)] hover:bg-gray-50 dark:hover:bg-slate-900"
                     }`}>
                       <input
                         type="radio"
@@ -192,14 +192,14 @@ export default function MergeWorktreeModal(props: MergeWorktreeModalProps) {
                 type="text"
                 value={message()}
                 onInput={(e) => setMessage(e.currentTarget.value)}
-                class="w-full px-3 py-2 text-sm bg-gray-50 dark:bg-slate-900 border border-gray-200 dark:border-slate-600 rounded-lg text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                class="w-full px-3 py-2 text-sm bg-gray-50 dark:bg-slate-900 border border-[var(--cm-hairline-strong)] rounded-lg text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
               />
             </div>
           </Show>
         </div>
 
         {/* Footer */}
-        <div class="px-6 py-4 border-t border-gray-200 dark:border-slate-700 flex justify-end gap-3">
+        <div class="px-6 py-4 border-t border-[var(--cm-hairline-strong)] flex justify-end gap-3">
           <button
             onClick={props.onClose}
             class="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-slate-700 rounded-lg transition-colors"

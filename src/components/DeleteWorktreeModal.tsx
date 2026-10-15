@@ -39,9 +39,9 @@ export function DeleteWorktreeModal(props: DeleteWorktreeModalProps) {
         <div
           role="dialog"
           aria-modal="true"
-          class="relative bg-white dark:bg-slate-900 rounded-2xl shadow-[var(--cm-shadow-lg)] ring-1 ring-[var(--cm-hairline-strong)] w-full max-w-md mx-4 overflow-hidden flex flex-col max-h-[calc(100vh-2rem)]"
+          class="relative bg-[var(--cm-surface)] dark:bg-[var(--cm-surface-2)] rounded-2xl shadow-[var(--cm-shadow-[var(--cm-shadow-lg)])] ring-1 ring-[var(--cm-hairline-strong)] w-full max-w-md mx-4 overflow-hidden flex flex-col max-h-[calc(100vh-2rem)]"
         >
-          <div class="flex items-center justify-between px-6 py-4 border-b border-gray-200 dark:border-slate-800">
+          <div class="flex items-center justify-between px-6 py-4 border-b border-[var(--cm-hairline-strong)]">
             <h2 class="text-lg font-semibold text-gray-900 dark:text-white">
               {t().worktree.remove}
             </h2>
@@ -88,7 +88,7 @@ export function DeleteWorktreeModal(props: DeleteWorktreeModalProps) {
             </div>
           </div>
 
-          <div class="flex flex-col-reverse sm:flex-row justify-end gap-2 sm:gap-3 px-6 py-4 border-t border-gray-200 dark:border-slate-800 bg-gray-50 dark:bg-slate-900/50 flex-shrink-0">
+          <div class="flex flex-col-reverse sm:flex-row justify-end gap-2 sm:gap-3 px-6 py-4 border-t border-[var(--cm-hairline-strong)] bg-gray-50 dark:bg-slate-900/50 flex-shrink-0">
             <button
               onClick={props.onClose}
               class="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-900/[0.04] dark:hover:bg-white/[0.05] rounded-lg transition-colors"

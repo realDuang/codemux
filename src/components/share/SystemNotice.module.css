@@ -5,19 +5,22 @@
   gap: 6px;
   padding: 4px 14px;
   margin: 4px auto;
+  font-family: var(--font-mono);
   font-size: 11px;
   line-height: 1.4;
-  color: var(--text-secondary, #888);
-  background: var(--bg-subtle, rgba(128, 128, 128, 0.08));
-  border-radius: 10px;
+  color: var(--cm-text-muted);
+  background: var(--cm-surface-2);
+  box-shadow: inset 0 0 0 1px var(--cm-hairline);
+  border-radius: 999px;
   width: fit-content;
   max-width: 80%;
   user-select: none;
 }
 
 .systemNotice[data-type="warning"] {
-  color: var(--text-warning, #b45309);
-  background: var(--bg-warning-subtle, rgba(180, 83, 9, 0.08));
+  color: var(--cm-warning);
+  background: color-mix(in oklch, var(--cm-warning) 10%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--cm-warning) 25%, transparent);
 }
 
 .noticeIcon {

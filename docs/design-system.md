@@ -60,6 +60,7 @@ Fonts are bundled so Electron works offline.
 | `cm-scanline` | Light sweep along the bottom edge of a working surface |
 | `cm-gradient-border` | 1px gradient border on `:focus-within` / `data-active` |
 | `cm-select` | Restyled native `<select>` |
+| `cm-orbit` + `data-orbit` | A comet of light circling the element's border (composer while a turn runs) |
 
 Shared components: `BrandMark` (titlebar brand) and `EmptyHero` (empty states,
 optional live engine status chips).
@@ -99,9 +100,10 @@ re-themed in one place.
   turn works, collapsed once it settles, and remembered when toggled. Folded
   segments hang on one continuous rail. Standalone tools (e.g. `task`)
   keep their card, which only shows its frame on hover or while open.
-- **Live state**: a working trigger gets a cyan/violet ping dot (violet while
-  reasoning) and a light sweep along its base, and the activity rail below it
-  turns into the signature gradient.
+- **Live state**: while a turn runs the composer's border carries an orbiting
+  violet → cyan comet (`cm-orbit`). The steps trigger keeps its ping dot (violet
+  while reasoning) and the light sweep along its base, and the activity rail
+  below it turns into the signature gradient. The send/stop button stays static.
 - **Reasoning**: the "Thinking" icon is violet, and the readable summary hangs
   off a faint violet rail.
 - **Metadata in mono**: durations, tool targets, tool counts, token usage,
@@ -112,7 +114,21 @@ re-themed in one place.
   uppercase language label.
 - **Composer**: one elevated card; the mode switch is a segmented control; focus
   shows an accent border and a soft ring; send uses the mode colour (gradient for
-  the default mode); stop shows a spinning gradient ring; "Jump to latest" is a
-  glass pill.
+  the default mode); stop is a static solid button; "Jump to latest" is a glass
+  pill.
+- **Docks** (permission and question prompts in the input area, and their inline
+  variants in the transcript): the composer's surface card with a 2px tone strip
+  along the top (warning for approvals, the signature gradient for questions), a
+  tinted icon chip, a mono uppercase status label, mono detail chips on
+  `--cm-code-bg`, and one button hierarchy: gradient primary (allow / submit),
+  neutral secondary (always allow / next), and quiet destructive (deny / dismiss,
+  red only on hover). TodoDock uses the same card.
+- **Elevated surfaces** (dialogs, menus, popovers, toasts): `--cm-surface`
+  (`--cm-surface-2` in dark), a `--cm-hairline-strong` border or ring and
+  `--cm-shadow-lg`; dialogs sit on a blurred `bg-black/40` backdrop. Every primary
+  action uses `cm-btn-primary`.
+- **Terminal**: xterm uses the sRGB equivalents of `--cm-code-bg`, `--cm-text`
+  and `--cm-accent` (xterm cannot read CSS variables); the panel chrome uses the
+  same code background.
 - **Lists**: active rows get a subtle fill, an inset hairline and a 2px gradient
   rail on the left.

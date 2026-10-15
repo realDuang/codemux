@@ -179,10 +179,10 @@ export function WeixinIlinkLoginModal(props: WeixinIlinkLoginModalProps) {
           role="dialog"
           aria-modal="true"
           aria-labelledby="weixin-ilink-login-modal-title"
-          class="relative bg-white dark:bg-slate-900 rounded-2xl shadow-[var(--cm-shadow-lg)] ring-1 ring-[var(--cm-hairline-strong)] w-full max-w-sm mx-4 overflow-hidden flex flex-col outline-none"
+          class="relative bg-[var(--cm-surface)] dark:bg-[var(--cm-surface-2)] rounded-2xl shadow-[var(--cm-shadow-[var(--cm-shadow-lg)])] ring-1 ring-[var(--cm-hairline-strong)] w-full max-w-sm mx-4 overflow-hidden flex flex-col outline-none"
           onKeyDown={handleKeyDown}
         >
-          <div class="flex items-center justify-between px-6 py-4 border-b border-gray-200 dark:border-slate-800">
+          <div class="flex items-center justify-between px-6 py-4 border-b border-[var(--cm-hairline-strong)]">
             <h2 id="weixin-ilink-login-modal-title" class="text-lg font-semibold text-gray-900 dark:text-white">
               {(t().channel as Record<string, string>).weixinIlinkLoginTitle ?? "WeChat iLink Login"}
             </h2>
@@ -210,7 +210,7 @@ export function WeixinIlinkLoginModal(props: WeixinIlinkLoginModalProps) {
                 <img
                   src={qrImg()}
                   alt="WeChat iLink QR code"
-                  class="w-56 h-56 object-contain border border-gray-200 dark:border-slate-700 rounded-lg bg-white"
+                  class="w-56 h-56 object-contain border border-[var(--cm-hairline-strong)] rounded-lg bg-white"
                 />
               </Show>
               <p class="text-sm text-gray-700 dark:text-gray-300 text-center">
@@ -232,7 +232,7 @@ export function WeixinIlinkLoginModal(props: WeixinIlinkLoginModalProps) {
               </p>
               <button
                 onClick={() => void startQrFlow()}
-                class="px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors"
+                class="cm-btn-primary px-4 py-2 text-sm font-medium rounded-lg"
               >
                 {(t().channel as Record<string, string>).weixinIlinkRefresh ?? "Refresh QR code"}
               </button>
@@ -244,7 +244,7 @@ export function WeixinIlinkLoginModal(props: WeixinIlinkLoginModalProps) {
               </p>
               <button
                 onClick={() => void startQrFlow()}
-                class="px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors"
+                class="cm-btn-primary px-4 py-2 text-sm font-medium rounded-lg"
                 disabled={saving()}
               >
                 {(t().channel as Record<string, string>).weixinIlinkRetry ?? "Retry"}

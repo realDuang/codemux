@@ -19,16 +19,16 @@ export function FileTabs() {
 
   return (
     <Show when={fileStore.openTabs.all.length > 0}>
-      <div class="flex items-center border-b border-gray-200 dark:border-slate-700 bg-gray-50 dark:bg-slate-950 overflow-x-auto shrink-0 scrollbar-none">
+      <div class="flex items-center border-b border-[var(--cm-hairline-strong)] bg-gray-50 dark:bg-slate-950 overflow-x-auto shrink-0 scrollbar-none">
         <For each={fileStore.openTabs.all}>
           {(tab) => {
             const isActive = () => fileStore.openTabs.active === tab.path;
 
             return (
               <button
-                class={`group flex items-center gap-1.5 px-3 h-[28px] text-[13px] border-r border-gray-200 dark:border-slate-700 shrink-0 transition-colors ${
+                class={`group flex items-center gap-1.5 px-3 h-[28px] text-[13px] border-r border-[var(--cm-hairline-strong)] shrink-0 transition-colors ${
                   isActive()
-                    ? "bg-white dark:bg-slate-900 text-gray-900 dark:text-slate-100"
+                    ? "bg-[var(--cm-surface)] dark:bg-[var(--cm-surface-2)] text-gray-900 dark:text-slate-100"
                     : "text-gray-500 dark:text-slate-400 hover:bg-gray-100 dark:hover:bg-slate-800/50"
                 }`}
                 onClick={() => switchTab(tab.path)}

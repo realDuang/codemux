@@ -242,7 +242,7 @@ function ChannelCard(props: ChannelCardProps) {
   const isError = () => props.status?.status === "error";
 
   return (
-    <div class="rounded-lg border border-gray-200 dark:border-slate-800 overflow-hidden">
+    <div class="rounded-lg border border-[var(--cm-hairline-strong)] overflow-hidden">
       <div class="p-4 flex items-center justify-between gap-3">
         <div class="flex items-center gap-3 min-w-0">
           <div class={`w-9 h-9 rounded-lg flex items-center justify-center text-xs font-semibold ${props.badgeClass}`}>
@@ -268,7 +268,7 @@ function ChannelCard(props: ChannelCardProps) {
         <div class="flex items-center gap-3 flex-shrink-0">
           <button
             onClick={() => props.onConfigure()}
-            class="px-3 py-1.5 text-xs font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-900/[0.04] dark:hover:bg-white/[0.05] rounded-lg transition-colors border border-gray-200 dark:border-slate-700"
+            class="px-3 py-1.5 text-xs font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-900/[0.04] dark:hover:bg-white/[0.05] rounded-lg transition-colors border border-[var(--cm-hairline-strong)]"
           >
             {t().channel.configure}
           </button>
@@ -296,7 +296,7 @@ function ChannelCard(props: ChannelCardProps) {
       </Show>
 
       <Show when={props.footer}>
-        <div class="px-4 py-3 border-t border-gray-100 dark:border-slate-800 bg-gray-50 dark:bg-slate-900/40">
+        <div class="px-4 py-3 border-t border-[var(--cm-hairline)] bg-gray-50 dark:bg-slate-900/40">
           {props.footer}
         </div>
       </Show>

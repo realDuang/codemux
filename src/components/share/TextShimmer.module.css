@@ -8,8 +8,8 @@
   --shimmer-size: 600%;
   --shimmer-angle: 90deg;
   --shimmer-spread: 5.2ch;
-  --shimmer-base-color: rgba(100, 116, 139, 0.75);
-  --shimmer-peak-color: rgba(30, 41, 59, 0.95);
+  --shimmer-base-color: var(--cm-text-faint);
+  --shimmer-peak-color: var(--cm-text);
   --shimmer-sweep-gradient: linear-gradient(
     var(--shimmer-angle),
     transparent calc(50% - var(--shimmer-spread)),
@@ -29,10 +29,6 @@
   line-height: inherit;
 }
 
-:global(.dark) .root {
-  --shimmer-base-color: rgba(148, 163, 184, 0.6);
-  --shimmer-peak-color: rgba(226, 232, 240, 0.95);
-}
 
 /* ── Shared text layer styles ── */
 .charBase,

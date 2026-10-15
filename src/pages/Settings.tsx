@@ -421,7 +421,7 @@ export default function Settings() {
               </h2>
               <div class="bg-[var(--cm-surface)] dark:bg-white/[0.025] rounded-xl border border-[var(--cm-hairline-strong)] shadow-[var(--cm-shadow-sm)] overflow-visible">
                 {/* Language Setting */}
-                <div class="p-4 sm:p-6 flex items-center justify-between gap-4 border-b border-gray-200 dark:border-slate-700">
+                <div class="p-4 sm:p-6 flex items-center justify-between gap-4 border-b border-[var(--cm-hairline-strong)]">
                   <div>
                     <h3 class="text-base font-medium text-gray-900 dark:text-white">
                       {t().settings.language}
@@ -449,7 +449,7 @@ export default function Settings() {
                   </div>
                 </div>
                 <Show when={isElectron() && window.electronAPI?.runtime}>
-                  <div class="p-4 sm:p-6 flex items-center justify-between gap-4 border-t border-gray-200 dark:border-slate-700">
+                  <div class="p-4 sm:p-6 flex items-center justify-between gap-4 border-t border-[var(--cm-hairline-strong)]">
                     <div>
                       <h3 class="text-base font-medium text-gray-900 dark:text-white">{t().localServer.title}</h3>
                       <p class="text-sm text-gray-500 dark:text-gray-400 mt-1">{t().localServer.description}</p>
@@ -457,7 +457,7 @@ export default function Settings() {
                     <button
                       type="button"
                       onClick={() => void window.electronAPI?.runtime?.showManager().catch((error: unknown) => logger.error("[Settings] Failed to open server manager:", error))}
-                      class="flex-shrink-0 rounded-lg border border-gray-200 dark:border-slate-700 px-3 py-2 text-sm font-medium text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-slate-700"
+                      class="flex-shrink-0 rounded-lg border border-[var(--cm-hairline-strong)] px-3 py-2 text-sm font-medium text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-slate-700"
                     >{t().localServer.openManager}</button>
                   </div>
                 </Show>
@@ -705,11 +705,11 @@ export default function Settings() {
                                         }, 150);
                                       }}
                                       placeholder="Enter model ID..."
-                                      class="w-full px-3 py-1.5 text-sm font-medium rounded-lg border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-gray-700 dark:text-gray-300 transition-colors hover:bg-gray-100 dark:hover:bg-slate-600"
+                                      class="w-full px-3 py-1.5 text-sm font-medium rounded-lg border border-[var(--cm-hairline-strong)] bg-[var(--cm-surface)] dark:bg-[var(--cm-surface-3)] text-gray-700 dark:text-gray-300 transition-colors hover:bg-gray-100 dark:hover:bg-slate-600"
                                     />
                                     <div
                                       style="display:none"
-                                      class="absolute z-50 mt-1 w-full max-h-48 overflow-y-auto rounded-lg border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-700 shadow-lg"
+                                      class="absolute z-50 mt-1 w-full max-h-48 overflow-y-auto rounded-xl p-1 border border-[var(--cm-hairline-strong)] bg-[var(--cm-surface)] dark:bg-[var(--cm-surface-2)] shadow-[var(--cm-shadow-lg)]"
                                     >
                                       <For each={models()}>
                                         {(model) => (
@@ -822,7 +822,7 @@ export default function Settings() {
                 </h2>
                 <div class="bg-[var(--cm-surface)] dark:bg-white/[0.025] rounded-xl border border-[var(--cm-hairline-strong)] shadow-[var(--cm-shadow-sm)] overflow-visible">
                   {/* Log file path */}
-                  <div class="p-4 sm:p-6 flex items-center justify-between gap-4 border-b border-gray-200 dark:border-slate-700">
+                  <div class="p-4 sm:p-6 flex items-center justify-between gap-4 border-b border-[var(--cm-hairline-strong)]">
                     <div class="min-w-0">
                       <h3 class="text-base font-medium text-gray-900 dark:text-white">
                         {t().settings.logFilePath}
@@ -841,7 +841,7 @@ export default function Settings() {
                         <button
                           onClick={handleOpenLogFolder}
                           disabled={!logPath()}
-                          class="px-3 py-1.5 text-sm font-medium rounded-lg border border-gray-300 dark:border-slate-600 text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-slate-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                          class="px-3 py-1.5 text-sm font-medium rounded-lg border border-[var(--cm-hairline-strong)] text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-slate-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                         >
                           {t().settings.openLogFolder}
                         </button>
@@ -850,7 +850,7 @@ export default function Settings() {
                   </div>
                   {/* Conversations storage */}
                   <Show when={isElectron()}>
-                    <div class="p-4 sm:p-6 flex items-center justify-between gap-4 border-b border-gray-200 dark:border-slate-700">
+                    <div class="p-4 sm:p-6 flex items-center justify-between gap-4 border-b border-[var(--cm-hairline-strong)]">
                       <div class="min-w-0">
                         <h3 class="text-base font-medium text-gray-900 dark:text-white">
                           {t().settings.conversationsPath}
@@ -868,7 +868,7 @@ export default function Settings() {
                         <button
                           onClick={handleOpenConversationsFolder}
                           disabled={!conversationsPath()}
-                          class="px-3 py-1.5 text-sm font-medium rounded-lg border border-gray-300 dark:border-slate-600 text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-slate-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                          class="px-3 py-1.5 text-sm font-medium rounded-lg border border-[var(--cm-hairline-strong)] text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-slate-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                         >
                           {t().settings.openConversationsFolder}
                         </button>
@@ -913,7 +913,7 @@ export default function Settings() {
               </h2>
               <div class="bg-[var(--cm-surface)] dark:bg-white/[0.025] rounded-xl border border-[var(--cm-hairline-strong)] shadow-[var(--cm-shadow-sm)] overflow-visible">
                 {/* Show Default Workspace toggle */}
-                <div class="p-4 sm:p-6 flex items-center justify-between gap-4 border-b border-gray-200 dark:border-slate-700">
+                <div class="p-4 sm:p-6 flex items-center justify-between gap-4 border-b border-[var(--cm-hairline-strong)]">
                   <div>
                     <h3 class="text-base font-medium text-gray-900 dark:text-white">
                       {t().settings.showDefaultWorkspace}
@@ -941,7 +941,7 @@ export default function Settings() {
                   </div>
                 </div>
                 {/* Scheduled Tasks toggle */}
-                <div class="p-4 sm:p-6 flex items-center justify-between gap-4 border-b border-gray-200 dark:border-slate-700">
+                <div class="p-4 sm:p-6 flex items-center justify-between gap-4 border-b border-[var(--cm-hairline-strong)]">
                   <div>
                     <h3 class="text-base font-medium text-gray-900 dark:text-white">
                       {t().settings.scheduledTasksEnabled}
@@ -1006,7 +1006,7 @@ export default function Settings() {
               </h2>
               <div class="bg-[var(--cm-surface)] dark:bg-white/[0.025] rounded-xl border border-[var(--cm-hairline-strong)] shadow-[var(--cm-shadow-sm)] overflow-visible">
                 {/* Team Orchestration toggle */}
-                <div class="p-4 sm:p-6 flex items-center justify-between gap-4" classList={{ "border-b border-gray-200 dark:border-slate-700": teamOrchestrationEnabled() }}>
+                <div class="p-4 sm:p-6 flex items-center justify-between gap-4" classList={{ "border-b border-[var(--cm-hairline-strong)]": teamOrchestrationEnabled() }}>
                   <div>
                     <h3 class="text-base font-medium text-gray-900 dark:text-white">
                       {t().settings.teamOrchestration}
@@ -1104,7 +1104,7 @@ export default function Settings() {
                 </h2>
                 <div class="bg-[var(--cm-surface)] dark:bg-white/[0.025] rounded-xl border border-[var(--cm-hairline-strong)] shadow-[var(--cm-shadow-sm)] overflow-visible">
                   {/* Current version + check for updates */}
-                  <div class="p-4 sm:p-6 flex items-center justify-between gap-4 border-b border-gray-200 dark:border-slate-700">
+                  <div class="p-4 sm:p-6 flex items-center justify-between gap-4 border-b border-[var(--cm-hairline-strong)]">
                     <div>
                       <h3 class="text-base font-medium text-gray-900 dark:text-white">
                         {t().update.currentVersion}
@@ -1132,14 +1132,14 @@ export default function Settings() {
                       <button
                         onClick={handleCheckForUpdates}
                         disabled={updateCheckStatus() === "checking"}
-                        class="px-3 py-1.5 text-sm font-medium rounded-lg border border-gray-300 dark:border-slate-600 text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-slate-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                        class="px-3 py-1.5 text-sm font-medium rounded-lg border border-[var(--cm-hairline-strong)] text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-slate-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                       >
                         {updateCheckStatus() === "checking" ? t().update.checking : t().update.checkForUpdates}
                       </button>
                     </div>
                   </div>
                   {/* Auto-check toggle */}
-                  <div class="p-4 sm:p-6 flex items-center justify-between gap-4 border-b border-gray-200 dark:border-slate-700">
+                  <div class="p-4 sm:p-6 flex items-center justify-between gap-4 border-b border-[var(--cm-hairline-strong)]">
                     <div>
                       <h3 class="text-base font-medium text-gray-900 dark:text-white">
                         {t().update.autoCheck}

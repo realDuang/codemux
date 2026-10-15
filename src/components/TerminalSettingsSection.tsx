@@ -84,7 +84,7 @@ export function TerminalSettingsSection() {
         </p>
 
         {/* Default profile */}
-        <div class="p-4 sm:p-6 flex items-center justify-between gap-4 border-b border-gray-200 dark:border-slate-700">
+        <div class="p-4 sm:p-6 flex items-center justify-between gap-4 border-b border-[var(--cm-hairline-strong)]">
           <div class="min-w-0">
             <h3 class="text-base font-medium text-gray-900 dark:text-white">
               {t().terminal.settingsDefaultProfile}
@@ -105,7 +105,7 @@ export function TerminalSettingsSection() {
               <select
                 value={defaultId()}
                 onChange={(e) => handleDefaultChange(e.currentTarget.value)}
-                class="px-3 py-1.5 text-sm rounded-lg border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-900 text-gray-700 dark:text-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                class="px-3 py-1.5 text-sm rounded-lg border border-[var(--cm-hairline-strong)] bg-[var(--cm-surface)] dark:bg-[var(--cm-surface-2)] text-gray-700 dark:text-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-500"
               >
                 <For each={profiles()}>
                   {(profile) => (
@@ -131,7 +131,7 @@ export function TerminalSettingsSection() {
             <select
               value={gpuMode()}
               onChange={(e) => handleGpuChange(e.currentTarget.value as GpuMode)}
-              class="px-3 py-1.5 text-sm rounded-lg border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-900 text-gray-700 dark:text-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              class="px-3 py-1.5 text-sm rounded-lg border border-[var(--cm-hairline-strong)] bg-[var(--cm-surface)] dark:bg-[var(--cm-surface-2)] text-gray-700 dark:text-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-500"
             >
               <option value="auto">{t().terminal.settingsGpuAuto}</option>
               <option value="canvas">{t().terminal.settingsGpuCanvas}</option>

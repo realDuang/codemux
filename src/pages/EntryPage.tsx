@@ -926,7 +926,7 @@ export default function EntryPage() {
 
                     <button
                       onClick={handleRetry}
-                      class="w-full mt-4 py-2 px-4 border border-gray-300 dark:border-slate-600 hover:bg-gray-50 dark:hover:bg-slate-700 text-gray-700 dark:text-gray-300 font-medium rounded-md transition-colors"
+                      class="w-full mt-4 py-2 px-4 border border-[var(--cm-hairline-strong)] hover:bg-gray-50 dark:hover:bg-slate-700 text-gray-700 dark:text-gray-300 font-medium rounded-md transition-colors"
                     >
                       {t().common.cancel}
                     </button>
@@ -970,7 +970,7 @@ export default function EntryPage() {
                     </p>
                     <button
                       onClick={handleRetry}
-                      class="w-full py-2 px-4 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-md transition-colors"
+                      class="cm-btn-primary w-full py-2 px-4 font-medium rounded-lg"
                     >
                       {t().approval.tryAgain}
                     </button>
@@ -1111,12 +1111,12 @@ export default function EntryPage() {
                         <div class="space-y-5">
 
                           {/* Access Code Card */}
-                          <div class="rounded-lg border border-gray-200 dark:border-slate-800 p-4">
+                          <div class="rounded-lg border border-[var(--cm-hairline-strong)] p-4">
                             <h3 class="text-sm font-medium text-gray-500 dark:text-gray-400 mb-3 flex items-center gap-2">
                               <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
                               {t().remote.accessPassword}
                             </h3>
-                            <div class="flex items-center justify-between bg-gray-50 dark:bg-slate-950 rounded-lg border border-gray-200 dark:border-slate-800 px-4 py-3">
+                            <div class="flex items-center justify-between bg-gray-50 dark:bg-slate-950 rounded-lg border border-[var(--cm-hairline-strong)] px-4 py-3">
                               <span class="font-mono text-xl font-bold tracking-widest text-gray-900 dark:text-white">
                                 {showPassword() ? accessCode() : "••••••"}
                               </span>
@@ -1145,8 +1145,8 @@ export default function EntryPage() {
                           </div>
 
                           {/* Connection Addresses */}
-                          <div class="rounded-lg border border-gray-200 dark:border-slate-800 overflow-hidden">
-                            <div class="p-3 border-b border-gray-100 dark:border-slate-800/50">
+                          <div class="rounded-lg border border-[var(--cm-hairline-strong)] overflow-hidden">
+                            <div class="p-3 border-b border-[var(--cm-hairline)]/50">
                               <h3 class="text-sm font-medium text-gray-500 dark:text-gray-400">{t().remote.connectionAddress}</h3>
                             </div>
                             <div class="divide-y divide-gray-100 dark:divide-slate-800/50">
@@ -1215,7 +1215,7 @@ export default function EntryPage() {
                           </div>
                         </div>
 
-                        <div class="rounded-lg border border-gray-200 dark:border-slate-800 p-5 flex flex-col items-center justify-center min-h-[280px]">
+                        <div class="rounded-lg border border-[var(--cm-hairline-strong)] p-5 flex flex-col items-center justify-center min-h-[280px]">
                           <Show when={accessUrl()} fallback={
                             <div class="py-10 text-center text-sm text-gray-500 dark:text-gray-400">{t().remote.accessOffDescription}</div>
                           }>
@@ -1229,7 +1229,7 @@ export default function EntryPage() {
                       {/* Public Access Link Banner */}
                       <div
                         onClick={() => setActiveTab("publicAccess")}
-                        class="rounded-lg border border-gray-200 dark:border-slate-800 p-4 flex items-center justify-between cursor-pointer hover:bg-gray-50 dark:hover:bg-slate-800/50 transition-colors"
+                        class="rounded-lg border border-[var(--cm-hairline-strong)] p-4 flex items-center justify-between cursor-pointer hover:bg-gray-50 dark:hover:bg-slate-800/50 transition-colors"
                       >
                         <div class="flex items-center gap-3">
                           <div class={`w-9 h-9 rounded-lg flex items-center justify-center ${
@@ -1264,7 +1264,7 @@ export default function EntryPage() {
                       {/* Authorized Devices Card */}
                       <div
                         onClick={() => navigate("/devices")}
-                        class="rounded-lg border border-gray-200 dark:border-slate-800 p-4 flex items-center justify-between cursor-pointer hover:bg-gray-50 dark:hover:bg-slate-800/50 transition-colors"
+                        class="rounded-lg border border-[var(--cm-hairline-strong)] p-4 flex items-center justify-between cursor-pointer hover:bg-gray-50 dark:hover:bg-slate-800/50 transition-colors"
                       >
                         <div class="flex items-center gap-3">
                           <div class="w-9 h-9 rounded-lg bg-blue-100 dark:bg-blue-900/30 flex items-center justify-center">
@@ -1323,7 +1323,7 @@ export default function EntryPage() {
                         </div>
                         <div class="space-y-3">
                           {/* Feishu Bot Row */}
-                          <div class="rounded-lg border border-gray-200 dark:border-slate-800 overflow-hidden">
+                          <div class="rounded-lg border border-[var(--cm-hairline-strong)] overflow-hidden">
                             <div class="p-4 flex items-center justify-between">
                               <div class="flex items-center gap-3">
                                 <div class="w-9 h-9 rounded-lg bg-indigo-100 dark:bg-indigo-900/30 flex items-center justify-center">
@@ -1353,7 +1353,7 @@ export default function EntryPage() {
                               <div class="flex items-center gap-3">
                                 <button
                                   onClick={() => setFeishuConfigOpen(true)}
-                                  class="px-3 py-1.5 text-xs font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-900/[0.04] dark:hover:bg-white/[0.05] rounded-lg transition-colors border border-gray-200 dark:border-slate-700"
+                                  class="px-3 py-1.5 text-xs font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-900/[0.04] dark:hover:bg-white/[0.05] rounded-lg transition-colors border border-[var(--cm-hairline-strong)]"
                                 >
                                   {t().channel.configure}
                                 </button>
@@ -1385,7 +1385,7 @@ export default function EntryPage() {
                           </div>
 
                           {/* DingTalk Bot Row */}
-                          <div class="rounded-lg border border-gray-200 dark:border-slate-800 overflow-hidden">
+                          <div class="rounded-lg border border-[var(--cm-hairline-strong)] overflow-hidden">
                             <div class="p-4 flex items-center justify-between">
                               <div class="flex items-center gap-3">
                                 <div class="w-9 h-9 rounded-lg bg-blue-100 dark:bg-blue-900/30 flex items-center justify-center">
@@ -1415,7 +1415,7 @@ export default function EntryPage() {
                               <div class="flex items-center gap-3">
                                 <button
                                   onClick={() => setDingtalkConfigOpen(true)}
-                                  class="px-3 py-1.5 text-xs font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-900/[0.04] dark:hover:bg-white/[0.05] rounded-lg transition-colors border border-gray-200 dark:border-slate-700"
+                                  class="px-3 py-1.5 text-xs font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-900/[0.04] dark:hover:bg-white/[0.05] rounded-lg transition-colors border border-[var(--cm-hairline-strong)]"
                                 >
                                   {t().channel.configure}
                                 </button>
@@ -1447,7 +1447,7 @@ export default function EntryPage() {
                           </div>
 
                           {/* Telegram Bot Row */}
-                          <div class="rounded-lg border border-gray-200 dark:border-slate-800 overflow-hidden">
+                          <div class="rounded-lg border border-[var(--cm-hairline-strong)] overflow-hidden">
                             <div class="p-4 flex items-center justify-between">
                               <div class="flex items-center gap-3">
                                 <div class="w-9 h-9 rounded-lg bg-sky-100 dark:bg-sky-900/30 flex items-center justify-center">
@@ -1477,7 +1477,7 @@ export default function EntryPage() {
                               <div class="flex items-center gap-3">
                                 <button
                                   onClick={() => setTelegramConfigOpen(true)}
-                                  class="px-3 py-1.5 text-xs font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-900/[0.04] dark:hover:bg-white/[0.05] rounded-lg transition-colors border border-gray-200 dark:border-slate-700"
+                                  class="px-3 py-1.5 text-xs font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-900/[0.04] dark:hover:bg-white/[0.05] rounded-lg transition-colors border border-[var(--cm-hairline-strong)]"
                                 >
                                   {t().channel.configure}
                                 </button>
@@ -1509,7 +1509,7 @@ export default function EntryPage() {
                           </div>
 
                           {/* WeChat iLink Bot Row */}
-                          <div class="rounded-lg border border-gray-200 dark:border-slate-800 overflow-hidden">
+                          <div class="rounded-lg border border-[var(--cm-hairline-strong)] overflow-hidden">
                             <div class="p-4 flex items-center justify-between">
                               <div class="flex items-center gap-3">
                                 <div class="w-9 h-9 rounded-lg bg-green-100 dark:bg-green-900/30 flex items-center justify-center">
@@ -1543,7 +1543,7 @@ export default function EntryPage() {
                                   fallback={
                                     <button
                                       onClick={() => setWeixinIlinkLoginOpen(true)}
-                                      class="px-3 py-1.5 text-xs font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-900/[0.04] dark:hover:bg-white/[0.05] rounded-lg transition-colors border border-gray-200 dark:border-slate-700"
+                                      class="px-3 py-1.5 text-xs font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-900/[0.04] dark:hover:bg-white/[0.05] rounded-lg transition-colors border border-[var(--cm-hairline-strong)]"
                                     >
                                       {t().channel.login}
                                     </button>
@@ -1618,7 +1618,7 @@ export default function EntryPage() {
 
                         <div class={`space-y-3 ${!accessUrl() ? "opacity-55" : ""}`}>
                           {/* Teams Bot Row */}
-                          <div class="rounded-lg border border-gray-200 dark:border-slate-800 overflow-hidden">
+                          <div class="rounded-lg border border-[var(--cm-hairline-strong)] overflow-hidden">
                             <div class="p-4 flex items-center justify-between">
                               <div class="flex items-center gap-3">
                                 <div class="w-9 h-9 rounded-lg bg-purple-100 dark:bg-purple-900/30 flex items-center justify-center">
@@ -1648,7 +1648,7 @@ export default function EntryPage() {
                               <div class="flex items-center gap-3">
                                 <button
                                   onClick={() => setTeamsConfigOpen(true)}
-                                  class="px-3 py-1.5 text-xs font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-900/[0.04] dark:hover:bg-white/[0.05] rounded-lg transition-colors border border-gray-200 dark:border-slate-700"
+                                  class="px-3 py-1.5 text-xs font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-900/[0.04] dark:hover:bg-white/[0.05] rounded-lg transition-colors border border-[var(--cm-hairline-strong)]"
                                 >
                                   {t().channel.configure}
                                 </button>
@@ -1684,7 +1684,7 @@ export default function EntryPage() {
                                 <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-blue-500 dark:text-blue-400 shrink-0 mt-0.5"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
                                 <div class="text-xs text-gray-600 dark:text-gray-400 leading-relaxed">
                                   <span class="text-gray-500 dark:text-gray-500">{t().channel.webhookEndpoint}:</span>{" "}
-                                  <code class="text-[11px] font-mono bg-gray-100 dark:bg-slate-800 px-1.5 py-0.5 rounded text-blue-600 dark:text-blue-400 border border-gray-200 dark:border-slate-700">{accessUrl()}/api/messages</code>
+                                  <code class="text-[11px] font-mono bg-gray-100 dark:bg-slate-800 px-1.5 py-0.5 rounded text-blue-600 dark:text-blue-400 border border-[var(--cm-hairline-strong)]">{accessUrl()}/api/messages</code>
                                   <br/>
                                   <span class="text-gray-400 dark:text-gray-500">{t().channel.teamsWebhookGuide}</span>
                                 </div>
@@ -1693,7 +1693,7 @@ export default function EntryPage() {
                           </div>
 
                           {/* WeCom Bot Row */}
-                          <div class="rounded-lg border border-gray-200 dark:border-slate-800 overflow-hidden">
+                          <div class="rounded-lg border border-[var(--cm-hairline-strong)] overflow-hidden">
                             <div class="p-4 flex items-center justify-between">
                               <div class="flex items-center gap-3">
                                 <div class="w-9 h-9 rounded-lg bg-green-100 dark:bg-green-900/30 flex items-center justify-center">
@@ -1723,7 +1723,7 @@ export default function EntryPage() {
                               <div class="flex items-center gap-3">
                                 <button
                                   onClick={() => setWecomConfigOpen(true)}
-                                  class="px-3 py-1.5 text-xs font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-900/[0.04] dark:hover:bg-white/[0.05] rounded-lg transition-colors border border-gray-200 dark:border-slate-700"
+                                  class="px-3 py-1.5 text-xs font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-900/[0.04] dark:hover:bg-white/[0.05] rounded-lg transition-colors border border-[var(--cm-hairline-strong)]"
                                 >
                                   {t().channel.configure}
                                 </button>
@@ -1759,7 +1759,7 @@ export default function EntryPage() {
                                 <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-blue-500 dark:text-blue-400 shrink-0 mt-0.5"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
                                 <div class="text-xs text-gray-600 dark:text-gray-400 leading-relaxed">
                                   <span class="text-gray-500 dark:text-gray-500">{t().channel.webhookEndpoint}:</span>{" "}
-                                  <code class="text-[11px] font-mono bg-gray-100 dark:bg-slate-800 px-1.5 py-0.5 rounded text-blue-600 dark:text-blue-400 border border-gray-200 dark:border-slate-700">{accessUrl()}/webhook/wecom</code>
+                                  <code class="text-[11px] font-mono bg-gray-100 dark:bg-slate-800 px-1.5 py-0.5 rounded text-blue-600 dark:text-blue-400 border border-[var(--cm-hairline-strong)]">{accessUrl()}/webhook/wecom</code>
                                   <br/>
                                   <span class="text-gray-400 dark:text-gray-500">{t().channel.wecomWebhookGuide}</span>
                                 </div>

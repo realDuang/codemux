@@ -92,7 +92,7 @@ export function ScheduledTaskSection(props: ScheduledTaskSectionProps) {
     <Show
       when={!props.collapsed}
       fallback={
-        <div class="flex flex-col items-center gap-1 mb-2 pb-2 border-b border-gray-200 dark:border-slate-800">
+        <div class="flex flex-col items-center gap-1 mb-2 pb-2 border-b border-[var(--cm-hairline-strong)]">
           <button
             class="w-10 h-10 rounded-lg flex items-center justify-center hover:bg-gray-100 dark:hover:bg-slate-800 transition-colors relative"
             onClick={props.onCreateTask}
@@ -112,7 +112,7 @@ export function ScheduledTaskSection(props: ScheduledTaskSectionProps) {
         </div>
       }
     >
-    <div class="mb-2 pb-2 border-b border-gray-200 dark:border-slate-800">
+    <div class="mb-2 pb-2 border-b border-[var(--cm-hairline-strong)]">
       {/* Section Header */}
       <div
         class="group flex items-center justify-between px-2 py-1.5 rounded-md cursor-pointer hover:bg-gray-900/[0.035] dark:hover:bg-white/[0.04] transition-colors"
@@ -242,7 +242,7 @@ export function ScheduledTaskSection(props: ScheduledTaskSectionProps) {
                       <Show
                         when={pendingDeleteId() !== task.id}
                         fallback={
-                          <div class="absolute right-1 top-1/2 -translate-y-1/2 flex items-center gap-1 bg-white dark:bg-slate-800 rounded-md shadow-sm px-1 py-0.5">
+                          <div class="absolute right-1 top-1/2 -translate-y-1/2 flex items-center gap-1 bg-[var(--cm-surface)] dark:bg-[var(--cm-surface-2)] rounded-md shadow-sm px-1 py-0.5">
                             <button
                               onClick={(e) => {
                                 e.stopPropagation();

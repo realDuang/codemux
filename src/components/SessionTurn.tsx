@@ -1134,7 +1134,7 @@ export function SessionTurn(props: SessionTurnProps) {
                   renderReasoning={renderItem}
                 />}</Show>;
                 return <Show when={isCompactStep(segment())} fallback={renderSegment()}>
-                  <div id={compactStepId(segmentIndex)} hidden={!compactStepsVisible()}>
+                  <div id={compactStepId(segmentIndex)} class={styles.compactStep} hidden={!compactStepsVisible()}>
                     <Show when={compactStepsVisible()}>{renderSegment()}</Show>
                   </div>
                 </Show>;

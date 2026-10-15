@@ -9,6 +9,18 @@
   min-width: 0;
   max-width: 100%;
 }
+/* Compact (per-segment) activity uses the same rail as .stepsContent, so every
+   engine reads the same way: activity hangs on a rail, prose sits on the canvas.
+   No display rule here: the element relies on [hidden] while steps are deferred. */
+.compactStep {
+  min-width: 0;
+  margin-left: 0.5rem;
+  padding: 0.125rem 0 0.125rem 0.875rem;
+  border-left: 1px solid var(--conversation-rail, var(--sl-color-border));
+}
+.compactStep:has([data-working]) {
+  border-image: linear-gradient(to bottom, var(--cm-accent), var(--cm-accent-2) 60%, var(--conversation-rail)) 1;
+}
 
 .sessionTurn[data-compact-activities] .compactStandalone :global([data-component="reasoning"] [data-slot="title"]) {
   gap: 0.375rem;
@@ -270,7 +282,7 @@
   .userMessage {
     max-width: 92%;
     padding: 0.625rem 0.875rem;
-  } .stepsContent {
+  } .stepsContent, .compactStep {
     margin-left: 0.25rem;
     padding-left: 0.625rem;
   }

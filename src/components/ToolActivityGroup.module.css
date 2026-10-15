@@ -26,5 +26,10 @@
 .icon { color: var(--conversation-subtle); }
 .trigger .icon { color: var(--cm-accent); }
 .errorSummary { padding-left: 1.25rem; font-size: 0.75rem; overflow-wrap: anywhere; }
+/* Live group: same sweep as the turn-level working trigger */
+.root[data-working] > .trigger { position: relative; }
+.root[data-working] > .trigger::after { content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 1px; background: linear-gradient(90deg, transparent, var(--cm-accent), var(--cm-accent-2), transparent); background-size: 40% 100%; background-repeat: no-repeat; animation: activity-sweep 1.6s linear infinite; pointer-events: none; }
+@keyframes activity-sweep { 0% { background-position: -40% 0; } 100% { background-position: 140% 0; } }
+@media (prefers-reduced-motion: reduce) { .root[data-working] > .trigger::after, .running { animation: none; } }
 @media (pointer: coarse) { .trigger, .rowTrigger { min-height: 44px; } .chevron { opacity: 1; } }
 @media (prefers-reduced-motion: reduce) { .groupChevron, .chevron { transition: none; } }

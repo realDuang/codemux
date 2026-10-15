@@ -199,7 +199,8 @@
 }
 
 .option:focus-visible {
-  box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.3);
+  outline: 2px solid var(--conversation-focus, currentColor);
+  outline-offset: 3px;
 }
 
 .option[data-picked] {
@@ -438,4 +439,22 @@
 .btnSubmit:disabled {
   opacity: 0.4;
   cursor: not-allowed;
+}
+
+.btnDismiss:focus-visible,
+.btnNav:focus-visible,
+.btnSubmit:focus-visible,
+.customInput:focus-visible {
+  outline: 2px solid var(--conversation-focus, currentColor);
+  outline-offset: 3px;
+}
+
+@media (pointer: coarse) {
+  .option,
+  .customInput,
+  .btnDismiss,
+  .btnNav,
+  .btnSubmit {
+    min-height: 44px;
+  }
 }

@@ -78,6 +78,50 @@ describe("buildDesktopOwnerState", () => {
     expect(converted.incompleteHistory).toBe(false);
     expect(native.thread.turns[0]).not.toHaveProperty("turnId");
   });
+
+  it("maps observed item completion and diff only to their native turn while preserving thread usage", () => {
+    const native = nativeState();
+    native.thread.turns.push(
+      { id: "turn-previous", status: "completed", items: [] },
+      { id: "turn-active", status: "inProgress", startedAt: 11, items: [
+        { id: "reasoning-1", type: "reasoning", summary: ["Checked the files"], content: [] },
+        { id: "answer-1", type: "agentMessage", text: "Checking the result", phase: "commentary" },
+      ] },
+    );
+    const latestTokenUsageInfo = { total: { inputTokens: 100, outputTokens: 20 }, last: { inputTokens: 40, outputTokens: 10 } };
+    const observed = {
+      completedItemIds: { "reasoning-1": true, "answer-1": true, "running-tool": false },
+      agentMessageCompletedAtMsById: { "answer-1": 11_250 },
+      diff: "diff --git a/file.ts b/file.ts",
+    };
+    const state = buildDesktopOwnerState({ ...native, latestTokenUsageInfo, turnStateById: { "turn-active": observed } });
+    const turns = state.turns as Array<Record<string, unknown>>;
+    expect(state.latestTokenUsageInfo).toEqual(latestTokenUsageInfo);
+    expect(turns[0]).toMatchObject({ turnId: "turn-previous", diff: null });
+    expect(turns[0]).not.toHaveProperty("completedItemIds");
+    expect(turns[0]).not.toHaveProperty("agentMessageCompletedAtMsById");
+    expect(turns[1]).toMatchObject({ turnId: "turn-active", ...observed });
+    expect(turns[1].completedItemIds).not.toBe(observed.completedItemIds);
+    expect(turns[1].agentMessageCompletedAtMsById).not.toBe(observed.agentMessageCompletedAtMsById);
+    const converted = convertDesktopConversation(state);
+    expect(converted.messages.find((message) => message.engineMeta?.codexItemId === "answer-1")?.time.completed).toBe(11_250);
+    expect(converted.isActive).toBe(true);
+  });
+
+  it("leaves absent runtime metadata unknown instead of inferring item completion", () => {
+    const native = nativeState();
+    native.thread.turns.push({ id: "turn-active", status: "inProgress", items: [
+      { id: "reasoning-1", type: "reasoning", summary: ["Checked the files"], content: [] },
+      { id: "command-1", type: "commandExecution", command: "pwd", status: "inProgress" },
+    ] });
+    const state = buildDesktopOwnerState(native);
+    const turn = (state.turns as Array<Record<string, unknown>>)[0];
+    expect(state.latestTokenUsageInfo).toBeNull();
+    expect(turn.diff).toBeNull();
+    expect(turn).not.toHaveProperty("completedItemIds");
+    expect(turn).not.toHaveProperty("agentMessageCompletedAtMsById");
+    expect(convertDesktopConversation(state).messages[0].time.completed).toBeUndefined();
+  });
 });
 
 describe("CodexDesktopOwner", () => {
@@ -183,6 +227,46 @@ describe("CodexDesktopOwner", () => {
     expect(await h.call("thread-follower-interrupt-turn", { expectedTurnId: "turn-active", mode: "user-stop" })).toEqual({ ok: true, interruptedTurnId: "turn-active" });
     expect(h.request).toHaveBeenLastCalledWith("codex_thread-created", "turn/interrupt", { threadId: "thread-created", turnId: "turn-active" });
     h.bridge.dispose();
+  });
+
+  it("rejects an async answer when refreshing the owner has advanced to another turn", async () => {
+    const h = harness();
+    const question = { id: "old-question", type: "agentMessage", questions: [{ title: "Deploy staging?" }] };
+    h.state.thread.turns.push({ id: "turn-old", status: "inProgress", items: [question] });
+    await h.bridge.registerCreatedThread("codex_thread-created", "thread-created");
+    h.state.thread.turns[0].status = "completed";
+    h.state.thread.turns.push({ id: "turn-new", status: "inProgress", items: [] });
+    const text = `<send_user_message_question_reply>\n${JSON.stringify([{
+      questionItemId: JSON.stringify(["request_user_input_async", "old-question", 0]), question: "Deploy staging?", answer: "Yes",
+    }])}\n</send_user_message_question_reply>`;
+    try {
+      await expect(h.call("thread-follower-steer-turn", {
+        input: [{ type: "text", text }], restoreMessage: { context: { turnTrigger: "send_user_message_async_question" } },
+      })).rejects.toThrow("no longer belongs to the active Codex turn");
+      expect(h.request).not.toHaveBeenCalled();
+    } finally {
+      h.bridge.dispose();
+    }
+  });
+
+  it("retains explicit async answer intent for the runtime's active-turn validation", async () => {
+    const h = harness();
+    h.state.thread.turns.push({ id: "turn-active", status: "inProgress", items: [
+      { id: "question", type: "agentMessage", questions: [{ title: "Continue?" }] },
+    ] });
+    await h.bridge.registerCreatedThread("codex_thread-created", "thread-created");
+    const input = [{ type: "text", text: `<send_user_message_question_reply>\n${JSON.stringify([{
+      questionItemId: JSON.stringify(["request_user_input_async", "question", 0]), question: "Continue?", answer: "Yes",
+    }])}\n</send_user_message_question_reply>` }];
+    const restoreMessage = { context: { turnTrigger: "send_user_message_async_question" } };
+    try {
+      await h.call("thread-follower-steer-turn", { input, restoreMessage });
+      expect(h.request).toHaveBeenCalledWith("codex_thread-created", "turn/steer", {
+        threadId: "thread-created", expectedTurnId: "turn-active", input, restoreMessage,
+      });
+    } finally {
+      h.bridge.dispose();
+    }
   });
 
   it("routes approvals only to the matching pending native request and publishes their removal", async () => {

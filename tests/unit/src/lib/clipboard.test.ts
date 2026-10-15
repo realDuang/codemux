@@ -1,8 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { copyTextToClipboard } from "../../../../src/lib/clipboard";
+import { copyResponseToClipboard, copyTextToClipboard } from "../../../../src/lib/clipboard";
 
 class ElementStub {
   focus = vi.fn();
+  closest = vi.fn<() => { appendChild: (element: TextareaStub) => void } | null>(() => null);
 }
 
 class TextInputStub extends ElementStub {
@@ -49,6 +50,25 @@ function setupPage(activeElement: ElementStub | null = new InputStub()) {
 afterEach(() => vi.unstubAllGlobals());
 
 describe("copyTextToClipboard", () => {
+  it("copies inside an active modal without selecting inert document content", async () => {
+    const button = new ElementStub();
+    const { page, textarea, selection, savedRange } = setupPage(button);
+    let dialogTextarea: TextareaStub | undefined;
+    const dialog = { appendChild: vi.fn((element: TextareaStub) => { dialogTextarea = element; }) };
+    button.closest.mockReturnValue(dialog);
+    page.execCommand.mockImplementation(() => dialogTextarea === textarea && textarea.value === "row\tvalue\n1\tdata");
+    vi.stubGlobal("navigator", { userActivation: { isActive: true } });
+
+    expect(await copyTextToClipboard("row\tvalue\n1\tdata")).toBe(true);
+    expect(page.body.appendChild).not.toHaveBeenCalled();
+    expect(dialog.appendChild).toHaveBeenCalledOnce();
+    expect(dialog.appendChild.mock.calls[0][0]).toBe(textarea);
+    expect(textarea.select).toHaveBeenCalledOnce();
+    expect(textarea.remove).toHaveBeenCalledOnce();
+    expect(button.focus).toHaveBeenCalledExactlyOnceWith({ preventScroll: true });
+    expect(selection.addRange).toHaveBeenCalledExactlyOnceWith(savedRange);
+  });
+
   it("uses the Clipboard API without disturbing the page selection", async () => {
     const { page } = setupPage();
     const writeText = vi.fn().mockResolvedValue(undefined);
@@ -132,5 +152,96 @@ describe("copyTextToClipboard", () => {
     expect(page.execCommand).toHaveBeenCalledExactlyOnceWith("copy");
     expect(textarea.remove).toHaveBeenCalledOnce();
     expect(button.focus).toHaveBeenCalledExactlyOnceWith({ preventScroll: true });
+  });
+
+  it("falls back to text after rich clipboard writing fails and preserves the initiating gesture", async () => {
+    const { page, textarea } = setupPage();
+    const userActivation = { isActive: true };
+    const write = vi.fn(async () => {
+      userActivation.isActive = false;
+      throw new DOMException("Rich content denied", "NotAllowedError");
+    });
+    const writeText = vi.fn().mockRejectedValue(new DOMException("Unavailable", "NotAllowedError"));
+    vi.stubGlobal("ClipboardItem", class { constructor(public contents: Record<string, Blob>) {} });
+    vi.stubGlobal("navigator", { clipboard: { write, writeText }, userActivation });
+
+    expect(await copyTextToClipboard("Visible answer", "<p>Visible answer</p>")).toBe(true);
+    expect(write).toHaveBeenCalledOnce();
+    expect(writeText).toHaveBeenCalledExactlyOnceWith("Visible answer");
+    expect(page.execCommand).toHaveBeenCalledExactlyOnceWith("copy");
+    expect(textarea.value).toBe("Visible answer");
+  });
+});
+
+describe("copyResponseToClipboard", () => {
+  const part = {
+    text: "Visible answer\n<oai-mem-citation>private metadata</oai-mem-citation>",
+    displayText: "Visible answer",
+  };
+
+  it("writes plain text and clean HTML without mutating the rendered Markdown", async () => {
+    const removed = new Set<string>();
+    const decoration = { remove: vi.fn(() => removed.add("decoration")) };
+    const copyButton = { remove: vi.fn(() => removed.add("button")) };
+    const footer = { remove: vi.fn(() => removed.add("footer")) };
+    const metadata = { remove: vi.fn(() => removed.add("metadata")) };
+    const clone = {
+      querySelectorAll: vi.fn(() => [decoration, copyButton, footer, metadata]),
+      get innerHTML() {
+        return "<p><strong>Visible answer</strong></p>" +
+          (removed.has("button") ? "" : "<button>Copy</button>") +
+          (removed.has("decoration") ? "" : '<span data-component="decoration">Decoration</span>') +
+          (removed.has("footer") ? "" : '<div data-component="content-footer">Date</div>') +
+          (removed.has("metadata") ? "" : "<oai-mem-citation>private metadata</oai-mem-citation>");
+      },
+    };
+    const markdown = { cloneNode: vi.fn(() => clone), querySelector: () => null, innerHTML: "Original rendered Markdown" };
+    const write = vi.fn().mockResolvedValue(undefined);
+    const writeText = vi.fn();
+    vi.stubGlobal("ClipboardItem", class { constructor(public contents: Record<string, Blob>) {} });
+    vi.stubGlobal("navigator", { clipboard: { write, writeText } });
+
+    expect(await copyResponseToClipboard(part, markdown as unknown as HTMLElement)).toBe(true);
+    const item = write.mock.calls[0][0][0] as { contents: Record<string, Blob> };
+    expect(await item.contents["text/plain"].text()).toBe("Visible answer");
+    expect(await item.contents["text/html"].text()).toBe("<p><strong>Visible answer</strong></p>");
+    expect(markdown.cloneNode).toHaveBeenCalledExactlyOnceWith(true);
+    expect(markdown.innerHTML).toBe("Original rendered Markdown");
+    expect(writeText).not.toHaveBeenCalled();
+  });
+
+  it.each(["missing ClipboardItem", "missing write", "write rejected"])("copies only visible text when rich copying is unavailable: %s", async (reason) => {
+    const write = vi.fn().mockRejectedValue(new Error("HTML clipboard denied"));
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    const clone = { querySelectorAll: () => [], innerHTML: "<p>Visible answer</p>" };
+    const markdown = { cloneNode: () => clone, querySelector: () => null };
+    vi.stubGlobal("ClipboardItem", reason === "missing ClipboardItem" ? undefined
+      : class { constructor(public contents: Record<string, Blob>) {} });
+    vi.stubGlobal("navigator", { clipboard: { write: reason === "missing write" ? undefined : write, writeText } });
+
+    expect(await copyResponseToClipboard(part, markdown as unknown as HTMLElement)).toBe(true);
+    expect(writeText).toHaveBeenCalledExactlyOnceWith("Visible answer");
+  });
+
+  it("copies original text for engines without display metadata or a rendered container", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal("navigator", { clipboard: { writeText } });
+
+    expect(await copyResponseToClipboard({ text: "**Original Markdown**" })).toBe(true);
+    expect(writeText).toHaveBeenCalledExactlyOnceWith("**Original Markdown**");
+  });
+
+  it("uses complete plain text while async Markdown rendering still contains an older fragment", async () => {
+    const cloneNode = vi.fn(() => ({ innerHTML: "<p>Old partial answer</p>" }));
+    const markdown = { cloneNode, querySelector: () => ({}) };
+    const write = vi.fn();
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal("ClipboardItem", class { constructor(public contents: Record<string, Blob>) {} });
+    vi.stubGlobal("navigator", { clipboard: { write, writeText } });
+
+    expect(await copyResponseToClipboard(part, markdown as unknown as HTMLElement)).toBe(true);
+    expect(writeText).toHaveBeenCalledExactlyOnceWith("Visible answer");
+    expect(write).not.toHaveBeenCalled();
+    expect(cloneNode).not.toHaveBeenCalled();
   });
 });

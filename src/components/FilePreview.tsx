@@ -50,11 +50,12 @@ function getLangFromFilename(filename: string): string {
 // ImagePreview sub-component
 // ---------------------------------------------------------------------------
 
-function ImagePreview(props: { mimeType: string; data: string }) {
+function ImagePreview(props: { mimeType: string; data: string; name: string }) {
   const { t } = useI18n();
   const [zoom, setZoom] = createSignal(1);
   const [pan, setPan] = createSignal({ x: 0, y: 0 });
   const [dragging, setDragging] = createSignal(false);
+  const [failed, setFailed] = createSignal(false);
   const [dragStart, setDragStart] = createSignal({ x: 0, y: 0 });
   const [naturalSize, setNaturalSize] = createSignal<{
     w: number;
@@ -69,18 +70,19 @@ function ImagePreview(props: { mimeType: string; data: string }) {
     setZoom((z) => Math.max(0.1, Math.min(5, z + delta)));
   }
 
-  function handleMouseDown(e: MouseEvent) {
+  function handlePointerDown(e: PointerEvent) {
     if (e.button !== 0) return;
+    if (e.currentTarget instanceof HTMLElement) e.currentTarget.setPointerCapture(e.pointerId);
     setDragging(true);
     setDragStart({ x: e.clientX - pan().x, y: e.clientY - pan().y });
   }
 
-  function handleMouseMove(e: MouseEvent) {
+  function handlePointerMove(e: PointerEvent) {
     if (!dragging()) return;
     setPan({ x: e.clientX - dragStart().x, y: e.clientY - dragStart().y });
   }
 
-  function handleMouseUp() {
+  function handlePointerUp() {
     setDragging(false);
   }
 
@@ -93,56 +95,74 @@ function ImagePreview(props: { mimeType: string; data: string }) {
     setPan({ x: 0, y: 0 });
   }
 
-  onMount(() => {
-    document.addEventListener("mousemove", handleMouseMove);
-    document.addEventListener("mouseup", handleMouseUp);
-  });
+  createEffect(on(() => props.data, () => {
+    setNaturalSize(null);
+    setFailed(false);
+    setZoom(1);
+    setPan({ x: 0, y: 0 });
+  }));
 
-  onCleanup(() => {
-    document.removeEventListener("mousemove", handleMouseMove);
-    document.removeEventListener("mouseup", handleMouseUp);
-  });
+  const controlClass = "min-w-8 min-h-8 px-2 rounded hover:bg-[var(--conversation-hover)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--conversation-focus)] [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11";
+
+  function handleImageKeyDown(event: KeyboardEvent) {
+    const moves: Record<string, { x: number; y: number }> = {
+      ArrowLeft: { x: 24, y: 0 }, ArrowRight: { x: -24, y: 0 },
+      ArrowUp: { x: 0, y: 24 }, ArrowDown: { x: 0, y: -24 },
+    };
+    const move = moves[event.key];
+    if (!move) return;
+    event.preventDefault();
+    setPan((position) => ({ x: position.x + move.x, y: position.y + move.y }));
+  }
 
   return (
-    <div class="flex flex-col h-full">
+    <div class="flex flex-col h-full min-h-64">
       {/* Toolbar */}
-      <div class="flex items-center gap-1 px-3 py-1.5 border-b border-gray-200 dark:border-slate-700 text-xs">
+      <div class="flex flex-wrap items-center gap-1 px-2 py-1 border-b border-[var(--conversation-border)] text-xs text-[var(--conversation-muted)]">
         <button
-          class="px-2 py-0.5 rounded hover:bg-gray-100 dark:hover:bg-slate-800"
+          type="button"
+          class={controlClass}
           onClick={() => setZoom((z) => Math.min(5, z * 1.25))}
           title={t().fileExplorer.imageZoomIn}
+          aria-label={t().fileExplorer.imageZoomIn}
         >
           +
         </button>
         <button
-          class="px-2 py-0.5 rounded hover:bg-gray-100 dark:hover:bg-slate-800"
+          type="button"
+          class={controlClass}
           onClick={() => setZoom((z) => Math.max(0.1, z * 0.8))}
           title={t().fileExplorer.imageZoomOut}
+          aria-label={t().fileExplorer.imageZoomOut}
         >
           −
         </button>
         <button
-          class="px-2 py-0.5 rounded hover:bg-gray-100 dark:hover:bg-slate-800"
+          type="button"
+          class={controlClass}
           onClick={fitToWindow}
           title={t().fileExplorer.imageFitToWindow}
+          aria-label={t().fileExplorer.imageFitToWindow}
         >
           ⊡
         </button>
         <button
-          class="px-2 py-0.5 rounded hover:bg-gray-100 dark:hover:bg-slate-800"
+          type="button"
+          class={controlClass}
           onClick={() => {
             setZoom(1);
             setPan({ x: 0, y: 0 });
           }}
           title={t().fileExplorer.imageResetZoom}
+          aria-label={t().fileExplorer.imageResetZoom}
         >
           1:1
         </button>
-        <span class="ml-2 text-gray-500 dark:text-slate-400">
+        <span class="ml-2 tabular-nums">
           {Math.round(zoom() * 100)}%
         </span>
         <Show when={naturalSize()}>
-          <span class="ml-2 text-gray-400 dark:text-slate-500">
+          <span class="ml-2 tabular-nums text-[var(--conversation-subtle)]">
             {naturalSize()!.w} × {naturalSize()!.h}
           </span>
         </Show>
@@ -151,13 +171,22 @@ function ImagePreview(props: { mimeType: string; data: string }) {
       {/* Image area */}
       <div
         ref={containerRef}
-        class="flex-1 overflow-hidden cursor-grab active:cursor-grabbing"
+        class="relative flex-1 min-h-0 overflow-hidden cursor-grab active:cursor-grabbing touch-none"
+        tabIndex={0}
+        role="region"
+        aria-label={props.name}
+        aria-busy={!naturalSize() && !failed()}
         style={{
           background:
-            "repeating-conic-gradient(#e5e7eb 0% 25%, transparent 0% 50%) 0 0 / 16px 16px",
+            "repeating-conic-gradient(var(--conversation-surface) 0% 25%, transparent 0% 50%) 0 0 / 16px 16px",
         }}
         onWheel={handleWheel}
-        onMouseDown={handleMouseDown}
+        onPointerDown={handlePointerDown}
+        onPointerMove={handlePointerMove}
+        onPointerUp={handlePointerUp}
+        onPointerCancel={handlePointerUp}
+        onLostPointerCapture={handlePointerUp}
+        onKeyDown={handleImageKeyDown}
       >
         <div
           class="w-full h-full flex items-center justify-center"
@@ -169,14 +198,22 @@ function ImagePreview(props: { mimeType: string; data: string }) {
           <img
             src={`data:${props.mimeType};base64,${props.data}`}
             loading="lazy"
+            alt={props.name}
             draggable={false}
             class="max-w-none"
+            classList={{ invisible: !naturalSize() || failed() }}
+            onError={() => setFailed(true)}
             onLoad={(e) => {
               const img = e.currentTarget;
               setNaturalSize({ w: img.naturalWidth, h: img.naturalHeight });
             }}
           />
         </div>
+        <Show when={!naturalSize() || failed()}>
+          <div class="absolute inset-0 flex items-center justify-center p-4 text-sm text-[var(--conversation-muted)]" role="status">
+            {failed() ? t().markdown.imageUnavailable : t().common.loading}
+          </div>
+        </Show>
       </div>
     </div>
   );
@@ -191,6 +228,7 @@ export function FilePreview() {
   const [viewMode, setViewMode] = createSignal<"content" | "diff">("content");
   const [showSearch, setShowSearch] = createSignal(false);
   let scrollRef: HTMLDivElement | undefined;
+  let appliedLineRequest: number | undefined;
 
   onMount(() => {
     const handler = (e: KeyboardEvent) => {
@@ -266,33 +304,84 @@ export function FilePreview() {
     }
   }
 
+  // Syntax highlighting arrives asynchronously, so wait for the requested line.
+  createEffect(() => {
+    const current = preview();
+    if (!scrollRef || !current?.lineRequestId || current.lineRequestId === appliedLineRequest
+      || !current.line || current.loading || current.error || current.content?.binary) return;
+    appliedLineRequest = current.lineRequestId;
+    setViewMode("content");
+    const container = scrollRef;
+    const lineNumber = current.line;
+    let settleTimer: ReturnType<typeof setTimeout> | undefined;
+    let finished = false;
+    const finish = () => {
+      finished = true;
+      observer.disconnect();
+      resizeObserver.disconnect();
+      if (settleTimer) clearTimeout(settleTimer);
+    };
+    const jump = () => {
+      if (finished) return;
+      const lines = container.querySelectorAll<HTMLElement>(".line");
+      if (!lines.length) return;
+      const line = lines[Math.min(lineNumber, lines.length) - 1];
+      const delta = line.getBoundingClientRect().top - container.getBoundingClientRect().top;
+      if (Math.abs(delta) > 1) container.scrollTop += delta;
+      if (settleTimer) clearTimeout(settleTimer);
+      settleTimer = setTimeout(finish, 150);
+    };
+    const observer = new MutationObserver(jump);
+    // The preview width animates when the first tab opens; wrapped line heights
+    // may change after highlighting without another DOM mutation.
+    const resizeObserver = new ResizeObserver(jump);
+    observer.observe(container, { childList: true, subtree: true });
+    resizeObserver.observe(container);
+    container.addEventListener("wheel", finish, { passive: true });
+    container.addEventListener("touchstart", finish, { passive: true });
+    container.addEventListener("pointerdown", finish);
+    const frame = requestAnimationFrame(jump);
+    onCleanup(() => {
+      finish();
+      cancelAnimationFrame(frame);
+      container.removeEventListener("wheel", finish);
+      container.removeEventListener("touchstart", finish);
+      container.removeEventListener("pointerdown", finish);
+    });
+  });
+
   return (
     <Show when={preview()}>
       {(prev) => (
-        <div class="flex flex-col h-full bg-white dark:bg-slate-900">
+        <div class="conversation flex flex-col h-full min-w-0">
           {/* Slim info bar: path + content/diff toggle */}
-          <div class="flex items-center justify-between px-3 py-1 border-b border-gray-200 dark:border-slate-700 bg-gray-50/50 dark:bg-slate-800/30 shrink-0 min-h-[28px]">
-            <span class="text-[11px] text-gray-400 dark:text-gray-500 truncate">
+          <div class="flex items-start justify-between gap-2 px-3 py-1.5 border-b border-[var(--conversation-border)] bg-[var(--conversation-surface)] shrink-0 min-h-10">
+            <span class="min-w-0 py-1 text-xs font-mono text-[var(--conversation-muted)] [overflow-wrap:anywhere]" title={prev().path}>
               {prev().path}
+              <Show when={prev().line}>:{prev().line}</Show>
             </span>
 
             <Show when={hasGitChanges()}>
-              <div class="flex rounded border border-gray-200 dark:border-slate-700 overflow-hidden text-[11px] shrink-0 ml-2">
+              <div class="flex rounded-md border border-[var(--conversation-border)] text-xs shrink-0">
                 <button
-                  class={`px-1.5 py-0.5 ${
+                  type="button"
+                  aria-pressed={viewMode() === "content"}
+                  class={`min-h-8 px-2 rounded-l-md [@media(pointer:coarse)]:min-h-11 ${
                     viewMode() === "content"
-                      ? "bg-blue-50 text-blue-600 dark:bg-blue-900/20 dark:text-blue-400"
-                      : "text-gray-600 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-slate-800"
+                      ? "bg-[var(--conversation-bg)] text-[var(--conversation-text)]"
+                      : "text-[var(--conversation-muted)] hover:bg-[var(--conversation-hover)]"
                   }`}
                   onClick={() => setViewMode("content")}
                 >
                   {t().fileExplorer.content}
                 </button>
                 <button
-                  class={`px-1.5 py-0.5 ${
+                  type="button"
+                  aria-pressed={viewMode() === "diff"}
+                  class={`min-h-8 px-2 rounded-r-md [@media(pointer:coarse)]:min-h-11 ${
                     viewMode() === "diff"
-                      ? "bg-blue-50 text-blue-600 dark:bg-blue-900/20 dark:text-blue-400"
-                      : "text-gray-600 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-slate-800"
+                      ? "bg-[var(--conversation-bg)] text-[var(--conversation-text)]"
+                      : "text-[var(--conversation-muted)] hover:bg-[var(--conversation-hover)]"
                   }`}
                   onClick={() => setViewMode("diff")}
                 >
@@ -314,17 +403,25 @@ export function FilePreview() {
           {/* Content */}
           <div
             ref={scrollRef}
-            class="flex-1 overflow-auto"
+            class="flex-1 min-h-0 min-w-0 overflow-auto"
+            data-preview-mode={viewMode()}
+            tabIndex={0}
+            role="region"
+            aria-label={prev().path}
             onScroll={handleScroll}
           >
             <Show when={prev().loading}>
-              <div class="flex items-center justify-center h-full">
+              <div class="flex items-center justify-center gap-2 h-full min-h-48 text-sm text-[var(--conversation-muted)]" role="status">
                 <Spinner size="medium" />
+                {t().common.loading}
               </div>
             </Show>
 
             <Show when={prev().error}>
-              <div class="p-4 text-red-500 text-sm">{prev().error}</div>
+              <div class="m-3 rounded-lg border border-red-200 dark:border-red-900/60 p-3 text-sm [overflow-wrap:anywhere]" role="alert">
+                <p class="mb-1 font-medium text-red-700 dark:text-red-300">{t().common.error}</p>
+                <p class="text-[var(--conversation-muted)]">{prev().error}</p>
+              </div>
             </Show>
 
             <Show when={!prev().loading && !prev().error && prev().content}>
@@ -340,6 +437,7 @@ export function FilePreview() {
                     <ImagePreview
                       mimeType={content().mimeType!}
                       data={content().content}
+                      name={prev().name}
                     />
                   </Show>
 
@@ -350,7 +448,7 @@ export function FilePreview() {
                       !content().mimeType?.startsWith("image/")
                     }
                   >
-                    <div class="flex items-center justify-center h-full text-gray-400 dark:text-slate-500 text-sm">
+                    <div class="flex items-center justify-center h-full min-h-48 p-4 text-[var(--conversation-muted)] text-sm" role="status">
                       {t().fileExplorer.binaryFile}
                     </div>
                   </Show>
@@ -365,6 +463,7 @@ export function FilePreview() {
                           lang={lang()}
                           showLineNumbers={true}
                           transparentBg={true}
+                          flush={true}
                         />
                       }
                     >

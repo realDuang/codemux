@@ -6,6 +6,8 @@ import {
   Switch,
   createMemo,
   createSignal,
+  createEffect,
+  onCleanup,
   type ParentProps,
 } from "solid-js";
 import {
@@ -34,6 +36,7 @@ import { Collapsible } from "../Collapsible";
 import { ContentError } from "./content-error";
 import { ContentMarkdown } from "./content-markdown";
 import { ContentText } from "./content-text";
+import AttachmentContent from "./AttachmentContent";
 import { formatDuration, createElapsedTimer } from "./common";
 import {
   ToolIcon,
@@ -51,10 +54,13 @@ import {
   EditTool,
   BashTool,
 } from "./tools";
-import type { UnifiedMessage, UnifiedPart, UnifiedPermission, UnifiedQuestion, ToolPart, SystemNoticePart } from "../../types/unified";
-import { useI18n } from "../../lib/i18n";
+import type { UnifiedMessage, UnifiedPart, UnifiedPermission, UnifiedQuestion, ToolPart, SystemNoticePart, ReasoningPart } from "../../types/unified";
+import { formatMessage, useI18n } from "../../lib/i18n";
+import { getReasoningDisplayText, getReasoningDuration } from "../../lib/reasoning-display";
+import { copyResponseToClipboard } from "../../lib/clipboard";
+import { createStreamScroll } from "../../lib/stream-scroll";
 import { logger } from "../../lib/logger";
-import { isExpanded, toggleExpanded } from "../../stores/message";
+import { isExpanded, setExpanded, toggleExpanded } from "../../stores/message";
 import { SystemNotice } from "./SystemNotice";
 
 import styles from "./part.module.css";
@@ -73,6 +79,7 @@ export interface PartProps {
   message: UnifiedMessage;
   part: UnifiedPart;
   last: boolean;
+  expandText?: boolean;
   isStreaming?: boolean;
   permission?: UnifiedPermission;
   onPermissionRespond?: (sessionID: string, permissionID: string, reply: string) => void;
@@ -84,6 +91,22 @@ export interface PartProps {
 export function Part(props: PartProps) {
   const { t } = useI18n();
   const [copied, setCopied] = createSignal(false);
+  const [responseCopied, setResponseCopied] = createSignal(false);
+  let responseMarkdown: HTMLDivElement | undefined;
+  let responseCopyTimer: ReturnType<typeof setTimeout> | undefined;
+  onCleanup(() => {
+    if (responseCopyTimer) clearTimeout(responseCopyTimer);
+  });
+  const handleCopyResponse = async () => {
+    if (props.part.type !== "text") return;
+    if (!await copyResponseToClipboard(props.part, responseMarkdown)) {
+      logger.error("Copy response failed");
+      return;
+    }
+    setResponseCopied(true);
+    if (responseCopyTimer) clearTimeout(responseCopyTimer);
+    responseCopyTimer = setTimeout(() => setResponseCopied(false), 2000);
+  };
   const id = createMemo(() => props.message.id + "-" + props.index);
 
   // System notices render as centered banners, not the standard part layout
@@ -170,10 +193,39 @@ export function Part(props: PartProps) {
           </div>
         )}
         {props.message.role === "assistant" && props.part.type === "text" && (
-          <div data-component="assistant-text">
-            <div data-component="assistant-text-markdown">
-              <ContentMarkdown expand={props.last} text={props.part.text} />
+          <div data-component="assistant-text" data-copyable={!props.isStreaming && !!props.message.time.completed && props.part.phase !== "commentary" && !!(props.part.displayText ?? props.part.text).trim() ? "" : undefined}>
+            <div data-component="assistant-text-markdown" ref={responseMarkdown}>
+              <ContentMarkdown expand={props.expandText ?? props.last} text={props.part.displayText ?? props.part.text} isStreaming={props.isStreaming} buffered={props.part.phase !== "commentary"} workingDirectory={props.message.workingDirectory} inlineAssets={props.part.inlineAssets} />
             </div>
+            <Show when={!props.isStreaming && props.message.time.completed && props.part.phase !== "commentary" && (props.part.displayText ?? props.part.text).trim()}>
+                <button
+                  type="button"
+                  data-component="response-copy-button"
+                  data-markdown-decoration=""
+                  aria-label={responseCopied() ? t().common.copied : t().common.copyToClipboard}
+                  title={responseCopied() ? t().common.copied : t().common.copyToClipboard}
+                  onClick={handleCopyResponse}
+                >
+                  <Show when={responseCopied()} fallback={
+                    <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" /><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" /></svg>
+                  }>
+                    <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12 4 4L19 6" /></svg>
+                  </Show>
+                  <span class="sr-only" role="status">{responseCopied() ? t().common.copied : ""}</span>
+                </button>
+            </Show>
+            <Show when={!props.isStreaming && props.part.citations?.length}>
+              <Footer title={t().parts.memorySources}>
+                <details data-component="response-citations">
+                  <summary>{t().parts.memorySources}</summary>
+                  <ul>
+                    <For each={props.part.citations}>
+                      {(citation) => <li>{citation.note}</li>}
+                    </For>
+                  </ul>
+                </details>
+              </Footer>
+            </Show>
             {props.last &&
               props.message.role === "assistant" &&
               props.message.time.completed && (
@@ -190,47 +242,106 @@ export function Part(props: PartProps) {
           </div>
         )}
         {props.message.role === "assistant" && props.part.type === "reasoning" && (() => {
-          const reasoningText = () => (props.part as any).text || "";
-          const heading = () => {
-            const text = reasoningText();
-            if (!text) return undefined;
-            const atx = text.trimStart().match(/^#{1,3}\s+(.+)$/m);
-            if (atx) { const h = atx[1].trim(); return h.length > 45 ? h.slice(0, 44) + "\u2026" : h; }
-            const bold = text.trimStart().match(/^\*\*(.+?)\*\*/);
-            if (bold) { const h = bold[1].trim(); return h.length > 45 ? h.slice(0, 44) + "\u2026" : h; }
-            return undefined;
+          const reasoning = () => props.part as ReasoningPart;
+          const isStreaming = () => props.isStreaming === true &&
+            !(reasoning().completed ?? reasoning().time?.end !== undefined);
+          const nativeSummary = () => reasoning().summaryFormat === "heading-prefixed";
+          const body = createMemo(() => getReasoningDisplayText(reasoning(), isStreaming()));
+          const [streamCollapsed, setStreamCollapsed] = createSignal(false);
+          const [reasoningViewport, setReasoningViewport] = createSignal<HTMLDivElement>();
+          let readingEarlier = false;
+          let previousTop = 0;
+          let previousHeight = 0;
+          let previousTouchY: number | undefined;
+          const reasoningScroll = createStreamScroll({
+            viewport: reasoningViewport,
+            sessionId: () => props.part.id,
+            following: () => isStreaming() && !readingEarlier,
+          });
+          onCleanup(reasoningScroll.cancel);
+          createEffect(() => { body(); reasoningScroll.schedule(); });
+          createEffect(() => {
+            const viewport = reasoningViewport();
+            if (!viewport) return;
+            const observer = new ResizeObserver(reasoningScroll.schedule);
+            observer.observe(viewport);
+            if (viewport.firstElementChild) observer.observe(viewport.firstElementChild);
+            onCleanup(() => observer.disconnect());
+          });
+          const [observedTime, setObservedTime] = createSignal<{ start: number; end?: number }>();
+          createEffect(() => {
+            if (isStreaming()) setObservedTime((current) => current ?? { start: Date.now() });
+            else setObservedTime((current) => current && current.end === undefined ? { ...current, end: Date.now() } : current);
+          });
+          const duration = createMemo(() => getReasoningDuration(reasoning().time) ?? getReasoningDuration(observedTime()));
+          const title = () => {
+            if (!nativeSummary() || isStreaming()) return t().parts.thinking;
+            const elapsed = duration();
+            return elapsed === undefined ? t().parts.thought
+              : formatMessage(t().parts.thoughtFor, { duration: formatDuration(elapsed) });
           };
-          const preview = () => {
-            const text = reasoningText().replace(/^#{1,3}\s+.+$/m, "").replace(/\*\*(.+?)\*\*/g, "$1").trim();
-            return text.length > 100 ? text.slice(0, 99) + "\u2026" : text;
-          };
-          const isCollapsed = () => !props.isStreaming && !isExpanded(`reasoning-${props.part.id}`);
           return (
-            <div data-component="reasoning" data-streaming={props.isStreaming ? "" : undefined}>
+            <div data-component="reasoning" data-streaming={isStreaming() ? "" : undefined}>
                <Collapsible
-                 open={props.isStreaming || isExpanded(`reasoning-${props.part.id}`)}
-                 onOpenChange={() => toggleExpanded(`reasoning-${props.part.id}`)}
+                 open={!!body().trim() && (isStreaming() ? !streamCollapsed() : isExpanded(`reasoning-${props.part.id}`))}
+                 onOpenChange={(open) => {
+                   if (isStreaming()) setStreamCollapsed(!open);
+                   if (body().trim()) setExpanded(`reasoning-${props.part.id}`, open);
+                 }}
                >
-                  <Collapsible.Trigger>
+                  <Collapsible.Trigger disabled={!body().trim()}>
                      <div data-slot="title">
                         <IconBrain width={14} height={14} />
-                        <span>{t().parts.thinking}</span>
-                        <Show when={heading()}>
-                          <span data-slot="reasoning-heading">{heading()}</span>
-                        </Show>
-                        <Show when={props.isStreaming}>
+                        <span>{title()}</span>
+                        <Show when={isStreaming()}>
                           <span data-slot="streaming-dot" />
                         </Show>
                      </div>
-                     <Collapsible.Arrow />
+                     <Show when={body().trim()}>
+                       <Collapsible.Arrow />
+                     </Show>
                   </Collapsible.Trigger>
-                  {/* Collapsed preview — shows first ~100 chars when folded */}
-                  <Show when={isCollapsed() && preview()}>
-                    <div data-slot="reasoning-preview">{preview()}</div>
+                  <Show when={!nativeSummary() && !isStreaming() && !isExpanded(`reasoning-${props.part.id}`) && body().trim()}>
+                    <div data-slot="reasoning-preview">{body().replace(/\*\*(.+?)\*\*/g, "$1").replace(/^#{1,6}\s*/, "").slice(0, 100)}</div>
                   </Show>
                   <Collapsible.Content>
-                      <div data-component="assistant-reasoning-markdown">
-                          <ContentMarkdown expand text={reasoningText() || t().parts.thinking + "..."} />
+                      <div
+                        ref={setReasoningViewport}
+                        data-component="assistant-reasoning-markdown"
+                        tabIndex={isStreaming() ? 0 : undefined}
+                        role="region"
+                        aria-label={t().parts.thinking}
+                        onWheel={(event) => { if (event.deltaY < 0) readingEarlier = true; }}
+                        onTouchStart={(event) => { previousTouchY = event.touches[0]?.clientY; }}
+                        onTouchMove={(event) => {
+                          const next = event.touches[0]?.clientY;
+                          if (next !== undefined && previousTouchY !== undefined && next > previousTouchY) readingEarlier = true;
+                          previousTouchY = next;
+                        }}
+                        onKeyDown={(event) => {
+                          if (event.defaultPrevented || !isStreaming() || event.target !== event.currentTarget) return;
+                          const viewport = event.currentTarget;
+                          const step = event.key.startsWith("Page") ? viewport.clientHeight * 0.8 : 40;
+                          const next = event.key === "Home" ? 0
+                            : event.key === "End" ? viewport.scrollHeight
+                            : ["ArrowUp", "PageUp"].includes(event.key) ? viewport.scrollTop - step
+                            : ["ArrowDown", "PageDown"].includes(event.key) ? viewport.scrollTop + step
+                            : undefined;
+                          if (next === undefined) return;
+                          event.preventDefault();
+                          event.stopPropagation();
+                          readingEarlier = next < viewport.scrollHeight - viewport.clientHeight;
+                          viewport.scrollTop = next;
+                        }}
+                        onScroll={(event) => {
+                          const viewport = event.currentTarget;
+                          if (viewport.scrollTop < previousTop && viewport.scrollHeight >= previousHeight) readingEarlier = true;
+                          else if (viewport.scrollTop > previousTop && viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight <= 1) readingEarlier = false;
+                          previousTop = viewport.scrollTop;
+                          previousHeight = viewport.scrollHeight;
+                        }}
+                      >
+                          <ContentMarkdown expand text={body()} isStreaming={isStreaming()} workingDirectory={props.message.workingDirectory} />
                       </div>
                   </Collapsible.Content>
                </Collapsible>
@@ -238,28 +349,8 @@ export function Part(props: PartProps) {
           );
         })()}
 
-        {props.message.role === "user" && props.part.type === "file" && (
-          <div data-component="attachment">
-            <Show
-              when={props.part.mime.startsWith("image/")}
-              fallback={
-                <>
-                  <div data-slot="copy">{t().parts.attachment}</div>
-                  <div data-slot="filename">{props.part.filename}</div>
-                </>
-              }
-            >
-              <div data-slot="image-container">
-                <img
-                  src={props.part.url}
-                  alt={props.part.filename}
-                  data-slot="image"
-                  loading="lazy"
-                />
-                <div data-slot="image-filename">{props.part.filename}</div>
-              </div>
-            </Show>
-          </div>
+        {props.part.type === "file" && (
+          <AttachmentContent part={props.part} message={props.message} />
         )}
         {props.part.type === "step-start" &&
           props.message.role === "assistant" && (
@@ -273,10 +364,10 @@ export function Part(props: PartProps) {
             <Collapsible open={isExpanded(`error-${props.part.id}`)} onOpenChange={() => toggleExpanded(`error-${props.part.id}`)} class={styles.root}>
               <Collapsible.Trigger>
                 <div data-component="tool-title">
-                  <span data-slot="icon" data-icon-color="amber">
+                  <span data-slot="icon" data-icon-color="red">
                     <IconSparkles width={14} height={14} />
                   </span>
-                  <span data-slot="name">{t().parts.toolHint}</span>
+                  <span data-slot="name">{t().common.error}</span>
                   <span data-slot="target">{(props.part as ToolPart).title || (props.part as ToolPart).originalTool}</span>
                 </div>
                 <Collapsible.Arrow />
@@ -285,6 +376,10 @@ export function Part(props: PartProps) {
                 <ContentError>
                   {formatErrorString(props.part.state.error)}
                 </ContentError>
+                <Show when={props.part.state.output != null}>
+                  <ContentText expand compact text={typeof props.part.state.output === "string"
+                    ? props.part.state.output : JSON.stringify(props.part.state.output, null, 2)} />
+                </Show>
               </Collapsible.Content>
             </Collapsible>
           </div>

@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync } from "fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { dirname, join } from "path";
 
@@ -111,6 +111,255 @@ describe("CodexAdapter", () => {
     vi.clearAllMocks();
     resolveCodexCliPathMock.mockReturnValue("/usr/local/bin/codex");
     resolveCodexCliVersionMock.mockReturnValue("codex-cli 1.2.3");
+  });
+
+  it("routes asynchronous agent questions and replies through the exact active turn", async () => {
+    const { adapter, client } = createAdapterWithClient();
+    const { sessionId, threadId } = seedSession(adapter);
+    const asked = vi.fn();
+    adapter.on("question.asked", asked);
+    const notify = (method: string, values: Record<string, unknown>) => (adapter as any).handleNotification(method, { threadId, turnId: "async-turn", ...values });
+    notify("turn/started", { turn: { id: "async-turn", status: "inProgress" } });
+    const item = { id: "async-item", type: "agentMessage", text: "Checking.", questions: [{ title: "  Which environment?  ", options: ["Staging", "Production"] }] };
+    notify("item/started", { item });
+    notify("item/completed", { item });
+    const pending = adapter.getPendingQuestions(sessionId);
+    expect(pending).toHaveLength(1);
+    expect(asked).toHaveBeenCalledTimes(1);
+    expect(pending[0]).toMatchObject({ dismissStopsTurn: false, questions: [{ question: item.questions[0].title, options: [{ label: "Staging" }, { label: "Production" }] }] });
+    client.request.mockResolvedValue({ turnId: "async-turn" });
+    await adapter.replyQuestion(pending[0].id, [["  Staging  "]], sessionId);
+    const expectedText = `<send_user_message_question_reply>\n${JSON.stringify([{ questionItemId: JSON.stringify(["request_user_input_async", "async-item", 0]), question: item.questions[0].title, answer: "Staging" }])}\n</send_user_message_question_reply>`;
+    expect(client.request).toHaveBeenCalledWith("turn/steer", { threadId, expectedTurnId: "async-turn", input: [{ type: "text", text: expectedText, text_elements: [] }] }, 120_000);
+    expect(client.respond).not.toHaveBeenCalled();
+    expect(adapter.getPendingQuestions(sessionId)).toEqual([]);
+    expect((adapter as any).activeTurnIds.get(sessionId)).toBe("async-turn");
+    expect((await adapter.listMessages(sessionId)).some((message) => message.role === "user")).toBe(false);
+    const buffer = (adapter as any).messageBuffers.get(sessionId);
+    expect(buffer.parts.some((part: { text?: string }) => part.text?.includes("Staging"))).toBe(true);
+    notify("item/completed", { item: { id: "echo", type: "userMessage", content: [{ type: "text", text: expectedText }] } });
+    expect(buffer.parts.filter((part: { text?: string }) => part.text?.includes("Staging"))).toHaveLength(1);
+  });
+
+  it("keeps asynchronous questions retryable after steer failure and dismisses locally", async () => {
+    const { adapter, client } = createAdapterWithClient();
+    const { sessionId, threadId } = seedSession(adapter);
+    const notify = (method: string, values: Record<string, unknown>) => (adapter as any).handleNotification(method, { threadId, turnId: "async-turn", ...values });
+    notify("turn/started", { turn: { id: "async-turn", status: "inProgress" } });
+    const item = { id: "async-item", type: "agentMessage", questions: [{ title: "Continue?" }] };
+    notify("item/started", { item });
+    const [pending] = adapter.getPendingQuestions(sessionId);
+    expect(pending).toBeDefined();
+    client.request.mockRejectedValue(new Error("Turn changed"));
+    await expect(adapter.replyQuestion(pending.id, [["Yes"]], sessionId)).rejects.toThrow("Turn changed");
+    expect(adapter.getPendingQuestions(sessionId)).toHaveLength(1);
+    expect((adapter as any).messageQueues.size).toBe(0);
+    expect(client.request.mock.calls.map(([method]) => method)).toEqual(["turn/steer"]);
+    await adapter.rejectQuestion(pending.id, sessionId);
+    notify("item/completed", { item });
+    expect(adapter.getPendingQuestions(sessionId)).toEqual([]);
+    expect(client.respond).not.toHaveBeenCalled();
+    expect(client.respondError).not.toHaveBeenCalled();
+    expect((adapter as any).activeTurnIds.get(sessionId)).toBe("async-turn");
+  });
+
+  it("consumes native asynchronous answer echoes and clears questions when their turn ends", async () => {
+    const { adapter } = createAdapterWithClient();
+    const { sessionId, threadId } = seedSession(adapter);
+    const notify = (method: string, values: Record<string, unknown>) => (adapter as any).handleNotification(method, { threadId, turnId: "async-turn", ...values });
+    notify("turn/started", { turn: { id: "async-turn", status: "inProgress" } });
+    notify("item/completed", { item: { id: "async-item", type: "agentMessage", questions: [{ title: "Which environment?" }, { title: "Run checks?" }] } });
+    const text = `<send_user_message_question_reply>\n${JSON.stringify([{ questionItemId: JSON.stringify(["request_user_input_async", "async-item", 0]), question: "Which environment?", answer: "Staging" }])}\n</send_user_message_question_reply>`;
+    notify("item/started", { item: { id: "reply-item", type: "userMessage", content: [{ type: "text", text }] } });
+    notify("item/completed", { item: { id: "reply-item", type: "userMessage", content: [{ type: "text", text }] } });
+    expect(adapter.getPendingQuestions(sessionId)).toHaveLength(1);
+    expect(adapter.getPendingQuestions(sessionId)[0].questions.map((question) => question.question)).toEqual(["Run checks?"]);
+    const buffer = (adapter as any).messageBuffers.get(sessionId);
+    expect(buffer.parts.filter((part: { text?: string }) => part.text?.includes("Staging"))).toHaveLength(1);
+    notify("turn/completed", { turn: { id: "async-turn", status: "completed" } });
+    expect(adapter.getPendingQuestions(sessionId)).toEqual([]);
+    notify("item/completed", { item: { id: "late-question", type: "agentMessage", questions: [{ title: "Too late?" }] } });
+    expect(adapter.getPendingQuestions(sessionId)).toEqual([]);
+  });
+
+  it("rejects blank or stale asynchronous replies without starting or queueing work", async () => {
+    const { adapter, client } = createAdapterWithClient();
+    const { sessionId, threadId } = seedSession(adapter);
+    (adapter as any).handleNotification("turn/started", { threadId, turn: { id: "async-turn", status: "inProgress" } });
+    (adapter as any).handleNotification("item/completed", { threadId, turnId: "async-turn", item: { id: "question", type: "agentMessage", questions: [{ title: "Continue?" }] } });
+    const [pending] = adapter.getPendingQuestions(sessionId);
+    expect(pending).toBeDefined();
+    await expect(adapter.replyQuestion(pending.id, [["Yes"]], "another-session")).rejects.toThrow("another Codex session");
+    await expect(adapter.replyQuestion(pending.id, [["   "]], sessionId)).rejects.toThrow();
+    (adapter as any).activeTurnIds.set(sessionId, "new-turn");
+    await expect(adapter.replyQuestion(pending.id, [["Yes"]], sessionId)).rejects.toThrow("active Codex turn");
+    expect(client.request).not.toHaveBeenCalled();
+    expect((adapter as any).messageQueues.size).toBe(0);
+  });
+
+  it("preserves the assistant boundary when the Desktop owner steers an asynchronous reply", async () => {
+    const { adapter, client } = createAdapterWithClient();
+    const { sessionId, threadId } = seedSession(adapter);
+    const runtime = adapter.createDesktopOwnerRuntime();
+    (adapter as any).handleNotification("turn/started", { threadId, turn: { id: "async-turn", status: "inProgress" } });
+    (adapter as any).handleNotification("item/completed", { threadId, turnId: "async-turn", item: { id: "question", type: "agentMessage", questions: [{ title: "Continue?" }] } });
+    const text = `<send_user_message_question_reply>\n${JSON.stringify([{ questionItemId: JSON.stringify(["request_user_input_async", "question", 0]), question: "Continue?", answer: "Yes" }])}\n</send_user_message_question_reply>`;
+    client.request.mockResolvedValue({ turnId: "async-turn" });
+    await runtime.request(sessionId, "turn/steer", { threadId, expectedTurnId: "async-turn", input: [{ type: "text", text, text_elements: [] }] });
+    expect(adapter.getPendingQuestions(sessionId)).toEqual([]);
+    expect((await adapter.listMessages(sessionId)).filter((message) => message.role === "user")).toEqual([]);
+    expect(client.request.mock.calls.map(([method]) => method)).toEqual(["turn/steer"]);
+    expect((adapter as any).messageBuffers.get(sessionId).parts.at(-1).text).toContain("Yes");
+  });
+
+  it.each(["unknown", "mixed", "malformed"])("rejects an explicitly asynchronous %s owner reply without creating a user message", async (source) => {
+    const { adapter, client } = createAdapterWithClient();
+    const { sessionId, threadId } = seedSession(adapter);
+    (adapter as any).handleNotification("turn/started", { threadId, turn: { id: "active-turn", status: "inProgress" } });
+    (adapter as any).handleNotification("item/completed", { threadId, turnId: "active-turn", item: {
+      id: "question", type: "agentMessage", questions: [{ title: "Continue?" }],
+    } });
+    const ids = source === "mixed" ? ["question", "old-question"] : ["old-question"];
+    const text = source === "malformed" ? "<send_user_message_question_reply>invalid</send_user_message_question_reply>"
+      : `<send_user_message_question_reply>\n${JSON.stringify(ids.map((id) => ({
+        questionItemId: JSON.stringify(["request_user_input_async", id, 0]), question: "Continue?", answer: "Yes",
+      })))}\n</send_user_message_question_reply>`;
+    await expect(adapter.createDesktopOwnerRuntime().request(sessionId, "turn/steer", {
+      threadId, expectedTurnId: "active-turn", input: [{ type: "text", text }],
+      restoreMessage: { context: { turnTrigger: "send_user_message_async_question" } },
+    })).rejects.toThrow("no longer belongs to the active Codex turn");
+    expect(client.request).not.toHaveBeenCalled();
+    expect((await adapter.listMessages(sessionId)).some((message) => message.role === "user")).toBe(false);
+    expect(adapter.getPendingQuestions(sessionId)).toHaveLength(1);
+    expect((adapter as any).messageQueues.size).toBe(0);
+  });
+
+  it("does not authorize visualization reads from an async user answer", async () => {
+    const { adapter, client } = createAdapterWithClient();
+    const { sessionId, threadId } = seedSession(adapter, { threadId: "11111111-1111-4111-8111-111111111111" });
+    const codexHome = mkdtempSync(join(tmpdir(), "codemux-question-image-"));
+    const imagePath = join(codexHome, "visualizations", "2026", "10", "14", threadId, "preview.png");
+    mkdirSync(dirname(imagePath), { recursive: true });
+    writeFileSync(imagePath, Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl6AAAAAElFTkSuQmCC", "base64"));
+    vi.stubEnv("CODEX_HOME", codexHome);
+    try {
+      const notify = (method: string, values: Record<string, unknown>) => (adapter as any).handleNotification(method, {
+        threadId, turnId: "active-turn", ...values,
+      });
+      notify("turn/started", { turn: { id: "active-turn", status: "inProgress" } });
+      notify("item/completed", { item: { id: "question", type: "agentMessage", questions: [{ title: "Which image?" }] } });
+      client.request.mockResolvedValue({ turnId: "active-turn" });
+      const markdown = `![Preview](${imagePath})`;
+      await adapter.replyQuestion(adapter.getPendingQuestions(sessionId)[0].id, [[markdown]], sessionId);
+      notify("item/completed", { item: { id: "native-image", type: "agentMessage", text: markdown } });
+      notify("turn/completed", { turn: { id: "active-turn", status: "completed" } });
+      const parts = (await adapter.listMessages(sessionId)).flatMap((message) => message.parts);
+      const receipt = parts.find((part) => part.type === "text" && part.text === `Which image?\n\n${markdown}`);
+      expect(receipt).toMatchObject({ type: "text", completed: true, phase: "commentary" });
+      expect(receipt).not.toHaveProperty("inlineAssets");
+      expect(parts.find((part) => part.type === "text" && part.text === markdown))
+        .toMatchObject({ inlineAssets: [{ sourcePath: imagePath }] });
+    } finally {
+      vi.unstubAllEnvs();
+      rmSync(codexHome, { recursive: true, force: true });
+    }
+  });
+
+  it("restores only unanswered active questions and keeps local dismissals through history refresh", async () => {
+    const { adapter } = createAdapterWithClient();
+    const { sessionId, threadId } = seedSession(adapter);
+    const question = { id: "question", type: "agentMessage", questions: [{ title: "Environment?" }, { title: "Run checks?" }] };
+    const answered = `<send_user_message_question_reply>\n${JSON.stringify([{ questionItemId: JSON.stringify(["request_user_input_async", "question", 0]), question: "Environment?", answer: "Staging" }])}\n</send_user_message_question_reply>`;
+    const read = vi.spyOn(adapter, "readStoredThread").mockResolvedValue({ archived: false, thread: { id: threadId, turns: [
+      { id: "old-turn", status: "completed", items: [{ id: "old-question", type: "agentMessage", questions: [{ title: "Old question?" }] }] },
+      { id: "async-turn", status: "inProgress", items: [question, { id: "reply", type: "userMessage", content: [{ type: "text", text: answered }] }] },
+    ] } } as any);
+    await adapter.getHistoricalMessages(sessionId, "/repo");
+    expect(adapter.getPendingQuestions(sessionId)).toHaveLength(1);
+    expect(adapter.getPendingQuestions(sessionId)[0].questions.map((entry) => entry.question)).toEqual(["Run checks?"]);
+    (adapter as any).handleNotification("item/completed", { threadId, turnId: "async-turn", item: question });
+    expect(adapter.getPendingQuestions(sessionId)[0].questions.map((entry) => entry.question)).toEqual(["Run checks?"]);
+    await adapter.rejectQuestion(adapter.getPendingQuestions(sessionId)[0].id, sessionId);
+    await adapter.getHistoricalMessages(sessionId, "/repo");
+    expect(adapter.getPendingQuestions(sessionId)).toEqual([]);
+    expect(read).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps newer asynchronous questions when an older history snapshot arrives", async () => {
+    const { adapter } = createAdapterWithClient();
+    const { sessionId, threadId } = seedSession(adapter);
+    vi.spyOn(adapter, "readStoredThread").mockResolvedValue({ archived: false, thread: { id: threadId, turns: [
+      { id: "old-turn", status: "completed", items: [] },
+    ] } } as any);
+    (adapter as any).handleNotification("turn/started", { threadId, turn: { id: "new-turn", status: "inProgress" } });
+    (adapter as any).handleNotification("item/completed", { threadId, turnId: "new-turn", item: { id: "new-question", type: "agentMessage", questions: [{ title: "Current choice?" }] } });
+    await adapter.getHistoricalMessages(sessionId, "/repo");
+    expect(adapter.getPendingQuestions(sessionId)).toHaveLength(1);
+    expect(adapter.getPendingQuestions(sessionId)[0].questions[0].question).toBe("Current choice?");
+  });
+
+  it("keeps a streamed asynchronous question absent from an older snapshot of the same turn", async () => {
+    const { adapter } = createAdapterWithClient();
+    const { sessionId, threadId } = seedSession(adapter);
+    vi.spyOn(adapter, "readStoredThread").mockResolvedValue({ archived: false, thread: { id: threadId, turns: [
+      { id: "async-turn", status: "inProgress", items: [] },
+    ] } } as any);
+    const item = { id: "new-question", type: "agentMessage", questions: [{ title: "Current choice?" }] };
+    (adapter as any).handleNotification("turn/started", { threadId, turn: { id: "async-turn", status: "inProgress" } });
+    (adapter as any).handleNotification("item/started", { threadId, turnId: "async-turn", item });
+    await adapter.getHistoricalMessages(sessionId, "/repo");
+    expect(adapter.getPendingQuestions(sessionId)).toHaveLength(1);
+    (adapter as any).handleNotification("item/completed", { threadId, turnId: "async-turn", item });
+    expect(adapter.getPendingQuestions(sessionId)).toHaveLength(1);
+    expect(adapter.getPendingQuestions(sessionId)[0].questions[0].question).toBe("Current choice?");
+  });
+
+  it.each(["unknown", "mixed"])("ignores %s asynchronous reply receipts for live question state", async (source) => {
+    const { adapter, client } = createAdapterWithClient();
+    const { sessionId, threadId } = seedSession(adapter);
+    (adapter as any).handleNotification("turn/started", { threadId, turn: { id: "async-turn", status: "inProgress" } });
+    (adapter as any).handleNotification("item/completed", { threadId, turnId: "async-turn", item: { id: "question", type: "agentMessage", questions: [{ title: "Continue?" }] } });
+    const ids = source === "mixed" ? ["question", "unknown-question"] : ["unknown-question"];
+    const text = `<send_user_message_question_reply>\n${JSON.stringify(ids.map((id) => ({
+      questionItemId: JSON.stringify(["request_user_input_async", id, 0]), question: "Continue?", answer: "Yes",
+    })))}\n</send_user_message_question_reply>`;
+    (adapter as any).handleNotification("item/completed", { threadId, turnId: "async-turn", item: { id: "user-example", type: "userMessage", content: [{ type: "text", text }] } });
+    expect(adapter.getPendingQuestions(sessionId)).toHaveLength(1);
+    expect((adapter as any).messageBuffers.get(sessionId).parts.some((part: { text?: string }) => part.text?.includes("Yes"))).toBe(false);
+
+    const runtime = adapter.createDesktopOwnerRuntime();
+    client.request.mockResolvedValue({ turnId: "async-turn" });
+    await runtime.request(sessionId, "turn/steer", { threadId, expectedTurnId: "async-turn", input: [{ type: "text", text, text_elements: [] }] });
+    expect((await adapter.listMessages(sessionId)).filter((message) => message.role === "user")).toMatchObject([{ parts: [{ type: "text", text }] }]);
+    expect(adapter.getPendingQuestions(sessionId)).toHaveLength(1);
+  });
+
+  it("refreshes completed command display actions without replacing tool identity or clearing omitted metadata", () => {
+    const { adapter } = createAdapterWithClient();
+    const { sessionId, threadId } = seedSession(adapter);
+    const buffer = (adapter as any).createMessageBuffer(sessionId, "/repo", threadId);
+    (adapter as any).messageBuffers.set(sessionId, buffer);
+    const commandActions = [{ type: "read", command: "cat src/main.ts", name: "main.ts", path: "src/main.ts" }];
+    for (const id of ["late-actions", "retained-actions"]) {
+      (adapter as any).handleItemStarted(sessionId, { item: {
+        id, type: "commandExecution", command: "initial command", cwd: "/repo",
+        ...(id === "retained-actions" ? { commandActions } : {}),
+      } });
+      const started = (adapter as any).activeToolParts.get(id);
+      const originalInput = structuredClone(started.state.input);
+      (adapter as any).handleItemCompleted(sessionId, { item: {
+        id, type: "commandExecution", command: "cat src/main.ts", status: "completed", aggregatedOutput: "source output",
+        ...(id === "late-actions" ? { commandActions } : {}),
+      } });
+      const completed = buffer.parts.find((part: { callId?: string }) => part.callId === id);
+      expect(completed).toBe(started);
+      expect(completed).toMatchObject({
+        callId: id, normalizedTool: "shell", originalTool: "commandExecution", title: "Running cat src/main.ts",
+        displayActions: [{ kind: "read", label: "main.ts", path: "/repo/src/main.ts", command: "cat src/main.ts" }],
+        state: { status: "completed", input: originalInput, output: "source output" },
+      });
+    }
+    expect(buffer.parts.filter((part: { type: string }) => part.type === "tool")).toHaveLength(2);
   });
 
   it("sets an error status when startup initialization fails", async () => {
@@ -654,7 +903,7 @@ describe("CodexAdapter", () => {
       role: "assistant",
       error: "Cancelled",
       staleSession: false,
-      engineMeta: { codexThreadId: "thread-1" },
+      engineMeta: { codexThreadId: "thread-1", codexTurnId: "turn-1" },
     }));
     expect((adapter as any).pendingPermissions.size).toBe(0);
     expect((adapter as any).pendingQuestions.size).toBe(0);
@@ -974,7 +1223,7 @@ describe("CodexAdapter", () => {
     expect((adapter as any).threads.get(threadId)?.loaded).toBe(false);
     expect((adapter as any).activeTurnIds.get(sessionId)).toBe("turn-1");
     expect(buffer.tokens).toEqual({ input: 2, output: 3 });
-    expect(buffer.engineMeta).toEqual({ codexThreadId: threadId, turnDiff: "@@ -1 +1 @@" });
+    expect(buffer.engineMeta).toEqual({ codexThreadId: threadId, codexTurnId: "turn-1", turnDiff: "@@ -1 +1 @@" });
     expect(buffer.modelId).toBe("gpt-5.4");
     expect(partUpdates.some((part) => part.type === "text" && part.text.includes("## Plan"))).toBe(true);
     expect(partUpdates.some((part) => part.type === "system-notice" && part.noticeType === "compact")).toBe(true);
@@ -991,8 +1240,9 @@ describe("CodexAdapter", () => {
     notify("turn/started", { turn: { id: "turn-1" } });
     notify("item/started", { item: { id: "reason-1", type: "reasoning", summary: [], content: [] } });
     notify("item/reasoning/textDelta", { itemId: "reason-1", contentIndex: 0, delta: "Inspect failures" });
-    const firstId = reasoningParts()[0].id;
+    expect(reasoningParts()).toEqual([]);
     notify("item/reasoning/summaryTextDelta", { itemId: "reason-1", summaryIndex: 0, delta: "Inspect " });
+    const firstId = reasoningParts()[0].id;
     notify("item/reasoning/summaryTextDelta", { itemId: "reason-1", summaryIndex: 0, delta: "failures" });
     expect(reasoningParts()).toHaveLength(1);
     expect(reasoningParts()[0]).toMatchObject({ id: firstId, text: "Inspect failures" });
@@ -1017,14 +1267,14 @@ describe("CodexAdapter", () => {
     expect(reasoningParts()[1].id).not.toBe(firstId);
     const streamed = (adapter as any).messageBuffers.get(sessionId).parts
       .filter((part: any) => part.type === "reasoning" || part.type === "tool")
-      .sort((left: any, right: any) => left.id.localeCompare(right.id))
+      .sort((left: any, right: any) => (left.order ?? 0) - (right.order ?? 0))
       .map((part: any) => ({ type: part.type, text: part.text }));
     const [history] = convertThreadToMessages(sessionId, { thread: { id: threadId, turns: [{
       id: "turn-1", status: "completed", items: [firstReasoning,
         { id: "cmd-1", type: "commandExecution", command: "bun test", status: "completed" }, secondReasoning],
     }] } });
     expect(history.parts.filter((part) => part.type === "reasoning" || part.type === "tool")
-      .sort((left, right) => left.id.localeCompare(right.id))
+      .sort((left, right) => (left.order ?? 0) - (right.order ?? 0))
       .map((part: any) => ({ type: part.type, text: part.text }))).toEqual(streamed);
   });
 
@@ -1179,7 +1429,7 @@ describe("CodexAdapter", () => {
     expect(mcpTool.state.output).toBe("doc-1");
     expect(webTool.state.output).toBe("codex docs");
     expect(textPart.text).toBe("Final answer");
-    expect(reasoningPart.text).toBe("Inspect\n\nApply the fix");
+    expect(reasoningPart.text).toBe("Inspect");
     expect(planPart.text).toBe("## Plan\n\nShip tests");
     expect(notices.map((notice) => notice.text)).toEqual(expect.arrayContaining([
       "notice:context_compressed",
@@ -1545,6 +1795,135 @@ describe("CodexAdapter", () => {
     (adapter as any).sessionServiceTiers.set(sessionId, "fast");
     (adapter as any).clearSessionState(sessionId);
     expect((adapter as any).sessionServiceTiers.has(sessionId)).toBe(false);
+  });
+});
+
+describe("CodexAdapter native turn lifecycle", () => {
+  it("keeps an ordinary retry in the same turn without consuming queued work", async () => {
+    const { adapter, client } = createAdapterWithClient();
+    const { sessionId, threadId } = seedSession(adapter);
+    client.request.mockResolvedValueOnce({ turn: { id: "retry-turn" } }).mockResolvedValueOnce({ turn: { id: "next-turn" } });
+    const first = adapter.sendMessage(sessionId, [{ type: "text", text: "First" }]);
+    await flushMicrotasks();
+    const buffer = (adapter as any).messageBuffers.get(sessionId);
+    const second = adapter.sendMessage(sessionId, [{ type: "text", text: "Second" }], { modelId: "gpt-5.4" });
+
+    (adapter as any).handleNotification("error", { threadId, turnId: "retry-turn", willRetry: true, error: { message: "Rate limited" } });
+    await flushMicrotasks();
+    expect((adapter as any).activeTurnIds.get(sessionId)).toBe("retry-turn");
+    expect((adapter as any).messageBuffers.get(sessionId)).toBe(buffer);
+    expect((adapter as any).messageQueues.get(sessionId)).toHaveLength(1);
+    expect(client.request).toHaveBeenCalledTimes(1);
+
+    (adapter as any).handleNotification("turn/completed", { threadId, turn: { id: "retry-turn", status: "completed" } });
+    expect((await first).error).toBeUndefined();
+    await flushMicrotasks();
+    expect(client.request).toHaveBeenCalledTimes(2);
+    (adapter as any).handleNotification("turn/completed", { threadId, turn: { id: "next-turn", status: "completed" } });
+    await second;
+  });
+
+  it.each(["turn/start", "turn/steer"] as const)("does not resurrect an ordinary turn after a late %s acknowledgement", async (method) => {
+    const { adapter, client } = createAdapterWithClient();
+    const { sessionId, threadId } = seedSession(adapter);
+    if (method === "turn/steer") {
+      (adapter as any).handleNotification("turn/started", { threadId, turn: { id: "fast-turn", status: "inProgress" } });
+    }
+    let acknowledge!: (value: unknown) => void;
+    client.request.mockImplementation(() => new Promise((resolve) => { acknowledge = resolve; }));
+    const response = adapter.sendMessage(sessionId, [{ type: "text", text: "Quick response" }]);
+    await flushMicrotasks();
+    const messageId = (adapter as any).messageBuffers.get(sessionId).messageId;
+    (adapter as any).handleNotification("turn/completed", { threadId, turn: { id: "fast-turn", status: "completed" } });
+    acknowledge(method === "turn/start" ? { turn: { id: "fast-turn" } } : { turnId: "fast-turn" });
+    expect((await response).id).toBe(messageId);
+    expect((adapter as any).hasActiveTurn(sessionId)).toBe(false);
+    expect((adapter as any).turnResolvers.has(sessionId)).toBe(false);
+  });
+
+  it.each(["turn/start", "turn/steer"] as const)("keeps a newer turn intact when %s is acknowledged after completion", async (method) => {
+    const { adapter, client } = createAdapterWithClient();
+    const { sessionId, threadId } = seedSession(adapter);
+    if (method === "turn/steer") {
+      (adapter as any).handleNotification("turn/started", { threadId, turn: { id: "old-turn", status: "inProgress" } });
+    }
+    let acknowledge!: (value: unknown) => void;
+    client.request.mockImplementation(() => new Promise((resolve) => { acknowledge = resolve; }));
+    const response = adapter.sendMessage(sessionId, [{ type: "text", text: "First" }]);
+    await flushMicrotasks();
+    const messageId = (adapter as any).messageBuffers.get(sessionId).messageId;
+    (adapter as any).handleNotification("turn/completed", { threadId, turn: { id: "old-turn", status: "completed" } });
+    (adapter as any).handleNotification("turn/started", { threadId, turn: { id: "new-turn", status: "inProgress" } });
+    const nextBuffer = (adapter as any).messageBuffers.get(sessionId);
+    acknowledge(method === "turn/start" ? { turn: { id: "old-turn" } } : { turnId: "old-turn" });
+    expect((await response).id).toBe(messageId);
+    expect((adapter as any).activeTurnIds.get(sessionId)).toBe("new-turn");
+    expect((adapter as any).messageBuffers.get(sessionId)).toBe(nextBuffer);
+    expect((adapter as any).turnResolvers.has(sessionId)).toBe(false);
+  });
+
+  it.each(["before", "after"] as const)("finishes cancellation once when native completion arrives %s the interrupt response", async (order) => {
+    const { adapter, client } = createAdapterWithClient();
+    const { sessionId, threadId } = seedSession(adapter);
+    const notify = (method: string, data: Record<string, unknown>) =>
+      (adapter as any).handleNotification(method, { threadId, ...data });
+    notify("turn/started", { turn: { id: "old-turn", status: "inProgress" } });
+    notify("item/started", { turnId: "old-turn", item: { id: "command", type: "commandExecution", command: "pwd" } });
+    let acknowledge!: (value: unknown) => void;
+    client.request.mockImplementation(() => new Promise((resolve) => { acknowledge = resolve; }));
+    const cancelled = adapter.cancelMessage(sessionId);
+    if (order === "before") notify("turn/completed", { turn: { id: "old-turn", status: "interrupted" } });
+    acknowledge({});
+    await cancelled;
+    if (order === "after") notify("turn/completed", { turn: { id: "old-turn", status: "interrupted" } });
+    notify("item/agentMessage/delta", { turnId: "old-turn", itemId: "late", delta: "Late old text" });
+    expect((adapter as any).messageHistory.get(sessionId)).toHaveLength(1);
+    expect((adapter as any).messageHistory.get(sessionId)[0].error).toBe("Cancelled");
+    expect((adapter as any).hasActiveTurn(sessionId)).toBe(false);
+    expect((adapter as any).activeToolParts.size).toBe(0);
+
+    notify("turn/started", { turn: { id: "new-turn", status: "inProgress" } });
+    notify("item/agentMessage/delta", { turnId: "new-turn", itemId: "new-text", delta: "New response" });
+    const nextBuffer = (adapter as any).messageBuffers.get(sessionId);
+    notify("turn/completed", { turn: { id: "old-turn", status: "interrupted" } });
+    notify("error", { turnId: "old-turn", willRetry: false, error: { message: "Old failure" } });
+    notify("item/completed", { turnId: "old-turn", item: { id: "old-text", type: "agentMessage", text: "Old response" } });
+    expect((adapter as any).activeTurnIds.get(sessionId)).toBe("new-turn");
+    expect((adapter as any).messageBuffers.get(sessionId)).toBe(nextBuffer);
+    expect(nextBuffer.parts.filter((part: any) => part.type === "text").map((part: any) => part.text)).toEqual(["New response"]);
+    expect((adapter as any).messageHistory.get(sessionId)).toHaveLength(1);
+  });
+
+  it("retains the ordinary active turn when the native interrupt fails", async () => {
+    const { adapter, client } = createAdapterWithClient();
+    const { sessionId, threadId } = seedSession(adapter);
+    (adapter as any).handleNotification("turn/started", { threadId, turn: { id: "turn-1", status: "inProgress" } });
+    const buffer = (adapter as any).messageBuffers.get(sessionId);
+    client.request.mockRejectedValue(new Error("Connection lost"));
+    await expect(adapter.cancelMessage(sessionId)).rejects.toThrow("Connection lost");
+    expect((adapter as any).activeTurnIds.get(sessionId)).toBe("turn-1");
+    expect((adapter as any).messageBuffers.get(sessionId)).toBe(buffer);
+    expect((adapter as any).messageHistory.has(sessionId)).toBe(false);
+  });
+
+  it("clears server-resolved approval and question cards once without sending another reply", () => {
+    const { adapter, client } = createAdapterWithClient();
+    const { sessionId, threadId } = seedSession(adapter);
+    const permissionReplied = vi.fn();
+    const questionReplied = vi.fn();
+    adapter.on("permission.replied", permissionReplied);
+    adapter.on("question.replied", questionReplied);
+    (adapter as any).handleServerRequest(42, "item/commandExecution/requestApproval", { threadId, turnId: "turn-1", itemId: "command", command: "pwd" });
+    (adapter as any).handleServerRequest(43, "item/tool/requestUserInput", { threadId, turnId: "turn-1", itemId: "question", questions: [{ id: "choice", question: "Continue?" }] });
+    for (const requestId of [42, 43, 42, 43]) {
+      (adapter as any).handleNotification("serverRequest/resolved", { threadId, requestId });
+    }
+    expect(adapter.getPendingPermissions(sessionId)).toEqual([]);
+    expect(adapter.getPendingQuestions(sessionId)).toEqual([]);
+    expect(permissionReplied).toHaveBeenCalledExactlyOnceWith({ permissionId: "42", optionId: "resolved" });
+    expect(questionReplied).toHaveBeenCalledExactlyOnceWith({ questionId: "43", answers: [] });
+    expect(client.respond).not.toHaveBeenCalled();
+    expect(client.respondError).not.toHaveBeenCalled();
   });
 });
 
@@ -2039,5 +2418,189 @@ describe("createCodexDesktopOwnerRuntime", () => {
     expect((adapter as any).nativeSessionSettings.get(sessionId).modelProvider).not.toBe("foreign");
     await expect(runtime.updateSettings!(sessionId, { model: "other" }, { activeTurnId: "active" })).rejects.toThrow("active Codex turn");
     expect(client.request).not.toHaveBeenCalled();
+  });
+});
+
+
+describe("Codex native item streams", () => {
+
+  it("keeps proposed plan items independent from progress plans and authoritative after completion", () => {
+    const { adapter } = createAdapterWithClient();
+    const { sessionId, threadId } = seedSession(adapter);
+    const notify = (method: string, data: Record<string, unknown>) =>
+      (adapter as any).handleNotification(method, { threadId, turnId: "plan-turn", ...data });
+    notify("turn/started", { turn: { id: "plan-turn" } });
+    notify("turn/plan/updated", { plan: [{ step: "Inspect", status: "in_progress" }] });
+    notify("item/started", { item: { id: "plan-1", type: "plan", text: "" } });
+    notify("item/started", { item: { id: "answer", type: "agentMessage", phase: "final_answer", text: "" } });
+    notify("item/plan/delta", { itemId: "plan-1", delta: "First draft" });
+    notify("item/plan/delta", { itemId: "plan-2", delta: "Second draft" });
+    notify("item/started", { item: { id: "plan-2", type: "plan", text: "" } });
+    notify("turn/plan/updated", { plan: [{ step: "Inspect", status: "completed" }] });
+    const plans = [
+      { id: "plan-1", type: "plan", text: "First final plan" },
+      { id: "plan-2", type: "plan", text: "# Second final plan" },
+    ];
+    for (const item of plans) {
+      notify("item/completed", { item });
+      notify("item/plan/delta", { itemId: item.id, delta: "Late duplicate" });
+      notify("item/started", { item: { ...item, text: "" } });
+    }
+    notify("item/completed", { item: { id: "answer", type: "agentMessage", phase: "final_answer", text: "Approved" } });
+    const parts = (adapter as any).messageBuffers.get(sessionId).parts;
+    expect(parts).toMatchObject([
+      { text: "## Plan\n\n- [x] Inspect", phase: "commentary", order: 0 },
+      { text: "## Plan\n\nFirst final plan", phase: "partial", order: 1 },
+      { text: "Approved", phase: "final", order: 2 },
+      { text: "# Second final plan", phase: "partial", order: 3 },
+    ]);
+    expect(new Set(parts.map((part: any) => part.id)).size).toBe(4);
+    const [history] = convertThreadToMessages(sessionId, { thread: { id: threadId, turns: [{
+      id: "plan-turn", status: "completed", items: plans,
+    }] } });
+    expect(parts.filter((part: any) => part.phase === "partial")
+      .map((part: any) => ({ id: part.id, text: part.text, phase: part.phase })))
+      .toEqual(history.parts.map((part: any) => ({ id: part.id, text: part.text, phase: part.phase })));
+  });
+
+  it("keeps an in-flight proposed plan before a steering boundary", async () => {
+    const { adapter, client } = createAdapterWithClient();
+    const { sessionId, threadId } = seedSession(adapter);
+    const notify = (method: string, data: Record<string, unknown>) =>
+      (adapter as any).handleNotification(method, { threadId, turnId: "plan-steer", ...data });
+    notify("turn/started", { turn: { id: "plan-steer" } });
+    notify("item/started", { item: { id: "plan", type: "plan", text: "" } });
+    client.request.mockResolvedValue({ turnId: "plan-steer" });
+    const sending = adapter.sendMessage(sessionId, [{ type: "text", text: "Make it smaller" }]);
+    await flushMicrotasks();
+    notify("item/plan/delta", { itemId: "plan", delta: "Original draft" });
+    notify("item/completed", { item: { id: "plan", type: "plan", text: "Original proposal" } });
+    notify("item/completed", { item: { id: "answer", type: "agentMessage", phase: "final_answer", text: "Revised answer" } });
+    notify("turn/completed", { turn: { id: "plan-steer", status: "completed" } });
+    await sending;
+    const messages = await adapter.listMessages(sessionId);
+    expect(messages.map((message) => message.role)).toEqual(["assistant", "user", "assistant"]);
+    expect(messages[0].parts).toMatchObject([{ text: "## Plan\n\nOriginal proposal", phase: "partial" }]);
+    expect(messages[2].parts).toMatchObject([{ text: "Revised answer", phase: "final" }]);
+  });
+
+  it("keeps raw-only reasoning invisible through streaming and completion", () => {
+    const { adapter } = createAdapterWithClient();
+    const { sessionId, threadId } = seedSession(adapter);
+    const notify = (method: string, data: Record<string, unknown>) =>
+      (adapter as any).handleNotification(method, { threadId, turnId: "raw-turn", ...data });
+    const updates: unknown[] = [];
+    adapter.on("message.part.updated", ({ part }) => updates.push(part));
+    notify("turn/started", { turn: { id: "raw-turn" } });
+    notify("item/started", { item: { id: "reason", type: "reasoning", summary: [], content: [] } });
+    notify("item/reasoning/textDelta", { itemId: "reason", contentIndex: 0, delta: "Raw reasoning" });
+    notify("item/completed", { item: { id: "reason", type: "reasoning", summary: [], content: ["Raw reasoning"] } });
+    expect(updates).toEqual([]);
+    expect((adapter as any).messageBuffers.get(sessionId).parts).toEqual([]);
+    expect((adapter as any).hasActiveTurn(sessionId)).toBe(true);
+  });
+
+  it("keeps turn controls running when steering closes a commentary segment", async () => {
+    const { adapter, client } = createAdapterWithClient();
+    const { sessionId, threadId } = seedSession(adapter);
+    const notify = (method: string, data: Record<string, unknown>) =>
+      (adapter as any).handleNotification(method, { threadId, turnId: "commentary-turn", ...data });
+    let sending = true;
+    adapter.on("message.updated", ({ message }) => {
+      if (message.role === "assistant" && message.time.completed != null) sending = false;
+    });
+    notify("turn/started", { turn: { id: "commentary-turn" } });
+    notify("item/completed", { item: { id: "commentary", type: "agentMessage", phase: "commentary", text: "Checking" } });
+    client.request.mockResolvedValue({ turnId: "commentary-turn" });
+    const steer = adapter.sendMessage(sessionId, [{ type: "text", text: "Use another approach" }]);
+    await flushMicrotasks();
+    expect(sending).toBe(true);
+    expect((adapter as any).hasActiveTurn(sessionId)).toBe(true);
+    notify("turn/completed", { turn: { id: "commentary-turn", status: "completed" } });
+    await steer;
+    expect(sending).toBe(false);
+    expect((await adapter.listMessages(sessionId)).filter((message) => message.role === "assistant").every((message) => message.time.completed != null)).toBe(true);
+  });
+
+
+
+  it("keeps in-flight items before the user boundary across two steering acknowledgements", async () => {
+    const { adapter, client } = createAdapterWithClient();
+    const { sessionId, threadId } = seedSession(adapter);
+    const notify = (method: string, data: Record<string, unknown>) =>
+      (adapter as any).handleNotification(method, { threadId, turnId: "steered", ...data });
+    notify("turn/started", { turn: { id: "steered" } });
+    notify("item/started", { item: { id: "command", type: "commandExecution", command: "pwd" } });
+    const acknowledgements: Array<(value: unknown) => void> = [];
+    client.request.mockImplementation(() => new Promise((resolve) => acknowledgements.push(resolve)));
+    const first = adapter.sendMessage(sessionId, [{ type: "text", text: "First direction" }]);
+    const second = adapter.sendMessage(sessionId, [{ type: "text", text: "Second direction" }]);
+    await flushMicrotasks();
+    acknowledgements[1]({ turnId: "steered" });
+    await flushMicrotasks();
+    acknowledgements[0]({ turnId: "steered" });
+    await flushMicrotasks();
+    expect((await adapter.listMessages(sessionId))[0].time.completed).toBeUndefined();
+    notify("item/completed", { item: { id: "command", type: "commandExecution", command: "pwd", aggregatedOutput: "/repo", exitCode: 0 } });
+    notify("item/completed", { item: { id: "answer", type: "agentMessage", text: "Done", phase: "final_answer" } });
+    notify("turn/completed", { turn: { id: "steered", status: "completed" } });
+    expect((await first).error).toBeUndefined();
+    expect((await second).error).toBeUndefined();
+    const messages = await adapter.listMessages(sessionId);
+    expect(messages.map((message) => message.role)).toEqual(["assistant", "user", "user", "assistant"]);
+    expect(messages[0].parts.find((part) => part.type === "tool")).toMatchObject({ state: { status: "completed", output: "/repo" } });
+    expect(messages.at(-1)!.parts.filter((part) => part.type === "text")).toMatchObject([{ text: "Done", phase: "final" }]);
+    expect((adapter as any).hasActiveTurn(sessionId)).toBe(false);
+  });
+
+
+  it("preserves commentary, tool, and final identity through authoritative and late events", async () => {
+    const { adapter } = createAdapterWithClient();
+    const { sessionId, threadId } = seedSession(adapter);
+    const notify = (method: string, data: Record<string, unknown>) =>
+      (adapter as any).handleNotification(method, { threadId, turnId: "native-turn", ...data });
+    notify("turn/started", { turn: { id: "native-turn" } });
+    const user = { id: "user", type: "userMessage", content: [{ type: "text", text: "Check" }] };
+    notify("item/started", { item: user });
+    notify("item/completed", { item: user });
+    notify("item/started", { item: { id: "z-commentary", type: "agentMessage", phase: "commentary", text: "" } });
+    notify("item/agentMessage/delta", { itemId: "z-commentary", delta: "Checking." });
+    notify("item/completed", { item: { id: "z-commentary", type: "agentMessage", phase: "commentary", text: "Checked." } });
+    notify("item/agentMessage/delta", { itemId: "z-commentary", delta: "Late duplicate" });
+    notify("item/started", { item: { id: "command", type: "commandExecution", command: "pwd" } });
+    notify("item/completed", { item: { id: "command", type: "commandExecution", command: "pwd", aggregatedOutput: "/repo", exitCode: 0 } });
+    notify("item/started", { item: { id: "a-final", type: "agentMessage", phase: "final_answer", text: "" } });
+    notify("item/agentMessage/delta", { itemId: "a-final", delta: "Don" });
+    const final = { id: "a-final", type: "agentMessage", phase: "final_answer", text: "Done." };
+    notify("item/completed", { item: final });
+    notify("turn/completed", { turn: { id: "native-turn", status: "completed", items: [final] } });
+    const message = (await adapter.listMessages(sessionId)).at(-1)!;
+    expect(message.parts.filter((p) => p.type === "text" || p.type === "tool").map((p: any) => [p.type, p.text ?? p.state.output, p.phase])).toEqual([
+      ["text", "Checked.", "commentary"], ["tool", "/repo", undefined], ["text", "Done.", "final"],
+    ]);
+    expect(message.parts.map((part) => part.order)).toEqual(message.parts.map((_, index) => index));
+    expect(message.parts.some((part: any) => part.originalTool === "userMessage")).toBe(false);
+  });
+
+  it.each([true, false])("interrupts a pending start without reviving it when notification arrives first: %s", async (notificationFirst) => {
+    const { adapter, client } = createAdapterWithClient();
+    const { sessionId, threadId } = seedSession(adapter);
+    let admit!: (value: unknown) => void;
+    client.request.mockImplementation((method: string) => method === "turn/start"
+      ? new Promise((resolve) => { admit = resolve; }) : Promise.resolve({}));
+    const send = adapter.sendMessage(sessionId, [{ type: "text", text: "Check" }]);
+    await flushMicrotasks();
+    await adapter.cancelMessage(sessionId);
+    expect((await send).error).toBe("Cancelled");
+    if (notificationFirst) (adapter as any).handleNotification("turn/started", { threadId, turn: { id: "cancelled-start" } });
+    admit({ turn: { id: "cancelled-start" } });
+    await flushMicrotasks();
+    (adapter as any).handleNotification("turn/started", { threadId, turn: { id: "cancelled-start" } });
+    (adapter as any).handleNotification("item/agentMessage/delta", { threadId, turnId: "cancelled-start", itemId: "answer", delta: "Do not resurrect" });
+    expect(client.request.mock.calls.filter(([method]) => method === "turn/interrupt")).toEqual([
+      ["turn/interrupt", { threadId, turnId: "cancelled-start" }],
+    ]);
+    expect((adapter as any).hasActiveTurn(sessionId)).toBe(false);
+    expect((await adapter.listMessages(sessionId)).filter((message) => message.role === "assistant")).toHaveLength(1);
   });
 });

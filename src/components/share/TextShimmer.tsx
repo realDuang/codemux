@@ -61,7 +61,6 @@ export function TextShimmer(props: TextShimmerProps) {
     <span
       class={`${styles.root} ${props.class ?? ""}`}
       data-active={active() ? "true" : "false"}
-      aria-label={text()}
       style={{
         "--shimmer-swap": `${SWAP_MS}ms`,
         "--shimmer-size": `${shimmerSize()}%`,
@@ -69,7 +68,7 @@ export function TextShimmer(props: TextShimmerProps) {
       }}
     >
       {/* Base layer: always visible, inherits parent color */}
-      <span class={styles.charBase} aria-hidden="true">
+      <span class={styles.charBase}>
         {text()}
       </span>
       {/* Shimmer layer: gradient-clipped overlay, animated when running */}

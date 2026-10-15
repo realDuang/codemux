@@ -1,4 +1,4 @@
-import { Show, createMemo } from "solid-js";
+import { Show, createMemo, createUniqueId } from "solid-js";
 import { isExpanded, toggleExpanded } from "../stores/message";
 import { formatTokenCount, formatCostWithUnit } from "./share/common";
 import { useI18n, formatMessage } from "../lib/i18n";
@@ -12,13 +12,14 @@ interface TokenUsageProps {
 
 export function TokenUsage(props: TokenUsageProps) {
   const { t } = useI18n();
+  const detailsId = createUniqueId();
 
   const reasoningEffortSuffix = createMemo(() => {
     const firstMsg = props.messages[0];
     return firstMsg?.reasoningEffort ? ` (${firstMsg.reasoningEffort})` : "";
   });
 
-  const usage = () => {
+  const usage = createMemo(() => {
     let input = 0, output = 0, cacheRead = 0, cacheWrite = 0, cost = 0;
     let hasTokens = false, hasCost = false, hasCache = false;
     let modelId: string | undefined;
@@ -40,7 +41,7 @@ export function TokenUsage(props: TokenUsageProps) {
 
     if (!hasTokens) return null;
     return { input, output, total: input + output, cacheRead, cacheWrite, cost, hasCache, hasCost, modelId, costUnit };
-  };
+  });
 
   const expandKey = () => {
     const first = props.messages[0];
@@ -52,8 +53,15 @@ export function TokenUsage(props: TokenUsageProps) {
   return (
     <Show when={usage()}>
       {(u) => (
-        <div class={styles.tokenUsage}>
-          <button type="button" class={styles.summary} onClick={handleToggle}>
+        <div class={styles.tokenUsage} data-markdown-decoration="">
+          <button
+            type="button"
+            class={styles.summary}
+            onClick={handleToggle}
+            aria-expanded={expanded()}
+            aria-controls={detailsId}
+            title={expanded() ? t().common.hideDetails : t().common.showDetails}
+          >
             <span class={styles.totalTokens}>{formatTokenCount(u().total)} {t().tokenUsage.tokens}</span>
             <Show when={u().hasCost}>
               <span class={styles.sep}>·</span>
@@ -61,9 +69,9 @@ export function TokenUsage(props: TokenUsageProps) {
             </Show>
             <Show when={u().modelId}>
               <span class={styles.sep}>·</span>
-              <span class={styles.model}>{u().modelId}{reasoningEffortSuffix()}</span>
+              <span class={styles.model} title={`${u().modelId}${reasoningEffortSuffix()}`}>{u().modelId}{reasoningEffortSuffix()}</span>
             </Show>
-            <span class={styles.chevron} data-expanded={expanded() ? "" : undefined}>
+            <span class={styles.chevron} aria-hidden="true" data-expanded={expanded() ? "" : undefined}>
               <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24"
                    fill="none" stroke="currentColor" stroke-width="2"
                    stroke-linecap="round" stroke-linejoin="round">
@@ -71,30 +79,28 @@ export function TokenUsage(props: TokenUsageProps) {
               </svg>
             </span>
           </button>
-          <Show when={expanded()}>
-            <div class={styles.details}>
+            <dl class={styles.details} id={detailsId} hidden={!expanded()}>
               <div class={styles.detailRow}>
-                <span class={styles.detailLabel}>{t().tokenUsage.input}</span>
-                <span class={styles.detailValue}>{u().input.toLocaleString()}</span>
+                <dt class={styles.detailLabel}>{t().tokenUsage.input}</dt>
+                <dd class={styles.detailValue}>{u().input.toLocaleString()}</dd>
               </div>
               <div class={styles.detailRow}>
-                <span class={styles.detailLabel}>{t().tokenUsage.output}</span>
-                <span class={styles.detailValue}>{u().output.toLocaleString()}</span>
+                <dt class={styles.detailLabel}>{t().tokenUsage.output}</dt>
+                <dd class={styles.detailValue}>{u().output.toLocaleString()}</dd>
               </div>
               <Show when={u().hasCache}>
                 <div class={styles.detailRow}>
-                  <span class={styles.detailLabel}>{t().tokenUsage.cache}</span>
-                  <span class={styles.detailValue}>{formatMessage(t().tokenUsage.cacheReadWrite, { read: u().cacheRead.toLocaleString(), write: u().cacheWrite.toLocaleString() })}</span>
+                  <dt class={styles.detailLabel}>{t().tokenUsage.cache}</dt>
+                  <dd class={styles.detailValue}>{formatMessage(t().tokenUsage.cacheReadWrite, { read: u().cacheRead.toLocaleString(), write: u().cacheWrite.toLocaleString() })}</dd>
                 </div>
               </Show>
               <Show when={u().hasCost}>
                 <div class={styles.detailRow}>
-                  <span class={styles.detailLabel}>{t().tokenUsage.cost}</span>
-                  <span class={styles.detailValue}>{formatCostWithUnit(u().cost, u().costUnit)}</span>
+                  <dt class={styles.detailLabel}>{t().tokenUsage.cost}</dt>
+                  <dd class={styles.detailValue}>{formatCostWithUnit(u().cost, u().costUnit)}</dd>
                 </div>
               </Show>
-            </div>
-          </Show>
+            </dl>
         </div>
       )}
     </Show>

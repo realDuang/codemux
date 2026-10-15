@@ -26,9 +26,11 @@ function getModeDisplayName(mode: AgentMode): string {
 /** Return the active-state background colour class for a mode button. */
 function getModeColor(mode: AgentMode, index: number): string {
   const label = getModeDisplayName(mode).toLowerCase();
-  if (label === "default" || label === "interactive" || label === "build") return "bg-indigo-600";
+  if (label === "default" || label === "manual" || label === "interactive" || label === "build") return "bg-indigo-600";
   if (label === "plan") return "bg-cyan-600";
   if (label === "autopilot" || label === "bypass permissions") return "bg-emerald-600";
+  if (label === "accept edits") return "bg-amber-600";
+  if (label === "auto") return "bg-violet-600";
   // Fallback by position
   const palette = ["bg-indigo-600", "bg-cyan-600", "bg-emerald-600"];
   if (index < palette.length) return palette[index];
@@ -56,6 +58,20 @@ function getModeAccentRing(mode: AgentMode, index: number): {
       ring: "focus-within:ring-emerald-500/40",
       border: "border-emerald-200/40 dark:border-emerald-600/30",
       bgHover: "bg-emerald-600 hover:bg-emerald-700",
+    };
+  if (label === "accept edits")
+    return {
+      bg: "bg-amber-50/60 dark:bg-slate-800/70 backdrop-blur-xl",
+      ring: "focus-within:ring-amber-500/40",
+      border: "border-amber-200/40 dark:border-amber-600/30",
+      bgHover: "bg-amber-600 hover:bg-amber-700",
+    };
+  if (label === "auto")
+    return {
+      bg: "bg-violet-50/60 dark:bg-slate-800/70 backdrop-blur-xl",
+      ring: "focus-within:ring-violet-500/40",
+      border: "border-violet-200/40 dark:border-violet-600/30",
+      bgHover: "bg-violet-600 hover:bg-violet-700",
     };
   // Default / Interactive / Build / unknown
   return {
@@ -96,9 +112,28 @@ const MODE_ICONS: Array<() => any> = [
   ),
 ];
 
+// Icons for Claude Code's additional permission modes
+const EXTRA_MODE_ICONS: Record<string, () => any> = {
+  // pencil — accept edits
+  "accept edits": () => (
+    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M12 20h9" />
+      <path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" />
+    </svg>
+  ),
+  // sparkles — auto (classifier)
+  auto: () => (
+    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z" />
+      <path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z" />
+    </svg>
+  ),
+};
+
 function getModeIcon(mode: AgentMode, index: number) {
   const label = getModeDisplayName(mode).toLowerCase();
-  if (label === "default" || label === "interactive" || label === "build") return MODE_ICONS[0]();
+  if (EXTRA_MODE_ICONS[label]) return EXTRA_MODE_ICONS[label]();
+  if (label === "default" || label === "manual" || label === "interactive" || label === "build") return MODE_ICONS[0]();
   if (label === "plan") return MODE_ICONS[1]();
   if (label === "autopilot" || label === "bypass permissions") return MODE_ICONS[2]();
   return MODE_ICONS[index % MODE_ICONS.length]();
@@ -471,7 +506,7 @@ export function PromptInput(props: PromptInputProps) {
     const label = getModeDisplayName(agent()).toLowerCase();
     if (label === "plan") return t().prompt.planPlaceholder;
     if (label === "autopilot" || label === "bypass permissions") return t().prompt.autopilotPlaceholder;
-    if (label === "build" || label === "interactive" || label === "default") return t().prompt.buildPlaceholder;
+    if (label === "build" || label === "interactive" || label === "default" || label === "manual") return t().prompt.buildPlaceholder;
     return t().prompt.placeholder;
   });
 

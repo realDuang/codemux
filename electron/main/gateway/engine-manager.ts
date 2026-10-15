@@ -105,6 +105,12 @@ interface EngineManagerEvents extends EngineAdapterEvents {
   /** Forwarded from adapters with engineType annotation */
 }
 
+interface MessageWriteSnapshot {
+  generation: number;
+  content: Array<TextPart | FilePart>;
+  steps: UnifiedPart[];
+}
+
 export declare interface EngineManager {
   on<K extends keyof EngineManagerEvents>(
     event: K,
@@ -133,12 +139,16 @@ export class EngineManager extends EventEmitter {
   private questionSessionMap = new Map<string, string>();
   /** permissionId → sessionId lookup so adapters can resolve correct directory */
   private permissionSessionMap = new Map<string, string>();
+  private pendingPermissionReplies = new Set<string>();
+  private pendingQuestionReplies = new Set<string>();
   /** engineSessionId → conversationId cache (populated on session creation / lookup) */
   private engineToConvMap = new Map<string, string>();
   /** Accumulate step-type parts during streaming: messageId → UnifiedPart[] */
   private stepPartsBuffer = new Map<string, UnifiedPart[]>();
   /** Accumulate content-type parts (text/file) during streaming: messageId → (TextPart|FilePart)[] */
   private contentPartsBuffer = new Map<string, Array<TextPart | FilePart>>();
+  /** Explicit removals invalidate writes that captured an earlier message revision. */
+  private messageGenerations = new Map<string, number>();
   /**
    * In-memory FIFO queue of persisted user message IDs awaiting timing patch.
    * Populated only for sends that arrive while the session is already active;
@@ -174,7 +184,7 @@ export class EngineManager extends EventEmitter {
   private catalogSources = new Map<EngineType, string>();
   private catalogRefreshes = new Map<EngineType, Promise<EngineCatalogSnapshot>>();
   private catalogRevisions = new Map<EngineType, number>();
-  /** Preserve external message event order across multi-step mirror writes. */
+  /** Preserve message, removal, and incremental step order across multi-step writes. */
   private authoritativeMessageWrites = new Map<string, Promise<void>>();
   private sessionRemovals = new Map<string, Promise<void>>();
   private catalogSessionChecks = new Map<string, Promise<void>>();
@@ -652,11 +662,7 @@ export class EngineManager extends EventEmitter {
 
       if (convId) {
         // Persist the message
-        if (adapter.getCapabilities().authoritativeSessionState) {
-          this.queueAuthoritativeMessageWrite(convId, () => this.persistMessage(convId, message, true));
-        } else {
-          this.persistMessage(convId, message);
-        }
+        this.persistMessage(convId, message, adapter.getCapabilities().authoritativeSessionState === true);
 
         // Rewrite sessionId and forward to frontend
         const rewritten = this.rewriteSessionId(data, engineSessionId, convId);
@@ -671,14 +677,15 @@ export class EngineManager extends EventEmitter {
       if (this.ignoreSessionEvent(adapter, engineSessionId)) return;
       const convId = this.resolveConversationId(engineSessionId, adapter.engineType);
 
+      this.messageGenerations.set(messageId, (this.messageGenerations.get(messageId) ?? 0) + 1);
       this.stepPartsBuffer.delete(messageId);
       this.contentPartsBuffer.delete(messageId);
       this.dirtySteps.delete(messageId);
       this.persistedPlaceholders.delete(messageId);
       this.messageConvMap.delete(messageId);
 
-      if (convId && adapter.getCapabilities().authoritativeSessionState) {
-        this.queueAuthoritativeMessageWrite(convId, () => conversationStore.removeMessage(convId, messageId));
+      if (convId) {
+        void this.runMessageWrite(convId, () => conversationStore.removeMessage(convId, messageId)).catch(() => {});
       }
 
       this.emit("message.removed", convId ? { ...data, sessionId: convId } : data);
@@ -821,11 +828,7 @@ export class EngineManager extends EventEmitter {
     }
   }
 
-  private queueAuthoritativeMessageWrite(conversationId: string, write: () => Promise<void>): void {
-    void this.runAuthoritativeMessageWrite(conversationId, write).catch(() => {});
-  }
-
-  private runAuthoritativeMessageWrite<T>(conversationId: string, write: () => Promise<T>): Promise<T> {
+  private runMessageWrite<T>(conversationId: string, write: () => Promise<T>): Promise<T> {
     const previous = this.authoritativeMessageWrites.get(conversationId) ?? Promise.resolve();
     const result = previous.then(write);
     const pending = result.then(() => undefined).catch((err) => {
@@ -857,7 +860,14 @@ export class EngineManager extends EventEmitter {
     message: UnifiedMessage,
     authoritative = false,
   ): Promise<void> {
-    return this.trackMessageWrite(this.writeMessage(conversationId, message, authoritative));
+    if (message.role === "assistant" && !message.time.completed) return Promise.resolve();
+    // Cancellation may clear streaming buffers before this queued completion runs.
+    const snapshot: MessageWriteSnapshot = {
+      generation: this.messageGenerations.get(message.id) ?? 0,
+      content: [...(this.contentPartsBuffer.get(message.id) ?? [])],
+      steps: [...(this.stepPartsBuffer.get(message.id) ?? [])],
+    };
+    return this.runMessageWrite(conversationId, () => this.writeMessage(conversationId, message, authoritative, snapshot));
   }
 
   private trackMessageWrite(write: Promise<void>): Promise<void> {
@@ -873,7 +883,10 @@ export class EngineManager extends EventEmitter {
     conversationId: string,
     message: UnifiedMessage,
     authoritative: boolean,
+    snapshot: MessageWriteSnapshot,
   ): Promise<void> {
+    const isCurrent = () => authoritative || (this.messageGenerations.get(message.id) ?? 0) === snapshot.generation;
+    if (!isCurrent()) return;
     if (message.role === "user" && !authoritative) {
       // Adapter-emitted queued user messages have a different ID than the one
       // we wrote via persistUserMessage at send time. Track only queued sends in
@@ -897,9 +910,6 @@ export class EngineManager extends EventEmitter {
       return;
     }
 
-    const isCompleted = !!message.time.completed;
-    if (message.role === "assistant" && !isCompleted) return;
-
     try {
       // Split parts into content vs steps, rewriting sessionId to conversationId
       const contentParts: Array<TextPart | FilePart> = [];
@@ -918,7 +928,7 @@ export class EngineManager extends EventEmitter {
 
       // Merge buffered content parts (text/file sent via part.updated SSE,
       // which are often NOT included in message.updated's parts array).
-      const bufferedContent = this.contentPartsBuffer.get(message.id) || [];
+      const bufferedContent = [...(this.contentPartsBuffer.get(message.id) ?? []), ...snapshot.content];
       for (const bp of bufferedContent) {
         if (!contentParts.some((p) => p.id === bp.id)) {
           const rewritten = bp.sessionId !== conversationId
@@ -951,6 +961,7 @@ export class EngineManager extends EventEmitter {
         await conversationStore.updateMessage(conversationId, message.id, convMessage);
       } else {
         const existingMessages = await conversationStore.listMessages(conversationId);
+        if (!isCurrent()) return;
         if (existingMessages.some((m) => m.id === message.id)) {
           await conversationStore.updateMessage(conversationId, message.id, convMessage);
         } else {
@@ -958,8 +969,9 @@ export class EngineManager extends EventEmitter {
         }
       }
 
+      if (!isCurrent()) return;
       // Merge buffered step parts with any steps from the message itself
-      const bufferedSteps = this.stepPartsBuffer.get(message.id) || [];
+      const bufferedSteps = [...(this.stepPartsBuffer.get(message.id) ?? []), ...snapshot.steps];
       const allSteps = [...stepParts];
       for (const bp of bufferedSteps) {
         if (!allSteps.some((s) => s.id === bp.id)) {
@@ -970,10 +982,12 @@ export class EngineManager extends EventEmitter {
         }
       }
 
-      if (allSteps.length > 0) {
+      // A corrected snapshot must clear old steps even when it retains only text.
+      if (allSteps.length > 0 || snapshot.generation > 0) {
         await conversationStore.saveSteps(conversationId, message.id, allSteps);
       }
 
+      if (!isCurrent()) return;
       // Clean up buffers and incremental persistence state
       this.stepPartsBuffer.delete(message.id);
       this.contentPartsBuffer.delete(message.id);
@@ -1041,28 +1055,35 @@ export class EngineManager extends EventEmitter {
 
       const steps = this.stepPartsBuffer.get(messageId);
       if (!steps || steps.length === 0) continue;
+      const generation = this.messageGenerations.get(messageId) ?? 0;
+      const isCurrent = () => (this.messageGenerations.get(messageId) ?? 0) === generation
+        && this.stepPartsBuffer.get(messageId) === steps;
 
       try {
-        // Ensure placeholder assistant message exists (once per message)
-        if (!this.persistedPlaceholders.has(messageId)) {
-          await conversationStore.ensureMessage(convId, {
-            id: messageId,
-            role: "assistant",
-            time: { created: Date.now() },
-            parts: [],
-          });
-          this.persistedPlaceholders.add(messageId);
-        }
+        await this.runMessageWrite(convId, async () => {
+          if (!isCurrent()) return;
+          // Ensure placeholder assistant message exists (once per message).
+          if (!this.persistedPlaceholders.has(messageId)) {
+            await conversationStore.ensureMessage(convId, {
+              id: messageId,
+              role: "assistant",
+              time: { created: Date.now() },
+              parts: [],
+            });
+            if (!isCurrent()) return;
+            this.persistedPlaceholders.add(messageId);
+          }
 
-        // Rewrite sessionId in steps to use conversationId before persisting
-        const rewrittenSteps = steps.map((s) =>
-          s.sessionId !== convId ? { ...s, sessionId: convId } : s,
-        );
-        await conversationStore.saveSteps(convId, messageId, [...rewrittenSteps]);
+          // Rewrite sessionId in steps to use conversationId before persisting.
+          const rewrittenSteps = steps.map((s) =>
+            s.sessionId !== convId ? { ...s, sessionId: convId } : s,
+          );
+          await conversationStore.saveSteps(convId, messageId, rewrittenSteps);
+        });
       } catch (err) {
         engineManagerLog.error(`Failed to flush steps for ${messageId}:`, err);
-        // Re-add to dirty set for retry on next schedule
-        this.dirtySteps.add(messageId);
+        // Retry only the current buffer; a removed snapshot must stay invalidated.
+        if (isCurrent()) this.dirtySteps.add(messageId);
       }
     }
   }
@@ -1725,7 +1746,7 @@ export class EngineManager extends EventEmitter {
     }
     if (conv?.engineSessionId && conv.catalogAvailable !== false && adapter?.getCapabilities().authoritativeSessionState) {
       await this.ensureAuthoritativeSession(conv, adapter);
-      return this.runAuthoritativeMessageWrite(sessionId, async () => {
+      return this.runMessageWrite(sessionId, async () => {
         if (!conversationStore.get(sessionId)) return [];
         const messages = await adapter.listMessages(conv.engineSessionId!);
         if (!conversationStore.get(sessionId)) return [];
@@ -2052,7 +2073,19 @@ export class EngineManager extends EventEmitter {
     const sessionId = this.permissionSessionMap.get(permissionId);
     this.permissionEngineMap.delete(permissionId);
     this.permissionSessionMap.delete(permissionId);
-    return adapter.replyPermission(permissionId, reply, sessionId);
+    this.pendingPermissionReplies.add(permissionId);
+    try {
+      await adapter.replyPermission(permissionId, reply, sessionId);
+    } catch (error) {
+      // Keep failed submissions retryable without allowing concurrent replies.
+      if (!this.permissionEngineMap.has(permissionId)) {
+        this.permissionEngineMap.set(permissionId, engineType);
+        if (sessionId) this.permissionSessionMap.set(permissionId, sessionId);
+      }
+      throw error;
+    } finally {
+      this.pendingPermissionReplies.delete(permissionId);
+    }
   }
 
   // --- Questions ---
@@ -2070,7 +2103,18 @@ export class EngineManager extends EventEmitter {
     const sessionId = this.questionSessionMap.get(questionId);
     this.questionEngineMap.delete(questionId);
     this.questionSessionMap.delete(questionId);
-    return adapter.replyQuestion(questionId, answers, sessionId);
+    this.pendingQuestionReplies.add(questionId);
+    try {
+      await adapter.replyQuestion(questionId, answers, sessionId);
+    } catch (error) {
+      if (!this.questionEngineMap.has(questionId)) {
+        this.questionEngineMap.set(questionId, engineType);
+        if (sessionId) this.questionSessionMap.set(questionId, sessionId);
+      }
+      throw error;
+    } finally {
+      this.pendingQuestionReplies.delete(questionId);
+    }
   }
 
   async rejectQuestion(
@@ -2084,7 +2128,18 @@ export class EngineManager extends EventEmitter {
     const sessionId = this.questionSessionMap.get(questionId);
     this.questionEngineMap.delete(questionId);
     this.questionSessionMap.delete(questionId);
-    return adapter.rejectQuestion(questionId, sessionId);
+    this.pendingQuestionReplies.add(questionId);
+    try {
+      await adapter.rejectQuestion(questionId, sessionId);
+    } catch (error) {
+      if (!this.questionEngineMap.has(questionId)) {
+        this.questionEngineMap.set(questionId, engineType);
+        if (sessionId) this.questionSessionMap.set(questionId, sessionId);
+      }
+      throw error;
+    } finally {
+      this.pendingQuestionReplies.delete(questionId);
+    }
   }
 
   // --- Projects ---
@@ -2193,6 +2248,17 @@ export class EngineManager extends EventEmitter {
       Promise.resolve(adapter.getPendingPermissions(engineSessionId)),
     ]);
     if (!conversationStore.get(conversationId)) return { questions: [], permissions: [] };
+    // Reconnect can discover requests whose original asked event was missed.
+    for (const question of rawQuestions) {
+      if (this.pendingQuestionReplies.has(question.id)) continue;
+      this.questionEngineMap.set(question.id, adapter.engineType);
+      this.questionSessionMap.set(question.id, question.sessionId);
+    }
+    for (const permission of rawPermissions) {
+      if (this.pendingPermissionReplies.has(permission.id)) continue;
+      this.permissionEngineMap.set(permission.id, adapter.engineType);
+      this.permissionSessionMap.set(permission.id, permission.sessionId);
+    }
     const questions = rawQuestions.map((q) => ({ ...q, sessionId: conversationId }));
     const permissions = rawPermissions.map((p) => ({ ...p, sessionId: conversationId }));
 

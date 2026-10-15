@@ -31,6 +31,155 @@ function turn(overrides: Record<string, unknown> = {}) {
 }
 
 describe("convertDesktopConversation", () => {
+  it("routes asynchronous choices through pending questions without inventing a blocking request", () => {
+    const result = convertDesktopConversation(conversation({ turns: [turn({ items: [
+      { id: "async-ask", type: "agentMessage", delivery: "async", text: "Choose a target.",
+        questions: [{ title: "Which target?", options: ["Local", "Remote"] }, { title: "Any constraints?" }] },
+    ] })] }));
+    expect(result.questions).toHaveLength(1);
+    expect(result.questions[0]).toMatchObject({
+      engineType: "codex-desktop", sessionId: "thread-1", dismissStopsTurn: false,
+      questions: [
+        { question: "Which target?", options: [{ label: "Local", description: "" }, { label: "Remote", description: "" }], custom: true },
+        { question: "Any constraints?", options: [], custom: true },
+      ],
+      metadata: { codexTurnId: "turn-1", codexAsyncQuestions: [
+        { id: JSON.stringify(["request_user_input_async", "async-ask", 0]), questionIndex: 0 },
+        { id: JSON.stringify(["request_user_input_async", "async-ask", 1]), questionIndex: 1 },
+      ] },
+    });
+    expect(result.pendingRequests).toEqual([]);
+    expect(result.session.activityStatus).toBe("running");
+  });
+
+  it("keeps unanswered async choices pending and renders accepted answer receipts as assistant history", () => {
+    const ask = { id: "async-ask", type: "agentMessage", delivery: "async", text: "Choose.",
+      questions: [{ title: "Which target?", options: ["Local", "Remote"] }, { title: "Any constraints?" }] };
+    const text = `<send_user_message_question_reply>\n${JSON.stringify([
+      { questionItemId: JSON.stringify(["request_user_input_async", "async-ask", 0]), question: "Which target?", answer: "Local" },
+    ])}\n</send_user_message_question_reply>`;
+    const input = [{ type: "text", text }];
+    const initial = convertDesktopConversation(conversation({ turns: [turn({ items: [ask] })] }));
+    for (const status of ["pending", "failed"]) {
+      const pending = convertDesktopConversation(conversation({ turns: [turn({ items: [ask,
+        { id: "reply", type: "steeringUserMessage", status, input },
+      ] })] }));
+      expect(pending.questions[0].questions).toHaveLength(2);
+    }
+    for (const reply of [
+      { id: "reply", type: "userMessage", content: input },
+      { id: "reply", type: "steeringUserMessage", status: "accepted", input },
+    ]) {
+      const result = convertDesktopConversation(conversation({ turns: [turn({ items: [ask, reply] })] }));
+      expect(result.questions).toHaveLength(1);
+      expect(result.questions[0].questions.map(question => question.question)).toEqual(["Any constraints?"]);
+      expect(result.questions[0].id).not.toBe(initial.questions[0].id);
+      const history = result.messages.find(message => message.engineMeta?.codexItemId === "reply")!;
+      expect(history.role).toBe("assistant");
+      expect(history.parts).toEqual([expect.objectContaining({ type: "text", text: "Which target?\n\nLocal", phase: "commentary" })]);
+    }
+    const completed = convertDesktopConversation(conversation({ turns: [turn({ status: "completed", items: [ask] })] }));
+    expect(completed.questions).toEqual([]);
+  });
+
+  it.each([
+    "Example: <send_user_message_question_reply>not a receipt</send_user_message_question_reply>",
+    "<send_user_message_question_reply>{\"answer\":\"Keep this literal\"}</send_user_message_question_reply>",
+    `<send_user_message_question_reply>${JSON.stringify({ questionItemId: JSON.stringify(["request_user_input_async", "unknown-call", 0]), question: "Copied sample", answer: "Example" })}</send_user_message_question_reply>`,
+  ])("preserves ordinary user text that resembles a question receipt", (text) => {
+    const result = convertDesktopConversation(conversation({ turns: [turn({ items: [
+      { id: "literal", type: "userMessage", content: [{ type: "text", text }] },
+    ] })] }));
+    const message = result.messages.find(message => message.engineMeta?.codexItemId === "literal")!;
+    expect(message.role).toBe("user");
+    expect(message.parts[0]).toMatchObject({ type: "text", text });
+  });
+
+  it("preserves command identity and output while projecting native actions across snapshot completion", () => {
+    const item = {
+      id: "command", type: "commandExecution", command: "cat .agents/skills/review/SKILL.md && rg needle src",
+      commandActions: [
+        { type: "read", command: "cat .agents/skills/review/SKILL.md", name: "SKILL.md", path: ".agents/skills/review/SKILL.md" },
+        { type: "search", command: "rg needle src", query: "needle", path: "src" },
+      ],
+    };
+    const running = convertDesktopConversation(conversation({ turns: [turn({ items: [{ ...item, status: "inProgress", aggregatedOutput: "partial" }] })] }));
+    const completed = convertDesktopConversation(conversation({ turns: [turn({ status: "completed", durationMs: 500, items: [
+      { ...item, status: "completed", aggregatedOutput: "complete output", exitCode: 0 },
+    ] })] }));
+    const before = running.messages.flatMap((message) => message.parts).filter((part) => part.type === "tool");
+    const after = completed.messages.flatMap((message) => message.parts).filter((part) => part.type === "tool");
+    expect(before).toHaveLength(1);
+    expect(after).toHaveLength(1);
+    expect(after[0]).toMatchObject({
+      id: before[0].id, callId: "command", normalizedTool: "shell", originalTool: "commandExecution",
+      displayActions: [
+        { kind: "skill", label: "review", path: "/repo/.agents/skills/review/SKILL.md" },
+        { kind: "search", query: "needle", path: "/repo/src" },
+      ],
+      state: { status: "completed", input: item, output: "complete output" },
+    });
+    expect(after[0].displayActions).toEqual(before[0].displayActions);
+  });
+
+  it("preserves response phases and native order when only some items have timestamps", () => {
+    const result = convertDesktopConversation(conversation({ turns: [turn({
+      commandExecutionStartedAtMsById: { command: 2_200 },
+      completedItemIds: { reasoning: true },
+      items: [
+        { id: "z-commentary", type: "agentMessage", text: "Checking", phase: "commentary" },
+        { id: "y-partial", type: "agentMessage", text: "First result", phase: "partial_answer" },
+        { id: "command", type: "commandExecution", command: "pwd", status: "inProgress" },
+        { id: "reasoning", type: "reasoning", summary: ["Check the result"], content: [] },
+        { id: "a-final", type: "agentMessage", text: "Done", phase: "final_answer" },
+      ],
+    })] }));
+    const ordered = [...result.messages].sort((a, b) => a.time.created - b.time.created);
+    expect(ordered.map((message) => message.engineMeta?.codexItemId)).toEqual([
+      "turn-1:user", "z-commentary", "y-partial", "command", "reasoning", "a-final",
+    ]);
+    expect(ordered.flatMap((message) => message.parts).filter((part) => part.type === "text").map((part) => part.phase)).toEqual([
+      undefined, "commentary", "partial", "final",
+    ]);
+    expect(ordered[4].parts[0]).toMatchObject({ type: "reasoning", completed: true });
+    expect(ordered[4].parts[0]).not.toHaveProperty("time");
+    expect(ordered.every((message) => message.parts.every((part, index) => part.order === index))).toBe(true);
+    expect(result.isActive).toBe(true);
+  });
+
+  it.each([
+    ["inProgress", "automatic_approval_review", false],
+    ["approved", "automatic_approval_approved", true],
+    ["denied", "automatic_approval_denied", true],
+    ["aborted", "automatic_approval_aborted", true],
+    ["timedOut", "automatic_approval_timed_out", true],
+  ])("renders the %s automatic review state as a notice", (status, key, completed) => {
+    const result = convertDesktopConversation(conversation({ turns: [turn({ items: [
+      { id: "review", type: "automaticApprovalReview", status, ...(completed ? { completedAtMs: 2_400 } : {}) },
+    ] })] }));
+    const message = result.messages.at(-1)!;
+    expect(message.parts[0]).toMatchObject({ type: "system-notice", text: `notice:${key}` });
+    expect(message.time.completed).toBe(completed ? 2_400 : undefined);
+  });
+
+  it("renders native review warnings without inventing tool calls", () => {
+    const result = convertDesktopConversation(conversation({ turns: [turn({ items: [
+      { id: "strict", type: "strictReviewNotice" },
+      { id: "interruption", type: "autoReviewInterruptionWarning" },
+    ] })] }));
+    expect(result.messages.slice(1).map((message) => message.parts[0])).toMatchObject([
+      { type: "system-notice", noticeType: "warning", text: "notice:strict_review_required" },
+      { type: "system-notice", noticeType: "warning", text: "notice:auto_review_interrupted" },
+    ]);
+  });
+
+  it.each(["completed", "failed", "interrupted"])("retains unfinished tool output in a %s turn", (status) => {
+    const result = convertDesktopConversation(conversation({ turns: [turn({ status, durationMs: 500, items: [
+      { id: "command", type: "commandExecution", command: "test", status: "inProgress", aggregatedOutput: "Partial output" },
+    ] })] }));
+    expect(result.messages.at(-1)!.parts[0]).toMatchObject({ type: "tool", state: { status: "error", output: "Partial output" } });
+  });
+
   it.each([["priority", "fast"], ["fast", "fast"], ["flex", "flex"], ["default", undefined], [null, undefined]])(
     "normalizes the native service tier %s", (nativeTier, expected) => {
       expect(convertDesktopConversation(conversation({ latestThreadSettings: { serviceTier: nativeTier } })).session.serviceTier).toBe(expected);
@@ -79,6 +228,7 @@ describe("convertDesktopConversation", () => {
     const state = conversation({ turns: [turn({ status, items: [
       { id: "empty", type: "reasoning", summary: [], content: [] },
       { id: "encrypted", type: "reasoning", encryptedContent: "opaque" },
+      { id: "raw-only", type: "reasoning", summary: [], content: [{ type: "reasoningText", text: "Not a display summary" }] },
       { id: "blank", type: "reasoning", summary: [{ type: "summaryText", text: " \n " }], content: ["\t"] },
       { id: "readable", type: "reasoning", summary: [{ type: "summaryText", text: "Inspect the repository" }], content: [] },
       { id: "command", type: "commandExecution", command: "pwd", status: "completed", aggregatedOutput: "/repo", exitCode: 0 },
@@ -88,7 +238,7 @@ describe("convertDesktopConversation", () => {
     const before = structuredClone(state);
     const result = convertDesktopConversation(state);
     expect(result.messages.map((message) => message.engineMeta?.codexItemId)).toEqual(["turn-1:user", "readable", "command", "answer"]);
-    expect(result.messages[1].parts[0]).toMatchObject({ type: "reasoning", text: "Inspect the repository" });
+    expect(result.messages[1].parts[0]).toMatchObject({ type: "reasoning", text: "Inspect the repository", completed: true });
     expect(result.session.activityStatus).toBe(status === "inProgress" ? "running" : "idle");
     expect(state).toEqual(before);
   });
@@ -100,16 +250,106 @@ describe("convertDesktopConversation", () => {
       { id: "reasoning-after", type: "reasoning", summary: ["Check the result"], content: [] },
     ] })] }));
     expect(result.messages.map((message) => message.engineMeta?.codexItemId)).toEqual(["turn-1:user", "reasoning-before", "command", "reasoning-after"]);
-    expect(result.messages[1].parts[0]).toMatchObject({ type: "reasoning", text: "Inspect the repository\n\nThen identify the relevant test" });
-    expect(result.messages[3].parts[0]).toMatchObject({ type: "reasoning", text: "Check the result" });
+    expect(result.messages[1].parts[0]).toMatchObject({ type: "reasoning", text: "Inspect the repository" });
+    expect(result.messages[3].parts[0]).toMatchObject({ type: "reasoning", text: "Check the result", completed: false });
     expect(result.messages[1].id).not.toBe(result.messages[3].id);
   });
 
-  it("deduplicates identical reasoning blocks across channels while retaining repetition within a channel", () => {
+  it("renders only summary blocks while retaining repetition within the summary", () => {
     const result = convertDesktopConversation(conversation({ turns: [turn({ items: [
       { id: "reasoning", type: "reasoning", summary: ["Check the tests", "Check the tests"], content: [{ type: "reasoningText", text: "Check the tests" }, { text: "Read the output" }] },
     ] })] }));
-    expect(result.messages[1].parts[0]).toMatchObject({ type: "reasoning", text: "Check the tests\n\nCheck the tests\n\nRead the output" });
+    expect(result.messages[1].parts[0]).toMatchObject({ type: "reasoning", text: "Check the tests\n\nCheck the tests" });
+  });
+
+  it("preserves completed question responses in question order with their original answers", () => {
+    const result = convertDesktopConversation(conversation({ turns: [turn({ items: [{
+      id: "response", type: "userInputResponse", completed: true,
+      questions: [{ id: "scope", question: "Which scope?" }, { id: "checks", question: "Which checks?" }],
+      answers: { checks: ["Unit tests", "Browser"], scope: ["Adapter"] },
+    }] })] }));
+    expect(result.messages[1]).toMatchObject({
+      time: { completed: 2_000 },
+      parts: [
+        { type: "text", text: "Which scope?\n\nAdapter", phase: "commentary", order: 0 },
+        { type: "text", text: "Which checks?\n\nUnit tests\n\nBrowser", phase: "commentary", order: 1 },
+      ],
+    });
+  });
+
+  it.each([
+    ["accept", "elicitation_accepted"], ["decline", "elicitation_declined"],
+    ["cancel", "elicitation_cancelled"], [null, "elicitation_completed"],
+  ])("retains a completed elicitation with action %s without inventing an executable tool", (action, notice) => {
+    const result = convertDesktopConversation(conversation({ turns: [turn({ items: [{
+      id: "elicitation", type: "mcpServerElicitation", completed: true, action,
+      params: { mode: "form", message: "Choose a deployment region.", requestedSchema: { type: "object", properties: {} } },
+    }] })] }));
+    expect(result.messages[1]).toMatchObject({
+      time: { completed: 2_000 },
+      parts: [{ type: "system-notice", text: `notice:${notice}` }, { type: "text", text: "Choose a deployment region." }],
+    });
+  });
+
+  it("keeps pending elicitations and permission responses out of the transcript", () => {
+    const result = convertDesktopConversation(conversation({ turns: [turn({ items: [
+      { id: "elicitation", type: "mcpServerElicitation", completed: false },
+      { id: "pending", type: "permissionRequest", completed: false },
+      { id: "allowed", type: "permissionRequest", completed: true, response: { permissions: { network: { enabled: true } }, scope: "turn" } },
+      { id: "denied", type: "permissionRequest", completed: true, response: { permissions: {}, scope: "turn" } },
+    ] })] }));
+    expect(result.messages.map((message) => message.engineMeta?.codexItemId)).toEqual(["turn-1:user"]);
+  });
+
+  it("omits gated OpenAI form history and preserves verification titles without challenge payloads", () => {
+    const result = convertDesktopConversation(conversation({ turns: [turn({ items: [
+      { id: "openai", type: "mcpServerElicitation", completed: true, params: { mode: "openaiForm", message: "Private form" } },
+      { id: "legacy", type: "mcpServerElicitation", completed: true, params: { mode: "openai/form", message: "Private form" } },
+      { id: "metadata", type: "mcpServerElicitation", completed: true, params: { mode: "form", message: "Private form", _meta: { "openai/elicitation": {} } } },
+      { id: "verification", type: "mcpServerElicitation", completed: true, action: "accept", params: { mode: "openai/userVerification", title: "Verification complete", challenge: "opaque-challenge" } },
+    ] })] }));
+    expect(result.messages.map((message) => message.engineMeta?.codexItemId)).toEqual(["turn-1:user", "verification"]);
+    expect(result.messages[1].parts).toMatchObject([
+      { type: "system-notice", text: "notice:elicitation_accepted" }, { type: "text", text: "Verification complete" },
+    ]);
+    expect(JSON.stringify(result.messages)).not.toContain("opaque-challenge");
+  });
+
+  it.each([false, true])("preserves plan content with its request completion %s", (isCompleted) => {
+    const result = convertDesktopConversation(conversation({ turns: [turn({ status: "completed", items: [{
+      id: "implementation", type: "planImplementation", planContent: "1. Inspect\n2. Implement", isCompleted,
+    }] })] }));
+    expect(result.messages[1].parts).toMatchObject([
+      { type: "system-notice", text: `notice:plan_implementation_${isCompleted ? "completed" : "pending"}` },
+      { type: "text", text: "1. Inspect\n2. Implement" },
+    ]);
+    expect(result.messages[1].time.completed).toBe(isCompleted ? 2_000 : undefined);
+  });
+
+  it("normalizes the native todo list into completed plan updates with independent step states", () => {
+    const result = convertDesktopConversation(conversation({ turns: [turn({ items: [{
+      id: "todos", type: "todo-list", explanation: "Start with the adapter.",
+      plan: [{ step: "Inspect", status: "completed" }, { step: "Implement", status: "inProgress" }, { step: "Validate", status: "pending" }],
+    }] })] }));
+    expect(result.messages[1].parts).toMatchObject([
+      { type: "text", text: "Start with the adapter." },
+      { type: "tool", normalizedTool: "todo", state: { status: "completed", input: { todos: [
+        { content: "Inspect", status: "completed" }, { content: "Implement", status: "in_progress" }, { content: "Validate", status: "pending" },
+      ] } } },
+    ]);
+    expect(result.isActive).toBe(true);
+  });
+
+  it.each([false, true])("renders retry=%s native errors as notices while keeping the turn state authoritative", (willRetry) => {
+    const result = convertDesktopConversation(conversation({ turns: [turn({ items: [{
+      id: "error", type: "error", message: "Connection lost", additionalDetails: "Retry in progress", willRetry,
+    }] })] }));
+    const parts = result.messages[1].parts;
+    expect(parts.at(-1)).toMatchObject({ type: "system-notice", noticeType: willRetry ? "info" : "warning", text: "Connection lost\n\nRetry in progress" });
+    expect(parts).toHaveLength(willRetry ? 2 : 1);
+    if (willRetry) expect(parts[0]).toMatchObject({ type: "system-notice", text: "notice:stream_reconnecting" });
+    expect(result.isActive).toBe(true);
+    expect(result.messages[1].error).toBeUndefined();
   });
 
   it("uses canonical island order and retains optimistic steering without duplicating accepted user items", () => {

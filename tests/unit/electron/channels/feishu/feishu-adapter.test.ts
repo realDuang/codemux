@@ -50,6 +50,8 @@ vi.mock("@larksuiteoapi/node-sdk", () => ({
 }));
 
 import { FeishuAdapter } from "../../../../../electron/main/channels/feishu/feishu-adapter";
+import { convertCodexAsyncQuestion, getCodexAsyncQuestions } from "../../../../../electron/main/engines/codex/async-questions";
+import type { GatewayWsClientEvents } from "../../../../../electron/main/channels/gateway-ws-client";
 
 function makeBinding(overrides: Partial<any> = {}): any {
   return {
@@ -1191,6 +1193,47 @@ describe("FeishuAdapter", () => {
       });
       expect(a.transport.sendMarkdown).toHaveBeenCalled();
       expect(a.sessionMapper.getPendingQuestion("c1")?.questionId).toBe("q-1");
+    });
+
+    it.each([
+      { chatType: "p2p", answer: "Current workspace" },
+      { chatType: "group", answer: "Use the archived project instead" },
+    ])("routes a Codex async question and $chatType text reply through the shared question handlers", async ({ chatType, answer }) => {
+      const a = makeGw();
+      const chatId = chatType === "p2p" ? "c1" : "g1";
+      const question = convertCodexAsyncQuestion("conv-codex", "turn-native", getCodexAsyncQuestions({
+        type: "agentMessage",
+        id: "question-item-native",
+        questions: [{ title: "Which project do you want to use?", options: ["Current workspace", "Another project"] }],
+      }), "codex-desktop");
+      const on = vi.fn<(event: keyof GatewayWsClientEvents, listener: unknown) => void>();
+      const replyQuestion = vi.fn(async () => undefined);
+      a.gatewayClient = { on, replyQuestion };
+      if (chatType === "p2p") {
+        a.sessionMapper.getOrCreateP2PChat(chatId, "u1");
+        a.sessionMapper.setTempSession(chatId, {
+          conversationId: "conv-codex", engineType: "codex-desktop", directory: "/d", projectId: "p",
+          lastActiveAt: Date.now(), messageQueue: [], processing: false,
+        });
+      } else {
+        a.sessionMapper.createGroupBinding(makeBinding({ chatId, conversationId: "conv-codex", engineType: "codex-desktop" }));
+      }
+      a.subscribeGatewayEvents();
+      const questionAsked = on.mock.calls.find(([event]) => event === "question.asked")?.[1] as GatewayWsClientEvents["question.asked"];
+
+      expect(questionAsked).toBeTypeOf("function");
+      questionAsked({ question });
+      expect(a.transport.sendMarkdown).toHaveBeenCalledWith(chatId, expect.stringContaining("Which project do you want to use?"));
+      expect(a.transport.sendMarkdown).toHaveBeenCalledWith(chatId, expect.stringContaining("1. Current workspace\n2. Another project"));
+      expect(a.sessionMapper.getPendingQuestion(chatId)).toEqual({ questionId: question.id, sessionId: "conv-codex" });
+
+      if (chatType === "p2p") {
+        await a.handleP2PMessage(chatId, answer, "reply-message", [{ type: "text", text: answer }]);
+      } else {
+        await a.handleGroupMessage(chatId, answer, "reply-message", [{ type: "text", text: answer }]);
+      }
+      expect(replyQuestion).toHaveBeenCalledExactlyOnceWith({ questionId: question.id, answers: [[answer]] });
+      expect(a.sessionMapper.getPendingQuestion(chatId)).toBeUndefined();
     });
 
     it("handleQuestionAsked sends 'no options' message when questions array empty", () => {

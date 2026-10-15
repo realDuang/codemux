@@ -92,9 +92,34 @@ export const [sessionStore, setSessionStore] = createStore<{
   teamOrchestrationEnabled: false,
 });
 
-/** Set the sending (streaming) state for a session. */
+interface PendingSessionSend {
+  count: number;
+  activitySending: boolean;
+}
+
+const pendingSessionSends = new Map<string, PendingSessionSend>();
+
+/** Pending RPC admission remains visible even when native history is still idle. */
+export function beginPendingSessionSend(sessionId: string, activitySending = sessionStore.sendingMap[sessionId] ?? false): () => void {
+  const pending = pendingSessionSends.get(sessionId) ?? { count: 0, activitySending };
+  pendingSessionSends.set(sessionId, pending);
+  pending.count += 1;
+  setSessionStore("sendingMap", sessionId, true);
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    pending.count -= 1;
+    if (pending.count === 0) pendingSessionSends.delete(sessionId);
+    setSessionStore("sendingMap", sessionId, pending.count > 0 || pending.activitySending);
+  };
+}
+
+/** Set native/renderer activity without clearing an unresolved local submission. */
 export function setSendingFor(sessionId: string, value: boolean): void {
-  setSessionStore("sendingMap", sessionId, value);
+  const pending = pendingSessionSends.get(sessionId);
+  if (pending) pending.activitySending = value;
+  setSessionStore("sendingMap", sessionId, value || (pending?.count ?? 0) > 0);
 }
 
 export function updateSessionInfo(sessionId: string, patch: Partial<SessionInfo>): void {

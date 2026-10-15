@@ -68,6 +68,8 @@ interface LocalSession {
   shared: boolean;
 }
 
+type InputRoute = { kind: "local"; session: LocalSession } | { kind: "foreign" };
+
 interface PendingRoute {
   runtime: LocalRuntime;
   sessionId: string;
@@ -88,7 +90,7 @@ export class UnifiedCodexAdapter extends EngineAdapter {
   private readonly runtimes = new Map<string, LocalRuntime>();
   private readonly runtimeStarts = new Map<string, Promise<LocalRuntime>>();
   private readonly locals = new Map<string, LocalSession>();
-  private readonly acquisitions = new Map<string, Promise<LocalSession>>();
+  private readonly inputRoutes = new Map<string, Promise<InputRoute>>();
   private readonly sessions = new Map<string, UnifiedSession>();
   private readonly pendingPermissions = new Map<string, PendingRoute>();
   private readonly pendingQuestions = new Map<string, PendingRoute>();
@@ -121,8 +123,8 @@ export class UnifiedCodexAdapter extends EngineAdapter {
       renameThread: (id, title, ownerId) => this.renameForeignThread(id, title, ownerId),
       setThreadArchived: (id, archived) => this.archiveThread(id, archived),
       acquireThread: async (id) => {
-        await this.acquireLocal(id);
-        return { threadId: id, owned: true };
+        const route = await this.routeForInput(id);
+        return { threadId: id, owned: route.kind === "local" };
       },
       turnTimeoutMs: options.turnTimeoutMs, syncTimeoutMs: options.syncTimeoutMs,
       catalog: options.catalogFactory ? {
@@ -405,13 +407,9 @@ export class UnifiedCodexAdapter extends EngineAdapter {
 
   async sendMessage(id: string, content: MessagePromptContent[], options?: SendOptions): Promise<UnifiedMessage> {
     id = nativeThreadId(id);
-    let local = this.locals.get(id);
-    if (!local && this.sharingEnabled) {
-      await this.requireSharing();
-      const owner = await this.followerClient.discoverOwner(id);
-      if (owner) return this.follower.sendMessage(id, content);
-    }
-    if (!local) local = await this.acquireLocal(id, options?.directory);
+    const route = await this.routeForInput(id, options?.directory);
+    if (route.kind === "foreign") return this.follower.sendMessage(id, content);
+    const local = route.session;
     const result = await local.runtime.execution.sendMessage(local.engineSessionId, content, await this.localInputOptions(local, options));
     const snapshot = await this.refreshLocal(id, local);
     return canonicalResponse(snapshot, result);
@@ -478,12 +476,9 @@ export class UnifiedCodexAdapter extends EngineAdapter {
   }
   async invokeCommand(id: string, name: string, args: string, options?: SendOptions): Promise<CommandInvokeResult> {
     id = nativeThreadId(id);
-    let local = this.locals.get(id);
-    if (!local && this.sharingEnabled) {
-      await this.requireSharing();
-      if (await this.followerClient.discoverOwner(id)) return this.follower.invokeCommand(id, name, args);
-    }
-    if (!local) local = await this.acquireLocal(id, options?.directory);
+    const route = await this.routeForInput(id, options?.directory);
+    if (route.kind === "foreign") return this.follower.invokeCommand(id, name, args);
+    const local = route.session;
     const result = await local.runtime.execution.invokeCommand(local.engineSessionId, name, args, await this.localInputOptions(local, options));
     const snapshot = await this.refreshLocal(id, local);
     return result.message ? { ...result, message: canonicalResponse(snapshot, result.message) } : result;
@@ -623,32 +618,57 @@ export class UnifiedCodexAdapter extends EngineAdapter {
     this.rememberSession(this.decorateSession(local.session));
     return local;
   }
-  private async acquireLocal(id: string, directory?: string): Promise<LocalSession> {
-    const known = this.locals.get(id);
-    if (known) return known;
-    const pending = this.acquisitions.get(id);
+  private async routeForInput(id: string, directory?: string): Promise<InputRoute> {
+    id = nativeThreadId(id);
+    // A loaded writer enters locals before sharing registration finishes. Every
+    // concurrent input must await that preparation before using the fast path.
+    const pending = this.inputRoutes.get(id);
     if (pending) return pending;
-    const operation = (async () => {
+    const known = this.locals.get(id);
+    if (known) return { kind: "local", session: known };
+    const operation = (async (): Promise<InputRoute> => {
       if (this.sharingEnabled) {
         await this.requireSharing();
         const owner = await this.followerClient.discoverOwner(id);
-        if (owner) throw new Error("This conversation is still owned by another Codex client. Reconnect to its owner before sending.");
+        // The follower revalidates its transport before submitting. Negative
+        // discovery is used only within this acquisition, never cached for reuse.
+        if (owner) return { kind: "foreign" };
       } else if (this.sessions.get(id)?.engineMeta?.codexOrigin !== "CodeMux"
         && this.sessions.get(id)?.engineMeta?.codexDesktopOwner !== "codemux") {
         throw new Error("Enable sharing to continue a conversation whose execution is managed outside CodeMux.");
       }
       const stored = await this.readStoredThread(id);
       const runtime = await this.runtimeFor(id, stored.thread);
+      const previous = this.sessions.get(id) ?? this.decorateSession(this.snapshotStored(stored).session);
       const session = await runtime.execution.createSession(directory ?? String(stored.thread.cwd ?? this.sessions.get(id)?.directory ?? ""), {
         ...this.sessions.get(id)?.engineMeta, codexThreadId: id, codexDesktopOwner: "codemux",
       });
-      if (sessionThreadId(session) !== id) throw new Error("Codex restoration changed the original thread identity.");
-      const local = this.rememberLocal(runtime, session);
-      await this.refreshLocal(id, local);
-      if (this.sharingEnabled) await this.exposeLocal(id, local);
-      return local;
-    })().finally(() => this.acquisitions.delete(id));
-    this.acquisitions.set(id, operation);
+      let local: LocalSession | undefined;
+      try {
+        if (sessionThreadId(session) !== id) throw new Error("Codex restoration changed the original thread identity.");
+        local = this.rememberLocal(runtime, session);
+        await this.refreshLocal(id, local);
+        if (this.sharingEnabled) await this.exposeLocal(id, local);
+        return { kind: "local", session: local };
+      } catch (error) {
+        // Failed ownership proof must never become a later local fast path.
+        // Detach only this acquisition; the original native history remains.
+        if (local && this.locals.get(id) === local) {
+          if (local.timer) clearTimeout(local.timer);
+          this.locals.delete(id);
+          runtime.owner.unregisterThread(id);
+        }
+        await runtime.execution.deleteSession(session.id).catch((cleanupError: unknown) => {
+          this.options.onError?.(id, cleanupError instanceof Error ? cleanupError : new Error(errorMessage(cleanupError)));
+        });
+        if (!this.locals.has(id)) {
+          const restored = this.rememberSession(this.decorateSession(previous));
+          this.emit("session.updated", { session: restored });
+        }
+        throw error;
+      }
+    })().finally(() => this.inputRoutes.delete(id));
+    this.inputRoutes.set(id, operation);
     return operation;
   }
   private async exposeLocal(id: string, local: LocalSession): Promise<void> {
@@ -695,12 +715,9 @@ export class UnifiedCodexAdapter extends EngineAdapter {
   }
   private async setting(id: string, update: (adapter: EngineAdapter, id: string) => Promise<void>, nativePatch: (state: NativeOwnedThreadState) => Record<string, unknown>): Promise<void> {
     id = nativeThreadId(id);
-    let local = this.locals.get(id);
-    if (!local && this.sharingEnabled) {
-      await this.requireSharing();
-      if (await this.followerClient.discoverOwner(id)) return update(this.follower, id);
-    }
-    if (!local) local = await this.acquireLocal(id);
+    const route = await this.routeForInput(id);
+    if (route.kind === "foreign") return update(this.follower, id);
+    const local = route.session;
     if (local.runtime.native.updateSettings) {
       const current = await local.runtime.native.readThread(local.engineSessionId);
       if (!await local.runtime.native.updateSettings(local.engineSessionId, nativePatch(current), {})) throw new Error("The Codex runtime did not accept the settings update.");

@@ -328,6 +328,99 @@ describe("UnifiedCodexAdapter", () => {
     expect((await f.adapter.getSession(session.id))!.connection?.runtimeVersion).toBe("0.154.0");
   });
 
+  it("performs one no-owner lookup before acquisition while retaining final owner registration checks", async () => {
+    const f = fixture(true);
+    await f.adapter.restoreSession("legacy", "/repo", { codexThreadId: "legacy", codexDesktopOwner: "codemux" });
+    f.follower.discoverOwner.mockClear();
+    await f.adapter.sendMessage("legacy", [{ type: "text", text: "Continue" }]);
+    expect(f.follower.discoverOwner).toHaveBeenCalledExactlyOnceWith("legacy");
+    expect(f.ownerClients[0].discoverOwner).toHaveBeenCalledExactlyOnceWith("legacy", undefined);
+    expect(f.executions[0].native.readMetadata).toHaveBeenCalledWith("codex_legacy");
+    expect(f.executions[0].createSession).toHaveBeenCalledExactlyOnceWith("/repo", expect.objectContaining({ codexThreadId: "legacy", codexDesktopOwner: "codemux" }));
+  });
+
+  it("makes concurrent input await the same acquisition through completed exposure", async () => {
+    const f = fixture(true);
+    await f.adapter.start();
+    await f.adapter.restoreSession("legacy", "/repo", { codexThreadId: "legacy", codexDesktopOwner: "codemux" });
+    let registering!: () => void;
+    let release!: () => void;
+    const registrationStarted = new Promise<void>((resolve) => { registering = resolve; });
+    const registrationReleased = new Promise<void>((resolve) => { release = resolve; });
+    f.ownerClients[0].discoverOwner.mockImplementationOnce(async () => {
+      registering();
+      await registrationReleased;
+      return null;
+    });
+    const first = f.adapter.sendMessage("legacy", [{ type: "text", text: "First" }]);
+    await registrationStarted;
+    expect(f.adapter.hasSession("legacy")).toBe(true);
+    const second = f.adapter.sendMessage("codex_legacy", [{ type: "text", text: "Second" }]);
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    const earlySends = f.executions[0].sendMessage.mock.calls.length;
+    release();
+    await Promise.all([first, second]);
+    expect(earlySends).toBe(0);
+    expect(f.executions[0].createSession).toHaveBeenCalledTimes(1);
+    expect(f.executions[0].sendMessage.mock.calls.map(([, content]) => content[0].text)).toEqual(["First", "Second"]);
+    expect(f.owners.has("legacy")).toBe(true);
+  });
+
+  it("revalidates a retry after native ownership verification rejects an acquired writer", async () => {
+    const archiveStoredThread = vi.fn(async (id: string) => ({ id }));
+    const f = fixture(true, { archiveStoredThread });
+    await f.adapter.start();
+    await f.adapter.restoreSession("legacy", "/repo", { codexThreadId: "legacy", codexDesktopOwner: "codemux" });
+    const execution = f.executions[0];
+    let allowInput = false;
+    vi.mocked(execution.native.readMetadata!).mockImplementation(async (id) => ({ ...execution.states.get(id)!.thread, canAcceptDirectInput: allowInput }));
+    await expect(f.adapter.sendMessage("legacy", [{ type: "text", text: "First attempt" }])).rejects.toThrow("exclusive input ownership");
+    await expect(f.adapter.sendMessage("legacy", [{ type: "text", text: "Retry remains blocked" }])).rejects.toThrow("exclusive input ownership");
+    expect(execution.sendMessage).not.toHaveBeenCalled();
+    expect(f.adapter.hasSession("legacy")).toBe(false);
+    expect(execution.deleteSession).toHaveBeenCalledTimes(2);
+    expect(archiveStoredThread).not.toHaveBeenCalled();
+    allowInput = true;
+    await expect(f.adapter.sendMessage("legacy", [{ type: "text", text: "Verified retry" }])).resolves.toMatchObject({ role: "assistant", sessionId: "legacy" });
+    expect(execution.createSession).toHaveBeenCalledTimes(3);
+    expect(execution.sendMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it("detaches failed acquisition and follows a foreign owner discovered during final registration on retry", async () => {
+    const archiveStoredThread = vi.fn(async (id: string) => ({ id }));
+    const f = fixture(true, { archiveStoredThread });
+    await f.adapter.start();
+    await f.adapter.restoreSession("legacy", "/repo", { codexThreadId: "legacy", codexDesktopOwner: "codemux" });
+    const state = { id: "legacy", hostId: "local", cwd: "/repo", title: "Original thread", createdAt: 1000, updatedAt: 2000,
+      resumeState: "resumed", turns: [] as Array<Record<string, unknown>>, requests: [],
+    };
+    let revision = 1;
+    f.ownerClients[0].discoverOwner.mockImplementationOnce(async () => {
+      f.owners.set("legacy", { clientId: "foreign-owner", followers: new Set(), registration: {
+        conversationId: "legacy", supportedMethods: [], getSnapshot: () => ({ type: "snapshot", revision, conversationState: state }), handleRequest: async () => ({}),
+      } });
+      return { ownerClientId: "foreign-owner", supportsUntrustedAppInput: false };
+    });
+    await expect(f.adapter.sendMessage("legacy", [{ type: "text", text: "First attempt" }])).rejects.toThrow("owned by another Codex client");
+    f.follower.startTurn.mockImplementation(async () => {
+      state.turns.push({ turnId: "remote-retry", status: "completed", turnStartedAtMs: 3000, durationMs: 1000,
+        params: { input: [{ type: "text", text: "Remote retry" }] },
+        items: [{ id: "user", type: "userMessage", content: [{ type: "text", text: "Remote retry" }] },
+          { id: "answer", type: "agentMessage", text: "Original owner's reply", phase: "final_answer" }],
+      });
+      revision += 1;
+      f.follower.emit("stream", { conversationId: "legacy", hostId: "local", ownerClientId: "foreign-owner", change: { type: "snapshot", revision, conversationState: state } });
+      return { threadId: "legacy", input: {}, turnId: "remote-retry" };
+    });
+    const reply = await f.adapter.sendMessage("legacy", [{ type: "text", text: "Remote retry" }]);
+    expect(reply.id).toContain(":legacy:remote-retry:");
+    expect(f.executions[0].createSession).toHaveBeenCalledTimes(1);
+    expect(f.executions[0].sendMessage).not.toHaveBeenCalled();
+    expect(f.executions[0].deleteSession).toHaveBeenCalledExactlyOnceWith("codex_legacy");
+    expect(archiveStoredThread).not.toHaveBeenCalled();
+    expect(f.owners.get("legacy")?.clientId).toBe("foreign-owner");
+  });
+
   it("preserves the original identity when its runtime is incompatible", async () => {
     const f = fixture();
     await f.adapter.restoreSession("legacy", "/repo", { codexThreadId: "legacy", codexDesktopOwner: "codemux" });
@@ -494,8 +587,10 @@ describe("UnifiedCodexAdapter", () => {
     expect(session.connection).toMatchObject({ origin: "Codex Desktop", executor: clientName ?? "Codex", shared: true, available: true });
     expect(f.resolve).not.toHaveBeenCalled();
     expect(f.executions).toHaveLength(0);
+    f.follower.discoverOwner.mockClear();
     const reply = await f.adapter.sendMessage("external", [{ type: "text", text: "External turn" }]);
     expect(reply.id).toBe("codex-desktop:v1:local:external:remote-turn:item:remote-final");
+    expect(f.follower.discoverOwner).toHaveBeenCalledExactlyOnceWith("external");
     expect(f.follower.startTurn).toHaveBeenCalledTimes(1);
     expect(f.executions).toHaveLength(0);
     await f.adapter.setSessionSharing(false);

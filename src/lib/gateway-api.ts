@@ -8,12 +8,13 @@
 import { gatewayClient } from "./gateway-client";
 import { GatewayRequestType } from "../types/unified";
 import { logger } from "./logger";
-import { createSignal } from "solid-js";
+import { createSignal, untrack } from "solid-js";
 import { configStore } from "../stores/config";
-import { sessionStore, setSendingFor } from "../stores/session";
+import { beginPendingSessionSend, sessionStore, setSendingFor } from "../stores/session";
 import type {
   EngineType,
   EngineInfo,
+  EngineSharingState,
   EngineCapabilities,
   UnifiedSession,
   SessionActivityStatus,
@@ -128,6 +129,31 @@ class GatewayAPI {
   private pendingSessionSnapshots = new Set<Map<string, UnifiedSession | null>>();
   private removedSessionIds = new Set<string>();
   private sessionRemovalRevisions = new Map<string, number>();
+  private pendingSends = new Map<string, Set<() => void>>();
+
+  private async withPendingSend<T>(sessionId: string, send: () => Promise<T>): Promise<T> {
+    const releaseSending = untrack(() => {
+      const engineType = sessionStore.list.find((session) => session.id === sessionId)?.engineType;
+      const activity = getAuthoritativeSessionActivity(sessionId);
+      return beginPendingSessionSend(sessionId, hasAuthoritativeSessionState(engineType)
+        ? activity === "running" || activity === "waiting" : undefined);
+    });
+    const pending = this.pendingSends.get(sessionId) ?? new Set<() => void>();
+    this.pendingSends.set(sessionId, pending);
+    const release = () => {
+      if (!pending.delete(release)) return;
+      if (pending.size === 0 && this.pendingSends.get(sessionId) === pending) this.pendingSends.delete(sessionId);
+      releaseSending();
+    };
+    pending.add(release);
+    try { return await send(); }
+    finally { release(); }
+  }
+
+  private releasePendingSends(sessionId?: string): void {
+    const groups = sessionId ? [this.pendingSends.get(sessionId)] : [...this.pendingSends.values()];
+    for (const pending of groups) for (const release of [...(pending ?? [])]) release();
+  }
 
   private recordCatalogSession(session: UnifiedSession, restore = false): boolean {
     if (this.removedSessionIds.has(session.id)) {
@@ -220,6 +246,7 @@ class GatewayAPI {
    * Disconnect and cleanup.
    */
   destroy(): void {
+    this.releasePendingSends();
     this.unbindEvents();
     gatewayClient.disconnect();
     _setGatewayConnected(false);
@@ -260,6 +287,7 @@ class GatewayAPI {
     });
 
     this.bind("disconnected", (reason) => {
+      this.releasePendingSends();
       _setGatewayConnected(false);
       this.handlers.onDisconnected?.(reason);
     });
@@ -291,6 +319,7 @@ class GatewayAPI {
     });
 
     this.bind("session.removed", ({ sessionId }) => {
+      this.releasePendingSends(sessionId);
       this.removedSessionIds.add(sessionId);
       const revision = ++this.activityRevision;
       this.sessionActivityRevisions.set(sessionId, revision);
@@ -394,6 +423,14 @@ class GatewayAPI {
     return gatewayClient.listEngines();
   }
 
+  getSessionSharing(engineType: EngineType): Promise<EngineSharingState> {
+    return gatewayClient.request(GatewayRequestType.ENGINE_SHARING_GET, { engineType });
+  }
+
+  setSessionSharing(engineType: EngineType, enabled: boolean): Promise<EngineSharingState> {
+    return gatewayClient.request(GatewayRequestType.ENGINE_SHARING_SET, { engineType, enabled });
+  }
+
   getCapabilities(engineType: EngineType): Promise<EngineCapabilities> {
     return gatewayClient.getEngineCapabilities(engineType);
   }
@@ -459,18 +496,21 @@ class GatewayAPI {
         content.push({ type: "image", data: img.data, mimeType: img.mimeType });
       }
     }
-    return gatewayClient.sendMessage({
+    return this.withPendingSend(sessionId, () => gatewayClient.sendMessage({
       sessionId,
       content,
       mode: options?.mode,
       modelId: options?.modelId,
       reasoningEffort: options?.reasoningEffort,
       serviceTier: options?.serviceTier,
-    });
+    }));
   }
 
-  cancelMessage(sessionId: string): Promise<void> {
-    return gatewayClient.cancelMessage(sessionId);
+  async cancelMessage(sessionId: string): Promise<void> {
+    const pending = [...(this.pendingSends.get(sessionId) ?? [])];
+    await gatewayClient.cancelMessage(sessionId);
+    // Only cancel submissions that existed when this request was made.
+    for (const release of pending) release();
   }
 
   async listMessages(sessionId: string): Promise<UnifiedMessage[]> {
@@ -702,7 +742,7 @@ class GatewayAPI {
     args: string,
     options?: { mode?: string; modelId?: string; reasoningEffort?: import("../types/unified").ReasoningEffort | null; serviceTier?: import("../types/unified").CodexServiceTier | null },
   ): Promise<CommandInvokeResult> {
-    return gatewayClient.invokeCommand({ sessionId, commandName, args, ...options });
+    return this.withPendingSend(sessionId, () => gatewayClient.invokeCommand({ sessionId, commandName, args, ...options }));
   }
 
   // --- File Explorer ---

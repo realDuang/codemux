@@ -90,7 +90,7 @@ function part(id: string, text: string, messageId = 'm1', sessionId = 's1'): Uni
 }
 
 const { setConfigStore } = await import('../../../../src/stores/config');
-const { sessionStore, setSessionStore } = await import('../../../../src/stores/session');
+const { sessionStore, setSessionStore, setSendingFor } = await import('../../../../src/stores/session');
 const { messageStore, setMessageStore } = await import('../../../../src/stores/message');
 
 function useAuthoritativeEngine() {
@@ -251,6 +251,146 @@ describe('GatewayAPI', () => {
 
       expect(sessionStore.sendingMap.s1).toBe(true);
       expect(getAuthoritativeSessionActivity('s1')).toBe('running');
+    });
+  });
+
+  describe('pending message submissions', () => {
+    it('keeps a cold submission visible through native idle snapshots and renderer activity updates', async () => {
+      useAuthoritativeEngine();
+      await gateway.init({ onSessionUpdated: session => setSendingFor(session.id, session.activityStatus === 'running' || session.activityStatus === 'waiting') });
+      const request = deferred<UnifiedMessage>();
+      mockGatewayClient.sendMessage.mockReturnValueOnce(request.promise);
+      const sending = gateway.sendMessage('s1', 'Continue the existing conversation');
+
+      emitGatewayEvent('session.updated', { session: sharedSession('idle') });
+      expect(sessionStore.sendingMap.s1).toBe(true);
+      expect(getAuthoritativeSessionActivity('s1')).toBe('idle');
+
+      request.resolve(message('completed'));
+      await sending;
+      expect(sessionStore.sendingMap.s1).toBe(false);
+    });
+
+    it('counts overlapping message and command submissions independently per session', async () => {
+      useAuthoritativeEngine();
+      await gateway.init({});
+      const first = deferred<UnifiedMessage>();
+      const command = deferred<{ handledAsCommand: boolean }>();
+      const other = deferred<UnifiedMessage>();
+      mockGatewayClient.sendMessage.mockReturnValueOnce(first.promise).mockReturnValueOnce(other.promise);
+      mockGatewayClient.invokeCommand.mockReturnValueOnce(command.promise);
+      const firstSend = gateway.sendMessage('s1', 'First');
+      const commandSend = gateway.invokeCommand('s1', 'review', '');
+      const otherSend = gateway.sendMessage('s2', 'Other session');
+      emitGatewayEvent('session.updated', { session: sharedSession('idle') });
+      emitGatewayEvent('session.updated', { session: sharedSession('idle', 's2') });
+
+      first.resolve(message('first'));
+      await firstSend;
+      expect(sessionStore.sendingMap.s1).toBe(true);
+      expect(sessionStore.sendingMap.s2).toBe(true);
+      const failedCommand = expect(commandSend).rejects.toThrow('Command rejected');
+      command.reject(new Error('Command rejected'));
+      await failedCommand;
+      expect(sessionStore.sendingMap.s1).toBe(false);
+      expect(sessionStore.sendingMap.s2).toBe(true);
+      other.resolve(message('other', 's2'));
+      await otherSend;
+      expect(sessionStore.sendingMap.s2).toBe(false);
+    });
+
+    it.each<SessionActivityStatus>(['running', 'waiting'])('retains native %s activity after the local RPC settles', async (activity) => {
+      useAuthoritativeEngine();
+      await gateway.init({});
+      const request = deferred<UnifiedMessage>();
+      mockGatewayClient.sendMessage.mockReturnValueOnce(request.promise);
+      const sending = gateway.sendMessage('s1', 'Continue');
+      emitGatewayEvent('session.updated', { session: sharedSession(activity) });
+      request.resolve(message('accepted'));
+      await sending;
+      expect(sessionStore.sendingMap.s1).toBe(true);
+      expect(getAuthoritativeSessionActivity('s1')).toBe(activity);
+      emitGatewayEvent('session.updated', { session: sharedSession('idle') });
+      expect(sessionStore.sendingMap.s1).toBe(false);
+    });
+
+    it('releases failed cold admission instead of retaining the renderer optimistic flag', async () => {
+      useAuthoritativeEngine();
+      setSendingFor('s1', true);
+      mockGatewayClient.sendMessage.mockRejectedValueOnce(new Error('Runtime unavailable'));
+      await expect(gateway.sendMessage('s1', 'Continue')).rejects.toThrow('Runtime unavailable');
+      expect(sessionStore.sendingMap.s1).toBe(false);
+    });
+
+    it('preserves ordinary engine streaming until its renderer reports completion', async () => {
+      await gateway.init({});
+      setSendingFor('s1', true);
+      const request = deferred<UnifiedMessage>();
+      mockGatewayClient.sendMessage.mockReturnValueOnce(request.promise);
+      const sending = gateway.sendMessage('s1', 'Continue');
+      request.resolve(message('intermediate'));
+      await sending;
+      expect(sessionStore.sendingMap.s1).toBe(true);
+      setSendingFor('s1', false);
+      expect(sessionStore.sendingMap.s1).toBe(false);
+    });
+
+    it('releases disconnected requests without letting late settlement clear a new connection submission', async () => {
+      useAuthoritativeEngine();
+      await gateway.init({});
+      const old = deferred<UnifiedMessage>();
+      const current = deferred<UnifiedMessage>();
+      mockGatewayClient.sendMessage.mockReturnValueOnce(old.promise).mockReturnValueOnce(current.promise);
+      const oldSend = gateway.sendMessage('s1', 'Before disconnect');
+      emitGatewayEvent('session.updated', { session: sharedSession('idle') });
+      emitGatewayEvent('disconnected', 'Connection lost');
+      expect(sessionStore.sendingMap.s1).toBe(false);
+      emitGatewayEvent('connected', undefined);
+      const currentSend = gateway.sendMessage('s1', 'After reconnect');
+      old.resolve(message('old'));
+      await oldSend;
+      expect(sessionStore.sendingMap.s1).toBe(true);
+      current.resolve(message('current'));
+      await currentSend;
+      expect(sessionStore.sendingMap.s1).toBe(false);
+    });
+
+    it.each(['remove', 'destroy'])('clears pending activity on %s and ignores late replies', async (operation) => {
+      useAuthoritativeEngine();
+      await gateway.init({});
+      const request = deferred<UnifiedMessage>();
+      mockGatewayClient.sendMessage.mockReturnValueOnce(request.promise);
+      const sending = gateway.sendMessage('s1', 'Continue');
+      if (operation === 'remove') emitGatewayEvent('session.removed', { sessionId: 's1' });
+      else gateway.destroy();
+      expect(sessionStore.sendingMap.s1).toBe(false);
+      request.resolve(message('late'));
+      await sending;
+      expect(sessionStore.sendingMap.s1).toBe(false);
+    });
+
+    it('keeps rejected cancellation pending and releases only submissions preceding a successful cancel', async () => {
+      useAuthoritativeEngine();
+      await gateway.init({});
+      const original = deferred<UnifiedMessage>();
+      const next = deferred<UnifiedMessage>();
+      const cancellation = deferred<void>();
+      mockGatewayClient.sendMessage.mockReturnValueOnce(original.promise).mockReturnValueOnce(next.promise);
+      mockGatewayClient.cancelMessage.mockRejectedValueOnce(new Error('Cancel failed')).mockReturnValueOnce(cancellation.promise);
+      const originalSend = gateway.sendMessage('s1', 'Original');
+      await expect(gateway.cancelMessage('s1')).rejects.toThrow('Cancel failed');
+      expect(sessionStore.sendingMap.s1).toBe(true);
+      const cancel = gateway.cancelMessage('s1');
+      const nextSend = gateway.sendMessage('s1', 'After cancel was requested');
+      cancellation.resolve();
+      await cancel;
+      expect(sessionStore.sendingMap.s1).toBe(true);
+      original.resolve(message('cancelled-original'));
+      await originalSend;
+      expect(sessionStore.sendingMap.s1).toBe(true);
+      next.resolve(message('next'));
+      await nextSend;
+      expect(sessionStore.sendingMap.s1).toBe(false);
     });
   });
 

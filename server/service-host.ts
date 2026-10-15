@@ -1,5 +1,6 @@
 import { randomBytes } from "node:crypto";
 import os from "node:os";
+import { join } from "node:path";
 import { runtimeHost } from "#runtime-host";
 import packageJson from "../package.json";
 import { ServiceRuntime } from "../shared/service-runtime";
@@ -13,7 +14,10 @@ import { OpenCodeAdapter } from "../electron/main/engines/opencode";
 import { CopilotSdkAdapter } from "../electron/main/engines/copilot";
 import { ClaudeCodeAdapter } from "../electron/main/engines/claude";
 import { CodexAdapter } from "../electron/main/engines/codex";
-import { createCodexDesktopSharing } from "../electron/main/engines/codex/desktop-sharing";
+import type { EngineAdapter } from "../electron/main/engines/engine-adapter";
+import { UnifiedCodexAdapter } from "../electron/main/engines/codex/unified-adapter";
+import { codexSettingsMigration } from "../electron/main/engines/codex/settings-migration";
+import { canonicalCodexThreadId, codexConversationIdentity } from "../electron/main/engines/codex/conversation-migration";
 import { CodexDesktopCatalog } from "../electron/main/engines/codex/desktop-catalog";
 import { getOrCreateCodexCatalogEnrollment } from "../electron/main/engines/codex/desktop-catalog-enrollment";
 import { ChannelManager } from "../electron/main/channels/channel-manager";
@@ -39,6 +43,13 @@ import { tunnelManager } from "../electron/main/services/tunnel-manager";
 import { getQrCode, pollQrStatus } from "../electron/main/channels/weixin-ilink/weixin-ilink-qr-flow";
 import { getLogFilePath, getFileLogLevel, setFileLogLevel, loadSettings, saveSettings, mainLog } from "../electron/main/services/logger";
 
+export interface ServiceHostOptions {
+  /** Explicit embedding seam; normal hosts continue to use all production engines. */
+  engines?: ReadonlyArray<readonly [name: string, adapter: EngineAdapter]>;
+  listenHost?: string;
+  stopEngines?: () => Promise<void>;
+}
+
 /** Construct one host per process, after acquiring ownership of its data directory. */
 export function createServiceHost(
   webMode: "static" | "dev-proxy",
@@ -50,6 +61,7 @@ export function createServiceHost(
     homePath: os.homedir(),
     isPackaged: runtimeHost.isPackaged,
   }),
+  options: ServiceHostOptions = {},
 ) {
   const engineManager = new EngineManager();
   const internalGatewayToken = randomBytes(32).toString("hex");
@@ -60,43 +72,42 @@ export function createServiceHost(
     requestValidator: req => remoteAccessManager.isRequestAllowed(req, true),
   });
   const unsubscribePolicy = remoteAccessManager.subscribe(() => gatewayServer.revalidateClients());
-  const codexAdapter = new CodexAdapter();
-  // Opt-in until the private Desktop protocol has a supported compatibility contract.
-  const desktopSharingEnabled = process.env.CODEMUX_CODEX_DESKTOP_BRIDGE !== undefined
+  const codexHome = process.env.CODEX_HOME ?? join(os.homedir(), ".codex");
+  const enrollment = options.engines ? undefined : getOrCreateCodexCatalogEnrollment(runtimeHost.paths.userDataPath, codexHome);
+  const metadata = options.engines ? undefined : new CodexAdapter();
+  const knownThreadIds = () => !enrollment ? [] : conversationStore.list({ engineType: "codex" })
+    .filter(conversation => conversation.engineSessionId && codexConversationIdentity(conversation, { ...enrollment, codexHome })
+      === JSON.stringify([enrollment.sourceId, canonicalCodexThreadId(conversation.engineSessionId)]))
+    .map(conversation => canonicalCodexThreadId(conversation.engineSessionId!));
+  const sharingEnabled = process.env.CODEMUX_CODEX_DESKTOP_BRIDGE !== undefined
     ? process.env.CODEMUX_CODEX_DESKTOP_BRIDGE === "1"
     : loadSettings().codexDesktopBridgeEnabled === true;
-  const codexDesktopSharing = desktopSharingEnabled
-    ? createCodexDesktopSharing({
-      listCandidates: (limit) => codexAdapter.listHistoricalSessions(limit),
-      listModelCatalog: async () => { await codexAdapter.start(); return codexAdapter.listModels(); },
-      renameStoredThread: (threadId, title) => codexAdapter.renameStoredThread(threadId, title),
-      readStoredThread: (threadId) => codexAdapter.readStoredThread(threadId, { activeOnly: true }),
-      archiveStoredThread: (threadId) => codexAdapter.archiveStoredThread(threadId),
-      unarchiveStoredThread: (threadId) => codexAdapter.unarchiveStoredThread(threadId),
-      catalogFactory: () => {
-        const enrollment = getOrCreateCodexCatalogEnrollment(runtimeHost.paths.userDataPath);
-        return new CodexDesktopCatalog({
-          ...enrollment,
-          client: codexAdapter.createDesktopCatalogClient(),
-          previouslyAdmittedThreadIds: conversationStore.list({ engineType: "codex-desktop" })
-            .filter((conversation) => conversation.catalogSourceId === enrollment.sourceId && conversation.engineSessionId)
-            .map((conversation) => conversation.engineSessionId!),
-          onError: (error) => mainLog.warn("Codex catalog refresh failed:", error.message),
-        });
-      },
-    })
-    : null;
-  const engines = [
+  const codex = metadata && enrollment ? new UnifiedCodexAdapter({
+    sharingEnabled, codexHome, catalogSourceId: enrollment.sourceId, knownThreadIds,
+    persistSharingEnabled: async enabled => { await saveSettings({ codexDesktopBridgeEnabled: enabled }); },
+    listCandidates: limit => metadata.listHistoricalSessions(limit),
+    readStoredThread: id => metadata.readStoredThread(id, { activeOnly: true }),
+    renameStoredThread: (id, title) => metadata.renameStoredThread(id, title),
+    archiveStoredThread: id => metadata.archiveStoredThread(id),
+    catalogFactory: () => new CodexDesktopCatalog({
+      ...enrollment, client: metadata.createDesktopCatalogClient(),
+      previouslyAdmittedThreadIds: knownThreadIds(),
+      onError: error => mainLog.warn("Codex catalog refresh failed:", error.message),
+    }),
+    onError: (_id, error) => mainLog.warn("Codex session synchronization failed:", error.message),
+  }) : undefined;
+  const engines = options.engines ?? [
     ["OpenCode", new OpenCodeAdapter({ port: OPENCODE_PORT })],
     ["Copilot", new CopilotSdkAdapter()],
     ["Claude", new ClaudeCodeAdapter()],
-    ["Codex", codexAdapter],
-    ...(codexDesktopSharing ? [["Codex Desktop", codexDesktopSharing.adapter] as const] : []),
+    ["Codex", codex!],
   ] as const;
   for (const [, adapter] of engines) engineManager.registerAdapter(adapter);
 
   const channelManager = new ChannelManager();
-  const webhookServer = new WebhookServer(WEBHOOK_PORT);
+  const webhookServer = options.listenHost === undefined
+    ? new WebhookServer(WEBHOOK_PORT)
+    : new WebhookServer(WEBHOOK_PORT, options.listenHost);
   channelManager.setWebhookServer(webhookServer);
   channelManager.registerAdapter(new FeishuAdapter());
   channelManager.registerAdapter(new DingTalkAdapter());
@@ -107,12 +118,18 @@ export function createServiceHost(
 
   const runtime = new ServiceRuntime({
     webMode,
+    listenHost: options.listenHost,
     webPort: WEB_PORT,
     gatewayPort: GATEWAY_PORT,
     internalGatewayToken,
     ensureDefaultWorkspace,
     deviceStore,
     conversationStore,
+    beforeEngineInitialize: enrollment ? async () => {
+      const patch = codexSettingsMigration(loadSettings());
+      if (patch) await saveSettings(patch);
+      await conversationStore.migrateCodexConversations({ sourceId: enrollment.sourceId, codexHome });
+    } : undefined,
     engineManager,
     engines,
     scheduledTaskService,
@@ -175,8 +192,8 @@ export function createServiceHost(
       try {
         await runtime.stop();
       } finally {
-        // The shared adapter detaches followers; the service also owns a private runtime.
-        await codexDesktopSharing?.stop();
+        await metadata?.stop();
+        await options.stopEngines?.();
       }
       // Stop-time engine events may enqueue their final persistence writes.
       await engineManager.flushPendingState();

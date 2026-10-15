@@ -45,8 +45,11 @@ import {
   type CodexAsyncQuestion,
 } from "./async-questions";
 import type { CodexDesktopOwnerRuntime, CodexOwnerRequestMethod, NativeOwnedThreadState } from "./desktop-owner";
+import { resolveDesktopQueuedPermissions } from "./desktop-queued-permissions";
 import { DESKTOP_CATALOG_METHODS, DESKTOP_CATALOG_NOTIFICATION_METHODS, type DesktopCatalogClient } from "./desktop-catalog";
 import { verifyCodexRolloutPath } from "./desktop-rollout-path";
+import { CodexRolloutHistory } from "./rollout-history";
+import { normalizeCodexRuntimeVersion } from "./rollout-reader";
 import {
   CODEX_FALLBACK_MODEL,
   CODEX_MODES,
@@ -241,10 +244,17 @@ interface CodexReasoningItemState {
 export type StoredCodexThreadAvailability = "active" | "archived" | "missing";
 export type StoredCodexThreadMetadata = Record<string, unknown> & { id: string };
 
+export interface CodexAdapterOptions {
+  /** Pin a verified executable for a version-specific execution pool. */
+  cliPath?: string;
+  cliVersion?: string;
+}
+
 export class CodexAdapter extends EngineAdapter {
   readonly engineType: EngineType = "codex";
   private readonly desktopCatalogAdmissions = new Map<string, number>();
   private readonly desktopRuntimeAdmissions = new Set<string>();
+  private readonly rolloutHistory = new CodexRolloutHistory();
 
   private client: CodexJsonRpcClient | null = null;
   private status: EngineStatus = "stopped";
@@ -299,6 +309,10 @@ export class CodexAdapter extends EngineAdapter {
 
   private cleanupIntervalId: ReturnType<typeof setInterval> | null = null;
 
+  constructor(private readonly options: CodexAdapterOptions = {}) {
+    super();
+  }
+
   async start(): Promise<void> {
     if (this.status === "running" && this.client?.running) return;
     if (this.startPromise) return this.startPromise;
@@ -314,12 +328,15 @@ export class CodexAdapter extends EngineAdapter {
     this.setStatus("starting");
 
     try {
-      this.cliPath = resolveCodexCliPath();
+      this.cliPath = this.options.cliPath ?? resolveCodexCliPath();
       if (!this.cliPath) {
         throw new Error("Codex CLI not found. Install `codex` and ensure it is in PATH.");
       }
 
       this.version = resolveCodexCliVersion(this.cliPath);
+      if (this.options.cliVersion && normalizeCodexRuntimeVersion(this.version) !== this.options.cliVersion) {
+        throw Object.assign(new Error(`The selected Codex executable changed. CLI ${this.options.cliVersion} is required; restore that version before continuing this conversation.`), { code: "CODEX_RUNTIME_CHANGED" });
+      }
 
       await this.spawnAndInitialize();
       await this.refreshRuntimeMetadata();
@@ -330,7 +347,11 @@ export class CodexAdapter extends EngineAdapter {
       const message = error instanceof Error && error.message
         ? error.message
         : "Failed to start Codex adapter.";
-      throw this.failStart(message);
+      const failure = this.failStart(message);
+      if (error instanceof Error && "code" in error && error.code === "CODEX_RUNTIME_CHANGED") {
+        Object.assign(failure, { code: error.code });
+      }
+      throw failure;
     }
   }
 
@@ -423,6 +444,12 @@ export class CodexAdapter extends EngineAdapter {
       request: (sessionId, method, params) => this.requestDesktopOwner(sessionId, method, params),
       respond: (sessionId, requestId, result) => this.respondDesktopOwner(sessionId, requestId, result),
       updateSettings: (sessionId, settings, options) => this.updateDesktopOwnerSettings(sessionId, settings, options),
+      resolveQueuedPermissions: async (sessionId, message) => {
+        this.requireDesktopOwnerThread(sessionId);
+        const cwd = message.cwd ?? this.sessionDirectories.get(sessionId) ?? "";
+        const response = asRecord(await this.client!.request("config/read", { cwd, includeLayers: false }));
+        return resolveDesktopQueuedPermissions(message, asRecord(response.config), cwd);
+      },
       subscribe: (listener) => {
         this.desktopOwnerListeners.add(listener);
         return () => {
@@ -453,7 +480,8 @@ export class CodexAdapter extends EngineAdapter {
       ...previous, model, effort, cwd: directory,
       serviceTier: this.sessionServiceTiers.get(sessionId) ?? previous.serviceTier ?? null,
       approvalPolicy: previous.approvalPolicy ?? clampApprovalPolicy(modeToApprovalPolicy(mode), this.configRequirements),
-      sandboxPolicy: previous.sandboxPolicy ?? clampSandboxPolicy(modeToSandboxPolicy(mode, directory), this.configRequirements),
+      sandboxPolicy: typeof previous.permissions === "string" ? null
+        : previous.sandboxPolicy ?? clampSandboxPolicy(modeToSandboxPolicy(mode, directory), this.configRequirements),
       collaborationMode: previous.collaborationMode ?? {
         mode, settings: { model, reasoning_effort: effort, developer_instructions: null },
       },
@@ -471,8 +499,9 @@ export class CodexAdapter extends EngineAdapter {
       if (!(error instanceof Error) || !error.message.includes("is not materialized yet; includeTurns is unavailable before first user message")) throw error;
       response = asRecord(await this.client!.request("thread/read", { threadId, includeTurns: false }));
     }
-    const thread = asRecord(response.thread);
+    let thread = asRecord(response.thread);
     if (thread.id !== threadId) throw new Error("Native Codex thread/read returned a different thread");
+    thread = await this.rolloutHistory.enrich(threadId, thread);
     const settings = this.desktopOwnerSettings(sessionId);
     const buffer = this.messageBuffers.get(sessionId);
     const completions = buffer ? this.itemCompletionTimes.get(buffer) : undefined;
@@ -990,7 +1019,7 @@ export class CodexAdapter extends EngineAdapter {
     if (thread.id !== threadId) throw new Error("Native Codex history returned a different thread");
     const availability = await this.storedThreadAvailability(threadId, thread.cwd);
     checkAvailability(availability);
-    return { thread: thread as StoredCodexThreadMetadata, archived: availability === "archived" };
+    return { thread: await this.rolloutHistory.enrich(threadId, thread) as StoredCodexThreadMetadata, archived: availability === "archived" };
   }
 
   /** Archives only native storage; never fabricates an IPC fact to release an owner. */
@@ -1461,7 +1490,7 @@ export class CodexAdapter extends EngineAdapter {
     sessionId: string,
     commandName: string,
     args: string,
-    options?: { mode?: string; modelId?: string; reasoningEffort?: ReasoningEffort | null; serviceTier?: CodexServiceTier | null; directory?: string },
+    options?: CodexMessageOptions,
   ): Promise<CommandInvokeResult> {
     const directory = normalizeDirectory(
       options?.directory ??

@@ -11,6 +11,24 @@ export type SessionActivityStatus = "idle" | "running" | "completed" | "waiting"
 
 export type EngineStatus = "stopped" | "starting" | "running" | "error";
 
+export interface EngineSharingState {
+  enabled: boolean;
+  available: boolean;
+  status: "disabled" | "connecting" | "connected" | "unavailable";
+  peerName: string;
+  error?: string;
+}
+
+export interface SessionConnectionInfo {
+  /** Known creation application, independent of the current executor. */
+  origin?: string;
+  executor?: string;
+  shared: boolean;
+  /** Live connection state; an offline history may still be safely resumable. */
+  available: boolean;
+  runtimeVersion?: string;
+}
+
 export interface EngineInfo {
   type: EngineType;
   name: string;
@@ -24,9 +42,11 @@ export interface EngineInfo {
   authMessage?: string;
   /** Error message when status is "error" */
   errorMessage?: string;
+  sessionSharing?: EngineSharingState;
 }
 
 export interface EngineCapabilities {
+  sessionSharing?: boolean;
   /** Session messages and activity are owned by a connected external client. */
   authoritativeSessionState?: boolean;
   /** Dismissing a blocking question interrupts the current turn. */
@@ -253,6 +273,7 @@ export type StepPart =
 // --- Session ---
 
 export interface UnifiedSession extends UnifiedSessionConfig {
+  connection?: SessionConnectionInfo;
   archived?: boolean;
   catalogSourceId?: string;
   catalogAvailable?: boolean;
@@ -798,6 +819,8 @@ export const GatewayRequestType = {
   // Engine
   ENGINE_LIST: "engine.list",
   ENGINE_CAPABILITIES: "engine.capabilities",
+  ENGINE_SHARING_GET: "engine.sharing.get",
+  ENGINE_SHARING_SET: "engine.sharing.set",
 
   // Session
   SESSION_LIST: "session.list",

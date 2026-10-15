@@ -53,7 +53,8 @@
     "server:ctl": "node out/server/cli.mjs",
     "postinstall": "bun scripts/prepare-native.ts",
     "build:server-app": "bun run build:server && bun run build:web",
-    "pack:server": "bun run build:server-app && bun scripts/pack-server.ts"
+    "pack:server": "bun run build:server-app && bun scripts/pack-server.ts",
+    "codex:sharing:verify": "bun scripts/codex-sharing-verify.ts"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.3.299",

@@ -1,22 +1,36 @@
-# Shared Codex Desktop conversations
+# Unified Codex sharing
 
-The **Codex Desktop (shared)** engine connects CodeMux to the local Codex
-Desktop/IDE coordination service. A conversation has one execution owner; other
-clients display that owner's state and send requests to it. ModelHub remains the
-model provider configured on the execution host. Copying session files or using
+CodeMux exposes one **Codex** engine. It can run its own native conversations
+and connect to the local Codex Desktop/IDE coordination service. Each
+conversation has one execution owner; other clients display that owner's state
+and send requests to it. The model provider and credentials remain configured
+on the execution host. Copying session files or using
 the same provider URL on another device does not establish this live connection.
 
-This integration uses a private protocol, verified against Desktop
-26.1007.30912 and the local Codex CLI 0.154.0. Method versions, snapshot revisions,
+This integration uses a private protocol inspected against Desktop
+26.1007.30912. Runtime checks have covered local Codex CLI 0.154.0 and 0.162.1;
+cross-version restoration has explicit limits described below. Method versions, snapshot revisions,
 thread identities, and response ownership are checked. Desktop upgrades require
 another compatibility check.
 
-## Enable the shared engine
+## Enable sharing
 
-Set `codexDesktopBridgeEnabled` to `true` in CodeMux's local `settings.json` and
-restart CodeMux. Alternatively, launch with `CODEMUX_CODEX_DESKTOP_BRIDGE=1`.
-An explicitly supplied environment value overrides the saved setting; `0`
-disables the bridge. The feature is disabled by default.
+Open **Settings → Engines → Codex → Share chats with Codex Desktop**. Changes
+apply immediately and persist through the running host's settings writer. The
+legacy `codexDesktopBridgeEnabled` setting and `CODEMUX_CODEX_DESKTOP_BRIDGE=1`
+startup environment variable remain supported; an explicit environment value
+still overrides the saved startup value. Sharing is disabled by default.
+
+Turning sharing off detaches the transport and leaves local execution, pending
+requests, and already accepted input with the original writer. Local chats remain
+usable without the Desktop router. Previously known external chats keep readable
+history; input requires their owner to reconnect or a verified native writer
+acquisition. Enabling sharing reuses local writers and their canonical message
+IDs. It does not start a competing process for an externally owned conversation.
+
+Settings show transport availability. Chat details distinguish known creation
+origin, the current execution client, and runtime version. Unknown origins remain
+unknown; an observed external executor is not evidence of who created a chat.
 
 In the separated runtime, the Server process owns this bridge and its catalog. Electron passes its local settings/data directory to the supervised Server; standalone Node uses its selected data directory. The bridge uses local Node IPC and adds no Electron or display dependency to the Server. Stopping CodeMux detaches external Desktop conversations and stops only execution processes owned by CodeMux.
 
@@ -28,22 +42,57 @@ native project, and previously admitted IDs remain enrolled across restarts.
 Legacy project assignments are neither read nor migrated. Older conversations
 can still be attached manually.
 
-To attach an older Desktop-owned conversation, open **Settings**, find **Codex Desktop
-(shared)**, and use **Import History**. Keep the original conversation available
+To attach an older Desktop-owned conversation, open **Settings → Engines → Codex**
+and use **Import History**. Keep the original conversation available
 in Desktop for live input. The picker reads a bounded native catalog without
 per-thread owner discovery, subscriptions, or resumption. Opening a selected
 conversation follows its live owner when available; otherwise its stored history
 can be read without starting another runtime.
 
-New sessions created with the shared engine run through a dedicated CodeMux
+New sessions created in CodeMux run through a CodeMux-owned
 Codex runtime. They retain the native thread UUID and are advertised to compatible
-IPC followers. Their saved metadata includes `codexDesktopOwner: "codemux"`.
-Restoring a marked session requires the original thread; a failed restore must
+IPC followers when sharing is enabled. Their saved metadata records the CodeMux
+origin and runtime version; legacy `codexDesktopOwner: "codemux"` markers remain
+recognized. Restoring a known session requires the original thread; a failed restore must
 not create a replacement. If another client already owns that thread, CodeMux
 follows that owner instead of starting a competing execution.
 
-The normal **Codex** engine retains its independent app-server behavior. Existing
-normal-engine sessions are not automatically converted into shared sessions.
+## Existing conversations and settings
+
+Startup migrates legacy `codex-desktop` bindings into `codex` before engine routing
+or channels start. Existing conversation IDs, history, archive/removal policy,
+native project identity, and catalog source identity are retained. Duplicate
+projections of the same native thread in the same Codex home use one visible row;
+old IDs remain persistent aliases so existing IM bindings continue to route.
+Removing an alias only detaches that old binding. Original index and projection
+files are backed up under `conversations/migrations/codex-unified-v1` before the
+new index is published. Different homes/sources are never merged by UUID alone.
+
+The previously preferred Codex variant supplies new-chat defaults; legacy settings
+keys remain as recovery data. Existing chats retain their own native settings.
+Frontend rendering uses only unified capabilities and connection metadata.
+
+## Runtime compatibility and history
+
+Existing conversations use the exact CLI version recorded in their verified native
+rollout metadata. CodeMux searches installed executables and retained standalone
+releases; it does not download another version, rewrite global configuration, or
+remove encrypted history. If the original version is unavailable, history remains
+readable and explicit input returns an actionable compatibility error.
+
+New conversations prefer the executable of a currently running local Desktop on
+macOS when it can be verified, then fall back to the installed CLI. Runtime pools
+retain their selected path/version and refuse an executable changed in place.
+The prototype demonstrated that this environment's ModelHub conversations failed
+when moving encrypted history between 0.154.0 and 0.162.1 in either direction,
+while both same-version controls passed. Exact matching avoids that known failure;
+it is not a claim of universal provider or future-version compatibility.
+
+Canonical message projection is shared by local and followed sessions. Public
+function/custom tool calls missing from native `thread/read` are reconciled from
+that same thread's validated rollout, preserving call IDs, ordering, arguments
+and outputs. Native replacements and removed turns win; encrypted reasoning is
+never exported as display content.
 
 ## New conversation catalog
 
@@ -187,7 +236,20 @@ ChatGPT mobile Remote experience are outside this integration's acceptance.
 An authenticated browser route and a working local shared engine do not establish
 those mobile capabilities.
 
-## Local validation
+## Production validation
+
+```sh
+bun run codex:sharing:verify --write --questions
+```
+
+This opt-in run creates a dedicated native conversation and checks independent
+execution, active-turn sharing, both input directions, native composer queues,
+questions, cancellation, reconnect, and disabling sharing during execution. The
+read-only default probes only the existing router. Native history is retained;
+no other client is stopped. [Prototype evidence](codex-sharing-prototype.md)
+records the official Desktop/UI round trip and version-control findings.
+
+## Additional local validation
 
 Use a dedicated test conversation. Write-enabled checks append test turns and
 can temporarily change that conversation's settings. They print summary metadata
@@ -268,7 +330,7 @@ bounded no-tools echo prompts and never changes project records.
 file; stdout contains only the local URL and file path. Cleanup confirms that
 every test-owned native process exits.
 
-## Validation and compatibility limits
+## Historical validation and compatibility limits
 
 Local acceptance on 2026-10-12 and 2026-10-13 used ModelHub, Codex Desktop
 26.1007.30912, and Codex CLI 0.154.0. The installed Apple Silicon preview passed

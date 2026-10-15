@@ -35,6 +35,7 @@ import {
   type SessionConfigUpdateRequest,
 } from "../../../src/types/unified";
 import { channelLog } from "../services/logger";
+import { canonicalCodexEngineType } from "../engines/codex/conversation-migration";
 
 // --- Event types ---
 
@@ -69,6 +70,40 @@ const DEFAULT_TIMEOUT = 120_000; // 2 min
 const RECONNECT_DELAYS = [500, 1000, 2000, 5000];
 
 type EventHandler = (...args: any[]) => void;
+
+function notificationRecord(value: unknown): Record<string, unknown> | undefined {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown> : undefined;
+}
+
+function notificationSessionId(payload: Record<string, unknown>): string | undefined {
+  return [payload.sessionId, notificationRecord(payload.session)?.id,
+    ...["message", "part", "permission", "question"].map(key => notificationRecord(payload[key])?.sessionId)]
+    .find((id): id is string => typeof id === "string" && id.trim().length > 0);
+}
+
+/** Rewrite only session references; native message, part, and interaction IDs stay stable. */
+function aliasNotificationPayload(payload: Record<string, unknown>, canonicalId: string, aliasId: string): Record<string, unknown> {
+  const rewritten = { ...payload };
+  if (rewritten.sessionId === canonicalId) rewritten.sessionId = aliasId;
+  for (const key of ["message", "part", "permission", "question", "session"]) {
+    const nested = notificationRecord(payload[key]);
+    if (!nested) continue;
+    rewritten[key] = aliasNotificationPayload(nested, canonicalId, aliasId);
+    if (key === "session" && nested.id === canonicalId) {
+      (rewritten[key] as Record<string, unknown>).id = aliasId;
+    }
+  }
+  for (const key of ["parts", "inlineAssets"]) {
+    const parts = payload[key];
+    if (!Array.isArray(parts)) continue;
+    rewritten[key] = parts.map(part => {
+      const nested = notificationRecord(part);
+      return nested ? aliasNotificationPayload(nested, canonicalId, aliasId) : part;
+    });
+  }
+  return rewritten;
+}
 
 // --- Client ---
 
@@ -218,9 +253,17 @@ export class GatewayWsClient {
         }
       }
     } else {
-      // Push notification
+      // Legacy channel bindings retain their conversation IDs after consolidation.
+      // Expand here so browser clients still receive one canonical notification.
       const notif = msg as GatewayNotification;
-      this.emit(notif.type as keyof GatewayWsClientEvents, notif.payload as any);
+      const payload = notificationRecord(notif.payload);
+      const canonicalId = payload && notificationSessionId(payload);
+      const aliases = canonicalId && Array.isArray(payload?.conversationAliases)
+        ? [...new Set(payload.conversationAliases.filter((id): id is string =>
+          typeof id === "string" && id.trim().length > 0 && id !== canonicalId))]
+        : [];
+      const deliveries = [notif.payload, ...aliases.map(alias => aliasNotificationPayload(payload!, canonicalId!, alias))];
+      for (const delivery of deliveries) this.emit(notif.type as keyof GatewayWsClientEvents, delivery as any);
     }
   }
 
@@ -334,7 +377,8 @@ export class GatewayWsClient {
 
   async listModes(engineType: EngineType): Promise<AgentMode[]> {
     const engines = await this.listEngines();
-    return engines.find((engine) => engine.type === engineType)?.capabilities.availableModes ?? [];
+    const canonicalType = canonicalCodexEngineType(engineType);
+    return engines.find((engine) => engine.type === canonicalType)?.capabilities.availableModes ?? [];
   }
 
   setMode(req: ModeSetRequest): Promise<void> {

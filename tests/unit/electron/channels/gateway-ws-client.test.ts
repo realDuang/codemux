@@ -664,6 +664,131 @@ describe("GatewayWsClient", () => {
 
       expect(handler).toHaveBeenCalledWith(statusData);
     });
+
+    it("routes canonical and legacy message snapshots without changing native identities or nested tool input", async () => {
+      const ws = await connectClient();
+      const handler = vi.fn();
+      client.on("message.updated", handler);
+      const payload = {
+        sessionId: "canonical",
+        conversationAliases: ["legacy-group", "legacy-p2p", "canonical", "legacy-group", "", "  ", null, 42],
+        message: {
+          id: "native-message", sessionId: "canonical", role: "assistant", time: { created: 1, completed: 2 },
+          parts: [{
+            id: "native-part", messageId: "native-message", sessionId: "canonical", type: "text", text: "Done",
+            inlineAssets: [{ id: "image-part", messageId: "native-message", sessionId: "canonical", type: "file", mime: "image/png", url: "data:image/png;base64,AA==" }],
+          }, {
+            id: "tool-part", messageId: "native-message", sessionId: "canonical", type: "tool",
+            state: { input: { sessionId: "canonical" } },
+          }, { id: "other-part", messageId: "other-message", sessionId: "other-conversation", type: "text", text: "Separate" }],
+        },
+      };
+
+      ws.simulateMessage({ type: "message.updated", payload });
+
+      expect(handler).toHaveBeenCalledTimes(3);
+      expect(handler.mock.calls[0][0]).toEqual(payload);
+      expect(handler.mock.calls.map(([data]) => data.sessionId)).toEqual(["canonical", "legacy-group", "legacy-p2p"]);
+      for (const [data] of handler.mock.calls) {
+        expect(data.message).toMatchObject({ id: "native-message", sessionId: data.sessionId });
+        expect(data.message.parts[0]).toMatchObject({
+          id: "native-part", messageId: "native-message", sessionId: data.sessionId,
+          inlineAssets: [{ id: "image-part", messageId: "native-message", sessionId: data.sessionId, type: "file", mime: "image/png", url: "data:image/png;base64,AA==" }],
+        });
+        expect(data.message.parts[1]).toMatchObject({
+          id: "tool-part", messageId: "native-message", sessionId: data.sessionId,
+          state: { input: { sessionId: "canonical" } },
+        });
+        expect(data.message.parts[2].sessionId).toBe("other-conversation");
+      }
+      expect(handler.mock.calls[0][0].message.parts[0].sessionId).toBe("canonical");
+    });
+
+    it.each([
+      { type: "message.part.updated" as const, key: "part", idField: "sessionId", item: { id: "part-id", messageId: "message-id", sessionId: "canonical", type: "text", text: "Hello" } },
+      { type: "message.updated" as const, key: "message", idField: "sessionId", item: { id: "message-id", sessionId: "canonical", parts: [], time: { created: 1 } } },
+      { type: "session.updated" as const, key: "session", idField: "id", item: { id: "canonical", engineType: "codex", title: "Shared" } },
+      { type: "session.created" as const, key: "session", idField: "id", item: { id: "canonical", engineType: "codex", title: "Shared" } },
+      { type: "permission.asked" as const, key: "permission", idField: "sessionId", item: { id: "permission-id", sessionId: "canonical", options: [{ id: "allow", label: "Allow" }] } },
+      { type: "question.asked" as const, key: "question", idField: "sessionId", item: { id: "question-id", sessionId: "canonical", questions: [{ question: "Continue?", options: [] }] } },
+    ])("routes $type using its nested conversation reference", async ({ type, key, idField, item }) => {
+      const ws = await connectClient();
+      const handler = vi.fn();
+      client.on(type, handler);
+      const payload = { [key]: item, conversationAliases: ["legacy"] };
+
+      ws.simulateMessage({ type, payload });
+
+      expect(handler).toHaveBeenCalledTimes(2);
+      expect(handler.mock.calls[0][0]).toEqual(payload);
+      expect(handler.mock.calls[1][0]).toEqual({ ...payload, [key]: { ...item, [idField]: "legacy" } });
+    });
+
+    it.each([undefined, null, "legacy", [], ["canonical", "", "  ", null, 42]])(
+      "delivers unchanged payload once when alias metadata is absent or invalid (%j)", async conversationAliases => {
+        const ws = await connectClient();
+        const handler = vi.fn();
+        client.on("message.part.updated", handler);
+        const payload = {
+          sessionId: "canonical", ...(conversationAliases !== undefined ? { conversationAliases } : {}),
+          part: { id: "part", messageId: "message", sessionId: "canonical", type: "text", text: "Hello" },
+        };
+
+        ws.simulateMessage({ type: "message.part.updated", payload });
+
+        expect(handler).toHaveBeenCalledExactlyOnceWith(payload);
+      },
+    );
+
+    it("does not expand alias metadata without a conversation reference", async () => {
+      const ws = await connectClient();
+      const handler = vi.fn();
+      client.on("engine.status.changed", handler);
+      const payload = { engineType: "claude", status: "running", conversationAliases: ["legacy"] };
+
+      ws.simulateMessage({ type: "engine.status.changed", payload });
+
+      expect(handler).toHaveBeenCalledExactlyOnceWith(payload);
+    });
+
+    it("resolves aliased request results once without emitting notifications", async () => {
+      const ws = await connectClient();
+      const handler = vi.fn();
+      client.on("message.updated", handler);
+      const pending = client.sendMessage({ sessionId: "legacy", content: [{ type: "text", text: "Hello" }] });
+      const { requestId } = JSON.parse(ws.send.mock.calls[0][0]);
+      const payload = {
+        id: "message-id", sessionId: "canonical", role: "assistant", time: { created: 1 }, parts: [],
+        conversationAliases: ["legacy"],
+      };
+
+      ws.simulateMessage({ type: "response", requestId, payload });
+
+      await expect(pending).resolves.toEqual(payload);
+      expect(handler).not.toHaveBeenCalled();
+      expect(ws.send).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe("listModes", () => {
+    it.each(["codex", "codex-desktop", "claude", "opencode", "copilot"] as const)(
+      "finds the available modes for %s through the canonical engine list", async engineType => {
+        const modes = [{ id: "agent", label: "Agent", description: "" }];
+        const canonicalType = engineType === "codex-desktop" ? "codex" : engineType;
+        const listEngines = vi.spyOn(client, "listEngines").mockResolvedValue([
+          { type: canonicalType, capabilities: { availableModes: modes } } as Awaited<ReturnType<GatewayWsClient["listEngines"]>>[number],
+        ]);
+
+        await expect(client.listModes(engineType)).resolves.toEqual(modes);
+        expect(listEngines).toHaveBeenCalledTimes(1);
+      },
+    );
+
+    it("returns an empty list when the engine is unavailable", async () => {
+      vi.spyOn(client, "listEngines").mockResolvedValue([]);
+
+      await expect(client.listModes("codex-desktop")).resolves.toEqual([]);
+    });
   });
 
   // ========================================================================

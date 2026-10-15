@@ -146,7 +146,7 @@ class ProductionServer {
     return this.server;
   }
 
-  async start(port: number = WEB_PORT): Promise<number> {
+  async start(port: number = WEB_PORT, listenHost = "0.0.0.0"): Promise<number> {
     if (this.server) {
       return this.port;
     }
@@ -169,14 +169,14 @@ class ProductionServer {
         if (err.code === "EADDRINUSE") {
           prodServerLog.info(`Port ${this.port} in use, trying ${this.port + 1}`);
           this.port++;
-          this.server?.listen(this.port, "0.0.0.0");
+          this.server?.listen(this.port, listenHost);
         } else {
           reject(err);
         }
       });
 
-      this.server.listen(this.port, "0.0.0.0", () => {
-        prodServerLog.info(`Started on http://0.0.0.0:${this.port}`);
+      this.server.listen(this.port, listenHost, () => {
+        prodServerLog.info(`Started on http://${listenHost}:${this.port}`);
         resolve(this.port);
       });
     });

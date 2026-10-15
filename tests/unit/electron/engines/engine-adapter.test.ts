@@ -2,26 +2,14 @@
 // Unit Tests — EngineAdapter base class
 // ============================================================================
 
-import { describe, it, expect } from "vitest";
-import { EngineAdapter } from "../../../../electron/main/engines/engine-adapter";
+import { describe, it, expect, vi } from "vitest";
+import { MockEngineAdapter } from "../../../../electron/main/engines/mock-adapter";
 
-// Minimal concrete subclass that exposes the protected static filterPending
-// and the default pending getter returns.
-class TestAdapter extends EngineAdapter {
-  getInfo() {
-    return { type: "opencode" as const, name: "t", available: true };
+// Use the in-memory engine to exercise inherited defaults without a CLI or I/O.
+class TestAdapter extends MockEngineAdapter {
+  constructor(engineType = "opencode") {
+    super({ engineType });
   }
-  async listModels() { return []; }
-  async createSession() { return "" as any; }
-  async listSessions() { return []; }
-  async deleteSession() { /* noop */ }
-  async sendMessage() { /* noop */ }
-  async cancelMessage() { /* noop */ }
-  async loadMessages() { return []; }
-  async replyPermission() { /* noop */ }
-  async replyQuestion() { /* noop */ }
-  async rejectQuestion() { /* noop */ }
-  async listProjects() { return []; }
 
   static callFilterPending<V, R>(
     map: Map<string, V>,
@@ -29,12 +17,105 @@ class TestAdapter extends EngineAdapter {
     project: (v: V) => R,
     getSessionId: (v: V) => string | undefined,
   ): R[] {
-    // @ts-expect-error -- exposing protected static for test
-    return EngineAdapter.filterPending(map, sessionId, project, getSessionId);
+    return this.filterPending(map, sessionId, project, getSessionId);
   }
 }
 
 describe("EngineAdapter", () => {
+  describe("getSessionSharing", () => {
+    it.each(["opencode", "copilot", "claude"])("does not advertise sharing for %s without an adapter implementation", (engineType) => {
+      const adapter = new TestAdapter(engineType);
+      expect(adapter.getSessionSharing()).toBeUndefined();
+      expect(adapter.getInfo().capabilities.sessionSharing).toBeUndefined();
+    });
+  });
+
+  describe("setSessionSharing", () => {
+    it.each([true, false])("rejects the unsupported switch %s without changing existing sessions", async (enabled) => {
+      const adapter = new TestAdapter();
+      const session = await adapter.createSession("/existing-project");
+      const before = structuredClone(session);
+      const stopped = vi.spyOn(adapter, "stop");
+      const removed = vi.spyOn(adapter, "deleteSession");
+      const updated = vi.fn();
+      adapter.on("session.updated", updated);
+
+      await expect(adapter.setSessionSharing(enabled)).rejects.toThrow("This engine does not support session sharing.");
+
+      expect(await adapter.getSession(session.id)).toEqual(before);
+      expect(adapter.getSessionSharing()).toBeUndefined();
+      expect(stopped).not.toHaveBeenCalled();
+      expect(removed).not.toHaveBeenCalled();
+      expect(updated).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("assertSessionCompatible", () => {
+    it("leaves source interpretation and native identity to the engine implementation", async () => {
+      const adapter = new TestAdapter("claude");
+      const session = await adapter.createSession("/existing-project");
+      const meta = Object.freeze({ sourceId: "remote-provider", codexHome: "/unrelated-metadata", ccSessionId: "original-id" });
+
+      expect(() => adapter.assertSessionCompatible(session.id, meta)).not.toThrow();
+      expect(() => adapter.assertSessionCompatible(session.id)).not.toThrow();
+      expect(meta).toEqual({ sourceId: "remote-provider", codexHome: "/unrelated-metadata", ccSessionId: "original-id" });
+      expect(await adapter.getSession(session.id)).toBe(session);
+    });
+  });
+
+  describe("restoreSession", () => {
+    it("returns the original session without changing archive state or creating a replacement", async () => {
+      const adapter = new TestAdapter();
+      const session = await adapter.createSession("/original-project");
+      session.archived = true;
+      session.engineMeta = { nativeIdentity: "original" };
+      const created = vi.spyOn(adapter, "createSession");
+
+      const restored = await adapter.restoreSession(session.id, "/different-project", { nativeIdentity: "replacement" });
+
+      expect(restored).toBe(session);
+      expect(restored).toMatchObject({ directory: "/original-project", archived: true, engineMeta: { nativeIdentity: "original" } });
+      expect(created).not.toHaveBeenCalled();
+    });
+
+    it("rejects a missing identity without silently creating another conversation", async () => {
+      const adapter = new TestAdapter();
+      const created = vi.spyOn(adapter, "createSession");
+
+      await expect(adapter.restoreSession("missing", "/project")).rejects.toThrow("The existing engine session is unavailable.");
+
+      expect(created).not.toHaveBeenCalled();
+      expect(await adapter.listSessions()).toEqual([]);
+    });
+  });
+
+  describe("removeSession", () => {
+    it("delegates to the engine's existing deletion path for the selected session only", async () => {
+      const adapter = new TestAdapter();
+      const selected = await adapter.createSession("/selected");
+      const retained = await adapter.createSession("/retained");
+      const remove = vi.spyOn(adapter, "deleteSession");
+
+      await adapter.removeSession(selected.id);
+
+      expect(remove).toHaveBeenCalledExactlyOnceWith(selected.id);
+      expect(await adapter.getSession(selected.id)).toBeNull();
+      expect(await adapter.getSession(retained.id)).toBe(retained);
+    });
+  });
+
+  describe("setSessionArchived", () => {
+    it("rejects unsupported archive mutations while preserving the existing conversation", async () => {
+      const adapter = new TestAdapter();
+      const session = await adapter.createSession("/existing-project");
+
+      await expect(adapter.setSessionArchived(session.id, true)).rejects.toThrow("This engine does not support archiving sessions.");
+
+      expect(await adapter.getSession(session.id)).toBe(session);
+      expect(session.archived).toBeUndefined();
+    });
+  });
+
   describe("default getPendingPermissions / getPendingQuestions", () => {
     it("returns empty arrays for engines without pending support", async () => {
       const a = new TestAdapter();
@@ -91,8 +172,8 @@ describe("EngineAdapter", () => {
       const out = TestAdapter.callFilterPending(
         new Map(),
         "s1",
-        (v: any) => v,
-        (v: any) => v.sessionId,
+        (v: Entry) => v,
+        (v: Entry) => v.sessionId,
       );
       expect(out).toEqual([]);
     });

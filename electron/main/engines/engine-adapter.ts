@@ -9,6 +9,7 @@ import type {
   EngineStatus,
   EngineCapabilities,
   EngineInfo,
+  EngineSharingState,
   AuthMethod,
   UnifiedSession,
   UnifiedMessage,
@@ -195,7 +196,16 @@ export abstract class EngineAdapter extends EventEmitter {
   /** Get available auth methods (e.g., Copilot login) */
   abstract getAuthMethods(): AuthMethod[];
 
+  getSessionSharing(): EngineSharingState | undefined { return undefined; }
+
+  async setSessionSharing(_enabled: boolean): Promise<EngineSharingState> {
+    throw new Error("This engine does not support session sharing.");
+  }
+
   // --- Sessions ---
+
+  /** Validate persisted source identity before a gateway uses cached native IDs. */
+  assertSessionCompatible(_sessionId: string, _meta?: Record<string, unknown>): void {}
 
   /** Check whether the adapter knows about a session (has it in runtime state). */
   hasSession(_sessionId: string): boolean {

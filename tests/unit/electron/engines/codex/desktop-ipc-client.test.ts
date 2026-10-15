@@ -96,6 +96,28 @@ async function follow(f: Fixture, hostId = "local"): Promise<void> {
   await f.client.followThread("thread", owner!.ownerClientId, hostId);
 }
 
+describe("CodexDesktopIpcClient.discoverOwner", () => {
+  it.each([undefined, "CodeMux", "VS Code", ""])("retains only an explicitly advertised application name %s", async (clientName) => {
+    const f = await fixture();
+    f.override = (message) => {
+      if (message.method !== "thread-owner-discovery") return false;
+      f.send({ type: "response", requestId: message.requestId, resultType: "success", method: message.method,
+        handledByClientId: "native-owner", result: { supportsUntrustedAppInput: false, ...(clientName === undefined ? {} : { clientName }) },
+      });
+      return true;
+    };
+    await f.client.connect();
+    const owner = await f.client.discoverOwner("thread");
+    expect(owner).toEqual({ ownerClientId: "native-owner", supportsUntrustedAppInput: false, ...(clientName ? { clientName } : {}) });
+    expect(f.client.getThreadOwner("thread")).toEqual(owner);
+    const cached = f.client.getThreadOwner("thread")!;
+    cached.clientName = "Changed by caller";
+    expect(f.client.getThreadOwner("thread")).toEqual(owner);
+    f.client.close();
+    expect(f.client.getThreadOwner("thread")).toBeUndefined();
+  });
+});
+
 describe("CodexDesktopIpcClient.connect", () => {
   it("initializes the existing router and never advertises thread ownership", async () => {
     const f = await fixture();
@@ -501,6 +523,32 @@ describe("CodexDesktopIpcClient.requestFollower", () => {
 });
 
 describe("CodexDesktopIpcClient.registerOwnedThread", () => {
+  it("accepts the native composer queue protocol and publishes authoritative queues to followers", async () => {
+    const f = await fixture();
+    await f.client.connect();
+    const queued = [{ id: "native-user", text: "Continue", context: {}, createdAt: 1 }];
+    const handleRequest = vi.fn(async () => ({ ok: true }));
+    f.client.registerOwnedThread({ conversationId: "owned", supportedMethods: ["thread-follower-set-queued-follow-ups-state"],
+      getSnapshot: () => ({ type: "snapshot", revision: 1, conversationState: { id: "owned" } }),
+      getQueuedFollowUps: () => queued, handleRequest });
+    f.send({ type: "client-discovery-request", requestId: "queue-discovery", request: {
+      method: "thread-follower-set-queued-follow-ups-state", version: 1, params: { conversationId: "owned", state: { owned: queued }, discardedMessageIds: [] },
+    } });
+    await vi.waitFor(() => expect(f.messages.at(-1)).toMatchObject({ requestId: "queue-discovery", response: { canHandle: true } }));
+    f.send({ type: "broadcast", method: "thread-stream-following-changed", version: 1, sourceClientId: "desktop-follower",
+      targetClientIds: ["codemux-client"], params: { conversationId: "owned", hostId: "local", following: true } });
+    await vi.waitFor(() => expect(f.messages.at(-1)).toMatchObject({ method: "thread-queued-followups-changed", version: 2,
+      targetClientIds: ["desktop-follower"], params: { conversationId: "owned", hostId: "local", messages: queued } }));
+    f.send({ type: "request", requestId: "native-queue", sourceClientId: "desktop-follower", targetClientId: "codemux-client",
+      method: "thread-follower-set-queued-follow-ups-state", version: 1, params: { conversationId: "owned", state: { owned: queued }, discardedMessageIds: [] } });
+    await vi.waitFor(() => expect(f.messages.at(-1)).toMatchObject({ requestId: "native-queue", resultType: "success", result: { ok: true } }));
+    expect(handleRequest).toHaveBeenCalledOnce();
+    f.client.publishOwnedQueuedFollowUps("owned", []);
+    await vi.waitFor(() => expect(f.messages.at(-1)).toMatchObject({ method: "thread-queued-followups-changed", version: 2,
+      targetClientIds: ["desktop-follower"], params: { conversationId: "owned", messages: [] } }));
+    expect(() => f.client.publishOwnedQueuedFollowUps("unowned", [])).toThrow("thread-not-owned");
+  });
+
   it("advertises only explicitly owned threads and exact supported method versions", async () => {
     const f = await fixture();
     await f.client.connect();
@@ -554,6 +602,7 @@ describe("CodexDesktopIpcClient.registerOwnedThread", () => {
     f.send({ type: "request", requestId: "discover", sourceClientId: "desktop-follower", targetClientId: "codemux-client", method: "thread-owner-discovery", version: 1,
       params: { conversationId: "owned", hostId: "local" } });
     await vi.waitFor(() => expect(f.messages.at(-1)).toMatchObject({ requestId: "discover", result: { supportsUntrustedAppInput: false } }));
+    expect(f.messages.at(-1)?.result).toEqual({ supportsUntrustedAppInput: false });
     const request = { type: "request", requestId: "start-owned", sourceClientId: "desktop-follower", targetClientId: "codemux-client", method: "thread-follower-start-turn", version: 2,
       params: { conversationId: "owned", turnStart: { request: { input: [] } } } };
     f.send(request);
@@ -564,6 +613,18 @@ describe("CodexDesktopIpcClient.registerOwnedThread", () => {
     f.send({ ...request, requestId: "failed-owned", params: { ...request.params, fail: true } });
     await vi.waitFor(() => expect(f.messages.at(-1)).toMatchObject({ requestId: "failed-owned", resultType: "error", error: "owner-request-failed" }));
     expect(JSON.stringify(f.messages)).not.toContain("PRIVATE_SOURCE_TEXT");
+  });
+
+  it("advertises a configured owner application without changing discovery routing", async () => {
+    const f = await fixture();
+    await f.client.connect();
+    f.client.registerOwnedThread({ conversationId: "owned", clientName: "CodeMux", supportedMethods: [],
+      getSnapshot: () => ({ type: "snapshot", revision: 1, conversationState: { id: "owned" } }), handleRequest: async () => ({}),
+    });
+    f.send({ type: "request", requestId: "named-owner", sourceClientId: "follower", targetClientId: "codemux-client", method: "thread-owner-discovery", version: 1,
+      params: { conversationId: "owned", hostId: "local" },
+    });
+    await vi.waitFor(() => expect(f.messages.at(-1)).toMatchObject({ requestId: "named-owner", handledByClientId: "codemux-client", result: { supportsUntrustedAppInput: false, clientName: "CodeMux" } }));
   });
 
   it("refuses to claim a followed thread and releases registrations on close", async () => {

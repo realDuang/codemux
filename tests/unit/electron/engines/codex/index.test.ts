@@ -379,6 +379,27 @@ describe("CodexAdapter", () => {
     expect((adapter as any).startPromise).toBeNull();
   });
 
+  it("keeps an explicitly selected runtime stable across startup", async () => {
+    const adapter = new CodexAdapter({ cliPath: "/verified/codex" });
+    vi.spyOn(adapter as any, "spawnAndInitialize").mockResolvedValue(undefined);
+    vi.spyOn(adapter as any, "refreshRuntimeMetadata").mockResolvedValue(undefined);
+    vi.spyOn(adapter as any, "startSessionCleanup").mockImplementation(() => undefined);
+    await adapter.start();
+    expect(resolveCodexCliPathMock).not.toHaveBeenCalled();
+    expect(resolveCodexCliVersionMock).toHaveBeenCalledWith("/verified/codex");
+    expect((adapter as any).cliPath).toBe("/verified/codex");
+    await adapter.stop();
+  });
+
+  it("refuses a replaced executable before it can resume a conversation", async () => {
+    const adapter = new CodexAdapter({ cliPath: "/verified/codex", cliVersion: "0.162.1" });
+    const spawn = vi.spyOn(adapter as any, "spawnAndInitialize").mockResolvedValue(undefined);
+    resolveCodexCliVersionMock.mockReturnValue("codex-cli 0.154.0");
+    await expect(adapter.start()).rejects.toMatchObject({ code: "CODEX_RUNTIME_CHANGED" });
+    expect(spawn).not.toHaveBeenCalled();
+    expect(adapter.getStatus()).toBe("error");
+  });
+
   it("resumes an existing Codex thread from engineMeta during session creation", async () => {
     const { adapter } = createAdapterWithClient();
     vi.spyOn(adapter, "getStoredThreadAvailability").mockResolvedValue("active");
@@ -2293,6 +2314,29 @@ describe("createCodexDesktopOwnerRuntime", () => {
     expect((await adapter.listMessages(sessionId)).map((message) => message.role)).toEqual(["user", "assistant"]);
     expect((adapter as any).activeTurnIds.has(sessionId)).toBe(false);
     expect((adapter as any).nativeSessionSettings.get(sessionId)).not.toHaveProperty("clientUserMessageId");
+  });
+
+  it("keeps a selected permission profile exclusive from fallback sandbox settings on the next native turn", async () => {
+    const { adapter, client } = createAdapterWithClient();
+    const { sessionId, threadId } = seedSession(adapter);
+    const runtime = createCodexDesktopOwnerRuntime(adapter);
+    await runtime.updateSettings!(sessionId, { permissions: ":read-only", sandboxPolicy: null }, {});
+    client.request.mockResolvedValue({ turn: { id: "profile-turn", status: "inProgress" } });
+    await runtime.request(sessionId, "turn/start", { threadId, input: [{ type: "text", text: "Read only" }] });
+    expect(client.request).toHaveBeenCalledWith("turn/start", expect.objectContaining({ permissions: ":read-only", sandboxPolicy: null }), 120000);
+    (adapter as any).handleTurnCompleted(sessionId, { turn: { id: "profile-turn", status: "completed" } });
+    expect((adapter as any).desktopOwnerSettings(sessionId)).toMatchObject({ permissions: ":read-only", sandboxPolicy: null });
+  });
+
+  it("resolves the custom composer policy through the same loaded runtime and directory", async () => {
+    const { adapter, client } = createAdapterWithClient();
+    const { sessionId } = seedSession(adapter);
+    const runtime = createCodexDesktopOwnerRuntime(adapter);
+    client.request.mockResolvedValue({ config: { sandbox_mode: "danger-full-access", approval_policy: "never" } });
+    const result = await runtime.resolveQueuedPermissions!(sessionId, { id: "native-input", text: "Continue", context: {}, createdAt: 1,
+      cwd: "/repo", submissionOptions: { permissionSelection: { kind: "custom" } } });
+    expect(client.request).toHaveBeenCalledExactlyOnceWith("config/read", { cwd: "/repo", includeLayers: false });
+    expect(result).toMatchObject({ approvalPolicy: "never", sandboxPolicy: { type: "dangerFullAccess" }, permissions: null });
   });
 
   it("keeps explicit start and steer distinct and never silently queues a rejected owner request", async () => {

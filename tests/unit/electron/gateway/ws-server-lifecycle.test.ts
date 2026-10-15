@@ -22,7 +22,7 @@ vi.mock("../../../../electron/main/services/logger", () => {
   const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() };
   return { gatewayLog: logger, terminalLog: logger, default: { scope: () => logger } };
 });
-vi.mock("../../../../electron/main/services/conversation-store", () => ({ conversationStore: {} }));
+vi.mock("../../../../electron/main/services/conversation-store", () => ({ conversationStore: { resolveConversationId: (id: string) => id, getConversationIds: (id: string) => [id] } }));
 vi.mock("../../../../electron/main/services/scheduled-task-service", () => ({
   scheduledTaskService: { on: vi.fn() },
 }));

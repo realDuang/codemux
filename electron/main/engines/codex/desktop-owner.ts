@@ -1,5 +1,5 @@
 import type {
-  CodexDesktopIpcClient, DesktopFollowerMethod, DesktopThreadSnapshot,
+  CodexDesktopIpcClient, DesktopFollowerMethod, DesktopQueuedFollowUp, DesktopThreadSnapshot,
 } from "./desktop-ipc-client";
 import { getCodexAsyncQuestions, parseCodexAsyncQuestionReplies } from "./async-questions";
 
@@ -42,10 +42,11 @@ export interface CodexDesktopOwnerRuntime {
     activeTurnId?: string;
     condition?: Record<string, unknown>;
   }): Promise<boolean>;
+  resolveQueuedPermissions?(engineSessionId: string, message: DesktopQueuedFollowUp): Promise<Record<string, unknown>>;
 }
 
 type OwnerTransport = Pick<CodexDesktopIpcClient,
-  "connect" | "clientId" | "discoverOwner" | "registerOwnedThread" | "publishOwnedThreadState">;
+  "connect" | "clientId" | "discoverOwner" | "registerOwnedThread" | "publishOwnedThreadState" | "publishOwnedQueuedFollowUps">;
 
 interface OwnedThread {
   engineSessionId: string;
@@ -56,6 +57,11 @@ interface OwnedThread {
   refresh?: Promise<void>;
   refreshAgain: boolean;
   timer?: ReturnType<typeof setTimeout>;
+  queuedFollowUps: DesktopQueuedFollowUp[];
+  retiredMessageIds: Set<string>;
+  queueDrain?: Promise<void>;
+  admittingMessageId?: string;
+  queuedPermissionSettings: Map<string, Record<string, unknown>>;
 }
 
 export interface CodexDesktopOwnerOptions {
@@ -82,7 +88,7 @@ export class CodexDesktopOwner {
       if (!thread || thread.timer || this.disposed) return;
       thread.timer = setTimeout(() => {
         thread.timer = undefined;
-        void this.refresh(thread.threadId).catch((error: unknown) => this.reportError(thread, error));
+        void this.refresh(thread.threadId).then(() => this.drainQueue(thread)).catch((error: unknown) => this.reportError(thread, error));
       }, options.refreshDelayMs ?? 100);
     });
   }
@@ -105,6 +111,7 @@ export class CodexDesktopOwner {
       snapshot: { type: "snapshot", revision: 0, conversationState: state },
       encodedState: JSON.stringify(state),
       unregister: () => {}, refreshAgain: false,
+      queuedFollowUps: [], retiredMessageIds: new Set(), queuedPermissionSettings: new Map(),
     };
     this.threads.set(threadId, entry);
     this.byEngineSession.set(engineSessionId, threadId);
@@ -132,6 +139,7 @@ export class CodexDesktopOwner {
       entry.unregister();
       await this.refresh(entry.threadId, false);
       this.registerTransport(entry);
+      void this.drainQueue(entry).catch((error: unknown) => this.reportError(entry, error));
     }
   }
 
@@ -210,7 +218,9 @@ export class CodexDesktopOwner {
       hostId: "local",
       supportedMethods,
       supportsUntrustedAppInput: false,
+      clientName: "CodeMux",
       getSnapshot: () => entry.snapshot,
+      getQueuedFollowUps: () => entry.queuedFollowUps,
       handleRequest: (method, params) => this.handleFollower(entry.threadId, method, params),
     });
   }
@@ -218,6 +228,37 @@ export class CodexDesktopOwner {
   private async handleFollower(threadId: string, method: DesktopFollowerMethod, params: Record<string, unknown>): Promise<unknown> {
     const entry = this.requireThread(threadId);
     if (params.conversationId !== threadId) throw new Error("Follower request thread identity mismatch");
+    if (method === "thread-follower-set-queued-follow-ups-state") {
+      const incoming = parseQueuedFollowUps(record(params.state)[threadId] ?? [], threadId);
+      const discarded = params.discardedMessageIds ?? [];
+      if (!Array.isArray(discarded) || discarded.some((id) => typeof id !== "string")) throw new Error("Invalid discarded Desktop message IDs");
+      const permissionSettings = await Promise.all(incoming.map(async (message) => {
+        if (!hasQueuedPermissionOverrides(message)) return [message.id, {}] as const;
+        if (!this.runtime.resolveQueuedPermissions) throw new Error("Queued Desktop permission changes are not supported by this owner");
+        return [message.id, await this.runtime.resolveQueuedPermissions(entry.engineSessionId, message)] as const;
+      }));
+      if (this.requireThread(threadId) !== entry) throw new Error("The Desktop queue owner changed during preparation");
+      for (const [id, settings] of permissionSettings) entry.queuedPermissionSettings.set(id, settings);
+      for (const id of discarded) entry.retiredMessageIds.add(id as string);
+      const preserved = entry.queuedFollowUps.filter((message) => message.id === entry.admittingMessageId
+        || (record(message.submission).status === "outcome-unknown" && !entry.retiredMessageIds.has(message.id)));
+      const preservedIds = new Set(preserved.map((message) => message.id));
+      entry.queuedFollowUps = [...preserved, ...incoming.filter((message) => !preservedIds.has(message.id) && !entry.retiredMessageIds.has(message.id))];
+      this.publishQueue(entry);
+      void this.drainQueue(entry).catch((error: unknown) => this.reportError(entry, error));
+      return { ok: true };
+    }
+    if (method === "thread-follower-remove-queued-message" || method === "thread-follower-clear-queued-messages") {
+      if (method === "thread-follower-remove-queued-message" && typeof params.messageId !== "string") throw new Error("Invalid queued Desktop message ID");
+      entry.queuedFollowUps = entry.queuedFollowUps.filter((message) => {
+        if (message.id === entry.admittingMessageId) return true;
+        if (method === "thread-follower-remove-queued-message" && message.id !== params.messageId) return true;
+        entry.retiredMessageIds.add(message.id);
+        return false;
+      });
+      this.publishQueue(entry);
+      return { ok: true };
+    }
     if (method === "thread-follower-read-model-settings") {
       await this.refresh(threadId);
       const state = entry.snapshot.conversationState;
@@ -250,6 +291,12 @@ export class CodexDesktopOwner {
       if (method === "thread-follower-interrupt-turn") {
         if (!activeTurnId || (params.expectedTurnId != null && params.expectedTurnId !== activeTurnId)) return { ok: true, interruptedTurnId: null };
         await this.runtime.request(entry.engineSessionId, "turn/interrupt", { threadId, turnId: activeTurnId });
+        if (params.mode === "user-stop") {
+          for (const message of entry.queuedFollowUps) entry.retiredMessageIds.add(message.id);
+          entry.queuedFollowUps = [];
+          entry.queuedPermissionSettings.clear();
+          this.publishQueue(entry);
+        }
         await this.refresh(threadId);
         return { ok: true, interruptedTurnId: activeTurnId };
       }
@@ -297,6 +344,56 @@ export class CodexDesktopOwner {
     throw new Error(`Unsupported Desktop follower method: ${method}`);
   }
 
+  private publishQueue(entry: OwnedThread): void {
+    if (this.threads.get(entry.threadId) === entry && !this.disposed) {
+      this.client.publishOwnedQueuedFollowUps(entry.threadId, entry.queuedFollowUps);
+    }
+  }
+
+  private drainQueue(entry: OwnedThread): Promise<void> {
+    if (entry.queueDrain) return entry.queueDrain;
+    if (entry.queuedFollowUps.length === 0) return Promise.resolve();
+    entry.queueDrain = Promise.resolve().then(async () => {
+      while (this.threads.get(entry.threadId) === entry && !this.disposed) {
+        await this.refresh(entry.threadId);
+        if (this.threads.get(entry.threadId) !== entry || this.disposed) return;
+        const message = entry.queuedFollowUps[0];
+        if (!message || record(message.submission).status === "outcome-unknown") return;
+        const active = records(entry.snapshot.conversationState.turns).findLast((turn) => turn.status === "inProgress");
+        const activeTurnId = text(active?.turnId);
+        const sendNow = message.submissionIntent === "send-now" || record(message.submission).queueModeOverride === "send-now";
+        if (activeTurnId && !sendNow) return;
+        entry.admittingMessageId = message.id;
+        entry.queuedFollowUps = entry.queuedFollowUps.map((queued) => queued.id === message.id
+          ? { ...queued, submission: { ...record(queued.submission), hostId: "local", status: "sending" } } : queued);
+        this.publishQueue(entry);
+        try {
+          const params = { ...queuedTurnRequest(entry.threadId, message), ...entry.queuedPermissionSettings.get(message.id) };
+          await this.runtime.request(entry.engineSessionId, activeTurnId ? "turn/steer" : "turn/start", {
+            ...params, ...(activeTurnId ? { expectedTurnId: activeTurnId } : {}),
+          });
+          // Admission, rather than receipt of the queue, is the point where the
+          // original message can disappear from every follower's composer.
+          entry.retiredMessageIds.add(message.id);
+          entry.queuedPermissionSettings.delete(message.id);
+          entry.queuedFollowUps = entry.queuedFollowUps.filter((queued) => queued.id !== message.id);
+          this.publishQueue(entry);
+        } catch (error) {
+          // Delivery may have succeeded before an IPC timeout. Keep this exact
+          // input visible and never retry it automatically as a second turn.
+          entry.queuedFollowUps = entry.queuedFollowUps.map((queued) => queued.id === message.id
+            ? { ...queued, submission: { ...record(queued.submission), status: "outcome-unknown" } } : queued);
+          this.publishQueue(entry);
+          this.reportError(entry, error);
+          return;
+        } finally {
+          entry.admittingMessageId = undefined;
+        }
+      }
+    }).finally(() => { entry.queueDrain = undefined; });
+    return entry.queueDrain;
+  }
+
   private requireThread(threadId: string): OwnedThread {
     const entry = this.threads.get(threadId);
     if (!entry || this.disposed) throw new Error("CodeMux does not own this Desktop thread");
@@ -318,8 +415,55 @@ const APPROVAL_REQUESTS: Partial<Record<DesktopFollowerMethod, string>> = {
 const FOLLOWER_METHODS: DesktopFollowerMethod[] = [
   "thread-follower-start-turn", "thread-follower-steer-turn", "thread-follower-interrupt-turn",
   "thread-follower-load-complete-history", "thread-follower-read-model-settings", "thread-follower-compact-thread",
+  "thread-follower-set-queued-follow-ups-state", "thread-follower-remove-queued-message", "thread-follower-clear-queued-messages",
   ...Object.keys(APPROVAL_REQUESTS) as DesktopFollowerMethod[],
 ];
+
+function parseQueuedFollowUps(value: unknown, threadId: string): DesktopQueuedFollowUp[] {
+  if (!Array.isArray(value)) throw new Error("Invalid Desktop follow-up queue");
+  const ids = new Set<string>();
+  return value.map((candidate) => {
+    const message = record(candidate);
+    if (!text(message.id) || ids.has(message.id as string) || typeof message.text !== "string"
+      || !Number.isFinite(message.createdAt) || (message.cwd != null && typeof message.cwd !== "string")
+      || message.context == null || typeof message.context !== "object" || Array.isArray(message.context)) {
+      throw new Error("Invalid queued Desktop message");
+    }
+    ids.add(message.id as string);
+    const queued = structuredClone(message) as DesktopQueuedFollowUp;
+    queuedTurnRequest(threadId, queued);
+    return queued;
+  });
+}
+
+function queuedTurnRequest(threadId: string, message: DesktopQueuedFollowUp): Record<string, unknown> {
+  const context = message.context;
+  const submission = record(message.submission);
+  const options = record(message.submissionOptions);
+  if (submission.hostId != null && submission.hostId !== "local") throw new Error("Queued Desktop input targets another host");
+  if (context.messageThreadId != null && context.messageThreadId !== threadId) throw new Error("Queued Desktop input targets another thread");
+  if (submission.editPosition != null) throw new Error("Editing an earlier Desktop turn is not supported by this owner");
+  if (message.submissionIntent != null && !["queue", "start", "send-now"].includes(String(message.submissionIntent))) throw new Error("Unsupported Desktop submission intent");
+  if (submission.queueModeOverride != null && !["queue", "queue-only", "send-now"].includes(String(submission.queueModeOverride))) throw new Error("Unsupported Desktop queue mode");
+  for (const key of ["responseItems", "imageAttachments", "attachments", "fileAttachments", "appMentions", "writingBlockContexts"]) {
+    if (Array.isArray(context[key]) && (context[key] as unknown[]).length > 0) throw new Error("Queued Desktop attachments require their original input preparation");
+  }
+  if (context.prompt != null && typeof context.prompt !== "string") throw new Error("Unsupported Desktop prompt content");
+  return { threadId, input: [{ type: "text", text: typeof context.prompt === "string" ? context.prompt : message.text }], clientUserMessageId: message.id,
+    ...(message.cwd ? { cwd: message.cwd } : {}),
+    ...(typeof context.turnTrigger === "string" ? { turnTrigger: context.turnTrigger } : {}),
+    ...(context.additionalContext != null ? { additionalContext: context.additionalContext } : {}),
+    ...(message.responsesapiClientMetadata != null ? { responsesapiClientMetadata: message.responsesapiClientMetadata } : {}),
+    ...(options.collaborationMode != null ? { collaborationMode: options.collaborationMode } : {}),
+    ...(Object.hasOwn(options, "serviceTier") ? { serviceTier: options.serviceTier } : {}),
+  };
+}
+
+function hasQueuedPermissionOverrides(message: DesktopQueuedFollowUp): boolean {
+  const options = record(message.submissionOptions);
+  return !!options.shouldSendPermissionOverrides || !!options.usePermissionSelection || message.context.workPermissions != null
+    || (options.permissionSelection != null && record(options.permissionSelection).kind !== "server-default");
+}
 
 /** Uses the same legacy turn shape accepted by Desktop's v11 snapshot hydrator. */
 export function buildDesktopOwnerState(native: NativeOwnedThreadState): Record<string, unknown> {

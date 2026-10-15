@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-**CodeMux** is a multi-engine AI coding assistant client. It runs as an Electron desktop app (or standalone web server) that connects to multiple AI coding engines — OpenCode, GitHub Copilot, and Claude Code — through a unified WebSocket gateway. Users can access it locally or remotely via Cloudflare Tunnel.
+**CodeMux** is a multi-engine AI coding assistant client. It runs as an Electron desktop app (or standalone web server) that connects to OpenCode, GitHub Copilot, Claude Code, and Codex through a unified WebSocket gateway. Users can access it locally or remotely via Cloudflare Tunnel.
 
 ### Tech Stack
 
@@ -44,6 +44,12 @@ codemux/
 │   │   │   │   ├── converters.ts
 │   │   │   │   ├── query-session.ts       # Persistent CLI session on query() (streaming input)
 │   │   │   │   └── cc-session-files.ts
+│   │   │   ├── codex/                    # Native app-server and optional Desktop sharing
+│   │   │   │   ├── unified-adapter.ts      # One public Codex engine; routes to the native owner
+│   │   │   │   ├── index.ts                # CodeMux-owned app-server execution
+│   │   │   │   ├── desktop-adapter.ts      # Follows external native execution owners
+│   │   │   │   ├── runtime-selection.ts    # Verified runtime version selection
+│   │   │   │   └── conversation-migration.ts # Legacy identity and history migration helpers
 │   │   │   └── mock-adapter.ts           # Mock engine for testing
 │   │   ├── gateway/                   # WebSocket Gateway
 │   │   │   ├── ws-server.ts              # WebSocket server
@@ -157,6 +163,7 @@ codemux/
 
 - `server/index.ts` and `server/cli.ts` build to `out/server` and run on Node 24 without Electron or a display. `server/service-host.ts` composes the same engine/channel stack for both hosts, with lifecycle in `shared/service-runtime.ts`.
 - Electron owns native integration and `LocalServerSupervisor`; engines and services run in its local Node child. Host settings have one writer, accessed through the private owner control API while running. Preserve the existing data paths and local/remote authorization rules.
+- Codex registers one `UnifiedCodexAdapter`. Startup migrates legacy bindings before engines and channels initialize. Sharing changes the local IPC connection; it must preserve each native thread, its execution owner, pending input, and saved conversation aliases. See [Unified Codex sharing](docs/codex-desktop-sharing.md).
 - Production Web and desktop entries share compiled business assets in `out/web`. Electron still loads `out/renderer/index.html` through `file:`. Only the Web entry imports the PWA runtime.
 - `bun run build:server-app` builds the standalone server and UI; `bun run pack:server` creates a target-platform directory package. `server:dev` / `server:up` use Node plus Vite, while `dev` retains Electron. `start` remains the legacy 8234 OpenCode/Vite compatibility entry.
 - See [Server runtime](docs/server-runtime.md) for launch, data, ownership, packaging, and upgrade details. Sources retained under `electron/main/engines`, `gateway`, `channels`, and `services` can be shared runtime modules; directory names alone do not imply an Electron dependency.
@@ -172,7 +179,8 @@ SolidJS UI
                   └─ EngineManager (electron/main/gateway/engine-manager.ts)
                       ├─ OpenCodeAdapter   → OpenCode CLI (HTTP :4096 + SSE)
                       ├─ CopilotSdkAdapter → @github/copilot-sdk (JSON-RPC/stdio)
-                      └─ ClaudeCodeAdapter → @anthropic-ai/claude-agent-sdk (stdio)
+                      ├─ ClaudeCodeAdapter → @anthropic-ai/claude-agent-sdk (stdio)
+                      └─ UnifiedCodexAdapter → Codex app-server or native Desktop owner (local IPC)
 ```
 
 ### Service Ports (Dev Mode)
@@ -189,6 +197,7 @@ SolidJS UI
 - **`"opencode"`** — OpenCode CLI, communicates via HTTP REST + SSE streaming
 - **`"copilot"`** — GitHub Copilot, uses `@github/copilot-sdk` (spawns Copilot CLI via JSON-RPC/stdio, reads session history from JSONL event files)
 - **`"claude"`** — Claude Code, uses `@anthropic-ai/claude-agent-sdk` (spawns Claude CLI via stdio, model list via SDK query)
+- **`"codex"`** — Codex, uses an app-server owned by CodeMux or follows the native execution owner through optional local Desktop IPC. `"codex-desktop"` is a legacy input alias, not a second registered production engine.
 
 ### Gateway Protocol
 
@@ -199,6 +208,8 @@ JSON messages over WebSocket:
 - **Notification** (push): `{ type: "message.part.updated", payload: {...} }`
 
 Key request types: `engine.list`, `session.create`, `session.list`, `message.send`, `message.cancel`, `model.list`, `model.set`, `mode.get`, `mode.set`, `permission.reply`, `project.list`
+
+`engine.sharing.get` and `engine.sharing.set` use generic adapter capabilities. Render `EngineSharingState` and `SessionConnectionInfo` in the frontend; keep transport selection, source validation, and execution ownership in the adapter layer.
 
 ---
 

@@ -7,6 +7,7 @@ import type { UnifiedProject, UnifiedWorktree, EngineType, SessionActivityStatus
 import { configStore, isEngineEnabled, getDefaultEngineType, setDefaultNewSessionEngine } from "../stores/config";
 import { getEngineBadge } from "./share/common";
 import { ScheduledTaskSection } from "./ScheduledTaskSection";
+import { SessionOriginBadge } from "./SessionConnectionBadge";
 import { getSetting } from "../lib/settings";
 import { gateway } from "../lib/gateway-api";
 import { setOrchestrationStore, orchestrationStore } from "../stores/orchestration";
@@ -619,6 +620,7 @@ export function SessionSidebar(props: SessionSidebarProps) {
                               {projectName()}
                             </span>
                           </Show>
+                          <SessionOriginBadge connection={session.connection} />
                           <Show when={getEngineBadge(session.engineType)}>
                             {(badge) => (
                               <span class={`text-[9px] font-medium px-1 py-[3px] rounded leading-none flex-shrink-0 ${badge().class}`}>
@@ -999,6 +1001,7 @@ export function SessionSidebar(props: SessionSidebarProps) {
                                 </div>
                                 <Show when={!isEditing()}>
                                   <div class="flex items-center gap-1.5 mt-0.5">
+                                    <SessionOriginBadge connection={session.connection} />
                                     <Show when={getEngineBadge(session.engineType)}>
                                       {(badge) => (
                                         <span class={`text-[9px] font-medium px-1 py-[3px] rounded leading-none flex-shrink-0 ${badge().class}`}>
@@ -1390,6 +1393,7 @@ export function SessionSidebar(props: SessionSidebarProps) {
                               {/* Line 2: Engine badge + Time */}
                               <Show when={!isEditing()}>
                                 <div class="flex items-center gap-1.5 mt-0.5">
+                                  <SessionOriginBadge connection={session.connection} />
                                   <Show when={getEngineBadge(session.engineType)}>
                                     {(badge) => (
                                       <span class={`text-[9px] font-medium px-1 py-[3px] rounded leading-none flex-shrink-0 ${badge().class}`}>

@@ -31,6 +31,10 @@ Default data directories retain the desktop conventions:
 
 Each data directory has one active runtime owner. The private `runtime-control.json` file identifies that owner and is readable only by the local account. CLI operations contact it; they do not bypass the running process to write settings or device files. Normal stop drains admitted operations and pending writes, closes clients, and stops owned children before releasing the lock. After a hard crash, allow the 30-second stale lease to expire before retrying; do not delete a live owner's lock.
 
+Codex registers one engine in both host modes. Initialization migrates legacy Codex settings and conversation bindings before starting engines, channels, or scheduled tasks. Duplicate projections of the same native thread in the same Codex home become one visible conversation; old IDs remain aliases for saved clients and IM bindings. The original index and merged projections are backed up under `conversations/migrations/codex-unified-v1`. See [Unified Codex sharing](codex-desktop-sharing.md) for source identity, migration recovery, and runtime compatibility.
+
+Optional Desktop sharing requires the native IPC router on the host, but independent CodeMux execution does not. Its switch is stored through the running host's settings writer. Disabling sharing preserves local writers and accepted input; stopping the host stops its own runtimes and detaches external owners. It never stops the official Desktop application.
+
 ## Local management
 
 ```sh
@@ -82,4 +86,4 @@ WantedBy=default.target
 
 For an update, build a new target-platform directory, stop the current owner and wait for it to exit, preserve the data directory, then switch the process manager to the new package and verify CLI status and the existing Web login/history. Keep the prior package for rollback; stop the new owner before starting the old package against the same data. Do not replace native dependencies or package files beneath an active process. Web clients receive the usual explicit PWA update prompt; old open tabs retain their version caches.
 
-The migration uses no new persistent data format. Validation evidence and remaining platform/device limits are recorded in [the migration checkpoints](architecture-migration.md).
+The Node-host architecture migration retained the existing data formats. Its validation evidence and platform/device limits are recorded in [the migration checkpoints](architecture-migration.md). The later unified Codex migration adds conversation alias metadata and recovery backups as described above; retain these when upgrading or restoring the data directory.

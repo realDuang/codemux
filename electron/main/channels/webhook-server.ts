@@ -43,7 +43,7 @@ export class WebhookServer {
   private routes = new Map<string, WebhookHandler>();
   private port: number;
 
-  constructor(port = WEBHOOK_PORT) {
+  constructor(port = WEBHOOK_PORT, private readonly listenHost?: string) {
     this.port = port;
   }
 
@@ -75,10 +75,12 @@ export class WebhookServer {
         reject(err);
       });
 
-      this.server!.listen(this.port, () => {
+      const onListening = () => {
         channelLog.info(`[Webhook] Server listening on port ${this.port}`);
         resolve();
-      });
+      };
+      if (this.listenHost === undefined) this.server!.listen(this.port, onListening);
+      else this.server!.listen(this.port, this.listenHost, onListening);
     });
   }
 

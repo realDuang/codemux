@@ -47,6 +47,7 @@ import {
 } from "../stores/message";
 import { MessageList } from "../components/MessageList";
 import { PromptInput } from "../components/PromptInput";
+import { SessionConnectionDetails } from "../components/SessionConnectionBadge";
 import { SessionControls } from "../components/SessionControls";
 import { SessionSidebar } from "../components/SessionSidebar";
 import { HideProjectModal } from "../components/HideProjectModal";
@@ -2339,6 +2340,7 @@ export default function Chat() {
               ...s,
               title: hasAuthoritativeSessionState(updated.engineType) ? updated.title ?? "" : updated.title || s.title,
               ...(updated.sourceUrl ? { sourceUrl: updated.sourceUrl, sourceName: updated.sourceName } : {}),
+              ...(Object.prototype.hasOwnProperty.call(updated, "connection") ? { connection: updated.connection } : {}),
               ...(typeof updated.archived === "boolean" ? { archived: updated.archived } : {}),
               ...(updated.catalogSourceId ? { catalogSourceId: updated.catalogSourceId, projectID: updated.projectId ?? null } : {}),
               ...(typeof updated.catalogAvailable === "boolean" ? { catalogAvailable: updated.catalogAvailable } : {}),
@@ -2988,6 +2990,7 @@ export default function Chat() {
             <span class={`shrink-0 px-1.5 py-[1px] text-[10px] font-medium rounded-md electron-no-drag ${currentEngineBadge().class}`}>
               {currentEngineBadge().label}
             </span>
+            <SessionConnectionDetails connection={currentSessionInfo()?.connection} />
             <span class={`cm-mono shrink-0 inline-flex items-center gap-1 px-1.5 py-[1px] text-[10px] font-medium rounded-md ring-1 ring-inset electron-no-drag ${
               (() => {
                 const id = currentAgent().id;
@@ -3324,7 +3327,11 @@ export default function Chat() {
                 </Show>
                 <div class="conversation-column">
                   <Show when={currentSessionUnavailable()}>
-                    <p role="status" class="rounded-lg bg-gray-100 dark:bg-slate-800 px-3 py-3 text-sm text-gray-500 dark:text-gray-400">{t().catalog.unavailableDetail}</p>
+                    <p role="status" class="rounded-lg bg-gray-100 dark:bg-slate-800 px-3 py-3 text-sm text-gray-500 dark:text-gray-400">
+                      <Show when={currentSessionInfo()?.connection?.available === false} fallback={t().catalog.unavailableDetail}>
+                        {t().sessionSharing.sessionUnavailable}
+                      </Show>
+                    </p>
                   </Show>
                   <Show when={currentSessionArchived()}>
                     <div role="status" class="flex items-center justify-between gap-3 rounded-lg bg-gray-100 dark:bg-slate-800 px-3 py-3 text-sm text-gray-600 dark:text-gray-300">

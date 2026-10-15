@@ -1271,6 +1271,8 @@ function extractDiffFromParams(params: Record<string, unknown>): string | undefi
 
 function itemToParams(item: CodexThreadItem): Record<string, unknown> {
   switch (item.type) {
+    case "functionCallOutput":
+      return typeof item.arguments === "string" ? { input: item.arguments } : asRecord(item.arguments);
     case "commandExecution":
       return {
         command: item.command,

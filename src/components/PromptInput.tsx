@@ -27,9 +27,11 @@ function getModeDisplayName(mode: AgentMode): string {
 function getModeColor(mode: AgentMode, index: number): string {
   // Active segment tint: icon + label pick up the mode hue on a raised chip.
   const label = getModeDisplayName(mode).toLowerCase();
-  if (label === "default" || label === "interactive" || label === "build") return "text-indigo-600 dark:text-indigo-300";
+  if (label === "default" || label === "manual" || label === "interactive" || label === "build") return "text-indigo-600 dark:text-indigo-300";
   if (label === "plan") return "text-cyan-600 dark:text-cyan-300";
   if (label === "autopilot" || label === "bypass permissions") return "text-emerald-600 dark:text-emerald-300";
+  if (label === "accept edits") return "text-amber-600 dark:text-amber-300";
+  if (label === "auto") return "text-violet-600 dark:text-violet-300";
   // Fallback by position
   const palette = ["text-indigo-600 dark:text-indigo-300", "text-cyan-600 dark:text-cyan-300", "text-emerald-600 dark:text-emerald-300"];
   if (index < palette.length) return palette[index];
@@ -58,6 +60,20 @@ function getModeAccentRing(mode: AgentMode, _index: number): {
       ring: "focus-within:ring-4 focus-within:ring-emerald-500/10 focus-within:border-emerald-500/50",
       border: "border-[var(--cm-hairline-strong)]",
       bgHover: "bg-emerald-600 hover:bg-emerald-500 shadow-[0_6px_18px_-6px] shadow-emerald-500/60",
+    };
+  if (label === "accept edits")
+    return {
+      bg: base,
+      ring: "focus-within:ring-4 focus-within:ring-amber-500/10 focus-within:border-amber-500/50",
+      border: "border-[var(--cm-hairline-strong)]",
+      bgHover: "bg-amber-600 hover:bg-amber-500 shadow-[0_6px_18px_-6px] shadow-amber-500/60",
+    };
+  if (label === "auto")
+    return {
+      bg: base,
+      ring: "focus-within:ring-4 focus-within:ring-violet-500/10 focus-within:border-violet-500/50",
+      border: "border-[var(--cm-hairline-strong)]",
+      bgHover: "bg-violet-600 hover:bg-violet-500 shadow-[0_6px_18px_-6px] shadow-violet-500/60",
     };
   // Default / Interactive / Build / unknown — signature gradient
   return {
@@ -98,9 +114,28 @@ const MODE_ICONS: Array<() => any> = [
   ),
 ];
 
+// Icons for Claude Code's additional permission modes
+const EXTRA_MODE_ICONS: Record<string, () => any> = {
+  // pencil — accept edits
+  "accept edits": () => (
+    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M12 20h9" />
+      <path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" />
+    </svg>
+  ),
+  // sparkles — auto (classifier)
+  auto: () => (
+    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z" />
+      <path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z" />
+    </svg>
+  ),
+};
+
 function getModeIcon(mode: AgentMode, index: number) {
   const label = getModeDisplayName(mode).toLowerCase();
-  if (label === "default" || label === "interactive" || label === "build") return MODE_ICONS[0]();
+  if (EXTRA_MODE_ICONS[label]) return EXTRA_MODE_ICONS[label]();
+  if (label === "default" || label === "manual" || label === "interactive" || label === "build") return MODE_ICONS[0]();
   if (label === "plan") return MODE_ICONS[1]();
   if (label === "autopilot" || label === "bypass permissions") return MODE_ICONS[2]();
   return MODE_ICONS[index % MODE_ICONS.length]();
@@ -473,7 +508,7 @@ export function PromptInput(props: PromptInputProps) {
     const label = getModeDisplayName(agent()).toLowerCase();
     if (label === "plan") return t().prompt.planPlaceholder;
     if (label === "autopilot" || label === "bypass permissions") return t().prompt.autopilotPlaceholder;
-    if (label === "build" || label === "interactive" || label === "default") return t().prompt.buildPlaceholder;
+    if (label === "build" || label === "interactive" || label === "default" || label === "manual") return t().prompt.buildPlaceholder;
     return t().prompt.placeholder;
   });
 

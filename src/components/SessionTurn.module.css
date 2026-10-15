@@ -1,496 +1,256 @@
 .sessionTurn {
   display: flex;
   flex-direction: column;
-  gap: 0.5rem;
+  gap: 0.875rem;
+  min-width: 0;
 }
 
-/* ─── User Message Bubble ─── */
+.compactStandalone {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.sessionTurn[data-compact-activities] .compactStandalone :global([data-component="reasoning"] [data-slot="title"]) {
+  gap: 0.375rem;
+}
+
+.sessionTurn[data-compact-activities] :global([data-slot="markdown"] ul) {
+  list-style-type: disc;
+}
+
+.sessionTurn[data-compact-activities] :global([data-slot="markdown"] ol) {
+  list-style-type: decimal;
+}
+
+.sessionTurn[data-compact-activities] :global([data-slot="markdown"] li:has(> input[type="checkbox"])) {
+  list-style-type: none;
+}
 .userMessage {
   display: flex;
   flex-direction: column;
-  gap: 0.75rem;
-  padding: 0.625rem 0.95rem;
-  border: 1px solid var(--cm-hairline-strong);
-  border-radius: 1rem 1rem 0.3rem 1rem;
-  background: var(--cm-surface-2);
-  color: var(--cm-text);
-  box-shadow: var(--cm-shadow-sm);
-  margin-left: auto;
-  max-width: 85%;
-  overflow-wrap: break-word;
-  word-break: break-word;
+  gap: 0.625rem;
+  margin: 0 0 0.5rem auto;
+  max-width: min(85%, 38rem);
+  padding: 0.75rem 1rem;
+  border-radius: 1rem;
+  background: var(--conversation-surface, var(--sl-color-bg-alt));
+  color: var(--conversation-text, var(--sl-color-text));
+  overflow-wrap: anywhere;
 }
-
-@media (max-width: 480px) {
-  .userMessage {
-    max-width: 92%;
-    padding: 0.625rem 0.75rem;
-  }
-}
-
-:global(.dark) .userMessage {
-  background: var(--cm-surface-3);
-  border-color: var(--cm-hairline);
-}
-
-/* ─── Steps Trigger ─── */
-/* NOTE: Do NOT use position:sticky here. When rendered inside a virtualizer
-   row (position:absolute + translateY), sticky positioning fails because the
-   containing block is the absolute-positioned row, not the scroll container.
-   This mismatch causes overlap/misalignment of adjacent virtualizer rows and
-   corrupts the ResizeObserver height measurements, leading to blank content
-   on reload. */
+/* A disclosure inside a measured turn must stay in normal flow. */
 .stepsTrigger {
   position: relative;
-  z-index: 2;
-  background: transparent;
-  margin: 0;
-  padding: 0;
-  border-radius: 0;
+  min-width: 0;
 }
-
-:global(.dark) .stepsTrigger {
-  background: transparent;
-}
-
 .stepsTriggerButton {
-  position: relative;
   display: flex;
   align-items: center;
   gap: 0.5rem;
   width: 100%;
-  padding: 0.5rem 0.75rem;
-  border: 1px solid var(--cm-hairline);
-  border-radius: 0.75rem;
-  background: var(--cm-surface-2);
-  color: var(--cm-text-muted);
+  min-height: 2.25rem;
+  padding: 0.375rem 0.5rem;
+  border: 0;
+  border-radius: 0.5rem;
+  background: transparent;
+  color: var(--conversation-muted, var(--sl-color-text-secondary));
   font-size: 0.8125rem;
-  font-weight: 500;
-  cursor: pointer;
-  transition: border-color 0.2s ease, background-color 0.2s ease, color 0.2s ease, box-shadow 0.2s ease;
+  line-height: 1.5;
   text-align: left;
-  overflow: hidden;
+  cursor: pointer;
+  transition: background-color 120ms ease;
 }
-
-:global(.dark) .stepsTriggerButton {
-  background: oklch(1 0 0 / 0.025);
-}
-
 .stepsTriggerButton:hover {
-  border-color: var(--cm-hairline-strong);
-  color: var(--cm-text);
+  background: var(--conversation-surface, var(--sl-color-bg-hover));
+  color: var(--conversation-text, var(--sl-color-text));
 }
-
-:global(.dark) .stepsTriggerButton:hover {
-  background: oklch(1 0 0 / 0.04);
+.stepsTriggerButton:focus-visible, .continueButton:focus-visible {
+  outline: 2px solid var(--conversation-focus, #2563eb);
+  outline-offset: 2px;
 }
-
-/* Working: accent hairline + a light sweep travelling along the bottom edge */
-.stepsTriggerButton[data-working] {
-  border-color: oklch(0.6 0.2 274 / 0.35);
-  background: linear-gradient(90deg, oklch(0.62 0.23 290 / 0.06), oklch(0.74 0.14 210 / 0.05));
-  box-shadow: 0 0 0 3px oklch(0.6 0.2 274 / 0.06);
-}
-
-.stepsTriggerButton[data-working]::after {
-  content: "";
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  height: 1px;
-  background: linear-gradient(90deg, transparent, var(--cm-accent), var(--cm-accent-2), transparent);
-  background-size: 40% 100%;
-  background-repeat: no-repeat;
-  animation: steps-sweep 1.6s linear infinite;
-}
-
-@keyframes steps-sweep {
-  0% { background-position: -40% 0; }
-  100% { background-position: 140% 0; }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .stepsTriggerButton[data-working]::after { animation: none; }
-}
-
 .statusText {
+  display: flex;
+  align-items: center;
   flex: 1;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  display: flex;
-  align-items: center;
-  gap: 0;
 }
-
-.statusReveal {
+.statusReveal, .statusHeading {
   flex: 1;
   min-width: 0;
   overflow: hidden;
 }
-
-.statusShimmer {
-  flex-shrink: 0;
-}
-
-.statusDivider {
-  margin: 0 0.375rem;
-  color: var(--cm-text-faint);
-  opacity: 0.5;
-  font-size: 0.75rem;
-  flex-shrink: 0;
-}
-
-:global(.dark) .statusDivider {
-  color: var(--cm-text-faint);
-}
-
 .statusHeading {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  opacity: 0.65;
   font-weight: 400;
 }
-
-.separator {
-  color: var(--cm-text-faint);
-  opacity: 0.6;
+.statusShimmer, .modelIcon, .separator, .duration, .arrow {
   flex-shrink: 0;
 }
-
+.statusDivider {
+  margin-inline: 0.375rem;
+}
+.statusDivider, .separator, .duration {
+  color: var(--conversation-subtle, var(--sl-color-text-secondary));
+}
 .duration {
-  color: var(--cm-text-faint);
-  font-family: var(--font-mono);
-  font-size: 0.6875rem;
-  flex-shrink: 0;
+  font-size: 0.75rem;
   font-variant-numeric: tabular-nums;
 }
-
-.modelIcon {
-  display: flex;
+.modelIcon, .arrow {
+  display: inline-flex;
   align-items: center;
   justify-content: center;
-  flex-shrink: 0;
-  color: var(--cm-text-muted);
 }
-
 .arrow {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-  transition: transform 0.2s ease;
-  opacity: 0.5;
+  transition: transform 120ms ease;
 }
-
 .arrow[data-expanded] {
   transform: rotate(180deg);
 }
-
-/* ─── Handoff Transition (thinking ↔ meta) ─── */
 .handoffWrap {
-  flex: 1;
-  min-width: 0;
-  position: relative;
-  min-height: 1.25rem;
   display: flex;
   align-items: center;
+  flex: 1;
+  min-width: 0;
+  min-height: 1.25rem;
 }
-
-.handoffThinking,
-.handoffMeta {
+.handoffThinking, .handoffMeta {
   display: flex;
   align-items: center;
   gap: 0.5rem;
   width: 100%;
   min-width: 0;
-  will-change: opacity, filter;
-  transition:
-    opacity 180ms ease-out,
-    filter 180ms ease-out,
-    transform 180ms ease-out;
 }
-
-.handoffThinking {
-  position: relative;
+.handoffThinking[data-visible="false"], .handoffMeta[data-visible="false"] {
+  display: none;
 }
-
-.handoffMeta {
-  position: absolute;
-  inset: 0;
-}
-
-.handoffThinking[data-visible="false"],
-.handoffMeta[data-visible="false"] {
-  opacity: 0;
-  filter: blur(2px);
-  transform: translateY(1px);
-  pointer-events: none;
-}
-
-.handoffThinking[data-visible="true"],
-.handoffMeta[data-visible="true"] {
-  opacity: 1;
-  filter: blur(0px);
-  transform: translateY(0px);
-}
-
-/* ─── Steps Content (expanded area) ─── */
-/* Rendered as a timeline: a hairline rail on the left, no boxed card. */
 .stepsContent {
-  position: relative;
   display: flex;
   flex-direction: column;
   gap: 0.5rem;
   min-width: 0;
-  margin-left: 0.875rem;
-  padding: 0.25rem 0 0.25rem 1rem;
-  border-left: 1px solid var(--cm-hairline-strong);
-  max-height: 420px;
-  overflow-y: auto;
-  -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 8px, #000 calc(100% - 8px), transparent 100%);
-  mask-image: linear-gradient(to bottom, transparent 0, #000 8px, #000 calc(100% - 8px), transparent 100%);
+  margin: 0.25rem 0 0.5rem 0.5rem;
+  padding: 0.25rem 0 0.25rem 0.875rem;
+  border-left: 1px solid var(--conversation-border, var(--sl-color-border));
 }
-
-.assistantMessageParts {
+.assistantMessageParts, .permissionPrompts {
   display: flex;
   flex-direction: column;
-  gap: 0.5rem;
-  position: relative;
+  gap: 0.625rem;
+  min-width: 0;
 }
-
-.permissionPrompts {
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-}
-
-/* ─── Response ─── */
-/* Final answer flows directly on the canvas; only a small mono header marks it. */
 .response {
   display: flex;
   flex-direction: column;
-  gap: 0.5rem;
+  gap: 0.75rem;
   min-width: 0;
   max-width: 100%;
-  overflow: hidden;
-  padding: 0.25rem 0.125rem 0;
+  padding: 0;
+  color: var(--conversation-text, var(--sl-color-text));
 }
-
-.responseHeader {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
-
-.responseIcon {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 1.25rem;
-  height: 1.25rem;
-  border-radius: 0.375rem;
-  color: #fff;
-  background: var(--cm-gradient);
-  box-shadow: 0 2px 8px -2px oklch(0.6 0.2 274 / 0.6);
-  margin-right: 0.5rem;
-}
-
-.responseTitle {
-  display: flex;
-  align-items: center;
-  font-family: var(--font-mono);
-  font-size: 0.6875rem;
-  font-weight: 500;
-  color: var(--cm-text-faint);
-  margin: 0;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-}
-
 .responseContent {
   min-width: 0;
   max-width: 100%;
 }
-
-/* ─── Compacting Turn ─── */
 .compactingTurn {
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  padding: 0.5rem 0.75rem;
-  border: 1px dashed var(--cm-hairline-strong);
-  border-radius: 0.75rem;
-  background: transparent;
-  color: var(--cm-text-muted);
+  padding: 0.5rem;
+  color: var(--conversation-muted, var(--sl-color-text-secondary));
   font-size: 0.8125rem;
-  font-weight: 500;
 }
-
 .compactingIcon {
   font-size: 0.875rem;
 }
-
 .compactingText {
-  color: var(--cm-text-muted);
+  color: inherit;
 }
-
-/* ─── Error/Cancelled Banner ─── */
+.workingDot {
+  width: 6px;
+  height: 6px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: currentColor;
+}
+.activityAttention {
+  font-size: 0.75rem;
+  color: var(--sl-color-red-high);
+  flex-shrink: 0;
+}
 .errorBanner {
   display: flex;
   flex-direction: column;
-  gap: 0.375rem;
-  padding: 0.625rem 0.875rem;
-  border-radius: 0.75rem;
+  gap: 0.5rem;
+  padding: 0.75rem;
+  border: 1px solid var(--sl-color-red-high);
+  border-radius: var(--conversation-radius, 0.75rem);
+  background: var(--sl-color-red-low);
 }
-
 .errorBanner[data-variant="cancelled"] {
-  border: 1px solid rgba(245, 158, 11, 0.25);
-  background: rgba(245, 158, 11, 0.06);
+  border-color: var(--sl-color-orange-high);
+  background: var(--sl-color-orange-low);
 }
-
-:global(.dark) .errorBanner[data-variant="cancelled"] {
-  border-color: rgba(245, 158, 11, 0.3);
-  background: rgba(245, 158, 11, 0.07);
-}
-
-.errorBanner[data-variant="error"] {
-  border: 1px solid rgba(239, 68, 68, 0.25);
-  background: rgba(239, 68, 68, 0.05);
-}
-
-:global(.dark) .errorBanner[data-variant="error"] {
-  border-color: rgba(239, 68, 68, 0.3);
-  background: rgba(239, 68, 68, 0.07);
-}
-
 .errorBannerHeader {
   display: flex;
   align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
 }
-
 .errorBannerIcon {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 1.375rem;
-  height: 1.375rem;
-  border-radius: 0.25rem;
-  margin-right: 0.375rem;
+  color: var(--sl-color-red-high);
 }
-
-.errorBanner[data-variant="cancelled"] .errorBannerIcon {
-  color: rgb(217, 119, 6);
-  background: rgba(217, 119, 6, 0.12);
-}
-
-:global(.dark) .errorBanner[data-variant="cancelled"] .errorBannerIcon {
-  color: rgb(251, 191, 36);
-  background: rgba(245, 158, 11, 0.15);
-}
-
-.errorBanner[data-variant="error"] .errorBannerIcon {
-  color: rgb(220, 38, 38);
-  background: rgba(220, 38, 38, 0.12);
-}
-
-:global(.dark) .errorBanner[data-variant="error"] .errorBannerIcon {
-  color: rgb(248, 113, 113);
-  background: rgba(239, 68, 68, 0.15);
-}
-
 .errorBannerTitle {
-  display: flex;
-  align-items: center;
-  font-family: var(--font-mono);
-  font-size: 0.6875rem;
-  font-weight: 500;
-  margin: 0;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-}
-
-.errorBanner[data-variant="cancelled"] .errorBannerTitle {
-  color: rgba(217, 119, 6, 0.8);
-}
-
-:global(.dark) .errorBanner[data-variant="cancelled"] .errorBannerTitle {
-  color: rgba(251, 191, 36, 0.7);
-}
-
-.errorBanner[data-variant="error"] .errorBannerTitle {
-  color: rgba(220, 38, 38, 0.8);
-}
-
-:global(.dark) .errorBanner[data-variant="error"] .errorBannerTitle {
-  color: rgba(248, 113, 113, 0.7);
-}
-
-.errorBannerContent {
-  padding-left: 1.75rem;
   font-size: 0.8125rem;
-  color: var(--cm-text-muted);
+  font-weight: 600;
+  margin: 0;
+  color: var(--sl-color-red-high);
 }
-
-/* ─── Working Dot (trigger bar) ─── */
-.workingDot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--cm-accent-2);
-  box-shadow: 0 0 8px var(--cm-accent-2);
-  animation: working-pulse 1.4s ease-in-out infinite;
-  flex-shrink: 0;
-  transition: background-color 300ms ease, box-shadow 300ms ease;
+.errorBanner[data-variant="cancelled"] .errorBannerIcon, .errorBanner[data-variant="cancelled"] .errorBannerTitle {
+  color: var(--sl-color-orange-high);
 }
-
-.workingDot[data-phase="reasoning"] {
-  background: rgba(139, 92, 246, 0.85);
-  box-shadow: 0 0 6px rgba(139, 92, 246, 0.35);
-  animation-duration: 1.2s;
+.errorBannerContent {
+  min-width: 0;
+  font-size: 0.8125rem;
+  color: var(--conversation-text, var(--sl-color-text));
 }
-
-.workingDot[data-phase="tool"] {
-  box-shadow: 0 0 8px oklch(0.74 0.14 210 / 0.6);
-}
-
-@keyframes working-pulse {
-  0%, 100% { opacity: 0.4; transform: scale(0.8); }
-  50% { opacity: 1; transform: scale(1.2); }
-}
-
-/* ─── Continue Button ─── */
 .continueButton {
   display: inline-flex;
   align-items: center;
   gap: 0.375rem;
   margin-left: auto;
-  padding: 0.25rem 0.625rem;
-  border: 1px solid rgba(217, 119, 6, 0.3);
+  padding: 0.375rem 0.625rem;
+  min-height: 2rem;
+  border: 1px solid currentColor;
   border-radius: 0.5rem;
-  background: rgba(217, 119, 6, 0.1);
-  color: rgb(180, 83, 9);
+  background: transparent;
+  color: var(--sl-color-orange-high);
   font-size: 0.75rem;
-  font-weight: 500;
   cursor: pointer;
-  transition: all 0.15s ease;
 }
-
 .continueButton:hover {
-  background: rgba(217, 119, 6, 0.2);
-  border-color: rgba(217, 119, 6, 0.5);
+  background: var(--conversation-hover, var(--sl-color-bg-hover));
 }
-
-:global(.dark) .continueButton {
-  border-color: rgba(245, 158, 11, 0.3);
-  background: rgba(245, 158, 11, 0.1);
-  color: rgb(251, 191, 36);
+@media (max-width: 640px) {
+  .userMessage {
+    max-width: 92%;
+    padding: 0.625rem 0.875rem;
+  } .stepsContent {
+    margin-left: 0.25rem;
+    padding-left: 0.625rem;
+  }
 }
-
-:global(.dark) .continueButton:hover {
-  background: rgba(245, 158, 11, 0.2);
-  border-color: rgba(245, 158, 11, 0.5);
+@media (pointer: coarse) {
+  .stepsTriggerButton, .continueButton {
+    min-height: 44px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .arrow, .stepsTriggerButton {
+    transition: none;
+  }
 }

@@ -1,3 +1,4 @@
+import { posix, win32 } from "node:path";
 import { timeId } from "../../utils/id-gen";
 import { inferToolKind, normalizeToolName } from "../../../../src/types/tool-mapping";
 import { mimeToFileExtension } from "../../../../shared/image-limits";
@@ -13,6 +14,7 @@ import type {
   StepStartPart,
   SystemNoticePart,
   TextPart,
+  ToolDisplayAction,
   ToolPart,
   UnifiedMessage,
   UnifiedPart,
@@ -20,6 +22,10 @@ import type {
   UnifiedQuestion,
 } from "../../../../src/types/unified";
 import type { MessageBuffer } from "../engine-adapter";
+import { normalizeCodexResponseContent } from "./response-content";
+import { extractCodexToolOutput } from "./tool-output";
+import { withCodexAssistantImages } from "./assistant-images";
+import { formatCodexAsyncQuestionReplies, getCodexAsyncQuestions, parseCodexAsyncQuestionReplies } from "./async-questions";
 
 interface CodexUserInput {
   type?: string;
@@ -36,11 +42,17 @@ interface CodexThreadItem {
   content?: unknown;
   summary?: string[];
   phase?: string | null;
+  memoryCitation?: unknown;
+  name?: string;
+  output?: unknown;
+  delivery?: string | null;
+  questions?: unknown;
   command?: string;
   cwd?: string;
   processId?: string | null;
   status?: string;
   commandActions?: Array<Record<string, unknown>>;
+  parsedCmd?: unknown;
   aggregatedOutput?: string | null;
   exitCode?: number | null;
   durationMs?: number | null;
@@ -72,6 +84,9 @@ interface CodexThreadTurn {
   items?: CodexThreadItem[];
   status?: string;
   error?: unknown;
+  startedAt?: number | null;
+  completedAt?: number | null;
+  durationMs?: number | null;
 }
 
 interface CodexThreadReadResult {
@@ -92,10 +107,48 @@ interface CodexPlanStep {
 export function upsertPart(parts: UnifiedPart[], part: UnifiedPart): void {
   const index = parts.findIndex((candidate) => candidate.id === part.id);
   if (index >= 0) {
+    part.order ??= parts[index].order ?? index;
     parts[index] = part;
     return;
   }
+  part.order ??= parts.length;
   parts.push(part);
+}
+
+export function codexItemPartId(buffer: MessageBuffer, itemId: string, suffix?: string): string {
+  return ["part_codex", buffer.sessionId, buffer.activeTurnId ?? buffer.messageId, itemId, suffix ?? "item"]
+    .map(encodeURIComponent).join(":");
+}
+
+export function upsertAgentMessage(
+  buffer: MessageBuffer,
+  itemId: string,
+  text: string,
+  options: { delta?: boolean; phase?: TextPart["phase"]; memoryCitation?: unknown; questions?: unknown; delivery?: unknown; completed?: boolean } = {},
+): TextPart {
+  const id = codexItemPartId(buffer, itemId);
+  const existing = buffer.parts.find((part): part is TextPart => part.id === id && part.type === "text");
+  const phase = options.phase ?? existing?.phase ?? (options.delivery === "async" ? "partial" : undefined);
+  const part: TextPart = withCodexAssistantImages({
+    id,
+    messageId: buffer.messageId,
+    sessionId: buffer.sessionId,
+    type: "text",
+    ...normalizeCodexResponseContent(options.delta ? (existing?.text ?? "") + text : text, options.memoryCitation, options.questions),
+    ...((options.completed ?? existing?.completed) !== undefined ? { completed: options.completed ?? existing?.completed } : {}),
+    ...(phase ? { phase } : {}),
+  }, buffer.engineMeta?.codexThreadId);
+  upsertPart(buffer.parts, part);
+  return part;
+}
+
+export function upsertAsyncQuestionReply(buffer: MessageBuffer, itemId: string, text: string): TextPart {
+  const part: TextPart = {
+    id: codexItemPartId(buffer, itemId), messageId: buffer.messageId, sessionId: buffer.sessionId,
+    type: "text", text, completed: true, phase: "commentary",
+  };
+  upsertPart(buffer.parts, part);
+  return part;
 }
 
 export function appendTextDelta(buffer: MessageBuffer, delta: string): TextPart {
@@ -140,19 +193,16 @@ export function appendReasoningDelta(buffer: MessageBuffer, delta: string): Reas
     messageId: buffer.messageId,
     sessionId: buffer.sessionId,
     type: "reasoning",
+    summaryFormat: "heading-prefixed",
     text: buffer.reasoningAccumulator,
   };
   upsertPart(buffer.parts, reasoningPart);
   return reasoningPart;
 }
 
-export function normalizeCodexReasoningText(summary: unknown, content: unknown): string {
-  const summaryBlocks = extractReasoningBlocks(summary);
-  const summaryText = new Set(summaryBlocks);
-  return [
-    ...summaryBlocks,
-    ...extractReasoningBlocks(content).filter((text) => !summaryText.has(text)),
-  ].join("\n\n");
+export function normalizeCodexReasoningText(summary: unknown, _content: unknown): string {
+  // Native Desktop displays only public summary sections, never raw reasoning content.
+  return extractReasoningBlocks(summary).join("\n\n");
 }
 
 function extractReasoningBlocks(value: unknown): string[] {
@@ -168,7 +218,14 @@ function extractReasoningBlocks(value: unknown): string[] {
   });
 }
 
-export function appendPlanDelta(buffer: MessageBuffer, delta: string): TextPart {
+export function appendPlanDelta(buffer: MessageBuffer, delta: string, itemId?: string): TextPart {
+  if (itemId) {
+    const existing = buffer.parts.find((part) => part.id === codexItemPartId(buffer, itemId));
+    return upsertAgentMessage(buffer, itemId, existing ? delta : formatPlanMarkdown(delta), {
+      delta: true,
+      phase: "partial",
+    });
+  }
   const prefix = "## Plan\n\n";
   const current = buffer.planAccumulator ?? prefix;
   buffer.planAccumulator = current + delta;
@@ -186,7 +243,8 @@ export function appendPlanDelta(buffer: MessageBuffer, delta: string): TextPart 
   return part;
 }
 
-export function replacePlanText(buffer: MessageBuffer, markdown: string): TextPart {
+export function replacePlanText(buffer: MessageBuffer, markdown: string, itemId?: string): TextPart {
+  if (itemId) return upsertAgentMessage(buffer, itemId, markdown, { phase: "partial" });
   buffer.planAccumulator = markdown;
   if (!buffer.planPartId) buffer.planPartId = timeId("part");
 
@@ -196,6 +254,7 @@ export function replacePlanText(buffer: MessageBuffer, markdown: string): TextPa
     sessionId: buffer.sessionId,
     type: "text",
     text: markdown,
+    phase: "commentary",
   };
   upsertPart(buffer.parts, part);
   return part;
@@ -211,6 +270,7 @@ export function createSystemNotice(
     messageId: buffer.messageId,
     sessionId: buffer.sessionId,
     type: "system-notice",
+    order: buffer.parts.length,
     noticeType,
     text,
   };
@@ -286,6 +346,87 @@ export function buildToolTitle(
   }
 }
 
+/** Preserve command details while exposing native exploration actions to the renderer. */
+export function applyCodexToolDisplay(
+  part: ToolPart,
+  params: Record<string, unknown>,
+  workingDirectory?: string,
+): void {
+  if (part.normalizedTool !== "shell") return;
+  const input = {
+    ...asRecord(part.state.input),
+    ...Object.fromEntries(Object.entries(params).filter(([, value]) => value != null)),
+  };
+  const actions = normalizeCodexToolDisplayActions(input, workingDirectory);
+  if (actions) part.displayActions = actions;
+  part.title = buildToolTitle(part.originalTool, part.normalizedTool, input);
+}
+
+export function normalizeCodexToolDisplayActions(
+  input: Record<string, unknown>,
+  workingDirectory?: string,
+): ToolDisplayAction[] | undefined {
+  const text = (value: unknown): string | undefined => typeof value === "string" && value.trim() ? value : undefined;
+  const command = text(input.command) ?? text(input.cmd);
+  if (input.status === "declined") return command ? [{ kind: "shell", command }] : undefined;
+  const cwd = text(input.cwd) ?? workingDirectory;
+  const parsed = input.parsedCmd;
+  const source = Array.isArray(input.commandActions) && input.commandActions.length > 0
+    ? input.commandActions : parsed && typeof parsed === "object" && !Array.isArray(parsed) ? [parsed] : [];
+  const actions = source.flatMap((value): ToolDisplayAction[] => {
+    const action = asRecord(value);
+    const actionCommand = text(action.command) ?? text(action.cmd);
+    const rawPath = text(action.path) ?? (action.type === "read" ? text(action.name) : undefined);
+    const path = rawPath ? resolveToolDisplayPath(rawPath, cwd) : undefined;
+    const details = { ...(path ? { path } : {}), ...(actionCommand ? { command: actionCommand } : {}) };
+    switch (action.type) {
+      case "read": {
+        const skill = path ? skillNameFromDefinitionPath(path) : undefined;
+        const label = text(action.displayLabel) ?? skill ?? text(action.name) ?? (path ? posix.basename(path.replaceAll("\\", "/")) : undefined);
+        return [{ kind: skill ? "skill" : "read", ...details, ...(label ? { label } : {}) }];
+      }
+      case "search": {
+        const query = text(action.query);
+        return [{ kind: "search", ...details, ...(query ? { query } : {}) }];
+      }
+      case "listFiles":
+      case "list_files":
+        return [{ kind: "list", ...details }];
+      case "unknown":
+        return [{ kind: "shell", ...(actionCommand ?? command ? { command: actionCommand ?? command } : {}) }];
+      default:
+        return actionCommand ? [{ kind: "shell", command: actionCommand }] : [];
+    }
+  });
+  return actions.length > 0 ? actions : command ? [{ kind: "shell", command }] : undefined;
+}
+
+function resolveToolDisplayPath(path: string, cwd?: string): string {
+  const paths = /^[A-Za-z]:[\\/]|^\\\\/.test(path) || (cwd && /^[A-Za-z]:[\\/]|^\\\\/.test(cwd)) ? win32 : posix;
+  return paths.isAbsolute(path) || !cwd ? paths.normalize(path) : paths.resolve(cwd, path);
+}
+
+function skillNameFromDefinitionPath(path: string): string | undefined {
+  const segments = path.replaceAll("\\", "/").split("/").filter(Boolean);
+  const lower = segments.map((segment) => segment.toLowerCase());
+  // A file named SKILL.md is only a skill definition inside a recognized skill root.
+  for (let index = 0; index < segments.length; index++) {
+    if (![".codex", ".agents"].includes(lower[index]) || lower[index + 1] !== "skills") continue;
+    const root = index + (["_import", ".system"].includes(lower[index + 2]) ? 3 : 2);
+    return segments.length === root + 2 && lower[root + 1] === "skill.md" ? segments[root] : undefined;
+  }
+  for (let index = 0; index < segments.length; index++) {
+    if (lower[index] !== "plugins") continue;
+    const cached = lower[index + 1] === "cache";
+    const plugin = index + (cached ? 3 : 1);
+    const pluginRoot = plugin + Number(cached);
+    const skills = lower.findIndex((segment, offset) => offset > pluginRoot && segment === "skills");
+    const root = skills < 0 ? pluginRoot : skills + 1;
+    if (segments.length === root + 2 && lower[root + 1] === "skill.md") return segments[skills < 0 ? plugin : root];
+  }
+  return undefined;
+}
+
 export function createToolPart(
   buffer: MessageBuffer,
   callId: string,
@@ -297,17 +438,19 @@ export function createToolPart(
   const title = buildToolTitle(itemType, normalizedTool, input);
 
   const stepStart: StepStartPart = {
-    id: timeId("part"),
+    id: codexItemPartId(buffer, callId, "start"),
     messageId: buffer.messageId,
     sessionId: buffer.sessionId,
     type: "step-start",
+    order: buffer.parts.length,
   };
 
   const toolPart: ToolPart = {
-    id: timeId("part"),
+    id: codexItemPartId(buffer, callId),
     messageId: buffer.messageId,
     sessionId: buffer.sessionId,
     type: "tool",
+    order: buffer.parts.length + 1,
     callId,
     normalizedTool,
     originalTool: itemType,
@@ -319,6 +462,8 @@ export function createToolPart(
       time: { start: Date.now() },
     },
   };
+
+  applyCodexToolDisplay(toolPart, input, buffer.workingDirectory);
 
   const filePath = extractFilePath(input);
   if (filePath) {
@@ -388,12 +533,13 @@ export function completeToolPart(
   };
 }
 
-export function createStepFinish(buffer: MessageBuffer): StepFinishPart {
+export function createStepFinish(buffer: MessageBuffer, itemId?: string): StepFinishPart {
   const part: StepFinishPart = {
-    id: timeId("part"),
+    id: itemId ? codexItemPartId(buffer, itemId, "finish") : timeId("part"),
     messageId: buffer.messageId,
     sessionId: buffer.sessionId,
     type: "step-finish",
+    order: buffer.parts.length,
   };
   buffer.parts.push(part);
   return part;
@@ -661,6 +807,7 @@ export function applyTurnMetadata(buffer: MessageBuffer, turn: Record<string, un
 }
 
 export function finalizeBufferToMessage(buffer: MessageBuffer): UnifiedMessage {
+  buffer.parts.forEach((part, index) => { part.order ??= index; });
   return {
     id: buffer.messageId,
     sessionId: buffer.sessionId,
@@ -727,6 +874,7 @@ export function createUserMessage(
     });
   }
 
+  parts.forEach((part, index) => { part.order = index; });
   return {
     id: messageId,
     sessionId,
@@ -747,30 +895,18 @@ export function convertThreadToMessages(
   const threadStart = toMillis(thread?.createdAt, Date.now());
 
   turns.forEach((turn, turnIndex) => {
-    const createdAt = threadStart + turnIndex * 2;
-    const completedAt = createdAt + 1;
+    const turnId = turn.id ?? `turn-${turnIndex}`;
+    const messagePrefix = ["msg_codex", sessionId, turnId].map(encodeURIComponent).join(":");
+    const nativeCreatedAt = toMillis(turn.startedAt ?? undefined, threadStart + turnIndex * 2);
+    const previousCreatedAt = messages.at(-1)?.time.created;
+    const createdAt = previousCreatedAt == null ? nativeCreatedAt : Math.max(nativeCreatedAt, previousCreatedAt + 1);
+    const completedAt = toMillis(turn.completedAt ?? undefined, createdAt + (turn.durationMs ?? 1));
+    const inProgress = turn.status === "inProgress";
     const items = Array.isArray(turn.items) ? turn.items : [];
-    const userInputs = items
-      .filter((item) => item.type === "userMessage")
-      .flatMap((item) => extractUserInputs(item.content));
-
-    const userParts = convertUserInputBlocks(sessionId, userInputs);
-    if (userParts.length > 0) {
-      const messageId = timeId("msg");
-      for (const part of userParts) {
-        part.messageId = messageId;
-      }
-      messages.push({
-        id: messageId,
-        sessionId,
-        role: "user",
-        time: { created: createdAt, completed: createdAt },
-        parts: userParts,
-      });
-    }
-
-    const buffer: MessageBuffer = {
-      messageId: timeId("msg"),
+    const asyncQuestionIds = new Set(items.flatMap(getCodexAsyncQuestions).map((question) => question.id));
+    let messageIndex = 0;
+    const createBuffer = (suffix = "assistant"): MessageBuffer => ({
+      messageId: `${messagePrefix}:${suffix}`,
       sessionId,
       parts: [],
       textAccumulator: "",
@@ -781,30 +917,58 @@ export function convertThreadToMessages(
       planPartId: null,
       startTime: createdAt,
       workingDirectory: workingDirectory ?? thread?.cwd,
-      activeTurnId: turn.id,
-      engineMeta: thread?.id ? { codexThreadId: thread.id } : undefined,
-    };
-
-    for (const item of items) {
-      if (item.type === "userMessage") continue;
-      applyHistoricalItem(buffer, item, completedAt);
-    }
-
-    if (turn.status === "failed" || turn.status === "interrupted") {
-      buffer.error = normalizeError(turn.error) ?? (turn.status === "interrupted" ? "Turn interrupted" : "Turn failed");
-    }
-
-    if (buffer.parts.length === 0 && !buffer.error) {
-      return;
-    }
-
-    messages.push({
-      ...finalizeBufferToMessage(buffer),
-      time: {
-        created: createdAt,
-        completed: completedAt,
+      activeTurnId: turnId,
+      engineMeta: {
+        ...(thread?.id ? { codexThreadId: thread.id } : {}),
+        ...(turn.id ? { codexTurnId: turn.id } : {}),
+        codexTurnStatus: turn.status,
       },
     });
+    let buffer = createBuffer();
+
+    const appendAssistant = (lastSegment: boolean): boolean => {
+      if (lastSegment && (turn.status === "failed" || turn.status === "interrupted")) {
+        buffer.error = normalizeError(turn.error) ?? (turn.status === "interrupted" ? "Turn interrupted" : "Turn failed");
+      }
+      if (buffer.parts.length === 0 && !buffer.error && !(lastSegment && inProgress)) return false;
+      // Native items have no timestamps. Keep their order within the turn's first millisecond.
+      const segmentCreatedAt = createdAt + messageIndex++ / (items.length + 1);
+      messages.push({
+        ...finalizeBufferToMessage(buffer),
+        time: {
+          created: segmentCreatedAt,
+          ...(!inProgress || !lastSegment ? { completed: Math.max(segmentCreatedAt, completedAt) } : {}),
+        },
+      });
+      return true;
+    };
+
+    items.forEach((item, itemIndex) => {
+      const itemId = item.id ?? `call-${itemIndex}`;
+      if (item.type === "userMessage") {
+        const replies = parseCodexAsyncQuestionReplies(item.content);
+        if (replies?.every((reply) => asyncQuestionIds.has(reply.questionItemId))) {
+          upsertAsyncQuestionReply(buffer, itemId, formatCodexAsyncQuestionReplies(replies));
+          return;
+        }
+        const messageId = `${messagePrefix}:user:${encodeURIComponent(itemId)}`;
+        const parts = convertUserInputBlocks(sessionId, extractUserInputs(item.content), messageId);
+        if (parts.length === 0) return;
+        if (appendAssistant(false)) buffer = createBuffer(`assistant-after:${encodeURIComponent(itemId)}`);
+        const userCreatedAt = createdAt + messageIndex++ / (items.length + 1);
+        messages.push({
+          id: messageId,
+          sessionId,
+          role: "user",
+          time: { created: userCreatedAt, completed: userCreatedAt },
+          parts,
+        });
+        return;
+      }
+      applyHistoricalItem(buffer, { ...item, id: itemId }, completedAt, turn.status);
+    });
+
+    appendAssistant(true);
   });
 
   return messages;
@@ -812,45 +976,61 @@ export function convertThreadToMessages(
 
 function applyHistoricalItem(
   buffer: MessageBuffer,
-  item: CodexThreadItem,
+  item: CodexThreadItem & { id: string },
   completedAt: number,
+  turnStatus: string | undefined,
 ): void {
+  const itemId = item.id;
+  const turnInProgress = turnStatus === "inProgress";
   switch (item.type) {
     case "agentMessage": {
-      if (item.text) appendTextDelta(buffer, item.text);
+      if (item.text || turnInProgress || Array.isArray(item.questions)) {
+        upsertAgentMessage(buffer, itemId, item.text ?? "", {
+          memoryCitation: item.memoryCitation,
+          delivery: item.delivery,
+          questions: item.questions,
+          completed: !turnInProgress,
+          phase: item.phase === "commentary" ? "commentary"
+            : item.phase === "partial_answer" ? "partial"
+            : item.phase === "final_answer" ? "final" : undefined,
+        });
+      }
       return;
     }
     case "reasoning": {
       const text = normalizeCodexReasoningText(item.summary, item.content);
       if (text) {
         upsertPart(buffer.parts, {
-          id: timeId("part"),
+          id: codexItemPartId(buffer, itemId),
           messageId: buffer.messageId,
           sessionId: buffer.sessionId,
           type: "reasoning",
+          summaryFormat: "heading-prefixed",
           text,
+          // Native history does not expose reliable per-item elapsed time.
+          completed: ["completed", "failed", "interrupted"].includes(turnStatus ?? ""),
         });
       }
       return;
     }
     case "plan": {
-      replacePlanText(buffer, formatPlanMarkdown(item.text ?? ""));
+      replacePlanText(buffer, formatPlanMarkdown(item.text ?? ""), itemId);
       return;
     }
     case "contextCompaction": {
-      createSystemNotice(buffer, "compact", "notice:context_compressed");
+      createSystemNotice(buffer, "compact", "notice:context_compressed").id = codexItemPartId(buffer, itemId);
       return;
     }
     case "enteredReviewMode": {
-      createSystemNotice(buffer, "info", item.review ? `Entered review mode: ${item.review}` : "Entered review mode");
+      createSystemNotice(buffer, "info", item.review ? `Entered review mode: ${item.review}` : "Entered review mode").id = codexItemPartId(buffer, itemId);
       return;
     }
     case "exitedReviewMode": {
-      createSystemNotice(buffer, "info", item.review ? `Exited review mode: ${item.review}` : "Exited review mode");
+      createSystemNotice(buffer, "info", item.review ? `Exited review mode: ${item.review}` : "Exited review mode").id = codexItemPartId(buffer, itemId);
       return;
     }
     case "hookPrompt": {
-      createSystemNotice(buffer, "info", "Hook prompt emitted");
+      createSystemNotice(buffer, "info", "Hook prompt emitted").id = codexItemPartId(buffer, itemId);
       return;
     }
     default:
@@ -858,12 +1038,26 @@ function applyHistoricalItem(
   }
 
   const params = itemToParams(item);
-  const callId = item.id ?? timeId("call");
-  const { toolPart } = createToolPart(buffer, callId, item.type ?? "unknown", params);
-  const startTime = completedAt;
+  const callId = itemId;
+  const { toolPart } = createToolPart(buffer, callId, item.type === "functionCallOutput" ? item.name ?? item.type : item.type ?? "unknown", params);
+  applyCodexToolDisplay(toolPart, { ...item }, buffer.workingDirectory);
+  const startTime = item.durationMs != null ? completedAt - item.durationMs : buffer.startTime;
+  const richOutput = extractCodexToolOutput(item, toolPart);
+  const output = richOutput.output ?? itemToOutput(item);
+  const isRunning = item.status === "inProgress"
+    || (turnInProgress && item.status == null && ["commandExecution", "fileChange", "mcpToolCall", "dynamicToolCall", "collabAgentToolCall"].includes(item.type ?? ""));
+  const terminalError = !isRunning ? undefined
+    : turnStatus === "interrupted" ? "Turn interrupted"
+    : turnStatus === "failed" ? "Turn failed"
+    : turnStatus === "completed" ? "Tool did not finish before the turn ended"
+    : undefined;
+  const error = normalizeItemError(item) ?? terminalError;
   toolPart.state = {
     status: "running",
-    input: toolPart.state.input,
+    input: {
+      ...asRecord(toolPart.state.input),
+      ...(toolPart.normalizedTool === "shell" && output ? { _output: stringifyOutput(output) } : {}),
+    },
     time: { start: startTime },
   };
 
@@ -872,23 +1066,26 @@ function applyHistoricalItem(
     if (diff) toolPart.diff = diff;
   }
 
+  if (isRunning && !error) return;
+
   completeToolPart(
     toolPart,
-    itemToOutput(item),
-    normalizeItemError(item),
-    buildToolMetadata(toolPart.normalizedTool, params, itemToOutput(item)),
+    output,
+    error,
+    buildToolMetadata(toolPart.normalizedTool, params, output),
   );
 
   applyHistoricalToolTiming(toolPart, startTime, completedAt);
 
-  createStepFinish(buffer);
+  createStepFinish(buffer, itemId);
+  for (const attachment of richOutput.attachments) upsertPart(buffer.parts, attachment);
 }
 
 function convertUserInputBlocks(
   sessionId: string,
   blocks: CodexUserInput[],
+  messageId: string,
 ): TextPart[] {
-  const messageId = timeId("msg");
   const parts: TextPart[] = [];
   let index = 0;
 
@@ -946,6 +1143,7 @@ function convertUserInputBlocks(
     }
   }
 
+  parts.forEach((part, index) => { part.order = index; });
   return parts;
 }
 
@@ -1078,6 +1276,7 @@ function itemToParams(item: CodexThreadItem): Record<string, unknown> {
         command: item.command,
         cwd: item.cwd,
         commandActions: item.commandActions,
+        parsedCmd: item.parsedCmd,
       };
     case "fileChange":
       return {
@@ -1174,7 +1373,7 @@ function buildToolMetadata(
   return Object.keys(metadata).length > 0 ? metadata : undefined;
 }
 
-function formatPlanMarkdown(text: string): string {
+export function formatPlanMarkdown(text: string): string {
   const trimmed = text.trim();
   if (!trimmed) return "## Plan\n\n";
   if (trimmed.startsWith("#")) return trimmed;

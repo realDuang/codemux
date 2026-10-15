@@ -35,6 +35,24 @@ export interface LocaleDict {
     updateFailed: string;
   };
   // Common
+  markdown: {
+    previewImage: string;
+    closeImage: string;
+    codeRegion: string;
+    plainText: string;
+    copyCode: string;
+    wrapCode: string;
+    unwrapCode: string;
+    expandTable: string;
+    closeTable: string;
+    tableDialog: string;
+    scrollHorizontally: string;
+    copyTable: string;
+    copyFailed: string;
+    tableRegion: string;
+    imageUnavailable: string;
+    mediaUnavailable: string;
+  };
   common: {
     loading: string;
     cancel: string;
@@ -43,6 +61,7 @@ export interface LocaleDict {
     confirm: string;
     back: string;
     copied: string;
+    copyToClipboard: string;
     showMore: string;
     showLess: string;
     showResults: string;
@@ -102,6 +121,9 @@ export interface LocaleDict {
 
   // Chat page
   chat: {
+    filePreview: string;
+    conversationRegion: string;
+    jumpToLatest: string;
     newSession: string;
     remoteAccess: string;
     settings: string;
@@ -323,8 +345,8 @@ export interface LocaleDict {
 
   // Prompt Input
   prompt: {
-    draftSaveFailed: string;
     draftImagesNotSaved: string;
+    draftSaveFailed: string;
     buildMode: string;
     build: string;
     planMode: string;
@@ -352,10 +374,46 @@ export interface LocaleDict {
     reasoningEffortUltra: string;
   };
 
+  activity: {
+    searchedIn: string;
+    searchingIn: string;
+    loadedTools: string;
+    loadingTools: string;
+    readFiles: string;
+    readingFiles: string;
+    ranCommands: string;
+    runningCommands: string;
+    changedFiles: string;
+    changingFiles: string;
+    searchedWeb: string;
+    searchingWeb: string;
+    calledTools: string;
+    callingTools: string;
+    readSkill: string;
+    readingSkill: string;
+    readFile: string;
+    readingFile: string;
+    searched: string;
+    searching: string;
+    listed: string;
+    listing: string;
+    ranCommand: string;
+    runningCommand: string;
+    separator: string;
+  };
+
   // Message Parts
   parts: {
     linkToMessage: string;
+    toolInput: string;
+    toolOutput: string;
+    toolPending: string;
+    toolCompleted: string;
+    readFile: string;
     thinking: string;
+    memorySources: string;
+    thought: string;
+    thoughtFor: string;
     attachment: string;
     creatingPlan: string;
     updatingPlan: string;
@@ -393,7 +451,30 @@ export interface LocaleDict {
     interrupted: string;
     emptyResponse: string;
     contextCompressed: string;
+    elicitationAccepted: string;
+    elicitationDeclined: string;
+    elicitationCancelled: string;
+    elicitationCompleted: string;
+    planImplementationPending: string;
+    planImplementationCompleted: string;
+    streamReconnecting: string;
+    turnFinished: string;
     sessionResumed: string;
+    automaticApprovalReview: string;
+    automaticApprovalApproved: string;
+    automaticApprovalDenied: string;
+    automaticApprovalAborted: string;
+    automaticApprovalTimedOut: string;
+    strictReviewRequired: string;
+    autoReviewInterrupted: string;
+    apiRetry: string;
+    permissionDenied: string;
+    rateLimitWarning: string;
+    rateLimitRejected: string;
+    rateLimitRejectedNoReset: string;
+    compactFailed: string;
+    authError: string;
+    conversationReset: string;
     continueWork: string;
     loadingSteps: string;
   };
@@ -633,6 +714,7 @@ export interface LocaleDict {
 
   // File Explorer
   fileExplorer: {
+    title: string;
     togglePanel: string;
     allFiles: string;
     changes: string;
@@ -827,6 +909,24 @@ export const en: LocaleDict = {
     updateFailed: "The update failed. Please try again.",
   },
   // Common
+  markdown: {
+    previewImage: "View image",
+    closeImage: "Close image",
+    codeRegion: "Code block",
+    plainText: "Plain text",
+    copyCode: "Copy code",
+    wrapCode: "Wrap lines",
+    unwrapCode: "Disable line wrapping",
+    expandTable: "Expand table",
+    closeTable: "Close table",
+    tableDialog: "Table details",
+    scrollHorizontally: "Scroll horizontally to view more",
+    copyTable: "Copy table",
+    copyFailed: "Copy failed",
+    tableRegion: "Table",
+    imageUnavailable: "Image unavailable",
+    mediaUnavailable: "Media unavailable",
+  },
   common: {
     loading: "Loading...",
     cancel: "Cancel",
@@ -835,6 +935,7 @@ export const en: LocaleDict = {
     confirm: "Confirm",
     back: "Back",
     copied: "Copied!",
+    copyToClipboard: "Copy to clipboard",
     showMore: "Show more",
     showLess: "Show less",
     showResults: "Show results",
@@ -894,6 +995,9 @@ export const en: LocaleDict = {
 
   // Chat page
   chat: {
+    filePreview: "File preview",
+    conversationRegion: "Conversation",
+    jumpToLatest: "Jump to latest",
     newSession: "New Session",
     remoteAccess: "Remote Access",
     settings: "Settings",
@@ -1112,8 +1216,8 @@ export const en: LocaleDict = {
 
   // Prompt Input
   prompt: {
+    draftImagesNotSaved: "Text is saved on this device. Reattach images after reopening.",
     draftSaveFailed: "This draft could not be saved on this device. Keep this page open or copy your text.",
-    draftImagesNotSaved: "Images are not saved with drafts. Reattach them after reopening.",
     buildMode: "Build mode - execute code changes and commands",
     build: "Build",
     planMode: "Plan mode - read-only research and planning",
@@ -1139,9 +1243,44 @@ export const en: LocaleDict = {
     reasoningEffortMax: "Max",
     reasoningEffortUltra: "Ultra",
   },
+  activity: {
+    searchedIn: "Searched {path} for “{query}”",
+    searchingIn: "Searching {path} for “{query}”",
+    loadedTools: "Loaded tools",
+    loadingTools: "Loading tools",
+    readFiles: "Read files",
+    readingFiles: "Reading files",
+    ranCommands: "Ran commands",
+    runningCommands: "Running commands",
+    changedFiles: "Changed files",
+    changingFiles: "Changing files",
+    searchedWeb: "Searched the web",
+    searchingWeb: "Searching the web",
+    calledTools: "Called tools",
+    callingTools: "Calling tools",
+    readSkill: "Read {target} skill",
+    readingSkill: "Reading {target} skill",
+    readFile: "Read {target}",
+    readingFile: "Reading {target}",
+    searched: "Searched {target}",
+    searching: "Searching {target}",
+    listed: "Listed {target}",
+    listing: "Listing {target}",
+    ranCommand: "Ran {target}",
+    runningCommand: "Running {target}",
+    separator: " · ",
+  },
   parts: {
     linkToMessage: "Link to this message",
+    toolInput: "Input",
+    toolOutput: "Output",
+    toolPending: "Pending",
+    toolCompleted: "Completed",
+    readFile: "Read file",
     thinking: "Thinking",
+    memorySources: "Memory sources",
+    thought: "Thought",
+    thoughtFor: "Thought for {duration}",
     attachment: "Attachment",
     creatingPlan: "Creating plan",
     updatingPlan: "Updating plan",
@@ -1179,7 +1318,30 @@ export const en: LocaleDict = {
     interrupted: "Model response interrupted unexpectedly.",
     emptyResponse: "Unexpected empty response. Try sending your message again.",
     contextCompressed: "Context has been automatically compressed",
+    elicitationAccepted: "Request accepted",
+    elicitationDeclined: "Request declined",
+    elicitationCancelled: "Request cancelled",
+    elicitationCompleted: "Request completed",
+    planImplementationPending: "Plan awaiting implementation",
+    planImplementationCompleted: "Plan request completed",
+    streamReconnecting: "Connection interrupted. Reconnecting…",
+    turnFinished: "Turn finished",
     sessionResumed: "Session has been resumed",
+    automaticApprovalReview: "Automatic approval review is in progress",
+    automaticApprovalApproved: "Automatic approval review approved the action",
+    automaticApprovalDenied: "Automatic approval review denied the action",
+    automaticApprovalAborted: "Automatic approval review was aborted",
+    automaticApprovalTimedOut: "Automatic approval review timed out",
+    strictReviewRequired: "Strict review is required before continuing",
+    autoReviewInterrupted: "Automatic approval review was interrupted",
+    apiRetry: "API request failed ({error}). Retrying {attempt}/{max} in {seconds}s…",
+    permissionDenied: "{tool} was denied automatically: {reason}",
+    rateLimitWarning: "Approaching your usage limit ({percent}% used)",
+    rateLimitRejected: "Usage limit reached. Resets at {resetsAt}",
+    rateLimitRejectedNoReset: "Usage limit reached",
+    compactFailed: "Context compaction failed: {error}",
+    authError: "Authentication error: {error}",
+    conversationReset: "Context cleared — a new conversation started",
     continueWork: "Continue",
     loadingSteps: "Loading steps...",
   },
@@ -1416,6 +1578,7 @@ export const en: LocaleDict = {
 
   // File Explorer
   fileExplorer: {
+    title: "File explorer",
     togglePanel: "Toggle file explorer",
     allFiles: "Files",
     changes: "Changes",

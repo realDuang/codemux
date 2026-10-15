@@ -1,5 +1,6 @@
 import { createStore } from "solid-js/store";
 import type { UnifiedMessage, UnifiedPart, UnifiedPermission, UnifiedQuestion } from "../types/unified";
+import { compareParts } from "../lib/message-parts";
 
 /** A message waiting in the queue (not yet processed by the engine). */
 export interface QueuedMessage {
@@ -17,7 +18,7 @@ export const [messageStore, setMessageStore] = createStore<{
     [sessionId: string]: UnifiedMessage[];  // Grouped by sessionId, array in chronological order
   };
   part: {
-    [messageId: string]: UnifiedPart[];  // Grouped by messageId, array sorted by id
+    [messageId: string]: UnifiedPart[];  // Grouped by messageId, sorted by explicit order or legacy id
   };
   permission: {
     [sessionId: string]: UnifiedPermission[];  // Permission request queue grouped by sessionId
@@ -49,7 +50,7 @@ export const [messageStore, setMessageStore] = createStore<{
 
 /** Replace the displayed parts with a complete authoritative message snapshot. */
 export function replaceMessageParts(messageId: string, parts: readonly UnifiedPart[]): void {
-  setMessageStore("part", messageId, [...parts].sort((a, b) => a.id.localeCompare(b.id)));
+  setMessageStore("part", messageId, [...parts].sort(compareParts));
 }
 
 // Helper functions for expanded state management

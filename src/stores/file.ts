@@ -28,6 +28,8 @@ interface FilePreviewState {
   diff?: string; // unified diff string
   loading: boolean;
   error?: string;
+  line?: number;
+  lineRequestId?: number;
 }
 
 interface OpenTab {
@@ -307,11 +309,15 @@ export async function toggleDirectory(
 // File preview
 // ---------------------------------------------------------------------------
 
+let nextLineRequestId = 0;
+
 export async function previewFile(
   absolutePath: string,
   name: string,
   relativePath: string,
+  line?: number,
 ): Promise<void> {
+  const lineRequestId = line ? ++nextLineRequestId : undefined;
   // Open tab if not already open
   openTab(relativePath, absolutePath, name);
 
@@ -322,6 +328,8 @@ export async function previewFile(
       path: relativePath,
       absolutePath,
       name,
+      line,
+      lineRequestId,
       content: cached,
       diff: undefined,
       loading: false,
@@ -335,6 +343,8 @@ export async function previewFile(
     path: relativePath,
     absolutePath,
     name,
+    line,
+    lineRequestId,
     content: undefined,
     diff: undefined,
     loading: true,
@@ -355,6 +365,8 @@ export async function previewFile(
           path: relativePath,
           absolutePath,
           name,
+          line,
+          lineRequestId,
           content,
           diff: undefined,
           loading: false,
@@ -368,6 +380,8 @@ export async function previewFile(
           path: relativePath,
           absolutePath,
           name,
+          line,
+          lineRequestId,
           diff: undefined,
           loading: false,
           error: msg,
@@ -389,6 +403,8 @@ export async function previewFile(
         path: relativePath,
         absolutePath,
         name,
+        line,
+        lineRequestId,
         content,
         diff: undefined,
         loading: false,
@@ -402,6 +418,8 @@ export async function previewFile(
         path: relativePath,
         absolutePath,
         name,
+        line,
+        lineRequestId,
         diff: undefined,
         loading: false,
         error: msg,

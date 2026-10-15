@@ -16,6 +16,7 @@ import { useNavigate } from "@solidjs/router";
 import { gateway, gatewayConnected, getAuthoritativeSessionActivity, hasAuthoritativeSessionState } from "../lib/gateway-api";
 import { gatewayClient } from "../lib/gateway-client";
 import { observeBrowserResume } from "../lib/browser-resume";
+import { compareParts, upsertPart } from "../lib/message-parts";
 import { ensureGatewayInitialized, refreshEngineConfigState } from "../lib/engine-bootstrap";
 import { logger } from "../lib/logger";
 import { isElectron } from "../lib/platform";
@@ -28,15 +29,15 @@ import {
   setInputDraft,
   setSendingFor,
   updateSessionInfo,
-  initializeWebInputDrafts,
-  consumeInputDraft,
-  restoreInputDraftIfUnchanged,
-  type InputDraftSubmission,
   toSessionInfo,
   applySessionCatalog,
   replaceListedSessions,
   visibleSessionsForEngines,
   removeListedSession,
+  initializeWebInputDrafts,
+  consumeInputDraft,
+  restoreInputDraftIfUnchanged,
+  type InputDraftSubmission,
 } from "../stores/session";
 import {
   messageStore,
@@ -81,6 +82,7 @@ import { BrandMark } from "../components/BrandMark";
 import { refreshThemeFromSettings } from "../lib/theme";
 import { refreshLocaleFromSettings } from "../lib/i18n";
 import { saveScrollPosition, deleteScrollPosition, resolveRemountScroll, resolveSessionSwitchScroll } from "../lib/scroll-position";
+import { createStreamScroll, isNearScrollBottom } from "../lib/stream-scroll";
 
 import { InputAreaQuestion } from "../components/InputAreaQuestion";
 import { InputAreaPermission } from "../components/InputAreaPermission";
@@ -90,6 +92,7 @@ const FileExplorer = lazy(() =>
     default: m.FileExplorer,
   })),
 );
+const FilePreview = lazy(() => import("../components/FilePreview").then((m) => ({ default: m.FilePreview })));
 import { ResizeHandle } from "../components/ResizeHandle";
 import { TerminalPanel } from "../components/TerminalPanel";
 import {
@@ -121,31 +124,6 @@ import { computeActiveSessions } from "../lib/active-sessions";
 import { orchestrationStore, updateRun, setCurrentRunId, generateTeamId, registerTeam, associateRunWithTeam, getTeamId, isTeamParentSession, getRunForTeam, restoreFromRuns, autoDetectTeams, getRoleMappings } from "../stores/orchestration";
 import { OrchestrationCards } from "../components/orchestration/OrchestrationCards";
 import type { OrchestrationRun } from "../types/unified";
-
-// Binary search helper (consistent with opencode desktop)
-function binarySearch<T>(
-  arr: T[],
-  target: string,
-  getId: (item: T) => string,
-): { found: boolean; index: number } {
-  let left = 0;
-  let right = arr.length;
-
-  while (left < right) {
-    const mid = Math.floor((left + right) / 2);
-    const midId = getId(arr[mid]);
-
-    if (midId === target) {
-      return { found: true, index: mid };
-    } else if (midId < target) {
-      left = mid + 1;
-    } else {
-      right = mid;
-    }
-  }
-
-  return { found: false, index: left };
-}
 
 export default function Chat() {
   const { t } = useI18n();
@@ -342,6 +320,7 @@ export default function Chat() {
   };
 
   const [messagesRef, setMessagesRef] = createSignal<HTMLDivElement>();
+  const [messagesContentRef, setMessagesContentRef] = createSignal<HTMLDivElement>();
   const [loadingMessages, setLoadingMessages] = createSignal(false);
   // Whether user has scrolled away from the bottom. When true, auto-scroll
   // during streaming is suppressed so the user can read earlier content.
@@ -683,6 +662,7 @@ export default function Chat() {
     setSendError(msg);
     sendErrorTimer = setTimeout(() => setSendError(null), 3000);
   };
+
   const notifySendFailure = (error: unknown) => {
     const message = error instanceof Error ? error.message : "";
     const interrupted = !gateway.connected || message.startsWith("Request timeout:")
@@ -729,11 +709,6 @@ export default function Chat() {
 
   // ── Scroll helpers ──────────────────────────────────────────────
 
-  const scrollToBottom = () => {
-    const el = messagesRef();
-    if (el) el.scrollTop = el.scrollHeight;
-  };
-
   // Stabilized scroll-to-bottom for session entry. After the initial scroll,
   // CSS content-visibility may cause layout shifts as items become visible,
   // changing scrollHeight. This retries via rAF a few times until the scroll
@@ -741,15 +716,19 @@ export default function Chat() {
   let stableScrollRafId: number | null = null;
   const scrollToBottomStable = () => {
     const el = messagesRef();
-    if (!el) return;
+    const sessionId = sessionStore.current;
+    if (!el || disposed || userScrolledUp() || manualScrollPause) return;
+    if (stableScrollRafId !== null) cancelAnimationFrame(stableScrollRafId);
     el.scrollTop = el.scrollHeight;
 
     let retries = 0;
     const recheck = () => {
       if (retries >= 5) return;
       retries++;
+      const scrollTop = el.scrollTop;
       stableScrollRafId = requestAnimationFrame(() => {
         stableScrollRafId = null;
+        if (disposed || userScrolledUp() || messagesRef() !== el || sessionStore.current !== sessionId || el.scrollTop < scrollTop) return;
         if (el.scrollHeight - el.scrollTop - el.clientHeight > 1) {
           el.scrollTop = el.scrollHeight;
           recheck();
@@ -764,51 +743,106 @@ export default function Chat() {
     }
   });
 
-  // Debounced scrollToBottom for high-frequency part updates —
-  // coalesces multiple calls within the same frame into one.
-  let scrollRafId: number | null = null;
-  const scheduleScrollToBottom = () => {
-    if (scrollRafId === null) {
-      scrollRafId = requestAnimationFrame(() => {
-        scrollRafId = null;
-        scrollToBottom();
-      });
-    }
-  };
-  onCleanup(() => {
-    if (scrollRafId !== null) {
-      cancelAnimationFrame(scrollRafId);
-    }
+  const streamScroll = createStreamScroll({
+    viewport: messagesRef,
+    sessionId: () => sessionStore.current,
+    following: () => !disposed && !userScrolledUp() && !manualScrollPause,
   });
+  const scheduleScrollToBottom = streamScroll.schedule;
+  onCleanup(streamScroll.cancel);
 
   const isNearBottom = () => {
     const el = messagesRef();
     if (!el) return true;
-    const threshold = 80;
-    return el.scrollHeight - el.scrollTop - el.clientHeight < threshold;
+    return isNearScrollBottom(el);
   };
 
-  let scrollRafPending = false;
-  let scrollRafId2: number | null = null;
-  const handleScroll = () => {
-    if (scrollRafPending) return;
-    scrollRafPending = true;
-    scrollRafId2 = requestAnimationFrame(() => {
-      scrollRafPending = false;
-      setUserScrolledUp(!isNearBottom());
-      // Persist scroll position so it survives navigation and session switches
-      const sid = sessionStore.current;
-      const el = messagesRef();
-      if (sid && el) {
-        saveScrollPosition(sid, el.scrollTop);
-      }
-    });
+  let lastScrollTop = 0;
+  let lastScrollHeight = 0;
+  let manualScrollPause = false;
+  const resumeScrollFollowing = () => {
+    manualScrollPause = false;
+    setUserScrolledUp(false);
   };
-  onCleanup(() => {
-    if (scrollRafId2 !== null) {
-      cancelAnimationFrame(scrollRafId2);
+  const handleJumpToLatest = () => {
+    resumeScrollFollowing();
+    scrollToBottomStable();
+    messagesRef()?.focus({ preventScroll: true });
+  };
+  const pauseScrollFollowing = () => {
+    manualScrollPause = true;
+    const el = messagesRef();
+    if (el) {
+      lastScrollTop = el.scrollTop;
+      lastScrollHeight = el.scrollHeight;
     }
+    setUserScrolledUp(true);
+    streamScroll.cancel();
+    if (stableScrollRafId !== null) cancelAnimationFrame(stableScrollRafId);
+    stableScrollRafId = null;
+  };
+
+  createEffect(() => {
+    const sessionId = sessionStore.current;
+    untrack(() => {
+      streamScroll.cancel();
+      if (stableScrollRafId !== null) cancelAnimationFrame(stableScrollRafId);
+      stableScrollRafId = null;
+      lastScrollTop = 0;
+      lastScrollHeight = 0;
+      // Hold the saved reading position until the session has been restored.
+      manualScrollPause = resolveRemountScroll(sessionId).action === "restore";
+      setUserScrolledUp(manualScrollPause);
+    });
   });
+  let touchY: number | undefined;
+  const handleTouchStart = (event: TouchEvent) => { touchY = event.touches[0]?.clientY; };
+  const handleTouchMove = (event: TouchEvent) => {
+    const nextY = event.touches[0]?.clientY;
+    if (nextY !== undefined && touchY !== undefined) {
+      if (nextY > touchY) pauseScrollFollowing();
+      else if (nextY < touchY && isNearBottom()) resumeScrollFollowing();
+    }
+    touchY = nextY;
+  };
+  const handleScrollKeyDown = (event: KeyboardEvent) => {
+    if (event.defaultPrevented) return;
+    if (event.target instanceof Element && event.target.closest("input, textarea, select, button, a, summary, [contenteditable=true]")) return;
+    if (["ArrowUp", "PageUp", "Home"].includes(event.key) || (event.key === " " && event.shiftKey)) {
+      pauseScrollFollowing();
+    } else if (event.key === "End" || (["ArrowDown", "PageDown", " "].includes(event.key) && isNearBottom())) {
+      resumeScrollFollowing();
+    }
+  };
+
+  // Images, syntax highlighting, and viewport resizing can change layout after
+  // the corresponding message notification has already been rendered.
+  createEffect(() => {
+    const viewport = messagesRef();
+    const content = messagesContentRef();
+    if (!viewport || !content) return;
+    const observer = new ResizeObserver(scheduleScrollToBottom);
+    observer.observe(content);
+    observer.observe(viewport);
+    onCleanup(() => observer.disconnect());
+  });
+
+  const handleScroll = () => {
+    // Update intent before any queued streaming frame can run.
+    const sid = sessionStore.current;
+    const el = messagesRef();
+    if (!el) return;
+    // Small upward gestures must stay detached even inside the bottom tolerance.
+    // A shorter document can clamp scrollTop without any user navigation.
+    const movedUp = el.scrollTop < lastScrollTop && el.scrollHeight >= lastScrollHeight;
+    if (manualScrollPause && el.scrollTop > lastScrollTop && el.scrollHeight - el.scrollTop - el.clientHeight <= 1) {
+      manualScrollPause = false;
+    }
+    setUserScrolledUp(manualScrollPause || movedUp || (userScrolledUp() && !isNearBottom()));
+    lastScrollTop = el.scrollTop;
+    lastScrollHeight = el.scrollHeight;
+    if (sid) saveScrollPosition(sid, el.scrollTop);
+  };
 
   const toggleSidebar = () => setIsSidebarOpen((prev) => !prev);
   const toggleSidebarCollapse = () => setIsSidebarCollapsed((prev) => !prev);
@@ -926,7 +960,7 @@ export default function Chat() {
       // current for in-progress assistant messages (placeholder empty on disk).
       for (const msg of messages) {
         const diskParts = msg.parts || [];
-        diskParts.sort((a, b) => a.id.localeCompare(b.id));
+        diskParts.sort(compareParts);
         const existingParts = messageStore.part[msg.id];
         if (authoritative || diskParts.length > 0 || !existingParts || existingParts.length === 0) {
           setMessageStore("part", msg.id, diskParts);
@@ -1092,7 +1126,6 @@ export default function Chat() {
         navigate("/", { replace: true });
         return;
       }
-
       if (!isElectron()) initializeWebInputDrafts(Auth.getDeviceId());
 
       // Bootstrap host settings on page refresh (no-op if already done)
@@ -1271,8 +1304,13 @@ export default function Chat() {
         if (scrollAction.action === "restore") {
           const pos = scrollAction.position;
           setTimeout(() => {
+            if (disposed || sessionStore.current !== currentSessionId) return;
             const el = messagesRef();
-            if (el) el.scrollTop = pos;
+            if (el) {
+              el.scrollTop = pos;
+              if (isNearBottom()) resumeScrollFollowing();
+              else setUserScrolledUp(true);
+            }
           }, 50);
         }
         return;
@@ -1469,20 +1507,21 @@ export default function Chat() {
     // Authoritative engines always refresh because another client may have
     // changed the conversation. Ordinary engines retain instant cache switching.
     const existing = messageStore.message[sessionId];
-    if (isAuthoritativeSession(sessionId) || !existing || !existing.some(m => m.role === "user")) {
-      await loadSessionMessages(sessionId);
-    } else {
-      if (!isElectron()) {
-        await loadSessionMessages(sessionId, { preserveScroll: true });
-        if (gen !== switchGeneration || sessionStore.current !== sessionId) return;
-      }
-      const scrollAction = resolveSessionSwitchScroll(sessionId);
+    const scrollAction = resolveSessionSwitchScroll(sessionId);
+    if (!isElectron() || isAuthoritativeSession(sessionId) || !existing || !existing.some(m => m.role === "user")) {
+      await loadSessionMessages(sessionId, { preserveScroll: true });
+    }
+    if (gen === switchGeneration && sessionStore.current === sessionId) {
       if (scrollAction.action === "restore") {
         const pos = scrollAction.position;
         setTimeout(() => {
           if (gen !== switchGeneration || sessionStore.current !== sessionId) return;
           const el = messagesRef();
-          if (el) el.scrollTop = pos;
+          if (el) {
+            el.scrollTop = pos;
+            if (isNearBottom()) resumeScrollFollowing();
+            else setUserScrolledUp(true);
+          }
         }, 100);
       } else {
         setTimeout(() => {
@@ -1541,7 +1580,9 @@ export default function Chat() {
       }
 
       setMessageStore("message", processedSession.id, []);
-      setTimeout(() => scrollToBottomStable(), 100);
+      setTimeout(() => {
+        if (sessionStore.current === processedSession.id) scrollToBottomStable();
+      }, 100);
 
       // Refresh engine capabilities (Copilot/Claude populate modes only after createSession)
       try {
@@ -1607,7 +1648,9 @@ export default function Chat() {
       setMessageStore("message", processedSession.id, []);
 
       registerTeam(teamId, processedSession.id, worktreeInfo);
-      setTimeout(() => scrollToBottomStable(), 100);
+      setTimeout(() => {
+        if (sessionStore.current === processedSession.id) scrollToBottomStable();
+      }, 100);
     } catch (error) {
       logger.error("[TeamTask] Failed to create team task:", error);
       notify(t().notification.sessionCreateFailed);
@@ -1665,6 +1708,7 @@ export default function Chat() {
     const existingMessages = messageStore.message[sessionId] || [];
     setMessageStore("message", sessionId, [...existingMessages, tempMsg]);
     setMessageStore("part", tempMsgId, [tempPart]);
+    resumeScrollFollowing();
     scheduleScrollToBottom();
 
     try {
@@ -2085,20 +2129,9 @@ export default function Chat() {
         }
       }
 
-      const parts = messageStore.part[messageId] || [];
-      const index = binarySearch(parts, part.id, (p) => p.id);
-
-      if (index.found) {
-        setMessageStore("part", messageId, index.index, part);
-      } else if (!messageStore.part[messageId]) {
-        setMessageStore("part", messageId, [part]);
-      } else {
-        setMessageStore("part", messageId, (draft) => {
-          const newParts = [...draft];
-          newParts.splice(index.index, 0, part);
-          return newParts;
-        });
-      }
+      const parts = [...(messageStore.part[messageId] || [])];
+      upsertPart(parts, part);
+      setMessageStore("part", messageId, parts);
       // Mark steps as loaded for streaming messages so lazy-load won't re-fetch
       if (!messageStore.stepsLoaded[messageId]) {
         setMessageStore("stepsLoaded", messageId, true);
@@ -2152,12 +2185,7 @@ export default function Chat() {
       const merged = [...existingParts];
 
       for (const part of parts) {
-        const { found, index } = binarySearch(merged, part.id, (p) => p.id);
-        if (found) {
-          merged[index] = part;
-        } else {
-          merged.splice(index, 0, part);
-        }
+        upsertPart(merged, part);
       }
 
       // Single store mutation for all parts
@@ -2231,7 +2259,7 @@ export default function Chat() {
           const existingParts = messageStore.part[msgInfo.id];
           if (!existingParts || existingParts.length === 0) {
             // Sort in-place — msgInfo.parts is from the incoming event, safe to mutate
-            msgInfo.parts.sort((a, b) => a.id.localeCompare(b.id));
+            msgInfo.parts.sort(compareParts);
             setMessageStore("part", msgInfo.id, msgInfo.parts);
           } else {
             // Merge: use existing streaming parts as base, add any new parts
@@ -2241,7 +2269,7 @@ export default function Chat() {
             if (newParts.length > 0) {
               // Single concat + in-place sort (avoids spread + sort creating 2 arrays)
               const merged = existingParts.concat(newParts);
-              merged.sort((a, b) => a.id.localeCompare(b.id));
+              merged.sort(compareParts);
               setMessageStore("part", msgInfo.id, merged);
             }
           }
@@ -2589,8 +2617,8 @@ export default function Chat() {
       setMessageStore("message", sessionId, (draft) => [...draft, tempMessageInfo]);
     }
     setMessageStore("part", tempMessageId, [tempPart]);
-    setUserScrolledUp(false);
-    setTimeout(() => scrollToBottom(), 0);
+    resumeScrollFollowing();
+    scheduleScrollToBottom();
 
     try {
       await gateway.invokeCommand(sessionId, commandName, args, {
@@ -2755,8 +2783,8 @@ export default function Chat() {
     }
 
     setMessageStore("part", tempMessageId, tempParts);
-    setUserScrolledUp(false);
-    setTimeout(() => scrollToBottom(), 0);
+    resumeScrollFollowing();
+    scheduleScrollToBottom();
 
     try {
       await gateway.sendMessage(sessionId, text, {
@@ -2967,6 +2995,10 @@ export default function Chat() {
                   return "bg-cyan-500/10 text-cyan-700 ring-cyan-500/25 dark:text-cyan-300";
                 if (id === "autopilot" || id === "bypassPermissions")
                   return "bg-emerald-500/10 text-emerald-700 ring-emerald-500/25 dark:text-emerald-300";
+                if (id === "acceptEdits")
+                  return "bg-amber-500/10 text-amber-700 ring-amber-500/25 dark:text-amber-300";
+                if (id === "auto")
+                  return "bg-violet-500/10 text-violet-700 ring-violet-500/25 dark:text-violet-300";
                 return "bg-indigo-500/10 text-indigo-700 ring-indigo-500/25 dark:text-indigo-300";
               })()
             }`}>
@@ -3140,13 +3172,13 @@ export default function Chat() {
       <div class="flex-1 flex flex-col overflow-hidden min-w-0 min-h-0">
 
       {/* Top row: chat area + file explorer */}
-      <div class="flex-1 flex overflow-hidden min-w-0 min-h-0">
+      <div class="relative flex-1 flex overflow-hidden min-w-0 min-h-0">
       <div class="flex-1 flex flex-col overflow-hidden min-w-0 bg-[var(--cm-surface)]">
 
 
 
         {/* Message List */}
-        <main class="flex-1 flex flex-col overflow-hidden relative">
+        <main class="conversation flex-1 flex flex-col overflow-hidden relative" inert={isMobile() && fileStore.panelOpen}>
           <Show
             when={!sessionStore.initError}
             fallback={
@@ -3199,7 +3231,7 @@ export default function Chat() {
             {/* Scroll container is ALWAYS in the DOM so the virtualizer
                 maintains a stable reference to getScrollElement(). The loading
                 overlay is rendered on top without destroying the scroll div. */}
-              <div ref={setMessagesRef} onScroll={handleScroll} class="flex-1 overflow-y-auto px-2 sm:px-4 md:px-6" style={{ position: "relative" }}>
+              <div ref={setMessagesRef} onScroll={handleScroll} onWheel={(event) => { if (event.deltaY < 0) pauseScrollFollowing(); else if (event.deltaY > 0 && isNearBottom()) resumeScrollFollowing(); }} onTouchStart={handleTouchStart} onTouchMove={handleTouchMove} onKeyDown={handleScrollKeyDown} class="conversation-viewport" tabIndex={0} role="region" aria-label={t().chat.conversationRegion} style={{ position: "relative" }}>
                 {/* Loading overlay — covers scroll area during message load */}
                 <Show when={loadingMessages()}>
                   <div class="absolute inset-0 flex items-center justify-center z-10 bg-[var(--cm-surface)]/80">
@@ -3208,7 +3240,7 @@ export default function Chat() {
                     </div>
                   </div>
                 </Show>
-                <div class="max-w-4xl mx-auto w-full py-6">
+                <div ref={setMessagesContentRef} class="conversation-column conversation-content">
                   {/* Tab bar — Dashboard / Chat switcher for team parent sessions */}
                   <Show when={showOrchestrationTabs()}>
                     <div class="flex items-center gap-0.5 mb-4 bg-gray-900/[0.04] dark:bg-white/[0.04] ring-1 ring-inset ring-[var(--cm-hairline)] rounded-lg p-0.5 w-fit">
@@ -3265,7 +3297,7 @@ export default function Chat() {
                           </Show>
                         }
                       >
-                        <MessageList sessionID={sessionStore.current!} isWorking={sending()} scrollContainerRef={messagesRef} onPermissionRespond={handlePermissionRespond} onQuestionRespond={handleQuestionRespond} onQuestionDismiss={handleQuestionDismiss} onContinue={handleContinue} />
+                        <MessageList sessionID={sessionStore.current!} isWorking={sending()} compactActivityGroups={currentEngineInfo()?.capabilities?.compactActivityGroups} scrollContainerRef={messagesRef} onPermissionRespond={handlePermissionRespond} onQuestionRespond={handleQuestionRespond} onQuestionDismiss={handleQuestionDismiss} onContinue={handleContinue} />
                       </Show>
                     }
                   >
@@ -3283,8 +3315,14 @@ export default function Chat() {
               </div>
 
               {/* Input Area */}
-              <div class="px-2 pb-2 pt-1 sm:px-4 sm:pb-3 relative z-20 bg-[var(--cm-surface)] before:content-[''] before:absolute before:inset-x-0 before:-top-8 before:h-8 before:pointer-events-none before:bg-gradient-to-t before:from-[var(--cm-surface)] before:to-transparent">
-                <div class="max-w-4xl mx-auto w-full">
+              <div class="conversation-composer">
+                <Show when={userScrolledUp() && !loadingMessages()}>
+                  <button type="button" class="conversation-jump" onClick={handleJumpToLatest}>
+                    <svg aria-hidden="true" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v16m-6-6 6 6 6-6" /></svg>
+                    {t().chat.jumpToLatest}
+                  </button>
+                </Show>
+                <div class="conversation-column">
                   <Show when={currentSessionUnavailable()}>
                     <p role="status" class="rounded-lg bg-gray-100 dark:bg-slate-800 px-3 py-3 text-sm text-gray-500 dark:text-gray-400">{t().catalog.unavailableDetail}</p>
                   </Show>
@@ -3400,7 +3438,7 @@ export default function Chat() {
                     />
                   </Show>
                   <div class="mt-1.5 text-center">
-                    <p class="cm-mono text-[10px] text-gray-400 dark:text-gray-500 tabular-nums">
+                    <p class="conversation-session-summary">
                       <Show when={sessionUsage()} fallback={t().chat.disclaimer}>
                         {(u) => (
                           <>
@@ -3425,6 +3463,11 @@ export default function Chat() {
       <Show when={fileStore.panelOpen}>
         {(() => {
           const [widthReady, setWidthReady] = createSignal(false);
+          const returnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+          const openedOnMobile = isMobile();
+          onCleanup(() => {
+            if (openedOnMobile) queueMicrotask(() => { if (returnFocus?.isConnected) returnFocus.focus({ preventScroll: true }); });
+          });
           // Defer transition to avoid layout thrashing during initial mount
           const timerId = setTimeout(() => setWidthReady(true), 300);
           onCleanup(() => clearTimeout(timerId));
@@ -3434,12 +3477,31 @@ export default function Chat() {
           const effectiveMin = () => hasPreview() ? 400 : 200;
           return (
             <div
-              class={`relative hidden md:flex flex-col overflow-hidden flex-shrink-0 ${
-                widthReady() ? "transition-[width] duration-200 ease-out" : ""
+              class={`${isMobile() ? "absolute inset-0 z-30 conversation" : "relative"} flex flex-col overflow-hidden flex-shrink-0 ${
+                widthReady() && !isMobile() ? "transition-[width] duration-200 ease-out" : ""
               }`}
-              style={{ width: `${effectiveWidth()}px` }}
-              aria-label="File explorer"
+              style={{ width: isMobile() ? "100%" : `${effectiveWidth()}px` }}
+              aria-label={isMobile() ? t().chat.filePreview : t().fileExplorer.title}
+              role="region"
+              onKeyDown={(event) => {
+                if (isMobile() && event.key === "Escape") {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  closePanel();
+                }
+              }}
             >
+              <Show when={!isMobile()} fallback={
+                <>
+                  <div class="flex items-center gap-3 border-b border-[var(--conversation-border)] px-4">
+                    <button type="button" class="min-h-11 px-2" ref={(el) => queueMicrotask(() => el.focus())} onClick={closePanel}>{t().common.back}</button>
+                    <span class="text-sm text-[var(--conversation-muted)]">{t().chat.filePreview}</span>
+                  </div>
+                  <div class="min-h-0 flex-1 overflow-auto">
+                    <Suspense><FilePreview /></Suspense>
+                  </div>
+                </>
+              }>
               <ResizeHandle
                 direction="horizontal"
                 edge="start"
@@ -3453,6 +3515,7 @@ export default function Chat() {
               <Suspense>
                 <FileExplorer />
               </Suspense>
+              </Show>
             </div>
           );
         })()}

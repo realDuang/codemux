@@ -1,14 +1,14 @@
 .root {
   position: relative;
-  border: 1px solid var(--sl-color-divider);
-  background-color: var(--sl-color-bg-surface);
-  border-radius: 0.25rem;
-  padding: 0.5rem calc(0.5rem + 3px);
-
-  :global(.dark) & {
-    background-color: var(--cm-code-bg);
-    border-color: rgba(71, 85, 105, 0.3);
-  }
+  min-width: 0;
+  max-width: 100%;
+  border: 1px solid var(--conversation-border, var(--sl-color-divider));
+  background-color: var(--conversation-surface, var(--sl-color-bg-surface));
+  border-radius: var(--conversation-radius, 0.5rem);
+  padding: 0.625rem 0.75rem;
+  font-family: var(--conversation-font-mono, var(--font-mono));
+  font-size: 0.75rem;
+  line-height: 1.6;
 
   &[data-flush="true"] {
     border: none;
@@ -28,71 +28,56 @@
   }
 
   pre {
-    --shiki-dark-bg: var(--sl-color-bg-surface) !important;
-    background-color: var(--sl-color-bg-surface) !important;
-    line-height: 1.6;
-    font-size: 0.75rem;
+    --shiki-dark-bg: var(--conversation-surface, var(--sl-color-bg-surface)) !important;
+    background-color: var(--conversation-surface, var(--sl-color-bg-surface)) !important;
+    font: inherit;
     white-space: pre-wrap;
-    word-break: break-word;
+    overflow-wrap: anywhere;
+    word-break: normal;
     margin: 0;
 
-    :global(.dark) & {
-      --shiki-dark-bg: var(--cm-code-bg) !important;
-      background-color: var(--cm-code-bg) !important;
+    code {
+      display: grid;
+      font: inherit;
     }
 
-    span {
+    :global(.line) {
+      display: block;
+      position: relative;
+      min-width: 0;
+      min-height: 1lh;
       white-space: break-spaces;
     }
   }
-}
 
-.withLineNumbers {
-  display: flex;
-  gap: 0;
-}
+  /* The gutter belongs to each code row, so wrapped lines cannot drift apart. */
+  &[data-line-numbers] :global(.line) {
+    padding-left: calc(var(--line-number-width) + 1.5rem);
+  }
 
-.lineNumbers {
-  display: flex;
-  flex-direction: column;
-  padding-right: 0.75rem;
-  border-right: 1px solid var(--sl-color-divider);
-  margin-right: 0.75rem;
-  user-select: none;
-}
-
-.lineNumber {
-  font-size: 0.7rem;
-  line-height: 1.6;
-  color: var(--sl-color-text-dimmed);
-  text-align: right;
-  min-width: 2.5ch;
-  font-family: var(--font-mono);
-}
-
-.codeContent {
-  flex: 1;
-  min-width: 0;
-  overflow-x: auto;
-  -webkit-overflow-scrolling: touch;
+  &[data-line-numbers] :global(.line)::before {
+    content: attr(data-line);
+    position: absolute;
+    top: 0;
+    left: 0;
+    box-sizing: content-box;
+    width: var(--line-number-width);
+    height: 100%;
+    padding-right: 0.5rem;
+    border-right: 1px solid var(--conversation-border, var(--sl-color-divider));
+    font: inherit;
+    color: var(--conversation-subtle, var(--sl-color-text-dimmed));
+    text-align: right;
+    white-space: nowrap;
+    overflow-wrap: normal;
+    font-variant-numeric: tabular-nums;
+    user-select: none;
+    pointer-events: none;
+  }
 }
 
 @media (max-width: 640px) {
   .root {
-    padding: 0.375rem calc(0.375rem + 2px);
-  }
-
-  .root pre {
-    font-size: 0.7rem;
-  }
-
-  .lineNumber {
-    font-size: 0.6rem;
-    min-width: 2ch;
-  }
-
-  .lineNumbers {
-    padding-right: 0.5rem;
-    margin-right: 0.5rem;
+    padding: 0.5rem;
   }
 }

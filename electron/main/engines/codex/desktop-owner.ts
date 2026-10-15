@@ -1,6 +1,7 @@
 import type {
   CodexDesktopIpcClient, DesktopFollowerMethod, DesktopThreadSnapshot,
 } from "./desktop-ipc-client";
+import { getCodexAsyncQuestions, parseCodexAsyncQuestionReplies } from "./async-questions";
 
 export type CodexOwnerRequestMethod = "turn/start" | "turn/steer" | "turn/interrupt" | "thread/compact/start";
 
@@ -15,6 +16,13 @@ export interface NativeOwnedThreadState {
   approvalPolicy?: unknown;
   sandboxPolicy?: unknown;
   permissions?: string | null;
+  latestTokenUsageInfo?: unknown;
+  /** Item lifecycle data observed by this runtime while a native turn is active. */
+  turnStateById?: Record<string, {
+    completedItemIds?: Record<string, boolean>;
+    agentMessageCompletedAtMsById?: Record<string, number>;
+    diff?: string | null;
+  }>;
   requests?: Array<{ id: string | number; method: string; params: Record<string, unknown> }>;
 }
 
@@ -247,8 +255,17 @@ export class CodexDesktopOwner {
       }
       if (!activeTurnId) throw new Error("No active Codex turn to steer");
       if (params.toolOutput != null) throw new Error("Desktop dynamic tool outputs require their original runtime owner");
+      const asyncQuestionReply = record(record(params.restoreMessage).context).turnTrigger === "send_user_message_async_question";
+      if (asyncQuestionReply) {
+        const replies = parseCodexAsyncQuestionReplies(params.input);
+        const knownIds = new Set(records(active?.items).flatMap(getCodexAsyncQuestions).map((question) => question.id));
+        if (!replies?.every((reply) => knownIds.has(reply.questionItemId))) {
+          throw new Error("The asynchronous question no longer belongs to the active Codex turn");
+        }
+      }
       const result = await this.runtime.request(entry.engineSessionId, "turn/steer", {
         threadId, expectedTurnId: activeTurnId, input: params.input,
+        ...(asyncQuestionReply ? { restoreMessage: { context: { turnTrigger: "send_user_message_async_question" } } } : {}),
         ...(params.clientUserMessageId != null ? { clientUserMessageId: params.clientUserMessageId } : {}),
         ...(params.additionalContext != null ? { additionalContext: params.additionalContext } : {}),
       });
@@ -331,11 +348,12 @@ export function buildDesktopOwnerState(native: NativeOwnedThreadState): Record<s
     currentPermissions: { approvalPolicy: native.approvalPolicy, sandboxPolicy: native.sandboxPolicy, permissions: native.permissions },
     resumeState: "resumed", hasUnreadTurn: false, threadGoal: null,
     threadRuntimeStatus: thread.status ?? { type: records(thread.turns).some((turn) => turn.status === "inProgress") ? "active" : "idle" },
-    rolloutPath: thread.path ?? "", gitInfo: thread.gitInfo ?? null, latestTokenUsageInfo: null,
+    rolloutPath: thread.path ?? "", gitInfo: thread.gitInfo ?? null, latestTokenUsageInfo: native.latestTokenUsageInfo ?? null,
     requests: native.requests ?? [],
     turnsPagination: { olderCursor: null, oldestLoadedTurnId: null, isLoadingOlder: false, hasLoadedOldest: true },
     turns: records(thread.turns).map((turn) => {
       const first = records(turn.items).find((item) => item.type !== "contextCompaction");
+      const turnState = typeof turn.id === "string" ? native.turnStateById?.[turn.id] : undefined;
       return {
         params: {
           ...settings, threadId: id, input: first?.type === "userMessage" ? first.content : [],
@@ -346,7 +364,9 @@ export function buildDesktopOwnerState(native: NativeOwnedThreadState): Record<s
         turnStartedAtMs: turn.startedAt == null ? null : secondsToMillis(turn.startedAt),
         durationMs: turn.durationMs ?? null,
         finalAssistantStartedAtMs: turn.completedAt == null ? null : secondsToMillis(turn.completedAt),
-        error: turn.error ?? null, diff: null, items: records(turn.items),
+        error: turn.error ?? null, diff: turnState?.diff ?? null, items: records(turn.items),
+        ...(turnState?.completedItemIds != null ? { completedItemIds: { ...turnState.completedItemIds } } : {}),
+        ...(turnState?.agentMessageCompletedAtMsById != null ? { agentMessageCompletedAtMsById: { ...turnState.agentMessageCompletedAtMsById } } : {}),
       };
     }),
   };

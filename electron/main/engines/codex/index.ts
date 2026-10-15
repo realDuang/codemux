@@ -18,6 +18,7 @@ import type {
   PermissionReply,
   ReasoningEffort,
   ReasoningPart,
+  TextPart,
   ToolPart,
   UnifiedMessage,
   UnifiedModelInfo,
@@ -33,6 +34,16 @@ import { CODEMUX_IDENTITY_PROMPT } from "../identity-prompt";
 import { timeId } from "../../utils/id-gen";
 import { codexLog } from "../../services/logger";
 import { CodexJsonRpcClient } from "./jsonrpc-client";
+import { extractCodexToolOutput } from "./tool-output";
+import {
+  buildCodexAsyncQuestionReply,
+  convertCodexAsyncQuestion,
+  formatCodexAsyncQuestionReplies,
+  getCodexAsyncQuestions,
+  getPendingCodexAsyncQuestionGroups,
+  parseCodexAsyncQuestionReplies,
+  type CodexAsyncQuestion,
+} from "./async-questions";
 import type { CodexDesktopOwnerRuntime, CodexOwnerRequestMethod, NativeOwnedThreadState } from "./desktop-owner";
 import { DESKTOP_CATALOG_METHODS, DESKTOP_CATALOG_NOTIFICATION_METHODS, type DesktopCatalogClient } from "./desktop-catalog";
 import { verifyCodexRolloutPath } from "./desktop-rollout-path";
@@ -62,7 +73,9 @@ import {
   appendTextDelta,
   applyTurnMetadata,
   applyTurnUsage,
+  applyCodexToolDisplay,
   completeToolPart,
+  codexItemPartId,
   convertApprovalToPermission,
   convertThreadToMessages,
   convertUserInputToQuestion,
@@ -71,10 +84,13 @@ import {
   createToolPart,
   createUserMessage,
   finalizeBufferToMessage,
+  formatPlanMarkdown,
   formatTurnPlanMarkdown,
   normalizeCodexReasoningText,
   replacePlanText,
   upsertPart,
+  upsertAgentMessage,
+  upsertAsyncQuestionReply,
 } from "./converters";
 
 const SESSION_IDLE_TIMEOUT_MS = 30 * 60 * 1000;
@@ -163,6 +179,18 @@ interface PendingQuestion {
   question: UnifiedQuestion;
 }
 
+interface PendingAsyncQuestion {
+  sessionId: string;
+  turnId: string;
+  questions: CodexAsyncQuestion[];
+  question: UnifiedQuestion;
+}
+
+interface AsyncQuestionTurnState {
+  turnId: string;
+  settledIds: Set<string>;
+}
+
 interface SkillEntry {
   name: string;
   description: string;
@@ -180,6 +208,7 @@ interface ThreadResponse {
     name?: string | null;
     preview?: string;
     projectId?: string | null;
+    turns?: unknown[];
   };
   cwd?: string;
   model?: string;
@@ -205,6 +234,8 @@ interface CodexReasoningItemState {
   summary: Map<number, string>;
   content: Map<number, string>;
   completed: boolean;
+  startedAt: number;
+  completedAt?: number;
 }
 
 export type StoredCodexThreadAvailability = "active" | "archived" | "missing";
@@ -231,6 +262,10 @@ export class CodexAdapter extends EngineAdapter {
 
   private messageBuffers = new Map<string, MessageBuffer>();
   private reasoningItems = new WeakMap<MessageBuffer, Map<string, CodexReasoningItemState>>();
+  private itemCompletionTimes = new WeakMap<MessageBuffer, Map<string, number>>();
+  private nativeTokenUsage = new WeakMap<MessageBuffer, unknown>();
+  private itemBuffers = new Map<string, Map<string, MessageBuffer>>();
+  private pendingStarts = new Map<string, { buffer: MessageBuffer; cancelled: boolean; interruptedTurnId?: string }>();
   private messageHistory = new Map<string, UnifiedMessage[]>();
   private turnResolvers = new Map<string, SendResolver[]>();
   private messageQueues = new Map<string, QueuedMessage[]>();
@@ -240,6 +275,8 @@ export class CodexAdapter extends EngineAdapter {
 
   private pendingPermissions = new Map<string, PendingPermission>();
   private pendingQuestions = new Map<string, PendingQuestion>();
+  private pendingAsyncQuestions = new Map<string, PendingAsyncQuestion>();
+  private asyncQuestionTurns = new Map<string, AsyncQuestionTurnState>();
 
   private sessionModes = new Map<string, string>();
   private sessionModels = new Map<string, string>();
@@ -437,6 +474,8 @@ export class CodexAdapter extends EngineAdapter {
     const thread = asRecord(response.thread);
     if (thread.id !== threadId) throw new Error("Native Codex thread/read returned a different thread");
     const settings = this.desktopOwnerSettings(sessionId);
+    const buffer = this.messageBuffers.get(sessionId);
+    const completions = buffer ? this.itemCompletionTimes.get(buffer) : undefined;
     return {
       thread,
       model: String(settings.model),
@@ -448,6 +487,12 @@ export class CodexAdapter extends EngineAdapter {
       approvalPolicy: settings.approvalPolicy,
       sandboxPolicy: settings.sandboxPolicy,
       permissions: typeof settings.permissions === "string" ? settings.permissions : undefined,
+      latestTokenUsageInfo: buffer ? this.nativeTokenUsage.get(buffer) : undefined,
+      ...(buffer?.activeTurnId ? { turnStateById: { [buffer.activeTurnId]: {
+        completedItemIds: Object.fromEntries([...(completions?.keys() ?? [])].map((id) => [id, true])),
+        agentMessageCompletedAtMsById: Object.fromEntries(completions ?? []),
+        diff: typeof buffer.engineMeta?.turnDiff === "string" ? buffer.engineMeta.turnDiff : null,
+      } } } : {}),
       requests: [
         ...[...this.pendingPermissions.values()].filter((pending) => pending.sessionId === sessionId)
           .map((pending) => ({ id: pending.requestId, method: pending.method, params: asRecord(pending.params) })),
@@ -546,6 +591,19 @@ export class CodexAdapter extends EngineAdapter {
       throw new Error("Desktop steer does not match the active turn");
     }
     const input = parseDesktopOwnerInput(params.input);
+    const asyncReplies = method === "turn/steer" ? parseCodexAsyncQuestionReplies(input) : undefined;
+    const knownAsyncReplies = asyncReplies && this.knowsAsyncQuestionReplies(sessionId, this.activeTurnIds.get(sessionId)!, asyncReplies);
+    if (asRecord(asRecord(params.restoreMessage).context).turnTrigger === "send_user_message_async_question" && !knownAsyncReplies) {
+      throw new Error("The asynchronous question no longer belongs to the active Codex turn");
+    }
+    if (asyncReplies && knownAsyncReplies) {
+      const turnId = this.activeTurnIds.get(sessionId)!;
+      const result = await this.client!.request("turn/steer", { threadId, input, expectedTurnId: turnId }, START_TIMEOUT_MS);
+      this.acceptAsyncQuestionReplies(sessionId, turnId, asyncReplies);
+      this.touchThread(sessionId);
+      this.notifyDesktopOwnerState(sessionId);
+      return result;
+    }
     const text = input.flatMap((item) => item.type === "text" ? [item.text] : item.type === "skill" ? [`$${item.name}`] : []).join("\n");
     const userMessage = createUserMessage(sessionId, text);
     const overrides = pickDesktopOwnerSettings(params, true);
@@ -667,6 +725,7 @@ export class CodexAdapter extends EngineAdapter {
 
   getCapabilities(): EngineCapabilities {
     return {
+      compactActivityGroups: true,
       reasoningEffortOptions: ["low", "medium", "high", "max", "ultra"],
       providerModelHierarchy: false,
       dynamicModes: true,
@@ -757,6 +816,7 @@ export class CodexAdapter extends EngineAdapter {
     const sessionId = toEngineSessionId(threadId);
     if (this.desktopOwnerRuntimeEnabled && (!existingThreadId || strictOwnerRestore)) this.desktopRuntimeAdmissions.add(threadId);
     this.registerThread(sessionId, threadId, normalizedDirectory, threadResponse.thread?.name ?? undefined, true, threadResponse.thread?.createdAt, threadResponse.thread?.updatedAt);
+    this.restoreAsyncQuestions(sessionId, threadResponse.thread);
     this.nativeSessionSettings.set(sessionId, {
       model: threadResponse.model ?? this.currentModelId,
       modelProvider: threadResponse.modelProvider,
@@ -993,17 +1053,18 @@ export class CodexAdapter extends EngineAdapter {
   async cancelMessage(sessionId: string, directory?: string): Promise<void> {
     const threadId = this.sessionToThread.get(sessionId);
     const turnId = this.activeTurnIds.get(sessionId);
+    const buffer = this.messageBuffers.get(sessionId);
+    this.rejectQueuedMessagesForSession(sessionId, "Cancelled");
+    const pendingStart = this.pendingStarts.get(sessionId);
+    if (!turnId && pendingStart) pendingStart.cancelled = true;
     if (threadId && turnId && this.client?.running) {
-      try {
-        await this.client.request("turn/interrupt", { threadId, turnId });
-      } catch (error) {
-        codexLog.warn(`Failed to interrupt turn ${turnId}:`, error);
-      }
+      await this.client.request("turn/interrupt", { threadId, turnId });
     }
 
-    this.failActiveTurn(sessionId, "Cancelled", false);
-    this.rejectQueuedMessagesForSession(sessionId, "Cancelled");
-    this.rejectPendingForSession(sessionId, "Cancelled");
+    if (this.messageBuffers.get(sessionId) === buffer && this.activeTurnIds.get(sessionId) === turnId) {
+      this.rejectPendingForSession(sessionId, "Cancelled");
+      this.failActiveTurn(sessionId, "Cancelled", false);
+    }
 
     if (directory) {
       this.sessionDirectories.set(sessionId, normalizeDirectory(directory));
@@ -1082,7 +1143,7 @@ export class CodexAdapter extends EngineAdapter {
 
     try {
       const response = await this.readStoredThread(threadId, { activeOnly: true });
-
+      if (this.sessionToThread.get(engineSessionId) === threadId) this.restoreAsyncQuestions(engineSessionId, response.thread);
       return convertThreadToMessages(engineSessionId, response as any, normalizeDirectory(directory));
     } catch (error) {
       if (error instanceof Error && "code" in error && error.code === "CODEX_THREAD_ARCHIVED") throw error;
@@ -1182,7 +1243,26 @@ export class CodexAdapter extends EngineAdapter {
     this.emit("permission.replied", { permissionId, optionId: reply.optionId });
   }
 
-  async replyQuestion(questionId: string, answers: string[][], _sessionId?: string): Promise<void> {
+  async replyQuestion(questionId: string, answers: string[][], sessionId?: string): Promise<void> {
+    const asyncPending = this.pendingAsyncQuestions.get(questionId);
+    if (asyncPending) {
+      if (sessionId && sessionId !== asyncPending.sessionId) throw new Error("The asynchronous question belongs to another Codex session");
+      const threadId = this.sessionToThread.get(asyncPending.sessionId);
+      if (!threadId || this.activeTurnIds.get(asyncPending.sessionId) !== asyncPending.turnId) {
+        throw new Error("The asynchronous question no longer belongs to the active Codex turn");
+      }
+      if (!this.client?.running) throw new Error("Codex client is not running");
+      const reply = buildCodexAsyncQuestionReply(asyncPending.questions, answers);
+      await this.client.request("turn/steer", {
+        threadId,
+        expectedTurnId: asyncPending.turnId,
+        input: [{ type: "text", text: reply.text, text_elements: [] }],
+      }, START_TIMEOUT_MS);
+      this.acceptAsyncQuestionReplies(asyncPending.sessionId, asyncPending.turnId, reply.replies);
+      this.touchThread(asyncPending.sessionId);
+      this.notifyDesktopOwnerState(asyncPending.sessionId);
+      return;
+    }
     const pending = this.pendingQuestions.get(questionId);
     if (!pending) return;
 
@@ -1209,7 +1289,18 @@ export class CodexAdapter extends EngineAdapter {
     this.emit("question.replied", { questionId, answers });
   }
 
-  async rejectQuestion(questionId: string, _sessionId?: string): Promise<void> {
+  async rejectQuestion(questionId: string, sessionId?: string): Promise<void> {
+    const asyncPending = this.pendingAsyncQuestions.get(questionId);
+    if (asyncPending) {
+      if (sessionId && sessionId !== asyncPending.sessionId) throw new Error("The asynchronous question belongs to another Codex session");
+      const state = this.asyncQuestionTurns.get(asyncPending.sessionId);
+      if (state?.turnId === asyncPending.turnId) {
+        for (const question of asyncPending.questions) state.settledIds.add(question.id);
+      }
+      this.pendingAsyncQuestions.delete(questionId);
+      this.emit("question.replied", { questionId, answers: [] });
+      return;
+    }
     const pending = this.pendingQuestions.get(questionId);
     if (!pending) return;
     this.pendingQuestions.delete(questionId);
@@ -1220,15 +1311,127 @@ export class CodexAdapter extends EngineAdapter {
   }
 
   getPendingQuestions(sessionId?: string): UnifiedQuestion[] {
-    return CodexAdapter.filterPending(
-      this.pendingQuestions, sessionId, (p) => p.question, (p) => p.question.sessionId,
-    );
+    return [
+      ...CodexAdapter.filterPending(this.pendingQuestions, sessionId, (p) => p.question, (p) => p.question.sessionId),
+      ...CodexAdapter.filterPending(this.pendingAsyncQuestions, sessionId, (p) => p.question, (p) => p.sessionId),
+    ];
   }
 
   getPendingPermissions(sessionId?: string): UnifiedPermission[] {
     return CodexAdapter.filterPending(
       this.pendingPermissions, sessionId, (p) => p.permission, (p) => p.permission.sessionId,
     );
+  }
+
+  private asyncQuestionState(sessionId: string, turnId: string): AsyncQuestionTurnState {
+    const previous = this.asyncQuestionTurns.get(sessionId);
+    if (previous?.turnId === turnId) return previous;
+    this.clearAsyncQuestions(sessionId);
+    const state = { turnId, settledIds: new Set<string>() };
+    this.asyncQuestionTurns.set(sessionId, state);
+    return state;
+  }
+
+  private publishAsyncQuestionGroup(sessionId: string, turnId: string, questions: CodexAsyncQuestion[]): void {
+    if (this.activeTurnIds.get(sessionId) !== turnId || questions.length === 0) return;
+    const state = this.asyncQuestionState(sessionId, turnId);
+    const unanswered = questions.filter((question) => !state.settledIds.has(question.id));
+    const sourceItemId = questions[0].sourceItemId;
+    const question = unanswered.length > 0 ? convertCodexAsyncQuestion(sessionId, turnId, unanswered, "codex") : undefined;
+    for (const [id, pending] of this.pendingAsyncQuestions) {
+      if (pending.sessionId !== sessionId || pending.turnId !== turnId || pending.questions[0]?.sourceItemId !== sourceItemId) continue;
+      if (id === question?.id) {
+        if (JSON.stringify(pending.question) !== JSON.stringify(question)) {
+          this.pendingAsyncQuestions.set(id, { sessionId, turnId, questions: unanswered, question });
+          this.emit("question.asked", { question });
+        }
+        return;
+      }
+      this.pendingAsyncQuestions.delete(id);
+      this.emit("question.replied", { questionId: id, answers: [] });
+    }
+    if (question) {
+      this.pendingAsyncQuestions.set(question.id, { sessionId, turnId, questions: unanswered, question });
+      this.emit("question.asked", { question });
+    }
+  }
+
+  private restoreAsyncQuestions(sessionId: string, threadValue: unknown): void {
+    const thread = asRecord(threadValue);
+    if (!Array.isArray(thread.turns)) return;
+    const turns = thread.turns.map(asRecord);
+    const currentTurnId = this.activeTurnIds.get(sessionId);
+    const turn = currentTurnId ? turns.find((candidate) => candidate.id === currentTurnId)
+      : turns.findLast((candidate) => candidate.status === "inProgress");
+    if (currentTurnId && !turn) return;
+    if (!turn || typeof turn.id !== "string" || turn.status !== "inProgress") {
+      this.clearAsyncQuestions(sessionId);
+      return;
+    }
+    if (!this.acceptsTurnNotification(sessionId, turn.id)) return;
+    this.activeTurnIds.set(sessionId, turn.id);
+    const buffer = this.ensureBuffer(sessionId);
+    buffer.activeTurnId = turn.id;
+    buffer.engineMeta = { ...buffer.engineMeta, codexTurnId: turn.id };
+    const state = this.asyncQuestionState(sessionId, turn.id);
+    const groups = getPendingCodexAsyncQuestionGroups(turn);
+    const pendingIds = new Set(groups.flatMap((group) => group.map((question) => question.id)));
+    for (const question of (Array.isArray(turn.items) ? turn.items : []).flatMap(getCodexAsyncQuestions)) {
+      if (!pendingIds.has(question.id)) state.settledIds.add(question.id);
+    }
+    for (const pending of [...this.pendingAsyncQuestions.values()]) {
+      if (pending.sessionId !== sessionId || pending.turnId !== turn.id) continue;
+      this.publishAsyncQuestionGroup(sessionId, turn.id, pending.questions);
+    }
+    for (const group of groups) this.publishAsyncQuestionGroup(sessionId, turn.id, group);
+  }
+
+  private acceptAsyncQuestionReplies(
+    sessionId: string,
+    turnId: string,
+    replies: NonNullable<ReturnType<typeof parseCodexAsyncQuestionReplies>>,
+  ): void {
+    // A successful steer can be acknowledged after its native turn has ended.
+    // Never recreate an active buffer or apply its answers to a newer turn.
+    if (this.activeTurnIds.get(sessionId) !== turnId || !this.knowsAsyncQuestionReplies(sessionId, turnId, replies)) return;
+    const state = this.asyncQuestionState(sessionId, turnId);
+    const buffer = this.messageBuffers.get(sessionId);
+    for (const reply of replies) {
+      state.settledIds.add(reply.questionItemId);
+      if (buffer) {
+        const part = upsertAsyncQuestionReply(buffer, `async-question-reply:${reply.questionItemId}`, formatCodexAsyncQuestionReplies([reply]));
+        this.emit("message.part.updated", { sessionId, messageId: buffer.messageId, part });
+      }
+    }
+    for (const pending of [...this.pendingAsyncQuestions.values()]) {
+      if (pending.sessionId === sessionId && pending.turnId === turnId) {
+        this.publishAsyncQuestionGroup(sessionId, turnId, pending.questions);
+      }
+    }
+  }
+
+  private knowsAsyncQuestionReplies(
+    sessionId: string,
+    turnId: string,
+    replies: NonNullable<ReturnType<typeof parseCodexAsyncQuestionReplies>>,
+  ): boolean {
+    const state = this.asyncQuestionTurns.get(sessionId);
+    const knownIds = new Set(state?.turnId === turnId ? state.settledIds : []);
+    for (const pending of this.pendingAsyncQuestions.values()) {
+      if (pending.sessionId !== sessionId || pending.turnId !== turnId) continue;
+      for (const question of pending.questions) knownIds.add(question.id);
+    }
+    return replies.every((reply) => knownIds.has(reply.questionItemId));
+  }
+
+  private clearAsyncQuestions(sessionId?: string): void {
+    for (const [id, pending] of this.pendingAsyncQuestions) {
+      if (sessionId && pending.sessionId !== sessionId) continue;
+      this.pendingAsyncQuestions.delete(id);
+      this.emit("question.replied", { questionId: id, answers: [] });
+    }
+    if (sessionId) this.asyncQuestionTurns.delete(sessionId);
+    else this.asyncQuestionTurns.clear();
   }
 
   async listProjects(): Promise<UnifiedProject[]> {
@@ -1583,6 +1786,13 @@ export class CodexAdapter extends EngineAdapter {
       ? this.pendingPermissions.get(String(data.requestId))?.sessionId ?? this.pendingQuestions.get(String(data.requestId))?.sessionId
       : undefined;
     const sessionId = threadId ? this.threadToSession.get(threadId) : resolvedRequestSession;
+    const nativeTurnId = typeof data.turnId === "string" ? data.turnId : asRecord(data.turn).id;
+    const pendingStart = sessionId ? this.pendingStarts.get(sessionId) : undefined;
+    if (sessionId && pendingStart?.cancelled && typeof nativeTurnId === "string") {
+      this.interruptCancelledStart(sessionId, pendingStart, nativeTurnId);
+      return;
+    }
+    if (sessionId && typeof nativeTurnId === "string" && !this.acceptsTurnNotification(sessionId, nativeTurnId)) return;
 
     try {
       switch (method) {
@@ -1724,21 +1934,33 @@ export class CodexAdapter extends EngineAdapter {
     const buffer = this.messageBuffers.get(sessionId);
     if (!buffer) return;
     applyTurnUsage(buffer, data.tokenUsage);
+    this.nativeTokenUsage.set(buffer, data.tokenUsage);
   }
 
   private handleTurnStarted(sessionId: string, data: Record<string, unknown>): void {
-    const buffer = this.ensureBuffer(sessionId);
     const turn = asRecord(data.turn);
     const turnId = typeof turn.id === "string" ? turn.id : undefined;
-    if (!turnId) return;
+    if (!turnId || !this.acceptsTurnNotification(sessionId, turnId)) return;
+    const buffer = this.ensureBuffer(sessionId);
 
     buffer.activeTurnId = turnId;
+    buffer.engineMeta = { ...buffer.engineMeta, codexTurnId: turnId };
     this.activeTurnIds.set(sessionId, turnId);
+    this.asyncQuestionState(sessionId, turnId);
+    for (const group of getPendingCodexAsyncQuestionGroups({ ...turn, status: "inProgress" })) {
+      this.publishAsyncQuestionGroup(sessionId, turnId, group);
+    }
     this.touchThread(sessionId);
   }
 
   private handleTurnCompleted(sessionId: string, data: Record<string, unknown>): void {
     const turn = asRecord(data.turn);
+    const turnId = typeof turn.id === "string" ? turn.id : undefined;
+    if (turnId && !this.acceptsTurnNotification(sessionId, turnId)) return;
+    const buffer = this.messageBuffers.get(sessionId);
+    if (!buffer) return;
+    buffer.activeTurnId = turnId ?? buffer.activeTurnId;
+    if (buffer.activeTurnId) buffer.engineMeta = { ...buffer.engineMeta, codexTurnId: buffer.activeTurnId };
     const status = typeof turn.status === "string" ? turn.status : "completed";
 
     if (status === "failed") {
@@ -1750,9 +1972,9 @@ export class CodexAdapter extends EngineAdapter {
       return;
     }
 
-    const buffer = this.messageBuffers.get(sessionId) ?? this.ensureBuffer(sessionId);
     applyTurnMetadata(buffer, turn);
     buffer.activeTurnId = typeof turn.id === "string" ? turn.id : buffer.activeTurnId;
+    this.settleIncompleteParts(sessionId, "Tool execution ended before completion", "completed");
 
     const message = finalizeBufferToMessage(buffer);
     this.appendMessageToHistory(sessionId, message);
@@ -1790,9 +2012,13 @@ export class CodexAdapter extends EngineAdapter {
   }
 
   private handleItemStarted(sessionId: string, data: Record<string, unknown>): void {
-    const buffer = this.ensureBuffer(sessionId);
     const item = asRecord(data.item);
     const itemType = typeof item.type === "string" ? item.type : "unknown";
+    const buffer = this.itemBuffer(sessionId, typeof item.id === "string" ? item.id : undefined);
+    if (typeof item.id === "string" && this.itemCompletionTimes.get(buffer)?.has(item.id)) return;
+    if (typeof item.id === "string" && itemType !== "userMessage" && itemType !== "hookPrompt") {
+      this.rememberItemBuffer(sessionId, item.id, buffer);
+    }
 
     switch (itemType) {
       case "contextCompaction": {
@@ -1811,11 +2037,33 @@ export class CodexAdapter extends EngineAdapter {
         return;
       }
       case "agentMessage":
-      case "plan":
+        if (typeof item.id === "string") {
+          const turnId = this.activeTurnIds.get(sessionId);
+          if (turnId) this.publishAsyncQuestionGroup(sessionId, turnId, getCodexAsyncQuestions(item));
+          this.rememberItemBuffer(sessionId, item.id, buffer);
+          const part = upsertAgentMessage(buffer, item.id, typeof item.text === "string" ? item.text : "", { completed: false, phase: this.messagePhase(item.phase), memoryCitation: item.memoryCitation, questions: item.questions, delivery: item.delivery });
+          this.emit("message.part.updated", { sessionId, messageId: buffer.messageId, part });
+        }
+        return;
+      case "plan": {
+        if (typeof item.id === "string") {
+          if (buffer.parts.some((part) => part.id === codexItemPartId(buffer, item.id as string))) return;
+          const part = replacePlanText(buffer, formatPlanMarkdown(typeof item.text === "string" ? item.text : ""), item.id);
+          part.completed = false;
+          this.emit("message.part.updated", { sessionId, messageId: buffer.messageId, part });
+        }
+        return;
+      }
       case "userMessage":
+        if (this.activeTurnIds.has(sessionId)) {
+          const replies = parseCodexAsyncQuestionReplies(item.content);
+          if (replies) this.acceptAsyncQuestionReplies(sessionId, this.activeTurnIds.get(sessionId)!, replies);
+        }
+        return;
       case "hookPrompt":
         return;
       case "reasoning":
+        if (typeof item.id === "string") this.rememberItemBuffer(sessionId, item.id, buffer);
         this.getReasoningItem(buffer, item);
         return;
       default:
@@ -1825,22 +2073,43 @@ export class CodexAdapter extends EngineAdapter {
     const callId = typeof item.id === "string" ? item.id : timeId("call");
     if (this.activeToolParts.has(callId)) return;
 
-    const { stepStart, toolPart } = createToolPart(buffer, callId, itemType, this.itemToToolParams(item));
+    const { stepStart, toolPart } = createToolPart(buffer, callId, itemType === "functionCallOutput" && typeof item.name === "string" ? item.name : itemType, this.itemToToolParams(item));
+    applyCodexToolDisplay(toolPart, item, buffer.workingDirectory);
+    this.rememberItemBuffer(sessionId, callId, buffer);
     this.activeToolParts.set(callId, toolPart);
     this.emit("message.part.updated", { sessionId, messageId: buffer.messageId, part: stepStart });
     this.emit("message.part.updated", { sessionId, messageId: buffer.messageId, part: toolPart });
   }
 
   private handleItemCompleted(sessionId: string, data: Record<string, unknown>): void {
-    const buffer = this.ensureBuffer(sessionId);
     const item = asRecord(data.item);
     const itemType = typeof item.type === "string" ? item.type : "unknown";
+    if (itemType === "userMessage") {
+      const turnId = this.activeTurnIds.get(sessionId);
+      const replies = parseCodexAsyncQuestionReplies(item.content);
+      if (turnId && replies) this.acceptAsyncQuestionReplies(sessionId, turnId, replies);
+      return;
+    }
+    if (itemType === "hookPrompt") return;
+    const itemId = typeof item.id === "string" ? item.id : undefined;
+    const buffer = this.itemBuffer(sessionId, itemId);
+    let completions = this.itemCompletionTimes.get(buffer);
+    if (!completions) {
+      completions = new Map();
+      this.itemCompletionTimes.set(buffer, completions);
+    }
+    if (itemId && completions.has(itemId)) return;
+    if (itemId) completions.set(itemId, Date.now());
 
     switch (itemType) {
       case "agentMessage": {
+        const turnId = this.activeTurnIds.get(sessionId);
+        if (turnId) this.publishAsyncQuestionGroup(sessionId, turnId, getCodexAsyncQuestions(item));
         const text = typeof item.text === "string" ? item.text : "";
-        if (text) {
-          const part = this.replaceTextPart(buffer, text);
+        if (text || itemId) {
+          const part = itemId
+            ? upsertAgentMessage(buffer, itemId, text, { completed: true, phase: this.messagePhase(item.phase), memoryCitation: item.memoryCitation, questions: item.questions, delivery: item.delivery })
+            : this.replaceTextPart(buffer, text);
           this.emit("message.part.updated", { sessionId, messageId: buffer.messageId, part });
         }
         return;
@@ -1848,9 +2117,9 @@ export class CodexAdapter extends EngineAdapter {
       case "reasoning": {
         const state = this.getReasoningItem(buffer, item);
         const summary = normalizeCodexReasoningText(item.summary, []) ? item.summary : this.reasoningBlocks(state.summary);
-        const content = normalizeCodexReasoningText([], item.content) ? item.content : this.reasoningBlocks(state.content);
         state.completed = true;
-        const text = normalizeCodexReasoningText(summary, content);
+        state.completedAt = Date.now();
+        const text = normalizeCodexReasoningText(summary, item.content);
         if (text) {
           const part = this.replaceReasoningPart(buffer, state, text);
           this.emit("message.part.updated", { sessionId, messageId: buffer.messageId, part });
@@ -1859,7 +2128,8 @@ export class CodexAdapter extends EngineAdapter {
       }
       case "plan": {
         const text = typeof item.text === "string" ? item.text : "";
-        const part = replacePlanText(buffer, text.startsWith("#") ? text : `## Plan\n\n${text}`.trimEnd());
+        const part = replacePlanText(buffer, formatPlanMarkdown(text), itemId ?? "plan");
+        part.completed = true;
         this.emit("message.part.updated", { sessionId, messageId: buffer.messageId, part });
         return;
       }
@@ -1885,38 +2155,48 @@ export class CodexAdapter extends EngineAdapter {
     const callId = typeof item.id === "string" ? item.id : "";
     let toolPart = callId ? this.activeToolParts.get(callId) : undefined;
     if (!toolPart) {
-      const synthetic = createToolPart(buffer, callId || timeId("call"), itemType, this.itemToToolParams(item));
+      const synthetic = createToolPart(buffer, callId || timeId("call"), itemType === "functionCallOutput" && typeof item.name === "string" ? item.name : itemType, this.itemToToolParams(item));
       toolPart = synthetic.toolPart;
       this.emit("message.part.updated", { sessionId, messageId: buffer.messageId, part: synthetic.stepStart });
       this.emit("message.part.updated", { sessionId, messageId: buffer.messageId, part: toolPart });
     }
 
+    applyCodexToolDisplay(toolPart, item, buffer.workingDirectory);
+    const richOutput = extractCodexToolOutput(item, toolPart);
     completeToolPart(
       toolPart,
-      this.itemToToolOutput(item),
+      richOutput.output ?? this.itemToToolOutput(item),
       normalizeItemToolError(item),
       this.itemToToolMetadata(item),
     );
     if (callId) this.activeToolParts.delete(callId);
 
     this.emit("message.part.updated", { sessionId, messageId: buffer.messageId, part: toolPart });
-    const stepFinish = createStepFinish(buffer);
+    const stepFinish = createStepFinish(buffer, callId || undefined);
     this.emit("message.part.updated", { sessionId, messageId: buffer.messageId, part: stepFinish });
+    for (const attachment of richOutput.attachments) {
+      upsertPart(buffer.parts, attachment);
+      this.emit("message.part.updated", { sessionId, messageId: buffer.messageId, part: attachment });
+    }
   }
 
   private handleAgentMessageDelta(sessionId: string, data: Record<string, unknown>): void {
-    const buffer = this.ensureBuffer(sessionId);
+    const itemId = typeof data.itemId === "string" ? data.itemId : undefined;
+    const buffer = this.itemBuffer(sessionId, itemId);
+    if (itemId && this.itemCompletionTimes.get(buffer)?.has(itemId)) return;
     const delta = typeof data.delta === "string" ? data.delta : "";
     if (!delta) return;
-    const part = appendTextDelta(buffer, delta);
+    const part = itemId ? upsertAgentMessage(buffer, itemId, delta, { delta: true }) : appendTextDelta(buffer, delta);
     this.emit("message.part.updated", { sessionId, messageId: buffer.messageId, part });
   }
 
   private handlePlanDelta(sessionId: string, data: Record<string, unknown>): void {
-    const buffer = this.ensureBuffer(sessionId);
+    const itemId = typeof data.itemId === "string" ? data.itemId : "plan";
+    const buffer = this.itemBuffer(sessionId, itemId);
+    if (this.itemCompletionTimes.get(buffer)?.has(itemId)) return;
     const delta = typeof data.delta === "string" ? data.delta : "";
     if (!delta) return;
-    const part = appendPlanDelta(buffer, delta);
+    const part = appendPlanDelta(buffer, delta, itemId);
     this.emit("message.part.updated", { sessionId, messageId: buffer.messageId, part });
   }
 
@@ -1925,7 +2205,7 @@ export class CodexAdapter extends EngineAdapter {
     data: Record<string, unknown>,
     channel: "summary" | "content" = "summary",
   ): void {
-    const buffer = this.ensureBuffer(sessionId);
+    const buffer = this.itemBuffer(sessionId, typeof data.itemId === "string" ? data.itemId : undefined);
     const delta = typeof data.delta === "string" ? data.delta : "";
     if (!delta) return;
     const state = this.getReasoningItem(buffer, data);
@@ -1934,9 +2214,9 @@ export class CodexAdapter extends EngineAdapter {
     const index = typeof nativeIndex === "number" && Number.isInteger(nativeIndex) && nativeIndex >= 0 ? nativeIndex : 0;
     const blocks = state[channel];
     blocks.set(index, `${blocks.get(index) ?? ""}${delta}`);
-    // Summary and content describe the same item; keep their deltas separate while streaming.
-    const summary = normalizeCodexReasoningText(this.reasoningBlocks(state.summary), []);
-    const text = summary || normalizeCodexReasoningText([], this.reasoningBlocks(state.content));
+    // Retain both native channels, but project only summary sections into the display.
+    if (channel === "content") return;
+    const text = normalizeCodexReasoningText(this.reasoningBlocks(state.summary), []);
     if (!text) return;
     const part = this.replaceReasoningPart(buffer, state, text);
     this.emit("message.part.updated", { sessionId, messageId: buffer.messageId, part });
@@ -1980,8 +2260,12 @@ export class CodexAdapter extends EngineAdapter {
   private handleServerRequestResolved(data: Record<string, unknown>): void {
     const requestId = String(data.requestId ?? "");
     if (!requestId) return;
-    this.pendingPermissions.delete(requestId);
-    this.pendingQuestions.delete(requestId);
+    if (this.pendingPermissions.delete(requestId)) {
+      this.emit("permission.replied", { permissionId: requestId, optionId: "resolved" });
+    }
+    if (this.pendingQuestions.delete(requestId)) {
+      this.emit("question.replied", { questionId: requestId, answers: [] });
+    }
   }
 
   private handleSkillsChanged(): void {
@@ -2008,9 +2292,9 @@ export class CodexAdapter extends EngineAdapter {
   }
 
   private handleTurnError(sessionId: string, data: Record<string, unknown>): void {
-    if (this.desktopOwnerSessions.has(sessionId) && data.willRetry === true) {
-      // A retry notification is not a terminal turn; followers must remain able
-      // to steer or interrupt the same running ModelHub request.
+    if (data.willRetry === true) {
+      // A retry notification leaves the same native turn available for steering
+      // and interruption in both the CLI and Desktop owner transports.
       return;
     }
     const error = normalizeTurnError(data.error) ?? "Turn failed";
@@ -2154,6 +2438,8 @@ export class CodexAdapter extends EngineAdapter {
 
     const buffer = this.createMessageBuffer(sessionId, directory, threadId);
     this.messageBuffers.set(sessionId, buffer);
+    const pendingStart = { buffer, cancelled: false };
+    this.pendingStarts.set(sessionId, pendingStart);
     this.activeTempDirs.set(sessionId, [...tempDirs]);
 
     if (emitQueuedConsumed) {
@@ -2192,9 +2478,15 @@ export class CodexAdapter extends EngineAdapter {
             : typeof result.turnId === "string"
               ? result.turnId
               : undefined;
-          if (turnId && (!options?.ownerAdmission || this.messageBuffers.get(sessionId) === buffer)) {
+          if (pendingStart.cancelled && turnId) {
+            this.interruptCancelledStart(sessionId, pendingStart, turnId);
+            options?.onAdmitted?.(response);
+            return;
+          }
+          if (turnId && this.messageBuffers.get(sessionId) === buffer) {
             this.activeTurnIds.set(sessionId, turnId);
             buffer.activeTurnId = turnId;
+            buffer.engineMeta = { ...buffer.engineMeta, codexTurnId: turnId };
           }
           buffer.modelId = modelId;
           buffer.reasoningEffort = reasoningEffort ?? undefined;
@@ -2203,7 +2495,13 @@ export class CodexAdapter extends EngineAdapter {
         .catch((error) => {
           options?.onAdmissionFailed?.(error instanceof Error ? error : new Error(String(error)));
           codexLog.error(`Failed to start turn for ${sessionId}:`, error);
-          this.failActiveTurn(sessionId, error instanceof Error ? error.message : String(error), false);
+          if (this.messageBuffers.get(sessionId) === buffer) {
+            this.failActiveTurn(sessionId, error instanceof Error ? error.message : String(error), false);
+          }
+        })
+        .finally(() => {
+          if (this.pendingStarts.get(sessionId) === pendingStart) this.pendingStarts.delete(sessionId);
+          void this.processNextQueuedMessage(sessionId);
         });
     });
   }
@@ -2217,11 +2515,13 @@ export class CodexAdapter extends EngineAdapter {
   ): Promise<UnifiedMessage> {
     const threadId = this.sessionToThread.get(sessionId);
     const activeTurnId = this.activeTurnIds.get(sessionId);
+    const buffer = this.messageBuffers.get(sessionId);
     if (!threadId || !activeTurnId || !this.client?.running) {
       if (options?.ownerAdmission) throw new Error("No active Codex turn to steer");
       return this.enqueueMessage(sessionId, input, userMessage, tempDirs, options);
     }
 
+    let admitted = false;
     try {
       const response = await this.client.request("turn/steer", {
         threadId,
@@ -2229,30 +2529,67 @@ export class CodexAdapter extends EngineAdapter {
         expectedTurnId: activeTurnId,
         ...options?.nativeOverrides,
       }, START_TIMEOUT_MS);
+      admitted = true;
+
+      // Steering adds a user boundary inside the same native turn. Existing
+      // items keep their buffer so a running tool can still finish in place.
+      const currentBuffer = this.messageBuffers.get(sessionId);
+      let continuedBuffer = currentBuffer;
+      if (currentBuffer && currentBuffer.parts.length > 0 && this.activeTurnIds.get(sessionId) === activeTurnId) {
+        const previous = finalizeBufferToMessage(currentBuffer);
+        previous.engineMeta = { ...previous.engineMeta, codexTurnStatus: "inProgress" };
+        // Ordinary clients use message completion to stop the turn's controls.
+        // A steering boundary must not signal that the native turn has ended.
+        previous.time.completed = undefined;
+        // Usage notifications are per turn; only the final segment owns the totals.
+        previous.tokens = undefined;
+        previous.cost = undefined;
+        previous.costUnit = undefined;
+        this.appendMessageToHistory(sessionId, previous);
+        this.emit("message.updated", { sessionId, message: previous });
+        continuedBuffer = this.createMessageBuffer(sessionId, currentBuffer.workingDirectory ?? "", threadId);
+        continuedBuffer.startTime = Math.max(Date.now(), userMessage.time.created + 0.001);
+        continuedBuffer.modelId = currentBuffer.modelId;
+        continuedBuffer.reasoningEffort = currentBuffer.reasoningEffort;
+        continuedBuffer.tokens = currentBuffer.tokens;
+        continuedBuffer.cost = currentBuffer.cost;
+        continuedBuffer.costUnit = currentBuffer.costUnit;
+        continuedBuffer.engineMeta = { ...currentBuffer.engineMeta };
+        const completions = this.itemCompletionTimes.get(currentBuffer) ?? new Map<string, number>();
+        this.itemCompletionTimes.set(currentBuffer, completions);
+        this.itemCompletionTimes.set(continuedBuffer, completions);
+        this.nativeTokenUsage.set(continuedBuffer, this.nativeTokenUsage.get(currentBuffer));
+        this.messageBuffers.set(sessionId, continuedBuffer);
+      }
 
       this.appendMessageToHistory(sessionId, userMessage);
       this.emit("message.updated", { sessionId, message: userMessage });
-      const existing = this.activeTempDirs.get(sessionId) ?? [];
-      this.activeTempDirs.set(sessionId, [...existing, ...tempDirs]);
       this.touchThread(sessionId);
       options?.onAdmitted?.(response);
 
-      if (options?.ownerAdmission && this.activeTurnIds.get(sessionId) !== activeTurnId) {
-        const completed = [...(this.messageHistory.get(sessionId) ?? [])].reverse().find((message) => message.role === "assistant");
+      if (this.activeTurnIds.get(sessionId) !== activeTurnId || this.messageBuffers.get(sessionId) !== continuedBuffer) {
+        this.cleanupTempDirs(tempDirs);
+        const completed = this.messageHistory.get(sessionId)?.find((message) => message.role === "assistant"
+          && (message.id === buffer?.messageId || message.engineMeta?.codexTurnId === activeTurnId));
         if (completed) return completed;
         throw new Error("The steered Codex turn ended before its admission response");
       }
 
+      const existing = this.activeTempDirs.get(sessionId) ?? [];
+      this.activeTempDirs.set(sessionId, [...existing, ...tempDirs]);
       return new Promise<UnifiedMessage>((resolve, reject) => {
         this.pushTurnResolver(sessionId, { resolve, reject });
       });
     } catch (error) {
-      if (options?.ownerAdmission) {
+      if (options?.ownerAdmission || admitted) {
         this.cleanupTempDirs(tempDirs);
-        options.onAdmissionFailed?.(error instanceof Error ? error : new Error(String(error)));
+        options?.onAdmissionFailed?.(error instanceof Error ? error : new Error(String(error)));
         throw error;
       }
       codexLog.warn(`turn/steer failed for ${sessionId}, falling back to queue:`, error);
+      if (!this.hasActiveTurn(sessionId)) {
+        return this.startPreparedTurn(sessionId, input, userMessage, tempDirs, options, false);
+      }
       return this.enqueueMessage(sessionId, input, userMessage, tempDirs, options);
     }
   }
@@ -2340,6 +2677,46 @@ export class CodexAdapter extends EngineAdapter {
     return buffer;
   }
 
+  private rememberItemBuffer(sessionId: string, itemId: string, buffer: MessageBuffer): void {
+    let items = this.itemBuffers.get(sessionId);
+    if (!items) {
+      items = new Map();
+      this.itemBuffers.set(sessionId, items);
+    }
+    if (!items.has(itemId)) items.set(itemId, buffer);
+  }
+
+  private itemBuffer(sessionId: string, itemId?: string): MessageBuffer {
+    const buffer = itemId ? this.itemBuffers.get(sessionId)?.get(itemId) : undefined;
+    if (buffer) return buffer;
+    const current = this.ensureBuffer(sessionId);
+    if (itemId) this.rememberItemBuffer(sessionId, itemId, current);
+    return current;
+  }
+
+  private messagePhase(value: unknown): TextPart["phase"] {
+    return value === "commentary" ? "commentary" : value === "partial_answer" ? "partial"
+      : value === "final_answer" ? "final" : undefined;
+  }
+
+  private interruptCancelledStart(
+    sessionId: string,
+    pending: { buffer: MessageBuffer; cancelled: boolean; interruptedTurnId?: string },
+    turnId: string,
+  ): void {
+    pending.buffer.activeTurnId = turnId;
+    const message = this.messageHistory.get(sessionId)?.find((candidate) => candidate.id === pending.buffer.messageId);
+    if (message) message.engineMeta = { ...message.engineMeta, codexTurnId: turnId };
+    if (pending.interruptedTurnId === turnId || !this.client?.running) return;
+    pending.interruptedTurnId = turnId;
+    const threadId = this.sessionToThread.get(sessionId);
+    if (threadId) {
+      void this.client.request("turn/interrupt", { threadId, turnId }).catch(() => {
+        codexLog.warn("Failed to interrupt a cancelled Codex turn admission");
+      });
+    }
+  }
+
   private replaceTextPart(buffer: MessageBuffer, text: string) {
     buffer.textAccumulator = text;
     buffer.leadingTrimmed = true;
@@ -2364,7 +2741,7 @@ export class CodexAdapter extends EngineAdapter {
     const itemId = typeof data.itemId === "string" ? data.itemId : typeof data.id === "string" ? data.id : "";
     let state = items.get(itemId);
     if (!state) {
-      state = { partId: timeId("part"), summary: new Map(), content: new Map(), completed: false };
+      state = { partId: itemId ? codexItemPartId(buffer, itemId) : timeId("part"), summary: new Map(), content: new Map(), completed: false, startedAt: Date.now() };
       items.set(itemId, state);
     }
     return state;
@@ -2380,7 +2757,10 @@ export class CodexAdapter extends EngineAdapter {
       messageId: buffer.messageId,
       sessionId: buffer.sessionId,
       type: "reasoning",
+      summaryFormat: "heading-prefixed",
       text,
+      completed: state.completed,
+      time: { start: state.startedAt, ...(state.completedAt != null ? { end: state.completedAt } : {}) },
     };
     upsertPart(buffer.parts, part);
     return part;
@@ -2394,6 +2774,7 @@ export class CodexAdapter extends EngineAdapter {
           command: item.command,
           cwd: item.cwd,
           commandActions: item.commandActions,
+          parsedCmd: item.parsedCmd,
         };
       case "fileChange":
         return { changes: item.changes };
@@ -2540,6 +2921,7 @@ export class CodexAdapter extends EngineAdapter {
       response.thread?.createdAt ?? thread?.createdAt,
       response.thread?.updatedAt ?? thread?.updatedAt,
     );
+    this.restoreAsyncQuestions(sessionId, response.thread);
     return threadId;
   }
 
@@ -2574,6 +2956,7 @@ export class CodexAdapter extends EngineAdapter {
   }
 
   private rejectPendingInteractions(reason: string): void {
+    this.clearAsyncQuestions();
     for (const [id, pending] of this.pendingPermissions) {
       this.pendingPermissions.delete(id);
       this.respondToDroppedPermission(pending, reason);
@@ -2589,6 +2972,7 @@ export class CodexAdapter extends EngineAdapter {
   }
 
   private rejectPendingForSession(sessionId: string, reason: string): void {
+    this.clearAsyncQuestions(sessionId);
     for (const [id, pending] of this.pendingPermissions) {
       if (pending.sessionId !== sessionId) continue;
       this.pendingPermissions.delete(id);
@@ -2647,8 +3031,12 @@ export class CodexAdapter extends EngineAdapter {
   }
 
   private failActiveTurn(sessionId: string, errorMessage: string, staleSession: boolean): void {
-    const buffer = this.messageBuffers.get(sessionId) ?? this.ensureBuffer(sessionId);
+    const buffer = this.messageBuffers.get(sessionId);
+    if (!buffer) return;
+    buffer.activeTurnId ??= this.activeTurnIds.get(sessionId);
+    if (buffer.activeTurnId) buffer.engineMeta = { ...buffer.engineMeta, codexTurnId: buffer.activeTurnId };
     buffer.error = errorMessage;
+    this.settleIncompleteParts(sessionId, errorMessage, errorMessage === "Cancelled" ? "interrupted" : "failed");
     const message: UnifiedMessage = {
       ...finalizeBufferToMessage(buffer),
       staleSession,
@@ -2662,8 +3050,14 @@ export class CodexAdapter extends EngineAdapter {
   }
 
   private finishTurn(sessionId: string): void {
+    this.clearAsyncQuestions(sessionId);
+    for (const [callId, part] of this.activeToolParts) {
+      if (part.sessionId === sessionId) this.activeToolParts.delete(callId);
+    }
     this.messageBuffers.delete(sessionId);
     this.activeTurnIds.delete(sessionId);
+    this.itemBuffers.delete(sessionId);
+    if (!this.pendingStarts.get(sessionId)?.cancelled) this.pendingStarts.delete(sessionId);
 
     const tempDirs = this.activeTempDirs.get(sessionId);
     if (tempDirs) {
@@ -2673,7 +3067,44 @@ export class CodexAdapter extends EngineAdapter {
   }
 
   private hasActiveTurn(sessionId: string): boolean {
-    return this.activeTurnIds.has(sessionId) || this.messageBuffers.has(sessionId) || (this.turnResolvers.get(sessionId)?.length ?? 0) > 0;
+    return this.pendingStarts.has(sessionId) || this.activeTurnIds.has(sessionId) || this.messageBuffers.has(sessionId) || (this.turnResolvers.get(sessionId)?.length ?? 0) > 0;
+  }
+
+  private acceptsTurnNotification(sessionId: string, turnId: string): boolean {
+    const activeTurnId = this.activeTurnIds.get(sessionId) ?? this.messageBuffers.get(sessionId)?.activeTurnId;
+    if (activeTurnId) return activeTurnId === turnId;
+    // A local interrupt may finish before the server emits its final events.
+    return !(this.messageHistory.get(sessionId) ?? []).some((message) => message.role === "assistant"
+      && message.engineMeta?.codexTurnId === turnId && message.engineMeta?.codexTurnStatus !== "inProgress" && message.time.completed != null);
+  }
+
+  private settleIncompleteParts(sessionId: string, error: string, status: "completed" | "failed" | "interrupted"): void {
+    for (const part of this.activeToolParts.values()) {
+      if (part.sessionId !== sessionId || (part.state.status !== "running" && part.state.status !== "pending")) continue;
+      completeToolPart(part, asRecord(part.state.input)._output ?? "", error);
+      this.emit("message.part.updated", { sessionId, messageId: part.messageId, part });
+    }
+    const buffers = new Set(this.itemBuffers.get(sessionId)?.values());
+    const current = this.messageBuffers.get(sessionId);
+    if (current) buffers.add(current);
+    for (const buffer of buffers) {
+      for (const part of buffer.parts) {
+        if (part.type === "reasoning" && part.time?.end == null) {
+          part.time = { start: part.time?.start ?? buffer.startTime, end: Date.now() };
+          part.completed = true;
+          this.emit("message.part.updated", { sessionId, messageId: part.messageId, part });
+        }
+      }
+    }
+    const turnId = current?.activeTurnId;
+    for (const message of this.messageHistory.get(sessionId) ?? []) {
+      if (turnId && message.role === "assistant" && message.engineMeta?.codexTurnId === turnId
+        && message.engineMeta?.codexTurnStatus === "inProgress") {
+        message.time.completed = Date.now();
+        message.engineMeta = { ...message.engineMeta, codexTurnStatus: status };
+        this.emit("message.updated", { sessionId, message });
+      }
+    }
   }
 
   private canSteer(

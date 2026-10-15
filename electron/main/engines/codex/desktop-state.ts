@@ -1,5 +1,6 @@
 import type {
   FilePart,
+  TextPart,
   ToolPart,
   UnifiedMessage,
   UnifiedPart,
@@ -9,8 +10,12 @@ import type {
 } from "../../../../src/types/unified";
 import { inferToolKind, normalizeToolName } from "../../../../src/types/tool-mapping";
 import { fromCodexEffort } from "./config";
-import { buildToolTitle, convertApprovalToPermission, convertUserInputToQuestion, normalizeCodexReasoningText } from "./converters";
+import { applyCodexToolDisplay, buildToolTitle, convertApprovalToPermission, convertUserInputToQuestion, normalizeCodexReasoningText } from "./converters";
 import { convertDesktopElicitationToQuestion } from "./desktop-elicitation";
+import { normalizeCodexResponseContent } from "./response-content";
+import { extractCodexToolOutput } from "./tool-output";
+import { withCodexAssistantImages } from "./assistant-images";
+import { convertCodexAsyncQuestion, formatCodexAsyncQuestionReplies, getCodexAsyncQuestions, getPendingCodexAsyncQuestionGroups, parseCodexAsyncQuestionReplies } from "./async-questions";
 
 export interface DesktopStatePatch {
   op: "add" | "replace" | "remove";
@@ -128,6 +133,13 @@ export function convertDesktopConversation(value: unknown): DesktopConversationS
     } else if (request.method === "mcpServer/elicitation/request") {
       const question = convertDesktopElicitationToQuestion(id, request.id, request.params);
       questions.push({ ...question, id: scopedId, metadata: { ...question.metadata, ...nativeIdentity } });
+    }
+  }
+  for (const turn of turns) {
+    const turnId = string(turn.turnId);
+    if (!turnId) continue;
+    for (const group of getPendingCodexAsyncQuestionGroups(turn)) {
+      questions.push(convertCodexAsyncQuestion(id, turnId, group, "codex-desktop", hostId));
     }
   }
 
@@ -262,6 +274,8 @@ function convertTurn(session: UnifiedSession, turn: Record<string, unknown>, ind
   const terminal = turn.status === "completed" || turn.status === "failed" || turn.status === "interrupted";
   const completed = terminal ? created + Math.max(0, duration ?? 0) : undefined;
   const items = records(turn.items);
+  const asyncQuestionIds = new Set(items.flatMap(getCodexAsyncQuestions).map(question => question.id));
+  const latestWorkItem = [...items].reverse().find((item) => !["userMessage", "hookPrompt", "steeringUserMessage", "steered"].includes(string(item.type) ?? ""));
   const messages: UnifiedMessage[] = [];
   const hostId = string(session.engineMeta?.desktopHostId) ?? "local";
   const makeMessage = (item: Record<string, unknown>, itemIndex: number, kind: "item" | "input" = "item"): UnifiedMessage | undefined => {
@@ -269,16 +283,26 @@ function convertTurn(session: UnifiedSession, turn: Record<string, unknown>, ind
     const messageId = desktopMessageId(session.id, turnKey, itemId, hostId, kind);
     const type = string(item.type) ?? "unknown";
     const isUser = type === "userMessage" || type === "steeringUserMessage";
-    const itemStarted = millis(record(turn.aeonAssistantMessageStartedAtMsById)[itemId])
-      ?? millis(record(turn.commandExecutionStartedAtMsById)[itemId]) ?? created;
-    const itemFinished = millis(record(turn.agentMessageCompletedAtMsById)[itemId]);
-    const itemCompleted = isUser ? type !== "steeringUserMessage" || item.status !== "pending"
-      : terminal || itemFinished != null || record(turn.completedItemIds)[itemId] === true || item.completed === true
+    const observedStart = millis(record(turn.aeonAssistantMessageStartedAtMsById)[itemId])
+      ?? millis(record(turn.commandExecutionStartedAtMsById)[itemId]);
+    const itemStarted = observedStart ?? created;
+    const itemFinished = millis(record(turn.agentMessageCompletedAtMsById)[itemId]) ?? millis(item.completedAtMs);
+    const reviewFinished = type === "automaticApprovalReview"
+      && ["approved", "denied", "aborted", "timedOut"].includes(string(item.status) ?? "");
+    const historyItem = type === "userInputResponse" || type === "mcpServerElicitation" || type === "permissionRequest";
+    const itemCompleted = historyItem ? item.completed === true
+      : type === "planImplementation" ? item.isCompleted === true
+      : type === "error" || type === "todo-list" || (type === "reasoning" && item !== latestWorkItem) ? true
+      : isUser ? type !== "steeringUserMessage" || item.status !== "pending"
+      : terminal || reviewFinished || type === "strictReviewNotice" || type === "autoReviewInterruptionWarning"
+        || itemFinished != null || record(turn.completedItemIds)[itemId] === true || item.completed === true
         || ["completed", "failed", "declined"].includes(string(item.status) ?? "");
     const itemEnd = itemCompleted ? itemFinished ?? (number(item.durationMs) != null ? itemStarted + Math.max(0, number(item.durationMs)!) : completed ?? itemStarted) : undefined;
     const message: UnifiedMessage = {
       id: messageId, sessionId: session.id, role: isUser ? "user" : "assistant",
-      time: { created: itemStarted, ...(itemEnd != null ? { completed: itemEnd } : {}) },
+      // Native item order is authoritative when only some items have start timestamps.
+      time: { created: Math.max(itemStarted, messages.at(-1)?.time.created ?? itemStarted),
+        ...(itemEnd != null && !(type === "reasoning" && !terminal && itemFinished == null) ? { completed: itemEnd } : {}) },
       parts: [], workingDirectory: string(params.cwd) ?? session.directory,
       modelId: string(params.model) ?? session.modelId,
       providerId,
@@ -288,27 +312,113 @@ function convertTurn(session: UnifiedSession, turn: Record<string, unknown>, ind
     };
     const base = { id: messageId, messageId, sessionId: session.id };
     if (isUser) {
-      message.parts = userParts(base, type === "userMessage" ? item.content : item.input);
+      const input = type === "userMessage" ? item.content : item.input;
+      const parsedReplies = parseCodexAsyncQuestionReplies(input);
+      const questionReplies = parsedReplies?.every(reply => asyncQuestionIds.has(reply.questionItemId)) ? parsedReplies : undefined;
+      if (questionReplies) {
+        message.role = "assistant";
+        message.parts = [{ ...base, type: "text", text: formatCodexAsyncQuestionReplies(questionReplies), phase: "commentary", completed: itemCompleted }];
+        message.engineMeta = { ...message.engineMeta,
+          codexAsyncQuestionReplyIds: questionReplies.map(reply => reply.questionItemId),
+          codexAsyncQuestionReplyAccepted: type === "userMessage" || item.status === "accepted",
+        };
+      } else message.parts = userParts(base, input);
       if (type === "steeringUserMessage") {
         message.engineMeta = { ...message.engineMeta, clientUserMessageId: item.clientUserMessageId, serverUserMessageId: item.serverUserMessageId };
       }
     } else if (type === "agentMessage" || type === "plan") {
-      message.parts = [{ ...base, type: "text", text: string(item.text) ?? "" }];
+      const phase = item.phase === "commentary" ? "commentary"
+        : item.phase === "partial_answer" ? "partial"
+          : item.phase === "final_answer" ? "final" : item.delivery === "async" || type === "plan" ? "partial" : undefined;
+      const textPart: TextPart = { ...base, type: "text", completed: itemCompleted,
+        ...normalizeCodexResponseContent(string(item.text) ?? "", item.memoryCitation, item.questions), ...(phase ? { phase } : {}) };
+      message.parts = [hostId === "local" ? withCodexAssistantImages(textPart, session.id) : textPart];
     } else if (type === "reasoning") {
       const text = normalizeCodexReasoningText(item.summary, item.content);
       // Native reasoning can contain encrypted content only. Session activity
       // carries its progress; an empty display item would leave a thinking box.
       if (!text) return undefined;
-      message.parts = [{ ...base, type: "reasoning", text }];
+      message.parts = [{ ...base, type: "reasoning", summaryFormat: "heading-prefixed", text, completed: itemCompleted,
+        ...(observedStart != null && itemFinished != null && itemFinished > observedStart
+          ? { time: { start: observedStart, end: itemFinished } } : {}) }];
     } else if (type === "contextCompaction") {
       message.isCompaction = true;
       message.parts = [{ ...base, type: "system-notice", noticeType: "compact", text: "notice:context_compressed" }];
-    } else if (type === "userInputResponse" || type === "permissionsApprovalResponse" || type === "planImplementation" || type === "steered") {
-      // These have a dedicated request surface and must not become fake tool calls.
+    } else if (type === "userInputResponse") {
+      const answers = record(item.answers);
+      message.parts = records(item.questions).flatMap((question, index): UnifiedPart[] => {
+        const values = answers[string(question.id) ?? ""];
+        const text = [string(question.question), ...(Array.isArray(values) ? values.filter((value): value is string => typeof value === "string") : [])].filter(Boolean).join("\n\n");
+        return text ? [{ ...base, id: `${base.id}:question:${index}`, type: "text", text, phase: "commentary" }] : [];
+      });
+      if (message.parts.length === 0) return undefined;
+    } else if (type === "mcpServerElicitation") {
+      // Pending requests are handled by the question dock. The transcript keeps
+      // only the completed response, without reintroducing authorization actions.
+      if (item.completed !== true) return undefined;
+      const params = record(item.params);
+      const metadata = record(params._meta);
+      // OpenAI forms are gated off in the default coding transcript. Keep the
+      // same default rather than interpreting their private schemas as plain text.
+      if (params.mode !== "form" && params.mode !== "url" && params.mode !== "openai/userVerification") return undefined;
+      if (params.mode === "form" && Object.hasOwn(metadata, "openai/elicitation") && metadata.codex_approval_kind == null) return undefined;
+      const notices: Record<string, string> = {
+        accept: "notice:elicitation_accepted", decline: "notice:elicitation_declined", cancel: "notice:elicitation_cancelled",
+      };
+      const notice = notices[string(item.action) ?? ""] ?? "notice:elicitation_completed";
+      message.parts = [{ ...base, type: "system-notice", noticeType: item.action === "decline" ? "warning" : "info", text: notice }];
+      const text = string(params.mode === "openai/userVerification" ? params.title : params.message);
+      if (text) message.parts.push({ ...base, id: `${base.id}:message`, type: "text", text, phase: "commentary" });
+    } else if (type === "permissionRequest") {
+      // Desktop hides completed permissions from its transcript; pending
+      // permissions already have the actionable request dock.
       return undefined;
+    } else if (type === "planImplementation") {
+      message.parts = [{ ...base, type: "system-notice", noticeType: "info", text: item.isCompleted === true ? "notice:plan_implementation_completed" : "notice:plan_implementation_pending" }];
+      const text = string(item.planContent);
+      if (text) message.parts.push({ ...base, id: `${base.id}:plan`, type: "text", text, phase: "commentary" });
+    } else if (type === "todo-list") {
+      const todos = records(item.plan).map((step, index) => ({
+        id: `${itemId}:${index}`, content: string(step.step) ?? "",
+        status: step.status === "inProgress" ? "in_progress" : step.status === "completed" ? "completed" : "pending",
+        priority: "medium",
+      }));
+      const part = toolPart(base, { ...item, todos, status: "completed" }, itemStarted, itemEnd, message.workingDirectory);
+      message.parts = [{ ...part, normalizedTool: "todo" }];
+      const explanation = string(item.explanation);
+      if (explanation) message.parts.unshift({ ...base, id: `${base.id}:explanation`, type: "text", text: explanation, phase: "commentary" });
+    } else if (type === "error") {
+      message.parts = [];
+      if (item.willRetry === true) message.parts.push({ ...base, id: `${base.id}:retry`, type: "system-notice", noticeType: "info", text: "notice:stream_reconnecting" });
+      const text = [string(item.message), string(item.additionalDetails)].filter(Boolean).join("\n\n");
+      if (text) message.parts.push({ ...base, type: "system-notice", noticeType: item.willRetry === true ? "info" : "warning", text });
+      if (message.parts.length === 0) return undefined;
+    } else if (type === "permissionsApprovalResponse" || type === "steered") {
+      // These are transport markers, not executable tools.
+      return undefined;
+    } else if (type === "automaticApprovalReview") {
+      const notices: Record<string, string> = {
+        inProgress: "notice:automatic_approval_review",
+        approved: "notice:automatic_approval_approved",
+        denied: "notice:automatic_approval_denied",
+        aborted: "notice:automatic_approval_aborted",
+        timedOut: "notice:automatic_approval_timed_out",
+      };
+      message.parts = [{ ...base, type: "system-notice", noticeType: item.status === "denied" || item.status === "timedOut" ? "warning" : "info", text: notices[string(item.status) ?? ""] ?? "notice:automatic_approval_review" }];
+    } else if (type === "strictReviewNotice" || type === "autoReviewInterruptionWarning") {
+      message.parts = [{ ...base, type: "system-notice", noticeType: "warning", text: type === "strictReviewNotice" ? "notice:strict_review_required" : "notice:auto_review_interrupted" }];
     } else {
-      message.parts = [toolPart(base, item, itemStarted, itemEnd)];
+      const unfinished = terminal && item.status === "inProgress";
+      const tool = toolPart(base, unfinished ? { ...item, status: "failed", error: errorText(turn.error) ?? "Tool execution ended before completion" } : item, itemStarted, itemEnd, message.workingDirectory);
+      const richOutput = extractCodexToolOutput(item, base);
+      if (richOutput.output !== undefined) {
+        if (tool.state.status === "running" || tool.state.status === "pending") {
+          tool.state.input = { ...record(tool.state.input), _output: richOutput.output };
+        } else tool.state.output = richOutput.output;
+      }
+      message.parts = [tool, ...richOutput.attachments];
     }
+    message.parts.forEach((part, partIndex) => { part.order = partIndex; });
     return message;
   };
   if (!hasOpeningUserMessage(turn, items) && records(params.input).length > 0) {
@@ -364,8 +474,8 @@ function userParts(base: { id: string; messageId: string; sessionId: string }, i
   });
 }
 
-function toolPart(base: { id: string; messageId: string; sessionId: string }, item: Record<string, unknown>, started: number, completed?: number): ToolPart {
-  const originalTool = string(item.type) ?? "unknown";
+function toolPart(base: { id: string; messageId: string; sessionId: string }, item: Record<string, unknown>, started: number, completed?: number, workingDirectory?: string): ToolPart {
+  const originalTool = (item.type === "functionCallOutput" ? string(item.name) : undefined) ?? string(item.type) ?? "unknown";
   const normalizedTool = normalizeToolName("codex", originalTool);
   const changes = records(item.changes);
   const filePath = string(item.path) ?? string(changes[0]?.path);
@@ -383,6 +493,7 @@ function toolPart(base: { id: string; messageId: string; sessionId: string }, it
         ? { status: "error", input, output, error: error ?? "Tool failed", time: { start: started, end, duration: Math.max(0, end - started) } }
         : { status: "completed", input, output, time: { start: started, end, duration: Math.max(0, end - started) } },
   };
+  applyCodexToolDisplay(part, input, workingDirectory);
   const paths = changes.map((change) => string(change.path)).filter((path): path is string => Boolean(path));
   if (paths.length > 0) part.locations = paths.map((path) => ({ path }));
   else if (filePath) part.locations = [{ path: filePath }];

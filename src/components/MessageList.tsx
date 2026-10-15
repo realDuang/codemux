@@ -2,10 +2,12 @@ import { createMemo, Index, Show } from "solid-js";
 import { messageStore } from "../stores/message";
 import { SessionTurn } from "./SessionTurn";
 import type { UnifiedMessage } from "../types/unified";
+import "./conversation.css";
 
 interface MessageListProps {
   sessionID: string;
   isWorking?: boolean;
+  compactActivityGroups?: boolean;
   scrollContainerRef?: () => HTMLDivElement | undefined;
   onPermissionRespond?: (sessionID: string, permissionID: string, reply: string) => void;
   onQuestionRespond?: (sessionID: string, questionID: string, answers: string[][]) => void;
@@ -73,7 +75,7 @@ export function MessageList(props: MessageListProps) {
         </div>
       }
     >
-      <div class="flex flex-col gap-5 py-3">
+      <div class="conversation conversation-turns">
         <Index each={turns()}>
           {(turn, turnIndex) => {
             const isLastTurn = () => turnIndex === turns().length - 1;
@@ -92,6 +94,7 @@ export function MessageList(props: MessageListProps) {
                   assistantMessages={turn().assistantMessages}
                   isLastTurn={isLastTurn()}
                   isWorking={isWorking()}
+                  compactActivityGroups={props.compactActivityGroups}
                   onPermissionRespond={props.onPermissionRespond}
                   onQuestionRespond={props.onQuestionRespond}
                   onQuestionDismiss={props.onQuestionDismiss}

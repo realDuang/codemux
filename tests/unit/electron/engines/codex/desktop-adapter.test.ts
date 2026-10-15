@@ -85,6 +85,68 @@ describe("CodexDesktopAdapter", () => {
     await adapter.stop();
   });
 
+  it("answers asynchronous choices through steering and waits for the accepted receipt", async () => {
+    const ask = { id: "async-ask", type: "agentMessage", delivery: "async", text: "Choose.",
+      questions: [{ title: "Which target?", options: ["Local", "Remote"] }, { title: "Any constraints?" }] };
+    const active = turn("active", "inProgress", { items: [ask] });
+    client.initialState = conversation({ turns: [active] });
+    await adapter.start();
+    await adapter.restoreSession(THREAD, "/repo");
+    const question = (await adapter.getPendingQuestions(THREAD))[0];
+    expect(question).toBeDefined();
+    expect(question.dismissStopsTurn).toBe(false);
+    let settled = false;
+    const replying = adapter.replyQuestion(question.id, [["Local"], []], THREAD).then(() => { settled = true; });
+    await vi.waitFor(() => expect(client.steerTurn).toHaveBeenCalledOnce());
+    const options = client.steerTurn.mock.calls[0][2];
+    expect(options.restoreMessage).toMatchObject({ context: { turnTrigger: "send_user_message_async_question" } });
+    expect(client.submitUserInput).not.toHaveBeenCalled();
+    expect(client.startTurn).not.toHaveBeenCalled();
+    expect(client.interruptTurn).not.toHaveBeenCalled();
+    client.publish({ type: "snapshot", revision: 2, conversationState: conversation({ turns: [
+      { ...active, items: [ask, { id: "reply", type: "steeringUserMessage", status: "pending", input: options.input }] },
+    ] }) });
+    expect(settled).toBe(false);
+    expect((await adapter.getPendingQuestions(THREAD))[0].questions).toHaveLength(2);
+    client.publish({ type: "snapshot", revision: 3, conversationState: conversation({ turns: [
+      { ...active, items: [ask, { id: "reply", type: "steeringUserMessage", status: "accepted", input: options.input }] },
+    ] }) });
+    await replying;
+    expect(settled).toBe(true);
+    const remaining = await adapter.getPendingQuestions(THREAD);
+    expect(remaining).toHaveLength(1);
+    expect(remaining[0].id).not.toBe(question.id);
+    expect(remaining[0].questions.map(item => item.question)).toEqual(["Any constraints?"]);
+    const messages = await adapter.listMessages(THREAD);
+    expect(messages.find(message => message.engineMeta?.codexItemId === "reply")).toMatchObject({ role: "assistant" });
+  });
+
+  it("retains failed async answers for retry and dismisses locally without stopping the turn", async () => {
+    const active = turn("active", "inProgress", { items: [
+      { id: "async-ask", type: "agentMessage", questions: [{ title: "Which target?", options: ["Local", "Remote"] }] },
+    ] });
+    client.initialState = conversation({ turns: [active] });
+    await adapter.start();
+    await adapter.restoreSession(THREAD, "/repo");
+    const question = (await adapter.getPendingQuestions(THREAD))[0];
+    expect(question).toBeDefined();
+    await expect(adapter.replyQuestion(question.id, [[]], THREAD)).rejects.toThrow();
+    expect(client.steerTurn).not.toHaveBeenCalled();
+    client.steerTurn.mockRejectedValueOnce(new Error("Owner rejected the reply"));
+    await expect(adapter.replyQuestion(question.id, [["Local"]], THREAD)).rejects.toThrow("Owner rejected");
+    expect((await adapter.getPendingQuestions(THREAD))[0].id).toBe(question.id);
+    const replied = vi.fn();
+    adapter.on("question.replied", replied);
+    await adapter.rejectQuestion(question.id, THREAD);
+    expect(replied).toHaveBeenCalledWith({ questionId: question.id, answers: [] });
+    expect(await adapter.getPendingQuestions(THREAD)).toEqual([]);
+    client.publish({ type: "snapshot", revision: 2, conversationState: conversation({ turns: [active] }) });
+    expect(await adapter.getPendingQuestions(THREAD)).toEqual([]);
+    expect(client.interruptTurn).not.toHaveBeenCalled();
+    expect(client.submitUserInput).not.toHaveBeenCalled();
+    expect(client.startTurn).not.toHaveBeenCalled();
+  });
+
   it("coalesces a completed owner miss across cold reads and retries after one second", async () => {
     let now = 1000;
     const clock = vi.spyOn(performance, "now").mockImplementation(() => now);

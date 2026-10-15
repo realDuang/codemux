@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { compareParts, groupCompactTurnParts, groupTurnParts, selectResponseParts, shouldHideUnfinishedTool, upsertPart } from "../../../../src/lib/message-parts";
+import { compareParts, groupCompactTurnParts, groupTurnParts, selectFinalResponseParts, selectResponseParts, shouldHideUnfinishedTool, upsertPart } from "../../../../src/lib/message-parts";
 import type { TextPart, UnifiedMessage, UnifiedPart } from "../../../../src/types/unified";
 
 const textPart = (id: string, order?: number, phase?: TextPart["phase"]): TextPart => ({
@@ -95,6 +95,52 @@ describe("selectResponseParts", () => {
     expect(selectResponseParts([first, next])).toEqual([first]);
     expect(selectResponseParts([first, { ...next, text: "The next result" }]).map((part) => part.id))
       .toEqual(["first-final", "next-final"]);
+  });
+});
+
+describe("selectFinalResponseParts", () => {
+  it("keeps every final fragment and its resources while completed process text stays in steps", () => {
+    const first = { ...textPart("first-final", 2, "final"), inlineAssets: [{
+      id: "image", messageId: "reply", sessionId: "session", type: "file" as const,
+      filename: "preview.png", mime: "image/png", url: "data:image/png;base64,fixture",
+    }], citations: [{ note: "A retained source" }] };
+    const second = textPart("second-final", 4, "final");
+    const parts = [
+      { ...textPart("commentary", 0, "commentary"), completed: true },
+      { ...textPart("partial", 1, "partial"), completed: true }, first,
+      textPart("later-commentary", 3, "commentary"), second,
+    ];
+    expect(selectFinalResponseParts(parts, false)).toEqual([first, second]);
+    expect(selectFinalResponseParts(parts, true)).toEqual([first, second]);
+    expect(selectResponseParts(parts)).toEqual([parts[1], first, second]);
+  });
+
+  it("does not promote process text when no final answer exists", () => {
+    const progress = { ...textPart("progress", 0, "commentary"), completed: true };
+    const partial = { ...textPart("partial", 1, "partial"), completed: true };
+    expect(selectFinalResponseParts([progress, partial], false)).toEqual([]);
+    expect(selectFinalResponseParts([progress, partial], true)).toEqual([]);
+    expect(selectFinalResponseParts([progress, partial], false, true)).toEqual([]);
+  });
+
+  it("uses only a successful completed legacy tail and never an earlier unphased progress item", () => {
+    const older = textPart("older");
+    const answer = textPart("answer");
+    expect(selectFinalResponseParts([older, answer], false)).toEqual([answer]);
+    expect(selectFinalResponseParts([older, answer], true)).toEqual([]);
+    expect(selectFinalResponseParts([older, answer], false, true)).toEqual([]);
+    expect(selectFinalResponseParts([older, textPart("partial", 1, "partial")], false)).toEqual([]);
+    expect(selectFinalResponseParts([older, textPart("commentary", 1, "commentary")], false)).toEqual([]);
+  });
+
+  it("retains earlier final content during an empty final update without reviving hidden metadata", () => {
+    const earlier = textPart("earlier-final", 0, "final");
+    const empty = { ...textPart("empty-final", 1, "final"), text: "" };
+    const hidden = { ...textPart("metadata", 2, "final"), displayText: "" };
+    const synthetic = { ...textPart("synthetic", 3, "final"), synthetic: true };
+    expect(selectFinalResponseParts([earlier, empty, hidden, synthetic], true)).toEqual([earlier]);
+    expect(selectFinalResponseParts([textPart("legacy"), empty], false)).toEqual([]);
+    expect(selectFinalResponseParts([], false)).toEqual([]);
   });
 });
 

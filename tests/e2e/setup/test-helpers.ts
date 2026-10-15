@@ -441,22 +441,12 @@ export async function hideProject(page: Page, projectName: string): Promise<void
 
 /**
  * Get the currently active mode button text (e.g., "Build", "Plan").
- * Active mode has bg-indigo-600, bg-cyan-600, or bg-emerald-600 class.
+ * Mode buttons form a radio group; the active one has aria-checked="true".
  */
 export async function getActiveMode(page: Page): Promise<string | null> {
   return page.evaluate(() => {
-    const buttons = document.querySelectorAll("button");
-    for (const btn of buttons) {
-      const cls = btn.className;
-      if (
-        cls.includes("bg-indigo-600") ||
-        cls.includes("bg-cyan-600") ||
-        cls.includes("bg-emerald-600")
-      ) {
-        return btn.textContent?.trim() || null;
-      }
-    }
-    return null;
+    const active = document.querySelector<HTMLElement>('[role="radiogroup"] [role="radio"][aria-checked="true"]');
+    return active ? (active.textContent?.trim() || active.getAttribute("title")) : null;
   });
 }
 

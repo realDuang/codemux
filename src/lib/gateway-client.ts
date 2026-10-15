@@ -124,6 +124,7 @@ const NOTIFICATION_FRAME_BUDGET_MS = 8;
 const MAX_NOTIFICATIONS_PER_FRAME = 128;
 const MAX_MESSAGE_BATCH_SIZE = 16;
 const MAX_PART_BATCH_SIZE = 64;
+const NOTIFICATION_FLUSH_DELAY_MS = 32;
 const MESSAGE_SNAPSHOT_BARRIER = "internal.message.snapshot";
 
 type EventHandler = (...args: any[]) => void;
@@ -149,6 +150,7 @@ export class GatewayClient {
   // the renderer can process them (which causes permanent UI freeze).
   private notificationQueue: Array<{ type: string; payload: any }> = [];
   private notificationFlushScheduled = false;
+  private cancelNotificationFlush: (() => void) | undefined;
   private static readonly BATCHED_EVENTS = new Set([
     "message.part.updated",
     "message.updated",
@@ -257,6 +259,7 @@ export class GatewayClient {
         this._connected = false;
         this.ws = null;
         this.rejectAllPending("Connection closed");
+        this.clearNotificationQueue();
         this.emit("disconnected", ev.reason || "closed");
 
         if (!this.manualClose && ev.code !== 4001) {
@@ -337,6 +340,7 @@ export class GatewayClient {
       this.ws = null;
       this._connected = false;
       this.rejectAllPending("Connection interrupted");
+      this.clearNotificationQueue();
       this.emit("disconnected", "Connection interrupted");
       stale.close(4000, "Connection health check failed");
     }
@@ -358,6 +362,7 @@ export class GatewayClient {
     }
     this._connected = false;
     this.rejectAllPending("Client disconnected");
+    this.clearNotificationQueue();
     this.listeners.clear();
   }
 
@@ -483,10 +488,23 @@ export class GatewayClient {
 
   // --- Notification batching ---
 
+  private clearNotificationQueue(): void {
+    this.cancelNotificationFlush?.();
+    this.cancelNotificationFlush = undefined;
+    this.notificationFlushScheduled = false;
+    const queued = this.notificationQueue;
+    this.notificationQueue = [];
+    // RPCs have already been rejected. Release local read barriers as well,
+    // so a cancelled connection cannot leave an awaiting caller suspended.
+    for (const item of queued) {
+      if (item.type === MESSAGE_SNAPSHOT_BARRIER) item.payload();
+    }
+  }
+
   /**
    * Schedule a flush of queued notifications on the next animation frame.
-   * Uses requestAnimationFrame (browser) or setTimeout (Node.js tests) to
-   * yield control back to the browser between batches, allowing user input
+   * Races requestAnimationFrame against a short timer because background windows
+   * can suspend animation frames. Each slice yields back to the browser, allowing user input
    * events (mouse, keyboard) to be processed. Without this, a burst of
    * streaming part updates can starve the event loop and freeze the UI.
    *
@@ -502,6 +520,7 @@ export class GatewayClient {
 
     const flush = () => {
       this.notificationFlushScheduled = false;
+      const epoch = this.connectionEpoch;
       const queued = this.notificationQueue;
       this.notificationQueue = [];
       if (queued[0]?.type === MESSAGE_SNAPSHOT_BARRIER) {
@@ -590,6 +609,12 @@ export class GatewayClient {
           index++;
           this.emit(notification.type as keyof GatewayClientEvents, notification.payload as any);
         }
+        if (!this._connected || this.connectionEpoch !== epoch) {
+          for (const item of following) {
+            if (item.type === MESSAGE_SNAPSHOT_BARRIER) item.payload();
+          }
+          return;
+        }
         // A single animation frame must not consume an entire restored history.
         // Both limits matter: fast callbacks and coarse clocks still yield.
         if (index >= MAX_NOTIFICATIONS_PER_FRAME || performance.now() - started >= NOTIFICATION_FRAME_BUDGET_MS) break;
@@ -602,12 +627,24 @@ export class GatewayClient {
       }
     };
 
-    // Use rAF in browsers, setTimeout in Node.js (tests)
-    if (typeof requestAnimationFrame === "function") {
-      requestAnimationFrame(flush);
-    } else {
-      setTimeout(flush, 0);
-    }
+    let active = true;
+    let frame: number | undefined;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const cancel = () => {
+      active = false;
+      if (frame !== undefined && typeof cancelAnimationFrame === "function") cancelAnimationFrame(frame);
+      if (timer !== undefined) clearTimeout(timer);
+      if (this.cancelNotificationFlush === cancel) this.cancelNotificationFlush = undefined;
+    };
+    const run = () => {
+      if (!active) return;
+      cancel();
+      flush();
+    };
+    this.cancelNotificationFlush = cancel;
+    const hasAnimationFrame = typeof requestAnimationFrame === "function";
+    if (hasAnimationFrame) frame = requestAnimationFrame(run);
+    timer = setTimeout(run, hasAnimationFrame ? NOTIFICATION_FLUSH_DELAY_MS : 0);
   }
 
   // --- Engine API ---

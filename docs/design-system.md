@@ -94,8 +94,10 @@ re-themed in one place.
   tools collapses into a `ToolActivityGroup` ("Read files · Ran commands")
   whose rows read "Read src/a.ts", "Ran npm test", and so on. Rows come from
   `ToolPart.displayActions`, which the gateway derives for any engine that does
-  not supply native ones. Lazily loaded history adds a turn-level "Show steps"
-  trigger that reveals the segments in place. Standalone tools (e.g. `task`)
+  not supply native ones. Everything except the final answer (commentary,
+  reasoning, tools) folds under the turn-level steps trigger: open while the
+  turn works, collapsed once it settles, and remembered when toggled. Folded
+  segments hang on one continuous rail. Standalone tools (e.g. `task`)
   keep their card, which only shows its frame on hover or while open.
 - **Live state**: a working trigger gets a cyan/violet ping dot (violet while
   reasoning) and a light sweep along its base, and the activity rail below it

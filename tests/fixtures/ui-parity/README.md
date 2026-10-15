@@ -69,6 +69,26 @@ It replaces only the Codex Desktop fixture response; no personal chat is loaded
 by default. The fixture gives this record synthetic timestamps after its user
 prompt while retaining its text and image bytes.
 
+## Compact turn folding stream
+
+In `UI parity - Codex CLI` or `UI parity - Codex Desktop`, send a composer prompt
+containing `folding-stream`. Before reasoning or tools appear, the fixture emits
+`STREAM_COMMENTARY` and `STREAM_PARTIAL`; the partial item already has
+`completed: true`. Commentary receives 20 updates at 150 ms intervals, then the
+existing reasoning/tool/final stream runs through `STREAM_COMPLETE`. This
+opt-in scenario has ordered parts and no `stepCount`. Other prompts and the
+OpenCode, Copilot, and Claude streams retain their existing behavior.
+
+An untouched compact turn starts expanded while active and folds on completion.
+Check that an explicit collapse stays collapsed through later updates and
+completion. In a separate run, collapse and reopen while active, then verify
+that the explicit expansion survives completion. Collapsed outer steps must
+hide commentary, partial text, reasoning, tools, notices, and standalone tool
+attachments together. The user prompt and all final fragments remain visible,
+including inline assets and source notes. Reopening restores the chronology;
+nested tool details retain independent controls. A completed partial item must
+never become a final answer solely because its `completed` flag is true.
+
 ## Lazy history disclosure regression
 
 Start with `UI_PARITY_LAZY_STEPS=1` to add five `UI parity lazy history` sessions.
@@ -89,6 +109,8 @@ Replace `265` with the caller's existing task-space ID. The script changes only
 the loopback fixture's saved session/locale preferences, clicks the real turn
 and reasoning controls, checks their ARIA targets and rendered content, and
 captures screenshots for visual review. It verifies repeated collapse/reopen,
-one steps request, visible responses, unchanged inline compact grouping, and
-the ordinary OpenCode disclosure. It leaves task-space lifecycle completion to
-the caller's larger browser workflow and never creates or claims a new space.
+one steps request, final responses preserved while all compact process output
+folds, and the same outer control for fully loaded compact turns. Nested tool
+grouping and the ordinary OpenCode disclosure retain their existing behavior.
+It leaves task-space lifecycle completion to the caller's larger browser
+workflow and never creates or claims a new space.

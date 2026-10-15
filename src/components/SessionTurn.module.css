@@ -18,6 +18,11 @@
   padding: 0.125rem 0 0.125rem 0.875rem;
   border-left: 1px solid var(--conversation-rail, var(--sl-color-border));
 }
+/* Adjacent steps share one continuous rail across the turn's flex gap. */
+.compactStep + .compactStep {
+  margin-top: -0.875rem;
+  padding-top: calc(0.125rem + 0.875rem);
+}
 .compactStep:has([data-working]) {
   border-image: linear-gradient(to bottom, var(--cm-accent), var(--cm-accent-2) 60%, var(--conversation-rail)) 1;
 }

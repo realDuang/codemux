@@ -87,3 +87,15 @@ export function selectResponseParts(parts: readonly TextPart[]): TextPart[] {
   }
   return visible.filter((part) => part.phase === "partial" || part.phase === "final" || part === lastLegacy);
 }
+
+/** A collapsed compact turn exposes final output, not completed intermediate items. */
+export function selectFinalResponseParts(parts: readonly TextPart[], isWorking: boolean, hasError = false): TextPart[] {
+  const visible = parts.filter((part) => !part.synthetic && (part.displayText ?? part.text).trim().length > 0);
+  if (parts.some((part) => !part.synthetic && part.phase === "final")) {
+    return visible.filter((part) => part.phase === "final");
+  }
+  // Older history has no phase metadata. Only its successful completed tail is an answer.
+  if (isWorking || hasError) return [];
+  const tail = visible.at(-1);
+  return tail && tail.phase === undefined ? [tail] : [];
+}

@@ -7,7 +7,7 @@ import {
   onCleanup,
   onMount,
 } from "solid-js";
-import { messageStore, setMessageStore, isExpanded, toggleExpanded } from "../stores/message";
+import { messageStore, setMessageStore, isExpanded, setExpanded, toggleExpanded } from "../stores/message";
 import { Part, PartProps, ProviderIcon } from "./share/part";
 import { ToolActivityGroup } from "./ToolActivityGroup";
 import { ContentError } from "./share/content-error";
@@ -16,7 +16,7 @@ import { TextReveal } from "./share/TextReveal";
 import { useI18n } from "../lib/i18n";
 import { logger } from "../lib/logger";
 import { gateway } from "../lib/gateway-api";
-import { compareParts, groupCompactTurnParts, selectResponseParts, shouldHideUnfinishedTool, type CompactTurnSegment, type TurnPart } from "../lib/message-parts";
+import { compareParts, groupCompactTurnParts, selectFinalResponseParts, shouldHideUnfinishedTool, type CompactTurnSegment, type TurnPart } from "../lib/message-parts";
 import type { UnifiedMessage, UnifiedPart, TextPart, ToolPart, UnifiedPermission } from "../types/unified";
 import { TokenUsage } from "./TokenUsage";
 import styles from "./SessionTurn.module.css";
@@ -259,16 +259,17 @@ export function SessionTurn(props: SessionTurnProps) {
   createEffect(() => { if (props.isWorking) setObservedWorking(true); });
   
   const stepsExpandedKey = () => `steps-${props.userMessage.id}`;
-  const stepsExpanded = () => isExpanded(stepsExpandedKey());
-  const handleStepsToggle = () => toggleExpanded(stepsExpandedKey());
+  // Steps are open while the turn is working and fold once it settles, unless the user chose.
+  const stepsExpanded = () => messageStore.expanded[stepsExpandedKey()] ?? props.isWorking;
+  const handleStepsToggle = () => setExpanded(stepsExpandedKey(), !stepsExpanded());
 
-  // Lazy-load step parts when the turn summary or an activity segment is expanded.
+  // Lazy-load step parts only while the turn's outer disclosure is expanded.
   // Uses a local Set to track in-flight requests, avoiding re-entrant fetches
   // when the effect re-runs due to store updates within the async body.
   const [stepsLoading, setStepsLoading] = createSignal(false);
   const stepsInflight = new Set<string>();
   createEffect(() => {
-    if (!stepsExpanded() && !expandedActivitySegment()) return;
+    if (!stepsExpanded()) return;
     // Only load messages that have steps, aren't loaded, and aren't in-flight
     const toLoad = props.assistantMessages.filter(
       (msg) => (msg.stepCount ?? 0) > 0
@@ -424,7 +425,6 @@ export function SessionTurn(props: SessionTurnProps) {
   // 6× redundant SolidJS subscriptions and 6× the scan work per streaming frame.
   const derivedPartState = createMemo(() => {
     const msgs = props.assistantMessages;
-    const textParts: { message: UnifiedMessage; part: TextPart; index: number }[] = [];
     let isReasoningActive = false;
     let reasoningHeading: string | null | undefined;
     let currentStatus: string | undefined;
@@ -441,10 +441,6 @@ export function SessionTurn(props: SessionTurnProps) {
       for (let pi = parts.length - 1; pi >= 0; pi--) {
         const p = parts[pi];
         if (!p) continue;
-
-        if (p.type === "text") {
-          textParts.push({ message: msg, part: p, index: pi });
-        }
 
         // isReasoningActive: only check last message's parts
         if (!foundReasoning && mi === msgs.length - 1 && props.isWorking) {
@@ -480,10 +476,7 @@ export function SessionTurn(props: SessionTurnProps) {
       currentStatus = t().steps.consideringNextSteps;
     }
 
-    textParts.reverse();
-    const responses = new Set(selectResponseParts(textParts.map(({ part }) => part)));
     return {
-      responseParts: textParts.filter(({ part }) => responses.has(part)),
       isReasoningActive,
       reasoningHeading: reasoningHeading ?? undefined,
       currentStatus,
@@ -491,7 +484,6 @@ export function SessionTurn(props: SessionTurnProps) {
   });
 
   // Convenience accessors (unwrap the combined memo for downstream consumers)
-  const responseParts = () => derivedPartState().responseParts;
   const isReasoningActive = () => derivedPartState().isReasoningActive;
   const reasoningHeading = () => derivedPartState().reasoningHeading;
   const currentStatus = () => derivedPartState().currentStatus;
@@ -609,25 +601,27 @@ export function SessionTurn(props: SessionTurnProps) {
     }
     return items;
   });
-  // Every engine uses the same timeline: prose stays on the canvas, while reasoning and
-  // tool calls collapse into activity segments between the texts that surround them.
+  // Every engine uses the same timeline: reasoning and tool runs collapse into activity
+  // segments between the texts that surround them, and everything except the final
+  // answer folds under the turn's steps disclosure.
   const compactSegments = createMemo(() => groupCompactTurnParts(timelineParts()));
+  const compactFinalParts = createMemo(() => {
+    // Preserve empty final placeholders so they cannot promote legacy progress text.
+    const textParts = props.assistantMessages.flatMap(message => messageStore.part[message.id] ?? [])
+      .filter((part): part is TextPart => part.type === "text");
+    return selectFinalResponseParts(textParts, props.isWorking, !!lastMessageError());
+  });
+  const compactFinalIds = createMemo(() => new Set(compactFinalParts().map(part => part.id)));
 
   const activityExpandedKey = (id: string) => `activity-${props.userMessage.id}-${id}`;
-  const expandedActivitySegment = createMemo(() => compactSegments().some((segment) => segment.kind === "activity" && isExpanded(activityExpandedKey(segment.id))));
-  // Loading history must not remove the disclosure that opened its steps.
-  const hasDeferredSteps = createMemo(() => props.assistantMessages.some(
-    (message) => (message.stepCount ?? 0) > 0,
-  ));
-  const isCompactStep = (segment: CompactTurnSegment) => segment.kind === "activity"
-    || (segment.kind === "standalone" && (segment.item.part.type === "reasoning" || segment.item.part.type === "tool"));
+  // Standalone file parts are tool output; final inline assets stay with their text part.
+  const isCompactStep = (segment: CompactTurnSegment) => segment.kind !== "message"
+    || segment.item.part.type !== "text" || !compactFinalIds().has(segment.item.part.id);
   const hasUnloadedSteps = createMemo(() => props.assistantMessages.some(
     (message) => (message.stepCount ?? 0) > 0 && !messageStore.stepsLoaded[message.id],
   ));
   const showTurnStepsTrigger = createMemo(() =>
-    (hasDeferredSteps() && (hasUnloadedSteps() || compactSegments().some(isCompactStep)))
-      || (props.isWorking && compactSegments().length === 0));
-  const compactStepsVisible = () => !hasDeferredSteps() || stepsExpanded();
+    props.isWorking || hasUnloadedSteps() || compactSegments().some(isCompactStep));
   const compactStepId = (index: number) => `compact-activity-${props.userMessage.id}-${index}`;
   const turnHasToolError = createMemo(() => compactSegments().some((segment) => segment.kind === "activity"
     && segment.items.some(({ part }) => part.type === "tool" && part.state.status === "error")));
@@ -759,7 +753,7 @@ export function SessionTurn(props: SessionTurnProps) {
             </div>
           </Show>
 
-          <Show when={(stepsExpanded() || expandedActivitySegment()) && stepsLoading()}>
+          <Show when={stepsExpanded() && stepsLoading()}>
             <div class={styles.stepsContent}>
               <div class="flex items-center gap-2 px-3 py-2 text-sm" style={{ color: "var(--color-text-secondary)" }}>
                 <TextShimmer text={t().steps.loadingSteps} />
@@ -772,7 +766,7 @@ export function SessionTurn(props: SessionTurnProps) {
               {(segment, segmentIndex) => {
                 const renderItem = (item: () => TurnPart) => <Show when={`${item().message.id}:${item().part.id}`} keyed>{(_key) =>
                   <Part
-                    last={item().part.type === "file" || item().part.id === responseParts().at(-1)?.part.id}
+                    last={item().part.type === "file" || item().part.id === compactFinalParts().at(-1)?.id}
                     expandText
                     part={item().part}
                     index={item().index}
@@ -799,8 +793,8 @@ export function SessionTurn(props: SessionTurnProps) {
                   renderReasoning={renderItem}
                 />}</Show>;
                 return <Show when={isCompactStep(segment())} fallback={renderSegment()}>
-                  <div id={compactStepId(segmentIndex)} class={styles.compactStep} hidden={!compactStepsVisible()}>
-                    <Show when={compactStepsVisible()}>{renderSegment()}</Show>
+                  <div id={compactStepId(segmentIndex)} class={styles.compactStep} hidden={!stepsExpanded()}>
+                    <Show when={stepsExpanded()}>{renderSegment()}</Show>
                   </div>
                 </Show>;
               }}

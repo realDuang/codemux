@@ -21,6 +21,7 @@
 import fs from "fs";
 import fsp from "fs/promises";
 import path from "path";
+import { isDeepStrictEqual } from "node:util";
 import { conversationStoreLog } from "./logger";
 import { getConversationsPath } from "./app-paths";
 import { timeId } from "../utils/id-gen";
@@ -588,6 +589,60 @@ class ConversationStore {
       Object.assign(messages[idx], allowed);
       await this.writeMessages(id, messages);
     });
+  }
+
+  /** Apply one burst of native message snapshots without rewriting history per item. */
+  async upsertMessageSnapshots(id: string, snapshots: UnifiedMessage[]): Promise<void> {
+    id = this.resolveConversationId(id);
+    this.ensureInitialized();
+    if (snapshots.length === 0) return;
+
+    await this.withWriteLock(id, () => this.withWriteLock(`${id}.steps`, async () => {
+      const conv = this.index.get(id);
+      if (!conv) return;
+      const messages = await this.listMessages(id);
+      const positions = new Map(messages.map((message, index) => [message.id, index]));
+      const steps = await this.readStepsFile(id) ?? { version: STEPS_FILE_VERSION, conversationId: id, messages: {} };
+      let messagesChanged = false;
+      let stepsChanged = false;
+      let appended = false;
+      for (const source of snapshots) {
+        const parts = source.parts.map((part) => ({ ...part, sessionId: id, messageId: source.id }));
+        const { parts: _parts, sessionId: _sessionId, ...metadata } = source;
+        const message: ConversationMessage = {
+          ...metadata, parts: parts.filter((part): part is TextPart | FilePart => part.type === "text" || part.type === "file"),
+        };
+        const position = positions.get(source.id);
+        if (position === undefined) {
+          positions.set(source.id, messages.length);
+          messages.push(message);
+          messagesChanged = appended = true;
+        } else if (!isDeepStrictEqual(messages[position], message)) {
+          messages[position] = message;
+          messagesChanged = true;
+        }
+        const messageSteps = parts.filter((part) => part.type !== "text" && part.type !== "file")
+          .map((part) => this.truncateStepOutput(part));
+        if (!isDeepStrictEqual(steps.messages[source.id] ?? [], messageSteps)) {
+          if (messageSteps.length > 0) steps.messages[source.id] = messageSteps;
+          else delete steps.messages[source.id];
+          stepsChanged = true;
+        }
+      }
+      if (messagesChanged) await this.writeMessages(id, messages);
+      if (stepsChanged) await this.writeStepsFile(id, steps);
+      if (!messagesChanged) return;
+      conv.messageCount = messages.length;
+      if (appended) conv.updatedAt = Date.now();
+      conv.preview = undefined;
+      for (let index = messages.length - 1; index >= 0; index--) {
+        const text = messages[index].parts.find((part): part is TextPart => part.type === "text");
+        if (!text) continue;
+        conv.preview = text.text.slice(0, PREVIEW_LENGTH) + (text.text.length > PREVIEW_LENGTH ? "..." : "");
+        break;
+      }
+      this.scheduleIndexWrite();
+    }));
   }
 
   /** Replace one local projection only after its owner returned complete history. */

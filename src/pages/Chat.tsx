@@ -42,9 +42,11 @@ import {
 import {
   messageStore,
   setMessageStore,
-  replaceMessageParts,
+  replaceMessageProjection,
+  invalidateMessageSteps,
   type QueuedMessage,
 } from "../stores/message";
+import { applyMessageUpdates } from "../stores/message-updates";
 import { MessageList } from "../components/MessageList";
 import { PromptInput } from "../components/PromptInput";
 import { SessionConnectionDetails } from "../components/SessionConnectionBadge";
@@ -956,35 +958,39 @@ export default function Chat() {
       const t1 = performance.now();
       logger.debug(`[LoadMessages] RPC took ${(t1 - t0).toFixed(0)}ms, got ${messages.length} messages`);
 
-      // Store parts — preserve existing streaming parts when disk parts are empty.
-      // Disk is authoritative for completed messages; streaming parts are more
-      // current for in-progress assistant messages (placeholder empty on disk).
-      for (const msg of messages) {
-        const diskParts = msg.parts || [];
-        diskParts.sort(compareParts);
-        const existingParts = messageStore.part[msg.id];
-        if (authoritative || diskParts.length > 0 || !existingParts || existingParts.length === 0) {
-          setMessageStore("part", msg.id, diskParts);
+      batch(() => {
+        // Store parts — preserve existing streaming parts when disk parts are empty.
+        // Disk is authoritative for completed messages; streaming parts are more
+        // current for in-progress assistant messages (placeholder empty on disk).
+        for (const msg of messages) {
+          const diskParts = msg.parts || [];
+          diskParts.sort(compareParts);
+          const existingParts = messageStore.part[msg.id];
+          if (authoritative) {
+            replaceMessageProjection(msg);
+          } else if (diskParts.length > 0 || !existingParts || existingParts.length === 0) {
+            setMessageStore("part", msg.id, diskParts);
+          }
         }
-      }
 
-      // Authoritative snapshots already include notifications received during
-      // the request. Only ordinary engines need to retain store-only messages.
-      messages.sort((a, b) => a.time.created - b.time.created);
-      const existing = messageStore.message[sessionId] || [];
-      if (!authoritative && existing.length > 0) {
-        const diskIds = new Set(messages.map(m => m.id));
-        const storeOnly = existing.filter(m => !diskIds.has(m.id));
-        if (storeOnly.length > 0) {
-          const merged = [...messages, ...storeOnly];
-          merged.sort((a, b) => a.time.created - b.time.created);
-          setMessageStore("message", sessionId, merged);
+        // Authoritative snapshots already include notifications received during
+        // the request. Only ordinary engines need to retain store-only messages.
+        messages.sort((a, b) => a.time.created - b.time.created);
+        const existing = messageStore.message[sessionId] || [];
+        if (!authoritative && existing.length > 0) {
+          const diskIds = new Set(messages.map(m => m.id));
+          const storeOnly = existing.filter(m => !diskIds.has(m.id));
+          if (storeOnly.length > 0) {
+            const merged = [...messages, ...storeOnly];
+            merged.sort((a, b) => a.time.created - b.time.created);
+            setMessageStore("message", sessionId, merged);
+          } else {
+            setMessageStore("message", sessionId, messages);
+          }
         } else {
           setMessageStore("message", sessionId, messages);
         }
-      } else {
-        setMessageStore("message", sessionId, messages);
-      }
+      });
 
       if (!authoritative && refreshActivity && !isTeamParentSession(sessionId)
         && sessionActivityVersions.get(sessionId) === activityVersion) {
@@ -1173,6 +1179,7 @@ export default function Chat() {
         onPartUpdated: handlePartUpdated,
         onPartsBatch: handlePartsBatch,
         onMessageUpdated: handleMessageUpdated,
+        onMessagesUpdated: handleMessagesUpdated,
         onMessageRemoved: handleMessageRemoved,
         onSessionUpdated: handleSessionUpdated,
         onSessionCreated: handleSessionCreated,
@@ -2094,6 +2101,7 @@ export default function Chat() {
       }
       setMessageStore("part", messageId, undefined as any);
       setMessageStore("stepsLoaded", messageId, undefined as any);
+      invalidateMessageSteps(messageId);
       const todo = todoPartRef();
       if (todo?.sessionId === sessionId && todo.messageId === messageId) setTodoPartRef(null);
     });
@@ -2133,6 +2141,7 @@ export default function Chat() {
       const parts = [...(messageStore.part[messageId] || [])];
       upsertPart(parts, part);
       setMessageStore("part", messageId, parts);
+      if (part.type !== "text" && part.type !== "file") invalidateMessageSteps(messageId);
       // Mark steps as loaded for streaming messages so lazy-load won't re-fetch
       if (!messageStore.stepsLoaded[messageId]) {
         setMessageStore("stepsLoaded", messageId, true);
@@ -2191,6 +2200,7 @@ export default function Chat() {
 
       // Single store mutation for all parts
       setMessageStore("part", messageId, merged);
+      if (parts.some((part) => part.type !== "text" && part.type !== "file")) invalidateMessageSteps(messageId);
 
       // 3. Mark steps as loaded once
       if (!messageStore.stepsLoaded[messageId]) {
@@ -2208,120 +2218,37 @@ export default function Chat() {
     if (!userScrolledUp()) scheduleScrollToBottom();
   };
 
-  const handleMessageUpdated = (_sessionId: string, msgInfo: UnifiedMessage) => {
-    noteSessionActivity(msgInfo.sessionId);
-    const targetSessionId = msgInfo.sessionId;
-    const authoritative = isAuthoritativeSession(targetSessionId);
-
+  const handleMessagesUpdated = (updates: readonly UnifiedMessage[]) => {
     batch(() => {
-      if (!authoritative && !isElectron() && msgInfo.role === "assistant" && !msgInfo.time.completed && !msgInfo.error) {
-        setSendingFor(targetSessionId, true);
-      }
-      if (msgInfo.role === "user") {
-        const currentMessages = messageStore.message[targetSessionId] || [];
-        const tempMessages = currentMessages.filter(m => m.id.startsWith("msg-temp-"));
-
-        if (tempMessages.length > 0) {
-          // Collect temp parts before deleting — if the real message has no parts
-          // (OpenCode often sends user message.updated without parts), we migrate
-          // the optimistic parts to the real message ID so the user bubble stays visible.
-          const hasMsgParts = msgInfo.parts && msgInfo.parts.length > 0;
-          if (!hasMsgParts) {
-            for (const tempMsg of tempMessages) {
-              const tempParts = messageStore.part[tempMsg.id];
-              if (tempParts && tempParts.length > 0) {
-                // Re-key temp parts to use the real message ID
-                const migrated = tempParts.map(p => ({
-                  ...p,
-                  id: p.id.replace(/^part-temp-/, `part-migrated-`),
-                  messageId: msgInfo.id,
-                }));
-                setMessageStore("part", msgInfo.id, migrated);
-                break; // only need one temp message's parts
-              }
-            }
-          }
-
-          setMessageStore("message", targetSessionId, (draft) =>
-            draft.filter(m => !m.id.startsWith("msg-temp-"))
-          );
-          tempMessages.forEach(tempMsg => {
-            setMessageStore("part", tempMsg.id, undefined as any);
-          });
+      applyMessageUpdates(updates, isAuthoritativeSession);
+      let shouldRefreshGitStatus = false;
+      for (const message of updates) {
+        const sessionId = message.sessionId;
+        noteSessionActivity(sessionId);
+        const authoritative = isAuthoritativeSession(sessionId);
+        if (!authoritative && !isElectron() && message.role === "assistant" && !message.time.completed && !message.error) {
+          setSendingFor(sessionId, true);
         }
-      }
 
-      if (authoritative) replaceMessageParts(msgInfo.id, msgInfo.parts ?? []);
-
-      // Ordinary engines preserve newer part.updated events. Authoritative
-      // engines replace the full snapshot, including existing IDs and removals.
-      if (msgInfo.parts && msgInfo.parts.length > 0) {
-        if (!authoritative) {
-          const existingParts = messageStore.part[msgInfo.id];
-          if (!existingParts || existingParts.length === 0) {
-            // Sort in-place — msgInfo.parts is from the incoming event, safe to mutate
-            msgInfo.parts.sort(compareParts);
-            setMessageStore("part", msgInfo.id, msgInfo.parts);
-          } else {
-            // Merge: use existing streaming parts as base, add any new parts
-            // from the final message that weren't received via streaming
-            const existingIds = new Set(existingParts.map(p => p.id));
-            const newParts = msgInfo.parts.filter(p => !existingIds.has(p.id));
-            if (newParts.length > 0) {
-              // Single concat + in-place sort (avoids spread + sort creating 2 arrays)
-              const merged = existingParts.concat(newParts);
-              merged.sort(compareParts);
-              setMessageStore("part", msgInfo.id, merged);
-            }
+        for (let index = (message.parts?.length ?? 0) - 1; index >= 0; index--) {
+          const part = message.parts[index];
+          if (part.type === "tool" && part.normalizedTool === "todo") {
+            setTodoPartRef({ sessionId, messageId: message.id, partId: part.id });
+            break;
           }
         }
 
-        // Track todo parts from bulk message updates (Copilot/Claude)
-        if (targetSessionId) {
-          for (let i = msgInfo.parts.length - 1; i >= 0; i--) {
-            const p = msgInfo.parts[i];
-            if (p.type === "tool" && (p as any).normalizedTool === "todo") {
-              setTodoPartRef({ sessionId: targetSessionId, messageId: msgInfo.id, partId: p.id });
-              break;
-            }
-          }
+        if (message.role === "assistant" && (message.time.completed || message.error)
+          && sessionStore.sendingMap[sessionId]) {
+          if (!authoritative && !messageStore.queued[sessionId]?.length) setSendingFor(sessionId, false);
+          shouldRefreshGitStatus = true;
         }
       }
-
-      const messages = messageStore.message[targetSessionId] || [];
-      const existingIdx = messages.findIndex(m => m.id === msgInfo.id);
-
-      if (existingIdx >= 0) {
-        // Update existing message in place
-        setMessageStore("message", targetSessionId, existingIdx, msgInfo);
-      } else if (!messageStore.message[targetSessionId]) {
-        setMessageStore("message", targetSessionId, [msgInfo]);
-      } else {
-        // New message — append to end (incoming messages are always for the current turn)
-        setMessageStore("message", targetSessionId, (draft) => [...draft, msgInfo]);
-      }
-
-      // Auto-clear sending state when assistant message is finalized (completed or errored).
-      // This is the authoritative signal that the engine is done — more reliable than
-      // waiting for the sendMessage RPC to resolve (which can happen prematurely in
-      // multi-step agent loops like OpenCode).
-      // But DON'T clear if there are still queued messages — the engine will continue
-      // processing them, and we need to keep the sending state active.
-      if (
-        msgInfo.role === "assistant" &&
-        (msgInfo.time.completed || msgInfo.error) &&
-        sessionStore.sendingMap[targetSessionId]
-      ) {
-        const queued = messageStore.queued[targetSessionId];
-        if (!isAuthoritativeSession(targetSessionId) && (!queued || queued.length === 0)) {
-          setSendingFor(targetSessionId, false);
-        }
-        // Refresh git status after engine finishes — engine file changes
-        // may not trigger filesystem events (e.g. git operations inside .git/)
-        refreshGitStatus();
-      }
+      if (shouldRefreshGitStatus) refreshGitStatus();
     });
   };
+
+  const handleMessageUpdated = (_sessionId: string, message: UnifiedMessage) => handleMessagesUpdated([message]);
 
   const handleSessionUpdated = (updated: UnifiedSession) => {
     noteSessionActivity(updated.id);

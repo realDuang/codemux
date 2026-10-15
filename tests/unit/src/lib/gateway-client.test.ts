@@ -11,7 +11,7 @@ vi.mock("../../../../src/lib/platform", () => ({ isElectron: mocks.isElectron })
 vi.mock("../../../../src/lib/electron-api", () => ({ gatewayAPI: { getWsUrl: mocks.getWsUrl } }));
 
 import { GatewayClient } from "../../../../src/lib/gateway-client";
-import type { EngineCatalogSnapshot, UnifiedProject } from "../../../../src/types/unified";
+import type { EngineCatalogSnapshot, UnifiedMessage, UnifiedProject } from "../../../../src/types/unified";
 
 class FakeWebSocket {
   static OPEN = 1;
@@ -73,6 +73,48 @@ describe("GatewayClient authentication", () => {
     ws.authenticate();
     await pending;
     return ws;
+  }
+
+  function captureAnimationFrames() {
+    const frames: FrameRequestCallback[] = [];
+    const callbacks = new Map<number, FrameRequestCallback>();
+    let nextId = 0;
+    const requestFrame = vi.fn((callback: FrameRequestCallback) => {
+      const id = ++nextId;
+      frames.push(callback);
+      callbacks.set(id, callback);
+      return id;
+    });
+    const cancelFrame = vi.fn((id: number) => {
+      const callback = callbacks.get(id);
+      if (callback) {
+        const index = frames.indexOf(callback);
+        if (index >= 0) frames.splice(index, 1);
+        callbacks.delete(id);
+      }
+    });
+    vi.stubGlobal("requestAnimationFrame", requestFrame);
+    vi.stubGlobal("cancelAnimationFrame", cancelFrame);
+    return {
+      frames,
+      requestFrame,
+      cancelFrame,
+      runNext() {
+        const callback = frames.shift();
+        expect(callback).toBeDefined();
+        callback!(performance.now());
+      },
+      drain() {
+        for (let remaining = 1000; frames.length && remaining > 0; remaining--) {
+          frames.shift()!(performance.now());
+        }
+        expect(frames).toHaveLength(0);
+      },
+    };
+  }
+
+  function notificationMessage(id: string, sessionId = "s1"): UnifiedMessage {
+    return { id, sessionId, role: "assistant", time: { created: 1 }, parts: [] };
   }
 
   it("uses the existing remote origin and device JWT for browser connections", async () => {
@@ -355,6 +397,403 @@ describe("GatewayClient authentication", () => {
     await vi.advanceTimersByTimeAsync(0);
 
     expect(order).toEqual(["message", "latest"]);
+  });
+
+  it("yields a 2000-message burst across animation frames with bounded message batches", async () => {
+    const ws = await connect();
+    const frames = captureAnimationFrames();
+    const batches: UnifiedMessage[][] = [];
+    const singleUpdated = vi.fn();
+    client.on("message.updated", singleUpdated);
+    client.on("message.updated.batch", ({ messages }) => batches.push(messages.map(({ message }) => message)));
+    const messages = Array.from({ length: 2000 }, (_, index) => notificationMessage(`m${index}`));
+    for (const message of messages) {
+      ws.onmessage?.({ data: JSON.stringify({ type: "message.updated", payload: { sessionId: "s1", message } }) });
+    }
+
+    expect(frames.frames).toHaveLength(1);
+    expect(batches).toHaveLength(0);
+    frames.runNext();
+    expect(batches.flat().length).toBeGreaterThan(0);
+    expect(batches.flat().length).toBeLessThanOrEqual(128);
+    expect(frames.frames).toHaveLength(1);
+    frames.drain();
+
+    expect(batches.every((batch) => batch.length > 0 && batch.length <= 16)).toBe(true);
+    expect(batches.flat()).toEqual(messages);
+    expect(singleUpdated).not.toHaveBeenCalled();
+  });
+
+  it("keeps single-message listeners working when no batch listener is registered", async () => {
+    const ws = await connect();
+    const frames = captureAnimationFrames();
+    const updated = vi.fn();
+    client.on("message.updated", updated);
+    const messages = Array.from({ length: 200 }, (_, index) => notificationMessage(`m${index}`));
+    for (const message of messages) {
+      ws.onmessage?.({ data: JSON.stringify({ type: "message.updated", payload: { sessionId: "s1", message } }) });
+    }
+
+    frames.runNext();
+    expect(updated.mock.calls.length).toBeGreaterThan(0);
+    expect(updated.mock.calls.length).toBeLessThanOrEqual(128);
+    expect(frames.frames).toHaveLength(1);
+    frames.drain();
+    expect(updated.mock.calls.map(([payload]) => payload.message)).toEqual(messages);
+  });
+
+  it("yields after a slow listener instead of dispatching the remaining notifications in one frame", async () => {
+    const ws = await connect();
+    const frames = captureAnimationFrames();
+    let elapsed = 0;
+    vi.stubGlobal("performance", { now: () => elapsed });
+    const updated = vi.fn(() => { elapsed += 9; });
+    client.on("message.updated", updated);
+    for (let index = 0; index < 3; index++) {
+      ws.onmessage?.({ data: JSON.stringify({
+        type: "message.updated", payload: { sessionId: "s1", message: notificationMessage(`m${index}`) },
+      }) });
+    }
+
+    frames.runNext();
+    expect(updated).toHaveBeenCalledTimes(1);
+    expect(frames.frames).toHaveLength(1);
+    frames.runNext();
+    expect(updated).toHaveBeenCalledTimes(2);
+    frames.drain();
+    expect(updated).toHaveBeenCalledTimes(3);
+  });
+
+  it("preserves removal, queued consumption, recreation, and part precedence across frame boundaries", async () => {
+    const ws = await connect();
+    const frames = captureAnimationFrames();
+    const order: string[] = [];
+    client.on("message.updated.batch", ({ messages }) => {
+      order.push(...messages.map(({ message }) => message.id));
+    });
+    client.on("message.removed", () => order.push("removed"));
+    client.on("message.queued.consumed", () => order.push("consumed"));
+    client.on("message.part.updated", ({ part }) => order.push((part as { text: string }).text));
+    const notify = (type: string, payload: unknown) => ws.onmessage?.({ data: JSON.stringify({ type, payload }) });
+    const preceding = Array.from({ length: 127 }, (_, index) => `preceding-${index}`);
+    for (const id of preceding) {
+      notify("message.updated", { sessionId: "s1", message: notificationMessage(id) });
+    }
+    notify("message.updated", { sessionId: "s1", message: notificationMessage("recreated") });
+    notify("message.part.updated", { sessionId: "s1", part: { id: "p1", messageId: "recreated", text: "obsolete" } });
+    notify("message.removed", { sessionId: "s1", messageId: "recreated" });
+    notify("message.part.updated", { sessionId: "s1", part: { id: "p1", messageId: "recreated", text: "late obsolete" } });
+    notify("message.queued.consumed", { sessionId: "s1", messageId: "queued" });
+    notify("message.updated", { sessionId: "s1", message: notificationMessage("recreated") });
+    notify("message.part.updated", { sessionId: "s1", part: { id: "p1", messageId: "recreated", text: "new part" } });
+
+    frames.runNext();
+    expect(frames.frames).toHaveLength(1);
+    frames.drain();
+    expect(order).toEqual([...preceding, "removed", "consumed", "recreated", "new part"]);
+  });
+
+  it("discards a removed session from the queued remainder between animation frames", async () => {
+    const ws = await connect();
+    const frames = captureAnimationFrames();
+    const delivered: UnifiedMessage[] = [];
+    const removed = vi.fn();
+    client.on("message.updated.batch", ({ messages }) => delivered.push(...messages.map(({ message }) => message)));
+    client.on("session.removed", removed);
+    const notify = (type: string, payload: unknown) => ws.onmessage?.({ data: JSON.stringify({ type, payload }) });
+    for (let index = 0; index < 256; index++) {
+      notify("message.updated", { sessionId: "s1", message: notificationMessage(`m${index}`) });
+    }
+    const retained = notificationMessage("other", "s2");
+    notify("message.updated", { sessionId: "s2", message: retained });
+
+    frames.runNext();
+    const deliveredBeforeRemoval = delivered.length;
+    expect(deliveredBeforeRemoval).toBeGreaterThan(0);
+    expect(deliveredBeforeRemoval).toBeLessThanOrEqual(128);
+    notify("session.removed", { sessionId: "s1" });
+    expect(removed).toHaveBeenCalledExactlyOnceWith({ sessionId: "s1" });
+    frames.drain();
+    expect(delivered).toHaveLength(deliveredBeforeRemoval + 1);
+    expect(delivered.at(-1)).toEqual(retained);
+  });
+
+  it("schedules additional notification slices through timers when animation frames are unavailable", async () => {
+    const ws = await connect();
+    vi.stubGlobal("requestAnimationFrame", undefined);
+    const updated = vi.fn();
+    client.on("message.updated.batch", updated);
+    for (let index = 0; index < 300; index++) {
+      ws.onmessage?.({ data: JSON.stringify({
+        type: "message.updated", payload: { sessionId: "s1", message: notificationMessage(`m${index}`) },
+      }) });
+    }
+
+    await vi.advanceTimersByTimeAsync(0);
+    const initialCount = updated.mock.calls.flatMap(([payload]) => payload.messages).length;
+    expect(initialCount).toBeGreaterThan(0);
+    expect(initialCount).toBeLessThanOrEqual(128);
+    await vi.advanceTimersByTimeAsync(10);
+    const delivered = updated.mock.calls.flatMap(([payload]) => payload.messages);
+    expect(delivered).toHaveLength(300);
+    expect(delivered.map(({ message }) => message.id)).toEqual(Array.from({ length: 300 }, (_, index) => `m${index}`));
+  });
+
+  it("settles a message snapshot after earlier notifications drain and before later notifications", async () => {
+    const ws = await connect();
+    const frames = captureAnimationFrames();
+    const order: string[] = [];
+    client.on("message.updated.batch", ({ messages }) => order.push(...messages.map(({ message }) => message.id)));
+    client.on("message.part.updated", ({ part }) => order.push(part.id));
+    const snapshot = [notificationMessage("snapshot")];
+    let settled = false;
+    const loading = client.listMessages("s1").then((messages) => {
+      settled = true;
+      order.push("snapshot");
+      return messages;
+    });
+    const request = JSON.parse(ws.send.mock.calls.at(-1)![0]);
+    expect(request).toMatchObject({ type: "message.list", payload: { sessionId: "s1" } });
+    const preceding = Array.from({ length: 260 }, (_, index) => `before-${index}`);
+    for (const id of preceding) {
+      ws.onmessage?.({ data: JSON.stringify({
+        type: "message.updated", payload: { sessionId: "s1", message: notificationMessage(id) },
+      }) });
+    }
+    ws.onmessage?.({ data: JSON.stringify({ type: "message.part.updated", payload: {
+      sessionId: "s1", part: { id: "before-part", messageId: "before-259", type: "text", text: "old" },
+    } }) });
+    ws.onmessage?.({ data: JSON.stringify({ type: "response", requestId: request.requestId, payload: snapshot }) });
+    ws.onmessage?.({ data: JSON.stringify({
+      type: "message.updated", payload: { sessionId: "s1", message: notificationMessage("after") },
+    }) });
+
+    await Promise.resolve();
+    expect(settled).toBe(false);
+    frames.runNext();
+    await Promise.resolve();
+    expect(order.length).toBeGreaterThan(0);
+    expect(order.length).toBeLessThanOrEqual(128);
+    expect(settled).toBe(false);
+    for (let remaining = 20; frames.frames.length && remaining > 0; remaining--) {
+      frames.runNext();
+      await Promise.resolve();
+    }
+
+    expect(frames.frames).toHaveLength(0);
+    expect(await loading).toEqual(snapshot);
+    expect(order).toEqual([...preceding, "before-part", "snapshot", "after"]);
+  });
+
+  it("resolves unrelated RPC responses immediately while message notifications are queued", async () => {
+    const ws = await connect();
+    const frames = captureAnimationFrames();
+    const updated = vi.fn();
+    client.on("message.updated.batch", updated);
+    for (let index = 0; index < 260; index++) {
+      ws.onmessage?.({ data: JSON.stringify({
+        type: "message.updated", payload: { sessionId: "s1", message: notificationMessage(`m${index}`) },
+      }) });
+    }
+    const loading = client.listEngines();
+    const request = JSON.parse(ws.send.mock.calls.at(-1)![0]);
+    expect(request.type).toBe("engine.list");
+    ws.onmessage?.({ data: JSON.stringify({ type: "response", requestId: request.requestId, payload: [] }) });
+
+    expect(await loading).toEqual([]);
+    expect(updated).not.toHaveBeenCalled();
+    expect(frames.frames).toHaveLength(1);
+    frames.drain();
+  });
+
+  it("waits only for notifications already queued when a local barrier is requested", async () => {
+    const ws = await connect();
+    const frames = captureAnimationFrames();
+    const order: string[] = [];
+    client.on("message.updated.batch", ({ messages }) => order.push(...messages.map(({ message }) => message.id)));
+    expect(client.waitForQueuedNotifications()).toBeUndefined();
+    expect(frames.frames).toHaveLength(0);
+    ws.onmessage?.({ data: JSON.stringify({
+      type: "message.updated", payload: { sessionId: "s1", message: notificationMessage("before") },
+    }) });
+    const waiting = client.waitForQueuedNotifications();
+    expect(waiting).toBeInstanceOf(Promise);
+    const completed = waiting!.then(() => order.push("barrier"));
+    ws.onmessage?.({ data: JSON.stringify({
+      type: "message.updated", payload: { sessionId: "s1", message: notificationMessage("after") },
+    }) });
+
+    for (let remaining = 10; frames.frames.length && remaining > 0; remaining--) {
+      frames.runNext();
+      await Promise.resolve();
+    }
+
+    await completed;
+    expect(order).toEqual(["before", "barrier", "after"]);
+    expect(frames.frames).toHaveLength(0);
+    expect(client.waitForQueuedNotifications()).toBeUndefined();
+  });
+
+  it("drains background message snapshots through bounded watchdog slices when animation frames never run", async () => {
+    const ws = await connect();
+    const frames = captureAnimationFrames();
+    const order: string[] = [];
+    client.on("message.updated.batch", ({ messages }) => order.push(...messages.map(({ message }) => message.id)));
+    client.on("message.parts.batch", ({ parts }) => order.push(...parts.map((part) => part.id)));
+    client.on("message.part.updated", ({ part }) => order.push(part.id));
+    const loading = client.listMessages("s1");
+    const settled = vi.fn();
+    void loading.then(settled);
+    const request = JSON.parse(ws.send.mock.calls.at(-1)![0]);
+    const messages = Array.from({ length: 260 }, (_, index) => notificationMessage(`m${index}`));
+    for (const message of messages) {
+      ws.onmessage?.({ data: JSON.stringify({ type: "message.updated", payload: { sessionId: "s1", message } }) });
+    }
+    const partIds = ["p1", "p2", "p3"];
+    for (const id of partIds) {
+      ws.onmessage?.({ data: JSON.stringify({ type: "message.part.updated", payload: {
+        sessionId: "s1", part: { id, messageId: "m259", type: "text", text: id },
+      } }) });
+    }
+    const snapshot = [notificationMessage("snapshot")];
+    ws.onmessage?.({ data: JSON.stringify({ type: "response", requestId: request.requestId, payload: snapshot }) });
+
+    await vi.advanceTimersByTimeAsync(31);
+    expect(order).toHaveLength(0);
+    expect(settled).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(order.length).toBeGreaterThan(0);
+    expect(order.length).toBeLessThanOrEqual(128);
+    expect(settled).not.toHaveBeenCalled();
+    for (let slice = 1; slice < 8; slice++) {
+      const before = order.length;
+      await vi.advanceTimersByTimeAsync(32);
+      expect(order.length - before).toBeLessThanOrEqual(128);
+    }
+
+    expect(settled).toHaveBeenCalledExactlyOnceWith(snapshot);
+    expect(await loading).toEqual(snapshot);
+    expect(order).toEqual([...messages.map((message) => message.id), ...partIds]);
+    expect(frames.cancelFrame).toHaveBeenCalled();
+    expect(frames.frames).toHaveLength(0);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it.each(["animation frame", "watchdog"])("dispatches each slice once when the %s wins the scheduler race", async (winner) => {
+    const ws = await connect();
+    const frames = captureAnimationFrames();
+    const updated = vi.fn();
+    client.on("message.updated.batch", updated);
+    const notify = (id: string) => ws.onmessage?.({ data: JSON.stringify({
+      type: "message.updated", payload: { sessionId: "s1", message: notificationMessage(id) },
+    }) });
+    notify("first");
+    const staleFrame = frames.frames[0];
+    const frameId = frames.requestFrame.mock.results[0].value;
+    expect(vi.getTimerCount()).toBe(1);
+
+    if (winner === "animation frame") frames.runNext();
+    else await vi.advanceTimersByTimeAsync(32);
+
+    expect(updated).toHaveBeenCalledTimes(1);
+    expect(vi.getTimerCount()).toBe(0);
+    if (winner === "watchdog") expect(frames.cancelFrame).toHaveBeenCalledWith(frameId);
+    await vi.advanceTimersByTimeAsync(32);
+    expect(updated).toHaveBeenCalledTimes(1);
+    notify("second");
+    staleFrame(performance.now());
+    expect(updated).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(32);
+
+    expect(updated.mock.calls.flatMap(([payload]) => payload.messages.map(({ message }: { message: UnifiedMessage }) => message.id)))
+      .toEqual(["first", "second"]);
+    expect(frames.frames).toHaveLength(0);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("cancels both notification schedulers and settles queued waits on disconnect", async () => {
+    const ws = await connect();
+    const frames = captureAnimationFrames();
+    const updated = vi.fn();
+    client.on("message.updated.batch", updated);
+    const loading = client.listMessages("s1");
+    const rejected = expect(loading).rejects.toThrow("Client disconnected");
+    const request = JSON.parse(ws.send.mock.calls.at(-1)![0]);
+    ws.onmessage?.({ data: JSON.stringify({
+      type: "message.updated", payload: { sessionId: "s1", message: notificationMessage("obsolete") },
+    }) });
+    const staleFrame = frames.frames[0];
+    const frameId = frames.requestFrame.mock.results[0].value;
+    const waiting = client.waitForQueuedNotifications();
+    const drained = vi.fn();
+    expect(waiting).toBeInstanceOf(Promise);
+    void waiting!.then(drained);
+    ws.onmessage?.({ data: JSON.stringify({
+      type: "response", requestId: request.requestId, payload: [notificationMessage("obsolete snapshot")],
+    }) });
+    expect(vi.getTimerCount()).toBe(1);
+
+    client.disconnect();
+    await Promise.resolve();
+    await rejected;
+    expect(drained).toHaveBeenCalledOnce();
+    expect(frames.cancelFrame).toHaveBeenCalledWith(frameId);
+    expect(frames.frames).toHaveLength(0);
+    expect(vi.getTimerCount()).toBe(0);
+    expect(client.waitForQueuedNotifications()).toBeUndefined();
+    client.on("message.updated.batch", updated);
+    staleFrame(performance.now());
+    await vi.advanceTimersByTimeAsync(256);
+
+    expect(updated).not.toHaveBeenCalled();
+    expect(drained).toHaveBeenCalledOnce();
+    expect(frames.frames).toHaveLength(0);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("drops the active slice remainder and settles barriers when a listener disconnects", async () => {
+    const ws = await connect();
+    const frames = captureAnimationFrames();
+    const delivered: string[] = [];
+    client.on("message.updated.batch", ({ messages }) => {
+      delivered.push(...messages.map(({ message }) => message.id));
+      client.disconnect();
+    });
+    const loading = client.listMessages("s1");
+    const rejected = expect(loading).rejects.toThrow("Client disconnected");
+    const request = JSON.parse(ws.send.mock.calls.at(-1)![0]);
+    for (let index = 0; index < 260; index++) {
+      ws.onmessage?.({ data: JSON.stringify({
+        type: "message.updated", payload: { sessionId: "s1", message: notificationMessage(`m${index}`) },
+      }) });
+    }
+    const waiting = client.waitForQueuedNotifications();
+    const drained = vi.fn();
+    expect(waiting).toBeInstanceOf(Promise);
+    void waiting!.then(drained);
+    ws.onmessage?.({ data: JSON.stringify({
+      type: "response", requestId: request.requestId, payload: [notificationMessage("snapshot")],
+    }) });
+    const staleFrame = frames.frames[0];
+
+    frames.runNext();
+    await Promise.resolve();
+    await rejected;
+    expect(delivered.length).toBeGreaterThan(0);
+    expect(delivered.length).toBeLessThanOrEqual(16);
+    expect(drained).toHaveBeenCalledOnce();
+    expect(frames.frames).toHaveLength(0);
+    expect(vi.getTimerCount()).toBe(0);
+    expect(client.waitForQueuedNotifications()).toBeUndefined();
+    const late = vi.fn();
+    client.on("message.updated.batch", late);
+    staleFrame(performance.now());
+    await vi.advanceTimersByTimeAsync(256);
+
+    expect(late).not.toHaveBeenCalled();
+    expect(drained).toHaveBeenCalledOnce();
+    expect(frames.frames).toHaveLength(0);
+    expect(vi.getTimerCount()).toBe(0);
   });
 
   it.each([true, false])("sends the archive RPC and propagates an upstream rejection for archived=%s", async (archived) => {

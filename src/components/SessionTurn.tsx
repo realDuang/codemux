@@ -7,7 +7,7 @@ import {
   onCleanup,
   onMount,
 } from "solid-js";
-import { messageStore, setMessageStore, isExpanded, setExpanded, toggleExpanded } from "../stores/message";
+import { messageStore, setMessageStore, replaceFetchedMessageSteps, isExpanded, setExpanded, toggleExpanded } from "../stores/message";
 import { Part, PartProps, ProviderIcon } from "./share/part";
 import { ToolActivityGroup } from "./ToolActivityGroup";
 import { ContentError } from "./share/content-error";
@@ -16,7 +16,7 @@ import { TextReveal } from "./share/TextReveal";
 import { useI18n } from "../lib/i18n";
 import { logger } from "../lib/logger";
 import { gateway } from "../lib/gateway-api";
-import { compareParts, groupCompactTurnParts, selectFinalResponseParts, shouldHideUnfinishedTool, type CompactTurnSegment, type TurnPart } from "../lib/message-parts";
+import { groupCompactTurnParts, selectFinalResponseParts, shouldHideUnfinishedTool, type CompactTurnSegment, type TurnPart } from "../lib/message-parts";
 import type { UnifiedMessage, UnifiedPart, TextPart, ToolPart, UnifiedPermission } from "../types/unified";
 import { TokenUsage } from "./TokenUsage";
 import styles from "./SessionTurn.module.css";
@@ -267,9 +267,13 @@ export function SessionTurn(props: SessionTurnProps) {
   // Uses a local Set to track in-flight requests, avoiding re-entrant fetches
   // when the effect re-runs due to store updates within the async body.
   const [stepsLoading, setStepsLoading] = createSignal(false);
+  const [stepsRetry, setStepsRetry] = createSignal(0);
   const stepsInflight = new Set<string>();
+  let disposed = false;
+  onCleanup(() => { disposed = true; });
   createEffect(() => {
     if (!stepsExpanded()) return;
+    stepsRetry();
     // Only load messages that have steps, aren't loaded, and aren't in-flight
     const toLoad = props.assistantMessages.filter(
       (msg) => (msg.stepCount ?? 0) > 0
@@ -282,26 +286,19 @@ export function SessionTurn(props: SessionTurnProps) {
     setStepsLoading(true);
     Promise.all(
       toLoad.map(async (msg) => {
+        const version = messageStore.stepsVersion[msg.id] ?? 0;
+        let retry = false;
         try {
           const steps = await gateway.getMessageSteps(props.sessionID, msg.id);
-          if (steps.length > 0) {
-            const existing = messageStore.part[msg.id] || [];
-            const existingIds = new Set(existing.map((p) => p.id));
-            const newSteps = steps.filter((s) => !existingIds.has(s.id));
-            if (newSteps.length > 0) {
-              setMessageStore("part", msg.id, (draft) => {
-                const merged = [...(draft || []), ...newSteps];
-                merged.sort(compareParts);
-                return merged;
-              });
-            }
-          }
-          setMessageStore("stepsLoaded", msg.id, true);
+          retry = replaceFetchedMessageSteps(msg.id, steps, version) === "retry";
         } catch (err) {
           logger.error(`[SessionTurn] Failed to load steps for ${msg.id}:`, err);
           // Don't mark as loaded on failure — allows retry on next expand
         } finally {
           stepsInflight.delete(msg.id);
+          if (retry && !disposed && !messageStore.stepsLoaded[msg.id]) {
+            setStepsRetry((attempt) => attempt + 1);
+          }
         }
       })
     ).finally(() => {

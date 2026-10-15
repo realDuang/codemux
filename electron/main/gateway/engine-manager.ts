@@ -113,6 +113,11 @@ interface MessageWriteSnapshot {
   steps: UnifiedPart[];
 }
 
+interface AuthoritativeMessageBatch {
+  messages: Map<string, { message: UnifiedMessage; snapshot: MessageWriteSnapshot }>;
+  completion: Promise<void>;
+}
+
 interface InteractionReply {
   engineType: EngineType;
   sessionId?: string;
@@ -198,6 +203,8 @@ export class EngineManager extends EventEmitter {
   private catalogRevisions = new Map<EngineType, number>();
   /** Preserve message, removal, and incremental step order across multi-step writes. */
   private authoritativeMessageWrites = new Map<string, Promise<void>>();
+  private authoritativeMessageBatches = new Map<string, AuthoritativeMessageBatch>();
+  private authoritativeHistoryReads = new Map<string, Promise<UnifiedMessage[]>>();
   private sessionRemovals = new Map<string, Promise<void>>();
   private catalogSessionChecks = new Map<string, Promise<void>>();
 
@@ -704,10 +711,12 @@ export class EngineManager extends EventEmitter {
 
       if (convId) {
         // Persist the message
-        this.persistMessage(convId, message, adapter.getCapabilities().authoritativeSessionState === true);
+        const authoritative = adapter.getCapabilities().authoritativeSessionState === true;
+        this.persistMessage(convId, message, authoritative);
 
         // Rewrite sessionId and forward to frontend
-        const rewritten = this.rewriteSessionId(data, engineSessionId, convId);
+        const rewritten = this.rewriteSessionId(authoritative
+          ? { ...data, message: this.projectHistoryMessage(message) } : data, engineSessionId, convId);
         this.emit("message.updated", rewritten as any);
       } else {
         this.emit("message.updated", data);
@@ -895,6 +904,8 @@ export class EngineManager extends EventEmitter {
   }
 
   private runMessageWrite<T>(conversationId: string, write: () => Promise<T>): Promise<T> {
+    // A removal or full snapshot closes the preceding burst before later events arrive.
+    this.authoritativeMessageBatches.delete(conversationId);
     const previous = this.authoritativeMessageWrites.get(conversationId) ?? Promise.resolve();
     const result = previous.then(write);
     const pending = result.then(() => undefined).catch((err) => {
@@ -933,7 +944,46 @@ export class EngineManager extends EventEmitter {
       content: [...(this.contentPartsBuffer.get(message.id) ?? [])],
       steps: [...(this.stepPartsBuffer.get(message.id) ?? [])],
     };
-    return this.runMessageWrite(conversationId, () => this.writeMessage(conversationId, message, authoritative, snapshot));
+    if (authoritative) return this.persistAuthoritativeMessage(conversationId, message, snapshot);
+    return this.runMessageWrite(conversationId, () => this.writeMessage(conversationId, message, snapshot));
+  }
+
+  private persistAuthoritativeMessage(conversationId: string, message: UnifiedMessage, snapshot: MessageWriteSnapshot): Promise<void> {
+    const pending = this.authoritativeMessageBatches.get(conversationId);
+    if (pending) {
+      pending.messages.set(message.id, { message, snapshot });
+      return pending.completion;
+    }
+    const batch: AuthoritativeMessageBatch = { messages: new Map([[message.id, { message, snapshot }]]), completion: Promise.resolve() };
+    batch.completion = this.runMessageWrite(conversationId, async () => {
+      if (this.authoritativeMessageBatches.get(conversationId) === batch) this.authoritativeMessageBatches.delete(conversationId);
+      const messages = [...batch.messages.values()].map(({ message: value, snapshot: saved }) => {
+        const parts = [...value.parts];
+        const ids = new Set(parts.map((part) => part.id));
+        for (const part of [...saved.content, ...saved.steps]) {
+          if (ids.has(part.id)) continue;
+          ids.add(part.id);
+          parts.push(part);
+        }
+        return { ...value, sessionId: conversationId, parts: parts.map((part) => ({ ...part, sessionId: conversationId })) };
+      });
+      await conversationStore.upsertMessageSnapshots(conversationId, messages);
+      for (const { message: value, snapshot: saved } of batch.messages.values()) {
+        const unchanged = (current: UnifiedPart[] | undefined, captured: UnifiedPart[]) =>
+          !current || (current.length === captured.length && current.every((part, index) => part === captured[index]));
+        if (unchanged(this.contentPartsBuffer.get(value.id), saved.content)) this.contentPartsBuffer.delete(value.id);
+        if (unchanged(this.stepPartsBuffer.get(value.id), saved.steps)) {
+          this.stepPartsBuffer.delete(value.id);
+          this.dirtySteps.delete(value.id);
+          this.persistedPlaceholders.delete(value.id);
+          this.messageConvMap.delete(value.id);
+        }
+      }
+    });
+    this.authoritativeMessageBatches.set(conversationId, batch);
+    // Adapter events do not await persistence; the ordered queue still reports errors.
+    void batch.completion.catch(() => {});
+    return batch.completion;
   }
 
   private trackMessageWrite(write: Promise<void>): Promise<void> {
@@ -948,12 +998,11 @@ export class EngineManager extends EventEmitter {
   private async writeMessage(
     conversationId: string,
     message: UnifiedMessage,
-    authoritative: boolean,
     snapshot: MessageWriteSnapshot,
   ): Promise<void> {
-    const isCurrent = () => authoritative || (this.messageGenerations.get(message.id) ?? 0) === snapshot.generation;
+    const isCurrent = () => (this.messageGenerations.get(message.id) ?? 0) === snapshot.generation;
     if (!isCurrent()) return;
-    if (message.role === "user" && !authoritative) {
+    if (message.role === "user") {
       // Adapter-emitted queued user messages have a different ID than the one
       // we wrote via persistUserMessage at send time. Track only queued sends in
       // pendingUserMsgIdQueue so foreground messages cannot consume timing
@@ -1020,19 +1069,12 @@ export class EngineManager extends EventEmitter {
         error: message.error,
       };
 
-      if (authoritative) {
-        // ensureMessage is serialized by the store, so repeated snapshot events
-        // cannot append the same external message twice.
-        await conversationStore.ensureMessage(conversationId, convMessage);
+      const existingMessages = await conversationStore.listMessages(conversationId);
+      if (!isCurrent()) return;
+      if (existingMessages.some((m) => m.id === message.id)) {
         await conversationStore.updateMessage(conversationId, message.id, convMessage);
       } else {
-        const existingMessages = await conversationStore.listMessages(conversationId);
-        if (!isCurrent()) return;
-        if (existingMessages.some((m) => m.id === message.id)) {
-          await conversationStore.updateMessage(conversationId, message.id, convMessage);
-        } else {
-          await conversationStore.appendMessage(conversationId, convMessage);
-        }
+        await conversationStore.appendMessage(conversationId, convMessage);
       }
 
       if (!isCurrent()) return;
@@ -1842,6 +1884,8 @@ export class EngineManager extends EventEmitter {
       await this.ensureAuthoritativeSession(conv, adapter);
       return this.runMessageWrite(sessionId, async () => {
         if (!conversationStore.get(sessionId)) return [];
+        // A lazy step read may predate queued updates, so a replacing snapshot must
+        // start its own owner read after the persistence barrier.
         const messages = await adapter.listMessages(conv.engineSessionId!);
         if (!conversationStore.get(sessionId)) return [];
         const normalized = messages.map((message) => ({
@@ -1850,7 +1894,7 @@ export class EngineManager extends EventEmitter {
           stepCount: message.parts.filter((part) => !this.isContentPart(part)).length,
         }));
         await conversationStore.replaceMessageSnapshot(sessionId, normalized);
-        return conversationStore.get(sessionId) ? normalized : [];
+        return conversationStore.get(sessionId) ? normalized.map((message) => this.projectHistoryMessage(message)) : [];
       });
     }
     const messages = await conversationStore.listMessages(sessionId);
@@ -1906,13 +1950,31 @@ export class EngineManager extends EventEmitter {
         : [];
     }
     if (conv?.engineSessionId && conv.catalogAvailable !== false && adapter?.getCapabilities().authoritativeSessionState) {
-      const messages = await this.listMessages(sessionId);
+      await this.ensureAuthoritativeSession(conv, adapter);
+      const messages = await this.readAuthoritativeHistory(sessionId, conv.engineSessionId, adapter);
+      if (!conversationStore.get(sessionId)) return [];
       return (messages.find((message) => message.id === messageId)?.parts ?? [])
         .filter((part) => !this.isContentPart(part))
-        .map((part) => ({ ...part, sessionId }));
+        .map((part) => normalizeToolPartDisplay({ ...part, sessionId }, conv.directory));
     }
     const parts = await conversationStore.getSteps(sessionId, messageId);
     return conversationStore.get(sessionId) ? parts.map((part) => normalizeToolPartDisplay(part, conv.directory)) : [];
+  }
+
+  private readAuthoritativeHistory(conversationId: string, engineSessionId: string, adapter: EngineAdapter): Promise<UnifiedMessage[]> {
+    const existing = this.authoritativeHistoryReads.get(conversationId);
+    if (existing) return existing;
+    const read = Promise.resolve().then(() => adapter.listMessages(engineSessionId)).finally(() => {
+      if (this.authoritativeHistoryReads.get(conversationId) === read) this.authoritativeHistoryReads.delete(conversationId);
+    });
+    this.authoritativeHistoryReads.set(conversationId, read);
+    return read;
+  }
+
+  private projectHistoryMessage(message: UnifiedMessage): UnifiedMessage {
+    const stepCount = message.parts.filter((part) => !this.isContentPart(part)).length;
+    return { ...message, stepCount, parts: message.time.completed
+      ? message.parts.filter((part) => this.isContentPart(part)) : message.parts };
   }
 
   /**

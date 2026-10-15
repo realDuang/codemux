@@ -113,7 +113,7 @@ async function assertLoaded(sessionId, expanded, compact) {
   assert(state.controls.length > 0 && state.controls.every(control => control.exists && control.hidden === !expanded), 'aria-controls must refer to the actual hidden containers', state);
   assert(state.responseVisible, 'Collapsing history hid the final response', state);
   assert(expanded ? state.visibleSteps > 0 : state.visibleSteps === 0, 'Step visibility disagrees with the outer disclosure', state);
-  if (compact) assert(state.commentaryVisible && state.partialVisible && state.noticeVisible, 'Compact history hid response, commentary or notice content', state);
+  if (compact) assert([state.commentaryVisible, state.partialVisible, state.noticeVisible].every(visible => visible === expanded), 'Compact process output must follow the steps disclosure', state);
   const fixture = await fixtureState(sessionId);
   const requests = Object.values(fixture.messageStepRequests).reduce((sum, count) => sum + count, 0);
   assert(requests === 1, 'History steps were fetched more than once', { sessionId, requests });
@@ -139,6 +139,7 @@ try {
     await selectSession(sessionId);
     const before = await readTurn();
     assert(before.triggerCount === 1 && before.expanded === 'false' && before.visibleSteps === 0 && before.responseVisible, 'Lazy history must begin with only its response visible', before);
+    if (compact) assert(!before.commentaryVisible && !before.partialVisible && !before.noticeVisible, 'Collapsed history exposed non-final process output', before);
     const initialRequests = Object.values((await fixtureState(sessionId)).messageStepRequests).reduce((sum, count) => sum + count, 0);
     assert(initialRequests === 0, 'History steps were fetched before the first expansion', { sessionId, requests: initialRequests });
     await pressControl(triggerSelector);
@@ -163,23 +164,24 @@ try {
     cliLog({ checked: sessionId, passed: true, screenshot: screenshotPath });
   }
 
-  // A normal compact transcript keeps its independent activity groups and no outer history disclosure.
-  await gotoAndWait(fixtureUrl + '/', { timeout: 20 });
-  await js('localStorage.setItem("settings:lastSessionId", JSON.stringify("ui-parity-codex"));');
-  await gotoAndWait(fixtureUrl + '/chat', { timeout: 20 });
-  await until(async () => await js('document.querySelectorAll("[data-component=tool-activity-group]").length >= 2'), 'Inline compact activity groups did not load');
-  await wait(1.5);
-  await js('document.querySelector(".conversation-viewport").scrollTop = 0');
-  await cdp('Page.captureScreenshot', { format: 'png' });
-  const inlineBefore = await js('({ groups: document.querySelectorAll("[data-component=tool-activity-group]").length, outer: document.querySelectorAll("[data-component=turn-steps-trigger], button[class*=stepsTriggerButton]").length, answer: document.body.innerText.includes("The response keeps its own place between activity groups.") })');
-  assert(inlineBefore.outer === 0 && inlineBefore.answer, 'Inline compact grouping gained a history disclosure or lost its response', inlineBefore);
+  // Fully loaded compact turns use the same outer disclosure as lazy history.
+  await selectSession('ui-parity-codex');
+  const readInline = () => js('({ groups: document.querySelectorAll("[data-component=tool-activity-group]").length, outer: document.querySelectorAll("[data-component=turn-steps-trigger]").length, expanded: document.querySelector("[data-component=turn-steps-trigger]")?.getAttribute("aria-expanded"), answer: document.body.innerText.includes("The response keeps its own place between activity groups."), commentary: document.body.innerText.includes("Checking the layout, output states, and reusable controls."), partial: document.body.innerText.includes("The first result is ready.") })');
+  const inlineBefore = await readInline();
+  assert(inlineBefore.outer === 1 && inlineBefore.expanded === 'false' && inlineBefore.groups === 0 && inlineBefore.answer && !inlineBefore.commentary && !inlineBefore.partial, 'Fully loaded compact history exposed process output', inlineBefore);
+  await pressControl(triggerSelector);
+  const inlineExpanded = await readInline();
+  assert(inlineExpanded.groups >= 2 && inlineExpanded.answer && inlineExpanded.commentary && inlineExpanded.partial, 'Expanding steps lost the original process content', inlineExpanded);
   const groupSelector = '[data-component="tool-activity-group"][data-grouped] > button';
   await pressControl(groupSelector);
   assert(await js('document.querySelector(' + JSON.stringify(groupSelector) + ').getAttribute("aria-expanded") === "true"'), 'Inline activity group did not expand');
   await pressControl(groupSelector);
   const inlineAfter = await js('({ groups: document.querySelectorAll("[data-component=tool-activity-group]").length, expanded: document.querySelector("[data-component=tool-activity-group][data-grouped] > button").getAttribute("aria-expanded"), answer: document.body.innerText.includes("The response keeps its own place between activity groups.") })');
-  assert(inlineAfter.groups === inlineBefore.groups && inlineAfter.expanded === 'false' && inlineAfter.answer, 'Inline activity grouping changed', inlineAfter);
-  results.push({ sessionId: 'ui-parity-codex', before: inlineBefore, after: inlineAfter, screenshot: await screenshot() });
+  assert(inlineAfter.groups === inlineExpanded.groups && inlineAfter.expanded === 'false' && inlineAfter.answer, 'Nested activity grouping changed', inlineAfter);
+  await pressControl(triggerSelector);
+  const inlineCollapsed = await readInline();
+  assert(inlineCollapsed.expanded === 'false' && inlineCollapsed.groups === 0 && inlineCollapsed.answer && !inlineCollapsed.commentary && !inlineCollapsed.partial, 'Reclosing fully loaded steps exposed process output', inlineCollapsed);
+  results.push({ sessionId: 'ui-parity-codex', before: inlineBefore, expanded: inlineExpanded, after: inlineCollapsed, screenshot: await screenshot() });
   cliLog({ passed: true, results, taskSpaceId, lifecycle: 'Caller retains ownership and completes the task space after its larger workflow.' });
 } catch (error) {
   cliLog({ passed: false, error: String(error.message || error), results });

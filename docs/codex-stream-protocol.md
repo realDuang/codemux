@@ -107,8 +107,10 @@ server -> turn/completed(threadId=T, turn.id=U, terminal status)
   be followed by further output or tools. A missing/null phase is unknown, not
   evidence of a final answer. Preserve unknown-phase compatibility.
 - A final-answer item does not by itself close the turn. The turn lifecycle
-  controls completion. Render commentary as progress and answer text as readable
-  content without moving it across intervening tools.
+  controls completion. Expanded compact turns preserve commentary, partial
+  answers, tools, and final answers in their original order. The outer steps
+  disclosure hides all non-final output together; every visible final fragment
+  remains outside it. Item completion alone does not make an item a final answer.
 
 Relevant generated files: `MessagePhase.ts`, `v2/ThreadItem.ts`,
 `v2/AgentMessageDeltaNotification.ts`, `v2/ItemStartedNotification.ts`, and
@@ -346,6 +348,8 @@ the same active turn. Renderer response/activity segments follow the original
 sequence, including a partial answer before a later tool. Existing unphased
 engines retain their previous response layout. Desktop synthetic review items
 become notices; running tools retain partial output when a turn terminates.
+This section records the initial checkpoint. The current outer-disclosure
+policy is specified under [History disclosure](#history-disclosure-and-asynchronous-questions-2026-10-15).
 
 | Check | Result |
 | --- | --- |
@@ -446,7 +450,8 @@ ContextGroup remain unchanged for OpenCode, Copilot, and Claude.
 ### Verified grouping rules
 
 - Every assistant text item, including commentary, ends the preceding activity
-  slice. This is a sequential presentation boundary, not inferred semantic intent.
+  slice in the expanded chronology. This boundary does not exempt commentary
+  or partial answers from the turn's outer steps disclosure.
 - Ordinary reasoning stays in its activity slice and does not split adjacent
   tools. Explicit standalone notices and subagent activity end a tool group.
 - One `commandExecution.commandActions` array can become several display rows.
@@ -510,9 +515,29 @@ for every private Codex mode or of new live-provider generation for every engine
 
 Historical `stepCount` metadata and the local `stepsLoaded` cache serve different
 purposes. Loading steps must not remove their disclosure control. Compact turns
-retain that control while visible activity exists, and hide only reasoning and
-tools when collapsed; answers, commentary, and notices remain visible. Internal
+retain the outer steps control while process content exists or steps remain
+unloaded, including live and fully loaded turns without `stepCount`. Internal
 events alone do not leave an empty disclosure after loading.
+
+Collapsing outer steps hides all non-final output: commentary, partial answers,
+reasoning, tools, notices, and standalone tool attachments. The user prompt and
+every visible final-answer fragment remain, including each fragment's inline
+assets and source notes. Expanding restores the original chronology; nested tool
+details retain their own disclosure state. Pending input controls and terminal
+error/status UI remain available through their existing surfaces.
+
+An active compact turn defaults to expanded and a finished turn defaults to
+collapsed. An explicit user choice overrides both defaults and persists across
+the active-to-complete transition. A completed commentary or partial-answer item
+stays process output. If no final phase exists, only the last visible unphased
+text in a successfully finished turn uses the legacy answer fallback; active,
+failed, or interrupted turns do not promote it. No-final turns keep their
+process content available through steps. OpenCode, Copilot, and Claude retain
+their existing renderer and unphased response behavior.
+
+Use the opt-in [`folding-stream` fixture](../tests/fixtures/ui-parity/README.md#compact-turn-folding-stream)
+to check process text before tools, item completion, manual disclosure choices,
+and the transition to the final streamed answer without lazy-step metadata.
 
 Asynchronous questions arrive in `agentMessage.questions`, separately from the
 blocking `item/tool/requestUserInput` request. Each native question ID is

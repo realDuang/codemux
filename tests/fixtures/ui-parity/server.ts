@@ -57,17 +57,22 @@ async function stream(adapter: MockEngineAdapter, sessionId: string, prompt: str
   const prefix = `${sessionId}:stream:${++streamSequence}`;
   const now = Date.now();
   const phased = profiles.find((item) => item.type === adapter.engineType)!.phased;
+  const foldingStream = phased && prompt.includes("folding-stream");
   const history = await adapter.listMessages(sessionId);
   const user: UnifiedMessage = { id: `${prefix}:user`, sessionId, role: "user", time: { created: now }, parts: [
     { id: `${prefix}:user:text`, messageId: `${prefix}:user`, sessionId, type: "text", text: prompt },
   ] };
   const message: UnifiedMessage = { id: `${prefix}:assistant`, sessionId, role: "assistant", workingDirectory: directory, time: { created: now + 1 }, parts: [] };
   const base = (suffix: string, order: number) => ({ id: `${prefix}:${suffix}`, messageId: message.id, sessionId, order });
-  const reason: ReasoningPart = { ...base("reason", 0), type: "reasoning", text: "**Inspecting", completed: false,
+  const progressParts: TextPart[] = foldingStream ? [
+    { ...base("commentary", 0), type: "text", text: "STREAM_COMMENTARY", phase: "commentary", completed: false },
+    { ...base("partial", 1), type: "text", text: "STREAM_PARTIAL: this completed item is still an intermediate response.", phase: "partial", completed: true },
+  ] : [];
+  const reason: ReasoningPart = { ...base("reason", progressParts.length), type: "reasoning", text: "**Inspecting", completed: false,
     ...(phased ? { summaryFormat: "heading-prefixed" as const } : {}), time: { start: now } };
-  const tool: ToolPart = { ...base("tool", 1), type: "tool", callId: `${prefix}:tool`, normalizedTool: "shell", originalTool: "fixture_command", title: "Running a deterministic display fixture", kind: "other", state: { status: "pending", input: { command: "fixture-render" }, time: { start: now } } };
-  const answer: TextPart = { ...base("answer", 2), type: "text", text: "", completed: false, ...(phased ? { phase: "final" as const } : {}) };
-  message.parts = [reason];
+  const tool: ToolPart = { ...base("tool", progressParts.length + 1), type: "tool", callId: `${prefix}:tool`, normalizedTool: "shell", originalTool: "fixture_command", title: "Running a deterministic display fixture", kind: "other", state: { status: "pending", input: { command: "fixture-render" }, time: { start: now } } };
+  const answer: TextPart = { ...base("answer", progressParts.length + 2), type: "text", text: "", completed: false, ...(phased ? { phase: "final" as const } : {}) };
+  message.parts = foldingStream ? [...progressParts] : [reason];
   const all = [...history, user, message];
   let started = false;
   const tick = async (delay: number) => {
@@ -76,6 +81,14 @@ async function stream(adapter: MockEngineAdapter, sessionId: string, prompt: str
     await new Promise((done) => setTimeout(done, delay));
   };
   try {
+    if (foldingStream) {
+      for (let index = 0; index < 20 && !controller.signal.aborted; index++) {
+        progressParts[0].text = `STREAM_COMMENTARY: visible process update ${index + 1} of 20.`;
+        await tick(150);
+      }
+      progressParts[0].completed = true;
+      message.parts = [...progressParts, reason];
+    }
     await tick(700);
     reason.text = "**Inspecting the stream**\n\nThe visible summary grows without repeating its heading.\n\n" + Array.from({ length: 12 }, (_, i) => `- Summary detail ${i + 1}: retain the full readable text.`).join("\n");
     if (prompt.includes("reasoning-scroll")) {
@@ -86,7 +99,7 @@ async function stream(adapter: MockEngineAdapter, sessionId: string, prompt: str
     } else await tick(700);
     reason.completed = true;
     reason.time = { start: now, end: Date.now() };
-    message.parts = [reason, tool, answer];
+    message.parts = [...progressParts, reason, tool, answer];
     tool.state = { status: "running", input: { command: "fixture-render" }, time: { start: now + 700 } };
     await tick(700);
     tool.state = { status: "completed", input: { command: "fixture-render" }, output: "FIXTURE_OK", time: { start: now + 700, end: now + 1400, duration: 700 } };

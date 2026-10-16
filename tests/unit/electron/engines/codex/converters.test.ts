@@ -710,26 +710,29 @@ describe("codex/converters.ts", () => {
     expect((finalText as any)?.text).toBe("Done.");
   });
 
-  it("keeps historical error turns even when they have no output parts", () => {
-    const messages = convertThreadToMessages("codex_thread-1", {
-      thread: {
-        id: "thread-1",
-        turns: [{
-          id: "turn-1",
-          status: "interrupted",
-          items: [],
-        }],
-      },
-    }, "/repo");
+  it.each([undefined, "", "Turn interrupted", { message: "Connection lost", additionalDetails: "Timeout" }])(
+    "normalizes historical interruption to cancellation without output parts (%j)", (error) => {
+      const messages = convertThreadToMessages("codex_thread-1", {
+        thread: {
+          id: "thread-1",
+          turns: [{
+            id: "turn-1",
+            status: "interrupted",
+            error,
+            items: [],
+          }],
+        },
+      }, "/repo");
 
-    expect(messages).toHaveLength(1);
-    expect(messages[0]).toMatchObject({
-      role: "assistant",
-      error: "Turn interrupted",
-      workingDirectory: "/repo",
-      engineMeta: { codexThreadId: "thread-1" },
-    });
-  });
+      expect(messages).toHaveLength(1);
+      expect(messages[0]).toMatchObject({
+        role: "assistant",
+        error: "Cancelled",
+        workingDirectory: "/repo",
+        engineMeta: { codexThreadId: "thread-1" },
+      });
+    },
+  );
 });
 
 // ---------------------------------------------------------------------------
@@ -1329,7 +1332,7 @@ describe("convertThreadToMessages - skipped turns and special cases", () => {
       thread: {
         id: "t-1",
         turns: [{
-          status: "interrupted",
+          status: "failed",
           error: { message: "Connection lost", additionalDetails: "Timeout after 30s" },
           items: [],
         }],
@@ -1343,7 +1346,7 @@ describe("convertThreadToMessages - skipped turns and special cases", () => {
       thread: {
         id: "t-1",
         turns: [{
-          status: "interrupted",
+          status: "failed",
           error: { message: "Network error" },
           items: [],
         }],
@@ -1356,10 +1359,10 @@ describe("convertThreadToMessages - skipped turns and special cases", () => {
     const messages = convertThreadToMessages("sess", {
       thread: {
         id: "t-1",
-        turns: [{ status: "interrupted", error: "", items: [] }],
+        turns: [{ status: "failed", error: "", items: [] }],
       },
     });
-    expect(messages[0].error).toBe("Turn interrupted");
+    expect(messages[0].error).toBe("Turn failed");
   });
 
   it("thread without id produces no codexThreadId in engineMeta", () => {
@@ -1456,7 +1459,7 @@ describe("convertThreadToMessages - skipped turns and special cases", () => {
       },
     });
     expect(messages).toHaveLength(1);
-    expect(messages[0].error).toBe("Turn interrupted");
+    expect(messages[0].error).toBe("Cancelled");
   });
 });
 
@@ -2535,15 +2538,15 @@ describe("normalizeError - object without message field (line 1131 false branch)
       thread: {
         id: "t-1",
         turns: [{
-          status: "interrupted",
+          status: "failed",
           error: { code: 500, name: "ServerError" }, // no message field
           items: [],
         }],
       },
     });
     // normalizeError({ code: 500 }) → message = undefined → if (message) is FALSE → returns undefined
-    // then ?? "Turn interrupted" kicks in
-    expect(messages[0].error).toBe("Turn interrupted");
+    // then ?? "Turn failed" kicks in
+    expect(messages[0].error).toBe("Turn failed");
   });
 });
 

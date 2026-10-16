@@ -180,6 +180,23 @@ describe("convertDesktopConversation", () => {
     expect(result.messages.at(-1)!.parts[0]).toMatchObject({ type: "tool", state: { status: "error", output: "Partial output" } });
   });
 
+  it.each([undefined, "", "Turn interrupted", { message: "Connection lost" }])(
+    "normalizes interrupted turns to cancellation with native error %j", (error) => {
+      for (const items of [[], turn().items]) {
+        const result = convertDesktopConversation(conversation({ turns: [turn({ status: "interrupted", durationMs: 500, error, items })] }));
+        expect(result.messages.at(-1)).toMatchObject({ role: "assistant", error: "Cancelled" });
+        expect(result.isActive).toBe(false);
+      }
+    },
+  );
+
+  it.each([[undefined, "Turn failed"], [{ message: "Quota exceeded" }, "Quota exceeded"]])(
+    "preserves failed turn errors (%j)", (error, expected) => {
+      const result = convertDesktopConversation(conversation({ turns: [turn({ status: "failed", durationMs: 500, error })] }));
+      expect(result.messages.at(-1)).toMatchObject({ role: "assistant", error: expected });
+    },
+  );
+
   it.each([["priority", "fast"], ["fast", "fast"], ["flex", "flex"], ["default", undefined], [null, undefined]])(
     "normalizes the native service tier %s", (nativeTier, expected) => {
       expect(convertDesktopConversation(conversation({ latestThreadSettings: { serviceTier: nativeTier } })).session.serviceTier).toBe(expected);

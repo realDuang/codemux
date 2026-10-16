@@ -1,4 +1,4 @@
-import { createMemo, For, Index, Show, createUniqueId, type JSX } from "solid-js";
+import { createMemo, Index, Show, createUniqueId, type JSX } from "solid-js";
 import type { ToolDisplayAction, ToolPart } from "../types/unified";
 import type { TurnPart } from "../lib/message-parts";
 import { useI18n, formatMessage } from "../lib/i18n";
@@ -58,7 +58,6 @@ export function ToolActivityGroup(props: Props) {
   const inFlight = createMemo(() => tools().some(part => part.state.status === "pending" || part.state.status === "running"));
   const active = createMemo(() => props.working && (inFlight()
     || props.items.some(({ part }) => part.type === "reasoning" && part.completed !== true && part.time?.end === undefined)));
-  const errors = createMemo(() => tools().filter(part => !!errorText(part)));
   const grouped = createMemo(() => rows().length > 1 || inFlight() || active() || tools().some(part =>
     (part.normalizedTool === "edit" || part.normalizedTool === "write") && (part.locations?.length ?? 0) > 1));
   const kind = (row: Row): string => {
@@ -144,7 +143,6 @@ export function ToolActivityGroup(props: Props) {
       <button type="button" class={styles.trigger} id={`${controlId}-trigger`} aria-expanded={props.expanded} aria-controls={`${controlId}-body`} onClick={() => props.onToggle()}>
         <span class={styles.icon} aria-hidden="true"><ActivityIcon kind={rows().every(row => ["read", "search", "list"].includes(kind(row))) ? "search" : "tool"} /></span>
         <span class={styles.summary}>{summary()}</span>
-        <Show when={errors().length > 0}><span class={styles.errorLabel}>{t().common.error}</span></Show>
         <span class={styles.groupChevron} data-open={props.expanded ? "" : undefined} aria-hidden="true"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="m6 9 6 6 6-6" /></svg></span>
       </button>
       <div id={`${controlId}-body`} hidden={!props.expanded} aria-labelledby={`${controlId}-trigger`}>
@@ -162,6 +160,5 @@ export function ToolActivityGroup(props: Props) {
         </Show>
       </div>
     </Show>
-    <Show when={grouped() && !props.expanded && errors().length > 0}><div class={styles.errorSummary}><For each={errors()}>{part => <p>{errorText(part)}</p>}</For></div></Show>
   </div>;
 }

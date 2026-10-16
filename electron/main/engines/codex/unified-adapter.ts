@@ -214,8 +214,8 @@ export class UnifiedCodexAdapter extends EngineAdapter {
   getSessionSharing(): EngineSharingState {
     return {
       enabled: this.sharingEnabled, available: this.followerClient.connected && !this.sharingError,
-      status: !this.sharingEnabled ? "disabled" : this.sharingTransition || this.sharingConnection ? "connecting"
-        : this.followerClient.connected && !this.sharingError ? "connected" : "unavailable",
+      status: !this.sharingEnabled ? "disabled" : this.sharingError ? "unavailable"
+        : this.followerClient.connected ? "connected" : this.sharingTransition || this.sharingConnection ? "connecting" : "unavailable",
       peerName: "Codex Desktop", ...(this.sharingError ? { error: this.sharingError } : {}),
     };
   }
@@ -408,7 +408,7 @@ export class UnifiedCodexAdapter extends EngineAdapter {
   async sendMessage(id: string, content: MessagePromptContent[], options?: SendOptions): Promise<UnifiedMessage> {
     id = nativeThreadId(id);
     const route = await this.routeForInput(id, options?.directory);
-    if (route.kind === "foreign") return this.follower.sendMessage(id, content);
+    if (route.kind === "foreign") return this.follower.sendMessage(id, content, options);
     const local = route.session;
     const result = await local.runtime.execution.sendMessage(local.engineSessionId, content, await this.localInputOptions(local, options));
     const snapshot = await this.refreshLocal(id, local);
@@ -797,6 +797,7 @@ export class UnifiedCodexAdapter extends EngineAdapter {
         ...(local ? { executor: "CodeMux" } : this.follower.hasSession(id) && this.sharingEnabled
           ? { executor: this.followerClient.getThreadOwner(id)?.clientName ?? "Codex" } : {}),
         shared: local ? local.shared && this.sharingEnabled : this.sharingEnabled,
+        sharingStatus: this.getSessionSharing().status,
         available, ...(local ? { runtimeVersion: local.runtime.identity.version } : {}),
       },
     };
@@ -940,6 +941,7 @@ export class UnifiedCodexAdapter extends EngineAdapter {
     });
     this.follower.on("message.updated", (event) => { if (!this.locals.has(event.sessionId)) this.emit("message.updated", event); });
     this.follower.on("message.removed", (event) => { if (!this.locals.has(event.sessionId)) this.emit("message.removed", event); });
+    this.follower.on("message.queued.consumed", (event) => { if (!this.locals.has(event.sessionId)) this.emit("message.queued.consumed", event); });
     this.follower.on("session.removed", (event) => { if (!this.locals.has(event.sessionId)) { this.sessions.delete(event.sessionId); this.emit("session.removed", event); } });
     this.follower.on("permission.asked", (event) => { if (!this.locals.has(event.permission.sessionId)) this.emit("permission.asked", event); });
     this.follower.on("question.asked", (event) => { if (!this.locals.has(event.question.sessionId)) this.emit("question.asked", event); });

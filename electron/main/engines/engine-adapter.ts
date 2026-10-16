@@ -132,12 +132,14 @@ export interface EngineAdapterEvents {
     sessionId: string;
     messageId: string;
     queuePosition: number;
+    clientMessageId?: string;
   }) => void;
 
   /** A previously queued message started being processed */
   "message.queued.consumed": (data: {
     sessionId: string;
     messageId: string;
+    clientMessageId?: string;
   }) => void;
 
   /** Available slash commands / skills changed (e.g. after session init, Copilot skills reload) */
@@ -293,6 +295,7 @@ export abstract class EngineAdapter extends EventEmitter {
     sessionId: string,
     content: MessagePromptContent[],
     options?: {
+      clientMessageId?: string;
       mode?: string;
       modelId?: string;
       reasoningEffort?: ReasoningEffort | null;

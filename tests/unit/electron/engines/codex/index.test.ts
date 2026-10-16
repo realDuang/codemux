@@ -635,6 +635,8 @@ describe("CodexAdapter", () => {
   it("steers an active turn when mode/model/directory stay compatible", async () => {
     const { adapter, client } = createAdapterWithClient();
     const { sessionId } = seedSession(adapter);
+    const consumed = vi.fn();
+    adapter.on("message.queued.consumed", consumed);
     (adapter as any).currentModelId = "gpt-5.4";
     (adapter as any).sessionModels.set(sessionId, "gpt-5.4");
 
@@ -654,6 +656,8 @@ describe("CodexAdapter", () => {
       input: [{ type: "text", text: "Second", text_elements: [] }],
       expectedTurnId: "turn-1",
     }, 120000);
+    expect(consumed).toHaveBeenCalledOnce();
+    expect(consumed).toHaveBeenCalledWith({ sessionId, messageId: expect.any(String) });
 
     (adapter as any).handleAgentMessageDelta(sessionId, { delta: "Merged response" });
     (adapter as any).handleTurnCompleted(sessionId, { turn: { id: "turn-1", status: "completed" } });
@@ -664,6 +668,167 @@ describe("CodexAdapter", () => {
     expect(message1.id).toBe(message2.id);
     expect((message1.parts[0] as any).text).toBe("Merged response");
     expect(history.map((message) => message.role)).toEqual(["user", "user", "assistant"]);
+  });
+
+  it("steers follow-up input as soon as a pending native start is admitted", async () => {
+    const { adapter, client } = createAdapterWithClient();
+    const { sessionId } = seedSession(adapter);
+    let admitStart!: (value: unknown) => void;
+    client.request.mockImplementation((method: string) => {
+      if (method === "turn/start") return new Promise((resolve) => { admitStart = resolve; });
+      if (method === "turn/steer") return Promise.resolve({});
+      throw new Error(`unexpected method: ${method}`);
+    });
+    const first = adapter.sendMessage(sessionId, [{ type: "text", text: "First" }]);
+    await flushMicrotasks();
+    const followUp = adapter.sendMessage(sessionId, [{ type: "text", text: "Follow up promptly" }]);
+    await flushMicrotasks();
+    expect(client.request).toHaveBeenCalledTimes(1);
+    admitStart({ turn: { id: "turn-starting" } });
+    await flushMicrotasks();
+    expect(client.request).toHaveBeenNthCalledWith(2, "turn/steer", expect.objectContaining({
+      expectedTurnId: "turn-starting", input: [{ type: "text", text: "Follow up promptly", text_elements: [] }],
+    }), 120000);
+    (adapter as any).handleAgentMessageDelta(sessionId, { delta: "Both inputs handled" });
+    (adapter as any).handleTurnCompleted(sessionId, { turn: { id: "turn-starting", status: "completed" } });
+    await Promise.all([first, followUp]);
+  });
+
+  it("does not replay a steering request whose admission response timed out", async () => {
+    const { adapter, client } = createAdapterWithClient();
+    const { sessionId } = seedSession(adapter);
+    const queued = vi.fn();
+    const consumed = vi.fn();
+    adapter.on("message.queued", queued);
+    adapter.on("message.queued.consumed", consumed);
+    client.request.mockImplementation(async (method: string) => {
+      if (method === "turn/start") return { turn: { id: "turn-1" } };
+      throw new Error("Request turn/steer timed out");
+    });
+    const first = adapter.sendMessage(sessionId, [{ type: "text", text: "Initial" }]);
+    await flushMicrotasks();
+    await expect(adapter.sendMessage(sessionId, [
+      { type: "text", text: "May already be accepted" }, { type: "image", data: "iVBORw0KGgo=", mimeType: "image/png" },
+    ], { clientMessageId: "uncertain-preview" })).rejects.toThrow("timed out");
+    const nativeInput = client.request.mock.calls[1][1].input;
+    expect(nativeInput[1]).toMatchObject({ type: "localImage", path: expect.any(String) });
+    expect(existsSync(nativeInput[1].path)).toBe(true);
+    expect(queued).not.toHaveBeenCalled();
+    expect(consumed).not.toHaveBeenCalled();
+    (adapter as any).handleTurnCompleted(sessionId, { turn: { id: "turn-1", status: "completed" } });
+    await first;
+    await flushMicrotasks();
+    expect(client.request).toHaveBeenCalledTimes(2);
+    expect(existsSync(nativeInput[1].path)).toBe(false);
+  });
+
+  it("retains queued image input after a pending start when steering admission is unknown", async () => {
+    const { adapter, client } = createAdapterWithClient();
+    const { sessionId } = seedSession(adapter);
+    let admitStart!: (value: unknown) => void;
+    client.request.mockImplementation((method: string) => method === "turn/start"
+      ? new Promise((resolve) => { admitStart = resolve; }) : Promise.reject(new Error("Steering timed out")));
+    const first = adapter.sendMessage(sessionId, [{ type: "text", text: "Initial" }]);
+    await flushMicrotasks();
+    const next = adapter.sendMessage(sessionId, [{ type: "image", data: "iVBORw0KGgo=", mimeType: "image/png" }]);
+    const rejected = expect(next).rejects.toThrow("timed out");
+    await flushMicrotasks();
+    admitStart({ turn: { id: "turn-1" } });
+    await rejected;
+    const imagePath = client.request.mock.calls[1][1].input[0].path;
+    expect(existsSync(imagePath)).toBe(true);
+    (adapter as any).handleTurnCompleted(sessionId, { turn: { id: "turn-1", status: "completed" } });
+    await first;
+    expect(existsSync(imagePath)).toBe(false);
+  });
+
+  it("steers compatible options against the running turn instead of stale session defaults", async () => {
+    const { adapter, client } = createAdapterWithClient();
+    const { sessionId } = seedSession(adapter);
+    client.request.mockImplementation(async (method: string) => method === "turn/start" ? { turn: { id: "turn-1" } } : {});
+    const options = { mode: "plan", modelId: "gpt-5.4", reasoningEffort: "high" as const, serviceTier: "fast" as const };
+    const first = adapter.sendMessage(sessionId, [{ type: "text", text: "Initial" }], options);
+    await flushMicrotasks();
+    const next = adapter.sendMessage(sessionId, [{ type: "text", text: "Same running settings" }], options);
+    await flushMicrotasks();
+    expect(client.request).toHaveBeenNthCalledWith(2, "turn/steer", expect.any(Object), 120000);
+    (adapter as any).handleTurnCompleted(sessionId, { turn: { id: "turn-1", status: "completed" } });
+    await Promise.all([first, next]);
+  });
+
+  it("steers a CodeMux follow-up against the effective settings selected by the Desktop owner", async () => {
+    const { adapter, client } = createAdapterWithClient();
+    const { sessionId, threadId } = seedSession(adapter);
+    const runtime = createCodexDesktopOwnerRuntime(adapter);
+    client.request.mockImplementation(async (method: string) => method === "turn/start" ? { turn: { id: "turn-1" } } : {});
+    await runtime.request(sessionId, "turn/start", { threadId, input: [{ type: "text", text: "Desktop start" }],
+      model: "gpt-5.4", effort: "high", serviceTier: "fast", collaborationMode: { mode: "plan", settings: { model: "gpt-5.4", reasoning_effort: "high" } },
+    });
+    const next = adapter.sendMessage(sessionId, [{ type: "text", text: "CodeMux follow-up" }], {
+      mode: "plan", modelId: "gpt-5.4", reasoningEffort: "high", serviceTier: "fast",
+    });
+    await flushMicrotasks();
+    expect(client.request).toHaveBeenNthCalledWith(2, "turn/steer", expect.objectContaining({ expectedTurnId: "turn-1" }), 120000);
+    (adapter as any).handleTurnCompleted(sessionId, { turn: { id: "turn-1", status: "completed" } });
+    await next;
+  });
+
+  it("inherits active native settings for follow-ups without an explicit new choice", async () => {
+    const { adapter, client } = createAdapterWithClient();
+    const { sessionId } = seedSession(adapter);
+    client.request.mockImplementation(async (method: string) => method === "turn/start" ? { turn: { id: "turn-1" } } : {});
+    const first = adapter.sendMessage(sessionId, [{ type: "text", text: "Native settings" }], { nativeOverrides: {
+      model: "gpt-5.4", effort: "high", serviceTier: "fast", collaborationMode: { mode: "plan", settings: { model: "gpt-5.4", reasoning_effort: "high" } },
+    } });
+    await flushMicrotasks();
+    const next = adapter.sendMessage(sessionId, [{ type: "text", text: "Optionless follow-up" }], { clientMessageId: "im-follow-up", directory: "/repo" });
+    await flushMicrotasks();
+    expect(client.request).toHaveBeenNthCalledWith(2, "turn/steer", expect.objectContaining({ expectedTurnId: "turn-1" }), 120000);
+    (adapter as any).handleTurnCompleted(sessionId, { turn: { id: "turn-1", status: "completed" } });
+    await Promise.all([first, next]);
+  });
+
+  it("queues an explicit null reasoning choice and applies it to the next turn", async () => {
+    const { adapter, client } = createAdapterWithClient();
+    const { sessionId } = seedSession(adapter);
+    (adapter as any).sessionReasoningEfforts.set(sessionId, "high");
+    let starts = 0;
+    client.request.mockImplementation(async (method: string) => method === "turn/start" ? { turn: { id: `turn-${++starts}` } } : {});
+    const first = adapter.sendMessage(sessionId, [{ type: "text", text: "High reasoning" }]);
+    await flushMicrotasks();
+    const next = adapter.sendMessage(sessionId, [{ type: "text", text: "Use the default reasoning" }], { reasoningEffort: null });
+    await flushMicrotasks();
+    expect(client.request).toHaveBeenCalledTimes(1);
+    (adapter as any).handleTurnCompleted(sessionId, { turn: { id: "turn-1", status: "completed" } });
+    await first;
+    await flushMicrotasks();
+    expect(client.request).toHaveBeenNthCalledWith(2, "turn/start", expect.objectContaining({
+      effort: undefined, collaborationMode: expect.objectContaining({ settings: expect.objectContaining({ reasoning_effort: null }) }),
+    }), 120000);
+    (adapter as any).handleTurnCompleted(sessionId, { turn: { id: "turn-2", status: "completed" } });
+    await next;
+  });
+
+  it("queues a definitely unsupported steer exactly once until the current turn finishes", async () => {
+    const { adapter, client } = createAdapterWithClient();
+    const { sessionId } = seedSession(adapter);
+    let starts = 0;
+    client.request.mockImplementation(async (method: string) => {
+      if (method === "turn/start") return { turn: { id: `turn-${++starts}` } };
+      throw Object.assign(new Error("Method not found"), { code: -32601 });
+    });
+    const first = adapter.sendMessage(sessionId, [{ type: "text", text: "Initial" }]);
+    await flushMicrotasks();
+    const next = adapter.sendMessage(sessionId, [{ type: "text", text: "Next" }]);
+    await flushMicrotasks();
+    await (adapter as any).processNextQueuedMessage(sessionId);
+    expect(client.request).toHaveBeenCalledTimes(2);
+    (adapter as any).handleTurnCompleted(sessionId, { turn: { id: "turn-1", status: "completed" } });
+    await first;
+    await flushMicrotasks();
+    expect(client.request).toHaveBeenCalledTimes(3);
+    (adapter as any).handleTurnCompleted(sessionId, { turn: { id: "turn-2", status: "completed" } });
+    await next;
   });
 
   it("queues a second message when the active turn cannot be steered and starts it after completion", async () => {

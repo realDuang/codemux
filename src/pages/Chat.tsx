@@ -44,6 +44,7 @@ import {
   setMessageStore,
   replaceMessageProjection,
   invalidateMessageSteps,
+  consumeQueuedPreview,
   type QueuedMessage,
 } from "../stores/message";
 import { applyMessageUpdates } from "../stores/message-updates";
@@ -588,15 +589,6 @@ export default function Chat() {
     if (!sid) return [];
     return messageStore.queued[sid] || [];
   });
-
-  const consumeQueuedPreview = (sessionId: string, _messageId: string) => {
-    const queued = messageStore.queued[sessionId];
-    if (!queued || queued.length === 0) {
-      return;
-    }
-
-    setMessageStore("queued", sessionId, (draft) => draft.slice(1));
-  };
 
   // Aggregate token usage across all assistant messages in the current session
   const sessionUsage = createMemo(() => {
@@ -1216,9 +1208,9 @@ export default function Chat() {
         onMessageQueued: (sessionId: string, _messageId: string, _queuePosition: number) => {
           logger.debug("[WS] message.queued for session:", sessionId);
         },
-        onMessageQueuedConsumed: (sessionId: string, messageId: string) => {
+        onMessageQueuedConsumed: (sessionId: string, messageId: string, clientMessageId?: string) => {
           logger.debug("[WS] message.queued.consumed for session:", sessionId, messageId);
-          consumeQueuedPreview(sessionId, messageId);
+          consumeQueuedPreview(sessionId, clientMessageId);
         },
         onFileChanged: handleFileChanged,
         onCommandsChanged: (engineType: EngineType, commands: EngineCommand[]) => {
@@ -2612,7 +2604,7 @@ export default function Chat() {
 
     const reasoningEffort = currentSessionReasoningEffort();
     const serviceTier = currentSessionServiceTier();
-    const tempMessageId = `msg-temp-${Date.now()}`;
+    const tempMessageId = `msg-temp-${Date.now()}-${Math.random().toString(36).slice(2)}`;
     const tempPartId = `part-temp-${Date.now()}`;
 
     // --- Enqueue path: fire-and-forget ---
@@ -2638,6 +2630,7 @@ export default function Chat() {
       setMessageStore("queued", sessionId, [...existingQueued, queuedMsg]);
 
       gateway.sendMessage(sessionId, text, {
+        clientMessageId: tempMessageId,
         mode: agent.id,
         modelId,
         images,
@@ -2717,6 +2710,7 @@ export default function Chat() {
 
     try {
       await gateway.sendMessage(sessionId, text, {
+        clientMessageId: tempMessageId,
         mode: agent.id,
         modelId,
         images,

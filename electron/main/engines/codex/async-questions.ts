@@ -1,4 +1,5 @@
-import type { UnifiedQuestion } from "../../../../src/types/unified";
+import type { TextPart, UnifiedQuestion } from "../../../../src/types/unified";
+import { Lexer, type Token, type Tokens } from "marked";
 
 export interface CodexAsyncQuestion {
   id: string;
@@ -114,6 +115,36 @@ export function convertCodexAsyncQuestion(
 
 export function formatCodexAsyncQuestionReplies(replies: readonly CodexAsyncQuestionReply[]): string {
   return replies.map((reply) => `${reply.question}\n\n${reply.answer}`).join("\n\n");
+}
+
+/** Native standalone receipts remain readable even after their question turn is paginated away. */
+export function projectCodexAsyncQuestionReply(
+  input: unknown,
+): Pick<TextPart, "displayText" | "questionReplies"> | undefined {
+  const replies = parseCodexAsyncQuestionReplies(input);
+  if (!replies) return;
+  return {
+    displayText: formatCodexAsyncQuestionReplies(replies),
+    questionReplies: replies.map(({ question, answer }) => {
+      const summary = questionSummary(question);
+      return { question, answer, ...(summary !== question ? { summary } : {}) };
+    }),
+  };
+}
+
+function questionSummary(markdown: string): string {
+  const plain = (tokens: readonly Token[]): string => tokens.map(token => {
+    if (token.type === "space" || token.type === "br" || token.type === "hr") return " ";
+    if (token.type === "list") return token.items.map((item: Tokens.ListItem) => plain(item.tokens)).join(" ");
+    if (token.type === "table") return [token.header, ...token.rows].flat().map(cell => plain(cell.tokens)).join(" ");
+    if (token.type === "html") return token.text.replace(/<[^>]*>/g, "");
+    if ("tokens" in token && Array.isArray(token.tokens)) {
+      const text = plain(token.tokens);
+      return token.type === "paragraph" || token.type === "heading" || token.type === "blockquote" ? `${text} ` : text;
+    }
+    return "text" in token && typeof token.text === "string" ? token.text : "";
+  }).join("");
+  return plain(Lexer.lex(markdown)).replace(/\s+/g, " ").trim();
 }
 
 function isQuestionId(value: unknown): value is string {

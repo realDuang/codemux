@@ -675,10 +675,10 @@ describe("codex/converters.ts", () => {
     expect(messages).toHaveLength(2);
     expect(messages[0].role).toBe("user");
     expect(messages[0].time.created).toBe(1_710_000_000_000);
-    expect(messages[0].parts.map((part) => part.type)).toEqual(["text", "text", "text"]);
+    expect(messages[0].parts.map((part) => part.type)).toEqual(["text", "file", "file"]);
     expect((messages[0].parts[0] as any).text).toBe("Fix the tests");
-    expect((messages[0].parts[1] as any).text).toBe("[Image: image/png]");
-    expect((messages[0].parts[2] as any).text).toBe("[Image]");
+    expect(messages[0].parts[1]).toMatchObject({ type: "file", mime: "image/png", url: "" });
+    expect(messages[0].parts[2]).toMatchObject({ type: "file", mime: "image/png", filename: "img.png", url: "" });
 
     const assistant = messages[1];
     expect(assistant.role).toBe("assistant");
@@ -2113,20 +2113,20 @@ describe("convertThreadToMessages - user input block types", () => {
     expect(messages).toHaveLength(0);
   });
 
-  it("image block without url returns [Image] fallback", () => {
+  it("keeps an unavailable attachment when an image block has no URL", () => {
     const messages = convertThreadToMessages("sess", makeUserTurn([
       { type: "image" }, // no url
     ]));
     expect(messages).toHaveLength(1);
-    expect((messages[0].parts[0] as any).text).toBe("[Image]");
+    expect(messages[0].parts[0]).toMatchObject({ type: "file", mime: "image/png", url: "" });
   });
 
-  it("image block with non-data URL returns [Image] fallback", () => {
+  it("preserves an explicitly attached HTTPS image", () => {
     const messages = convertThreadToMessages("sess", makeUserTurn([
       { type: "image", url: "https://example.com/img.jpg" },
     ]));
     expect(messages).toHaveLength(1);
-    expect((messages[0].parts[0] as any).text).toBe("[Image]");
+    expect(messages[0].parts[0]).toMatchObject({ type: "file", mime: "image/jpeg", url: "https://example.com/img.jpg" });
   });
 
   it("non-array content returns no user inputs", () => {

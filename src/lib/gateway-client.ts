@@ -83,8 +83,8 @@ export interface GatewayClientEvents {
   "question.asked": (data: { question: UnifiedQuestion }) => void;
   "question.replied": (data: { questionId: string; answers: string[][] }) => void;
   "engine.status.changed": (data: { engineType: EngineType; status: string; error?: string }) => void;
-  "message.queued": (data: { sessionId: string; messageId: string; queuePosition: number }) => void;
-  "message.queued.consumed": (data: { sessionId: string; messageId: string }) => void;
+  "message.queued": (data: { sessionId: string; messageId: string; queuePosition: number; clientMessageId?: string }) => void;
+  "message.queued.consumed": (data: { sessionId: string; messageId: string; clientMessageId?: string }) => void;
   "session.import.progress": (data: SessionImportProgress) => void;
   "file.changed": (event: { type: string; path: string; directory: string }) => void;
   "commands.changed": (data: { engineType: EngineType; commands: EngineCommand[] }) => void;

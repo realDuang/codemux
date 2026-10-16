@@ -336,8 +336,11 @@ export interface LocaleDict {
     executor: string;
     unknownExecutor: string;
     connection: string;
+    liveConnection: string;
+    awaitingConnection: string;
     runtimeVersion: string;
     shared: string;
+    enabled: string;
     notShared: string;
     sessionUnavailable: string;
   };
@@ -1235,8 +1238,11 @@ export const en: LocaleDict = {
     executor: "Current executor",
     unknownExecutor: "Unknown executor",
     connection: "Sharing",
+    liveConnection: "Executor connection",
+    awaitingConnection: "No executor connected",
     runtimeVersion: "Runtime version",
     shared: "Shared",
+    enabled: "Sharing enabled",
     notShared: "Not shared",
     sessionUnavailable: "This chat’s executor is unavailable. Reconnect sharing in Settings or reopen the originating app to continue. Your history is still available.",
   },

@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { reconcile } from "solid-js/store";
 import {
   isExpanded,
+  consumeQueuedPreview,
   messageStore,
   invalidateMessageSteps,
   replaceFetchedMessageSteps,
@@ -15,6 +16,38 @@ import type { ReasoningPart, TextPart, ToolPart, UnifiedMessage } from "../../..
 
 const textPart = (id: string, text: string): TextPart => ({
   id, messageId: "reply", sessionId: "shared-session", type: "text", text,
+});
+
+describe("consumeQueuedPreview", () => {
+  beforeEach(() => {
+    setMessageStore("queued", reconcile({}));
+    setMessageStore("queued", "session", [
+      { id: "client-first", text: "First input", enqueuedAt: 1 },
+      { id: "client-second", text: "Second input", enqueuedAt: 2 },
+    ]);
+  });
+
+  it("removes the acknowledged input when native acceptance completes out of order", () => {
+    consumeQueuedPreview("session", "client-second");
+    expect(messageStore.queued.session.map((message) => message.id)).toEqual(["client-first"]);
+    consumeQueuedPreview("session", "client-first");
+    expect(messageStore.queued.session).toEqual([]);
+  });
+
+  it("ignores another client's acknowledgment and repeated acceptance events", () => {
+    consumeQueuedPreview("session", "other-client");
+    expect(messageStore.queued.session).toHaveLength(2);
+    consumeQueuedPreview("session", "client-first");
+    consumeQueuedPreview("session", "client-first");
+    expect(messageStore.queued.session.map((message) => message.id)).toEqual(["client-second"]);
+  });
+
+  it("retains FIFO behavior for adapters that do not provide submission correlation", () => {
+    consumeQueuedPreview("session");
+    expect(messageStore.queued.session.map((message) => message.id)).toEqual(["client-second"]);
+    consumeQueuedPreview("missing");
+    expect(messageStore.queued.missing).toBeUndefined();
+  });
 });
 
 describe("replaceMessageProjection", () => {

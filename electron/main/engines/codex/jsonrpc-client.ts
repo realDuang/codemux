@@ -304,7 +304,9 @@ export class CodexJsonRpcClient extends EventEmitter {
         this.pendingRequests.delete(response.id);
         clearTimeout(pending.timer);
         if (response.error) {
-          pending.reject(new Error(`${response.error.message} (code: ${response.error.code})`));
+          pending.reject(Object.assign(new Error(`${response.error.message} (code: ${response.error.code})`), {
+            code: response.error.code,
+          }));
         } else {
           pending.resolve(response.result);
         }

@@ -36,6 +36,7 @@ import { Collapsible } from "../Collapsible";
 import { ContentError } from "./content-error";
 import { ContentMarkdown } from "./content-markdown";
 import { ContentText } from "./content-text";
+import { UserTextContent } from "./UserTextContent";
 import AttachmentContent from "./AttachmentContent";
 import { formatDuration, createElapsedTimer } from "./common";
 import {
@@ -189,7 +190,7 @@ export function Part(props: PartProps) {
       <div data-component="content">
         {props.message.role === "user" && props.part.type === "text" && (
           <div data-component="user-text">
-            <ContentText text={props.part.text} expand={props.last} plain />
+            <UserTextContent part={props.part} expand={props.last} workingDirectory={props.message.workingDirectory} />
           </div>
         )}
         {props.message.role === "assistant" && props.part.type === "text" && (

@@ -32,6 +32,22 @@ Settings show transport availability. Chat details distinguish known creation
 origin, the current execution client, and runtime version. Unknown origins remain
 unknown; an observed external executor is not evidence of who created a chat.
 
+The chat header distinguishes the sharing channel from an attached execution
+owner. A healthy channel with no current owner shows **Sharing enabled**; it does
+not imply that a historical conversation is running. The details list the
+executor connection separately. Completed or interrupted history is not marked
+as failed merely because its owner is offline.
+
+Compatible follow-ups during execution use native steering. The pending preview
+is removed when native acceptance is confirmed, using the sending client's
+message identity. Explicit model or mode changes can still wait for the next
+turn, and uncertain transport failures are not automatically replayed.
+
+User question receipts retain their raw protocol text but display a question
+summary and answer. Native image attachments display independently from the
+request text; only structured local attachments authorize local file reads.
+Expired or invalid image files retain an unavailable attachment card.
+
 In the separated runtime, the Server process owns this bridge and its catalog. Electron passes its local settings/data directory to the supervised Server; standalone Node uses its selected data directory. The bridge uses local Node IPC and adds no Electron or display dependency to the Server. Stopping CodeMux detaches external Desktop conversations and stops only execution processes owned by CodeMux.
 
 New eligible conversations appear automatically in the existing project sidebar.

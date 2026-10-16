@@ -1159,13 +1159,14 @@ describe("GatewayServer", () => {
           mode: "agent",
           modelId: "opus",
           reasoningEffort: "high",
+          clientMessageId: "client-second",
         },
       });
 
       expect(engineManager.sendMessage).toHaveBeenCalledWith(
         "sess-1",
         "Hello",
-        { mode: "agent", modelId: "opus", reasoningEffort: "high" },
+        { mode: "agent", modelId: "opus", reasoningEffort: "high", clientMessageId: "client-second" },
       );
     });
 

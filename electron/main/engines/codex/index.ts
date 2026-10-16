@@ -131,7 +131,15 @@ type CodexTurnInput =
   | { type: "localImage"; path: string }
   | { type: "skill"; name: string; path: string };
 
+function isRejectedSteer(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  const code = (error as Error & { code?: number }).code;
+  return code === -32601 || code === -32602
+    || /\b(no active turn|active turn not found|expected turn(?: id)?[^\n]*(?:mismatch|does not match)|turn[^\n]*is not active)\b/i.test(error.message);
+}
+
 interface CodexMessageOptions {
+  clientMessageId?: string;
   mode?: string;
   modelId?: string;
   reasoningEffort?: ReasoningEffort | null;
@@ -142,6 +150,14 @@ interface CodexMessageOptions {
   nativeOverrides?: Record<string, unknown>;
   onAdmitted?: (result: unknown) => void;
   onAdmissionFailed?: (error: Error) => void;
+}
+
+interface ActiveTurnSettings {
+  mode: string;
+  modelId: string;
+  reasoningEffort: ReasoningEffort | null;
+  serviceTier: CodexServiceTier | null;
+  directory: string;
 }
 
 interface ThreadInfo {
@@ -165,6 +181,7 @@ interface QueuedMessage {
   tempDirs: string[];
   options?: CodexMessageOptions;
   resolver: SendResolver;
+  waitForNextTurn?: boolean;
 }
 
 interface PendingPermission {
@@ -279,6 +296,7 @@ export class CodexAdapter extends EngineAdapter {
   private messageHistory = new Map<string, UnifiedMessage[]>();
   private turnResolvers = new Map<string, SendResolver[]>();
   private messageQueues = new Map<string, QueuedMessage[]>();
+  private activeTurnSettings = new Map<string, ActiveTurnSettings>();
   private activeTurnIds = new Map<string, string>();
   private activeToolParts = new Map<string, ToolPart>();
   private activeTempDirs = new Map<string, string[]>();
@@ -1979,6 +1997,7 @@ export class CodexAdapter extends EngineAdapter {
       this.publishAsyncQuestionGroup(sessionId, turnId, group);
     }
     this.touchThread(sessionId);
+    void this.processNextQueuedMessage(sessionId);
   }
 
   private handleTurnCompleted(sessionId: string, data: Record<string, unknown>): void {
@@ -2449,7 +2468,8 @@ export class CodexAdapter extends EngineAdapter {
     }
     const modeId = options?.mode ?? this.sessionModes.get(sessionId) ?? this.currentMode;
     const modelId = options?.modelId ?? this.sessionModels.get(sessionId) ?? this.currentModelId;
-    const reasoningEffort = options?.reasoningEffort ?? this.sessionReasoningEfforts.get(sessionId) ?? null;
+    const reasoningEffort = options?.reasoningEffort !== undefined
+      ? options.reasoningEffort : this.sessionReasoningEfforts.get(sessionId) ?? null;
     const hasExplicitServiceTier = options != null && Object.prototype.hasOwnProperty.call(options, "serviceTier");
     const serviceTier = hasExplicitServiceTier
       ? (options!.serviceTier ?? null)
@@ -2469,10 +2489,18 @@ export class CodexAdapter extends EngineAdapter {
     const pendingStart = { buffer, cancelled: false };
     this.pendingStarts.set(sessionId, pendingStart);
     this.activeTempDirs.set(sessionId, [...tempDirs]);
+    const native = options?.nativeOverrides ?? {};
+    const nativeMode = asRecord(native.collaborationMode).mode;
+    this.activeTurnSettings.set(sessionId, {
+      mode: typeof nativeMode === "string" ? nativeMode : modeId,
+      modelId: typeof native.model === "string" ? native.model : modelId,
+      reasoningEffort: Object.prototype.hasOwnProperty.call(native, "effort")
+        ? typeof native.effort === "string" ? fromCodexEffort(native.effort) ?? null : null : reasoningEffort,
+      serviceTier: Object.prototype.hasOwnProperty.call(native, "serviceTier")
+        ? isCodexServiceTier(native.serviceTier) ? native.serviceTier : null : serviceTier,
+      directory: typeof native.cwd === "string" ? normalizeDirectory(native.cwd) : directory,
+    });
 
-    if (emitQueuedConsumed) {
-      this.emit("message.queued.consumed", { sessionId, messageId: userMessage.id });
-    }
     this.appendMessageToHistory(sessionId, userMessage);
     this.emit("message.updated", { sessionId, message: userMessage });
 
@@ -2518,6 +2546,10 @@ export class CodexAdapter extends EngineAdapter {
           }
           buffer.modelId = modelId;
           buffer.reasoningEffort = reasoningEffort ?? undefined;
+          if (emitQueuedConsumed || options?.clientMessageId) {
+            this.emit("message.queued.consumed", { sessionId, messageId: userMessage.id,
+              ...(options?.clientMessageId ? { clientMessageId: options.clientMessageId } : {}) });
+          }
           options?.onAdmitted?.(response);
         })
         .catch((error) => {
@@ -2592,8 +2624,13 @@ export class CodexAdapter extends EngineAdapter {
 
       this.appendMessageToHistory(sessionId, userMessage);
       this.emit("message.updated", { sessionId, message: userMessage });
+      if (!options?.ownerAdmission) {
+        this.emit("message.queued.consumed", { sessionId, messageId: userMessage.id,
+          ...(options?.clientMessageId ? { clientMessageId: options.clientMessageId } : {}) });
+      }
       this.touchThread(sessionId);
       options?.onAdmitted?.(response);
+      void this.processNextQueuedMessage(sessionId);
 
       if (this.activeTurnIds.get(sessionId) !== activeTurnId || this.messageBuffers.get(sessionId) !== continuedBuffer) {
         this.cleanupTempDirs(tempDirs);
@@ -2614,11 +2651,17 @@ export class CodexAdapter extends EngineAdapter {
         options?.onAdmissionFailed?.(error instanceof Error ? error : new Error(String(error)));
         throw error;
       }
-      codexLog.warn(`turn/steer failed for ${sessionId}, falling back to queue:`, error);
+      // A timeout/disconnect can happen after native acceptance. Replaying that
+      // input in a new turn would duplicate both its text and its attachments.
+      if (!isRejectedSteer(error)) {
+        this.activeTempDirs.set(sessionId, [...this.activeTempDirs.get(sessionId) ?? [], ...tempDirs]);
+        throw error;
+      }
+      codexLog.warn(`turn/steer rejected for ${sessionId}, falling back to queue:`, error);
       if (!this.hasActiveTurn(sessionId)) {
         return this.startPreparedTurn(sessionId, input, userMessage, tempDirs, options, false);
       }
-      return this.enqueueMessage(sessionId, input, userMessage, tempDirs, options);
+      return this.enqueueMessage(sessionId, input, userMessage, tempDirs, options, true);
     }
   }
 
@@ -2628,6 +2671,7 @@ export class CodexAdapter extends EngineAdapter {
     userMessage: UnifiedMessage,
     tempDirs: string[],
     options: CodexMessageOptions | undefined,
+    waitForNextTurn = false,
   ): Promise<UnifiedMessage> {
     return new Promise<UnifiedMessage>((resolve, reject) => {
       const queue = this.messageQueues.get(sessionId) ?? [];
@@ -2636,6 +2680,7 @@ export class CodexAdapter extends EngineAdapter {
         userMessage,
         tempDirs,
         options,
+        waitForNextTurn,
         resolver: { resolve, reject },
       });
       this.messageQueues.set(sessionId, queue);
@@ -2644,15 +2689,18 @@ export class CodexAdapter extends EngineAdapter {
         sessionId,
         messageId: userMessage.id,
         queuePosition: queue.length,
+        ...(options?.clientMessageId ? { clientMessageId: options.clientMessageId } : {}),
       });
     });
   }
 
   private async processNextQueuedMessage(sessionId: string): Promise<void> {
-    if (this.hasActiveTurn(sessionId)) return;
-
     const queue = this.messageQueues.get(sessionId);
     if (!queue || queue.length === 0) return;
+    const active = this.hasActiveTurn(sessionId);
+    const first = queue[0];
+    const directory = normalizeDirectory(first.options?.directory ?? this.sessionDirectories.get(sessionId) ?? "");
+    if (active && (!this.activeTurnIds.has(sessionId) || first.waitForNextTurn || !this.canSteer(sessionId, first.options, directory))) return;
 
     const next = queue.shift();
     if (!next) return;
@@ -2661,7 +2709,7 @@ export class CodexAdapter extends EngineAdapter {
     }
 
     try {
-      const message = await this.startPreparedTurn(
+      const message = active ? await this.steerTurn(sessionId, next.input, next.userMessage, next.tempDirs, next.options) : await this.startPreparedTurn(
         sessionId,
         next.input,
         next.userMessage,
@@ -2671,7 +2719,8 @@ export class CodexAdapter extends EngineAdapter {
       );
       next.resolver.resolve(message);
     } catch (error) {
-      this.cleanupTempDirs(next.tempDirs);
+      const retained = new Set(this.activeTempDirs.get(sessionId) ?? []);
+      this.cleanupTempDirs(next.tempDirs.filter((directory) => !retained.has(directory)));
       next.resolver.reject(error instanceof Error ? error : new Error(String(error)));
     }
   }
@@ -3078,6 +3127,7 @@ export class CodexAdapter extends EngineAdapter {
   }
 
   private finishTurn(sessionId: string): void {
+    this.activeTurnSettings.delete(sessionId);
     this.clearAsyncQuestions(sessionId);
     for (const [callId, part] of this.activeToolParts) {
       if (part.sessionId === sessionId) this.activeToolParts.delete(callId);
@@ -3146,17 +3196,22 @@ export class CodexAdapter extends EngineAdapter {
     } | undefined,
     directory: string,
   ): boolean {
-    const requestedMode = options?.mode ?? this.sessionModes.get(sessionId) ?? this.currentMode;
-    const requestedModel = options?.modelId ?? this.sessionModels.get(sessionId) ?? this.currentModelId;
-    const requestedEffort = options?.reasoningEffort ?? this.sessionReasoningEfforts.get(sessionId) ?? null;
-    const requestedTier = options?.serviceTier ?? this.sessionServiceTiers.get(sessionId) ?? null;
-    const sessionDirectory = normalizeDirectory(this.sessionDirectories.get(sessionId) ?? directory);
+    const active = this.activeTurnSettings.get(sessionId) ?? {
+      mode: this.sessionModes.get(sessionId) ?? this.currentMode,
+      modelId: this.sessionModels.get(sessionId) ?? this.currentModelId,
+      reasoningEffort: this.sessionReasoningEfforts.get(sessionId) ?? null,
+      serviceTier: this.sessionServiceTiers.get(sessionId) ?? null,
+      directory: normalizeDirectory(this.sessionDirectories.get(sessionId) ?? directory),
+    };
+    const requestedEffort = options?.reasoningEffort !== undefined ? options.reasoningEffort : active.reasoningEffort;
+    const requestedTier = options && Object.prototype.hasOwnProperty.call(options, "serviceTier")
+      ? options.serviceTier ?? null : active.serviceTier;
 
-    return requestedMode === (this.sessionModes.get(sessionId) ?? this.currentMode)
-      && requestedModel === (this.sessionModels.get(sessionId) ?? this.currentModelId)
-      && requestedEffort === (this.sessionReasoningEfforts.get(sessionId) ?? null)
-      && requestedTier === (this.sessionServiceTiers.get(sessionId) ?? null)
-      && directory === sessionDirectory;
+    return (options?.mode ?? active.mode) === active.mode
+      && (options?.modelId ?? active.modelId) === active.modelId
+      && requestedEffort === active.reasoningEffort
+      && requestedTier === active.serviceTier
+      && directory === active.directory;
   }
 
   private registerThread(

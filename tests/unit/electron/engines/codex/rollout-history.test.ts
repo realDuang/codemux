@@ -1,4 +1,4 @@
-import { appendFile, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -7,6 +7,8 @@ import { convertThreadToMessages } from "../../../../../electron/main/engines/co
 
 const id = "01a13ed7-4a99-7d30-8b50-2d1b2df28866";
 const turnId = "01a13ed7-75c9-7723-8684-a64a67515195";
+const PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl6AAAAAElFTkSuQmCC", "base64");
+const PNG_URL = `data:image/png;base64,${PNG.toString("base64")}`;
 let home: string;
 let path: string;
 
@@ -33,6 +35,23 @@ function snapshot(status = "completed") {
   ] }] };
 }
 
+function imageRecord(imagePath: string, url = PNG_URL, text = "Inspect the steering image") {
+  return response({ type: "message", id: "image-native", role: "user", content: [
+    { type: "input_text", text },
+    { type: "input_text", text: `<image name=[Image #1] path="${imagePath}">` },
+    { type: "input_image", image_url: url },
+    { type: "input_text", text: "</image>" },
+  ] });
+}
+
+function imageSnapshot(imagePath: string, text = "Inspect the steering image") {
+  return { id, path, turns: [{ id: turnId, status: "completed", items: [
+    { id: "image-item", type: "userMessage", content: [
+      { type: "text", text }, { type: "localImage", path: imagePath },
+    ] },
+  ] }] };
+}
+
 beforeEach(async () => {
   home = await mkdtemp(join(tmpdir(), "codemux-rollout-history-"));
   path = join(home, "sessions", "2026", "10", "15", `rollout-2026-10-15T17-14-19-${id}.jsonl`);
@@ -43,6 +62,71 @@ beforeEach(async () => {
 afterEach(async () => { await rm(home, { recursive: true, force: true }); });
 
 describe("CodexRolloutHistory.enrich", () => {
+  it("restores native image bytes after temporary attachment cleanup and a fresh reader", async () => {
+    const imagePath = join(home, "temporary-image.png");
+    await writeFile(imagePath, PNG);
+    await appendFile(path, JSON.stringify(imageRecord(imagePath)) + "\n");
+    const source = imageSnapshot(imagePath);
+    const original = await readFile(path, "utf8");
+    await rm(imagePath);
+    for (let pass = 0; pass < 2; pass++) {
+      const reader = new CodexRolloutHistory(home);
+      const enriched = await reader.enrich(id, source);
+      const message = convertThreadToMessages("session", { thread: enriched }).find(message => message.id.endsWith("image-item"));
+      expect(message?.parts.find(part => part.type === "file")).toMatchObject({ type: "file", url: PNG_URL });
+      expect(await reader.enrich(id, enriched)).toBe(enriched);
+    }
+    expect(source.turns[0].items.at(-1)?.content?.[1]).toEqual({ type: "localImage", path: imagePath });
+    expect(await readFile(path, "utf8")).toBe(original);
+  });
+
+  it.each(["thread", "turn", "path", "text", "removed-item"])("does not recover an image when its %s no longer matches native history", async (mismatch) => {
+    const imagePath = join(home, "temporary-image.png");
+    await appendFile(path, JSON.stringify(imageRecord(imagePath)) + "\n");
+    const source = imageSnapshot(imagePath);
+    let requestedThread = id;
+    if (mismatch === "thread") requestedThread = "01a13ed7-4a99-7d30-8b50-2d1b2df28867";
+    if (mismatch === "turn") source.turns[0].id = "another-turn";
+    if (mismatch === "path") source.turns[0].items[0].content[1].path = join(home, "different.png");
+    if (mismatch === "text") source.turns[0].items[0].content[0].text = "New text with the same native ID";
+    if (mismatch === "removed-item") source.turns[0].items = [];
+    expect(await new CodexRolloutHistory(home).enrich(requestedThread, source)).toBe(source);
+  });
+
+  it.each([
+    "data:image/png;base64,AAAA",
+    "data:image/svg+xml;base64,PHN2Zy8+",
+    "file:///tmp/image.png",
+    "https://example.com/image.png",
+  ])("rejects invalid or non-inline replay image content: %s", async (url) => {
+    const imagePath = join(home, "temporary-image.png");
+    await appendFile(path, JSON.stringify(imageRecord(imagePath, url)) + "\n");
+    const source = imageSnapshot(imagePath);
+    expect(await new CodexRolloutHistory(home).enrich(id, source)).toBe(source);
+  });
+
+  it.each(["same-bytes", "different-bytes", "invalid-bytes", "duplicate-native-item"])("keeps ambiguous %s image input unchanged", async (ambiguity) => {
+    const imagePath = join(home, "temporary-image.png");
+    const source = imageSnapshot(imagePath);
+    const entries = [imageRecord(imagePath)];
+    if (ambiguity === "duplicate-native-item") source.turns[0].items.push({ ...source.turns[0].items[0], id: "another-item" });
+    else entries.push(imageRecord(imagePath, ambiguity === "same-bytes" ? PNG_URL
+      : ambiguity === "invalid-bytes" ? "data:image/png;base64,AAAA"
+        : `data:image/png;base64,${Buffer.concat([PNG, Buffer.from([0])]).toString("base64")}`));
+    await appendFile(path, entries.map(entry => JSON.stringify(entry)).join("\n") + "\n");
+    expect(await new CodexRolloutHistory(home).enrich(id, source)).toBe(source);
+  });
+
+  it("requires the exact paired envelope and preserves every other user block", async () => {
+    const imagePath = join(home, "temporary-image.png");
+    const entry = imageRecord(imagePath);
+    const content = entry.payload.content as Array<Record<string, unknown>>;
+    content.pop();
+    await appendFile(path, JSON.stringify(entry) + "\n");
+    const source = imageSnapshot(imagePath);
+    expect(await new CodexRolloutHistory(home).enrich(id, source)).toBe(source);
+  });
+
   it("restores missing custom exec output in native order without hidden reasoning", async () => {
     const source = snapshot();
     const enriched = await new CodexRolloutHistory(home).enrich(id, source);

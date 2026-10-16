@@ -104,8 +104,8 @@ export interface GatewayNotificationHandlers {
   onQuestionAsked?: (question: UnifiedQuestion) => void;
   onQuestionReplied?: (questionId: string, answers: string[][]) => void;
   onEngineStatusChanged?: (engineType: EngineType, status: string, error?: string) => void;
-  onMessageQueued?: (sessionId: string, messageId: string, queuePosition: number) => void;
-  onMessageQueuedConsumed?: (sessionId: string, messageId: string) => void;
+  onMessageQueued?: (sessionId: string, messageId: string, queuePosition: number, clientMessageId?: string) => void;
+  onMessageQueuedConsumed?: (sessionId: string, messageId: string, clientMessageId?: string) => void;
   onFileChanged?: (event: { type: string; path: string; directory: string }) => void;
   onCommandsChanged?: (engineType: EngineType, commands: EngineCommand[]) => void;
   onScheduledTaskFired?: (taskId: string, conversationId: string) => void;
@@ -397,12 +397,12 @@ class GatewayAPI {
 
     this.bind("message.queued", (data) => {
       if (this.removedSessionIds.has(data.sessionId)) return;
-      this.handlers.onMessageQueued?.(data.sessionId, data.messageId, data.queuePosition);
+      this.handlers.onMessageQueued?.(data.sessionId, data.messageId, data.queuePosition, data.clientMessageId);
     });
 
     this.bind("message.queued.consumed", (data) => {
       if (this.removedSessionIds.has(data.sessionId)) return;
-      this.handlers.onMessageQueuedConsumed?.(data.sessionId, data.messageId);
+      this.handlers.onMessageQueuedConsumed?.(data.sessionId, data.messageId, data.clientMessageId);
     });
 
     this.bind("file.changed", (event) => {
@@ -501,7 +501,7 @@ class GatewayAPI {
   sendMessage(
     sessionId: string,
     text: string,
-    options?: { mode?: string; modelId?: string; images?: import("../types/unified").ImageAttachment[]; reasoningEffort?: import("../types/unified").ReasoningEffort | null; serviceTier?: import("../types/unified").CodexServiceTier | null },
+    options?: { clientMessageId?: string; mode?: string; modelId?: string; images?: import("../types/unified").ImageAttachment[]; reasoningEffort?: import("../types/unified").ReasoningEffort | null; serviceTier?: import("../types/unified").CodexServiceTier | null },
   ): Promise<UnifiedMessage> {
     const content: import("../types/unified").MessagePromptContent[] = [{ type: "text", text }];
     if (options?.images) {
@@ -512,6 +512,7 @@ class GatewayAPI {
     return this.withPendingSend(sessionId, () => gatewayClient.sendMessage({
       sessionId,
       content,
+      clientMessageId: options?.clientMessageId,
       mode: options?.mode,
       modelId: options?.modelId,
       reasoningEffort: options?.reasoningEffort,

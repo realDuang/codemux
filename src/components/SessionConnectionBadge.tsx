@@ -1,4 +1,4 @@
-import { Show, onCleanup, onMount } from "solid-js";
+import { Show, createMemo, onCleanup, onMount } from "solid-js";
 import { formatMessage, useI18n } from "../lib/i18n";
 import type { UnifiedSession } from "../types/unified";
 
@@ -26,6 +26,17 @@ export function SessionOriginBadge(props: SessionConnectionProps) {
 export function SessionConnectionDetails(props: SessionConnectionProps) {
   const { t } = useI18n();
   let details: HTMLDetailsElement | undefined;
+  const sharingStatus = createMemo(() => props.connection?.sharingStatus
+    ?? (!props.connection?.available ? "unavailable" : props.connection.shared ? "connected" : "disabled"));
+  const sharingLabel = createMemo(() => {
+    const labels = t().sessionSharing;
+    switch (sharingStatus()) {
+      case "connected": return props.connection?.shared && props.connection.available ? labels.shared : labels.enabled;
+      case "connecting": return labels.connecting;
+      case "disabled": return labels.notShared;
+      case "unavailable": return labels.unavailable;
+    }
+  });
 
   onMount(() => {
     const handleOutsidePress = (event: PointerEvent) => {
@@ -55,14 +66,8 @@ export function SessionConnectionDetails(props: SessionConnectionProps) {
             title={t().sessionSharing.details}
             data-session-connection
           >
-            <span class={`h-1.5 w-1.5 rounded-full ${!connection().available ? "bg-amber-500" : connection().shared ? "bg-emerald-500" : "bg-[var(--cm-text-faint)]"}`} />
-            <span class="hidden sm:inline">
-              <Show when={connection().available} fallback={t().sessionSharing.unavailable}>
-                <Show when={connection().shared} fallback={t().sessionSharing.notShared}>
-                  {t().sessionSharing.shared}
-                </Show>
-              </Show>
-            </span>
+            <span class={`h-1.5 w-1.5 rounded-full ${sharingStatus() === "unavailable" ? "bg-amber-500" : sharingStatus() === "connected" ? "bg-emerald-500" : "bg-[var(--cm-text-faint)]"}`} />
+            <span class="hidden sm:inline">{sharingLabel()}</span>
             <svg aria-hidden="true" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m7 10 5 5 5-5" /></svg>
           </summary>
           <div
@@ -77,11 +82,11 @@ export function SessionConnectionDetails(props: SessionConnectionProps) {
               <dt class="text-[var(--cm-text-muted)]">{t().sessionSharing.executor}</dt>
               <dd class="break-words text-right text-[var(--cm-text)]">{connection().executor || t().sessionSharing.unknownExecutor}</dd>
               <dt class="text-[var(--cm-text-muted)]">{t().sessionSharing.connection}</dt>
+              <dd class="text-right text-[var(--cm-text)]">{sharingLabel()}</dd>
+              <dt class="text-[var(--cm-text-muted)]">{t().sessionSharing.liveConnection}</dt>
               <dd class="text-right text-[var(--cm-text)]">
-                <Show when={connection().available} fallback={t().sessionSharing.unavailable}>
-                  <Show when={connection().shared} fallback={t().sessionSharing.notShared}>
-                    {t().sessionSharing.shared}
-                  </Show>
+                <Show when={connection().available} fallback={t().sessionSharing.awaitingConnection}>
+                  {t().sessionSharing.connected}
                 </Show>
               </dd>
               <Show when={connection().runtimeVersion}>

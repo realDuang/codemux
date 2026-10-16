@@ -1094,6 +1094,19 @@ describe('GatewayAPI', () => {
 
   // --- sendMessage ---
 
+  it('preserves submission correlation in send requests and acceptance notifications', async () => {
+    const onMessageQueuedConsumed = vi.fn();
+    await gateway.init({ onMessageQueuedConsumed });
+    await gateway.sendMessage('s1', 'Steer this turn', { clientMessageId: 'client-second' });
+    expect(mockGatewayClient.sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ clientMessageId: 'client-second' }),
+    );
+    emitGatewayEvent('message.queued.consumed', {
+      sessionId: 's1', messageId: 'native-second', clientMessageId: 'client-second',
+    });
+    expect(onMessageQueuedConsumed).toHaveBeenCalledWith('s1', 'native-second', 'client-second');
+  });
+
   it('sendMessage builds content with text only', async () => {
     await gateway.sendMessage('s1', 'hello');
     expect(mockGatewayClient.sendMessage).toHaveBeenCalledWith({

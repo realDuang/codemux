@@ -477,6 +477,7 @@ export class GatewayServer {
       case GatewayRequestType.MESSAGE_SEND: {
         const req = p as MessageSendRequest;
         return this.engineManager.sendMessage(req.sessionId, req.content, {
+          clientMessageId: typeof req.clientMessageId === "string" ? req.clientMessageId : undefined,
           mode: req.mode,
           modelId: req.modelId,
           reasoningEffort: req.reasoningEffort,

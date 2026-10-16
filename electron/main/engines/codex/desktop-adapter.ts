@@ -278,8 +278,8 @@ export class CodexDesktopAdapter extends EngineAdapter {
   async listSessions(directory?: string): Promise<UnifiedSession[]> {
     const sessions = new Map([...this.storedSnapshots].map(([id, snapshot]) => [id, snapshot.session]));
     for (const entry of this.sessions.values()) {
-      const session = entry.reducer.snapshot?.session;
-      if (session) sessions.set(session.id, { ...session, ...(!entry.available ? { activityStatus: "error" as const } : {}) });
+      const snapshot = entry.reducer.snapshot;
+      if (snapshot) sessions.set(snapshot.session.id, entry.available ? snapshot.session : this.unavailableSession(snapshot));
     }
     return [...sessions.values()].filter((session) => !session.archived && !this.archivedSessionIds.has(session.id) && (!directory || session.directory === directory));
   }
@@ -445,8 +445,9 @@ export class CodexDesktopAdapter extends EngineAdapter {
       this.excludeArchivedSession(id);
       throw archivedThreadError();
     }
-    const live = this.sessions.get(id)?.reducer.snapshot;
-    const known = live?.session ?? this.storedSnapshots.get(id)?.session;
+    const followed = this.sessions.get(id);
+    const live = followed?.available ? followed.reducer.snapshot : undefined;
+    const known = followed?.reducer.snapshot?.session ?? this.storedSnapshots.get(id)?.session;
     const state = buildDesktopOwnerState({
       thread: stored.thread, model: known?.modelId ?? "",
       reasoningEffort: known?.reasoningEffort ? toCodexEffort(known.reasoningEffort) : undefined,
@@ -456,12 +457,13 @@ export class CodexDesktopAdapter extends EngineAdapter {
     const snapshot = reducer.apply({ type: "snapshot", revision: 0, conversationState: state });
     this.applyEngineIdentity(snapshot);
     snapshot.session = {
-      ...snapshot.session, archived: false, activityStatus: "error",
+      ...this.unavailableSession(snapshot), archived: false,
       ...(snapshot.messages.length > 0 ? { sourceUrl: `codex://threads/${encodeURIComponent(id)}`, sourceName: "Codex" } : {}),
       engineMeta: { ...snapshot.session.engineMeta, ...(this.codemuxOwnedThreadIds.has(id) ? { codexDesktopOwner: "codemux" } : {}) },
     };
     const previous = this.storedSnapshots.get(id);
     if (previous && previous.session.archived !== false) this.readOwnerMisses.delete(id);
+    if (followed && !followed.available) this.sessions.delete(id);
     this.storedSnapshots.set(id, snapshot);
     if (!live || previous?.session.archived !== false) {
       this.emit("session.updated", { session: live ? { ...live.session, archived: false } : snapshot.session });
@@ -485,7 +487,7 @@ export class CodexDesktopAdapter extends EngineAdapter {
     });
   }
 
-  async sendMessage(id: string, content: MessagePromptContent[]): Promise<UnifiedMessage> {
+  async sendMessage(id: string, content: MessagePromptContent[], options?: Parameters<EngineAdapter["sendMessage"]>[2]): Promise<UnifiedMessage> {
     await this.attachForInput(id);
     const text = content.filter((part) => part.type === "text").map((part) => part.text ?? "").join("\n").trim();
     const input: Array<Record<string, unknown>> = text ? [{ type: "text", text, text_elements: [] }] : [];
@@ -531,7 +533,7 @@ export class CodexDesktopAdapter extends EngineAdapter {
       response = await this.client.startTurn(id, entry.ownerClientId, { request: { threadId: id, input, clientUserMessageId }, context: { attachments: [] } });
     }
     return this.waitForCompletion(id, revision, readTurnId(response) ?? (before.isActive ? before.activeTurnId : undefined), before.latestTurnId, before.isActive,
-      new Set(before.messages.filter((message) => message.role === "user").map((message) => message.id)), text, images.length);
+      new Set(before.messages.filter((message) => message.role === "user").map((message) => message.id)), text, images.length, clientUserMessageId, options?.clientMessageId);
   }
 
   private async attachForInput(id: string): Promise<UnifiedSession> {
@@ -880,22 +882,35 @@ export class CodexDesktopAdapter extends EngineAdapter {
     return entry.reducer.snapshot;
   }
 
-  private waitForCompletion(id: string, afterRevision: number, expectedTurnId: string | undefined, previousTurnId: string | undefined, steering: boolean, previousUserIds: Set<string>, inputText: string, imageCount: number): Promise<UnifiedMessage> {
+  private waitForCompletion(id: string, afterRevision: number, expectedTurnId: string | undefined, previousTurnId: string | undefined, steering: boolean, previousUserIds: Set<string>, inputText: string, imageCount: number, nativeClientMessageId: string, clientMessageId?: string): Promise<UnifiedMessage> {
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => finish(new Error("Desktop turn is still running. Its execution was not cancelled.")), this.options.turnTimeoutMs ?? 600_000);
+      let consumed = false;
       const check = () => {
         try {
           const snapshot = this.requireSnapshot(id);
           if (this.sessions.get(id)!.reducer.revision! <= afterRevision) return;
           const turnId = expectedTurnId ?? snapshot.latestTurnId;
           if (!turnId || (!steering && !expectedTurnId && turnId === previousTurnId)) return;
+          if (!consumed) {
+            const state = this.sessions.get(id)!.reducer.conversationState ?? {};
+            const nativeTurn = Array.isArray(state.turns)
+              ? asRecord(state.turns.findLast((turn) => (asRecord(turn).turnId ?? asRecord(turn).id) === turnId)) : {};
+            const nativeItems = Array.isArray(nativeTurn.items) ? nativeTurn.items.map(asRecord) : [];
+            const acceptedInput = snapshot.messages.findLast((message) => message.role === "user" && !previousUserIds.has(message.id)
+              && message.time.completed != null && message.engineMeta?.codexTurnId === turnId
+              && isAcceptedNativeInput(message, nativeItems, nativeClientMessageId)
+              && message.parts.filter((part) => part.type === "text").map((part) => part.text).join("\n").trim() === inputText
+              && message.parts.filter((part) => part.type === "file" && part.mime.startsWith("image/")).length === imageCount);
+            if (!acceptedInput) return;
+            consumed = true;
+            if (steering || clientMessageId) {
+              this.emit("message.queued.consumed", { sessionId: id, messageId: acceptedInput.id,
+                ...(clientMessageId ? { clientMessageId } : {}) });
+            }
+          }
           if (snapshot.isActive && (!snapshot.activeTurnId || snapshot.activeTurnId === turnId)) return;
-          const acceptedInput = snapshot.messages.some((message) => message.role === "user" && !previousUserIds.has(message.id)
-            && message.time.completed != null && message.engineMeta?.codexTurnId === turnId
-            && message.parts.filter((part) => part.type === "text").map((part) => part.text).join("\n").trim() === inputText
-            && message.parts.filter((part) => part.type === "file" && part.mime.startsWith("image/")).length === imageCount);
-          if (!acceptedInput) return;
-          const message = [...snapshot.messages].reverse().find((entry) => entry.role === "assistant" && entry.engineMeta?.codexTurnId === turnId);
+          const message = snapshot.messages.findLast((entry) => entry.role === "assistant" && entry.engineMeta?.codexTurnId === turnId);
           if (message?.time.completed != null) finish(undefined, message);
         } catch (error) { finish(error instanceof Error ? error : new Error("Desktop unavailable")); }
       };
@@ -938,15 +953,34 @@ export class CodexDesktopAdapter extends EngineAdapter {
   }
   private publishAvailability(): void {
     for (const entry of this.sessions.values()) {
-      if (!entry.available && entry.reducer.snapshot) this.emit("session.updated", { session: { ...entry.reducer.snapshot.session, activityStatus: "error" } });
+      if (!entry.available && entry.reducer.snapshot) this.emit("session.updated", { session: this.unavailableSession(entry.reducer.snapshot) });
     }
     this.notifyWatchers();
+  }
+  private unavailableSession(snapshot: DesktopConversationSnapshot): UnifiedSession {
+    // Completed or interrupted history keeps its native outcome when its owner
+    // goes away. Unfinished work still needs attention until a fresh follow.
+    return snapshot.isActive || snapshot.pendingRequests.length > 0 || this.visibleQuestions(snapshot).length > 0
+      ? { ...snapshot.session, activityStatus: "error" }
+      : snapshot.session;
   }
   private notifyWatchers(): void { for (const watcher of [...this.watchers]) watcher(); }
 }
 
 function asRecord(value: unknown): Record<string, unknown> {
   return value != null && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
+
+function isAcceptedNativeInput(message: UnifiedMessage, items: Record<string, unknown>[], clientMessageId: string): boolean {
+  const item = items.find((entry) => entry.id === message.engineMeta?.codexItemId);
+  // Native snapshots can replace the steering placeholder with its server user
+  // item. The retained receipt still owns its original client correlation.
+  const receipt = item?.type === "userMessage"
+    ? items.find((entry) => entry.type === "steeringUserMessage" && entry.serverUserMessageId === item.id)
+    : item;
+  if (receipt?.type === "steeringUserMessage" && receipt.status !== "accepted") return false;
+  const nativeClientId = receipt?.clientUserMessageId ?? item?.clientUserMessageId ?? item?.clientId ?? message.engineMeta?.clientUserMessageId;
+  return nativeClientId == null || nativeClientId === clientMessageId;
 }
 
 function archivedThreadError(): Error & { code: string } {

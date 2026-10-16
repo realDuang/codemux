@@ -1,6 +1,8 @@
 import { createHash } from "node:crypto";
 import { createInterface } from "node:readline";
 import { openVerifiedCodexRollout } from "./rollout-reader";
+import { projectCodexUserInput } from "./user-input";
+import { MAX_IMAGES_PER_MESSAGE } from "../../../../shared/image-limits";
 
 const MAX_ROLLOUT_BYTES = 128 * 1024 * 1024;
 const MAX_CACHED_THREADS = 8;
@@ -11,6 +13,12 @@ interface ReplayEntry {
   aliases?: string[];
   anchor?: string;
   tool?: Record<string, unknown>;
+  userImages?: ReplayedUserImages;
+}
+
+interface ReplayedUserImages {
+  key: string;
+  images?: Array<{ path: string; url: string }>;
 }
 
 interface ReplayIndex {
@@ -18,7 +26,7 @@ interface ReplayIndex {
   turns: Map<string, ReplayEntry[]>;
 }
 
-/** Restore public tool records dropped by app-server's custom-tool history decoder. */
+/** Restore public tool records and attached image bytes from verified native history. */
 export class CodexRolloutHistory {
   private readonly cache = new Map<string, ReplayIndex>();
 
@@ -36,7 +44,7 @@ export class CodexRolloutHistory {
       if (index?.signature !== signature) {
         const stream = opened.file.createReadStream({ start: 0, end: Math.max(0, stat.size - 1), autoClose: false });
         const lines = createInterface({ input: stream, crlfDelay: Infinity });
-        try { index = { signature, turns: await readPublicToolIndex(lines) }; }
+        try { index = { signature, turns: await readPublicHistoryIndex(lines) }; }
         finally { lines.close(); stream.destroy(); }
         this.cache.delete(threadId);
         if (stat.size <= MAX_CACHED_ROLLOUT_BYTES) this.cache.set(threadId, index);
@@ -47,7 +55,7 @@ export class CodexRolloutHistory {
         const turn = record(value);
         const replay = typeof turn.id === "string" ? index.turns.get(turn.id) : undefined;
         if (!replay || !Array.isArray(turn.items)) return value;
-        const items = reconcileTools(turn.items, replay, turn.status === "inProgress");
+        const items = reconcileUserImages(reconcileTools(turn.items, replay, turn.status === "inProgress"), replay);
         if (items === turn.items) return value;
         changed = true;
         return { ...turn, items };
@@ -62,7 +70,7 @@ export class CodexRolloutHistory {
   }
 }
 
-async function readPublicToolIndex(lines: AsyncIterable<string>): Promise<Map<string, ReplayEntry[]>> {
+async function readPublicHistoryIndex(lines: AsyncIterable<string>): Promise<Map<string, ReplayEntry[]>> {
   const turns = new Map<string, ReplayEntry[]>();
   const calls = new Map<string, ReplayEntry>();
   let activeTurn: string | undefined;
@@ -80,7 +88,8 @@ async function readPublicToolIndex(lines: AsyncIterable<string>): Promise<Map<st
     turns.set(turnId, list);
     if (payload.type === "message" && (payload.role === "user" || payload.role === "assistant")) {
       const anchor = messageAnchor(payload.role, payload.content);
-      if (anchor) list.push({ id: string(payload.id), anchor });
+      const userImages = payload.role === "user" ? readUserImages(payload.content) : undefined;
+      if (anchor || userImages) list.push({ id: string(payload.id), anchor, userImages });
       continue;
     }
     const callId = string(payload.call_id);
@@ -110,6 +119,87 @@ async function readPublicToolIndex(lines: AsyncIterable<string>): Promise<Map<st
     }
   }
   return turns;
+}
+
+function readUserImages(value: unknown): ReplayedUserImages | undefined {
+  if (!Array.isArray(value)) return;
+  const content = value.map(record);
+  if (!content.some(block => block.type === "input_image")) return;
+  const projected = projectCodexUserInput(content, { allowLocalFiles: false });
+  const inputs: Array<[string, string]> = [];
+  const images: NonNullable<ReplayedUserImages["images"]> = [];
+  let valid = true;
+  let imageCount = 0;
+  for (let index = 0; index < content.length; index++) {
+    const block = content[index];
+    if (block.type !== "input_text" || typeof block.text !== "string") return;
+    const path = /^<image name=\[Image #\d+\] path="([^"\r\n]+)">$/.exec(block.text)?.[1];
+    if (path && content[index + 1]?.type === "input_image" && content[index + 2]?.type === "input_text" && content[index + 2].text === "</image>") {
+      const image = projected[index + 1];
+      if (image?.type !== "file" || !image.url.startsWith("data:") || imageCount++ >= MAX_IMAGES_PER_MESSAGE) valid = false;
+      else images.push({ path, url: image.url });
+      inputs.push(["image", path]);
+      index += 2;
+    } else inputs.push(["text", block.text]);
+  }
+  return inputs.some(input => input[0] === "image") ? { key: inputKey(inputs), images: valid ? images : undefined } : undefined;
+}
+
+function nativeUserImageKey(item: Record<string, unknown>): string | undefined {
+  if (item.type !== "userMessage" || !Array.isArray(item.content)) return;
+  const inputs: Array<[string, string]> = [];
+  let hasImage = false;
+  for (const value of item.content) {
+    const block = record(value);
+    if (block.type === "text" && typeof block.text === "string") inputs.push(["text", block.text]);
+    else if ((block.type === "localImage" || block.type === "image") && typeof block.path === "string") {
+      hasImage = true;
+      inputs.push(["image", block.path]);
+    } else return;
+  }
+  return hasImage ? inputKey(inputs) : undefined;
+}
+
+function inputKey(inputs: Array<[string, string]>): string {
+  return createHash("sha256").update(JSON.stringify(inputs)).digest("hex");
+}
+
+function reconcileUserImages(items: unknown[], replay: ReplayEntry[]): unknown[] {
+  const candidates = new Map<string, ReplayedUserImages | undefined>();
+  for (const entry of replay) {
+    if (!entry.userImages) continue;
+    const { key } = entry.userImages;
+    // Repeated input cannot establish which image bytes belong to a native item.
+    candidates.set(key, candidates.has(key) || !entry.userImages.images ? undefined : entry.userImages);
+  }
+  if (candidates.size === 0) return items;
+  const keys = items.map(value => nativeUserImageKey(record(value)));
+  const occurrences = new Map<string, number>();
+  for (const key of keys) if (key) occurrences.set(key, (occurrences.get(key) ?? 0) + 1);
+  let changed = false;
+  const result = items.map((value, index) => {
+    const key = keys[index];
+    const candidate = key && occurrences.get(key) === 1 ? candidates.get(key) : undefined;
+    if (!candidate?.images) return value;
+    const images = candidate.images;
+    const item = record(value);
+    let imageIndex = 0;
+    let replaced = false;
+    const content = (item.content as unknown[]).map(value => {
+      const block = record(value);
+      if (block.type !== "localImage" && block.type !== "image") return value;
+      const image = images[imageIndex++];
+      if (block.type !== "localImage") return value;
+      replaced = true;
+      // The path is only an exact-match key. Bytes come from the same native turn,
+      // so completed history does not depend on keeping upload files alive.
+      return { ...block, type: "image", url: image.url };
+    });
+    if (!replaced) return value;
+    changed = true;
+    return { ...item, content };
+  });
+  return changed ? result : items;
 }
 
 function reconcileTools(items: unknown[], replay: ReplayEntry[], live: boolean): unknown[] {

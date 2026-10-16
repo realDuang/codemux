@@ -25,7 +25,8 @@ import type { MessageBuffer } from "../engine-adapter";
 import { normalizeCodexResponseContent } from "./response-content";
 import { extractCodexToolOutput } from "./tool-output";
 import { withCodexAssistantImages } from "./assistant-images";
-import { formatCodexAsyncQuestionReplies, getCodexAsyncQuestions, parseCodexAsyncQuestionReplies } from "./async-questions";
+import { projectCodexUserInput } from "./user-input";
+import { formatCodexAsyncQuestionReplies, getCodexAsyncQuestions, parseCodexAsyncQuestionReplies, projectCodexAsyncQuestionReply } from "./async-questions";
 
 interface CodexUserInput {
   type?: string;
@@ -952,7 +953,9 @@ export function convertThreadToMessages(
           return;
         }
         const messageId = `${messagePrefix}:user:${encodeURIComponent(itemId)}`;
-        const parts = convertUserInputBlocks(sessionId, extractUserInputs(item.content), messageId);
+        const replyDisplay = projectCodexAsyncQuestionReply(item.content);
+        const parts = convertUserInputBlocks(sessionId, extractUserInputs(item.content), messageId)
+          .map(part => part.type === "text" && replyDisplay ? { ...part, ...replyDisplay } : part);
         if (parts.length === 0) return;
         if (appendAssistant(false)) buffer = createBuffer(`assistant-after:${encodeURIComponent(itemId)}`);
         const userCreatedAt = createdAt + messageIndex++ / (items.length + 1);
@@ -1085,41 +1088,20 @@ function convertUserInputBlocks(
   sessionId: string,
   blocks: CodexUserInput[],
   messageId: string,
-): TextPart[] {
-  const parts: TextPart[] = [];
+): UnifiedPart[] {
+  const parts: UnifiedPart[] = [];
+  const projected = projectCodexUserInput(blocks, { allowLocalFiles: true });
   let index = 0;
 
-  for (const block of blocks) {
+  for (const [blockIndex, block] of blocks.entries()) {
+    const content = projected[blockIndex];
+    if (content) {
+      if (content.type !== "text" || content.text) {
+        parts.push({ id: `${messageId}_p${index++}`, messageId, sessionId, ...content });
+      }
+      continue;
+    }
     switch (block.type) {
-      case "text":
-        if (block.text) {
-          parts.push({
-            id: `${messageId}_p${index++}`,
-            messageId,
-            sessionId,
-            type: "text",
-            text: block.text,
-          });
-        }
-        break;
-      case "image":
-        parts.push({
-          id: `${messageId}_p${index++}`,
-          messageId,
-          sessionId,
-          type: "text",
-          text: summarizeImageBlock(block.url),
-        });
-        break;
-      case "localImage":
-        parts.push({
-          id: `${messageId}_p${index++}`,
-          messageId,
-          sessionId,
-          type: "text",
-          text: "[Image]",
-        });
-        break;
       case "skill":
         parts.push({
           id: `${messageId}_p${index++}`,
@@ -1498,15 +1480,4 @@ function toMillis(value: string | number | undefined, fallback: number): number 
   }
 
   return fallback;
-}
-
-function summarizeImageBlock(url?: string): string {
-  if (typeof url === "string") {
-    const match = /^data:([^;,]+)[;,]/i.exec(url);
-    if (match?.[1]) {
-      return `[Image: ${match[1]}]`;
-    }
-  }
-
-  return "[Image]";
 }

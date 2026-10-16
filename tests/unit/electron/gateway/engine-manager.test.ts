@@ -849,6 +849,28 @@ describe("EngineManager", () => {
       expect(adapterA.sendMessage).toHaveBeenCalledWith("existing-s1", expect.any(Array), expect.any(Object));
     });
 
+    it("forwards submission correlation independently of resolved session settings", async () => {
+      adapterA.createSession.mockResolvedValue({ id: "engine-s1", engineMeta: {} } as any);
+      await engineManager.sendMessage("conv1", [{ type: "text", text: "Steer" }], {
+        clientMessageId: "client-second",
+      });
+      expect(adapterA.sendMessage).toHaveBeenCalledWith(
+        "engine-s1",
+        [{ type: "text", text: "Steer" }],
+        expect.objectContaining({ clientMessageId: "client-second", directory: "/dir" }),
+      );
+    });
+
+    it("assigns distinct submission IDs to callers without a pending preview", async () => {
+      adapterA.createSession.mockResolvedValue({ id: "engine-s1", engineMeta: {} } as any);
+      await engineManager.sendMessage("conv1", [{ type: "text", text: "IM input" }]);
+      await engineManager.sendMessage("conv1", [{ type: "text", text: "Another client" }]);
+      const ids = adapterA.sendMessage.mock.calls.map((call) => call[2]?.clientMessageId);
+      expect(ids).toHaveLength(2);
+      expect(ids.every((id) => typeof id === "string" && id.length > 0)).toBe(true);
+      expect(new Set(ids).size).toBe(2);
+    });
+
     it("recreates engine session when hasSession returns false", async () => {
       (conversationStore.get as any).mockReturnValue(
         makeMockConv({ engineSessionId: "stale-session" }),

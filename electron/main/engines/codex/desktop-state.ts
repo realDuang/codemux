@@ -1,5 +1,4 @@
 import type {
-  FilePart,
   TextPart,
   ToolPart,
   UnifiedMessage,
@@ -15,7 +14,8 @@ import { convertDesktopElicitationToQuestion } from "./desktop-elicitation";
 import { normalizeCodexResponseContent } from "./response-content";
 import { extractCodexToolOutput } from "./tool-output";
 import { withCodexAssistantImages } from "./assistant-images";
-import { convertCodexAsyncQuestion, formatCodexAsyncQuestionReplies, getCodexAsyncQuestions, getPendingCodexAsyncQuestionGroups, parseCodexAsyncQuestionReplies } from "./async-questions";
+import { projectCodexUserInput } from "./user-input";
+import { convertCodexAsyncQuestion, formatCodexAsyncQuestionReplies, getCodexAsyncQuestions, getPendingCodexAsyncQuestionGroups, parseCodexAsyncQuestionReplies, projectCodexAsyncQuestionReply } from "./async-questions";
 
 export interface DesktopStatePatch {
   op: "add" | "replace" | "remove";
@@ -322,7 +322,11 @@ function convertTurn(session: UnifiedSession, turn: Record<string, unknown>, ind
           codexAsyncQuestionReplyIds: questionReplies.map(reply => reply.questionItemId),
           codexAsyncQuestionReplyAccepted: type === "userMessage" || item.status === "accepted",
         };
-      } else message.parts = userParts(base, input);
+      } else {
+        const replyDisplay = projectCodexAsyncQuestionReply(input);
+        message.parts = userParts(base, input, hostId).map(part =>
+          part.type === "text" && replyDisplay ? { ...part, ...replyDisplay } : part);
+      }
       if (type === "steeringUserMessage") {
         message.engineMeta = { ...message.engineMeta, clientUserMessageId: item.clientUserMessageId, serverUserMessageId: item.serverUserMessageId };
       }
@@ -460,15 +464,14 @@ function userInputKey(input: unknown): string {
   return values.length > 0 ? JSON.stringify(values) : "";
 }
 
-function userParts(base: { id: string; messageId: string; sessionId: string }, input: unknown): UnifiedPart[] {
-  return records(input).flatMap((block, index): UnifiedPart[] => {
+function userParts(base: { id: string; messageId: string; sessionId: string }, input: unknown, hostId: string): UnifiedPart[] {
+  const blocks = records(input);
+  const projected = projectCodexUserInput(blocks, { allowLocalFiles: hostId === "local" });
+  return blocks.flatMap((block, index): UnifiedPart[] => {
     const part = { ...base, id: `${base.id}:input:${index}` };
-    if (block.type === "text") return [{ ...part, type: "text", text: string(block.text) ?? "" }];
-    if (block.type === "image" && typeof block.url === "string") {
-      const mime = /^data:([^;,]+)/.exec(block.url)?.[1] ?? "image/png";
-      return [{ ...part, type: "file", mime, filename: `image-${index + 1}`, url: block.url } satisfies FilePart];
-    }
-    if (block.type === "localImage") return [{ ...part, type: "text", text: `[Image: ${string(block.path) ?? "local image"}]` }];
+    const content = projected[index];
+    if (content) return [{ ...part, ...content }];
+    if (block.type === "text") return [{ ...part, type: "text", text: "" }];
     if (block.type === "skill") return [{ ...part, type: "text", text: `$${string(block.name) ?? "skill"}` }];
     return [];
   });

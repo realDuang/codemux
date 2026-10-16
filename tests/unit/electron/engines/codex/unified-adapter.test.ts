@@ -203,8 +203,13 @@ describe("UnifiedCodexAdapter", () => {
     expect(session.id).toBe("thread-1");
     expect(session.connection).toMatchObject({ origin: "CodeMux", executor: "CodeMux", shared: false, available: true });
     const messages = vi.fn();
+    const consumed = vi.fn();
     f.adapter.on("message.updated", messages);
-    const reply = await f.adapter.sendMessage("codex_thread-1", [{ type: "text", text: "Hello" }]);
+    f.adapter.on("message.queued.consumed", consumed);
+    const reply = await f.adapter.sendMessage("codex_thread-1", [{ type: "text", text: "Hello" }], { clientMessageId: "local-preview" });
+    expect(f.executions[0].sendMessage).toHaveBeenCalledWith("codex_thread-1", expect.any(Array), expect.objectContaining({ clientMessageId: "local-preview" }));
+    f.executions[0].emit("message.queued.consumed", { sessionId: "codex_thread-1", messageId: "local-native-message", clientMessageId: "local-preview" });
+    expect(consumed).toHaveBeenCalledExactlyOnceWith({ sessionId: "thread-1", messageId: "local-native-message", clientMessageId: "local-preview" });
     expect(reply.id).toContain("codex-desktop:v1:local:thread-1:turn-1:item:turn-1-final");
     const before = await f.adapter.listMessages(session.id);
     expect(before).toHaveLength(2);
@@ -326,6 +331,39 @@ describe("UnifiedCodexAdapter", () => {
     expect(f.resolve).toHaveBeenCalledWith("legacy", expect.objectContaining({ id: "legacy" }));
     expect(f.executions[0].createSession).toHaveBeenCalledWith("/repo", expect.objectContaining({ codexThreadId: "legacy", codexDesktopOwner: "codemux" }));
     expect((await f.adapter.getSession(session.id))!.connection?.runtimeVersion).toBe("0.154.0");
+  });
+
+  it("distinguishes a healthy sharing channel from idle history without an attached executor", async () => {
+    const f = fixture(true);
+    await f.adapter.start();
+    const session = await f.adapter.restoreSession("idle-history", "/repo", { codexThreadId: "idle-history" });
+
+    expect(f.adapter.getSessionSharing().status).toBe("connected");
+    expect(session.connection).toMatchObject({ shared: true, available: false, sharingStatus: "connected" });
+    expect(session.connection?.executor).toBeUndefined();
+    expect(f.executions[0].createSession).not.toHaveBeenCalled();
+    const updates = vi.fn();
+    f.adapter.on("session.updated", updates);
+    await f.adapter.setSessionSharing(false);
+    expect(updates).toHaveBeenLastCalledWith({ session: expect.objectContaining({ connection: expect.objectContaining({
+      available: false, sharingStatus: "disabled",
+    }) }) });
+    await f.adapter.setSessionSharing(true);
+    expect(updates).toHaveBeenLastCalledWith({ session: expect.objectContaining({ connection: expect.objectContaining({
+      available: false, sharingStatus: "connected",
+    }) }) });
+  });
+
+  it("reports sharing loss separately while a local executor remains available", async () => {
+    const f = fixture(true);
+    const session = await f.adapter.createSession("/repo");
+    f.follower.close();
+
+    expect(f.adapter.getSessionSharing().status).toBe("unavailable");
+    expect((await f.adapter.getSession(session.id))?.connection).toMatchObject({
+      executor: "CodeMux", available: true, shared: false, sharingStatus: "unavailable",
+    });
+    expect(f.executions[0].hasSession(`codex_${session.id}`)).toBe(true);
   });
 
   it("performs one no-owner lookup before acquisition while retaining final owner registration checks", async () => {
@@ -568,6 +606,8 @@ describe("UnifiedCodexAdapter", () => {
 
   it.each([undefined, "CodeMux"])("follows a foreign owner using its advertised name %s without inferring creation origin", async (clientName) => {
     const f = fixture(true);
+    const consumed = vi.fn();
+    f.adapter.on("message.queued.consumed", consumed);
     const state = { id: "external", hostId: "local", cwd: "/repo", title: "External", createdAt: 1000, updatedAt: 2000, resumeState: "resumed", turns: [] as Array<Record<string, unknown>>, requests: [] };
     let revision = 1;
     f.owners.set("external", { clientId: "desktop", followers: new Set(), registration: {
@@ -588,8 +628,9 @@ describe("UnifiedCodexAdapter", () => {
     expect(f.resolve).not.toHaveBeenCalled();
     expect(f.executions).toHaveLength(0);
     f.follower.discoverOwner.mockClear();
-    const reply = await f.adapter.sendMessage("external", [{ type: "text", text: "External turn" }]);
+    const reply = await f.adapter.sendMessage("external", [{ type: "text", text: "External turn" }], { clientMessageId: "foreign-preview" });
     expect(reply.id).toBe("codex-desktop:v1:local:external:remote-turn:item:remote-final");
+    expect(consumed).toHaveBeenCalledExactlyOnceWith({ sessionId: "external", messageId: expect.any(String), clientMessageId: "foreign-preview" });
     expect(f.follower.discoverOwner).toHaveBeenCalledExactlyOnceWith("external");
     expect(f.follower.startTurn).toHaveBeenCalledTimes(1);
     expect(f.executions).toHaveLength(0);

@@ -26,6 +26,8 @@ export interface SessionConnectionInfo {
   shared: boolean;
   /** Live connection state; an offline history may still be safely resumable. */
   available: boolean;
+  /** Sharing channel health, independent of whether this chat has an attached executor. */
+  sharingStatus?: EngineSharingState["status"];
   runtimeVersion?: string;
 }
 
@@ -362,6 +364,8 @@ export interface TextPart extends PartBase {
   completed?: boolean;
   /** Visible content when the original text also carries non-display metadata. */
   displayText?: string;
+  /** Structured user answers; transport envelopes remain in the original text. */
+  questionReplies?: QuestionReplyContent[];
   /** Source notes normalized by the adapter for the response footer. */
   citations?: TextCitation[];
   /** Adapter-authorized resources for exact image references; text and copy content stay intact. */
@@ -369,6 +373,13 @@ export interface TextPart extends PartBase {
   synthetic?: boolean;
   /** Progress updates stay in the activity stream; final text forms the response. */
   phase?: "commentary" | "partial" | "final";
+}
+
+export interface QuestionReplyContent {
+  question: string;
+  answer: string;
+  /** Plain-text summary when the original question contains Markdown. */
+  summary?: string;
 }
 
 export interface TextCitation {
@@ -993,6 +1004,8 @@ export interface SessionArchiveRequest {
 export interface MessageSendRequest {
   sessionId: string;
   content: MessagePromptContent[];
+  /** Correlates native acceptance with the sending client's pending preview. */
+  clientMessageId?: string;
   mode?: string;
   modelId?: string;
   reasoningEffort?: ReasoningEffort | null;

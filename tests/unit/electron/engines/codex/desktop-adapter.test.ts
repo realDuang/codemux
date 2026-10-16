@@ -227,6 +227,73 @@ describe("CodexDesktopAdapter", () => {
     expect(client.discoverOwner).toHaveBeenCalledTimes(2);
   });
 
+  it.each(["completed", "interrupted", "failed"])("preserves a stored %s turn's activity without a connected owner", async (status) => {
+    client.discoverOwner.mockResolvedValue(null);
+    const readStoredThread = vi.fn(async () => ({
+      thread: { id: THREAD, cwd: "/repo", createdAt: 1, updatedAt: 2, turns: [
+        { id: "stored-turn", status, items: [], ...(status === "failed" ? { error: { message: "Current turn failed" } } : {}) },
+      ] },
+      archived: false,
+    }));
+    adapter = new CodexDesktopAdapter({ client: client as unknown as CodexDesktopIpcClient, readStoredThread });
+    const updated = vi.fn();
+    adapter.on("session.updated", updated);
+
+    const session = await adapter.getSession(THREAD);
+    const expected = status === "failed" ? "error" : "idle";
+    expect(session?.activityStatus).toBe(expected);
+    expect((await adapter.listSessions())[0].activityStatus).toBe(expected);
+    expect(updated).toHaveBeenLastCalledWith({ session: expect.objectContaining({ activityStatus: expected }) });
+    expect(adapter.hasSession(THREAD)).toBe(false);
+    expect(client.followThread).not.toHaveBeenCalled();
+    expect(client.startTurn).not.toHaveBeenCalled();
+  });
+
+  it.each(["completed", "interrupted", "failed", "inProgress"])("preserves terminal %s activity when its owner disconnects", async (status) => {
+    client.initialState = conversation({ turns: [turn("latest-turn", status)] });
+    await adapter.attachThread(THREAD);
+    const updated = vi.fn();
+    adapter.on("session.updated", updated);
+
+    client.emit("ownerDisconnected", OWNER);
+
+    const expected = status === "failed" || status === "inProgress" ? "error" : "idle";
+    expect((await adapter.listSessions())[0].activityStatus).toBe(expected);
+    expect(updated).toHaveBeenLastCalledWith({ session: expect.objectContaining({ activityStatus: expected }) });
+    expect(adapter.hasSession(THREAD)).toBe(false);
+  });
+
+  it("replaces disconnected active state after stored history confirms completion", async () => {
+    client.initialState = conversation({ turns: [turn("latest-turn", "inProgress")] });
+    adapter = new CodexDesktopAdapter({ client: client as unknown as CodexDesktopIpcClient,
+      readStoredThread: async () => ({ thread: { id: THREAD, cwd: "/repo", createdAt: 1, updatedAt: 2,
+        turns: [{ id: "latest-turn", status: "completed", items: [] }] }, archived: false }) });
+    await adapter.attachThread(THREAD);
+    client.emit("ownerDisconnected", OWNER);
+    expect((await adapter.listSessions())[0].activityStatus).toBe("error");
+    client.discoverOwner.mockResolvedValue(null);
+    const updated = vi.fn();
+    adapter.on("session.updated", updated);
+
+    expect((await adapter.getSession(THREAD))?.activityStatus).toBe("idle");
+    expect((await adapter.listSessions())[0].activityStatus).toBe("idle");
+    expect(updated).toHaveBeenLastCalledWith({ session: expect.objectContaining({ activityStatus: "idle" }) });
+    expect(adapter.hasSession(THREAD)).toBe(false);
+  });
+
+  it("keeps disconnected pending approvals visible until a fresh follow recovers", async () => {
+    client.initialState = conversation({ turns: [turn("latest-turn", "completed")], requests: [
+      { id: "approval", method: "item/commandExecution/requestApproval", params: { command: "pwd" } },
+    ] });
+    await adapter.attachThread(THREAD);
+    expect((await adapter.listSessions())[0].activityStatus).toBe("waiting");
+    client.emit("ownerDisconnected", OWNER);
+    expect((await adapter.listSessions())[0].activityStatus).toBe("error");
+    await adapter.attachThread(THREAD);
+    expect((await adapter.listSessions())[0].activityStatus).toBe("waiting");
+    expect(await adapter.getPendingPermissions(THREAD)).toHaveLength(1);
+  });
+
   it.each(["completed-read", "pending-read"])("discovers a newly available owner before sending after %s", async (readState) => {
     const readStoredThread = vi.fn(async () => ({ thread: { id: THREAD, cwd: "/repo", createdAt: 1, updatedAt: 2, turns: [] }, archived: false }));
     const acquireThread = vi.fn(async () => ({ threadId: THREAD, owned: true }));
@@ -513,6 +580,56 @@ describe("CodexDesktopAdapter", () => {
       } },
     ] });
     expect((await sending).engineMeta?.codexItemId).toBe("answer-after-input");
+  });
+
+  it("consumes the queued preview when native steering is accepted while work continues", async () => {
+    const active = turn("active-turn", "inProgress");
+    client.initialState = conversation({ turns: [active] });
+    await adapter.attachThread(THREAD);
+    const consumed = vi.fn();
+    adapter.on("message.queued.consumed", consumed);
+    const sending = adapter.sendMessage(THREAD, [{ type: "text", text: "Also inspect this" }]);
+    const outcome = observe(sending);
+    await vi.waitFor(() => expect(client.steerTurn).toHaveBeenCalledOnce());
+    const payload = client.steerTurn.mock.calls[0][2];
+    expect(consumed).not.toHaveBeenCalled();
+    const receipt = { id: "steer-receipt", type: "steeringUserMessage", clientUserMessageId: payload.clientUserMessageId,
+      input: payload.input, status: "pending" };
+    client.publish({ type: "snapshot", revision: 2, conversationState: conversation({ turns: [{ ...active, items: [...active.items, receipt] }] }) });
+    expect(consumed).not.toHaveBeenCalled();
+    client.publish({ type: "snapshot", revision: 3, conversationState: conversation({ turns: [{ ...active, items: [...active.items, { ...receipt, status: "accepted" }] }] }) });
+    expect(consumed).toHaveBeenCalledOnce();
+    expect(outcome.settled).toBe(false);
+    client.publish({ type: "snapshot", revision: 4, conversationState: conversation({ turns: [{ ...active, status: "completed", durationMs: 1000, items: [...active.items, { ...receipt, status: "accepted" }] }] }) });
+    await sending;
+    expect(consumed).toHaveBeenCalledOnce();
+  });
+
+  it.each([false, true])("correlates identical steering previews by client identity and ignores rejected receipts (server items=%s)", async (serverItems) => {
+    const active = turn("active-turn", "inProgress");
+    client.initialState = conversation({ turns: [active] });
+    await adapter.attachThread(THREAD);
+    const consumed = vi.fn();
+    adapter.on("message.queued.consumed", consumed);
+    const content = [{ type: "text" as const, text: "Same follow-up" }, { type: "image" as const, data: "iVBORw0KGgo=", mimeType: "image/png" }];
+    const first = adapter.sendMessage(THREAD, content, { clientMessageId: "preview-first" });
+    const second = adapter.sendMessage(THREAD, content, { clientMessageId: "preview-second" });
+    observe(first); observe(second);
+    await vi.waitFor(() => expect(client.steerTurn).toHaveBeenCalledTimes(2));
+    const receipts = client.steerTurn.mock.calls.map(([, , payload], index) => ({ id: `receipt-${index}`, type: "steeringUserMessage",
+      clientUserMessageId: payload.clientUserMessageId, input: payload.input, status: "pending", serverUserMessageId: `server-user-${index}` }));
+    const nativeUser = (index: number) => ({ id: receipts[index].serverUserMessageId, type: "userMessage", content: receipts[index].input });
+    client.publish({ type: "snapshot", revision: 2, conversationState: conversation({ turns: [{ ...active, items: [...active.items,
+      { ...receipts[0], status: "failed" }, { ...receipts[1], status: "accepted" },
+      ...(serverItems ? [nativeUser(1)] : []),
+    ] }] }) });
+    expect(consumed).toHaveBeenCalledExactlyOnceWith({ sessionId: THREAD, messageId: expect.any(String), clientMessageId: "preview-second" });
+    client.publish({ type: "snapshot", revision: 3, conversationState: conversation({ turns: [{ ...active, status: "completed", durationMs: 1000,
+      items: [...active.items, ...receipts.map((receipt) => ({ ...receipt, status: "accepted" })), ...(serverItems ? [nativeUser(0), nativeUser(1)] : [])],
+    }] }) });
+    await Promise.all([first, second]);
+    expect(consumed.mock.calls.map(([event]) => event.clientMessageId)).toEqual(["preview-second", "preview-first"]);
+    expect(client.startTurn).not.toHaveBeenCalled();
   });
 
   it("detaches without interrupting a Desktop-owned turn", async () => {

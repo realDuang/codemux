@@ -54,6 +54,15 @@ export const [messageStore, setMessageStore] = createStore<{
   stepsVersion: {},
 });
 
+/** Native admissions can complete out of order or originate from another client. */
+export function consumeQueuedPreview(sessionId: string, clientMessageId?: string): void {
+  const queued = messageStore.queued[sessionId];
+  if (!queued?.length) return;
+  setMessageStore("queued", sessionId, (draft) => clientMessageId === undefined
+    ? draft.slice(1)
+    : draft.filter((message) => message.id !== clientMessageId));
+}
+
 /** Replace the displayed parts with a complete authoritative message snapshot. */
 export function replaceMessageParts(messageId: string, parts: readonly UnifiedPart[]): void {
   setMessageStore("part", messageId, [...parts].sort(compareParts));

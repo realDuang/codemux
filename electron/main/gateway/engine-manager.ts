@@ -3,6 +3,7 @@
 // ============================================================================
 
 import { EventEmitter } from "events";
+import { randomUUID } from "node:crypto";
 import { EngineAdapter, type EngineAdapterEvents } from "../engines/engine-adapter";
 import { conversationStore, makeCatalogProjectId } from "../services/conversation-store";
 import { getDefaultWorkspacePath } from "../services/default-workspace";
@@ -1780,7 +1781,7 @@ export class EngineManager extends EventEmitter {
   async sendMessage(
     sessionId: string,
     content: MessagePromptContent[],
-    options?: { mode?: string; modelId?: string; reasoningEffort?: ReasoningEffort | null; serviceTier?: CodexServiceTier | null },
+    options?: { clientMessageId?: string; mode?: string; modelId?: string; reasoningEffort?: ReasoningEffort | null; serviceTier?: CodexServiceTier | null },
   ): Promise<UnifiedMessage> {
     sessionId = conversationStore.resolveConversationId(sessionId);
     const trackQueuedTiming = this.markSessionActive(sessionId);
@@ -1816,6 +1817,7 @@ export class EngineManager extends EventEmitter {
 
       const result = await adapter.sendMessage(engineSessionId, content, {
         ...resolvedOptions,
+        clientMessageId: options?.clientMessageId || randomUUID(),
         directory: conv.directory,
       });
 

@@ -92,3 +92,13 @@ See [Server runtime and distribution](server-runtime.md) for directory packages,
 ## Adding a new engine
 
 Implement `EngineAdapter` (see `electron/main/engines/engine-adapter.ts`), add tool name mapping in `src/types/tool-mapping.ts`, and register in `electron/main/index.ts`. All engine-specific logic stays in the adapter layer; the frontend renders only unified types.
+
+## README media
+
+The demo GIF and feature screenshots in `assets/screenshots/` are recorded from a real CodeMux server, so they stay in sync with the UI:
+
+```bash
+bun run media:readme
+```
+
+`scripts/readme-media/` starts the server with scripted demo engines (no real agents or accounts), creates a throwaway sample repository, and drives the Web UI with Playwright. It needs `ffmpeg` on `PATH`; set `PLAYWRIGHT_CHROMIUM_PATH` to use a specific Chromium, and `SKIP_VIDEO=1` to refresh only the screenshots. To change what an agent does on screen, edit `scripts/readme-media/scenarios.ts`.

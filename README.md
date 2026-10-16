@@ -17,12 +17,7 @@
 
 [Website](https://realduang.github.io/codemux/) · [Download](https://github.com/realDuang/codemux/releases/latest) · [Docs](#-documentation) · [Roadmap](https://github.com/realDuang/codemux/discussions/61)
 
-<!--
-  TODO(demo-gif): replace the screenshot below with a 15–25 s GIF/MP4 (≤ 10 MB, ~1600px wide):
-  pick an engine → send a prompt → expand a tool step with a diff → open the same session on a phone.
-  Save as assets/screenshots/demo.gif and point this <img> at it.
--->
-<img src="https://raw.githubusercontent.com/realDuang/codemux/main/assets/screenshots/main-chat.jpg" alt="CodeMux - Multi-Engine AI Coding Interface" width="860" />
+<img src="https://raw.githubusercontent.com/realDuang/codemux/main/assets/screenshots/demo.gif" alt="CodeMux demo: an agent finds a bug, asks to run tests, and shows the diff" width="860" />
 
 </div>
 
@@ -94,11 +89,19 @@ Every agent action is an expandable step: file diffs with syntax highlighting, s
 <table>
   <tr>
     <td><img src="https://raw.githubusercontent.com/realDuang/codemux/main/assets/screenshots/terminal.jpg" alt="Integrated terminal" /></td>
-    <td><img src="https://raw.githubusercontent.com/realDuang/codemux/main/assets/screenshots/project-preview.jpg" alt="File explorer" /></td>
+    <td><img src="https://raw.githubusercontent.com/realDuang/codemux/main/assets/screenshots/main-chat.jpg" alt="Git changes with inline diff" /></td>
   </tr>
   <tr>
     <td align="center"><sub>Integrated terminal</sub></td>
-    <td align="center"><sub>File explorer and git changes</sub></td>
+    <td align="center"><sub>Git changes with inline diff</sub></td>
+  </tr>
+  <tr>
+    <td><img src="https://raw.githubusercontent.com/realDuang/codemux/main/assets/screenshots/scheduled-task.jpg" alt="Scheduled tasks" /></td>
+    <td><img src="https://raw.githubusercontent.com/realDuang/codemux/main/assets/screenshots/project-preview.jpg" alt="File explorer and preview" /></td>
+  </tr>
+  <tr>
+    <td align="center"><sub>Scheduled tasks</sub></td>
+    <td align="center"><sub>File explorer and preview</sub></td>
   </tr>
 </table>
 
@@ -117,17 +120,14 @@ New devices must be approved with a 6-digit code, each device gets its own JWT, 
   <tr>
     <td><img src="https://raw.githubusercontent.com/realDuang/codemux/main/assets/screenshots/remote-access.jpg" alt="Remote access" /></td>
     <td><img src="https://raw.githubusercontent.com/realDuang/codemux/main/assets/screenshots/devices-management.jpg" alt="Device management" /></td>
+    <td width="22%"><img src="https://raw.githubusercontent.com/realDuang/codemux/main/assets/screenshots/mobile.jpg" alt="Same session on a phone" /></td>
   </tr>
   <tr>
     <td align="center"><sub>Remote access</sub></td>
     <td align="center"><sub>Device management</sub></td>
+    <td align="center"><sub>Same session on a phone</sub></td>
   </tr>
 </table>
-
-<!--
-  TODO(mobile-screenshot): add a phone screenshot (portrait, browser or PWA) showing a running session
-  with an expanded tool step, e.g. assets/screenshots/mobile.jpg, as a third cell above.
--->
 
 > CodeMux is designed for personal use. Revoke devices you no longer use and turn the public tunnel off when you do not need it.
 
@@ -146,10 +146,7 @@ Talk to your agents from IM with streaming output and structured cards, not just
 
 📖 [Channel setup guide](docs/channels/README.md)
 
-<!--
-  TODO(im-screenshot): add one IM screenshot (e.g. Feishu or Telegram) showing a streamed reply with a
-  tool summary, e.g. assets/screenshots/im-channel.jpg.
--->
+<p align="center"><img src="https://raw.githubusercontent.com/realDuang/codemux/main/assets/screenshots/channels.jpg" alt="IM channel settings" width="720" /></p>
 
 ## How is this different?
 

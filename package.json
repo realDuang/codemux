@@ -21,6 +21,7 @@
     "dist:mac:x64": "TARGET_ARCH=x64 bun scripts/predist.ts && bun run build && electron-builder --mac --x64 --publish never",
     "dist:win": "bun scripts/predist.ts && bun run build && electron-builder --win --publish never",
     "typecheck": "tsc --noEmit",
+    "media:readme": "node scripts/readme-media/capture.mjs",
     "codex:desktop:smoke": "bun scripts/codex-desktop-smoke.ts",
     "setup": "bun scripts/setup.ts",
     "start": "bun scripts/start.ts",

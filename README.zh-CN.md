@@ -17,12 +17,7 @@
 
 [官网](https://realduang.github.io/codemux/) · [下载](https://github.com/realDuang/codemux/releases/latest) · [文档](#-文档) · [路线图](https://github.com/realDuang/codemux/discussions/61)
 
-<!--
-  TODO(demo-gif): 用一段 15–25 秒的 GIF/MP4（≤ 10 MB，宽约 1600px）替换下面的截图：
-  选择引擎 → 发送任务 → 展开一个带 diff 的工具步骤 → 在手机上打开同一个会话。
-  保存为 assets/screenshots/demo.gif 并把这里的 <img> 指向它。
--->
-<img src="https://raw.githubusercontent.com/realDuang/codemux/main/assets/screenshots/main-chat.jpg" alt="CodeMux - 多引擎 AI 编程界面" width="860" />
+<img src="https://raw.githubusercontent.com/realDuang/codemux/main/assets/screenshots/demo.gif" alt="CodeMux 演示：Agent 定位 bug、申请运行测试并展示 diff" width="860" />
 
 </div>
 
@@ -94,11 +89,19 @@ Agent 的每个动作都是一个可展开的步骤：带语法高亮的文件 d
 <table>
   <tr>
     <td><img src="https://raw.githubusercontent.com/realDuang/codemux/main/assets/screenshots/terminal.jpg" alt="内置终端" /></td>
-    <td><img src="https://raw.githubusercontent.com/realDuang/codemux/main/assets/screenshots/project-preview.jpg" alt="文件浏览器" /></td>
+    <td><img src="https://raw.githubusercontent.com/realDuang/codemux/main/assets/screenshots/main-chat.jpg" alt="Git 变更与内联 diff" /></td>
   </tr>
   <tr>
     <td align="center"><sub>内置终端</sub></td>
-    <td align="center"><sub>文件浏览器与 Git 变更</sub></td>
+    <td align="center"><sub>Git 变更与内联 diff</sub></td>
+  </tr>
+  <tr>
+    <td><img src="https://raw.githubusercontent.com/realDuang/codemux/main/assets/screenshots/scheduled-task.jpg" alt="定时任务" /></td>
+    <td><img src="https://raw.githubusercontent.com/realDuang/codemux/main/assets/screenshots/project-preview.jpg" alt="文件浏览与预览" /></td>
+  </tr>
+  <tr>
+    <td align="center"><sub>定时任务</sub></td>
+    <td align="center"><sub>文件浏览与预览</sub></td>
   </tr>
 </table>
 
@@ -117,17 +120,14 @@ Agent 的每个动作都是一个可展开的步骤：带语法高亮的文件 d
   <tr>
     <td><img src="https://raw.githubusercontent.com/realDuang/codemux/main/assets/screenshots/remote-access.jpg" alt="远程访问" /></td>
     <td><img src="https://raw.githubusercontent.com/realDuang/codemux/main/assets/screenshots/devices-management.jpg" alt="设备管理" /></td>
+    <td width="22%"><img src="https://raw.githubusercontent.com/realDuang/codemux/main/assets/screenshots/mobile.jpg" alt="手机上的同一会话" /></td>
   </tr>
   <tr>
     <td align="center"><sub>远程访问</sub></td>
     <td align="center"><sub>设备管理</sub></td>
+    <td align="center"><sub>手机上的同一会话</sub></td>
   </tr>
 </table>
-
-<!--
-  TODO(mobile-screenshot): 补一张手机竖屏截图（浏览器或 PWA），展示正在运行、展开了工具步骤的会话，
-  例如 assets/screenshots/mobile.jpg，作为上表的第三格。
--->
 
 > CodeMux 面向个人使用。不再使用的设备请及时撤销，不需要时请关闭公网隧道。
 
@@ -146,10 +146,7 @@ Agent 的每个动作都是一个可展开的步骤：带语法高亮的文件 d
 
 📖 [渠道配置指南](docs/channels/README.md)
 
-<!--
-  TODO(im-screenshot): 补一张 IM 截图（如飞书或 Telegram），展示流式回复和工具摘要，
-  例如 assets/screenshots/im-channel.jpg。
--->
+<p align="center"><img src="https://raw.githubusercontent.com/realDuang/codemux/main/assets/screenshots/channels.jpg" alt="IM 渠道设置" width="720" /></p>
 
 ## 有什么不同？
 

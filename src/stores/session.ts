@@ -1,5 +1,6 @@
 import { createStore, reconcile } from "solid-js/store";
 import { isElectron } from "../lib/platform";
+import { isProjectPathVisible, type ProjectPathFilter } from "../../shared/project-path-filter";
 import { clearPersistedInputDrafts, loadPersistedInputDrafts, persistInputDraft, readPersistedInputDrafts, type InputDraftStorage } from "../lib/input-draft-storage";
 import type {
   CodexServiceTier,
@@ -66,6 +67,8 @@ export const [sessionStore, setSessionStore] = createStore<{
   sendingMap: Record<string, boolean>;
   /** Whether to show default workspace in sidebar (reactive mirror of setting). */
   showDefaultWorkspace: boolean;
+  /** Folder rules affect project history display without changing native sessions. */
+  projectPathFilter: ProjectPathFilter;
   /** Worktrees grouped by project directory */
   worktrees: Record<string, UnifiedWorktree[]>;
   /** Worktree expand/collapse state */
@@ -85,6 +88,7 @@ export const [sessionStore, setSessionStore] = createStore<{
   projectExpanded: {},
   sendingMap: {},
   showDefaultWorkspace: true,
+  projectPathFilter: { whitelist: [], blacklist: [] },
   worktrees: {},
   worktreeExpanded: {},
   inputDrafts: {},
@@ -174,6 +178,22 @@ export function replaceListedSessions(sessions: SessionInfo[]): void {
 
 export function visibleSessionsForEngines(sessions: readonly SessionInfo[], hideArchivedFor: ReadonlySet<EngineType>): SessionInfo[] {
   return sessions.filter((session) => !session.archived || !hideArchivedFor.has(session.engineType));
+}
+
+export function visibleSessionsForProjectPaths(
+  sessions: readonly SessionInfo[],
+  projects: readonly UnifiedProject[],
+  filter: ProjectPathFilter,
+  projectIds?: ReadonlyMap<string, string | undefined>,
+): SessionInfo[] {
+  const byId = new Map(projects.map((project) => [project.id, project]));
+  return sessions.filter((session) => {
+    if (session.directory) return isProjectPathVisible(session.directory, filter);
+    const projectId = projectIds?.get(session.id) ?? session.projectID;
+    const project = projectId ? byId.get(projectId) : undefined;
+    const roots = project ? [project.directory, ...(project.roots ?? [])].filter(Boolean) : [];
+    return (roots.length ? roots : [""]).some((root) => isProjectPathVisible(root, filter));
+  });
 }
 
 export function removeListedSession(sessionId: string): void {

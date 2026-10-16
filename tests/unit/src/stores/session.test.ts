@@ -58,6 +58,7 @@ import {
   replaceListedSessions,
   buildSessionProjectView,
   visibleSessionsForEngines,
+  visibleSessionsForProjectPaths,
   removeListedSession,
 } from "../../../../src/stores/session";
 import type { UnifiedSession } from "../../../../src/types/unified";
@@ -91,6 +92,7 @@ describe("session store", () => {
       projectExpanded: {},
       sendingMap: {},
       showDefaultWorkspace: true,
+      projectPathFilter: { whitelist: [], blacklist: [] },
       worktrees: {},
       worktreeExpanded: {},
       inputDrafts: {},
@@ -113,6 +115,43 @@ describe("session store", () => {
       [{ name: "", directory: "/mixed\\separators/path" }, "path"],
     ] as [any, string][])('getProjectName(%j) returns "%s"', (project, expected) => {
       expect(getProjectName(project)).toBe(expected);
+    });
+  });
+
+  describe("visibleSessionsForProjectPaths", () => {
+    const session = (id: string, directory: string, projectId = "project") => toSessionInfo({
+      id, engineType: "claude", directory, projectId, time: { created: 1, updated: 2 },
+    });
+
+    it("filters a subfolder within a project while preserving selection and drafts", () => {
+      const sessions = [session("keep", "/repo/public"), session("hide", "/repo/private/sub"), session("neighbor", "/repository")];
+      setSessionStore("list", sessions);
+      setSessionStore("current", "hide");
+      setInputDraft("hide", { text: "Keep this draft" });
+      const filter = { whitelist: ["/repo"], blacklist: ["/repo/private"] };
+      const visible = visibleSessionsForProjectPaths(sessionStore.list, [{ id: "project", directory: "/repo" }], filter);
+
+      expect(visible.map((item) => item.id)).toEqual(["keep"]);
+      expect(visible[0]).toBe(sessionStore.list[0]);
+      expect(sessionStore.list).toHaveLength(3);
+      expect(sessionStore.current).toBe("hide");
+      expect(getInputDraft("hide").text).toBe("Keep this draft");
+      expect(visibleSessionsForProjectPaths(sessionStore.list, [], { whitelist: [], blacklist: [] })).toHaveLength(3);
+    });
+
+    it("uses project roots only when a session has no working directory", () => {
+      const sessions = [session("unknown-cwd", ""), session("known-cwd", "/outside"), session("unassigned", "", "missing")];
+      const projects = [{ id: "project", directory: "/root-a", roots: ["/root-a", "/root-b"] }];
+      expect(visibleSessionsForProjectPaths(sessions, projects, { whitelist: ["/root-b"], blacklist: [] }).map((item) => item.id)).toEqual(["unknown-cwd"]);
+      expect(visibleSessionsForProjectPaths(sessions, projects, { whitelist: [], blacklist: ["/root-a", "/root-b"] }).map((item) => item.id)).toEqual(["known-cwd", "unassigned"]);
+    });
+
+    it("respects display project membership and filters archived sessions without changing them", () => {
+      const archived = { ...session("archived", "", "native"), archived: true };
+      const projects = [{ id: "view", directory: "/hidden" }];
+      const projectIds = new Map([["archived", "view"]]);
+      expect(visibleSessionsForProjectPaths([archived], projects, { whitelist: [], blacklist: ["/hidden"] }, projectIds)).toEqual([]);
+      expect(archived).toMatchObject({ archived: true, projectID: "native", directory: "" });
     });
   });
 

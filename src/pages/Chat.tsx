@@ -82,6 +82,7 @@ import { isDefaultTitle } from "../lib/session-utils";
 import { formatTokenCount, formatCostWithUnit, getEngineBadge } from "../components/share/common";
 import { EmptyHero } from "../components/EmptyHero";
 import { getSetting, saveSetting, bootstrapHostSettings } from "../lib/settings";
+import { readProjectPathFilter } from "../../shared/project-path-filter";
 import { BrandMark } from "../components/BrandMark";
 import { refreshThemeFromSettings } from "../lib/theme";
 import { refreshLocaleFromSettings } from "../lib/i18n";
@@ -1319,6 +1320,7 @@ export default function Chat() {
       setSessionStore({
         loading: true,
         showDefaultWorkspace: getSetting<boolean>("showDefaultWorkspace") ?? true,
+        projectPathFilter: readProjectPathFilter(getSetting("projectPathFilter")),
         teamOrchestrationEnabled: getSetting<boolean>("teamOrchestrationEnabled") ?? false,
       });
       setScheduledTaskStore("enabled", getSetting<boolean>("scheduledTasksEnabled") ?? true);
@@ -3010,8 +3012,8 @@ export default function Chat() {
               newSessionPending={newSessionPending()}
               onDeleteSession={handleDeleteSession}
               onRenameSession={handleRenameSession}
-              onDeleteProjectSessions={(projectID, projectName, sessionCount) =>
-                setDeleteProjectInfo({ projectID, projectName, sessionCount })
+              onDeleteProjectSessions={(projectID, projectName) =>
+                setDeleteProjectInfo({ projectID, projectName, sessionCount: sessionStore.list.filter((session) => session.projectID === projectID).length })
               }
               onAddProject={() => {
                 if (!canAddProject()) return;

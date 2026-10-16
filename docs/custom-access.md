@@ -72,3 +72,36 @@ callback address with that platform when using webhook channels.
 
 This setting is an advertised entry point, not a remote desktop-client mode. It
 does not connect the desktop application to another CodeMux host.
+
+## Cloudflare custom domains
+
+Cloudflare quick tunnels require no Cloudflare account setup and produce a
+temporary `*.trycloudflare.com` URL each time they start.
+
+A custom domain requires a Cloudflare named tunnel and a local tunnel credential
+file. CodeMux looks for a UUID-named JSON file in `~/.cloudflared/`, for example
+`~/.cloudflared/<tunnel-id>.json`. If a custom domain is configured but that
+credential is missing, CodeMux will stop startup with a missing-credentials error
+instead of silently falling back to a random quick tunnel URL.
+
+To prepare a custom domain:
+
+```bash
+# Sign in and choose the Cloudflare zone for your domain.
+# This writes ~/.cloudflared/cert.pem.
+cloudflared tunnel login
+
+# If the tunnel already exists, find its name and UUID.
+cloudflared tunnel list
+
+# Download/write the connector credential that CodeMux can detect.
+cloudflared tunnel token --cred-file ~/.cloudflared/<tunnel-id>.json <tunnel-name-or-id>
+
+# Route the hostname to that named tunnel, if it is not already routed.
+cloudflared tunnel route dns <tunnel-name-or-id> <your-domain>
+```
+
+If you do not already have a named tunnel, create one first with
+`cloudflared tunnel create <tunnel-name>`; that command also writes the credential
+JSON. Keep `cert.pem` and `<tunnel-id>.json` private and never commit them to the
+repository.

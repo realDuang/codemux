@@ -1,379 +1,208 @@
 <div align="center">
 
-# CodeMux
-
-[English](./README.md) | **[简体中文](./README.zh-CN.md)** | [日本語](./README.ja.md) | [한국어](./README.ko.md) | [Русский](./README.ru.md)
-
-**多引擎 AI 编程客户端，完整的远程 Agent 体验。**
-
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-
 <img src="https://raw.githubusercontent.com/realDuang/codemux/main/assets/logo.png" alt="CodeMux" width="120" />
 
-*多引擎 AI 编程客户端，完整的 Agent 思维链可视化，零配置安全远程访问 —— 不只是又一个聊天封装。*
+# CodeMux
 
-<img src="https://raw.githubusercontent.com/realDuang/codemux/main/assets/screenshots/main-chat.jpg" alt="CodeMux - 多引擎 AI 编程界面" width="800" />
+**一个工作台，同时驾驭 Claude Code、Copilot CLI、OpenCode 和 Codex：桌面端、任意浏览器、或直接在聊天软件里。**
+
+[![Release](https://img.shields.io/github/v/release/realDuang/codemux?color=blue)](https://github.com/realDuang/codemux/releases/latest)
+[![Downloads](https://img.shields.io/github/downloads/realDuang/codemux/total?color=green)](https://github.com/realDuang/codemux/releases)
+[![Stars](https://img.shields.io/github/stars/realDuang/codemux?style=flat)](https://github.com/realDuang/codemux/stargazers)
+[![Platforms](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux%20%7C%20Web-lightgrey)](#-安装)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Discussions](https://img.shields.io/github/discussions/realDuang/codemux)](https://github.com/realDuang/codemux/discussions)
+
+[English](./README.md) | **简体中文** | [日本語](./README.ja.md) | [한국어](./README.ko.md) | [Русский](./README.ru.md)
+
+[官网](https://realduang.github.io/codemux/) · [下载](https://github.com/realDuang/codemux/releases/latest) · [文档](#-文档) · [路线图](https://github.com/realDuang/codemux/discussions/61)
+
+<!--
+  TODO(demo-gif): 用一段 15–25 秒的 GIF/MP4（≤ 10 MB，宽约 1600px）替换下面的截图：
+  选择引擎 → 发送任务 → 展开一个带 diff 的工具步骤 → 在手机上打开同一个会话。
+  保存为 assets/screenshots/demo.gif 并把这里的 <img> 指向它。
+-->
+<img src="https://raw.githubusercontent.com/realDuang/codemux/main/assets/screenshots/main-chat.jpg" alt="CodeMux - 多引擎 AI 编程界面" width="860" />
 
 </div>
 
----
+## CodeMux 是什么？
+
+CodeMux 是一个面向**编程 Agent** 的开源桌面端与 Web 客户端。它不是对模型 API 的封装，而是在协议层直接对接每个 Agent 自己的运行时，所以 Claude Code、GitHub Copilot CLI、OpenCode 和 Codex 的工具、会话和项目上下文都完整保留，你只是多了一个统一的界面。
+
+然后，它让你可以**离开工位**。同样的会话，连同每一次工具调用、文件 diff 和 Shell 命令的实时渲染，都能在手机浏览器里打开，或者在飞书、钉钉、Telegram、企业微信、Teams、微信里直接使用，无需端口转发。
+
+- 🔀 **多引擎，而非多模型**：四个真正的 Agent 运行时，同一个界面，按会话切换。
+- 👀 **完整的思维链**：每次工具调用、文件 diff、命令执行都是可展开的步骤，而不是一大段文字。
+- 📱 **天生支持远程**：局域网扫码，或一键 Cloudflare Tunnel，带设备审批和独立设备令牌。
+- 💬 **聊天软件里的 Agent**：六个 IM 平台，流式输出、结构化回复。
+- 🧰 **真正的工作台**：内置终端、文件浏览器、Git worktree、定时任务、斜杠命令与技能。
 
-## 为什么选择 CodeMux？
+> 💡 CodeMux 是 **首个 GitHub Copilot CLI 开源图形界面**，通过 JSON-RPC 在协议层对接，可视化呈现 Copilot 完整的 Agent 编程体验。
+
+## 🚀 安装
+
+| 平台 | 获取方式 |
+|------|----------|
+| **macOS** | `brew tap realDuang/codemux && brew install --cask codemux`，或从 [Releases](https://github.com/realDuang/codemux/releases/latest) 下载 `.dmg`（Apple Silicon 选 `-arm64.dmg`） |
+| **Windows** | 从 [Releases](https://github.com/realDuang/codemux/releases/latest) 下载 `CodeMux-Setup-<版本>.exe` |
+| **Linux 桌面** | 从 [Releases](https://github.com/realDuang/codemux/releases/latest) 下载 `.AppImage` 或 `.deb` |
+| **Linux 服务器（无界面）** | 运行 Node 主机，用任意浏览器访问，见 [Server runtime](docs/server-runtime.md) |
+| **源码运行** | 见 [Development](docs/development.md) |
+
+> ⚠️ macOS 版本未签名。如果提示"应用已损坏"，请执行 `xattr -cr /Applications/CodeMux.app`。
+
+### 接入一个引擎
 
-### 1. 多引擎，而非多模型
-
-这不是一个切换 API Key 的聊天封装。CodeMux 是一个**协议级网关** —— 每个引擎运行在自己的运行时中，会话、工具执行和能力都完整保留。
-
-在同一个界面中切换引擎，每个引擎都保持完整能力 —— 文件编辑、Shell 访问、会话历史、项目上下文 —— CodeMux 只是为它们提供了一个统一的入口。
-
-| 引擎                                                                                           | 协议                         | 状态     |
-| ---------------------------------------------------------------------------------------------- | ---------------------------- | -------- |
-| **[OpenCode](https://opencode.ai)**                                                            | HTTP REST + SSE              | ✅ 稳定   |
-| **[GitHub Copilot CLI](https://docs.github.com/en/copilot/concepts/agents/about-copilot-cli)** | JSON-RPC/stdio               | ✅ 稳定   |
-| **[Claude Code](https://claude.ai/code)**                                                      | SDK (stdio)                  | ✅ 稳定   |
-| **[Codex](https://github.com/openai/codex)**                                                   | JSON-RPC/stdio（app-server） | ⚠️ 实验性 |
-
-> 💡 CodeMux 同时也是**首个 —— 也是目前唯一的 —— Copilot CLI 开源图形界面**，在协议层面连接（JSON-RPC over stdio），让你在可视化界面中获得 Copilot 完整的 Agent 编程体验。
->
-> ⚠️ Codex 支持目前仍处于实验性/unstable 阶段。随着上游 app-server 协议演进，协议细节和行为可能继续变化。
-
-### 2. Agent 思维链可视化
-
-每个 Agent 操作都渲染为可展开的步骤 —— 文件 diff、Shell 命令、搜索结果、工具调用 —— 让你清楚地看到 Agent 在做什么以及为什么这样做，而不仅仅是最终答案。
-
-<img src="https://raw.githubusercontent.com/realDuang/codemux/main/assets/screenshots/chat-steps.jpg" alt="CodeMux - 逐步 Agent 可视化" width="700" />
-
-这不仅限于桌面应用。**完整的思维链体验在每种访问方式中都得以保留** —— 无论你是通过局域网或公网在浏览器中访问，还是通过手机上的 IM 机器人进行交互。
-
-### 3. 真正的远程 Agent 体验
-
-[OpenClaw](https://github.com/openclaw/openclaw) 等工具让"从即时通讯应用访问 AI"的想法广为流行 —— 在 WhatsApp 或 Telegram 上发条消息，收到一段文字回复。但对于 AI 辅助编程来说，一段文字回复远远不够。你需要看到 Agent 在**思考**什么、在**编辑**哪些文件、在**运行**什么命令 —— 而且是实时的。
-
-**CodeMux 弥合了这一差距。** 无论你从浏览器还是 IM 平台访问，都能获得完整的 Agent 体验和结构化流式传输：
-
-| 能力       | CodeMux                                              | 基于文本的助手       |
-| ---------- | ---------------------------------------------------- | -------------------- |
-| 流式输出   | ✅ Token 级实时流式传输                               | ⚠️ 完整回复或分块文本 |
-| 思考步骤   | ✅ 每个工具调用渲染为可展开的步骤                     | ❌ 仅有最终答案       |
-| 文件差异   | ✅ 带语法高亮的内联 diff 查看器                       | ❌ 纯文本或无         |
-| Shell 命令 | ✅ 命令 + 输出实时渲染                                | ❌ 充其量是文本摘要   |
-| 多引擎     | ✅ 在 OpenCode / Copilot / Claude Code / Codex 间切换 | ❌ 单一模型/提供商    |
-| 编程上下文 | ✅ 项目感知的会话，完整工具访问                       | ⚠️ 通用助手上下文     |
-| 图片输入   | ✅ 粘贴/拖拽图片，所有引擎均可分析                    | ❌ 仅支持文本输入     |
-
-### 4. 多模态支持
-
-基于文本的编程工具只能处理文字输入。CodeMux 打破了这一限制 —— **在提示中附加图片，让 AI 看到你所看到的**。
-
-粘贴截图、拖入设计稿、上传报错截图 —— 四个引擎都能原生分析图片。每个引擎适配器在幕后将图片转换为其原生格式，而你获得的是统一的体验：
-
-- **上传方式**：文件选择器、拖放上传、剪贴板粘贴
-- **支持格式**：JPEG、PNG、GIF、WebP（每条消息最多 4 张图片，每张最大 3MB）
-- **内联预览**：发送前显示缩略图，图片在聊天记录中直接渲染
-
-> 这在所有访问方式中都有效 —— 桌面端、远程浏览器和 IM 机器人 —— CodeMux 运行在哪里，图片输入就跟到哪里。
-
-### 5. 开发工作流工具
-
-CodeMux 不只是聊天 —— 它提供集成工具，让你直接在界面中管理开发工作流。
-
-- **定时任务**：自动化定期执行的 Agent 任务 —— 每天早上跑代码审查、按间隔生成报告、每周批量处理 Issue。支持手动触发、间隔（5 分钟 – 12 小时）、每日和每周调度，应用重启时自动补执行错过的任务。
-
-<img src="https://raw.githubusercontent.com/realDuang/codemux/main/assets/screenshots/scheduled-task.jpg" alt="CodeMux - 定时任务" width="700" />
-
-- **Git Worktree 并行会话**：无需 `git stash` 即可同时在多个分支上工作。从侧边栏创建隔离的 Worktree，每个都有独立的目录、分支和 AI 会话。支持 merge、squash 或 rebase 三种方式合并回主分支 —— 全程不离开界面。
-
-- **文件浏览器与 Git 变更监听**：通过可折叠的文件树浏览项目文件，带语法高亮的代码预览，实时追踪 Git 变更。"变更"标签页展示修改文件及逐行增删统计，内联 diff 查看器让你无需离开 CodeMux 即可检视每一处改动。
-
-<img src="https://raw.githubusercontent.com/realDuang/codemux/main/assets/screenshots/project-preview.jpg" alt="CodeMux - 文件浏览器" width="700" />
-
-- **斜杠命令与引擎技能**：在输入框中键入 `/` 即可通过自动补全调用引擎原生命令和技能 —— `/cancel`、`/status`、`/mode`、`/model` 等。每个引擎暴露各自的命令；Copilot 提供项目级和个人技能，Claude Code 提供用户安装的技能，OpenCode 透传 SDK 命令，Codex 暴露 app-server 技能 —— 全部通过统一的自动补全界面操作。
-
-- **集成终端**：聊天界面正下方内置 VS Code 风格终端 —— 用 `` Ctrl+` `` 即可开关。可开多个标签页运行真实 Shell（Windows 上自动检测 PowerShell / pwsh / cmd / Git Bash / WSL，Unix 上读取 `$SHELL` 与 `/etc/shells`，并支持自定义 profile），配备搜索浮层（`Ctrl+F`）、可点击的文件路径（在 CodeMux 内置文件面板中打开）以及可选的 GPU 渲染（WebGL → Canvas → DOM）。由于终端通过同一条 Gateway WebSocket 流式传输，它在**远程访问下同样可用** —— 无论局域网还是 Cloudflare Tunnel —— 而不只是本地桌面端。
-
-<img src="https://raw.githubusercontent.com/realDuang/codemux/main/assets/screenshots/terminal.jpg" alt="CodeMux - 集成终端" width="700" />
-
-### 更多特性
-
-- **Agent 模式切换**：在 Build / Plan / Autopilot 等模式间切换 —— 每种模式有不同的行为和提示风格
-- **实时任务面板**：Agent 生成的任务列表显示在输入框上方，实时追踪完成进度
-- **权限审批**：内联审批或拒绝敏感操作（Shell、文件编辑） —— 支持"始终允许"以简化可信操作
-- **交互式问答**：引擎可发起单选/多选问题，支持描述文字和自定义输入
-- **每引擎独立选模型**：为每个引擎独立选择模型；Claude Code 和 Codex 支持手动输入自定义模型 ID
-- **Token 用量追踪**：监控输入、输出和缓存 Token 消耗，支持按引擎分类的成本统计
-
-#### 浏览器远程访问
-
-从任何设备访问你的编程 Agent —— 手机、平板或另一台电脑 —— 无需修改任何配置文件。
-
-- **局域网**：自动检测 IP + 二维码，几秒内即可就绪
-- **公网**：一键 [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/) —— 无需端口转发、无需 VPN、无需防火墙更改。支持**快速隧道**（随机临时 URL，零配置）和**命名隧道**（通过 `~/.cloudflared/` 凭证持久化自定义域名）
-- **内置安全机制**：设备授权、JWT 令牌、通过 Cloudflare 的 HTTPS；快速隧道 URL 会在隧道本身被重建时轮换，命名隧道保留你的自定义主机名
-
-#### IM 机器人渠道
-
-直接在你常用的即时通讯应用中使用 AI 编程 Agent，享受**实时流式传输和结构化富内容** —— 而不仅仅是纯文本回复。
-
-##### 支持平台
-
-| 平台                                                                               | 事件接收             | 流式输出           | 创建群组   | 富文本内容            |
-| ---------------------------------------------------------------------------------- | -------------------- | ------------------ | ---------- | --------------------- |
-| [飞书](https://open.feishu.cn/)                                                    | WebSocket（长连接）  | ✅ 编辑更新         | ✅ 自动建群 | 互动卡片              |
-| [钉钉](https://open.dingtalk.com/)                                                 | Stream 模式（WS）    | ✅ AI 卡片          | ✅ 场景群   | ActionCard / Markdown |
-| [Telegram](https://core.telegram.org/bots/api)                                     | Webhook / 长轮询     | ✅ sendMessageDraft | ❌ 仅私聊   | MarkdownV2 + 内联键盘 |
-| [企业微信](https://developer.work.weixin.qq.com/)                                  | HTTP 回调（AES XML） | ❌ 批量模式         | ✅ 应用群聊 | Markdown / 模板卡片   |
-| [Microsoft Teams](https://learn.microsoft.com/en-us/microsoftteams/platform/bots/) | Bot Framework HTTP   | ✅ 编辑更新         | ❌ 仅私聊   | Adaptive Cards v1.5   |
-
-##### 通用功能
-
-- **私聊入口**：与机器人私聊选择项目和会话
-- **斜杠命令**：`/cancel`、`/status`、`/mode`、`/model`、`/history`、`/help`
-- **流式响应**：AI 实时输出，根据平台能力自动选择更新策略
-- **工具摘要**：完成时附带操作统计（如 `Shell(2), Edit(1)`）
-- **自动审批权限**：引擎权限请求自动批准
-
-##### 会话模型
-
-- **一群一会话**（飞书、钉钉、企业微信）：每个群聊对应一个 CodeMux 会话。私聊选择项目 → 自动创建群聊。
-- **私聊直连**（Telegram、Teams）：在私聊中直接交互，使用临时会话（2 小时 TTL）。群聊中 @机器人 交互。
-
-##### 配置方式
-
-每个平台需要在开发者门户创建机器人/应用，然后在 CodeMux 设置 → 渠道中配置凭证。
-
-📖 **[详细配置指南 →](docs/channels/README.md)** — 包含各平台的完整步骤、权限配置、Webhook 设置及常见问题排查。
-
-| 平台     | 需要的凭证                                        | 开发者门户                                                                                       |
-| -------- | ------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
-| 飞书     | App ID、App Secret                                | [open.feishu.cn](https://open.feishu.cn/)                                                        |
-| 钉钉     | App Key、App Secret、Robot Code                   | [open.dingtalk.com](https://open.dingtalk.com/)                                                  |
-| Telegram | Bot Token（来自 @BotFather）                      | [core.telegram.org](https://core.telegram.org/bots)                                              |
-| 企业微信 | 企业 ID、应用密钥、Agent ID、回调 Token、加密密钥 | [developer.work.weixin.qq.com](https://developer.work.weixin.qq.com/)                            |
-| Teams    | Microsoft App ID、应用密码、Tenant ID             | [Azure Portal](https://portal.azure.com/) + [Teams 开发者门户](https://dev.teams.microsoft.com/) |
-
----
-
-## 快速开始
-
-### 方式 1：桌面应用
-
-**macOS（推荐 — 通过 Homebrew）：**
-
-```bash
-brew tap realDuang/codemux
-brew install --cask codemux
-```
-
-**手动下载：**
-
-- **macOS (Apple Silicon)**：`CodeMux-x.x.x-arm64.dmg`
-- **macOS (Intel)**：`CodeMux-x.x.x-x64.dmg`
-- **Windows**：`CodeMux-x.x.x-setup.exe`
-
-桌面应用内置了 Cloudflare Tunnel 二进制文件和网关服务器。**OpenCode、Copilot CLI、Claude Code 和 Codex 需要单独安装**（见下文）。
-
-> ⚠️ **macOS 用户（手动下载）**：应用未进行代码签名。如果 macOS 提示"应用已损坏"，请运行：
->
-> ```bash
-> xattr -cr /Applications/CodeMux.app
-> ```
-
-### 方式 2：开发模式
-
-```bash
-# 克隆仓库
-git clone https://github.com/realDuang/codemux.git
-cd codemux
-
-# 安装依赖
-bun install
-
-# 下载 cloudflared 二进制文件（用于远程访问）
-bun run update:cloudflared
-
-# 启动开发服务器（Electron + Vite HMR）
-bun run dev
-```
-
-> **引擎前置条件**：所有引擎都是外部依赖，需要安装并添加到 PATH 中：
-> - **OpenCode**：从 [opencode.ai](https://opencode.ai) 安装 —— `curl -fsSL https://opencode.ai/install.sh | bash`（Unix）或 `irm https://opencode.ai/install.ps1 | iex`（Windows）
-> - **Copilot CLI**：单独安装 [GitHub Copilot CLI](https://docs.github.com/en/copilot/concepts/agents/about-copilot-cli)
-> - **Claude Code**：通过 `npm install -g @anthropic-ai/claude-code` 安装，并设置 `ANTHROPIC_API_KEY`
-> - **Codex**：单独安装 [`codex` CLI](https://github.com/openai/codex)，并确保 `codex` 已加入 PATH。CodeMux 会复用 Codex 现有的 OpenAI 登录或 API Key 配置。当前为实验性/unstable 支持。
->
-> CodeMux 启动时会自动检测已安装的引擎。
-
----
-
-## 远程访问与渠道
-
-### 连接方式
-
-| 方式             | 配置                                                                                    | 适用场景                                        |
-| ---------------- | --------------------------------------------------------------------------------------- | ----------------------------------------------- |
-| **局域网浏览器** | 打开 `http://<你的IP>:8233`，输入 6 位访问码或扫描二维码                                | 同一网络下从另一台设备快速访问                  |
-| **公网**         | 开启"公网访问" → 分享 `*.trycloudflare.com` URL，或在准备好命名隧道凭证后配置自定义域名 | 从任何地方访问，无需端口转发                    |
-| **IM 机器人**    | 在设置 → 渠道中配置机器人凭证                                                           | 通过飞书、钉钉、Telegram、企业微信或 Teams 交互 |
-
-### Cloudflare 自定义域名
-
-CodeMux 默认使用 Cloudflare quick tunnel。quick tunnel 不需要 Cloudflare 账号配置，每次启动都会生成一个临时的 `*.trycloudflare.com` URL。
-
-自定义域名需要 Cloudflare named tunnel 以及本机的 tunnel credential 文件。CodeMux 会在 `~/.cloudflared/` 下查找以 UUID 命名的 JSON 文件，例如 `~/.cloudflared/<tunnel-id>.json`。如果配置了自定义域名但缺少这个 credential，CodeMux 会直接停止启动并显示缺少凭证错误，而不会静默回退到随机 quick tunnel URL。
-
-准备自定义域名的步骤：
-
-```bash
-# 登录 Cloudflare，并选择你的域名所在 zone。
-# 这会写入 ~/.cloudflared/cert.pem。
-cloudflared tunnel login
-
-# 如果 tunnel 已经存在，先找到它的名称和 UUID。
-cloudflared tunnel list
-
-# 下载/写入 CodeMux 可检测到的 connector credential。
-cloudflared tunnel token --cred-file ~/.cloudflared/<tunnel-id>.json <tunnel-name-or-id>
-
-# 如果域名还没有指向该 named tunnel，则创建 DNS route。
-cloudflared tunnel route dns <tunnel-name-or-id> <your-domain>
-```
-
-如果还没有 named tunnel，先运行 `cloudflared tunnel create <tunnel-name>` 创建；这个命令也会写入 credential JSON。`cert.pem` 和 `<tunnel-id>.json` 都是私密凭证，不要提交到仓库。
-
-### 安全与设备管理
-
-| 层级         | 保护措施                               |
-| ------------ | -------------------------------------- |
-| **设备授权** | 新设备需要通过 6 位验证码审批          |
-| **JWT 令牌** | 按设备存储的安全令牌                   |
-| **HTTPS**    | 公网隧道通过 Cloudflare 自动使用 HTTPS |
-| **临时 URL** | 隧道 URL 每次重启时更换                |
-
-在设备管理页面管理已连接的设备 —— 查看最后访问时间、重命名以便识别，或按设备撤销访问权限。
-
-> CodeMux 专为个人使用设计。请撤销不再使用的设备，并在不需要时关闭公网隧道。
-
----
+CodeMux 启动时会自动检测已安装的引擎，至少需要一个：
+
+| 引擎 | 协议 | 状态 | 准备工作 |
+|------|------|------|----------|
+| **[Claude Code](https://docs.anthropic.com/en/docs/claude-code)** | Claude Agent SDK | ✅ 稳定 | 运行时已内置，沿用你现有的 Claude Code 登录或 `ANTHROPIC_API_KEY`。 |
+| **[GitHub Copilot CLI](https://docs.github.com/en/copilot/concepts/agents/about-copilot-cli)** | JSON-RPC / stdio | ✅ 稳定 | 安装 Copilot CLI 并登录。 |
+| **[OpenCode](https://opencode.ai)** | HTTP REST + SSE | ✅ 稳定 | `curl -fsSL https://opencode.ai/install \| bash`（Windows：`irm https://opencode.ai/install.ps1 \| iex`） |
+| **[Codex](https://github.com/openai/codex)** | JSON-RPC / stdio app-server | ⚠️ 实验性 | 安装 `codex` CLI，CodeMux 复用它的登录或 API Key。 |
+
+### 用手机打开
+
+1. 在 CodeMux 中打开**远程访问**。
+2. 选择**局域网**（扫二维码）或 **Cloudflare Tunnel**（随处可用，快速隧道无需账号）。
+3. 用 6 位验证码批准新设备，完成。
+
+## ✨ 功能
+
+### 完整呈现 Agent 思维链
+
+Agent 的每个动作都是一个可展开的步骤：带语法高亮的文件 diff、实时输出的 Shell 命令、搜索、工具调用、待办列表和权限请求。你能看到 Agent 在做什么、为什么这么做，而不只是最终答案；同样的渲染在浏览器和 IM 中也一样。
+
+<img src="https://raw.githubusercontent.com/realDuang/codemux/main/assets/screenshots/chat-steps.jpg" alt="CodeMux - 逐步可视化 Agent 执行过程" width="720" />
+
+### 是工作台，不是聊天框
+
+| | |
+|---|---|
+| **内置终端** | VS Code 风格多标签真实 Shell（`` Ctrl+` ``），支持搜索、可点击路径，局域网和隧道远程同样可用。 |
+| **文件浏览器与 Git 变更** | 项目文件树、语法高亮预览，实时"变更"标签页显示增删行数与内联 diff。 |
+| **Git worktree 并行会话** | 多个分支并行开发，各自拥有独立会话；可选 merge、squash 或 rebase 合并回去。 |
+| **定时任务** | 手动触发、每 5 分钟到 12 小时、每天或每周执行 Agent 任务，应用重启后补跑错过的任务。 |
+| **斜杠命令与技能** | 输入 `/` 调用引擎原生命令和技能，带自动补全。 |
+| **Agent 模式与模型** | Build / Plan / Autopilot 模式，每个引擎独立选择模型。 |
+| **权限审批与问答** | 内联批准 Shell 或文件编辑操作（可对信任的模式"始终允许"），并回答 Agent 提出的选择题。 |
+| **图片输入** | 粘贴、拖拽或选择，每条消息最多 4 张图片，所有引擎都能识别。 |
+| **Token 用量** | 输入、输出、缓存 Token 统计，按引擎拆分费用。 |
+
+<table>
+  <tr>
+    <td><img src="https://raw.githubusercontent.com/realDuang/codemux/main/assets/screenshots/terminal.jpg" alt="内置终端" /></td>
+    <td><img src="https://raw.githubusercontent.com/realDuang/codemux/main/assets/screenshots/project-preview.jpg" alt="文件浏览器" /></td>
+  </tr>
+  <tr>
+    <td align="center"><sub>内置终端</sub></td>
+    <td align="center"><sub>文件浏览器与 Git 变更</sub></td>
+  </tr>
+</table>
+
+### 远程访问，体验不打折
+
+| 方式 | 适用场景 |
+|------|----------|
+| **局域网浏览器** | 同一网络下的其他设备，自动识别 IP 并生成二维码。 |
+| **Cloudflare Tunnel** | 随时随地访问，无需端口转发或 VPN。快速隧道零配置；命名隧道可绑定[自己的域名](docs/custom-access.md#cloudflare-custom-domains)。 |
+| **自定义地址** | 使用你自己的反向代理或路由，见 [Custom access](docs/custom-access.md)。 |
+| **可安装的 PWA** | 通过固定的 HTTPS 地址把 CodeMux 添加到手机主屏，见 [Web and mobile PWA](docs/web-pwa.md)。 |
+
+新设备需要通过 6 位验证码批准，每台设备拥有独立的 JWT，公网隧道全程 HTTPS。你可以在设备管理页重命名或撤销任意设备。
+
+<table>
+  <tr>
+    <td><img src="https://raw.githubusercontent.com/realDuang/codemux/main/assets/screenshots/remote-access.jpg" alt="远程访问" /></td>
+    <td><img src="https://raw.githubusercontent.com/realDuang/codemux/main/assets/screenshots/devices-management.jpg" alt="设备管理" /></td>
+  </tr>
+  <tr>
+    <td align="center"><sub>远程访问</sub></td>
+    <td align="center"><sub>设备管理</sub></td>
+  </tr>
+</table>
+
+<!--
+  TODO(mobile-screenshot): 补一张手机竖屏截图（浏览器或 PWA），展示正在运行、展开了工具步骤的会话，
+  例如 assets/screenshots/mobile.jpg，作为上表的第三格。
+-->
+
+> CodeMux 面向个人使用。不再使用的设备请及时撤销，不需要时请关闭公网隧道。
+
+### 在聊天软件里使用编程 Agent
+
+在 IM 中与 Agent 对话，获得流式输出和结构化卡片，而不只是纯文本。先私聊机器人选择项目和会话，然后可使用 `/cancel`、`/status`、`/mode`、`/model`、`/history`、`/help`。
+
+| 平台 | 流式输出 | 会话模型 | 富文本 |
+|------|----------|----------|--------|
+| [飞书 / Lark](docs/channels/feishu/README.md) | ✅ 原地更新 | 一个群 = 一个会话 | 交互卡片 |
+| [钉钉](docs/channels/dingtalk/README.md) | ✅ AI 卡片 | 一个群 = 一个会话 | ActionCard / Markdown |
+| [Telegram](docs/channels/telegram/README.md) | ✅ 草稿 / 编辑 | 私聊 | MarkdownV2 + 按钮 |
+| [企业微信](docs/channels/wecom/README.md) | 批量发送 | 一个群 = 一个会话 | Markdown / 模板卡片 |
+| [Microsoft Teams](docs/channels/teams/README.md) | ✅ 原地更新 | 私聊 | Adaptive Cards |
+| [微信（iLink 个人号）](docs/channels/weixin-ilink/README.md) | 批量发送 | 私聊 | 纯文本 |
+
+📖 [渠道配置指南](docs/channels/README.md)
+
+<!--
+  TODO(im-screenshot): 补一张 IM 截图（如飞书或 Telegram），展示流式回复和工具摘要，
+  例如 assets/screenshots/im-channel.jpg。
+-->
+
+## 有什么不同？
+
+| | CodeMux | 纯文本聊天机器人 | 单个 Agent 自带的界面 |
+|---|---|---|---|
+| 真正的 Agent 运行时（工具、会话、项目上下文） | ✅ | ⚠️ 通常只是模型 API | ✅ |
+| 多个 Agent 集中在一处 | ✅ Claude Code、Copilot、OpenCode、Codex | ❌ | ❌ |
+| 工具调用、diff、Shell 输出按步骤渲染 | ✅ | ❌ 只有最终文本 | ✅ 仅本地 |
+| 手机浏览器和 IM 中体验一致 | ✅ | ⚠️ 仅文本 | ❌ |
+| 自托管：你的机器、你的凭据 | ✅ | 视情况而定 | ✅ |
 
 ## 架构
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                          接入层                                  │
-│                                                                 │
-│  ┌──────────┐  ┌───────────────┐  ┌──────────────────────────┐  │
-│  │ Electron │  │ 浏览器（局域网│  │ IM 机器人（飞书/钉钉/    │  │
-│  │  桌面端  │  │ /Cloudflare） │  │ Telegram/企业微信/Teams） │  │
-│  └────┬─────┘  └──────┬────────┘  └────────────┬─────────────┘  │
-│       │               │                        │                │
-│       └───────────────┼────────────────────────┘                │
-│                       │                                         │
-│              WebSocket (JSON-RPC)                               │
-│                       │                                         │
-│              ┌────────┴────────┐                                │
-│              │    网关服务器    │                                │
-│              │  （引擎管理器） │                                │
-│              └──┬──────┬──────┬─────┬┘                            │
-│                 │      │      │     │                             │
-│           ┌─────┘   ┌──┘   ┌──┘   └──┐                            │
-│           │         │      │         │                            │
-│     ┌─────┴─────┐ ┌─┴──────┐ ┌┴───────┐ ┌─────────┐               │
-│     │ OpenCode  │ │Copilot │ │ Claude │ │  Codex  │               │
-│     │  适配器   │ │ 适配器 │ │ 适配器 │ │ 适配器  │               │
-│     │(HTTP+SSE) │ │(stdio) │ │ (SDK)  │ │ (stdio) │               │
-│     └───────────┘ └────────┘ └────────┘ └─────────┘               │
-│                                                                 │
-│     统一类型系统：UnifiedPart, ToolPart, AgentMode               │
-└─────────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TB
+  subgraph 接入层
+    A[桌面端<br/>Electron]
+    B[浏览器 / PWA<br/>局域网 · Cloudflare Tunnel]
+    C[IM 机器人<br/>飞书 · 钉钉 · Telegram<br/>企业微信 · Teams · 微信]
+  end
+  A & B & C -->|WebSocket JSON-RPC| G[Gateway 服务<br/>引擎管理器]
+  G --> O[OpenCode 适配器<br/>HTTP + SSE]
+  G --> P[Copilot 适配器<br/>stdio]
+  G --> Q[Claude Code 适配器<br/>Agent SDK]
+  G --> R[Codex 适配器<br/>stdio]
 ```
 
-所有访问方式 —— 桌面应用、远程浏览器和 IM 机器人 —— 都通过同一个 WebSocket 网关连接。引擎共享**标准化类型系统**，因此无论使用哪个引擎或访问方式，工具调用、文件 diff 和流式消息都以完全相同的方式呈现。
+所有客户端都通过同一个 Gateway 连接，每个引擎都被转换为统一的**标准化类型系统**，因此无论使用哪个引擎、哪种客户端，工具调用、diff 和流式消息的呈现都完全一致。
 
----
+## 📚 文档
 
-## 开发
+| 主题 | 文档 |
+|------|------|
+| IM 渠道配置 | [docs/channels](docs/channels/README.md) |
+| 自定义域名与访问方式 | [docs/custom-access.md](docs/custom-access.md) |
+| Web 与移动端 PWA | [docs/web-pwa.md](docs/web-pwa.md) |
+| 无界面 Linux 服务器 | [docs/server-runtime.md](docs/server-runtime.md) |
+| 与 Codex Desktop 共享会话 | [docs/codex-desktop-sharing.md](docs/codex-desktop-sharing.md) |
+| 开发、命令、隔离开发实例 | [docs/development.md](docs/development.md) |
+| 项目结构 | [docs/project-structure.md](docs/project-structure.md) |
 
-### 命令
+## 🤝 参与贡献
 
-```bash
-bun run dev              # Electron + Vite HMR
-bun run build            # 生产构建
-bun run dist:mac:arm64   # macOS Apple Silicon
-bun run dist:mac:x64     # macOS Intel
-bun run dist:win         # Windows NSIS 安装程序
-bun run typecheck        # 类型检查
-bun run update:cloudflared  # 更新 Cloudflare Tunnel 二进制文件
-```
+欢迎提 Issue、想法和 PR。先看看 [CONTRIBUTING.md](CONTRIBUTING.md) 和 [路线图](https://github.com/realDuang/codemux/discussions/61)，有任何问题欢迎到 [Discussions](https://github.com/realDuang/codemux/discussions) 交流。想接入新的引擎？见 [Adding a new engine](docs/development.md#adding-a-new-engine)。
 
-### 项目结构
-
-```
-codemux/
-├── electron/
-│   ├── main/
-│   │   ├── engines/          # 引擎适配器（OpenCode、Copilot、Claude Code、Codex）
-│   │   ├── gateway/          # WebSocket 服务器 + 引擎路由
-│   │   ├── channels/         # IM 机器人渠道（飞书、钉钉、Telegram、企业微信、Teams）
-│   │   │   └── streaming/    # 跨渠道流式传输基础设施
-│   │   ├── services/         # 认证、设备存储、隧道、会话、文件服务、托盘等
-│   │   └── utils/            # 共享工具函数（ID 生成等）
-│   └── preload/
-├── src/                      # SolidJS 渲染层
-│   ├── pages/                # Chat、Settings、Devices、Entry
-│   ├── components/           # UI 组件 + 内容渲染器
-│   ├── stores/               # 响应式状态（session、message、config）
-│   ├── lib/                  # 网关客户端、认证、国际化、主题
-│   ├── locales/              # 国际化翻译文件（en、zh、ru）
-│   └── types/                # 统一类型系统 + 工具映射
-├── shared/                   # 共享后端模块（认证、JWT、设备存储基类）
-├── tests/                    # 单元测试、端到端测试（Playwright）、性能基准
-├── docs/                     # 渠道配置指南 + 设计文档
-├── website/                  # 项目网站（SolidJS + Vite）
-├── scripts/                  # 安装脚本、二进制文件更新器、CI 辅助工具
-├── homebrew/                 # macOS Homebrew 分发配方
-├── electron.vite.config.ts
-└── electron-builder.yml
-```
-
----
-
-## 贡献
-
-欢迎贡献！详细指南请参阅 [CONTRIBUTING.md](CONTRIBUTING.md)。
-
-**代码风格**：TypeScript 严格模式，SolidJS 响应式模式，使用 Tailwind 进行样式编写
-
-**提交规范**：`feat:` | `fix:` | `docs:` | `refactor:` | `chore:`
-
-**添加新引擎**：实现 `EngineAdapter`（参见 `electron/main/engines/engine-adapter.ts`），在 `src/types/tool-mapping.ts` 中添加工具名称映射，然后在 `electron/main/index.ts` 中注册。
-
----
+如果 CodeMux 对你有帮助，点个 ⭐ 能让更多人发现它。
 
 ## 许可证
 
 [MIT](LICENSE)
 
----
-
-## 链接
-
-- [社区讨论](https://github.com/realDuang/codemux/discussions) — 路线图、功能建议与社区交流
-- [路线图](https://github.com/realDuang/codemux/discussions/61) — 开发路线图与里程碑追踪
-- [问题反馈](https://github.com/realDuang/codemux/issues) — Bug 报告
-- [OpenCode](https://opencode.ai) — 支持的引擎
-- [GitHub Copilot CLI](https://docs.github.com/en/copilot/concepts/agents/about-copilot-cli) — 支持的引擎
-- [Claude Code](https://docs.anthropic.com/en/docs/claude-code) — 支持的引擎
-- [Codex](https://github.com/openai/codex) — 支持的引擎
-- [飞书开放平台](https://open.feishu.cn/) — 飞书机器人渠道
-- [钉钉开放平台](https://open.dingtalk.com/) — 钉钉机器人渠道
-- [Telegram Bot API](https://core.telegram.org/bots/api) — Telegram 机器人渠道
-- [企业微信开发者中心](https://developer.work.weixin.qq.com/) — 企业微信机器人渠道
-- [Microsoft Teams 平台](https://learn.microsoft.com/en-us/microsoftteams/platform/bots/) — Teams 机器人渠道
-
----
-
 <div align="center">
 
-**基于 [Electron](https://electronjs.org)、[SolidJS](https://solidjs.com) 构建，源于对 AI 辅助编程的热爱。**
+**基于 [Electron](https://electronjs.org)、[SolidJS](https://solidjs.com) 构建，以及对 AI 辅助编程的热爱。**
 
 </div>

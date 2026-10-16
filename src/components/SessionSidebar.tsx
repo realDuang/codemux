@@ -1,5 +1,14 @@
 import { For, Show, Switch, Match, createSignal, createMemo, createEffect } from "solid-js";
-import { SessionInfo, sessionStore, setSessionStore, getProjectName, buildSessionProjectView } from "../stores/session";
+import {
+  buildSessionProjectView,
+  getProjectName,
+  projectHasCatalogSessions,
+  sessionStore,
+  setSessionStore,
+  visibleSessionsForProjectPaths,
+  type SessionInfo,
+} from "../stores/session";
+import { isProjectPathVisible } from "../../shared/project-path-filter";
 import { useI18n, formatMessage } from "../lib/i18n";
 import { isDefaultTitle } from "../lib/session-utils";
 import { filterSessionsBySearch } from "../lib/active-sessions";
@@ -71,8 +80,11 @@ export function SessionSidebar(props: SessionSidebarProps) {
   const [editingTitle, setEditingTitle] = createSignal("");
   const [pendingDeleteId, setPendingDeleteId] = createSignal<string | null>(null);
   const [searchQuery, setSearchQuery] = createSignal("");
-  const visibleSessions = createMemo(() => props.sessions.filter((session) => (session.archived === true) === (props.showArchived === true)));
-  const projectView = createMemo(() => buildSessionProjectView(visibleSessions(), props.projects, Object.values(sessionStore.catalogs)));
+  const archiveSessions = createMemo(() => props.sessions.filter((session) => (session.archived === true) === (props.showArchived === true)));
+  const projectView = createMemo(() => buildSessionProjectView(archiveSessions(), props.projects, Object.values(sessionStore.catalogs)));
+  const visibleSessions = createMemo(() => visibleSessionsForProjectPaths(
+    archiveSessions(), projectView().projects, sessionStore.projectPathFilter, projectView().projectIds,
+  ));
   const sessionRemovalLabel = (session: SessionInfo) => {
     const capabilities = configStore.engines.find((engine) => engine.type === session.engineType)?.capabilities;
     return !session.catalogSourceId && !capabilities?.hideArchivedSessions && capabilities?.authoritativeSessionState
@@ -157,6 +169,7 @@ export function SessionSidebar(props: SessionSidebarProps) {
         && (props.showArchived || s.catalogSourceId || !s.worktreeId || worktreeEnabled() || (s.teamId && sessionStore.teamOrchestrationEnabled)),
     );
     if (!sessionStore.showDefaultWorkspace && !props.showArchived && !sessions.some((session) => session.catalogSourceId)) return null;
+    if (sessions.length === 0 && !isProjectPathVisible(defaultProject.directory, sessionStore.projectPathFilter)) return null;
     if (props.showArchived && sessions.length === 0) return null;
 
     return {
@@ -1265,7 +1278,11 @@ export function SessionSidebar(props: SessionSidebarProps) {
                         </button>
                       </Show>
                       {/* Hide project */}
-                      <Show when={!project.sessions.some((session) => session.catalogSourceId) && !project.project?.catalogSourceId && !projectView().displayOnlyIds.has(project.projectID)}>
+                      <Show when={
+                        !projectHasCatalogSessions(project.projectID, props.sessions, projectView().projectIds)
+                        && !project.project?.catalogSourceId
+                        && !projectView().displayOnlyIds.has(project.projectID)
+                      }>
                         <button
                           class="p-1 text-gray-400 hover:text-red-500 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 rounded transition-all"
                           onClick={(e) => {

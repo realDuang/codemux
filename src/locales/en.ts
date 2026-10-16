@@ -194,6 +194,36 @@ export interface LocaleDict {
     importSkipped: string;
     showDefaultWorkspace: string;
     showDefaultWorkspaceDesc: string;
+    projectFilterTitle: string;
+    projectFilterHeading: string;
+    projectFilterDescription: string;
+    projectWhitelist: string;
+    projectWhitelistHint: string;
+    projectBlacklist: string;
+    projectBlacklistHint: string;
+    projectFilterPlaceholder: string;
+    projectFilterInvalidPath: string;
+    projectFilterTooManyPaths: string;
+    projectFilterPreserveHistory: string;
+    projectFilterSaved: string;
+    projectFilterSaveFailed: string;
+    projectFilterAddPath: string;
+    projectFilterPathLabel: string;
+    projectFilterBrowse: string;
+    projectFilterSuggestions: string;
+    projectFilterAdd: string;
+    projectFilterCancel: string;
+    projectFilterRemovePath: string;
+    projectFilterPathRequired: string;
+    projectFilterDuplicatePath: string;
+    projectFilterBrowseFailed: string;
+    projectFilterWhitelistEmpty: string;
+    projectFilterBlacklistEmpty: string;
+    projectFilterEmptyHint: string;
+    projectFilterPathCount: string;
+    projectFilterUnsaved: string;
+    projectFilterDiscard: string;
+    projectFilterSave: string;
     features: string;
     experimental: string;
     scheduledTasksEnabled: string;
@@ -1096,6 +1126,36 @@ export const en: LocaleDict = {
     importSkipped: "Skipped (already imported)",
     showDefaultWorkspace: "Show default workspace in sidebar",
     showDefaultWorkspaceDesc: "Display the default workspace project group in the sidebar",
+    projectFilterTitle: "Project visibility",
+    projectFilterHeading: "Project path whitelist / blacklist",
+    projectFilterDescription: "Folder rules apply to project history, including archived sessions. Each path includes its subfolders.",
+    projectWhitelist: "Whitelist",
+    projectWhitelistHint: "Leave empty to show all paths. Otherwise, only sessions under these folders are shown.",
+    projectBlacklist: "Blacklist",
+    projectBlacklistHint: "Hide sessions under these folders. The blacklist takes priority over the whitelist.",
+    projectFilterPlaceholder: "/home/user/projects",
+    projectFilterInvalidPath: "Enter an absolute folder path: {path}",
+    projectFilterTooManyPaths: "Each list can contain up to {count} paths.",
+    projectFilterPreserveHistory: "History is kept. Running and pinned sessions remain accessible.",
+    projectFilterSaved: "Saved. Project visibility has been updated.",
+    projectFilterSaveFailed: "Could not save to the host. Check the connection and try again.",
+    projectFilterAddPath: "Add path",
+    projectFilterPathLabel: "Folder path",
+    projectFilterBrowse: "Choose folder",
+    projectFilterSuggestions: "Known projects",
+    projectFilterAdd: "Add",
+    projectFilterCancel: "Cancel",
+    projectFilterRemovePath: "Remove {path}",
+    projectFilterPathRequired: "Enter an absolute folder path.",
+    projectFilterDuplicatePath: "This path is already in the list.",
+    projectFilterBrowseFailed: "Could not open the folder picker. Enter the path manually.",
+    projectFilterWhitelistEmpty: "No paths restricted",
+    projectFilterBlacklistEmpty: "No paths excluded",
+    projectFilterEmptyHint: "Use Add path to add a folder.",
+    projectFilterPathCount: "{count} paths",
+    projectFilterUnsaved: "Changes have not been saved.",
+    projectFilterDiscard: "Discard changes",
+    projectFilterSave: "Save changes",
     features: "Features",
     experimental: "Experimental",
     scheduledTasksEnabled: "Scheduled Tasks",

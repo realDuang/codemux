@@ -33,7 +33,7 @@ let _rendererCache: Record<string, unknown> | null = null;
 function getRendererCache(): Record<string, unknown> | null {
   if (_rendererCache) return _rendererCache;
   try {
-    const preloadCache = (window as any).electronAPI?.settings?.cache;
+    const preloadCache = window.electronAPI?.settings?.cache;
     if (preloadCache) {
       // Deep-clone so we own the object (contextBridge returns a frozen proxy)
       _rendererCache = JSON.parse(JSON.stringify(preloadCache));
@@ -45,12 +45,21 @@ function getRendererCache(): Record<string, unknown> | null {
   return null;
 }
 
-function electronSave(patch: Record<string, unknown>): Promise<void> {
+async function electronSave(patch: Record<string, unknown>, requireSuccess = false): Promise<void> {
   try {
-    return Promise.resolve((window as any).electronAPI?.settings?.save(patch)).then(() => {}, () => {});
-  } catch {
-    return Promise.resolve();
+    const result = await window.electronAPI?.settings?.save(patch);
+    if (requireSuccess && result?.success !== true) throw new Error("Host settings save failed");
+  } catch (error) {
+    if (requireSuccess) throw error;
   }
+}
+
+function patchHostSetting(key: string, value: unknown): Promise<Response> {
+  return fetch("/api/settings/shared", {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", ...Auth.getAuthHeaders() },
+    body: JSON.stringify({ [key]: value }),
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -75,16 +84,34 @@ export function getSetting<T = unknown>(key: string): T | undefined {
   }
 }
 
+export interface SaveSettingOptions {
+  requireHostPersistence?: boolean;
+}
+
 /** Save a setting value. Async write to settings.json in Electron, localStorage in web. */
-export async function saveSetting(key: string, value: unknown): Promise<void> {
-  const savePromise = isElectron() ? (() => {
+export async function saveSetting(key: string, value: unknown, options: SaveSettingOptions = {}): Promise<void> {
+  const electronMode = isElectron();
+  // Explicit Save actions can require host acknowledgement before updating caches.
+  if (options.requireHostPersistence) {
+    if (electronMode) {
+      await electronSave({ [key]: value }, true);
+    } else {
+      if (!isSharedSettingsKey(key) || !Auth.isAuthenticated() || typeof fetch !== "function") {
+        throw new Error("Host settings save unavailable");
+      }
+      const response = await patchHostSetting(key, value);
+      if (!response.ok) throw new Error("Host settings save failed");
+    }
+  }
+  let savePromise: Promise<void> | undefined;
+  if (electronMode) {
     // Update renderer-side cache immediately so subsequent reads see the new value
     const cache = getRendererCache();
     if (cache) {
       cache[key] = value;
     }
-    return electronSave({ [key]: value });
-  })() : null;
+    if (!options.requireHostPersistence) savePromise = electronSave({ [key]: value });
+  }
 
   // Always write to localStorage as well for web mode and as immediate cache
   try {
@@ -95,16 +122,9 @@ export async function saveSetting(key: string, value: unknown): Promise<void> {
   }
 
   // In web mode, also write back to host so the setting persists across refreshes
-  if (!isElectron() && isSharedSettingsKey(key) && Auth.isAuthenticated() && typeof fetch === "function") {
+  if (!options.requireHostPersistence && !electronMode && isSharedSettingsKey(key) && Auth.isAuthenticated() && typeof fetch === "function") {
     try {
-      fetch("/api/settings/shared", {
-        method: "PATCH",
-        headers: {
-          "Content-Type": "application/json",
-          ...Auth.getAuthHeaders(),
-        },
-        body: JSON.stringify({ [key]: value }),
-      }).catch(() => {});
+      void patchHostSetting(key, value).catch(() => {});
     } catch {
       // Best-effort — swallow errors
     }
@@ -159,6 +179,7 @@ export function saveNestedSetting(path: string, value: unknown): Promise<void> {
 // Called once on page load after authentication.
 
 let _bootstrapDone = false;
+let _bootstrapPromise: Promise<boolean> | null = null;
 
 /**
  * Fetch host settings and write them to localStorage.
@@ -170,7 +191,17 @@ export async function bootstrapHostSettings(): Promise<boolean> {
   if (isElectron()) return false;
   if (_bootstrapDone) return false;
   if (!Auth.isAuthenticated()) return false;
+  if (_bootstrapPromise) return _bootstrapPromise;
 
+  _bootstrapPromise = fetchHostSettings();
+  try {
+    return await _bootstrapPromise;
+  } finally {
+    _bootstrapPromise = null;
+  }
+}
+
+async function fetchHostSettings(): Promise<boolean> {
   try {
     const res = await fetch("/api/settings/shared", {
       headers: Auth.getAuthHeaders(),
@@ -205,4 +236,5 @@ export async function bootstrapHostSettings(): Promise<boolean> {
 /** Reset bootstrap state (for testing). */
 export function _resetBootstrapState(): void {
   _bootstrapDone = false;
+  _bootstrapPromise = null;
 }

@@ -1,4 +1,5 @@
 import { normalizeAccessUrl } from "./access-url";
+import { isValidProjectPathFilter } from "./project-path-filter";
 
 /**
  * Settings keys that are safe to share between the host and authenticated
@@ -11,6 +12,7 @@ export const SHARED_SETTINGS_KEYS = [
   "engineModels",
   "defaultEngine",
   "showDefaultWorkspace",
+  "projectPathFilter",
   "scheduledTasksEnabled",
   "worktreeEnabled",
   "engineReasoningEfforts",
@@ -45,6 +47,8 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
  */
 export function isValidSharedSettingValue(key: SharedSettingsKey, value: unknown): boolean {
   switch (key) {
+    case "projectPathFilter":
+      return isValidProjectPathFilter(value);
     case "customAccessUrl":
       if (typeof value !== "string") return false;
       try {

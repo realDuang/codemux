@@ -196,6 +196,15 @@ export function visibleSessionsForProjectPaths(
   });
 }
 
+export function projectHasCatalogSessions(
+  projectId: string,
+  sessions: readonly SessionInfo[],
+  projectIds?: ReadonlyMap<string, string | undefined>,
+): boolean {
+  return sessions.some((session) => !!session.catalogSourceId
+    && (session.projectID === projectId || projectIds?.get(session.id) === projectId));
+}
+
 export function removeListedSession(sessionId: string): void {
   setSessionStore("list", (sessions) => sessions.filter((session) => session.id !== sessionId));
   for (const [sourceId, catalog] of Object.entries(sessionStore.catalogs)) {

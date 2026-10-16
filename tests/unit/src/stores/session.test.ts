@@ -59,6 +59,7 @@ import {
   buildSessionProjectView,
   visibleSessionsForEngines,
   visibleSessionsForProjectPaths,
+  projectHasCatalogSessions,
   removeListedSession,
 } from "../../../../src/stores/session";
 import type { UnifiedSession } from "../../../../src/types/unified";
@@ -152,6 +153,35 @@ describe("session store", () => {
       const projectIds = new Map([["archived", "view"]]);
       expect(visibleSessionsForProjectPaths([archived], projects, { whitelist: [], blacklist: ["/hidden"] }, projectIds)).toEqual([]);
       expect(archived).toMatchObject({ archived: true, projectID: "native", directory: "" });
+    });
+  });
+
+  describe("projectHasCatalogSessions", () => {
+    it("retains catalog ownership when a hidden session inherits a project by directory", () => {
+      const sessions = [
+        toSessionInfo({ id: "local", engineType: "claude", directory: "/repo", projectId: "project", time: { created: 1, updated: 2 } }),
+        toSessionInfo({ id: "native", engineType: "codex", catalogSourceId: "catalog", directory: "/repo/private", projectId: null, time: { created: 1, updated: 2 } }),
+      ];
+      const view = buildSessionProjectView(sessions, [{ id: "project", directory: "/repo" }]);
+      const visible = visibleSessionsForProjectPaths(sessions, view.projects, { whitelist: [], blacklist: ["/repo/private"] }, view.projectIds);
+
+      expect(visible.map((session) => session.id)).toEqual(["local"]);
+      expect(sessions[1].projectID).toBeNull();
+      expect(view.projectIds.get("native")).toBe("project");
+      expect(projectHasCatalogSessions("project", sessions, view.projectIds)).toBe(true);
+    });
+
+    it("protects explicit catalog membership even when an archived session is absent from the display map", () => {
+      const session = toSessionInfo({ id: "native", engineType: "codex", catalogSourceId: "catalog", directory: "/repo", projectId: "project", archived: true, time: { created: 1, updated: 2 } });
+      expect(projectHasCatalogSessions("project", [session], new Map())).toBe(true);
+    });
+
+    it("allows local project actions when catalog sessions belong to another project", () => {
+      const sessions = [
+        toSessionInfo({ id: "local", engineType: "claude", directory: "/repo", projectId: "project", time: { created: 1, updated: 2 } }),
+        toSessionInfo({ id: "native", engineType: "codex", catalogSourceId: "catalog", directory: "/other", projectId: "other", time: { created: 1, updated: 2 } }),
+      ];
+      expect(projectHasCatalogSessions("project", sessions)).toBe(false);
     });
   });
 

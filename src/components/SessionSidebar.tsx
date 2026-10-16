@@ -1,5 +1,13 @@
 import { For, Show, Switch, Match, createSignal, createMemo, createEffect } from "solid-js";
-import { SessionInfo, sessionStore, setSessionStore, getProjectName, buildSessionProjectView, visibleSessionsForProjectPaths } from "../stores/session";
+import {
+  buildSessionProjectView,
+  getProjectName,
+  projectHasCatalogSessions,
+  sessionStore,
+  setSessionStore,
+  visibleSessionsForProjectPaths,
+  type SessionInfo,
+} from "../stores/session";
 import { isProjectPathVisible } from "../../shared/project-path-filter";
 import { useI18n, formatMessage } from "../lib/i18n";
 import { isDefaultTitle } from "../lib/session-utils";
@@ -1270,7 +1278,11 @@ export function SessionSidebar(props: SessionSidebarProps) {
                         </button>
                       </Show>
                       {/* Hide project */}
-                      <Show when={!props.sessions.some((session) => session.projectID === project.projectID && session.catalogSourceId) && !project.project?.catalogSourceId && !projectView().displayOnlyIds.has(project.projectID)}>
+                      <Show when={
+                        !projectHasCatalogSessions(project.projectID, props.sessions, projectView().projectIds)
+                        && !project.project?.catalogSourceId
+                        && !projectView().displayOnlyIds.has(project.projectID)
+                      }>
                         <button
                           class="p-1 text-gray-400 hover:text-red-500 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 rounded transition-all"
                           onClick={(e) => {

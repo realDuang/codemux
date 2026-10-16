@@ -46,7 +46,10 @@ turn, and uncertain transport failures are not automatically replayed.
 User question receipts retain their raw protocol text but display a question
 summary and answer. Native image attachments display independently from the
 request text; only structured local attachments authorize local file reads.
-Expired or invalid image files retain an unavailable attachment card.
+Temporary upload images can be recovered from validated inline bytes in the
+same native turn, using the full text/path sequence rather than keeping upload
+files alive. Images with neither a valid file nor unambiguous native bytes
+retain an unavailable attachment card.
 
 In the separated runtime, the Server process owns this bridge and its catalog. Electron passes its local settings/data directory to the supervised Server; standalone Node uses its selected data directory. The bridge uses local Node IPC and adds no Electron or display dependency to the Server. Stopping CodeMux detaches external Desktop conversations and stops only execution processes owned by CodeMux.
 

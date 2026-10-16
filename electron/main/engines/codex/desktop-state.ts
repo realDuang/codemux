@@ -436,7 +436,7 @@ function convertTurn(session: UnifiedSession, turn: Record<string, unknown>, ind
     if (message) messages.push(message);
   });
   if (turn.status === "failed" || turn.status === "interrupted") {
-    const error = errorText(turn.error) ?? (turn.status === "interrupted" ? "Turn interrupted" : "Turn failed");
+    const error = turn.status === "interrupted" ? "Cancelled" : errorText(turn.error) ?? "Turn failed";
     const last = [...messages].reverse().find((message) => message.role === "assistant");
     if (last) last.error = error;
     else messages.push({ id: desktopMessageId(session.id, turnKey, "error", hostId, "error"), sessionId: session.id, role: "assistant", time: { created, completed }, parts: [], error, engineMeta: { codexThreadId: session.id, codexTurnId: turnId } });

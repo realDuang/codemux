@@ -929,7 +929,7 @@ export function convertThreadToMessages(
 
     const appendAssistant = (lastSegment: boolean): boolean => {
       if (lastSegment && (turn.status === "failed" || turn.status === "interrupted")) {
-        buffer.error = normalizeError(turn.error) ?? (turn.status === "interrupted" ? "Turn interrupted" : "Turn failed");
+        buffer.error = turn.status === "interrupted" ? "Cancelled" : normalizeError(turn.error) ?? "Turn failed";
       }
       if (buffer.parts.length === 0 && !buffer.error && !(lastSegment && inProgress)) return false;
       // Native items have no timestamps. Keep their order within the turn's first millisecond.

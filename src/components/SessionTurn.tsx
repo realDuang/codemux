@@ -486,11 +486,11 @@ export function SessionTurn(props: SessionTurnProps) {
   const currentStatus = () => derivedPartState().currentStatus;
 
   // Detect error/cancelled state from the last assistant message
-  const lastMessageError = createMemo(() => {
-    const msgs = props.assistantMessages;
-    if (msgs.length === 0) return undefined;
-    return msgs[msgs.length - 1].error;
-  });
+  const lastMessageError = createMemo(() => props.assistantMessages.at(-1)?.error);
+  const isTurnCancelled = createMemo(() => lastMessageError() === "Cancelled"
+    || lastMessageError() === "error:stopped_by_user");
+  // A failed command can be recovered within a turn; only its terminal outcome marks the steps as failed.
+  const turnHasError = createMemo(() => !props.isWorking && !!lastMessageError() && !isTurnCancelled());
 
   // Compute duration — live-ticking while no final endTime, static when done.
   // Use a self-contained timer that doesn't depend on isWorking prop for ticking,
@@ -620,8 +620,6 @@ export function SessionTurn(props: SessionTurnProps) {
   const showTurnStepsTrigger = createMemo(() =>
     props.isWorking || hasUnloadedSteps() || compactSegments().some(isCompactStep));
   const compactStepId = (index: number) => `compact-activity-${props.userMessage.id}-${index}`;
-  const turnHasToolError = createMemo(() => compactSegments().some((segment) => segment.kind === "activity"
-    && segment.items.some(({ part }) => part.type === "tool" && part.state.status === "error")));
 
   return (
     <div class={styles.sessionTurn} data-component="session-turn" data-compacting={isCompactingTurn() ? "" : undefined}>
@@ -723,7 +721,7 @@ export function SessionTurn(props: SessionTurnProps) {
                 {/* Duration */}
                 <span class={styles.separator}>·</span>
                 <span class={styles.duration}>{duration()}</span>
-                <Show when={turnHasToolError()}><span class={styles.activityAttention}>{t().common.error}</span></Show>
+                <Show when={turnHasError()}><span class={styles.activityAttention}>{t().common.error}</span></Show>
 
                 {/* Expand/Collapse arrow */}
                 <Show when={props.assistantMessages.length > 0}>
@@ -807,7 +805,6 @@ export function SessionTurn(props: SessionTurnProps) {
           {/* Error/Cancelled Banner */}
           <Show when={!props.isWorking && lastMessageError()}>
             {(_) => {
-              const isCancelled = () => lastMessageError() === "Cancelled";
               /** Resolve error:* keys to i18n, pass through unknown strings as-is. */
               const errorKeyMap: Record<string, () => string> = {
                 "error:stopped_by_user": () => t().steps.stoppedByUser,
@@ -818,14 +815,12 @@ export function SessionTurn(props: SessionTurnProps) {
                 const raw = lastMessageError() ?? "";
                 return errorKeyMap[raw]?.() ?? raw;
               };
-              const isKnownSoftError = () =>
-                lastMessageError() === "error:stopped_by_user" || isCancelled();
-              const variant = () => isKnownSoftError() ? "cancelled" : "error";
+              const variant = () => isTurnCancelled() ? "cancelled" : "error";
               return (
                 <div class={styles.errorBanner} data-variant={variant()}>
                   <div class={styles.errorBannerHeader}>
                     <span class={styles.errorBannerIcon}>
-                      <Show when={isKnownSoftError()} fallback={
+                      <Show when={isTurnCancelled()} fallback={
                         <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                           <circle cx="12" cy="12" r="10" />
                           <path d="m15 9-6 6" />
@@ -841,10 +836,10 @@ export function SessionTurn(props: SessionTurnProps) {
                       </Show>
                     </span>
                     <h3 class={styles.errorBannerTitle}>
-                      {isKnownSoftError() ? t().steps.cancelled : t().steps.errorOccurred}
+                      {isTurnCancelled() ? t().steps.cancelled : t().steps.errorOccurred}
                     </h3>
                     {/* Continue button for cancelled/stopped state */}
-                    <Show when={isKnownSoftError() && props.isLastTurn && props.onContinue}>
+                    <Show when={isTurnCancelled() && props.isLastTurn && props.onContinue}>
                       <button
                         type="button"
                         class={styles.continueButton}
@@ -857,7 +852,7 @@ export function SessionTurn(props: SessionTurnProps) {
                       </button>
                     </Show>
                   </div>
-                  <Show when={!isKnownSoftError()}>
+                  <Show when={!isTurnCancelled()}>
                     <div class={styles.errorBannerContent}>
                       <ContentError>{resolvedError()}</ContentError>
                     </div>

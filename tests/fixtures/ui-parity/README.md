@@ -89,6 +89,21 @@ including inline assets and source notes. Reopening restores the chronology;
 nested tool details retain independent controls. A completed partial item must
 never become a final answer solely because its `completed` flag is true.
 
+## Tool errors and turn outcomes
+
+Run the focused regression in an existing, exclusively owned ego-browser space:
+
+```sh
+bash tests/fixtures/ui-parity/check-turn-errors.sh TASK_SPACE_ID http://127.0.0.1:60790
+```
+
+The script checks that a recoverable command error keeps its own badge, output,
+and details without marking the command group or turn as failed. It verifies
+collapse and history reload, then stops a synthetic stream after its command
+succeeds to check the independent terminal message error. Screenshots are saved
+for visual review. The caller retains task-space ownership and completes its
+lifecycle after the browser workflow.
+
 ## Lazy history disclosure regression
 
 Start with `UI_PARITY_LAZY_STEPS=1` to add five `UI parity lazy history` sessions.

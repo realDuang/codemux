@@ -81,7 +81,8 @@ temporary `*.trycloudflare.com` URL each time they start.
 A custom domain requires a Cloudflare named tunnel and a local tunnel credential
 file. CodeMux looks for a UUID-named JSON file in `~/.cloudflared/`, for example
 `~/.cloudflared/<tunnel-id>.json`. If a custom domain is configured but that
-credential is missing, CodeMux will stop startup with a missing-credentials error
+credential is missing, the tunnel does not start: CodeMux keeps running locally,
+turns remote access off and shows a missing-credentials error in Remote Access,
 instead of silently falling back to a random quick tunnel URL.
 
 To prepare a custom domain:

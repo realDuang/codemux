@@ -12,6 +12,7 @@
 /* global process, console, Buffer, setTimeout, document, localStorage, addEventListener, MutationObserver, requestAnimationFrame, getComputedStyle */
 
 import { spawn, execFileSync } from "node:child_process";
+import { createServer } from "node:net";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -30,6 +31,12 @@ const recordVideo = !process.env.SKIP_VIDEO;
 // ---------------------------------------------------------------------------
 // Demo host
 // ---------------------------------------------------------------------------
+
+// The server moves to the next free port when this one is taken, so a busy port would point the browser elsewhere.
+await new Promise((free, busy) => {
+  const probe = createServer().once("error", () => busy(new Error(`Port ${port} is in use; set DEMO_PORT to a free port.`)));
+  probe.listen(Number(port), "127.0.0.1", () => probe.close(free));
+});
 
 execFileSync("npx", ["vite", "build", "--config", "scripts/readme-media/vite.demo.config.ts", "--logLevel", "warn"], { cwd: repo, stdio: "inherit" });
 if (!process.env.SKIP_WEB_BUILD) execFileSync("bun", ["run", "build:web"], { cwd: repo, stdio: "inherit" });

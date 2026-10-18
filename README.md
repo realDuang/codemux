@@ -61,7 +61,7 @@ CodeMux detects installed engines on startup. You need at least one:
 ### Open it from your phone
 
 1. Open **Remote Access** in CodeMux.
-2. Pick **LAN** (scan the QR code) or **Cloudflare Tunnel** (works from anywhere, no account needed for quick tunnels).
+2. Choose **Custom** and save this computer's LAN address (for example `http://192.168.1.20:8233`), or choose **Cloudflare Tunnel** to reach it from anywhere (quick tunnels need no account). Turn remote access on and scan the QR code.
 3. Approve the new device with its 6-digit code. Done.
 
 ## ✨ Features
@@ -109,7 +109,7 @@ Every agent action is an expandable step: file diffs with syntax highlighting, s
 
 | Method | Best for |
 |--------|----------|
-| **LAN browser** | Another device on the same network; IP and QR code detected automatically. |
+| **LAN browser** | Another device on the same network: save this computer's LAN IP and port as the custom address, then scan the QR code. |
 | **Cloudflare Tunnel** | Anywhere, with no port forwarding or VPN. Quick tunnels need zero config; named tunnels keep [your own domain](docs/custom-access.md#cloudflare-custom-domains). |
 | **Custom address** | Your own reverse proxy or route; see [Custom access](docs/custom-access.md). |
 | **Installable PWA** | Add CodeMux to a phone's home screen over a stable HTTPS address; see [Web and mobile PWA](docs/web-pwa.md). |

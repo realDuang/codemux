@@ -91,7 +91,7 @@ See [Server runtime and distribution](server-runtime.md) for directory packages,
 
 ## Adding a new engine
 
-Implement `EngineAdapter` (see `electron/main/engines/engine-adapter.ts`), add tool name mapping in `src/types/tool-mapping.ts`, and register in `electron/main/index.ts`. All engine-specific logic stays in the adapter layer; the frontend renders only unified types.
+Implement `EngineAdapter` (see `electron/main/engines/engine-adapter.ts`), add tool name mapping in `src/types/tool-mapping.ts`, and register the adapter in the `engines` list in `server/service-host.ts`, which both the desktop app and the standalone server use. All engine-specific logic stays in the adapter layer; the frontend renders only unified types.
 
 ## README media
 

@@ -1,457 +1,202 @@
 <div align="center">
 
-# CodeMux
-
-**[English](./README.md)** | [简体中文](./README.zh-CN.md) | [日本語](./README.ja.md) | [한국어](./README.ko.md) | [Русский](./README.ru.md)
-
-**Multi-Engine AI Coding Client with Full Remote Agent Experience.**
-
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-
 <img src="https://raw.githubusercontent.com/realDuang/codemux/main/assets/logo.png" alt="CodeMux" width="120" />
 
-*A multi-engine AI coding client with full agent chain-of-thought visualization and zero-config secure remote access — not another chat wrapper.*
+# CodeMux
 
-<img src="https://raw.githubusercontent.com/realDuang/codemux/main/assets/screenshots/main-chat.jpg" alt="CodeMux - Multi-Engine AI Coding Interface" width="800" />
+**One workbench for Claude Code, Copilot CLI, OpenCode and Codex — on your desktop, in any browser, or from your chat app.**
+
+[![Release](https://img.shields.io/github/v/release/realDuang/codemux?color=blue)](https://github.com/realDuang/codemux/releases/latest)
+[![Downloads](https://img.shields.io/github/downloads/realDuang/codemux/total?color=green)](https://github.com/realDuang/codemux/releases)
+[![Stars](https://img.shields.io/github/stars/realDuang/codemux?style=flat)](https://github.com/realDuang/codemux/stargazers)
+[![Platforms](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux%20%7C%20Web-lightgrey)](#-install)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Discussions](https://img.shields.io/github/discussions/realDuang/codemux)](https://github.com/realDuang/codemux/discussions)
+
+**English** | [简体中文](./README.zh-CN.md) | [日本語](./README.ja.md) | [한국어](./README.ko.md) | [Русский](./README.ru.md)
+
+[Website](https://realduang.github.io/codemux/) · [Download](https://github.com/realDuang/codemux/releases/latest) · [Docs](#-documentation) · [Roadmap](https://github.com/realDuang/codemux/discussions/61)
+
+<img src="https://raw.githubusercontent.com/realDuang/codemux/main/assets/screenshots/demo.gif" alt="CodeMux demo: an agent finds a bug, asks to run tests, and shows the diff" width="860" />
 
 </div>
 
----
-
-## Why CodeMux?
-
-### 1. Multi-Engine, Not Multi-Model
-
-This is not a chat wrapper that swaps API keys. CodeMux is a **protocol-level gateway** — each engine runs with its own runtime, sessions, tool execution, and capabilities fully preserved.
-
-Switch between engines from a single interface. Each keeps its full power — file editing, shell access, session history, project context — CodeMux just gives them a shared front door.
-
-| Engine | Protocol | Status |
-|--------|----------|--------|
-| **[OpenCode](https://opencode.ai)** | HTTP REST + SSE | ✅ Stable |
-| **[GitHub Copilot CLI](https://docs.github.com/en/copilot/concepts/agents/about-copilot-cli)** | JSON-RPC/stdio | ✅ Stable |
-| **[Claude Code](https://claude.ai/code)** | SDK (stdio) | ✅ Stable |
-| **[Codex](https://github.com/openai/codex)** | JSON-RPC/stdio (app-server), optional local Desktop IPC | ⚠️ Experimental |
-
-> 💡 CodeMux is also the **first — and currently only — open-source GUI for GitHub Copilot CLI**, connecting at the protocol level (JSON-RPC over stdio) to deliver Copilot's complete agentic coding experience in a visual interface.
->
-> ⚠️ Codex support is currently experimental/unstable. Expect protocol details and behavior to evolve as the upstream app-server protocol changes.
-
-Codex has one engine entry for independent execution and optional Desktop sharing. Enable **Settings → Engines → Codex → Share chats with Codex Desktop** to discover eligible native conversations and exchange input with their current execution owner. Existing CodeMux conversations join sharing without replacing their writer, and older Desktop conversations can be imported manually. Conversation details show the known creation origin and current execution client. See [unified Codex sharing](docs/codex-desktop-sharing.md) for migration, live checks, and runtime compatibility limits.
-
-### 2. Agent Chain-of-Thought Visualization
-
-Every agent action is rendered as an expandable step — file diffs, shell commands, search results, tool calls — so you can see exactly what the agent is doing and why, not just the final answer.
-
-<img src="https://raw.githubusercontent.com/realDuang/codemux/main/assets/screenshots/chat-steps.jpg" alt="CodeMux - Step-by-Step Agent Visualization" width="700" />
-
-This isn't limited to the desktop app. **The full chain-of-thought experience is preserved across every access method** — whether you're on a browser via LAN or public internet, or interacting through an IM bot on your phone.
-
-### 3. True Remote Agent Experience
-
-Tools like [OpenClaw](https://github.com/openclaw/openclaw) have popularized the idea of accessing AI from messaging apps — send a message on WhatsApp or Telegram, get a text reply. But for AI-assisted coding, a text reply isn't enough. You need to see what the agent is **thinking**, what files it's **editing**, what commands it's **running** — in real time.
-
-**CodeMux bridges this gap.** Whether you access from a browser or an IM platform, you get the complete agent experience with structured streaming:
-
-| Capability | CodeMux | Text-based assistants |
-|------------|---------|----------------------|
-| Streaming output | ✅ Token-level real-time streaming | ⚠️ Complete reply or chunked text |
-| Thinking steps | ✅ Each tool call rendered as expandable step | ❌ Final answer only |
-| File diffs | ✅ Inline diff viewer with syntax highlighting | ❌ Plain text or none |
-| Shell commands | ✅ Command + output rendered in real time | ❌ Text summary at best |
-| Multi-engine | ✅ Switch between OpenCode / Copilot / Claude Code / Codex | ❌ Single model / provider |
-| Coding context | ✅ Project-aware sessions with full tool access | ⚠️ Generic assistant context |
-| Image input | ✅ Paste/drag images for all engines to analyze | ❌ Text-only input |
-
-### 4. Multimodal Support
-
-Text-based coding tools are limited to text input. CodeMux breaks this barrier — **attach images to your prompts and let the AI see what you see**.
-
-Paste a screenshot, drag in a design mockup, or upload an error image — all four engines can analyze images natively. Each engine adapter translates images into its native format behind the scenes, while you get a unified experience:
-
-- **Upload methods**: File picker, drag & drop, clipboard paste
-- **Supported formats**: JPEG, PNG, GIF, WebP (up to 4 images per message, 3MB each)
-- **Inline preview**: Thumbnails shown before sending, images rendered in chat history
-
-> This works across all access methods — desktop, remote browser, and IM bots — wherever CodeMux runs, image input follows.
-
-### 5. Developer Workflow Tools
-
-CodeMux goes beyond chat — it provides integrated tools to manage your development workflow directly from the interface.
-
-- **Scheduled Tasks**: Automate recurring agent tasks — run code reviews every morning, generate reports on an interval, or batch-process issues weekly. Supports manual trigger, interval (5 min – 12 hours), daily, and weekly scheduling with missed-run catch-up when the app restarts.
-
-<img src="https://raw.githubusercontent.com/realDuang/codemux/main/assets/screenshots/scheduled-task.jpg" alt="CodeMux - Scheduled Tasks" width="700" />
-
-- **Git Worktree Parallel Sessions**: Work on multiple branches simultaneously without `git stash`. Create isolated worktrees from the sidebar, each with its own directory, branch, and AI sessions. Merge back with your choice of merge, squash, or rebase — all without leaving the UI.
-
-- **File Explorer & Git Monitoring**: Browse project files with a collapsible tree, preview code with syntax highlighting, and track git changes in real time. A "Changes" tab shows modified files with line-level add/remove counts, and an inline diff viewer lets you inspect every change without leaving CodeMux.
-
-<img src="https://raw.githubusercontent.com/realDuang/codemux/main/assets/screenshots/project-preview.jpg" alt="CodeMux - File Explorer" width="700" />
-
-- **Slash Commands & Engine Skills**: Type `/` in the input to invoke engine-native commands and skills with autocomplete — `/cancel`, `/status`, `/mode`, `/model`, and more. Each engine exposes its own commands; Copilot surfaces project-level and personal skills, Claude Code surfaces user-installed skills, OpenCode passes through its SDK commands, and Codex surfaces app-server skills — all through a unified autocomplete UI.
-
-- **Integrated Terminal**: A built-in VS Code-style terminal lives right under the chat — toggle it with `` Ctrl+` ``. Open multiple tabs running real shells (auto-detected PowerShell / pwsh / cmd / Git Bash / WSL on Windows; `$SHELL` and `/etc/shells` on Unix; plus custom profiles), with a search overlay (`Ctrl+F`), clickable file paths that open in CodeMux's built-in file panel, and selectable GPU rendering (WebGL → Canvas → DOM). Because it streams over the same Gateway WebSocket, the terminal works **remotely too** — over LAN or Cloudflare Tunnel — not just on the local desktop.
-
-<img src="https://raw.githubusercontent.com/realDuang/codemux/main/assets/screenshots/terminal.jpg" alt="CodeMux - Integrated Terminal" width="700" />
-
-### And More
-
-- **Agent mode switching**: Toggle between Build / Plan / Autopilot modes per engine — each with its own behavior and prompt style
-- **Live todo panel**: Agent-generated task lists displayed above the input area with real-time progress tracking
-- **Permission approvals**: Approve or deny sensitive operations (shell, file edits) inline — with "always allow" for trusted patterns
-- **Interactive questions**: Engines can ask single/multi-select questions with descriptions and custom input
-- **Per-engine model selection**: Pick different models for each engine independently; Claude Code and Codex support custom model ID input
-- **Token usage tracking**: Monitor input, output, and cache token consumption with per-engine cost breakdowns
-
-#### Browser Remote Access
-
-Access your coding agents from any device — phone, tablet, or another machine — without touching a single config file.
-
-- **LAN**: Auto-detected IP + QR code, ready in seconds
-- **Public Internet**: One-click [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/) — no port forwarding, no VPN, no firewall changes. Supports both **quick tunnels** (random ephemeral URL, zero config) and **named tunnels** (persistent custom domain via `~/.cloudflared/` credentials)
-- **Security built-in**: Device authorization, JWT tokens, HTTPS via Cloudflare; quick tunnel URLs rotate whenever the tunnel itself is recreated, while named tunnels preserve your custom hostname
-
-#### IM Bot Channels
-
-Use your AI coding agents directly from your favorite messaging apps with **real-time streaming and structured rich content** — not just plain text replies.
-
-##### Supported Platforms
-
-| Platform | Event Receiving | Streaming | Group Creation | Rich Content |
-|----------|----------------|-----------|----------------|--------------|
-| [Feishu (Lark)](https://open.feishu.cn/) | WebSocket (长连接) | ✅ Edit-in-place | ✅ Auto-create group | Interactive Cards |
-| [DingTalk](https://open.dingtalk.com/) | Stream mode (WS) | ✅ AI Card | ✅ Scene groups | ActionCard / Markdown |
-| [Telegram](https://core.telegram.org/bots/api) | Webhook / Long Polling | ✅ sendMessageDraft | ❌ P2P only | MarkdownV2 + InlineKeyboard |
-| [WeCom](https://developer.work.weixin.qq.com/) | HTTP Callback (AES XML) | ❌ Batch mode | ✅ App group chat | Markdown / Template Card |
-| [Microsoft Teams](https://learn.microsoft.com/en-us/microsoftteams/platform/bots/) | Bot Framework HTTP | ✅ Edit-in-place | ❌ P2P only | Adaptive Cards v1.5 |
-
-##### Common Features
-
-- **P2P entry point**: Private chat with the bot to select projects and sessions
-- **Slash commands**: `/cancel`, `/status`, `/mode`, `/model`, `/history`, `/help`
-- **Streaming responses**: Real-time AI output with platform-appropriate update strategy
-- **Tool summary**: Completion messages include action counts (e.g. `Shell(2), Edit(1)`)
-- **Auto-approve permissions**: Engine permission requests are approved automatically
-
-##### Session Models
-
-- **One Group = One Session** (Feishu, DingTalk, WeCom): Each group chat maps to a single CodeMux session. Start in P2P → select project → group auto-created.
-- **P2P Direct** (Telegram, Teams): Interact directly in private chat with temporary sessions (2h TTL). In group chats, @mention the bot to interact.
-
-##### Setup
-
-Each platform requires creating a bot/app on its developer portal and configuring credentials in CodeMux Settings → Channels.
-
-📖 **[Detailed setup guide →](docs/channels/README.md)** — Step-by-step instructions for each platform, including permissions, webhook configuration, and troubleshooting.
-
-| Platform | Required Credentials | Developer Portal |
-|----------|---------------------|-----------------|
-| Feishu | App ID, App Secret | [open.feishu.cn](https://open.feishu.cn/) |
-| DingTalk | App Key, App Secret, Robot Code | [open.dingtalk.com](https://open.dingtalk.com/) |
-| Telegram | Bot Token (from @BotFather) | [core.telegram.org](https://core.telegram.org/bots) |
-| WeCom | Corp ID, Corp Secret, Agent ID, Callback Token, Encoding AES Key | [developer.work.weixin.qq.com](https://developer.work.weixin.qq.com/) |
-| Teams | Microsoft App ID, App Password, Tenant ID | [Azure Portal](https://portal.azure.com/) + [Teams Dev Portal](https://dev.teams.microsoft.com/) |
-
----
-
-## Quick Start
-
-### Option 1: Desktop App
-
-**macOS (Recommended — via Homebrew):**
-
-```bash
-brew tap realDuang/codemux
-brew install --cask codemux
-```
-
-**Manual download:**
-
-- **macOS (Apple Silicon)**: `CodeMux-x.x.x-arm64.dmg`
-- **macOS (Intel)**: `CodeMux-x.x.x-x64.dmg`
-- **Windows**: `CodeMux-x.x.x-setup.exe`
-
-The desktop app bundles the Cloudflare Tunnel binary and the gateway server. **OpenCode, Copilot CLI, Claude Code, and Codex must be installed separately** (see below).
-
-> ⚠️ **macOS Users (manual download)**: The app is not code-signed. If macOS shows "App is damaged", run:
->
-> ```bash
-> xattr -cr /Applications/CodeMux.app
-> ```
-
-### Option 2: Development Mode
-
-```bash
-# Clone the repository
-git clone https://github.com/realDuang/codemux.git
-cd codemux
-
-# Install dependencies
-bun install
-
-# Download cloudflared binary (for remote access)
-bun run update:cloudflared
-
-# Start development server (Electron + Vite HMR)
-bun run dev
-```
-
-### Isolated Electron Dev Instances
-
-Use isolated dev mode when you want to debug CodeMux from a separate git worktree without interrupting your normal running app session:
-
-```bash
-bun run dev:isolated
-```
-
-This keeps `bun run dev` unchanged. The isolated command writes all Electron app state for that worktree under a gitignored `.codemux-dev/` directory:
-
-```text
-.codemux-dev/
-  userData/
-  sessionData/
-  logs/
-  ports.json
-```
-
-Each worktree can have its own `.codemux-dev/` directory and port allocation. The first run automatically reserves a non-default port offset and stores it in `.codemux-dev/ports.json`; later runs reuse that saved offset so the same worktree stays stable. If the saved ports become stale or conflict with another process, stop the existing isolated instance, delete `.codemux-dev/ports.json` to reallocate, or set an explicit `CODEMUX_PORT_OFFSET`.
-
-Supported port overrides:
-
-- `CODEMUX_PORT_OFFSET`
-- `CODEMUX_WEB_PORT`
-- `CODEMUX_WEB_STANDALONE_PORT`
-- `CODEMUX_GATEWAY_PORT`
-- `CODEMUX_OPENCODE_PORT`
-- `CODEMUX_AUTH_API_PORT`
-- `CODEMUX_WEBHOOK_PORT`
-
-### Linux Server
-
-The complete host runs on Node 24 without Electron, a display server, or a desktop session. It serves the Web/PWA client and the same gateway, engines, channels, tasks, files, and terminals used by the desktop application.
-
-```bash
-# Build and run the production server from this checkout
-bun install --frozen-lockfile
-bun run build:server-app
-node out/server/index.mjs
-
-# Manage the running host from another terminal
-node out/server/cli.mjs status
-node out/server/cli.mjs access-code
-node out/server/cli.mjs pending
-node out/server/cli.mjs stop
-
-# Develop with the full Node host and Vite source updates
-./scripts/server-init.sh        # Debian/Ubuntu prerequisites; optional engine setup
-bun run server:dev             # Foreground
-bun run server:up              # Background
-bun run server:status
-bun run server:restart
-bun run server:down
-bun run server:tunnel          # Enable the existing Cloudflare quick-tunnel flow
-bun run server:access-requests # Review device approvals from the terminal
-```
-
-Use `--data-dir /absolute/path` on both the production server and CLI to select an existing data directory. Development wrappers retain their legacy device-file and isolation conventions. `bun run start` remains the legacy OpenCode/Vite compatibility entry on port 8234, with `.devices.json` and `.settings.json` in its working directory; it is separate from the complete Node host.
-
-Remote access retains its existing settings and device-approval flow. A quick-tunnel URL can change when its owning server restarts; use a named tunnel or an existing stable HTTPS address for an installed PWA. Approved browsers can manage channels through Settings.
-
-See [Server runtime and distribution](docs/server-runtime.md) for directory packages, service management, data paths, and upgrades.
-
-> **Engine Prerequisites**: All engines are external dependencies that must be installed and available in your PATH:
-> - **OpenCode**: Install from [opencode.ai](https://opencode.ai) — `curl -fsSL https://opencode.ai/install | bash` (Unix) or `irm https://opencode.ai/install.ps1 | iex` (Windows)
-> - **Copilot CLI**: Install [GitHub Copilot CLI](https://docs.github.com/en/copilot/concepts/agents/about-copilot-cli) separately
-> - **Claude Code**: Install via `npm install -g @anthropic-ai/claude-code` and set your `ANTHROPIC_API_KEY`
-> - **Codex**: Install the [`codex` CLI](https://github.com/openai/codex) separately and ensure `codex` is in PATH. CodeMux reuses Codex's existing OpenAI login or API key configuration. Experimental/unstable.
->
-> CodeMux auto-detects installed engines on startup.
-
----
-
-## Remote Access & Channels
-
-### How to Connect
-
-| Method | Setup | Best For |
-|--------|-------|----------|
-| **LAN Browser** | Select Custom entry, save `http://<your-ip>:8233`, and enable Remote Access | Quick access from another device on the same network |
-| **Custom IP / Domain** | Select Custom entry, save an existing reachable address, and enable Remote Access | Reuse your own network route or reverse proxy; [setup guide](docs/custom-access.md) |
-| **Public Internet** | Select Cloudflare Tunnel and enable Remote Access → share the tunnel URL | Access from anywhere, no port forwarding needed |
-| **IM Bot** | Configure bot credentials in Settings → Channels (desktop or approved web UI) | Interact from Feishu, DingTalk, Telegram, WeCom, or Teams |
-
-### Cloudflare Custom Domains
-
-Remote access is off by default. Custom entry and Cloudflare Tunnel are mutually exclusive. Cloudflare quick tunnels require no Cloudflare account setup and produce a temporary `*.trycloudflare.com` URL each time they start.
-
-A custom domain requires a Cloudflare named tunnel and a local tunnel credential file. CodeMux looks for a UUID-named JSON file in `~/.cloudflared/`, for example `~/.cloudflared/<tunnel-id>.json`. If a custom domain is configured but that credential is missing, CodeMux will stop startup with a missing-credentials error instead of silently falling back to a random quick tunnel URL.
-
-To prepare a custom domain:
-
-```bash
-# Sign in and choose the Cloudflare zone for your domain.
-# This writes ~/.cloudflared/cert.pem.
-cloudflared tunnel login
-
-# If the tunnel already exists, find its name and UUID.
-cloudflared tunnel list
-
-# Download/write the connector credential that CodeMux can detect.
-cloudflared tunnel token --cred-file ~/.cloudflared/<tunnel-id>.json <tunnel-name-or-id>
-
-# Route the hostname to that named tunnel, if it is not already routed.
-cloudflared tunnel route dns <tunnel-name-or-id> <your-domain>
-```
-
-If you do not already have a named tunnel, create one first with `cloudflared tunnel create <tunnel-name>`; that command also writes the credential JSON. Keep `cert.pem` and `<tunnel-id>.json` private and never commit them to the repository.
-
-### Security & Device Management
-
-| Layer | Protection |
-|-------|------------|
-| **Device Authorization** | New devices require approval with a 6-digit code |
-| **JWT Tokens** | Per-device tokens stored securely |
-| **HTTPS** | Public tunnel uses HTTPS via Cloudflare automatically |
-| **Ephemeral URLs** | Tunnel URLs change on every restart |
-
-Manage connected devices from the Devices page — view last access time, rename for identification, or revoke access per-device.
-
-> CodeMux is designed for personal use. Revoke devices you no longer use and disable the public tunnel when not needed.
-
----
+## What is CodeMux?
+
+CodeMux is an open-source desktop and web client for **coding agents**. It does not wrap a model API. It talks to each agent's own runtime at the protocol level, so Claude Code, GitHub Copilot CLI, OpenCode and Codex keep their tools, sessions and project context, and you get one interface on top of all of them.
+
+Then it lets you **leave your desk**. The same sessions, with every tool call, diff and shell command rendered live, are reachable from your phone's browser or from Feishu, DingTalk, Telegram, WeCom, Teams or WeChat, with no port forwarding.
+
+- 🔀 **Multi-engine, not multi-model**: four real agent runtimes behind one UI, switchable per session.
+- 👀 **See the whole chain of thought**: every tool call, file diff and command is an expandable step, not a wall of text.
+- 📱 **Remote by default**: LAN QR code or one-click Cloudflare Tunnel, with device approval and per-device tokens.
+- 💬 **Agents in your chat app**: streaming, structured replies in six IM platforms.
+- 🧰 **A real workbench**: integrated terminal, file explorer, git worktrees, scheduled tasks, slash commands and skills.
+
+> 💡 CodeMux is the **first open-source GUI for GitHub Copilot CLI**, connecting over JSON-RPC to deliver Copilot's full agentic experience visually.
+
+## 🚀 Install
+
+| Platform | Get it |
+|----------|--------|
+| **macOS** | `brew tap realDuang/codemux && brew install --cask codemux`, or the `.dmg` from [Releases](https://github.com/realDuang/codemux/releases/latest) (Apple Silicon: `-arm64.dmg`) |
+| **Windows** | `CodeMux-Setup-<version>.exe` from [Releases](https://github.com/realDuang/codemux/releases/latest) |
+| **Linux desktop** | `.AppImage` or `.deb` from [Releases](https://github.com/realDuang/codemux/releases/latest) |
+| **Linux server (headless)** | Run the Node host and use it from any browser; see [Server runtime](docs/server-runtime.md) |
+| **From source** | See [Development](docs/development.md) |
+
+> ⚠️ The macOS build is not code-signed. If macOS says "App is damaged", run `xattr -cr /Applications/CodeMux.app`.
+
+### Then connect an engine
+
+CodeMux detects installed engines on startup. You need at least one:
+
+| Engine | Protocol | Status | Setup |
+|--------|----------|--------|-------|
+| **[Claude Code](https://docs.anthropic.com/en/docs/claude-code)** | Claude Agent SDK | ✅ Stable | Runtime is bundled. Uses your existing Claude Code login or `ANTHROPIC_API_KEY`. |
+| **[GitHub Copilot CLI](https://docs.github.com/en/copilot/concepts/agents/about-copilot-cli)** | JSON-RPC / stdio | ✅ Stable | Install Copilot CLI and sign in. |
+| **[OpenCode](https://opencode.ai)** | HTTP REST + SSE | ✅ Stable | `curl -fsSL https://opencode.ai/install \| bash` (Windows: `irm https://opencode.ai/install.ps1 \| iex`) |
+| **[Codex](https://github.com/openai/codex)** | JSON-RPC / stdio app-server | ⚠️ Experimental | Install the `codex` CLI; CodeMux reuses its login or API key. |
+
+### Open it from your phone
+
+1. Open **Remote Access** in CodeMux.
+2. Choose **Custom** and save this computer's LAN address (for example `http://192.168.1.20:8233`), or choose **Cloudflare Tunnel** to reach it from anywhere (quick tunnels need no account). Turn remote access on and scan the QR code.
+3. Approve the new device with its 6-digit code. Done.
+
+## ✨ Features
+
+### Agent chain of thought, rendered
+
+Every agent action is an expandable step: file diffs with syntax highlighting, shell commands with live output, searches, tool calls, todo lists and permission prompts. You see what the agent is doing and why, not only the final answer, and the same rendering follows you to the browser and to IM.
+
+<img src="https://raw.githubusercontent.com/realDuang/codemux/main/assets/screenshots/chat-steps.jpg" alt="CodeMux - Step-by-Step Agent Visualization" width="720" />
+
+### A workbench, not a chat box
+
+| | |
+|---|---|
+| **Integrated terminal** | VS Code-style tabs with real shells (`` Ctrl+` ``), search, clickable paths, and remote use over LAN or tunnel. |
+| **File explorer & git changes** | Project tree, syntax-highlighted preview, live "Changes" tab with line counts and inline diffs. |
+| **Git worktree sessions** | Work on several branches in parallel, each with its own sessions; merge back with merge, squash or rebase. |
+| **Scheduled tasks** | Run agent tasks manually, every 5 min–12 h, daily or weekly, with missed-run catch-up. |
+| **Slash commands & skills** | Type `/` for engine-native commands and skills with autocomplete. |
+| **Agent modes & models** | Build / Plan / Autopilot modes and a separate model per engine. |
+| **Approvals & questions** | Approve shell or edit operations inline ("always allow" for trusted patterns); answer agent questions with choices. |
+| **Images in prompts** | Paste, drag or pick up to 4 images per message; all engines can read them. |
+| **Token usage** | Input, output and cache tokens with per-engine cost breakdown. |
+
+<table>
+  <tr>
+    <td><img src="https://raw.githubusercontent.com/realDuang/codemux/main/assets/screenshots/terminal.jpg" alt="Integrated terminal" /></td>
+    <td><img src="https://raw.githubusercontent.com/realDuang/codemux/main/assets/screenshots/main-chat.jpg" alt="Git changes with inline diff" /></td>
+  </tr>
+  <tr>
+    <td align="center"><sub>Integrated terminal</sub></td>
+    <td align="center"><sub>Git changes with inline diff</sub></td>
+  </tr>
+  <tr>
+    <td><img src="https://raw.githubusercontent.com/realDuang/codemux/main/assets/screenshots/scheduled-task.jpg" alt="Scheduled tasks" /></td>
+    <td><img src="https://raw.githubusercontent.com/realDuang/codemux/main/assets/screenshots/project-preview.jpg" alt="File explorer and preview" /></td>
+  </tr>
+  <tr>
+    <td align="center"><sub>Scheduled tasks</sub></td>
+    <td align="center"><sub>File explorer and preview</sub></td>
+  </tr>
+</table>
+
+### Remote access that keeps the full experience
+
+| Method | Best for |
+|--------|----------|
+| **LAN browser** | Another device on the same network: save this computer's LAN IP and port as the custom address, then scan the QR code. |
+| **Cloudflare Tunnel** | Anywhere, with no port forwarding or VPN. Quick tunnels need zero config; named tunnels keep [your own domain](docs/custom-access.md#cloudflare-custom-domains). |
+| **Custom address** | Your own reverse proxy or route; see [Custom access](docs/custom-access.md). |
+| **Installable PWA** | Add CodeMux to a phone's home screen over a stable HTTPS address; see [Web and mobile PWA](docs/web-pwa.md). |
+
+New devices must be approved with a 6-digit code, each device gets its own JWT, and public tunnels use HTTPS. You can rename or revoke any device from the Devices page.
+
+<table>
+  <tr>
+    <td><img src="https://raw.githubusercontent.com/realDuang/codemux/main/assets/screenshots/remote-access.jpg" alt="Remote access" /></td>
+    <td><img src="https://raw.githubusercontent.com/realDuang/codemux/main/assets/screenshots/devices-management.jpg" alt="Device management" /></td>
+    <td width="22%"><img src="https://raw.githubusercontent.com/realDuang/codemux/main/assets/screenshots/mobile.jpg" alt="Same session on a phone" /></td>
+  </tr>
+  <tr>
+    <td align="center"><sub>Remote access</sub></td>
+    <td align="center"><sub>Device management</sub></td>
+    <td align="center"><sub>Same session on a phone</sub></td>
+  </tr>
+</table>
+
+> CodeMux is designed for personal use. Revoke devices you no longer use and turn the public tunnel off when you do not need it.
+
+### Coding agents in your chat app
+
+Talk to your agents from IM with streaming output and structured cards, not just plain text replies. Start in a private chat with the bot, pick a project and session, and use `/cancel`, `/status`, `/mode`, `/model`, `/history` and `/help`.
+
+| Platform | Streaming | Session model | Rich content |
+|----------|-----------|---------------|--------------|
+| [Feishu / Lark](docs/channels/feishu/README.md) | ✅ Edit in place | One group = one session | Interactive cards |
+| [DingTalk](docs/channels/dingtalk/README.md) | ✅ AI Card | One group = one session | ActionCard / Markdown |
+| [Telegram](docs/channels/telegram/README.md) | ✅ Draft / edit | Private chat | MarkdownV2 + buttons |
+| [WeCom](docs/channels/wecom/README.md) | Batch | One group = one session | Markdown / template card |
+| [Microsoft Teams](docs/channels/teams/README.md) | ✅ Edit in place | Private chat | Adaptive Cards |
+| [WeChat (iLink, personal account)](docs/channels/weixin-ilink/README.md) | Batch | Private chat | Plain text |
+
+📖 [Channel setup guide](docs/channels/README.md)
+
+<p align="center"><img src="https://raw.githubusercontent.com/realDuang/codemux/main/assets/screenshots/channels.jpg" alt="IM channel settings" width="720" /></p>
+
+## How is this different?
+
+| | CodeMux | Text-only chat bots | A single agent's own UI |
+|---|---|---|---|
+| Real agent runtimes (tools, sessions, project context) | ✅ | ⚠️ Usually a model API | ✅ |
+| Several agents in one place | ✅ Claude Code, Copilot, OpenCode, Codex | ❌ | ❌ |
+| Tool calls, diffs and shell output rendered as steps | ✅ | ❌ Final text | ✅ Locally |
+| Same experience from phone browser and IM | ✅ | ⚠️ Text only | ❌ |
+| Self-hosted, your machine, your credentials | ✅ | Varies | ✅ |
 
 ## Architecture
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                        Access Layer                             │
-│                                                                 │
-│  ┌──────────┐  ┌───────────────┐  ┌──────────────────────────┐  │
-│  │ Electron │  │ Browser (LAN/ │  │ IM Bots (Feishu/DingTalk │  │
-│  │   App    │  │  Cloudflare)  │  │ /Telegram/WeCom/Teams)   │  │
-│  └────┬─────┘  └──────┬────────┘  └────────────┬─────────────┘  │
-│       │               │                        │                │
-│       └───────────────┼────────────────────────┘                │
-│                       │                                         │
-│              WebSocket (JSON-RPC)                               │
-│                       │                                         │
-│              ┌────────┴────────┐                                │
-│              │  Gateway Server │                                │
-│              │ (Engine Manager)│                                │
-│              └──┬──────┬──────┬─────┬┘                            │
-│                 │      │      │     │                             │
-│           ┌─────┘   ┌──┘   ┌──┘   └──┐                            │
-│           │         │      │         │                            │
-│     ┌─────┴─────┐ ┌─┴──────┐ ┌┴───────┐ ┌─────────┐               │
-│     │ OpenCode  │ │Copilot │ │ Claude │ │  Codex  │               │
-│     │ Adapter   │ │Adapter │ │Adapter │ │ Adapter │               │
-│     │(HTTP+SSE) │ │(stdio) │ │ (SDK)  │ │ (stdio) │               │
-│     └───────────┘ └────────┘ └────────┘ └─────────┘               │
-│                                                                 │
-│     Unified Type System: UnifiedPart, ToolPart, AgentMode       │
-└─────────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TB
+  subgraph Access
+    A[Desktop app<br/>Electron]
+    B[Browser / PWA<br/>LAN · Cloudflare Tunnel]
+    C[IM bots<br/>Feishu · DingTalk · Telegram<br/>WeCom · Teams · WeChat]
+  end
+  A & B & C -->|WebSocket JSON-RPC| G[Gateway server<br/>engine manager]
+  G --> O[OpenCode adapter<br/>HTTP + SSE]
+  G --> P[Copilot adapter<br/>stdio]
+  G --> Q[Claude Code adapter<br/>Agent SDK]
+  G --> R[Codex adapter<br/>stdio]
 ```
 
-All access methods — desktop app, remote browser, and IM bots — connect through the same WebSocket gateway. Engines share a **normalized type system**, so tool calls, file diffs, and streaming messages are rendered identically regardless of which engine or access method is used.
+All clients connect through the same gateway, and every engine is translated into one **normalized type system**, so tool calls, diffs and streaming messages look the same whichever engine or client you use.
 
----
+## 📚 Documentation
 
-## Development
+| Topic | Doc |
+|-------|-----|
+| IM channel setup | [docs/channels](docs/channels/README.md) |
+| Custom domains and access | [docs/custom-access.md](docs/custom-access.md) |
+| Web and mobile PWA | [docs/web-pwa.md](docs/web-pwa.md) |
+| Headless Linux server | [docs/server-runtime.md](docs/server-runtime.md) |
+| Sharing chats with Codex Desktop | [docs/codex-desktop-sharing.md](docs/codex-desktop-sharing.md) |
+| Development, commands, isolated dev | [docs/development.md](docs/development.md) |
+| Project structure | [docs/project-structure.md](docs/project-structure.md) |
 
-### Commands
+## 🤝 Contributing
 
-```bash
-./scripts/server-init.sh  # Bootstrap a Linux server before Bun is installed
-bun run dev                # Electron + Vite HMR
-bun run server:dev         # Foreground Node + Vite development
-bun run server:up          # Background Node + Vite development
-bun run server:tunnel      # Background Node + Vite development + quick tunnel
-bun run server:restart     # Restart the managed development host
-bun run server:access-code # Print the current 6-digit access code
-bun run server:access-requests # Interactively review pending remote access requests
-bun run server:down        # Stop the managed development host
-bun run server:status      # Show managed development status
-bun run build              # Build Electron and Web/PWA clients
-bun run build:desktop      # Desktop shell, local Server, and shared UI
-bun run build:web          # Shared UI in out/web plus thin desktop HTML
-bun run build:server-app   # Pure Node Server/CLI and Web UI
-bun run pack:server        # Target-platform standalone directory package
-bun run dist:mac:arm64     # macOS Apple Silicon
-bun run dist:mac:x64       # macOS Intel
-bun run dist:win           # Windows NSIS installer
-bun run typecheck          # Type checking
-bun run update:cloudflared # Update Cloudflare Tunnel binary
-```
+Issues, ideas and pull requests are welcome. Start with [CONTRIBUTING.md](CONTRIBUTING.md), check the [Roadmap](https://github.com/realDuang/codemux/discussions/61), and ask anything in [Discussions](https://github.com/realDuang/codemux/discussions). Want another engine? See [Adding a new engine](docs/development.md#adding-a-new-engine).
 
-### Project Structure
-
-See [Web and mobile PWA](docs/web-pwa.md) for build boundaries, mobile installation, caching, and validation.
-
-```
-codemux/
-├── electron/
-│   ├── main/
-│   │   ├── engines/          # Engine adapters (OpenCode, Copilot, Claude Code, Codex)
-│   │   ├── gateway/          # WebSocket server + engine routing
-│   │   ├── channels/         # IM bot channels (Feishu, DingTalk, Telegram, WeCom, Teams)
-│   │   │   └── streaming/    # Cross-channel streaming infrastructure
-│   │   ├── services/         # Auth, device store, tunnel, sessions, file service, tray, etc.
-│   │   └── utils/            # Shared utilities (ID generation, etc.)
-│   └── preload/
-├── src/                      # SolidJS renderer
-│   ├── pages/                # Chat, Settings, Devices, Entry
-│   ├── components/           # UI components + content renderers
-│   ├── stores/               # Reactive state (session, message, config)
-│   ├── lib/                  # Gateway client, auth, i18n, theme
-│   ├── locales/              # i18n translation files (en, zh, ru)
-│   └── types/                # Unified type system + tool mapping
-├── shared/                   # Shared backend modules (auth, JWT, device store base)
-├── tests/                    # Unit tests, e2e tests (Playwright), benchmarks
-├── docs/                     # Channel setup guides + design documents
-├── website/                  # Project website (SolidJS + Vite)
-├── scripts/                  # Setup, binary updaters, CI helpers
-├── homebrew/                 # Homebrew formula for macOS distribution
-├── electron.vite.config.ts
-└── electron-builder.yml
-```
-
----
-
-## Contributing
-
-Contributions are welcome! See [CONTRIBUTING.md](CONTRIBUTING.md) for detailed guidelines.
-
-**Code Style**: TypeScript strict mode, SolidJS reactive patterns, Tailwind for styling
-
-**Commit Convention**: `feat:` | `fix:` | `docs:` | `refactor:` | `chore:`
-
-**Adding a New Engine**: Implement `EngineAdapter` (see `electron/main/engines/engine-adapter.ts`), add tool name mapping in `src/types/tool-mapping.ts`, and register in `electron/main/index.ts`.
-
----
+If CodeMux is useful to you, a ⭐ helps other people find it.
 
 ## License
 
 [MIT](LICENSE)
-
----
-
-## Links
-
-- [Discussions](https://github.com/realDuang/codemux/discussions) — Roadmap, feature requests & community conversations
-- [Roadmap](https://github.com/realDuang/codemux/discussions/61) — Development roadmap and milestone tracking
-- [Issues](https://github.com/realDuang/codemux/issues) — Bug reports
-- [OpenCode](https://opencode.ai) — Supported engine
-- [GitHub Copilot CLI](https://docs.github.com/en/copilot/concepts/agents/about-copilot-cli) — Supported engine
-- [Claude Code](https://docs.anthropic.com/en/docs/claude-code) — Supported engine
-- [Codex](https://github.com/openai/codex) — Supported engine
-- [Feishu Open Platform](https://open.feishu.cn/) — Feishu bot channel
-- [DingTalk Open Platform](https://open.dingtalk.com/) — DingTalk bot channel
-- [Telegram Bot API](https://core.telegram.org/bots/api) — Telegram bot channel
-- [WeCom Developer Center](https://developer.work.weixin.qq.com/) — WeCom bot channel
-- [Microsoft Teams Platform](https://learn.microsoft.com/en-us/microsoftteams/platform/bots/) — Teams bot channel
-
----
 
 <div align="center">
 

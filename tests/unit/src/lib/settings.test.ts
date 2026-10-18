@@ -107,6 +107,56 @@ describe('settings', () => {
       await promise;
       expect(resolved).toBe(true);
     });
+
+    it('waits for host acceptance before replacing the browser cache for an explicit save', async () => {
+      vi.mocked(Auth.isAuthenticated).mockReturnValue(true);
+      const previous = { whitelist: [], blacklist: [] };
+      const next = { whitelist: ['/repo'], blacklist: ['/repo/private'] };
+      localStorage.setItem('settings:projectPathFilter', JSON.stringify(previous));
+      let accept!: (response: { ok: boolean }) => void;
+      const fetchMock = vi.fn(() => new Promise<{ ok: boolean }>((resolve) => { accept = resolve; }));
+      vi.stubGlobal('fetch', fetchMock);
+
+      const saving = saveSetting('projectPathFilter', next, { requireHostPersistence: true });
+      expect(getSetting('projectPathFilter')).toEqual(previous);
+      accept({ ok: true });
+      await saving;
+      expect(getSetting('projectPathFilter')).toEqual(next);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(fetchMock).toHaveBeenCalledWith('/api/settings/shared', expect.objectContaining({
+        method: 'PATCH', body: JSON.stringify({ projectPathFilter: next }),
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer test-token' },
+      }));
+    });
+
+    it.each([
+      ['rejected response', () => Promise.resolve({ ok: false })],
+      ['lost connection', () => Promise.reject(new Error('Connection lost'))],
+    ])('preserves the browser cache after %s on an explicit save', async (_name, fetchResponse) => {
+      vi.mocked(Auth.isAuthenticated).mockReturnValue(true);
+      localStorage.setItem('settings:projectPathFilter', JSON.stringify({ whitelist: [], blacklist: ['/old'] }));
+      vi.stubGlobal('fetch', vi.fn(fetchResponse));
+      await expect(saveSetting('projectPathFilter', { whitelist: [], blacklist: ['/new'] }, { requireHostPersistence: true })).rejects.toThrow();
+      expect(getSetting('projectPathFilter')).toEqual({ whitelist: [], blacklist: ['/old'] });
+    });
+
+    it('requires authentication for an explicit host save', async () => {
+      const fetchMock = vi.fn();
+      vi.stubGlobal('fetch', fetchMock);
+      await expect(saveSetting('projectPathFilter', { whitelist: [], blacklist: [] }, { requireHostPersistence: true })).rejects.toThrow('unavailable');
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(getSetting('projectPathFilter')).toBeUndefined();
+    });
+
+    it('preserves the Electron cache when the host rejects an explicit save', async () => {
+      vi.mocked(isElectron).mockReturnValue(true);
+      const saveMock = vi.fn(async () => ({ success: false }));
+      window.electronAPI = { settings: { cache: {}, save: saveMock } } as typeof window.electronAPI;
+      const previous = getSetting('projectPathFilter');
+      await expect(saveSetting('projectPathFilter', { whitelist: [], blacklist: ['/new'] }, { requireHostPersistence: true })).rejects.toThrow('failed');
+      expect(getSetting('projectPathFilter')).toEqual(previous);
+      expect(localStorage.getItem('settings:projectPathFilter')).toBeNull();
+    });
   });
 
   describe('getNestedSetting', () => {
@@ -163,6 +213,20 @@ describe('settings', () => {
   describe('bootstrapHostSettings', () => {
     beforeEach(() => {
       vi.stubGlobal('fetch', vi.fn());
+    });
+
+    it('shares an in-flight host read between route mounts', async () => {
+      vi.mocked(Auth.isAuthenticated).mockReturnValue(true);
+      let respond!: (response: { ok: boolean; json: () => Promise<unknown> }) => void;
+      const fetchMock = vi.fn(() => new Promise<{ ok: boolean; json: () => Promise<unknown> }>((resolve) => { respond = resolve; }));
+      vi.stubGlobal('fetch', fetchMock);
+      const firstMount = bootstrapHostSettings();
+      const nextMount = bootstrapHostSettings();
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      respond({ ok: true, json: async () => ({ settings: { projectPathFilter: { whitelist: [], blacklist: ['/repo'] } } }) });
+      expect(await Promise.all([firstMount, nextMount])).toEqual([true, true]);
+      expect(getSetting('projectPathFilter')).toEqual({ whitelist: [], blacklist: ['/repo'] });
+      expect(await bootstrapHostSettings()).toBe(false);
     });
 
     it('returns false in Electron mode', async () => {

@@ -371,6 +371,7 @@ describe('auth-route-handlers', () => {
         engineModels: { claude: { providerID: 'anthropic', modelID: 'sonnet' } },
         engineReasoningEfforts: { claude: 'max' },
         engineServiceTiers: { codex: 'fast', opencode: null },
+        projectPathFilter: { whitelist: ['/repo'], blacklist: ['/repo/private'] },
         lastSessionId: 'sess-123',
         someInternalKey: 'secret',
       });
@@ -385,6 +386,7 @@ describe('auth-route-handlers', () => {
         engineModels: { claude: { providerID: 'anthropic', modelID: 'sonnet' } },
         engineReasoningEfforts: { claude: 'max' },
         engineServiceTiers: { codex: 'fast', opencode: null },
+        projectPathFilter: { whitelist: ['/repo'], blacklist: ['/repo/private'] },
         serverMode: process.env.CODEMUX_SERVER_MODE === "1",
       });
       // Sensitive keys must not leak
@@ -431,6 +433,20 @@ describe('auth-route-handlers', () => {
       expect(mockSettingsFns.saveSettings).toHaveBeenCalledWith({ theme: 'light', locale: 'en' });
       const responseBody = JSON.parse((mockRes.end as any).mock.calls[0][0]);
       expect(responseBody.success).toBe(true);
+    });
+
+    it.each([
+      [{ whitelist: ['/repo'], blacklist: ['/repo/private'] }, 200],
+      [{ whitelist: ['relative/path'], blacklist: [] }, 400],
+    ])('PATCH validates project path rules %j with status %i', async (projectPathFilter, status) => {
+      const pathname = '/api/settings/shared';
+      const req = createMockReq(pathname, 'PATCH', { projectPathFilter });
+      req.headers.authorization = 'Bearer valid-token';
+      mockStore.verifyToken.mockReturnValue({ valid: true, deviceId: 'dev1' });
+      expect(await handleSettingsRoutes(req, mockRes, pathname, mockStore, mockSettingsFns)).toBe(true);
+      expect(mockRes.writeHead).toHaveBeenCalledWith(status, expect.any(Object));
+      if (status === 200) expect(mockSettingsFns.saveSettings).toHaveBeenCalledWith({ projectPathFilter });
+      else expect(mockSettingsFns.saveSettings).not.toHaveBeenCalled();
     });
 
     it('PATCH saves valid reasoning effort and service tier settings', async () => {

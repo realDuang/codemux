@@ -98,8 +98,8 @@ async function selectSession(sessionId) {
   // Use the app's normal saved-session preference, then let its real boot path restore it.
   await js('localStorage.setItem("settings:lastSessionId", ' + JSON.stringify(JSON.stringify(sessionId)) + '); localStorage.setItem("settings:locale", JSON.stringify("en"));');
   await gotoAndWait(fixtureUrl + '/chat', { timeout: 20 });
-  const enter = await js('[...document.querySelectorAll("button")].some(button => button.innerText.trim() === "Enter Chat")');
-  if (enter) await pressControl('xpath=//button[normalize-space(.)="Enter Chat"]');
+  const enter = await js('[...document.querySelectorAll("button")].some(button => button.innerText.trim() === "Open local chat")');
+  if (enter) await pressControl('xpath=//button[normalize-space(.)="Open local chat"]');
   await until(async () => await js('document.querySelector("h1")?.innerText === ' + JSON.stringify(expectedTitle)), 'Requested lazy fixture did not load: ' + sessionId);
   // The initial WebSocket recovery restores history again after the first paint.
   await wait(1.5);

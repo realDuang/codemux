@@ -184,4 +184,27 @@ describe("registerRemoteHostIpc", () => {
     expect(() => list({ sender: contents, senderFrame: {} })).toThrow("local desktop");
     expect(list({ sender: contents, senderFrame: mainFrame })).toEqual([]);
   });
+
+  it("dispatches trusted host operations and rejects invalid IDs before changing a connection", async () => {
+    const mainFrame = {};
+    const contents = { mainFrame };
+    const win = { webContents: contents, isDestroyed: () => false };
+    registerRemoteHostIpc(manager, () => win as any);
+    const caller = { sender: contents, senderFrame: mainFrame };
+    const call = (method: string, ...args: unknown[]) => mocks.handlers.get(`remoteHosts:${method}`)!(caller, ...args);
+    const saved = await call("save", direct) as { id: string };
+    for (const method of ["connect", "disconnect", "remove"]) {
+      for (const id of [null, {}, "", "x".repeat(129)]) expect(() => call(method, id)).toThrow("Invalid host ID");
+      expect(() => mocks.handlers.get(`remoteHosts:${method}`)!({ sender: {}, senderFrame: mainFrame }, saved.id)).toThrow("local desktop");
+    }
+    expect(() => call("save", direct, {})).toThrow("Invalid host ID");
+    const renamed = await call("save", { ...direct, name: "Updated" }, saved.id) as { id: string; name: string };
+    expect(renamed).toMatchObject({ id: saved.id, name: "Updated" });
+    await call("connect", saved.id);
+    expect(manager.list()[0].status).toBe("connected");
+    await call("disconnect", saved.id);
+    expect(manager.list()[0].status).toBe("disconnected");
+    await call("remove", saved.id);
+    expect(call("list")).toEqual([]);
+  });
 });

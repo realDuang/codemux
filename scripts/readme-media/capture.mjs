@@ -89,7 +89,7 @@ async function open(context) {
   // Headless Chromium mis-scales the WebGL terminal renderer; the DOM renderer is exact.
   await page.addInitScript(() => localStorage.setItem("settings:terminal", JSON.stringify({ gpuAcceleration: "dom" })));
   await page.goto(base + "/");
-  await page.getByRole("button", { name: "Enter Chat" }).click();
+  await page.getByRole("button", { name: "Open local chat" }).click();
   await page.waitForURL(/\/chat/);
   await page.waitForTimeout(1500);
   await dismissHints(page);

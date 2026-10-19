@@ -1,12 +1,25 @@
 import { contextBridge, ipcRenderer } from "electron";
 import type { RemoteAccessUpdate } from "../../shared/remote-access";
 import type { LocalServerState } from "../../shared/local-server-types";
+import type { RemoteHostInput, RemoteHostState, SavedRemoteHost } from "../../shared/remote-hosts";
 
 // Pre-load settings synchronously so renderer can read them immediately at module init
 // (needed for theme/locale which must be applied before first paint)
 const _settingsCache: Record<string, unknown> = ipcRenderer.sendSync("settings:loadSync") ?? {};
 
 const electronAPI = {
+  remoteHosts: {
+    list: () => ipcRenderer.invoke("remoteHosts:list") as Promise<RemoteHostState[]>,
+    save: (input: RemoteHostInput, id?: string) => ipcRenderer.invoke("remoteHosts:save", input, id) as Promise<SavedRemoteHost>,
+    connect: (id: string) => ipcRenderer.invoke("remoteHosts:connect", id) as Promise<void>,
+    disconnect: (id: string) => ipcRenderer.invoke("remoteHosts:disconnect", id) as Promise<void>,
+    remove: (id: string) => ipcRenderer.invoke("remoteHosts:remove", id) as Promise<void>,
+    onChange: (callback: (hosts: RemoteHostState[]) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, hosts: RemoteHostState[]) => callback(hosts);
+      ipcRenderer.on("remoteHosts:changed", handler);
+      return () => ipcRenderer.removeListener("remoteHosts:changed", handler);
+    },
+  },
   // System API
   system: {
     getInfo: () => ipcRenderer.invoke("system:getInfo"),

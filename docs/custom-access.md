@@ -7,11 +7,15 @@ on the host computer.
 
 ## Configure an entry point
 
-1. Open **Remote Access** on the CodeMux host.
-2. Select **Custom entry** and enter the complete address, for example
-   `http://192.168.1.20:8233` or `https://codemux.example.com`.
-3. Save it, then enable **Remote Access**. **Web App** displays the active address
-   and a locally generated QR code.
+1. Open **Remote connections** on the CodeMux host.
+2. Under **Access this computer from another device**, select **Direct connection**.
+   Enter the host/IP and port, and select **Use SSL**
+   when that entry already serves HTTPS. Pasting a complete address such as
+   `http://192.168.1.20:8233` or `https://codemux.example.com` fills those fields.
+3. Select **Enable direct access**. This saves and enables the entry in one step.
+   The dialog closes and the same page displays its address, locally generated QR
+   code, and access code. Use **Edit** to change the configuration or **Disable**
+   to stop access to this computer.
 4. Open that address on another device, enter the host's access code, and approve
    the device on the host. The browser can then read and operate the same sessions.
 
@@ -27,18 +31,19 @@ custom entry to the host's LAN IP and web port.
 
 ## Enable, disable, and switch methods
 
-Remote access has one active mode: **Off**, **Custom entry**, or **Cloudflare
+Remote access has one active mode: **Off**, **Direct connection**, or **Cloudflare
 Tunnel**. New installations default to Off. A valid custom address saved before
-the mode selector was introduced is migrated to Custom entry.
+the mode selector was introduced is migrated to Direct connection. The persisted
+mode remains `custom` for compatibility with existing installations and CLI clients.
 
 Turning remote access off blocks remote HTTP requests and WebSocket connections,
 including already connected browser sessions. Localhost and the desktop app remain
 available. The custom address and Cloudflare configuration are retained for the
 next activation. Remote devices cannot change the access mode or custom address.
 
-Selecting another method while enabled switches the active mode. CodeMux stops
-its Cloudflare connector before activating custom access. Only the selected
-browser-facing origin is accepted for remote requests; a proxy must preserve that
+Selecting another method opens its form; submitting **Enable** or **Update**
+switches the active mode. CodeMux stops its Cloudflare connector before activating
+direct access. Only the selected browser-facing origin is accepted for remote requests; a proxy must preserve that
 origin. Switching to Cloudflare prevents browser use of the custom entry.
 
 CodeMux controls access to its own server. An externally managed proxy or tunnel
@@ -70,8 +75,8 @@ A private LAN address can serve browser clients
 without being reachable by an external messaging platform; configure a reachable
 callback address with that platform when using webhook channels.
 
-This setting is an advertised entry point, not a remote desktop-client mode. It
-does not connect the desktop application to another CodeMux host.
+This setting controls access to this host. To connect CodeMux Desktop to another
+host through Direct or SSH, use [saved host connections](remote-hosts.md).
 
 ## Cloudflare custom domains
 
@@ -82,7 +87,7 @@ A custom domain requires a Cloudflare named tunnel and a local tunnel credential
 file. CodeMux looks for a UUID-named JSON file in `~/.cloudflared/`, for example
 `~/.cloudflared/<tunnel-id>.json`. If a custom domain is configured but that
 credential is missing, the tunnel does not start: CodeMux keeps running locally,
-turns remote access off and shows a missing-credentials error in Remote Access,
+turns remote access off and shows a missing-credentials error in Remote connections,
 instead of silently falling back to a random quick tunnel URL.
 
 To prepare a custom domain:

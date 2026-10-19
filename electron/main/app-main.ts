@@ -10,6 +10,9 @@ import { runtimeHost } from "./runtime-host";
 import { getDevicesPath, getUserDataPath } from "./services/app-paths";
 import { flushDesktopSettings } from "./desktop-settings";
 import { LocalServerSupervisor } from "./local-server-supervisor";
+import { RemoteHostManager } from "./remote-host-manager";
+import { RemoteHostStore } from "./services/remote-host-store";
+import { registerRemoteHostIpc } from "./remote-host-ipc";
 import { getLocalIp } from "../../shared/http-utils";
 import {
   AUTH_API_PORT, GATEWAY_PORT, OPENCODE_PORT, WEBHOOK_PORT, WEB_PORT, WEB_STANDALONE_PORT,
@@ -26,6 +29,7 @@ try {
 }
 
 let supervisor: LocalServerSupervisor | undefined;
+let remoteHosts: RemoteHostManager | undefined;
 let quitting = false;
 let quitReady = false;
 let finalQuitStarted = false;
@@ -41,6 +45,7 @@ async function prepareForQuit(): Promise<void> {
   shutdownPromise = (async () => {
     let failure: unknown;
     try { await flushDesktopSettings(); } catch (error) { failure = error; }
+    try { await remoteHosts?.close(); } catch (error) { failure ??= error; }
     try { await supervisor?.shutdown(); } catch (error) { failure ??= error; }
     try { await flushDesktopSettings(); } catch (error) { failure ??= error; }
     if (failure) throw failure;
@@ -56,6 +61,7 @@ async function prepareForInstall(): Promise<void> {
     // The installer has not started; leave the manager usable for a retry.
     shutdownPromise = undefined;
     quitting = false;
+    remoteHosts?.resume();
     throw error;
   }
 }
@@ -146,6 +152,7 @@ if (!app.requestSingleInstanceLock()) {
       quitReady = false;
       quitting = false;
       shutdownPromise = undefined;
+      remoteHosts?.resume();
       void localServer.start().catch(error => mainLog.error("Failed to restore server after update error:", error));
     });
 
@@ -170,6 +177,11 @@ if (!app.requestSingleInstanceLock()) {
       },
     };
     registerIpcHandlers({ management, beforeInstall: prepareForInstall });
+    remoteHosts = new RemoteHostManager(new RemoteHostStore(getUserDataPath()), hosts => {
+      const win = getMainWindow();
+      if (win && !win.isDestroyed()) win.webContents.send("remoteHosts:changed", hosts);
+    });
+    registerRemoteHostIpc(remoteHosts, getMainWindow);
     ipcMain.handle("runtime:getState", () => localServer.getState());
     ipcMain.handle("runtime:start", () => {
       if (quitting) throw new Error("CodeMux is shutting down");

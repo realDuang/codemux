@@ -11,6 +11,14 @@ interface ImportMeta {
 
 // Electron API type declarations for renderer process
 interface ElectronAPI {
+  remoteHosts?: {
+    list: () => Promise<import("../shared/remote-hosts").RemoteHostState[]>;
+    save: (input: import("../shared/remote-hosts").RemoteHostInput, id?: string) => Promise<import("../shared/remote-hosts").SavedRemoteHost>;
+    connect: (id: string) => Promise<void>;
+    disconnect: (id: string) => Promise<void>;
+    remove: (id: string) => Promise<void>;
+    onChange: (callback: (hosts: import("../shared/remote-hosts").RemoteHostState[]) => void) => () => void;
+  };
   runtime?: {
     getState: () => Promise<import("../shared/local-server-types").LocalServerState>;
     start: () => Promise<import("../shared/local-server-types").LocalServerState>;

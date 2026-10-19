@@ -2,9 +2,7 @@ import { createSignal, onMount, onCleanup, Show, Switch, Match } from "solid-js"
 import { useNavigate } from "@solidjs/router";
 import { Auth } from "../lib/auth";
 import { useI18n } from "../lib/i18n";
-import { copyTextToClipboard } from "../lib/clipboard";
-import { AccessQRCode } from "../components/AccessQRCode";
-import { RemoteAccessSettings } from "../components/RemoteAccessSettings";
+import { RemoteConnections } from "../components/RemoteConnections";
 import { readCustomAccessUrl } from "../../shared/remote-access";
 import type { RemoteAccessStatus } from "../../shared/remote-access";
 import { LanguageSwitcher } from "../components/LanguageSwitcher";
@@ -12,9 +10,9 @@ import { FeishuConfigModal } from "../components/FeishuConfigModal";
 import { ChannelConfigModal } from "../components/ChannelConfigModal";
 import { WeixinIlinkLoginModal } from "../components/WeixinIlinkLoginModal";
 import { logger } from "../lib/logger";
-import { WEB_PORT, WEB_STANDALONE_PORT } from "../../shared/ports";
+import { WEB_STANDALONE_PORT } from "../../shared/ports";
 import { isElectron } from "../lib/platform";
-import { systemAPI, remoteAccessAPI, channelAPI, weixinIlinkAPI, type ChannelInfo } from "../lib/electron-api";
+import { systemAPI, serverAPI, remoteAccessAPI, channelAPI, weixinIlinkAPI, type ChannelInfo } from "../lib/electron-api";
 import { getSetting, bootstrapHostSettings } from "../lib/settings";
 import { refreshThemeFromSettings } from "../lib/theme";
 import { refreshLocaleFromSettings } from "../lib/i18n";
@@ -56,14 +54,12 @@ export default function EntryPage() {
     mode: "off", customAccessUrl: readCustomAccessUrl({ customAccessUrl: getSetting("customAccessUrl") }),
     url: "", tunnel: { url: "", status: "stopped" }, tunnelConfig: {}, cloudflareAvailable: true,
   });
-  const customAccessUrl = () => remoteStatus().mode === "custom" ? remoteStatus().url : "";
-  const tunnelInfo = () => remoteStatus().tunnel;
   const accessUrl = () => remoteStatus().url;
   const [accessCode, setAccessCode] = createSignal("......");
   const [port, setPort] = createSignal(WEB_STANDALONE_PORT);
-  const [showPassword, setShowPassword] = createSignal(false);
+  const [localIp, setLocalIp] = createSignal("");
   const [enteringChat, setEnteringChat] = createSignal(false);
-  const [activeTab, setActiveTab] = createSignal<"webApp" | "channels" | "publicAccess">(isElectron() ? "channels" : "webApp");
+  const [activeTab, setActiveTab] = createSignal<"channels" | "remote">("remote");
 
   // Feishu channel states
   const [feishuStatus, setFeishuStatus] = createSignal<ChannelInfo | null>(null);
@@ -171,6 +167,13 @@ export default function EntryPage() {
           logger.error("[EntryPage] Local auth failed:", authResult.error);
         }
       }
+
+      // A saved SSH host enters its existing chat after loopback authentication.
+      if (new URLSearchParams(window.location.search).get("connect") === "1" && Auth.isAuthenticated()) {
+        await applyHostSettingsIfNeeded();
+        navigate("/chat", { replace: true });
+        return;
+      }
       
       loadLocalModeData();
       return;
@@ -211,21 +214,15 @@ export default function EntryPage() {
     // Get system info - different sources for Electron vs Browser
     try {
       if (isElectron()) {
-        // Electron: use IPC APIs for local IP
-        // For port, use the current window's port in dev mode
-        // In production (file:// protocol), use default port WEB_PORT
-        const currentPort = window.location.port;
-        if (currentPort) {
-          setPort(parseInt(currentPort, 10));
-        } else {
-          // Production Electron: default to WEB_PORT
-          setPort(WEB_PORT);
-        }
+        const [webPort, ip] = await Promise.all([serverAPI.getPort(), systemAPI.getLocalIp()]);
+        setPort(webPort);
+        setLocalIp(ip);
       } else {
         // Browser: use HTTP API
         const res = await fetch("/api/system/info");
         const data = await res.json();
         if (data.port) setPort(data.port);
+        if (typeof data.localIp === "string") setLocalIp(data.localIp);
       }
     } catch (err) {
       logger.error("[EntryPage] Failed to get system info:", err);
@@ -846,14 +843,6 @@ export default function EntryPage() {
     }
   };
 
-  const copyToClipboard = async (text: string) => {
-    if (!await copyTextToClipboard(text)) {
-      logger.warn("[EntryPage] Could not copy to the clipboard.");
-    }
-  };
-
-  const getLocalUrl = () => `http://localhost:${port()}`;
-
   // =========================================================================
   // Render
   // =========================================================================
@@ -1034,283 +1023,29 @@ export default function EntryPage() {
 
           {/* Main Content */}
           <main class="p-4 md:p-6">
-            <div class="max-w-4xl mx-auto space-y-6">
-
-              {/* Local Mode Banner */}
-              <div class="rounded-xl bg-[var(--cm-gradient-soft)] ring-1 ring-inset ring-blue-500/20 p-4 flex gap-3">
-                <svg xmlns="http://www.w3.org/2000/svg" class="shrink-0 text-blue-600 dark:text-blue-400 mt-0.5" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" x2="16" y1="21" y2="21"/><line x1="12" x2="12" y1="17" y2="21"/></svg>
-                <div class="text-sm text-blue-800 dark:text-blue-200">
-                  <span class="font-medium">{t().entry.localModeTitle}</span> {t().entry.localModeDesc}
-                </div>
-              </div>
+            <div class="max-w-5xl mx-auto space-y-6">
 
               {/* Vertical Tab Layout (horizontal on mobile) */}
               <div class="flex flex-col md:flex-row gap-0 bg-[var(--cm-surface)] rounded-2xl border border-[var(--cm-hairline-strong)] shadow-[var(--cm-shadow-md)] overflow-hidden md:min-h-[520px]">
-                {/* Left: Tab Navigation (top on mobile) */}
-                <nav class="w-full md:w-auto md:min-w-44 md:max-w-56 shrink-0 border-b md:border-b-0 md:border-r border-[var(--cm-hairline)] bg-[var(--cm-surface-2)]/60 p-2 md:p-3 flex md:flex-col gap-1 overflow-x-auto">
-                  <Show when={isElectron()}>
-                    <button
-                      onClick={() => setActiveTab("channels")}
-                      class={`flex items-center gap-2 md:gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all text-left whitespace-nowrap ${
-                        activeTab() === "channels"
-                          ? "bg-[var(--cm-surface)] dark:bg-white/[0.07] text-gray-900 dark:text-white shadow-[var(--cm-shadow-sm)] ring-1 ring-[var(--cm-hairline)]"
-                          : "text-gray-600 dark:text-gray-400 hover:bg-white/60 dark:hover:bg-slate-800/60 hover:text-gray-900 dark:hover:text-gray-200"
-                      }`}
-                    >
-                      <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="shrink-0"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
-                      <span class="hidden md:inline">{t().channel.channels}</span>
-                    </button>
-                  </Show>
-                  <button
-                    onClick={() => setActiveTab("webApp")}
-                    aria-label={t().remote.webApp}
-                    class={`flex items-center gap-2 md:gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all text-left whitespace-nowrap ${
-                      activeTab() === "webApp"
-                        ? "bg-[var(--cm-surface)] dark:bg-white/[0.07] text-gray-900 dark:text-white shadow-[var(--cm-shadow-sm)] ring-1 ring-[var(--cm-hairline)]"
-                        : "text-gray-600 dark:text-gray-400 hover:bg-white/60 dark:hover:bg-slate-800/60 hover:text-gray-900 dark:hover:text-gray-200"
-                    }`}
-                  >
-                    <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="shrink-0"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18"/><path d="M9 21V9"/></svg>
-                    <span class="hidden md:inline">{t().remote.webApp}</span>
-                  </button>
-                  <button
-                    onClick={() => setActiveTab("publicAccess")}
-                    aria-label={t().remote.publicAccessTab}
-                    class={`flex items-center gap-2 md:gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all text-left relative whitespace-nowrap ${
-                      activeTab() === "publicAccess"
-                        ? "bg-[var(--cm-surface)] dark:bg-white/[0.07] text-gray-900 dark:text-white shadow-[var(--cm-shadow-sm)] ring-1 ring-[var(--cm-hairline)]"
-                        : "text-gray-600 dark:text-gray-400 hover:bg-white/60 dark:hover:bg-slate-800/60 hover:text-gray-900 dark:hover:text-gray-200"
-                    }`}
-                  >
-                    <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="shrink-0"><circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><path d="M2 12h20"/></svg>
-                    <span class="hidden md:inline">{t().remote.publicAccessTab}</span>
-                    <Show when={accessUrl()}>
-                      <span class="absolute right-2.5 top-1/2 -translate-y-1/2 inline-flex h-1.5 w-1.5 rounded-full bg-green-500"></span>
-                    </Show>
-                    <Show when={tunnelInfo().status === "starting"}>
-                      <span class="absolute right-2.5 top-1/2 -translate-y-1/2 inline-flex h-1.5 w-1.5 rounded-full bg-yellow-400 animate-pulse"></span>
-                    </Show>
-                  </button>
-                </nav>
+                <Show when={isElectron()}>
+                  <nav aria-label={t().connectionCenter.title} class="w-full shrink-0 border-b border-[var(--cm-hairline)] bg-[var(--cm-surface-2)]/50 p-2 md:w-44 md:border-b-0 md:border-r md:p-3">
+                    <div class="flex gap-1 md:flex-col">
+                      <button type="button" onClick={() => setActiveTab("remote")} aria-current={activeTab() === "remote" ? "page" : undefined}
+                        class={`flex items-center gap-2 rounded-lg px-3 py-2.5 text-left text-sm font-medium ${activeTab() === "remote" ? "bg-[var(--cm-surface)] text-[var(--cm-text)] shadow-sm" : "text-[var(--cm-text-muted)] hover:bg-[var(--cm-surface)]"}`}>
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a18 18 0 0 1 0 18 18 18 0 0 1 0-18"/></svg>
+                        {t().connectionCenter.title}
+                      </button>
+                      <button type="button" onClick={() => setActiveTab("channels")} aria-current={activeTab() === "channels" ? "page" : undefined}
+                        class={`flex items-center gap-2 rounded-lg px-3 py-2.5 text-left text-sm font-medium ${activeTab() === "channels" ? "bg-[var(--cm-surface)] text-[var(--cm-text)] shadow-sm" : "text-[var(--cm-text-muted)] hover:bg-[var(--cm-surface)]"}`}>
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+                        {t().channel.channels}
+                      </button>
+                    </div>
+                  </nav>
+                </Show>
 
                 {/* Right: Tab Content (bottom on mobile) */}
-                <div class="flex-1 p-3 md:p-5 overflow-y-auto">
-                  {/* Web App Tab */}
-                  <Show when={activeTab() === "webApp"}>
-                    <div class="space-y-5">
-                      {/* Warning Banner */}
-                      <div class="rounded-lg bg-orange-50 dark:bg-orange-900/10 border border-orange-100 dark:border-orange-900/30 p-3 flex gap-3">
-                        <svg xmlns="http://www.w3.org/2000/svg" class="shrink-0 text-orange-600 dark:text-orange-400 mt-0.5" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><line x1="12" x2="12" y1="9" y2="13"/><line x1="12" x2="12.01" y1="17" y2="17"/></svg>
-                        <div class="text-xs text-orange-800 dark:text-orange-200">
-                          <span class="font-medium">{t().remote.securityWarning}</span> {t().remote.securityWarningDesc}
-                        </div>
-                      </div>
-
-                      <div class="grid grid-cols-1 md:grid-cols-2 gap-5">
-                        {/* Left Column: Info */}
-                        <div class="space-y-5">
-
-                          {/* Access Code Card */}
-                          <div class="rounded-lg border border-[var(--cm-hairline-strong)] p-4">
-                            <h3 class="text-sm font-medium text-gray-500 dark:text-gray-400 mb-3 flex items-center gap-2">
-                              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
-                              {t().remote.accessPassword}
-                            </h3>
-                            <div class="flex items-center justify-between bg-gray-50 dark:bg-slate-950 rounded-lg border border-[var(--cm-hairline-strong)] px-4 py-3">
-                              <span class="font-mono text-xl font-bold tracking-widest text-gray-900 dark:text-white">
-                                {showPassword() ? accessCode() : "••••••"}
-                              </span>
-                              <div class="flex items-center gap-2">
-                                <button
-                                  onClick={() => setShowPassword(!showPassword())}
-                                  class="p-1.5 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors rounded-md hover:bg-gray-200 dark:hover:bg-slate-800"
-                                  title={showPassword() ? "Hide" : "Show"}
-                                >
-                                  <Show when={showPassword()} fallback={
-                                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9.88 9.88a3 3 0 1 0 4.24 4.24"/><path d="M10.73 5.08A10.43 10.43 0 0 1 12 5c7 0 10 7 10 7a13.16 13.16 0 0 1-1.67 2.68"/><path d="M6.61 6.61A13.526 13.526 0 0 0 2 12s3 7 10 7c.44 0 .87-.03 1.28-.09"/><path d="M2 2l20 20"/></svg>
-                                  }>
-                                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>
-                                  </Show>
-                                </button>
-                                <button
-                                  onClick={() => copyToClipboard(accessCode())}
-                                  class="p-1.5 text-blue-600 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300 transition-colors rounded-md hover:bg-blue-50 dark:hover:bg-blue-900/30"
-                                  title={t().remote.copyAccessCode}
-                                  aria-label={t().remote.copyAccessCode}
-                                >
-                                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
-                                </button>
-                              </div>
-                            </div>
-                          </div>
-
-                          {/* Connection Addresses */}
-                          <div class="rounded-lg border border-[var(--cm-hairline-strong)] overflow-hidden">
-                            <div class="p-3 border-b border-[var(--cm-hairline)]/50">
-                              <h3 class="text-sm font-medium text-gray-500 dark:text-gray-400">{t().remote.connectionAddress}</h3>
-                            </div>
-                            <div class="divide-y divide-gray-100 dark:divide-slate-800/50">
-
-                              <Show when={customAccessUrl()}>
-                                <div class="p-3 flex items-center justify-between group hover:bg-gray-50 dark:hover:bg-slate-800/50 transition-colors">
-                                  <div class="min-w-0 flex-1 mr-3">
-                                    <span class="text-xs font-medium text-gray-500">{t().remote.customAccessUrl}</span>
-                                    <p class="font-mono text-sm text-green-700 dark:text-green-400 truncate select-all mt-1">{customAccessUrl()}</p>
-                                  </div>
-                                  <button
-                                    onClick={() => copyToClipboard(customAccessUrl())}
-                                    aria-label={t().remote.copyAddress}
-                                    title={t().remote.copyAddress}
-                                    class="p-2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 transition-colors"
-                                  >
-                                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
-                                  </button>
-                                </div>
-                              </Show>
-
-                              {/* Public Address */}
-                              <Show when={tunnelInfo().status === "running"}>
-                                <div class="p-3 flex items-center justify-between group hover:bg-gray-50 dark:hover:bg-slate-800/50 transition-colors">
-                                  <div class="min-w-0 flex-1 mr-3">
-                                    <div class="flex items-center gap-2 mb-1">
-                                      <span class="inline-flex items-center justify-center w-5 h-5 rounded bg-green-100 dark:bg-green-900/30 text-green-600 dark:text-green-400">
-                                        <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><path d="M2 12h20"/></svg>
-                                      </span>
-                                      <span class="text-xs font-medium text-gray-500">{t().remote.publicAddress}</span>
-                                    </div>
-                                    <p class="font-mono text-sm text-green-700 dark:text-green-400 truncate select-all">{tunnelInfo().url}</p>
-                                  </div>
-                                  <button
-                                    onClick={() => copyToClipboard(tunnelInfo().url)}
-                                    aria-label={t().remote.copyAddress}
-                                    title={t().remote.copyAddress}
-                                    class="p-2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 opacity-0 group-hover:opacity-100 transition-all"
-                                  >
-                                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
-                                  </button>
-                                </div>
-                              </Show>
-
-                              {/* Local Address */}
-                              <div class="p-3 flex items-center justify-between group hover:bg-gray-50 dark:hover:bg-slate-800/50 transition-colors">
-                                <div class="min-w-0 flex-1 mr-3">
-                                  <div class="flex items-center gap-2 mb-1">
-                                    <span class="inline-flex items-center justify-center w-5 h-5 rounded bg-gray-100 dark:bg-slate-800 text-gray-600 dark:text-gray-400">
-                                      <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" x2="16" y1="21" y2="21"/><line x1="12" x2="12" y1="17" y2="21"/></svg>
-                                    </span>
-                                    <span class="text-xs font-medium text-gray-500">{t().remote.localAddress}</span>
-                                  </div>
-                                  <p class="font-mono text-sm text-gray-700 dark:text-gray-300 truncate select-all">{getLocalUrl()}</p>
-                                </div>
-                                <button
-                                  onClick={() => copyToClipboard(getLocalUrl())}
-                                  aria-label={t().remote.copyAddress}
-                                  title={t().remote.copyAddress}
-                                  class="p-2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 opacity-0 group-hover:opacity-100 transition-all"
-                                >
-                                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
-                                </button>
-                              </div>
-                            </div>
-                          </div>
-                        </div>
-
-                        <div class="rounded-lg border border-[var(--cm-hairline-strong)] p-5 flex flex-col items-center justify-center min-h-[280px]">
-                          <Show when={accessUrl()} fallback={
-                            <div class="py-10 text-center text-sm text-gray-500 dark:text-gray-400">{t().remote.accessOffDescription}</div>
-                          }>
-                            <AccessQRCode url={accessUrl()} />
-                            <h4 class="mt-4 text-sm font-medium">{t().remote.customQrScan}</h4>
-                            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">{t().remote.customQrDesc}</p>
-                          </Show>
-                        </div>
-                      </div>
-
-                      {/* Public Access Link Banner */}
-                      <div
-                        onClick={() => setActiveTab("publicAccess")}
-                        class="rounded-lg border border-[var(--cm-hairline-strong)] p-4 flex items-center justify-between cursor-pointer hover:bg-gray-50 dark:hover:bg-slate-800/50 transition-colors"
-                      >
-                        <div class="flex items-center gap-3">
-                          <div class={`w-9 h-9 rounded-lg flex items-center justify-center ${
-                            accessUrl()
-                              ? "bg-green-100 dark:bg-green-900/30"
-                              : "bg-gray-100 dark:bg-slate-800"
-                          }`}>
-                            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class={accessUrl() ? "text-green-600 dark:text-green-400" : "text-gray-400 dark:text-gray-500"}>
-                              <circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><path d="M2 12h20"/>
-                            </svg>
-                          </div>
-                          <div>
-                            <h3 class="text-sm font-medium text-gray-900 dark:text-white">
-                              {t().remote.publicAccessTab}
-                            </h3>
-                            <p class="text-xs text-gray-500 dark:text-gray-400 mt-0.5 flex items-center gap-1.5">
-                              <Show when={accessUrl()}>
-                                <span class="inline-flex h-1.5 w-1.5 rounded-full bg-green-500"></span>
-                                <Show when={customAccessUrl()} fallback={t().remote.publicAccessEnabled}>{t().remote.customAccessConfigured}</Show>
-                              </Show>
-                              <Show when={!accessUrl()}>
-                                {t().remote.publicAccessDisabled}
-                              </Show>
-                            </p>
-                          </div>
-                        </div>
-                        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-gray-400">
-                          <path d="m9 18 6-6-6-6"/>
-                        </svg>
-                      </div>
-
-                      {/* Authorized Devices Card */}
-                      <div
-                        onClick={() => navigate("/devices")}
-                        class="rounded-lg border border-[var(--cm-hairline-strong)] p-4 flex items-center justify-between cursor-pointer hover:bg-gray-50 dark:hover:bg-slate-800/50 transition-colors"
-                      >
-                        <div class="flex items-center gap-3">
-                          <div class="w-9 h-9 rounded-lg bg-blue-100 dark:bg-blue-900/30 flex items-center justify-center">
-                            <svg
-                              xmlns="http://www.w3.org/2000/svg"
-                              width="18"
-                              height="18"
-                              viewBox="0 0 24 24"
-                              fill="none"
-                              stroke="currentColor"
-                              stroke-width="2"
-                              stroke-linecap="round"
-                              stroke-linejoin="round"
-                              class="text-blue-600 dark:text-blue-400"
-                            >
-                              <rect width="14" height="20" x="5" y="2" rx="2" ry="2" />
-                              <path d="M12 18h.01" />
-                            </svg>
-                          </div>
-                          <div>
-                            <h3 class="text-sm font-medium text-gray-900 dark:text-white">
-                              {t().devices.title}
-                            </h3>
-                            <p class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
-                              {t().remote.devicesDesc}
-                            </p>
-                          </div>
-                        </div>
-                        <svg
-                          xmlns="http://www.w3.org/2000/svg"
-                          width="18"
-                          height="18"
-                          viewBox="0 0 24 24"
-                          fill="none"
-                          stroke="currentColor"
-                          stroke-width="2"
-                          stroke-linecap="round"
-                          stroke-linejoin="round"
-                          class="text-gray-400"
-                        >
-                          <path d="m9 18 6-6-6-6" />
-                        </svg>
-                      </div>
-                    </div>
-                  </Show>
-
+                <div class="min-w-0 flex-1 p-4 sm:p-6 md:p-7">
                   {/* Channels Tab */}
                   <Show when={activeTab() === "channels"}>
                     <div class="space-y-5">
@@ -1598,7 +1333,7 @@ export default function EntryPage() {
                         {/* An access address is required for webhook callbacks */}
                         <Show when={!accessUrl()}>
                           <div
-                            onClick={() => setActiveTab("publicAccess")}
+                            onClick={() => setActiveTab("remote")}
                             class="rounded-lg border border-amber-200 dark:border-amber-900/30 bg-amber-50 dark:bg-amber-900/10 p-3 flex items-center justify-between cursor-pointer hover:bg-amber-100 dark:hover:bg-amber-900/20 transition-colors mb-3"
                           >
                             <div class="flex items-center gap-2.5">
@@ -1771,16 +1506,8 @@ export default function EntryPage() {
                     </div>
                   </Show>
 
-                  {/* Public Access Tab */}
-                  <Show when={activeTab() === "publicAccess"}>
-                    <div class="space-y-5">
-                      <div>
-                        <h2 class="text-base font-semibold text-gray-900 dark:text-white">{t().remote.publicAccessTab}</h2>
-                        <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">{t().remote.publicAccessTabDesc}</p>
-                      </div>
-
-                      <RemoteAccessSettings status={remoteStatus()} onChanged={setRemoteStatus} />
-                    </div>
+                  <Show when={activeTab() === "remote"}>
+                    <RemoteConnections status={remoteStatus()} onChanged={setRemoteStatus} defaultHost={localIp()} defaultPort={port()} accessCode={accessCode()} onManageDevices={() => navigate("/devices")} />
                   </Show>
                 </div>
               </div>
@@ -1867,20 +1594,20 @@ export default function EntryPage() {
           </main>
         </div>
 
-        {/* Bottom: Enter Chat Button (sticky) */}
+        {/* Keep the local conversation action distinct from remote host actions. */}
         <div class="sticky bottom-0 bg-[var(--cm-canvas)]/80 backdrop-blur-xl border-t border-[var(--cm-hairline)] p-4">
-          <div class="max-w-4xl mx-auto">
+          <div class="max-w-5xl mx-auto">
             <button
               onClick={handleEnterChat}
               disabled={enteringChat()}
-              class="cm-btn-primary group w-full h-12 px-6 font-medium tracking-tight rounded-xl disabled:cursor-not-allowed flex items-center justify-center gap-3"
+              class={`group h-11 px-5 font-medium rounded-lg disabled:cursor-not-allowed flex items-center justify-center gap-2 ${activeTab() === "remote" ? "ml-auto w-full sm:w-auto border border-[var(--cm-hairline-strong)] bg-[var(--cm-surface)] text-sm text-[var(--cm-text)] hover:bg-[var(--cm-surface-2)]" : "cm-btn-primary w-full"}`}
             >
               <Show when={enteringChat()} fallback={
                 <>
                   <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                     <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
                   </svg>
-                  <span>{t().entry.enterChat}</span>
+                  <span>{activeTab() === "remote" ? t().connectionCenter.openLocalChat : t().entry.enterChat}</span>
                   <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="transition-transform duration-200 group-hover:translate-x-0.5">
                     <path d="m9 18 6-6-6-6"/>
                   </svg>
@@ -1890,9 +1617,9 @@ export default function EntryPage() {
                 <span>{t().common.loading}</span>
               </Show>
             </button>
-            <p class="text-xs text-gray-500 dark:text-gray-400 text-center mt-2">
+            <Show when={activeTab() !== "remote"}><p class="text-xs text-gray-500 dark:text-gray-400 text-center mt-2">
               {t().entry.enterChatDesc}
-            </p>
+            </p></Show>
           </div>
         </div>
       </Show>

@@ -61,8 +61,8 @@ async function selectSession() {
   await gotoAndWait(fixtureUrl + '/', { timeout: 20 });
   await js('localStorage.setItem("settings:lastSessionId", ' + JSON.stringify(JSON.stringify(sessionId)) + '); localStorage.setItem("settings:locale", JSON.stringify("en"));');
   await gotoAndWait(fixtureUrl + '/chat', { timeout: 20 });
-  const enter = await js('[...document.querySelectorAll("button")].some(button => button.innerText.trim() === "Enter Chat")');
-  if (enter) await click('xpath=//button[normalize-space(.)="Enter Chat"]');
+  const enter = await js('[...document.querySelectorAll("button")].some(button => button.innerText.trim() === "Open local chat")');
+  if (enter) await click('xpath=//button[normalize-space(.)="Open local chat"]');
   await until(() => js('document.querySelector("h1")?.innerText === "UI parity - Codex CLI"'), 'Requested fixture did not load');
   // Allow the initial WebSocket recovery to restore history after first paint.
   await wait(1.5);

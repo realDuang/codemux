@@ -134,6 +134,7 @@ describe("app-main desktop lifecycle", () => {
       expect(mocks.supervisor.start).toHaveBeenCalledOnce();
       expect(mocks.registerIpcHandlers).toHaveBeenCalledOnce();
       expect(mocks.ipcHandle.mock.calls.map(([channel]) => channel)).toEqual([
+        "remoteHosts:list", "remoteHosts:save", "remoteHosts:connect", "remoteHosts:disconnect", "remoteHosts:remove",
         "runtime:getState", "runtime:start", "runtime:stop", "runtime:restart", "runtime:showManager", "runtime:openLogs",
       ]);
       expect(mocks.createWindow.mock.invocationCallOrder[0]).toBeLessThan(mocks.supervisor.start.mock.invocationCallOrder[0]);

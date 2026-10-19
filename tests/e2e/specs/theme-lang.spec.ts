@@ -3,7 +3,7 @@ import { test, expect } from "@playwright/test";
 test.describe("Theme & Language", () => {
   test.beforeEach(async ({ page }) => {
     await page.goto(process.env.TEST_BASE_URL!);
-    await page.getByRole("button", { name: /Enter Chat/i }).click();
+    await page.getByRole("button", { name: /Open local chat/i }).click();
     await expect(page).toHaveURL(/.*\/chat/, { timeout: 10_000 });
   });
 

@@ -1,9 +1,10 @@
-import { onCleanup, onMount, Show } from "solid-js";
+import { createSignal, onCleanup, onMount, Show } from "solid-js";
 import type { LocalServerState } from "../../shared/local-server-types";
 import { Spinner } from "../components/Spinner";
 import { formatMessage, useI18n } from "../lib/i18n";
 import { publicAssetUrl } from "../lib/public-assets";
 import type { LocalServerAction } from "./local-server-state";
+import { HostConnections } from "../components/HostConnections";
 
 interface LocalServerManagerProps {
   state: LocalServerState;
@@ -17,6 +18,7 @@ interface LocalServerManagerProps {
 
 export function LocalServerManager(props: LocalServerManagerProps) {
   const { t } = useI18n();
+  const [showHosts, setShowHosts] = createSignal(false);
   let dialog: HTMLElement | undefined;
   const isBusy = () => props.pending || props.state.phase === "starting" || props.state.phase === "stopping";
   const isExternal = () => props.state.ownership === "external";
@@ -35,7 +37,7 @@ export function LocalServerManager(props: LocalServerManagerProps) {
       event.preventDefault();
       props.onClose();
     } else if (event.key === "Tab") {
-      const buttons = dialog?.querySelectorAll<HTMLButtonElement>("button:not(:disabled)");
+      const buttons = dialog?.querySelectorAll<HTMLElement>("button:not(:disabled), input:not(:disabled), select:not(:disabled), [tabindex='0']");
       if (!buttons?.length) return;
       const first = buttons[0];
       const last = buttons[buttons.length - 1];
@@ -113,6 +115,14 @@ export function LocalServerManager(props: LocalServerManagerProps) {
             class="rounded-lg border border-[var(--cm-hairline-strong)] px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-slate-800"
           >{t().localServer.openLogs}</button>
         </div>
+        <Show when={window.electronAPI?.remoteHosts}>
+          <div class="mt-5 border-t border-[var(--cm-hairline-strong)] pt-4">
+            <button type="button" aria-expanded={showHosts()} onClick={() => setShowHosts(value => !value)} class="text-sm font-medium text-blue-600 dark:text-blue-400">
+              {t().connectionCenter.title}
+            </button>
+            <Show when={showHosts()}><div class="mt-4"><HostConnections /></div></Show>
+          </div>
+        </Show>
         <Show when={props.canClose}>
           <div class="mt-5 border-t border-[var(--cm-hairline-strong)] pt-4">
             <Show when={props.state.phase !== "ready"}>

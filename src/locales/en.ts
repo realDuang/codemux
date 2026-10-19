@@ -1,5 +1,99 @@
 // Define the structure of our translations
 export interface LocaleDict {
+  connectionCenter: {
+    openLocalChat: string;
+    title: string;
+    description: string;
+    savedHeading: string;
+    savedDescription: string;
+    sharingHeading: string;
+    sharingDescription: string;
+    localUnavailable: string;
+    manageDevices: string;
+    directConfigured: string;
+    desktopOnly: string;
+    methodLabel: string;
+    accessCode: string;
+    showCode: string;
+    hideCode: string;
+    copied: string;
+    copyFailed: string;
+    edit: string;
+    disable: string;
+    disabled: string;
+    chooseMethod: string;
+    quickLink: string;
+    fixedDomain: string;
+    domain: string;
+    quickDescription: string;
+    fixedDescription: string;
+    switchNotice: string;
+    retry: string;
+    configuredDescription: string;
+    activeDescription: string;
+    shareAddress: string;
+    directDescription: string;
+    cloudflareDescription: string;
+    cloudflareUnavailable: string;
+    addressPending: string;
+    staleAddress: string;
+    configureTitle: string;
+    currentMethod: string;
+    accessCodeDescription: string;
+    hostnameRequired: string;
+    methodChangeDescription: string;
+    manageConnection: string;
+    emptyConnections: string;
+    starting: string;
+    running: string;
+    error: string;
+    stopped: string;
+    loading: string;
+    cancel: string;
+  };
+  hostConnections: {
+    title: string;
+    description: string;
+    addHost: string;
+    empty: string;
+    directTitle: string;
+    directDescription: string;
+    directHint: string;
+    sshTitle: string;
+    sshDescription: string;
+    sshHint: string;
+    host: string;
+    port: string;
+    useTls: string;
+    sshAddress: string;
+    authHint: string;
+    advanced: string;
+    connectionUrl: string;
+    remotePort: string;
+    displayName: string;
+    optional: string;
+    connect: string;
+    reconnect: string;
+    open: string;
+    disconnect: string;
+    edit: string;
+    remove: string;
+    removeConfirm: string;
+    close: string;
+    disconnected: string;
+    connecting: string;
+    connected: string;
+    error: string;
+    hostRequired: string;
+    invalidPort: string;
+    invalidUrl: string;
+    sshRequired: string;
+    invalidSsh: string;
+    invalidConnection: string;
+    connectFailed: string;
+    loadFailed: string;
+    tryAgain: string;
+  };
   localServer: {
     title: string;
     description: string;
@@ -284,6 +378,13 @@ export interface LocaleDict {
     customAccessSaveFailed: string;
     customAccessClear: string;
     customAccessConfigured: string;
+    directHost: string;
+    directHostPlaceholder: string;
+    directPort: string;
+    directUseSsl: string;
+    enableDirectAccess: string;
+    updateAccess: string;
+    enableCloudflare: string;
     custom: string;
     customQrScan: string;
     customQrDesc: string;
@@ -935,6 +1036,100 @@ export interface LocaleDict {
 }
 
 export const en: LocaleDict = {
+  connectionCenter: {
+    openLocalChat: "Open local chat",
+    title: "Remote connections",
+    description: "Connect to another computer or continue this computer’s work from another device.",
+    savedHeading: "Connect to another computer",
+    savedDescription: "Open CodeMux on a saved computer, or add a new connection.",
+    sharingHeading: "Access this computer from another device",
+    sharingDescription: "Set up a connection, then open its address on your phone or another computer.",
+    localUnavailable: "Start this computer’s CodeMux server to manage remote access.",
+    manageDevices: "Manage devices",
+    directConfigured: "Configured",
+    desktopOnly: "SSH connections are available in CodeMux Desktop.",
+    methodLabel: "Connection method",
+    accessCode: "Access code",
+    showCode: "Show code",
+    hideCode: "Hide code",
+    copied: "Copied",
+    copyFailed: "Could not copy. Select and copy the text manually.",
+    edit: "Edit",
+    disable: "Disable",
+    disabled: "Off",
+    chooseMethod: "Choose a connection method",
+    domain: "Domain",
+    quickLink: "Temporary link",
+    fixedDomain: "Use a fixed domain",
+    quickDescription: "Create a public link without a Cloudflare account. The address changes when the tunnel restarts.",
+    fixedDescription: "Use a domain already configured with Cloudflare Tunnel. This requires existing tunnel credentials on this computer.",
+    switchNotice: "Saving this change switches how other devices access this computer and disconnects existing remote clients.",
+    retry: "Retry",
+    configuredDescription: "The address is configured. Other devices must be able to reach this computer.",
+    activeDescription: "Open this address on another device and enter the access code when prompted.",
+    shareAddress: "Connection address",
+    directDescription: "Use a reachable IP address or your own domain. Works with your local network or VPN.",
+    cloudflareDescription: "Create a public link for access outside your network.",
+    cloudflareUnavailable: "Cloudflare Tunnel is unavailable on this host.",
+    addressPending: "The connection address will appear when the tunnel is running.",
+    staleAddress: "The previous address is unavailable while the tunnel is not running.",
+    configureTitle: "Set up access to this computer",
+    currentMethod: "Current method",
+    accessCodeDescription: "New devices enter this code before requesting access.",
+    hostnameRequired: "Enter your Cloudflare Tunnel domain.",
+    methodChangeDescription: "Choose how other devices reach this computer.",
+    manageConnection: "Manage connection",
+    emptyConnections: "No saved connections yet",
+    starting: "Starting",
+    running: "Running",
+    error: "Connection error",
+    stopped: "Stopped",
+    loading: "Checking connection status…",
+    cancel: "Cancel",
+  },
+  hostConnections: {
+    title: "Connect to another computer",
+    description: "Connect to CodeMux running on another computer.",
+    addHost: "Add connection",
+    empty: "Save a connection to open CodeMux on another computer.",
+    directTitle: "Direct connection",
+    directDescription: "Connect using an IP address, domain, or shared link.",
+    directHint: "Enter the remote CodeMux address, or paste its shared Cloudflare link.",
+    sshTitle: "Remote SSH",
+    sshDescription: "Connect securely through an SSH host or config alias.",
+    sshHint: "Enter an SSH address or a host from your SSH config. CodeMux uses your existing SSH keys and agent.",
+    host: "Host",
+    port: "Port",
+    useTls: "Use SSL (HTTPS)",
+    sshAddress: "SSH address",
+    authHint: "If the host requires an access code, you will enter it after connecting.",
+    advanced: "Advanced",
+    connectionUrl: "Connection URL",
+    remotePort: "Remote CodeMux port",
+    displayName: "Display name",
+    optional: "Optional",
+    connect: "Connect",
+    reconnect: "Reconnect",
+    open: "Open",
+    disconnect: "Disconnect",
+    edit: "Edit",
+    remove: "Remove",
+    removeConfirm: "Remove {name} from saved hosts? Sessions on that host will be kept.",
+    close: "Close",
+    disconnected: "Disconnected",
+    connecting: "Connecting…",
+    connected: "Connected",
+    error: "Connection error",
+    hostRequired: "Enter a hostname or IP address.",
+    invalidPort: "Enter a port between 1 and 65535.",
+    invalidUrl: "Enter an HTTP or HTTPS address without a path, query, or credentials.",
+    sshRequired: "Enter an SSH address or config alias.",
+    invalidSsh: "Use ssh://user@host, user@host, or an SSH config alias. Add :port for a custom SSH port.",
+    invalidConnection: "Check the connection details and try again.",
+    connectFailed: "Unable to connect. {detail}",
+    loadFailed: "Unable to load saved connections.",
+    tryAgain: "Try again.",
+  },
   localServer: {
     title: "Local server",
     description: "Manage the CodeMux server on this computer.",
@@ -1060,7 +1255,7 @@ export const en: LocaleDict = {
     conversationRegion: "Conversation",
     jumpToLatest: "Jump to latest",
     newSession: "New Session",
-    remoteAccess: "Remote Access",
+    remoteAccess: "Remote connections",
     settings: "Settings",
     logout: "Logout",
     startConversation: "Start a new conversation",
@@ -1173,7 +1368,7 @@ export const en: LocaleDict = {
 
   // Remote Access page
   remote: {
-    title: "Remote Access",
+    title: "Remote connections",
     publicAccess: "Cloudflare Tunnel",
     publicAccessDesc: "Access via Cloudflare tunnel from the internet",
     starting: "Starting tunnel, please wait...",
@@ -1195,29 +1390,36 @@ export const en: LocaleDict = {
     lanQrDesc: "Make sure your phone and computer are on the same Wi-Fi",
     webApp: "Web App",
     devicesDesc: "Manage devices that can access this server",
-    publicAccessTab: "Remote Access",
-    publicAccessTabDesc: "Use your own IP or domain, or enable Cloudflare Tunnel, for browser access and webhook callbacks.",
+    publicAccessTab: "Remote connections",
+    publicAccessTabDesc: "Choose how other devices connect to this CodeMux host.",
     accessOffDescription: "Remote access is off. This computer can still use CodeMux locally.",
-    accessOnDescription: "Remote access is enabled with the selected method.",
+    accessOnDescription: "Remote access is on.",
     accessMethod: "Access method",
-    accessCustomMethod: "Use your own IP, domain, or network forwarding.",
+    accessCustomMethod: "Local network, VPN, or your own domain.",
     accessCloudflare: "Cloudflare Tunnel",
-    accessCloudflareMethod: "CodeMux starts and manages a Cloudflare connector.",
+    accessCloudflareMethod: "Create a public address with Cloudflare.",
     accessExclusive: "Only one method can be active. Switching disconnects existing remote clients.",
     accessSwitching: "Updating remote access…",
     accessUpdateFailed: "Could not update remote access. Check the host connection and configuration, then try again.",
-    accessUrlRequired: "Save a custom address below before enabling this method.",
-    customAccessTitle: "Custom Access",
-    customAccessDesc: "Use an address that already routes to this CodeMux host. Configure network access and HTTPS externally; saving an address does not create a tunnel.",
-    customAccessUrl: "Custom Access URL",
+    accessUrlRequired: "Enter a host address to enable direct access.",
+    customAccessTitle: "Direct connection",
+    customAccessDesc: "Enter a reachable IP address or domain for this computer. Use SSL if HTTPS is already configured.",
+    customAccessUrl: "Connection URL",
     customAccessUrlPlaceholder: "http://192.168.1.20:8233 or https://codemux.example.com",
-    customAccessInvalid: "Enter an HTTP or HTTPS address with an optional port. Paths, query parameters, fragments, and credentials are not supported.",
-    customAccessSaved: "Access address saved.",
-    customAccessSaveFailed: "Could not save the access address. Try again.",
+    customAccessInvalid: "Enter a valid host and port (1–65535), or paste an HTTP(S) address without a path, query, fragment, or credentials.",
+    customAccessSaved: "Direct access enabled.",
+    customAccessSaveFailed: "Could not enable direct access. Try again.",
     customAccessClear: "Clear",
-    customAccessConfigured: "Custom access address configured",
-    custom: "Custom",
-    customQrScan: "Scan to open your custom address",
+    customAccessConfigured: "Direct access configured",
+    directHost: "Host / IP",
+    directHostPlaceholder: "192.168.1.20 or codemux.example.com",
+    directPort: "Port",
+    directUseSsl: "Use SSL",
+    enableDirectAccess: "Enable direct access",
+    updateAccess: "Update connection",
+    enableCloudflare: "Enable Cloudflare Tunnel",
+    custom: "Direct",
+    customQrScan: "Scan to connect directly",
     customQrDesc: "Your device must be able to reach the configured IP or domain.",
     copyAddress: "Copy address",
     copyAccessCode: "Copy access code",
@@ -1236,11 +1438,11 @@ export const en: LocaleDict = {
     namedTunnelSetupHint: "Run `cloudflared tunnel login`, `cloudflared tunnel create <name>` and `cloudflared tunnel route dns <name> <domain>` first.",
     noteSecurity: "Access Security",
     noteSecurityDesc: "Web access requires a 6-digit password. Webhook endpoints are validated by each channel's SDK signature/token verification.",
-    noteKeepRunning: "Keep App Running",
-    noteKeepRunningDesc: "CodeMux must remain running on this computer. Closing the app or putting the computer to sleep interrupts remote access.",
+    noteKeepRunning: "Keep CodeMux running",
+    noteKeepRunningDesc: "Keep CodeMux running on this computer. Putting the computer to sleep interrupts remote access.",
     notes: "Notes",
     publicAccessEnabled: "Public Access enabled — Cloudflare Tunnel running",
-    publicAccessDisabled: "Set up a custom address or Cloudflare Tunnel",
+    publicAccessDisabled: "Set up Direct or Cloudflare Tunnel",
     goToPublicAccess: "Set Up Remote Access",
   },
 

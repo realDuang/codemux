@@ -332,6 +332,68 @@ describe("readHostControlMetadata", () => {
     expect(await fs.readdir(directory)).toEqual([]);
   });
 
+  it.each(["EPERM", "EBUSY"])("reopens metadata after a transient Windows %s read failure", async code => {
+    await start();
+    const saved = await metadata();
+    const open = vi.spyOn(fs, "open").mockRejectedValueOnce(Object.assign(new Error("File is being removed"), { code }));
+    const platform = process.platform;
+    Object.defineProperty(process, "platform", { value: "win32", configurable: true });
+    try {
+      await expect(readHostControlMetadata(directory)).resolves.toEqual(saved);
+      expect(open).toHaveBeenCalledTimes(2);
+    } finally {
+      Object.defineProperty(process, "platform", { value: platform, configurable: true });
+    }
+  });
+
+  it("recognizes metadata removed during a Windows access-denied read race", async () => {
+    const open = vi.spyOn(fs, "open")
+      .mockRejectedValueOnce(Object.assign(new Error("File is pending deletion"), { code: "EPERM" }));
+    const platform = process.platform;
+    Object.defineProperty(process, "platform", { value: "win32", configurable: true });
+    try {
+      await expect(readHostControlMetadata(directory)).resolves.toBeNull();
+      expect(open).toHaveBeenCalledTimes(2);
+      expect(await fs.readdir(directory)).toEqual([]);
+    } finally {
+      Object.defineProperty(process, "platform", { value: platform, configurable: true });
+    }
+  });
+
+  it.each([
+    { platform: "win32", code: "EPERM", attempts: 3 },
+    { platform: "win32", code: "EBUSY", attempts: 3 },
+    { platform: "win32", code: "EIO", attempts: 1 },
+    { platform: "darwin", code: "EPERM", attempts: 1 },
+  ])("fails closed for persistent $platform $code errors after $attempts attempts", async ({ platform, code, attempts }) => {
+    const open = vi.spyOn(fs, "open").mockRejectedValue(Object.assign(new Error("Unreadable file"), { code }));
+    const originalPlatform = process.platform;
+    Object.defineProperty(process, "platform", { value: platform, configurable: true });
+    try {
+      await expect(readHostControlMetadata(directory)).rejects.toMatchObject({ code: "INVALID_METADATA", cause: { code } });
+      expect(open).toHaveBeenCalledTimes(attempts);
+    } finally {
+      Object.defineProperty(process, "platform", { value: originalPlatform, configurable: true });
+    }
+  });
+
+  it("does not retry malformed JSON or expose its bytes through the diagnostic cause", async () => {
+    const credential = "a".repeat(64);
+    await fs.writeFile(path.join(directory, HOST_CONTROL_FILENAME), `{"ownerCredential":"${credential}`);
+    const open = vi.spyOn(fs, "open");
+    const platform = process.platform;
+    Object.defineProperty(process, "platform", { value: "win32", configurable: true });
+    try {
+      const failure = await readHostControlMetadata(directory).catch(error => error as Error & { code: string });
+      expect(failure).toMatchObject({ code: "INVALID_METADATA" });
+      expect(failure).not.toHaveProperty("cause");
+      expect(JSON.stringify(failure)).not.toContain(credential);
+      expect(open).toHaveBeenCalledOnce();
+    } finally {
+      Object.defineProperty(process, "platform", { value: platform, configurable: true });
+    }
+  });
+
   it.each([
     { version: 2 }, { instanceId: "not-a-uuid" }, { pid: 0 }, { pid: 1.2 },
     { port: 0 }, { port: 65_536 }, { port: "1234" },

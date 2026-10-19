@@ -32,9 +32,9 @@ test.describe("Remote Authentication", () => {
   test("should show 6-digit code input for remote access", async ({
     page,
   }) => {
-    // Should NOT show "Enter Chat" (that's local/host mode)
+    // Should NOT show "Open local chat" (that's local/host mode)
     await expect(
-      page.getByRole("button", { name: /Enter Chat/i }),
+      page.getByRole("button", { name: /Open local chat/i }),
     ).not.toBeVisible({ timeout: 5_000 });
 
     // Should show login form with code input

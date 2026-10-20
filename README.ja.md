@@ -60,9 +60,9 @@ CodeMux は起動時にインストール済みのエンジンを検出します
 
 ### スマートフォンから開く
 
-1. CodeMux で **Remote Access** を開きます。
-2. **Custom** を選んでこのコンピューターの LAN アドレス（例：`http://192.168.1.20:8233`）を保存するか、どこからでもアクセスできる **Cloudflare Tunnel** を選びます（クイックトンネルはアカウント不要）。リモートアクセスをオンにして QR コードをスキャンします。
-3. 新しいデバイスを 6 桁のコードで承認すれば完了です。
+1. CodeMux で **Remote connections** を開きます。**Access this computer from another device** で、LAN 経由なら **Direct connection**、どこからでもアクセスするなら **Cloudflare Tunnel** を選びます（クイックトンネルはアカウント不要）。
+2. Direct connection の場合は、このコンピューターの LAN アドレス（例：`http://192.168.1.20:8233`）を入力し、**Enable direct access** を選びます。Cloudflare Tunnel の場合は、トンネルを有効にします。ページに表示される QR コードをスキャンします。
+3. スマートフォンでホストの 6 桁のアクセスコードを入力し、ホスト側で新しいデバイスを承認します。
 
 ## ✨ 機能
 
@@ -109,9 +109,10 @@ CodeMux は起動時にインストール済みのエンジンを検出します
 
 | 方法 | 適した用途 |
 |--------|----------|
-| **LAN ブラウザ** | 同じネットワーク上の別デバイス。このコンピューターの LAN IP とポートをカスタムアドレスとして保存し、QR コードをスキャン。 |
+| **LAN ブラウザ** | 同じネットワーク上の別デバイス。このコンピューターの LAN IP と Web ポートで Direct connection を有効にし、QR コードをスキャン。 |
 | **Cloudflare Tunnel** | ポート転送や VPN なしでどこからでも。クイックトンネルは設定不要、名前付きトンネルなら[独自ドメイン](docs/custom-access.md#cloudflare-custom-domains)を維持。 |
-| **カスタムアドレス** | 独自のリバースプロキシやルート。[Custom access](docs/custom-access.md) を参照。 |
+| **Direct connection** | 独自のリバースプロキシやルート。[Custom access](docs/custom-access.md) を参照。 |
+| **Remote SSH** | システムの OpenSSH を使い、CodeMux Desktop から稼働中の既存の CodeMux ホストに接続。[Remote connections](docs/remote-hosts.md) を参照。 |
 | **インストール可能な PWA** | 安定した HTTPS アドレスでスマートフォンのホーム画面に追加。[Web and mobile PWA](docs/web-pwa.md) を参照。 |
 
 新しいデバイスは 6 桁のコードで承認が必要で、デバイスごとに個別の JWT が発行され、公開トンネルは HTTPS を使用します。デバイス管理ページから任意のデバイスの名前変更や取り消しができます。

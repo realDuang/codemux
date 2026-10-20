@@ -60,9 +60,9 @@ CodeMux는 시작할 때 설치된 엔진을 감지합니다. 최소 하나가 �
 
 ### 휴대폰에서 열기
 
-1. CodeMux에서 **Remote Access**를 엽니다.
-2. **Custom**을 선택해 이 컴퓨터의 LAN 주소(예: `http://192.168.1.20:8233`)를 저장하거나, 어디서나 접속할 수 있는 **Cloudflare Tunnel**을 선택합니다(퀵 터널은 계정 불필요). 원격 접속을 켜고 QR 코드를 스캔합니다.
-3. 새 기기를 6자리 코드로 승인하면 끝입니다.
+1. CodeMux에서 **Remote connections**를 엽니다. **Access this computer from another device**에서 LAN 접속은 **Direct connection**, 어디서나 접속하려면 **Cloudflare Tunnel**을 선택합니다(퀵 터널은 계정 불필요).
+2. Direct connection은 이 컴퓨터의 LAN 주소(예: `http://192.168.1.20:8233`)를 입력하고 **Enable direct access**를 선택합니다. Cloudflare Tunnel은 터널을 켭니다. 페이지에 표시된 QR 코드를 스캔합니다.
+3. 휴대폰에서 호스트의 6자리 액세스 코드를 입력한 뒤, 호스트에서 새 기기를 승인합니다.
 
 ## ✨ 기능
 
@@ -109,9 +109,10 @@ CodeMux는 시작할 때 설치된 엔진을 감지합니다. 최소 하나가 �
 
 | 방식 | 적합한 경우 |
 |--------|----------|
-| **LAN 브라우저** | 같은 네트워크의 다른 기기. 이 컴퓨터의 LAN IP와 포트를 사용자 지정 주소로 저장한 뒤 QR 코드를 스캔. |
+| **LAN 브라우저** | 같은 네트워크의 다른 기기. 이 컴퓨터의 LAN IP와 Web 포트로 Direct connection을 켠 뒤 QR 코드를 스캔. |
 | **Cloudflare Tunnel** | 포트 포워딩이나 VPN 없이 어디서나. 퀵 터널은 설정 불필요, 이름 있는 터널은 [자체 도메인](docs/custom-access.md#cloudflare-custom-domains) 유지. |
-| **사용자 지정 주소** | 자체 리버스 프록시나 라우트. [Custom access](docs/custom-access.md) 참고. |
+| **Direct connection** | 자체 리버스 프록시나 라우트. [Custom access](docs/custom-access.md) 참고. |
+| **Remote SSH** | 시스템 OpenSSH를 통해 CodeMux Desktop에서 실행 중인 기존 CodeMux 호스트에 접속. [Remote connections](docs/remote-hosts.md) 참고. |
 | **설치형 PWA** | 안정적인 HTTPS 주소로 휴대폰 홈 화면에 추가. [Web and mobile PWA](docs/web-pwa.md) 참고. |
 
 새 기기는 6자리 코드로 승인해야 하고, 기기마다 별도의 JWT가 발급되며, 공개 터널은 HTTPS를 사용합니다. 기기 관리 페이지에서 어떤 기기든 이름을 바꾸거나 권한을 취소할 수 있습니다.

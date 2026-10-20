@@ -22,8 +22,8 @@ npm run dev
 ### Prerequisites
 
 - **Bun** — Package manager and script runner
-- **At least one AI engine CLI** — [OpenCode](https://opencode.ai), [GitHub Copilot](https://github.com/features/copilot), or [Claude Code](https://claude.ai/code)
-- **Node.js 20+** — For Electron and build tools
+- **At least one AI engine runtime** — See the [engine setup table](README.md#then-connect-an-engine) for OpenCode, GitHub Copilot CLI, Claude Code, and Codex.
+- **Node.js 24+** — For the server runtime and development tools
 
 ## Key Commands
 
@@ -41,7 +41,7 @@ CodeMux is a multi-engine AI coding assistant client. The key architectural rule
 
 > **Engine-agnostic frontend**: All engine-specific logic lives in adapter layer (`electron/main/engines/`), never in the frontend (`src/`). The frontend renders based solely on unified types.
 
-See [CLAUDE.md](./CLAUDE.md) for detailed architecture documentation.
+See [Development](docs/development.md), [Project structure](docs/project-structure.md), and [Server runtime](docs/server-runtime.md) for detailed architecture documentation.
 
 ## Code Conventions
 
@@ -82,7 +82,7 @@ Before starting work on a new feature, check our [**GitHub Discussions**](https:
 1. Create adapter directory in `electron/main/engines/[engine-name]/`
 2. Extend `EngineAdapter` base class from `engine-adapter.ts`
 3. Implement converters to normalize engine data into unified types
-4. Register in `EngineManager` (`electron/main/gateway/engine-manager.ts`)
+4. Add the adapter to the `engines` list in `server/service-host.ts`, which composes the engine stack for both desktop and standalone hosts
 
 ## Adding a New Channel
 

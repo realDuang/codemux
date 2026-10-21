@@ -197,6 +197,22 @@ describe("UnifiedCodexAdapter", () => {
     expect(f.executions).toHaveLength(0);
   });
 
+  it("keeps new conversations as local drafts until their first input", async () => {
+    const f = fixture(true);
+    const draft = await f.adapter.createSession("/repo");
+    // No native name, catalog admission, or sharing registration for an empty draft.
+    expect(f.owners.has(draft.id)).toBe(false);
+    expect(f.executions[0].native.readMetadata).not.toHaveBeenCalled();
+    expect(f.adapter.hasSession(draft.id)).toBe(true);
+    await expect(f.adapter.removeSession(draft.id)).resolves.toBe("local");
+    expect(f.executions[0].deleteSession).toHaveBeenCalledWith("codex_thread-1");
+
+    const session = await f.adapter.createSession("/repo");
+    expect(f.owners.has(session.id)).toBe(false);
+    await f.adapter.sendMessage(session.id, [{ type: "text", text: "Start" }]);
+    expect(f.owners.get(session.id)?.clientId).toBe(f.ownerClients[0].clientId);
+  });
+
   it("keeps native session and message identities across sharing toggles without replacing the writer", async () => {
     const f = fixture();
     const session = await f.adapter.createSession("/repo");
@@ -263,9 +279,12 @@ describe("UnifiedCodexAdapter", () => {
   it("retains accepted Desktop follow-up input when sharing is disabled during the current turn", async () => {
     const f = fixture(true);
     const session = await f.adapter.createSession("/repo");
+    await f.adapter.sendMessage(session.id, [{ type: "text", text: "Start" }]);
     const execution = f.executions[0];
+    execution.native.request.mockClear();
     const turns = execution.states.get("codex_thread-1")!.thread.turns as Array<Record<string, unknown>>;
-    turns.push({ id: "active-turn", status: "inProgress", items: [] });
+    const activeTurn: Record<string, unknown> = { id: "active-turn", status: "inProgress", items: [] };
+    turns.push(activeTurn);
     const registration = f.owners.get(session.id)!.registration;
     const queued = { id: "queued-desktop-input", text: "Continue after the active turn", context: {}, cwd: "/repo", createdAt: 2, submission: { hostId: "local", status: "pending" } };
     await registration.handleRequest("thread-follower-set-queued-follow-ups-state", {
@@ -275,7 +294,7 @@ describe("UnifiedCodexAdapter", () => {
     expect(execution.native.request).not.toHaveBeenCalled();
     await f.adapter.setSessionSharing(false);
     f.ownerClients[0].publishOwnedQueuedFollowUps.mockClear();
-    turns[0].status = "completed";
+    activeTurn.status = "completed";
     for (const watcher of execution.watchers) watcher("codex_thread-1");
     await vi.waitFor(() => expect(execution.native.request).toHaveBeenCalledExactlyOnceWith("codex_thread-1", "turn/start", expect.objectContaining({
       threadId: session.id, clientUserMessageId: queued.id, input: [{ type: "text", text: queued.text }],
@@ -292,6 +311,7 @@ describe("UnifiedCodexAdapter", () => {
     const errors = vi.fn();
     const f = fixture(true, { onError: errors });
     const session = await f.adapter.createSession("/repo");
+    await f.adapter.sendMessage(session.id, [{ type: "text", text: "Start" }]);
     await f.adapter.setSessionSharing(false);
     const owner = f.ownerClients[0];
     let discovered!: () => void;

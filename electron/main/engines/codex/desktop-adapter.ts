@@ -8,7 +8,7 @@ import type {
   ModelListResult, UnifiedModelInfo, EngineCatalogSnapshot, UnifiedProject,
   CatalogProjectInput, CatalogProjectPatch, UnifiedQuestion,
 } from "../../../../src/types/unified";
-import { CodexDesktopIpcClient, type DesktopThreadStream, type DesktopThreadSettingsPatch, type DesktopCollaborationMode } from "./desktop-ipc-client";
+import { CodexDesktopIpcClient, type DesktopThreadOwner, type DesktopThreadStream, type DesktopThreadSettingsPatch, type DesktopCollaborationMode } from "./desktop-ipc-client";
 import { DesktopStateReducer, desktopRequestId, type DesktopStateChange, type DesktopConversationSnapshot, type DesktopPendingRequest } from "./desktop-state";
 import { CODEX_MODES, toCodexEffort } from "./config";
 import { validateImageAddition, type ImageCandidate } from "../../../../shared/image-limits";
@@ -16,6 +16,10 @@ import { buildDesktopElicitationResponse, cancelDesktopElicitation } from "./des
 import { buildCodexAsyncQuestionReply, convertCodexAsyncQuestion, type CodexAsyncQuestion } from "./async-questions";
 
 const READ_OWNER_MISS_TTL_MS = 1000;
+// A live owner answers discovery within milliseconds, but the router reports a
+// missing owner only after its fixed 10s deadline. Reads wait this long before
+// showing stored history and finishing discovery in the background.
+const READ_OWNER_GRACE_MS = 250;
 const MAX_READ_OWNER_MISSES = 256;
 import { buildDesktopOwnerState } from "./desktop-owner";
 
@@ -75,6 +79,7 @@ export class CodexDesktopAdapter extends EngineAdapter {
   private readonly attaching = new Map<string, Promise<UnifiedSession>>();
   private readonly readOwnerMisses = new Map<string, { expiresAt: number; clientId: string | null }>();
   private readonly inputOwnerChecks = new Map<string, number>();
+  private readonly backgroundDiscoveries = new Map<string, Promise<void>>();
   private readonly watchers = new Set<() => void>();
   private readonly codemuxOwnedThreadIds = new Set<string>();
   private readonly storedSnapshots = new Map<string, DesktopConversationSnapshot>();
@@ -128,6 +133,7 @@ export class CodexDesktopAdapter extends EngineAdapter {
 
   async stop(): Promise<void> {
     this.stopped = true;
+    this.backgroundDiscoveries.clear();
     await this.options.catalog?.stop();
     this.client.close();
     this.markUnavailable("CodeMux detached from Codex Desktop");
@@ -235,6 +241,10 @@ export class CodexDesktopAdapter extends EngineAdapter {
     if (this.archivedSessionIds.has(id)) throw archivedThreadError();
     if (this.sessions.get(id)?.available && this.client.connected) return this.requireSnapshot(id).session;
     let stored: DesktopConversationSnapshot | undefined;
+    if (!this.inputOwnerChecks.has(id) && this.backgroundDiscoveries.has(id)) {
+      stored = this.storedSnapshots.get(id);
+      if (stored) return stored.session;
+    }
     if (!this.client.connected) {
       try { await this.start(); }
       catch (error) {
@@ -249,16 +259,41 @@ export class CodexDesktopAdapter extends EngineAdapter {
       if (stored) return stored.session;
     }
     this.readOwnerMisses.delete(id);
-    const owner = await this.client.discoverOwner(id);
+    const discovery = this.client.discoverOwner(id);
+    let owner: DesktopThreadOwner | null;
+    if (this.options.readStoredThread && !this.inputOwnerChecks.has(id)) {
+      let grace: ReturnType<typeof setTimeout> | undefined;
+      const quick = await Promise.race([
+        discovery,
+        new Promise<"pending">((resolve) => { grace = setTimeout(() => resolve("pending"), READ_OWNER_GRACE_MS); }),
+      ]).finally(() => clearTimeout(grace));
+      if (quick === "pending") {
+        void discovery.catch(() => undefined);
+        stored = await this.readStoredSnapshot(id);
+        if (stored) {
+          this.followWhenDiscovered(id, discovery);
+          return stored.session;
+        }
+        owner = await discovery;
+      } else owner = quick;
+    } else owner = await discovery;
     if (!owner) {
-      // Cache only a completed negative response, never a timeout or error. The
-      // short read-only window avoids repeating router discovery in restore/list.
-      this.readOwnerMisses.set(id, { expiresAt: performance.now() + READ_OWNER_MISS_TTL_MS, clientId: this.client.clientId });
-      if (this.readOwnerMisses.size > MAX_READ_OWNER_MISSES) this.readOwnerMisses.delete(this.readOwnerMisses.keys().next().value!);
+      this.rememberOwnerMiss(id);
       stored = await this.readStoredSnapshot(id);
       if (stored) return stored.session;
       throw new Error("This conversation has no connected Codex Desktop owner. Open it in Codex Desktop first.");
     }
+    return this.followOwner(id, owner);
+  }
+
+  private rememberOwnerMiss(id: string): void {
+    // Cache only a completed negative response, never a timeout or error. The
+    // short read-only window avoids repeating router discovery in restore/list.
+    this.readOwnerMisses.set(id, { expiresAt: performance.now() + READ_OWNER_MISS_TTL_MS, clientId: this.client.clientId });
+    if (this.readOwnerMisses.size > MAX_READ_OWNER_MISSES) this.readOwnerMisses.delete(this.readOwnerMisses.keys().next().value!);
+  }
+
+  private async followOwner(id: string, owner: DesktopThreadOwner): Promise<UnifiedSession> {
     const session: FollowedSession = { ownerClientId: owner.ownerClientId, reducer: new DesktopStateReducer(), available: false };
     this.sessions.set(id, session);
     try {
@@ -273,6 +308,22 @@ export class CodexDesktopAdapter extends EngineAdapter {
       this.client.unfollowThread(id);
       throw error;
     }
+  }
+
+  /** Upgrades a stored read to a live follow if discovery later finds an owner. */
+  private followWhenDiscovered(id: string, discovery: Promise<DesktopThreadOwner | null>): void {
+    const operation = discovery.then(async (owner) => {
+      if (this.backgroundDiscoveries.get(id) !== operation) return;
+      if (!owner) { this.rememberOwnerMiss(id); return; }
+      if (!this.client.connected || this.archivedSessionIds.has(id) || this.sessions.has(id)
+        || this.attaching.has(id) || !this.storedSnapshots.has(id)) return;
+      await this.followOwner(id, owner);
+    }).catch(() => {
+      // The stored snapshot stays visible; the next read or input retries discovery.
+    }).finally(() => {
+      if (this.backgroundDiscoveries.get(id) === operation) this.backgroundDiscoveries.delete(id);
+    });
+    this.backgroundDiscoveries.set(id, operation);
   }
 
   async listSessions(directory?: string): Promise<UnifiedSession[]> {
@@ -361,7 +412,8 @@ export class CodexDesktopAdapter extends EngineAdapter {
   }
 
   async removeSession(id: string): Promise<"local" | "archived"> {
-    try { await this.attachThread(id); }
+    // Removal needs the authoritative owner, not a stored read shown early.
+    try { await this.attachForInput(id); }
     catch (error) {
       if (!isArchivedThreadError(error)) throw error;
       this.detachSession(id);
@@ -388,6 +440,7 @@ export class CodexDesktopAdapter extends EngineAdapter {
   }
 
   private detachSession(id: string): void {
+    this.backgroundDiscoveries.delete(id);
     this.client.unfollowThread(id);
     this.sessions.delete(id);
     this.storedSnapshots.delete(id);

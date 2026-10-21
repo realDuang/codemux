@@ -133,6 +133,8 @@ jobs:
             release/*.zip
             release/latest-mac.yml
           if-no-files-found: error
+          # The release job attaches these files to the GitHub Release in the same run.
+          retention-days: 1
 
   # Build for Windows
   build-windows:
@@ -190,6 +192,8 @@ jobs:
             release/*.exe
             release/latest.yml
           if-no-files-found: error
+          # The release job attaches these files to the GitHub Release in the same run.
+          retention-days: 1
 
   # #57 Build for Linux
   build-linux:
@@ -245,6 +249,8 @@ jobs:
             release/*.deb
             release/latest-linux.yml
           if-no-files-found: error
+          # The release job attaches these files to the GitHub Release in the same run.
+          retention-days: 1
 
   # Create GitHub Release (skip for PRs)
   release:

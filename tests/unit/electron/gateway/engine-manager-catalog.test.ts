@@ -511,6 +511,7 @@ describe("EngineManager catalog integration", () => {
   it("passes canonical project metadata when creating a pending native conversation", async () => {
     publish();
     const project = manager.listCatalogs()[0].projects[0];
+    adapter.hasSession.mockImplementation((id: string) => id === "created-thread");
     const created = await manager.createSession(adapter.engineType, "/chosen/cwd", undefined, project.id);
     expect(adapter.createSession).toHaveBeenCalledWith("/chosen/cwd", { catalogSourceId: "source-a", catalogProjectId: "native-project" });
     expect(created).toMatchObject({ projectId: project.id, directory: "/chosen/cwd", catalogSourceId: "source-a" });
@@ -518,6 +519,19 @@ describe("EngineManager catalog integration", () => {
     publish();
     expect(conversationStore.get(created.id)?.catalogAvailable).toBeUndefined();
     expect(conversationStore.get(created.id)?.engineSessionId).toBe("created-thread");
+  });
+
+  it("drops an empty pending conversation once its draft writer is gone", async () => {
+    publish();
+    adapter.hasSession.mockImplementation((id: string) => id === "created-thread");
+    const created = await manager.createSession(adapter.engineType, "/chosen/cwd");
+    const removed = vi.fn();
+    manager.on("session.removed", removed);
+    // e.g. CodeMux restarted before the draft received input.
+    adapter.hasSession.mockReturnValue(false);
+    publish();
+    expect(conversationStore.get(created.id)).toBeNull();
+    expect(removed).toHaveBeenCalledWith(expect.objectContaining({ sessionId: created.id }));
   });
 
   it("reuses the catalog identity when discovery arrives before native creation resolves", async () => {

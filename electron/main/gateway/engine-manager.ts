@@ -443,6 +443,7 @@ export class EngineManager extends EventEmitter {
       }),
     });
     normalized.sessions = normalized.sessions.filter((session) => !this.catalogSessionChecks.has(session.id));
+    if (snapshot.complete) this.purgeAbandonedDrafts(adapter, snapshot);
     this.catalogSources.set(adapter.engineType, snapshot.sourceId);
     this.catalogRevisions.set(adapter.engineType, (this.catalogRevisions.get(adapter.engineType) ?? 0) + 1);
     for (const session of normalized.sessions) {
@@ -454,6 +455,23 @@ export class EngineManager extends EventEmitter {
     }
     this.emit("catalog.updated", normalized);
     return normalized;
+  }
+
+  /**
+   * A catalog engine may defer native writes until a draft receives input. A
+   * draft without content or a live writer (e.g. after a restart) can never
+   * appear natively, so drop its local row instead of leaving it unrecoverable.
+   */
+  private purgeAbandonedDrafts(adapter: EngineAdapter, snapshot: EngineCatalogSnapshot): void {
+    const present = new Set(snapshot.sessions.map((session) => session.id));
+    for (const conv of conversationStore.list({ engineType: adapter.engineType })) {
+      if (conv.catalogSourceId !== snapshot.sourceId || conv.catalogAvailable !== undefined || !conv.engineSessionId
+        || present.has(conv.engineSessionId) || conv.messageCount || conv.firstPrompt || conv.archived
+        || adapter.hasSession(conv.engineSessionId) || this.sessionRemovals.has(conv.id)
+        || this.authoritativeAttaching.has(conv.id) || this.catalogSessionChecks.has(conv.id)) continue;
+      void this.purgeRemovedConversation(conv, "local", snapshot.sourceId)
+        .catch((error) => engineManagerLog.error("Failed to remove abandoned draft:", error));
+    }
   }
 
   private markCatalogsUnavailable(engineType: EngineType): void {

@@ -146,10 +146,29 @@ export function toSessionInfo(session: UnifiedSession, fallbackProjectId?: strin
   };
 }
 
+// Sessions hidden while their deletion is confirmed by the gateway. List
+// refreshes must not resurrect them until the deletion fails.
+const pendingRemovals = new Set<string>();
+
+export function beginPendingRemoval(sessionId: string): void {
+  pendingRemovals.add(sessionId);
+  setSessionStore("list", (sessions) => sessions.filter((session) => session.id !== sessionId));
+  setSendingFor(sessionId, false);
+  if (sessionStore.current === sessionId) setSessionStore("current", null);
+}
+
+export function endPendingRemoval(sessionId: string): void {
+  pendingRemovals.delete(sessionId);
+}
+
+export function isPendingRemoval(sessionId: string): boolean {
+  return pendingRemovals.has(sessionId);
+}
+
 /** Catalog updates never reset the selected conversation, its messages or drafts. */
 export function applySessionCatalog(snapshot: EngineCatalogSnapshot): void {
   setSessionStore("catalogs", snapshot.sourceId, snapshot);
-  const incoming = new Map(snapshot.sessions.map((session) => [session.id, toSessionInfo({ ...session, catalogSourceId: snapshot.sourceId })]));
+  const incoming = new Map(snapshot.sessions.filter((session) => !pendingRemovals.has(session.id)).map((session) => [session.id, toSessionInfo({ ...session, catalogSourceId: snapshot.sourceId })]));
   setSessionStore("list", (current) => {
     const result = current.map((session) => {
       const next = incoming.get(session.id);
@@ -172,7 +191,8 @@ export function replaceListedSessions(sessions: SessionInfo[]): void {
   setSessionStore("list", (current) => {
     const catalog = new Map(sessions.filter((session) => session.catalogSourceId).map((session) => [session.id, session]));
     for (const session of current) if (session.catalogSourceId) catalog.set(session.id, session);
-    return [...sessions.filter((session) => !session.catalogSourceId), ...catalog.values()];
+    return [...sessions.filter((session) => !session.catalogSourceId), ...catalog.values()]
+      .filter((session) => !pendingRemovals.has(session.id));
   });
 }
 

@@ -210,6 +210,10 @@ confirmed is reported as unconfirmed, not as a successful synchronized rename.
 Delete is the shared conversation's only removal action in CodeMux. The header
 has no Archive or Open in Codex shortcut.
 
+CodeMux hides the row as soon as you delete it, then waits for the native
+result in the background. If archiving fails, an error is shown and the list is
+refreshed, which restores the conversation.
+
 - An empty conversation is removed locally. Its native thread is not archived
   or deleted. A source-scoped suppression record prevents polling and restart
   from re-adding that discarded empty conversation.

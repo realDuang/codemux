@@ -173,6 +173,8 @@ interface PromptInputProps {
   onImagesChange?: (images: ImageAttachment[]) => void;
   /** Toolbar content rendered in the bottom bar (left of send button) */
   toolbarContent?: JSX.Element;
+  /** Each new value moves keyboard focus into the textarea once it is enabled. */
+  focusRequest?: number;
 }
 
 export function PromptInput(props: PromptInputProps) {
@@ -256,6 +258,16 @@ export function PromptInput(props: PromptInputProps) {
     } else {
       setShowCommandMenu(false);
     }
+  });
+
+  // A request may arrive before the new session enables the input; consume it
+  // on the first enabled pass so a later re-enable does not steal focus again.
+  let handledFocusRequest = props.focusRequest;
+  createEffect(() => {
+    const request = props.focusRequest;
+    if (!request || request === handledFocusRequest || props.disabled) return;
+    handledFocusRequest = request;
+    queueMicrotask(() => textarea()?.focus());
   });
 
   /** Select a command from the autocomplete menu */

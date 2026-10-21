@@ -575,7 +575,7 @@ describe("CodexAdapter", () => {
     });
   });
 
-  it("starts turns with cwd, sandbox, model, reasoning effort, and collaboration mode", async () => {
+  it("starts turns with cwd, permission preset, model, reasoning effort, and collaboration mode", async () => {
     const { adapter, client } = createAdapterWithClient();
     const { sessionId } = seedSession(adapter);
     client.request.mockImplementation(async (method: string) => {
@@ -588,7 +588,7 @@ describe("CodexAdapter", () => {
     const responsePromise = adapter.sendMessage(
       sessionId,
       [{ type: "text", text: "Fix the failing tests" }],
-      { mode: "plan", modelId: "gpt-5.4", reasoningEffort: "max", directory: "/repo" },
+      { mode: "auto-review", modelId: "gpt-5.4", reasoningEffort: "max", directory: "/repo" },
     );
     await flushMicrotasks();
 
@@ -597,19 +597,20 @@ describe("CodexAdapter", () => {
       expect.objectContaining({
         threadId: "thread-1",
         cwd: "/repo",
-        approvalPolicy: "never",
+        approvalPolicy: "on-request",
+        approvalsReviewer: "auto_review",
         sandboxPolicy: {
           type: "workspaceWrite",
           writableRoots: ["/repo"],
           readOnlyAccess: { type: "fullAccess" },
-          networkAccess: true,
+          networkAccess: false,
           excludeTmpdirEnvVar: false,
           excludeSlashTmp: false,
         },
         model: "gpt-5.4",
         effort: "xhigh",
         collaborationMode: expect.objectContaining({
-          mode: "plan",
+          mode: "default",
         }),
       }),
       120000,
@@ -1035,7 +1036,7 @@ describe("CodexAdapter", () => {
       authenticated: true,
       authMessage: "user@example.com",
     });
-    expect(info.capabilities.availableModes.map((mode) => mode.id)).toEqual(["default", "plan"]);
+    expect(info.capabilities.availableModes.map((mode) => mode.id)).toEqual(["ask", "auto-review", "full-access"]);
     expect(info.authMethods).toEqual([{
       id: "openai",
       name: "OpenAI",
@@ -1861,7 +1862,8 @@ describe("CodexAdapter", () => {
       threadId: "thread-1",
       cwd: "/repo",
       model: "codex-mini-latest",
-      approvalPolicy: "never",
+      approvalPolicy: "on-request",
+      approvalsReviewer: "user",
       sandbox: "workspace-write",
     }));
     expect((adapter as any).threads.get(threadId)).toMatchObject({ loaded: true, title: "Reloaded Thread" });

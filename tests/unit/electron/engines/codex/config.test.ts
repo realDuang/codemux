@@ -3,6 +3,10 @@ import { describe, expect, it } from "vitest";
 import {
   CODEX_MODES,
   buildStartupArgs,
+  codexModeFromPermissions,
+  codexPermissionPatch,
+  modeToApprovalsReviewer,
+  normalizeCodexMode,
   clampApprovalPolicy,
   clampSandboxMode,
   clampSandboxPolicy,
@@ -17,36 +21,45 @@ import {
 import { REASONING_EFFORT_VALUES, isCodexServiceTier, isReasoningEffort, normalizeReasoningEfforts } from "../../../../../src/types/unified";
 
 describe("codex/config.ts", () => {
-  it("defines the expected Codex modes", () => {
-    expect(CODEX_MODES.map((mode) => mode.id)).toEqual(["default", "plan"]);
+  it("exposes Codex permission presets as modes", () => {
+    expect(CODEX_MODES.map((mode) => mode.id)).toEqual(["ask", "auto-review", "full-access"]);
+    expect(normalizeCodexMode("plan")).toBe("ask");
   });
 
-  it("maps modes to stable approval policies", () => {
-    expect(modeToApprovalPolicy("default")).toBe("never");
-    expect(modeToApprovalPolicy("plan")).toBe("never");
+  it("maps presets to approval policies and reviewers", () => {
+    expect(modeToApprovalPolicy("ask")).toBe("on-request");
+    expect(modeToApprovalPolicy("auto-review")).toBe("on-request");
+    expect(modeToApprovalPolicy("full-access")).toBe("never");
+    expect(modeToApprovalsReviewer("ask")).toBe("user");
+    expect(modeToApprovalsReviewer("auto-review")).toBe("auto_review");
+    expect(modeToApprovalsReviewer("full-access")).toBe("user");
   });
 
-  it("maps modes to stable sandbox modes and policies", () => {
-    expect(modeToSandboxMode("default")).toBe("workspace-write");
-    expect(modeToSandboxMode("plan")).toBe("workspace-write");
-
-    expect(modeToSandboxPolicy("default", "/repo")).toEqual({
+  it("maps presets to sandbox modes and policies", () => {
+    expect(modeToSandboxMode("ask")).toBe("workspace-write");
+    expect(modeToSandboxMode("full-access")).toBe("danger-full-access");
+    expect(modeToSandboxPolicy("auto-review", "/repo")).toEqual({
       type: "workspaceWrite",
       writableRoots: ["/repo"],
       readOnlyAccess: { type: "fullAccess" },
-      networkAccess: true,
+      networkAccess: false,
       excludeTmpdirEnvVar: false,
       excludeSlashTmp: false,
     });
+    expect(modeToSandboxPolicy("full-access", "/repo")).toEqual({ type: "dangerFullAccess" });
+    expect(codexPermissionPatch("full-access")).toEqual({
+      approvalPolicy: "never", approvalsReviewer: "user",
+      sandboxPolicy: { type: "dangerFullAccess" }, activePermissionProfile: { id: ":danger-full-access", extends: null },
+    });
+  });
 
-    expect(modeToSandboxPolicy("plan", "/repo")).toEqual({
-      type: "workspaceWrite",
-      writableRoots: ["/repo"],
-      readOnlyAccess: { type: "fullAccess" },
-      networkAccess: true,
-      excludeTmpdirEnvVar: false,
-      excludeSlashTmp: false,
-    });
+  it("recognizes presets from native permission settings", () => {
+    for (const mode of CODEX_MODES) expect(codexModeFromPermissions(codexPermissionPatch(mode.id))).toBe(mode.id);
+    // Codex Desktop's full-access snapshot.
+    expect(codexModeFromPermissions({ approvalPolicy: "never", approvalsReviewer: "user", sandboxPolicy: { type: "dangerFullAccess" } })).toBe("full-access");
+    // Combinations outside the presets are not reported as one.
+    expect(codexModeFromPermissions({ approvalPolicy: "never", sandboxPolicy: { type: "workspaceWrite" } })).toBeUndefined();
+    expect(codexModeFromPermissions({ approvalPolicy: "on-request", sandboxPolicy: { type: "readOnly" } })).toBeUndefined();
   });
 
   it("clamps approval and sandbox selections to server requirements", () => {

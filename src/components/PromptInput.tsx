@@ -23,10 +23,23 @@ function getModeDisplayName(mode: AgentMode): string {
   return raw.charAt(0).toUpperCase() + raw.slice(1);
 }
 
+// Permission-preset labels share the styling of equivalent existing modes.
+const MODE_STYLE_ALIASES: Record<string, string> = {
+  "ask for approval": "manual",
+  "approve for me": "auto",
+  "full access": "bypass permissions",
+};
+
+/** Lowercased label used to pick a mode's colour, icon and placeholder. */
+function getModeStyleKey(mode: AgentMode): string {
+  const label = getModeDisplayName(mode).toLowerCase();
+  return MODE_STYLE_ALIASES[label] ?? label;
+}
+
 /** Return the active-state text colour class for a mode segment. */
 function getModeColor(mode: AgentMode, index: number): string {
   // Active segment tint: icon + label pick up the mode hue on a raised chip.
-  const label = getModeDisplayName(mode).toLowerCase();
+  const label = getModeStyleKey(mode);
   if (label === "default" || label === "manual" || label === "interactive" || label === "build") return "text-indigo-600 dark:text-indigo-300";
   if (label === "plan") return "text-cyan-600 dark:text-cyan-300";
   if (label === "autopilot" || label === "bypass permissions") return "text-emerald-600 dark:text-emerald-300";
@@ -45,7 +58,7 @@ function getModeAccentRing(mode: AgentMode, _index: number): {
   border: string;
   bgHover: string;
 } {
-  const label = getModeDisplayName(mode).toLowerCase();
+  const label = getModeStyleKey(mode);
   const base = "bg-[var(--cm-surface)] dark:bg-[var(--cm-surface-2)]";
   if (label === "plan")
     return {
@@ -133,7 +146,7 @@ const EXTRA_MODE_ICONS: Record<string, () => any> = {
 };
 
 function getModeIcon(mode: AgentMode, index: number) {
-  const label = getModeDisplayName(mode).toLowerCase();
+  const label = getModeStyleKey(mode);
   if (EXTRA_MODE_ICONS[label]) return EXTRA_MODE_ICONS[label]();
   if (label === "default" || label === "manual" || label === "interactive" || label === "build") return MODE_ICONS[0]();
   if (label === "plan") return MODE_ICONS[1]();
@@ -505,7 +518,7 @@ export function PromptInput(props: PromptInputProps) {
       if (props.canEnqueue) return t().prompt.typeNextMessage ?? "Type your next message...";
       return t().prompt.waitingForResponse ?? "Waiting for response...";
     }
-    const label = getModeDisplayName(agent()).toLowerCase();
+    const label = getModeStyleKey(agent());
     if (label === "plan") return t().prompt.planPlaceholder;
     if (label === "autopilot" || label === "bypass permissions") return t().prompt.autopilotPlaceholder;
     if (label === "build" || label === "interactive" || label === "default" || label === "manual") return t().prompt.buildPlaceholder;

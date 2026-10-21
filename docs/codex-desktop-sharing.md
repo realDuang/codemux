@@ -169,7 +169,8 @@ never edits global-state caches or migration flags.
 | Input during a turn | Forwarded to the same owner's active turn |
 | Stop | Interrupts the synchronized active turn |
 | Images | Image input and resulting messages are shared |
-| Model, effort, mode, Fast | Updates the owner's settings and waits for its confirmed state; native effort values such as `ultra` are preserved |
+| Model, effort, permissions, Fast | Updates the owner's settings and waits for its confirmed state; native effort values such as `ultra` are preserved |
+| Permission mode | The mode selector shows Codex's presets: Ask for approval (`on-request`, workspace sandbox), Approve for me (`on-request` with `auto_review`), and Full access (`never`, full-access sandbox). Other native combinations show no preset. The collaboration mode is not changed |
 | Questions | Answers are forwarded to the original pending request; dismissing an ordinary blocking question stops its turn |
 | MCP elicitations | Limited typed forms support accept, decline, and cancel; cancellation resolves the request without stopping its turn |
 | Approvals | Supported command, file-change, and permission requests are routed to their owner; decisions must be offered by the pending request |

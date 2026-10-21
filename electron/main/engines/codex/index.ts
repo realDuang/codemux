@@ -51,8 +51,12 @@ import { verifyCodexRolloutPath } from "./desktop-rollout-path";
 import { CodexRolloutHistory } from "./rollout-history";
 import { normalizeCodexRuntimeVersion } from "./rollout-reader";
 import {
+  CODEX_COLLABORATION_MODE,
+  CODEX_COLLABORATION_MODES,
   CODEX_FALLBACK_MODEL,
   CODEX_MODES,
+  DEFAULT_CODEX_MODE,
+  codexModeFromPermissions,
   type CodexApprovalPolicy,
   type CodexConfigRequirements,
   type CodexSandboxMode,
@@ -63,8 +67,10 @@ import {
   clampSandboxPolicy,
   fromCodexEffort,
   modeToApprovalPolicy,
+  modeToApprovalsReviewer,
   modeToSandboxMode,
   modeToSandboxPolicy,
+  normalizeCodexMode,
   normalizeDirectory,
   resolveCodexCliPath,
   resolveCodexCliVersion,
@@ -98,7 +104,7 @@ import {
 
 const SESSION_IDLE_TIMEOUT_MS = 30 * 60 * 1000;
 const START_TIMEOUT_MS = 120_000;
-const DEFAULT_MODE_ID = "default";
+const DEFAULT_MODE_ID = DEFAULT_CODEX_MODE;
 const MAX_IMAGE_ATTACHMENT_BYTES = 3 * 1024 * 1024;
 const STORED_THREAD_PAGE_SIZE = 100;
 const STORED_THREAD_MAX_PAGES = 20;
@@ -234,6 +240,7 @@ interface ThreadResponse {
   model?: string;
   modelProvider?: string;
   approvalPolicy?: CodexApprovalPolicy;
+  approvalsReviewer?: string;
   sandbox?: CodexSandboxPolicy;
   reasoningEffort?: string | null;
   serviceTier?: string | null;
@@ -498,10 +505,11 @@ export class CodexAdapter extends EngineAdapter {
       ...previous, model, effort, cwd: directory,
       serviceTier: this.sessionServiceTiers.get(sessionId) ?? previous.serviceTier ?? null,
       approvalPolicy: previous.approvalPolicy ?? clampApprovalPolicy(modeToApprovalPolicy(mode), this.configRequirements),
+      approvalsReviewer: previous.approvalsReviewer ?? modeToApprovalsReviewer(mode),
       sandboxPolicy: typeof previous.permissions === "string" ? null
         : previous.sandboxPolicy ?? clampSandboxPolicy(modeToSandboxPolicy(mode, directory), this.configRequirements),
       collaborationMode: previous.collaborationMode ?? {
-        mode, settings: { model, reasoning_effort: effort, developer_instructions: null },
+        mode: CODEX_COLLABORATION_MODE, settings: { model, reasoning_effort: effort, developer_instructions: null },
       },
     };
   }
@@ -532,6 +540,7 @@ export class CodexAdapter extends EngineAdapter {
       collaborationMode: asRecord(settings.collaborationMode),
       serviceTier: typeof settings.serviceTier === "string" ? settings.serviceTier : null,
       approvalPolicy: settings.approvalPolicy,
+      approvalsReviewer: settings.approvalsReviewer,
       sandboxPolicy: settings.sandboxPolicy,
       permissions: typeof settings.permissions === "string" ? settings.permissions : undefined,
       latestTokenUsageInfo: buffer ? this.nativeTokenUsage.get(buffer) : undefined,
@@ -699,9 +708,11 @@ export class CodexAdapter extends EngineAdapter {
     if (options.condition?.ifModelEquals != null && options.condition.ifModelEquals !== previous.model) return false;
     if (options.condition && Object.prototype.hasOwnProperty.call(options.condition, "ifEffortEquals") && options.condition.ifEffortEquals !== previous.effort) return false;
     const settings = { ...previous, ...pickDesktopOwnerSettings(patch) };
+    // An explicit sandbox replaces a named permission profile on this owner.
+    if (patch.sandboxPolicy !== undefined && patch.permissions === undefined) delete settings.permissions;
     const collaboration = asRecord(settings.collaborationMode);
-    const mode = typeof collaboration.mode === "string" ? collaboration.mode : this.sessionModes.get(sessionId) ?? this.currentMode;
-    if (!CODEX_MODES.some((candidate) => candidate.id === mode)) throw new Error("Unsupported Codex collaboration mode");
+    const mode = typeof collaboration.mode === "string" ? collaboration.mode : CODEX_COLLABORATION_MODE;
+    if (!CODEX_COLLABORATION_MODES.includes(mode)) throw new Error("Unsupported Codex collaboration mode");
     const collaborationSettings = asRecord(collaboration.settings);
     if (patch.collaborationMode != null) {
       if (typeof collaborationSettings.model === "string") settings.model = collaborationSettings.model;
@@ -719,8 +730,8 @@ export class CodexAdapter extends EngineAdapter {
       ...pickDesktopOwnerSettings(settings),
     });
     if (typeof settings.model === "string") this.sessionModels.set(sessionId, settings.model);
-    const mode = asRecord(settings.collaborationMode).mode;
-    if (typeof mode === "string") this.sessionModes.set(sessionId, mode);
+    const mode = codexModeFromPermissions(settings);
+    if (mode) this.sessionModes.set(sessionId, mode);
     if (typeof settings.cwd === "string") this.sessionDirectories.set(sessionId, normalizeDirectory(settings.cwd));
     const effort = typeof settings.effort === "string" ? fromCodexEffort(settings.effort) : undefined;
     if (effort) this.sessionReasoningEfforts.set(sessionId, effort); else this.sessionReasoningEfforts.delete(sessionId);
@@ -869,13 +880,17 @@ export class CodexAdapter extends EngineAdapter {
       effort: threadResponse.reasoningEffort ?? null,
       serviceTier: threadResponse.serviceTier ?? null,
       approvalPolicy: threadResponse.approvalPolicy,
+      approvalsReviewer: threadResponse.approvalsReviewer,
       sandboxPolicy: threadResponse.sandbox,
       collaborationMode: threadResponse.collaborationMode,
       permissions: threadResponse.permissions,
       cwd: threadResponse.cwd ?? normalizedDirectory,
     });
 
-    const restoredMode = strictOwnerRestore ? threadResponse.collaborationMode?.mode : undefined;
+    const restoredMode = strictOwnerRestore ? codexModeFromPermissions({
+      approvalPolicy: threadResponse.approvalPolicy, approvalsReviewer: threadResponse.approvalsReviewer,
+      sandboxPolicy: threadResponse.sandbox, permissions: threadResponse.permissions,
+    }) : undefined;
     if (typeof restoredMode === "string") {
       this.sessionModes.set(sessionId, restoredMode);
     } else if (!this.sessionModes.has(sessionId)) {
@@ -1222,8 +1237,23 @@ export class CodexAdapter extends EngineAdapter {
   }
 
   async setMode(sessionId: string, modeId: string): Promise<void> {
-    this.sessionModes.set(sessionId, modeId);
-    this.currentMode = modeId;
+    const mode = normalizeCodexMode(modeId);
+    this.sessionModes.set(sessionId, mode);
+    this.currentMode = mode;
+    // Loaded threads keep their native permissions; replace them with the preset.
+    const previous = this.nativeSessionSettings.get(sessionId);
+    if (previous) {
+      const { permissions: _profile, ...rest } = previous;
+      this.nativeSessionSettings.set(sessionId, { ...rest, ...this.permissionSettings(mode, this.sessionDirectories.get(sessionId) ?? "") });
+    }
+  }
+
+  private permissionSettings(modeId: string, directory: string): Record<string, unknown> {
+    return {
+      approvalPolicy: clampApprovalPolicy(modeToApprovalPolicy(modeId), this.configRequirements),
+      approvalsReviewer: modeToApprovalsReviewer(modeId),
+      sandboxPolicy: clampSandboxPolicy(modeToSandboxPolicy(modeId, normalizeDirectory(directory)), this.configRequirements),
+    };
   }
 
   override async setReasoningEffort(sessionId: string, effort: ReasoningEffort | null): Promise<void> {
@@ -2466,7 +2496,7 @@ export class CodexAdapter extends EngineAdapter {
     if (options?.ownerAdmission && this.hasActiveTurn(sessionId)) {
       throw new Error("A Codex turn is already active; use steer instead of start");
     }
-    const modeId = options?.mode ?? this.sessionModes.get(sessionId) ?? this.currentMode;
+    const modeId = normalizeCodexMode(options?.mode ?? this.sessionModes.get(sessionId) ?? this.currentMode);
     const modelId = options?.modelId ?? this.sessionModels.get(sessionId) ?? this.currentModelId;
     const reasoningEffort = options?.reasoningEffort !== undefined
       ? options.reasoningEffort : this.sessionReasoningEfforts.get(sessionId) ?? null;
@@ -2481,8 +2511,7 @@ export class CodexAdapter extends EngineAdapter {
         this.sessionServiceTiers.delete(sessionId);
       }
     }
-    const approvalPolicy = clampApprovalPolicy(modeToApprovalPolicy(modeId), this.configRequirements);
-    const sandboxPolicy = clampSandboxPolicy(modeToSandboxPolicy(modeId, directory), this.configRequirements);
+    const permissions = this.permissionSettings(modeId, directory);
 
     const buffer = this.createMessageBuffer(sessionId, directory, threadId);
     this.messageBuffers.set(sessionId, buffer);
@@ -2490,9 +2519,8 @@ export class CodexAdapter extends EngineAdapter {
     this.pendingStarts.set(sessionId, pendingStart);
     this.activeTempDirs.set(sessionId, [...tempDirs]);
     const native = options?.nativeOverrides ?? {};
-    const nativeMode = asRecord(native.collaborationMode).mode;
     this.activeTurnSettings.set(sessionId, {
-      mode: typeof nativeMode === "string" ? nativeMode : modeId,
+      mode: codexModeFromPermissions({ ...permissions, ...native }) ?? modeId,
       modelId: typeof native.model === "string" ? native.model : modelId,
       reasoningEffort: Object.prototype.hasOwnProperty.call(native, "effort")
         ? typeof native.effort === "string" ? fromCodexEffort(native.effort) ?? null : null : reasoningEffort,
@@ -2512,13 +2540,12 @@ export class CodexAdapter extends EngineAdapter {
         threadId,
         input,
         cwd: directory,
-        approvalPolicy,
-        sandboxPolicy,
+        ...permissions,
         model: modelId,
         effort: reasoningEffort ? toCodexEffort(reasoningEffort) : undefined,
         ...(serviceTier ? { serviceTier } : {}),
         collaborationMode: {
-          mode: modeId,
+          mode: CODEX_COLLABORATION_MODE,
           settings: {
             model: modelId,
             reasoning_effort: reasoningEffort ? toCodexEffort(reasoningEffort) : null,
@@ -2928,6 +2955,7 @@ export class CodexAdapter extends EngineAdapter {
       cwd: directory,
       model: this.currentModelId,
       approvalPolicy,
+      approvalsReviewer: modeToApprovalsReviewer(modeId),
       sandbox: sandboxMode,
       baseInstructions: CODEMUX_IDENTITY_PROMPT,
       serviceName: "codemux",
@@ -2964,6 +2992,7 @@ export class CodexAdapter extends EngineAdapter {
       cwd: directory,
       model: modelId,
       approvalPolicy,
+      approvalsReviewer: modeToApprovalsReviewer(modeId),
       sandbox: sandboxMode,
       baseInstructions: CODEMUX_IDENTITY_PROMPT,
       persistExtendedHistory: true,
@@ -3207,7 +3236,7 @@ export class CodexAdapter extends EngineAdapter {
     const requestedTier = options && Object.prototype.hasOwnProperty.call(options, "serviceTier")
       ? options.serviceTier ?? null : active.serviceTier;
 
-    return (options?.mode ?? active.mode) === active.mode
+    return normalizeCodexMode(options?.mode ?? active.mode) === normalizeCodexMode(active.mode)
       && (options?.modelId ?? active.modelId) === active.modelId
       && requestedEffort === active.reasoningEffort
       && requestedTier === active.serviceTier

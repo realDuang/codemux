@@ -86,6 +86,8 @@ class TestExecution extends EventEmitter {
       if (patch.collaborationMode) state.collaborationMode = patch.collaborationMode as Record<string, unknown>;
       if (patch.effort === null || typeof patch.effort === "string") state.reasoningEffort = patch.effort;
       if (patch.serviceTier === null || typeof patch.serviceTier === "string") state.serviceTier = patch.serviceTier;
+      for (const key of ["approvalPolicy", "approvalsReviewer"] as const) if (patch[key] !== undefined) state[key] = patch[key];
+      if (patch.sandboxPolicy !== undefined) { state.sandboxPolicy = patch.sandboxPolicy; delete state.permissions; }
       return true;
     }),
   };
@@ -529,17 +531,28 @@ describe("UnifiedCodexAdapter", () => {
     native.approvalPolicy = "on-request";
     native.sandboxPolicy = null;
     await f.adapter.setModel(session.id, "chosen-model");
-    await f.adapter.setMode(session.id, "plan");
     await f.adapter.setReasoningEffort(session.id, "high");
     await f.adapter.setServiceTier(session.id, "fast");
     const current = await f.adapter.getSession(session.id);
-    expect(current).toMatchObject({ modelId: "chosen-model", mode: "plan", reasoningEffort: "high", serviceTier: "fast" });
+    expect(current).toMatchObject({ modelId: "chosen-model", mode: "ask", reasoningEffort: "high", serviceTier: "fast" });
     await f.adapter.sendMessage(session.id, [{ type: "text", text: "Preserve permissions" }]);
     expect(execution.sendMessage).toHaveBeenCalledWith("codex_thread-1", expect.any(Array), expect.objectContaining({
       nativeOverrides: { permissions: ":workspace", approvalPolicy: "on-request", sandboxPolicy: null },
     }));
     expect(native.permissions).toBe(":workspace");
-    expect(execution.native.updateSettings).toHaveBeenCalledTimes(4);
+    expect(execution.native.updateSettings).toHaveBeenCalledTimes(3);
+
+    // Choosing a preset replaces the native profile with explicit permissions.
+    await f.adapter.setMode(session.id, "full-access");
+    expect(execution.native.updateSettings).toHaveBeenLastCalledWith("codex_thread-1", {
+      approvalPolicy: "never", approvalsReviewer: "user", sandboxPolicy: { type: "dangerFullAccess" },
+    }, {});
+    expect(await f.adapter.getSession(session.id)).toMatchObject({ mode: "full-access" });
+    await f.adapter.sendMessage(session.id, [{ type: "text", text: "Full access" }]);
+    expect(execution.sendMessage).toHaveBeenLastCalledWith("codex_thread-1", expect.any(Array), expect.objectContaining({
+      nativeOverrides: { approvalPolicy: "never", approvalsReviewer: "user", sandboxPolicy: { type: "dangerFullAccess" } },
+    }));
+    await expect(f.adapter.setMode(session.id, "plan")).rejects.toThrow("Unsupported Codex permission mode");
   });
 
   it("uses the same protected permissions and canonical reply identity for skills", async () => {

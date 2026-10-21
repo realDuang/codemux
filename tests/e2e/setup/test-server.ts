@@ -774,7 +774,7 @@ export async function startTestServer(
         filePath = path.join(filePath, "index.html");
       }
     } catch {
-      const routes = ["/", "/chat", "/settings", "/devices", "/login", "/remote"];
+      const routes = ["/", "/chat", "/settings", "/devices", "/login", "/remote", "/connections"];
       if (!req.headers.accept?.includes("text/html") || !routes.includes(pathname.replace(/\/$/, "") || "/")) {
         res.writeHead(404);
         res.end("Not Found");

@@ -10,8 +10,8 @@ import { expect, type Page } from "@playwright/test";
 
 /** Navigate to chat page and wait for session list to load */
 export async function navigateToChat(page: Page): Promise<void> {
+  // The host opens chat directly after local authentication.
   await page.goto(process.env.TEST_BASE_URL!);
-  await page.getByRole("button", { name: /Open local chat/i }).click();
   await expect(page).toHaveURL(/.*\/chat/, { timeout: 10_000 });
   // Wait for projects to load via WebSocket — project headers are always
   // visible in the sidebar regardless of expand/collapse state

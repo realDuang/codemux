@@ -47,7 +47,7 @@ function getMimeType(filePath: string): string {
   return MIME_TYPES[ext] || "application/octet-stream";
 }
 
-const WEB_ROUTES = new Set(["/", "/login", "/remote", "/settings", "/devices", "/chat"]);
+const WEB_ROUTES = new Set(["/", "/login", "/remote", "/connections", "/settings", "/devices", "/chat"]);
 
 function isWithinDirectory(directory: string, filePath: string): boolean {
   const relativePath = path.relative(directory, filePath);

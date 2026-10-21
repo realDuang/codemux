@@ -82,6 +82,7 @@ import { isDefaultTitle } from "../lib/session-utils";
 import { formatTokenCount, formatCostWithUnit, getEngineBadge } from "../components/share/common";
 import { EmptyHero } from "../components/EmptyHero";
 import { getSetting, saveSetting, bootstrapHostSettings } from "../lib/settings";
+import { CONNECTION_CENTER_PATH } from "../lib/routes";
 import { readProjectPathFilter } from "../../shared/project-path-filter";
 import { BrandMark } from "../components/BrandMark";
 import { refreshThemeFromSettings } from "../lib/theme";
@@ -3066,7 +3067,7 @@ export default function Chat() {
         <div class={`${isSidebarCollapsed() && !isMobile() ? "px-1 py-2" : "p-2"} border-t border-[var(--cm-hairline)] space-y-0.5 bg-[var(--cm-canvas)]`}>
           <Show when={isLocalAccess()}>
             <button
-              onClick={() => navigate("/")}
+              onClick={() => navigate(CONNECTION_CENTER_PATH)}
               class={`w-full flex items-center ${isSidebarCollapsed() && !isMobile() ? "justify-center p-2" : "gap-2.5 px-2.5 py-1.5"} text-[13px] font-medium text-gray-600 dark:text-gray-400 hover:bg-gray-900/[0.04] dark:hover:bg-white/[0.05] hover:text-gray-900 dark:hover:text-white rounded-lg transition-colors`}
               title={t().chat.remoteAccess}
             >

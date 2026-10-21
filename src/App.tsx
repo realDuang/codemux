@@ -11,6 +11,7 @@ import { UpdateNotification } from "./components/UpdateNotification";
 import { NotificationToast } from "./components/NotificationToast";
 import { Spinner } from "./components/Spinner";
 import EntryPage from "./pages/EntryPage";
+import { CONNECTION_CENTER_PATH } from "./lib/routes";
 import Chat from "./pages/Chat";
 import { LocalServerManager } from "./desktop/LocalServerManager";
 import { initialLocalServerView, observeLocalServer, receiveLocalServerState, type LocalServerAction } from "./desktop/local-server-state";
@@ -46,8 +47,8 @@ function LoginRedirect() {
 // Redirect component for /remote route
 function RemoteRedirect() {
   if (isElectron()) {
-    logger.debug("[Remote Route] Electron host, redirecting to /");
-    return <Navigate href="/" />;
+    logger.debug("[Remote Route] Electron host, redirecting to the connection center");
+    return <Navigate href={CONNECTION_CENTER_PATH} />;
   }
   // Web clients: redirect to chat if authenticated, else to /
   if (Auth.isAuthenticated()) {
@@ -264,6 +265,7 @@ function App(props: ParentProps) {
         <UpdateNotification />
         <AppRouter>
           <Route path="/" component={EntryPage} />
+          <Route path={CONNECTION_CENTER_PATH} component={EntryPage} />
           <Route path="/login" component={LoginRedirect} />
           <Route path="/remote" component={RemoteRedirect} />
           <Route path="/settings" component={Settings} />

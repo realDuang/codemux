@@ -1,5 +1,5 @@
 import { createSignal, onMount, onCleanup, Show, Switch, Match } from "solid-js";
-import { useNavigate } from "@solidjs/router";
+import { useLocation, useNavigate } from "@solidjs/router";
 import { Auth } from "../lib/auth";
 import { useI18n } from "../lib/i18n";
 import { RemoteConnections } from "../components/RemoteConnections";
@@ -17,11 +17,22 @@ import { getSetting, bootstrapHostSettings } from "../lib/settings";
 import { refreshThemeFromSettings } from "../lib/theme";
 import { refreshLocaleFromSettings } from "../lib/i18n";
 import { BrandMark } from "../components/BrandMark";
+import { ChannelCard, channelButtonClass, type ChannelRunState } from "../components/ChannelCard";
 import { publicAssetUrl } from "../lib/public-assets";
+import { CONNECTION_CENTER_PATH } from "../lib/routes";
+
+/** Loading wins over the last reported status while a toggle is in flight. */
+function channelState(info: ChannelInfo | null, loading: boolean): ChannelRunState {
+  if (loading || info?.status === "starting") return "starting";
+  return info?.status === "running" || info?.status === "error" ? info.status : "stopped";
+}
 
 export default function EntryPage() {
   const { t } = useI18n();
   const navigate = useNavigate();
+  const location = useLocation();
+  // The host opens chat by default; the connection center has its own route.
+  const showConnectionCenter = () => location.pathname === CONNECTION_CENTER_PATH;
 
   // Access detection states
   const [checking, setChecking] = createSignal(true);
@@ -47,6 +58,20 @@ export default function EntryPage() {
       refreshThemeFromSettings();
       refreshLocaleFromSettings();
     }
+  };
+
+  /** Authenticates this host and opens chat; false keeps the entry page visible. */
+  const enterLocalChat = async (hasValidToken?: boolean): Promise<boolean> => {
+    if (!(hasValidToken ?? await Auth.checkDeviceToken())) {
+      const result = await Auth.localAuth();
+      if (!result.success) {
+        logger.error("[EntryPage] Local auth failed:", result.error);
+        return false;
+      }
+    }
+    await applyHostSettingsIfNeeded();
+    navigate("/chat", { replace: true });
+    return true;
   };
 
   // Local mode states (remote access config)
@@ -142,6 +167,7 @@ export default function EntryPage() {
 
     // For Electron, always host mode
     if (inElectron) {
+      if (!showConnectionCenter() && await enterLocalChat()) return;
       setIsHost(true);
       setChecking(false);
       loadLocalModeData();
@@ -156,6 +182,7 @@ export default function EntryPage() {
     logger.debug("[EntryPage] Is localhost:", isLocal);
 
     if (isLocal) {
+      if (!showConnectionCenter() && await enterLocalChat(hasValidToken)) return;
       // Localhost web access - treat as host mode (show remote access config)
       setIsHost(true);
       setChecking(false);
@@ -1048,461 +1075,122 @@ export default function EntryPage() {
                 <div class="min-w-0 flex-1 p-4 sm:p-6 md:p-7">
                   {/* Channels Tab */}
                   <Show when={activeTab() === "channels"}>
-                    <div class="space-y-5">
-                      {/* Direct Connect Group */}
-                      <div>
-                        <div class="flex items-center gap-2 mb-3">
-                          <h3 class="text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider">{t().channel.directConnect}</h3>
-                          <span class="text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-green-100 dark:bg-green-900/30 text-green-600 dark:text-green-400">{t().channel.directConnectBadge}</span>
-                          <div class="flex-1 h-px bg-gray-100 dark:bg-slate-800"></div>
+                    <div class="space-y-7" data-testid="channels">
+                      <header>
+                        <h1 class="text-xl font-semibold tracking-tight text-[var(--cm-text)]">{t().channel.channels}</h1>
+                        <p class="mt-2 max-w-xl text-sm leading-relaxed text-[var(--cm-text-muted)]">{t().channel.channelsDescription}</p>
+                      </header>
+
+                      <section class="space-y-4" aria-labelledby="channels-direct-heading">
+                        <div>
+                          <h2 id="channels-direct-heading" class="text-sm font-semibold text-[var(--cm-text)]">{t().channel.directConnect}</h2>
+                          <p class="mt-1 text-xs leading-relaxed text-[var(--cm-text-muted)]">{t().channel.directConnectDescription}</p>
                         </div>
-                        <div class="space-y-3">
-                          {/* Feishu Bot Row */}
-                          <div class="rounded-lg border border-[var(--cm-hairline-strong)] overflow-hidden">
-                            <div class="p-4 flex items-center justify-between">
-                              <div class="flex items-center gap-3">
-                                <div class="w-9 h-9 rounded-lg bg-indigo-100 dark:bg-indigo-900/30 flex items-center justify-center">
-                                  <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-indigo-600 dark:text-indigo-400"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
-                                </div>
-                                <div>
-                                  <div class="flex items-center gap-2">
-                                    <h3 class="text-sm font-medium text-gray-900 dark:text-white">
-                                      {t().channel.feishuBot}
-                                    </h3>
-                                    <Show when={feishuLoading() || feishuStatus()?.status === "starting"}>
-                                      <span class="inline-flex h-2 w-2 rounded-full bg-yellow-400 animate-pulse"></span>
-                                    </Show>
-                                    <Show when={!feishuLoading() && feishuStatus()?.status === "running"}>
-                                      <span class="inline-flex h-2 w-2 rounded-full bg-green-500"></span>
-                                    </Show>
-                                    <Show when={!feishuLoading() && feishuStatus()?.status === "error"}>
-                                      <span class="inline-flex h-2 w-2 rounded-full bg-red-500"></span>
-                                    </Show>
-                                  </div>
-                                  <p class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
-                                    {t().channel.feishuBotDesc}
-                                  </p>
-                                </div>
-                              </div>
-
-                              <div class="flex items-center gap-3">
-                                <button
-                                  onClick={() => setFeishuConfigOpen(true)}
-                                  class="px-3 py-1.5 text-xs font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-900/[0.04] dark:hover:bg-white/[0.05] rounded-lg transition-colors border border-[var(--cm-hairline-strong)]"
-                                >
-                                  {t().channel.configure}
-                                </button>
-                                <button
-                                  onClick={handleFeishuToggle}
-                                  disabled={feishuLoading()}
-                                  class={`relative inline-flex h-7 w-12 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:ring-offset-2 ${
-                                    feishuStatus()?.status === "running" ? "bg-blue-600" : "bg-gray-200 dark:bg-slate-700"
-                                  } ${feishuLoading() ? "opacity-50 cursor-not-allowed" : ""}`}
-                                >
-                                  <span class="sr-only">Toggle Feishu Bot</span>
-                                  <span
-                                    class={`pointer-events-none inline-block h-6 w-6 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
-                                      feishuStatus()?.status === "running" ? "translate-x-5" : "translate-x-0"
-                                    }`}
-                                  />
-                                </button>
-                              </div>
-                            </div>
-
-                            <Show when={feishuStatus()?.status === "error" && feishuStatus()?.error}>
-                              <div class="px-4 py-3 bg-red-50 dark:bg-red-900/10 border-t border-red-100 dark:border-red-900/30">
-                                <p class="text-xs text-red-600 dark:text-red-400 flex items-center gap-2">
-                                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" x2="12" y1="8" y2="12"/><line x1="12" x2="12.01" y1="16" y2="16"/></svg>
-                                  {feishuStatus()?.error}
-                                </p>
-                              </div>
-                            </Show>
-                          </div>
-
-                          {/* DingTalk Bot Row */}
-                          <div class="rounded-lg border border-[var(--cm-hairline-strong)] overflow-hidden">
-                            <div class="p-4 flex items-center justify-between">
-                              <div class="flex items-center gap-3">
-                                <div class="w-9 h-9 rounded-lg bg-blue-100 dark:bg-blue-900/30 flex items-center justify-center">
-                                  <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-blue-600 dark:text-blue-400"><path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"/></svg>
-                                </div>
-                                <div>
-                                  <div class="flex items-center gap-2">
-                                    <h3 class="text-sm font-medium text-gray-900 dark:text-white">
-                                      {t().channel.dingtalkBot}
-                                    </h3>
-                                    <Show when={dingtalkLoading() || dingtalkStatus()?.status === "starting"}>
-                                      <span class="inline-flex h-2 w-2 rounded-full bg-yellow-400 animate-pulse"></span>
-                                    </Show>
-                                    <Show when={!dingtalkLoading() && dingtalkStatus()?.status === "running"}>
-                                      <span class="inline-flex h-2 w-2 rounded-full bg-green-500"></span>
-                                    </Show>
-                                    <Show when={!dingtalkLoading() && dingtalkStatus()?.status === "error"}>
-                                      <span class="inline-flex h-2 w-2 rounded-full bg-red-500"></span>
-                                    </Show>
-                                  </div>
-                                  <p class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
-                                    {t().channel.dingtalkBotDesc}
-                                  </p>
-                                </div>
-                              </div>
-
-                              <div class="flex items-center gap-3">
-                                <button
-                                  onClick={() => setDingtalkConfigOpen(true)}
-                                  class="px-3 py-1.5 text-xs font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-900/[0.04] dark:hover:bg-white/[0.05] rounded-lg transition-colors border border-[var(--cm-hairline-strong)]"
-                                >
-                                  {t().channel.configure}
-                                </button>
-                                <button
-                                  onClick={handleDingtalkToggle}
-                                  disabled={dingtalkLoading()}
-                                  class={`relative inline-flex h-7 w-12 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:ring-offset-2 ${
-                                    dingtalkStatus()?.status === "running" ? "bg-blue-600" : "bg-gray-200 dark:bg-slate-700"
-                                  } ${dingtalkLoading() ? "opacity-50 cursor-not-allowed" : ""}`}
-                                >
-                                  <span class="sr-only">Toggle DingTalk Bot</span>
-                                  <span
-                                    class={`pointer-events-none inline-block h-6 w-6 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
-                                      dingtalkStatus()?.status === "running" ? "translate-x-5" : "translate-x-0"
-                                    }`}
-                                  />
-                                </button>
-                              </div>
-                            </div>
-
-                            <Show when={dingtalkStatus()?.status === "error" && dingtalkStatus()?.error}>
-                              <div class="px-4 py-3 bg-red-50 dark:bg-red-900/10 border-t border-red-100 dark:border-red-900/30">
-                                <p class="text-xs text-red-600 dark:text-red-400 flex items-center gap-2">
-                                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" x2="12" y1="8" y2="12"/><line x1="12" x2="12.01" y1="16" y2="16"/></svg>
-                                  {dingtalkStatus()?.error}
-                                </p>
-                              </div>
-                            </Show>
-                          </div>
-
-                          {/* Telegram Bot Row */}
-                          <div class="rounded-lg border border-[var(--cm-hairline-strong)] overflow-hidden">
-                            <div class="p-4 flex items-center justify-between">
-                              <div class="flex items-center gap-3">
-                                <div class="w-9 h-9 rounded-lg bg-sky-100 dark:bg-sky-900/30 flex items-center justify-center">
-                                  <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-sky-600 dark:text-sky-400"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></svg>
-                                </div>
-                                <div>
-                                  <div class="flex items-center gap-2">
-                                    <h3 class="text-sm font-medium text-gray-900 dark:text-white">
-                                      {t().channel.telegramBot}
-                                    </h3>
-                                    <Show when={telegramLoading() || telegramStatus()?.status === "starting"}>
-                                      <span class="inline-flex h-2 w-2 rounded-full bg-yellow-400 animate-pulse"></span>
-                                    </Show>
-                                    <Show when={!telegramLoading() && telegramStatus()?.status === "running"}>
-                                      <span class="inline-flex h-2 w-2 rounded-full bg-green-500"></span>
-                                    </Show>
-                                    <Show when={!telegramLoading() && telegramStatus()?.status === "error"}>
-                                      <span class="inline-flex h-2 w-2 rounded-full bg-red-500"></span>
-                                    </Show>
-                                  </div>
-                                  <p class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
-                                    {t().channel.telegramBotDesc}
-                                  </p>
-                                </div>
-                              </div>
-
-                              <div class="flex items-center gap-3">
-                                <button
-                                  onClick={() => setTelegramConfigOpen(true)}
-                                  class="px-3 py-1.5 text-xs font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-900/[0.04] dark:hover:bg-white/[0.05] rounded-lg transition-colors border border-[var(--cm-hairline-strong)]"
-                                >
-                                  {t().channel.configure}
-                                </button>
-                                <button
-                                  onClick={handleTelegramToggle}
-                                  disabled={telegramLoading()}
-                                  class={`relative inline-flex h-7 w-12 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:ring-offset-2 ${
-                                    telegramStatus()?.status === "running" ? "bg-blue-600" : "bg-gray-200 dark:bg-slate-700"
-                                  } ${telegramLoading() ? "opacity-50 cursor-not-allowed" : ""}`}
-                                >
-                                  <span class="sr-only">Toggle Telegram Bot</span>
-                                  <span
-                                    class={`pointer-events-none inline-block h-6 w-6 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
-                                      telegramStatus()?.status === "running" ? "translate-x-5" : "translate-x-0"
-                                    }`}
-                                  />
-                                </button>
-                              </div>
-                            </div>
-
-                            <Show when={telegramStatus()?.status === "error" && telegramStatus()?.error}>
-                              <div class="px-4 py-3 bg-red-50 dark:bg-red-900/10 border-t border-red-100 dark:border-red-900/30">
-                                <p class="text-xs text-red-600 dark:text-red-400 flex items-center gap-2">
-                                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" x2="12" y1="8" y2="12"/><line x1="12" x2="12.01" y1="16" y2="16"/></svg>
-                                  {telegramStatus()?.error}
-                                </p>
-                              </div>
-                            </Show>
-                          </div>
-
-                          {/* WeChat iLink Bot Row */}
-                          <div class="rounded-lg border border-[var(--cm-hairline-strong)] overflow-hidden">
-                            <div class="p-4 flex items-center justify-between">
-                              <div class="flex items-center gap-3">
-                                <div class="w-9 h-9 rounded-lg bg-green-100 dark:bg-green-900/30 flex items-center justify-center">
-                                  <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="currentColor" class="text-green-600 dark:text-green-400">
-                                    <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/>
-                                  </svg>
-                                </div>
-                                <div>
-                                  <div class="flex items-center gap-2">
-                                    <h3 class="text-sm font-medium text-gray-900 dark:text-white">
-                                      {t().channel.weixinIlinkBot}
-                                    </h3>
-                                    <Show when={weixinIlinkLoading() || weixinIlinkStatus()?.status === "starting"}>
-                                      <span class="inline-flex h-2 w-2 rounded-full bg-yellow-400 animate-pulse"></span>
-                                    </Show>
-                                    <Show when={!weixinIlinkLoading() && weixinIlinkStatus()?.status === "running"}>
-                                      <span class="inline-flex h-2 w-2 rounded-full bg-green-500"></span>
-                                    </Show>
-                                    <Show when={!weixinIlinkLoading() && weixinIlinkStatus()?.status === "error"}>
-                                      <span class="inline-flex h-2 w-2 rounded-full bg-red-500"></span>
-                                    </Show>
-                                  </div>
-                                  <p class="text-xs text-gray-500 dark:text-gray-400">
-                                    {t().channel.weixinIlinkBotDesc}
-                                  </p>
-                                </div>
-                              </div>
-                              <div class="flex items-center gap-2">
-                                <Show
-                                  when={!!weixinIlinkConfig().botToken && !!weixinIlinkConfig().accountId}
-                                  fallback={
-                                    <button
-                                      onClick={() => setWeixinIlinkLoginOpen(true)}
-                                      class="px-3 py-1.5 text-xs font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-900/[0.04] dark:hover:bg-white/[0.05] rounded-lg transition-colors border border-[var(--cm-hairline-strong)]"
-                                    >
-                                      {t().channel.login}
-                                    </button>
-                                  }
-                                >
-                                  <button
-                                    onClick={handleWeixinIlinkLogout}
-                                    disabled={weixinIlinkLoading()}
-                                    class="px-3 py-1.5 text-xs font-medium text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors border border-red-200 dark:border-red-900/40 disabled:opacity-50 disabled:cursor-not-allowed"
-                                  >
-                                    {t().channel.weixinIlinkLogout}
-                                  </button>
-                                </Show>
-                                <button
-                                  onClick={handleWeixinIlinkToggle}
-                                  disabled={weixinIlinkLoading() || !weixinIlinkConfig().botToken || !weixinIlinkConfig().accountId}
-                                  title={!weixinIlinkConfig().botToken || !weixinIlinkConfig().accountId ? t().channel.weixinIlinkLoginRequiredHint : undefined}
-                                  class={`relative inline-flex h-7 w-12 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:ring-offset-2 ${
-                                    weixinIlinkStatus()?.status === "running" ? "bg-blue-600" : "bg-gray-200 dark:bg-slate-700"
-                                  } ${weixinIlinkLoading() || !weixinIlinkConfig().botToken || !weixinIlinkConfig().accountId ? "opacity-50 cursor-not-allowed" : ""}`}
-                                >
-                                  <span class="sr-only">Toggle WeChat iLink Bot</span>
-                                  <span
-                                    class={`pointer-events-none inline-block h-6 w-6 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
-                                      weixinIlinkStatus()?.status === "running" ? "translate-x-5" : "translate-x-0"
-                                    }`}
-                                  />
-                                </button>
-                              </div>
-                            </div>
-                            {/* Error message display */}
-                            <Show when={weixinIlinkStatus()?.status === "error" && weixinIlinkStatus()?.error}>
-                              <div class="px-4 py-3 bg-red-50 dark:bg-red-900/10 border-t border-red-100 dark:border-red-900/30">
-                                <p class="text-xs text-red-600 dark:text-red-400 flex items-center gap-2">
-                                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" x2="12" y1="8" y2="12"/><line x1="12" x2="12.01" y1="16" y2="16"/></svg>
-                                  {weixinIlinkStatus()?.error}
-                                </p>
-                              </div>
-                            </Show>
-                          </div>
+                        <div class="divide-y divide-[var(--cm-hairline)] rounded-xl border border-[var(--cm-hairline-strong)] bg-[var(--cm-surface)]">
+                          <ChannelCard
+                            icon={<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>}
+                            name={t().channel.feishuBot}
+                            description={t().channel.feishuBotDesc}
+                            state={channelState(feishuStatus(), feishuLoading())}
+                            enabled={feishuStatus()?.status === "running"}
+                            onToggle={handleFeishuToggle}
+                            toggleDisabled={feishuLoading()}
+                            error={feishuStatus()?.status === "error" ? feishuStatus()?.error : undefined}
+                            actions={<button type="button" onClick={() => setFeishuConfigOpen(true)} class={channelButtonClass}>{t().channel.configure}</button>}
+                          />
+                          <ChannelCard
+                            icon={<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"/></svg>}
+                            name={t().channel.dingtalkBot}
+                            description={t().channel.dingtalkBotDesc}
+                            state={channelState(dingtalkStatus(), dingtalkLoading())}
+                            enabled={dingtalkStatus()?.status === "running"}
+                            onToggle={handleDingtalkToggle}
+                            toggleDisabled={dingtalkLoading()}
+                            error={dingtalkStatus()?.status === "error" ? dingtalkStatus()?.error : undefined}
+                            actions={<button type="button" onClick={() => setDingtalkConfigOpen(true)} class={channelButtonClass}>{t().channel.configure}</button>}
+                          />
+                          <ChannelCard
+                            icon={<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></svg>}
+                            name={t().channel.telegramBot}
+                            description={t().channel.telegramBotDesc}
+                            state={channelState(telegramStatus(), telegramLoading())}
+                            enabled={telegramStatus()?.status === "running"}
+                            onToggle={handleTelegramToggle}
+                            toggleDisabled={telegramLoading()}
+                            error={telegramStatus()?.status === "error" ? telegramStatus()?.error : undefined}
+                            actions={<button type="button" onClick={() => setTelegramConfigOpen(true)} class={channelButtonClass}>{t().channel.configure}</button>}
+                          />
+                          <ChannelCard
+                            icon={<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="currentColor"> <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/> </svg>}
+                            name={t().channel.weixinIlinkBot}
+                            description={t().channel.weixinIlinkBotDesc}
+                            state={channelState(weixinIlinkStatus(), weixinIlinkLoading())}
+                            enabled={weixinIlinkStatus()?.status === "running"}
+                            onToggle={handleWeixinIlinkToggle}
+                            toggleDisabled={weixinIlinkLoading() || !weixinIlinkConfig().botToken || !weixinIlinkConfig().accountId}
+                            toggleTitle={!weixinIlinkConfig().botToken || !weixinIlinkConfig().accountId ? t().channel.weixinIlinkLoginRequiredHint : undefined}
+                            error={weixinIlinkStatus()?.status === "error" ? weixinIlinkStatus()?.error : undefined}
+                            actions={<Show
+                              when={!!weixinIlinkConfig().botToken && !!weixinIlinkConfig().accountId}
+                              fallback={<button type="button" onClick={() => setWeixinIlinkLoginOpen(true)} class={channelButtonClass}>{t().channel.login}</button>}
+                            >
+                              <button type="button" onClick={handleWeixinIlinkLogout} disabled={weixinIlinkLoading()} class={`${channelButtonClass} text-red-600 dark:text-red-400`}>{t().channel.weixinIlinkLogout}</button>
+                            </Show>}
+                          />
                         </div>
-                      </div>
+                      </section>
 
-                      {/* Webhook Group */}
-                      <div>
-                        <div class="flex items-center gap-2 mb-3">
-                          <h3 class="text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider">{t().channel.webhookConnect}</h3>
-                          <span class="text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-amber-100 dark:bg-amber-900/30 text-amber-600 dark:text-amber-400">{t().channel.webhookConnectBadge}</span>
-                          <div class="flex-1 h-px bg-gray-100 dark:bg-slate-800"></div>
+                      <section class="space-y-4 border-t border-[var(--cm-hairline)] pt-6" aria-labelledby="channels-webhook-heading">
+                        <div>
+                          <h2 id="channels-webhook-heading" class="text-sm font-semibold text-[var(--cm-text)]">{t().channel.webhookConnect}</h2>
+                          <p class="mt-1 text-xs leading-relaxed text-[var(--cm-text-muted)]">{accessUrl() ? t().channel.webhookReachabilityHint : t().channel.webhookConnectDescription}</p>
                         </div>
-
-                        {/* An access address is required for webhook callbacks */}
+                        {/* Webhook callbacks need an address the channel platform can reach. */}
                         <Show when={!accessUrl()}>
-                          <div
-                            onClick={() => setActiveTab("remote")}
-                            class="rounded-lg border border-amber-200 dark:border-amber-900/30 bg-amber-50 dark:bg-amber-900/10 p-3 flex items-center justify-between cursor-pointer hover:bg-amber-100 dark:hover:bg-amber-900/20 transition-colors mb-3"
-                          >
-                            <div class="flex items-center gap-2.5">
-                              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-amber-600 dark:text-amber-400 shrink-0"><circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><path d="M2 12h20"/></svg>
-                              <div>
-                                <span class="text-xs font-medium text-amber-700 dark:text-amber-400">{t().channel.accessUrlRequired}</span>
-                                <span class="text-xs text-amber-600 dark:text-amber-400/70 ml-1">— {t().channel.accessUrlRequiredDesc}</span>
-                              </div>
-                            </div>
-                            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-amber-400 shrink-0"><path d="m9 18 6-6-6-6"/></svg>
+                          <div class="flex flex-wrap items-center justify-between gap-3 rounded-lg bg-black/[0.035] px-3 py-2.5 dark:bg-white/[0.05]">
+                            <p class="min-w-0 flex-1 text-xs leading-relaxed text-[var(--cm-text-muted)]"><span class="font-medium text-[var(--cm-text)]">{t().channel.accessUrlRequired}</span> {t().channel.accessUrlRequiredDesc}</p>
+                            <button type="button" onClick={() => setActiveTab("remote")} class={channelButtonClass}>{t().channel.openRemoteConnections}</button>
                           </div>
                         </Show>
-
-                        <Show when={accessUrl()}>
-                          <p class="text-xs text-gray-500 dark:text-gray-400 mb-3">{t().channel.webhookReachabilityHint}</p>
-                        </Show>
-
-                        <div class={`space-y-3 ${!accessUrl() ? "opacity-55" : ""}`}>
-                          {/* Teams Bot Row */}
-                          <div class="rounded-lg border border-[var(--cm-hairline-strong)] overflow-hidden">
-                            <div class="p-4 flex items-center justify-between">
-                              <div class="flex items-center gap-3">
-                                <div class="w-9 h-9 rounded-lg bg-purple-100 dark:bg-purple-900/30 flex items-center justify-center">
-                                  <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="currentColor" class="text-purple-600 dark:text-purple-400"><path d="M19.27 4.26h-3.42v-.7A1.56 1.56 0 0 0 14.3 2H9.7a1.56 1.56 0 0 0-1.55 1.56v.7H4.73A1.73 1.73 0 0 0 3 6v1.73h18V6a1.73 1.73 0 0 0-1.73-1.74zM9.88 3.56a.43.43 0 0 1 .43-.43h3.38a.43.43 0 0 1 .43.43v.7H9.88z"/><path d="M3 9v11.27A1.73 1.73 0 0 0 4.73 22h14.54A1.73 1.73 0 0 0 21 20.27V9zm7.13 8.59H7.36v-2.77h-.01V12.5h2.78v5.09zm3.74 0h-2.37V12.5h2.37zm3.77 0h-2.37V12.5h2.37z"/></svg>
-                                </div>
-                                <div>
-                                  <div class="flex items-center gap-2">
-                                    <h3 class="text-sm font-medium text-gray-900 dark:text-white">
-                                      {t().channel.teamsBot}
-                                    </h3>
-                                    <Show when={teamsLoading() || teamsStatus()?.status === "starting"}>
-                                      <span class="inline-flex h-2 w-2 rounded-full bg-yellow-400 animate-pulse"></span>
-                                    </Show>
-                                    <Show when={!teamsLoading() && teamsStatus()?.status === "running"}>
-                                      <span class="inline-flex h-2 w-2 rounded-full bg-green-500"></span>
-                                    </Show>
-                                    <Show when={!teamsLoading() && teamsStatus()?.status === "error"}>
-                                      <span class="inline-flex h-2 w-2 rounded-full bg-red-500"></span>
-                                    </Show>
-                                  </div>
-                                  <p class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
-                                    {t().channel.teamsBotDesc}
-                                  </p>
-                                </div>
+                        <div class="divide-y divide-[var(--cm-hairline)] rounded-xl border border-[var(--cm-hairline-strong)] bg-[var(--cm-surface)]">
+                          <ChannelCard
+                            icon={<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M19.27 4.26h-3.42v-.7A1.56 1.56 0 0 0 14.3 2H9.7a1.56 1.56 0 0 0-1.55 1.56v.7H4.73A1.73 1.73 0 0 0 3 6v1.73h18V6a1.73 1.73 0 0 0-1.73-1.74zM9.88 3.56a.43.43 0 0 1 .43-.43h3.38a.43.43 0 0 1 .43.43v.7H9.88z"/><path d="M3 9v11.27A1.73 1.73 0 0 0 4.73 22h14.54A1.73 1.73 0 0 0 21 20.27V9zm7.13 8.59H7.36v-2.77h-.01V12.5h2.78v5.09zm3.74 0h-2.37V12.5h2.37zm3.77 0h-2.37V12.5h2.37z"/></svg>}
+                            name={t().channel.teamsBot}
+                            description={t().channel.teamsBotDesc}
+                            state={channelState(teamsStatus(), teamsLoading())}
+                            enabled={teamsStatus()?.status === "running"}
+                            onToggle={handleTeamsToggle}
+                            toggleDisabled={teamsLoading() || (!accessUrl() && teamsStatus()?.status !== "running")}
+                            error={teamsStatus()?.status === "error" ? teamsStatus()?.error : undefined}
+                            actions={<button type="button" onClick={() => setTeamsConfigOpen(true)} class={channelButtonClass}>{t().channel.configure}</button>}
+                            details={accessUrl() && teamsStatus()?.status === "running" ? (
+                              <div class="text-xs leading-relaxed text-[var(--cm-text-muted)]">
+                                <p class="text-[11px] font-medium">{t().channel.webhookEndpoint}</p>
+                                <p class="mt-1 select-all break-all font-mono text-[var(--cm-text)]">{accessUrl()}/api/messages</p>
+                                <p class="mt-1.5">{t().channel.teamsWebhookGuide}</p>
                               </div>
-
-                              <div class="flex items-center gap-3">
-                                <button
-                                  onClick={() => setTeamsConfigOpen(true)}
-                                  class="px-3 py-1.5 text-xs font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-900/[0.04] dark:hover:bg-white/[0.05] rounded-lg transition-colors border border-[var(--cm-hairline-strong)]"
-                                >
-                                  {t().channel.configure}
-                                </button>
-                                <button
-                                  onClick={handleTeamsToggle}
-                                  disabled={teamsLoading() || (!accessUrl() && teamsStatus()?.status !== "running")}
-                                  class={`relative inline-flex h-7 w-12 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:ring-offset-2 ${
-                                    teamsStatus()?.status === "running" ? "bg-blue-600" : "bg-gray-200 dark:bg-slate-700"
-                                  } ${teamsLoading() || (!accessUrl() && teamsStatus()?.status !== "running") ? "opacity-50 cursor-not-allowed" : ""}`}
-                                >
-                                  <span class="sr-only">Toggle Teams Bot</span>
-                                  <span
-                                    class={`pointer-events-none inline-block h-6 w-6 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
-                                      teamsStatus()?.status === "running" ? "translate-x-5" : "translate-x-0"
-                                    }`}
-                                  />
-                                </button>
+                            ) : undefined}
+                          />
+                          <ChannelCard
+                            icon={<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M8.69 4.47C5.29 5.2 2.8 8.14 2.8 11.6c0 1.73.58 3.33 1.55 4.62l-.97 2.87 3.02-.98c1.12.65 2.42 1.03 3.8 1.08-.2-.6-.3-1.24-.3-1.9 0-3.75 3.15-6.8 7.02-6.8.5 0 .99.06 1.46.16C17.79 7.17 14.93 4.8 11.5 4.4c-.94-.11-1.89-.08-2.81.07zM7.5 8.1a1.05 1.05 0 1 1 0 2.1 1.05 1.05 0 0 1 0-2.1zm5.2 0a1.05 1.05 0 1 1 0 2.1 1.05 1.05 0 0 1 0-2.1z"/><path d="M21.2 17.3c0-2.94-2.87-5.33-6.4-5.33s-6.4 2.39-6.4 5.33c0 2.94 2.87 5.33 6.4 5.33.98 0 1.9-.18 2.73-.5l2.27.74-.72-2.15c.72-1 1.12-2.17 1.12-3.42zm-8.65-.6a.88.88 0 1 1 0-1.75.88.88 0 0 1 0 1.75zm4.5 0a.88.88 0 1 1 0-1.75.88.88 0 0 1 0 1.75z"/></svg>}
+                            name={t().channel.wecomBot}
+                            description={t().channel.wecomBotDesc}
+                            state={channelState(wecomStatus(), wecomLoading())}
+                            enabled={wecomStatus()?.status === "running"}
+                            onToggle={handleWecomToggle}
+                            toggleDisabled={wecomLoading() || (!accessUrl() && wecomStatus()?.status !== "running")}
+                            error={wecomStatus()?.status === "error" ? wecomStatus()?.error : undefined}
+                            actions={<button type="button" onClick={() => setWecomConfigOpen(true)} class={channelButtonClass}>{t().channel.configure}</button>}
+                            details={accessUrl() && wecomStatus()?.status === "running" ? (
+                              <div class="text-xs leading-relaxed text-[var(--cm-text-muted)]">
+                                <p class="text-[11px] font-medium">{t().channel.webhookEndpoint}</p>
+                                <p class="mt-1 select-all break-all font-mono text-[var(--cm-text)]">{accessUrl()}/webhook/wecom</p>
+                                <p class="mt-1.5">{t().channel.wecomWebhookGuide}</p>
                               </div>
-                            </div>
-
-                            <Show when={teamsStatus()?.status === "error" && teamsStatus()?.error}>
-                              <div class="px-4 py-3 bg-red-50 dark:bg-red-900/10 border-t border-red-100 dark:border-red-900/30">
-                                <p class="text-xs text-red-600 dark:text-red-400 flex items-center gap-2">
-                                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" x2="12" y1="8" y2="12"/><line x1="12" x2="12.01" y1="16" y2="16"/></svg>
-                                  {teamsStatus()?.error}
-                                </p>
-                              </div>
-                            </Show>
-
-                            {/* Webhook endpoint info when an access address is configured and the channel is active */}
-                            <Show when={accessUrl() && teamsStatus()?.status === "running"}>
-                              <div class="px-4 py-2.5 bg-blue-50 dark:bg-blue-900/5 border-t border-blue-100 dark:border-blue-900/20 flex items-start gap-2">
-                                <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-blue-500 dark:text-blue-400 shrink-0 mt-0.5"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
-                                <div class="text-xs text-gray-600 dark:text-gray-400 leading-relaxed">
-                                  <span class="text-gray-500 dark:text-gray-500">{t().channel.webhookEndpoint}:</span>{" "}
-                                  <code class="text-[11px] font-mono bg-gray-100 dark:bg-slate-800 px-1.5 py-0.5 rounded text-blue-600 dark:text-blue-400 border border-[var(--cm-hairline-strong)]">{accessUrl()}/api/messages</code>
-                                  <br/>
-                                  <span class="text-gray-400 dark:text-gray-500">{t().channel.teamsWebhookGuide}</span>
-                                </div>
-                              </div>
-                            </Show>
-                          </div>
-
-                          {/* WeCom Bot Row */}
-                          <div class="rounded-lg border border-[var(--cm-hairline-strong)] overflow-hidden">
-                            <div class="p-4 flex items-center justify-between">
-                              <div class="flex items-center gap-3">
-                                <div class="w-9 h-9 rounded-lg bg-green-100 dark:bg-green-900/30 flex items-center justify-center">
-                                  <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="currentColor" class="text-green-600 dark:text-green-400"><path d="M8.69 4.47C5.29 5.2 2.8 8.14 2.8 11.6c0 1.73.58 3.33 1.55 4.62l-.97 2.87 3.02-.98c1.12.65 2.42 1.03 3.8 1.08-.2-.6-.3-1.24-.3-1.9 0-3.75 3.15-6.8 7.02-6.8.5 0 .99.06 1.46.16C17.79 7.17 14.93 4.8 11.5 4.4c-.94-.11-1.89-.08-2.81.07zM7.5 8.1a1.05 1.05 0 1 1 0 2.1 1.05 1.05 0 0 1 0-2.1zm5.2 0a1.05 1.05 0 1 1 0 2.1 1.05 1.05 0 0 1 0-2.1z"/><path d="M21.2 17.3c0-2.94-2.87-5.33-6.4-5.33s-6.4 2.39-6.4 5.33c0 2.94 2.87 5.33 6.4 5.33.98 0 1.9-.18 2.73-.5l2.27.74-.72-2.15c.72-1 1.12-2.17 1.12-3.42zm-8.65-.6a.88.88 0 1 1 0-1.75.88.88 0 0 1 0 1.75zm4.5 0a.88.88 0 1 1 0-1.75.88.88 0 0 1 0 1.75z"/></svg>
-                                </div>
-                                <div>
-                                  <div class="flex items-center gap-2">
-                                    <h3 class="text-sm font-medium text-gray-900 dark:text-white">
-                                      {t().channel.wecomBot}
-                                    </h3>
-                                    <Show when={wecomLoading() || wecomStatus()?.status === "starting"}>
-                                      <span class="inline-flex h-2 w-2 rounded-full bg-yellow-400 animate-pulse"></span>
-                                    </Show>
-                                    <Show when={!wecomLoading() && wecomStatus()?.status === "running"}>
-                                      <span class="inline-flex h-2 w-2 rounded-full bg-green-500"></span>
-                                    </Show>
-                                    <Show when={!wecomLoading() && wecomStatus()?.status === "error"}>
-                                      <span class="inline-flex h-2 w-2 rounded-full bg-red-500"></span>
-                                    </Show>
-                                  </div>
-                                  <p class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
-                                    {t().channel.wecomBotDesc}
-                                  </p>
-                                </div>
-                              </div>
-
-                              <div class="flex items-center gap-3">
-                                <button
-                                  onClick={() => setWecomConfigOpen(true)}
-                                  class="px-3 py-1.5 text-xs font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-900/[0.04] dark:hover:bg-white/[0.05] rounded-lg transition-colors border border-[var(--cm-hairline-strong)]"
-                                >
-                                  {t().channel.configure}
-                                </button>
-                                <button
-                                  onClick={handleWecomToggle}
-                                  disabled={wecomLoading() || (!accessUrl() && wecomStatus()?.status !== "running")}
-                                  class={`relative inline-flex h-7 w-12 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:ring-offset-2 ${
-                                    wecomStatus()?.status === "running" ? "bg-blue-600" : "bg-gray-200 dark:bg-slate-700"
-                                  } ${wecomLoading() || (!accessUrl() && wecomStatus()?.status !== "running") ? "opacity-50 cursor-not-allowed" : ""}`}
-                                >
-                                  <span class="sr-only">Toggle WeCom Bot</span>
-                                  <span
-                                    class={`pointer-events-none inline-block h-6 w-6 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
-                                      wecomStatus()?.status === "running" ? "translate-x-5" : "translate-x-0"
-                                    }`}
-                                  />
-                                </button>
-                              </div>
-                            </div>
-
-                            <Show when={wecomStatus()?.status === "error" && wecomStatus()?.error}>
-                              <div class="px-4 py-3 bg-red-50 dark:bg-red-900/10 border-t border-red-100 dark:border-red-900/30">
-                                <p class="text-xs text-red-600 dark:text-red-400 flex items-center gap-2">
-                                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" x2="12" y1="8" y2="12"/><line x1="12" x2="12.01" y1="16" y2="16"/></svg>
-                                  {wecomStatus()?.error}
-                                </p>
-                              </div>
-                            </Show>
-
-                            {/* Webhook endpoint info when an access address is configured and the channel is active */}
-                            <Show when={accessUrl() && wecomStatus()?.status === "running"}>
-                              <div class="px-4 py-2.5 bg-blue-50 dark:bg-blue-900/5 border-t border-blue-100 dark:border-blue-900/20 flex items-start gap-2">
-                                <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-blue-500 dark:text-blue-400 shrink-0 mt-0.5"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
-                                <div class="text-xs text-gray-600 dark:text-gray-400 leading-relaxed">
-                                  <span class="text-gray-500 dark:text-gray-500">{t().channel.webhookEndpoint}:</span>{" "}
-                                  <code class="text-[11px] font-mono bg-gray-100 dark:bg-slate-800 px-1.5 py-0.5 rounded text-blue-600 dark:text-blue-400 border border-[var(--cm-hairline-strong)]">{accessUrl()}/webhook/wecom</code>
-                                  <br/>
-                                  <span class="text-gray-400 dark:text-gray-500">{t().channel.wecomWebhookGuide}</span>
-                                </div>
-                              </div>
-                            </Show>
-                          </div>
+                            ) : undefined}
+                          />
                         </div>
-                      </div>
+                      </section>
                     </div>
                   </Show>
 
@@ -1600,26 +1288,23 @@ export default function EntryPage() {
             <button
               onClick={handleEnterChat}
               disabled={enteringChat()}
-              class={`group h-11 px-5 font-medium rounded-lg disabled:cursor-not-allowed flex items-center justify-center gap-2 ${activeTab() === "remote" ? "ml-auto w-full sm:w-auto border border-[var(--cm-hairline-strong)] bg-[var(--cm-surface)] text-sm text-[var(--cm-text)] hover:bg-[var(--cm-surface-2)]" : "cm-btn-primary w-full"}`}
+              class="group ml-auto flex h-11 w-full items-center justify-center gap-2 rounded-lg border border-[var(--cm-hairline-strong)] bg-[var(--cm-surface)] px-5 text-sm font-medium text-[var(--cm-text)] hover:bg-[var(--cm-surface-2)] disabled:cursor-not-allowed sm:w-auto"
             >
               <Show when={enteringChat()} fallback={
                 <>
                   <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                     <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
                   </svg>
-                  <span>{activeTab() === "remote" ? t().connectionCenter.openLocalChat : t().entry.enterChat}</span>
+                  <span>{t().connectionCenter.openLocalChat}</span>
                   <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="transition-transform duration-200 group-hover:translate-x-0.5">
                     <path d="m9 18 6-6-6-6"/>
                   </svg>
                 </>
               }>
-                <div class="animate-spin w-5 h-5 border-2 border-white border-t-transparent rounded-full" />
+                <div class="animate-spin w-5 h-5 border-2 border-current border-t-transparent rounded-full" />
                 <span>{t().common.loading}</span>
               </Show>
             </button>
-            <Show when={activeTab() !== "remote"}><p class="text-xs text-gray-500 dark:text-gray-400 text-center mt-2">
-              {t().entry.enterChatDesc}
-            </p></Show>
           </div>
         </div>
       </Show>

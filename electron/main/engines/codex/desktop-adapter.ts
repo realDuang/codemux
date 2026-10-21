@@ -10,7 +10,7 @@ import type {
 } from "../../../../src/types/unified";
 import { CodexDesktopIpcClient, type DesktopThreadStream, type DesktopThreadSettingsPatch, type DesktopCollaborationMode } from "./desktop-ipc-client";
 import { DesktopStateReducer, desktopRequestId, type DesktopStateChange, type DesktopConversationSnapshot, type DesktopPendingRequest } from "./desktop-state";
-import { CODEX_MODES, toCodexEffort } from "./config";
+import { CODEX_MODES, codexPermissionPatch, toCodexEffort } from "./config";
 import { validateImageAddition, type ImageCandidate } from "../../../../shared/image-limits";
 import { buildDesktopElicitationResponse, cancelDesktopElicitation } from "./desktop-elicitation";
 import { buildCodexAsyncQuestionReply, convertCodexAsyncQuestion, type CodexAsyncQuestion } from "./async-questions";
@@ -587,10 +587,10 @@ export class CodexDesktopAdapter extends EngineAdapter {
     await this.updateSettings(id, { model: modelId, collaborationMode: this.collaborationMode(id, { model: modelId }) }, (snapshot) => snapshot.session.modelId === modelId);
   }
   async setMode(id: string, modeId: string): Promise<void> {
-    if (!CODEX_MODES.some((mode) => mode.id === modeId)) throw new Error(`Unsupported Codex Desktop mode: ${modeId}`);
+    if (!CODEX_MODES.some((mode) => mode.id === modeId)) throw new Error(`Unsupported Codex permission mode: ${modeId}`);
     await this.attachThread(id);
     if (this.requireSnapshot(id).session.mode === modeId) return;
-    await this.updateSettings(id, { collaborationMode: this.collaborationMode(id, { mode: modeId }) }, (snapshot) => snapshot.session.mode === modeId);
+    await this.updateSettings(id, codexPermissionPatch(modeId), (snapshot) => snapshot.session.mode === modeId);
   }
   async setReasoningEffort(id: string, effort: ReasoningEffort | null): Promise<void> {
     await this.attachThread(id);

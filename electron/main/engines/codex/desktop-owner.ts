@@ -14,6 +14,7 @@ export interface NativeOwnedThreadState {
   collaborationMode?: Record<string, unknown>;
   serviceTier?: string | null;
   approvalPolicy?: unknown;
+  approvalsReviewer?: unknown;
   sandboxPolicy?: unknown;
   permissions?: string | null;
   latestTokenUsageInfo?: unknown;
@@ -477,7 +478,7 @@ export function buildDesktopOwnerState(native: NativeOwnedThreadState): Record<s
   const settings = {
     cwd, model: native.model, effort: native.reasoningEffort ?? null, collaborationMode,
     serviceTier: native.serviceTier ?? null, approvalPolicy: native.approvalPolicy,
-    sandboxPolicy: native.sandboxPolicy, permissions: native.permissions,
+    approvalsReviewer: native.approvalsReviewer, sandboxPolicy: native.sandboxPolicy, permissions: native.permissions,
   };
   return {
     id, sessionId: text(thread.sessionId) ?? id, hostId: "local",
@@ -489,7 +490,7 @@ export function buildDesktopOwnerState(native: NativeOwnedThreadState): Record<s
     mode: "default", modelProvider: native.modelProvider ?? thread.modelProvider ?? "",
     latestModel: native.model, latestReasoningEffort: native.reasoningEffort ?? null,
     latestCollaborationMode: collaborationMode, latestThreadSettings: settings,
-    currentPermissions: { approvalPolicy: native.approvalPolicy, sandboxPolicy: native.sandboxPolicy, permissions: native.permissions },
+    currentPermissions: { approvalPolicy: native.approvalPolicy, approvalsReviewer: native.approvalsReviewer, sandboxPolicy: native.sandboxPolicy, permissions: native.permissions },
     resumeState: "resumed", hasUnreadTurn: false, threadGoal: null,
     threadRuntimeStatus: thread.status ?? { type: records(thread.turns).some((turn) => turn.status === "inProgress") ? "active" : "idle" },
     rolloutPath: thread.path ?? "", gitInfo: thread.gitInfo ?? null, latestTokenUsageInfo: native.latestTokenUsageInfo ?? null,

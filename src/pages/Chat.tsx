@@ -526,8 +526,12 @@ export default function Chat() {
     }
   };
 
-  const handleAgentChange = (agent: AgentMode) =>
-    handleSessionConfigChange({ mode: agent.id });
+  const handleAgentChange = (agent: AgentMode) => {
+    // New sessions of this engine start in the last chosen mode.
+    const engineType = currentSessionInfo()?.engineType ?? currentEngineType();
+    saveSetting(`engineModes.${engineType}`, agent.id);
+    return handleSessionConfigChange({ mode: agent.id });
+  };
 
   const handleSessionModelChange = (modelId: string) =>
     handleSessionConfigChange({ modelId });
@@ -549,8 +553,9 @@ export default function Chat() {
     engineType: EngineType,
     availableModes?: AgentMode[],
   ) => {
+    const lastMode = getSetting<string>(`engineModes.${engineType}`);
     const defaultConfig: Partial<import("../types/unified").UnifiedSessionConfig> = {
-      mode: availableModes?.[0]?.id,
+      mode: availableModes?.find((mode) => mode.id === lastMode)?.id ?? availableModes?.[0]?.id,
       modelId: getSelectedModelForSession(engineType),
       reasoningEffort: getEffectiveReasoningEffortForSession(engineType) ?? undefined,
       serviceTier: getServiceTierForSession(engineType) ?? undefined,

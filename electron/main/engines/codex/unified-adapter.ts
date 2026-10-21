@@ -10,7 +10,7 @@ import type {
 } from "../../../../src/types/unified";
 import { EngineAdapter } from "../engine-adapter";
 import { isDefaultTitle } from "../../../../src/lib/session-utils";
-import { CODEX_MODES, toCodexEffort } from "./config";
+import { CODEX_MODES, codexPermissionPatch, toCodexEffort } from "./config";
 import { CodexAdapter } from "./index";
 import { CodexDesktopAdapter, type DesktopStoredThread } from "./desktop-adapter";
 import type { CodexDesktopCatalog } from "./desktop-catalog";
@@ -450,9 +450,10 @@ export class UnifiedCodexAdapter extends EngineAdapter {
       collaborationMode: { ...state.collaborationMode, settings: { ...asRecord(state.collaborationMode?.settings), model: value } } }));
   }
   async setMode(id: string, value: string): Promise<void> {
-    await this.setting(id, (adapter, key) => adapter.setMode(key, value), (state) => ({
-      collaborationMode: { ...state.collaborationMode, mode: value, settings: { model: state.model, reasoning_effort: state.reasoningEffort ?? null, ...asRecord(state.collaborationMode?.settings) } },
-    }));
+    if (!CODEX_MODES.some((mode) => mode.id === value)) throw new Error(`Unsupported Codex permission mode: ${value}`);
+    // The private owner keeps no named profile; an explicit sandbox replaces it.
+    const { activePermissionProfile: _profile, ...permissions } = codexPermissionPatch(value);
+    await this.setting(id, (adapter, key) => adapter.setMode(key, value), () => permissions);
   }
   async setReasoningEffort(id: string, value: ReasoningEffort | null): Promise<void> {
     const effort = value ? toCodexEffort(value) : null;
@@ -731,7 +732,7 @@ export class UnifiedCodexAdapter extends EngineAdapter {
       // The native permission profile belongs to this writer. Both normal input
       // and /skills preserve it instead of applying initial adapter defaults.
       nativeOverrides: Object.fromEntries(Object.entries({
-        approvalPolicy: native.approvalPolicy, sandboxPolicy: native.sandboxPolicy, permissions: native.permissions,
+        approvalPolicy: native.approvalPolicy, approvalsReviewer: native.approvalsReviewer, sandboxPolicy: native.sandboxPolicy, permissions: native.permissions,
       }).filter(([, value]) => value !== undefined)),
     };
   }

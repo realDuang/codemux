@@ -8,7 +8,7 @@ import type {
   UnifiedSession,
 } from "../../../../src/types/unified";
 import { inferToolKind, normalizeToolName } from "../../../../src/types/tool-mapping";
-import { fromCodexEffort } from "./config";
+import { codexModeFromPermissions, fromCodexEffort } from "./config";
 import { applyCodexToolDisplay, buildToolTitle, convertApprovalToPermission, convertUserInputToQuestion, normalizeCodexReasoningText } from "./converters";
 import { convertDesktopElicitationToQuestion } from "./desktop-elicitation";
 import { normalizeCodexResponseContent } from "./response-content";
@@ -148,7 +148,6 @@ export function convertDesktopConversation(value: unknown): DesktopConversationS
       ? record(state.threadRuntimeStatus).type === "active"
       : activeTurn != null || (turns.length === 0 && state.resumeState === "resuming"));
   const settings = record(state.latestThreadSettings);
-  const collaboration = record(settings.collaborationMode ?? state.latestCollaborationMode);
   const created = millis(state.createdAt) ?? 0;
   const updated = millis(state.updatedAt) ?? created;
   const effort = string(settings.effort ?? state.latestReasoningEffort);
@@ -161,7 +160,8 @@ export function convertDesktopConversation(value: unknown): DesktopConversationS
     parentId: string(state.parentThreadId),
     time: { created, updated },
     modelId: string(settings.model ?? state.latestModel),
-    mode: string(collaboration.mode ?? state.mode),
+    // CodeMux modes are Codex permission presets, not collaboration modes.
+    mode: codexModeFromPermissions({ ...record(state.currentPermissions), ...settings }),
     reasoningEffort: effort ? fromCodexEffort(effort) : undefined,
     serviceTier: tier === "priority" || tier === "fast" ? "fast" : tier === "flex" ? "flex" : undefined,
     activityStatus: pendingRequests.length > 0 ? "waiting" : isActive ? "running" : latestTurn?.status === "failed" ? "error" : "idle",
@@ -307,7 +307,7 @@ function convertTurn(session: UnifiedSession, turn: Record<string, unknown>, ind
       modelId: string(params.model) ?? session.modelId,
       providerId,
       reasoningEffort: fromCodexEffort(string(params.effort) ?? "") ?? session.reasoningEffort,
-      mode: string(record(params.collaborationMode).mode) ?? session.mode,
+      mode: codexModeFromPermissions({ ...params, sandboxPolicy: params.sandboxPolicy ?? params.sandbox }) ?? session.mode,
       engineMeta: { codexThreadId: session.id, codexTurnId: turnId, codexItemId: string(item.id), desktopItemType: type },
     };
     const base = { id: messageId, messageId, sessionId: session.id };

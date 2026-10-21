@@ -816,6 +816,14 @@ export const zh: LocaleDict = {
     teamsWebhookGuide: "请将此 URL 配置到 Azure Bot Service → Settings → Messaging Endpoint",
     wecomWebhookGuide: "请将此 URL 配置到企业微信管理后台 → 应用 → 接收消息 → 回调 URL",
     webhookEndpoint: "Endpoint",
+    channelsDescription: "在聊天软件里使用 CodeMux，消息由这台电脑上的引擎处理。",
+    directConnectDescription: "由这台电脑主动连接平台，不需要公网地址。",
+    webhookConnectDescription: "平台会回调这台电脑，需要一个平台能访问到的地址。",
+    stateRunning: "运行中",
+    stateStarting: "正在启动",
+    stateError: "出错",
+    stateStopped: "已停止",
+    openRemoteConnections: "前往远程连接",
   },
 
   // Token Usage

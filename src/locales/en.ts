@@ -823,6 +823,14 @@ export interface LocaleDict {
     teamsWebhookGuide: string;
     wecomWebhookGuide: string;
     webhookEndpoint: string;
+    channelsDescription: string;
+    directConnectDescription: string;
+    webhookConnectDescription: string;
+    stateRunning: string;
+    stateStarting: string;
+    stateError: string;
+    stateStopped: string;
+    openRemoteConnections: string;
   };
 
   // Token Usage
@@ -1849,6 +1857,14 @@ export const en: LocaleDict = {
     teamsWebhookGuide: "Configure this URL as Messaging Endpoint in Azure Bot Service → Settings",
     wecomWebhookGuide: "Configure this URL as callback URL in WeCom Admin Console → App → Receive Messages",
     webhookEndpoint: "Endpoint",
+    channelsDescription: "Use CodeMux from chat apps. Messages are handled by the engines on this computer.",
+    directConnectDescription: "This computer connects out to the platform. No public address is needed.",
+    webhookConnectDescription: "The platform calls this computer back, so it needs an address the platform can reach.",
+    stateRunning: "Running",
+    stateStarting: "Starting",
+    stateError: "Error",
+    stateStopped: "Stopped",
+    openRemoteConnections: "Open remote connections",
   },
 
   // Token Usage

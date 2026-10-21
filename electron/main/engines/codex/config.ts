@@ -43,22 +43,46 @@ export interface CodexConfigRequirements {
 // Used only before model/list returns the server default.
 export const CODEX_FALLBACK_MODEL = "codex-mini-latest";
 
+/**
+ * CodeMux exposes Codex's permission presets as its session modes, matching the
+ * official Desktop picker. Codex's collaboration mode always stays "default".
+ */
 export const CODEX_MODES: AgentMode[] = [
-  { id: "default", label: "Default", description: "Standard coding assistant mode" },
-  { id: "plan", label: "Plan", description: "Multi-step planning and execution mode" },
+  { id: "ask", label: "Ask for approval", description: "Always ask before editing files outside the workspace or using the internet" },
+  { id: "auto-review", label: "Approve for me", description: "Only ask for approval when a risky action is detected" },
+  { id: "full-access", label: "Full access", description: "Unrestricted access to the internet and any file on this computer" },
 ];
+export const DEFAULT_CODEX_MODE = "ask";
+export const CODEX_COLLABORATION_MODE = "default";
+/** Native collaboration modes that may appear on threads created elsewhere. */
+export const CODEX_COLLABORATION_MODES = ["default", "plan"];
+
+export type CodexApprovalsReviewer = "user" | "auto_review";
+
+export function normalizeCodexMode(modeId: string | undefined): string {
+  return CODEX_MODES.some((mode) => mode.id === modeId) ? modeId! : DEFAULT_CODEX_MODE;
+}
 
 const FULL_READ_ACCESS: CodexReadOnlyAccess = { type: "fullAccess" };
 
-export function modeToApprovalPolicy(_modeId: string): CodexApprovalPolicy {
-  return "never";
+export function modeToApprovalPolicy(modeId: string): CodexApprovalPolicy {
+  return normalizeCodexMode(modeId) === "full-access" ? "never" : "on-request";
 }
 
-export function modeToSandboxMode(_modeId: string): CodexSandboxMode {
-  return "workspace-write";
+export function modeToApprovalsReviewer(modeId: string): CodexApprovalsReviewer {
+  return normalizeCodexMode(modeId) === "auto-review" ? "auto_review" : "user";
 }
 
-export function modeToSandboxPolicy(_modeId: string, directory: string): CodexSandboxPolicy {
+export function modeToSandboxMode(modeId: string): CodexSandboxMode {
+  return normalizeCodexMode(modeId) === "full-access" ? "danger-full-access" : "workspace-write";
+}
+
+export function modeToPermissionProfile(modeId: string): string {
+  return normalizeCodexMode(modeId) === "full-access" ? ":danger-full-access" : ":workspace";
+}
+
+export function modeToSandboxPolicy(modeId: string, directory: string): CodexSandboxPolicy {
+  if (normalizeCodexMode(modeId) === "full-access") return { type: "dangerFullAccess" };
   const normalizedDirectory = normalizeDirectory(directory);
   const writableRoots = normalizedDirectory ? [normalizedDirectory] : [];
 
@@ -66,10 +90,49 @@ export function modeToSandboxPolicy(_modeId: string, directory: string): CodexSa
     type: "workspaceWrite",
     writableRoots,
     readOnlyAccess: FULL_READ_ACCESS,
-    networkAccess: true,
+    networkAccess: false,
     excludeTmpdirEnvVar: false,
     excludeSlashTmp: false,
   };
+}
+
+/** Native thread settings that select a preset on the next turn. */
+export function codexPermissionPatch(modeId: string): {
+  approvalPolicy: CodexApprovalPolicy;
+  approvalsReviewer: CodexApprovalsReviewer;
+  sandboxPolicy: Record<string, unknown>;
+  activePermissionProfile: { id: string; extends: null };
+} {
+  return {
+    approvalPolicy: modeToApprovalPolicy(modeId),
+    approvalsReviewer: modeToApprovalsReviewer(modeId),
+    // The workspace root is implied by the thread cwd; no extra writable roots.
+    sandboxPolicy: normalizeCodexMode(modeId) === "full-access" ? { type: "dangerFullAccess" }
+      : { type: "workspaceWrite", writableRoots: [], networkAccess: false, excludeTmpdirEnvVar: false, excludeSlashTmp: false },
+    activePermissionProfile: { id: modeToPermissionProfile(modeId), extends: null },
+  };
+}
+
+/**
+ * Maps native permission settings back to a preset. Combinations the presets
+ * cannot express (e.g. read-only or never-ask with a workspace sandbox) have no
+ * mode, so the UI never claims a preset the thread is not actually using.
+ */
+export function codexModeFromPermissions(settings: {
+  approvalPolicy?: unknown;
+  approvalsReviewer?: unknown;
+  sandboxPolicy?: unknown;
+  activePermissionProfile?: unknown;
+  permissions?: unknown;
+}): string | undefined {
+  const sandbox = settings.sandboxPolicy && typeof settings.sandboxPolicy === "object" ? (settings.sandboxPolicy as { type?: unknown }).type : undefined;
+  const profile = settings.activePermissionProfile && typeof settings.activePermissionProfile === "object"
+    ? (settings.activePermissionProfile as { id?: unknown }).id : settings.permissions;
+  const fullAccess = sandbox === "dangerFullAccess" || profile === ":danger-full-access";
+  const workspace = sandbox === "workspaceWrite" || profile === ":workspace";
+  if (fullAccess && settings.approvalPolicy === "never") return "full-access";
+  if (!workspace || fullAccess || (settings.approvalPolicy !== "on-request" && settings.approvalPolicy !== "untrusted")) return undefined;
+  return settings.approvalsReviewer === "auto_review" || settings.approvalsReviewer === "guardian_subagent" ? "auto-review" : "ask";
 }
 
 export function clampApprovalPolicy(

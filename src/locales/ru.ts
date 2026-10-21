@@ -819,6 +819,14 @@ export const ru: LocaleDict = {
     teamsWebhookGuide: "Укажите этот URL в Azure Bot Service → Settings → Messaging Endpoint",
     wecomWebhookGuide: "Укажите этот URL в консоли администратора WeCom → Приложение → Получение сообщений → URL обратного вызова",
     webhookEndpoint: "Endpoint",
+    channelsDescription: "Используйте CodeMux из мессенджеров. Сообщения обрабатывают движки на этом компьютере.",
+    directConnectDescription: "Этот компьютер сам подключается к платформе. Публичный адрес не нужен.",
+    webhookConnectDescription: "Платформа обращается к этому компьютеру, поэтому нужен доступный ей адрес.",
+    stateRunning: "Работает",
+    stateStarting: "Запуск",
+    stateError: "Ошибка",
+    stateStopped: "Остановлен",
+    openRemoteConnections: "Открыть удалённые подключения",
   },
 
   // Token Usage

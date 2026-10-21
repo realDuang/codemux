@@ -131,12 +131,17 @@ the canonical Codex home. It checks the UUID, dated filename, regular-file type,
 and active versus archived location before including the record. It neither
 scans arbitrary rollouts nor changes them. This preserves known empty CodeMux
 conversations across restarts while retaining the native archive boundary.
-When CodeMux creates an untitled catalog conversation, its private runtime writes
-and reads back a durable `New session - <ISO timestamp>` default name, verifying
-its active rollout file before catalog admission. CodeMux displays that recognized
-default as its localized new conversation label. A native custom title is
-preserved. This initialization starts no model turn, edits no official application
-files, and does not automatically rename the conversation later.
+A conversation created in CodeMux starts as a local draft: its private runtime
+starts the native thread, but CodeMux writes no name, admits nothing to the
+catalog, and registers no shared owner. Creating or deleting a draft therefore
+does not wait on native storage or Desktop IPC, and an untouched draft never
+appears in Codex. The first input (or an explicit rename) publishes it: the
+thread ID is admitted to the catalog and, with sharing on, its owner is
+registered before the input is sent. Codex persists the thread with that first
+item and displays its first prompt until someone renames it. A draft whose
+writer is gone, e.g. after a restart, is removed from the local list. Earlier
+versions wrote a `New session - <ISO timestamp>` placeholder name; CodeMux still
+displays that recognized value as its localized new conversation label.
 
 Opening an enrolled conversation follows its live owner or reads its stored
 history. Sending valid input to an ownerless, unarchived conversation can acquire
@@ -164,7 +169,8 @@ never edits global-state caches or migration flags.
 | Input during a turn | Forwarded to the same owner's active turn |
 | Stop | Interrupts the synchronized active turn |
 | Images | Image input and resulting messages are shared |
-| Model, effort, mode, Fast | Updates the owner's settings and waits for its confirmed state; native effort values such as `ultra` are preserved |
+| Model, effort, permissions, Fast | Updates the owner's settings and waits for its confirmed state; native effort values such as `ultra` are preserved |
+| Permission mode | The mode selector shows Codex's presets: Ask for approval (`on-request`, workspace sandbox), Approve for me (`on-request` with `auto_review`), and Full access (`never`, full-access sandbox). Other native combinations show no preset. The collaboration mode is not changed |
 | Questions | Answers are forwarded to the original pending request; dismissing an ordinary blocking question stops its turn |
 | MCP elicitations | Limited typed forms support accept, decline, and cancel; cancellation resolves the request without stopping its turn |
 | Approvals | Supported command, file-change, and permission requests are routed to their owner; decisions must be offered by the pending request |
@@ -213,6 +219,11 @@ has no Archive or Open in Codex shortcut.
 CodeMux hides the row as soon as you delete it, then waits for the native
 result in the background. If archiving fails, an error is shown and the list is
 refreshed, which restores the conversation.
+
+Opening a conversation shows stored history at once when no live owner answers
+discovery within 250 ms. The Desktop router reports a missing owner only after
+its fixed 10-second deadline, so discovery continues in the background and
+switches the view to the live owner if one appears.
 
 - An empty conversation is removed locally. Its native thread is not archived
   or deleted. A source-scoped suppression record prevents polling and restart

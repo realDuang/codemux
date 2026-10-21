@@ -147,6 +147,27 @@ describe("CodexDesktopAdapter", () => {
     expect(client.startTurn).not.toHaveBeenCalled();
   });
 
+  it("shows stored history while slow owner discovery continues, then follows a late owner", async () => {
+    let finishDiscovery!: (owner: DesktopThreadOwner | null) => void;
+    client.discoverOwner.mockImplementationOnce(() => new Promise((resolve) => { finishDiscovery = resolve; }));
+    const readStoredThread = vi.fn(async () => ({ thread: { id: THREAD, cwd: "/repo", createdAt: 1, updatedAt: 2, turns: [] }, archived: false }));
+    adapter = new CodexDesktopAdapter({ client: client as unknown as CodexDesktopIpcClient, readStoredThread });
+    const updates = vi.fn();
+    adapter.on("session.updated", updates);
+    const session = await adapter.restoreSession(THREAD, "/repo", { catalogSourceId: "source" });
+    expect(session.id).toBe(THREAD);
+    expect(adapter.hasSession(THREAD)).toBe(false);
+    expect(client.followThread).not.toHaveBeenCalled();
+    // Later reads reuse the stored snapshot instead of waiting again.
+    await adapter.listMessages(THREAD);
+    expect(client.discoverOwner).toHaveBeenCalledOnce();
+    expect(readStoredThread).toHaveBeenCalledOnce();
+    finishDiscovery({ ownerClientId: OWNER, supportsUntrustedAppInput: true });
+    await vi.waitFor(() => expect(client.followThread).toHaveBeenCalledWith(THREAD, OWNER));
+    await vi.waitFor(() => expect(adapter.hasSession(THREAD)).toBe(true));
+    expect(updates).toHaveBeenCalled();
+  });
+
   it("coalesces a completed owner miss across cold reads and retries after one second", async () => {
     let now = 1000;
     const clock = vi.spyOn(performance, "now").mockImplementation(() => now);
@@ -706,16 +727,19 @@ describe("CodexDesktopAdapter", () => {
     await adapter.setModel(THREAD, "another-modelhub-model");
     expect(client.updateThreadSettings.mock.calls[0][2].collaborationMode?.settings.reasoning_effort).toBe("ultra");
     await adapter.setReasoningEffort(THREAD, "max");
-    await adapter.setMode(THREAD, "plan");
+    await adapter.setMode(THREAD, "auto-review");
     await adapter.setServiceTier(THREAD, "fast");
     expect(client.updateThreadSettings.mock.calls.at(-1)?.[2]).toEqual({ serviceTier: "priority" });
     const session = await adapter.getSession(THREAD);
-    expect(session).toMatchObject({ modelId: "another-modelhub-model", reasoningEffort: "max", mode: "plan", serviceTier: "fast" });
+    expect(session).toMatchObject({ modelId: "another-modelhub-model", reasoningEffort: "max", mode: "auto-review", serviceTier: "fast" });
     expect(adapter.getReasoningEffort(THREAD)).toBe("max");
     expect(adapter.getServiceTier(THREAD)).toBe("fast");
-    expect(client.updateThreadSettings.mock.calls[2][2]).toEqual({ collaborationMode: {
-      mode: "plan", settings: { model: "another-modelhub-model", reasoning_effort: "xhigh", developer_instructions: "Keep project conventions" },
-    } });
+    // Permission presets leave the native collaboration mode untouched.
+    expect(client.updateThreadSettings.mock.calls[2][2]).toEqual({
+      approvalPolicy: "on-request", approvalsReviewer: "auto_review", activePermissionProfile: { id: ":workspace", extends: null },
+      sandboxPolicy: { type: "workspaceWrite", writableRoots: [], networkAccess: false, excludeTmpdirEnvVar: false, excludeSlashTmp: false },
+    });
+    expect(settings.collaborationMode).toMatchObject({ mode: "default" });
     expect(client.updateThreadSettings.mock.calls.every((call) => !Object.hasOwn(call[2], "modelProvider"))).toBe(true);
 
     await adapter.setReasoningEffort(THREAD, null);
@@ -743,7 +767,7 @@ describe("CodexDesktopAdapter", () => {
     client.updateThreadSettings.mockResolvedValue({ applied: false });
     await expect(adapter.setModel(THREAD, "unapplied-model")).rejects.toThrow("did not apply");
     expect((await adapter.getSession(THREAD))?.modelId).toBe("custom-model");
-    await expect(adapter.setMode(THREAD, "unsupported-mode")).rejects.toThrow("Unsupported Codex Desktop mode");
+    await expect(adapter.setMode(THREAD, "unsupported-mode")).rejects.toThrow("Unsupported Codex permission mode");
     await expect(adapter.renameSession(THREAD, "New title")).rejects.toThrow("unavailable");
   });
 

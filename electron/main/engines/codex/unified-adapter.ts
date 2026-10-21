@@ -10,7 +10,7 @@ import type {
 } from "../../../../src/types/unified";
 import { EngineAdapter } from "../engine-adapter";
 import { isDefaultTitle } from "../../../../src/lib/session-utils";
-import { CODEX_MODES, toCodexEffort } from "./config";
+import { CODEX_MODES, codexPermissionPatch, toCodexEffort } from "./config";
 import { CodexAdapter } from "./index";
 import { CodexDesktopAdapter, type DesktopStoredThread } from "./desktop-adapter";
 import type { CodexDesktopCatalog } from "./desktop-catalog";
@@ -18,7 +18,6 @@ import { CodexDesktopIpcClient } from "./desktop-ipc-client";
 import { buildDesktopOwnerState, CodexDesktopOwner, type CodexDesktopOwnerRuntime, type NativeOwnedThreadState } from "./desktop-owner";
 import { convertDesktopConversation, type DesktopConversationSnapshot } from "./desktop-state";
 import { CodexRuntimeResolver, type CodexRuntimeIdentity } from "./runtime-selection";
-import { verifyCodexRolloutPath } from "./desktop-rollout-path";
 
 type SendOptions = Parameters<EngineAdapter["sendMessage"]>[2];
 
@@ -66,6 +65,9 @@ interface LocalSession {
   refreshAgain: boolean;
   timer?: ReturnType<typeof setTimeout>;
   shared: boolean;
+  /** Created here but not yet written to native storage, catalog, or sharing. */
+  draft?: boolean;
+  materializing?: Promise<void>;
 }
 
 type InputRoute = { kind: "local"; session: LocalSession } | { kind: "foreign" };
@@ -288,30 +290,11 @@ export class UnifiedCodexAdapter extends EngineAdapter {
     const runtime = this.defaultRuntime!;
     const created = await runtime.execution.createSession(directory, meta);
     const id = sessionThreadId(created);
+    // Codex writes a new thread only with its first item. Until CodeMux sends
+    // input, the conversation is a local draft: no native name, catalog
+    // admission, or sharing registration, so creating and discarding it is cheap.
     const local = this.rememberLocal(runtime, created, { ...meta, codexOrigin: "CodeMux" });
-    try {
-      if (this.options.catalogFactory) {
-        // Empty native threads are drafts until a name is persisted. Establish a
-        // durable catalog identity without sending an artificial model prompt.
-        const metadata = await runtime.native.readMetadata?.(created.id);
-        const title = typeof metadata?.name === "string" ? metadata.name.trim() : "";
-        if (!title || isDefaultTitle(title)) {
-          const name = `New session - ${new Date(created.time.created).toISOString()}`;
-          await runtime.execution.renameSession(created.id, name);
-          const confirmed = await runtime.native.readMetadata?.(created.id);
-          if (confirmed?.id !== id || confirmed.name !== name || await verifyCodexRolloutPath(id, confirmed) !== "active") {
-            throw new Error("The new Codex conversation was not durably recorded in native storage.");
-          }
-        }
-      }
-      await this.refreshLocal(id, local);
-      if (this.options.catalogFactory) await (await this.requireCatalog()).admitCreatedThread(id);
-    } catch (error) {
-      // Only detach the new, unused writer. Native storage remains recoverable.
-      await this.deleteSession(id).catch(() => {});
-      throw error;
-    }
-    if (this.sharingEnabled) await this.exposeLocal(id, local).catch((error: unknown) => this.sharingFailed(error));
+    local.draft = true;
     const session = this.decorateSession(local.session);
     this.emit("session.created", { session });
     return session;
@@ -401,6 +384,8 @@ export class UnifiedCodexAdapter extends EngineAdapter {
       return;
     }
     await local.runtime.execution.renameSession(local.engineSessionId, title);
+    // A native name persists an empty thread, so it is no longer a draft.
+    await this.materialize(id, local);
     const snapshot = await this.refreshLocal(id, local);
     if (snapshot.session.title?.trim() !== title.trim()) throw new Error("The Codex runtime did not confirm the new title.");
   }
@@ -410,6 +395,7 @@ export class UnifiedCodexAdapter extends EngineAdapter {
     const route = await this.routeForInput(id, options?.directory);
     if (route.kind === "foreign") return this.follower.sendMessage(id, content, options);
     const local = route.session;
+    await this.materialize(id, local);
     const result = await local.runtime.execution.sendMessage(local.engineSessionId, content, await this.localInputOptions(local, options));
     const snapshot = await this.refreshLocal(id, local);
     return canonicalResponse(snapshot, result);
@@ -450,9 +436,10 @@ export class UnifiedCodexAdapter extends EngineAdapter {
       collaborationMode: { ...state.collaborationMode, settings: { ...asRecord(state.collaborationMode?.settings), model: value } } }));
   }
   async setMode(id: string, value: string): Promise<void> {
-    await this.setting(id, (adapter, key) => adapter.setMode(key, value), (state) => ({
-      collaborationMode: { ...state.collaborationMode, mode: value, settings: { model: state.model, reasoning_effort: state.reasoningEffort ?? null, ...asRecord(state.collaborationMode?.settings) } },
-    }));
+    if (!CODEX_MODES.some((mode) => mode.id === value)) throw new Error(`Unsupported Codex permission mode: ${value}`);
+    // The private owner keeps no named profile; an explicit sandbox replaces it.
+    const { activePermissionProfile: _profile, ...permissions } = codexPermissionPatch(value);
+    await this.setting(id, (adapter, key) => adapter.setMode(key, value), () => permissions);
   }
   async setReasoningEffort(id: string, value: ReasoningEffort | null): Promise<void> {
     const effort = value ? toCodexEffort(value) : null;
@@ -479,6 +466,7 @@ export class UnifiedCodexAdapter extends EngineAdapter {
     const route = await this.routeForInput(id, options?.directory);
     if (route.kind === "foreign") return this.follower.invokeCommand(id, name, args);
     const local = route.session;
+    await this.materialize(id, local);
     const result = await local.runtime.execution.invokeCommand(local.engineSessionId, name, args, await this.localInputOptions(local, options));
     const snapshot = await this.refreshLocal(id, local);
     return result.message ? { ...result, message: canonicalResponse(snapshot, result.message) } : result;
@@ -671,8 +659,22 @@ export class UnifiedCodexAdapter extends EngineAdapter {
     this.inputRoutes.set(id, operation);
     return operation;
   }
-  private async exposeLocal(id: string, local: LocalSession): Promise<void> {
-    if (!this.sharingEnabled) return;
+  /** Publishes a draft once it receives input that Codex will persist. */
+  private materialize(id: string, local: LocalSession): Promise<void> {
+    if (!local.draft) return Promise.resolve();
+    local.materializing ??= (async () => {
+      if (this.options.catalogFactory) {
+        // Admission only trusts this ID; the row appears once the rollout exists.
+        void this.requireCatalog().then((catalog) => catalog.admitCreatedThread(id))
+          .catch((error: unknown) => this.reportLocalError(id, error));
+      }
+      if (this.sharingEnabled) await this.exposeLocal(id, local, true).catch((error: unknown) => this.sharingFailed(error));
+      local.draft = false;
+    })().finally(() => { local.materializing = undefined; });
+    return local.materializing;
+  }
+  private async exposeLocal(id: string, local: LocalSession, materializing = false): Promise<void> {
+    if (!this.sharingEnabled || (local.draft && !materializing)) return;
     const metadata = await local.runtime.native.readMetadata?.(local.engineSessionId);
     if (metadata?.id !== id || metadata.canAcceptDirectInput !== true) throw new Error("The Codex runtime did not confirm exclusive input ownership.");
     if (!this.sharingEnabled) return;
@@ -731,7 +733,7 @@ export class UnifiedCodexAdapter extends EngineAdapter {
       // The native permission profile belongs to this writer. Both normal input
       // and /skills preserve it instead of applying initial adapter defaults.
       nativeOverrides: Object.fromEntries(Object.entries({
-        approvalPolicy: native.approvalPolicy, sandboxPolicy: native.sandboxPolicy, permissions: native.permissions,
+        approvalPolicy: native.approvalPolicy, approvalsReviewer: native.approvalsReviewer, sandboxPolicy: native.sandboxPolicy, permissions: native.permissions,
       }).filter(([, value]) => value !== undefined)),
     };
   }

@@ -3,8 +3,8 @@ import { test, expect } from "@playwright/test";
 test.describe("Settings", () => {
   test("should display settings page with engine info", async ({ page }) => {
     // Auth first, then navigate to settings
+    // The host opens chat directly after local authentication.
     await page.goto(process.env.TEST_BASE_URL!);
-    await page.getByRole("button", { name: /Open local chat/i }).click();
     await expect(page).toHaveURL(/.*\/chat/, { timeout: 10_000 });
 
     // Navigate to settings via SPA sidebar button (preserves store state)
@@ -18,8 +18,8 @@ test.describe("Settings", () => {
 
   test("should show mock engine status", async ({ page }) => {
     // Auth first
+    // The host opens chat directly after local authentication.
     await page.goto(process.env.TEST_BASE_URL!);
-    await page.getByRole("button", { name: /Open local chat/i }).click();
     await expect(page).toHaveURL(/.*\/chat/, { timeout: 10_000 });
 
     // Wait for projects to load, proving WebSocket is connected and engines are loaded

@@ -3,6 +3,7 @@ import { useNavigate } from "@solidjs/router";
 import { Auth, type DeviceInfo } from "../lib/auth";
 import { useI18n, formatMessage } from "../lib/i18n";
 import { isElectron } from "../lib/platform";
+import { CONNECTION_CENTER_PATH } from "../lib/routes";
 import { BrandMark } from "../components/BrandMark";
 
 // ============================================================================
@@ -234,7 +235,7 @@ export default function Devices() {
         <BrandMark />
         <div class="flex items-center gap-2 electron-no-drag flex-shrink-0">
           <button
-            onClick={() => navigate("/")}
+            onClick={() => navigate(CONNECTION_CENTER_PATH)}
             class="p-1 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-200 dark:hover:bg-slate-700 rounded transition-colors"
           >
             <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">

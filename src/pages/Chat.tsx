@@ -38,6 +38,9 @@ import {
   consumeInputDraft,
   restoreInputDraftIfUnchanged,
   type InputDraftSubmission,
+  beginPendingRemoval,
+  endPendingRemoval,
+  isPendingRemoval,
 } from "../stores/session";
 import {
   messageStore,
@@ -1457,6 +1460,7 @@ export default function Chat() {
   // Switch session — guarded against rapid re-entry so parallel requests
   // don't pile up and flood the main thread when they all resolve at once.
   let switchGeneration = 0;
+  const [promptFocusRequest, setPromptFocusRequest] = createSignal(0);
   const handleSelectSession = async (sessionId: string) => {
     const gen = ++switchGeneration;
     logger.debug("[SelectSession] Switching to session:", sessionId);
@@ -1579,12 +1583,23 @@ export default function Chat() {
           list.map(s => s.id === processedSession.id ? { ...s, projectID: processedSession.projectID } : s)
         );
       }
+      // Same bookkeeping as handleSelectSession: cancel an in-flight switch,
+      // leave any team dashboard, and restore this session on next launch.
+      ++switchGeneration;
+      const prevSid = sessionStore.current;
+      const prevEl = messagesRef();
+      if (prevSid && prevEl) saveScrollPosition(prevSid, prevEl.scrollTop);
       setSessionStore("current", processedSession.id);
       setShowArchivedSessions(false);
       setSessionStore("initError", null);
+      setOrchestratorView("dashboard");
+      if (processedSession.projectID) setSessionStore("projectExpanded", processedSession.projectID, true);
       setConfigStore("currentEngineType", engineType as import("../types/unified").EngineType);
+      saveSetting("lastSessionId", processedSession.id);
       if (isMobile()) {
         setIsSidebarOpen(false);
+      } else {
+        setPromptFocusRequest((value) => value + 1);
       }
 
       setMessageStore("message", processedSession.id, []);
@@ -1823,12 +1838,24 @@ export default function Chat() {
 
   const handleDeleteSession = async (sessionId: string) => {
     logger.debug("[DeleteSession] Deleting session:", sessionId);
+    // Hide the row at once; native archive sync can be slow. Messages and
+    // drafts stay cached until the gateway confirms, so a failure can restore it.
+    const wasCurrent = sessionStore.current === sessionId;
+    if (wasCurrent) switchGeneration++;
+    beginPendingRemoval(sessionId);
     try {
       await gateway.deleteSession(sessionId);
+      endPendingRemoval(sessionId);
       handleSessionRemoved(sessionId);
     } catch (error) {
+      endPendingRemoval(sessionId);
       logger.error("[DeleteSession] Failed to delete session:", error);
-      notify(t().notification.sessionDeleteFailed);
+      const detail = error instanceof Error ? error.message : String(error);
+      notify(detail ? `${t().notification.sessionDeleteFailed} ${detail}` : t().notification.sessionDeleteFailed);
+      await reloadSessionList();
+      if (wasCurrent && !sessionStore.current && sessionStore.list.some((session) => session.id === sessionId)) {
+        void handleSelectSession(sessionId);
+      }
     }
   };
 
@@ -1851,33 +1878,37 @@ export default function Chat() {
     }
   };
 
+  const reloadSessionList = async () => {
+    const [allProjects, allSessions] = await Promise.all([
+      gateway.listAllProjects(),
+      gateway.listAllSessions(),
+    ]);
+    setSessionStore("projects", allProjects);
+    const validDirectories = new Set(allProjects.map(p => p.directory));
+    const normDir = (d: string) => d.replaceAll("\\", "/");
+    const filteredSessions = allSessions.filter(s =>
+      s.catalogSourceId || (s.directory && (validDirectories.has(normDir(s.directory)) || s.worktreeId))
+    );
+    // Build index for O(1) project lookup by directory
+    const projectIndex = new Map<string, UnifiedProject>();
+    for (const p of allProjects) {
+      if (!p.catalogSourceId) projectIndex.set(p.directory, p);
+    }
+    const sessionInfos = filteredSessions.map(s => {
+      const project = projectIndex.get(normDir(s.directory));
+      return toSessionInfo(s, project?.id);
+    });
+    replaceListedSessions(sessionInfos);
+    await refreshSessionCatalogs();
+  };
+
   const handleRefreshSessions = async () => {
     if (refreshingSessions()) return;
     setRefreshingSessions(true);
     logger.debug("[RefreshSessions] Refreshing session list");
     const minSpinnerDelay = new Promise(resolve => setTimeout(resolve, 1000));
     try {
-      const [allProjects, allSessions] = await Promise.all([
-        gateway.listAllProjects(),
-        gateway.listAllSessions(),
-      ]);
-      setSessionStore("projects", allProjects);
-      const validDirectories = new Set(allProjects.map(p => p.directory));
-      const normDir = (d: string) => d.replaceAll("\\", "/");
-      const filteredSessions = allSessions.filter(s =>
-        s.catalogSourceId || (s.directory && (validDirectories.has(normDir(s.directory)) || s.worktreeId))
-      );
-      // Build index for O(1) project lookup by directory
-      const projectIndex = new Map<string, UnifiedProject>();
-      for (const p of allProjects) {
-        if (!p.catalogSourceId) projectIndex.set(p.directory, p);
-      }
-      const sessionInfos = filteredSessions.map(s => {
-        const project = projectIndex.get(normDir(s.directory));
-        return toSessionInfo(s, project?.id);
-      });
-      replaceListedSessions(sessionInfos);
-      await refreshSessionCatalogs();
+      await reloadSessionList();
 
       // Restore orchestration team groupings from backend runs
       try {
@@ -2295,6 +2326,7 @@ export default function Chat() {
   };
 
   const handleSessionCreated = (created: UnifiedSession) => {
+    if (isPendingRemoval(created.id)) return;
     removedSessionIds.delete(created.id);
     logger.debug("[WS] session.created received:", created);
     const teamId = getTeamId(created.id);
@@ -3351,6 +3383,7 @@ export default function Chat() {
                       onTextChange={(text) => updateCurrentDraft({ text })}
                       images={currentDraft().images}
                       onImagesChange={(images) => updateCurrentDraft({ images })}
+                      focusRequest={promptFocusRequest()}
                       toolbarContent={
                         <Show when={sessionStore.current}>
                           <SessionControls

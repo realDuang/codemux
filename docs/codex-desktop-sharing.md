@@ -216,6 +216,10 @@ confirmed is reported as unconfirmed, not as a successful synchronized rename.
 Delete is the shared conversation's only removal action in CodeMux. The header
 has no Archive or Open in Codex shortcut.
 
+CodeMux hides the row as soon as you delete it, then waits for the native
+result in the background. If archiving fails, an error is shown and the list is
+refreshed, which restores the conversation.
+
 Opening a conversation shows stored history at once when no live owner answers
 discovery within 250 ms. The Desktop router reports a missing owner only after
 its fixed 10-second deadline, so discovery continues in the background and

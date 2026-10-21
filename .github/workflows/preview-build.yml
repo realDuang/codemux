@@ -110,7 +110,7 @@ jobs:
           path: |
             release/*.dmg
             release/*.zip
-          retention-days: 14
+          retention-days: 3
 
   build-windows:
     name: Build Windows
@@ -156,7 +156,7 @@ jobs:
         with:
           name: preview-windows-x64
           path: release/*.exe
-          retention-days: 14
+          retention-days: 3
 
   # #57 Linux build support
   build-linux:
@@ -200,7 +200,7 @@ jobs:
           path: |
             release/*.AppImage
             release/*.deb
-          retention-days: 14
+          retention-days: 3
 
   post-comment:
     name: Post Download Links
@@ -249,7 +249,7 @@ jobs:
               ``,
               `### 📥 Download`,
               `Go to the [Actions run artifacts section](${runUrl}#artifacts) to download installers.`,
-              `Artifacts are retained for **14 days**.`,
+              `Artifacts are retained for **3 days**.`,
             ].join('\n');
 
             const { data: comments } = await github.rest.issues.listComments({

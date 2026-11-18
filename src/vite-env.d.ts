@@ -13,6 +13,8 @@ interface ImportMeta {
 interface ElectronAPI {
   remoteHosts?: {
     list: () => Promise<import("../shared/remote-hosts").RemoteHostState[]>;
+    discoverDevTunnels: (interactive: boolean) => Promise<import("../shared/dev-tunnel-metadata").DevTunnelDiscoveryResult>;
+    cancelDevTunnelDiscovery: () => Promise<void>;
     save: (input: import("../shared/remote-hosts").RemoteHostInput, id?: string) => Promise<import("../shared/remote-hosts").SavedRemoteHost>;
     connect: (id: string) => Promise<void>;
     disconnect: (id: string) => Promise<void>;

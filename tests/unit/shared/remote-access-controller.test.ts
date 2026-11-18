@@ -52,6 +52,69 @@ function fixture(initialSettings: Record<string, unknown> = {}, cloudflareAvaila
 }
 
 describe("RemoteAccessController", () => {
+  describe("Dev Tunnels", () => {
+    function devFixture(settings: Record<string, unknown> = {}) {
+      let info: RemoteAccessTunnelInfo = { status: "stopped", url: "" };
+      let changed: () => void = () => {};
+      const devTunnel = {
+        start: vi.fn(async () => { info = { status: "starting", url: "", phase: "login" }; return info; }),
+        stop: vi.fn(async () => { info = { status: "stopped", url: "" }; }),
+        getInfo: () => info,
+        isAvailable: () => true,
+        setOnChange: (listener: () => void) => { changed = listener; },
+      };
+      const cloudflare = { start: vi.fn(), stop: vi.fn(async () => {}), getInfo: () => ({ status: "stopped" as const, url: "" }) };
+      const controller = new RemoteAccessController({
+        loadSettings: () => settings,
+        saveSettings: async patch => { Object.assign(settings, patch); },
+        tunnel: cloudflare, devTunnel, getPort: () => 8233,
+      });
+      return { controller, devTunnel, cloudflare, settings, publish: (next: RemoteAccessTunnelInfo) => { info = next; changed(); } };
+    }
+
+    it("restores without opening sign-in and keeps admission closed until the tunnel is ready", async () => {
+      const host = devFixture({ remoteAccessMode: "devtunnel" });
+      await host.controller.initialize();
+      expect(host.devTunnel.start).toHaveBeenCalledWith(8233, { access: "private" }, false);
+      expect(host.controller.getStatus()).toMatchObject({ mode: "devtunnel", url: "" });
+      const url = "https://codemux-test-8233.jpe1.devtunnels.ms";
+      expect(host.controller.isRequestAllowed(request(new URL(url).host))).toBe(false);
+      const listener = vi.fn();
+      host.controller.subscribe(listener);
+      host.publish({ status: "running", url });
+      expect(host.controller.isRequestAllowed(request(new URL(url).host))).toBe(true);
+      expect(listener).toHaveBeenCalled();
+      host.publish({ status: "error", url: "", errorCode: "DEVTUNNEL_LOGIN_REQUIRED" });
+      expect(host.controller.isRequestAllowed(request(new URL(url).host))).toBe(false);
+      await host.controller.update({ mode: "devtunnel" });
+      expect(host.devTunnel.start).toHaveBeenLastCalledWith(8233, { access: "private" }, true);
+    });
+
+    it("stops the provider before switching and retains its configuration while off", async () => {
+      const host = devFixture();
+      await host.controller.update({ mode: "devtunnel", devTunnelConfig: { access: "tenant" } });
+      expect(host.settings.devTunnelConfig).toEqual({ access: "tenant" });
+      host.devTunnel.stop.mockClear();
+      const stopped = deferred<void>();
+      host.devTunnel.stop.mockImplementationOnce(() => stopped.promise);
+      const switching = host.controller.update({ mode: "custom", customAccessUrl: CUSTOM_URL });
+      await vi.waitFor(() => expect(host.devTunnel.stop).toHaveBeenCalledOnce());
+      expect(host.controller.getStatus().mode).toBe("off");
+      stopped.resolve();
+      await switching;
+      expect(host.controller.getStatus()).toMatchObject({ mode: "custom", devTunnelConfig: { access: "tenant" } });
+    });
+
+    it.each([{ access: "public" }, { access: "private", tunnelId: "someone-elses-tunnel" }, null])(
+      "rejects invalid provider configuration before changing the current entry: %j", async config => {
+        const host = devFixture({ remoteAccessMode: "custom", customAccessUrl: CUSTOM_URL });
+        await expect(host.controller.update({ mode: "devtunnel", devTunnelConfig: config as never })).rejects.toThrow();
+        expect(host.controller.getStatus().mode).toBe("custom");
+        expect(host.devTunnel.start).not.toHaveBeenCalled();
+      },
+    );
+  });
+
   describe("initialize", () => {
     it("defaults new installations to off even when a Cloudflare hostname is saved", async () => {
       const host = fixture({ tunnelConfig: { hostname: "codemux.example.com" } });

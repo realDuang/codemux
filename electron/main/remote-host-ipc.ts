@@ -15,6 +15,12 @@ export function registerRemoteHostIpc(manager: RemoteHostManager, getWindow: () 
     return value;
   };
   ipcMain.handle("remoteHosts:list", event => { guard(event); return manager.list(); });
+  ipcMain.handle("remoteHosts:discoverDevTunnels", (event, interactive: unknown) => {
+    guard(event);
+    if (typeof interactive !== "boolean") throw new Error("Invalid login choice");
+    return manager.discoverDevTunnels(interactive);
+  });
+  ipcMain.handle("remoteHosts:cancelDevTunnelDiscovery", event => { guard(event); return manager.cancelDevTunnelDiscovery(); });
   ipcMain.handle("remoteHosts:save", (event, input: RemoteHostInput, id?: string) => {
     guard(event);
     return manager.save(input, id === undefined ? undefined : hostId(id));

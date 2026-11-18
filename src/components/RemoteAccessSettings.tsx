@@ -5,6 +5,7 @@ import { useI18n } from "../lib/i18n";
 import { AccessQRCode } from "./AccessQRCode";
 import { ConnectionDialog } from "./ConnectionDialog";
 import { CustomAccessSettings } from "./CustomAccessSettings";
+import type { DevTunnelConfig } from "../../shared/remote-access";
 
 type AccessMethod = Exclude<RemoteAccessMode, "off">;
 
@@ -34,6 +35,8 @@ export function RemoteAccessSettings(props: RemoteAccessSettingsProps) {
   const [provider, setProvider] = createSignal<AccessMethod>("custom");
   const [hostname, setHostname] = createSignal("");
   const [fixedDomain, setFixedDomain] = createSignal(false);
+  const [devAccess, setDevAccess] = createSignal<DevTunnelConfig["access"]>("private");
+  const [devName, setDevName] = createSignal("");
   const [busy, setBusy] = createSignal(false);
   const [error, setError] = createSignal("");
   const [validationError, setValidationError] = createSignal("");
@@ -45,15 +48,18 @@ export function RemoteAccessSettings(props: RemoteAccessSettingsProps) {
   let mutationRevision = 0;
   let copyTimer: ReturnType<typeof setTimeout> | undefined;
   const enabled = () => props.status.mode !== "off";
-  const methods: AccessMethod[] = ["custom", "cloudflare"];
-  const methodName = (method: AccessMethod) => method === "custom" ? t().remote.customAccessTitle : t().remote.accessCloudflare;
-  const methodDescription = (method: AccessMethod) => method === "custom" ? t().connectionCenter.directDescription : t().connectionCenter.cloudflareDescription;
+  const methods: AccessMethod[] = ["custom", "cloudflare", "devtunnel"];
+  const methodName = (method: AccessMethod) => method === "devtunnel" ? t().devTunnel.title : method === "custom" ? t().remote.customAccessTitle : t().remote.accessCloudflare;
+  const methodDescription = (method: AccessMethod) => method === "devtunnel" ? t().devTunnel.description : method === "custom" ? t().connectionCenter.directDescription : t().connectionCenter.cloudflareDescription;
+  const activeMethod = (): AccessMethod => props.status.mode === "off" ? "custom" : props.status.mode;
+  const isTunnel = () => props.status.mode === "cloudflare" || props.status.mode === "devtunnel";
   const unavailable = (method: AccessMethod) => method === "cloudflare" && !props.status.cloudflareAvailable;
   const tunnelError = () => props.status.tunnel.status === "error";
   const statusLabel = createMemo(() => {
     if (!loaded()) return t().connectionCenter.loading;
     if (props.status.mode === "custom") return t().connectionCenter.directConfigured;
-    if (props.status.mode === "cloudflare") {
+    if (isTunnel()) {
+      if (props.status.mode === "devtunnel" && props.status.tunnel.phase) return t().devTunnel[props.status.tunnel.phase!];
       return t().connectionCenter[props.status.tunnel.status];
     }
     return tunnelError() || failedPatch() ? t().connectionCenter.error : t().connectionCenter.disabled;
@@ -61,12 +67,12 @@ export function RemoteAccessSettings(props: RemoteAccessSettingsProps) {
   // A retained tunnel URL is not a usable link until the tunnel confirms it is running.
   const address = createMemo(() => {
     if (props.status.mode === "custom") return props.status.customAccessUrl;
-    if (props.status.mode === "cloudflare" && props.status.tunnel.status === "running") return props.status.url;
+    if (isTunnel() && props.status.tunnel.status === "running") return props.status.url;
     return "";
   });
-  const failureDetail = () => error() || (tunnelError() ? props.status.tunnel.error : "");
+  const failureDetail = () => (props.status.tunnel.errorCode && t().devTunnel.errors[props.status.tunnel.errorCode!]) || error() || (tunnelError() ? props.status.tunnel.error : "");
   const failureCode = () => tunnelError() ? props.status.tunnel.errorCode : "";
-  const canRetry = () => !!failedPatch() || (props.status.mode === "cloudflare" && ["error", "stopped"].includes(props.status.tunnel.status));
+  const canRetry = () => !!failedPatch() || (isTunnel() && ["error", "stopped"].includes(props.status.tunnel.status));
 
   const refresh = async () => {
     const revision = mutationRevision;
@@ -114,6 +120,8 @@ export function RemoteAccessSettings(props: RemoteAccessSettingsProps) {
     setProvider(method);
     setHostname(props.status.tunnelConfig.hostname ?? "");
     setFixedDomain(!!props.status.tunnelConfig.hostname);
+    setDevAccess(props.status.devTunnelConfig?.access ?? "private");
+    setDevName(props.status.devTunnelConfig?.name ?? "");
     setValidationError("");
     setEditing(true);
   };
@@ -131,7 +139,7 @@ export function RemoteAccessSettings(props: RemoteAccessSettingsProps) {
     }
     void save({ mode: "cloudflare", tunnelConfig: { hostname: fixedDomain() ? hostname().trim() : "" } });
   };
-  const retry = () => void update(failedPatch() ?? { mode: "cloudflare" });
+  const retry = () => void update(failedPatch() ?? { mode: props.status.mode });
   const copy = async (text: string) => {
     const success = await copyTextToClipboard(text);
     if (disposed) return;
@@ -149,13 +157,13 @@ export function RemoteAccessSettings(props: RemoteAccessSettingsProps) {
           <p class="mt-1.5 text-xs leading-relaxed text-gray-500 dark:text-gray-400">{t().connectionCenter.sharingDescription}</p>
         </div>
         <span role="status" class={`inline-flex shrink-0 items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-medium ${tunnelError() || failedPatch() ? "border-red-200 text-red-700 dark:border-red-900 dark:text-red-300" : "border-[var(--cm-hairline-strong)] text-gray-600 dark:text-gray-300"}`}>
-          <span aria-hidden="true" class={`h-1.5 w-1.5 rounded-full ${tunnelError() || failedPatch() ? "bg-red-500" : props.status.mode === "cloudflare" && props.status.tunnel.status === "running" ? "bg-emerald-500" : "bg-gray-400"} ${busy() || props.status.mode === "cloudflare" && props.status.tunnel.status === "starting" ? "animate-pulse" : ""}`} />
+          <span aria-hidden="true" class={`h-1.5 w-1.5 rounded-full ${tunnelError() || failedPatch() ? "bg-red-500" : isTunnel() && props.status.tunnel.status === "running" ? "bg-emerald-500" : "bg-gray-400"} ${busy() || isTunnel() && props.status.tunnel.status === "starting" ? "animate-pulse" : ""}`} />
           {statusLabel()}
         </span>
       </div>
 
       <Show when={enabled()} fallback={
-        <div class="grid gap-3 sm:grid-cols-2">
+        <div class="grid gap-3 sm:grid-cols-3">
           <For each={methods}>{method => (
             <button type="button" data-testid={`share-method-${method}`} disabled={busy() || !loaded() || unavailable(method)} onClick={() => openEditor(method)}
               class="group flex items-start gap-3 rounded-xl border border-[var(--cm-hairline-strong)] bg-[var(--cm-surface)] p-4 text-left transition-colors hover:bg-black/[0.025] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-gray-500 disabled:cursor-not-allowed disabled:opacity-50 dark:hover:bg-white/[0.03]">
@@ -168,15 +176,15 @@ export function RemoteAccessSettings(props: RemoteAccessSettingsProps) {
       }>
         <div class="overflow-hidden rounded-xl border border-[var(--cm-hairline-strong)] bg-[var(--cm-surface)]">
           <div class="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--cm-hairline)] px-4 py-3">
-            <span class="flex items-center gap-2.5 text-sm font-medium text-gray-900 dark:text-gray-100"><MethodIcon method={props.status.mode === "custom" ? "custom" : "cloudflare"} />{methodName(props.status.mode === "custom" ? "custom" : "cloudflare")}</span>
+            <span class="flex items-center gap-2.5 text-sm font-medium text-gray-900 dark:text-gray-100"><MethodIcon method={activeMethod()} />{methodName(activeMethod())}</span>
             <div class="flex items-center gap-2">
-              <button type="button" data-testid="edit-share-access" disabled={busy()} onClick={() => openEditor(props.status.mode === "custom" ? "custom" : "cloudflare")} class={secondaryButton}>{t().connectionCenter.edit}</button>
+              <button type="button" data-testid="edit-share-access" disabled={busy()} onClick={() => openEditor(activeMethod())} class={secondaryButton}>{t().connectionCenter.edit}</button>
               <button type="button" data-testid="disable-share-access" disabled={busy()} onClick={() => void update({ mode: "off" })} class={secondaryButton}>{t().connectionCenter.disable}</button>
             </div>
           </div>
           <Show when={address()} fallback={
             <div class="px-4 py-6">
-              <p class="text-sm text-gray-600 dark:text-gray-300">{props.status.tunnel.url ? t().connectionCenter.staleAddress : t().connectionCenter.addressPending}</p>
+              <p class="text-sm text-gray-600 dark:text-gray-300">{props.status.mode === "devtunnel" && props.status.tunnel.phase === "login" ? t().devTunnel.loginHint : props.status.tunnel.url ? t().connectionCenter.staleAddress : t().connectionCenter.addressPending}</p>
               <Show when={canRetry()}><button type="button" disabled={busy()} onClick={retry} class={`${secondaryButton} mt-3`}>{t().connectionCenter.retry}</button></Show>
             </div>
           }>
@@ -186,6 +194,10 @@ export function RemoteAccessSettings(props: RemoteAccessSettingsProps) {
                   <p class="text-[11px] font-medium text-gray-500 dark:text-gray-400">{t().connectionCenter.shareAddress}</p>
                   <p data-testid="active-share-address" class="mt-1.5 select-all break-all font-mono text-sm leading-relaxed text-gray-900 dark:text-gray-100">{address()}</p>
                   <p class="mt-2 text-xs leading-relaxed text-gray-500 dark:text-gray-400">{props.status.mode === "custom" ? t().connectionCenter.configuredDescription : t().connectionCenter.activeDescription}</p>
+                  <Show when={props.status.mode === "devtunnel"}>
+                    <p data-testid="devtunnel-access-summary" class="mt-2 text-xs font-medium text-gray-600 dark:text-gray-300">{t().devTunnel[props.status.devTunnelConfig?.access ?? "private"]}</p>
+                    <p class="mt-1 text-xs leading-relaxed text-gray-500 dark:text-gray-400">{t().devTunnel.visitorHint}</p>
+                  </Show>
                   <button type="button" onClick={() => void copy(address())} class={`${secondaryButton} mt-3`}>{t().remote.copyAddress}</button>
                 </div>
                 <Show when={props.accessCode}>
@@ -225,7 +237,7 @@ export function RemoteAccessSettings(props: RemoteAccessSettingsProps) {
           <p class="mb-4 text-xs leading-relaxed text-gray-500 dark:text-gray-400">{t().connectionCenter.methodChangeDescription}</p>
           <fieldset disabled={busy()}>
             <legend class="mb-2 text-xs font-medium text-gray-600 dark:text-gray-400">{t().connectionCenter.methodLabel}</legend>
-            <div class="grid grid-cols-1 gap-2 sm:grid-cols-2">
+            <div class="grid grid-cols-1 gap-2 sm:grid-cols-3">
               <For each={methods}>{method => (
                 <label class={`flex min-h-11 items-center gap-2.5 rounded-lg border px-3 py-2.5 text-sm ${provider() === method ? "border-gray-600 bg-black/[0.035] dark:border-gray-400 dark:bg-white/[0.05]" : "border-[var(--cm-hairline-strong)]"} ${unavailable(method) ? "cursor-not-allowed opacity-50" : "cursor-pointer"}`}>
                   <input type="radio" name={`${id}-provider`} checked={provider() === method} disabled={unavailable(method)} onChange={() => { setProvider(method); setValidationError(""); }} class="accent-gray-800 dark:accent-gray-200" />
@@ -238,6 +250,46 @@ export function RemoteAccessSettings(props: RemoteAccessSettingsProps) {
           <div class="mt-5 border-t border-[var(--cm-hairline)] pt-5">
             <Show when={provider() === "custom"}>
               <CustomAccessSettings value={props.status.customAccessUrl} active={props.status.mode === "custom"} defaultHost={props.defaultHost} defaultPort={props.defaultPort} disabled={busy()} onCancel={closeEditor} onSave={url => save({ customAccessUrl: url, mode: "custom" })} />
+            </Show>
+            <Show when={provider() === "devtunnel"}>
+              <form onSubmit={event => {
+                event.preventDefault();
+                void save({ mode: "devtunnel", devTunnelConfig: { access: devAccess(), ...(devName().trim() ? { name: devName().trim() } : {}) } });
+              }}>
+                <h4 class="text-sm font-medium text-gray-900 dark:text-gray-100">{t().devTunnel.persistentTitle}</h4>
+                <p class="mt-1.5 text-xs leading-relaxed text-gray-500 dark:text-gray-400">{t().devTunnel.persistentHint}</p>
+                <p class="mt-3 text-xs leading-relaxed text-gray-500 dark:text-gray-400">{t().devTunnel.loginHint}</p>
+                <label for={`${id}-dev-name`} class="mt-4 block text-xs font-medium text-gray-700 dark:text-gray-300">{t().devTunnel.computerName}</label>
+                <input id={`${id}-dev-name`} value={devName()} onInput={event => setDevName(event.currentTarget.value)} maxlength={100} disabled={busy()} placeholder={t().hostConnections.optional} data-testid="devtunnel-computer-name" class="mt-1.5 min-h-10 w-full rounded-lg border border-[var(--cm-hairline-strong)] bg-[var(--cm-surface)] px-3 text-sm text-gray-800 dark:text-gray-200" />
+                <p class="mt-1.5 text-xs text-gray-500 dark:text-gray-400">{t().devTunnel.computerNameHint}</p>
+                <Show when={!props.status.devTunnelAvailable}>
+                  <div role="alert" class="mt-3 rounded-lg border border-[var(--cm-hairline-strong)] p-3 text-xs leading-relaxed text-gray-600 dark:text-gray-300">
+                    <p>{t().devTunnel.installHint}</p>
+                    <code class="mt-2 block select-all break-all">winget install Microsoft.devtunnel</code>
+                    <a href="https://learn.microsoft.com/azure/developer/dev-tunnels/get-started" target="_blank" rel="noopener noreferrer" class="mt-2 inline-block underline">{t().devTunnel.installDocs}</a>
+                  </div>
+                </Show>
+                <div class="mt-4 rounded-lg border border-[var(--cm-hairline-strong)] p-3">
+                  <p class="text-sm font-medium text-gray-800 dark:text-gray-200">{t().devTunnel[devAccess()]}</p>
+                  <details class="mt-3">
+                    <summary class="cursor-pointer text-xs text-gray-600 dark:text-gray-400">{t().devTunnel.advanced}</summary>
+                    <label for={`${id}-dev-access`} class="mt-3 block text-xs text-gray-600 dark:text-gray-400">{t().devTunnel.accessLabel}</label>
+                    <select id={`${id}-dev-access`} data-testid="devtunnel-access" value={devAccess()} disabled={busy()} onChange={event => setDevAccess(event.currentTarget.value as DevTunnelConfig["access"])} class="mt-1.5 min-h-10 w-full rounded-lg border border-[var(--cm-hairline-strong)] bg-[var(--cm-surface)] px-3 text-sm text-gray-800 dark:text-gray-200">
+                      <option value="private">{t().devTunnel.private}</option>
+                      <option value="tenant">{t().devTunnel.tenant}</option>
+                      <option value="anonymous">{t().devTunnel.anonymous}</option>
+                    </select>
+                    <Show when={devAccess() !== "private"}><p role="note" class="mt-2 text-xs leading-relaxed text-amber-700 dark:text-amber-300">{devAccess() === "tenant" ? t().devTunnel.tenantWarning : t().devTunnel.anonymousWarning}</p></Show>
+                  </details>
+                </div>
+                <p class="mt-3 text-xs leading-relaxed text-gray-500 dark:text-gray-400">{t().devTunnel.visitorHint}</p>
+                <div class="mt-6 flex items-center justify-end gap-2">
+                  <button type="button" disabled={busy()} onClick={closeEditor} class={secondaryButton}>{t().common.cancel}</button>
+                  <button type="submit" data-testid="save-devtunnel" disabled={busy() || !props.status.devTunnelAvailable} class="cm-btn-primary min-h-9 rounded-lg px-4 text-xs font-medium disabled:opacity-50">
+                    <Show when={busy()} fallback={t().devTunnel.enable}>{t().remote.accessSwitching}</Show>
+                  </button>
+                </div>
+              </form>
             </Show>
             <Show when={provider() === "cloudflare"}>
               <form onSubmit={saveCloudflare}>

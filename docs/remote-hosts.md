@@ -1,15 +1,15 @@
 # Remote connections
 
-**Remote connections** is the single entry point for Direct, SSH, and Cloudflare.
+**Remote connections** is the single entry point for Direct, SSH, Cloudflare, and Microsoft Dev Tunnels.
 The page groups actions by the computer being accessed, so an outbound SSH session
 and this computer's Cloudflare sharing can remain active independently:
 
 | Section | Purpose |
 | --- | --- |
-| **Connect to another computer** | Open a saved connection, or add a Direct/SSH destination. A shared Cloudflare URL works as a Direct HTTPS destination. |
-| **Access this computer from another device** | Configure Direct or Cloudflare sharing, then copy the address/access code or scan the QR code. |
+| **Connect to another computer** | Open a saved connection, add a Direct/SSH destination, or discover your Microsoft Dev Tunnels computers. Shared tunnel links also work as Direct HTTPS destinations. |
+| **Access this computer from another device** | Configure Direct, Cloudflare, or Microsoft Dev Tunnels sharing, then copy the address/access code or scan the QR code. |
 
-An empty saved-connection list offers Direct and SSH shortcuts. Once connections
+An empty saved-connection list offers Direct, Microsoft Dev Tunnels, and SSH shortcuts. Once connections
 are saved, **Add connection** opens the method picker. Enter the destination and
 select **Connect**; the form remains available after a failure. An in-progress
 connection can be cancelled. Saved rows keep Open/Connect as their primary action;
@@ -67,6 +67,85 @@ drafts keep the same origin. If another application takes that port, CodeMux rep
 the conflict instead of silently opening a new storage origin. Closing the remote
 window, disconnecting, or quitting CodeMux releases its SSH process and listener.
 Stopping the separate local CodeMux server does not close remote connections.
+
+## Microsoft Dev Tunnels
+
+Install Microsoft's `devtunnel` CLI on the computer running the CodeMux server
+(`winget install Microsoft.devtunnel` on Windows). Select **Microsoft Dev Tunnels**
+in this computer's sharing settings, then enable it. Desktop and Node server hosts
+use the same provider; it forwards only the configured CodeMux Web port, including
+HTTP and WebSocket traffic. Cloudflare remains a separate choice. Only one sharing
+method is enabled at a time.
+
+The provider reuses the CLI's existing login. An explicit enable/retry can open
+interactive Microsoft sign-in on the host. On Windows this uses a separate native
+window so Windows account authentication has a parent console. Device-code
+fallback is stopped, not offered as an alternative. Startup restoration never
+opens sign-in automatically; an expired login is shown as an error requiring
+retry. Headless hosts need a valid CLI login established beforehand.
+
+CodeMux creates a dedicated persistent tunnel, defaulting to **Only my account**.
+Its identity is retained in the host's settings, not taken from the CLI's
+last-used tunnel. Existing unrelated tunnels are never adopted or stopped.
+Disabling access stops the owned connector without deleting the persistent
+tunnel. Re-enabling reuses its address; changing the CLI account or Web port
+creates a different dedicated tunnel. The service expires tunnels after 30 days
+of inactivity; expired tunnels are recreated when enabling access.
+
+Advanced settings can explicitly grant access to the current **Microsoft Entra
+tenant** or to **Anyone with the address**. Tenant access includes the entire
+tenant, not just a team. These choices must be permitted by your organization.
+Switching back to private resets both tunnel-level and port-level access grants.
+CodeMux's own access-code/device-approval flow is required in every mode.
+
+Private visitors first authenticate to Microsoft Dev Tunnels. Desktop Direct
+connections use a separate sandboxed sign-in window sharing only that saved
+host's browser partition; the application window remains locked to its selected
+origin. The tunnel's first-visit confirmation may also appear there.
+
+The provider preserves the public Host and Origin headers, so tunnel traffic
+cannot acquire the host's loopback-only management privileges. No usable link is
+published until the connector reports readiness. Unexpected disconnects retry
+with bounded backoff; disabling access cancels pending sign-in, provisioning, and
+reconnection. Login credentials stay in the CLI's credential store, not CodeMux
+settings or logs.
+
+Dev Tunnels is a development service with service quotas, not an availability or
+compliance guarantee. Inspect account limits with `devtunnel limits`.
+
+### Discover and connect to your computers
+
+Under **Connect to another computer**, select **Microsoft Dev Tunnels**. Desktop
+checks the current local CLI login and lists your tagged CodeMux tunnels. If login
+is missing or expired, explicitly select **Sign in to Microsoft and discover**;
+opening the dialog never launches login automatically. Refresh and cancellation
+are available. Discovery needs the CLI on the connecting desktop but does not
+need this computer's CodeMux server to be running.
+
+The host adds tunnel labels `codemux` and `codemux-discovery-v1`, plus `codemux-web`
+on its single Web port. Only the locally saved, account-matched host identity is
+updated; unrecognized tunnels are not adopted. After upgrading an existing host,
+restart its Dev Tunnels sharing once to add labels. **Computer name** in sharing
+settings is optional and is stored in the service's tunnel description; avoid
+sensitive information. Without a name, CodeMux uses a generic description.
+
+Discovery only lists owned tunnels, not every computer in the tenant or every
+tunnel someone has allowed you to visit. It never hosts, stops, updates, or deletes
+the results. The desktop validates version and port labels, the tunnel identity,
+and its HTTPS address before offering a connection. Host online/offline status is
+a service hint, not an application health check. Offline hosts and hosts without
+a published Web address cannot be connected from the list.
+
+Browser clients do not expose the server's CLI account or discovery API. They
+offer a shared-link field instead; desktop also keeps that field for colleagues'
+links, missing CLI installations, and older hosts. Links must be HTTPS
+`*.devtunnels.ms` origins. Saved tunnel connections reuse the existing Direct
+transport and browser isolation, and reopen in the Dev Tunnels editor.
+
+CLI discovery credentials are separate from visitor browser cookies. Connecting
+may therefore require Microsoft sign-in again, followed by CodeMux authentication.
+Labels are discovery metadata, never proof of trust or a replacement for either
+authentication layer.
 
 ## Isolation and compatibility
 

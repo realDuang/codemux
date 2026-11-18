@@ -1,5 +1,44 @@
 // Define the structure of our translations
 export interface LocaleDict {
+  devTunnel: {
+    connectDescription: string;
+    connectHint: string;
+    sharedLink: string;
+    invalidLink: string;
+    myComputers: string;
+    discoveryHint: string;
+    discoveryDesktopOnly: string;
+    discoveryInstallHint: string;
+    discovering: string;
+    signInDiscover: string;
+    refresh: string;
+    noComputers: string;
+    hostOnline: string;
+    hostOffline: string;
+    addressNotReady: string;
+    computerName: string;
+    computerNameHint: string;
+    title: string;
+    description: string;
+    persistentTitle: string;
+    persistentHint: string;
+    loginHint: string;
+    installHint: string;
+    installDocs: string;
+    advanced: string;
+    accessLabel: string;
+    private: string;
+    tenant: string;
+    anonymous: string;
+    tenantWarning: string;
+    anonymousWarning: string;
+    visitorHint: string;
+    enable: string;
+    login: string;
+    provisioning: string;
+    connecting: string;
+    errors: Record<string, string>;
+  };
   connectionCenter: {
     openLocalChat: string;
     title: string;
@@ -1044,6 +1083,54 @@ export interface LocaleDict {
 }
 
 export const en: LocaleDict = {
+  devTunnel: {
+    connectDescription: "Find your CodeMux computers or paste a Dev Tunnels link.",
+    connectHint: "Choose your computer or paste its shared HTTPS link. Microsoft sign-in may open separately before CodeMux device approval.",
+    sharedLink: "Shared Dev Tunnels link",
+    invalidLink: "Enter an HTTPS devtunnels.ms link without a path, query, credentials, or custom port.",
+    myComputers: "My CodeMux computers",
+    discoveryHint: "Only CodeMux-tagged tunnels owned by the current CLI account appear here, not all computers in your organization. Discovery does not change their access permissions.",
+    discoveryDesktopOnly: "Account discovery is available in CodeMux Desktop. In a browser, paste the computer's shared link below.",
+    discoveryInstallHint: "Install the Microsoft devtunnel CLI on this computer to discover your tunnels. You can still paste a shared link below.",
+    discovering: "Looking for your CodeMux computers…",
+    signInDiscover: "Sign in to Microsoft and discover",
+    refresh: "Refresh",
+    noComputers: "No tagged CodeMux computers found. Enable Dev Tunnels on the other computer. After upgrading an existing host, restart its sharing once to add discovery labels.",
+    hostOnline: "Tunnel host online",
+    hostOffline: "Tunnel host offline",
+    addressNotReady: "The host has not published a usable Web address yet. Refresh after it finishes starting.",
+    computerName: "Computer name (optional)",
+    computerNameHint: "Shown in your discovered computers and stored in the tunnel description. Avoid sensitive information.",
+    title: "Microsoft Dev Tunnels",
+    description: "Use a persistent Microsoft tunnel, private to your account by default.",
+    persistentTitle: "Persistent, private tunnel",
+    persistentHint: "CodeMux creates its own tunnel for the Web port and reuses its address. Disabling access stops forwarding without deleting the tunnel. It expires after 30 days of inactivity; changing the account or Web port creates a new address.",
+    loginHint: "Your existing CLI login is reused. If needed, a browser or system sign-in window opens on this computer. Device-code login is never used. A headless host must be signed in beforehand.",
+    installHint: "Install the Microsoft devtunnel CLI on this host. On Windows, run the command below; for macOS or Linux, follow the installation guide.",
+    installDocs: "Installation guide",
+    advanced: "Advanced access settings",
+    accessLabel: "Who can reach this tunnel?",
+    private: "Only my account",
+    tenant: "My Microsoft Entra tenant",
+    anonymous: "Anyone with the address",
+    tenantWarning: "Allows every user in your current Entra tenant to reach the CodeMux login page, not just your team. Requires a work or school account and your organization's approval.",
+    anonymousWarning: "Removes Microsoft sign-in at the tunnel entrance. Anyone with the address can reach the CodeMux login page. Only enable this if your organization permits public access.",
+    visitorHint: "Visitors still need CodeMux device approval. Private and tenant access also require Microsoft sign-in. Keep this computer and its CodeMux server running.",
+    enable: "Enable Dev Tunnels",
+    login: "Waiting for Microsoft sign-in",
+    provisioning: "Preparing tunnel",
+    connecting: "Connecting tunnel",
+    errors: {
+      DEVTUNNEL_CLI_MISSING: "Install the Microsoft devtunnel CLI on this host, then retry.",
+      DEVTUNNEL_LOGIN_REQUIRED: "Microsoft sign-in is required. Retry to open interactive sign-in on this host, or sign in there with devtunnel user login --use-browser-auth. Device-code fallback is disabled.",
+      DEVTUNNEL_TENANT_REQUIRED: "Tenant access requires a Microsoft Entra work or school account.",
+      DEVTUNNEL_TIMEOUT: "The tunnel did not become ready in time. Check the network and retry.",
+      DEVTUNNEL_COMMAND_FAILED: "Dev Tunnels could not complete the request. Check CLI login, network access, and tunnel permissions, then retry.",
+      DEVTUNNEL_ALREADY_HOSTED: "Another process is hosting this CodeMux tunnel. Stop that host before retrying.",
+      DEVTUNNEL_UNEXPECTED_PORTS: "The dedicated CodeMux tunnel contains extra ports. Remove them with the CLI before retrying.",
+      DEVTUNNEL_DISCONNECTED: "Dev Tunnels disconnected after automatic retries. Check the network and retry.",
+    },
+  },
   connectionCenter: {
     openLocalChat: "Open local chat",
     title: "Remote connections",
@@ -1102,7 +1189,7 @@ export const en: LocaleDict = {
     empty: "Save a connection to open CodeMux on another computer.",
     directTitle: "Direct connection",
     directDescription: "Connect using an IP address, domain, or shared link.",
-    directHint: "Enter the remote CodeMux address, or paste its shared Cloudflare link.",
+    directHint: "Enter the remote CodeMux address, or paste its shared Cloudflare or Dev Tunnels link.",
     sshTitle: "Remote SSH",
     sshDescription: "Connect securely through an SSH host or config alias.",
     sshHint: "Enter an SSH address or a host from your SSH config. CodeMux uses your existing SSH keys and agent.",

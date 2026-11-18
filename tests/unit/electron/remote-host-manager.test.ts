@@ -76,6 +76,38 @@ describe("remoteHostWindowOptions", () => {
 });
 
 describe("RemoteHostManager", () => {
+  it("authenticates private Dev Tunnels in a separate sandbox while keeping the app origin locked", async () => {
+    const host = await manager.save({ connection: { type: "direct", host: "codemux-test-8233.jpe1.devtunnels.ms", port: 443, useTls: true } });
+    mocks.fetch.mockRejectedValueOnce(new Error("Redirect requires login"));
+    mocks.fetch.mockResolvedValue({ ok: true, json: async () => ({ mode: "devtunnel" }) });
+    await manager.connect(host.id);
+    expect(mocks.windows).toHaveLength(2);
+    const [app, login] = mocks.windows;
+    expect(login.options.webPreferences).toEqual(app.options.webPreferences);
+    expect(login.options.webPreferences.preload).toBeUndefined();
+    expect(login.isDestroyed()).toBe(true);
+    expect(app.show).toHaveBeenCalled();
+    const preventDefault = vi.fn();
+    app.webContents.emit("will-redirect", { preventDefault }, "https://login.microsoftonline.com/");
+    expect(preventDefault).toHaveBeenCalled();
+    expect(manager.list()[0].status).toBe("connected");
+  });
+
+  it("cancels the login window and rejects unsafe auth navigation without changing other hosts", async () => {
+    const host = await manager.save({ connection: { type: "direct", host: "codemux-test-8233.jpe1.devtunnels.ms", port: 443, useTls: true } });
+    mocks.fetch.mockRejectedValue(new Error("Login required"));
+    const connecting = manager.connect(host.id);
+    const cancelled = expect(connecting).rejects.toThrow("cancelled");
+    await vi.waitFor(() => expect(mocks.windows).toHaveLength(2));
+    const preventDefault = vi.fn();
+    mocks.windows[1].webContents.emit("will-redirect", { preventDefault }, "file:///private.txt");
+    expect(preventDefault).toHaveBeenCalledOnce();
+    await manager.disconnect(host.id);
+    await cancelled;
+    expect(mocks.windows.every(window => window.isDestroyed())).toBe(true);
+    expect(manager.list()[0].status).toBe("disconnected");
+  });
+
   it("opens the complete remote Web origin and reuses its existing window", async () => {
     const host = await manager.save(direct);
     await Promise.all([manager.connect(host.id), manager.connect(host.id)]);
@@ -174,6 +206,28 @@ describe("RemoteHostManager", () => {
 });
 
 describe("registerRemoteHostIpc", () => {
+  it("restricts discovery and login to the main desktop frame with an explicit boolean login choice", async () => {
+    const mainFrame = {};
+    const contents = { mainFrame };
+    const discover = vi.spyOn(manager, "discoverDevTunnels").mockResolvedValue({ status: "ready", tunnels: [] });
+    const cancel = vi.spyOn(manager, "cancelDevTunnelDiscovery").mockResolvedValue();
+    registerRemoteHostIpc(manager, () => ({ webContents: contents, isDestroyed: () => false }) as any);
+    const caller = { sender: contents, senderFrame: mainFrame };
+    const discovery = mocks.handlers.get("remoteHosts:discoverDevTunnels")!;
+    const cancellation = mocks.handlers.get("remoteHosts:cancelDevTunnelDiscovery")!;
+    for (const invalid of [{ sender: {}, senderFrame: mainFrame }, { sender: contents, senderFrame: {} }]) {
+      expect(() => discovery(invalid, true)).toThrow("local desktop");
+      expect(() => cancellation(invalid)).toThrow("local desktop");
+    }
+    for (const invalid of [undefined, "true", 1, {}]) expect(() => discovery(caller, invalid)).toThrow("Invalid login choice");
+    expect(discover).not.toHaveBeenCalled();
+    await discovery(caller, false);
+    await discovery(caller, true);
+    await cancellation(caller);
+    expect(discover.mock.calls).toEqual([[false], [true]]);
+    expect(cancel).toHaveBeenCalledOnce();
+  });
+
   it("rejects remote renderers and subframes before invoking host management", () => {
     const mainFrame = {};
     const contents = { mainFrame };

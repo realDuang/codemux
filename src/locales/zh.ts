@@ -3,7 +3,7 @@ import { LocaleDict } from "./en";
 export const zh: LocaleDict = {
   devTunnel: {
     connectDescription: "发现你的 CodeMux 电脑，或粘贴 Dev Tunnels 链接。",
-    connectHint: "选择电脑或粘贴其 HTTPS 共享链接。通过 CodeMux 设备审批前，可能还会打开单独的微软登录窗口。",
+    connectHint: "连接自己的电脑会复用 CLI 账号，需要时打开系统登录。其他私有链接会在默认浏览器打开。仍需通过 CodeMux 设备审批。",
     sharedLink: "Dev Tunnels 共享链接",
     invalidLink: "请输入 HTTPS devtunnels.ms 链接，不要包含路径、查询参数、凭据或自定义端口。",
     myComputers: "我的 CodeMux 电脑",
@@ -132,6 +132,7 @@ export const zh: LocaleDict = {
     disconnected: "未连接",
     connecting: "正在连接…",
     connected: "已连接",
+    external: "已在浏览器打开",
     error: "连接失败",
     hostRequired: "请输入主机名或 IP 地址。",
     invalidPort: "请输入 1 到 65535 之间的端口。",

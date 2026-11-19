@@ -17,7 +17,7 @@ export interface SavedRemoteHost {
 }
 
 export interface RemoteHostState extends SavedRemoteHost {
-  status: "disconnected" | "connecting" | "connected" | "error";
+  status: "disconnected" | "connecting" | "connected" | "external" | "error";
   error?: string;
 }
 

@@ -3,7 +3,7 @@ import { LocaleDict } from "./en";
 export const ru: LocaleDict = {
   devTunnel: {
     connectDescription: "Найдите свои компьютеры CodeMux или вставьте ссылку Dev Tunnels.",
-    connectHint: "Выберите компьютер или вставьте его HTTPS-ссылку. Перед одобрением устройства CodeMux может открыться отдельное окно входа Microsoft.",
+    connectHint: "Для своих компьютеров используется учётная запись CLI и при необходимости системный вход. Другие частные ссылки открываются в браузере по умолчанию. Одобрение устройства CodeMux по-прежнему требуется.",
     sharedLink: "Общая ссылка Dev Tunnels",
     invalidLink: "Введите HTTPS-ссылку devtunnels.ms без пути, параметров, учётных данных или нестандартного порта.",
     myComputers: "Мои компьютеры CodeMux",
@@ -132,6 +132,7 @@ export const ru: LocaleDict = {
     disconnected: "Не подключён",
     connecting: "Подключение…",
     connected: "Подключён",
+    external: "Открыто в браузере",
     error: "Ошибка подключения",
     hostRequired: "Введите имя хоста или IP-адрес.",
     invalidPort: "Введите порт от 1 до 65535.",

@@ -122,6 +122,7 @@ export interface LocaleDict {
     disconnected: string;
     connecting: string;
     connected: string;
+    external: string;
     error: string;
     hostRequired: string;
     invalidPort: string;
@@ -1085,7 +1086,7 @@ export interface LocaleDict {
 export const en: LocaleDict = {
   devTunnel: {
     connectDescription: "Find your CodeMux computers or paste a Dev Tunnels link.",
-    connectHint: "Choose your computer or paste its shared HTTPS link. Microsoft sign-in may open separately before CodeMux device approval.",
+    connectHint: "Your own computers reuse the CLI account, with system sign-in if needed. Other private links open in your default browser. CodeMux device approval is still required.",
     sharedLink: "Shared Dev Tunnels link",
     invalidLink: "Enter an HTTPS devtunnels.ms link without a path, query, credentials, or custom port.",
     myComputers: "My CodeMux computers",
@@ -1214,6 +1215,7 @@ export const en: LocaleDict = {
     disconnected: "Disconnected",
     connecting: "Connecting…",
     connected: "Connected",
+    external: "Opened in browser",
     error: "Connection error",
     hostRequired: "Enter a hostname or IP address.",
     invalidPort: "Enter a port between 1 and 65535.",

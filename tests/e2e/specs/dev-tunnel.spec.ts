@@ -123,8 +123,8 @@ test.describe("Microsoft Dev Tunnels sharing", () => {
   }
   type HarnessWindow = Window & { discoveryHarness: DiscoveryHarness };
 
-  async function setupDiscovery(page: Page, initial: DevTunnelDiscoveryResult = discovered, pending = false) {
-    await page.addInitScript(({ initial, ready, pending }) => {
+  async function setupDiscovery(page: Page, initial: DevTunnelDiscoveryResult = discovered, pending = false, external = false) {
+    await page.addInitScript(({ initial, ready, pending, external }) => {
       const state: DiscoveryHarness = { calls: [], cancelled: 0, saved: [], connected: [] };
       Object.assign(window, { discoveryHarness: state });
       const hosts: RemoteHostState[] = [];
@@ -171,7 +171,8 @@ test.describe("Microsoft Dev Tunnels sharing", () => {
             },
             connect: async (id: string) => {
               state.connected.push(id);
-              hosts.find(host => host.id === id)!.status = "connected";
+              const index = hosts.findIndex(host => host.id === id);
+              hosts[index] = { ...hosts[index], status: external ? "external" : "connected" };
               listeners.forEach(listener => listener([...hosts]));
             },
             disconnect: async () => {},
@@ -179,12 +180,24 @@ test.describe("Microsoft Dev Tunnels sharing", () => {
           },
         },
       });
-    }, { initial, ready: discovered, pending });
+    }, { initial, ready: discovered, pending, external });
     await setup(page);
     await page.getByTestId("add-host-devtunnel").click();
   }
 
   test.describe("Dev Tunnels connections and account discovery", () => {
+    test("distinguishes browser handoff from a verified desktop connection", async ({ page }, testInfo) => {
+      await setupDiscovery(page, { status: "unavailable", tunnels: [] }, false, true);
+      await expect(page.getByRole("dialog")).toContainText("Other private links open in your default browser");
+      await page.getByTestId("devtunnel-connect-url").fill(DISCOVERED_URL);
+      await page.getByTestId("connect-host").click();
+      await expect(page.getByTestId("saved-host").getByRole("status")).toHaveText("Opened in browser");
+      await page.getByTestId("saved-host").locator("summary").click();
+      await expect(page.getByRole("button", { name: "Disconnect", exact: true })).not.toBeVisible();
+      await page.getByTestId("saved-host").locator("summary").click();
+      await page.screenshot({ path: testInfo.outputPath("external-browser-status.png"), fullPage: true });
+    });
+
     test("retains browser link connections without exposing account discovery", async ({ page }) => {
       await setup(page);
       await page.getByTestId("add-host-devtunnel").click();

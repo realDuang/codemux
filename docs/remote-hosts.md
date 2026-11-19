@@ -98,10 +98,20 @@ tenant, not just a team. These choices must be permitted by your organization.
 Switching back to private resets both tunnel-level and port-level access grants.
 CodeMux's own access-code/device-approval flow is required in every mode.
 
-Private visitors first authenticate to Microsoft Dev Tunnels. Desktop Direct
-connections use a separate sandboxed sign-in window sharing only that saved
-host's browser partition; the application window remains locked to its selected
-origin. The tunnel's first-visit confirmation may also appear there.
+Private visitors first authenticate to Microsoft Dev Tunnels. For owned, tagged
+tunnels, Desktop reuses the CLI account (and its native/system-browser sign-in
+when necessary) to issue a connect-only token for the verified tunnel identity.
+No Microsoft sign-in page is loaded inside Electron. The token stays in main
+process memory and is attached only to that saved host's exact HTTPS/WSS origin,
+including the WebSocket handshake. It is refreshed before expiry on subsequent
+requests; refresh failures require reconnecting rather than background login.
+Disconnecting clears the token and request handler.
+
+Private links that cannot be matched to the CLI account's tagged tunnels, or
+clients without the CLI, open entirely in the default browser. The saved row
+reports **Opened in browser**, not a verified desktop connection. Browser tabs
+are not managed or closed by CodeMux. Anonymous links can still open in the
+isolated desktop window without issuing a token.
 
 The provider preserves the public Host and Origin headers, so tunnel traffic
 cannot acquire the host's loopback-only management privileges. No usable link is
@@ -142,10 +152,11 @@ links, missing CLI installations, and older hosts. Links must be HTTPS
 `*.devtunnels.ms` origins. Saved tunnel connections reuse the existing Direct
 transport and browser isolation, and reopen in the Dev Tunnels editor.
 
-CLI discovery credentials are separate from visitor browser cookies. Connecting
-may therefore require Microsoft sign-in again, followed by CodeMux authentication.
-Labels are discovery metadata, never proof of trust or a replacement for either
-authentication layer.
+CLI credentials and browser cookies remain separate; CodeMux does not copy
+cookies between them. Owned-tunnel connections use the service's supported
+`X-Tunnel-Authorization` header instead. CodeMux access-code/device approval is
+still required. Labels are discovery metadata, never proof of trust or a
+replacement for either authentication layer.
 
 ## Isolation and compatibility
 

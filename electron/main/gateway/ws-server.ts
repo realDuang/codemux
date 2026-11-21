@@ -434,6 +434,13 @@ export class GatewayServer {
         if (typeof p?.enabled !== "boolean") throw invalidCatalogParams("enabled must be a boolean");
         return this.engineManager.setSessionSharing(p.engineType, p.enabled);
 
+      case GatewayRequestType.SESSION_SOURCE_LIST:
+        return this.engineManager.listSessionSources();
+
+      case GatewayRequestType.SESSION_SOURCE_SET:
+        if (!nonEmptyString(p?.sourceId) || typeof p?.enabled !== "boolean") throw invalidCatalogParams("sourceId and enabled are required");
+        return this.engineManager.setSessionSourceEnabled(p.sourceId, p.enabled);
+
       // Session
       case GatewayRequestType.SESSION_LIST:
         return this.engineManager.listSessions(p.engineType ?? p.directory);

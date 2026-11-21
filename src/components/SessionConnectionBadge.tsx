@@ -8,15 +8,18 @@ interface SessionConnectionProps {
 
 export function SessionOriginBadge(props: SessionConnectionProps) {
   const { t } = useI18n();
+  const label = createMemo(() => props.connection?.origin || props.connection?.source);
   return (
-    <Show when={props.connection?.origin}>
-      {(origin) => (
+    <Show when={label()}>
+      {(value) => (
         <span
           class="max-w-[100px] truncate text-[9px] leading-none text-[var(--cm-text-muted)]"
-          title={formatMessage(t().sessionSharing.createdIn, { origin: origin() })}
+          title={props.connection?.origin
+            ? formatMessage(t().sessionSharing.createdIn, { origin: value() })
+            : formatMessage(t().sessionSharing.connectedVia, { source: value() })}
           data-session-origin
         >
-          {origin()}
+          {value()}
         </span>
       )}
     </Show>
@@ -77,6 +80,14 @@ export function SessionConnectionDetails(props: SessionConnectionProps) {
           >
             <p class="mb-3 text-xs font-medium text-[var(--cm-text)]">{t().sessionSharing.details}</p>
             <dl class="grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-2 text-xs">
+              <Show when={connection().source}>
+                {(source) => (
+                  <>
+                    <dt class="text-[var(--cm-text-muted)]">{t().sessionSharing.source}</dt>
+                    <dd class="break-words text-right text-[var(--cm-text)]">{source()}</dd>
+                  </>
+                )}
+              </Show>
               <dt class="text-[var(--cm-text-muted)]">{t().sessionSharing.origin}</dt>
               <dd class="break-words text-right text-[var(--cm-text)]">{connection().origin || t().sessionSharing.unknownOrigin}</dd>
               <dt class="text-[var(--cm-text-muted)]">{t().sessionSharing.executor}</dt>

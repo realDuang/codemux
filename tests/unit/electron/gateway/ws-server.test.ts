@@ -154,6 +154,8 @@ function createMockEngineManager() {
     })),
     getSessionSharing: vi.fn(() => ({ enabled: false, available: true })),
     setSessionSharing: vi.fn(async () => ({ enabled: true, available: true })),
+    listSessionSources: vi.fn(() => [{ id: "vscode", enabled: false, providers: [] }] ),
+    setSessionSourceEnabled: vi.fn(async () => ({ id: "vscode", enabled: true, providers: [] })),
     listSessions: vi.fn(async () => []),
     createSession: vi.fn(async () => ({ id: "sess-1" })),
     getSession: vi.fn(async () => ({ id: "sess-1" })),
@@ -984,6 +986,20 @@ describe("GatewayServer", () => {
   // =========================================================================
 
   describe("routeRequest - major types", () => {
+    it("routes source toggles without an engine identity and validates their payloads", async () => {
+      const { connect, sendMessage, engineManager } = createTestHarness();
+      const ws = connect();
+      await sendMessage(ws, { type: GatewayRequestType.SESSION_SOURCE_LIST, requestId: "sources", payload: {} });
+      expect(engineManager.listSessionSources).toHaveBeenCalledOnce();
+      await sendMessage(ws, { type: GatewayRequestType.SESSION_SOURCE_SET, requestId: "source-set", payload: { sourceId: "vscode", enabled: true } });
+      expect(engineManager.setSessionSourceEnabled).toHaveBeenCalledExactlyOnceWith("vscode", true);
+      for (const payload of [{ sourceId: "vscode", enabled: "true" }, { enabled: true }, { sourceId: "", enabled: false }]) {
+        await sendMessage(ws, { type: GatewayRequestType.SESSION_SOURCE_SET, requestId: "bad-source", payload });
+        expect(JSON.parse(ws.send.mock.calls.at(-1)![0]).error.code).toBe("INVALID_PARAMS");
+      }
+      expect(engineManager.setSessionSourceEnabled).toHaveBeenCalledOnce();
+      expect(engineManager.setSessionSharing).not.toHaveBeenCalled();
+    });
     it("routes sharing settings through the unified engine and rejects invalid switches", async () => {
       const { connect, sendMessage, engineManager } = createTestHarness();
       const ws = connect();

@@ -106,6 +106,28 @@ describe("ServiceRuntime", () => {
   });
 
   describe("start", () => {
+    it("starts session sources independently of failed engines and waits for sources before channels", async () => {
+      const { options } = createFixture();
+      const starting = deferred();
+      const source = { start: vi.fn(() => starting.promise), stop: vi.fn(async () => {}) };
+      options.engines[0][1].start.mockRejectedValue(new Error("SDK unavailable"));
+      const runtime = new ServiceRuntime({ ...options, sessionSources: [["VS Code", source]] });
+
+      await runtime.start();
+      const completion = runtime.completeStartup();
+      expect(source.start).toHaveBeenCalledOnce();
+      expect(options.engines[1][1].start).toHaveBeenCalledOnce();
+      expect(options.channelManager.initFromConfig).not.toHaveBeenCalled();
+      expect(runtime.isStartupReady()).toBe(false);
+      starting.reject(new Error("Host unavailable"));
+      await completion;
+
+      expect(options.log.error).toHaveBeenCalledWith("VS Code session source failed to start:", "Host unavailable");
+      expect(options.channelManager.initFromConfig).toHaveBeenCalledOnce();
+      expect(runtime.isStartupReady()).toBe(true);
+      await runtime.stop();
+    });
+
     it("starts dev endpoints in order and returns while engines are still starting", async () => {
       const { runtime, options, events } = createFixture();
       const first = deferred();
@@ -259,6 +281,49 @@ describe("ServiceRuntime", () => {
   });
 
   describe("stop", () => {
+    it("disconnects settled session sources even when engine shutdown fails", async () => {
+      const { options, engineManager } = createFixture();
+      const disconnected = deferred();
+      const source = { start: vi.fn(async () => {}), stop: vi.fn(() => disconnected.promise) };
+      const runtime = new ServiceRuntime({ ...options, sessionSources: [["VS Code", source]] });
+      await runtime.start();
+      await runtime.completeStartup();
+      const failure = new Error("SDK shutdown failed");
+      engineManager.stopAll.mockRejectedValue(failure);
+      let finished = false;
+      const stopping = runtime.stop().catch(error => { finished = true; return error; });
+
+      await vi.waitFor(() => expect(source.stop).toHaveBeenCalledOnce());
+      expect(finished).toBe(false);
+      disconnected.resolve();
+      expect(await stopping).toBe(failure);
+      expect(source.stop).toHaveBeenCalledOnce();
+      expect(options.productionServer.stop).toHaveBeenCalledOnce();
+    });
+
+    it("cancels a starting session source and disconnects its late connection before finishing shutdown", async () => {
+      const { options } = createFixture();
+      const starting = deferred();
+      let connected = false;
+      const source = {
+        start: vi.fn(async () => { await starting.promise; connected = true; }),
+        stop: vi.fn(async () => { connected = false; }),
+      };
+      const runtime = new ServiceRuntime({ ...options, sessionSources: [["VS Code", source]] });
+      await runtime.start();
+      const completion = runtime.completeStartup();
+      const stopping = runtime.stop();
+      expect(runtime.stop()).toBe(stopping);
+      await vi.waitFor(() => expect(source.stop).toHaveBeenCalledOnce());
+      starting.resolve();
+      await Promise.all([completion, stopping]);
+
+      expect(source.stop).toHaveBeenCalledTimes(2);
+      expect(connected).toBe(false);
+      expect(options.channelManager.initFromConfig).not.toHaveBeenCalled();
+      expect(runtime.isStartupReady()).toBe(false);
+    });
+
     it("starts engine shutdown before pending startup settles and cleans up a late-spawned engine", async () => {
       const { runtime, options, engineManager } = createFixture();
       const starting = deferred();

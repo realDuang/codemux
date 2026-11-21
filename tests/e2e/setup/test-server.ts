@@ -33,6 +33,7 @@ import {
   type ModeSetRequest,
   type UnifiedSession,
   type UnifiedProject,
+  type SessionSourceState,
 } from "../../../src/types/unified";
 
 // --- MIME types for static file serving ---
@@ -101,6 +102,7 @@ export interface TestServerConfig {
   staticRoot?: string;
   /** Sessions whose history separates content from lazily requested steps. */
   lazyStepsSessionIds?: readonly string[];
+  sessionSources?: readonly SessionSourceState[];
 }
 
 export interface TestServerInstance {
@@ -262,6 +264,9 @@ export async function startTestServer(
       }
 
       // --- Session ---
+      case GatewayRequestType.SESSION_SOURCE_LIST:
+        return config?.sessionSources ?? [];
+
       case GatewayRequestType.SESSION_LIST_ALL: {
         const allSessions: UnifiedSession[] = [];
         for (const adapter of adapters.values()) {

@@ -15,6 +15,7 @@ import type {
   EngineType,
   EngineInfo,
   EngineSharingState,
+  SessionSourceState,
   EngineCapabilities,
   UnifiedSession,
   SessionActivityStatus,
@@ -68,7 +69,9 @@ export const gatewayConnected = _gatewayConnected;
 
 const [sessionActivity, setSessionActivity] = createSignal<Record<string, SessionActivityStatus>>({});
 
-export function hasAuthoritativeSessionState(engineType: EngineType | undefined): boolean {
+export function hasAuthoritativeSessionState(engine: EngineType | Pick<UnifiedSession, "engineType" | "connection"> | undefined): boolean {
+  if (typeof engine === "object" && engine.connection?.authoritative !== undefined) return engine.connection.authoritative;
+  const engineType = typeof engine === "object" ? engine.engineType : engine;
   return configStore.engines.find((engine) => engine.type === engineType)
     ?.capabilities?.authoritativeSessionState === true;
 }
@@ -134,9 +137,9 @@ class GatewayAPI {
 
   private async withPendingSend<T>(sessionId: string, send: () => Promise<T>): Promise<T> {
     const releaseSending = untrack(() => {
-      const engineType = sessionStore.list.find((session) => session.id === sessionId)?.engineType;
+      const session = sessionStore.list.find((session) => session.id === sessionId);
       const activity = getAuthoritativeSessionActivity(sessionId);
-      return beginPendingSessionSend(sessionId, hasAuthoritativeSessionState(engineType)
+      return beginPendingSessionSend(sessionId, hasAuthoritativeSessionState(session)
         ? activity === "running" || activity === "waiting" : undefined);
     });
     const pending = this.pendingSends.get(sessionId) ?? new Set<() => void>();
@@ -192,7 +195,7 @@ class GatewayAPI {
   private syncSessionActivity(session: UnifiedSession, snapshotRevision = this.activityRevision): void {
     if (this.removedSessionIds.has(session.id)) return;
     const activity = session.activityStatus;
-    if (!hasAuthoritativeSessionState(session.engineType) || !activity) return;
+    if (!hasAuthoritativeSessionState(session) || !activity) return;
     if ((this.sessionActivityRevisions.get(session.id) ?? 0) > snapshotRevision) return;
     this.sessionActivityRevisions.set(session.id, ++this.activityRevision);
     setSessionActivity((current) => ({ ...current, [session.id]: activity }));
@@ -440,6 +443,14 @@ class GatewayAPI {
     return gatewayClient.request(GatewayRequestType.ENGINE_SHARING_GET, { engineType });
   }
 
+  listSessionSources(): Promise<SessionSourceState[]> {
+    return gatewayClient.request(GatewayRequestType.SESSION_SOURCE_LIST, {});
+  }
+
+  setSessionSourceEnabled(sourceId: string, enabled: boolean): Promise<SessionSourceState> {
+    return gatewayClient.request(GatewayRequestType.SESSION_SOURCE_SET, { sourceId, enabled });
+  }
+
   setSessionSharing(engineType: EngineType, enabled: boolean): Promise<EngineSharingState> {
     return gatewayClient.request(GatewayRequestType.ENGINE_SHARING_SET, { engineType, enabled });
   }
@@ -477,7 +488,7 @@ class GatewayAPI {
       if (!session || this.removedSessionIds.has(sessionId)) throw new Error("Session was removed");
       const stale = (this.sessionActivityRevisions.get(session.id) ?? 0) > revision;
       this.syncSessionActivity(session, revision);
-      if (!stale && hasAuthoritativeSessionState(session.engineType)) this.handlers.onSessionUpdated?.(session);
+      if (!stale && hasAuthoritativeSessionState(session)) this.handlers.onSessionUpdated?.(session);
       return session;
     } finally {
       this.pendingSessionSnapshots.delete(updates);
@@ -534,7 +545,7 @@ class GatewayAPI {
     if (queued) await queued;
     if (this.snapshotWasRemoved(sessionId, revision)) return [];
     const session = sessionStore.list.find((item) => item.id === sessionId);
-    const authoritative = hasAuthoritativeSessionState(session?.engineType);
+    const authoritative = hasAuthoritativeSessionState(session);
 
     // Every engine retains notifications received during history loading.
     // Authoritative messages replace their complete parts; other engines merge.

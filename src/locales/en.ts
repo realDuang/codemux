@@ -490,6 +490,13 @@ export interface LocaleDict {
   };
 
   sessionSharing: {
+    sourcesTitle: string;
+    sourcesDescription: string;
+    unsupportedProviders: string;
+    attachTitle: string;
+    attachDescription: string;
+    attachUnavailableHint: string;
+    readOnly: string;
     title: string;
     peer: string;
     description: string;
@@ -502,6 +509,8 @@ export interface LocaleDict {
     updateFailed: string;
     details: string;
     createdIn: string;
+    connectedVia: string;
+    source: string;
     origin: string;
     unknownOrigin: string;
     executor: string;
@@ -1580,6 +1589,13 @@ export const en: LocaleDict = {
   },
 
   sessionSharing: {
+    sourcesTitle: "Session sources",
+    sourcesDescription: "Connect to applications independently of their AI engines. Supported providers keep their own engine identity and original executor.",
+    unsupportedProviders: "These host providers are not supported and their chats are not shown: {providers}",
+    attachTitle: "Connect to {peer} chats",
+    attachDescription: "Access chats through {peer} on this computer. They may have been created by different apps; their original executor keeps running them. New CodeMux chats stay independent. Start the original executor and sign in first.",
+    attachUnavailableHint: "Start the original executor on this computer to reconnect. Saved chat history remains readable.",
+    readOnly: "This chat is read-only. Continue it in its original app.",
     title: "Share chats with {peer}",
     peer: "the companion app",
     description: "Continue the same chats in CodeMux and {peer}. Messages, progress, and requests stay with the current executor.",
@@ -1592,8 +1608,10 @@ export const en: LocaleDict = {
     updateFailed: "Could not update sharing: {message}",
     details: "Chat connection",
     createdIn: "Created in {origin}",
-    origin: "Created in",
-    unknownOrigin: "Unknown origin",
+    connectedVia: "Connected via {source}",
+    source: "Connection source",
+    origin: "Creating app",
+    unknownOrigin: "Unknown",
     executor: "Current executor",
     unknownExecutor: "Unknown executor",
     connection: "Sharing",

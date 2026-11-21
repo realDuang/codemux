@@ -63,6 +63,7 @@
     "@fontsource-variable/geist-mono": "^5.3.0",
     "@github/copilot-sdk": "1.0.0",
     "@larksuiteoapi/node-sdk": "^1.42.0",
+    "@microsoft/agent-host-protocol": "1.1.0",
     "@opencode-ai/sdk": "^1.14.41",
     "@parcel/watcher": "^2.5.1",
     "@shikijs/transformers": "^1.22.0",

@@ -1,6 +1,5 @@
 import type { ChannelManager } from "../electron/main/channels/channel-manager";
 import type { WebhookServer } from "../electron/main/channels/webhook-server";
-import type { EngineAdapter } from "../electron/main/engines/engine-adapter";
 import type { EngineManager } from "../electron/main/gateway/engine-manager";
 import type { GatewayServer } from "../electron/main/gateway/ws-server";
 import type { authApiServer } from "../electron/main/services/auth-api-server";
@@ -11,6 +10,13 @@ import type { productionServer } from "../electron/main/services/production-serv
 import type { ScheduledTaskService } from "../electron/main/services/scheduled-task-service";
 import type { ChannelManagerRoutes } from "./channel-route-handlers";
 import type { RemoteAccessController } from "./remote-access-controller";
+
+interface ServiceLifecycle {
+  start(): Promise<void>;
+  stop(): Promise<void>;
+}
+
+type NamedService = readonly [name: string, service: ServiceLifecycle];
 
 export interface ServiceRuntimeOptions {
   webMode: "static" | "dev-proxy";
@@ -23,7 +29,8 @@ export interface ServiceRuntimeOptions {
   conversationStore: Pick<typeof conversationStore, "init" | "flushAll">;
   beforeEngineInitialize?: () => Promise<void>;
   engineManager: EngineManager;
-  engines: ReadonlyArray<readonly [name: string, adapter: Pick<EngineAdapter, "start" | "stop">]>;
+  engines: ReadonlyArray<NamedService>;
+  sessionSources?: ReadonlyArray<NamedService>;
   scheduledTaskService: Pick<ScheduledTaskService, "init" | "shutdown">;
   authApiServer: Pick<typeof authApiServer, "setChannelManager" | "start" | "stop">;
   productionServer: Pick<typeof productionServer, "setChannelManager" | "start" | "stop" | "isRunning" | "getServer" | "getPort">;
@@ -39,8 +46,8 @@ export interface ServiceRuntimeOptions {
   log: Pick<ScopedLogger, "info" | "error">;
 }
 
-interface EngineStartup {
-  adapter: Pick<EngineAdapter, "start" | "stop">;
+interface ServiceStartup {
+  service: ServiceLifecycle;
   promise: Promise<void>;
   settled: boolean;
 }
@@ -57,7 +64,8 @@ async function finishCleanup(cleanups: Promise<unknown>[]): Promise<void> {
 
 /** Service lifecycle shared by hosts; window and process ownership stay with the caller. */
 export class ServiceRuntime {
-  private engineStarts: EngineStartup[] = [];
+  private engineStarts: ServiceStartup[] = [];
+  private sessionSourceStarts: ServiceStartup[] = [];
   private startupReady = false;
   private stopping = false;
   private startPromise: Promise<void> | undefined;
@@ -97,7 +105,7 @@ export class ServiceRuntime {
     services.scheduledTaskService.init(services.engineManager);
   }
 
-  /** Start the network endpoints and launch engines without waiting for them. */
+  /** Start network endpoints and launch engines and session sources without waiting for them. */
   start(): Promise<void> {
     if (this.stopping) return Promise.resolve();
     if (!this.startPromise) {
@@ -158,18 +166,24 @@ export class ServiceRuntime {
       log.error("Failed to start Gateway server:", err);
     }
 
-    for (const [name, adapter] of services.engines) {
+    this.startManagedServices(services.engines, "engine", this.engineStarts);
+    this.startManagedServices(services.sessionSources ?? [], "session source", this.sessionSourceStarts);
+  }
+
+  private startManagedServices(services: ReadonlyArray<NamedService>, kind: "engine" | "session source", starts: ServiceStartup[]): void {
+    const { log } = this.options;
+    for (const [name, service] of services) {
       if (this.stopping) return;
-      const startup: EngineStartup = { adapter, promise: Promise.resolve(), settled: false };
-      this.engineStarts.push(startup);
-      startup.promise = adapter.start().then(
-        () => log.info(`${name} engine started successfully`),
-        err => log.error(`${name} engine failed to start:`, err?.message ?? err),
+      const startup: ServiceStartup = { service, promise: Promise.resolve(), settled: false };
+      starts.push(startup);
+      startup.promise = service.start().then(
+        () => log.info(`${name} ${kind} started successfully`),
+        err => log.error(`${name} ${kind} failed to start:`, err?.message ?? err),
       ).finally(() => { startup.settled = true; });
     }
   }
 
-  /** Call after host UI setup, even when engines settle immediately. */
+  /** Call after host UI setup, even when backend services settle immediately. */
   completeStartup(): Promise<void> {
     if (this.stopping) return Promise.resolve();
     this.completionPromise ??= this.finishStartup();
@@ -179,7 +193,7 @@ export class ServiceRuntime {
   private async finishStartup(): Promise<void> {
     await this.startPromise;
     if (this.stopping) return;
-    await Promise.allSettled(this.engineStarts.map(startup => startup.promise));
+    await Promise.allSettled([...this.engineStarts, ...this.sessionSourceStarts].map(startup => startup.promise));
     if (this.stopping) return;
     this.channelStartup = this.startChannels().finally(() => { this.channelStartup = undefined; });
     await this.channelStartup;
@@ -188,7 +202,7 @@ export class ServiceRuntime {
   private async startChannels(): Promise<void> {
     const services = this.options;
     const { log } = services;
-    log.info("All engines settled");
+    log.info("All engines and session sources settled");
 
     const gatewayBaseUrl = services.webMode === "static" && services.productionServer.isRunning()
       ? `ws://127.0.0.1:${services.productionServer.getPort()}/ws`
@@ -213,9 +227,9 @@ export class ServiceRuntime {
     }
 
     if (this.stopping) return;
-    // Readiness means initialization settled, including unavailable engines/channels.
+    // Readiness means initialization settled, including unavailable engines, sources, and channels.
     this.startupReady = true;
-    log.info("All engines and channels settled, startup ready");
+    log.info("All engines, session sources, and channels settled, startup ready");
   }
 
   stop(): Promise<void> {
@@ -223,12 +237,13 @@ export class ServiceRuntime {
       this.stopping = true;
       this.startupReady = false;
       const pendingEngines = this.engineStarts.filter(startup => !startup.settled);
-      this.stopPromise = this.stopServices(pendingEngines);
+      const pendingSources = this.sessionSourceStarts.filter(startup => !startup.settled);
+      this.stopPromise = this.stopServices(pendingEngines, pendingSources);
     }
     return this.stopPromise;
   }
 
-  private async stopServices(pendingEngines: EngineStartup[]): Promise<void> {
+  private async stopServices(pendingEngines: ServiceStartup[], pendingSources: ServiceStartup[]): Promise<void> {
     if (this.initialization) await this.initialization.catch(() => {});
     const services = this.options;
     // Tear down native watchers and PTYs before persistence and engine shutdown.
@@ -248,22 +263,31 @@ export class ServiceRuntime {
       afterSettled(this.channelStartup, () => services.channelManager.stopAll()),
       afterSettled(this.channelStartup, () => services.webhookServer.stop()),
       this.stopEngines(pendingEngines),
+      this.stopSessionSources(pendingSources),
       afterSettled(httpStartup, () => services.productionServer.stop()),
       services.scheduledTaskService.shutdown(),
       gatewayClosed ?? Promise.resolve(),
     ]);
   }
 
-  private stopEngines(pending: EngineStartup[]): Promise<void> {
+  private stopEngines(pending: ServiceStartup[]): Promise<void> {
     // Start cancellation immediately; an adapter may not settle until stop is called.
-    const stopped = this.options.engineManager.stopAll();
+    return this.stopLateStarts(pending, this.options.engineManager.stopAll());
+  }
+
+  private stopSessionSources(pending: ServiceStartup[]): Promise<void> {
+    const stopped = finishCleanup((this.options.sessionSources ?? []).map(async ([, source]) => { await source.stop(); }));
+    return this.stopLateStarts(pending, stopped);
+  }
+
+  private stopLateStarts(pending: ServiceStartup[], stopped: Promise<void>): Promise<void> {
     if (pending.length === 0) return stopped;
     return finishCleanup([
       stopped,
       ...pending.map(startup => afterSettled(
         Promise.allSettled([stopped, startup.promise]),
-        // Some SDKs finish spawning after stop. Clean up only those late starts.
-        () => startup.adapter.stop(),
+        // A service may finish connecting or spawning after its first stop.
+        () => startup.service.stop(),
       )),
     ]);
   }

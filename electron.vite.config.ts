@@ -82,6 +82,7 @@ export default defineConfig(({ command }) => ({
     },
     server: {
       hmr: false,
+      watch: { ignored: ['**/.codemux-dev/**'] },
       host: true,
       port: WEB_PORT,
       // The host's tunnel targets this configured port; never silently move it.

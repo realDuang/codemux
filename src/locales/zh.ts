@@ -498,6 +498,13 @@ export const zh: LocaleDict = {
 
   // Project
   sessionSharing: {
+    sourcesTitle: "会话来源",
+    sourcesDescription: "独立连接应用，不与某个 AI 引擎绑定。受支持的提供方保留各自的引擎身份，由原应用继续执行。",
+    unsupportedProviders: "暂不支持以下主机提供方，其会话不会显示：{providers}",
+    attachTitle: "连接 {peer} 会话",
+    attachDescription: "通过 {peer} 访问此计算机上的会话。会话可能由不同应用创建，仍由原执行端运行；CodeMux 新建会话保持独立。请先启动原执行端并登录。",
+    attachUnavailableHint: "请在这台电脑上启动原执行端以重新连接。已保存的会话历史仍可查看。",
+    readOnly: "此会话为只读，请在原应用中继续。",
     title: "与 {peer} 共享会话",
     peer: "配套应用",
     description: "在 CodeMux 和 {peer} 中接续同一会话。消息、进度和待确认问题由当前执行端同步处理。",
@@ -510,8 +517,10 @@ export const zh: LocaleDict = {
     updateFailed: "无法更新共享设置：{message}",
     details: "会话连接",
     createdIn: "创建于 {origin}",
-    origin: "创建来源",
-    unknownOrigin: "来源未知",
+    connectedVia: "通过 {source} 接入",
+    source: "接入来源",
+    origin: "创建应用",
+    unknownOrigin: "未知",
     executor: "当前执行端",
     unknownExecutor: "执行端未知",
     connection: "共享状态",
